@@ -491,7 +491,9 @@ const STEPS: Record<string, Step> = {
     question: "Phone number?",
     placeholder: "(508) 555-1234",
     field: "contactPhone",
+    inputType: "tel",
     optional: true,
+    validation: "phone",
   },
 
   submitted: { type: "submitted" },
