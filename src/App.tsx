@@ -315,9 +315,32 @@ type Step =
       inputType?: string;
       optional?: boolean;
       sub?: string;
+      validation?: "email" | "phone";
     }
   | { type: "multi"; question: string; sub?: string; field: string; options: Option[] }
   | { type: "submitted" };
+
+/* ── Validators ── */
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+
+function validateText(
+  raw: string,
+  validation: "email" | "phone" | undefined,
+  optional: boolean
+): string | null {
+  const v = raw.trim();
+  if (!v) {
+    return optional ? null : "Please enter a value to continue.";
+  }
+  if (validation === "email") {
+    if (!EMAIL_RE.test(v)) return "Please enter a valid email address.";
+  }
+  if (validation === "phone") {
+    const digits = v.replace(/\D/g, "");
+    if (digits.length < 10) return "Please enter a valid phone number.";
+  }
+  return null;
+}
 
 const STEPS: Record<string, Step> = {
   welcome: {
@@ -461,6 +484,7 @@ const STEPS: Record<string, Step> = {
     placeholder: "you@example.com",
     field: "contactEmail",
     inputType: "email",
+    validation: "email",
   },
   contactPhone: {
     type: "text",
@@ -1099,8 +1123,9 @@ function QuoteFlow({ isDay, onToggleTheme }: { isDay: boolean; onToggleTheme: ()
 
   function handleTextSubmit() {
     if (step.type !== "text") return;
-    if (!step.optional && !inputVal.trim()) {
-      setError("Please enter a value to continue.");
+    const errMsg = validateText(inputVal, step.validation, !!step.optional);
+    if (errMsg) {
+      setError(errMsg);
       return;
     }
     const newData = { ...data, [step.field]: inputVal.trim() };
