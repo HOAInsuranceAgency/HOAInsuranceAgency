@@ -213,6 +213,12 @@ const Icon = {
       <path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.13.96.37 1.9.72 2.81a2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.91.35 1.85.59 2.81.72A2 2 0 0122 16.92z" />
     </svg>
   ),
+  Restart: ({ size = 18, color = "currentColor" }: IconProps) => (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 12a9 9 0 1 0 3-6.7" />
+      <path d="M3 4v5h5" />
+    </svg>
+  ),
 };
 
 type IconKey = keyof typeof Icon;
@@ -685,6 +691,84 @@ function BackButton({ onClick }: { onClick: () => void }) {
   );
 }
 
+function RestartButton({ onClick }: { onClick: () => void }) {
+  const c = useTheme();
+  const [hov, setHov] = useState(false);
+  const isLight = c.bg === LIGHT.bg;
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      onMouseEnter={() => setHov(true)}
+      onMouseLeave={() => setHov(false)}
+      aria-label="Start over"
+      title="Start over"
+      className="qf-restart-btn"
+      style={{
+        color: hov ? c.text : c.textMuted,
+        background: hov ? (isLight ? "rgba(15,23,42,0.05)" : "rgba(255,255,255,0.06)") : "transparent",
+      }}
+    >
+      <Icon.Restart size={18} />
+    </button>
+  );
+}
+
+/* ── Friendly headshot header (Lemonade-style) ── */
+function AgentHeader({ greeting }: { greeting?: string }) {
+  const c = useTheme();
+  const [imgFailed, setImgFailed] = useState(false);
+  return (
+    <div className="qf-agent-header">
+      <div
+        className="qf-agent-avatar"
+        style={{
+          background: c.accentDim,
+          borderColor: c.border,
+        }}
+      >
+        {!imgFailed ? (
+          <img
+            src="/agent.jpg"
+            alt="Your insurance agent"
+            onError={() => setImgFailed(true)}
+            draggable={false}
+          />
+        ) : (
+          <FallbackAvatar accent={c.accent} />
+        )}
+      </div>
+      {greeting && (
+        <p className="qf-agent-greeting" style={{ color: c.textMuted }}>
+          {greeting}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function FallbackAvatar({ accent }: { accent: string }) {
+  return (
+    <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <defs>
+        <clipPath id="qf-avatar-clip">
+          <circle cx="50" cy="50" r="50" />
+        </clipPath>
+      </defs>
+      <g clipPath="url(#qf-avatar-clip)">
+        <rect width="100" height="100" fill="#fde6d2" />
+        <ellipse cx="50" cy="100" rx="42" ry="32" fill={accent} />
+        <rect x="44" y="58" width="12" height="14" fill="#f4cba6" />
+        <circle cx="50" cy="44" r="20" fill="#f4cba6" />
+        <path d="M30 40 Q30 22 50 22 Q70 22 70 42 Q66 30 50 28 Q34 30 32 44 Z" fill="#5a3e2a" />
+        <circle cx="43" cy="45" r="1.6" fill="#2a2a2a" />
+        <circle cx="57" cy="45" r="1.6" fill="#2a2a2a" />
+        <path d="M43 52 Q50 57 57 52" stroke="#2a2a2a" strokeWidth="1.6" fill="none" strokeLinecap="round" />
+      </g>
+    </svg>
+  );
+}
+
 /* ──────────────────────────────────────────────────────────
    APP
    ────────────────────────────────────────────────────────── */
@@ -739,6 +823,20 @@ function QuoteFlow({ isDay, onToggleTheme }: { isDay: boolean; onToggleTheme: ()
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [direction, setDirection] = useState<1 | -1>(1);
+
+  function handleRestart() {
+    if (stepIndex === 0) return;
+    const ok = window.confirm("Start over? Your answers will be cleared.");
+    if (!ok) return;
+    setDirection(-1);
+    setStepIndex(0);
+    setData({});
+    setRole(null);
+    setInputVal("");
+    setMultiVal([]);
+    setError("");
+    setSubmitting(false);
+  }
 
   const flow = useMemo(() => getFlow(role, data), [role, data]);
   const stepKey = flow[stepIndex];
@@ -843,13 +941,28 @@ function QuoteFlow({ isDay, onToggleTheme }: { isDay: boolean; onToggleTheme: ()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stepKey]);
 
+  const showAgentHeader = step?.type !== "splash" && step?.type !== "submitted";
+  const firstName = (data.contactName as string | undefined)?.split(" ")[0];
+  const greeting = useMemo(() => {
+    if (stepKey === "role") return "Hi, I'm Maya — I'll get you a quote.";
+    if (stepKey === "assocName") return "Tell me about your association.";
+    if (stepKey === "contactName") return "Just a few more questions.";
+    if (firstName && stepKey === "contactEmail") return `Thanks, ${firstName}!`;
+    if (firstName && stepKey === "contactPhone") return `Almost done, ${firstName}.`;
+    return undefined;
+  }, [stepKey, firstName]);
+
   return (
     <div className="qf-root">
       <ProgressBar current={Math.min(stepIndex, totalSteps)} total={totalSteps} />
       {stepIndex > 0 && step?.type !== "submitted" && <BackButton onClick={goBack} />}
-      <ThemeIndicator isDay={isDay} onToggle={onToggleTheme} />
+      <div className="qf-top-right">
+        {stepIndex > 0 && step?.type !== "submitted" && <RestartButton onClick={handleRestart} />}
+        <ThemeIndicator isDay={isDay} onToggle={onToggleTheme} />
+      </div>
 
       <div className="qf-stage">
+        {showAgentHeader && <AgentHeader greeting={greeting} />}
         <SlideIn keyVal={stepKey} direction={direction}>
           {/* SPLASH */}
           {step?.type === "splash" && (
