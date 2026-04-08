@@ -169,6 +169,10 @@ a {
   animation: qf-fade-down 0.5s cubic-bezier(0.2, 0.7, 0.3, 1) both;
 }
 
+.qf-agent-header--compact {
+  margin-bottom: 14px;
+}
+
 .qf-agent-avatar {
   width: 84px;
   height: 84px;
@@ -194,6 +198,31 @@ a {
   margin: 12px 0 0;
   letter-spacing: -0.005em;
   text-align: center;
+}
+
+/* Splash chat-style message — sits under the avatar like a chat bubble */
+.qf-splash-message {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  font-size: clamp(17px, 2.4vw, 20px);
+  font-weight: 500;
+  line-height: 1.5;
+  letter-spacing: -0.005em;
+  color: var(--qf-text);
+  max-width: 480px;
+  text-align: center;
+  margin: 4px 0 6px;
+}
+
+/* Emojis must opt out of any text gradients/clipping so they keep
+   their native color. Belt-and-suspenders here. */
+.qf-emoji {
+  -webkit-text-fill-color: initial;
+  background: none;
+  font-style: normal;
+  display: inline-block;
 }
 
 @keyframes qf-fade-down {
@@ -265,7 +294,7 @@ a {
 }
 
 .qf-splash-logo {
-  margin-bottom: 36px;
+  margin-bottom: 28px;
   animation: qf-pop 0.6s cubic-bezier(0.2, 0.9, 0.4, 1.4) both;
   display: flex;
   justify-content: center;

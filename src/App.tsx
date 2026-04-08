@@ -322,8 +322,9 @@ type Step =
 const STEPS: Record<string, Step> = {
   welcome: {
     type: "splash",
-    headline: "Let's review your HOA insurance.",
-    sub: "Takes about 2 minutes. No commitment, no spam.",
+    // headline is rendered dynamically in JSX so it can include the agent's name
+    headline: "",
+    sub: "Free, fast, and never any spam.",
   },
   role: {
     type: "select",
@@ -885,13 +886,21 @@ function RestartButton({ onClick }: { onClick: () => void }) {
 }
 
 /* ── Friendly headshot header (Lemonade-style) ── */
-function AgentHeader({ agent, greeting }: { agent: Agent; greeting?: string }) {
+function AgentHeader({
+  agent,
+  greeting,
+  compact,
+}: {
+  agent: Agent;
+  greeting?: string;
+  compact?: boolean;
+}) {
   const c = useTheme();
   const [imgFailed, setImgFailed] = useState(false);
   // reset error state if agent changes (e.g., after restart)
   useEffect(() => setImgFailed(false), [agent.photo]);
   return (
-    <div className="qf-agent-header">
+    <div className={"qf-agent-header" + (compact ? " qf-agent-header--compact" : "")}>
       <div
         className="qf-agent-avatar"
         style={{
@@ -1154,17 +1163,21 @@ function QuoteFlow({ isDay, onToggleTheme }: { isDay: boolean; onToggleTheme: ()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stepKey]);
 
-  const showAgentHeader = step?.type !== "splash" && step?.type !== "submitted";
+  // Splash renders the avatar inline (below the logo). Other question steps
+  // get the avatar at the top of the stage. Submitted screen has neither.
+  const showAgentHeader = step?.type !== "submitted" && step?.type !== "splash";
   const firstName = (data.contactName as string | undefined)?.split(" ")[0];
   const agentFirst = agent.name.split(" ")[0];
   const greeting = useMemo(() => {
-    if (stepKey === "role") return `Hi, I'm ${agentFirst} — I'll get you a quote.`;
+    // Splash uses the headline itself for the agent's intro line
+    if (stepKey === "welcome") return undefined;
+    if (stepKey === "role") return "Let's get to know you.";
     if (stepKey === "assocName") return "Tell me about your association.";
     if (stepKey === "contactName") return "Just a few more questions.";
     if (firstName && stepKey === "contactEmail") return `Thanks, ${firstName}!`;
     if (firstName && stepKey === "contactPhone") return `Almost done, ${firstName}.`;
     return undefined;
-  }, [stepKey, firstName, agentFirst]);
+  }, [stepKey, firstName]);
 
   return (
     <div className="qf-root">
@@ -1184,10 +1197,13 @@ function QuoteFlow({ isDay, onToggleTheme }: { isDay: boolean; onToggleTheme: ()
               <div className="qf-splash-logo">
                 <img src="/logo.png" alt="HOA Insurance Agency" draggable={false} />
               </div>
-              <h1 className="qf-headline">{step.headline}</h1>
-              <p className="qf-sub">{step.sub}</p>
+              <AgentHeader agent={agent} compact />
+              <div className="qf-splash-message">
+                <span>Hi, I'm {agentFirst} <span className="qf-emoji">👋</span></span>
+                <span>I'll get you an awesome HOA insurance quote in minutes. Ready to go?</span>
+              </div>
+              <p className="qf-sub-small">{step.sub}</p>
               <PrimaryButton onClick={handleSplash} label="Get Started" />
-              <p className="qf-hint">Press Enter to start</p>
             </div>
           )}
 
