@@ -1,0 +1,120 @@
+---
+import Layout from "../layouts/Layout.astro";
+import Hero from "../components/Hero.astro";
+import { ContactForm } from "../components/ContactForm";
+import { QUOTE_URL } from "../constants";
+import { cities } from "../data/cities";
+
+export function getStaticPaths() {
+  return cities.map((c) => ({
+    params: { city: c.slug, stateAbbr: c.stateAbbr },
+    props: { city: c },
+  }));
+}
+
+const { city } = Astro.props;
+---
+
+<Layout
+  title={city.title}
+  description={city.description}
+  canonicalPath={`/hoa-insurance-${city.slug}-${city.stateAbbr}`}
+>
+  <Hero
+    title={city.heroTitle}
+    subtitle={`HOA master insurance and HO-6 condo coverage for ${city.name}, ${city.stateName} associations.`}
+    backgroundImage="/images/modern-building.jpg"
+    backgroundVideo="/images/hero-video.mp4"
+    ctaText="Request Insurance Review"
+    ctaHref={QUOTE_URL}
+    compact
+  />
+
+  <section class="section">
+    <div class="container reveal" style="max-width: 800px">
+      <h2 class="section-title">HOA Insurance in {city.name}, {city.stateAbbr.toUpperCase()}</h2>
+      <p style="font-size: 17px; color: var(--color-gray-600); line-height: 1.7; margin-bottom: 32px">{city.intro}</p>
+    </div>
+  </section>
+
+  <section class="section section--alt">
+    <div class="container" style="max-width: 800px">
+      <h2 class="section-title">What {city.name} Associations Need to Know</h2>
+      <ul class="geo-list">
+        {city.details.map((d) => <li class="geo-list-item">{d}</li>)}
+      </ul>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="container" style="max-width: 800px">
+      <h2 class="section-title">What We Cover</h2>
+      <p style="font-size: 16px; color: var(--color-gray-600); line-height: 1.7; margin-bottom: 24px">
+        We place all core HOA coverages for {city.name} associations — master property, general liability, umbrella, D&O, crime/fidelity, and ordinance or law. We also help unit owners with HO-6 policies aligned to the master policy.
+      </p>
+      <div style="display: flex; gap: 12px; flex-wrap: wrap">
+        <a href="/what-we-do" class="btn btn-primary">Our Coverages</a>
+        <a href={`/hoa-insurance-${city.stateSlug}`} class="btn btn-outline-dark">HOA Insurance in {city.stateName}</a>
+      </div>
+    </div>
+  </section>
+
+  <section class="section section--navy" style="text-align: center">
+    <div class="container">
+      <h2 class="section-title">Need HOA insurance in {city.name}?</h2>
+      <p class="section-subtitle" style="margin: 0 auto 32px">Start with a free insurance review — takes about 2 minutes.</p>
+      <a href={QUOTE_URL} class="btn btn-gold">Request Insurance Review</a>
+    </div>
+  </section>
+
+  <ContactForm client:visible />
+</Layout>
+
+<style>
+  .geo-list {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    margin-top: 24px;
+  }
+  .geo-list-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    font-size: 16px;
+    color: var(--color-gray-700);
+    line-height: 1.6;
+    padding: 16px 20px;
+    background: var(--color-white);
+    border: 1px solid var(--color-gray-200);
+    border-radius: 10px;
+    list-style: none;
+  }
+  .geo-list-item::before {
+    content: "";
+    display: inline-block;
+    width: 22px;
+    height: 22px;
+    min-width: 22px;
+    margin-top: 2px;
+    border-radius: 50%;
+    background: var(--color-gold-dim) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23d1b378' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12l5 5 9-11'/%3E%3C/svg%3E") no-repeat center;
+  }
+  .btn-outline-dark {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 14px 28px;
+    border-radius: 8px;
+    font-size: 15px;
+    font-weight: 600;
+    background: transparent;
+    color: var(--color-accent);
+    border: 2px solid var(--color-gray-200);
+    transition: all 0.25s ease;
+  }
+  .btn-outline-dark:hover {
+    border-color: var(--color-accent);
+    background: var(--color-sky);
+  }
+</style>

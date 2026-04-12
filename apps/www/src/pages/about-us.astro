@@ -1,0 +1,88 @@
+---
+import Layout from "../layouts/Layout.astro";
+import Hero from "../components/Hero.astro";
+import { ContactForm } from "../components/ContactForm";
+import "./AboutUs.css";
+
+const BELIEFS = [
+  "Boards deserve clarity regarding insurance matters",
+  "Coverage should align with the governing documents (all-in vs. bare walls)",
+  "Deductibles and limits matter as much as price — per-unit deductibles, water losses, and loss assessment exposure need careful attention",
+  "HO-6 coordination is part of doing the job right — when unit owners understand master policy gaps, it reduces claims conflicts",
+];
+
+const APPROACH = [
+  "Structured renewal timeline",
+  "Clean submission data preparation",
+  "Clear coverage summaries for board review",
+  "Claims-informed guidance",
+  "Long-term risk approach",
+];
+---
+
+<Layout
+  title="About Us — HOA Insurance Agency"
+  description="Independent insurance brokerage specializing in HOA master insurance and HO-6 condo unit owner policies for shared-ownership communities."
+  canonicalPath="/about-us"
+>
+  <Hero
+    title="About Us"
+    subtitle="Independent insurance brokerage specializing in HOA master insurance and HO-6 condo unit owner policies. We serve one type of customer: shared-ownership communities and the people responsible for protecting them."
+    backgroundImage="/images/board-meeting.jpg"
+    backgroundVideo="/images/hero-video.mp4"
+    compact
+  />
+
+  <section class="section">
+    <div class="container about-intro-grid reveal">
+      <div class="about-intro-content">
+        <p>HOAs have unique requirements — shared buildings, shared liability, board governance, and long-term maintenance realities. We build insurance programs around those realities and explain them in plain English.</p>
+        <p>We're not a generalist agency that happens to sell condo policies. HOA insurance is our focus — the complexities, the underwriting, the board-level conversations.</p>
+      </div>
+      <div class="about-intro-image">
+        <img src="/images/about-hero.jpg" alt="Community building" loading="lazy" width="800" height="600" />
+      </div>
+    </div>
+  </section>
+
+  <section class="section section--alt">
+    <div class="container">
+      <h2 class="section-title">What We Believe</h2>
+      <ul class="beliefs-list">
+        {BELIEFS.map((b) => <li class="belief-item">{b}</li>)}
+      </ul>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="container">
+      <h3 class="section-title">Independent Market Access</h3>
+      <p style="font-size: 16px; color: var(--color-gray-600); line-height: 1.7; max-width: 720px">
+        We're not tied to a single insurer. We can access multiple carriers and specialty markets to place the best fit for your association. Coverage is subject to underwriting, policy terms, and eligibility — but our responsibility is consistent: advise the association and place the best program available.
+      </p>
+    </div>
+  </section>
+
+  <section class="section section--alt">
+    <div class="container">
+      <h2 class="section-title">How We Work With Associations</h2>
+      <ul class="approach-list">
+        {APPROACH.map((a) => <li class="approach-item">{a}</li>)}
+      </ul>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="container">
+      <h2 class="section-title">Compliance &amp; Professional Standards</h2>
+      <p style="font-size: 16px; color: var(--color-gray-600); line-height: 1.7; max-width: 720px">
+        HOA Insurance Agency is a licensed insurance agency. We provide insurance guidance and placement — not legal advice. Final coverage depends on actual policy language and endorsements issued by the insurer.
+      </p>
+      <div style="margin-top: 32px">
+        <a href="/why-choose-us" class="btn btn-primary">Why Choose Us</a>
+      </div>
+    </div>
+  </section>
+
+  <ContactForm client:visible />
+</Layout>

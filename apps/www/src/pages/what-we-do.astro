@@ -1,0 +1,159 @@
+---
+import Layout from "../layouts/Layout.astro";
+import Hero from "../components/Hero.astro";
+import { ContactForm } from "../components/ContactForm";
+import { QUOTE_URL } from "../constants";
+import "./WhatWeDo.css";
+
+const MASTER_COVERAGES = [
+  { title: "Property (Buildings & Common Areas)", items: ["Replacement cost vs. ACV", "Building limit adequacy", "Water and freeze exposure", "Per-unit water deductibles", "Ordinance or law limits", "Equipment breakdown"] },
+  { title: "General Liability", items: ["Premises liability (slip & fall)", "Operations liability", "Medical payments and defense costs", "Contractual considerations"] },
+  { title: "Umbrella / Excess Liability", items: ["Extends limits above underlying liability policies", "Broader protection for catastrophic claims"] },
+  { title: "Directors & Officers (D&O)", items: ["Governance allegations", "Decision/enforcement disputes", "Discrimination claims (where eligible)", "Defense costs"] },
+  { title: "Crime / Fidelity", items: ["Employee/volunteer theft", "Forgery", "Computer fraud", "Funds transfer fraud"] },
+];
+
+const COMMON_ISSUES = [
+  "Master policy doesn't match bylaws",
+  "Building limits are outdated",
+  "Ordinance limits are too low",
+  "Uninformed unit owners about deductible increases",
+  "Missing D&O or crime coverage",
+  "Coverage gaps between master policy and HO-6",
+];
+
+const HO6_COVERAGES = [
+  "Loss assessment coverage limits",
+  "Water backup and seepage",
+  "Adequate Coverage A for improvements",
+  "Personal property limits",
+  "Liability limits and umbrella coordination",
+];
+
+const FAQS = [
+  { q: "What's the difference between an HOA master policy and HO-6?", a: "The master policy covers association-owned buildings, common areas, and shared liability. HO-6 covers unit owner personal property, interior improvements, personal liability, and loss assessment exposure." },
+  { q: "Do condo owners need HO-6 insurance?", a: "In most cases, yes. The master policy typically does not cover your personal belongings, interior upgrades, or your share of association deductibles and special assessments." },
+  { q: "What should boards review at renewal?", a: "Building valuation, deductible structure, ordinance or law limits, general liability, umbrella, D&O, and crime/fidelity coverage. We prepare a clear summary covering all of these." },
+];
+
+const faqJsonLd = {
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  mainEntity: FAQS.map((f) => ({
+    "@type": "Question",
+    name: f.q,
+    acceptedAnswer: { "@type": "Answer", text: f.a },
+  })),
+};
+---
+
+<Layout
+  title="HOA Insurance & HO-6 Coverage — ProtectMyHOA"
+  description="Specialists in HOA master insurance policies and HO-6 condo unit owner coverage. Property, liability, D&O, crime, umbrella — built to work together."
+  canonicalPath="/what-we-do"
+  jsonLd={[faqJsonLd]}
+>
+  <Hero
+    title="HOA Insurance"
+    subtitle="Specializing in HOA master insurance policies for associations and HO-6 condo unit owner insurance for residents — built to work together."
+    backgroundImage="/images/modern-building.jpg"
+    backgroundVideo="/images/hero-video.mp4"
+    compact
+  />
+
+  <section class="section">
+    <div class="container">
+      <h2 class="section-title">What Is an HOA Master Policy?</h2>
+      <p class="wwd-intro">An HOA master insurance policy is more than just property coverage. It's a financial and legal protection plan for shared assets, shared liability, and shared decision-making.</p>
+      <ul class="wwd-bullets">
+        <li>Property coverage for buildings and common areas</li>
+        <li>General liability for premises and operations</li>
+        <li>Optional and added coverages based on need</li>
+        <li>Policies differ by building type and governing documents</li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="section section--alt">
+    <div class="container">
+      <h2 class="section-title">Key HOA Master Coverages We Place</h2>
+      <div class="coverage-list">
+        {MASTER_COVERAGES.map((c) => (
+          <div class="coverage-block reveal">
+            <h3>{c.title}</h3>
+            <ul>
+              {c.items.map((item) => <li>{item}</li>)}
+            </ul>
+          </div>
+        ))}
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="container">
+      <h2 class="section-title">Common HOA Insurance Issues We Help Solve</h2>
+      <div class="issues-grid">
+        {COMMON_ISSUES.map((issue) => (
+          <div class="issue-card reveal">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--color-gold)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01"/><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/></svg>
+            <span>{issue}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  </section>
+
+  <section class="section section--alt">
+    <div class="container ho6-split">
+      <div>
+        <h2 class="section-title">What Is HO-6 Insurance?</h2>
+        <p class="wwd-intro">HO-6 insurance is designed for condo unit owners. It covers personal property, unit improvements, personal liability, loss of use, and loss assessment coverage.</p>
+        <h3 class="wwd-sub-heading">Why HO-6 Matters for Unit Owners in HOAs</h3>
+        <p class="wwd-body">Unit owners are often surprised by association deductibles, special assessments, and coverage gaps between what the master policy covers and what they're responsible for. A properly structured HO-6 policy helps protect against these exposures.</p>
+        <h3 class="wwd-sub-heading">HO-6 Coverage We Focus On</h3>
+        <ul class="wwd-bullets">
+          {HO6_COVERAGES.map((c) => <li>{c}</li>)}
+        </ul>
+      </div>
+      <div class="ho6-image-wrap">
+        <img src="/images/ho6.jpg" alt="Condo building" loading="lazy" width="800" height="600" />
+      </div>
+    </div>
+  </section>
+
+  <section class="section section--navy" style="text-align: center">
+    <div class="container">
+      <h2 class="section-title">Master Policy + HO-6 Coordination</h2>
+      <p class="section-subtitle" style="margin: 0 auto 32px">The best outcomes happen when boards understand the master policy structure and unit owners carry HO-6 coverage aligned with that structure. We help both sides get there.</p>
+      <div style="display: flex; gap: 16px; justify-content: center; flex-wrap: wrap">
+        <a href={QUOTE_URL} class="btn btn-white">Request an HOA Review</a>
+        <a href={QUOTE_URL} class="btn btn-outline">Get an HO-6 Quote</a>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="container">
+      <h2 class="section-title">Frequently Asked Questions</h2>
+      <div class="faq-list">
+        {FAQS.map((f) => (
+          <details class="faq-item">
+            <summary>{f.q}</summary>
+            <p>{f.a}</p>
+          </details>
+        ))}
+      </div>
+    </div>
+  </section>
+
+  <section class="section section--alt" style="text-align: center">
+    <div class="container">
+      <h3 class="section-title">Board renewal coming up? Unit owner needs HO-6?</h3>
+      <p class="section-subtitle" style="margin: 0 auto 32px">Start with a quick review — no commitment, no pressure.</p>
+      <a href={QUOTE_URL} class="btn btn-primary">Request Insurance Review</a>
+    </div>
+  </section>
+
+  <ContactForm client:visible />
+</Layout>

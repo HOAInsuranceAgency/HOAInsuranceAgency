@@ -1,0 +1,114 @@
+---
+import { Navbar } from "../components/Navbar";
+import Footer from "../components/Footer.astro";
+import "../styles/global.css";
+
+interface Props {
+  title: string;
+  description: string;
+  ogImage?: string;
+  canonicalPath?: string;
+  jsonLd?: Record<string, unknown>[];
+}
+
+const {
+  title,
+  description,
+  ogImage = "/logo.png",
+  canonicalPath = "",
+  jsonLd = [],
+} = Astro.props;
+
+const siteUrl = "https://www.protectmyhoa.com";
+const canonicalUrl = `${siteUrl}${canonicalPath}`;
+const ogImageUrl = ogImage.startsWith("http") ? ogImage : `${siteUrl}${ogImage}`;
+
+const baseSchema = {
+  "@context": "https://schema.org",
+  "@type": "InsuranceAgency",
+  name: "HOA Insurance Agency",
+  url: siteUrl,
+  telephone: "+1-508-233-2261",
+  email: "insurance@ProtectMyHOA.com",
+  address: {
+    "@type": "PostalAddress",
+    streetAddress: "11 Apex Drive, Suite 300A, Box 1067",
+    addressLocality: "Marlborough",
+    addressRegion: "MA",
+    postalCode: "01752",
+    addressCountry: "US",
+  },
+  areaServed: [
+    { "@type": "State", name: "Massachusetts" },
+    { "@type": "State", name: "Rhode Island" },
+    { "@type": "State", name: "New Hampshire" },
+    { "@type": "State", name: "Connecticut" },
+    { "@type": "State", name: "New York" },
+    { "@type": "State", name: "Oklahoma" },
+  ],
+  description: "Independent insurance brokerage specializing in HOA master insurance policies and HO-6 condo unit owner coverage.",
+  sameAs: [
+    "https://www.instagram.com/hoainsuranceagency",
+    "https://www.facebook.com/people/HOA-Insurance-Agency/61575377498498/",
+    "https://www.linkedin.com/company/hoa-insurance-agency",
+  ],
+};
+
+const allSchemas = [baseSchema, ...jsonLd];
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/png" href="/favicon.png" />
+    <link rel="apple-touch-icon" href="/favicon.png" />
+    <meta name="theme-color" content="#1a365d" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <link rel="canonical" href={canonicalUrl} />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:image" content={ogImageUrl} />
+    <meta property="og:url" content={canonicalUrl} />
+    <meta property="og:site_name" content="ProtectMyHOA" />
+
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content={title} />
+    <meta name="twitter:description" content={description} />
+    <meta name="twitter:image" content={ogImageUrl} />
+
+    {allSchemas.map((schema) => (
+      <script type="application/ld+json" set:html={JSON.stringify(schema)} />
+    ))}
+  </head>
+  <body>
+    <Navbar client:load currentPath={Astro.url.pathname} />
+    <main>
+      <slot />
+    </main>
+    <Footer />
+
+    <script>
+      const observer = new IntersectionObserver(
+        (entries) => {
+          for (const entry of entries) {
+            if (entry.isIntersecting) {
+              entry.target.classList.add("revealed");
+              observer.unobserve(entry.target);
+            }
+          }
+        },
+        { threshold: 0.12, rootMargin: "0px 0px -40px 0px" }
+      );
+      document.querySelectorAll(".reveal").forEach((el) => observer.observe(el));
+    </script>
+  </body>
+</html>

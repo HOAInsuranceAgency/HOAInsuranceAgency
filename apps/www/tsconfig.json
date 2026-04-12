@@ -1,5 +1,6 @@
 {
-  "extends": "../../tsconfig.base.json",
-  "include": ["src"],
-  "references": [{ "path": "./tsconfig.node.json" }]
+  "extends": "astro/tsconfigs/strict",
+  "compilerOptions": {
+    "jsx": "react-jsx"
+  }
 }

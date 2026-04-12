@@ -1,0 +1,39 @@
+---
+import "./Hero.css";
+
+interface Props {
+  title: string;
+  subtitle?: string;
+  backgroundImage: string;
+  backgroundVideo?: string;
+  ctaText?: string;
+  ctaHref?: string;
+  compact?: boolean;
+}
+
+const { title, subtitle, backgroundImage, backgroundVideo, ctaText, ctaHref, compact } = Astro.props;
+---
+
+<section class={"hero" + (compact ? " hero--compact" : "")} style={`background-image: url(${backgroundImage})`}>
+  {backgroundVideo && (
+    <video
+      class="hero-video"
+      autoplay
+      muted
+      loop
+      playsinline
+      preload="auto"
+      poster={backgroundImage}
+    >
+      <source src={backgroundVideo} type="video/mp4" />
+    </video>
+  )}
+  <div class="hero-overlay"></div>
+  <div class="hero-content container">
+    <h1 class="hero-title">{title}</h1>
+    {subtitle && <p class="hero-subtitle">{subtitle}</p>}
+    {ctaText && ctaHref && (
+      <a href={ctaHref} class="btn btn-gold hero-cta">{ctaText}</a>
+    )}
+  </div>
+</section>

@@ -1,0 +1,166 @@
+---
+import Layout from "../layouts/Layout.astro";
+import Hero from "../components/Hero.astro";
+import { ContactForm } from "../components/ContactForm";
+import { QUOTE_URL } from "../constants";
+import { states } from "../data/states";
+import { cities } from "../data/cities";
+
+export function getStaticPaths() {
+  return states.map((s) => ({
+    params: { state: s.slug },
+    props: { state: s },
+  }));
+}
+
+const { state } = Astro.props;
+const stateCities = cities.filter(
+  (c) => c.stateSlug === state.slug
+);
+
+const COVERAGES = [
+  "HOA Master Property Insurance",
+  "General Liability",
+  "Umbrella / Excess Liability",
+  "Directors & Officers (D&O)",
+  "Crime / Fidelity",
+  "Ordinance or Law",
+  "HO-6 Condo Unit Owner Coverage",
+];
+---
+
+<Layout
+  title={state.title}
+  description={state.description}
+  canonicalPath={`/hoa-insurance-${state.slug}`}
+>
+  <Hero
+    title={state.heroTitle}
+    subtitle={`Specialists in HOA master insurance and HO-6 condo coverage for ${state.name} associations.`}
+    backgroundImage="/images/hero-people.jpg"
+    backgroundVideo="/images/hero-video.mp4"
+    ctaText="Request Insurance Review"
+    ctaHref={QUOTE_URL}
+    compact
+  />
+
+  <section class="section">
+    <div class="container reveal" style="max-width: 800px">
+      <h2 class="section-title">HOA Insurance for {state.name} Associations</h2>
+      <p style="font-size: 17px; color: var(--color-gray-600); line-height: 1.7; margin-bottom: 32px">{state.intro}</p>
+    </div>
+  </section>
+
+  <section class="section section--alt">
+    <div class="container">
+      <h2 class="section-title">Coverages We Place in {state.name}</h2>
+      <div class="card-grid">
+        {COVERAGES.map((c) => (
+          <div class="card reveal">
+            <h3>{c}</h3>
+          </div>
+        ))}
+      </div>
+      <div style="text-align: center; margin-top: 40px">
+        <a href="/what-we-do" class="btn btn-primary">Learn More About Our Coverages</a>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="container" style="max-width: 800px">
+      <h2 class="section-title">{state.name} HOA Insurance Considerations</h2>
+      <ul class="geo-list">
+        {state.regulations.map((r) => <li class="geo-list-item">{r}</li>)}
+      </ul>
+    </div>
+  </section>
+
+  <section class="section section--alt">
+    <div class="container" style="max-width: 800px">
+      <h2 class="section-title">Types of Associations We Serve in {state.name}</h2>
+      <ul class="geo-list">
+        {state.hoaTypes.map((t) => <li class="geo-list-item">{t}</li>)}
+      </ul>
+    </div>
+  </section>
+
+  {stateCities.length > 0 && (
+    <section class="section">
+      <div class="container" style="max-width: 800px">
+        <h2 class="section-title">Cities We Serve in {state.name}</h2>
+        <div class="city-links">
+          {stateCities.map((c) => (
+            <a href={`/hoa-insurance-${c.slug}-${c.stateAbbr}`} class="city-link">
+              {c.name}
+            </a>
+          ))}
+        </div>
+      </div>
+    </section>
+  )}
+
+  <section class="section section--navy" style="text-align: center">
+    <div class="container">
+      <h2 class="section-title">Ready to review your {state.name} HOA insurance?</h2>
+      <p class="section-subtitle" style="margin: 0 auto 32px">Start with a free insurance review — no commitment, no pressure.</p>
+      <a href={QUOTE_URL} class="btn btn-gold">Request Insurance Review</a>
+    </div>
+  </section>
+
+  <ContactForm client:visible />
+</Layout>
+
+<style>
+  .geo-list {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    margin-top: 24px;
+  }
+  .geo-list-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    font-size: 16px;
+    color: var(--color-gray-700);
+    line-height: 1.6;
+    padding: 16px 20px;
+    background: var(--color-white);
+    border: 1px solid var(--color-gray-200);
+    border-radius: 10px;
+    list-style: none;
+  }
+  .geo-list-item::before {
+    content: "";
+    display: inline-block;
+    width: 22px;
+    height: 22px;
+    min-width: 22px;
+    margin-top: 2px;
+    border-radius: 50%;
+    background: var(--color-gold-dim) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23d1b378' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12l5 5 9-11'/%3E%3C/svg%3E") no-repeat center;
+  }
+  .city-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-top: 24px;
+  }
+  .city-link {
+    display: inline-flex;
+    padding: 12px 24px;
+    border-radius: 10px;
+    background: var(--color-gray-50);
+    border: 1px solid var(--color-gray-200);
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--color-accent);
+    transition: all 0.2s ease;
+  }
+  .city-link:hover {
+    background: var(--color-sky);
+    border-color: var(--color-accent);
+    transform: translateY(-2px);
+  }
+</style>
