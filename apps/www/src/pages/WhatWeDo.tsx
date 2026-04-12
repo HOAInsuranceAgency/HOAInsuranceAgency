@@ -40,7 +40,7 @@ export function WhatWeDo() {
       <Hero
         title="HOA Insurance"
         subtitle="Specializing in HOA master insurance policies for associations and HO-6 condo unit owner insurance for residents — built to work together."
-        backgroundImage="/images/what-we-do.jpg"
+        backgroundImage="/images/modern-building.jpg"
         compact
       />
 

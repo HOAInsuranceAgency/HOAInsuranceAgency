@@ -36,7 +36,7 @@ export function Home() {
       <Hero
         title="HOA Insurance, Built for Associations"
         subtitle="Independent brokerage specializing in HOA master policies and HO-6 condo unit owner coverage. Boards and trustees make high-stakes decisions. Our job is to make those decisions clear, defendable, and properly insured."
-        backgroundImage="/images/hero.jpg"
+        backgroundImage="/images/hero-people.jpg"
         ctaText="Request Insurance Review"
         ctaHref={QUOTE_URL}
       />
@@ -86,7 +86,7 @@ export function Home() {
             </Link>
           </div>
           <div className="ho6-image">
-            <img src="/images/community.jpg" alt="Community housing" />
+            <img src="/images/modern-building.jpg" alt="Modern condo building" />
           </div>
         </div>
       </section>

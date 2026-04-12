@@ -24,7 +24,7 @@ export function AboutUs() {
       <Hero
         title="About Us"
         subtitle="Independent insurance brokerage specializing in HOA master insurance and HO-6 condo unit owner policies."
-        backgroundImage="/images/about.jpg"
+        backgroundImage="/images/board-meeting.jpg"
         compact
       />
 

@@ -52,7 +52,7 @@ export function WhyChooseUs() {
       <Hero
         title="Why Choose Us"
         subtitle="HOA boards need more than a generic insurance quote. Associations face shared ownership, shared liability, shared governance — plus increasingly complex underwriting requirements."
-        backgroundImage="/images/community.jpg"
+        backgroundImage="/images/hero-people.jpg"
         compact
       />
 
