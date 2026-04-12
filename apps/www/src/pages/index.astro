@@ -2,6 +2,7 @@
 import Layout from "../layouts/Layout.astro";
 import Hero from "../components/Hero.astro";
 import { ContactForm } from "../components/ContactForm";
+import { CoverageCalculator } from "../components/CoverageCalculator";
 import { QUOTE_URL } from "../constants";
 import "../pages/Home.css";
 
@@ -125,6 +126,9 @@ const CLIENT_TYPES = [
       </div>
     </div>
   </section>
+
+  <!-- Coverage Calculator -->
+  <CoverageCalculator client:visible />
 
   <!-- Who We Work With -->
   <section class="section section--navy">
