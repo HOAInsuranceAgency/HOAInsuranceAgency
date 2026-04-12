@@ -2,15 +2,23 @@
   "name": "hoa-insurance-agency",
   "private": true,
   "version": "0.0.0",
-  "workspaces": ["apps/*"],
+  "type": "module",
   "scripts": {
-    "dev:quote": "npm run dev -w @pmh/quote",
-    "dev:www": "npm run dev -w @pmh/www",
-    "build:quote": "npm run build -w @pmh/quote",
-    "build:www": "npm run build -w @pmh/www"
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview"
   },
-  "engines": {
-    "node": ">= 20.20.0",
-    "npm": ">= 10.8.0"
+  "dependencies": {
+    "@astrojs/react": "^4.2.0",
+    "@astrojs/sitemap": "^3.3.0",
+    "astro": "^5.7.0",
+    "react": "~18.3.1",
+    "react-dom": "~18.3.1"
+  },
+  "devDependencies": {
+    "@types/google.maps": "^3.58.1",
+    "@types/react": "~18.3.27",
+    "@types/react-dom": "~18.3.7",
+    "typescript": "~5.9.3"
   }
 }

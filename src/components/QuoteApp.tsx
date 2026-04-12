@@ -1174,7 +1174,7 @@ function FallbackAvatar({ accent }: { accent: string }) {
    ────────────────────────────────────────────────────────── */
 type ThemeMode = "auto" | "light" | "dark";
 
-export default function App() {
+export default function QuoteApp() {
   const [mode, setMode] = useState<ThemeMode>(() => {
     try {
       const v = localStorage.getItem(THEME_KEY);
@@ -1525,7 +1525,7 @@ function QuoteFlow({ isDay, onToggleTheme }: { isDay: boolean; onToggleTheme: ()
           {step?.type === "submitted" && (
             <div className="qf-center">
               <a
-                href="https://www.protectmyhoa.com"
+                href="/"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="qf-splash-logo qf-splash-logo--small qf-splash-logo--link"
@@ -1554,7 +1554,7 @@ function QuoteFlow({ isDay, onToggleTheme }: { isDay: boolean; onToggleTheme: ()
                 <Icon.Phone size={16} />
                 <span>Or call us — 508‑233‑2261</span>
               </a>
-              <a href="https://www.protectmyhoa.com" className="qf-back-link">
+              <a href="/" className="qf-back-link">
                 ← Back to ProtectMyHOA.com
               </a>
             </div>

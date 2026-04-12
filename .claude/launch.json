@@ -2,9 +2,9 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "www-dev",
+      "name": "dev",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev:www"],
+      "runtimeArgs": ["run", "dev"],
       "port": 4321
     }
   ]
