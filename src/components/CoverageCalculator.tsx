@@ -14,7 +14,7 @@ interface CoverageResult {
 }
 
 /* ── Google Places autocomplete loader ── */
-const GOOGLE_API_KEY = "AIzaSyATjkVxcj7uAd7tFreq-TfMlsOB98L3FM8";
+const GOOGLE_API_KEY = import.meta.env.PUBLIC_GOOGLE_PLACES_KEY || "";
 
 function loadGooglePlaces(): Promise<void> {
   return new Promise((resolve, reject) => {
