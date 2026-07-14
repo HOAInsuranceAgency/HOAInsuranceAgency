@@ -9,9 +9,10 @@ interface Props {
   ctaText?: string;
   ctaHref?: string;
   compact?: boolean;
+  eyebrow?: string;
 }
 
-const { title, subtitle, backgroundImage, backgroundVideo, ctaText, ctaHref, compact } = Astro.props;
+const { title, subtitle, backgroundImage, backgroundVideo, ctaText, ctaHref, compact, eyebrow } = Astro.props;
 ---
 
 <section class={"hero" + (compact ? " hero--compact" : "")} style={`background-image: url(${backgroundImage})`}>
@@ -30,6 +31,7 @@ const { title, subtitle, backgroundImage, backgroundVideo, ctaText, ctaHref, com
   )}
   <div class="hero-overlay"></div>
   <div class="hero-content container">
+    {eyebrow && <span class="hero-eyebrow">{eyebrow}</span>}
     <h1 class="hero-title">{title}</h1>
     {subtitle && <p class="hero-subtitle">{subtitle}</p>}
     {ctaText && ctaHref && (
