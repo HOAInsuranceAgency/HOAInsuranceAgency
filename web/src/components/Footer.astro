@@ -31,6 +31,7 @@ import { PHONE, PHONE_HREF, EMAIL, EMAIL_HREF, ADDRESS_LINE1, ADDRESS_LINE2, SOC
     <a href="/terms-of-service">Terms of Service</a>
     <span class="site-footer__dot">&middot;</span>
     <span>&copy; {new Date().getFullYear()} HOA Insurance Agency</span>
+    <span class="site-footer__mark">PROTECTMYHOA&trade; insurance agency and brokerage services are provided by HOA Insurance Agency LLC.</span>
   </div>
 </footer>
 
@@ -129,6 +130,12 @@ import { PHONE, PHONE_HREF, EMAIL, EMAIL_HREF, ADDRESS_LINE1, ADDRESS_LINE2, SOC
 
   .site-footer__bottom a:hover {
     color: rgba(255, 255, 255, 0.7);
+  }
+
+  .site-footer__mark {
+    flex-basis: 100%;
+    text-align: center;
+    color: rgba(255, 255, 255, 0.3);
   }
 
   @media (max-width: 768px) {
