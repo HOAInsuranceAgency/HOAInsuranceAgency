@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { NavLink, Route, Routes } from "react-router-dom";
-import { Authenticator } from "@aws-amplify/ui-react";
+import { Authenticator, useAuthenticator } from "@aws-amplify/ui-react";
 import type { AuthUser } from "aws-amplify/auth";
 import { client, type UserProfile } from "./lib/client";
+import EmailCodeSignIn from "./components/EmailCodeSignIn";
 import Dashboard from "./pages/Dashboard";
 import AccountsList from "./pages/AccountsList";
 import AccountDetail from "./pages/AccountDetail";
@@ -14,11 +15,44 @@ import Settings from "./pages/Settings";
 
 export default function App() {
   return (
-    <Authenticator>
-      {({ signOut, user }) => (
-        <ProfileGate user={user!} signOut={() => signOut?.()} />
-      )}
-    </Authenticator>
+    <Authenticator.Provider>
+      <AuthGate />
+    </Authenticator.Provider>
+  );
+}
+
+/**
+ * Password sign-in via the Authenticator (it also handles the
+ * temporary-password and reset flows for admin-created users), with a
+ * passwordless emailed-code alternative. Both land in the same session —
+ * a successful confirmSignIn flips authStatus via the Amplify Hub.
+ */
+function AuthGate() {
+  const { authStatus, user, signOut } = useAuthenticator((ctx) => [
+    ctx.authStatus,
+    ctx.user,
+  ]);
+  const [mode, setMode] = useState<"password" | "code">("password");
+
+  if (authStatus === "authenticated" && user) {
+    return <ProfileGate user={user} signOut={signOut} />;
+  }
+
+  if (mode === "code") {
+    return (
+      <div className="auth-screen">
+        <EmailCodeSignIn onBack={() => setMode("password")} />
+      </div>
+    );
+  }
+
+  return (
+    <div className="auth-screen">
+      <Authenticator />
+      <button className="link auth-alt" onClick={() => setMode("code")}>
+        Email me a sign-in code instead (no password)
+      </button>
+    </div>
   );
 }
 

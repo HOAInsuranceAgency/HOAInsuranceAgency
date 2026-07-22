@@ -21,3 +21,23 @@ backend.processDocument.resources.lambda.addToRolePolicy(
     resources: ["*"],
   })
 );
+
+// ── Auth behavior ────────────────────────────────────────────────────
+const { cfnUserPool, cfnUserPoolClient } = backend.auth.resources.cfnResources;
+
+// Passwordless sign-in (emailed one-time code) alongside password.
+// Requires the Essentials tier + the USER_AUTH flow on the app client.
+cfnUserPool.userPoolTier = "ESSENTIALS";
+cfnUserPool.addPropertyOverride("Policies.SignInPolicy.AllowedFirstAuthFactors", [
+  "PASSWORD",
+  "EMAIL_OTP",
+]);
+cfnUserPoolClient.explicitAuthFlows = [
+  "ALLOW_USER_AUTH",
+  "ALLOW_USER_SRP_AUTH",
+  "ALLOW_REFRESH_TOKEN_AUTH",
+];
+
+// Stay signed in for 7 days (refresh token lifetime).
+cfnUserPoolClient.refreshTokenValidity = 7;
+cfnUserPoolClient.tokenValidityUnits = { refreshToken: "days" };
