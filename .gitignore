@@ -26,6 +26,10 @@ dist-ssr
 # environment variables
 .env
 .env.*
+!.env.example
+
+# astro
+.astro
 
 # amplify
 .amplify

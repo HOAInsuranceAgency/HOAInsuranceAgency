@@ -1,0 +1,35 @@
+{
+  "name": "hoa-crm",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "sandbox": "ampx sandbox"
+  },
+  "dependencies": {
+    "@aws-amplify/ui-react": "^6.9.0",
+    "aws-amplify": "^6.12.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^7.1.0"
+  },
+  "devDependencies": {
+    "@aws-amplify/backend": "^1.14.0",
+    "@aws-amplify/backend-cli": "^1.5.0",
+    "@aws-sdk/client-textract": "^3.750.0",
+    "@types/aws-lambda": "^8.10.145",
+    "@types/node": "^26.1.1",
+    "@types/react": "^18.3.27",
+    "@types/react-dom": "^18.3.7",
+    "@vitejs/plugin-react": "^4.3.4",
+    "aws-cdk-lib": "^2.180.0",
+    "constructs": "^10.4.2",
+    "esbuild": "^0.25.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.9.3",
+    "vite": "^6.1.0"
+  }
+}
