@@ -5,10 +5,18 @@ Internal agency management system replacing EzLynx for the commercial
 
 ## Architecture
 
-- **Auth** — Cognito email sign-in. Groups `ADMIN` / `STAFF` / `PRODUCER` exist
-  as placeholders; privileges are not enforced yet. First login runs an
-  onboarding flow ([src/pages/Onboarding.tsx](src/pages/Onboarding.tsx));
-  producers must supply an NPN and at least one state license.
+- **Auth** — passwordless magic-link sign-in ONLY (Cognito custom auth
+  challenge, [amplify/functions/magic-link](amplify/functions/magic-link)):
+  enter your email → SES sends a link signed with a Secrets Manager HMAC
+  secret (15-min expiry) → clicking it signs you in. Sessions last 7 days.
+  No self-signup: users are created by an admin (Cognito console/CLI).
+  The sender address must be SES-verified (`MAGIC_LINK_FROM` in
+  [amplify/backend.ts](amplify/backend.ts), currently `noreply@gim.llc`;
+  branch URLs for the link live in `BRANCH_URLS` there too).
+  Groups `ADMIN` / `STAFF` / `PRODUCER` exist as placeholders; privileges
+  are not enforced yet. First login runs an onboarding flow
+  ([src/pages/Onboarding.tsx](src/pages/Onboarding.tsx)); producers must
+  supply an NPN and at least one state license.
 - **Data** — AppSync + DynamoDB, schema in
   [amplify/data/resource.ts](amplify/data/resource.ts).
 - **Documents** — S3 ([amplify/storage/resource.ts](amplify/storage/resource.ts)).
