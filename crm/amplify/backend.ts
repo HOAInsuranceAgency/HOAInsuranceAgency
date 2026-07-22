@@ -62,9 +62,8 @@ const BRANCH_URLS: Record<string, string> = {
 };
 const magicLinkBaseUrl =
   BRANCH_URLS[process.env.AWS_BRANCH ?? ""] ?? "http://localhost:5173";
-// Sender must be SES-verified. gim.llc is domain-verified today; switch to a
-// protectmyhoa.com address once that domain is verified in SES.
-const magicLinkFrom = "HOA CRM <noreply@gim.llc>";
+// Sender must be SES-verified (protectmyhoa.com domain, DKIM verified).
+const magicLinkFrom = "HOA Insurance Agency <noreply@protectmyhoa.com>";
 
 backend.magicLinkCreate.addEnvironment("MAGIC_LINK_SECRET_ARN", magicLinkSecret.secretArn);
 backend.magicLinkVerify.addEnvironment("MAGIC_LINK_SECRET_ARN", magicLinkSecret.secretArn);

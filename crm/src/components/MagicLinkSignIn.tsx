@@ -85,48 +85,52 @@ export default function MagicLinkSignIn() {
   }
 
   return (
-    <div className="auth-card card">
-      <h2 style={{ textAlign: "center" }}>HOA CRM</h2>
+    <>
+      <img className="auth-logo" src="/logo.png" alt="HOA Insurance Agency" />
+      <div className="auth-card card">
+        <h2 style={{ textAlign: "center" }}>Sign in</h2>
 
-      {phase === "completing" ? (
-        <p className="muted" style={{ textAlign: "center" }}>
-          Signing you in…
-        </p>
-      ) : phase === "sent" ? (
-        <>
-          <p className="muted small">
-            If <strong>{email.trim()}</strong> has an account, a sign-in link is
-            on its way. Open the email on this device and click the link —
-            it's valid for 15 minutes.
+        {phase === "completing" ? (
+          <p className="muted" style={{ textAlign: "center" }}>
+            Signing you in…
           </p>
-          <button className="link" onClick={() => setPhase("email")}>
-            ← Use a different email
-          </button>
-        </>
-      ) : (
-        <>
-          <p className="muted small">
-            Enter your work email and we'll send you a sign-in link. No
-            password needed.
-          </p>
-          <div className="field">
-            <label>Email</label>
-            <input
-              type="email"
-              autoFocus
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && requestLink()}
-            />
-          </div>
-          <div className="form-actions">
-            <button className="primary" disabled={!email.trim()} onClick={requestLink}>
-              Email me a sign-in link
+        ) : phase === "sent" ? (
+          <>
+            <p className="muted small">
+              If <strong>{email.trim()}</strong> has an account, a sign-in link
+              is on its way. Open the email on this device and click the link —
+              it's valid for 15 minutes.
+            </p>
+            <button className="link" onClick={() => setPhase("email")}>
+              ← Use a different email
             </button>
-          </div>
-        </>
-      )}
-      {error && <p className="error-text">{error}</p>}
-    </div>
+          </>
+        ) : (
+          <>
+            <p className="muted small" style={{ textAlign: "center" }}>
+              Enter your work email and we'll send you a sign-in link.
+              No password needed.
+            </p>
+            <div className="field">
+              <label>Email</label>
+              <input
+                type="email"
+                autoFocus
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && requestLink()}
+              />
+            </div>
+            <div className="form-actions">
+              <button className="primary" disabled={!email.trim()} onClick={requestLink}>
+                Email me a sign-in link
+              </button>
+            </div>
+          </>
+        )}
+        {error && <p className="error-text">{error}</p>}
+      </div>
+      <div className="auth-tag">Agency CRM · ProtectMyHOA</div>
+    </>
   );
 }
