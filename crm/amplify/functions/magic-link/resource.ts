@@ -11,17 +11,22 @@ import { defineFunction } from "@aws-amplify/backend";
  *     mode="consume" (no email sent) and answers the challenge with the
  *     token → verifyAuthChallengeResponse checks signature/expiry/email.
  */
+// resourceGroupName "auth": auth triggers must live in the auth stack, or
+// the auth↔function stacks become circularly dependent.
 export const magicLinkDefine = defineFunction({
   name: "magic-link-define",
   entry: "./define.ts",
+  resourceGroupName: "auth",
 });
 
 export const magicLinkCreate = defineFunction({
   name: "magic-link-create",
   entry: "./create.ts",
+  resourceGroupName: "auth",
 });
 
 export const magicLinkVerify = defineFunction({
   name: "magic-link-verify",
   entry: "./verify.ts",
+  resourceGroupName: "auth",
 });
