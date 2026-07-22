@@ -6,6 +6,7 @@ import { data } from "./data/resource";
 import { storage } from "./storage/resource";
 import { processDocument } from "./functions/process-document/resource";
 import { leadIntake } from "./functions/lead-intake/resource";
+import { teamAdmin } from "./functions/team-admin/resource";
 import {
   magicLinkDefine,
   magicLinkCreate,
@@ -18,6 +19,7 @@ const backend = defineBackend({
   storage,
   processDocument,
   leadIntake,
+  teamAdmin,
   magicLinkDefine,
   magicLinkCreate,
   magicLinkVerify,
@@ -71,6 +73,31 @@ backend.magicLinkCreate.addEnvironment("MAGIC_LINK_BASE_URL", magicLinkBaseUrl);
 backend.magicLinkCreate.addEnvironment("MAGIC_LINK_FROM", magicLinkFrom);
 
 backend.magicLinkCreate.resources.lambda.addToRolePolicy(
+  new PolicyStatement({
+    actions: ["ses:SendEmail"],
+    resources: ["*"],
+  })
+);
+
+// ── Team admin (in-app invites) ──────────────────────────────────────
+backend.teamAdmin.addEnvironment(
+  "USER_POOL_ID",
+  backend.auth.resources.userPool.userPoolId
+);
+backend.teamAdmin.addEnvironment("PORTAL_URL", magicLinkBaseUrl);
+backend.teamAdmin.addEnvironment("INVITE_FROM", magicLinkFrom);
+backend.teamAdmin.resources.lambda.addToRolePolicy(
+  new PolicyStatement({
+    actions: [
+      "cognito-idp:AdminCreateUser",
+      "cognito-idp:AdminAddUserToGroup",
+      "cognito-idp:AdminListGroupsForUser",
+      "cognito-idp:ListUsers",
+    ],
+    resources: [backend.auth.resources.userPool.userPoolArn],
+  })
+);
+backend.teamAdmin.resources.lambda.addToRolePolicy(
   new PolicyStatement({
     actions: ["ses:SendEmail"],
     resources: ["*"],

@@ -1,6 +1,7 @@
 import { type ClientSchema, a, defineData } from "@aws-amplify/backend";
 import { processDocument } from "../functions/process-document/resource";
 import { leadIntake } from "../functions/lead-intake/resource";
+import { teamAdmin } from "../functions/team-admin/resource";
 
 /**
  * HOA CRM data model.
@@ -224,6 +225,23 @@ const schema = a
       .returns(a.json())
       .authorization((allow) => [allow.publicApiKey()])
       .handler(a.handler.function(leadIntake)),
+
+    // ── Team administration (ADMIN group only) ─────────────────────────
+    inviteUser: a
+      .mutation()
+      .arguments({
+        email: a.string().required(),
+        role: a.string(), // ADMIN | STAFF | PRODUCER (default STAFF)
+      })
+      .returns(a.json())
+      .authorization((allow) => [allow.groups(["ADMIN"])])
+      .handler(a.handler.function(teamAdmin)),
+
+    listTeamUsers: a
+      .query()
+      .returns(a.json())
+      .authorization((allow) => [allow.groups(["ADMIN"])])
+      .handler(a.handler.function(teamAdmin)),
   })
   .authorization((allow) => [
     // Placeholder privileges: any signed-in user has full access.
