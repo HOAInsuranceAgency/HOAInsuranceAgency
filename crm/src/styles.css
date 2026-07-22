@@ -215,6 +215,8 @@ button.link { background: none; border: none; color: var(--accent-dark); font-si
 .ocr-search { margin-bottom: 10px; }
 .ocr-search input { width: 100%; max-width: 420px; }
 mark { background: #ffe58a; padding: 0 1px; }
+.ocr-table { margin-bottom: 12px; max-height: 320px; overflow: auto; }
+.ocr-table td { font-size: 13px; padding: 6px 8px; border: 1px solid var(--border); }
 
 /* ── Auth screen tweaks ────────────────────────────────────────────── */
 [data-amplify-authenticator] {

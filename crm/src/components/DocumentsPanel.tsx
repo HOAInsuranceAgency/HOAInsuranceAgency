@@ -116,6 +116,7 @@ export default function DocumentsPanel({
   }
 
   const openDoc = docs.find((d) => d.id === openDocId);
+  const openTables = openDoc ? parseTables(openDoc.ocrTables) : null;
 
   return (
     <div>
@@ -218,8 +219,47 @@ export default function DocumentsPanel({
             />
           </div>
           <div className="ocr-text">{highlight(openDoc.ocrText, ocrSearch)}</div>
+
+          {openTables && openTables.length > 0 && (
+            <>
+              <h3>
+                Extracted tables ({openTables.length}) — budgets, dues
+                schedules, etc.
+              </h3>
+              {openTables.map((table, ti) => (
+                <div className="table-wrap ocr-table" key={ti}>
+                  <table>
+                    <tbody>
+                      {table.map((row, ri) => (
+                        <tr key={ri}>
+                          {row.map((cell, ci) => (
+                            <td key={ci}>{highlight(cell, ocrSearch)}</td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ))}
+            </>
+          )}
         </div>
       )}
     </div>
   );
+}
+
+/**
+ * ocrTables is an AWSJSON field written as a JSON string by the Lambda, so
+ * it may come back single- or double-encoded depending on the write path.
+ */
+export function parseTables(raw: unknown): string[][][] | null {
+  let v: unknown = raw;
+  try {
+    if (typeof v === "string") v = JSON.parse(v);
+    if (typeof v === "string") v = JSON.parse(v);
+  } catch {
+    return null;
+  }
+  return Array.isArray(v) && v.length ? (v as string[][][]) : null;
 }
