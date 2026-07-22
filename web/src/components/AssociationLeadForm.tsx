@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { FORMSUBMIT_URL } from "../constants";
+import { submitCrmLead } from "../lib/crmLead";
 import "./AssociationLeadForm.css";
 
 interface Property {
@@ -40,6 +41,24 @@ export function AssociationLeadForm({ property }: Props) {
     }
     setSending(true);
     setError("");
+    // CRM lead (fail-soft, runs alongside the notification email)
+    void submitCrmLead({
+      type: "PERSONAL",
+      name: `${firstName.trim()} ${lastName.trim()}`,
+      contactFirstName: firstName.trim(),
+      contactLastName: lastName.trim(),
+      contactEmail: email.trim(),
+      contactPhone: phone.trim() || undefined,
+      address: property.address,
+      city: property.city,
+      state: property.state,
+      zip: property.zip,
+      unitNumber: unitNumber.trim() || undefined,
+      currentCarrier: currentCarrier.trim() || undefined,
+      buildiumId: String(property.id),
+      source: `website-ho6:${property.slug}`,
+      notes: [`Association: ${property.name}`, notes.trim()].filter(Boolean).join("\n"),
+    });
     try {
       const res = await fetch(FORMSUBMIT_URL, {
         method: "POST",

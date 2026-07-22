@@ -1,15 +1,18 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
+import { uploadData, getUrl } from "aws-amplify/storage";
 import {
   client,
   fmtDate,
   fmtMoney,
   US_STATES,
   type Account,
+  type Carrier,
   type Certificate,
   type Policy,
   type UserProfile,
 } from "../lib/client";
+import { fillAcord25 } from "../lib/acord";
 import DocumentsPanel from "../components/DocumentsPanel";
 import QuotesPanel from "../components/QuotesPanel";
 
@@ -322,12 +325,16 @@ function CertificatesTab({
 }) {
   const [certs, setCerts] = useState<Certificate[]>([]);
   const [policies, setPolicies] = useState<Policy[]>([]);
+  const [carriers, setCarriers] = useState<Carrier[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [holderName, setHolderName] = useState("");
   const [holderAddress, setHolderAddress] = useState("");
   const [description, setDescription] = useState("");
   const [selectedPolicies, setSelectedPolicies] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
+  const [generating, setGenerating] = useState<string | null>(null);
+  const [genNote, setGenNote] = useState("");
+  const [error, setError] = useState("");
 
   useEffect(() => {
     client.models.Certificate.list({
@@ -338,11 +345,13 @@ function CertificatesTab({
     client.models.Policy.list({ filter: { accountId: { eq: account.id } } }).then(
       ({ data }) => setPolicies(data)
     );
+    client.models.Carrier.list().then(({ data }) => setCarriers(data));
   }, [account.id]);
 
   async function issue() {
     if (!holderName.trim()) return;
     setSaving(true);
+    setError("");
     const { data } = await client.models.Certificate.create({
       accountId: account.id,
       policyIds: selectedPolicies,
@@ -361,15 +370,57 @@ function CertificatesTab({
       setHolderAddress("");
       setDescription("");
       setSelectedPolicies([]);
+      generatePdf(data); // fire the fill immediately; failures leave a retry button
     }
+  }
+
+  async function generatePdf(cert: Certificate) {
+    setGenerating(cert.id);
+    setGenNote("");
+    setError("");
+    try {
+      const { bytes, missing } = await fillAcord25(account, cert, policies, carriers);
+      const path = `certificates/${account.id}/${cert.id}.pdf`;
+      await uploadData({
+        path,
+        data: new Blob([bytes as BlobPart], { type: "application/pdf" }),
+        options: { contentType: "application/pdf" },
+      }).result;
+      const { data } = await client.models.Certificate.update({
+        id: cert.id,
+        s3Key: path,
+      });
+      if (data) setCerts((cs) => cs.map((c) => (c.id === cert.id ? data : c)));
+      if (missing.length) {
+        setGenNote(
+          `Generated, but these fields had no match in the template: ${missing.join(", ")}. ` +
+            "Use Settings → Inspect fields to extend the mapping."
+        );
+      }
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? `PDF generation failed: ${err.message}. Is the ACORD 25 template uploaded in Settings?`
+          : "PDF generation failed"
+      );
+    } finally {
+      setGenerating(null);
+    }
+  }
+
+  async function downloadPdf(cert: Certificate) {
+    if (!cert.s3Key) return;
+    const { url } = await getUrl({ path: cert.s3Key });
+    window.open(url.toString(), "_blank");
   }
 
   return (
     <div className="card">
       <h2>Certificates of Insurance</h2>
       <p className="muted small">
-        Certificate records are tracked now; ACORD 25 PDF generation is the next
-        build phase — issued records here will backfill their PDFs.
+        Issuing a certificate fills the ACORD 25 template (uploaded in
+        Settings) from this account's policies and stores the PDF with the
+        issuance record.
       </p>
 
       {account.stage !== "CLIENT" ? (
@@ -446,6 +497,9 @@ function CertificatesTab({
             </div>
           )}
 
+          {genNote && <p className="small" style={{ color: "var(--amber)" }}>{genNote}</p>}
+          {error && <p className="error-text">{error}</p>}
+
           {certs.length === 0 ? (
             <p className="muted small">No certificates issued.</p>
           ) : (
@@ -457,6 +511,7 @@ function CertificatesTab({
                     <th>Form</th>
                     <th>Issued</th>
                     <th>By</th>
+                    <th>PDF</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -468,6 +523,30 @@ function CertificatesTab({
                       </td>
                       <td>{fmtDate(c.issuedAt?.slice(0, 10))}</td>
                       <td>{c.issuedBy ?? "—"}</td>
+                      <td style={{ whiteSpace: "nowrap" }}>
+                        {c.s3Key ? (
+                          <>
+                            <button className="link" onClick={() => downloadPdf(c)}>
+                              Download
+                            </button>
+                            <button
+                              className="link"
+                              disabled={generating === c.id}
+                              onClick={() => generatePdf(c)}
+                            >
+                              {generating === c.id ? "Regenerating…" : "Regenerate"}
+                            </button>
+                          </>
+                        ) : (
+                          <button
+                            className="link"
+                            disabled={generating === c.id}
+                            onClick={() => generatePdf(c)}
+                          >
+                            {generating === c.id ? "Generating…" : "Generate PDF"}
+                          </button>
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>

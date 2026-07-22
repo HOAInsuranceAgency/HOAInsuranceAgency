@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { FORMSUBMIT_URL, PHONE, PHONE_HREF, EMAIL, EMAIL_HREF, ADDRESS_LINE1, ADDRESS_LINE2 } from "../constants";
+import { submitCrmLead } from "../lib/crmLead";
 import "./ContactForm.css";
 
 export function ContactForm() {
@@ -13,6 +14,15 @@ export function ContactForm() {
     e.preventDefault();
     if (!firstName.trim() || !lastName.trim() || !email.trim() || !message.trim()) return;
     setStatus("sending");
+    void submitCrmLead({
+      type: "ASSOCIATION",
+      name: `${firstName.trim()} ${lastName.trim()}`,
+      contactFirstName: firstName.trim(),
+      contactLastName: lastName.trim(),
+      contactEmail: email.trim(),
+      source: "website-contact",
+      notes: message.trim(),
+    });
     try {
       const res = await fetch(FORMSUBMIT_URL, {
         method: "POST",

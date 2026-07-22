@@ -10,6 +10,7 @@ import NewLead from "./pages/NewLead";
 import Carriers from "./pages/Carriers";
 import CarrierDetail from "./pages/CarrierDetail";
 import Onboarding from "./pages/Onboarding";
+import Settings from "./pages/Settings";
 
 export default function App() {
   return (
@@ -61,6 +62,7 @@ function Shell({ profile, signOut }: { profile: UserProfile; signOut: () => void
           <NavLink to="/leads">Leads</NavLink>
           <NavLink to="/clients">Clients</NavLink>
           <NavLink to="/carriers">Carriers</NavLink>
+          <NavLink to="/settings">Settings</NavLink>
         </nav>
         <div className="spacer" />
         <div className="user">
@@ -80,6 +82,7 @@ function Shell({ profile, signOut }: { profile: UserProfile; signOut: () => void
           <Route path="/accounts/:id" element={<AccountDetail profile={profile} />} />
           <Route path="/carriers" element={<Carriers />} />
           <Route path="/carriers/:id" element={<CarrierDetail />} />
+          <Route path="/settings" element={<Settings />} />
         </Routes>
       </main>
     </div>

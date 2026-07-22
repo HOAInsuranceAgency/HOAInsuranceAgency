@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { FORMSUBMIT_URL } from "../constants";
+import { submitCrmLead } from "../lib/crmLead";
 import "./InstantAssessment.css";
 
 /* ── Google Places ── */
@@ -95,6 +96,18 @@ export function InstantAssessment({
     if (!name.trim()) { setError("Please enter your name."); return; }
     setSending(true);
     setError("");
+    void submitCrmLead({
+      type: "ASSOCIATION",
+      name: address.trim() || name.trim(),
+      contactFirstName: name.trim().split(/\s+/)[0],
+      contactLastName: name.trim().split(/\s+/).slice(1).join(" ") || undefined,
+      contactEmail: email.trim(),
+      contactPhone: phone.trim() || undefined,
+      address: address.trim() || undefined,
+      state: detectedState || undefined,
+      source: `website-assessment:${source}`,
+      notes: units ? `Unit count: ${units}` : undefined,
+    });
     try {
       const res = await fetch(FORMSUBMIT_URL, {
         method: "POST",

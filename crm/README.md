@@ -55,15 +55,34 @@ Deployed as the `crm` app of the monorepo (see root [amplify.yml](../amplify.yml
 `ampx pipeline-deploy` gives `main` and `staging` fully isolated backends
 (separate user pools, tables, buckets).
 
+## ACORD forms
+
+Certificate issuance fills the ACORD 25 template client-side with pdf-lib
+([src/lib/acord.ts](src/lib/acord.ts)) and stores the PDF under
+`certificates/` in S3. Because ACORD PDFs are licensed, the fillable template
+is uploaded by the agency via **Settings** (→ `templates/acord25.pdf`), not
+shipped in the repo. Field names differ between form editions, so the mapping
+uses candidate lists per logical field — use Settings → *Inspect fields* to
+list a template's real field names and extend the mapping when a value comes
+out blank. Generated PDFs are intentionally not flattened, so they stay
+hand-editable. Adding another ACORD form (125/126/140…) = a new template
+entry in [Settings.tsx](src/pages/Settings.tsx) + a mapping in `acord.ts`.
+
+## Website lead intake
+
+The public `submitWebLead` mutation (API-key auth, handled by
+[amplify/functions/lead-intake](amplify/functions/lead-intake)) lets
+protectmyhoa.com forms create leads directly; the handler forces
+`stage=LEAD`, so the public surface can never touch existing data. The web
+app calls it via `web/src/lib/crmLead.ts` (dual-write alongside the
+FormSubmit email, fail-soft). Set `PUBLIC_CRM_API_URL` / `PUBLIC_CRM_API_KEY`
+on the **web** Amplify app per environment (values from this app's
+`amplify_outputs.json` → `data.url` / `data.api_key`). Note the API key
+expires after 365 days and must be rotated.
+
 ## Next phases
 
-1. **COI PDF generation** — fill the ACORD 25 template from Policy +
-   Certificate data in a Lambda (pdf-lib); the `Certificate` model and
-   issuance history UI already exist. Requires the fillable ACORD 25 PDF
-   (ACORD-licensed) dropped into the function's assets. Same pipeline then
-   extends to other ACORD forms for carrier submissions (125/126/140…).
-2. **Website → CRM lead intake** — a public `createLead` API path so
-   protectmyhoa.com forms create `Account` records directly instead of
-   FormSubmit emails.
-3. **Role enforcement** — wire the Cognito groups into per-model auth rules.
-4. **License expiration alerts** — data is already captured per producer.
+1. **Role enforcement** — wire the Cognito groups into per-model auth rules.
+2. **License expiration alerts** — data is already captured per producer.
+3. **ACORD carrier-submission forms** (125/126/140) on the template+mapping
+   engine above.

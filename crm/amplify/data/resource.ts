@@ -1,5 +1,6 @@
 import { type ClientSchema, a, defineData } from "@aws-amplify/backend";
 import { processDocument } from "../functions/process-document/resource";
+import { leadIntake } from "../functions/lead-intake/resource";
 
 /**
  * HOA CRM data model.
@@ -197,6 +198,32 @@ const schema = a
       expirationDate: a.date(),
       linesOfAuthority: a.string().array(),
     }),
+
+    // ── Public website → CRM lead intake ───────────────────────────────
+    // API-key-only surface for protectmyhoa.com forms. The handler forces
+    // stage=LEAD; this cannot create clients or touch existing records.
+    submitWebLead: a
+      .mutation()
+      .arguments({
+        type: a.string(), // ASSOCIATION | PERSONAL | COMMERCIAL_OTHER
+        name: a.string().required(),
+        contactFirstName: a.string(),
+        contactLastName: a.string(),
+        contactEmail: a.string(),
+        contactPhone: a.string(),
+        address: a.string(),
+        city: a.string(),
+        state: a.string(),
+        zip: a.string(),
+        unitNumber: a.string(),
+        currentCarrier: a.string(),
+        buildiumId: a.string(),
+        source: a.string(),
+        notes: a.string(),
+      })
+      .returns(a.json())
+      .authorization((allow) => [allow.publicApiKey()])
+      .handler(a.handler.function(leadIntake)),
   })
   .authorization((allow) => [
     // Placeholder privileges: any signed-in user has full access.
@@ -204,6 +231,8 @@ const schema = a
     allow.authenticated(),
     // The Textract pipeline function writes OCR results back to Document.
     allow.resource(processDocument),
+    // The web-lead intake function creates Account records.
+    allow.resource(leadIntake),
   ]);
 
 export type Schema = ClientSchema<typeof schema>;
@@ -212,5 +241,9 @@ export const data = defineData({
   schema,
   authorizationModes: {
     defaultAuthorizationMode: "userPool",
+    // Only the submitWebLead mutation opts into API key auth.
+    apiKeyAuthorizationMode: {
+      expiresInDays: 365,
+    },
   },
 });

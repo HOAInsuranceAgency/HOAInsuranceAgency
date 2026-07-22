@@ -18,6 +18,8 @@ export const storage = defineStorage({
       allow.resource(processDocument).to(["read"]),
     ],
     "certificates/*": [allow.authenticated.to(["read", "write", "delete"])],
+    // ACORD fillable PDF templates (acord25.pdf, …) uploaded via Settings.
+    "templates/*": [allow.authenticated.to(["read", "write", "delete"])],
   }),
   triggers: {
     onUpload: processDocument,

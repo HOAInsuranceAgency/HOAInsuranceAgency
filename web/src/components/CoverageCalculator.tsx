@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import { QUOTE_URL, FORMSUBMIT_URL } from "../constants";
+import { submitCrmLead } from "../lib/crmLead";
 import "./CoverageCalculator.css";
 
 /* ── Types ── */
@@ -192,6 +193,22 @@ export function CoverageCalculator() {
     e.preventDefault();
     if (!email.trim() || sending) return;
     setSending(true);
+    void submitCrmLead({
+      type: "ASSOCIATION",
+      name: address || email.trim(),
+      contactEmail: email.trim(),
+      address: address || undefined,
+      state: stateAbbr || undefined,
+      source: "website-coverage-calculator",
+      notes: [
+        units ? `Unit count: ${units}` : undefined,
+        coverages.length
+          ? `Coverages shown: ${coverages.map((c) => c.name).join(", ")}`
+          : undefined,
+      ]
+        .filter(Boolean)
+        .join("\n") || undefined,
+    });
     try {
       await fetch(FORMSUBMIT_URL, {
         method: "POST",
