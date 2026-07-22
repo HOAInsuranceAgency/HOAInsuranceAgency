@@ -35,3 +35,4 @@ dist-ssr
 .amplify
 amplify_outputs*
 amplifyconfiguration*
+*.tsbuildinfo
