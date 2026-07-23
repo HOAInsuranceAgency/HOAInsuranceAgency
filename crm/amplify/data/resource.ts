@@ -101,6 +101,8 @@ const schema = a
         aiExtraction: a.json(), // per-field values + confidence + evidence
         extractionError: a.string(),
         buildings: a.hasMany("Building", "accountId"),
+        // Incumbent broker/agent currently servicing the account
+        currentAgent: a.string(),
         // Incumbent policy expiration (drives lead renewal pipeline; for
         // clients the bound Policy records are authoritative)
         currentPolicyExpiration: a.date(),

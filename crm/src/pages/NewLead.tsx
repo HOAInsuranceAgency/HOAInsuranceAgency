@@ -21,6 +21,7 @@ export default function NewLead() {
     unitCount: "",
     yearBuilt: "",
     totalInsuredValue: "",
+    currentAgent: "",
     currentPolicyExpiration: "",
     source: "",
     notes: "",
@@ -58,6 +59,7 @@ export default function NewLead() {
       totalInsuredValue: form.totalInsuredValue
         ? Number(form.totalInsuredValue)
         : undefined,
+      currentAgent: form.currentAgent.trim() || undefined,
       currentPolicyExpiration: form.currentPolicyExpiration || undefined,
       source: form.source.trim() || undefined,
       notes: form.notes.trim() || undefined,
@@ -165,6 +167,14 @@ export default function NewLead() {
               type="number"
               value={form.totalInsuredValue}
               onChange={set("totalInsuredValue")}
+            />
+          </div>
+          <div className="field">
+            <label>Current agent / broker</label>
+            <input
+              placeholder="Incumbent agency"
+              value={form.currentAgent}
+              onChange={set("currentAgent")}
             />
           </div>
           <div className="field">

@@ -128,6 +128,7 @@ function OverviewTab({
     contactEmail: account.contactEmail ?? "",
     contactPhone: account.contactPhone ?? "",
     totalInsuredValue: account.totalInsuredValue?.toString() ?? "",
+    currentAgent: account.currentAgent ?? "",
     currentPolicyExpiration: account.currentPolicyExpiration ?? "",
     source: account.source ?? "",
     notes: account.notes ?? "",
@@ -159,6 +160,7 @@ function OverviewTab({
       totalInsuredValue: form.totalInsuredValue
         ? Number(form.totalInsuredValue)
         : null,
+      currentAgent: form.currentAgent.trim() || null,
       currentPolicyExpiration: form.currentPolicyExpiration || null,
       source: form.source.trim() || null,
       notes: form.notes.trim() || null,
@@ -203,6 +205,10 @@ function OverviewTab({
             value={form.totalInsuredValue}
             onChange={set("totalInsuredValue")}
           />
+        </div>
+        <div className="field">
+          <label>Current agent / broker</label>
+          <input value={form.currentAgent} onChange={set("currentAgent")} />
         </div>
         <div className="field">
           <label>Current policy expiration</label>

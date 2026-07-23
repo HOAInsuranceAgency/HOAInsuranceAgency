@@ -93,6 +93,10 @@ const EXTRACTION_SCHEMA = {
     plumbingUpdatedYear: field("integer"),
     firewallsVerified: field("boolean"),
     currentCarrier: field("string"),
+    currentAgent: {
+      ...field("string"),
+      description: "Incumbent agent/broker/agency servicing the account (not the carrier)",
+    },
     currentAnnualPremium: field("number"),
     currentPolicyExpiration: {
       ...field("string"),
@@ -138,6 +142,7 @@ const EXTRACTION_SCHEMA = {
     "plumbingUpdatedYear",
     "firewallsVerified",
     "currentCarrier",
+    "currentAgent",
     "currentAnnualPremium",
     "currentPolicyExpiration",
     "buildings",

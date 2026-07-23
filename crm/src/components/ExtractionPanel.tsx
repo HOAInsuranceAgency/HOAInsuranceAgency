@@ -81,6 +81,7 @@ const FIELD_DEFS: FieldDef[] = [
   { key: "electricalUpdatedYear", label: "Electrical updated", kind: "patch", current: (a) => a.electricalUpdatedYear?.toString() ?? "" },
   { key: "plumbingUpdatedYear", label: "Plumbing updated", kind: "patch", current: (a) => a.plumbingUpdatedYear?.toString() ?? "" },
   { key: "firewallsVerified", label: "Firewalls verified", kind: "patch", current: (a) => (a.firewallsVerified == null ? "" : a.firewallsVerified ? "Yes" : "No") },
+  { key: "currentAgent", label: "Current agent / broker", kind: "patch", current: (a) => a.currentAgent ?? "" },
   { key: "currentCarrier", label: "Current carrier → notes", kind: "note", current: () => "" },
   {
     key: "currentAnnualPremium",
