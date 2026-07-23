@@ -50,7 +50,9 @@ const field = (valueType: string | string[]) => ({
 const enumField = (values: string[]) => ({
   type: "object",
   properties: {
-    value: { type: ["string", "null"], enum: [...values, null] },
+    // Nullable enum: express as anyOf — a type-array (["string","null"])
+    // combined with `enum` is rejected by structured-outputs validation.
+    value: { anyOf: [{ type: "string", enum: values }, { type: "null" }] },
     confidence: { type: "string", enum: ["high", "medium", "low"] },
     evidence: { type: ["string", "null"] },
     source: { type: ["string", "null"] },

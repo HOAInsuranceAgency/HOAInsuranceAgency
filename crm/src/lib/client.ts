@@ -21,16 +21,17 @@ export const US_STATES = [
   "VA","WA","WV","WI","WY","DC",
 ];
 
+// Alphabetical.
 export const LINES_OF_BUSINESS = [
-  "Property",
-  "General Liability",
-  "D&O",
   "Crime/Fidelity",
-  "Umbrella",
-  "Flood",
+  "D&O",
   "Earthquake",
-  "Workers Comp",
+  "Flood",
+  "General Liability",
   "HO-6",
+  "Property",
+  "Umbrella",
+  "Workers Comp",
 ];
 
 export function fmtMoney(n: number | null | undefined): string {

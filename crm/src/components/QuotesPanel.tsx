@@ -153,11 +153,12 @@ export default function QuotesPanel({
                             setStatus(qt, e.target.value as Quote["status"])
                           }
                         >
-                          {OPEN_STATUSES.map((s) => (
-                            <option key={s}>{s}</option>
-                          ))}
-                          <option value="DECLINED">DECLINED</option>
-                          <option value="LOST">LOST</option>
+                          {[...OPEN_STATUSES, "DECLINED", "LOST"]
+                            .slice()
+                            .sort((a, b) => a.localeCompare(b))
+                            .map((s) => (
+                              <option key={s}>{s}</option>
+                            ))}
                         </select>{" "}
                         <button className="link" onClick={() => setBinding(qt)}>
                           Bind
@@ -189,10 +190,11 @@ export default function QuotesPanel({
   );
 }
 
+// Alphabetical by label.
 const RC_TYPES = [
-  ["RC", "RC — Replacement Cost"],
   ["ERC", "ERC — Extended Replacement Cost"],
   ["GRC", "GRC — Guaranteed Replacement Cost"],
+  ["RC", "RC — Replacement Cost"],
 ] as const;
 
 function QuoteForm({

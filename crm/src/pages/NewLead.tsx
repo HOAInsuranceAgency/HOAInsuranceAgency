@@ -86,8 +86,8 @@ export default function NewLead() {
             <label>Type</label>
             <select value={form.type} onChange={set("type")}>
               <option value="ASSOCIATION">Association / HOA</option>
-              <option value="PERSONAL">Personal (HO-6)</option>
               <option value="COMMERCIAL_OTHER">Commercial — other</option>
+              <option value="PERSONAL">Personal (HO-6)</option>
             </select>
           </div>
           <div className="field">

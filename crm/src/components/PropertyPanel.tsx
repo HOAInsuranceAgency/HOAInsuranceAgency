@@ -11,13 +11,14 @@ import {
 import FilePreviewModal from "./FilePreview";
 import { AddressAutocomplete } from "../lib/googlePlaces";
 
+// Alphabetical by label.
 const CONSTRUCTION_TYPES = [
+  ["FIRE_RESISTIVE", "Fire Resistive"],
   ["FRAME", "Frame"],
   ["JOISTED_MASONRY", "Joisted Masonry"],
-  ["NON_COMBUSTIBLE", "Non-Combustible"],
   ["MASONRY_NON_COMBUSTIBLE", "Masonry Non-Combustible"],
   ["MODIFIED_FIRE_RESISTIVE", "Modified Fire Resistive"],
-  ["FIRE_RESISTIVE", "Fire Resistive"],
+  ["NON_COMBUSTIBLE", "Non-Combustible"],
 ] as const;
 
 /** Underwriting property details: construction, system updates, buildings,

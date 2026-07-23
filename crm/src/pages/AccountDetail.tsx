@@ -388,7 +388,7 @@ function PoliciesTab({ accountId }: { accountId: string }) {
                         updatePolicy(p.id, { status: e.target.value as Policy["status"] })
                       }
                     >
-                      {["ACTIVE", "EXPIRED", "CANCELLED", "NON_RENEWED"].map((s) => (
+                      {["ACTIVE", "CANCELLED", "EXPIRED", "NON_RENEWED"].map((s) => (
                         <option key={s}>{s}</option>
                       ))}
                     </select>

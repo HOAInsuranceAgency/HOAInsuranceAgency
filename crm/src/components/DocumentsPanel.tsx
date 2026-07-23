@@ -8,16 +8,17 @@ import FileButton from "./FileButton";
 type EntityType = Schema["DocumentEntityType"]["type"];
 type Category = NonNullable<Schema["DocumentCategory"]["type"]>;
 
+// Alphabetical by label.
 const CATEGORIES: { value: Category; label: string }[] = [
-  { value: "PRIOR_POLICY", label: "Prior policy packet" },
-  { value: "CONDO_DOCS", label: "Condo documents" },
   { value: "BUDGET", label: "Budget" },
+  { value: "CONDO_DOCS", label: "Condo documents" },
   { value: "DUES_SCHEDULE", label: "Dues per unit" },
-  { value: "LOSS_RUNS", label: "Loss runs" },
-  { value: "QUOTE_DOC", label: "Quote document" },
-  { value: "POLICY_DOC", label: "Policy document" },
   { value: "LICENSE", label: "License" },
+  { value: "LOSS_RUNS", label: "Loss runs" },
   { value: "OTHER", label: "Other" },
+  { value: "POLICY_DOC", label: "Policy document" },
+  { value: "PRIOR_POLICY", label: "Prior policy packet" },
+  { value: "QUOTE_DOC", label: "Quote document" },
 ];
 
 const OCR_BADGE: Record<string, { cls: string; label: string }> = {

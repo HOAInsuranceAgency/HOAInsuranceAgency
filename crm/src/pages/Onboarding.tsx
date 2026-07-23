@@ -110,9 +110,9 @@ export default function Onboarding({
           <div className="field">
             <label>Role</label>
             <select value={role} onChange={(e) => setRole(e.target.value as Role)}>
-              <option value="STAFF">Staff</option>
-              <option value="PRODUCER">Producer</option>
               <option value="ADMIN">Admin</option>
+              <option value="PRODUCER">Producer</option>
+              <option value="STAFF">Staff</option>
             </select>
           </div>
           {isProducer && (
