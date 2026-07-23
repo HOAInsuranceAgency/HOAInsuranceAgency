@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { uploadData, getUrl, remove } from "aws-amplify/storage";
 import {
@@ -20,6 +20,7 @@ import FilePreviewModal from "../components/FilePreview";
 import PropertyPanel from "../components/PropertyPanel";
 import FormsTab from "../components/FormsTab";
 import ExtractionPanel from "../components/ExtractionPanel";
+import Celebration from "../components/Celebration";
 
 type Tab = "overview" | "quotes" | "policies" | "documents" | "certificates";
 
@@ -40,6 +41,15 @@ export default function AccountDetail({ profile }: { profile: UserProfile }) {
     initialTab && VALID_TABS.includes(initialTab) ? initialTab : "overview"
   );
   const [notFound, setNotFound] = useState(false);
+  const [celebrate, setCelebrate] = useState(false);
+  const prevStage = useRef<string | null>(null);
+
+  // Fire the celebration on a LEAD → CLIENT transition (quote bound).
+  useEffect(() => {
+    const stage = account?.stage ?? null;
+    if (prevStage.current === "LEAD" && stage === "CLIENT") setCelebrate(true);
+    prevStage.current = stage;
+  }, [account?.stage]);
 
   useEffect(() => {
     if (!id) return;
@@ -54,6 +64,9 @@ export default function AccountDetail({ profile }: { profile: UserProfile }) {
 
   return (
     <>
+      {celebrate && (
+        <Celebration name={account.name} onDone={() => setCelebrate(false)} />
+      )}
       <h1>
         {account.name}{" "}
         <span className={`badge ${account.stage === "CLIENT" ? "green" : "blue"}`}>
