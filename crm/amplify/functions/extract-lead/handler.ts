@@ -235,15 +235,26 @@ async function runExtraction(accountId: string) {
       included++;
     }
 
+    // Strict structured-output grammar can't compile for a schema this wide
+    // ("compiled grammar too large"). Describe the exact JSON shape in the
+    // prompt instead and parse defensively — Opus 4.8 returns clean JSON.
+    const dataKeys = Object.keys(EXTRACTION_SCHEMA.properties).filter(
+      (k) => k !== "buildings" && k !== "summary"
+    );
+    const shapeInstruction = `Respond with ONLY a JSON object — no markdown fences, no commentary. The object has exactly these keys:
+${dataKeys.join(", ")}
+Each of those keys maps to: { "value": <string>, "confidence": "high"|"medium"|"low", "evidence": <string>, "source": <string> }.
+Also include:
+  "buildings": array of { "label": <string>, "sqft": <string, digits only> } — [] if none documented,
+  "summary": <string, 2-3 sentence underwriting summary>.
+For "constructionType".value use exactly one of: FRAME, JOISTED_MASONRY, NON_COMBUSTIBLE, MASONRY_NON_COMBUSTIBLE, MODIFIED_FIRE_RESISTIVE, FIRE_RESISTIVE, or "".`;
+
     const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
     const response = await anthropic.messages.create({
       model: "claude-opus-4-8",
       max_tokens: 16000,
       thinking: { type: "adaptive" },
-      system: SYSTEM_PROMPT,
-      output_config: {
-        format: { type: "json_schema", schema: EXTRACTION_SCHEMA as never },
-      },
+      system: SYSTEM_PROMPT + "\n\n" + shapeInstruction,
       messages: [
         {
           role: "user",
@@ -259,7 +270,14 @@ async function runExtraction(accountId: string) {
     }
     const text = response.content.find((b) => b.type === "text");
     if (!text || text.type !== "text") throw new Error("No extraction output returned.");
-    const result = JSON.parse(text.text);
+    // Tolerate stray fences / prose around the JSON object.
+    let raw = text.text.trim();
+    const fence = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (fence) raw = fence[1].trim();
+    const open = raw.indexOf("{");
+    const close = raw.lastIndexOf("}");
+    if (open > 0 || close < raw.length - 1) raw = raw.slice(open, close + 1);
+    const result = JSON.parse(raw);
 
     const { errors } = await client.models.Account.update({
       id: accountId,
