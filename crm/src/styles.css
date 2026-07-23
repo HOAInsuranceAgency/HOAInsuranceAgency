@@ -292,6 +292,11 @@ button.link { background: none; border: none; color: var(--accent-dark); font-si
 .ocr-search { margin-bottom: 10px; }
 .ocr-search input { width: 100%; max-width: 420px; }
 mark { background: #ffe58a; padding: 0 1px; }
+mark.ocr-current { background: #f79b32; color: #fff; border-radius: 2px; }
+.ocr-find { display: flex; align-items: center; gap: 6px; }
+.ocr-find input { flex: 1; max-width: 320px; }
+.ocr-find .ocr-count { font-size: 12.5px; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.ocr-find button { padding: 6px 10px; line-height: 1; }
 .ocr-table { margin-bottom: 12px; max-height: 320px; overflow: auto; }
 .ocr-table td { font-size: 13px; padding: 6px 8px; border: 1px solid var(--border); }
 

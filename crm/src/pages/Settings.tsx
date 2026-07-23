@@ -2,13 +2,15 @@ import { useEffect, useState } from "react";
 import { list, uploadData } from "aws-amplify/storage";
 import { ACORD_FORMS, listTemplateFields, type AcordFormDef } from "../lib/acord";
 import FileButton from "../components/FileButton";
+import Team from "./Team";
+import type { UserProfile } from "../lib/client";
 
 type TemplateDef = AcordFormDef;
 
 /** New ACORD forms: add to ACORD_FORMS + a mapping in lib/acord.ts. */
 const TEMPLATES: TemplateDef[] = ACORD_FORMS;
 
-export default function Settings() {
+export default function Settings({ profile }: { profile: UserProfile }) {
   const [uploaded, setUploaded] = useState<Record<string, boolean>>({});
   const [busy, setBusy] = useState<string | null>(null);
   const [fields, setFields] = useState<Record<string, string[]>>({});
@@ -108,6 +110,8 @@ export default function Settings() {
         ))}
         {error && <p className="error-text">{error}</p>}
       </div>
+
+      {profile.role === "ADMIN" && <Team profile={profile} />}
     </>
   );
 }

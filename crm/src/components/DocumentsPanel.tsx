@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { uploadData, getUrl, remove } from "aws-amplify/storage";
 import { client, type CrmDocument } from "../lib/client";
 import type { Schema } from "../../amplify/data/resource";
@@ -48,6 +48,9 @@ export default function DocumentsPanel({
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [previewDoc, setPreviewDoc] = useState<CrmDocument | null>(null);
   const [ocrSearch, setOcrSearch] = useState("");
+  const [matchIdx, setMatchIdx] = useState(0);
+  const [matchCount, setMatchCount] = useState(0);
+  const viewerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const sub = client.models.Document.observeQuery({
@@ -128,6 +131,30 @@ export default function DocumentsPanel({
 
   const openDoc = docs.find((d) => d.id === openDocId);
   const openTables = openDoc ? parseTables(openDoc.ocrTables) : null;
+
+  // Ctrl+F-style match navigation: after each render, index the <mark>
+  // elements (text + tables, DOM order), flag the current one, scroll to it.
+  useEffect(() => {
+    const container = viewerRef.current;
+    if (!container) {
+      if (matchCount !== 0) setMatchCount(0);
+      return;
+    }
+    const marks = container.querySelectorAll("mark");
+    if (marks.length !== matchCount) setMatchCount(marks.length);
+    marks.forEach((m) => m.classList.remove("ocr-current"));
+    if (marks.length > 0) {
+      const idx = ((matchIdx % marks.length) + marks.length) % marks.length;
+      const current = marks[idx];
+      current.classList.add("ocr-current");
+      current.scrollIntoView({ block: "nearest" });
+    }
+  }, [ocrSearch, matchIdx, openDocId, matchCount, openTables]);
+
+  function stepMatch(delta: number) {
+    if (matchCount === 0) return;
+    setMatchIdx((i) => (((i + delta) % matchCount) + matchCount) % matchCount);
+  }
 
   return (
     <div>
@@ -242,14 +269,45 @@ export default function DocumentsPanel({
       )}
 
       {openDoc?.ocrText && (
-        <div style={{ marginTop: 14 }}>
+        <div style={{ marginTop: 14 }} ref={viewerRef}>
           <h3>Extracted text — {openDoc.name}</h3>
           <div className="ocr-search field">
-            <input
-              placeholder="Find in text…"
-              value={ocrSearch}
-              onChange={(e) => setOcrSearch(e.target.value)}
-            />
+            <div className="ocr-find">
+              <input
+                placeholder="Find in text…"
+                value={ocrSearch}
+                onChange={(e) => {
+                  setOcrSearch(e.target.value);
+                  setMatchIdx(0);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") stepMatch(e.shiftKey ? -1 : 1);
+                }}
+              />
+              {ocrSearch.trim() && (
+                <>
+                  <span className="ocr-count">
+                    {matchCount === 0 ? "0 results" : `${(matchIdx % matchCount + matchCount) % matchCount + 1} of ${matchCount}`}
+                  </span>
+                  <button
+                    className="secondary"
+                    title="Previous match (Shift+Enter)"
+                    disabled={matchCount === 0}
+                    onClick={() => stepMatch(-1)}
+                  >
+                    ▲
+                  </button>
+                  <button
+                    className="secondary"
+                    title="Next match (Enter)"
+                    disabled={matchCount === 0}
+                    onClick={() => stepMatch(1)}
+                  >
+                    ▼
+                  </button>
+                </>
+              )}
+            </div>
           </div>
           <div className="ocr-text">{highlight(openDoc.ocrText, ocrSearch)}</div>
 

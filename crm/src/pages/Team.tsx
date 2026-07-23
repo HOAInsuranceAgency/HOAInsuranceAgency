@@ -80,13 +80,12 @@ export default function Team({ profile }: { profile: UserProfile }) {
 
   return (
     <>
-      <h1>Team</h1>
-      <p className="sub">
-        Invite staff and producers — they sign in with an emailed link
-      </p>
-
       <div className="card">
-        <h2>Invite someone</h2>
+        <h2>Team — invite someone</h2>
+        <p className="muted small">
+          Invited staff and producers sign in with an emailed link — no
+          passwords. Admin only.
+        </p>
         <div className="form-grid" style={{ maxWidth: 640 }}>
           <div className="field">
             <label>Email</label>
@@ -129,7 +128,7 @@ export default function Team({ profile }: { profile: UserProfile }) {
       </div>
 
       <div className="card">
-        <h2>Members</h2>
+        <h2>Team members</h2>
         {users === null ? (
           <p className="muted small">Loading…</p>
         ) : users.length === 0 ? (

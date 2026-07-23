@@ -38,25 +38,19 @@ export const ACORD_FORMS: AcordFormDef[] = [
     key: "acord125",
     path: "templates/acord125.pdf",
     label: "ACORD 125 — Commercial Insurance Application",
-    note: "Generated from an account's Forms tab for carrier submissions.",
+    note: "Generated from an account's Documents tab for carrier submissions.",
   },
   {
     key: "acord126",
     path: "templates/acord126.pdf",
     label: "ACORD 126 — Commercial General Liability Section",
-    note: "Generated from an account's Forms tab for carrier submissions.",
+    note: "Generated from an account's Documents tab for carrier submissions.",
   },
   {
     key: "acord140",
     path: "templates/acord140.pdf",
     label: "ACORD 140 — Property Section",
-    note: "Generated from an account's Forms tab for carrier submissions.",
-  },
-  {
-    key: "acord151",
-    path: "templates/acord151.pdf",
-    label: "ACORD 151",
-    note: "Generated from an account's Forms tab for carrier submissions.",
+    note: "Generated from an account's Documents tab for carrier submissions.",
   },
 ];
 

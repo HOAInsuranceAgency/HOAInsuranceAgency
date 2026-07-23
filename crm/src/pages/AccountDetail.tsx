@@ -21,20 +21,13 @@ import PropertyPanel from "../components/PropertyPanel";
 import FormsTab from "../components/FormsTab";
 import ExtractionPanel from "../components/ExtractionPanel";
 
-type Tab =
-  | "overview"
-  | "quotes"
-  | "policies"
-  | "documents"
-  | "forms"
-  | "certificates";
+type Tab = "overview" | "quotes" | "policies" | "documents" | "certificates";
 
 const VALID_TABS: Tab[] = [
   "overview",
   "quotes",
   "policies",
   "documents",
-  "forms",
   "certificates",
 ];
 
@@ -79,7 +72,6 @@ export default function AccountDetail({ profile }: { profile: UserProfile }) {
             ["quotes", "Quotes"],
             ["policies", "Policies"],
             ["documents", "Documents"],
-            ["forms", "Forms"],
             ["certificates", "Certificates"],
           ] as [Tab, string][]
         ).map(([t, label]) => (
@@ -100,7 +92,6 @@ export default function AccountDetail({ profile }: { profile: UserProfile }) {
           {account.stage === "LEAD" && <DeleteLeadZone account={account} />}
         </>
       )}
-      {tab === "forms" && <FormsTab account={account} />}
       {tab === "quotes" && (
         <div className="card">
           <QuotesPanel account={account} onAccountChange={setAccount} />
@@ -113,6 +104,7 @@ export default function AccountDetail({ profile }: { profile: UserProfile }) {
             <DocumentsPanel entityType="ACCOUNT" entityId={account.id} />
           </div>
           <ExtractionPanel account={account} onChange={setAccount} />
+          <FormsTab account={account} />
         </>
       )}
       {tab === "certificates" && (
