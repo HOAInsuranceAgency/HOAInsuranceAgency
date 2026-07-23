@@ -1,4 +1,4 @@
-import { PDFDocument, PDFTextField, PDFCheckBox } from "pdf-lib";
+import { PDFDocument, PDFTextField, PDFCheckBox, PDFName, PDFBool } from "pdf-lib";
 import { getUrl } from "aws-amplify/storage";
 import { AGENCY } from "./agency";
 import type { Account, Carrier, Certificate, Policy } from "./client";
@@ -348,18 +348,38 @@ async function fillTemplate(path: string, values: FieldValues): Promise<FillResu
       missing.push(logical);
       continue;
     }
-    const field = form.getField(name);
-    if (field instanceof PDFTextField) {
-      field.setText(value);
-      filled.push(logical);
-    } else if (field instanceof PDFCheckBox) {
-      field.check();
-      filled.push(logical);
+    // Guard each field: a single malformed field on a large ACORD form
+    // should never abort the whole generation.
+    try {
+      const field = form.getField(name);
+      if (field instanceof PDFTextField) {
+        field.setText(value);
+        filled.push(logical);
+      } else if (field instanceof PDFCheckBox) {
+        field.check();
+        filled.push(logical);
+      }
+    } catch {
+      missing.push(logical);
     }
   }
 
   // Deliberately NOT flattened — the PDF stays editable for manual touch-ups.
-  const bytes = await pdf.save();
+  // pdf-lib regenerates field appearances on save; complex ACORD templates
+  // reference fonts pdf-lib can't rebuild, throwing during save. If that
+  // happens, set NeedAppearances so the PDF viewer renders values itself
+  // and save without pdf-lib's (failing) appearance generation.
+  let bytes: Uint8Array;
+  try {
+    bytes = await pdf.save();
+  } catch {
+    try {
+      form.acroForm.dict.set(PDFName.of("NeedAppearances"), PDFBool.True);
+    } catch {
+      /* older pdf-lib internals — best effort */
+    }
+    bytes = await pdf.save({ updateFieldAppearances: false });
+  }
   return { bytes, filled, missing };
 }
 
@@ -405,158 +425,104 @@ function buildAppFormValues(
 ): FieldValues {
   const totalSqft = buildings.reduce((s, b) => s + (b.sqft ?? 0), 0);
 
+  const zip = account.zip ?? "";
+  const state = account.state ?? "";
+  const city = account.city ?? "";
+  const addr = account.address ?? "";
+  const yb = account.yearBuilt?.toString() ?? "";
+  const stories = account.stories?.toString() ?? "";
+  const area = totalSqft ? totalSqft.toString() : "";
+  const construction = account.constructionType
+    ? CONSTRUCTION_LABELS[account.constructionType] ?? ""
+    : "";
+
+  // Shared header — present on 125 / 126 / 140.
   const values: FieldValues = {
     date: {
-      candidates: ["Form_CompletionDate_A", "DATE", "Date"],
+      candidates: ["Form_CompletionDate_A"],
       value: new Date().toLocaleDateString("en-US"),
     },
-    producer: {
-      candidates: ["Producer_FullName_A", "PRODUCER"],
-      value: AGENCY.name,
-    },
-    producerAddress1: {
-      candidates: ["Producer_MailingAddress_LineOne_A"],
-      value: AGENCY.addressLine1,
-    },
-    producerCity: {
-      candidates: ["Producer_MailingAddress_CityName_A"],
-      value: AGENCY.city,
-    },
-    producerState: {
-      candidates: ["Producer_MailingAddress_StateOrProvinceCode_A"],
-      value: AGENCY.state,
-    },
-    producerZip: {
-      candidates: ["Producer_MailingAddress_PostalCode_A"],
-      value: AGENCY.zip,
-    },
-    producerPhone: {
-      candidates: [
-        "Producer_ContactPerson_PhoneNumber_A",
-        "Producer_PhoneNumber_A",
-      ],
-      value: AGENCY.phone,
-    },
-    insured: {
-      candidates: [
-        "NamedInsured_FullName_A",
-        "Applicant_FullName_A",
-        "ApplicantInformation_NamedInsured_FullName_A",
-      ],
-      value: account.name,
-    },
-    insuredAddress1: {
-      candidates: [
-        "NamedInsured_MailingAddress_LineOne_A",
-        "Applicant_MailingAddress_LineOne_A",
-      ],
-      value: account.address ?? "",
-    },
-    insuredCity: {
-      candidates: [
-        "NamedInsured_MailingAddress_CityName_A",
-        "Applicant_MailingAddress_CityName_A",
-      ],
-      value: account.city ?? "",
-    },
-    insuredState: {
-      candidates: [
-        "NamedInsured_MailingAddress_StateOrProvinceCode_A",
-        "Applicant_MailingAddress_StateOrProvinceCode_A",
-      ],
-      value: account.state ?? "",
-    },
-    insuredZip: {
-      candidates: [
-        "NamedInsured_MailingAddress_PostalCode_A",
-        "Applicant_MailingAddress_PostalCode_A",
-      ],
-      value: account.zip ?? "",
-    },
-    insuredPhone: {
-      candidates: [
-        "NamedInsured_Primary_PhoneNumber_A",
-        "Applicant_BusinessPhoneNumber_A",
-      ],
-      value: account.contactPhone ?? "",
-    },
-    insuredEmail: {
-      candidates: [
-        "NamedInsured_Primary_EmailAddress_A",
-        "Applicant_EmailAddress_A",
-      ],
-      value: account.contactEmail ?? "",
+    producer: { candidates: ["Producer_FullName_A"], value: AGENCY.name },
+    insured: { candidates: ["NamedInsured_FullName_A"], value: account.name },
+    policyEffective: {
+      // The prospective policy's effective date isn't tracked; left blank.
+      candidates: ["Policy_EffectiveDate_A"],
+      value: "",
     },
   };
 
-  if (formKey === "acord140") {
-    // Property section — premises/building details.
+  if (formKey === "acord125") {
+    // Commercial Insurance Application — producer + applicant + first premises.
     Object.assign(values, {
-      premisesAddress: {
-        candidates: ["Premises_PhysicalAddress_LineOne_A", "PremisesInformation_Address_LineOne_A"],
-        value: account.address ?? "",
+      producerAddr1: { candidates: ["Producer_MailingAddress_LineOne_A"], value: AGENCY.addressLine1 },
+      producerCity: { candidates: ["Producer_MailingAddress_CityName_A"], value: AGENCY.city },
+      producerState: { candidates: ["Producer_MailingAddress_StateOrProvinceCode_A"], value: AGENCY.state },
+      producerZip: { candidates: ["Producer_MailingAddress_PostalCode_A"], value: AGENCY.zip },
+      producerPhone: { candidates: ["Producer_ContactPerson_PhoneNumber_A"], value: AGENCY.phone },
+      producerEmail: { candidates: ["Producer_ContactPerson_EmailAddress_A"], value: AGENCY.email },
+      insuredAddr1: { candidates: ["NamedInsured_MailingAddress_LineOne_A"], value: addr },
+      insuredCity: { candidates: ["NamedInsured_MailingAddress_CityName_A"], value: city },
+      insuredState: { candidates: ["NamedInsured_MailingAddress_StateOrProvinceCode_A"], value: state },
+      insuredZip: { candidates: ["NamedInsured_MailingAddress_PostalCode_A"], value: zip },
+      insuredPhone: { candidates: ["NamedInsured_Primary_PhoneNumber_A"], value: account.contactPhone ?? "" },
+      notForProfit: {
+        candidates: ["NamedInsured_LegalEntity_NotForProfitIndicator_A"],
+        value: account.type === "ASSOCIATION" ? "x" : "",
       },
-      construction: {
-        candidates: [
-          "Construction_ConstructionTypeCode_A",
-          "PremisesInformation_ConstructionTypeCode_A",
-          "Building_ConstructionTypeDescription_A",
-        ],
-        value: account.constructionType
-          ? CONSTRUCTION_LABELS[account.constructionType] ?? ""
-          : "",
+      condoType: {
+        candidates: ["BusinessInformation_BusinessType_CondominiumsIndicator_A"],
+        value: account.type === "ASSOCIATION" ? "x" : "",
       },
-      yearBuilt: {
-        candidates: [
-          "Construction_BuildingYearBuiltDate_A",
-          "PremisesInformation_YearBuilt_A",
-        ],
-        value: account.yearBuilt?.toString() ?? "",
-      },
-      stories: {
-        candidates: [
-          "Construction_BuildingStoriesAboveGradeCount_A",
-          "PremisesInformation_NumberOfStoriesCount_A",
-        ],
-        value: account.stories?.toString() ?? "",
-      },
-      totalArea: {
-        candidates: [
-          "Construction_BuildingAreaSquareFeetCount_A",
-          "PremisesInformation_TotalAreaSquareFeet_A",
-        ],
-        value: totalSqft ? totalSqft.toString() : "",
-      },
-      roofYear: {
-        candidates: ["BuildingImprovement_RoofingImprovementYear_A"],
-        value: account.roofUpdatedYear?.toString() ?? "",
-      },
-      heatingYear: {
-        candidates: ["BuildingImprovement_HeatingImprovementYear_A"],
-        value: account.hvacUpdatedYear?.toString() ?? "",
-      },
-      wiringYear: {
-        candidates: ["BuildingImprovement_WiringImprovementYear_A"],
-        value: account.electricalUpdatedYear?.toString() ?? "",
-      },
-      plumbingYear: {
-        candidates: ["BuildingImprovement_PlumbingImprovementYear_A"],
-        value: account.plumbingUpdatedYear?.toString() ?? "",
+      // First premises / structure block.
+      premisesAddr1: { candidates: ["CommercialStructure_PhysicalAddress_LineOne_A"], value: addr },
+      premisesCity: { candidates: ["CommercialStructure_PhysicalAddress_CityName_A"], value: city },
+      premisesState: { candidates: ["CommercialStructure_PhysicalAddress_StateOrProvinceCode_A"], value: state },
+      premisesZip: { candidates: ["CommercialStructure_PhysicalAddress_PostalCode_A"], value: zip },
+      buildingArea: { candidates: ["Construction_BuildingArea_A"], value: area },
+      natureOfBusiness: {
+        candidates: ["CommercialPolicy_OperationsDescription_A", "BuildingOccupancy_OperationsDescription_A"],
+        value: account.type === "ASSOCIATION" ? "Condominium / Homeowners Association" : "",
       },
     } satisfies FieldValues);
   }
 
-  if (formKey === "acord125") {
+  if (formKey === "acord126") {
+    // GL section — only the header maps from account data; GL limits are
+    // entered per submission. Named insured / producer / effective already set.
+  }
+
+  if (formKey === "acord140") {
+    // Property section — the richest mapping (construction, improvements, TIV).
     Object.assign(values, {
-      natureOfBusiness: {
-        candidates: [
-          "NatureOfBusiness_Description_A",
-          "BusinessInformation_NatureOfBusinessDescription_A",
-        ],
-        value:
-          account.type === "ASSOCIATION"
-            ? "Condominium / Homeowners Association"
-            : "",
+      structureAddr1: { candidates: ["CommercialStructure_PhysicalAddress_LineOne_A"], value: addr },
+      constructionCode: { candidates: ["Construction_ConstructionCode_A"], value: construction },
+      stories: { candidates: ["Construction_StoreyCount_A"], value: stories },
+      builtYear: { candidates: ["CommercialStructure_BuiltYear_A"], value: yb },
+      buildingArea: { candidates: ["Construction_BuildingArea_A"], value: area },
+      tivLimit: {
+        candidates: ["CommercialProperty_Premises_LimitAmount_A"],
+        value: account.totalInsuredValue != null ? Math.round(account.totalInsuredValue).toString() : "",
+      },
+      // System-improvement years + their "improved" indicators.
+      wiringYear: { candidates: ["BuildingImprovement_WiringYear_A"], value: account.electricalUpdatedYear?.toString() ?? "" },
+      wiringInd: {
+        candidates: ["BuildingImprovement_WiringIndicator_A"],
+        value: account.electricalUpdatedYear ? "x" : "",
+      },
+      roofYear: { candidates: ["BuildingImprovement_RoofingYear_A"], value: account.roofUpdatedYear?.toString() ?? "" },
+      roofInd: {
+        candidates: ["BuildingImprovement_RoofingIndicator_A"],
+        value: account.roofUpdatedYear ? "x" : "",
+      },
+      plumbingYear: { candidates: ["BuildingImprovement_PlumbingYear_A"], value: account.plumbingUpdatedYear?.toString() ?? "" },
+      plumbingInd: {
+        candidates: ["BuildingImprovement_PlumbingIndicator_A"],
+        value: account.plumbingUpdatedYear ? "x" : "",
+      },
+      heatingYear: { candidates: ["BuildingImprovement_HeatingYear_A"], value: account.hvacUpdatedYear?.toString() ?? "" },
+      heatingInd: {
+        candidates: ["BuildingImprovement_HeatingIndicator_A"],
+        value: account.hvacUpdatedYear ? "x" : "",
       },
     } satisfies FieldValues);
   }
