@@ -1,21 +1,11 @@
 import { useEffect, useState } from "react";
 import { list, uploadData } from "aws-amplify/storage";
-import { ACORD25_TEMPLATE_PATH, listTemplateFields } from "../lib/acord";
+import { ACORD_FORMS, listTemplateFields, type AcordFormDef } from "../lib/acord";
 
-interface TemplateDef {
-  path: string;
-  label: string;
-  note: string;
-}
+type TemplateDef = AcordFormDef;
 
-/** New ACORD forms later: add the template here + a mapping in lib/acord.ts. */
-const TEMPLATES: TemplateDef[] = [
-  {
-    path: ACORD25_TEMPLATE_PATH,
-    label: "ACORD 25 — Certificate of Liability Insurance",
-    note: "Used by the Certificates tab on client accounts.",
-  },
-];
+/** New ACORD forms: add to ACORD_FORMS + a mapping in lib/acord.ts. */
+const TEMPLATES: TemplateDef[] = ACORD_FORMS;
 
 export default function Settings() {
   const [uploaded, setUploaded] = useState<Record<string, boolean>>({});

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { uploadData, getUrl, remove } from "aws-amplify/storage";
 import { client, type CrmDocument } from "../lib/client";
 import type { Schema } from "../../amplify/data/resource";
+import FilePreviewModal, { canPreview } from "./FilePreview";
 
 type EntityType = Schema["DocumentEntityType"]["type"];
 type Category = NonNullable<Schema["DocumentCategory"]["type"]>;
@@ -44,6 +45,7 @@ export default function DocumentsPanel({
   const [error, setError] = useState("");
   const [openDocId, setOpenDocId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [previewDoc, setPreviewDoc] = useState<CrmDocument | null>(null);
   const [ocrSearch, setOcrSearch] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -193,6 +195,11 @@ export default function DocumentsPanel({
                       {d.sizeBytes ? `${Math.max(1, Math.round(d.sizeBytes / 1024))} KB` : "—"}
                     </td>
                     <td style={{ whiteSpace: "nowrap" }}>
+                      {d.s3Key !== "pending" && canPreview(d.name) && (
+                        <button className="link" onClick={() => setPreviewDoc(d)}>
+                          Preview
+                        </button>
+                      )}
                       <button className="link" onClick={() => download(d)}>
                         Download
                       </button>
@@ -227,6 +234,14 @@ export default function DocumentsPanel({
             </tbody>
           </table>
         </div>
+      )}
+
+      {previewDoc && (
+        <FilePreviewModal
+          s3Key={previewDoc.s3Key}
+          name={previewDoc.name}
+          onClose={() => setPreviewDoc(null)}
+        />
       )}
 
       {openDoc?.ocrText && (

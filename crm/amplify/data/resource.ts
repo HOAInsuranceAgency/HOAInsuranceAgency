@@ -46,10 +46,21 @@ const schema = a
       "QUOTE_DOC",
       "POLICY_DOC",
       "LICENSE",
+      "ACORD_FORM", // generated carrier-submission forms
       "OTHER",
     ]),
     OcrStatus: a.enum(["PENDING", "PROCESSING", "COMPLETE", "FAILED", "SKIPPED"]),
     UserRole: a.enum(["ADMIN", "STAFF", "PRODUCER"]),
+    // ISO construction classes
+    ConstructionType: a.enum([
+      "FRAME",
+      "JOISTED_MASONRY",
+      "NON_COMBUSTIBLE",
+      "MASONRY_NON_COMBUSTIBLE",
+      "MODIFIED_FIRE_RESISTIVE",
+      "FIRE_RESISTIVE",
+    ]),
+    ReplacementCostType: a.enum(["RC", "ERC", "GRC"]),
 
     // ── Account: Lead → Client, converted in place ─────────────────────
     Account: a
@@ -69,6 +80,21 @@ const schema = a
         unitCount: a.integer(),
         yearBuilt: a.integer(),
         totalInsuredValue: a.float(),
+        // ── Property / underwriting details ──
+        constructionType: a.ref("ConstructionType"),
+        firewallsVerified: a.boolean(),
+        stories: a.integer(),
+        coastal: a.boolean(),
+        milesToCoast: a.float(), // only meaningful when coastal
+        roofUpdatedYear: a.integer(),
+        hvacUpdatedYear: a.integer(),
+        electricalUpdatedYear: a.integer(),
+        plumbingUpdatedYear: a.integer(),
+        otherUpdates: a.string(),
+        coverPhotoKey: a.string(), // S3 keys under property-photos/
+        aerialPhotoKey: a.string(),
+        plotPlanKey: a.string(),
+        buildings: a.hasMany("Building", "accountId"),
         buildiumId: a.string(), // lineage from web lead forms / Buildium sync
         source: a.string(), // e.g. "website", "referral", "cold"
         notes: a.string(),
@@ -80,6 +106,14 @@ const schema = a
       })
       .secondaryIndexes((index) => [index("stage").sortKeys(["name"])]),
 
+    // Individual buildings on a property; total buildings/sqft are derived.
+    Building: a.model({
+      accountId: a.id().required(),
+      account: a.belongsTo("Account", "accountId"),
+      label: a.string(), // "Building A", "Clubhouse", …
+      sqft: a.integer(),
+    }),
+
     // ── Quotes: tied to an account; binding creates a Policy ───────────
     Quote: a.model({
       accountId: a.id().required(),
@@ -89,6 +123,15 @@ const schema = a
       status: a.ref("QuoteStatus").required(),
       lines: a.string().array(), // e.g. ["Property", "GL", "D&O", "Umbrella"]
       premium: a.float(),
+      // Agency commission, % of premium. NOTE: already baked into the
+      // quoted premium — commission $ is informational, never additive.
+      commissionPct: a.float(),
+      // ── Property terms ──
+      perOccurrenceDeductible: a.float(),
+      perUnitDeductible: a.float(),
+      blanketLimit: a.float(),
+      coinsurancePct: a.float(),
+      replacementCostType: a.ref("ReplacementCostType"),
       effectiveDate: a.date(),
       expirationDate: a.date(),
       submittedAt: a.date(),
@@ -108,6 +151,12 @@ const schema = a
       status: a.ref("PolicyStatus").required(),
       lines: a.string().array(),
       premium: a.float(),
+      commissionPct: a.float(), // carried from the bound quote; baked into premium
+      perOccurrenceDeductible: a.float(),
+      perUnitDeductible: a.float(),
+      blanketLimit: a.float(),
+      coinsurancePct: a.float(),
+      replacementCostType: a.ref("ReplacementCostType"),
       effectiveDate: a.date(),
       expirationDate: a.date(),
       limits: a.json(), // per-line limits/deductibles, shape evolves with ACORD needs
@@ -127,6 +176,7 @@ const schema = a
       primaryUnderwriterPhone: a.string(),
       states: a.string().array(), // states they cover
       naicCode: a.string(), // used on ACORD forms
+      standardCommissionPct: a.float(), // autofills onto new quotes
       notes: a.string(),
       appetiteGuides: a.hasMany("AppetiteGuide", "carrierId"),
       quotes: a.hasMany("Quote", "carrierId"),

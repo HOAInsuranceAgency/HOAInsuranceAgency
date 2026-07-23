@@ -21,6 +21,35 @@ const STATUS_BADGE: Record<string, string> = {
 
 const OPEN_STATUSES = ["DRAFT", "SUBMITTED", "QUOTED", "PRESENTED"] as const;
 
+/** Commission is baked into the premium — the $ figure is the agency's cut,
+ * never an addition on top. */
+export function commissionCell(q: {
+  premium?: number | null;
+  commissionPct?: number | null;
+}): string {
+  if (q.commissionPct == null) return "—";
+  const dollars =
+    q.premium != null ? fmtMoney((q.premium * q.commissionPct) / 100) : null;
+  return dollars ? `${q.commissionPct}% · ${dollars}` : `${q.commissionPct}%`;
+}
+
+export function termsSummary(q: {
+  perOccurrenceDeductible?: number | null;
+  perUnitDeductible?: number | null;
+  blanketLimit?: number | null;
+  coinsurancePct?: number | null;
+  replacementCostType?: string | null;
+}): string {
+  const parts = [
+    q.perOccurrenceDeductible != null && `${fmtMoney(q.perOccurrenceDeductible)} occ ded`,
+    q.perUnitDeductible != null && `${fmtMoney(q.perUnitDeductible)} unit ded`,
+    q.blanketLimit != null && `${fmtMoney(q.blanketLimit)} blanket`,
+    q.coinsurancePct != null && `${q.coinsurancePct}% coins`,
+    q.replacementCostType,
+  ].filter(Boolean);
+  return parts.length ? parts.join(" · ") : "—";
+}
+
 /**
  * Quotes for an account. Binding a quote is the conversion event: it creates
  * a Policy and flips the account LEAD → CLIENT in place.
@@ -93,6 +122,8 @@ export default function QuotesPanel({
                 <th>Carrier</th>
                 <th>Lines</th>
                 <th>Premium</th>
+                <th>Commission</th>
+                <th>Terms</th>
                 <th>Effective</th>
                 <th>Status</th>
                 <th></th>
@@ -104,6 +135,8 @@ export default function QuotesPanel({
                   <td>{carrierName(qt.carrierId)}</td>
                   <td className="small">{(qt.lines ?? []).filter(Boolean).join(", ") || "—"}</td>
                   <td>{fmtMoney(qt.premium)}</td>
+                  <td className="small">{commissionCell(qt)}</td>
+                  <td className="small">{termsSummary(qt)}</td>
                   <td>{fmtDate(qt.effectiveDate)}</td>
                   <td>
                     <span className={`badge ${STATUS_BADGE[qt.status] ?? "gray"}`}>
@@ -156,6 +189,12 @@ export default function QuotesPanel({
   );
 }
 
+const RC_TYPES = [
+  ["RC", "RC — Replacement Cost"],
+  ["ERC", "ERC — Extended Replacement Cost"],
+  ["GRC", "GRC — Guaranteed Replacement Cost"],
+] as const;
+
 function QuoteForm({
   accountId,
   carriers,
@@ -168,6 +207,13 @@ function QuoteForm({
   const [carrierId, setCarrierId] = useState("");
   const [lines, setLines] = useState<string[]>([]);
   const [premium, setPremium] = useState("");
+  const [commissionPct, setCommissionPct] = useState("");
+  const [commissionTouched, setCommissionTouched] = useState(false);
+  const [perOccDed, setPerOccDed] = useState("");
+  const [perUnitDed, setPerUnitDed] = useState("");
+  const [blanketLimit, setBlanketLimit] = useState("");
+  const [coinsurance, setCoinsurance] = useState("");
+  const [rcType, setRcType] = useState("");
   const [effectiveDate, setEffectiveDate] = useState("");
   const [expirationDate, setExpirationDate] = useState("");
   const [notes, setNotes] = useState("");
@@ -179,6 +225,15 @@ function QuoteForm({
     );
   }
 
+  function pickCarrier(id: string) {
+    setCarrierId(id);
+    // Autofill the carrier's standard commission unless manually edited.
+    if (!commissionTouched) {
+      const std = carriers.find((c) => c.id === id)?.standardCommissionPct;
+      setCommissionPct(std != null ? String(std) : "");
+    }
+  }
+
   async function save() {
     setSaving(true);
     await client.models.Quote.create({
@@ -187,6 +242,12 @@ function QuoteForm({
       status: "DRAFT",
       lines,
       premium: premium ? Number(premium) : undefined,
+      commissionPct: commissionPct ? Number(commissionPct) : undefined,
+      perOccurrenceDeductible: perOccDed ? Number(perOccDed) : undefined,
+      perUnitDeductible: perUnitDed ? Number(perUnitDed) : undefined,
+      blanketLimit: blanketLimit ? Number(blanketLimit) : undefined,
+      coinsurancePct: coinsurance ? Number(coinsurance) : undefined,
+      replacementCostType: (rcType || undefined) as Quote["replacementCostType"],
       effectiveDate: effectiveDate || undefined,
       expirationDate: expirationDate || undefined,
       notes: notes || undefined,
@@ -200,7 +261,7 @@ function QuoteForm({
       <div className="form-grid">
         <div className="field">
           <label>Carrier</label>
-          <select value={carrierId} onChange={(e) => setCarrierId(e.target.value)}>
+          <select value={carrierId} onChange={(e) => pickCarrier(e.target.value)}>
             <option value="">—</option>
             {carriers.map((c) => (
               <option key={c.id} value={c.id}>
@@ -212,6 +273,20 @@ function QuoteForm({
         <div className="field">
           <label>Premium ($)</label>
           <input type="number" value={premium} onChange={(e) => setPremium(e.target.value)} />
+        </div>
+        <div className="field">
+          <label>Commission % (baked into premium)</label>
+          <input
+            type="number"
+            step="0.1"
+            min={0}
+            max={100}
+            value={commissionPct}
+            onChange={(e) => {
+              setCommissionTouched(true);
+              setCommissionPct(e.target.value);
+            }}
+          />
         </div>
         <div className="field">
           <label>Effective date</label>
@@ -228,6 +303,43 @@ function QuoteForm({
             value={expirationDate}
             onChange={(e) => setExpirationDate(e.target.value)}
           />
+        </div>
+        <div className="field">
+          <label>Per-occurrence deductible ($)</label>
+          <input type="number" value={perOccDed} onChange={(e) => setPerOccDed(e.target.value)} />
+        </div>
+        <div className="field">
+          <label>Per-unit deductible ($)</label>
+          <input type="number" value={perUnitDed} onChange={(e) => setPerUnitDed(e.target.value)} />
+        </div>
+        <div className="field">
+          <label>Blanket limit ($)</label>
+          <input
+            type="number"
+            value={blanketLimit}
+            onChange={(e) => setBlanketLimit(e.target.value)}
+          />
+        </div>
+        <div className="field">
+          <label>Coinsurance %</label>
+          <input
+            type="number"
+            min={0}
+            max={100}
+            value={coinsurance}
+            onChange={(e) => setCoinsurance(e.target.value)}
+          />
+        </div>
+        <div className="field">
+          <label>Replacement cost</label>
+          <select value={rcType} onChange={(e) => setRcType(e.target.value)}>
+            <option value="">—</option>
+            {RC_TYPES.map(([v, l]) => (
+              <option key={v} value={v}>
+                {l}
+              </option>
+            ))}
+          </select>
         </div>
         <div className="field full">
           <label>Lines</label>
@@ -284,7 +396,7 @@ function BindForm({
     setSaving(true);
     onError("");
     try {
-      // 1. Policy from the accepted quote
+      // 1. Policy from the accepted quote (terms + commission carry over)
       const { data: policy, errors: pErr } = await client.models.Policy.create({
         accountId: account.id,
         quoteId: quote.id,
@@ -293,6 +405,12 @@ function BindForm({
         status: "ACTIVE",
         lines: (quote.lines ?? []).filter((l): l is string => !!l),
         premium: quote.premium ?? undefined,
+        commissionPct: quote.commissionPct ?? undefined,
+        perOccurrenceDeductible: quote.perOccurrenceDeductible ?? undefined,
+        perUnitDeductible: quote.perUnitDeductible ?? undefined,
+        blanketLimit: quote.blanketLimit ?? undefined,
+        coinsurancePct: quote.coinsurancePct ?? undefined,
+        replacementCostType: quote.replacementCostType ?? undefined,
         effectiveDate: quote.effectiveDate ?? undefined,
         expirationDate: quote.expirationDate ?? undefined,
       });
