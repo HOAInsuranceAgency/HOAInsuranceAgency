@@ -89,7 +89,12 @@ const FIELD_DEFS: FieldDef[] = [
     current: () => "",
     display: (v) => (typeof v === "number" ? fmtMoney(v) : fmtVal(v)),
   },
-  { key: "currentPolicyExpiration", label: "Current expiration → notes", kind: "note", current: () => "" },
+  {
+    key: "currentPolicyExpiration",
+    label: "Current policy expiration",
+    kind: "patch",
+    current: (a) => a.currentPolicyExpiration ?? "",
+  },
 ];
 
 function parseExtraction(raw: unknown): ExtractionResult | null {

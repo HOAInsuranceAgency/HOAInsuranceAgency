@@ -101,6 +101,9 @@ const schema = a
         aiExtraction: a.json(), // per-field values + confidence + evidence
         extractionError: a.string(),
         buildings: a.hasMany("Building", "accountId"),
+        // Incumbent policy expiration (drives lead renewal pipeline; for
+        // clients the bound Policy records are authoritative)
+        currentPolicyExpiration: a.date(),
         buildiumId: a.string(), // lineage from web lead forms / Buildium sync
         source: a.string(), // e.g. "website", "referral", "cold"
         notes: a.string(),

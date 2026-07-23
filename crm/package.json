@@ -30,6 +30,7 @@
     "@aws-sdk/client-sesv2": "^3.1093.0",
     "@aws-sdk/client-textract": "^3.750.0",
     "@types/aws-lambda": "^8.10.145",
+    "@types/google.maps": "^3.65.3",
     "@types/node": "^26.1.1",
     "@types/react": "^18.3.27",
     "@types/react-dom": "^18.3.7",

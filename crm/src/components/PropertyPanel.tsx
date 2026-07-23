@@ -1,7 +1,15 @@
 import { useEffect, useState } from "react";
 import { uploadData, getUrl, remove } from "aws-amplify/storage";
-import { client, friendlyError, type Account, type Building } from "../lib/client";
+import {
+  client,
+  friendlyError,
+  US_STATES,
+  validateAccountFields,
+  type Account,
+  type Building,
+} from "../lib/client";
 import FilePreviewModal from "./FilePreview";
+import { AddressAutocomplete } from "../lib/googlePlaces";
 
 const CONSTRUCTION_TYPES = [
   ["FRAME", "Frame"],
@@ -38,6 +46,12 @@ function DetailsCard({
   onChange: (a: Account) => void;
 }) {
   const [form, setForm] = useState({
+    address: account.address ?? "",
+    city: account.city ?? "",
+    state: account.state ?? "",
+    zip: account.zip ?? "",
+    unitCount: account.unitCount?.toString() ?? "",
+    yearBuilt: account.yearBuilt?.toString() ?? "",
     constructionType: account.constructionType ?? "",
     firewallsVerified: account.firewallsVerified ?? false,
     stories: account.stories?.toString() ?? "",
@@ -65,6 +79,11 @@ function DetailsCard({
   };
 
   async function save() {
+    const problems = validateAccountFields(form);
+    if (problems.length) {
+      setError(problems.join(" "));
+      return;
+    }
     const badYears = (
       [
         ["roofUpdatedYear", "Roof"],
@@ -85,6 +104,12 @@ function DetailsCard({
     setError("");
     const { data, errors } = await client.models.Account.update({
       id: account.id,
+      address: form.address.trim() || null,
+      city: form.city.trim() || null,
+      state: form.state || null,
+      zip: form.zip.trim() || null,
+      unitCount: form.unitCount ? Number(form.unitCount) : null,
+      yearBuilt: form.yearBuilt ? Number(form.yearBuilt) : null,
       constructionType: (form.constructionType || null) as Account["constructionType"],
       firewallsVerified: form.firewallsVerified,
       stories: form.stories ? Number(form.stories) : null,
@@ -112,8 +137,59 @@ function DetailsCard({
 
   return (
     <div className="card">
-      <h2>Property details</h2>
+      <h2>Property</h2>
       <div className="form-grid">
+        <div className="field full">
+          <label>Street address</label>
+          <AddressAutocomplete
+            value={form.address}
+            onChange={(v) => setF("address", v)}
+            onPlace={(p) => {
+              setSaved(false);
+              setForm((f) => ({
+                ...f,
+                address: p.address || f.address,
+                city: p.city || f.city,
+                state: p.state || f.state,
+                zip: p.zip || f.zip,
+              }));
+            }}
+          />
+        </div>
+        <div className="field">
+          <label>City</label>
+          <input value={form.city} onChange={(e) => setF("city", e.target.value)} />
+        </div>
+        <div className="field">
+          <label>State</label>
+          <select value={form.state} onChange={(e) => setF("state", e.target.value)}>
+            <option value="">—</option>
+            {US_STATES.map((s) => (
+              <option key={s}>{s}</option>
+            ))}
+          </select>
+        </div>
+        <div className="field">
+          <label>ZIP</label>
+          <input value={form.zip} onChange={(e) => setF("zip", e.target.value)} />
+        </div>
+        <div className="field">
+          <label>Unit count</label>
+          <input
+            type="number"
+            min={0}
+            value={form.unitCount}
+            onChange={(e) => setF("unitCount", e.target.value)}
+          />
+        </div>
+        <div className="field">
+          <label>Year built</label>
+          <input
+            type="number"
+            value={form.yearBuilt}
+            onChange={(e) => setF("yearBuilt", e.target.value)}
+          />
+        </div>
         <div className="field">
           <label>Construction type</label>
           <select
@@ -220,7 +296,7 @@ function DetailsCard({
 
       <div className="form-actions">
         <button className="primary" disabled={saving} onClick={save}>
-          {saving ? "Saving…" : "Save property details"}
+          {saving ? "Saving…" : "Save property"}
         </button>
         {saved && <span className="small" style={{ color: "var(--green)" }}>Saved.</span>}
         {error && <span className="error-text">{error}</span>}

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import {
   client,
   fmtDate,
@@ -39,85 +39,187 @@ export default function Dashboard() {
     client.models.Carrier.list().then(({ data }) => setCarriers(data));
   }, []);
 
-  const recentLeads = [...leads]
-    .sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""))
-    .slice(0, 8);
-
   return (
     <>
       <h1>Dashboard</h1>
       <p className="sub">Pipeline at a glance</p>
 
       <div className="stat-row">
-        <div className="stat">
-          <div className="n">{leads.length}</div>
-          <div className="l">Open leads</div>
-        </div>
-        <div className="stat">
-          <div className="n">{clients.length}</div>
-          <div className="l">Clients</div>
-        </div>
-        <div className="stat">
-          <div className="n">{openQuotes.length}</div>
-          <div className="l">Quotes in flight</div>
-        </div>
-        <div className="stat">
-          <div className="n">{policies.length}</div>
-          <div className="l">Policies bound</div>
-        </div>
+        <Tile n={leads.length} label="Open leads" onClick={() => navigate("/leads")} />
+        <Tile n={clients.length} label="Clients" onClick={() => navigate("/clients")} />
+        <Tile
+          n={openQuotes.length}
+          label="Quotes in flight"
+          onClick={() => navigate("/quotes")}
+        />
+        <Tile
+          n={policies.length}
+          label="Policies bound"
+          onClick={() => navigate("/policies")}
+        />
       </div>
 
-      <PremiumByCarrier policies={policies} carriers={carriers} />
-
-      <div className="card">
-        <h2>Recent leads</h2>
-        {recentLeads.length === 0 ? (
-          <p className="muted small">
-            No leads yet. <Link to="/leads/new">Create the first one.</Link>
-          </p>
-        ) : (
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Name</th>
-                  <th>Type</th>
-                  <th>State</th>
-                  <th>Source</th>
-                  <th>Created</th>
-                </tr>
-              </thead>
-              <tbody>
-                {recentLeads.map((a) => (
-                  <tr
-                    key={a.id}
-                    className="clickable"
-                    onClick={() => navigate(`/accounts/${a.id}`)}
-                  >
-                    <td>{a.name}</td>
-                    <td>{a.type}</td>
-                    <td>{a.state ?? "—"}</td>
-                    <td>{a.source ?? "—"}</td>
-                    <td>{fmtDate(a.createdAt?.slice(0, 10))}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+      <RenewalsCard leads={leads} clients={clients} policies={policies} />
+      <CarrierCharts policies={policies} carriers={carriers} />
     </>
   );
 }
 
+function Tile({ n, label, onClick }: { n: number; label: string; onClick: () => void }) {
+  return (
+    <div
+      className="stat clickable"
+      role="button"
+      tabIndex={0}
+      onClick={onClick}
+      onKeyDown={(e) => e.key === "Enter" && onClick()}
+    >
+      <div className="n">{n}</div>
+      <div className="l">{label}</div>
+    </div>
+  );
+}
+
+// ── Upcoming renewals: client policies + lead incumbent expirations ────
+
+interface RenewalRow {
+  accountId: string;
+  name: string;
+  kind: "CLIENT" | "LEAD";
+  date: string; // YYYY-MM-DD
+  days: number;
+  detail: string;
+}
+
+function daysUntil(date: string): number {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return Math.round((new Date(date + "T00:00:00").getTime() - today.getTime()) / 86_400_000);
+}
+
+function RenewalsCard({
+  leads,
+  clients,
+  policies,
+}: {
+  leads: Account[];
+  clients: Account[];
+  policies: Policy[];
+}) {
+  const [horizon, setHorizon] = useState<30 | 60 | 90>(90);
+  const navigate = useNavigate();
+
+  const rows = useMemo(() => {
+    const out: RenewalRow[] = [];
+    const clientById = new Map(clients.map((c) => [c.id, c]));
+
+    for (const p of policies) {
+      if (p.status !== "ACTIVE" || !p.expirationDate) continue;
+      const acct = clientById.get(p.accountId);
+      if (!acct) continue;
+      out.push({
+        accountId: acct.id,
+        name: acct.name,
+        kind: "CLIENT",
+        date: p.expirationDate,
+        days: daysUntil(p.expirationDate),
+        detail: `Policy ${p.policyNumber || "—"} · ${(p.lines ?? []).filter(Boolean).join(", ") || "—"}`,
+      });
+    }
+    for (const l of leads) {
+      if (!l.currentPolicyExpiration) continue;
+      out.push({
+        accountId: l.id,
+        name: l.name,
+        kind: "LEAD",
+        date: l.currentPolicyExpiration,
+        days: daysUntil(l.currentPolicyExpiration),
+        detail: "Incumbent policy expires",
+      });
+    }
+    return out
+      .filter((r) => r.days <= horizon)
+      .sort((a, b) => a.days - b.days);
+  }, [leads, clients, policies, horizon]);
+
+  const within = (d: number) => rows.filter((r) => r.days <= d && r.days >= 0).length;
+
+  return (
+    <div className="card">
+      <div className="toolbar" style={{ marginBottom: 8 }}>
+        <h2 style={{ margin: 0 }}>Upcoming renewals</h2>
+        <div className="grow" />
+        <div className="chip-row">
+          {([30, 60, 90] as const).map((d) => (
+            <button
+              key={d}
+              className={horizon === d ? "on" : ""}
+              onClick={() => setHorizon(d)}
+            >
+              {d}d · {within(d)}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {rows.length === 0 ? (
+        <p className="muted small">
+          Nothing renewing in the next {horizon} days. Lead renewal dates come
+          from "Current policy expiration" (set manually or via AI extraction).
+        </p>
+      ) : (
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Account</th>
+                <th></th>
+                <th>Renewal</th>
+                <th>Days</th>
+                <th>Detail</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r, i) => (
+                <tr
+                  key={`${r.accountId}-${i}`}
+                  className="clickable"
+                  onClick={() => navigate(`/accounts/${r.accountId}`)}
+                >
+                  <td>
+                    <strong>{r.name}</strong>
+                  </td>
+                  <td>
+                    <span className={`badge ${r.kind === "CLIENT" ? "green" : "blue"}`}>
+                      {r.kind === "CLIENT" ? "Client" : "Lead"}
+                    </span>
+                  </td>
+                  <td>{fmtDate(r.date)}</td>
+                  <td className="days-badge">
+                    {r.days < 0 ? (
+                      <span className="badge red">{Math.abs(r.days)}d overdue</span>
+                    ) : r.days <= 30 ? (
+                      <span className="badge amber">{r.days}d</span>
+                    ) : (
+                      <span className="badge gray">{r.days}d</span>
+                    )}
+                  </td>
+                  <td className="small muted">{r.detail}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Premium & commission by carrier (shared date filter) ───────────────
+
 type Preset = "all" | "ytd" | "12mo";
 
-/**
- * Premium written by carrier: horizontal bars (single hue — magnitude, not
- * identity), value at each bar tip, hover tooltip, date-range filter on
- * policy effective date.
- */
-function PremiumByCarrier({
+function CarrierCharts({
   policies,
   carriers,
 }: {
@@ -127,7 +229,7 @@ function PremiumByCarrier({
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [preset, setPreset] = useState<Preset>("all");
-  const [tip, setTip] = useState<{ x: number; y: number; text: string; value: string } | null>(null);
+  const [tip, setTip] = useState<{ x: number; y: number; text: string } | null>(null);
 
   function applyPreset(p: Preset) {
     setPreset(p);
@@ -147,18 +249,23 @@ function PremiumByCarrier({
     }
   }
 
-  const rows = useMemo(() => {
-    const inRange = policies.filter((p) => {
-      const d = p.effectiveDate;
-      if (from && (!d || d < from)) return false;
-      if (to && (!d || d > to)) return false;
-      return true;
-    });
-    const byCarrier = new Map<string, { premium: number; count: number }>();
-    for (const p of inRange) {
+  const filtered = useMemo(
+    () =>
+      policies.filter((p) => {
+        const d = p.effectiveDate;
+        if (from && (!d || d < from)) return false;
+        if (to && (!d || d > to)) return false;
+        return true;
+      }),
+    [policies, from, to]
+  );
+
+  const rowsFor = (value: (p: Policy) => number) => {
+    const byCarrier = new Map<string, { total: number; count: number }>();
+    for (const p of filtered) {
       const key = p.carrierId ?? "unassigned";
-      const cur = byCarrier.get(key) ?? { premium: 0, count: 0 };
-      cur.premium += p.premium ?? 0;
+      const cur = byCarrier.get(key) ?? { total: 0, count: 0 };
+      cur.total += value(p);
       cur.count += 1;
       byCarrier.set(key, cur);
     }
@@ -171,71 +278,117 @@ function PremiumByCarrier({
             : carriers.find((c) => c.id === carrierId)?.name ?? "Unknown carrier",
         ...agg,
       }))
-      .sort((a, b) => b.premium - a.premium);
-  }, [policies, carriers, from, to]);
+      .filter((r) => r.total > 0)
+      .sort((a, b) => b.total - a.total);
+  };
 
-  const total = rows.reduce((s, r) => s + r.premium, 0);
-  const totalPolicies = rows.reduce((s, r) => s + r.count, 0);
-  const max = rows[0]?.premium || 1;
+  const premiumRows = useMemo(() => rowsFor((p) => p.premium ?? 0), [filtered, carriers]);
+  const commissionRows = useMemo(
+    () =>
+      rowsFor((p) =>
+        p.premium != null && p.commissionPct != null
+          ? (p.premium * p.commissionPct) / 100
+          : 0
+      ),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [filtered, carriers]
+  );
+
+  return (
+    <>
+      <div className="card">
+        <h2>Production by carrier</h2>
+        <div className="filter-row">
+          <div className="field">
+            <label>Effective from</label>
+            <input
+              type="date"
+              value={from}
+              onChange={(e) => {
+                setFrom(e.target.value);
+                setPreset("all");
+              }}
+            />
+          </div>
+          <div className="field">
+            <label>Effective to</label>
+            <input
+              type="date"
+              value={to}
+              onChange={(e) => {
+                setTo(e.target.value);
+                setPreset("all");
+              }}
+            />
+          </div>
+          <div className="preset-btns">
+            {(
+              [
+                ["all", "All time"],
+                ["ytd", "YTD"],
+                ["12mo", "Last 12 mo"],
+              ] as [Preset, string][]
+            ).map(([p, label]) => (
+              <button
+                key={p}
+                className={`secondary${preset === p && (p !== "all" || (!from && !to)) ? " on" : ""}`}
+                onClick={() => applyPreset(p)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <BarCard
+        title="Premium written by carrier"
+        heroLabel="written premium"
+        rows={premiumRows}
+        setTip={setTip}
+      />
+      <BarCard
+        title="Commission by carrier"
+        heroLabel="commission (baked into premium)"
+        rows={commissionRows}
+        setTip={setTip}
+      />
+
+      {tip && (
+        <div className="chart-tip" style={{ left: tip.x, top: tip.y }}>
+          {tip.text}
+        </div>
+      )}
+    </>
+  );
+}
+
+function BarCard({
+  title,
+  heroLabel,
+  rows,
+  setTip,
+}: {
+  title: string;
+  heroLabel: string;
+  rows: { carrierId: string; name: string; total: number; count: number }[];
+  setTip: (t: { x: number; y: number; text: string } | null) => void;
+}) {
+  const total = rows.reduce((s, r) => s + r.total, 0);
+  const totalCount = rows.reduce((s, r) => s + r.count, 0);
+  const max = rows[0]?.total || 1;
 
   return (
     <div className="card">
-      <h2>Premium written by carrier</h2>
-
-      <div className="filter-row">
-        <div className="field">
-          <label>Effective from</label>
-          <input
-            type="date"
-            value={from}
-            onChange={(e) => {
-              setFrom(e.target.value);
-              setPreset("all");
-            }}
-          />
-        </div>
-        <div className="field">
-          <label>Effective to</label>
-          <input
-            type="date"
-            value={to}
-            onChange={(e) => {
-              setTo(e.target.value);
-              setPreset("all");
-            }}
-          />
-        </div>
-        <div className="preset-btns">
-          {(
-            [
-              ["all", "All time"],
-              ["ytd", "YTD"],
-              ["12mo", "Last 12 mo"],
-            ] as [Preset, string][]
-          ).map(([p, label]) => (
-            <button
-              key={p}
-              className={`secondary${preset === p && (p !== "all" || (!from && !to)) ? " on" : ""}`}
-              onClick={() => applyPreset(p)}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-      </div>
-
+      <h2>{title}</h2>
       <div className="chart-hero">
         <span className="n">{fmtMoney(total)}</span>
         <span className="l">
-          written premium · {totalPolicies} {totalPolicies === 1 ? "policy" : "policies"}
+          {heroLabel} · {totalCount} {totalCount === 1 ? "policy" : "policies"}
         </span>
       </div>
-
       {rows.length === 0 ? (
-        <p className="muted small">
-          No bound policies{from || to ? " in this date range" : " yet"} — premium
-          appears here as quotes are bound.
-        </p>
+        <p className="muted small">No matching policies.</p>
       ) : (
         <div className="pbar-rows">
           {rows.map((r) => (
@@ -246,8 +399,7 @@ function PremiumByCarrier({
                 setTip({
                   x: e.clientX,
                   y: e.clientY,
-                  text: `${r.name} · ${r.count} ${r.count === 1 ? "policy" : "policies"}`,
-                  value: fmtMoney(r.premium),
+                  text: `${r.name} · ${r.count} ${r.count === 1 ? "policy" : "policies"} — ${fmtMoney(r.total)}`,
                 })
               }
               onMouseLeave={() => setTip(null)}
@@ -258,18 +410,12 @@ function PremiumByCarrier({
               <div className="pbar-track">
                 <div
                   className="pbar-fill"
-                  style={{ width: `${Math.max(1, (r.premium / max) * 100)}%` }}
+                  style={{ width: `${Math.max(1, (r.total / max) * 100)}%` }}
                 />
               </div>
-              <div className="pbar-value">{fmtMoney(r.premium)}</div>
+              <div className="pbar-value">{fmtMoney(r.total)}</div>
             </div>
           ))}
-        </div>
-      )}
-
-      {tip && (
-        <div className="chart-tip" style={{ left: tip.x, top: tip.y }}>
-          {tip.text} — <span className="t-val">{tip.value}</span>
         </div>
       )}
     </div>

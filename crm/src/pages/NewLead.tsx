@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { client, friendlyError, US_STATES, validateAccountFields } from "../lib/client";
+import { AddressAutocomplete } from "../lib/googlePlaces";
 
 export default function NewLead() {
   const navigate = useNavigate();
@@ -20,6 +21,7 @@ export default function NewLead() {
     unitCount: "",
     yearBuilt: "",
     totalInsuredValue: "",
+    currentPolicyExpiration: "",
     source: "",
     notes: "",
   });
@@ -56,6 +58,7 @@ export default function NewLead() {
       totalInsuredValue: form.totalInsuredValue
         ? Number(form.totalInsuredValue)
         : undefined,
+      currentPolicyExpiration: form.currentPolicyExpiration || undefined,
       source: form.source.trim() || undefined,
       notes: form.notes.trim() || undefined,
     });
@@ -115,7 +118,19 @@ export default function NewLead() {
           </div>
           <div className="field">
             <label>Street address</label>
-            <input value={form.address} onChange={set("address")} />
+            <AddressAutocomplete
+              value={form.address}
+              onChange={(v) => setForm((f) => ({ ...f, address: v }))}
+              onPlace={(p) =>
+                setForm((f) => ({
+                  ...f,
+                  address: p.address || f.address,
+                  city: p.city || f.city,
+                  state: p.state || f.state,
+                  zip: p.zip || f.zip,
+                }))
+              }
+            />
           </div>
           <div className="field">
             <label>City</label>
@@ -150,6 +165,14 @@ export default function NewLead() {
               type="number"
               value={form.totalInsuredValue}
               onChange={set("totalInsuredValue")}
+            />
+          </div>
+          <div className="field">
+            <label>Current policy expiration</label>
+            <input
+              type="date"
+              value={form.currentPolicyExpiration}
+              onChange={set("currentPolicyExpiration")}
             />
           </div>
           <div className="field full">

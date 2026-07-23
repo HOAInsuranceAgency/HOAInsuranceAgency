@@ -7,6 +7,7 @@ import {
   type AppetiteGuide,
   type Carrier,
 } from "../lib/client";
+import { useSort, SortTh } from "../lib/useSort";
 
 export default function Carriers() {
   const [carriers, setCarriers] = useState<Carrier[]>([]);
@@ -18,11 +19,21 @@ export default function Carriers() {
   const navigate = useNavigate();
 
   useEffect(() => {
-    client.models.Carrier.list().then(({ data }) =>
-      setCarriers(data.sort((a, b) => a.name.localeCompare(b.name)))
-    );
+    client.models.Carrier.list().then(({ data }) => setCarriers(data));
     client.models.AppetiteGuide.list().then(({ data }) => setGuides(data));
   }, []);
+
+  const { sorted, sortKey, dir, toggle } = useSort(
+    carriers,
+    {
+      name: (c) => c.name,
+      status: (c) => (c.appointed ? "Appointed" : "Prospective"),
+      underwriter: (c) => c.primaryUnderwriterName,
+      commission: (c) => c.standardCommissionPct,
+      states: (c) => (c.states ?? []).filter(Boolean).length || null,
+    },
+    "name"
+  );
 
   async function create() {
     if (!name.trim()) return;
@@ -83,15 +94,16 @@ export default function Carriers() {
             <table>
               <thead>
                 <tr>
-                  <th>Carrier</th>
-                  <th>Status</th>
-                  <th>Underwriter</th>
-                  <th>States</th>
+                  <SortTh label="Carrier" colKey="name" sortKey={sortKey} dir={dir} onToggle={toggle} />
+                  <SortTh label="Status" colKey="status" sortKey={sortKey} dir={dir} onToggle={toggle} />
+                  <SortTh label="Underwriter" colKey="underwriter" sortKey={sortKey} dir={dir} onToggle={toggle} />
+                  <SortTh label="Commission" colKey="commission" sortKey={sortKey} dir={dir} onToggle={toggle} />
+                  <SortTh label="States" colKey="states" sortKey={sortKey} dir={dir} onToggle={toggle} />
                   <th>Lines written</th>
                 </tr>
               </thead>
               <tbody>
-                {carriers.map((c) => {
+                {sorted.map((c) => {
                   const cGuides = guides.filter((g) => g.carrierId === c.id);
                   const lines = [
                     ...new Set(cGuides.flatMap((g) => g.linesWritten ?? []).filter(Boolean)),
@@ -111,6 +123,7 @@ export default function Carriers() {
                         </span>
                       </td>
                       <td>{c.primaryUnderwriterName ?? "—"}</td>
+                      <td>{c.standardCommissionPct != null ? `${c.standardCommissionPct}%` : "—"}</td>
                       <td className="small">
                         {(c.states ?? []).filter(Boolean).join(", ") || "—"}
                       </td>

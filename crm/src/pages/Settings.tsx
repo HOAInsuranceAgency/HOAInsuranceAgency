@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { list, uploadData } from "aws-amplify/storage";
 import { ACORD_FORMS, listTemplateFields, type AcordFormDef } from "../lib/acord";
+import FileButton from "../components/FileButton";
 
 type TemplateDef = AcordFormDef;
 
@@ -82,11 +83,11 @@ export default function Settings() {
               {tpl.note}
             </p>
             <div className="toolbar">
-              <input
-                type="file"
+              <FileButton
+                label={uploaded[tpl.path] ? "Replace PDF…" : "Upload PDF…"}
                 accept="application/pdf"
-                disabled={busy === tpl.path}
-                onChange={(e) => upload(tpl, e.target.files?.[0])}
+                busy={busy === tpl.path}
+                onFiles={(files) => upload(tpl, files?.[0])}
               />
               {uploaded[tpl.path] && (
                 <button

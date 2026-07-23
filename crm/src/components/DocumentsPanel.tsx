@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { uploadData, getUrl, remove } from "aws-amplify/storage";
 import { client, type CrmDocument } from "../lib/client";
 import type { Schema } from "../../amplify/data/resource";
 import FilePreviewModal, { canPreview } from "./FilePreview";
+import FileButton from "./FileButton";
 
 type EntityType = Schema["DocumentEntityType"]["type"];
 type Category = NonNullable<Schema["DocumentCategory"]["type"]>;
@@ -47,7 +48,6 @@ export default function DocumentsPanel({
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [previewDoc, setPreviewDoc] = useState<CrmDocument | null>(null);
   const [ocrSearch, setOcrSearch] = useState("");
-  const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const sub = client.models.Document.observeQuery({
@@ -103,7 +103,6 @@ export default function DocumentsPanel({
       }
     }
     setUploading(false);
-    if (fileRef.current) fileRef.current.value = "";
   }
 
   async function download(doc: CrmDocument) {
@@ -148,15 +147,13 @@ export default function DocumentsPanel({
         </div>
         <div className="field">
           <label>Attach files (PDF/images are OCR'd automatically)</label>
-          <input
-            ref={fileRef}
-            type="file"
+          <FileButton
+            label="Choose files…"
             multiple
-            disabled={uploading}
-            onChange={(e) => handleUpload(e.target.files)}
+            busy={uploading}
+            onFiles={handleUpload}
           />
         </div>
-        {uploading && <span className="muted small">Uploading…</span>}
         {error && <span className="error-text">{error}</span>}
       </div>
 

@@ -14,6 +14,8 @@ import Onboarding from "./pages/Onboarding";
 import Settings from "./pages/Settings";
 import DocumentSearch from "./pages/DocumentSearch";
 import Team from "./pages/Team";
+import QuotesList from "./pages/QuotesList";
+import PoliciesList from "./pages/PoliciesList";
 
 export default function App() {
   return (
@@ -233,6 +235,8 @@ function Shell({ profile, signOut }: { profile: UserProfile; signOut: () => void
           <Route path="/accounts/:id" element={<AccountDetail profile={profile} />} />
           <Route path="/carriers" element={<Carriers />} />
           <Route path="/carriers/:id" element={<CarrierDetail />} />
+          <Route path="/quotes" element={<QuotesList />} />
+          <Route path="/policies" element={<PoliciesList />} />
           <Route path="/documents" element={<DocumentSearch />} />
           <Route path="/settings" element={<Settings />} />
           {profile.role === "ADMIN" && (
