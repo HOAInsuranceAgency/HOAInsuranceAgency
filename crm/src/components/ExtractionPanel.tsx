@@ -17,7 +17,7 @@ interface ExtractedField {
 
 interface ExtractionResult {
   [key: string]: unknown;
-  buildings?: { label: string | null; sqft: number | null }[];
+  buildings?: { label?: string | null; sqft?: string | number | null }[];
   summary?: string;
   extractedAt?: string;
   documentCount?: number;
@@ -38,14 +38,39 @@ interface FieldDef {
   key: string;
   label: string;
   kind: "patch" | "note";
+  vtype?: "int" | "float" | "bool"; // coercion for apply; default string
   current: (a: Account) => string;
   display?: (v: ExtractedField["value"]) => string;
 }
 
 const fmtVal = (v: ExtractedField["value"]): string => {
-  if (v == null) return "—";
+  if (v == null || v === "") return "—";
   if (typeof v === "boolean") return v ? "Yes" : "No";
   return String(v);
+};
+
+// Values arrive as strings ("" = not found). Coerce to the Account field's
+// type before writing.
+const isEmpty = (v: ExtractedField["value"]) => v == null || v === "";
+function coerce(def: FieldDef, v: ExtractedField["value"]): unknown {
+  if (isEmpty(v)) return undefined;
+  const s = String(v).trim();
+  if (def.vtype === "int") {
+    const n = Math.round(Number(s.replace(/[^0-9.-]/g, "")));
+    return Number.isFinite(n) ? n : undefined;
+  }
+  if (def.vtype === "float") {
+    const n = Number(s.replace(/[^0-9.-]/g, ""));
+    return Number.isFinite(n) ? n : undefined;
+  }
+  if (def.vtype === "bool") return /^(yes|true|y)$/i.test(s);
+  return s;
+}
+
+const moneyDisplay = (v: ExtractedField["value"]): string => {
+  if (isEmpty(v)) return "—";
+  const n = Number(String(v).replace(/[^0-9.-]/g, ""));
+  return Number.isFinite(n) ? fmtMoney(n) : fmtVal(v);
 };
 
 const FIELD_DEFS: FieldDef[] = [
@@ -57,30 +82,31 @@ const FIELD_DEFS: FieldDef[] = [
   { key: "city", label: "City", kind: "patch", current: (a) => a.city ?? "" },
   { key: "state", label: "State", kind: "patch", current: (a) => a.state ?? "" },
   { key: "zip", label: "ZIP", kind: "patch", current: (a) => a.zip ?? "" },
-  { key: "unitCount", label: "Unit count", kind: "patch", current: (a) => a.unitCount?.toString() ?? "" },
-  { key: "yearBuilt", label: "Year built", kind: "patch", current: (a) => a.yearBuilt?.toString() ?? "" },
+  { key: "unitCount", label: "Unit count", kind: "patch", vtype: "int", current: (a) => a.unitCount?.toString() ?? "" },
+  { key: "yearBuilt", label: "Year built", kind: "patch", vtype: "int", current: (a) => a.yearBuilt?.toString() ?? "" },
   {
     key: "totalInsuredValue",
     label: "Total insured value",
     kind: "patch",
+    vtype: "float",
     current: (a) => (a.totalInsuredValue != null ? fmtMoney(a.totalInsuredValue) : ""),
-    display: (v) => (typeof v === "number" ? fmtMoney(v) : fmtVal(v)),
+    display: moneyDisplay,
   },
   {
     key: "constructionType",
     label: "Construction type",
     kind: "patch",
     current: (a) => (a.constructionType ? CONSTRUCTION_LABELS[a.constructionType] ?? a.constructionType : ""),
-    display: (v) => (typeof v === "string" ? CONSTRUCTION_LABELS[v] ?? v : fmtVal(v)),
+    display: (v) => (typeof v === "string" && v ? CONSTRUCTION_LABELS[v] ?? v : fmtVal(v)),
   },
-  { key: "stories", label: "Stories", kind: "patch", current: (a) => a.stories?.toString() ?? "" },
-  { key: "coastal", label: "Coastal", kind: "patch", current: (a) => (a.coastal == null ? "" : a.coastal ? "Yes" : "No") },
-  { key: "milesToCoast", label: "Miles to coast", kind: "patch", current: (a) => a.milesToCoast?.toString() ?? "" },
-  { key: "roofUpdatedYear", label: "Roof updated", kind: "patch", current: (a) => a.roofUpdatedYear?.toString() ?? "" },
-  { key: "hvacUpdatedYear", label: "HVAC updated", kind: "patch", current: (a) => a.hvacUpdatedYear?.toString() ?? "" },
-  { key: "electricalUpdatedYear", label: "Electrical updated", kind: "patch", current: (a) => a.electricalUpdatedYear?.toString() ?? "" },
-  { key: "plumbingUpdatedYear", label: "Plumbing updated", kind: "patch", current: (a) => a.plumbingUpdatedYear?.toString() ?? "" },
-  { key: "firewallsVerified", label: "Firewalls verified", kind: "patch", current: (a) => (a.firewallsVerified == null ? "" : a.firewallsVerified ? "Yes" : "No") },
+  { key: "stories", label: "Stories", kind: "patch", vtype: "int", current: (a) => a.stories?.toString() ?? "" },
+  { key: "coastal", label: "Coastal", kind: "patch", vtype: "bool", current: (a) => (a.coastal == null ? "" : a.coastal ? "Yes" : "No") },
+  { key: "milesToCoast", label: "Miles to coast", kind: "patch", vtype: "float", current: (a) => a.milesToCoast?.toString() ?? "" },
+  { key: "roofUpdatedYear", label: "Roof updated", kind: "patch", vtype: "int", current: (a) => a.roofUpdatedYear?.toString() ?? "" },
+  { key: "hvacUpdatedYear", label: "HVAC updated", kind: "patch", vtype: "int", current: (a) => a.hvacUpdatedYear?.toString() ?? "" },
+  { key: "electricalUpdatedYear", label: "Electrical updated", kind: "patch", vtype: "int", current: (a) => a.electricalUpdatedYear?.toString() ?? "" },
+  { key: "plumbingUpdatedYear", label: "Plumbing updated", kind: "patch", vtype: "int", current: (a) => a.plumbingUpdatedYear?.toString() ?? "" },
+  { key: "firewallsVerified", label: "Firewalls verified", kind: "patch", vtype: "bool", current: (a) => (a.firewallsVerified == null ? "" : a.firewallsVerified ? "Yes" : "No") },
   { key: "currentAgent", label: "Current agent / broker", kind: "patch", current: (a) => a.currentAgent ?? "" },
   { key: "currentCarrier", label: "Current carrier → notes", kind: "note", current: () => "" },
   {
@@ -88,7 +114,7 @@ const FIELD_DEFS: FieldDef[] = [
     label: "Current premium → notes",
     kind: "note",
     current: () => "",
-    display: (v) => (typeof v === "number" ? fmtMoney(v) : fmtVal(v)),
+    display: moneyDisplay,
   },
   {
     key: "currentPolicyExpiration",
@@ -149,11 +175,13 @@ export default function ExtractionPanel({
     const initial: Record<string, boolean> = {};
     for (const def of FIELD_DEFS) {
       const f = result[def.key] as ExtractedField | undefined;
-      if (f?.value != null) initial[def.key] = f.confidence !== "low";
+      if (f && !isEmpty(f.value)) initial[def.key] = f.confidence !== "low";
     }
     setSelected(initial);
     const b: Record<number, boolean> = {};
-    (result.buildings ?? []).forEach((_, i) => (b[i] = true));
+    (result.buildings ?? []).forEach((bd, i) => {
+      if (bd && (!isEmpty(bd.label as never) || !isEmpty(bd.sqft as never))) b[i] = true;
+    });
     setSelectedBuildings(b);
     setApplied(false);
   }, [result]);
@@ -185,11 +213,14 @@ export default function ExtractionPanel({
       for (const def of FIELD_DEFS) {
         if (!selected[def.key]) continue;
         const f = result[def.key] as ExtractedField | undefined;
-        if (f?.value == null) continue;
+        if (!f || isEmpty(f.value)) continue;
+        const coerced = coerce(def, f.value);
+        if (coerced === undefined) continue;
         if (def.kind === "patch") {
-          patch[def.key] = f.value;
+          patch[def.key] = coerced;
         } else {
-          noteLines.push(`${def.label.replace(" → notes", "")}: ${fmtVal(f.value)}`);
+          const shown = def.display ? def.display(f.value) : String(coerced);
+          noteLines.push(`${def.label.replace(" → notes", "")}: ${shown}`);
         }
       }
       if (noteLines.length) {
@@ -206,10 +237,11 @@ export default function ExtractionPanel({
 
       const buildings = (result.buildings ?? []).filter((_, i) => selectedBuildings[i]);
       for (const [i, b] of buildings.entries()) {
+        const sqftNum = Math.round(Number(String(b.sqft ?? "").replace(/[^0-9.]/g, "")));
         await client.models.Building.create({
           accountId: account.id,
-          label: b.label ?? `Building ${i + 1}`,
-          sqft: b.sqft ?? undefined,
+          label: (b.label as string) || `Building ${i + 1}`,
+          sqft: Number.isFinite(sqftNum) && sqftNum > 0 ? sqftNum : undefined,
         });
       }
 
@@ -276,7 +308,7 @@ export default function ExtractionPanel({
               <tbody>
                 {FIELD_DEFS.map((def) => {
                   const f = result[def.key] as ExtractedField | undefined;
-                  if (!f || f.value == null) return null;
+                  if (!f || isEmpty(f.value)) return null;
                   const cur = def.current(account);
                   const extracted = def.display ? def.display(f.value) : fmtVal(f.value);
                   return (
@@ -307,7 +339,11 @@ export default function ExtractionPanel({
                     </tr>
                   );
                 })}
-                {(result.buildings ?? []).map((b, i) => (
+                {(result.buildings ?? []).map((b, i) => {
+                  const sqftNum = Number(String(b.sqft ?? "").replace(/[^0-9.]/g, ""));
+                  const hasSqft = Number.isFinite(sqftNum) && sqftNum > 0;
+                  if (isEmpty(b.label as never) && !hasSqft) return null;
+                  return (
                   <tr key={`b-${i}`}>
                     <td>
                       <input
@@ -322,8 +358,8 @@ export default function ExtractionPanel({
                     <td className="small muted">—</td>
                     <td>
                       <strong>
-                        {b.label ?? `Building ${i + 1}`}
-                        {b.sqft ? ` · ${b.sqft.toLocaleString()} sq ft` : ""}
+                        {(b.label as string) || `Building ${i + 1}`}
+                        {hasSqft ? ` · ${sqftNum.toLocaleString()} sq ft` : ""}
                       </strong>
                     </td>
                     <td>
@@ -331,7 +367,8 @@ export default function ExtractionPanel({
                     </td>
                     <td className="small muted">Creates a Building record</td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>

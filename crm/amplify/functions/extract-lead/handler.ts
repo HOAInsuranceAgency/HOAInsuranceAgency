@@ -33,15 +33,26 @@ async function getDataClient() {
 //    every property required, nullable via type arrays) ─────────────────
 
 const field = (valueType: string | string[]) => ({
+  // Every value is a plain string — no nullable/union types. Structured
+  // outputs caps union-typed parameters at 16, and per-field
+  // value/evidence/source nullability blew past that. "" means "not found";
+  // numbers come back as digit strings, booleans as "Yes"/"No" — coerced
+  // client-side on apply. valueType is retained only for the description.
   type: "object",
   properties: {
-    value: { type: Array.isArray(valueType) ? valueType : [valueType, "null"] },
+    value: {
+      type: "string",
+      description:
+        Array.isArray(valueType) || valueType === "string"
+          ? "The extracted value, or empty string if not found"
+          : `The extracted ${valueType} as a plain string (digits only for numbers, "Yes"/"No" for booleans), or empty string if not found`,
+    },
     confidence: { type: "string", enum: ["high", "medium", "low"] },
     evidence: {
-      type: ["string", "null"],
-      description: "Short verbatim quote (<=150 chars) supporting the value",
+      type: "string",
+      description: "Short verbatim quote (<=150 chars) supporting the value, or empty string",
     },
-    source: { type: ["string", "null"], description: "Filename the value came from" },
+    source: { type: "string", description: "Filename the value came from, or empty string" },
   },
   required: ["value", "confidence", "evidence", "source"],
   additionalProperties: false,
@@ -50,12 +61,11 @@ const field = (valueType: string | string[]) => ({
 const enumField = (values: string[]) => ({
   type: "object",
   properties: {
-    // Nullable enum: express as anyOf — a type-array (["string","null"])
-    // combined with `enum` is rejected by structured-outputs validation.
-    value: { anyOf: [{ type: "string", enum: values }, { type: "null" }] },
+    // Single-type string enum with "" allowed — not a union.
+    value: { type: "string", enum: [...values, ""] },
     confidence: { type: "string", enum: ["high", "medium", "low"] },
-    evidence: { type: ["string", "null"] },
-    source: { type: ["string", "null"] },
+    evidence: { type: "string" },
+    source: { type: "string" },
   },
   required: ["value", "confidence", "evidence", "source"],
   additionalProperties: false,
@@ -110,8 +120,8 @@ const EXTRACTION_SCHEMA = {
       items: {
         type: "object",
         properties: {
-          label: { type: ["string", "null"] },
-          sqft: { type: ["integer", "null"] },
+          label: { type: "string", description: "Building name/label, or empty string" },
+          sqft: { type: "string", description: "Square footage as digits only, or empty string" },
         },
         required: ["label", "sqft"],
         additionalProperties: false,
@@ -156,8 +166,9 @@ const EXTRACTION_SCHEMA = {
 const SYSTEM_PROMPT = `You are a commercial insurance data-extraction assistant for an agency that writes condominium/HOA association master policies. You are given the OCR'd contents of documents attached to a lead (prior policy packets, association budgets, dues schedules, condo documents, loss runs).
 
 Extract every requested datapoint you can find. Rules:
-- Only report a value when the documents actually support it — use null otherwise. Never guess or infer beyond the text.
-- For each value give a short verbatim evidence quote and the source filename.
+- Every value is a STRING. Use an empty string "" when the documents don't support a value — never guess or infer beyond the text.
+- For numeric values return digits only, no "$", commas, or units (e.g. "5000000", "1985", "120"). For yes/no values return "Yes" or "No". Dates as YYYY-MM-DD.
+- For each value give a short verbatim evidence quote and the source filename (or "" when the value is empty).
 - Confidence: "high" when explicitly stated, "medium" when derived (e.g. summing per-building values), "low" when ambiguous or conflicting across documents.
 - totalInsuredValue is the building/property limit (TIV), not liability limits or premium.
 - Construction type maps to ISO classes (frame, joisted masonry, non-combustible, masonry non-combustible, modified fire resistive, fire resistive).
