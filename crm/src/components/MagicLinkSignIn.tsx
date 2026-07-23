@@ -57,7 +57,14 @@ export default function MagicLinkSignIn() {
       });
       const { isSignedIn } = await confirmSignIn({ challengeResponse: token });
       if (!isSignedIn) throw new Error("not signed in");
-      // Success: the Hub auth event flips authStatus and unmounts this screen.
+      // Success. The Authenticator's state machine doesn't reliably pick up
+      // a confirmSignIn done outside its own UI (Hub-timing race), which
+      // left this screen stuck on "Signing you in…". Reload to the clean
+      // URL: the restored session resolves straight to the app (the
+      // configuring-splash prevents any sign-in flash). The hash is already
+      // stripped, so this does not re-consume the token.
+      window.location.replace(window.location.origin + window.location.pathname);
+      return;
     } catch (err) {
       console.warn(err);
       setError("That sign-in link is invalid or has expired. Request a new one.");
