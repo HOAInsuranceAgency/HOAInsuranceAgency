@@ -150,6 +150,7 @@ export default function ExtractionPanel({
   const [applied, setApplied] = useState(false);
   const [selected, setSelected] = useState<Record<string, boolean>>({});
   const [selectedBuildings, setSelectedBuildings] = useState<Record<number, boolean>>({});
+  const [showReview, setShowReview] = useState(true);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const status = account.extractionStatus;
@@ -184,6 +185,7 @@ export default function ExtractionPanel({
     });
     setSelectedBuildings(b);
     setApplied(false);
+    setShowReview(true); // expand on a fresh extraction
   }, [result]);
 
   async function start() {
@@ -293,6 +295,16 @@ export default function ExtractionPanel({
             </p>
           )}
 
+          <button
+            className="secondary"
+            style={{ marginBottom: showReview ? 10 : 0 }}
+            onClick={() => setShowReview((s) => !s)}
+          >
+            {showReview ? "▾ Hide extracted data" : "▸ Review & apply extracted data"}
+          </button>
+
+          {showReview && (
+          <>
           <div className="table-wrap">
             <table>
               <thead>
@@ -375,14 +387,18 @@ export default function ExtractionPanel({
 
           <div className="form-actions">
             <button className="primary" disabled={applying} onClick={apply}>
-              {applying ? "Applying…" : "Apply selected to lead"}
+              {applying
+                ? "Applying…"
+                : `Apply selected to ${account.stage === "CLIENT" ? "client" : "lead"}`}
             </button>
             {applied && (
               <span className="small" style={{ color: "var(--green)" }}>
-                Applied — review the Overview and Property tabs.
+                Applied — review the Overview tab.
               </span>
             )}
           </div>
+          </>
+          )}
         </>
       )}
     </div>

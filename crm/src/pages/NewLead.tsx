@@ -1,12 +1,15 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { uploadData } from "aws-amplify/storage";
 import { client, friendlyError, US_STATES, validateAccountFields } from "../lib/client";
 import { AddressAutocomplete } from "../lib/googlePlaces";
+import FileButton from "../components/FileButton";
 
 export default function NewLead() {
   const navigate = useNavigate();
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [stagedFiles, setStagedFiles] = useState<File[]>([]);
   const [form, setForm] = useState({
     type: "ASSOCIATION",
     name: "",
@@ -64,12 +67,41 @@ export default function NewLead() {
       source: form.source.trim() || undefined,
       notes: form.notes.trim() || undefined,
     });
-    setSaving(false);
     if (errors?.length || !data) {
+      setSaving(false);
       setError(friendlyError(new Error(errors?.[0]?.message), "Failed to create lead."));
       return;
     }
-    // Land on Documents so uploads (and AI extraction) are the next step.
+
+    // Upload any staged documents to the new account so OCR + AI extraction
+    // are ready when they land on the Documents tab.
+    for (const file of stagedFiles) {
+      try {
+        const { data: doc } = await client.models.Document.create({
+          entityType: "ACCOUNT",
+          entityId: data.id,
+          category: "OTHER",
+          name: file.name,
+          s3Key: "pending",
+          contentType: file.type,
+          sizeBytes: file.size,
+          ocrStatus: "PENDING",
+        });
+        if (!doc) continue;
+        const path = `documents/ACCOUNT/${data.id}/${doc.id}/${file.name}`;
+        await client.models.Document.update({ id: doc.id, s3Key: path });
+        await uploadData({
+          path,
+          data: file,
+          options: { contentType: file.type || undefined },
+        }).result;
+      } catch {
+        /* a failed upload shouldn't block lead creation */
+      }
+    }
+
+    setSaving(false);
+    // Land on Documents so OCR completes and AI extraction is the next step.
     navigate(`/accounts/${data.id}?tab=documents`);
   }
 
@@ -190,9 +222,58 @@ export default function NewLead() {
             <textarea rows={3} value={form.notes} onChange={set("notes")} />
           </div>
         </div>
+
+        <h3>Documents (optional)</h3>
+        <p className="muted small" style={{ marginTop: 0 }}>
+          Attach prior policy packets, budgets, or condo docs now. They're
+          OCR'd on the account, then AI extraction can auto-fill the details.
+        </p>
+        <div className="toolbar">
+          <FileButton
+            label="Add documents…"
+            multiple
+            onFiles={(files) =>
+              files &&
+              setStagedFiles((prev) => [...prev, ...Array.from(files)])
+            }
+          />
+        </div>
+        {stagedFiles.length > 0 && (
+          <div className="table-wrap" style={{ marginBottom: 4 }}>
+            <table>
+              <tbody>
+                {stagedFiles.map((f, i) => (
+                  <tr key={i}>
+                    <td>{f.name}</td>
+                    <td className="muted small">
+                      {Math.max(1, Math.round(f.size / 1024))} KB
+                    </td>
+                    <td style={{ width: 60 }}>
+                      <button
+                        className="danger"
+                        onClick={() =>
+                          setStagedFiles((prev) => prev.filter((_, j) => j !== i))
+                        }
+                      >
+                        Remove
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
         <div className="form-actions">
           <button className="primary" disabled={saving} onClick={save}>
-            {saving ? "Creating…" : "Create lead"}
+            {saving
+              ? stagedFiles.length
+                ? "Creating & uploading…"
+                : "Creating…"
+              : stagedFiles.length
+                ? `Create lead & upload ${stagedFiles.length} document${stagedFiles.length > 1 ? "s" : ""}`
+                : "Create lead"}
           </button>
           {error && <span className="error-text">{error}</span>}
         </div>
