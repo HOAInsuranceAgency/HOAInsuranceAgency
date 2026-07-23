@@ -2,6 +2,7 @@ import { type ClientSchema, a, defineData } from "@aws-amplify/backend";
 import { processDocument } from "../functions/process-document/resource";
 import { leadIntake } from "../functions/lead-intake/resource";
 import { teamAdmin } from "../functions/team-admin/resource";
+import { extractLead } from "../functions/extract-lead/resource";
 
 /**
  * HOA CRM data model.
@@ -50,6 +51,7 @@ const schema = a
       "OTHER",
     ]),
     OcrStatus: a.enum(["PENDING", "PROCESSING", "COMPLETE", "FAILED", "SKIPPED"]),
+    ExtractionStatus: a.enum(["PENDING", "PROCESSING", "COMPLETE", "FAILED"]),
     UserRole: a.enum(["ADMIN", "STAFF", "PRODUCER"]),
     // ISO construction classes
     ConstructionType: a.enum([
@@ -94,7 +96,16 @@ const schema = a
         coverPhotoKey: a.string(), // S3 keys under property-photos/
         aerialPhotoKey: a.string(),
         plotPlanKey: a.string(),
+        // ── AI document extraction ──
+        extractionStatus: a.ref("ExtractionStatus"),
+        aiExtraction: a.json(), // per-field values + confidence + evidence
+        extractionError: a.string(),
         buildings: a.hasMany("Building", "accountId"),
+        // Incumbent broker/agent currently servicing the account
+        currentAgent: a.string(),
+        // Incumbent policy expiration (drives lead renewal pipeline; for
+        // clients the bound Policy records are authoritative)
+        currentPolicyExpiration: a.date(),
         buildiumId: a.string(), // lineage from web lead forms / Buildium sync
         source: a.string(), // e.g. "website", "referral", "cold"
         notes: a.string(),
@@ -293,6 +304,14 @@ const schema = a
       .returns(a.json())
       .authorization((allow) => [allow.groups(["ADMIN"])])
       .handler(a.handler.function(teamAdmin)),
+
+    // ── AI extraction: kick off async document → datapoints extraction ──
+    startLeadExtraction: a
+      .mutation()
+      .arguments({ accountId: a.string().required() })
+      .returns(a.json())
+      .authorization((allow) => [allow.authenticated()])
+      .handler(a.handler.function(extractLead)),
   })
   .authorization((allow) => [
     // Placeholder privileges: any signed-in user has full access.
@@ -302,6 +321,8 @@ const schema = a
     allow.resource(processDocument),
     // The web-lead intake function creates Account records.
     allow.resource(leadIntake),
+    // The AI extraction function reads Documents and updates Accounts.
+    allow.resource(extractLead),
   ]);
 
 export type Schema = ClientSchema<typeof schema>;

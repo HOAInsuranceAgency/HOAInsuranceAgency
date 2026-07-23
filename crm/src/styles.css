@@ -183,6 +183,68 @@ tr.clickable:hover td { background: var(--blue-bg); }
   outline: 2px solid var(--accent);
   outline-offset: -1px;
 }
+
+/* ── Platform-styled selects (everywhere, incl. inline table selects) ── */
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 30px 8px 10px;
+  font-size: 14px;
+  font-family: inherit;
+  color: var(--text);
+  background: #fff
+    url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5 6 6.5 11 1.5' fill='none' stroke='%2364748b' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")
+    no-repeat right 10px center;
+  cursor: pointer;
+  transition: border-color 0.15s ease;
+}
+select:hover { border-color: var(--accent); }
+select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+td select { padding: 5px 26px 5px 8px; font-size: 13px; background-position: right 8px center; }
+
+/* ── Styled file pickers (native inputs hidden behind label buttons) ── */
+.file-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  background: #fff;
+  color: var(--accent-dark);
+  border: 1px dashed var(--accent);
+  border-radius: 6px;
+  padding: 8px 14px;
+  font-size: 13.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease;
+  user-select: none;
+}
+.file-btn:hover { background: var(--blue-bg); }
+.file-btn.disabled { opacity: 0.55; cursor: default; }
+.file-btn svg { flex-shrink: 0; }
+.file-btn input[type="file"] { display: none; }
+
+/* ── Sortable table headers ────────────────────────────────────────── */
+th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+th.sortable:hover { color: var(--accent-dark); }
+th.sortable .arrow { display: inline-block; width: 1em; color: var(--accent-dark); }
+
+/* ── Dashboard tiles & renewals ────────────────────────────────────── */
+.stat.clickable { cursor: pointer; transition: border-color 0.15s ease, box-shadow 0.15s ease; }
+.stat.clickable:hover { border-color: var(--accent); box-shadow: 0 2px 10px rgba(46,125,209,0.12); }
+.chip-row { display: flex; gap: 6px; }
+.chip-row button {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-size: 12.5px;
+  cursor: pointer;
+  color: var(--muted);
+}
+.chip-row button.on { border-color: var(--accent); color: var(--accent-dark); font-weight: 600; background: var(--blue-bg); }
+.days-badge { font-variant-numeric: tabular-nums; }
 .field.full { grid-column: 1 / -1; }
 .form-actions { margin-top: 16px; display: flex; gap: 10px; align-items: center; }
 
@@ -230,6 +292,11 @@ button.link { background: none; border: none; color: var(--accent-dark); font-si
 .ocr-search { margin-bottom: 10px; }
 .ocr-search input { width: 100%; max-width: 420px; }
 mark { background: #ffe58a; padding: 0 1px; }
+mark.ocr-current { background: #f79b32; color: #fff; border-radius: 2px; }
+.ocr-find { display: flex; align-items: center; gap: 6px; }
+.ocr-find input { flex: 1; max-width: 320px; }
+.ocr-find .ocr-count { font-size: 12.5px; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.ocr-find button { padding: 6px 10px; line-height: 1; }
 .ocr-table { margin-bottom: 12px; max-height: 320px; overflow: auto; }
 .ocr-table td { font-size: 13px; padding: 6px 8px; border: 1px solid var(--border); }
 

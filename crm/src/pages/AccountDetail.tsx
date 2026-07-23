@@ -1,12 +1,11 @@
 import { useEffect, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { uploadData, getUrl, remove } from "aws-amplify/storage";
 import {
   client,
   fmtDate,
   fmtMoney,
   friendlyError,
-  US_STATES,
   validateAccountFields,
   type Account,
   type Carrier,
@@ -20,20 +19,26 @@ import QuotesPanel, { commissionCell, termsSummary } from "../components/QuotesP
 import FilePreviewModal from "../components/FilePreview";
 import PropertyPanel from "../components/PropertyPanel";
 import FormsTab from "../components/FormsTab";
+import ExtractionPanel from "../components/ExtractionPanel";
 
-type Tab =
-  | "overview"
-  | "property"
-  | "quotes"
-  | "policies"
-  | "documents"
-  | "forms"
-  | "certificates";
+type Tab = "overview" | "quotes" | "policies" | "documents" | "certificates";
+
+const VALID_TABS: Tab[] = [
+  "overview",
+  "quotes",
+  "policies",
+  "documents",
+  "certificates",
+];
 
 export default function AccountDetail({ profile }: { profile: UserProfile }) {
   const { id } = useParams<{ id: string }>();
+  const [searchParams] = useSearchParams();
+  const initialTab = searchParams.get("tab") as Tab | null;
   const [account, setAccount] = useState<Account | null>(null);
-  const [tab, setTab] = useState<Tab>("overview");
+  const [tab, setTab] = useState<Tab>(
+    initialTab && VALID_TABS.includes(initialTab) ? initialTab : "overview"
+  );
   const [notFound, setNotFound] = useState(false);
 
   useEffect(() => {
@@ -64,11 +69,9 @@ export default function AccountDetail({ profile }: { profile: UserProfile }) {
         {(
           [
             ["overview", "Overview"],
-            ["property", "Property"],
             ["quotes", "Quotes"],
             ["policies", "Policies"],
             ["documents", "Documents"],
-            ["forms", "Forms"],
             ["certificates", "Certificates"],
           ] as [Tab, string][]
         ).map(([t, label]) => (
@@ -85,13 +88,10 @@ export default function AccountDetail({ profile }: { profile: UserProfile }) {
       {tab === "overview" && (
         <>
           <OverviewTab account={account} onChange={setAccount} />
+          <PropertyPanel account={account} onChange={setAccount} />
           {account.stage === "LEAD" && <DeleteLeadZone account={account} />}
         </>
       )}
-      {tab === "property" && (
-        <PropertyPanel account={account} onChange={setAccount} />
-      )}
-      {tab === "forms" && <FormsTab account={account} />}
       {tab === "quotes" && (
         <div className="card">
           <QuotesPanel account={account} onAccountChange={setAccount} />
@@ -99,9 +99,13 @@ export default function AccountDetail({ profile }: { profile: UserProfile }) {
       )}
       {tab === "policies" && <PoliciesTab accountId={account.id} />}
       {tab === "documents" && (
-        <div className="card">
-          <DocumentsPanel entityType="ACCOUNT" entityId={account.id} />
-        </div>
+        <>
+          <div className="card">
+            <DocumentsPanel entityType="ACCOUNT" entityId={account.id} />
+          </div>
+          <ExtractionPanel account={account} onChange={setAccount} />
+          <FormsTab account={account} />
+        </>
       )}
       {tab === "certificates" && (
         <CertificatesTab account={account} profile={profile} />
@@ -123,13 +127,9 @@ function OverviewTab({
     contactLastName: account.contactLastName ?? "",
     contactEmail: account.contactEmail ?? "",
     contactPhone: account.contactPhone ?? "",
-    address: account.address ?? "",
-    city: account.city ?? "",
-    state: account.state ?? "",
-    zip: account.zip ?? "",
-    unitCount: account.unitCount?.toString() ?? "",
-    yearBuilt: account.yearBuilt?.toString() ?? "",
     totalInsuredValue: account.totalInsuredValue?.toString() ?? "",
+    currentAgent: account.currentAgent ?? "",
+    currentPolicyExpiration: account.currentPolicyExpiration ?? "",
     source: account.source ?? "",
     notes: account.notes ?? "",
   });
@@ -157,15 +157,11 @@ function OverviewTab({
       contactLastName: form.contactLastName.trim() || null,
       contactEmail: form.contactEmail.trim() || null,
       contactPhone: form.contactPhone.trim() || null,
-      address: form.address.trim() || null,
-      city: form.city.trim() || null,
-      state: form.state || null,
-      zip: form.zip.trim() || null,
-      unitCount: form.unitCount ? Number(form.unitCount) : null,
-      yearBuilt: form.yearBuilt ? Number(form.yearBuilt) : null,
       totalInsuredValue: form.totalInsuredValue
         ? Number(form.totalInsuredValue)
         : null,
+      currentAgent: form.currentAgent.trim() || null,
+      currentPolicyExpiration: form.currentPolicyExpiration || null,
       source: form.source.trim() || null,
       notes: form.notes.trim() || null,
     });
@@ -203,40 +199,23 @@ function OverviewTab({
           <input value={form.contactPhone} onChange={set("contactPhone")} />
         </div>
         <div className="field">
-          <label>Street address</label>
-          <input value={form.address} onChange={set("address")} />
-        </div>
-        <div className="field">
-          <label>City</label>
-          <input value={form.city} onChange={set("city")} />
-        </div>
-        <div className="field">
-          <label>State</label>
-          <select value={form.state} onChange={set("state")}>
-            <option value="">—</option>
-            {US_STATES.map((s) => (
-              <option key={s}>{s}</option>
-            ))}
-          </select>
-        </div>
-        <div className="field">
-          <label>ZIP</label>
-          <input value={form.zip} onChange={set("zip")} />
-        </div>
-        <div className="field">
-          <label>Unit count</label>
-          <input type="number" value={form.unitCount} onChange={set("unitCount")} />
-        </div>
-        <div className="field">
-          <label>Year built</label>
-          <input type="number" value={form.yearBuilt} onChange={set("yearBuilt")} />
-        </div>
-        <div className="field">
           <label>Total insured value ($)</label>
           <input
             type="number"
             value={form.totalInsuredValue}
             onChange={set("totalInsuredValue")}
+          />
+        </div>
+        <div className="field">
+          <label>Current agent / broker</label>
+          <input value={form.currentAgent} onChange={set("currentAgent")} />
+        </div>
+        <div className="field">
+          <label>Current policy expiration</label>
+          <input
+            type="date"
+            value={form.currentPolicyExpiration}
+            onChange={set("currentPolicyExpiration")}
           />
         </div>
         <div className="field">

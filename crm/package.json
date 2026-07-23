@@ -21,13 +21,16 @@
     "react-router-dom": "^7.1.0"
   },
   "devDependencies": {
+    "@anthropic-ai/sdk": "^0.113.0",
     "@aws-amplify/backend": "^1.14.0",
     "@aws-amplify/backend-cli": "^1.5.0",
     "@aws-sdk/client-cognito-identity-provider": "^3.1093.0",
+    "@aws-sdk/client-lambda": "^3.1093.0",
     "@aws-sdk/client-secrets-manager": "^3.1093.0",
     "@aws-sdk/client-sesv2": "^3.1093.0",
     "@aws-sdk/client-textract": "^3.750.0",
     "@types/aws-lambda": "^8.10.145",
+    "@types/google.maps": "^3.65.3",
     "@types/node": "^26.1.1",
     "@types/react": "^18.3.27",
     "@types/react-dom": "^18.3.7",

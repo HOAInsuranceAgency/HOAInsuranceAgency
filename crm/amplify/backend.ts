@@ -7,6 +7,7 @@ import { storage } from "./storage/resource";
 import { processDocument } from "./functions/process-document/resource";
 import { leadIntake } from "./functions/lead-intake/resource";
 import { teamAdmin } from "./functions/team-admin/resource";
+import { extractLead } from "./functions/extract-lead/resource";
 import {
   magicLinkDefine,
   magicLinkCreate,
@@ -20,6 +21,7 @@ const backend = defineBackend({
   processDocument,
   leadIntake,
   teamAdmin,
+  extractLead,
   magicLinkDefine,
   magicLinkCreate,
   magicLinkVerify,
@@ -29,6 +31,17 @@ const backend = defineBackend({
 backend.processDocument.resources.lambda.addToRolePolicy(
   new PolicyStatement({
     actions: ["textract:StartDocumentAnalysis", "textract:GetDocumentAnalysis"],
+    resources: ["*"],
+  })
+);
+
+// The extraction resolver re-invokes itself asynchronously (the actual
+// Claude call outlives AppSync's 30s resolver limit). Wildcard resource:
+// a self-referencing ARN would create a circular CFN dependency between
+// the function and its role.
+backend.extractLead.resources.lambda.addToRolePolicy(
+  new PolicyStatement({
+    actions: ["lambda:InvokeFunction"],
     resources: ["*"],
   })
 );

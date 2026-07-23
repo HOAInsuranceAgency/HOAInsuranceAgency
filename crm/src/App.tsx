@@ -13,7 +13,8 @@ import CarrierDetail from "./pages/CarrierDetail";
 import Onboarding from "./pages/Onboarding";
 import Settings from "./pages/Settings";
 import DocumentSearch from "./pages/DocumentSearch";
-import Team from "./pages/Team";
+import QuotesList from "./pages/QuotesList";
+import PoliciesList from "./pages/PoliciesList";
 
 export default function App() {
   return (
@@ -149,15 +150,6 @@ function IconGear() {
     </svg>
   );
 }
-function IconUserPlus() {
-  return (
-    <svg {...iconProps}>
-      <circle cx="9" cy="8" r="3.5" />
-      <path d="M2.5 20c0-3.5 3-5.5 6.5-5.5s6.5 2 6.5 5.5" />
-      <path d="M19 8v6M16 11h6" />
-    </svg>
-  );
-}
 function IconMenu() {
   return (
     <svg {...iconProps} width={22} height={22}>
@@ -208,12 +200,6 @@ function Shell({ profile, signOut }: { profile: UserProfile; signOut: () => void
               <span>{item.label}</span>
             </NavLink>
           ))}
-          {profile.role === "ADMIN" && (
-            <NavLink to="/team">
-              <IconUserPlus />
-              <span>Team</span>
-            </NavLink>
-          )}
         </nav>
         <div className="spacer" />
         <div className="user">
@@ -233,11 +219,10 @@ function Shell({ profile, signOut }: { profile: UserProfile; signOut: () => void
           <Route path="/accounts/:id" element={<AccountDetail profile={profile} />} />
           <Route path="/carriers" element={<Carriers />} />
           <Route path="/carriers/:id" element={<CarrierDetail />} />
+          <Route path="/quotes" element={<QuotesList />} />
+          <Route path="/policies" element={<PoliciesList />} />
           <Route path="/documents" element={<DocumentSearch />} />
-          <Route path="/settings" element={<Settings />} />
-          {profile.role === "ADMIN" && (
-            <Route path="/team" element={<Team profile={profile} />} />
-          )}
+          <Route path="/settings" element={<Settings profile={profile} />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </main>
