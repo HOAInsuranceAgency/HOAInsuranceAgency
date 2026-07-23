@@ -16,9 +16,19 @@ import {
 } from "../lib/client";
 import { fillAcord25 } from "../lib/acord";
 import DocumentsPanel from "../components/DocumentsPanel";
-import QuotesPanel from "../components/QuotesPanel";
+import QuotesPanel, { commissionCell, termsSummary } from "../components/QuotesPanel";
+import FilePreviewModal from "../components/FilePreview";
+import PropertyPanel from "../components/PropertyPanel";
+import FormsTab from "../components/FormsTab";
 
-type Tab = "overview" | "quotes" | "policies" | "documents" | "certificates";
+type Tab =
+  | "overview"
+  | "property"
+  | "quotes"
+  | "policies"
+  | "documents"
+  | "forms"
+  | "certificates";
 
 export default function AccountDetail({ profile }: { profile: UserProfile }) {
   const { id } = useParams<{ id: string }>();
@@ -54,9 +64,11 @@ export default function AccountDetail({ profile }: { profile: UserProfile }) {
         {(
           [
             ["overview", "Overview"],
+            ["property", "Property"],
             ["quotes", "Quotes"],
             ["policies", "Policies"],
             ["documents", "Documents"],
+            ["forms", "Forms"],
             ["certificates", "Certificates"],
           ] as [Tab, string][]
         ).map(([t, label]) => (
@@ -76,6 +88,10 @@ export default function AccountDetail({ profile }: { profile: UserProfile }) {
           {account.stage === "LEAD" && <DeleteLeadZone account={account} />}
         </>
       )}
+      {tab === "property" && (
+        <PropertyPanel account={account} onChange={setAccount} />
+      )}
+      {tab === "forms" && <FormsTab account={account} />}
       {tab === "quotes" && (
         <div className="card">
           <QuotesPanel account={account} onAccountChange={setAccount} />
@@ -358,6 +374,8 @@ function PoliciesTab({ accountId }: { accountId: string }) {
                 <th>Policy #</th>
                 <th>Lines</th>
                 <th>Premium</th>
+                <th>Commission</th>
+                <th>Terms</th>
                 <th>Effective</th>
                 <th>Expires</th>
                 <th>Status</th>
@@ -380,6 +398,8 @@ function PoliciesTab({ accountId }: { accountId: string }) {
                   </td>
                   <td className="small">{(p.lines ?? []).filter(Boolean).join(", ") || "—"}</td>
                   <td>{fmtMoney(p.premium)}</td>
+                  <td className="small">{commissionCell(p)}</td>
+                  <td className="small">{termsSummary(p)}</td>
                   <td>{fmtDate(p.effectiveDate)}</td>
                   <td>{fmtDate(p.expirationDate)}</td>
                   <td>
@@ -423,6 +443,7 @@ function CertificatesTab({
   const [generating, setGenerating] = useState<string | null>(null);
   const [genNote, setGenNote] = useState("");
   const [error, setError] = useState("");
+  const [previewCert, setPreviewCert] = useState<Certificate | null>(null);
 
   useEffect(() => {
     client.models.Certificate.list({
@@ -615,6 +636,9 @@ function CertificatesTab({
                       <td style={{ whiteSpace: "nowrap" }}>
                         {c.s3Key ? (
                           <>
+                            <button className="link" onClick={() => setPreviewCert(c)}>
+                              Preview
+                            </button>
                             <button className="link" onClick={() => downloadPdf(c)}>
                               Download
                             </button>
@@ -643,6 +667,13 @@ function CertificatesTab({
             </div>
           )}
         </>
+      )}
+      {previewCert?.s3Key && (
+        <FilePreviewModal
+          s3Key={previewCert.s3Key}
+          name={`ACORD 25 — ${previewCert.holderName}.pdf`}
+          onClose={() => setPreviewCert(null)}
+        />
       )}
     </div>
   );

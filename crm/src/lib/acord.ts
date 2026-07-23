@@ -18,6 +18,48 @@ import type { Account, Carrier, Certificate, Policy } from "./client";
 
 export const ACORD25_TEMPLATE_PATH = "templates/acord25.pdf";
 
+/** Registry of supported ACORD templates. Adding a form = one entry here
+ * plus a mapping (see buildAppFormValues). */
+export interface AcordFormDef {
+  key: string;
+  path: string;
+  label: string;
+  note: string;
+}
+
+export const ACORD_FORMS: AcordFormDef[] = [
+  {
+    key: "acord25",
+    path: ACORD25_TEMPLATE_PATH,
+    label: "ACORD 25 — Certificate of Liability Insurance",
+    note: "Used by the Certificates tab on client accounts.",
+  },
+  {
+    key: "acord125",
+    path: "templates/acord125.pdf",
+    label: "ACORD 125 — Commercial Insurance Application",
+    note: "Generated from an account's Forms tab for carrier submissions.",
+  },
+  {
+    key: "acord126",
+    path: "templates/acord126.pdf",
+    label: "ACORD 126 — Commercial General Liability Section",
+    note: "Generated from an account's Forms tab for carrier submissions.",
+  },
+  {
+    key: "acord140",
+    path: "templates/acord140.pdf",
+    label: "ACORD 140 — Property Section",
+    note: "Generated from an account's Forms tab for carrier submissions.",
+  },
+  {
+    key: "acord151",
+    path: "templates/acord151.pdf",
+    label: "ACORD 151",
+    note: "Generated from an account's Forms tab for carrier submissions.",
+  },
+];
+
 type FieldValues = Record<string, { candidates: string[]; value: string }>;
 
 export interface FillResult {
@@ -42,10 +84,26 @@ function buildAcord25Values(
       value: new Date().toLocaleDateString("en-US"),
     },
 
-    // ── Producer (agency) block ──
+    // ── Producer (agency) block — split address fields ──
     producer: {
       candidates: ["Producer_FullName_A", "PRODUCER", "Producer"],
-      value: `${AGENCY.name}\n${AGENCY.addressLine1}\n${AGENCY.city}, ${AGENCY.state} ${AGENCY.zip}`,
+      value: AGENCY.name,
+    },
+    producerAddress1: {
+      candidates: ["Producer_MailingAddress_LineOne_A"],
+      value: AGENCY.addressLine1,
+    },
+    producerCity: {
+      candidates: ["Producer_MailingAddress_CityName_A"],
+      value: AGENCY.city,
+    },
+    producerState: {
+      candidates: ["Producer_MailingAddress_StateOrProvinceCode_A"],
+      value: AGENCY.state,
+    },
+    producerZip: {
+      candidates: ["Producer_MailingAddress_PostalCode_A"],
+      value: AGENCY.zip,
     },
     producerContact: {
       candidates: ["Producer_ContactPerson_FullName_A", "CONTACT NAME:"],
@@ -63,17 +121,26 @@ function buildAcord25Values(
       value: AGENCY.email,
     },
 
-    // ── Insured block ──
+    // ── Insured block — split address fields ──
     insured: {
       candidates: ["NamedInsured_FullName_A", "INSURED", "Insured"],
-      value: [
-        account.name,
-        account.address,
-        [account.city, account.state].filter(Boolean).join(", ") +
-          (account.zip ? ` ${account.zip}` : ""),
-      ]
-        .filter(Boolean)
-        .join("\n"),
+      value: account.name,
+    },
+    insuredAddress1: {
+      candidates: ["NamedInsured_MailingAddress_LineOne_A"],
+      value: account.address ?? "",
+    },
+    insuredCity: {
+      candidates: ["NamedInsured_MailingAddress_CityName_A"],
+      value: account.city ?? "",
+    },
+    insuredState: {
+      candidates: ["NamedInsured_MailingAddress_StateOrProvinceCode_A"],
+      value: account.state ?? "",
+    },
+    insuredZip: {
+      candidates: ["NamedInsured_MailingAddress_PostalCode_A"],
+      value: account.zip ?? "",
     },
 
     // ── Certificate holder ──
@@ -83,12 +150,17 @@ function buildAcord25Values(
         "CERTIFICATE HOLDER",
         "CertificateHolder",
       ],
-      value: [cert.holderName, cert.holderAddress].filter(Boolean).join("\n"),
+      value: cert.holderName,
+    },
+    holderAddress1: {
+      candidates: ["CertificateHolder_MailingAddress_LineOne_A"],
+      value: cert.holderAddress ?? "",
     },
 
-    // ── Description of operations ──
+    // ── Description of operations / remarks ──
     description: {
       candidates: [
+        "CertificateOfLiabilityInsurance_ACORDForm_RemarkText_A",
         "OperationsDescription_A",
         "DescriptionOfOperations_A",
         "DESCRIPTION OF OPERATIONS / LOCATIONS / VEHICLES",
@@ -101,6 +173,8 @@ function buildAcord25Values(
   const certPolicies = policies.filter((p) => (cert.policyIds ?? []).includes(p.id));
   const carrierIds = [...new Set(certPolicies.map((p) => p.carrierId).filter(Boolean))];
   const letters = ["A", "B", "C", "D", "E", "F"];
+  const letterFor = (carrierId: string | null | undefined): string =>
+    carrierId ? letters[carrierIds.indexOf(carrierId)] ?? "" : "";
   carrierIds.slice(0, 6).forEach((cid, i) => {
     const carrier = carriers.find((c) => c.id === cid);
     if (!carrier) return;
@@ -128,24 +202,42 @@ function buildAcord25Values(
 
   const gl = rowFor("liability");
   if (gl) {
+    values.glInsurerLetter = {
+      candidates: ["GeneralLiability_InsurerLetterCode_A"],
+      value: letterFor(gl.carrierId),
+    };
     values.glPolicyNumber = {
-      candidates: ["GeneralLiability_PolicyNumberIdentifier_A"],
+      candidates: [
+        "Policy_GeneralLiability_PolicyNumberIdentifier_A",
+        "GeneralLiability_PolicyNumberIdentifier_A",
+      ],
       value: gl.policyNumber ?? "",
     };
     values.glEffective = {
-      candidates: ["GeneralLiability_PolicyEffectiveDate_A"],
+      candidates: [
+        "Policy_GeneralLiability_EffectiveDate_A",
+        "GeneralLiability_PolicyEffectiveDate_A",
+      ],
       value: fmtUs(gl.effectiveDate),
     };
     values.glExpiration = {
-      candidates: ["GeneralLiability_PolicyExpirationDate_A"],
+      candidates: [
+        "Policy_GeneralLiability_ExpirationDate_A",
+        "GeneralLiability_PolicyExpirationDate_A",
+      ],
       value: fmtUs(gl.expirationDate),
     };
   }
 
   const umbrella = rowFor("umbrella");
   if (umbrella) {
+    values.umbInsurerLetter = {
+      candidates: ["ExcessUmbrella_InsurerLetterCode_A"],
+      value: letterFor(umbrella.carrierId),
+    };
     values.umbPolicyNumber = {
       candidates: [
+        "Policy_ExcessLiability_PolicyNumberIdentifier_A",
         "ExcessUmbrella_PolicyNumberIdentifier_A",
         "Umbrella_PolicyNumberIdentifier_A",
       ],
@@ -153,6 +245,7 @@ function buildAcord25Values(
     };
     values.umbEffective = {
       candidates: [
+        "Policy_ExcessLiability_EffectiveDate_A",
         "ExcessUmbrella_PolicyEffectiveDate_A",
         "Umbrella_PolicyEffectiveDate_A",
       ],
@@ -160,6 +253,7 @@ function buildAcord25Values(
     };
     values.umbExpiration = {
       candidates: [
+        "Policy_ExcessLiability_ExpirationDate_A",
         "ExcessUmbrella_PolicyExpirationDate_A",
         "Umbrella_PolicyExpirationDate_A",
       ],
@@ -167,11 +261,41 @@ function buildAcord25Values(
     };
   }
 
-  // Property / other lines go in the OTHER row.
-  const other = certPolicies.find((p) => p !== gl && p !== umbrella);
+  const wc = rowFor("workers");
+  if (wc) {
+    values.wcInsurerLetter = {
+      candidates: ["WorkersCompensationEmployersLiability_InsurerLetterCode_A"],
+      value: letterFor(wc.carrierId),
+    };
+    values.wcPolicyNumber = {
+      candidates: [
+        "Policy_WorkersCompensationAndEmployersLiability_PolicyNumberIdentifier_A",
+      ],
+      value: wc.policyNumber ?? "",
+    };
+    values.wcEffective = {
+      candidates: ["Policy_WorkersCompensationAndEmployersLiability_EffectiveDate_A"],
+      value: fmtUs(wc.effectiveDate),
+    };
+    values.wcExpiration = {
+      candidates: ["Policy_WorkersCompensationAndEmployersLiability_ExpirationDate_A"],
+      value: fmtUs(wc.expirationDate),
+    };
+  }
+
+  // Property / D&O / crime / flood etc. go in the OTHER row.
+  const other = certPolicies.find((p) => p !== gl && p !== umbrella && p !== wc);
   if (other) {
+    values.otherInsurerLetter = {
+      candidates: ["OtherPolicy_InsurerLetterCode_A"],
+      value: letterFor(other.carrierId),
+    };
     values.otherPolicyDescription = {
-      candidates: ["OtherPolicy_PolicyDescription_A", "OtherPolicy_CoverageDescription_A"],
+      candidates: [
+        "OtherPolicy_OtherPolicyDescription_A",
+        "OtherPolicy_PolicyDescription_A",
+        "OtherPolicy_CoverageDescription_A",
+      ],
       value: (other.lines ?? []).filter(Boolean).join(", "),
     };
     values.otherPolicyNumber = {
@@ -203,25 +327,23 @@ export async function listTemplateFields(path: string): Promise<string[]> {
   const pdf = await PDFDocument.load(await fetchTemplate(path), {
     ignoreEncryption: true,
   });
+  // instanceof, not constructor.name — minified builds mangle class names.
+  const typeOf = (f: unknown) =>
+    f instanceof PDFTextField ? "text" : f instanceof PDFCheckBox ? "checkbox" : "other";
   return pdf
     .getForm()
     .getFields()
-    .map((f) => `${f.getName()}  (${f.constructor.name.replace("PDF", "")})`);
+    .map((f) => `${f.getName()}  (${typeOf(f)})`);
 }
 
-export async function fillAcord25(
-  account: Account,
-  cert: Certificate,
-  policies: Policy[],
-  carriers: Carrier[]
-): Promise<FillResult> {
-  const pdf = await PDFDocument.load(await fetchTemplate(ACORD25_TEMPLATE_PATH), {
+/** Shared fill core: first matching candidate wins; misses are reported. */
+async function fillTemplate(path: string, values: FieldValues): Promise<FillResult> {
+  const pdf = await PDFDocument.load(await fetchTemplate(path), {
     ignoreEncryption: true,
   });
   const form = pdf.getForm();
   const fieldNames = new Set(form.getFields().map((f) => f.getName()));
 
-  const values = buildAcord25Values(account, cert, policies, carriers);
   const filled: string[] = [];
   const missing: string[] = [];
 
@@ -245,4 +367,213 @@ export async function fillAcord25(
   // Deliberately NOT flattened — the PDF stays editable for manual touch-ups.
   const bytes = await pdf.save();
   return { bytes, filled, missing };
+}
+
+export async function fillAcord25(
+  account: Account,
+  cert: Certificate,
+  policies: Policy[],
+  carriers: Carrier[]
+): Promise<FillResult> {
+  return fillTemplate(
+    ACORD25_TEMPLATE_PATH,
+    buildAcord25Values(account, cert, policies, carriers)
+  );
+}
+
+// ── Carrier-submission application forms (125 / 126 / 140 / 151) ──────
+
+const CONSTRUCTION_LABELS: Record<string, string> = {
+  FRAME: "Frame",
+  JOISTED_MASONRY: "Joisted Masonry",
+  NON_COMBUSTIBLE: "Non-Combustible",
+  MASONRY_NON_COMBUSTIBLE: "Masonry Non-Combustible",
+  MODIFIED_FIRE_RESISTIVE: "Modified Fire Resistive",
+  FIRE_RESISTIVE: "Fire Resistive",
+};
+
+export interface BuildingInfo {
+  label?: string | null;
+  sqft?: number | null;
+}
+
+/**
+ * Shared applicant/producer values for the application-section forms.
+ * The producer/insured blocks follow the same eForm naming convention as
+ * the ACORD 25, so they're high-confidence; form-specific fields carry
+ * best-effort candidates — refine them via Settings → Inspect fields
+ * exactly like the 25 (misses are reported after each generation).
+ */
+function buildAppFormValues(
+  formKey: string,
+  account: Account,
+  buildings: BuildingInfo[]
+): FieldValues {
+  const totalSqft = buildings.reduce((s, b) => s + (b.sqft ?? 0), 0);
+
+  const values: FieldValues = {
+    date: {
+      candidates: ["Form_CompletionDate_A", "DATE", "Date"],
+      value: new Date().toLocaleDateString("en-US"),
+    },
+    producer: {
+      candidates: ["Producer_FullName_A", "PRODUCER"],
+      value: AGENCY.name,
+    },
+    producerAddress1: {
+      candidates: ["Producer_MailingAddress_LineOne_A"],
+      value: AGENCY.addressLine1,
+    },
+    producerCity: {
+      candidates: ["Producer_MailingAddress_CityName_A"],
+      value: AGENCY.city,
+    },
+    producerState: {
+      candidates: ["Producer_MailingAddress_StateOrProvinceCode_A"],
+      value: AGENCY.state,
+    },
+    producerZip: {
+      candidates: ["Producer_MailingAddress_PostalCode_A"],
+      value: AGENCY.zip,
+    },
+    producerPhone: {
+      candidates: [
+        "Producer_ContactPerson_PhoneNumber_A",
+        "Producer_PhoneNumber_A",
+      ],
+      value: AGENCY.phone,
+    },
+    insured: {
+      candidates: [
+        "NamedInsured_FullName_A",
+        "Applicant_FullName_A",
+        "ApplicantInformation_NamedInsured_FullName_A",
+      ],
+      value: account.name,
+    },
+    insuredAddress1: {
+      candidates: [
+        "NamedInsured_MailingAddress_LineOne_A",
+        "Applicant_MailingAddress_LineOne_A",
+      ],
+      value: account.address ?? "",
+    },
+    insuredCity: {
+      candidates: [
+        "NamedInsured_MailingAddress_CityName_A",
+        "Applicant_MailingAddress_CityName_A",
+      ],
+      value: account.city ?? "",
+    },
+    insuredState: {
+      candidates: [
+        "NamedInsured_MailingAddress_StateOrProvinceCode_A",
+        "Applicant_MailingAddress_StateOrProvinceCode_A",
+      ],
+      value: account.state ?? "",
+    },
+    insuredZip: {
+      candidates: [
+        "NamedInsured_MailingAddress_PostalCode_A",
+        "Applicant_MailingAddress_PostalCode_A",
+      ],
+      value: account.zip ?? "",
+    },
+    insuredPhone: {
+      candidates: [
+        "NamedInsured_Primary_PhoneNumber_A",
+        "Applicant_BusinessPhoneNumber_A",
+      ],
+      value: account.contactPhone ?? "",
+    },
+    insuredEmail: {
+      candidates: [
+        "NamedInsured_Primary_EmailAddress_A",
+        "Applicant_EmailAddress_A",
+      ],
+      value: account.contactEmail ?? "",
+    },
+  };
+
+  if (formKey === "acord140") {
+    // Property section — premises/building details.
+    Object.assign(values, {
+      premisesAddress: {
+        candidates: ["Premises_PhysicalAddress_LineOne_A", "PremisesInformation_Address_LineOne_A"],
+        value: account.address ?? "",
+      },
+      construction: {
+        candidates: [
+          "Construction_ConstructionTypeCode_A",
+          "PremisesInformation_ConstructionTypeCode_A",
+          "Building_ConstructionTypeDescription_A",
+        ],
+        value: account.constructionType
+          ? CONSTRUCTION_LABELS[account.constructionType] ?? ""
+          : "",
+      },
+      yearBuilt: {
+        candidates: [
+          "Construction_BuildingYearBuiltDate_A",
+          "PremisesInformation_YearBuilt_A",
+        ],
+        value: account.yearBuilt?.toString() ?? "",
+      },
+      stories: {
+        candidates: [
+          "Construction_BuildingStoriesAboveGradeCount_A",
+          "PremisesInformation_NumberOfStoriesCount_A",
+        ],
+        value: account.stories?.toString() ?? "",
+      },
+      totalArea: {
+        candidates: [
+          "Construction_BuildingAreaSquareFeetCount_A",
+          "PremisesInformation_TotalAreaSquareFeet_A",
+        ],
+        value: totalSqft ? totalSqft.toString() : "",
+      },
+      roofYear: {
+        candidates: ["BuildingImprovement_RoofingImprovementYear_A"],
+        value: account.roofUpdatedYear?.toString() ?? "",
+      },
+      heatingYear: {
+        candidates: ["BuildingImprovement_HeatingImprovementYear_A"],
+        value: account.hvacUpdatedYear?.toString() ?? "",
+      },
+      wiringYear: {
+        candidates: ["BuildingImprovement_WiringImprovementYear_A"],
+        value: account.electricalUpdatedYear?.toString() ?? "",
+      },
+      plumbingYear: {
+        candidates: ["BuildingImprovement_PlumbingImprovementYear_A"],
+        value: account.plumbingUpdatedYear?.toString() ?? "",
+      },
+    } satisfies FieldValues);
+  }
+
+  if (formKey === "acord125") {
+    Object.assign(values, {
+      natureOfBusiness: {
+        candidates: [
+          "NatureOfBusiness_Description_A",
+          "BusinessInformation_NatureOfBusinessDescription_A",
+        ],
+        value:
+          account.type === "ASSOCIATION"
+            ? "Condominium / Homeowners Association"
+            : "",
+      },
+    } satisfies FieldValues);
+  }
+
+  return values;
+}
+
+export async function fillAcordApp(
+  form: AcordFormDef,
+  account: Account,
+  buildings: BuildingInfo[]
+): Promise<FillResult> {
+  return fillTemplate(form.path, buildAppFormValues(form.key, account, buildings));
 }

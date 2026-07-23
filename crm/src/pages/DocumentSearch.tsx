@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { getUrl } from "aws-amplify/storage";
 import { client, fmtDate, type CrmDocument } from "../lib/client";
+import FilePreviewModal, { canPreview } from "../components/FilePreview";
 
 /**
  * Global "where is that document?" search — matches file names and OCR'd
@@ -13,6 +14,7 @@ export default function DocumentSearch() {
   const [results, setResults] = useState<CrmDocument[] | null>(null);
   const [searching, setSearching] = useState(false);
   const [error, setError] = useState("");
+  const [previewDoc, setPreviewDoc] = useState<CrmDocument | null>(null);
 
   async function search() {
     const q = query.trim();
@@ -127,7 +129,12 @@ export default function DocumentSearch() {
                       </td>
                       <td>{entityLink(d)}</td>
                       <td className="small">{fmtDate(d.createdAt?.slice(0, 10))}</td>
-                      <td>
+                      <td style={{ whiteSpace: "nowrap" }}>
+                        {canPreview(d.name) && (
+                          <button className="link" onClick={() => setPreviewDoc(d)}>
+                            Preview
+                          </button>
+                        )}
                         <button className="link" onClick={() => download(d)}>
                           Download
                         </button>
@@ -139,6 +146,13 @@ export default function DocumentSearch() {
             </div>
           )}
         </div>
+      )}
+      {previewDoc && (
+        <FilePreviewModal
+          s3Key={previewDoc.s3Key}
+          name={previewDoc.name}
+          onClose={() => setPreviewDoc(null)}
+        />
       )}
     </>
   );

@@ -61,6 +61,7 @@ function CarrierForm({
     primaryUnderwriterPhone: carrier.primaryUnderwriterPhone ?? "",
     states: (carrier.states ?? []).filter((s): s is string => !!s),
     naicCode: carrier.naicCode ?? "",
+    standardCommissionPct: carrier.standardCommissionPct?.toString() ?? "",
     notes: carrier.notes ?? "",
   });
   const [saving, setSaving] = useState(false);
@@ -100,6 +101,9 @@ function CarrierForm({
       primaryUnderwriterPhone: form.primaryUnderwriterPhone.trim() || null,
       states: form.states,
       naicCode: form.naicCode.trim() || null,
+      standardCommissionPct: form.standardCommissionPct
+        ? Number(form.standardCommissionPct)
+        : null,
       notes: form.notes.trim() || null,
     });
     setSaving(false);
@@ -139,6 +143,17 @@ function CarrierForm({
         <div className="field">
           <label>NAIC code</label>
           <input value={form.naicCode} onChange={set("naicCode")} />
+        </div>
+        <div className="field">
+          <label>Standard commission % (autofills new quotes)</label>
+          <input
+            type="number"
+            step="0.1"
+            min={0}
+            max={100}
+            value={form.standardCommissionPct}
+            onChange={set("standardCommissionPct")}
+          />
         </div>
         <div className="field">
           <label>Primary contact</label>

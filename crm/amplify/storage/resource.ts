@@ -33,6 +33,17 @@ export const storage = defineStorage({
       allow.authenticated.to(["read", "write", "delete"]),
       allow.groups(ALL_GROUPS).to(["read", "write", "delete"]),
     ],
+    // Generated ACORD submission forms — outside documents/ so the OCR
+    // trigger doesn't re-read our own output.
+    "generated/*": [
+      allow.authenticated.to(["read", "write", "delete"]),
+      allow.groups(ALL_GROUPS).to(["read", "write", "delete"]),
+    ],
+    // Property photos (cover, aerial, plot plan) — no OCR.
+    "property-photos/*": [
+      allow.authenticated.to(["read", "write", "delete"]),
+      allow.groups(ALL_GROUPS).to(["read", "write", "delete"]),
+    ],
   }),
   triggers: {
     onUpload: processDocument,
