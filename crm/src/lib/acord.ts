@@ -42,10 +42,26 @@ function buildAcord25Values(
       value: new Date().toLocaleDateString("en-US"),
     },
 
-    // ── Producer (agency) block ──
+    // ── Producer (agency) block — split address fields ──
     producer: {
       candidates: ["Producer_FullName_A", "PRODUCER", "Producer"],
-      value: `${AGENCY.name}\n${AGENCY.addressLine1}\n${AGENCY.city}, ${AGENCY.state} ${AGENCY.zip}`,
+      value: AGENCY.name,
+    },
+    producerAddress1: {
+      candidates: ["Producer_MailingAddress_LineOne_A"],
+      value: AGENCY.addressLine1,
+    },
+    producerCity: {
+      candidates: ["Producer_MailingAddress_CityName_A"],
+      value: AGENCY.city,
+    },
+    producerState: {
+      candidates: ["Producer_MailingAddress_StateOrProvinceCode_A"],
+      value: AGENCY.state,
+    },
+    producerZip: {
+      candidates: ["Producer_MailingAddress_PostalCode_A"],
+      value: AGENCY.zip,
     },
     producerContact: {
       candidates: ["Producer_ContactPerson_FullName_A", "CONTACT NAME:"],
@@ -63,17 +79,26 @@ function buildAcord25Values(
       value: AGENCY.email,
     },
 
-    // ── Insured block ──
+    // ── Insured block — split address fields ──
     insured: {
       candidates: ["NamedInsured_FullName_A", "INSURED", "Insured"],
-      value: [
-        account.name,
-        account.address,
-        [account.city, account.state].filter(Boolean).join(", ") +
-          (account.zip ? ` ${account.zip}` : ""),
-      ]
-        .filter(Boolean)
-        .join("\n"),
+      value: account.name,
+    },
+    insuredAddress1: {
+      candidates: ["NamedInsured_MailingAddress_LineOne_A"],
+      value: account.address ?? "",
+    },
+    insuredCity: {
+      candidates: ["NamedInsured_MailingAddress_CityName_A"],
+      value: account.city ?? "",
+    },
+    insuredState: {
+      candidates: ["NamedInsured_MailingAddress_StateOrProvinceCode_A"],
+      value: account.state ?? "",
+    },
+    insuredZip: {
+      candidates: ["NamedInsured_MailingAddress_PostalCode_A"],
+      value: account.zip ?? "",
     },
 
     // ── Certificate holder ──
@@ -83,12 +108,17 @@ function buildAcord25Values(
         "CERTIFICATE HOLDER",
         "CertificateHolder",
       ],
-      value: [cert.holderName, cert.holderAddress].filter(Boolean).join("\n"),
+      value: cert.holderName,
+    },
+    holderAddress1: {
+      candidates: ["CertificateHolder_MailingAddress_LineOne_A"],
+      value: cert.holderAddress ?? "",
     },
 
-    // ── Description of operations ──
+    // ── Description of operations / remarks ──
     description: {
       candidates: [
+        "CertificateOfLiabilityInsurance_ACORDForm_RemarkText_A",
         "OperationsDescription_A",
         "DescriptionOfOperations_A",
         "DESCRIPTION OF OPERATIONS / LOCATIONS / VEHICLES",
@@ -101,6 +131,8 @@ function buildAcord25Values(
   const certPolicies = policies.filter((p) => (cert.policyIds ?? []).includes(p.id));
   const carrierIds = [...new Set(certPolicies.map((p) => p.carrierId).filter(Boolean))];
   const letters = ["A", "B", "C", "D", "E", "F"];
+  const letterFor = (carrierId: string | null | undefined): string =>
+    carrierId ? letters[carrierIds.indexOf(carrierId)] ?? "" : "";
   carrierIds.slice(0, 6).forEach((cid, i) => {
     const carrier = carriers.find((c) => c.id === cid);
     if (!carrier) return;
@@ -128,24 +160,42 @@ function buildAcord25Values(
 
   const gl = rowFor("liability");
   if (gl) {
+    values.glInsurerLetter = {
+      candidates: ["GeneralLiability_InsurerLetterCode_A"],
+      value: letterFor(gl.carrierId),
+    };
     values.glPolicyNumber = {
-      candidates: ["GeneralLiability_PolicyNumberIdentifier_A"],
+      candidates: [
+        "Policy_GeneralLiability_PolicyNumberIdentifier_A",
+        "GeneralLiability_PolicyNumberIdentifier_A",
+      ],
       value: gl.policyNumber ?? "",
     };
     values.glEffective = {
-      candidates: ["GeneralLiability_PolicyEffectiveDate_A"],
+      candidates: [
+        "Policy_GeneralLiability_EffectiveDate_A",
+        "GeneralLiability_PolicyEffectiveDate_A",
+      ],
       value: fmtUs(gl.effectiveDate),
     };
     values.glExpiration = {
-      candidates: ["GeneralLiability_PolicyExpirationDate_A"],
+      candidates: [
+        "Policy_GeneralLiability_ExpirationDate_A",
+        "GeneralLiability_PolicyExpirationDate_A",
+      ],
       value: fmtUs(gl.expirationDate),
     };
   }
 
   const umbrella = rowFor("umbrella");
   if (umbrella) {
+    values.umbInsurerLetter = {
+      candidates: ["ExcessUmbrella_InsurerLetterCode_A"],
+      value: letterFor(umbrella.carrierId),
+    };
     values.umbPolicyNumber = {
       candidates: [
+        "Policy_ExcessLiability_PolicyNumberIdentifier_A",
         "ExcessUmbrella_PolicyNumberIdentifier_A",
         "Umbrella_PolicyNumberIdentifier_A",
       ],
@@ -153,6 +203,7 @@ function buildAcord25Values(
     };
     values.umbEffective = {
       candidates: [
+        "Policy_ExcessLiability_EffectiveDate_A",
         "ExcessUmbrella_PolicyEffectiveDate_A",
         "Umbrella_PolicyEffectiveDate_A",
       ],
@@ -160,6 +211,7 @@ function buildAcord25Values(
     };
     values.umbExpiration = {
       candidates: [
+        "Policy_ExcessLiability_ExpirationDate_A",
         "ExcessUmbrella_PolicyExpirationDate_A",
         "Umbrella_PolicyExpirationDate_A",
       ],
@@ -167,11 +219,41 @@ function buildAcord25Values(
     };
   }
 
-  // Property / other lines go in the OTHER row.
-  const other = certPolicies.find((p) => p !== gl && p !== umbrella);
+  const wc = rowFor("workers");
+  if (wc) {
+    values.wcInsurerLetter = {
+      candidates: ["WorkersCompensationEmployersLiability_InsurerLetterCode_A"],
+      value: letterFor(wc.carrierId),
+    };
+    values.wcPolicyNumber = {
+      candidates: [
+        "Policy_WorkersCompensationAndEmployersLiability_PolicyNumberIdentifier_A",
+      ],
+      value: wc.policyNumber ?? "",
+    };
+    values.wcEffective = {
+      candidates: ["Policy_WorkersCompensationAndEmployersLiability_EffectiveDate_A"],
+      value: fmtUs(wc.effectiveDate),
+    };
+    values.wcExpiration = {
+      candidates: ["Policy_WorkersCompensationAndEmployersLiability_ExpirationDate_A"],
+      value: fmtUs(wc.expirationDate),
+    };
+  }
+
+  // Property / D&O / crime / flood etc. go in the OTHER row.
+  const other = certPolicies.find((p) => p !== gl && p !== umbrella && p !== wc);
   if (other) {
+    values.otherInsurerLetter = {
+      candidates: ["OtherPolicy_InsurerLetterCode_A"],
+      value: letterFor(other.carrierId),
+    };
     values.otherPolicyDescription = {
-      candidates: ["OtherPolicy_PolicyDescription_A", "OtherPolicy_CoverageDescription_A"],
+      candidates: [
+        "OtherPolicy_OtherPolicyDescription_A",
+        "OtherPolicy_PolicyDescription_A",
+        "OtherPolicy_CoverageDescription_A",
+      ],
       value: (other.lines ?? []).filter(Boolean).join(", "),
     };
     values.otherPolicyNumber = {
@@ -203,10 +285,13 @@ export async function listTemplateFields(path: string): Promise<string[]> {
   const pdf = await PDFDocument.load(await fetchTemplate(path), {
     ignoreEncryption: true,
   });
+  // instanceof, not constructor.name — minified builds mangle class names.
+  const typeOf = (f: unknown) =>
+    f instanceof PDFTextField ? "text" : f instanceof PDFCheckBox ? "checkbox" : "other";
   return pdf
     .getForm()
     .getFields()
-    .map((f) => `${f.getName()}  (${f.constructor.name.replace("PDF", "")})`);
+    .map((f) => `${f.getName()}  (${typeOf(f)})`);
 }
 
 export async function fillAcord25(
