@@ -39,6 +39,17 @@ function AuthGate() {
     return <ProfileGate user={user} signOut={signOut} />;
   }
 
+  // On reload, authStatus is "configuring" while Amplify restores the
+  // stored session. Show a neutral splash (not the login screen) so an
+  // already-signed-in user never sees a sign-in flash. Only render the
+  // sign-in screen once we're definitively unauthenticated — unless the
+  // URL carries a magic-link token, which must reach MagicLinkSignIn
+  // immediately to complete the flow.
+  const hasMagicToken = window.location.hash.includes("magic=");
+  if (authStatus === "configuring" && !hasMagicToken) {
+    return <div className="auth-screen" aria-busy="true" />;
+  }
+
   return (
     <div className="auth-screen">
       <MagicLinkSignIn />
