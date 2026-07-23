@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { client, US_STATES } from "../lib/client";
+import { client, friendlyError, US_STATES, validateAccountFields } from "../lib/client";
 
 export default function NewLead() {
   const navigate = useNavigate();
@@ -32,6 +32,11 @@ export default function NewLead() {
       setError("Name is required.");
       return;
     }
+    const problems = validateAccountFields(form);
+    if (problems.length) {
+      setError(problems.join(" "));
+      return;
+    }
     setSaving(true);
     setError("");
     const { data, errors } = await client.models.Account.create({
@@ -56,11 +61,13 @@ export default function NewLead() {
     });
     setSaving(false);
     if (errors?.length || !data) {
-      setError(errors?.[0]?.message ?? "Failed to create lead.");
+      setError(friendlyError(new Error(errors?.[0]?.message), "Failed to create lead."));
       return;
     }
     navigate(`/accounts/${data.id}`);
   }
+
+  const isPersonal = form.type === "PERSONAL";
 
   return (
     <>
@@ -126,10 +133,12 @@ export default function NewLead() {
             <label>ZIP</label>
             <input value={form.zip} onChange={set("zip")} />
           </div>
-          <div className="field">
-            <label>Unit count</label>
-            <input type="number" value={form.unitCount} onChange={set("unitCount")} />
-          </div>
+          {!isPersonal && (
+            <div className="field">
+              <label>Unit count</label>
+              <input type="number" min={0} value={form.unitCount} onChange={set("unitCount")} />
+            </div>
+          )}
           <div className="field">
             <label>Year built</label>
             <input type="number" value={form.yearBuilt} onChange={set("yearBuilt")} />

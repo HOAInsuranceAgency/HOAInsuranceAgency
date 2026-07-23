@@ -1,11 +1,13 @@
 import { useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
-import { uploadData, getUrl } from "aws-amplify/storage";
+import { useNavigate, useParams } from "react-router-dom";
+import { uploadData, getUrl, remove } from "aws-amplify/storage";
 import {
   client,
   fmtDate,
   fmtMoney,
+  friendlyError,
   US_STATES,
+  validateAccountFields,
   type Account,
   type Carrier,
   type Certificate,
@@ -69,7 +71,10 @@ export default function AccountDetail({ profile }: { profile: UserProfile }) {
       </div>
 
       {tab === "overview" && (
-        <OverviewTab account={account} onChange={setAccount} />
+        <>
+          <OverviewTab account={account} onChange={setAccount} />
+          {account.stage === "LEAD" && <DeleteLeadZone account={account} />}
+        </>
       )}
       {tab === "quotes" && (
         <div className="card">
@@ -122,6 +127,11 @@ function OverviewTab({
   };
 
   async function save() {
+    const problems = validateAccountFields(form);
+    if (problems.length) {
+      setError(problems.join(" "));
+      return;
+    }
     setSaving(true);
     setError("");
     const { data, errors } = await client.models.Account.update({
@@ -145,7 +155,7 @@ function OverviewTab({
     });
     setSaving(false);
     if (errors?.length || !data) {
-      setError(errors?.[0]?.message ?? "Save failed");
+      setError(friendlyError(new Error(errors?.[0]?.message), "Save failed"));
       return;
     }
     onChange(data);
@@ -229,6 +239,84 @@ function OverviewTab({
         {saved && <span className="small" style={{ color: "var(--green)" }}>Saved.</span>}
         {error && <span className="error-text">{error}</span>}
       </div>
+    </div>
+  );
+}
+
+/**
+ * Leads (and only leads — clients carry bound policies and stay for the
+ * audit trail) can be deleted along with their quotes and documents.
+ */
+function DeleteLeadZone({ account }: { account: Account }) {
+  const [confirming, setConfirming] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [error, setError] = useState("");
+  const navigate = useNavigate();
+
+  async function deleteLead() {
+    setDeleting(true);
+    setError("");
+    try {
+      const { data: quotes } = await client.models.Quote.list({
+        filter: { accountId: { eq: account.id } },
+      });
+      await Promise.all(quotes.map((q) => client.models.Quote.delete({ id: q.id })));
+
+      const { data: docs } = await client.models.Document.list({
+        filter: { entityId: { eq: account.id } },
+      });
+      await Promise.all(
+        docs.map(async (d) => {
+          if (d.s3Key && d.s3Key !== "pending") {
+            await remove({ path: d.s3Key }).catch(() => {});
+          }
+          await client.models.Document.delete({ id: d.id });
+        })
+      );
+
+      const { errors } = await client.models.Account.delete({ id: account.id });
+      if (errors?.length) throw new Error(errors[0].message);
+      navigate("/leads");
+    } catch (err) {
+      setError(friendlyError(err, "Delete failed"));
+      setDeleting(false);
+    }
+  }
+
+  return (
+    <div className="card" style={{ borderColor: "#eec8c4" }}>
+      <h2 style={{ color: "var(--red)" }}>Danger zone</h2>
+      {confirming ? (
+        <>
+          <p className="small">
+            Permanently delete <strong>{account.name}</strong> and its quotes
+            and documents? This can't be undone.
+          </p>
+          <div className="form-actions" style={{ marginTop: 8 }}>
+            <button
+              className="primary"
+              style={{ background: "var(--red)" }}
+              disabled={deleting}
+              onClick={deleteLead}
+            >
+              {deleting ? "Deleting…" : "Yes, delete this lead"}
+            </button>
+            <button className="secondary" disabled={deleting} onClick={() => setConfirming(false)}>
+              Cancel
+            </button>
+          </div>
+        </>
+      ) : (
+        <div className="form-actions" style={{ marginTop: 0 }}>
+          <button className="secondary" onClick={() => setConfirming(true)}>
+            Delete this lead…
+          </button>
+          <span className="muted small">
+            Removes the lead, its quotes, and its documents.
+          </span>
+        </div>
+      )}
+      {error && <p className="error-text">{error}</p>}
     </div>
   );
 }
@@ -398,10 +486,11 @@ function CertificatesTab({
         );
       }
     } catch (err) {
+      const msg = err instanceof Error ? err.message : "";
       setError(
-        err instanceof Error
-          ? `PDF generation failed: ${err.message}. Is the ACORD 25 template uploaded in Settings?`
-          : "PDF generation failed"
+        /Template fetch failed|NoSuchKey|403|404/.test(msg)
+          ? "The ACORD 25 template hasn't been uploaded yet. Go to Settings → ACORD templates, upload the fillable PDF, then hit Generate again — this certificate record is saved and waiting."
+          : `PDF generation failed: ${msg || "unknown error"}`
       );
     } finally {
       setGenerating(null);

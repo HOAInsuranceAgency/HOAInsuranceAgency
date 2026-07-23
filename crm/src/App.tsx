@@ -73,6 +73,18 @@ function ProfileGate({ user, signOut }: { user: AuthUser; signOut: () => void })
   return <Shell profile={profile} signOut={signOut} />;
 }
 
+function NotFound() {
+  return (
+    <div className="card" style={{ maxWidth: 480, textAlign: "center", marginTop: 40 }}>
+      <h2>Page not found</h2>
+      <p className="muted small">That page doesn't exist (or moved).</p>
+      <NavLink to="/">
+        <button className="primary">Back to dashboard</button>
+      </NavLink>
+    </div>
+  );
+}
+
 const iconProps = {
   width: 18,
   height: 18,
@@ -226,6 +238,7 @@ function Shell({ profile, signOut }: { profile: UserProfile; signOut: () => void
           {profile.role === "ADMIN" && (
             <Route path="/team" element={<Team profile={profile} />} />
           )}
+          <Route path="*" element={<NotFound />} />
         </Routes>
       </main>
     </div>

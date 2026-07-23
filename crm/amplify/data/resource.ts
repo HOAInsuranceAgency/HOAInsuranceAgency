@@ -60,7 +60,8 @@ const schema = a
         contactFirstName: a.string(),
         contactLastName: a.string(),
         contactEmail: a.email(),
-        contactPhone: a.phone(),
+        // Free-form: a.phone() only accepts E.164 and rejects "555-123-4567"
+        contactPhone: a.string(),
         address: a.string(),
         city: a.string(),
         state: a.string(),
@@ -120,10 +121,10 @@ const schema = a
       dateAppointed: a.date(),
       primaryContactName: a.string(),
       primaryContactEmail: a.email(),
-      primaryContactPhone: a.phone(),
+      primaryContactPhone: a.string(),
       primaryUnderwriterName: a.string(),
       primaryUnderwriterEmail: a.email(),
-      primaryUnderwriterPhone: a.phone(),
+      primaryUnderwriterPhone: a.string(),
       states: a.string().array(), // states they cover
       naicCode: a.string(), // used on ACORD forms
       notes: a.string(),

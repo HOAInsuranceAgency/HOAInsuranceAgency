@@ -133,12 +133,18 @@ export const handler = async (
     (event.identity && "username" in event.identity && event.identity.username) ||
     "unknown";
 
-  switch (event.info.fieldName) {
+  // The invocation payload doesn't always carry `info` — fall back to the
+  // argument shape to tell the two operations apart.
+  const field =
+    event.info?.fieldName ??
+    ("email" in (event.arguments ?? {}) ? "inviteUser" : "listTeamUsers");
+
+  switch (field) {
     case "inviteUser":
       return inviteUser(event.arguments as InviteArgs, String(invokedBy));
     case "listTeamUsers":
       return listTeamUsers();
     default:
-      return { ok: false, error: `Unknown field ${event.info.fieldName}` };
+      return { ok: false, error: `Unknown field ${field}` };
   }
 };

@@ -154,14 +154,24 @@ function AppetiteFinder({
             const states = (g.states?.filter(Boolean).length ? g.states : c.states) ?? [];
             if (state && states.filter(Boolean).length > 0 && !states.includes(state))
               return false;
+            // Normalize possibly-inverted ranges (guarded at entry now, but
+            // legacy rows may still be reversed — never silently zero-match).
+            const [loV, hiV] =
+              g.minValue != null && g.maxValue != null && g.minValue > g.maxValue
+                ? [g.maxValue, g.minValue]
+                : [g.minValue, g.maxValue];
+            const [loY, hiY] =
+              g.minConstructionYear != null &&
+              g.maxConstructionYear != null &&
+              g.minConstructionYear > g.maxConstructionYear
+                ? [g.maxConstructionYear, g.minConstructionYear]
+                : [g.minConstructionYear, g.maxConstructionYear];
             const tivN = tiv ? Number(tiv) : null;
-            if (tivN != null && g.minValue != null && tivN < g.minValue) return false;
-            if (tivN != null && g.maxValue != null && tivN > g.maxValue) return false;
+            if (tivN != null && loV != null && tivN < loV) return false;
+            if (tivN != null && hiV != null && tivN > hiV) return false;
             const yearN = year ? Number(year) : null;
-            if (yearN != null && g.minConstructionYear != null && yearN < g.minConstructionYear)
-              return false;
-            if (yearN != null && g.maxConstructionYear != null && yearN > g.maxConstructionYear)
-              return false;
+            if (yearN != null && loY != null && yearN < loY) return false;
+            if (yearN != null && hiY != null && yearN > hiY) return false;
             return true;
           });
           return { carrier: c, guides: matching };

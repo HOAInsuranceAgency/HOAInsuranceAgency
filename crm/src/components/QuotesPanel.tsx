@@ -272,6 +272,14 @@ function BindForm({
   const [policyNumber, setPolicyNumber] = useState("");
   const [saving, setSaving] = useState(false);
 
+  // A quote must carry real terms before it can become a policy.
+  const blockers = [
+    !quote.carrierId && "a carrier",
+    !(quote.premium && quote.premium > 0) && "a premium",
+    !quote.effectiveDate && "an effective date",
+    !(quote.lines ?? []).filter(Boolean).length && "at least one line",
+  ].filter(Boolean) as string[];
+
   async function bind() {
     setSaving(true);
     onError("");
@@ -318,23 +326,39 @@ function BindForm({
       <p className="small muted">
         Creates a policy{account.stage === "LEAD" ? " and converts this lead to a client" : ""}.
       </p>
-      <div className="form-grid">
-        <div className="field">
-          <label>Policy number (can be added later)</label>
-          <input
-            value={policyNumber}
-            onChange={(e) => setPolicyNumber(e.target.value)}
-          />
-        </div>
-      </div>
-      <div className="form-actions">
-        <button className="primary" disabled={saving} onClick={bind}>
-          {saving ? "Binding…" : "Confirm bind"}
-        </button>
-        <button className="secondary" onClick={() => onDone(null)}>
-          Cancel
-        </button>
-      </div>
+      {blockers.length > 0 ? (
+        <>
+          <p className="error-text">
+            This quote can't be bound yet — it needs {blockers.join(", ")}.
+            Edit the quote details first.
+          </p>
+          <div className="form-actions">
+            <button className="secondary" onClick={() => onDone(null)}>
+              Close
+            </button>
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="form-grid">
+            <div className="field">
+              <label>Policy number (can be added later)</label>
+              <input
+                value={policyNumber}
+                onChange={(e) => setPolicyNumber(e.target.value)}
+              />
+            </div>
+          </div>
+          <div className="form-actions">
+            <button className="primary" disabled={saving} onClick={bind}>
+              {saving ? "Binding…" : "Confirm bind"}
+            </button>
+            <button className="secondary" onClick={() => onDone(null)}>
+              Cancel
+            </button>
+          </div>
+        </>
+      )}
     </div>
   );
 }

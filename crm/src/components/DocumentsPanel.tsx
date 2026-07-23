@@ -43,6 +43,7 @@ export default function DocumentsPanel({
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
   const [openDocId, setOpenDocId] = useState<string | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [ocrSearch, setOcrSearch] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -64,8 +65,9 @@ export default function DocumentsPanel({
     if (!files?.length) return;
     setUploading(true);
     setError("");
-    try {
-      for (const file of Array.from(files)) {
+    for (const file of Array.from(files)) {
+      let docId: string | null = null;
+      try {
         const { data: doc, errors } = await client.models.Document.create({
           entityType,
           entityId,
@@ -77,6 +79,7 @@ export default function DocumentsPanel({
           ocrStatus: "PENDING",
         });
         if (errors?.length || !doc) throw new Error(errors?.[0]?.message);
+        docId = doc.id;
 
         const path = `documents/${entityType}/${entityId}/${doc.id}/${file.name}`;
         await client.models.Document.update({ id: doc.id, s3Key: path });
@@ -85,13 +88,20 @@ export default function DocumentsPanel({
           data: file,
           options: { contentType: file.type || undefined },
         }).result;
+      } catch (err) {
+        // Don't leave a ghost record behind for a file that never landed.
+        if (docId) {
+          await client.models.Document.delete({ id: docId }).catch(() => {});
+        }
+        setError(
+          `"${file.name}" failed to upload — ${
+            err instanceof Error ? err.message : "unknown error"
+          }`
+        );
       }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Upload failed");
-    } finally {
-      setUploading(false);
-      if (fileRef.current) fileRef.current.value = "";
     }
+    setUploading(false);
+    if (fileRef.current) fileRef.current.value = "";
   }
 
   async function download(doc: CrmDocument) {
@@ -100,11 +110,11 @@ export default function DocumentsPanel({
   }
 
   async function deleteDoc(doc: CrmDocument) {
-    if (!confirm(`Delete "${doc.name}"?`)) return;
     if (doc.s3Key && doc.s3Key !== "pending") {
       await remove({ path: doc.s3Key }).catch(() => {});
     }
     await client.models.Document.delete({ id: doc.id });
+    setConfirmDeleteId(null);
   }
 
   function highlight(text: string, term: string) {
@@ -196,9 +206,20 @@ export default function DocumentsPanel({
                           {openDocId === d.id ? "Hide text" : "View text"}
                         </button>
                       )}
-                      <button className="danger" onClick={() => deleteDoc(d)}>
-                        Delete
-                      </button>
+                      {confirmDeleteId === d.id ? (
+                        <>
+                          <button className="danger" onClick={() => deleteDoc(d)}>
+                            Confirm delete
+                          </button>
+                          <button className="link" onClick={() => setConfirmDeleteId(null)}>
+                            Keep
+                          </button>
+                        </>
+                      ) : (
+                        <button className="danger" onClick={() => setConfirmDeleteId(d.id)}>
+                          Delete
+                        </button>
+                      )}
                     </td>
                   </tr>
                 );

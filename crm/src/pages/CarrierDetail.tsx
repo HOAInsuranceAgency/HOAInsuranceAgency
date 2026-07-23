@@ -219,6 +219,7 @@ function AppetiteGuides({ carrierId }: { carrierId: string }) {
   const [maxYear, setMaxYear] = useState("");
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
 
   useEffect(() => {
     client.models.AppetiteGuide.list({
@@ -227,6 +228,19 @@ function AppetiteGuides({ carrierId }: { carrierId: string }) {
   }, [carrierId]);
 
   async function add() {
+    // Inverted ranges silently break the Appetite Finder — catch them here.
+    const problems: string[] = [];
+    if (minValue && maxValue && Number(minValue) > Number(maxValue))
+      problems.push("Min TIV can't be greater than Max TIV.");
+    if (minYear && maxYear && Number(minYear) > Number(maxYear))
+      problems.push("Earliest construction year can't be after the latest.");
+    if ((minValue && Number(minValue) < 0) || (maxValue && Number(maxValue) < 0))
+      problems.push("TIV values can't be negative.");
+    if (problems.length) {
+      setError(problems.join(" "));
+      return;
+    }
+    setError("");
     setSaving(true);
     const { data } = await client.models.AppetiteGuide.create({
       carrierId,
@@ -322,6 +336,7 @@ function AppetiteGuides({ carrierId }: { carrierId: string }) {
             <button className="primary" disabled={saving} onClick={add}>
               {saving ? "Saving…" : "Add guide"}
             </button>
+            {error && <span className="error-text">{error}</span>}
           </div>
         </div>
       )}
