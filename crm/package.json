@@ -21,9 +21,11 @@
     "react-router-dom": "^7.1.0"
   },
   "devDependencies": {
+    "@anthropic-ai/sdk": "^0.113.0",
     "@aws-amplify/backend": "^1.14.0",
     "@aws-amplify/backend-cli": "^1.5.0",
     "@aws-sdk/client-cognito-identity-provider": "^3.1093.0",
+    "@aws-sdk/client-lambda": "^3.1093.0",
     "@aws-sdk/client-secrets-manager": "^3.1093.0",
     "@aws-sdk/client-sesv2": "^3.1093.0",
     "@aws-sdk/client-textract": "^3.750.0",

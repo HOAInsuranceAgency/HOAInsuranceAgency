@@ -64,7 +64,8 @@ export default function NewLead() {
       setError(friendlyError(new Error(errors?.[0]?.message), "Failed to create lead."));
       return;
     }
-    navigate(`/accounts/${data.id}`);
+    // Land on Documents so uploads (and AI extraction) are the next step.
+    navigate(`/accounts/${data.id}?tab=documents`);
   }
 
   const isPersonal = form.type === "PERSONAL";

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { uploadData, getUrl, remove } from "aws-amplify/storage";
 import {
   client,
@@ -20,6 +20,7 @@ import QuotesPanel, { commissionCell, termsSummary } from "../components/QuotesP
 import FilePreviewModal from "../components/FilePreview";
 import PropertyPanel from "../components/PropertyPanel";
 import FormsTab from "../components/FormsTab";
+import ExtractionPanel from "../components/ExtractionPanel";
 
 type Tab =
   | "overview"
@@ -30,10 +31,24 @@ type Tab =
   | "forms"
   | "certificates";
 
+const VALID_TABS: Tab[] = [
+  "overview",
+  "property",
+  "quotes",
+  "policies",
+  "documents",
+  "forms",
+  "certificates",
+];
+
 export default function AccountDetail({ profile }: { profile: UserProfile }) {
   const { id } = useParams<{ id: string }>();
+  const [searchParams] = useSearchParams();
+  const initialTab = searchParams.get("tab") as Tab | null;
   const [account, setAccount] = useState<Account | null>(null);
-  const [tab, setTab] = useState<Tab>("overview");
+  const [tab, setTab] = useState<Tab>(
+    initialTab && VALID_TABS.includes(initialTab) ? initialTab : "overview"
+  );
   const [notFound, setNotFound] = useState(false);
 
   useEffect(() => {
@@ -99,9 +114,12 @@ export default function AccountDetail({ profile }: { profile: UserProfile }) {
       )}
       {tab === "policies" && <PoliciesTab accountId={account.id} />}
       {tab === "documents" && (
-        <div className="card">
-          <DocumentsPanel entityType="ACCOUNT" entityId={account.id} />
-        </div>
+        <>
+          <div className="card">
+            <DocumentsPanel entityType="ACCOUNT" entityId={account.id} />
+          </div>
+          <ExtractionPanel account={account} onChange={setAccount} />
+        </>
       )}
       {tab === "certificates" && (
         <CertificatesTab account={account} profile={profile} />
