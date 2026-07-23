@@ -1,0 +1,192 @@
+import { useEffect, useState } from "react";
+import { client, fmtDate, type UserProfile } from "../lib/client";
+
+interface TeamUser {
+  userId: string;
+  email: string;
+  status: string;
+  enabled: boolean;
+  createdAt: string | null;
+  groups: string[];
+}
+
+/** ADMIN-only (enforced server-side by the group rule on the mutations). */
+export default function Team({ profile }: { profile: UserProfile }) {
+  const [users, setUsers] = useState<TeamUser[] | null>(null);
+  const [profiles, setProfiles] = useState<UserProfile[]>([]);
+  const [email, setEmail] = useState("");
+  const [role, setRole] = useState("STAFF");
+  const [inviting, setInviting] = useState(false);
+  const [notice, setNotice] = useState("");
+  const [error, setError] = useState("");
+
+  const parse = (raw: unknown): Record<string, unknown> => {
+    if (typeof raw === "string") {
+      try {
+        return JSON.parse(raw);
+      } catch {
+        return {};
+      }
+    }
+    return (raw as Record<string, unknown>) ?? {};
+  };
+
+  async function load() {
+    setError("");
+    try {
+      const { data, errors } = await client.queries.listTeamUsers();
+      if (errors?.length) throw new Error(errors[0].message);
+      const body = parse(data);
+      setUsers((body.users as TeamUser[]) ?? []);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load team");
+      setUsers([]);
+    }
+    client.models.UserProfile.list().then(({ data }) => setProfiles(data));
+  }
+
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function invite() {
+    if (!email.trim()) return;
+    setInviting(true);
+    setNotice("");
+    setError("");
+    try {
+      const { data, errors } = await client.mutations.inviteUser({
+        email: email.trim().toLowerCase(),
+        role,
+      });
+      if (errors?.length) throw new Error(errors[0].message);
+      const body = parse(data);
+      if (!body.ok) throw new Error(String(body.error ?? "Invite failed"));
+      setNotice(
+        `Invited ${email.trim().toLowerCase()} as ${role}. They'll get an email with the portal link — they sign in with a magic link, no password.`
+      );
+      setEmail("");
+      load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Invite failed");
+    } finally {
+      setInviting(false);
+    }
+  }
+
+  const profileFor = (u: TeamUser) =>
+    profiles.find((p) => p.userId === u.userId || p.email === u.email);
+
+  return (
+    <>
+      <h1>Team</h1>
+      <p className="sub">
+        Invite staff and producers — they sign in with an emailed link
+      </p>
+
+      <div className="card">
+        <h2>Invite someone</h2>
+        <div className="form-grid" style={{ maxWidth: 640 }}>
+          <div className="field">
+            <label>Email</label>
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && invite()}
+            />
+          </div>
+          <div className="field">
+            <label>Role</label>
+            <select value={role} onChange={(e) => setRole(e.target.value)}>
+              <option value="STAFF">Staff</option>
+              <option value="PRODUCER">Producer</option>
+              <option value="ADMIN">Admin</option>
+            </select>
+          </div>
+        </div>
+        <div className="form-actions">
+          <button
+            className="primary"
+            disabled={inviting || !email.trim()}
+            onClick={invite}
+          >
+            {inviting ? "Inviting…" : "Send invite"}
+          </button>
+          {notice && (
+            <span className="small" style={{ color: "var(--green)" }}>
+              {notice}
+            </span>
+          )}
+          {error && <span className="error-text">{error}</span>}
+        </div>
+        <p className="muted small" style={{ marginBottom: 0 }}>
+          Role is a placeholder for now (privileges aren't enforced except
+          this Team page, which is admin-only). Producers complete licensing
+          during their first sign-in.
+        </p>
+      </div>
+
+      <div className="card">
+        <h2>Members</h2>
+        {users === null ? (
+          <p className="muted small">Loading…</p>
+        ) : users.length === 0 ? (
+          <p className="muted small">No users found.</p>
+        ) : (
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Email</th>
+                  <th>Name</th>
+                  <th>Role</th>
+                  <th>Onboarded</th>
+                  <th>Invited</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[...users]
+                  .sort((a, b) => (a.email ?? "").localeCompare(b.email ?? ""))
+                  .map((u) => {
+                    const p = profileFor(u);
+                    return (
+                      <tr key={u.userId}>
+                        <td>
+                          {u.email}
+                          {u.email === profile.email && (
+                            <span className="badge blue" style={{ marginLeft: 6 }}>
+                              you
+                            </span>
+                          )}
+                        </td>
+                        <td>
+                          {p ? `${p.firstName} ${p.lastName}` : <span className="muted">—</span>}
+                        </td>
+                        <td>
+                          <span className="badge gray">
+                            {u.groups[0] ?? p?.role ?? "—"}
+                          </span>
+                        </td>
+                        <td>
+                          {p?.onboardingComplete ? (
+                            <span className="badge green">Yes</span>
+                          ) : (
+                            <span className="badge amber">Invited</span>
+                          )}
+                        </td>
+                        <td className="small">
+                          {fmtDate(u.createdAt?.slice(0, 10))}
+                        </td>
+                      </tr>
+                    );
+                  })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </>
+  );
+}

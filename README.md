@@ -1,25 +1,32 @@
-## AWS Amplify React+Vite Starter Template
+# HOA Insurance Agency
 
-This repository provides a starter template for creating applications using React+Vite and AWS Amplify, emphasizing easy setup for authentication, API, and database capabilities.
+Monorepo for HOA Insurance Agency ([protectmyhoa.com](https://www.protectmyhoa.com)).
 
-## Overview
+| App | Path | Stack | Amplify app |
+| --- | --- | --- | --- |
+| Marketing site | [`web/`](web) | Astro (static) + React islands | Web (no backend) |
+| CRM | [`crm/`](crm) | Vite + React SPA, Amplify Gen 2 (Cognito, AppSync/DynamoDB, S3, Lambda/Textract) | CRM (full-stack) |
 
-This template equips you with a foundational React application integrated with AWS Amplify, streamlined for scalability and performance. It is ideal for developers looking to jumpstart their project with pre-configured AWS services like Cognito, AppSync, and DynamoDB.
+Both apps deploy from this repo as separate AWS Amplify apps using the
+monorepo build spec in [`amplify.yml`](amplify.yml). Each Amplify app sets
+`AMPLIFY_MONOREPO_APP_ROOT` to `web` or `crm`.
 
-## Features
+## Branches
 
-- **Authentication**: Setup with Amazon Cognito for secure user authentication.
-- **API**: Ready-to-use GraphQL endpoint with AWS AppSync.
-- **Database**: Real-time database powered by Amazon DynamoDB.
+- `main` — production
+- `staging` — pre-production; both Amplify apps build this branch. Land work
+  here first, verify on the staging URLs, then merge to `main`.
 
-## Deploying to AWS
+## Development
 
-For detailed instructions on deploying your application, refer to the [deployment section](https://docs.amplify.aws/react/start/quickstart/#deploy-a-fullstack-app-to-aws) of our documentation.
+```sh
+# Marketing site
+cd web && npm install && npm run dev
 
-## Security
+# CRM (frontend + a personal cloud sandbox backend)
+cd crm && npm install
+npx ampx sandbox        # deploys an isolated dev backend, writes amplify_outputs.json
+npm run dev             # in a second terminal
+```
 
-See [CONTRIBUTING](CONTRIBUTING.md#security-issue-notifications) for more information.
-
-## License
-
-This library is licensed under the MIT-0 License. See the LICENSE file.
+See [`crm/README.md`](crm/README.md) for CRM architecture and data model notes.
