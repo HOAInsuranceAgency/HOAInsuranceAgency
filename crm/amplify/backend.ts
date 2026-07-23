@@ -73,7 +73,7 @@ magicLinkSecret.grantRead(backend.magicLinkVerify.resources.lambda);
 // Where the emailed link points, per branch (custom domains: update here).
 const BRANCH_URLS: Record<string, string> = {
   staging: "https://staging.d2d4g940z91vj4.amplifyapp.com",
-  main: "https://main.d2d4g940z91vj4.amplifyapp.com",
+  main: "https://app.protectmyhoa.com",
 };
 const magicLinkBaseUrl =
   BRANCH_URLS[process.env.AWS_BRANCH ?? ""] ?? "http://localhost:5173";
