@@ -453,8 +453,29 @@ function CertificatesTab({
     if (!holderName.trim()) return;
     setSaving(true);
     setError("");
+
+    // Reserve a unique, sequential certificate number (atomic server-side
+    // counter) before recording the certificate.
+    let certificateNumber: string | undefined;
+    try {
+      const { data: r, errors } = await client.mutations.reserveCertificateNumber();
+      if (errors?.length) throw new Error(errors[0].message);
+      const body = typeof r === "string" ? JSON.parse(r) : (r ?? {});
+      certificateNumber = body?.certificateNumber;
+      if (!certificateNumber) throw new Error("No number returned");
+    } catch (err) {
+      setSaving(false);
+      setError(
+        "Couldn't reserve a certificate number: " +
+          (err instanceof Error ? err.message : "unknown error") +
+          ". Nothing was saved — try again."
+      );
+      return;
+    }
+
     const { data } = await client.models.Certificate.create({
       accountId: account.id,
+      certificateNumber,
       policyIds: selectedPolicies,
       holderName: holderName.trim(),
       holderAddress: holderAddress.trim() || undefined,
@@ -609,6 +630,7 @@ function CertificatesTab({
               <table>
                 <thead>
                   <tr>
+                    <th>Cert #</th>
                     <th>Holder</th>
                     <th>Form</th>
                     <th>Issued</th>
@@ -619,6 +641,9 @@ function CertificatesTab({
                 <tbody>
                   {certs.map((c) => (
                     <tr key={c.id}>
+                      <td style={{ whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>
+                        {c.certificateNumber ?? "—"}
+                      </td>
                       <td>{c.holderName}</td>
                       <td>
                         <span className="badge gray">{c.formType ?? "ACORD_25"}</span>

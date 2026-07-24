@@ -1,6 +1,12 @@
 import { defineBackend } from "@aws-amplify/backend";
 import { PolicyStatement } from "aws-cdk-lib/aws-iam";
 import { Secret } from "aws-cdk-lib/aws-secretsmanager";
+import {
+  AttributeType,
+  BillingMode,
+  Table,
+  TableEncryption,
+} from "aws-cdk-lib/aws-dynamodb";
 import { auth } from "./auth/resource";
 import { data } from "./data/resource";
 import { storage } from "./storage/resource";
@@ -8,6 +14,7 @@ import { processDocument } from "./functions/process-document/resource";
 import { leadIntake } from "./functions/lead-intake/resource";
 import { teamAdmin } from "./functions/team-admin/resource";
 import { extractLead } from "./functions/extract-lead/resource";
+import { certNumber } from "./functions/cert-number/resource";
 import {
   magicLinkDefine,
   magicLinkCreate,
@@ -22,6 +29,7 @@ const backend = defineBackend({
   leadIntake,
   teamAdmin,
   extractLead,
+  certNumber,
   magicLinkDefine,
   magicLinkCreate,
   magicLinkVerify,
@@ -44,6 +52,30 @@ backend.extractLead.resources.lambda.addToRolePolicy(
     actions: ["lambda:InvokeFunction"],
     resources: ["*"],
   })
+);
+
+// ── Certificate numbering counter ────────────────────────────────────
+// A standalone DynamoDB table (partition key = year) holding one atomic
+// counter per year. reserveCertificateNumber does a single UpdateItem ADD,
+// so numbers are unique and gap-free even under concurrent COI issuance.
+const certStack = backend.createStack("CertNumberStack");
+const certSeqTable = new Table(certStack, "CertificateSequence", {
+  partitionKey: { name: "year", type: AttributeType.STRING },
+  billingMode: BillingMode.PAY_PER_REQUEST,
+  encryption: TableEncryption.AWS_MANAGED,
+  // The numbering ledger — keep it recoverable.
+  pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true },
+});
+certSeqTable.grantReadWriteData(backend.certNumber.resources.lambda);
+backend.certNumber.addEnvironment("SEQ_TABLE", certSeqTable.tableName);
+backend.certNumber.addEnvironment("CERT_PREFIX", "HOA");
+// Seed offsets for numbering that predates this system: 10 certificates were
+// issued in 2026 (HOA-2026-00001 … HOA-2026-00010), so the counter starts at
+// 10 and the first system-issued number is HOA-2026-00011. Once the 2026 row
+// exists this offset is ignored (if_not_exists), so it's safe to leave.
+backend.certNumber.addEnvironment(
+  "CERT_SEQ_BASES",
+  JSON.stringify({ "2026": 10 })
 );
 
 // ── Auth behavior ────────────────────────────────────────────────────

@@ -77,6 +77,14 @@ function buildAcord25Values(
       candidates: ["Form_CompletionDate_A", "DATE", "Date"],
       value: new Date().toLocaleDateString("en-US"),
     },
+    certificateNumber: {
+      candidates: [
+        "CertificateOfLiabilityInsurance_ACORDForm_CertificateNumberIdentifier_A",
+        "Certificate_Number_A",
+        "CERTIFICATE NUMBER",
+      ],
+      value: cert.certificateNumber ?? "",
+    },
 
     // ── Producer (agency) block — split address fields ──
     producer: {

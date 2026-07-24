@@ -3,6 +3,7 @@ import { processDocument } from "../functions/process-document/resource";
 import { leadIntake } from "../functions/lead-intake/resource";
 import { teamAdmin } from "../functions/team-admin/resource";
 import { extractLead } from "../functions/extract-lead/resource";
+import { certNumber } from "../functions/cert-number/resource";
 
 /**
  * HOA CRM data model.
@@ -234,6 +235,7 @@ const schema = a
     Certificate: a.model({
       accountId: a.id().required(),
       account: a.belongsTo("Account", "accountId"),
+      certificateNumber: a.string(), // unique record-keeping ID, e.g. HOA-2026-00011
       policyIds: a.string().array(),
       holderName: a.string().required(),
       holderAddress: a.string(),
@@ -317,6 +319,15 @@ const schema = a
       .returns(a.json())
       .authorization((allow) => [allow.authenticated()])
       .handler(a.handler.function(extractLead)),
+
+    // ── Certificate numbering: atomically reserve the next COI number ──
+    // Returns { certificateNumber, year, seq }. Uniqueness is guaranteed by
+    // an atomic DynamoDB counter — see the cert-number function.
+    reserveCertificateNumber: a
+      .mutation()
+      .returns(a.json())
+      .authorization((allow) => [allow.authenticated()])
+      .handler(a.handler.function(certNumber)),
   })
   .authorization((allow) => [
     // Placeholder privileges: any signed-in user has full access.
