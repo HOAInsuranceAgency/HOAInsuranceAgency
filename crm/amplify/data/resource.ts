@@ -188,6 +188,11 @@ const schema = a
       states: a.string().array(), // states they cover
       naicCode: a.string(), // used on ACORD forms
       standardCommissionPct: a.float(), // autofills onto new quotes
+      annualMinimumPremium: a.float(), // min premium written to maintain appointment
+      profitSharingPremiumThreshold: a.float(), // premium written to qualify for profit sharing
+      profitSharingLossRatioThreshold: a.float(), // max loss ratio % to qualify for profit sharing
+      commercialLines: a.boolean(), // writes commercial lines
+      personalLines: a.boolean(), // writes personal lines
       notes: a.string(),
       appetiteGuides: a.hasMany("AppetiteGuide", "carrierId"),
       quotes: a.hasMany("Quote", "carrierId"),

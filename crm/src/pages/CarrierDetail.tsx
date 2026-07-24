@@ -62,6 +62,13 @@ function CarrierForm({
     states: (carrier.states ?? []).filter((s): s is string => !!s),
     naicCode: carrier.naicCode ?? "",
     standardCommissionPct: carrier.standardCommissionPct?.toString() ?? "",
+    annualMinimumPremium: carrier.annualMinimumPremium?.toString() ?? "",
+    profitSharingPremiumThreshold:
+      carrier.profitSharingPremiumThreshold?.toString() ?? "",
+    profitSharingLossRatioThreshold:
+      carrier.profitSharingLossRatioThreshold?.toString() ?? "",
+    commercialLines: carrier.commercialLines ?? false,
+    personalLines: carrier.personalLines ?? false,
     notes: carrier.notes ?? "",
   });
   const [saving, setSaving] = useState(false);
@@ -104,6 +111,17 @@ function CarrierForm({
       standardCommissionPct: form.standardCommissionPct
         ? Number(form.standardCommissionPct)
         : null,
+      annualMinimumPremium: form.annualMinimumPremium
+        ? Number(form.annualMinimumPremium)
+        : null,
+      profitSharingPremiumThreshold: form.profitSharingPremiumThreshold
+        ? Number(form.profitSharingPremiumThreshold)
+        : null,
+      profitSharingLossRatioThreshold: form.profitSharingLossRatioThreshold
+        ? Number(form.profitSharingLossRatioThreshold)
+        : null,
+      commercialLines: form.commercialLines,
+      personalLines: form.personalLines,
       notes: form.notes.trim() || null,
     });
     setSaving(false);
@@ -154,6 +172,70 @@ function CarrierForm({
             value={form.standardCommissionPct}
             onChange={set("standardCommissionPct")}
           />
+        </div>
+        <div className="field">
+          <label>Annual minimum premium to maintain appointment ($)</label>
+          <input
+            type="number"
+            step="1"
+            min={0}
+            value={form.annualMinimumPremium}
+            onChange={set("annualMinimumPremium")}
+          />
+        </div>
+        <div className="field">
+          <label>Profit sharing threshold — premium written ($)</label>
+          <input
+            type="number"
+            step="1"
+            min={0}
+            value={form.profitSharingPremiumThreshold}
+            onChange={set("profitSharingPremiumThreshold")}
+          />
+        </div>
+        <div className="field">
+          <label>Profit sharing loss ratio threshold (%)</label>
+          <input
+            type="number"
+            step="0.1"
+            min={0}
+            max={100}
+            value={form.profitSharingLossRatioThreshold}
+            onChange={set("profitSharingLossRatioThreshold")}
+          />
+        </div>
+        <div className="field">
+          <label>Lines written</label>
+          <div style={{ display: "flex", gap: 16, alignItems: "center", height: 38 }}>
+            <label
+              className="small"
+              style={{ display: "flex", gap: 5, alignItems: "center" }}
+            >
+              <input
+                type="checkbox"
+                checked={form.commercialLines}
+                onChange={(e) => {
+                  setSaved(false);
+                  setForm((f) => ({ ...f, commercialLines: e.target.checked }));
+                }}
+              />
+              Commercial lines
+            </label>
+            <label
+              className="small"
+              style={{ display: "flex", gap: 5, alignItems: "center" }}
+            >
+              <input
+                type="checkbox"
+                checked={form.personalLines}
+                onChange={(e) => {
+                  setSaved(false);
+                  setForm((f) => ({ ...f, personalLines: e.target.checked }));
+                }}
+              />
+              Personal lines
+            </label>
+          </div>
         </div>
         <div className="field">
           <label>Primary contact</label>
