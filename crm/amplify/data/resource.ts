@@ -85,6 +85,9 @@ const schema = a
       "FIRE_RESISTIVE",
     ]),
     ReplacementCostType: a.enum(["RC", "ERC", "GRC"]),
+    // Per-building property terms (ACORD 140 subject-of-insurance row).
+    BuildingDeductibleType: a.enum(["PER_OCCURRENCE", "OTHER"]),
+    CauseOfLoss: a.enum(["SPECIAL", "BASIC", "BROAD"]),
     AggregateAppliesTo: a.enum(["POLICY", "PROJECT", "LOCATION", "OTHER"]),
     // The ACORD 125 applicant block's "Legal Entity" checkboxes, one member
     // per box. Kept in the schema's order rather than the form's, which puts
@@ -404,7 +407,12 @@ const schema = a
       pendingPriorLitigationDate: a.date(),
     }),
 
-    // Individual buildings on a property; total buildings/sqft are derived.
+    // ── Buildings: the ACORD 140's unit of description ─────────────────
+    //
+    // The 140 is a property section PER BUILDING — two per PDF — so almost
+    // everything an underwriter asks about construction and protection is a
+    // property of one building, not of the account. The construction columns
+    // that used to sit on Account are here now; see W5 in the spec.
     Building: a.model({
       accountId: a.id().required(),
       account: a.belongsTo("Account", "accountId"),
@@ -414,6 +422,46 @@ const schema = a
       // street address and an occupancy description of its own.
       streetAddress: a.string(),
       description: a.string(), // "2, 4, 10, 12 John Hancock. Two-story wood frame…"
+
+      // ── Construction ──
+      yearBuilt: a.integer(),
+      stories: a.integer(),
+      basements: a.integer(),
+      constructionType: a.ref("ConstructionType"),
+      roofType: a.string(),
+      roofYear: a.integer(),
+      heatingYear: a.integer(),
+      wiringYear: a.integer(),
+      plumbingYear: a.integer(),
+
+      // ── Protection ──
+      distanceToHydrantFt: a.integer(),
+      distanceToFireStationMi: a.float(),
+      fireProtectionType: a.string(),
+      sprinklerPct: a.float(),
+
+      // ── Coverage: the 140's first subject-of-insurance row ──
+      individualBuildingValue: a.float(),
+      coinsurancePct: a.float(),
+      valuation: a.ref("ReplacementCostType"),
+      deductibleType: a.ref("BuildingDeductibleType"),
+      deductibleAmount: a.float(),
+      // Free text, NOT a foreign key to Blanket. The forms print the number
+      // an underwriter wrote, deleting a blanket must not orphan a building,
+      // and the numbers come off prior declarations rather than being
+      // generated here. The edit form offers the account's existing numbers
+      // through a datalist, so the common case is still a click.
+      blanketNumber: a.string(),
+      causeOfLoss: a.ref("CauseOfLoss"),
+      formsConditions: a.string(),
+
+      // ── Other ──
+      otherOccupancies: a.string(),
+      historicalLandmark: a.boolean(),
+      sinkholeCoverageAccepted: a.boolean(),
+      mineSubsidenceCoverage: a.boolean(),
+      remarks: a.string(), // ACORD 101 overflow
+      extractionSourceKey: a.string(),
     }),
 
     // ── Quotes: tied to an account; binding creates a Policy ───────────

@@ -50,6 +50,10 @@ export type LicenseResidency = Schema["LicenseResidency"]["type"];
 export type LicenseStatus = Schema["LicenseStatus"]["type"];
 export type ConstructionType = Schema["ConstructionType"]["type"];
 export type ReplacementCostType = Schema["ReplacementCostType"]["type"];
+export type BuildingDeductibleType = NonNullable<
+  Schema["BuildingDeductibleType"]["type"]
+>;
+export type CauseOfLoss = NonNullable<Schema["CauseOfLoss"]["type"]>;
 export type AggregateAppliesTo = Schema["AggregateAppliesTo"]["type"];
 export type ContactType = NonNullable<Schema["ContactType"]["type"]>;
 export type LegalEntityType = NonNullable<Schema["LegalEntityType"]["type"]>;
@@ -176,6 +180,54 @@ const REPLACEMENT_COST = {
 } satisfies Record<ReplacementCostType, string>;
 
 export const REPLACEMENT_COST_OPTIONS = optionsByLabel(REPLACEMENT_COST);
+
+// ── Per-building property terms ──────────────────────────────────────────────
+
+/**
+ * The 140's subject-of-insurance row asks for a deductible type and a cause of
+ * loss as **text**, not as checkboxes.
+ *
+ * The field inventory (docs/acord/acord-140-fields.txt) gives field names; it
+ * does not give the code vocabulary those fields expect. So the mapping writes
+ * the label below rather than an invented ACORD code: an underwriter reads
+ * this row, "Per occurrence" is unambiguous to a human, and a guessed code
+ * that is wrong is a wrong value rather than a blank.
+ */
+const BUILDING_DEDUCTIBLE_TYPE = {
+  PER_OCCURRENCE: "Per occurrence",
+  OTHER: "Other",
+} satisfies Record<BuildingDeductibleType, string>;
+
+export const BUILDING_DEDUCTIBLE_TYPE_OPTIONS = optionsByLabel(
+  BUILDING_DEDUCTIBLE_TYPE
+);
+
+export const BUILDING_DEDUCTIBLE_TYPE_LABELS: Record<string, string> =
+  Object.freeze({ ...BUILDING_DEDUCTIBLE_TYPE });
+
+/** The three standard commercial property causes-of-loss forms. */
+const CAUSE_OF_LOSS = {
+  SPECIAL: "Special",
+  BASIC: "Basic",
+  BROAD: "Broad",
+} satisfies Record<CauseOfLoss, string>;
+
+export const CAUSE_OF_LOSS_OPTIONS = optionsByLabel(CAUSE_OF_LOSS);
+
+export const CAUSE_OF_LOSS_LABELS: Record<string, string> = Object.freeze({
+  ...CAUSE_OF_LOSS,
+});
+
+/**
+ * `ReplacementCostType`'s labels carry an "RC — " prefix for the dropdown,
+ * which is not what should land in the 140's valuation field. This is the
+ * short form for the form.
+ */
+export const REPLACEMENT_COST_CODES: Record<string, string> = Object.freeze({
+  RC: "RC",
+  ERC: "ERC",
+  GRC: "GRC",
+} satisfies Record<ReplacementCostType, string>);
 
 // ── AggregateAppliesTo ───────────────────────────────────────────────────────
 

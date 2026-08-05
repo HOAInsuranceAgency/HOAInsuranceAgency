@@ -5,6 +5,11 @@ import {
   ACCOUNT_TYPES,
   ACCOUNT_TYPE_OPTIONS,
   ACORD125_LEGAL_ENTITY_FIELDS,
+  BUILDING_DEDUCTIBLE_TYPE_LABELS,
+  BUILDING_DEDUCTIBLE_TYPE_OPTIONS,
+  CAUSE_OF_LOSS_LABELS,
+  CAUSE_OF_LOSS_OPTIONS,
+  REPLACEMENT_COST_CODES,
   ACORD25_AGGREGATE_FIELDS,
   AGGREGATE_APPLIES_TO_OPTIONS,
   CONSTRUCTION_LABELS,
@@ -41,6 +46,8 @@ import {
   type AccountStage,
   type AccountType,
   type AggregateAppliesTo,
+  type BuildingDeductibleType,
+  type CauseOfLoss,
   type ConstructionType,
   type ContactType,
   type DefenseLimitPosition,
@@ -92,9 +99,11 @@ const stillLiteralUnions: [
   NotWidened<DoPart>,
   NotWidened<DoCoverageType>,
   NotWidened<DefenseLimitPosition>,
+  NotWidened<BuildingDeductibleType>,
+  NotWidened<CauseOfLoss>,
 ] = [
   true, true, true, true, true, true, true, true, true, true, true, true, true,
-  true, true, true, true, true, true, true, true, true,
+  true, true, true, true, true, true, true, true, true, true, true,
 ];
 
 /**
@@ -162,10 +171,13 @@ describe("every table covers its schema enum exactly", () => {
     );
   });
 
-  it("ReplacementCostType", () => {
-    expect(valuesOf(REPLACEMENT_COST_OPTIONS).sort()).toEqual(
-      schemaEnum("ReplacementCostType").sort()
-    );
+  it("ReplacementCostType — options and the 140's short codes agree", () => {
+    const members = schemaEnum("ReplacementCostType").sort();
+    expect(valuesOf(REPLACEMENT_COST_OPTIONS).sort()).toEqual(members);
+    expect(Object.keys(REPLACEMENT_COST_CODES).sort()).toEqual(members);
+    // The dropdown label carries an explanatory prefix; the form field takes
+    // the bare code. Both come off the same member set, which is the point.
+    expect(REPLACEMENT_COST_CODES.ERC).toBe("ERC");
   });
 
   it("AggregateAppliesTo — options and ACORD fields agree", () => {
@@ -192,6 +204,12 @@ describe("every table covers its schema enum exactly", () => {
   it("the W4 property enums — labels and options agree", () => {
     const pairs: [string, Record<string, string>, readonly { value: string }[]][] = [
       ["GlDeductibleType", GL_DEDUCTIBLE_TYPE_LABELS, GL_DEDUCTIBLE_TYPE_OPTIONS],
+      [
+        "BuildingDeductibleType",
+        BUILDING_DEDUCTIBLE_TYPE_LABELS,
+        BUILDING_DEDUCTIBLE_TYPE_OPTIONS,
+      ],
+      ["CauseOfLoss", CAUSE_OF_LOSS_LABELS, CAUSE_OF_LOSS_OPTIONS],
       ["GlPremiumBasis", GL_PREMIUM_BASIS_LABELS, GL_PREMIUM_BASIS_OPTIONS],
       ["DoCoverageType", DO_COVERAGE_TYPE_LABELS, DO_COVERAGE_TYPE_OPTIONS],
       [

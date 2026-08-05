@@ -11,8 +11,9 @@ const Building = vi.hoisted(() => ({
   update: vi.fn(),
   delete: vi.fn(),
 }));
+const Blanket = vi.hoisted(() => ({ list: vi.fn() }));
 vi.mock("aws-amplify/data", () => ({
-  generateClient: () => ({ models: { Building } }),
+  generateClient: () => ({ models: { Building, Blanket } }),
 }));
 
 import BuildingsCard from "./BuildingsCard";
@@ -45,9 +46,30 @@ const renderCard = () => render(<BuildingsCard accountId="a1" />);
 /** The add form and the edit form hold the same four fields, so every query
  *  has to say which one it means. */
 const toolbar = () => within(document.querySelector(".toolbar") as HTMLElement);
-const table = () => within(screen.getByRole("table"));
+/**
+ * The edit modal, plus a by-label lookup for it.
+ *
+ * Labels in this app sit beside their inputs rather than being
+ * `for`-associated, so `getByLabelText` cannot find them. `getByLabelText2`
+ * walks from the label text to the input in the same `.field` wrapper, which
+ * is the structure every form here uses.
+ */
+const editor = () => {
+  const dialog = screen.getByRole("dialog");
+  const scope = within(dialog);
+  return Object.assign(scope, {
+    getByLabelText2(text: string) {
+      const label = scope.getByText(text, { selector: "label" });
+      const input = label.parentElement?.querySelector("input, select, textarea");
+      if (!input) throw new Error(`no control beside the label "${text}"`);
+      return input as HTMLElement;
+    },
+  });
+};
 
 beforeEach(() => {
+  Blanket.list.mockReset();
+  Blanket.list.mockResolvedValue({ data: [], nextToken: null });
   Building.list.mockReset();
   Building.create.mockReset();
   Building.update.mockReset();
@@ -122,13 +144,18 @@ describe("add", () => {
     await user.type(toolbar().getAllByRole("textbox")[2], "400");
     await user.click(screen.getByText("+ Add building"));
 
-    expect(Building.create).toHaveBeenCalledWith({
-      accountId: "a1",
-      label: "Gatehouse",
-      sqft: 400,
-      streetAddress: null,
-      description: null,
-    });
+    // objectContaining, not equality: a building now carries twenty-eight
+    // columns and pinning every null would be pinning the schema, not the
+    // behaviour. What matters is that the four the toolbar asks for arrive.
+    expect(Building.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        accountId: "a1",
+        label: "Gatehouse",
+        sqft: 400,
+        streetAddress: null,
+        description: null,
+      })
+    );
     expect(await screen.findByText("Gatehouse added.")).toBeInTheDocument();
     expect(screen.getByRole("table")).toHaveTextContent("Gatehouse");
     // No refetch — the row on screen is the one the write returned.
@@ -186,16 +213,20 @@ describe("edit", () => {
     expect(screen.getByDisplayValue("2 John Hancock Dr")).toBeInTheDocument();
 
     await user.clear(screen.getByDisplayValue("Clubhouse"));
-    await user.type(table().getAllByRole("textbox")[0], "Clubhouse Annex");
+    // The editor is a modal now, so the label field is no longer inside the
+    // table — it is the dialog's first textbox.
+    await user.type(editor().getAllByRole("textbox")[0], "Clubhouse Annex");
     await user.click(screen.getByText("Save"));
 
-    expect(Building.update).toHaveBeenCalledWith({
-      id: "b1",
-      label: "Clubhouse Annex",
-      sqft: 12000,
-      streetAddress: "2 John Hancock Dr",
-      description: null,
-    });
+    expect(Building.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "b1",
+        label: "Clubhouse Annex",
+        sqft: 12000,
+        streetAddress: "2 John Hancock Dr",
+        description: null,
+      })
+    );
     expect(await screen.findByText("Clubhouse Annex saved.")).toBeInTheDocument();
     expect(screen.getByRole("table")).toHaveTextContent("Clubhouse Annex");
     expect(Building.list).toHaveBeenCalledTimes(1);
@@ -287,5 +318,124 @@ describe("delete", () => {
       await screen.findByText("You don't have permission to do that.")
     ).toBeInTheDocument();
     expect(screen.getByRole("table")).toHaveTextContent("Clubhouse");
+  });
+});
+
+/**
+ * What W5 added: twenty-four more columns per building, edited in a modal
+ * rather than in the row, and validated per building rather than per account.
+ *
+ * The point of the move is that these are properties of a *building*. An
+ * association with a 1978 clubhouse and 2016 townhouses had one `yearBuilt`
+ * on the Account before this, and the ACORD 140 asks per building because the
+ * answer differs per building.
+ */
+describe("the full underwriting field set", () => {
+  beforeEach(() => {
+    Building.list.mockResolvedValue({ data: rows(), nextToken: null });
+  });
+
+  it("edits in a modal, not in the table row", async () => {
+    const user = userEvent.setup();
+    renderCard();
+    await screen.findByText("Clubhouse");
+
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    await user.click(screen.getAllByText("Edit")[0]);
+
+    const dialog = screen.getByRole("dialog");
+    expect(dialog).toBeInTheDocument();
+    // The row is still in the table behind the overlay — an inline editor
+    // would have replaced it and reflowed everything below.
+    expect(screen.getByRole("table")).toHaveTextContent("Pool House");
+    // Grouped the way the 140 groups them.
+    // Scoped to the h3s: "Other" is also a <option> label in two of the
+    // dropdowns inside this same dialog.
+    for (const group of ["Identity", "Construction", "Protection", "Coverage", "Other"]) {
+      expect(
+        within(dialog).getByText(group, { selector: "h3" })
+      ).toBeInTheDocument();
+    }
+  });
+
+  it("writes the construction fields that used to live on the Account", async () => {
+    const user = userEvent.setup();
+    Building.update.mockResolvedValue({ data: rows()[0] });
+    renderCard();
+    await screen.findByText("Clubhouse");
+    await user.click(screen.getAllByText("Edit")[0]);
+
+    const dialog = editor();
+    await user.type(dialog.getByLabelText2("Year built"), "1978");
+    await user.type(dialog.getByLabelText2("Roof updated"), "2019");
+    await user.click(screen.getByText("Save"));
+
+    expect(Building.update).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "b1", yearBuilt: 1978, roofYear: 2019 })
+    );
+  });
+
+  it("allows a year built five years out but not a roof year", async () => {
+    const user = userEvent.setup();
+    const ahead = (n: number) => String(new Date().getFullYear() + n);
+    renderCard();
+    await screen.findByText("Clubhouse");
+    await user.click(screen.getAllByText("Edit")[0]);
+
+    const dialog = editor();
+    // Construction can be scheduled ahead; work already *done* cannot be.
+    // The two bounds are the ones client.ts:270 documents, now per building.
+    await user.type(dialog.getByLabelText2("Year built"), ahead(3));
+    await user.type(dialog.getByLabelText2("Roof updated"), ahead(3));
+    await user.click(screen.getByText("Save"));
+
+    expect(await screen.findByText(/Roof year should be between/)).toBeInTheDocument();
+    expect(screen.queryByText(/Year built should be between/)).not.toBeInTheDocument();
+    expect(Building.update).not.toHaveBeenCalled();
+  });
+
+  it("records an unanswered yes/no as null rather than false", async () => {
+    const user = userEvent.setup();
+    Building.update.mockResolvedValue({ data: rows()[0] });
+    renderCard();
+    await screen.findByText("Clubhouse");
+    await user.click(screen.getAllByText("Edit")[0]);
+    await user.click(screen.getByText("Save"));
+
+    // "Is it a historical landmark?" left blank is not "no".
+    expect(Building.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        historicalLandmark: null,
+        sinkholeCoverageAccepted: null,
+        mineSubsidenceCoverage: null,
+      })
+    );
+  });
+
+  it("offers the account's blanket numbers without requiring one", async () => {
+    const user = userEvent.setup();
+    Blanket.list.mockResolvedValue({
+      data: [{ id: "bl1", accountId: "a1", blanketNumber: "BL-1" }],
+      nextToken: null,
+    });
+    Building.update.mockResolvedValue({ data: rows()[0] });
+    renderCard();
+    await screen.findByText("Clubhouse");
+    await user.click(screen.getAllByText("Edit")[0]);
+
+    expect(
+      document.querySelector("#account-blanket-numbers option[value='BL-1']")
+    ).toBeTruthy();
+
+    // Free text, not a foreign key: a number with no Blanket row is legal,
+    // because the form prints the number an underwriter wrote.
+    const field = document.querySelector<HTMLInputElement>(
+      "input[list=account-blanket-numbers]"
+    )!;
+    await user.type(field, "BL-99");
+    await user.click(screen.getByText("Save"));
+    expect(Building.update).toHaveBeenCalledWith(
+      expect.objectContaining({ blanketNumber: "BL-99" })
+    );
   });
 });
