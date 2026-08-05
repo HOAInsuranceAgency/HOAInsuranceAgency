@@ -19,17 +19,66 @@ import { useAsyncResource } from "../lib/useAsyncResource";
 import { OverviewTab } from "./account/OverviewTab";
 import { DeleteLeadZone } from "./account/DeleteLeadZone";
 import { PoliciesTab } from "./account/PoliciesTab";
+import { PriorCarrierTab } from "./account/PriorCarrierTab";
 import { CertificatesTab } from "./account/CertificatesTab";
 
-type Tab = "overview" | "quotes" | "policies" | "documents" | "certificates";
+type Tab =
+  | "overview"
+  | "priorcarrier"
+  | "quotes"
+  | "policies"
+  | "documents"
+  | "certificates";
 
 const VALID_TABS: Tab[] = [
   "overview",
+  "priorcarrier",
   "quotes",
   "policies",
   "documents",
   "certificates",
 ];
+
+/**
+ * Tabs that only make sense while the account is still a prospect.
+ *
+ * Prior coverage is what the association is insured under *today*; once a
+ * quote binds, the Policy records answer that question and a second tab
+ * claiming to invites someone to maintain two answers to it. The rows stay in
+ * the table either way — every renewal submission fills the ACORD 125's
+ * prior-coverage block from them.
+ */
+const LEAD_ONLY_TABS: ReadonlySet<Tab> = new Set<Tab>(["priorcarrier"]);
+
+/** The tabs an account of this stage offers, in display order. */
+export function tabsFor(stage: string | null | undefined): [Tab, string][] {
+  const isLead = stage !== "CLIENT";
+  return [
+    ["overview", "Overview"],
+    ...(isLead ? ([["priorcarrier", "Prior coverage"]] as [Tab, string][]) : []),
+    ["quotes", "Quotes"],
+    ["policies", "Policies"],
+    ["documents", "Documents"],
+    ["certificates", "Certificates"],
+  ];
+}
+
+/**
+ * The tab actually rendered, given the one the URL or a click asked for.
+ *
+ * `?tab=` is read before the account has loaded, so at that moment there is
+ * nothing to check the stage against. A client reached by a bookmarked
+ * `?tab=priorcarrier` would otherwise sit on a tab with no button to leave it
+ * by — the tab list would not contain it, so nothing would be highlighted and
+ * the panel would be one nobody can navigate back to.
+ *
+ * Derived rather than corrected in an effect: correcting state after the fact
+ * renders the wrong tab for a frame first, and leaves two places that know
+ * the rule.
+ */
+export function resolveTab(requested: Tab, stage: string | null | undefined): Tab {
+  return stage === "CLIENT" && LEAD_ONLY_TABS.has(requested) ? "overview" : requested;
+}
 
 export default function AccountDetail({ profile }: { profile: UserProfile }) {
   const { id } = useParams<{ id: string }>();
@@ -72,6 +121,9 @@ export default function AccountDetail({ profile }: { profile: UserProfile }) {
   if (notFound) return <p>Account not found.</p>;
   if (!account) return <p className="muted">Loading…</p>;
 
+  const tabs = tabsFor(account.stage);
+  const activeTab = resolveTab(tab, account.stage);
+
   return (
     <>
       {celebrate && (
@@ -89,18 +141,10 @@ export default function AccountDetail({ profile }: { profile: UserProfile }) {
       </p>
 
       <div className="tabs">
-        {(
-          [
-            ["overview", "Overview"],
-            ["quotes", "Quotes"],
-            ["policies", "Policies"],
-            ["documents", "Documents"],
-            ["certificates", "Certificates"],
-          ] as [Tab, string][]
-        ).map(([t, label]) => (
+        {tabs.map(([t, label]) => (
           <button
             key={t}
-            className={tab === t ? "active" : ""}
+            className={activeTab === t ? "active" : ""}
             onClick={() => setTab(t)}
           >
             {label}
@@ -108,7 +152,7 @@ export default function AccountDetail({ profile }: { profile: UserProfile }) {
         ))}
       </div>
 
-      {tab === "overview" && (
+      {activeTab === "overview" && (
         <>
           <OverviewTab account={account} onChange={setAccount} />
           <ContactsCard accountId={account.id} />
@@ -116,7 +160,7 @@ export default function AccountDetail({ profile }: { profile: UserProfile }) {
           {account.stage === "LEAD" && <DeleteLeadZone account={account} />}
         </>
       )}
-      {tab === "quotes" && (
+      {activeTab === "quotes" && (
         <>
           <div className="card">
             <QuotesPanel account={account} onAccountChange={setAccount} />
@@ -127,8 +171,9 @@ export default function AccountDetail({ profile }: { profile: UserProfile }) {
           />
         </>
       )}
-      {tab === "policies" && <PoliciesTab accountId={account.id} />}
-      {tab === "documents" && (
+      {activeTab === "priorcarrier" && <PriorCarrierTab accountId={account.id} />}
+      {activeTab === "policies" && <PoliciesTab accountId={account.id} />}
+      {activeTab === "documents" && (
         <>
           <div className="card">
             <DocumentsPanel entityType="ACCOUNT" entityId={account.id} />
@@ -137,7 +182,7 @@ export default function AccountDetail({ profile }: { profile: UserProfile }) {
           <FormsTab account={account} profile={profile} />
         </>
       )}
-      {tab === "certificates" && (
+      {activeTab === "certificates" && (
         <CertificatesTab account={account} profile={profile} />
       )}
     </>

@@ -194,12 +194,17 @@ const schema = a
         // Superseded by the INSPECTION-typed Contact; see the note above.
         inspectionContactName: a.string(),
         inspectionContactPhone: a.string(),
-        // ── Incumbent coverage (ACORD 125 prior-carrier block) ──
+        // ── Incumbent coverage: superseded by the PriorCarrier model ──
+        // One row's worth of columns for what is genuinely a list — an
+        // association carries property, GL, D&O and crime with different
+        // carriers on different terms. Unread since W3; kept until the
+        // backfill has run, same as the contact columns above.
         priorCarrierName: a.string(),
         priorPolicyNumber: a.string(),
         priorPremium: a.float(),
         priorTermEffective: a.date(),
         priorTermExpiration: a.date(),
+        priorCarriers: a.hasMany("PriorCarrier", "accountId"),
         // Write-only by design: set by lead-intake from the web lead forms and
         // never read back in the app. Kept because it is the only link from an
         // account to its Buildium property record.
@@ -249,6 +254,35 @@ const schema = a
       // extraction updates the contact it already created instead of adding
       // a second copy of the same person. Also what makes the backfill
       // idempotent. See W9.
+      extractionSourceKey: a.string(),
+    }),
+
+    // ── Prior coverage: one row per line, per term ─────────────────────
+    //
+    // Replaces five Account columns that could describe exactly one expiring
+    // policy. An association routinely carries property, general liability,
+    // D&O and crime with different carriers on different terms, and a renewal
+    // submission has to state all of them.
+    //
+    // Lead-only in the UI (the tab is hidden once an account converts) but
+    // NOT deleted on conversion: the rows keep feeding the ACORD 125's prior
+    // coverage block on every renewal submission after that.
+    //
+    // Schema default authorization, like Building and Contact — staff manage
+    // these as ordinary work and no screen gates them on ADMIN.
+    PriorCarrier: a.model({
+      accountId: a.id().required(),
+      account: a.belongsTo("Account", "accountId"),
+      carrierName: a.string(),
+      policyNumber: a.string(),
+      // A plain string, not an enum: LINES_OF_BUSINESS (client.ts) is a
+      // hand-written vocabulary with no schema counterpart, which PATTERNS
+      // lists explicitly under "where the rule does not apply". Making it an
+      // enum here would create the second copy that rule exists to prevent.
+      lineOfBusiness: a.string(),
+      premium: a.float(),
+      effectiveDate: a.date(),
+      expirationDate: a.date(),
       extractionSourceKey: a.string(),
     }),
 

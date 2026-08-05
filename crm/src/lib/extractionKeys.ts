@@ -59,3 +59,30 @@ export function contactKey(c: {
   if (email) return `email:${email}`;
   return `name:${norm(c.name)}|${c.type ?? ""}`;
 }
+
+/**
+ * A prior policy is the same policy if the carrier, the policy number and the
+ * line all match.
+ *
+ * All three, rather than the policy number alone, for two reasons. Numbers are
+ * only unique within a carrier — "CP-1001" is a plausible number at any of
+ * them — and an association routinely has *no* number recorded for a line
+ * whose declarations page never reached the agency, which would collapse
+ * every such row onto one key. Including the line also keeps a package policy
+ * that covers property and GL under one number as the two rows the ACORD form
+ * needs it to be.
+ *
+ * The term dates are deliberately not in the key: a renewal that keeps the
+ * same number is the same coverage moving forward, and an extraction that
+ * finds this year's dates should update the row rather than add a second one
+ * beside it.
+ */
+export function priorCarrierKey(p: {
+  carrierName?: string | null;
+  policyNumber?: string | null;
+  lineOfBusiness?: string | null;
+}): string {
+  return [norm(p.carrierName), norm(p.policyNumber), norm(p.lineOfBusiness)].join(
+    "|"
+  );
+}

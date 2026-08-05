@@ -32,6 +32,79 @@ interface BuildingInfo {
 
 type ContactInfo = ContactLike;
 
+interface PriorCarrierInfo {
+  carrierName?: string | null;
+  policyNumber?: string | null;
+  lineOfBusiness?: string | null;
+  premium?: number | null;
+  effectiveDate?: string | null;
+  expirationDate?: string | null;
+}
+
+/**
+ * CRM line of business → the ACORD 125 prior-coverage field prefix for it.
+ *
+ * Same shape and the same tolerance as `LOB_FIELDS` below: a line with no
+ * entry here does not fill, rather than filling the wrong row.
+ *
+ * ## What is confirmed and what is not
+ *
+ * `General Liability` is confirmed — those five field names are what this
+ * file has been filling since before `PriorCarrier` existed. Note what they
+ * establish and what they do not: the block name (`PriorCoverage_`) and the
+ * suffix set (`InsurerFullName_A`, `PolicyNumberIdentifier_A`,
+ * `TotalPremiumAmount_A`, `EffectiveDate_A`, `ExpirationDate_A`) are certain;
+ * the *line token* is not derivable from anywhere else in this file. The
+ * proof is right here: `LOB_FIELDS` calls the same line
+ * `CommercialGeneralLiability` while the prior-coverage block calls it
+ * `GeneralLiability`. The two sections of the same form disagree, so a token
+ * borrowed from one for the other is a guess with a known counterexample.
+ *
+ * Every entry below except GL therefore carries both plausible spellings and
+ * must be checked with Settings → Inspect fields. Getting one wrong is
+ * visible rather than silent — the five fields for that line land in
+ * `FillResult.missing`, which `FormsTab` renders as "Unmatched fields:
+ * priorPropertyCarrier, …" with the instruction to extend the mapping. That
+ * message naming the line is the point: an unmatched field here says which
+ * line to go and look up.
+ *
+ * Lines carried by this agency with no entry at all — HO-6 is not a
+ * commercial prior-coverage row — simply do not fill.
+ */
+export const PRIOR_COVERAGE_FIELDS: Record<string, readonly string[]> = {
+  "General Liability": ["PriorCoverage_GeneralLiability_"],
+  Property: ["PriorCoverage_CommercialProperty_", "PriorCoverage_Property_"],
+  "Crime/Fidelity": ["PriorCoverage_Crime_", "PriorCoverage_CrimeFidelity_"],
+  Umbrella: ["PriorCoverage_Umbrella_", "PriorCoverage_ExcessLiability_"],
+  "Workers Comp": ["PriorCoverage_WorkersCompensation_"],
+  Flood: ["PriorCoverage_Flood_"],
+  Earthquake: ["PriorCoverage_Earthquake_"],
+  "D&O": ["PriorCoverage_ManagementLiability_", "PriorCoverage_DirectorsAndOfficers_"],
+};
+
+/**
+ * The most recent prior policy per line — the coverage a submission is
+ * replacing. Older rows for the same line are history, and the form has one
+ * row per line to put them in.
+ *
+ * Ordered on expiration, falling back to the term start, because a row
+ * entered off a declarations page that never stated an end date still knows
+ * when it began. A row with neither loses to any row that has one.
+ */
+export function newestPriorByLine<T extends PriorCarrierInfo>(
+  rows: T[]
+): Map<string, T> {
+  const when = (r: T) => r.expirationDate ?? r.effectiveDate ?? "";
+  const out = new Map<string, T>();
+  for (const r of rows) {
+    const line = r.lineOfBusiness;
+    if (!line) continue;
+    const held = out.get(line);
+    if (!held || when(r) > when(held)) out.set(line, r);
+  }
+  return out;
+}
+
 /**
  * Which Legal Entity box the 125 ticks for an account, or `null` for none.
  *
@@ -121,6 +194,7 @@ function buildAppFormValues(
   account: Account,
   buildings: BuildingInfo[],
   contacts: ContactInfo[],
+  priorCarriers: PriorCarrierInfo[],
   /**
    * When the coverage being applied for starts. For a lead that's the
    * incumbent's expiration; for a client it's the expiring policy's end date
@@ -133,6 +207,10 @@ function buildAppFormValues(
 ): FieldValues {
   const totalSqft = buildings.reduce((s, b) => s + (b.sqft ?? 0), 0);
   const primary = primaryContact(contacts);
+  const newestByLine = newestPriorByLine(priorCarriers);
+  const newestPrior = [...newestByLine.values()].sort((a, b) =>
+    (b.effectiveDate ?? "").localeCompare(a.effectiveDate ?? "")
+  )[0];
 
   const zip = account.zip ?? "";
   const state = account.state ?? "";
@@ -262,32 +340,11 @@ function buildAppFormValues(
         value: inspection?.phone ?? "",
       },
 
-      // ── Incumbent coverage ──
-      priorCarrier: {
-        candidates: ["PriorCoverage_GeneralLiability_InsurerFullName_A"],
-        value: account.priorCarrierName ?? "",
-      },
-      priorPolicyNumber: {
-        candidates: ["PriorCoverage_GeneralLiability_PolicyNumberIdentifier_A"],
-        value: account.priorPolicyNumber ?? "",
-      },
-      priorPremium: {
-        candidates: ["PriorCoverage_GeneralLiability_TotalPremiumAmount_A"],
-        value: account.priorPremium != null ? account.priorPremium.toFixed(2) : "",
-      },
-      priorEffective: {
-        candidates: ["PriorCoverage_GeneralLiability_EffectiveDate_A"],
-        value: fmtUs(account.priorTermEffective),
-      },
-      priorExpiration: {
-        candidates: ["PriorCoverage_GeneralLiability_ExpirationDate_A"],
-        value: fmtUs(account.priorTermExpiration),
-      },
       priorPolicyYear: {
         candidates: ["PriorCoverage_PolicyYear_A"],
-        value: account.priorTermEffective
-          ? account.priorTermEffective.slice(0, 4)
-          : "",
+        // The block has one year field covering all the lines, so it takes
+        // the newest term start across them.
+        value: newestPrior?.effectiveDate?.slice(0, 4) ?? "",
       },
 
       natureOfBusiness: {
@@ -298,6 +355,47 @@ function buildAppFormValues(
         value: operationsSummary(account, buildings.length),
       },
     } satisfies FieldValues);
+
+    // ── Incumbent coverage, one row per line ──
+    //
+    // This used to fill a single GL row from five Account columns, so an
+    // association carrying property with one carrier and GL with another
+    // could only ever declare one of them. The 125 has a prior-coverage row
+    // per line; `PRIOR_COVERAGE_FIELDS` says which prefix belongs to which
+    // line, and a line with no entry there simply does not fill — the same
+    // way `LOB_FIELDS` above skips a line it has no box for.
+    //
+    // One row per line: the newest term, because that is the coverage the
+    // submission is replacing. An older row for the same line is history and
+    // the form has nowhere to put it.
+    for (const [line, prefixes] of Object.entries(PRIOR_COVERAGE_FIELDS)) {
+      const row = newestByLine.get(line);
+      if (!row) continue;
+      const key = line.replace(/\W+/g, "");
+      const at = (suffix: string) => prefixes.map((p) => `${p}${suffix}`);
+      Object.assign(values, {
+        [`prior${key}Carrier`]: {
+          candidates: at("InsurerFullName_A"),
+          value: row.carrierName ?? "",
+        },
+        [`prior${key}PolicyNumber`]: {
+          candidates: at("PolicyNumberIdentifier_A"),
+          value: row.policyNumber ?? "",
+        },
+        [`prior${key}Premium`]: {
+          candidates: at("TotalPremiumAmount_A"),
+          value: row.premium != null ? row.premium.toFixed(2) : "",
+        },
+        [`prior${key}Effective`]: {
+          candidates: at("EffectiveDate_A"),
+          value: fmtUs(row.effectiveDate),
+        },
+        [`prior${key}Expiration`]: {
+          candidates: at("ExpirationDate_A"),
+          value: fmtUs(row.expirationDate),
+        },
+      } satisfies FieldValues);
+    }
 
     // ── Lines of business ──
     // Maps the CRM's line vocabulary onto the 125's checkboxes. Candidates
@@ -343,7 +441,15 @@ function buildAppFormValues(
       policyNumber: {
         candidates: ["Policy_PolicyNumberIdentifier_A"],
         // New business has no number yet; a renewal carries the incumbent's.
-        value: account.priorPolicyNumber ?? "",
+        // Which incumbent, now that there can be several: the one covering
+        // the first line being applied for that has a prior policy at all.
+        // `lines` is ordered by the caller, so this is "the main thing this
+        // submission is about" rather than an arbitrary pick — and blank when
+        // nothing lines up, which is what the field means for new business.
+        value:
+          lines
+            .map((l) => newestByLine.get(l)?.policyNumber)
+            .find((n) => n) ?? "",
       },
       billingPlanDirect: {
         candidates: ["CommercialPolicy_BillingPlan_DirectBillIndicator_A"],
@@ -484,13 +590,22 @@ export async function fillAcordApp(
   account: Account,
   buildings: BuildingInfo[],
   contacts: ContactInfo[],
+  priorCarriers: PriorCarrierInfo[],
   signature?: SignatureInfo | null,
   renewalDate?: string | null,
   lines: string[] = []
 ): Promise<FillResult> {
   return fillTemplate(
     form.path,
-    buildAppFormValues(form.key, account, buildings, contacts, renewalDate, lines),
+    buildAppFormValues(
+      form.key,
+      account,
+      buildings,
+      contacts,
+      priorCarriers,
+      renewalDate,
+      lines
+    ),
     signature
   );
 }

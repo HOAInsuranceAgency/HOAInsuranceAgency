@@ -99,6 +99,15 @@ export default function FormsTab({
               nextToken,
             })
           );
+          // Fills the 125's prior-coverage block, one row per line. Read for
+          // clients too: the tab that edits these is lead-only, but a renewal
+          // submission still has to declare what the association carried.
+          const priorCarriers = await listAllPages((nextToken) =>
+            client.models.PriorCarrier.list({
+              filter: { accountId: { eq: account.id } },
+              nextToken,
+            })
+          );
           // Clients renew off their bound policies; the lead-only
           // currentPolicyExpiration field isn't used once an account converts.
           let renewalDate: string | null = null;
@@ -139,6 +148,7 @@ export default function FormsTab({
             account,
             buildings,
             contacts,
+            priorCarriers,
             await signatureFor(profile.id),
             renewalDate,
             lines

@@ -30,11 +30,6 @@ export function OverviewTab({
     naicsCode: inputValue(account.naicsCode),
     legalEntityType: inputValue(account.legalEntityType),
     annualRevenue: inputValue(account.annualRevenue),
-    priorCarrierName: inputValue(account.priorCarrierName),
-    priorPolicyNumber: inputValue(account.priorPolicyNumber),
-    priorPremium: inputValue(account.priorPremium),
-    priorTermEffective: inputValue(account.priorTermEffective),
-    priorTermExpiration: inputValue(account.priorTermExpiration),
     totalInsuredValue: inputValue(account.totalInsuredValue),
     currentAgent: inputValue(account.currentAgent),
     currentPolicyExpiration: inputValue(account.currentPolicyExpiration),
@@ -63,11 +58,6 @@ export function OverviewTab({
                 form.legalEntityType
               ) as Account["legalEntityType"],
               annualRevenue: num(form.annualRevenue),
-              priorCarrierName: str(form.priorCarrierName),
-              priorPolicyNumber: str(form.priorPolicyNumber),
-              priorPremium: num(form.priorPremium),
-              priorTermEffective: str(form.priorTermEffective),
-              priorTermExpiration: str(form.priorTermExpiration),
               totalInsuredValue: num(form.totalInsuredValue),
               currentAgent: str(form.currentAgent),
               currentPolicyExpiration: str(form.currentPolicyExpiration),
@@ -148,35 +138,9 @@ export function OverviewTab({
           <label>Current agent / broker</label>
           <input value={form.currentAgent} onChange={(e) => setF("currentAgent", e.target.value)} />
         </div>
-        <div className="field">
-          <label>Prior carrier</label>
-          <input value={form.priorCarrierName} onChange={(e) => setF("priorCarrierName", e.target.value)} />
-        </div>
-        <div className="field">
-          <label>Prior policy number</label>
-          <input value={form.priorPolicyNumber} onChange={(e) => setF("priorPolicyNumber", e.target.value)} />
-        </div>
-        <div className="field">
-          <label>Prior premium ($)</label>
-          <MoneyInput
-            value={form.priorPremium}
-            onChange={(v) => setF("priorPremium", v)}
-          />
-        </div>
-        <div className="field">
-          <label>Prior term effective</label>
-          <DateInput
-            value={form.priorTermEffective}
-            onChange={(v) => setF("priorTermEffective", v)}
-          />
-        </div>
-        <div className="field">
-          <label>Prior term expiration</label>
-          <DateInput
-            value={form.priorTermExpiration}
-            onChange={(v) => setF("priorTermExpiration", v)}
-          />
-        </div>
+        {/* The five prior-carrier fields moved to the Prior coverage tab —
+            an association carries property, GL, D&O and crime with different
+            carriers on different terms, and these five could describe one. */}
         {/* Lead-only: once bound, the Policy records are authoritative. */}
         {account.stage !== "CLIENT" && (
         <div className="field">

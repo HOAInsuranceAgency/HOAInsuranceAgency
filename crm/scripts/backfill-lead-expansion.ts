@@ -13,18 +13,30 @@
  * The ordering in docs/specs/lead-client-expansion.md is what keeps this
  * reversible, and it is not negotiable:
  *
- *   1. Add the new models. Deploy.               ← W1 did this
+ *   1. Add the new models. Deploy.               ← W1 and W3 did this
  *   2. Run this, dry, and read the summary.
  *   3. Run it with --apply. Verify.
- *   4. Ship the UI reading the new rows.         ← W1 did this too
+ *   4. Ship the UI reading the new rows.         ← W1 and W3 did this too
  *   5. Only then delete the old columns.         ← NOT DONE YET
  *
  * Steps 1 and 4 landed together because the UI half is what makes the columns
  * unread, and a column nothing reads is a column that cannot drift while this
  * runs. Step 5 is a separate commit, deliberately: dropping a field from an
  * Amplify model does not delete the DynamoDB attribute, so until something
- * overwrites it the whole of W1 is revertible by putting the fields back.
- * Nothing in W1 writes to a column it is about to drop. Keep it that way.
+ * overwrites it the whole workstream is revertible by putting the fields back.
+ * Nothing in W1 or W3 writes to a column it is about to drop. Keep it that way.
+ *
+ * ## What it covers
+ *
+ * | Columns on Account | Becomes |
+ * |---|---|
+ * | `contactFirstName`/`contactLastName`/`contactEmail`/`contactPhone` | one primary `Contact` |
+ * | `inspectionContactName`/`inspectionContactPhone` | one INSPECTION `Contact` |
+ * | `priorCarrierName`/`priorPolicyNumber`/`priorPremium`/`priorTermEffective`/`priorTermExpiration` | one General Liability `PriorCarrier` |
+ *
+ * W5's buildings backfill is not here yet. It is the one that can produce
+ * wrong data — an account-level "roof updated 2019" is not necessarily true
+ * of all thirteen buildings — so it needs its own review pass.
  *
  * ## Authentication
  *
@@ -62,12 +74,28 @@ const only = args.includes("--account") ? ONLY : null;
 /** Provenance markers. One per row this script can create. */
 const PRIMARY_KEY = "backfill:contact";
 const INSPECTION_KEY = "backfill:inspection";
+const PRIOR_CARRIER_KEY = "backfill:priorcarrier";
+
+/**
+ * The line the five prior-carrier columns described.
+ *
+ * Not a guess: those columns fed `PriorCoverage_GeneralLiability_*` on the
+ * ACORD 125 and nothing else, so General Liability is what they *were*,
+ * whatever the agency may have been using them for in practice. Producing a
+ * row with a blank line would be more honest about the uncertainty and less
+ * useful — it would fill no prior-coverage row at all, which is a regression
+ * against what the account's submissions print today.
+ */
+const BACKFILLED_LINE = "General Liability";
 
 const trim = (v: string | null | undefined) => v?.trim() || null;
+
+type TargetModel = "Contact" | "PriorCarrier";
 
 interface Planned {
   accountId: string;
   accountName: string;
+  model: TargetModel;
   action: "create" | "skip";
   reason: string;
   row?: Record<string, unknown>;
@@ -105,6 +133,7 @@ async function plan(): Promise<Planned[]> {
       planned.push({
         accountId: a.id,
         accountName: a.name,
+        model: "Contact",
         action: "skip",
         reason: "no contact columns set",
       });
@@ -112,6 +141,7 @@ async function plan(): Promise<Planned[]> {
       planned.push({
         accountId: a.id,
         accountName: a.name,
+        model: "Contact",
         action: "skip",
         reason: "primary contact already backfilled",
       });
@@ -119,8 +149,9 @@ async function plan(): Promise<Planned[]> {
       planned.push({
         accountId: a.id,
         accountName: a.name,
+        model: "Contact",
         action: "create",
-        reason: `primary contact from contact* columns`,
+        reason: "primary contact from contact* columns",
         row: {
           accountId: a.id,
           // `name` is required on the model. An account carrying only an
@@ -149,6 +180,7 @@ async function plan(): Promise<Planned[]> {
       planned.push({
         accountId: a.id,
         accountName: a.name,
+        model: "Contact",
         action: "skip",
         reason: "inspection contact already backfilled",
       });
@@ -156,6 +188,7 @@ async function plan(): Promise<Planned[]> {
       planned.push({
         accountId: a.id,
         accountName: a.name,
+        model: "Contact",
         action: "create",
         reason: "inspection contact from inspectionContact* columns",
         row: {
@@ -165,6 +198,50 @@ async function plan(): Promise<Planned[]> {
           type: "INSPECTION",
           isPrimary: false,
           extractionSourceKey: INSPECTION_KEY,
+        },
+      });
+    }
+
+    // ── The incumbent policy, from the five prior* columns ──
+    const priorExisting = await listAllPages((nextToken) =>
+      client.models.PriorCarrier.list({
+        filter: { accountId: { eq: a.id } },
+        nextToken,
+      })
+    );
+    const carrier = trim(a.priorCarrierName);
+    const policyNumber = trim(a.priorPolicyNumber);
+    const effective = trim(a.priorTermEffective);
+    const expiration = trim(a.priorTermExpiration);
+    const premium = a.priorPremium ?? null;
+    if (!carrier && !policyNumber && premium == null && !effective && !expiration) {
+      // Nothing recorded. The common case for a lead nobody has worked yet.
+    } else if (
+      priorExisting.some((p) => p.extractionSourceKey === PRIOR_CARRIER_KEY)
+    ) {
+      planned.push({
+        accountId: a.id,
+        accountName: a.name,
+        model: "PriorCarrier",
+        action: "skip",
+        reason: "prior carrier already backfilled",
+      });
+    } else {
+      planned.push({
+        accountId: a.id,
+        accountName: a.name,
+        model: "PriorCarrier",
+        action: "create",
+        reason: "prior carrier from prior* columns",
+        row: {
+          accountId: a.id,
+          carrierName: carrier,
+          policyNumber,
+          lineOfBusiness: BACKFILLED_LINE,
+          premium,
+          effectiveDate: effective,
+          expirationDate: expiration,
+          extractionSourceKey: PRIOR_CARRIER_KEY,
         },
       });
     }
@@ -186,16 +263,33 @@ async function main() {
   for (const p of planned) {
     const row = p.row;
     const detail = row
-      ? [row.name, row.email, row.phone, row.type].filter(Boolean).join(" · ")
+      ? [
+          row.name,
+          row.email,
+          row.phone,
+          row.type,
+          row.carrierName,
+          row.policyNumber,
+          row.lineOfBusiness,
+          row.premium,
+          [row.effectiveDate, row.expirationDate].filter(Boolean).join(" → "),
+        ]
+          .filter(Boolean)
+          .join(" · ")
       : p.reason;
     console.log(
       `${p.action === "create" ? "+" : "·"} ${p.accountName} (${p.accountId})` +
-        `\n    ${p.action === "create" ? detail : `skipped — ${p.reason}`}`
+        `\n    ${p.model}: ${
+          p.action === "create" ? detail : `skipped — ${p.reason}`
+        }`
     );
   }
 
+  const tally = (m: TargetModel) =>
+    creates.filter((p) => p.model === m).length;
   console.log(
-    `\n${creates.length} contact row(s) to create across ` +
+    `\n${tally("Contact")} contact row(s) and ${tally("PriorCarrier")} prior ` +
+      `carrier row(s) to create across ` +
       `${new Set(creates.map((p) => p.accountId)).size} account(s); ` +
       `${planned.length - creates.length} skipped.`
   );
@@ -208,17 +302,26 @@ async function main() {
   let written = 0;
   const failures: string[] = [];
   for (const p of creates) {
-    const { errors } = await client.models.Contact.create(
-      p.row as Parameters<typeof client.models.Contact.create>[0]
-    );
+    // The two models take different payloads, so this dispatches rather than
+    // pretending one create signature covers both.
+    const { errors } =
+      p.model === "Contact"
+        ? await client.models.Contact.create(
+            p.row as Parameters<typeof client.models.Contact.create>[0]
+          )
+        : await client.models.PriorCarrier.create(
+            p.row as Parameters<typeof client.models.PriorCarrier.create>[0]
+          );
     if (errors?.length) {
-      failures.push(`${p.accountName} (${p.accountId}): ${errors[0].message}`);
+      failures.push(
+        `${p.accountName} (${p.accountId}) ${p.model}: ${errors[0].message}`
+      );
     } else {
       written++;
     }
   }
 
-  console.log(`\nWrote ${written} contact row(s).`);
+  console.log(`\nWrote ${written} row(s).`);
   if (failures.length) {
     console.error(`\n${failures.length} failed:`);
     for (const f of failures) console.error(`  ${f}`);
@@ -234,15 +337,26 @@ async function main() {
   // remember to run.
   console.log("\nVerifying…");
   const stillMissing: string[] = [];
-  for (const id of new Set(creates.map((p) => p.accountId))) {
-    const rows = await listAllPages((nextToken) =>
-      client.models.Contact.list({ filter: { accountId: { eq: id } }, nextToken })
-    );
-    const keys = new Set(rows.map((c) => c.extractionSourceKey));
-    for (const p of creates.filter((c) => c.accountId === id)) {
-      if (!keys.has(p.row?.extractionSourceKey as string)) {
-        stillMissing.push(`${p.accountName} (${id}): ${p.row?.extractionSourceKey}`);
-      }
+  for (const p of creates) {
+    const rows =
+      p.model === "Contact"
+        ? await listAllPages((nextToken) =>
+            client.models.Contact.list({
+              filter: { accountId: { eq: p.accountId } },
+              nextToken,
+            })
+          )
+        : await listAllPages((nextToken) =>
+            client.models.PriorCarrier.list({
+              filter: { accountId: { eq: p.accountId } },
+              nextToken,
+            })
+          );
+    const keys = new Set(rows.map((r) => r.extractionSourceKey));
+    if (!keys.has(p.row?.extractionSourceKey as string)) {
+      stillMissing.push(
+        `${p.accountName} (${p.accountId}) ${p.model}: ${p.row?.extractionSourceKey}`
+      );
     }
   }
   if (stillMissing.length) {
