@@ -116,6 +116,98 @@ export function fmtDate(d: string | null | undefined): string {
   return new Date(d + (d.length === 10 ? "T00:00:00" : "")).toLocaleDateString("en-US");
 }
 
+/**
+ * A phone number as this agency writes it: `(555) 123-4567` for a plain
+ * 10-digit US entry, and **the input verbatim** for everything else.
+ *
+ * The verbatim half is the important half. `Account.contactPhone` and friends
+ * are freeform `a.string()` columns — the schema comment at
+ * `amplify/data/resource.ts:118` explains that `a.phone()` only accepts E.164,
+ * which this agency's data is not — so the column legitimately holds
+ * `+44 20 7123 4567`, `(555) 123-4567 x212`, and a 7-digit local number an
+ * office manager gave over the phone. A formatter that reshaped those would be
+ * corrupting data, not tidying it, so three things opt out of reformatting:
+ *
+ *  - a leading `+`, which is the caller saying "this is an E.164/international
+ *    number, the digits after me are not an area code";
+ *  - any letter, which means an extension (`x212`) or a vanity number;
+ *  - a digit count that isn't exactly 10 — 7 digits has no area code to place
+ *    and 11+ has something in front of one, and inventing either is a guess.
+ *
+ * Punctuation is otherwise ignored, so `555.123.4567`, `555-123-4567` and
+ * `(555) 123-4567` all land on the same rendering, and applying this to its
+ * own output is a no-op. That idempotence is what lets `PhoneInput` store the
+ * formatted string and this function render it again on read.
+ */
+export function normalizePhone(v: string): string {
+  const s = v.trim();
+  if (s.startsWith("+") || /[A-Za-z]/.test(s)) return s;
+  const digits = s.replace(/\D/g, "");
+  if (digits.length !== 10) return s;
+  return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`;
+}
+
+/**
+ * The display counterpart of `normalizePhone`, in the shape of `fmtMoney` and
+ * `fmtDate`: `"—"` for a value that isn't there. Every read-only phone render
+ * goes through this.
+ */
+export function fmtPhone(v: string | null | undefined): string {
+  if (blank(v)) return "—";
+  return normalizePhone(String(v));
+}
+
+/**
+ * Throws on GraphQL errors or a null payload; returns the data.
+ *
+ * Amplify **resolves** a failed mutation rather than rejecting it, so every
+ * write has to check `{ data, errors }` by hand. INVENTORY §1.2 counts 36 such
+ * checks across 24 files in three mutually inconsistent spellings, ten of
+ * which do not throw at all — a rejected create that clears the form and says
+ * nothing. Two details this fixes rather than merely centralises:
+ *
+ *  - **The null-data message is not empty.** The most common spelling,
+ *    `if (errors?.length || !data) throw new Error(errors?.[0]?.message)`,
+ *    constructs `new Error(undefined)` whenever `data` is null and `errors` is
+ *    empty, and is rescued only by `friendlyError`'s `msg || fallback`. Here
+ *    that case has its own sentence.
+ *  - **Every error is reported, not just the first.** AppSync returns one
+ *    entry per failed field; `errors[0].message` throws the rest away.
+ *    `friendlyError`'s rules are substring tests, so they still classify a
+ *    joined message.
+ *
+ * For mutations and for reads that must find something. A `get` whose miss is
+ * a legitimate outcome (`data: null`, no errors) should branch on `data`
+ * itself — this would turn "not found" into a thrown failure.
+ */
+export function unwrap<T>(r: {
+  data: T | null;
+  errors?: { message: string }[];
+}): T {
+  assertNoErrors(r);
+  if (r.data == null) {
+    throw new Error("The server accepted that but returned nothing.");
+  }
+  return r.data;
+}
+
+/**
+ * `unwrap` without the payload check: throws on GraphQL errors and returns
+ * nothing.
+ *
+ * For a **delete**, and for the writes whose result is genuinely unused. A
+ * delete resolves with `data: null` and no errors when the row was already
+ * gone — two tabs open, or two people on the same account — and that is the
+ * state the caller was asking for, not a failure. Putting `unwrap` there would
+ * report "couldn't remove that" about a row that does not exist, and keep
+ * reporting it on every retry.
+ */
+export function assertNoErrors(r: { errors?: { message: string }[] }): void {
+  if (r.errors?.length) {
+    throw new Error(r.errors.map((e) => e.message).join("; "));
+  }
+}
+
 // ── Shared form validation ───────────────────────────────────────────
 // Returns a list of human-readable problems; empty = valid. All fields
 // optional — only filled-in values are checked.

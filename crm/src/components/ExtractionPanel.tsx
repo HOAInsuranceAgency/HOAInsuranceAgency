@@ -1,5 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { client, fmtMoney, fmtNum, friendlyError, type Account } from "../lib/client";
+import {
+  client,
+  fmtMoney,
+  fmtNum,
+  fmtPhone,
+  friendlyError,
+  type Account,
+} from "../lib/client";
 import { Badge, statusBadge, CONFIDENCE_BADGE } from "../lib/badges";
 import { CONSTRUCTION_LABELS } from "../lib/enums";
 import { SaveStatus, useSaveStatus } from "./SaveStatus";
@@ -73,7 +80,17 @@ const ALL_FIELD_DEFS: FieldDef[] = [
   { key: "contactFirstName", label: "Contact first name", kind: "patch", current: (a) => a.contactFirstName ?? "" },
   { key: "contactLastName", label: "Contact last name", kind: "patch", current: (a) => a.contactLastName ?? "" },
   { key: "contactEmail", label: "Contact email", kind: "patch", current: (a) => a.contactEmail ?? "" },
-  { key: "contactPhone", label: "Contact phone", kind: "patch", current: (a) => a.contactPhone ?? "" },
+  {
+    key: "contactPhone",
+    label: "Contact phone",
+    kind: "patch",
+    // Both sides through `fmtPhone`, for the same reason `totalInsuredValue`
+    // runs both through `fmtMoney`: this row exists so a human can compare the
+    // stored value with the proposed one, and `(555) 123-4567` next to
+    // `5551234567` reads as a change when it is the same number.
+    current: (a) => (a.contactPhone ? fmtPhone(a.contactPhone) : ""),
+    display: (v) => (typeof v === "string" && v ? fmtPhone(v) : fmtVal(v)),
+  },
   { key: "address", label: "Street address", kind: "patch", current: (a) => a.address ?? "" },
   { key: "city", label: "City", kind: "patch", current: (a) => a.city ?? "" },
   { key: "state", label: "State", kind: "patch", current: (a) => a.state ?? "" },

@@ -1,197 +1,162 @@
+import { type KeyboardEvent as ReactKeyboardEvent } from "react";
 import {
   client,
   fmtNum,
-  listAllPages,
+  validatePositiveInt,
   type Building,
 } from "../../lib/client";
-import { useAsyncResource } from "../../lib/useAsyncResource";
-import ConfirmButton from "../ConfirmButton";
-import { useSort, SortTh } from "../../lib/useSort";
-import { useFormState } from "../../lib/useFormState";
-import { SaveStatus, useSaveStatus } from "../SaveStatus";
+import { inputValue, num, str } from "../../lib/formCodec";
+import { useChildRows } from "../../lib/useChildRows";
+import type { FormState } from "../../lib/useFormState";
+import ChildRowsCard from "../ChildRowsCard";
+import { IntegerInput } from "../inputs";
+
+interface BuildingForm {
+  label: string;
+  sqft: string;
+  street: string;
+  desc: string;
+}
+
+const BLANK: BuildingForm = { label: "", sqft: "", street: "", desc: "" };
 
 export default function BuildingsCard({ accountId }: { accountId: string }) {
-  const res = useAsyncResource(
-    () =>
-      listAllPages((nextToken) =>
-        client.models.Building.list({
-          filter: { accountId: { eq: accountId } },
-          nextToken,
-        })
-      ),
-    [accountId],
-    { initialData: [] as Building[], errorMessage: "Failed to load buildings" }
-  );
-  const buildings = res.data;
-  const setBuildings = res.setData;
+  // `toCreate` and friends are function *declarations* so they are hoisted
+  // above this call while still closing over `child` — which is what lets the
+  // default label count the rows the hook is holding. They only ever run from
+  // a click, long after `child` is initialised.
+  const child = useChildRows<Building, BuildingForm>(client.models.Building, {
+    accountId,
+    noun: "building",
+    initialForm: BLANK,
+    toForm,
+    toCreate,
+    toUpdate,
+    validate,
+    describe: labelFor,
+    describeRow: (b) => b.label ?? "Building",
+  });
 
-  // Persistent: the new row is on screen next to the confirmation, so the
-  // message keeps describing something the user can still see.
-  const addStatus = useSaveStatus();
-  const { form, setF, reset } = useFormState(
-    {
-      label: "",
-      sqft: "",
-      street: "",
-      desc: "",
-    },
-    { onEdit: addStatus.markDirty }
-  );
-  // Auto-clearing: the row a delete confirmation refers to is gone, so
-  // nothing here will ever go dirty and clear it.
-  const delStatus = useSaveStatus({ autoClearMs: 4000 });
-
-  async function add() {
-    const n = Number(form.sqft);
-    if (form.sqft && (!Number.isInteger(n) || n <= 0)) {
-      addStatus.markError("Sq ft should be a positive whole number.");
-      return;
-    }
-    const label = form.label.trim() || `Building ${buildings.length + 1}`;
-    await addStatus.run(
-      async () => {
-        // `errors` used to be dropped: a rejected create cleared nothing and
-        // said nothing, so the form just sat there looking untouched.
-        const { data, errors } = await client.models.Building.create({
-          accountId,
-          label,
-          sqft: form.sqft ? n : undefined,
-          streetAddress: form.street.trim() || undefined,
-          description: form.desc.trim() || undefined,
-        });
-        if (errors?.length || !data) throw new Error(errors?.[0]?.message);
-        setBuildings((bs) => [...bs, data]);
-        // Baseline is still the blanks this mounted with — nothing ever calls
-        // markSaved here — so `reset()` is the four setters it replaces. Its
-        // `onEdit` fires while the status is still "saving", which markDirty
-        // deliberately ignores, so it can't wipe the confirmation below.
-        reset();
-      },
-      { savedMessage: `${label} added.`, errorMessage: "Couldn't add that building." }
-    );
+  function labelFor(form: BuildingForm): string {
+    return form.label.trim() || `Building ${child.rows.length + 1}`;
   }
 
-  async function del(id: string) {
-    const label = buildings.find((b) => b.id === id)?.label ?? "Building";
-    await delStatus.run(
-      async () => {
-        // `errors` used to be dropped: a rejected delete still removed the row
-        // from the table, so the building looked gone until the next reload.
-        const { errors } = await client.models.Building.delete({ id });
-        if (errors?.length) throw new Error(errors[0].message);
-        setBuildings((bs) => bs.filter((b) => b.id !== id));
-      },
-      { savedMessage: `${label} removed.`, errorMessage: "Couldn't remove that building." }
-    );
+  function toForm(b: Building): BuildingForm {
+    return {
+      label: inputValue(b.label),
+      sqft: inputValue(b.sqft),
+      street: inputValue(b.streetAddress),
+      desc: inputValue(b.description),
+    };
   }
 
-  const totalSqft = buildings.reduce((s, b) => s + (b.sqft ?? 0), 0);
+  function toCreate(form: BuildingForm) {
+    return { ...toUpdate(form), label: labelFor(form) };
+  }
 
-  // By label, unlabelled last — useSort puts nulls last in either direction.
-  const { sorted, sortKey, dir, toggle } = useSort(
-    buildings,
-    {
-      building: (b) => b.label,
-      sqft: (b) => b.sqft,
-    },
-    "building"
-  );
+  function toUpdate(form: BuildingForm) {
+    return {
+      label: str(form.label),
+      sqft: num(form.sqft),
+      streetAddress: str(form.street),
+      description: str(form.desc),
+    };
+  }
+
+  function validate(form: BuildingForm): string[] {
+    return validatePositiveInt(form.sqft, "Sq ft", { min: 1 });
+  }
+
+  const totalSqft = child.rows.reduce((s, b) => s + (b.sqft ?? 0), 0);
 
   return (
-    <div className="card">
-      <h2>
-        Buildings{" "}
-        {res.loaded && !res.error && (
-          <span className="muted small" style={{ fontWeight: 400 }}>
-            — {buildings.length} total
-            {totalSqft ? ` · ${fmtNum(totalSqft)} sq ft` : ""}
-          </span>
-        )}
-      </h2>
+    <ChildRowsCard
+      title="Buildings"
+      child={child}
+      addLabel="+ Add building"
+      emptyMessage="No buildings yet."
+      summary={`— ${child.rows.length} total${
+        totalSqft ? ` · ${fmtNum(totalSqft)} sq ft` : ""
+      }`}
+      defaultSort="building"
+      columns={[
+        {
+          key: "building",
+          label: "Building",
+          // Unlabelled rows sort last in either direction — `useSort`'s rule.
+          sort: (b) => b.label,
+          cell: (b) => b.label,
+        },
+        { key: "sqft", label: "Sq ft", sort: (b) => b.sqft, cell: (b) => fmtNum(b.sqft) },
+      ]}
+      editTitle={(b) => `Editing ${b.label ?? "building"}`}
+      removeMessage={(b) => `Remove ${b.label ?? "this building"}?`}
+      addFields={
+        <BuildingFields
+          form={child.addForm}
+          labelPlaceholder={`Building ${child.rows.length + 1}`}
+          onEnter={child.add}
+        />
+      }
+      editFields={<BuildingFields form={child.editForm} />}
+    />
+  );
+}
 
-      {/* The add form defaults its label to `Building ${buildings.length + 1}`,
-          so offering it before the read lands would number a new building over
-          an existing one. Gating the body on `loaded` is what prevents that. */}
-      {!res.loaded ? (
-        <p className="muted small">Loading…</p>
-      ) : res.error ? (
-        <p className="error-text">{res.error}</p>
-      ) : (
-        <>
-      <div className="toolbar">
-        <div className="field">
-          <label>Label</label>
-          <input
-            placeholder={`Building ${buildings.length + 1}`}
-            value={form.label}
-            onChange={(e) => setF("label", e.target.value)}
-          />
-        </div>
-        <div className="field">
-          <label>Street address</label>
-          <input
-            placeholder="2 John Hancock Dr"
-            value={form.street}
-            onChange={(e) => setF("street", e.target.value)}
-          />
-        </div>
-        <div className="field">
-          <label>Sq ft</label>
-          <input
-            type="number"
-            min={1}
-            value={form.sqft}
-            onChange={(e) => setF("sqft", e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && add()}
-          />
-        </div>
-        <div className="field" style={{ flex: "1 1 260px" }}>
-          <label>Description (prints on ACORD 125)</label>
-          <input
-            placeholder="2, 4, 10, 12 John Hancock. Two-story wood frame…"
-            value={form.desc}
-            onChange={(e) => setF("desc", e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && add()}
-          />
-        </div>
-        <button className="secondary" disabled={addStatus.busy} onClick={add}>
-          + Add building
-        </button>
-        <SaveStatus {...addStatus.status} />
+/**
+ * The same four fields in the add toolbar and the edit form. Written once so
+ * they cannot drift into two different field sets — the add form offering a
+ * column the edit form can't change is the failure mode.
+ */
+function BuildingFields({
+  form,
+  labelPlaceholder,
+  onEnter,
+}: {
+  form: FormState<BuildingForm>;
+  labelPlaceholder?: string;
+  onEnter?: () => void;
+}) {
+  const enter = onEnter
+    ? (e: ReactKeyboardEvent) => {
+        if (e.key === "Enter") onEnter();
+      }
+    : undefined;
+  return (
+    <>
+      <div className="field">
+        <label>Label</label>
+        <input
+          placeholder={labelPlaceholder}
+          value={form.form.label}
+          onChange={(e) => form.setF("label", e.target.value)}
+        />
       </div>
-      <SaveStatus {...delStatus.status} />
-      {buildings.length > 0 && (
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <SortTh label="Building" colKey="building" sortKey={sortKey} dir={dir} onToggle={toggle} />
-                <SortTh label="Sq ft" colKey="sqft" sortKey={sortKey} dir={dir} onToggle={toggle} />
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {sorted.map((b) => (
-                <tr key={b.id}>
-                  <td>{b.label}</td>
-                  <td>{fmtNum(b.sqft)}</td>
-                  <td>
-                    {/* Was unguarded: one click deleted the building. */}
-                    <ConfirmButton
-                      label="Remove"
-                      busyLabel="Removing…"
-                      message={`Remove ${b.label ?? "this building"}?`}
-                      onConfirm={() => del(b.id)}
-                    />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-        </>
-      )}
-    </div>
+      <div className="field">
+        <label>Street address</label>
+        <input
+          placeholder="2 John Hancock Dr"
+          value={form.form.street}
+          onChange={(e) => form.setF("street", e.target.value)}
+        />
+      </div>
+      <div className="field">
+        <label>Sq ft</label>
+        <IntegerInput
+          value={form.form.sqft}
+          onChange={(v) => form.setF("sqft", v)}
+          onKeyDown={enter}
+        />
+      </div>
+      <div className="field" style={{ flex: "1 1 260px" }}>
+        <label>Description (prints on ACORD 125)</label>
+        <input
+          placeholder="2, 4, 10, 12 John Hancock. Two-story wood frame…"
+          value={form.form.desc}
+          onChange={(e) => form.setF("desc", e.target.value)}
+          onKeyDown={enter}
+        />
+      </div>
+    </>
   );
 }

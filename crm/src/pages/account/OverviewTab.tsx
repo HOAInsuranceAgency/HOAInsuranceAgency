@@ -1,10 +1,13 @@
 import {
   client,
+  unwrap,
   validateAccountFields,
   type Account,
 } from "../../lib/client";
 import { SaveStatus, useSaveStatus } from "../../components/SaveStatus";
 import { useFormState } from "../../lib/useFormState";
+import { inputValue, num, str } from "../../lib/formCodec";
+import { DateInput, MoneyInput, PhoneInput } from "../../components/inputs";
 
 export function OverviewTab({
   account,
@@ -20,26 +23,26 @@ export function OverviewTab({
   const saveStatus = useSaveStatus();
   const { form, setF } = useFormState({
     name: account.name,
-    legalName: account.legalName ?? "",
-    fein: account.fein ?? "",
-    sicCode: account.sicCode ?? "",
-    naicsCode: account.naicsCode ?? "",
-    inspectionContactName: account.inspectionContactName ?? "",
-    inspectionContactPhone: account.inspectionContactPhone ?? "",
-    priorCarrierName: account.priorCarrierName ?? "",
-    priorPolicyNumber: account.priorPolicyNumber ?? "",
-    priorPremium: account.priorPremium?.toString() ?? "",
-    priorTermEffective: account.priorTermEffective ?? "",
-    priorTermExpiration: account.priorTermExpiration ?? "",
-    contactFirstName: account.contactFirstName ?? "",
-    contactLastName: account.contactLastName ?? "",
-    contactEmail: account.contactEmail ?? "",
-    contactPhone: account.contactPhone ?? "",
-    totalInsuredValue: account.totalInsuredValue?.toString() ?? "",
-    currentAgent: account.currentAgent ?? "",
-    currentPolicyExpiration: account.currentPolicyExpiration ?? "",
-    source: account.source ?? "",
-    notes: account.notes ?? "",
+    legalName: inputValue(account.legalName),
+    fein: inputValue(account.fein),
+    sicCode: inputValue(account.sicCode),
+    naicsCode: inputValue(account.naicsCode),
+    inspectionContactName: inputValue(account.inspectionContactName),
+    inspectionContactPhone: inputValue(account.inspectionContactPhone),
+    priorCarrierName: inputValue(account.priorCarrierName),
+    priorPolicyNumber: inputValue(account.priorPolicyNumber),
+    priorPremium: inputValue(account.priorPremium),
+    priorTermEffective: inputValue(account.priorTermEffective),
+    priorTermExpiration: inputValue(account.priorTermExpiration),
+    contactFirstName: inputValue(account.contactFirstName),
+    contactLastName: inputValue(account.contactLastName),
+    contactEmail: inputValue(account.contactEmail),
+    contactPhone: inputValue(account.contactPhone),
+    totalInsuredValue: inputValue(account.totalInsuredValue),
+    currentAgent: inputValue(account.currentAgent),
+    currentPolicyExpiration: inputValue(account.currentPolicyExpiration),
+    source: inputValue(account.source),
+    notes: inputValue(account.notes),
   }, { onEdit: saveStatus.markDirty });
 
   async function save() {
@@ -50,34 +53,34 @@ export function OverviewTab({
     }
     await saveStatus.run(
       async () => {
-        const { data, errors } = await client.models.Account.update({
-          id: account.id,
-          name: form.name.trim() || account.name,
-          legalName: form.legalName.trim() || null,
-          fein: form.fein.trim() || null,
-          sicCode: form.sicCode.trim() || null,
-          naicsCode: form.naicsCode.trim() || null,
-          inspectionContactName: form.inspectionContactName.trim() || null,
-          inspectionContactPhone: form.inspectionContactPhone.trim() || null,
-          priorCarrierName: form.priorCarrierName.trim() || null,
-          priorPolicyNumber: form.priorPolicyNumber.trim() || null,
-          priorPremium: form.priorPremium ? Number(form.priorPremium) : null,
-          priorTermEffective: form.priorTermEffective || null,
-          priorTermExpiration: form.priorTermExpiration || null,
-          contactFirstName: form.contactFirstName.trim() || null,
-          contactLastName: form.contactLastName.trim() || null,
-          contactEmail: form.contactEmail.trim() || null,
-          contactPhone: form.contactPhone.trim() || null,
-          totalInsuredValue: form.totalInsuredValue
-            ? Number(form.totalInsuredValue)
-            : null,
-          currentAgent: form.currentAgent.trim() || null,
-          currentPolicyExpiration: form.currentPolicyExpiration || null,
-          source: form.source.trim() || null,
-          notes: form.notes.trim() || null,
-        });
-        if (errors?.length || !data) throw new Error(errors?.[0]?.message);
-        onChange(data);
+        onChange(
+          unwrap(
+            await client.models.Account.update({
+              id: account.id,
+              name: str(form.name) ?? account.name,
+              legalName: str(form.legalName),
+              fein: str(form.fein),
+              sicCode: str(form.sicCode),
+              naicsCode: str(form.naicsCode),
+              inspectionContactName: str(form.inspectionContactName),
+              inspectionContactPhone: str(form.inspectionContactPhone),
+              priorCarrierName: str(form.priorCarrierName),
+              priorPolicyNumber: str(form.priorPolicyNumber),
+              priorPremium: num(form.priorPremium),
+              priorTermEffective: str(form.priorTermEffective),
+              priorTermExpiration: str(form.priorTermExpiration),
+              contactFirstName: str(form.contactFirstName),
+              contactLastName: str(form.contactLastName),
+              contactEmail: str(form.contactEmail),
+              contactPhone: str(form.contactPhone),
+              totalInsuredValue: num(form.totalInsuredValue),
+              currentAgent: str(form.currentAgent),
+              currentPolicyExpiration: str(form.currentPolicyExpiration),
+              source: str(form.source),
+              notes: str(form.notes),
+            })
+          )
+        );
       },
       { errorMessage: "Save failed" }
     );
@@ -120,9 +123,9 @@ export function OverviewTab({
         </div>
         <div className="field">
           <label>Inspection contact phone</label>
-          <input
+          <PhoneInput
             value={form.inspectionContactPhone}
-            onChange={(e) => setF("inspectionContactPhone", e.target.value)}
+            onChange={(v) => setF("inspectionContactPhone", v)}
           />
         </div>
         <div className="field">
@@ -139,14 +142,16 @@ export function OverviewTab({
         </div>
         <div className="field">
           <label>Contact phone</label>
-          <input value={form.contactPhone} onChange={(e) => setF("contactPhone", e.target.value)} />
+          <PhoneInput
+            value={form.contactPhone}
+            onChange={(v) => setF("contactPhone", v)}
+          />
         </div>
         <div className="field">
           <label>Total insured value ($)</label>
-          <input
-            type="number"
+          <MoneyInput
             value={form.totalInsuredValue}
-            onChange={(e) => setF("totalInsuredValue", e.target.value)}
+            onChange={(v) => setF("totalInsuredValue", v)}
           />
         </div>
         <div className="field">
@@ -163,36 +168,32 @@ export function OverviewTab({
         </div>
         <div className="field">
           <label>Prior premium ($)</label>
-          <input
-            type="number"
+          <MoneyInput
             value={form.priorPremium}
-            onChange={(e) => setF("priorPremium", e.target.value)}
+            onChange={(v) => setF("priorPremium", v)}
           />
         </div>
         <div className="field">
           <label>Prior term effective</label>
-          <input
-            type="date"
+          <DateInput
             value={form.priorTermEffective}
-            onChange={(e) => setF("priorTermEffective", e.target.value)}
+            onChange={(v) => setF("priorTermEffective", v)}
           />
         </div>
         <div className="field">
           <label>Prior term expiration</label>
-          <input
-            type="date"
+          <DateInput
             value={form.priorTermExpiration}
-            onChange={(e) => setF("priorTermExpiration", e.target.value)}
+            onChange={(v) => setF("priorTermExpiration", v)}
           />
         </div>
         {/* Lead-only: once bound, the Policy records are authoritative. */}
         {account.stage !== "CLIENT" && (
         <div className="field">
           <label>Current policy expiration</label>
-          <input
-            type="date"
+          <DateInput
             value={form.currentPolicyExpiration}
-            onChange={(e) => setF("currentPolicyExpiration", e.target.value)}
+            onChange={(v) => setF("currentPolicyExpiration", v)}
           />
         </div>
         )}
