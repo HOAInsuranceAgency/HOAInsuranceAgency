@@ -5,7 +5,12 @@ import { AGENCY } from "./agency";
 import type { Account } from "./client";
 import type { AcordFormDef } from "./acordRegistry";
 import { fmtUs, todayUs } from "./acordFormat";
-import { CONSTRUCTION_LABELS, CONSTRUCTION_PHRASES } from "./enums";
+import { inspectionContact, primaryContact, type ContactLike } from "./contacts";
+import {
+  CONSTRUCTION_LABELS,
+  CONSTRUCTION_PHRASES,
+  CONTACT_TYPE_LABELS,
+} from "./enums";
 import {
   fillTemplate,
   type FieldValues,
@@ -21,6 +26,8 @@ interface BuildingInfo {
   streetAddress?: string | null;
   description?: string | null;
 }
+
+type ContactInfo = ContactLike;
 
 /** ACORD 125 has four premises rows on the form; the rest go on a schedule. */
 const PREMISES_ROWS = ["A", "B", "C", "D"] as const;
@@ -88,6 +95,7 @@ function buildAppFormValues(
   formKey: string,
   account: Account,
   buildings: BuildingInfo[],
+  contacts: ContactInfo[],
   /**
    * When the coverage being applied for starts. For a lead that's the
    * incumbent's expiration; for a client it's the expiring policy's end date
@@ -99,6 +107,7 @@ function buildAppFormValues(
   lines: string[] = []
 ): FieldValues {
   const totalSqft = buildings.reduce((s, b) => s + (b.sqft ?? 0), 0);
+  const primary = primaryContact(contacts);
 
   const zip = account.zip ?? "";
   const state = account.state ?? "";
@@ -144,7 +153,10 @@ function buildAppFormValues(
     insuredCity: { candidates: ["NamedInsured_MailingAddress_CityName_A"], value: account.city ?? "" },
     insuredState: { candidates: ["NamedInsured_MailingAddress_StateOrProvinceCode_A"], value: account.state ?? "" },
     insuredZip: { candidates: ["NamedInsured_MailingAddress_PostalCode_A"], value: account.zip ?? "" },
-    insuredPhone: { candidates: ["NamedInsured_Primary_PhoneNumber_A"], value: account.contactPhone ?? "" },
+    insuredPhone: {
+      candidates: ["NamedInsured_Primary_PhoneNumber_A"],
+      value: primary?.phone ?? "",
+    },
     insuredFein: { candidates: ["NamedInsured_TaxIdentifier_A"], value: account.fein ?? "" },
     insuredSic: { candidates: ["NamedInsured_SICCode_A"], value: account.sicCode ?? "" },
     insuredNaics: { candidates: ["NamedInsured_NAICSCode_A"], value: account.naicsCode ?? "" },
@@ -166,6 +178,7 @@ function buildAppFormValues(
           return d.toISOString().slice(0, 10);
         })()
       : "";
+    const inspection = inspectionContact(contacts);
 
     Object.assign(values, {
       notForProfit: {
@@ -180,18 +193,23 @@ function buildAppFormValues(
       proposedEffective: { candidates: ["Policy_EffectiveDate_A"], value: fmtUs(proposedEff) },
       proposedExpiration: { candidates: ["Policy_ExpirationDate_A"], value: fmtUs(proposedExp) },
 
-      // Who the carrier's inspector calls to get on site.
+      // Who the carrier's inspector calls to get on site — the first contact
+      // carrying the INSPECTION role, where this used to be two Account
+      // columns that could name exactly one person and never said who the
+      // other five were. The description text comes from the same label table
+      // the role dropdown renders, so the PDF and the form cannot disagree
+      // about what the role is called.
       inspectionLabel: {
         candidates: ["NamedInsured_Contact_ContactDescription_A"],
-        value: account.inspectionContactName ? "Inspection" : "",
+        value: inspection ? CONTACT_TYPE_LABELS.INSPECTION : "",
       },
       inspectionName: {
         candidates: ["NamedInsured_Contact_FullName_A"],
-        value: account.inspectionContactName ?? "",
+        value: inspection?.name ?? "",
       },
       inspectionPhone: {
         candidates: ["NamedInsured_Contact_PrimaryPhoneNumber_A"],
-        value: account.inspectionContactPhone ?? "",
+        value: inspection?.phone ?? "",
       },
 
       // ── Incumbent coverage ──
@@ -415,13 +433,14 @@ export async function fillAcordApp(
   form: AcordFormDef,
   account: Account,
   buildings: BuildingInfo[],
+  contacts: ContactInfo[],
   signature?: SignatureInfo | null,
   renewalDate?: string | null,
   lines: string[] = []
 ): Promise<FillResult> {
   return fillTemplate(
     form.path,
-    buildAppFormValues(form.key, account, buildings, renewalDate, lines),
+    buildAppFormValues(form.key, account, buildings, contacts, renewalDate, lines),
     signature
   );
 }

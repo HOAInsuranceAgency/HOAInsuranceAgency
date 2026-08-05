@@ -86,6 +86,21 @@ const schema = a
     ]),
     ReplacementCostType: a.enum(["RC", "ERC", "GRC"]),
     AggregateAppliesTo: a.enum(["POLICY", "PROJECT", "LOCATION", "OTHER"]),
+    // Roles an association contact plays. The seven named ones are what the
+    // agency asked for; OTHER is here because carriers routinely ask for a
+    // role the list does not cover — a property manager's assistant, an
+    // on-site super — and the alternative to a member for them is a contact
+    // recorded with no role at all.
+    ContactType: a.enum([
+      "INSPECTION",
+      "CLAIMS",
+      "ACCOUNTING",
+      "MANAGER",
+      "TRUSTEE",
+      "DIRECTOR",
+      "PRESIDENT",
+      "OTHER",
+    ]),
 
     // ── Account: Lead → Client, converted in place ─────────────────────
     //
@@ -112,11 +127,19 @@ const schema = a
         fein: a.string(), // federal tax ID — ACORD 125 applicant block
         sicCode: a.string(), // e.g. 8641
         naicsCode: a.string(), // e.g. 813990
+        // ── Contact columns: superseded by the Contact model ──
+        // Nothing reads or writes these any more; they are kept only until
+        // the backfill has run and been verified, which is the rollback point
+        // for W1. See docs/specs/lead-client-expansion.md → Migration and
+        // rollout. Removing a field here does not delete the DynamoDB
+        // attribute, so this stays reversible until something overwrites it —
+        // and nothing does.
         contactFirstName: a.string(),
         contactLastName: a.string(),
         contactEmail: a.email(),
         // Free-form: a.phone() only accepts E.164 and rejects "555-123-4567"
         contactPhone: a.string(),
+        contacts: a.hasMany("Contact", "accountId"),
         address: a.string(),
         city: a.string(),
         state: a.string(),
@@ -149,7 +172,7 @@ const schema = a
         // Incumbent policy expiration (drives lead renewal pipeline; for
         // clients the bound Policy records are authoritative)
         currentPolicyExpiration: a.date(),
-        // Who a carrier's inspector should call to get on site.
+        // Superseded by the INSPECTION-typed Contact; see the note above.
         inspectionContactName: a.string(),
         inspectionContactPhone: a.string(),
         // ── Incumbent coverage (ACORD 125 prior-carrier block) ──
@@ -174,6 +197,41 @@ const schema = a
         allow.authenticated().to(["read", "create", "update"]),
         allow.groups(["ADMIN"]),
       ]),
+
+    // ── Contacts: the people at an association ─────────────────────────
+    //
+    // One row per person, replacing the four flat `contact*` columns and the
+    // two `inspectionContact*` columns on Account, which between them could
+    // hold exactly two people and had no way to say who either of them was.
+    //
+    // Schema default authorization (authenticated read/write/delete), like
+    // Building: adding and removing a contact is ordinary staff work, and no
+    // screen gates it on ADMIN — so there is no client gate here for a model
+    // rule to have to match.
+    //
+    // `leadIntake` creates a primary Contact from a web lead. That is not
+    // affected by this rule either way — see the note on `allow.resource` at
+    // the bottom of this file.
+    Contact: a.model({
+      accountId: a.id().required(),
+      account: a.belongsTo("Account", "accountId"),
+      name: a.string().required(),
+      email: a.email(),
+      // Free-form for the same reason Account.contactPhone was: a.phone()
+      // accepts only E.164, and these are extensions and 10-digit US numbers.
+      phone: a.string(),
+      type: a.ref("ContactType"),
+      notes: a.string(),
+      // Exactly one per account. The ACORD insured block and the COI use this
+      // one; without it there is no answer to "which of five contacts is the
+      // applicant's phone number".
+      isPrimary: a.boolean(),
+      // Natural key for the extraction apply path, so re-running an
+      // extraction updates the contact it already created instead of adding
+      // a second copy of the same person. Also what makes the backfill
+      // idempotent. See W9.
+      extractionSourceKey: a.string(),
+    }),
 
     // Individual buildings on a property; total buildings/sqft are derived.
     Building: a.model({

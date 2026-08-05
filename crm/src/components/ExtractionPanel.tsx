@@ -5,10 +5,15 @@ import {
   fmtNum,
   fmtPhone,
   friendlyError,
+  listAllPages,
   type Account,
+  type Contact,
 } from "../lib/client";
 import { Badge, statusBadge, CONFIDENCE_BADGE } from "../lib/badges";
-import { CONSTRUCTION_LABELS } from "../lib/enums";
+import { CONSTRUCTION_LABELS, CONTACT_TYPE_LABELS } from "../lib/enums";
+import { str } from "../lib/formCodec";
+import { contactKey } from "../lib/extractionKeys";
+import { useAsyncResource } from "../lib/useAsyncResource";
 import { SaveStatus, useSaveStatus } from "./SaveStatus";
 
 /**
@@ -25,13 +30,24 @@ interface ExtractedField {
   source: string | null;
 }
 
+interface ExtractedContact {
+  name?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  type?: string | null;
+}
+
 interface ExtractionResult {
   [key: string]: unknown;
+  contacts?: ExtractedContact[];
   buildings?: { label?: string | null; sqft?: string | number | null }[];
   summary?: string;
   extractedAt?: string;
   documentCount?: number;
 }
+
+/** A candidate worth showing: the model returned an entry with a name on it. */
+const namedContact = (c: ExtractedContact) => Boolean(c?.name?.trim());
 
 // Field definitions: extraction key → label, current-value accessor, and
 // how the value lands on the Account record ("patch") or in notes ("note").
@@ -76,21 +92,10 @@ const moneyDisplay = (v: ExtractedField["value"]): string => {
   return Number.isFinite(n) ? fmtMoney(n) : fmtVal(v);
 };
 
+// The four flat `contact*` fields are gone from here: contacts are rows now,
+// reviewed in their own section below, because a prior policy packet names
+// several people and this table can only ever patch one of each column.
 const ALL_FIELD_DEFS: FieldDef[] = [
-  { key: "contactFirstName", label: "Contact first name", kind: "patch", current: (a) => a.contactFirstName ?? "" },
-  { key: "contactLastName", label: "Contact last name", kind: "patch", current: (a) => a.contactLastName ?? "" },
-  { key: "contactEmail", label: "Contact email", kind: "patch", current: (a) => a.contactEmail ?? "" },
-  {
-    key: "contactPhone",
-    label: "Contact phone",
-    kind: "patch",
-    // Both sides through `fmtPhone`, for the same reason `totalInsuredValue`
-    // runs both through `fmtMoney`: this row exists so a human can compare the
-    // stored value with the proposed one, and `(555) 123-4567` next to
-    // `5551234567` reads as a change when it is the same number.
-    current: (a) => (a.contactPhone ? fmtPhone(a.contactPhone) : ""),
-    display: (v) => (typeof v === "string" && v ? fmtPhone(v) : fmtVal(v)),
-  },
   { key: "address", label: "Street address", kind: "patch", current: (a) => a.address ?? "" },
   { key: "city", label: "City", kind: "patch", current: (a) => a.city ?? "" },
   { key: "state", label: "State", kind: "patch", current: (a) => a.state ?? "" },
@@ -170,8 +175,37 @@ export default function ExtractionPanel({
   const applyStatus = useSaveStatus();
   const [selected, setSelected] = useState<Record<string, boolean>>({});
   const [selectedBuildings, setSelectedBuildings] = useState<Record<number, boolean>>({});
+  const [selectedContacts, setSelectedContacts] = useState<Record<number, boolean>>({});
   const [showReview, setShowReview] = useState(true);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // The account's existing contacts, so a candidate can be classified before
+  // it is written. Without this the apply path can only ever create, which is
+  // how re-running an extraction duplicates everything it already applied.
+  //
+  // A separate resource rather than part of the poll: the poll is an interval
+  // that deliberately drops most of its successful responses, and this is a
+  // plain fetch-per-account. The error is deliberately not surfaced — a failed
+  // read leaves every candidate classified as "add", which is what the panel
+  // did before contacts existed, and blocking the whole review over it would
+  // be worse than the duplicate it prevents.
+  const contactsRes = useAsyncResource(
+    () =>
+      listAllPages((nextToken) =>
+        client.models.Contact.list({
+          filter: { accountId: { eq: account.id } },
+          nextToken,
+        })
+      ),
+    [account.id],
+    { initialData: [] as Contact[] }
+  );
+
+  /** The stored contact a candidate would land on, if there is one. */
+  const matchFor = (c: ExtractedContact): Contact | undefined => {
+    const key = contactKey(c);
+    return contactsRes.data.find((e) => e.extractionSourceKey === key);
+  };
 
   const status = account.extractionStatus;
   const result = useMemo(() => parseExtraction(account.aiExtraction), [account.aiExtraction]);
@@ -204,6 +238,11 @@ export default function ExtractionPanel({
       if (bd && (!isEmpty(bd.label as never) || !isEmpty(bd.sqft as never))) b[i] = true;
     });
     setSelectedBuildings(b);
+    const c: Record<number, boolean> = {};
+    (result.contacts ?? []).forEach((ct, i) => {
+      if (namedContact(ct)) c[i] = true;
+    });
+    setSelectedContacts(c);
     // A fresh extraction means the previous "Applied" no longer describes
     // what is on screen — the same event the form setters signal elsewhere.
     applyStatus.markDirty();
@@ -259,6 +298,48 @@ export default function ExtractionPanel({
         });
         if (errors?.length || !data) throw new Error(errors?.[0]?.message);
 
+        // Contacts before buildings, and match-then-write rather than always
+        // create. Re-running an extraction and applying it again used to add
+        // a second copy of everything it had already added; a candidate that
+        // matches a stored contact on its natural key now updates that row.
+        //
+        // The update is a *merge*: only fields the documents actually
+        // supported are sent. A candidate found in a budget that names the
+        // manager but not their phone number must not blank the phone number
+        // somebody typed in by hand.
+        let contactFailures = 0;
+        let primaryTaken = contactsRes.data.some((c) => c.isPrimary);
+        for (const c of (result.contacts ?? []).filter((_, i) => selectedContacts[i])) {
+          if (!namedContact(c)) continue;
+          const found = matchFor(c);
+          const name = str(c.name);
+          const email = str(c.email);
+          const phone = str(c.phone);
+          const type = str(c.type) as Contact["type"];
+          if (!name) continue;
+          const supplied = {
+            name,
+            ...(email ? { email } : {}),
+            ...(phone ? { phone } : {}),
+            ...(type ? { type } : {}),
+          };
+          const written = found
+            ? await client.models.Contact.update({ id: found.id, ...supplied })
+            : await client.models.Contact.create({
+                accountId: account.id,
+                ...supplied,
+                // An account with nobody flagged has no answer for the ACORD
+                // insured block, so the first contact to exist takes it.
+                isPrimary: !primaryTaken,
+                extractionSourceKey: contactKey(c),
+              });
+          if (written.errors?.length || !written.data) contactFailures++;
+          else if (!found) primaryTaken = true;
+        }
+        // So a second apply in the same session classifies against what the
+        // first one wrote, rather than re-creating it.
+        if (result.contacts?.length) await contactsRes.refetch();
+
         const buildings = (result.buildings ?? []).filter((_, i) => selectedBuildings[i]);
         // These `errors` used to be dropped entirely, so a building that
         // failed to create reported the same green "Applied" as one that did.
@@ -276,10 +357,21 @@ export default function ExtractionPanel({
         }
 
         onChange(data);
-        return buildingFailures
-          ? `Fields applied — review the Overview tab. ${buildingFailures} building${
-              buildingFailures === 1 ? "" : "s"
-            } couldn't be created; add ${buildingFailures === 1 ? "it" : "them"} by hand under Property.`
+        // The account fields did land, so a child row that failed is a partial
+        // success, not a failure: it comes back as `run`'s warning arm rather
+        // than a throw, and it names where to finish the job by hand.
+        const unfinished = [
+          buildingFailures &&
+            `${buildingFailures} building${buildingFailures === 1 ? "" : "s"} under Property`,
+          contactFailures &&
+            `${contactFailures} contact${contactFailures === 1 ? "" : "s"} on the Contacts card`,
+        ].filter(Boolean);
+        return unfinished.length
+          ? `Fields applied — review the Overview tab. Couldn't save ${unfinished.join(
+              " and "
+            )}; add ${
+              buildingFailures + contactFailures === 1 ? "it" : "them"
+            } by hand.`
           : "";
       },
       {
@@ -378,6 +470,54 @@ export default function ExtractionPanel({
                       <td className="small muted" style={{ maxWidth: 320 }}>
                         {f.evidence ?? "—"}
                         {f.source && <div>({f.source})</div>}
+                      </td>
+                    </tr>
+                  );
+                })}
+                {(result.contacts ?? []).map((c, i) => {
+                  if (!namedContact(c)) return null;
+                  const found = matchFor(c);
+                  const bits = [
+                    c.type ? CONTACT_TYPE_LABELS[c.type] ?? c.type : "",
+                    c.email?.trim(),
+                    c.phone?.trim() ? fmtPhone(c.phone) : "",
+                  ].filter(Boolean);
+                  return (
+                    <tr key={`c-${i}`}>
+                      <td>
+                        <input
+                          type="checkbox"
+                          checked={!!selectedContacts[i]}
+                          onChange={(e) =>
+                            setSelectedContacts((s) => ({ ...s, [i]: e.target.checked }))
+                          }
+                        />
+                      </td>
+                      <td>Contact</td>
+                      <td className="small muted">
+                        {found
+                          ? [found.name, found.email, fmtPhone(found.phone)]
+                              .filter((v) => v && v !== "—")
+                              .join(" · ")
+                          : "—"}
+                      </td>
+                      <td>
+                        <strong>{c.name?.trim()}</strong>
+                        {bits.length ? (
+                          <div className="small muted">{bits.join(" · ")}</div>
+                        ) : null}
+                      </td>
+                      <td>
+                        {/* The verdict, not a confidence: the model does not
+                            score a whole person, and what the reviewer needs
+                            to know is whether this creates a row or edits one.
+                            W9 turns this into the full three-way rule. */}
+                        <span className="badge gray">{found ? "update" : "add"}</span>
+                      </td>
+                      <td className="small muted">
+                        {found
+                          ? "Updates the matching contact; blank fields are left alone"
+                          : "Creates a Contact record"}
                       </td>
                     </tr>
                   );

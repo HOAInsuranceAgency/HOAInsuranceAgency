@@ -7,6 +7,7 @@ import type { Schema } from "../../data/resource";
 import { listAllPages } from "../../../src/lib/pagination";
 import {
   CONSTRUCTION_TYPES,
+  CONTACT_TYPES,
   DEFAULT_DOCUMENT_CATEGORY,
   DOCUMENT_CATEGORY_EXTRACTION_PRIORITY,
 } from "../../../src/lib/enums";
@@ -80,10 +81,6 @@ const enumField = (values: string[]) => ({
 const EXTRACTION_SCHEMA = {
   type: "object",
   properties: {
-    contactFirstName: field("string"),
-    contactLastName: field("string"),
-    contactEmail: field("string"),
-    contactPhone: field("string"),
     address: field("string"),
     city: field("string"),
     state: {
@@ -113,6 +110,30 @@ const EXTRACTION_SCHEMA = {
       ...field("string"),
       description: "ISO date YYYY-MM-DD of current policy expiration",
     },
+    // An array, not four flat columns, because a prior policy packet names
+    // the manager, the board president and whoever the inspector called, and
+    // the flat shape could carry exactly one of them. Same shape as
+    // `buildings` — no per-field confidence, because the reviewer accepts or
+    // rejects a whole person rather than their phone number separately.
+    contacts: {
+      type: "array",
+      description:
+        "People named in the documents: manager, board officers, accounting, whoever an inspector should call",
+      items: {
+        type: "object",
+        properties: {
+          name: { type: "string", description: "Full name, or empty string" },
+          email: { type: "string", description: "Email address, or empty string" },
+          phone: {
+            type: "string",
+            description: "Phone as written in the document, or empty string",
+          },
+          type: { type: "string", enum: [...CONTACT_TYPES, ""] },
+        },
+        required: ["name", "email", "phone", "type"],
+        additionalProperties: false,
+      },
+    },
     buildings: {
       type: "array",
       description: "Individual buildings with square footage, if documented",
@@ -132,10 +153,6 @@ const EXTRACTION_SCHEMA = {
     },
   },
   required: [
-    "contactFirstName",
-    "contactLastName",
-    "contactEmail",
-    "contactPhone",
     "address",
     "city",
     "state",
@@ -156,6 +173,7 @@ const EXTRACTION_SCHEMA = {
     "currentAgent",
     "currentAnnualPremium",
     "currentPolicyExpiration",
+    "contacts",
     "buildings",
     "summary",
   ],
@@ -246,15 +264,17 @@ async function runExtraction(accountId: string) {
     // ("compiled grammar too large"). Describe the exact JSON shape in the
     // prompt instead and parse defensively — Opus 4.8 returns clean JSON.
     const dataKeys = Object.keys(EXTRACTION_SCHEMA.properties).filter(
-      (k) => k !== "buildings" && k !== "summary"
+      (k) => k !== "contacts" && k !== "buildings" && k !== "summary"
     );
     const shapeInstruction = `Respond with ONLY a JSON object — no markdown fences, no commentary. The object has exactly these keys:
 ${dataKeys.join(", ")}
 Each of those keys maps to: { "value": <string>, "confidence": "high"|"medium"|"low", "evidence": <string>, "source": <string> }.
 Also include:
+  "contacts": array of { "name": <string>, "email": <string>, "phone": <string>, "type": <string> } — [] if nobody is named,
   "buildings": array of { "label": <string>, "sqft": <string, digits only> } — [] if none documented,
   "summary": <string, 2-3 sentence underwriting summary>.
-For "constructionType".value use exactly one of: ${CONSTRUCTION_TYPES.join(", ")}, or "".`;
+For "constructionType".value use exactly one of: ${CONSTRUCTION_TYPES.join(", ")}, or "".
+For a contact's "type" use exactly one of: ${CONTACT_TYPES.join(", ")}, or "" when the documents don't say what the person's role is. One entry per person — do not repeat the same person under two roles.`;
 
     const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
     const response = await anthropic.messages.create({

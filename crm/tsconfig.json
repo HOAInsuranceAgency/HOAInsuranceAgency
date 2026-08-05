@@ -16,5 +16,9 @@
     "isolatedModules": true,
     "noEmit": true
   },
-  "include": ["src"]
+  // `scripts` is here for the same reason `typecheck:backend` exists: a
+  // migration script that writes to production data is not less deserving of
+  // a type check than a Lambda, and nothing else would ever compile it.
+  // `vite build` only reads `src`, so this costs the bundle nothing.
+  "include": ["src", "scripts"]
 }

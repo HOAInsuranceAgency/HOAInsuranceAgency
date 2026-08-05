@@ -7,6 +7,7 @@ export const client = generateClient<Schema>();
 
 export type Account = Schema["Account"]["type"];
 export type Building = Schema["Building"]["type"];
+export type Contact = Schema["Contact"]["type"];
 export type Quote = Schema["Quote"]["type"];
 export type Policy = Schema["Policy"]["type"];
 export type Carrier = Schema["Carrier"]["type"];

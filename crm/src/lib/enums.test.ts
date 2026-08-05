@@ -10,6 +10,9 @@ import {
   CONSTRUCTION_OPTIONS,
   CONSTRUCTION_PHRASES,
   CONSTRUCTION_TYPES,
+  CONTACT_TYPE_LABELS,
+  CONTACT_TYPE_OPTIONS,
+  DEFAULT_CONTACT_TYPE,
   DOCUMENT_CATEGORY_EXTRACTION_PRIORITY,
   DOCUMENT_CATEGORY_OPTIONS,
   LICENSE_CLASS_LABELS,
@@ -25,6 +28,7 @@ import {
   type AccountType,
   type AggregateAppliesTo,
   type ConstructionType,
+  type ContactType,
   type DocumentCategory,
   type LicenseClass,
   type LicenseHolderType,
@@ -61,9 +65,10 @@ const stillLiteralUnions: [
   NotWidened<ConstructionType>,
   NotWidened<ReplacementCostType>,
   NotWidened<AggregateAppliesTo>,
+  NotWidened<ContactType>,
 ] = [
   true, true, true, true, true, true, true, true, true, true, true, true, true,
-  true, true,
+  true, true, true,
 ];
 
 /**
@@ -141,6 +146,13 @@ describe("every table covers its schema enum exactly", () => {
     const members = schemaEnum("AggregateAppliesTo").sort();
     expect(valuesOf(AGGREGATE_APPLIES_TO_OPTIONS).sort()).toEqual(members);
     expect(Object.keys(ACORD25_AGGREGATE_FIELDS).sort()).toEqual(members);
+  });
+
+  it("ContactType — labels and options agree", () => {
+    const members = schemaEnum("ContactType").sort();
+    expect(Object.keys(CONTACT_TYPE_LABELS).sort()).toEqual(members);
+    expect(valuesOf(CONTACT_TYPE_OPTIONS).sort()).toEqual(members);
+    expect(members).toContain(DEFAULT_CONTACT_TYPE);
   });
 
   it("AccountType — the shared copy matches the schema", () => {
@@ -310,6 +322,24 @@ describe("option lists reproduce the hand-written ones they replaced", () => {
       "Consultant",
       "Producer",
       "Surplus lines",
+    ]);
+  });
+
+  it("CONTACT_TYPE_OPTIONS — the contacts card's role picker", () => {
+    // No hand-written list preceded this one — the members are new in W1 — so
+    // this locks the rendered order rather than reproducing an old one. It is
+    // alphabetical by label, which is what `optionsByLabel` gives every list
+    // in this file, and it means the schema's INSPECTION-first declaration
+    // order does not decide what a producer sees first.
+    expect(CONTACT_TYPE_OPTIONS.map((o) => [o.value, o.label])).toEqual([
+      ["ACCOUNTING", "Accounting"],
+      ["CLAIMS", "Claims"],
+      ["DIRECTOR", "Director"],
+      ["INSPECTION", "Inspection"],
+      ["MANAGER", "Manager"],
+      ["OTHER", "Other"],
+      ["PRESIDENT", "President"],
+      ["TRUSTEE", "Trustee"],
     ]);
   });
 

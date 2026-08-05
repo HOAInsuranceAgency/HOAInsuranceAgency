@@ -11,6 +11,7 @@ import DocumentsPanel from "../components/DocumentsPanel";
 import QuotesPanel from "../components/QuotesPanel";
 import AccountMarketingTasks from "../components/MarketingTasks";
 import PropertyPanel from "../components/PropertyPanel";
+import ContactsCard from "../components/ContactsCard";
 import FormsTab from "../components/FormsTab";
 import ExtractionPanel from "../components/ExtractionPanel";
 import Celebration from "../components/Celebration";
@@ -110,6 +111,7 @@ export default function AccountDetail({ profile }: { profile: UserProfile }) {
       {tab === "overview" && (
         <>
           <OverviewTab account={account} onChange={setAccount} />
+          <ContactsCard accountId={account.id} />
           <PropertyPanel account={account} onChange={setAccount} />
           {account.stage === "LEAD" && <DeleteLeadZone account={account} />}
         </>

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type Dispatch, type SetStateAction } from "react";
 import { assertNoErrors, listAllPages, unwrap } from "./client";
 import { useAsyncResource } from "./useAsyncResource";
 import { useFormState, type FormState } from "./useFormState";
@@ -115,6 +115,13 @@ export interface ChildRowsOptions<T, F extends object> {
 export interface ChildRows<T, F extends object> {
   /** Every row for this account, in read order. */
   rows: T[];
+  /**
+   * Patch the cached rows directly — for a write this hook does not own.
+   * `ContactsCard`'s primary-contact radio is the case: promoting one row
+   * demotes every other, which is a write across rows that neither the add
+   * form nor the edit form can express.
+   */
+  setRows: Dispatch<SetStateAction<T[]>>;
   /** The read has settled — the one gate for "show a placeholder". */
   loaded: boolean;
   /** Read failure, empty string when there is none. */
@@ -271,6 +278,7 @@ export function useChildRows<T extends { id: string }, F extends object>(
 
   return {
     rows,
+    setRows,
     loaded: res.loaded,
     error: res.error,
     addStatus,

@@ -1,12 +1,22 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { uploadData } from "aws-amplify/storage";
-import { client, friendlyError, US_STATES, validateAccountFields } from "../lib/client";
+import {
+  client,
+  friendlyError,
+  US_STATES,
+  validateAccountFields,
+  type Contact,
+} from "../lib/client";
 import { AddressAutocomplete } from "../lib/googlePlaces";
 import FileButton from "../components/FileButton";
+import { PhoneInput } from "../components/inputs";
 import { useFormState } from "../lib/useFormState";
+import { str } from "../lib/formCodec";
+import { contactKey } from "../lib/extractionKeys";
 import {
   ACCOUNT_TYPE_OPTIONS,
+  CONTACT_TYPE_OPTIONS,
   DEFAULT_ACCOUNT_TYPE,
   type AccountType,
 } from "../lib/enums";
@@ -21,8 +31,8 @@ export default function NewLead() {
   const { form, setF, patch } = useFormState({
     type: DEFAULT_ACCOUNT_TYPE as string,
     name: "",
-    contactFirstName: "",
-    contactLastName: "",
+    contactName: "",
+    contactType: "",
     contactEmail: "",
     contactPhone: "",
     address: "",
@@ -54,10 +64,6 @@ export default function NewLead() {
       stage: "LEAD",
       type: form.type as AccountType,
       name: form.name.trim(),
-      contactFirstName: form.contactFirstName.trim() || undefined,
-      contactLastName: form.contactLastName.trim() || undefined,
-      contactEmail: form.contactEmail.trim() || undefined,
-      contactPhone: form.contactPhone.trim() || undefined,
       address: form.address.trim() || undefined,
       city: form.city.trim() || undefined,
       state: form.state || undefined,
@@ -76,6 +82,28 @@ export default function NewLead() {
       setSaving(false);
       setError(friendlyError(errors?.[0]?.message, "Failed to create lead."));
       return;
+    }
+
+    // The primary contact, as a row rather than four columns on the Account.
+    // Not fatal, for the same reason it isn't in `lead-intake`: the lead
+    // exists and its documents are about to upload, so failing the whole
+    // creation over one contact row would lose more than it saved. The
+    // producer is told, and the Contacts card is one click away.
+    let contactFailed = false;
+    if (form.contactName.trim() || form.contactEmail.trim() || form.contactPhone.trim()) {
+      const contact = {
+        name: str(form.contactName) ?? form.name.trim(),
+        type: (str(form.contactType) ?? undefined) as Contact["type"],
+        email: str(form.contactEmail),
+        phone: str(form.contactPhone),
+      };
+      const { errors: contactErrors } = await client.models.Contact.create({
+        accountId: data.id,
+        ...contact,
+        isPrimary: true,
+        extractionSourceKey: contactKey(contact),
+      });
+      contactFailed = Boolean(contactErrors?.length);
     }
 
     // Upload any staged documents to the new account so OCR + AI extraction
@@ -112,13 +140,22 @@ export default function NewLead() {
     }
 
     setSaving(false);
+    const afterCreate: string[] = [];
     if (failedUploads.length) {
       const many = failedUploads.length > 1;
-      setCreatedId(data.id);
-      setError(
-        `The lead was created, but ${failedUploads.length} document${many ? "s" : ""} didn't upload: ` +
+      afterCreate.push(
+        `${failedUploads.length} document${many ? "s" : ""} didn't upload: ` +
           `${failedUploads.join(", ")}. Open the lead and add ${many ? "them" : "it"} from the Documents tab.`
       );
+    }
+    if (contactFailed) {
+      afterCreate.push(
+        "the contact wasn't saved. Open the lead and add it from the Contacts card."
+      );
+    }
+    if (afterCreate.length) {
+      setCreatedId(data.id);
+      setError(`The lead was created, but ${afterCreate.join(" Also, ")}`);
       return;
     }
     // Land on Documents so OCR completes and AI extraction is the next step.
@@ -156,13 +193,31 @@ export default function NewLead() {
               onChange={(e) => setF("source", e.target.value)}
             />
           </div>
+          {/* One person, matching `Contact` exactly — this used to be a first
+              and last name feeding two Account columns, which then had to be
+              re-joined by everything that rendered them. More contacts are
+              added on the account's Contacts card; this one is the primary. */}
           <div className="field">
-            <label>Contact first name</label>
-            <input value={form.contactFirstName} onChange={(e) => setF("contactFirstName", e.target.value)} />
+            <label>Contact name</label>
+            <input
+              placeholder="Pat Alvarez"
+              value={form.contactName}
+              onChange={(e) => setF("contactName", e.target.value)}
+            />
           </div>
           <div className="field">
-            <label>Contact last name</label>
-            <input value={form.contactLastName} onChange={(e) => setF("contactLastName", e.target.value)} />
+            <label>Contact role</label>
+            <select
+              value={form.contactType}
+              onChange={(e) => setF("contactType", e.target.value)}
+            >
+              <option value="">—</option>
+              {CONTACT_TYPE_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
           </div>
           <div className="field">
             <label>Contact email</label>
@@ -170,7 +225,10 @@ export default function NewLead() {
           </div>
           <div className="field">
             <label>Contact phone</label>
-            <input value={form.contactPhone} onChange={(e) => setF("contactPhone", e.target.value)} />
+            <PhoneInput
+              value={form.contactPhone}
+              onChange={(v) => setF("contactPhone", v)}
+            />
           </div>
           <div className="field">
             <label>Street address</label>

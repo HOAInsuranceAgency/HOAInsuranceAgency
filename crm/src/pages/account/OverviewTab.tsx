@@ -7,7 +7,7 @@ import {
 import { SaveStatus, useSaveStatus } from "../../components/SaveStatus";
 import { useFormState } from "../../lib/useFormState";
 import { inputValue, num, str } from "../../lib/formCodec";
-import { DateInput, MoneyInput, PhoneInput } from "../../components/inputs";
+import { DateInput, MoneyInput } from "../../components/inputs";
 
 export function OverviewTab({
   account,
@@ -27,17 +27,11 @@ export function OverviewTab({
     fein: inputValue(account.fein),
     sicCode: inputValue(account.sicCode),
     naicsCode: inputValue(account.naicsCode),
-    inspectionContactName: inputValue(account.inspectionContactName),
-    inspectionContactPhone: inputValue(account.inspectionContactPhone),
     priorCarrierName: inputValue(account.priorCarrierName),
     priorPolicyNumber: inputValue(account.priorPolicyNumber),
     priorPremium: inputValue(account.priorPremium),
     priorTermEffective: inputValue(account.priorTermEffective),
     priorTermExpiration: inputValue(account.priorTermExpiration),
-    contactFirstName: inputValue(account.contactFirstName),
-    contactLastName: inputValue(account.contactLastName),
-    contactEmail: inputValue(account.contactEmail),
-    contactPhone: inputValue(account.contactPhone),
     totalInsuredValue: inputValue(account.totalInsuredValue),
     currentAgent: inputValue(account.currentAgent),
     currentPolicyExpiration: inputValue(account.currentPolicyExpiration),
@@ -62,17 +56,11 @@ export function OverviewTab({
               fein: str(form.fein),
               sicCode: str(form.sicCode),
               naicsCode: str(form.naicsCode),
-              inspectionContactName: str(form.inspectionContactName),
-              inspectionContactPhone: str(form.inspectionContactPhone),
               priorCarrierName: str(form.priorCarrierName),
               priorPolicyNumber: str(form.priorPolicyNumber),
               priorPremium: num(form.priorPremium),
               priorTermEffective: str(form.priorTermEffective),
               priorTermExpiration: str(form.priorTermExpiration),
-              contactFirstName: str(form.contactFirstName),
-              contactLastName: str(form.contactLastName),
-              contactEmail: str(form.contactEmail),
-              contactPhone: str(form.contactPhone),
               totalInsuredValue: num(form.totalInsuredValue),
               currentAgent: str(form.currentAgent),
               currentPolicyExpiration: str(form.currentPolicyExpiration),
@@ -114,39 +102,9 @@ export function OverviewTab({
           <label>NAICS</label>
           <input value={form.naicsCode} onChange={(e) => setF("naicsCode", e.target.value)} />
         </div>
-        <div className="field">
-          <label>Inspection contact</label>
-          <input
-            value={form.inspectionContactName}
-            onChange={(e) => setF("inspectionContactName", e.target.value)}
-          />
-        </div>
-        <div className="field">
-          <label>Inspection contact phone</label>
-          <PhoneInput
-            value={form.inspectionContactPhone}
-            onChange={(v) => setF("inspectionContactPhone", v)}
-          />
-        </div>
-        <div className="field">
-          <label>Contact first name</label>
-          <input value={form.contactFirstName} onChange={(e) => setF("contactFirstName", e.target.value)} />
-        </div>
-        <div className="field">
-          <label>Contact last name</label>
-          <input value={form.contactLastName} onChange={(e) => setF("contactLastName", e.target.value)} />
-        </div>
-        <div className="field">
-          <label>Contact email</label>
-          <input value={form.contactEmail} onChange={(e) => setF("contactEmail", e.target.value)} />
-        </div>
-        <div className="field">
-          <label>Contact phone</label>
-          <PhoneInput
-            value={form.contactPhone}
-            onChange={(v) => setF("contactPhone", v)}
-          />
-        </div>
+        {/* The four contact fields and the inspection pair moved to the
+            Contacts card below — an association has more than two people, and
+            these six columns could hold exactly two. */}
         <div className="field">
           <label>Total insured value ($)</label>
           <MoneyInput

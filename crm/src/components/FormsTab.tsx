@@ -89,6 +89,16 @@ export default function FormsTab({
               nextToken,
             })
           );
+          // Fills the insured phone and the 125's inspection block, which
+          // were `Account.contactPhone` and `Account.inspectionContact*`
+          // before W1. Read here rather than in `acordApp` so the mapping
+          // stays a pure function of what it is handed.
+          const contacts = await listAllPages((nextToken) =>
+            client.models.Contact.list({
+              filter: { accountId: { eq: account.id } },
+              nextToken,
+            })
+          );
           // Clients renew off their bound policies; the lead-only
           // currentPolicyExpiration field isn't used once an account converts.
           let renewalDate: string | null = null;
@@ -128,6 +138,7 @@ export default function FormsTab({
             form,
             account,
             buildings,
+            contacts,
             await signatureFor(profile.id),
             renewalDate,
             lines

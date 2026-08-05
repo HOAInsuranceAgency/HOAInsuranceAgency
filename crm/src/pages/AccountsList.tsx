@@ -7,8 +7,10 @@ import {
   fmtNum,
   listAllPages,
   type Account,
+  type Contact,
   type Policy,
 } from "../lib/client";
+import { primaryContact } from "../lib/contacts";
 import { useAsyncResource } from "../lib/useAsyncResource";
 import { useSort, SortTh } from "../lib/useSort";
 
@@ -38,6 +40,30 @@ export default function AccountsList({ stage }: { stage: "LEAD" | "CLIENT" }) {
     { initialData: [] as Policy[] }
   );
 
+  // The contact column, which used to be two Account columns. Same shape as
+  // the policies read above and for the same reason: it is a lookup table, its
+  // failure costs one column and nothing else, so it stays out of the
+  // page-level error rather than blanking a table that is still worth showing.
+  const { data: contacts } = useAsyncResource(
+    () => listAllPages((nextToken) => client.models.Contact.list({ nextToken })),
+    [],
+    { initialData: [] as Contact[] }
+  );
+
+  const contactsByAccount = useMemo(() => {
+    const map = new Map<string, Contact[]>();
+    for (const c of contacts) {
+      const list = map.get(c.accountId);
+      if (list) list.push(c);
+      else map.set(c.accountId, [c]);
+    }
+    return map;
+  }, [contacts]);
+
+  /** The one name shown per row — the same rule the ACORD insured block uses. */
+  const contactOf = (a: Account) =>
+    primaryContact(contactsByAccount.get(a.id) ?? []);
+
   // Renewal date: clients → earliest ACTIVE policy expiration;
   // leads → incumbent policy expiration.
   const renewalByAccount = useMemo(() => {
@@ -58,7 +84,15 @@ export default function AccountsList({ stage }: { stage: "LEAD" | "CLIENT" }) {
   const q = search.trim().toLowerCase();
   const filtered = q
     ? accounts.filter((a) =>
-        [a.name, a.city, a.state, a.contactFirstName, a.contactLastName, a.contactEmail]
+        [
+          a.name,
+          a.city,
+          a.state,
+          // Every contact, not just the primary one: searching for the board
+          // president used to find nothing unless they happened to be the one
+          // person the Account columns could hold.
+          ...(contactsByAccount.get(a.id) ?? []).flatMap((c) => [c.name, c.email]),
+        ]
           .filter(Boolean)
           .some((v) => String(v).toLowerCase().includes(q))
       )
@@ -71,8 +105,7 @@ export default function AccountsList({ stage }: { stage: "LEAD" | "CLIENT" }) {
     {
       name: (a) => a.name,
       type: (a) => a.type,
-      contact: (a) =>
-        [a.contactFirstName, a.contactLastName].filter(Boolean).join(" ") || null,
+      contact: (a) => contactOf(a)?.name ?? null,
       location: (a) => [a.city, a.state].filter(Boolean).join(", ") || null,
       units: (a) => a.unitCount,
       tiv: (a) => a.totalInsuredValue,
@@ -137,6 +170,7 @@ export default function AccountsList({ stage }: { stage: "LEAD" | "CLIENT" }) {
               <tbody>
                 {sorted.map((a) => {
                   const renewal = renewalOf(a);
+                  const contact = contactOf(a);
                   return (
                     <tr
                       key={a.id}
@@ -150,9 +184,9 @@ export default function AccountsList({ stage }: { stage: "LEAD" | "CLIENT" }) {
                         <span className="badge gray">{a.type}</span>
                       </td>
                       <td>
-                        {[a.contactFirstName, a.contactLastName].filter(Boolean).join(" ") || "—"}
-                        {a.contactEmail && (
-                          <div className="muted small">{a.contactEmail}</div>
+                        {contact?.name ?? "—"}
+                        {contact?.email && (
+                          <div className="muted small">{contact.email}</div>
                         )}
                       </td>
                       <td>{[a.city, a.state].filter(Boolean).join(", ") || "—"}</td>

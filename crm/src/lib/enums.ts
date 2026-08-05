@@ -51,6 +51,7 @@ export type LicenseStatus = Schema["LicenseStatus"]["type"];
 export type ConstructionType = Schema["ConstructionType"]["type"];
 export type ReplacementCostType = Schema["ReplacementCostType"]["type"];
 export type AggregateAppliesTo = Schema["AggregateAppliesTo"]["type"];
+export type ContactType = NonNullable<Schema["ContactType"]["type"]>;
 
 /**
  * `AccountType` is re-exported from `shared/` rather than derived here: `web`
@@ -218,6 +219,51 @@ export const ACORD25_AGGREGATE_FIELDS: Record<string, string> = Object.freeze(
     ])
   ) as Record<AggregateAppliesTo, string>
 );
+
+// ── ContactType ──────────────────────────────────────────────────────────────
+
+/**
+ * What a contact is *for*. Labels only — the ACORD 125 does not have a
+ * per-role checkbox; it has one contact slot with a free-text description, and
+ * `acordApp` writes the label of the contact it picked into it. So unlike
+ * `AGGREGATE_APPLIES_TO` there is no field name to carry alongside.
+ *
+ * `INSPECTION` is load-bearing rather than decorative: the 125's inspection
+ * block is filled from the first contact carrying it, which is what replaced
+ * `Account.inspectionContactName` / `…Phone`.
+ */
+const CONTACT_TYPE = {
+  INSPECTION: "Inspection",
+  CLAIMS: "Claims",
+  ACCOUNTING: "Accounting",
+  MANAGER: "Manager",
+  TRUSTEE: "Trustee",
+  DIRECTOR: "Director",
+  PRESIDENT: "President",
+  OTHER: "Other",
+} satisfies Record<ContactType, string>;
+
+/**
+ * Every role, in schema order. The extraction Lambda interpolates this into
+ * its prompt and its JSON schema, the same way `CONSTRUCTION_TYPES` is — so
+ * the model can only ever return a role the app knows how to store.
+ */
+export const CONTACT_TYPES: readonly ContactType[] = Object.freeze(
+  Object.keys(CONTACT_TYPE) as ContactType[]
+);
+
+export const CONTACT_TYPE_LABELS: Record<string, string> = Object.freeze({
+  ...CONTACT_TYPE,
+});
+
+export const CONTACT_TYPE_OPTIONS = optionsByLabel(CONTACT_TYPE);
+
+/**
+ * What a contact with no stated role is recorded as — by the backfill, which
+ * is turning two anonymous columns into people, and by the extraction apply
+ * path when the documents name someone without saying what they do.
+ */
+export const DEFAULT_CONTACT_TYPE = "OTHER" satisfies ContactType;
 
 // ── DocumentCategory ─────────────────────────────────────────────────────────
 
