@@ -8,6 +8,7 @@ import { SaveStatus, useSaveStatus } from "../../components/SaveStatus";
 import { useFormState } from "../../lib/useFormState";
 import { inputValue, num, str } from "../../lib/formCodec";
 import { DateInput, MoneyInput } from "../../components/inputs";
+import { LEGAL_ENTITY_OPTIONS } from "../../lib/enums";
 
 export function OverviewTab({
   account,
@@ -27,6 +28,8 @@ export function OverviewTab({
     fein: inputValue(account.fein),
     sicCode: inputValue(account.sicCode),
     naicsCode: inputValue(account.naicsCode),
+    legalEntityType: inputValue(account.legalEntityType),
+    annualRevenue: inputValue(account.annualRevenue),
     priorCarrierName: inputValue(account.priorCarrierName),
     priorPolicyNumber: inputValue(account.priorPolicyNumber),
     priorPremium: inputValue(account.priorPremium),
@@ -56,6 +59,10 @@ export function OverviewTab({
               fein: str(form.fein),
               sicCode: str(form.sicCode),
               naicsCode: str(form.naicsCode),
+              legalEntityType: str(
+                form.legalEntityType
+              ) as Account["legalEntityType"],
+              annualRevenue: num(form.annualRevenue),
               priorCarrierName: str(form.priorCarrierName),
               priorPolicyNumber: str(form.priorPolicyNumber),
               priorPremium: num(form.priorPremium),
@@ -101,6 +108,31 @@ export function OverviewTab({
         <div className="field">
           <label>NAICS</label>
           <input value={form.naicsCode} onChange={(e) => setF("naicsCode", e.target.value)} />
+        </div>
+        <div className="field">
+          <label>Legal entity type</label>
+          <select
+            value={form.legalEntityType}
+            onChange={(e) => setF("legalEntityType", e.target.value)}
+          >
+            {/* An association left blank still ticks Not For Profit on the
+                125 — the placeholder says so rather than reading as "none". */}
+            <option value="">
+              {account.type === "ASSOCIATION" ? "— (Not For Profit)" : "—"}
+            </option>
+            {LEGAL_ENTITY_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="field">
+          <label>Annual revenue ($)</label>
+          <MoneyInput
+            value={form.annualRevenue}
+            onChange={(v) => setF("annualRevenue", v)}
+          />
         </div>
         {/* The four contact fields and the inspection pair moved to the
             Contacts card below — an association has more than two people, and

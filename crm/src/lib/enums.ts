@@ -52,6 +52,7 @@ export type ConstructionType = Schema["ConstructionType"]["type"];
 export type ReplacementCostType = Schema["ReplacementCostType"]["type"];
 export type AggregateAppliesTo = Schema["AggregateAppliesTo"]["type"];
 export type ContactType = NonNullable<Schema["ContactType"]["type"]>;
+export type LegalEntityType = NonNullable<Schema["LegalEntityType"]["type"]>;
 
 /**
  * `AccountType` is re-exported from `shared/` rather than derived here: `web`
@@ -219,6 +220,117 @@ export const ACORD25_AGGREGATE_FIELDS: Record<string, string> = Object.freeze(
     ])
   ) as Record<AggregateAppliesTo, string>
 );
+
+// ── LegalEntityType ──────────────────────────────────────────────────────────
+
+/**
+ * How the applicant is organised, and the ACORD 125 checkbox each choice
+ * ticks. Same shape as `AGGREGATE_APPLIES_TO` above and for the same reason:
+ * the dropdown and the PDF mapping read one table, so they cannot come to
+ * offer different member sets.
+ *
+ * ## The field names, and how far to trust them
+ *
+ * `NOT_FOR_PROFIT`'s name is **confirmed** — it is the one this app has been
+ * ticking since before this table existed, hardcoded in `acordApp.ts`. The
+ * other seven are derived from its convention
+ * (`NamedInsured_LegalEntity_<Entity>Indicator_A`) and have **not** been read
+ * off a template. They must be confirmed with Settings → Inspect fields.
+ *
+ * Until they are, a wrong name is not silent: only the one member a given
+ * account selects is ever populated, and `fillTemplate` reports a populated
+ * field whose candidates matched nothing in `FillResult.missing`, which
+ * `FormsTab` renders as "Unmatched fields: legalEntity" on the generation.
+ * So the failure mode is one visible unticked box on one submission, not a
+ * quietly wrong form — but it is still a box a carrier reads.
+ *
+ * Lists rather than single names, unlike `AGGREGATE_APPLIES_TO`, because
+ * `fillTemplate` takes candidates in preference order and one member is a
+ * genuine coin-flip: ACORD's own vocabularies spell an LLC both
+ * "LimitedLiabilityCorporation" and "LimitedLiabilityCompany". Covering both
+ * costs nothing and is exactly what the candidate mechanism is for.
+ */
+const LEGAL_ENTITY = {
+  CORPORATION: {
+    label: "Corporation",
+    acord125Fields: ["NamedInsured_LegalEntity_CorporationIndicator_A"],
+  },
+  INDIVIDUAL: {
+    label: "Individual",
+    acord125Fields: ["NamedInsured_LegalEntity_IndividualIndicator_A"],
+  },
+  JOINT_VENTURE: {
+    label: "Joint Venture",
+    acord125Fields: ["NamedInsured_LegalEntity_JointVentureIndicator_A"],
+  },
+  LLC: {
+    label: "LLC",
+    acord125Fields: [
+      "NamedInsured_LegalEntity_LimitedLiabilityCorporationIndicator_A",
+      "NamedInsured_LegalEntity_LimitedLiabilityCompanyIndicator_A",
+    ],
+  },
+  NOT_FOR_PROFIT: {
+    label: "Not For Profit",
+    // Confirmed: shipping today at acordApp.ts's 125 block.
+    acord125Fields: ["NamedInsured_LegalEntity_NotForProfitIndicator_A"],
+  },
+  PARTNERSHIP: {
+    label: "Partnership",
+    acord125Fields: ["NamedInsured_LegalEntity_PartnershipIndicator_A"],
+  },
+  SUBCHAPTER_S_CORP: {
+    label: "Subchapter S Corporation",
+    acord125Fields: ["NamedInsured_LegalEntity_SubchapterSCorporationIndicator_A"],
+  },
+  TRUST: {
+    label: "Trust",
+    acord125Fields: ["NamedInsured_LegalEntity_TrustIndicator_A"],
+  },
+} satisfies Record<
+  LegalEntityType,
+  { label: string; acord125Fields: readonly string[] }
+>;
+
+export const LEGAL_ENTITY_OPTIONS = optionsByLabel(
+  Object.fromEntries(
+    (Object.keys(LEGAL_ENTITY) as LegalEntityType[]).map((k) => [
+      k,
+      LEGAL_ENTITY[k].label,
+    ])
+  ) as Record<LegalEntityType, string>
+);
+
+export const LEGAL_ENTITY_LABELS: Record<string, string> = Object.freeze(
+  Object.fromEntries(
+    (Object.keys(LEGAL_ENTITY) as LegalEntityType[]).map((k) => [
+      k,
+      LEGAL_ENTITY[k].label,
+    ])
+  ) as Record<LegalEntityType, string>
+);
+
+export const ACORD125_LEGAL_ENTITY_FIELDS: Record<string, readonly string[]> =
+  Object.freeze(
+    Object.fromEntries(
+      (Object.keys(LEGAL_ENTITY) as LegalEntityType[]).map((k) => [
+        k,
+        Object.freeze([...LEGAL_ENTITY[k].acord125Fields]),
+      ])
+    ) as Record<LegalEntityType, readonly string[]>
+  );
+
+/**
+ * What an ASSOCIATION with no stated entity type is treated as on the 125.
+ *
+ * Before `legalEntityType` existed, `acordApp` ticked Not-For-Profit for
+ * every ASSOCIATION and nothing else, unconditionally. Every account already
+ * in the system predates the column, so without this fallback shipping W2
+ * would silently *untick* a box on every existing association's next
+ * submission — a regression dressed as a new feature.
+ */
+export const DEFAULT_ASSOCIATION_LEGAL_ENTITY =
+  "NOT_FOR_PROFIT" satisfies LegalEntityType;
 
 // ── ContactType ──────────────────────────────────────────────────────────────
 

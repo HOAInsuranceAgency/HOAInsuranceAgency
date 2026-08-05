@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   ACCOUNT_TYPES,
   ACCOUNT_TYPE_OPTIONS,
+  ACORD125_LEGAL_ENTITY_FIELDS,
   ACORD25_AGGREGATE_FIELDS,
   AGGREGATE_APPLIES_TO_OPTIONS,
   CONSTRUCTION_LABELS,
@@ -12,9 +13,12 @@ import {
   CONSTRUCTION_TYPES,
   CONTACT_TYPE_LABELS,
   CONTACT_TYPE_OPTIONS,
+  DEFAULT_ASSOCIATION_LEGAL_ENTITY,
   DEFAULT_CONTACT_TYPE,
   DOCUMENT_CATEGORY_EXTRACTION_PRIORITY,
   DOCUMENT_CATEGORY_OPTIONS,
+  LEGAL_ENTITY_LABELS,
+  LEGAL_ENTITY_OPTIONS,
   LICENSE_CLASS_LABELS,
   LICENSE_RESIDENCY_OPTIONS,
   LICENSE_STATUS_LABELS,
@@ -30,6 +34,7 @@ import {
   type ConstructionType,
   type ContactType,
   type DocumentCategory,
+  type LegalEntityType,
   type LicenseClass,
   type LicenseHolderType,
   type LicenseResidency,
@@ -66,9 +71,10 @@ const stillLiteralUnions: [
   NotWidened<ReplacementCostType>,
   NotWidened<AggregateAppliesTo>,
   NotWidened<ContactType>,
+  NotWidened<LegalEntityType>,
 ] = [
   true, true, true, true, true, true, true, true, true, true, true, true, true,
-  true, true, true,
+  true, true, true, true,
 ];
 
 /**
@@ -153,6 +159,14 @@ describe("every table covers its schema enum exactly", () => {
     expect(Object.keys(CONTACT_TYPE_LABELS).sort()).toEqual(members);
     expect(valuesOf(CONTACT_TYPE_OPTIONS).sort()).toEqual(members);
     expect(members).toContain(DEFAULT_CONTACT_TYPE);
+  });
+
+  it("LegalEntityType — labels, options and ACORD fields agree", () => {
+    const members = schemaEnum("LegalEntityType").sort();
+    expect(Object.keys(LEGAL_ENTITY_LABELS).sort()).toEqual(members);
+    expect(valuesOf(LEGAL_ENTITY_OPTIONS).sort()).toEqual(members);
+    expect(Object.keys(ACORD125_LEGAL_ENTITY_FIELDS).sort()).toEqual(members);
+    expect(members).toContain(DEFAULT_ASSOCIATION_LEGAL_ENTITY);
   });
 
   it("AccountType — the shared copy matches the schema", () => {
@@ -341,6 +355,36 @@ describe("option lists reproduce the hand-written ones they replaced", () => {
       ["PRESIDENT", "President"],
       ["TRUSTEE", "Trustee"],
     ]);
+  });
+
+  it("LEGAL_ENTITY_OPTIONS — the Overview tab's entity picker", () => {
+    expect(LEGAL_ENTITY_OPTIONS.map((o) => [o.value, o.label])).toEqual([
+      ["CORPORATION", "Corporation"],
+      ["INDIVIDUAL", "Individual"],
+      ["JOINT_VENTURE", "Joint Venture"],
+      ["LLC", "LLC"],
+      ["NOT_FOR_PROFIT", "Not For Profit"],
+      ["PARTNERSHIP", "Partnership"],
+      ["SUBCHAPTER_S_CORP", "Subchapter S Corporation"],
+      ["TRUST", "Trust"],
+    ]);
+  });
+
+  it("ACORD125_LEGAL_ENTITY_FIELDS — the one confirmed name is unchanged", () => {
+    // This is the field acordApp.ts hardcoded before W2, and the only one in
+    // the table that has been seen on a real template. Every other name is
+    // derived from its convention, so if this one ever changes the derivation
+    // it anchors is no longer sound. The rest are pinned only to catch an
+    // accidental edit — they are not evidence of anything.
+    expect(ACORD125_LEGAL_ENTITY_FIELDS.NOT_FOR_PROFIT).toEqual([
+      "NamedInsured_LegalEntity_NotForProfitIndicator_A",
+    ]);
+    for (const [member, fields] of Object.entries(ACORD125_LEGAL_ENTITY_FIELDS)) {
+      expect(fields.length, `${member} has no candidates`).toBeGreaterThan(0);
+      for (const f of fields) {
+        expect(f).toMatch(/^NamedInsured_LegalEntity_\w+Indicator_A$/);
+      }
+    }
   });
 
   it("ACCOUNT_TYPE_OPTIONS — NewLead type <option>s", () => {

@@ -7,9 +7,12 @@ import type { AcordFormDef } from "./acordRegistry";
 import { fmtUs, todayUs } from "./acordFormat";
 import { inspectionContact, primaryContact, type ContactLike } from "./contacts";
 import {
+  ACORD125_LEGAL_ENTITY_FIELDS,
   CONSTRUCTION_LABELS,
   CONSTRUCTION_PHRASES,
   CONTACT_TYPE_LABELS,
+  DEFAULT_ASSOCIATION_LEGAL_ENTITY,
+  type LegalEntityType,
 } from "./enums";
 import {
   fillTemplate,
@@ -28,6 +31,28 @@ interface BuildingInfo {
 }
 
 type ContactInfo = ContactLike;
+
+/**
+ * Which Legal Entity box the 125 ticks for an account, or `null` for none.
+ *
+ * Exported for its test. The fallback is the whole of it: before
+ * `legalEntityType` existed this block ticked Not-For-Profit for every
+ * ASSOCIATION and nothing for anyone else, and every account in the system
+ * predates the column. Without the fallback, W2 would ship as a silent
+ * *un*ticking of a box on every existing association's next carrier
+ * submission — a regression wearing a new feature's clothes.
+ *
+ * A stated type always wins, including on an association: an HOA that is
+ * actually incorporated says so, and the fallback is a guess standing in for
+ * an unanswered question, not a fact about the account.
+ */
+export function legalEntityFor(account: {
+  legalEntityType?: LegalEntityType | null;
+  type?: string | null;
+}): LegalEntityType | null {
+  if (account.legalEntityType) return account.legalEntityType;
+  return account.type === "ASSOCIATION" ? DEFAULT_ASSOCIATION_LEGAL_ENTITY : null;
+}
 
 /** ACORD 125 has four premises rows on the form; the rest go on a schedule. */
 const PREMISES_ROWS = ["A", "B", "C", "D"] as const;
@@ -179,16 +204,41 @@ function buildAppFormValues(
         })()
       : "";
     const inspection = inspectionContact(contacts);
+    const legalEntity = legalEntityFor(account);
 
     Object.assign(values, {
-      notForProfit: {
-        candidates: ["NamedInsured_LegalEntity_NotForProfitIndicator_A"],
-        value: account.type === "ASSOCIATION" ? "x" : "",
+      // The Legal Entity box, through the one table that also builds the
+      // dropdown. This used to tick Not-For-Profit for every ASSOCIATION and
+      // nothing at all for anyone else, which is why an unset column still
+      // falls back to exactly that — every account in the system predates
+      // `legalEntityType`, and shipping this without the fallback would
+      // untick a box on their next submission.
+      legalEntity: {
+        candidates: legalEntity ? [...ACORD125_LEGAL_ENTITY_FIELDS[legalEntity]] : [],
+        value: legalEntity ? "x" : "",
       },
       condoType: {
         candidates: ["BusinessInformation_BusinessType_CondominiumsIndicator_A"],
         value: account.type === "ASSOCIATION" ? "x" : "",
       },
+
+      // ── `account.annualRevenue` is deliberately NOT mapped here yet. ──
+      //
+      // The 125 has a gross-revenue field and nobody has read its name off a
+      // real template. Every other name in this file was either confirmed or
+      // derived from a confirmed sibling — the Legal Entity boxes above are
+      // derived from the Not-For-Profit name this app has been ticking for
+      // months — and there is no confirmed sibling for this one: both halves
+      // of the name would be invented.
+      //
+      // A wrong candidate is reported in FillResult.missing and surfaces as
+      // "Unmatched fields" on the generation, so it fails visibly rather than
+      // wrongly. But an unmatched field looks identical to a mapping nobody
+      // has written, which is how a guess becomes permanent.
+      //
+      // To finish this: Settings → Inspect fields on the ACORD 125 template,
+      // find the gross-revenue field, and add it here. The column is already
+      // populated by the Overview tab, so that is the only step left.
 
       proposedEffective: { candidates: ["Policy_EffectiveDate_A"], value: fmtUs(proposedEff) },
       proposedExpiration: { candidates: ["Policy_ExpirationDate_A"], value: fmtUs(proposedExp) },

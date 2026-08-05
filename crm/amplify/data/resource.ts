@@ -86,6 +86,19 @@ const schema = a
     ]),
     ReplacementCostType: a.enum(["RC", "ERC", "GRC"]),
     AggregateAppliesTo: a.enum(["POLICY", "PROJECT", "LOCATION", "OTHER"]),
+    // The ACORD 125 applicant block's "Legal Entity" checkboxes, one member
+    // per box. Kept in the schema's order rather than the form's, which puts
+    // them in two columns.
+    LegalEntityType: a.enum([
+      "CORPORATION",
+      "INDIVIDUAL",
+      "JOINT_VENTURE",
+      "LLC",
+      "NOT_FOR_PROFIT",
+      "PARTNERSHIP",
+      "SUBCHAPTER_S_CORP",
+      "TRUST",
+    ]),
     // Roles an association contact plays. The seven named ones are what the
     // agency asked for; OTHER is here because carriers routinely ask for a
     // role the list does not cover — a property manager's assistant, an
@@ -127,6 +140,12 @@ const schema = a
         fein: a.string(), // federal tax ID — ACORD 125 applicant block
         sicCode: a.string(), // e.g. 8641
         naicsCode: a.string(), // e.g. 813990
+        // How the applicant is organised — ACORD 125's Legal Entity boxes.
+        // An association left blank still ticks Not-For-Profit; see
+        // DEFAULT_ASSOCIATION_LEGAL_ENTITY in enums.ts.
+        legalEntityType: a.ref("LegalEntityType"),
+        // Gross annual revenue, for the 125's business-information block.
+        annualRevenue: a.float(),
         // ── Contact columns: superseded by the Contact model ──
         // Nothing reads or writes these any more; they are kept only until
         // the backfill has run and been verified, which is the rollback point
