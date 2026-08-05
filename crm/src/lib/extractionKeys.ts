@@ -86,3 +86,13 @@ export function priorCarrierKey(p: {
     "|"
   );
 }
+
+/**
+ * A blanket is identified by its number, which is what the prior carrier
+ * printed on the declarations page and the only thing about it that is meant
+ * to be stable. The amount changes at every renewal and the type is written
+ * differently by every carrier.
+ */
+export function blanketKey(b: { blanketNumber?: string | null }): string {
+  return `blanket:${norm(b.blanketNumber)}`;
+}

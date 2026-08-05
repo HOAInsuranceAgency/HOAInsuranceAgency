@@ -289,3 +289,59 @@ export function DateInput({
     />
   );
 }
+
+/**
+ * A Yes/No pair of radios, with "not answered" as a real third state.
+ *
+ * The one input here that is not a text field, and it exists for the same
+ * reason the rest do: the obvious control is wrong. A checkbox has two states
+ * and an application question has three — yes, no, and nobody has asked — and
+ * on a form that goes to a carrier the difference between "No" and blank is
+ * the difference between an answer and a silence.
+ *
+ * `value` is `""` / `"yes"` / `"no"`, which is what `bool` and `boolValue` in
+ * `formCodec` consume and produce. Clicking the selected option again clears
+ * it back to unanswered; there is otherwise no way back to blank once either
+ * radio has been picked.
+ */
+export function YesNoRadio({
+  value,
+  onChange,
+  disabled,
+  name,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  disabled?: boolean;
+  /** Radio group name — must be unique on the page. */
+  name: string;
+}) {
+  return (
+    <div className="chip-row" role="radiogroup" aria-label={name}>
+      {[
+        ["yes", "Yes"],
+        ["no", "No"],
+      ].map(([v, label]) => (
+        <label
+          key={v}
+          className="small"
+          style={{ display: "flex", gap: 4, alignItems: "center" }}
+        >
+          <input
+            type="radio"
+            name={name}
+            value={v}
+            checked={value === v}
+            disabled={disabled}
+            // `onClick` rather than `onChange`: React fires no change event
+            // when the already-checked radio is clicked, which is exactly the
+            // gesture that has to clear it.
+            onClick={() => onChange(value === v ? "" : v)}
+            onChange={() => {}}
+          />
+          {label}
+        </label>
+      ))}
+    </div>
+  );
+}

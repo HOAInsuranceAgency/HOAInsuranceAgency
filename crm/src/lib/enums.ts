@@ -53,6 +53,13 @@ export type ReplacementCostType = Schema["ReplacementCostType"]["type"];
 export type AggregateAppliesTo = Schema["AggregateAppliesTo"]["type"];
 export type ContactType = NonNullable<Schema["ContactType"]["type"]>;
 export type LegalEntityType = NonNullable<Schema["LegalEntityType"]["type"]>;
+export type GlDeductibleType = NonNullable<Schema["GlDeductibleType"]["type"]>;
+export type GlPremiumBasis = NonNullable<Schema["GlPremiumBasis"]["type"]>;
+export type DoPart = NonNullable<Schema["DoPart"]["type"]>;
+export type DoCoverageType = NonNullable<Schema["DoCoverageType"]["type"]>;
+export type DefenseLimitPosition = NonNullable<
+  Schema["DefenseLimitPosition"]["type"]
+>;
 
 /**
  * `AccountType` is re-exported from `shared/` rather than derived here: `web`
@@ -370,6 +377,95 @@ export const CONTACT_TYPE_OPTIONS = optionsByLabel(CONTACT_TYPE);
  * path when the documents name someone without saying what they do.
  */
 export const DEFAULT_CONTACT_TYPE = "OTHER" satisfies ContactType;
+
+// ── General liability application ────────────────────────────────────────────
+
+const GL_DEDUCTIBLE_TYPE = {
+  PER_OCCURRENCE: "Per occurrence",
+  PER_CLAIM: "Per claim",
+} satisfies Record<GlDeductibleType, string>;
+
+export const GL_DEDUCTIBLE_TYPE_OPTIONS = optionsByLabel(GL_DEDUCTIBLE_TYPE);
+
+export const GL_DEDUCTIBLE_TYPE_LABELS: Record<string, string> = Object.freeze({
+  ...GL_DEDUCTIBLE_TYPE,
+});
+
+/**
+ * What a class code's exposure is measured in. "Unit" is the one that matters
+ * for this agency — an association's GL exposure is rated per residential
+ * unit — and OTHER covers the class codes that are rated on area, payroll or
+ * receipts, where the basis is written into the description instead.
+ */
+const GL_PREMIUM_BASIS = {
+  UNIT: "Per unit",
+  OTHER: "Other",
+} satisfies Record<GlPremiumBasis, string>;
+
+export const GL_PREMIUM_BASIS_OPTIONS = optionsByLabel(GL_PREMIUM_BASIS);
+
+export const GL_PREMIUM_BASIS_LABELS: Record<string, string> = Object.freeze({
+  ...GL_PREMIUM_BASIS,
+});
+
+// ── Directors & Officers ─────────────────────────────────────────────────────
+
+/**
+ * The three coverage parts, labelled neutrally.
+ *
+ * **Deliberately not "Side A / Side B / Side C".** That is standard D&O
+ * terminology for a specific split — personal liability the entity cannot
+ * indemnify, reimbursement of the entity for indemnification, and entity
+ * securities cover — and this agency's parts carry a primary/excess type and
+ * their own retentions per part, which reads more like layers of a tower than
+ * the Side split. Naming them Side A/B/C would assert a meaning nobody has
+ * confirmed, on a form that goes to a carrier.
+ *
+ * Open question 4 in docs/specs/lead-client-expansion.md. When it is
+ * answered, the labels change here and nowhere else.
+ */
+const DO_PART = {
+  A: "Part A",
+  B: "Part B",
+  C: "Part C",
+} satisfies Record<DoPart, string>;
+
+/** Schema order — A, B, C — which is the order the form prints them in. */
+export const DO_PARTS: readonly DoPart[] = Object.freeze(
+  Object.keys(DO_PART) as DoPart[]
+);
+
+export const DO_PART_LABELS: Record<string, string> = Object.freeze({
+  ...DO_PART,
+});
+
+const DO_COVERAGE_TYPE = {
+  PRIMARY: "Primary",
+  EXCESS: "Excess",
+} satisfies Record<DoCoverageType, string>;
+
+export const DO_COVERAGE_TYPE_OPTIONS = optionsByLabel(DO_COVERAGE_TYPE);
+
+export const DO_COVERAGE_TYPE_LABELS: Record<string, string> = Object.freeze({
+  ...DO_COVERAGE_TYPE,
+});
+
+/**
+ * Whether defence costs erode the limit ("inside") or sit on top of it
+ * ("outside"). The distinction is worth real money on a claim, which is why
+ * it is a stored answer rather than a note.
+ */
+const DEFENSE_LIMIT_POSITION = {
+  INSIDE: "Inside the limit",
+  OUTSIDE: "Outside the limit",
+} satisfies Record<DefenseLimitPosition, string>;
+
+export const DEFENSE_LIMIT_POSITION_OPTIONS = optionsByLabel(
+  DEFENSE_LIMIT_POSITION
+);
+
+export const DEFENSE_LIMIT_POSITION_LABELS: Record<string, string> =
+  Object.freeze({ ...DEFENSE_LIMIT_POSITION });
 
 // ── DocumentCategory ─────────────────────────────────────────────────────────
 

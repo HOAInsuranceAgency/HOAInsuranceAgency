@@ -32,6 +32,12 @@ interface BuildingInfo {
 
 type ContactInfo = ContactLike;
 
+/** The slice of the GL application the 125 reads. */
+interface GlInfo {
+  fullTimeEmployees?: number | null;
+  partTimeEmployees?: number | null;
+}
+
 interface PriorCarrierInfo {
   carrierName?: string | null;
   policyNumber?: string | null;
@@ -249,6 +255,8 @@ function buildAppFormValues(
   buildings: BuildingInfo[],
   contacts: ContactInfo[],
   priorCarriers: PriorCarrierInfo[],
+  /** The account's GL application, when it has one. */
+  gl: GlInfo | null,
   /**
    * When the coverage being applied for starts. For a lead that's the
    * incumbent's expiration; for a client it's the expiring policy's end date
@@ -360,6 +368,17 @@ function buildAppFormValues(
       annualRevenue: {
         candidates: ["CommercialStructure_AnnualRevenueAmount_A"],
         value: account.annualRevenue != null ? account.annualRevenue.toFixed(0) : "",
+      },
+      // Asked per premises like the revenue above, and answered once for the
+      // association: the GL application is where the agency records staff
+      // counts, and an HOA's are site-wide rather than per building.
+      fullTimeEmployees: {
+        candidates: ["BusinessInformation_FullTimeEmployeeCount_A"],
+        value: gl?.fullTimeEmployees != null ? String(gl.fullTimeEmployees) : "",
+      },
+      partTimeEmployees: {
+        candidates: ["BusinessInformation_PartTimeEmployeeCount_A"],
+        value: gl?.partTimeEmployees != null ? String(gl.partTimeEmployees) : "",
       },
 
       proposedEffective: { candidates: ["Policy_EffectiveDate_A"], value: fmtUs(proposedEff) },
@@ -632,6 +651,7 @@ export async function fillAcordApp(
   buildings: BuildingInfo[],
   contacts: ContactInfo[],
   priorCarriers: PriorCarrierInfo[],
+  gl: GlInfo | null,
   signature?: SignatureInfo | null,
   renewalDate?: string | null,
   lines: string[] = []
@@ -644,6 +664,7 @@ export async function fillAcordApp(
       buildings,
       contacts,
       priorCarriers,
+      gl,
       renewalDate,
       lines
     ),

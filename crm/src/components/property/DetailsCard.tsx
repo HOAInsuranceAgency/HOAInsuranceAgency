@@ -41,6 +41,7 @@ export default function DetailsCard({
     electricalUpdatedYear: inputValue(account.electricalUpdatedYear),
     plumbingUpdatedYear: inputValue(account.plumbingUpdatedYear),
     otherUpdates: inputValue(account.otherUpdates),
+    fireDistrict: inputValue(account.fireDistrict),
   }, { onEdit: saveStatus.markDirty });
 
   async function save() {
@@ -91,6 +92,7 @@ export default function DetailsCard({
               electricalUpdatedYear: num(form.electricalUpdatedYear),
               plumbingUpdatedYear: num(form.plumbingUpdatedYear),
               otherUpdates: str(form.otherUpdates),
+              fireDistrict: str(form.fireDistrict),
             })
           )
         );
@@ -174,6 +176,14 @@ export default function DetailsCard({
         <div className="field">
           <label>Stories</label>
           <IntegerInput value={form.stories} onChange={(v) => setF("stories", v)} />
+        </div>
+        <div className="field">
+          <label>Fire district</label>
+          <input
+            placeholder="Middlesex FD #3"
+            value={form.fireDistrict}
+            onChange={(e) => setF("fireDistrict", e.target.value)}
+          />
         </div>
         <div className="field">
           <label>Firewalls verified?</label>

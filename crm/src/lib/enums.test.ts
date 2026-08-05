@@ -14,6 +14,16 @@ import {
   CONTACT_TYPE_LABELS,
   CONTACT_TYPE_OPTIONS,
   DEFAULT_ASSOCIATION_LEGAL_ENTITY,
+  DEFENSE_LIMIT_POSITION_LABELS,
+  DEFENSE_LIMIT_POSITION_OPTIONS,
+  DO_COVERAGE_TYPE_LABELS,
+  DO_COVERAGE_TYPE_OPTIONS,
+  DO_PARTS,
+  DO_PART_LABELS,
+  GL_DEDUCTIBLE_TYPE_LABELS,
+  GL_DEDUCTIBLE_TYPE_OPTIONS,
+  GL_PREMIUM_BASIS_LABELS,
+  GL_PREMIUM_BASIS_OPTIONS,
   DEFAULT_CONTACT_TYPE,
   DOCUMENT_CATEGORY_EXTRACTION_PRIORITY,
   DOCUMENT_CATEGORY_OPTIONS,
@@ -33,6 +43,11 @@ import {
   type AggregateAppliesTo,
   type ConstructionType,
   type ContactType,
+  type DefenseLimitPosition,
+  type DoCoverageType,
+  type DoPart,
+  type GlDeductibleType,
+  type GlPremiumBasis,
   type DocumentCategory,
   type LegalEntityType,
   type LicenseClass,
@@ -72,9 +87,14 @@ const stillLiteralUnions: [
   NotWidened<AggregateAppliesTo>,
   NotWidened<ContactType>,
   NotWidened<LegalEntityType>,
+  NotWidened<GlDeductibleType>,
+  NotWidened<GlPremiumBasis>,
+  NotWidened<DoPart>,
+  NotWidened<DoCoverageType>,
+  NotWidened<DefenseLimitPosition>,
 ] = [
   true, true, true, true, true, true, true, true, true, true, true, true, true,
-  true, true, true, true,
+  true, true, true, true, true, true, true, true, true,
 ];
 
 /**
@@ -167,6 +187,32 @@ describe("every table covers its schema enum exactly", () => {
     expect(valuesOf(LEGAL_ENTITY_OPTIONS).sort()).toEqual(members);
     expect(Object.keys(ACORD125_LEGAL_ENTITY_FIELDS).sort()).toEqual(members);
     expect(members).toContain(DEFAULT_ASSOCIATION_LEGAL_ENTITY);
+  });
+
+  it("the W4 property enums — labels and options agree", () => {
+    const pairs: [string, Record<string, string>, readonly { value: string }[]][] = [
+      ["GlDeductibleType", GL_DEDUCTIBLE_TYPE_LABELS, GL_DEDUCTIBLE_TYPE_OPTIONS],
+      ["GlPremiumBasis", GL_PREMIUM_BASIS_LABELS, GL_PREMIUM_BASIS_OPTIONS],
+      ["DoCoverageType", DO_COVERAGE_TYPE_LABELS, DO_COVERAGE_TYPE_OPTIONS],
+      [
+        "DefenseLimitPosition",
+        DEFENSE_LIMIT_POSITION_LABELS,
+        DEFENSE_LIMIT_POSITION_OPTIONS,
+      ],
+    ];
+    for (const [name, labels, options] of pairs) {
+      const members = schemaEnum(name).sort();
+      expect(Object.keys(labels).sort(), name).toEqual(members);
+      expect(valuesOf(options).sort(), name).toEqual(members);
+    }
+  });
+
+  it("DoPart — schema order is preserved, because the form prints A, B, C", () => {
+    // The one list here that is NOT sorted by label: the parts are a fixed
+    // sequence on the form, and rendering them alphabetically would be a
+    // coincidence rather than a decision.
+    expect([...DO_PARTS]).toEqual(schemaEnum("DoPart"));
+    expect(Object.keys(DO_PART_LABELS).sort()).toEqual(schemaEnum("DoPart").sort());
   });
 
   it("AccountType — the shared copy matches the schema", () => {

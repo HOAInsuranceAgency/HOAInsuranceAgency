@@ -95,3 +95,28 @@ export function num(v: string | null | undefined): number | null {
 export function inputValue(v: string | number | null | undefined): string {
   return v == null ? "" : String(v);
 }
+
+/**
+ * The third state a checkbox cannot hold.
+ *
+ * On an application, "no" and "not answered" are different answers. A carrier
+ * reading "does the association use sub-contractors: No" has been told
+ * something; a blank means nobody asked. A checkbox collapses those two into
+ * one unchecked box, so the nullable booleans on `GlApplication` and
+ * `DoApplication` are rendered as Yes/No radios and held in form state as
+ * `""` / `"yes"` / `"no"`.
+ *
+ * `bool` consumes that; `boolValue` produces it. Anything that is not exactly
+ * `"yes"` or `"no"` is `null` — a value the radio cannot produce means the
+ * question is unanswered, which is the safe reading.
+ */
+export function bool(v: string | null | undefined): boolean | null {
+  if (v === "yes") return true;
+  if (v === "no") return false;
+  return null;
+}
+
+/** A stored nullable boolean → what the Yes/No radio should show. */
+export function boolValue(v: boolean | null | undefined): string {
+  return v == null ? "" : v ? "yes" : "no";
+}

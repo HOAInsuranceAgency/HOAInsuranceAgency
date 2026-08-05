@@ -99,6 +99,15 @@ const schema = a
       "SUBCHAPTER_S_CORP",
       "TRUST",
     ]),
+    // ── General liability application (ACORD 126 input) ──
+    // What the association carries or is applying for, not what a carrier
+    // quoted — Quote/Policy already have their own gl* columns for that.
+    GlDeductibleType: a.enum(["PER_OCCURRENCE", "PER_CLAIM"]),
+    GlPremiumBasis: a.enum(["UNIT", "OTHER"]),
+    // ── Directors & Officers (ACORD 810 input) ──
+    DoPart: a.enum(["A", "B", "C"]),
+    DoCoverageType: a.enum(["PRIMARY", "EXCESS"]),
+    DefenseLimitPosition: a.enum(["INSIDE", "OUTSIDE"]),
     // Roles an association contact plays. The seven named ones are what the
     // agency asked for; OTHER is here because carriers routinely ask for a
     // role the list does not cover — a property manager's assistant, an
@@ -178,6 +187,18 @@ const schema = a
         electricalUpdatedYear: a.integer(),
         plumbingUpdatedYear: a.integer(),
         otherUpdates: a.string(),
+        // Which fire district serves the site. Free text: districts are named
+        // locally and inconsistently ("Middlesex FD #3", "Town of Acton"),
+        // and there is no list to pick from.
+        fireDistrict: a.string(),
+        blankets: a.hasMany("Blanket", "accountId"),
+        // 1:1. Created lazily, on the first save of either section — an
+        // account that has never been asked about GL should not carry an
+        // empty row implying it was.
+        glApplication: a.hasOne("GlApplication", "accountId"),
+        glClassCodes: a.hasMany("GlClassCode", "accountId"),
+        doApplication: a.hasOne("DoApplication", "accountId"),
+        doCoverageParts: a.hasMany("DoCoveragePart", "accountId"),
         coverPhotoKey: a.string(), // S3 keys under property-photos/
         aerialPhotoKey: a.string(),
         plotPlanKey: a.string(),
@@ -284,6 +305,103 @@ const schema = a
       effectiveDate: a.date(),
       expirationDate: a.date(),
       extractionSourceKey: a.string(),
+    }),
+
+    // ── Blanket coverages ──────────────────────────────────────────────
+    //
+    // The blanket limits an association's property schedule sits under. Note
+    // this is NOT `Quote.blanketLimit` / `Policy.blanketLimit`: those are
+    // terms a carrier quoted or bound, and these are the application's own
+    // schedule — what the association says it carries. Conflating them would
+    // make a quoted limit look like a stated exposure.
+    //
+    // `type` is free text per the requirement: blanket types are written the
+    // way the prior carrier wrote them ("Blanket Bldg & BPP", "Bldg/Contents").
+    Blanket: a.model({
+      accountId: a.id().required(),
+      account: a.belongsTo("Account", "accountId"),
+      blanketNumber: a.string(),
+      amount: a.float(),
+      type: a.string(),
+      extractionSourceKey: a.string(),
+    }),
+
+    // ── General liability application ──────────────────────────────────
+    //
+    // Its own 1:1 model rather than 25 more columns on an Account that is
+    // already ~50 wide. Application data — what is carried or applied for,
+    // the ACORD 126's input — which is a different thing from the `gl*`
+    // columns on Quote and Policy, where a carrier's answer lives.
+    GlApplication: a.model({
+      accountId: a.id().required(),
+      account: a.belongsTo("Account", "accountId"),
+
+      // ── Limits ──
+      eachOccurrence: a.float(),
+      generalAggregate: a.float(),
+      // Reuses AggregateAppliesTo rather than declaring a two-member twin.
+      // The requirement names only Location and Policy; the existing enum
+      // also offers Project and Other and is already wired to the ACORD 25
+      // checkboxes. Two enums for one concept is the drift PATTERNS forbids.
+      limitAppliesPer: a.ref("AggregateAppliesTo"),
+      productsCompletedOpsAggregate: a.float(),
+      personalAdvInjury: a.float(),
+      damageToRentedPremises: a.float(),
+      medicalExpense: a.float(),
+
+      // ── Deductibles ──
+      deductibleType: a.ref("GlDeductibleType"),
+      propertyDamageDeductible: a.float(),
+      bodilyInjuryDeductible: a.float(),
+
+      // ── Sub-contractors ──
+      // Nullable booleans on purpose: on an application "no" and "not asked"
+      // are different answers, and the UI renders these as Yes/No radios
+      // rather than checkboxes so the difference can be expressed.
+      usesSubcontractors: a.boolean(),
+      subsCarryLowerLimits: a.boolean(),
+      subsAllowedWithoutCoi: a.boolean(),
+      subcontractedWorkDescription: a.string(),
+      paidToSubcontractors: a.float(),
+      workSubcontractedPct: a.float(),
+      fullTimeEmployees: a.integer(),
+      partTimeEmployees: a.integer(),
+    }),
+
+    // Class codes are a list, so they are rows rather than columns.
+    GlClassCode: a.model({
+      accountId: a.id().required(),
+      account: a.belongsTo("Account", "accountId"),
+      hazardNumber: a.string(),
+      classCode: a.string(),
+      premiumBasis: a.ref("GlPremiumBasis"),
+      exposure: a.float(),
+      description: a.string(),
+    }),
+
+    // ── Directors & Officers ───────────────────────────────────────────
+    //
+    // Parts A, B and C carry identical field sets, so they are three rows of
+    // one model rather than twelve columns. Not an add/remove table: the
+    // parts are fixed by the form, and the UI renders exactly three.
+    DoCoveragePart: a.model({
+      accountId: a.id().required(),
+      account: a.belongsTo("Account", "accountId"),
+      part: a.ref("DoPart").required(),
+      coverageType: a.ref("DoCoverageType"),
+      perClaimLimit: a.float(),
+      aggregateLimit: a.float(),
+      perClaimRetention: a.float(),
+      aggregateRetention: a.float(),
+    }),
+
+    DoApplication: a.model({
+      accountId: a.id().required(),
+      account: a.belongsTo("Account", "accountId"),
+      separateDefenseLimit: a.boolean(),
+      defenseLimit: a.float(),
+      defenseLimitPosition: a.ref("DefenseLimitPosition"),
+      pendingPriorLitigationDate: a.date(),
     }),
 
     // Individual buildings on a property; total buildings/sqft are derived.

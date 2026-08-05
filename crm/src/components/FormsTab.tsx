@@ -143,12 +143,22 @@ export default function FormsTab({
             ] as string[];
           }
 
+          // The GL application supplies the 125's employee counts. A missing
+          // one is not an error: most accounts have never been asked.
+          const glRows = await listAllPages((nextToken) =>
+            client.models.GlApplication.list({
+              filter: { accountId: { eq: account.id } },
+              nextToken,
+            })
+          );
+
           const { bytes, missing, unsigned } = await fillAcordApp(
             form,
             account,
             buildings,
             contacts,
             priorCarriers,
+            glRows[0] ?? null,
             await signatureFor(profile.id),
             renewalDate,
             lines
