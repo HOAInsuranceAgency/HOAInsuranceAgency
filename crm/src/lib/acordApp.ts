@@ -42,50 +42,104 @@ interface PriorCarrierInfo {
 }
 
 /**
- * CRM line of business → the ACORD 125 prior-coverage field prefix for it.
+ * CRM line of business → its ACORD 125 checkbox.
  *
- * Same shape and the same tolerance as `LOB_FIELDS` below: a line with no
- * entry here does not fill, rather than filling the wrong row.
- *
- * ## What is confirmed and what is not
- *
- * `General Liability` is confirmed — those five field names are what this
- * file has been filling since before `PriorCarrier` existed. Note what they
- * establish and what they do not: the block name (`PriorCoverage_`) and the
- * suffix set (`InsurerFullName_A`, `PolicyNumberIdentifier_A`,
- * `TotalPremiumAmount_A`, `EffectiveDate_A`, `ExpirationDate_A`) are certain;
- * the *line token* is not derivable from anywhere else in this file. The
- * proof is right here: `LOB_FIELDS` calls the same line
- * `CommercialGeneralLiability` while the prior-coverage block calls it
- * `GeneralLiability`. The two sections of the same form disagree, so a token
- * borrowed from one for the other is a guess with a known counterexample.
- *
- * Every entry below except GL therefore carries both plausible spellings and
- * must be checked with Settings → Inspect fields. Getting one wrong is
- * visible rather than silent — the five fields for that line land in
- * `FillResult.missing`, which `FormsTab` renders as "Unmatched fields:
- * priorPropertyCarrier, …" with the instruction to extend the mapping. That
- * message naming the line is the point: an unmatched field here says which
- * line to go and look up.
- *
- * Lines carried by this agency with no entry at all — HO-6 is not a
- * commercial prior-coverage row — simply do not fill.
+ * Every name here exists on the agency's template
+ * (`docs/acord/acord-125-fields.txt`). Four lines the CRM tracks have **no
+ * box on this form at all** — Workers Comp, Flood, Earthquake and D&O — and
+ * are deliberately absent so they fall through to the Other rows below.
+ * Listing them with invented names, which is what this table did before the
+ * inventory was read, was worse than useless: the line was neither ticked in
+ * its own box (the name matched nothing) nor written into an Other row (the
+ * table claimed to handle it), so an HOA's D&O simply vanished from the form.
  */
-export const PRIOR_COVERAGE_FIELDS: Record<string, readonly string[]> = {
-  "General Liability": ["PriorCoverage_GeneralLiability_"],
-  Property: ["PriorCoverage_CommercialProperty_", "PriorCoverage_Property_"],
-  "Crime/Fidelity": ["PriorCoverage_Crime_", "PriorCoverage_CrimeFidelity_"],
-  Umbrella: ["PriorCoverage_Umbrella_", "PriorCoverage_ExcessLiability_"],
-  "Workers Comp": ["PriorCoverage_WorkersCompensation_"],
-  Flood: ["PriorCoverage_Flood_"],
-  Earthquake: ["PriorCoverage_Earthquake_"],
-  "D&O": ["PriorCoverage_ManagementLiability_", "PriorCoverage_DirectorsAndOfficers_"],
+export const LOB_FIELDS: Record<string, readonly string[]> = {
+  Property: ["Policy_LineOfBusiness_CommercialProperty_A"],
+  "General Liability": ["Policy_LineOfBusiness_CommercialGeneralLiability_A"],
+  "Crime/Fidelity": ["Policy_LineOfBusiness_CrimeIndicator_A"],
+  Umbrella: ["Policy_LineOfBusiness_UmbrellaIndicator_A"],
 };
 
+/** The 125 has six free-text "other line of business" rows. */
+const LOB_OTHER_ROWS = ["A", "B", "C", "D", "E", "F"] as const;
+
 /**
- * The most recent prior policy per line — the coverage a submission is
- * replacing. Older rows for the same line are history, and the form has one
- * row per line to put them in.
+ * The prior-coverage section is a **three-year grid**, not a list of lines.
+ *
+ * Each block (`_A`, `_B`, `_C`) carries a policy year and four fixed rows:
+ * general liability, automobile, property, and one catch-all "other line"
+ * whose own line is named in a code field. That shape was the surprise in the
+ * field inventory — W3 shipped assuming a row per line, with six invented
+ * prefixes, four of which named nothing.
+ *
+ * Automobile has a row here that nothing fills: `LINES_OF_BUSINESS` has no
+ * auto line, because this agency does not write it.
+ */
+const PRIOR_COVERAGE_BLOCKS = ["A", "B", "C"] as const;
+
+/** Lines with a row of their own inside a block. Everything else shares one. */
+export const PRIOR_COVERAGE_LINE_ROWS: Record<string, string> = {
+  "General Liability": "GeneralLiability",
+  Property: "Property",
+};
+
+/** One policy year of the prior-coverage grid. */
+export interface PriorCoverageBlock {
+  /** The year as the form prints it, or "" when no row in it carries a date. */
+  year: string;
+  generalLiability?: PriorCarrierInfo;
+  property?: PriorCarrierInfo;
+  /** The one non-GL, non-property line that fits. */
+  other?: PriorCarrierInfo;
+}
+
+/**
+ * Prior-carrier rows → up to three policy-year blocks, newest first.
+ *
+ * Grouped by the year the term started, because that is what
+ * `PriorCoverage_PolicyYear_*` asks for and what makes the three blocks read
+ * as a history rather than an unordered pile. Rows carrying no dates at all
+ * are grouped under a blank year and sorted last, so they take a block only
+ * if there is one going spare.
+ *
+ * What does not fit is dropped rather than crammed in: a fourth year, a
+ * second "other" line within a year, an auto policy. The form has three
+ * blocks of four rows and there is nowhere else to put them.
+ */
+export function priorCoverageBlocks(
+  rows: PriorCarrierInfo[]
+): PriorCoverageBlock[] {
+  const yearOf = (r: PriorCarrierInfo) =>
+    (r.effectiveDate ?? r.expirationDate ?? "").slice(0, 4);
+
+  const byYear = new Map<string, PriorCarrierInfo[]>();
+  for (const r of rows) {
+    const y = yearOf(r);
+    const held = byYear.get(y);
+    if (held) held.push(r);
+    else byYear.set(y, [r]);
+  }
+
+  return [...byYear.keys()]
+    // Newest first; undated last, because a row with a year is more use to an
+    // underwriter than one without.
+    .sort((a, b) => (a === "" ? 1 : b === "" ? -1 : b.localeCompare(a)))
+    .slice(0, PRIOR_COVERAGE_BLOCKS.length)
+    .map((year) => {
+      const newest = newestPriorByLine(byYear.get(year) ?? []);
+      const block: PriorCoverageBlock = { year };
+      for (const [line, row] of newest) {
+        const named = PRIOR_COVERAGE_LINE_ROWS[line];
+        if (named === "GeneralLiability") block.generalLiability = row;
+        else if (named === "Property") block.property = row;
+        else if (!block.other) block.other = row;
+      }
+      return block;
+    });
+}
+
+/**
+ * The most recent prior policy per line within a set of rows.
  *
  * Ordered on expiration, falling back to the term start, because a row
  * entered off a declarations page that never stated an end date still knows
@@ -208,9 +262,6 @@ function buildAppFormValues(
   const totalSqft = buildings.reduce((s, b) => s + (b.sqft ?? 0), 0);
   const primary = primaryContact(contacts);
   const newestByLine = newestPriorByLine(priorCarriers);
-  const newestPrior = [...newestByLine.values()].sort((a, b) =>
-    (b.effectiveDate ?? "").localeCompare(a.effectiveDate ?? "")
-  )[0];
 
   const zip = account.zip ?? "";
   const state = account.state ?? "";
@@ -266,7 +317,8 @@ function buildAppFormValues(
 
     policyEffective: { candidates: ["Policy_EffectiveDate_A"], value: fmtUs(proposedEff) },
     carrierName: {
-      candidates: ["Policy_Insurer_FullName_A", "Insurer_FullName_A"],
+      // Left blank: the carrier is chosen per submission, not per account.
+      candidates: ["Insurer_FullName_A"],
       value: "",
     },
   };
@@ -300,23 +352,15 @@ function buildAppFormValues(
         value: account.type === "ASSOCIATION" ? "x" : "",
       },
 
-      // ── `account.annualRevenue` is deliberately NOT mapped here yet. ──
-      //
-      // The 125 has a gross-revenue field and nobody has read its name off a
-      // real template. Every other name in this file was either confirmed or
-      // derived from a confirmed sibling — the Legal Entity boxes above are
-      // derived from the Not-For-Profit name this app has been ticking for
-      // months — and there is no confirmed sibling for this one: both halves
-      // of the name would be invented.
-      //
-      // A wrong candidate is reported in FillResult.missing and surfaces as
-      // "Unmatched fields" on the generation, so it fails visibly rather than
-      // wrongly. But an unmatched field looks identical to a mapping nobody
-      // has written, which is how a guess becomes permanent.
-      //
-      // To finish this: Settings → Inspect fields on the ACORD 125 template,
-      // find the gross-revenue field, and add it here. The column is already
-      // populated by the Overview tab, so that is the only step left.
+      // Revenue is asked per premises on this form
+      // (`CommercialStructure_AnnualRevenueAmount_A..D`), not once for the
+      // business. An association's dues income is an account-level figure, so
+      // it goes against the first premises row only — stating it four times
+      // would read as four times the revenue.
+      annualRevenue: {
+        candidates: ["CommercialStructure_AnnualRevenueAmount_A"],
+        value: account.annualRevenue != null ? account.annualRevenue.toFixed(0) : "",
+      },
 
       proposedEffective: { candidates: ["Policy_EffectiveDate_A"], value: fmtUs(proposedEff) },
       proposedExpiration: { candidates: ["Policy_ExpirationDate_A"], value: fmtUs(proposedExp) },
@@ -340,13 +384,6 @@ function buildAppFormValues(
         value: inspection?.phone ?? "",
       },
 
-      priorPolicyYear: {
-        candidates: ["PriorCoverage_PolicyYear_A"],
-        // The block has one year field covering all the lines, so it takes
-        // the newest term start across them.
-        value: newestPrior?.effectiveDate?.slice(0, 4) ?? "",
-      },
-
       natureOfBusiness: {
         candidates: [
           "CommercialPolicy_OperationsDescription_A",
@@ -356,80 +393,86 @@ function buildAppFormValues(
       },
     } satisfies FieldValues);
 
-    // ── Incumbent coverage, one row per line ──
+    // ── Incumbent coverage: three policy-year blocks ──
     //
-    // This used to fill a single GL row from five Account columns, so an
-    // association carrying property with one carrier and GL with another
-    // could only ever declare one of them. The 125 has a prior-coverage row
-    // per line; `PRIOR_COVERAGE_FIELDS` says which prefix belongs to which
-    // line, and a line with no entry there simply does not fill — the same
-    // way `LOB_FIELDS` above skips a line it has no box for.
-    //
-    // One row per line: the newest term, because that is the coverage the
-    // submission is replacing. An older row for the same line is history and
-    // the form has nowhere to put it.
-    for (const [line, prefixes] of Object.entries(PRIOR_COVERAGE_FIELDS)) {
-      const row = newestByLine.get(line);
-      if (!row) continue;
-      const key = line.replace(/\W+/g, "");
-      const at = (suffix: string) => prefixes.map((p) => `${p}${suffix}`);
-      Object.assign(values, {
-        [`prior${key}Carrier`]: {
-          candidates: at("InsurerFullName_A"),
-          value: row.carrierName ?? "",
-        },
-        [`prior${key}PolicyNumber`]: {
-          candidates: at("PolicyNumberIdentifier_A"),
-          value: row.policyNumber ?? "",
-        },
-        [`prior${key}Premium`]: {
-          candidates: at("TotalPremiumAmount_A"),
-          value: row.premium != null ? row.premium.toFixed(2) : "",
-        },
-        [`prior${key}Effective`]: {
-          candidates: at("EffectiveDate_A"),
-          value: fmtUs(row.effectiveDate),
-        },
-        [`prior${key}Expiration`]: {
-          candidates: at("ExpirationDate_A"),
-          value: fmtUs(row.expirationDate),
-        },
-      } satisfies FieldValues);
-    }
+    // This used to fill a single General Liability row from five Account
+    // columns, so an association carrying property with one carrier and GL
+    // with another could only ever declare one of them. The form actually
+    // offers three years, each with a GL row, a property row and one
+    // catch-all — see `priorCoverageBlocks`.
+    priorCoverageBlocks(priorCarriers).forEach((blk, i) => {
+      const b = PRIOR_COVERAGE_BLOCKS[i];
+      values[`priorYear${b}`] = {
+        candidates: [`PriorCoverage_PolicyYear_${b}`],
+        value: blk.year,
+      };
+      const fillRow = (token: string, tag: string, row?: PriorCarrierInfo) => {
+        if (!row) return;
+        const at = (suffix: string) => [`PriorCoverage_${token}_${suffix}_${b}`];
+        Object.assign(values, {
+          [`prior${tag}Carrier${b}`]: {
+            candidates: at("InsurerFullName"),
+            value: row.carrierName ?? "",
+          },
+          [`prior${tag}PolicyNumber${b}`]: {
+            candidates: at("PolicyNumberIdentifier"),
+            value: row.policyNumber ?? "",
+          },
+          [`prior${tag}Premium${b}`]: {
+            candidates: at("TotalPremiumAmount"),
+            value: row.premium != null ? row.premium.toFixed(2) : "",
+          },
+          [`prior${tag}Effective${b}`]: {
+            candidates: at("EffectiveDate"),
+            value: fmtUs(row.effectiveDate),
+          },
+          [`prior${tag}Expiration${b}`]: {
+            candidates: at("ExpirationDate"),
+            value: fmtUs(row.expirationDate),
+          },
+        } satisfies FieldValues);
+      };
+      fillRow("GeneralLiability", "GL", blk.generalLiability);
+      fillRow("Property", "Property", blk.property);
+      fillRow("OtherLine", "Other", blk.other);
+      // The field naming that "other" line exists on the first block only —
+      // an omission in the form, not in this mapping. Blocks B and C print
+      // the carrier and the dates with no label saying what line they are.
+      if (b === "A" && blk.other) {
+        values.priorOtherLineCode = {
+          candidates: ["PriorCoverage_OtherLine_LineOfBusinessCode_A"],
+          value: blk.other.lineOfBusiness ?? "",
+        };
+      }
+    });
 
     // ── Lines of business ──
-    // Maps the CRM's line vocabulary onto the 125's checkboxes. Candidates
-    // that a template edition lacks are skipped, so unknowns cost nothing.
-    const LOB_FIELDS: Record<string, string[]> = {
-      "Property": ["Policy_LineOfBusiness_CommercialProperty_A", "Policy_LineOfBusiness_CommercialPropertyIndicator_A"],
-      "General Liability": ["Policy_LineOfBusiness_CommercialGeneralLiability_A", "Policy_LineOfBusiness_CommercialGeneralLiabilityIndicator_A"],
-      "Crime/Fidelity": ["Policy_LineOfBusiness_CrimeIndicator_A"],
-      "Umbrella": ["Policy_LineOfBusiness_UmbrellaIndicator_A", "Policy_LineOfBusiness_ExcessLiabilityIndicator_A"],
-      "Workers Comp": ["Policy_LineOfBusiness_WorkersCompensationIndicator_A"],
-      "Flood": ["Policy_LineOfBusiness_FloodIndicator_A"],
-      "Earthquake": ["Policy_LineOfBusiness_EarthquakeIndicator_A"],
-      "D&O": ["Policy_LineOfBusiness_ManagementLiabilityIndicator_A", "Policy_LineOfBusiness_DirectorsAndOfficersIndicator_A"],
-    };
     for (const line of lines) {
       const candidates = LOB_FIELDS[line];
       if (!candidates) continue;
-      values[`lob_${line.replace(/\W+/g, "")}`] = { candidates, value: "x" };
-    }
-    // Anything without its own box goes in the Other row.
-    const otherLines = lines.filter((l) => !LOB_FIELDS[l]);
-    if (otherLines.length) {
-      values.lobOther = {
-        candidates: ["Policy_LineOfBusiness_OtherIndicator_A"],
+      values[`lob_${line.replace(/\W+/g, "")}`] = {
+        candidates: [...candidates],
         value: "x",
       };
-      values.lobOtherDesc = {
-        candidates: [
-          "Policy_LineOfBusiness_OtherDescription_A",
-          "OtherLineOfBusiness_LineOfBusinessDescription_A",
-        ],
-        value: otherLines.join(", "),
-      };
     }
+    // Anything without a box of its own gets one of the six Other rows, named
+    // individually. Joining them into a single row — which is what this did
+    // before — put "Workers Comp, Flood, D&O" on one line of a form that has
+    // six lines and a premium column beside each.
+    lines
+      .filter((l) => !LOB_FIELDS[l])
+      .slice(0, LOB_OTHER_ROWS.length)
+      .forEach((line, i) => {
+        const row = LOB_OTHER_ROWS[i];
+        values[`lobOther${row}`] = {
+          candidates: [`Policy_LineOfBusiness_OtherIndicator_${row}`],
+          value: "x",
+        };
+        values[`lobOtherDesc${row}`] = {
+          candidates: [`Policy_LineOfBusiness_OtherLineOfBusinessDescription_${row}`],
+          value: line,
+        };
+      });
 
     // ── Policy information ──
     // A carrier submission is a request to quote, not an issued policy.
@@ -452,29 +495,27 @@ function buildAppFormValues(
             .find((n) => n) ?? "",
       },
       billingPlanDirect: {
-        candidates: ["CommercialPolicy_BillingPlan_DirectBillIndicator_A"],
+        candidates: ["Policy_Payment_DirectBillIndicator_A"],
         value: "x",
       },
     } satisfies FieldValues);
 
     // ── Attachments ──
-    // Only tick what we actually send, so the underwriter isn't hunting for
-    // a schedule that doesn't exist.
-    values.attachRemarks = {
-      candidates: [
-        "CommercialPolicy_Attachment_AdditionalRemarksScheduleIndicator_A",
-        "Policy_SectionAttached_AdditionalRemarksIndicator_A",
-      ],
-      value: (account.notes ?? "").trim() ? "x" : "",
-    };
-    values.attachPropertySection = {
-      candidates: ["Policy_SectionAttached_CommercialPropertyIndicator_A"],
-      value: lines.includes("Property") ? "x" : "",
-    };
-    values.attachGlSection = {
-      candidates: ["Policy_SectionAttached_CommercialGeneralLiabilityIndicator_A"],
-      value: lines.includes("General Liability") ? "x" : "",
-    };
+    //
+    // Three mappings used to live here and none of them named a field that
+    // exists on this form: an "additional remarks schedule" box, and a
+    // "section attached" box per line. The attachment list on the 125 is a
+    // fixed set of named supplements (statement of values, condominium
+    // by-laws, loss summary…) with no per-line entry and no remarks entry —
+    // the line-of-business checkboxes above already say which sections a
+    // submission covers, so the per-line boxes were saying it twice and
+    // saying it to nothing.
+    //
+    // The form does carry `CommercialPolicy_RemarkText_A`, a free-text
+    // remarks field. `account.notes` is deliberately NOT written into it:
+    // those notes are internal, they are not composed for a carrier's eyes,
+    // and putting them on a submission is a decision for the agency to make
+    // rather than one to inherit from a dead checkbox.
 
     // ── Premises schedule ──
     // One row per building. Falls back to the account address when no

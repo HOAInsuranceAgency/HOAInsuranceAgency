@@ -229,26 +229,22 @@ export const ACORD25_AGGREGATE_FIELDS: Record<string, string> = Object.freeze(
  * the dropdown and the PDF mapping read one table, so they cannot come to
  * offer different member sets.
  *
- * ## The field names, and how far to trust them
+ * **Every name here is confirmed** against the agency's own template — see
+ * `docs/acord/acord-125-fields.txt`, which is the full field inventory read
+ * with Settings → Inspect fields. Seven of the eight were derived guesses
+ * when W2 shipped; the inventory confirmed all seven and settled the one
+ * genuine coin-flip: an LLC is `LimitedLiabilityCorporation`, not
+ * `…Company`, so the second candidate that covered it is gone.
  *
- * `NOT_FOR_PROFIT`'s name is **confirmed** — it is the one this app has been
- * ticking since before this table existed, hardcoded in `acordApp.ts`. The
- * other seven are derived from its convention
- * (`NamedInsured_LegalEntity_<Entity>Indicator_A`) and have **not** been read
- * off a template. They must be confirmed with Settings → Inspect fields.
+ * The member set matches the form's exactly, minus its `OtherIndicator_A`
+ * box — the enum has no OTHER member, so nothing can select it. The form also
+ * carries `MemberManagerCount_A` beside the LLC box, which the CRM does not
+ * record.
  *
- * Until they are, a wrong name is not silent: only the one member a given
- * account selects is ever populated, and `fillTemplate` reports a populated
- * field whose candidates matched nothing in `FillResult.missing`, which
- * `FormsTab` renders as "Unmatched fields: legalEntity" on the generation.
- * So the failure mode is one visible unticked box on one submission, not a
- * quietly wrong form — but it is still a box a carrier reads.
- *
- * Lists rather than single names, unlike `AGGREGATE_APPLIES_TO`, because
- * `fillTemplate` takes candidates in preference order and one member is a
- * genuine coin-flip: ACORD's own vocabularies spell an LLC both
- * "LimitedLiabilityCorporation" and "LimitedLiabilityCompany". Covering both
- * costs nothing and is exactly what the candidate mechanism is for.
+ * Lists rather than single names, unlike `AGGREGATE_APPLIES_TO`, because the
+ * form has an _A/_B/_C set of these for three named insureds and a later
+ * workstream filling the second one will add candidates here rather than a
+ * second table.
  */
 const LEGAL_ENTITY = {
   CORPORATION: {
@@ -267,12 +263,10 @@ const LEGAL_ENTITY = {
     label: "LLC",
     acord125Fields: [
       "NamedInsured_LegalEntity_LimitedLiabilityCorporationIndicator_A",
-      "NamedInsured_LegalEntity_LimitedLiabilityCompanyIndicator_A",
     ],
   },
   NOT_FOR_PROFIT: {
     label: "Not For Profit",
-    // Confirmed: shipping today at acordApp.ts's 125 block.
     acord125Fields: ["NamedInsured_LegalEntity_NotForProfitIndicator_A"],
   },
   PARTNERSHIP: {
