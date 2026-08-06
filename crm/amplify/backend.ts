@@ -240,6 +240,27 @@ backend.teamAdmin.resources.lambda.addToRolePolicy(
 // `src/lib/pagination` — so the address is read there instead. `tsc` and
 // `npm run synth:check` both pass on the import that fails; only a real
 // pipeline deploy catches it.
+// ── Lead text alerts ─────────────────────────────────────────────────
+// The intake handler texts every UserProfile with leadTextAlerts on. The
+// link in the message is this branch's portal, so it opens the lead the
+// recipient is being told about rather than the wrong environment's.
+//
+// `sns:Publish` on `*` because SMS-to-a-phone-number has no topic ARN to
+// scope to — the resource being published to is the number itself.
+//
+// ⚠️ Provisioning is NOT in this stack. Amazon SNS will not deliver to US
+// numbers until the account is out of the SMS sandbox AND has a registered
+// origination identity (10DLC for a long code, or a toll-free number).
+// Until then Publish succeeds and the message is dropped downstream, which
+// looks identical to working. See README.
+backend.leadIntake.addEnvironment("CRM_BASE_URL", magicLinkBaseUrl);
+backend.leadIntake.resources.lambda.addToRolePolicy(
+  new PolicyStatement({
+    actions: ["sns:Publish"],
+    resources: ["*"],
+  })
+);
+
 backend.licenseAlerts.addEnvironment("LICENSE_ALERT_FROM", magicLinkFrom);
 backend.licenseAlerts.resources.lambda.addToRolePolicy(
   new PolicyStatement({

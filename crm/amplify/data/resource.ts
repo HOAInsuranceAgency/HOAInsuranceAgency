@@ -867,6 +867,21 @@ const schema = a
         lastName: a.string().required(),
         role: a.ref("UserRole").required(), // privileges are placeholder for now
         npn: a.string(), // required for producers at onboarding (app-enforced)
+        /**
+         * Mobile number for lead texts. Free-form as typed — normalised to
+         * E.164 at send time by `lead-intake/sms.ts`, not on the way in, so a
+         * number saved in any of the shapes people actually type still works
+         * and nothing is silently rewritten under the person who typed it.
+         */
+        mobilePhone: a.string(),
+        /**
+         * Text me when a web lead arrives. Off unless someone turns it on:
+         * an alert nobody asked for is how a phone number ends up blocked.
+         *
+         * Only inbound leads — the `submitWebLead` mutation. A lead a
+         * producer types into the CRM themselves does not text that producer.
+         */
+        leadTextAlerts: a.boolean(),
         // S3 key of a transparent-PNG signature, drawn into the signature
         // fields of generated ACORD forms. See storage: signatures/*.
         signatureKey: a.string(),

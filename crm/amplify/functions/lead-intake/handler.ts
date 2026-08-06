@@ -1,3 +1,4 @@
+import { SNSClient, PublishCommand } from "@aws-sdk/client-sns";
 import { Amplify } from "aws-amplify";
 import { generateClient } from "aws-amplify/data";
 import { getAmplifyDataClientConfig } from "@aws-amplify/backend/function/runtime";
@@ -11,6 +12,14 @@ import {
   isAccountType,
 } from "../../../src/lib/enums";
 import { contactKey } from "../../../src/lib/extractionKeys";
+import { listAllPages } from "../../../src/lib/pagination";
+import {
+  leadText,
+  profileName,
+  textRecipients,
+  unreachableOptIns,
+  type LeadSummary,
+} from "./sms";
 
 /**
  * Public website → CRM lead intake.
@@ -19,9 +28,19 @@ import { contactKey } from "../../../src/lib/extractionKeys";
  * marketing site can create leads directly. Everything is forced to
  * stage=LEAD / source=website here regardless of input — the public surface
  * can only ever create leads.
+ *
+ * Also texts whoever asked to hear about leads. That is here rather than on a
+ * stream because "a lead came in" means *this* mutation: an Account reaching
+ * stage=LEAD by any other route is a producer typing one in, and texting them
+ * about the lead they just entered is noise.
  */
 
-let dataClient: ReturnType<typeof generateClient<Schema>> | undefined;
+// Named rather than written inline as `Awaited<ReturnType<typeof
+// getDataClient>>`: that indirection makes tsc give up with "excessive stack
+// depth" on the generated model types.
+type DataClient = ReturnType<typeof generateClient<Schema>>;
+
+let dataClient: DataClient | undefined;
 
 async function getDataClient() {
   if (!dataClient) {
@@ -36,6 +55,81 @@ async function getDataClient() {
 
 /** How this handler's writes are attributed in the activity log. */
 const WRITER = "lead-intake";
+
+const sns = new SNSClient();
+
+/**
+ * Text everyone who asked to hear about leads.
+ *
+ * Swallows everything. The lead is already saved and the marketing site is
+ * waiting on this mutation's `ok`; a texting outage must not turn a captured
+ * lead into a failed form submission, which is the one outcome that actually
+ * loses business. Same reasoning as the Contact create above.
+ *
+ * Sent in parallel and settled, not raced: one bad number must not stop the
+ * other recipients, and this runs inside AppSync's 30s resolver limit with a
+ * visitor watching a spinner.
+ */
+async function textLeadAlerts(
+  client: DataClient,
+  lead: LeadSummary
+): Promise<void> {
+  try {
+    const baseUrl = process.env.CRM_BASE_URL;
+    if (!baseUrl) {
+      console.error("CRM_BASE_URL unset — skipping lead texts");
+      return;
+    }
+
+    const profiles = await listAllPages((nextToken) =>
+      client.models.UserProfile.list({ nextToken, limit: 200 })
+    );
+
+    // Opted in with nothing to send to. Logged rather than dropped: the
+    // switch is on, so this person believes they are covered.
+    for (const p of unreachableOptIns(profiles)) {
+      console.error(
+        `${profileName(p)} has lead texts on but no usable mobile number`
+      );
+    }
+
+    const recipients = textRecipients(profiles);
+    if (recipients.length === 0) return;
+
+    const Message = leadText(lead, baseUrl);
+    const results = await Promise.allSettled(
+      recipients.map((r) =>
+        sns.send(
+          new PublishCommand({
+            PhoneNumber: r.phone,
+            Message,
+            MessageAttributes: {
+              // Lead alerts are the transactional kind: they must not be
+              // dropped for cost optimisation the way Promotional may be.
+              "AWS.SNS.SMS.SMSType": {
+                DataType: "String",
+                StringValue: "Transactional",
+              },
+            },
+          })
+        )
+      )
+    );
+
+    results.forEach((res, i) => {
+      if (res.status === "rejected") {
+        console.error(
+          `Lead text to ${profileName(recipients[i].profile)} failed`,
+          res.reason
+        );
+      }
+    });
+    const sent = results.filter((r) => r.status === "fulfilled").length;
+    console.log(`Lead texts sent: ${sent}/${recipients.length} for ${lead.id}`);
+  } catch (err) {
+    console.error("Lead texts failed entirely", err);
+  }
+}
 
 const clean = (v: string | null | undefined, max = 500): string | undefined => {
   const t = v?.trim();
@@ -149,5 +243,18 @@ export const handler: Schema["submitWebLead"]["functionHandler"] = async (
   }
 
   console.log(`Web lead created: ${data.id} (${name})`);
+
+  // After the contact, so the text carries the caller's name and number —
+  // the two things that decide whether someone rings back now or later.
+  await textLeadAlerts(client, {
+    id: data.id,
+    name,
+    city: data.city,
+    state: data.state,
+    contactName,
+    contactPhone: clean(args.contactPhone, 50),
+    source: data.source,
+  });
+
   return { ok: true, id: data.id };
 };

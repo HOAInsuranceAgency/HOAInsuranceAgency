@@ -586,3 +586,16 @@ mark.ocr-current { background: #f79b32; color: #fff; border-radius: 2px; }
   touch-action: none; /* let the pad capture drags instead of scrolling */
 }
 .sig-canvas:hover { border-color: var(--accent); }
+
+/* ── Team: lead text alerts ── */
+.lead-text-cell { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
+.lead-text-switch { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; }
+.lead-text-phone {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 8px;
+  font-size: 13px;
+  font-family: inherit;
+  width: 150px;
+}
+.lead-text-phone:focus { outline: 2px solid var(--accent); outline-offset: -1px; }

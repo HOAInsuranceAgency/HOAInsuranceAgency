@@ -1,4 +1,6 @@
+import { useState } from "react";
 import { client, fmtDate, type UserProfile } from "../lib/client";
+import { toE164 } from "../../amplify/functions/lead-intake/sms";
 import { Badge, flagBadge } from "../lib/badges";
 import SignatureManager from "../components/SignatureManager";
 import { SaveStatus, useSaveStatus } from "../components/SaveStatus";
@@ -12,6 +14,66 @@ interface TeamUser {
   email: string;
   createdAt: string | null;
   groups: string[];
+}
+
+/**
+ * The lead-text switch and the number it sends to.
+ *
+ * Its own component for the local phone draft: the field commits on blur, so
+ * between keystrokes it holds a value the saved profile does not, and keeping
+ * that in the page would re-render every row on every character.
+ *
+ * The unreachable-number warning is here rather than left to the Lambda's log
+ * because this is the only screen where it can be fixed. `toE164` is the same
+ * function the sender uses, so what this calls unreachable is exactly what
+ * will be skipped.
+ */
+function LeadTextCell({
+  profile,
+  onSave,
+}: {
+  profile: UserProfile;
+  onSave: (p: UserProfile, patch: Partial<UserProfile>) => void | Promise<void>;
+}) {
+  const [draft, setDraft] = useState(profile.mobilePhone ?? "");
+  const on = !!profile.leadTextAlerts;
+  const reachable = toE164(draft) !== null;
+
+  return (
+    <div className="lead-text-cell">
+      <label className="lead-text-switch">
+        <input
+          type="checkbox"
+          checked={on}
+          aria-label={`Lead texts for ${profile.firstName} ${profile.lastName}`}
+          onChange={(e) => void onSave(profile, { leadTextAlerts: e.target.checked })}
+        />
+        <span>{on ? "On" : "Off"}</span>
+      </label>
+      <input
+        className="lead-text-phone"
+        type="tel"
+        inputMode="tel"
+        placeholder="Mobile number"
+        aria-label={`Mobile number for ${profile.firstName} ${profile.lastName}`}
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={() => {
+          const next = draft.trim();
+          if (next !== (profile.mobilePhone ?? "")) {
+            void onSave(profile, { mobilePhone: next || null });
+          }
+        }}
+      />
+      {on && !reachable && (
+        <span className="error-text small">
+          {draft.trim()
+            ? "Not a number we can text."
+            : "No mobile number — nothing will send."}
+        </span>
+      )}
+    </div>
+  );
 }
 
 // Stable identity for "not loaded yet" (and for a failed read), so the sort
@@ -28,6 +90,9 @@ export default function Team({ profile }: { profile: UserProfile }) {
   // cleared — it sat over the form while you typed the next invitee's
   // address. `markDirty` in `onEdit` is what retires it now.
   const inviteStatus = useSaveStatus();
+  // Auto-clearing: these are per-row edits with no form to go dirty and
+  // retire the message, so nothing else would ever clear it.
+  const alertStatus = useSaveStatus({ autoClearMs: 4000 });
   const { form, setF } = useFormState(
     { email: "", role: DEFAULT_USER_ROLE as string },
     { onEdit: inviteStatus.markDirty }
@@ -106,6 +171,31 @@ export default function Team({ profile }: { profile: UserProfile }) {
   const profileFor = (u: TeamUser) =>
     profiles.find((p) => p.userId === u.userId || p.email === u.email);
 
+  /**
+   * Save a lead-alert change straight away — there is no Save button on this
+   * table, and a toggle that needed one would be a toggle people believe they
+   * have set. The phone field commits on blur for the same reason.
+   */
+  async function saveAlerts(p: UserProfile, patch: Partial<UserProfile>) {
+    setProfiles((ps) =>
+      ps.map((x) => (x.id === p.id ? { ...x, ...patch } : x))
+    );
+    await alertStatus.run(
+      async () => {
+        const { data, errors } = await client.models.UserProfile.update({
+          id: p.id,
+          ...patch,
+        });
+        if (errors?.length || !data) throw new Error(errors?.[0]?.message);
+        setProfiles((ps) => ps.map((x) => (x.id === data.id ? data : x)));
+      },
+      {
+        savedMessage: `Lead alerts updated for ${p.firstName} ${p.lastName}.`,
+        errorMessage: "Couldn't save that.",
+      }
+    );
+  }
+
   // By email; a user with no email sorts last, which useSort does for nulls
   // in either direction.
   const { sorted, sortKey, dir, toggle } = useSort(
@@ -118,6 +208,7 @@ export default function Team({ profile }: { profile: UserProfile }) {
       },
       role: (u) => u.groups[0] ?? profileFor(u)?.role,
       onboarded: (u) => (profileFor(u)?.onboardingComplete ? "Yes" : "Invited"),
+      leadTexts: (u) => (profileFor(u)?.leadTextAlerts ? "On" : "Off"),
       invited: (u) => u.createdAt,
     },
     "email"
@@ -171,7 +262,20 @@ export default function Team({ profile }: { profile: UserProfile }) {
       </div>
 
       <div className="card">
-        <h2>Team members</h2>
+        <div className="toolbar" style={{ marginTop: 0, alignItems: "flex-start" }}>
+          <div>
+            <h2 style={{ margin: 0 }}>Team members</h2>
+            <p className="muted small" style={{ margin: "4px 0 0" }}>
+              Lead texts go out the moment a website enquiry lands. Both the
+              switch and a mobile number are needed — a switch on its own
+              sends nothing.
+            </p>
+          </div>
+          <div className="grow" />
+          {/* Toggles are per-row with no per-row place to report; this is
+              the card's one status line. */}
+          <SaveStatus {...alertStatus.status} />
+        </div>
         {!team.loaded ? (
           <p className="muted small">Loading…</p>
         ) : team.error ? (
@@ -188,6 +292,7 @@ export default function Team({ profile }: { profile: UserProfile }) {
                   <SortTh label="Role" colKey="role" sortKey={sortKey} dir={dir} onToggle={toggle} />
                   <SortTh label="Onboarded" colKey="onboarded" sortKey={sortKey} dir={dir} onToggle={toggle} />
                   <th>Signature</th>
+                  <SortTh label="Lead texts" colKey="leadTexts" sortKey={sortKey} dir={dir} onToggle={toggle} />
                   <SortTh label="Invited" colKey="invited" sortKey={sortKey} dir={dir} onToggle={toggle} />
                 </tr>
               </thead>
@@ -233,6 +338,15 @@ export default function Team({ profile }: { profile: UserProfile }) {
                             )
                           }
                         />
+                      </td>
+                      <td style={{ whiteSpace: "nowrap" }}>
+                        {/* No profile means the invite is unaccepted — there
+                            is no row to write the preference onto yet. */}
+                        {p ? (
+                          <LeadTextCell profile={p} onSave={saveAlerts} />
+                        ) : (
+                          <span className="muted small">—</span>
+                        )}
                       </td>
                       <td className="small">
                         {fmtDate(u.createdAt?.slice(0, 10))}
