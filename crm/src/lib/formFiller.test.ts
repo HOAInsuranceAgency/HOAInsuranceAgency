@@ -196,3 +196,55 @@ describe("PLACEHOLDER_RE", () => {
     expect(PLACEHOLDER_RE.source.endsWith("$")).toBe(true);
   });
 });
+
+/**
+ * Money boxes.
+ *
+ * The deterministic mapping renders every figure grouped (`acordFormat.amt`);
+ * the model does not, so a certificate came off the line reading `1,000,000`
+ * in the boxes the mapping filled and `300000` in the boxes the AI filled, on
+ * the same page, going to a mortgagee.
+ */
+describe("currency grouping", () => {
+  const money = "GeneralLiability_EachOccurrence_LimitAmount_A";
+
+  it("groups a bare number in a money field", () => {
+    expect(
+      sanitiseSuggestions([{ field: money, value: "300000", why: "" }], [money])
+    ).toEqual([{ field: money, value: "300,000", why: "" }]);
+  });
+
+  it("keeps cents when the model gave them", () => {
+    expect(
+      sanitiseSuggestions([{ field: money, value: "1234.50", why: "" }], [money])
+        [0].value
+    ).toBe("1,234.5");
+  });
+
+  it("leaves a value the model already formatted or qualified alone", () => {
+    // Reformatting something we do not fully understand is how a number gets
+    // changed rather than restyled.
+    for (const value of ["1,000,000", "$250,000", "500 per occurrence", "1M"]) {
+      expect(
+        sanitiseSuggestions([{ field: money, value, why: "" }], [money])[0].value
+      ).toBe(value);
+    }
+  });
+
+  it("leaves small numbers alone — there is nothing to group", () => {
+    expect(
+      sanitiseSuggestions([{ field: money, value: "500", why: "" }], [money])[0]
+        .value
+    ).toBe("500");
+  });
+
+  it("does not touch a number in a field that does not hold money", () => {
+    // A year, a count, a code. The field name is the only signal available —
+    // the model is told names and nothing about types.
+    const year = "Construction_YearBuilt_A";
+    expect(
+      sanitiseSuggestions([{ field: year, value: "1987", why: "" }], [year])[0]
+        .value
+    ).toBe("1987");
+  });
+});

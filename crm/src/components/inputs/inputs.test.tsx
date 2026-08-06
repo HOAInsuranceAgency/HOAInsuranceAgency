@@ -13,6 +13,7 @@ vi.mock("aws-amplify/data", () => ({
 
 import {
   DateInput,
+  FeinInput,
   IntegerInput,
   MoneyInput,
   PercentInput,
@@ -248,6 +249,51 @@ describe("PhoneInput", () => {
     );
 
     await user.click(phone());
+    await user.tab();
+    expect(onChange).not.toHaveBeenCalled();
+  });
+});
+
+describe("FeinInput", () => {
+  const fein = () => screen.getByRole("textbox");
+
+  it("stores the hyphenated number for nine digits", async () => {
+    const user = userEvent.setup();
+    render(<Harness Component={FeinInput} />);
+
+    await user.type(fein(), "045551234");
+    await user.tab();
+    // The column is text and the hyphen is how the number is printed on a W-9
+    // and typed into a carrier portal, so the hyphen *is* the value.
+    expect(stored()).toBe("04-5551234");
+  });
+
+  it("accepts a number that already has its hyphen", async () => {
+    const user = userEvent.setup();
+    render(<Harness Component={FeinInput} />);
+
+    await user.type(fein(), "04-5551234");
+    await user.tab();
+    expect(stored()).toBe("04-5551234");
+  });
+
+  it("leaves anything that is not nine digits exactly as typed", async () => {
+    // A part-entered number must not be reshaped mid-thought, and a foreign
+    // or malformed identifier somebody has a reason for is not ours to fix.
+    const user = userEvent.setup();
+    render(<Harness Component={FeinInput} />);
+
+    await user.type(fein(), "0455");
+    await user.tab();
+    expect(stored()).toBe("0455");
+  });
+
+  it("does not fire onChange when a field is merely tabbed through", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<Harness Component={FeinInput} initial="04-5551234" onChange={onChange} />);
+
+    await user.click(fein());
     await user.tab();
     expect(onChange).not.toHaveBeenCalled();
   });

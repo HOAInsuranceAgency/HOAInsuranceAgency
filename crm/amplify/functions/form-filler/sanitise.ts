@@ -48,11 +48,59 @@ export const PLACEHOLDER_RE =
 const WHY_MAX = 200;
 
 /**
+ * ACORD field names that hold an amount of money.
+ *
+ * The deterministic mapping renders every figure through `amt` — `1,000,000`,
+ * grouped, no currency sign, because the box already has a printed `$`. The
+ * model does not, so a certificate came off the line with `1,000,000` in the
+ * boxes the mapping filled and `300000` in the boxes the AI filled, on the
+ * same page, going to a mortgagee. Matching the two is not cosmetic: an
+ * ungrouped seven-digit number in a narrow box is the one a reader miscounts.
+ *
+ * Matched on the name because the model is told the field names and nothing
+ * about their types. The words below are ACORD's own and appear in the names
+ * of the money boxes across the 25, the 125, the 126 and the 140.
+ */
+const CURRENCY_FIELD_RE =
+  /(Amount|Limit|Premium|Deductible|Aggregate|Payroll|Revenue|Receipts|Valuation|Retention)/i;
+
+/**
+ * A bare non-negative number, optionally with cents, and nothing else — no
+ * `$`, no commas, no words.
+ *
+ * Anything the model has already formatted, qualified ("per occurrence") or
+ * written as a range is left exactly as it came: reformatting a value we do
+ * not fully understand is how a number gets changed rather than restyled.
+ */
+const BARE_NUMBER_RE = /^\d+(\.\d{1,2})?$/;
+
+/**
+ * Group a money value the way `acordFormat.amt` does.
+ *
+ * Reimplemented rather than imported: this module deliberately imports
+ * nothing, which is what lets the browser take `MAX_FIELDS` from it without
+ * pulling a Lambda's dependencies into the bundle.
+ *
+ * Values under 1,000 are returned untouched — there is nothing to group, and
+ * the guard keeps a four-digit year out of the way of anything named, say,
+ * `…ValuationYear…`.
+ */
+function groupCurrency(value: string): string {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 1000) return value;
+  return n.toLocaleString("en-US", { maximumFractionDigits: 2 });
+}
+
+/**
  * Keep only what the caller asked for and can be believed.
  *
  * Dropped: anything for a field name that wasn't requested (the model is not
  * allowed to decide which fields get written), blank values, placeholders,
  * non-strings, and the second answer for a field already answered.
+ *
+ * Changed rather than dropped: a bare number in a money box gains its
+ * thousands separators, so an AI-filled figure and a mapping-filled one on the
+ * same form read alike. See CURRENCY_FIELD_RE.
  *
  * NOT checked here: whether the value fits the field's `maxLength`, and
  * whether the deterministic pass already filled it. Both need the PDF, which
@@ -87,7 +135,10 @@ export function sanitiseSuggestions(
     seen.add(field);
     out.push({
       field,
-      value: trimmed,
+      value:
+        CURRENCY_FIELD_RE.test(field) && BARE_NUMBER_RE.test(trimmed)
+          ? groupCurrency(trimmed)
+          : trimmed,
       why: (typeof why === "string" ? why.trim() : "").slice(0, WHY_MAX),
     });
   }

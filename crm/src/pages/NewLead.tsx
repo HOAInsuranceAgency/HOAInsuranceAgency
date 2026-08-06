@@ -10,7 +10,12 @@ import {
 } from "../lib/client";
 import { AddressAutocomplete } from "../lib/googlePlaces";
 import FileButton from "../components/FileButton";
-import { PhoneInput } from "../components/inputs";
+import {
+  DateInput,
+  IntegerInput,
+  MoneyInput,
+  PhoneInput,
+} from "../components/inputs";
 import { useFormState } from "../lib/useFormState";
 import { str } from "../lib/formCodec";
 import { contactKey } from "../lib/extractionKeys";
@@ -40,7 +45,6 @@ export default function NewLead() {
     state: "",
     zip: "",
     unitCount: "",
-    yearBuilt: "",
     totalInsuredValue: "",
     currentAgent: "",
     currentPolicyExpiration: "",
@@ -69,7 +73,6 @@ export default function NewLead() {
       state: form.state || undefined,
       zip: form.zip.trim() || undefined,
       unitCount: form.unitCount ? Number(form.unitCount) : undefined,
-      yearBuilt: form.yearBuilt ? Number(form.yearBuilt) : undefined,
       totalInsuredValue: form.totalInsuredValue
         ? Number(form.totalInsuredValue)
         : undefined,
@@ -265,19 +268,23 @@ export default function NewLead() {
           {!isPersonal && (
             <div className="field">
               <label>Unit count</label>
-              <input type="number" min={0} value={form.unitCount} onChange={(e) => setF("unitCount", e.target.value)} />
+              <IntegerInput
+                value={form.unitCount}
+                onChange={(v) => setF("unitCount", v)}
+              />
             </div>
           )}
-          <div className="field">
-            <label>Year built</label>
-            <input type="number" value={form.yearBuilt} onChange={(e) => setF("yearBuilt", e.target.value)} />
-          </div>
+          {/* No "Year built" here any more. A year built belongs to a
+              building, not to a site — that is why the Property card lost it
+              and every Building gained one — and asking for a single year on
+              the one form that creates the account put it back, on a column
+              nothing reads. An association with a 1978 clubhouse and 2016
+              townhouses has no answer to give this field. */}
           <div className="field">
             <label>Total insured value ($)</label>
-            <input
-              type="number"
+            <MoneyInput
               value={form.totalInsuredValue}
-              onChange={(e) => setF("totalInsuredValue", e.target.value)}
+              onChange={(v) => setF("totalInsuredValue", v)}
             />
           </div>
           <div className="field">
@@ -290,10 +297,9 @@ export default function NewLead() {
           </div>
           <div className="field">
             <label>Current policy expiration</label>
-            <input
-              type="date"
+            <DateInput
               value={form.currentPolicyExpiration}
-              onChange={(e) => setF("currentPolicyExpiration", e.target.value)}
+              onChange={(v) => setF("currentPolicyExpiration", v)}
             />
           </div>
           <div className="field full">

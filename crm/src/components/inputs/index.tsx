@@ -266,6 +266,37 @@ export function PhoneInput(props: FormattedInputProps) {
 }
 
 /**
+ * `045551234` → `04-5551234`. A federal EIN is nine digits written as two then
+ * seven, and that hyphen is not decoration: it is how the number is printed on
+ * every W-9 and typed into every carrier portal, and a producer checking the
+ * CRM against a tax letter reads it a digit at a time without one.
+ *
+ * Stores the formatted string, like `PhoneInput` and for the same reason — the
+ * column is `a.string()`, so the hyphen *is* part of the value, and the ACORD
+ * 125's `NamedInsured_TaxIdentifier_A` box is where it ends up.
+ *
+ * Anything that is not nine digits is left exactly as typed. A partly-entered
+ * number must not be reshaped under the user mid-thought, and a foreign or
+ * malformed identifier somebody has a reason for is not this component's to
+ * correct.
+ */
+export function FeinInput(props: FormattedInputProps) {
+  return (
+    <FormattedInput
+      {...props}
+      format={(raw) => {
+        const d = raw.replace(/\D/g, "");
+        return d.length === 9 ? `${d.slice(0, 2)}-${d.slice(2)}` : raw;
+      }}
+      parse={(typed) => typed}
+      commitOnBlur
+      inputMode="numeric"
+      type="text"
+    />
+  );
+}
+
+/**
  * The native day picker, unchanged — the browser already renders an ISO day in
  * the reader's locale and hands back `YYYY-MM-DD`, which is what `a.date()`
  * stores. It takes the same props as the other five so a form's fields read

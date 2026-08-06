@@ -14,6 +14,7 @@ import {
   POLICY_STATUSES,
   REPLACEMENT_COST_OPTIONS,
 } from "../lib/enums";
+import { DateInput, MoneyInput, PercentInput } from "./inputs";
 
 /**
  * Shared create/edit form for quotes and policies.
@@ -215,74 +216,61 @@ export default function CoverageForm({
         </div>
         <div className="field">
           <label>Premium ($)</label>
-          <input
-            type="number"
+          <MoneyInput
             value={form.premium}
-            onChange={(e) => setF("premium", e.target.value)}
+            onChange={(v) => setF("premium", v)}
           />
         </div>
         <div className="field">
           <label>Commission % (baked into premium)</label>
-          <input
-            type="number"
-            step="0.1"
-            min={0}
-            max={100}
+          <PercentInput
             value={form.commissionPct}
-            onChange={(e) => {
+            onChange={(v) => {
               setCommissionTouched(true);
-              setF("commissionPct", e.target.value);
+              setF("commissionPct", v);
             }}
           />
         </div>
         <div className="field">
           <label>Effective date</label>
-          <input
-            type="date"
+          <DateInput
             value={form.effectiveDate}
-            onChange={(e) => setF("effectiveDate", e.target.value)}
+            onChange={(v) => setF("effectiveDate", v)}
           />
         </div>
         <div className="field">
           <label>Expiration date</label>
-          <input
-            type="date"
+          <DateInput
             value={form.expirationDate}
-            onChange={(e) => setF("expirationDate", e.target.value)}
+            onChange={(v) => setF("expirationDate", v)}
           />
         </div>
         <div className="field">
           <label>Per-occurrence deductible ($)</label>
-          <input
-            type="number"
+          <MoneyInput
             value={form.perOccDed}
-            onChange={(e) => setF("perOccDed", e.target.value)}
+            onChange={(v) => setF("perOccDed", v)}
           />
         </div>
         <div className="field">
           <label>Per-unit deductible ($)</label>
-          <input
-            type="number"
+          <MoneyInput
             value={form.perUnitDed}
-            onChange={(e) => setF("perUnitDed", e.target.value)}
+            onChange={(v) => setF("perUnitDed", v)}
           />
         </div>
         <div className="field">
           <label>Blanket limit ($)</label>
-          <input
-            type="number"
+          <MoneyInput
             value={form.blanketLimit}
-            onChange={(e) => setF("blanketLimit", e.target.value)}
+            onChange={(v) => setF("blanketLimit", v)}
           />
         </div>
         <div className="field">
           <label>Coinsurance %</label>
-          <input
-            type="number"
-            min={0}
-            max={100}
+          <PercentInput
             value={form.coinsurance}
-            onChange={(e) => setF("coinsurance", e.target.value)}
+            onChange={(v) => setF("coinsurance", v)}
           />
         </div>
         <div className="field">
@@ -305,27 +293,27 @@ export default function CoverageForm({
         </div>
         <div className="field">
           <label>Each occurrence ($)</label>
-          <input type="number" value={form.glEachOcc} onChange={(e) => setF("glEachOcc", e.target.value)} />
+          <MoneyInput value={form.glEachOcc} onChange={(v) => setF("glEachOcc", v)} />
         </div>
         <div className="field">
           <label>Damage to rented premises ($)</label>
-          <input type="number" value={form.glRented} onChange={(e) => setF("glRented", e.target.value)} />
+          <MoneyInput value={form.glRented} onChange={(v) => setF("glRented", v)} />
         </div>
         <div className="field">
           <label>Medical expense, any one person ($)</label>
-          <input type="number" value={form.glMed} onChange={(e) => setF("glMed", e.target.value)} />
+          <MoneyInput value={form.glMed} onChange={(v) => setF("glMed", v)} />
         </div>
         <div className="field">
           <label>Personal &amp; advertising injury ($)</label>
-          <input type="number" value={form.glPersAdv} onChange={(e) => setF("glPersAdv", e.target.value)} />
+          <MoneyInput value={form.glPersAdv} onChange={(v) => setF("glPersAdv", v)} />
         </div>
         <div className="field">
           <label>General aggregate ($)</label>
-          <input type="number" value={form.glGenAgg} onChange={(e) => setF("glGenAgg", e.target.value)} />
+          <MoneyInput value={form.glGenAgg} onChange={(v) => setF("glGenAgg", v)} />
         </div>
         <div className="field">
           <label>Products &amp; completed ops aggregate ($)</label>
-          <input type="number" value={form.glProdAgg} onChange={(e) => setF("glProdAgg", e.target.value)} />
+          <MoneyInput value={form.glProdAgg} onChange={(v) => setF("glProdAgg", v)} />
         </div>
         <div className="field">
           <label>Aggregate applies per</label>

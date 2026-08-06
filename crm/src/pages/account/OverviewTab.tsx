@@ -7,7 +7,7 @@ import {
 import { SaveStatus, useSaveStatus } from "../../components/SaveStatus";
 import { useFormState } from "../../lib/useFormState";
 import { inputValue, num, str } from "../../lib/formCodec";
-import { DateInput, MoneyInput } from "../../components/inputs";
+import { DateInput, FeinInput, MoneyInput } from "../../components/inputs";
 import { LEGAL_ENTITY_OPTIONS } from "../../lib/enums";
 
 export function OverviewTab({
@@ -89,7 +89,7 @@ export function OverviewTab({
         </div>
         <div className="field">
           <label>FEIN</label>
-          <input value={form.fein} onChange={(e) => setF("fein", e.target.value)} />
+          <FeinInput value={form.fein} onChange={(v) => setF("fein", v)} />
         </div>
         <div className="field">
           <label>SIC</label>
