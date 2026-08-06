@@ -8,7 +8,6 @@ import {
   StreamViewType,
   Table,
   TableEncryption,
-  type CfnTable,
 } from "aws-cdk-lib/aws-dynamodb";
 import { StartingPosition } from "aws-cdk-lib/aws-lambda";
 import { DynamoEventSource } from "aws-cdk-lib/aws-lambda-event-sources";
@@ -29,7 +28,10 @@ import {
   magicLinkVerify,
 } from "./functions/magic-link/resource";
 
-const backend = defineBackend({
+// Exported only so `scripts/synth-check.ts` can reach the CDK app and force a
+// real synth. Nothing else imports it; `ampx` uses this file for its side
+// effects, as it always has.
+export const backend = defineBackend({
   auth,
   data,
   storage,
@@ -126,9 +128,15 @@ for (const model of STREAMED_MODELS) {
   // question — a stream that turned out to be NEW_IMAGE would produce an
   // activity log where every update looked like a creation and every delete
   // was invisible.
-  (table.node.defaultChild as CfnTable).streamSpecification = {
-    streamViewType: StreamViewType.NEW_AND_OLD_IMAGES,
-  };
+  //
+  // Through the wrapper, NOT `table.node.defaultChild`. An Amplify data table
+  // is a `Custom::AmplifyDynamoDBTable` custom resource, not a CDK L2 Table,
+  // so it has no CfnTable default child — reaching for one yields undefined
+  // and fails synth with "Cannot set properties of undefined". `tsc` cannot
+  // see that, because the cast asserts the type it wanted; the only thing
+  // that catches it is a synth, which is why `npm run synth:check` exists.
+  backend.data.resources.cfnResources.amplifyDynamoDbTables[model].streamSpecification =
+    { streamViewType: StreamViewType.NEW_AND_OLD_IMAGES };
 
   backend.activityLog.resources.lambda.addEventSource(
     new DynamoEventSource(table, {
