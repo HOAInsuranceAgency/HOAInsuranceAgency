@@ -21,6 +21,7 @@ import { DeleteLeadZone } from "./account/DeleteLeadZone";
 import { PoliciesTab } from "./account/PoliciesTab";
 import { PriorCarrierTab } from "./account/PriorCarrierTab";
 import { LossesTab } from "./account/LossesTab";
+import { ActivityTab } from "./account/ActivityTab";
 import { CertificatesTab } from "./account/CertificatesTab";
 
 type Tab =
@@ -30,7 +31,8 @@ type Tab =
   | "quotes"
   | "policies"
   | "documents"
-  | "certificates";
+  | "certificates"
+  | "activity";
 
 const VALID_TABS: Tab[] = [
   "overview",
@@ -40,6 +42,7 @@ const VALID_TABS: Tab[] = [
   "policies",
   "documents",
   "certificates",
+  "activity",
 ];
 
 /**
@@ -66,6 +69,7 @@ export function tabsFor(stage: string | null | undefined): [Tab, string][] {
     ["policies", "Policies"],
     ["documents", "Documents"],
     ["certificates", "Certificates"],
+    ["activity", "Activity"],
   ];
 }
 
@@ -192,6 +196,7 @@ export default function AccountDetail({ profile }: { profile: UserProfile }) {
       {activeTab === "certificates" && (
         <CertificatesTab account={account} profile={profile} />
       )}
+      {activeTab === "activity" && <ActivityTab accountId={account.id} />}
     </>
   );
 }

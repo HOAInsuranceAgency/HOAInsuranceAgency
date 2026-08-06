@@ -26,6 +26,7 @@ describe("tabsFor", () => {
       "policies",
       "documents",
       "certificates",
+      "activity",
     ]);
   });
 
@@ -37,6 +38,7 @@ describe("tabsFor", () => {
       "policies",
       "documents",
       "certificates",
+      "activity",
     ]);
   });
 
@@ -68,7 +70,15 @@ describe("resolveTab", () => {
 
   it("touches nothing else, for either stage", () => {
     for (const stage of ["LEAD", "CLIENT"]) {
-      for (const t of ["overview", "losses", "quotes", "policies", "documents", "certificates"] as const) {
+      for (const t of [
+        "overview",
+        "losses",
+        "quotes",
+        "policies",
+        "documents",
+        "certificates",
+        "activity",
+      ] as const) {
         expect(resolveTab(t, stage)).toBe(t);
       }
     }

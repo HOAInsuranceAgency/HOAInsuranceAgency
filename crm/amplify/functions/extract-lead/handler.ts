@@ -367,6 +367,9 @@ For a contact's "type" use exactly one of: ${CONTACT_TYPES.join(", ")}, or "" wh
         },
       }),
       extractionError: null,
+      // Attributed to the extraction rather than to "system", so the activity
+      // log distinguishes a robot's write from an unattributed one.
+      lastWriteBy: "extract-lead",
     });
     if (errors?.length) throw new Error(errors[0].message);
     console.log(
@@ -379,6 +382,7 @@ For a contact's "type" use exactly one of: ${CONTACT_TYPES.join(", ")}, or "" wh
       id: accountId,
       extractionStatus: "FAILED",
       extractionError: err instanceof Error ? err.message : String(err),
+      lastWriteBy: "extract-lead",
     });
   }
 }

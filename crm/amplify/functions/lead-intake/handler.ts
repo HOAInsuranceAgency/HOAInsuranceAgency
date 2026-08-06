@@ -34,6 +34,9 @@ async function getDataClient() {
   return dataClient;
 }
 
+/** How this handler's writes are attributed in the activity log. */
+const WRITER = "lead-intake";
+
 const clean = (v: string | null | undefined, max = 500): string | undefined => {
   const t = v?.trim();
   return t ? t.slice(0, max) : undefined;
@@ -75,6 +78,10 @@ export const handler: Schema["submitWebLead"]["functionHandler"] = async (
     buildiumId: clean(args.buildiumId, 50),
     source: clean(args.source, 100) ?? "website",
     notes: extraNotes || undefined,
+    // Named rather than left to default to "system". The activity log can
+    // then say a lead came from the website instead of implying a person did
+    // it at 3am — see amplify/functions/activity-log/.
+    lastWriteBy: WRITER,
   });
 
   if (errors?.length || !data) {
@@ -107,6 +114,7 @@ export const handler: Schema["submitWebLead"]["functionHandler"] = async (
       phone: clean(args.contactPhone, 50),
       type: DEFAULT_CONTACT_TYPE,
       isPrimary: true,
+      lastWriteBy: WRITER,
       // The same key the app computes, from the same function, so a form
       // submitted twice matches one contact instead of creating two — see W9.
       extractionSourceKey: contactKey({

@@ -5,6 +5,7 @@ import { teamAdmin } from "../functions/team-admin/resource";
 import { extractLead } from "../functions/extract-lead/resource";
 import { certNumber } from "../functions/cert-number/resource";
 import { renewalTasks } from "../functions/renewal-tasks/resource";
+import { activityLog } from "../functions/activity-log/resource";
 
 /**
  * HOA CRM data model.
@@ -116,6 +117,7 @@ const schema = a
     // role the list does not cover — a property manager's assistant, an
     // on-site super — and the alternative to a member for them is a contact
     // recorded with no role at all.
+    ActivityAction: a.enum(["CREATE", "UPDATE", "DELETE"]),
     ContactType: a.enum([
       "INSPECTION",
       "CLAIMS",
@@ -237,6 +239,8 @@ const schema = a
         source: a.string(), // e.g. "website", "referral", "cold"
         notes: a.string(),
         convertedAt: a.datetime(), // set when first quote is bound
+        // Who made this write — see the Contact model's note.
+        lastWriteBy: a.string(),
         quotes: a.hasMany("Quote", "accountId"),
         policies: a.hasMany("Policy", "accountId"),
         certificates: a.hasMany("Certificate", "accountId"),
@@ -264,6 +268,11 @@ const schema = a
     Contact: a.model({
       accountId: a.id().required(),
       account: a.belongsTo("Account", "accountId"),
+      // Who made this write. Set by the actor proxy in `src/lib/client.ts`,
+      // read by the activity-log stream handler and then excluded from the
+      // diff so it never renders as a change. A write that arrives without
+      // one is attributed to "system" — see STREAMED_MODELS in backend.ts.
+      lastWriteBy: a.string(),
       name: a.string().required(),
       email: a.email(),
       // Free-form for the same reason Account.contactPhone was: a.phone()
@@ -298,6 +307,11 @@ const schema = a
     PriorCarrier: a.model({
       accountId: a.id().required(),
       account: a.belongsTo("Account", "accountId"),
+      // Who made this write. Set by the actor proxy in `src/lib/client.ts`,
+      // read by the activity-log stream handler and then excluded from the
+      // diff so it never renders as a change. A write that arrives without
+      // one is attributed to "system" — see STREAMED_MODELS in backend.ts.
+      lastWriteBy: a.string(),
       carrierName: a.string(),
       policyNumber: a.string(),
       // A plain string, not an enum: LINES_OF_BUSINESS (client.ts) is a
@@ -311,6 +325,41 @@ const schema = a
       extractionSourceKey: a.string(),
     }),
 
+    // ── Activity: what changed on an account, and who changed it ───────
+    //
+    // Written only by the activity-log stream handler, which is the system of
+    // record for change capture. Read-only from the client: the model rule
+    // below denies create/update/delete to a signed-in user, and the handler
+    // reaches the API as an IAM principal, which those rules do not apply to
+    // (see the note on `allow.resource` at the foot of this file).
+    //
+    // Not itself streamed, for two reasons: it would loop, and it has no
+    // event-source mapping in backend.ts so it cannot.
+    Activity: a
+      .model({
+        // The ACCOUNT id for anything under an account — this is what the tab
+        // queries. Mirrors Document's entityId convention.
+        entityId: a.string().required(),
+        // What actually changed.
+        subjectType: a.string().required(), // "Building", "Quote", "Contact", …
+        subjectId: a.string().required(),
+        subjectLabel: a.string(), // "Building A", "Quote — Travelers"
+        action: a.ref("ActivityAction").required(),
+        actor: a.string(), // Cognito sub, or "system"
+        // Resolved and denormalised at write time, so the tab does not join
+        // against UserProfile per row and a renamed user does not rewrite
+        // history.
+        actorName: a.string(),
+        changes: a.json(), // [{ field, from, to }]
+        summary: a.string(), // one human sentence
+        occurredAt: a.datetime().required(),
+      })
+      .secondaryIndexes((index) => [index("entityId").sortKeys(["occurredAt"])])
+      .authorization((allow) => [
+        allow.authenticated().to(["read"]),
+        allow.groups(["ADMIN"]),
+      ]),
+
     // ── Loss history ───────────────────────────────────────────────────
     //
     // Kept for leads and clients alike: loss history follows the account, and
@@ -323,6 +372,11 @@ const schema = a
     Loss: a.model({
       accountId: a.id().required(),
       account: a.belongsTo("Account", "accountId"),
+      // Who made this write. Set by the actor proxy in `src/lib/client.ts`,
+      // read by the activity-log stream handler and then excluded from the
+      // diff so it never renders as a change. A write that arrives without
+      // one is attributed to "system" — see STREAMED_MODELS in backend.ts.
+      lastWriteBy: a.string(),
       dateOfLoss: a.date().required(),
       // LINES_OF_BUSINESS (client.ts), same reasoning as PriorCarrier's.
       lineOfBusiness: a.string().required(),
@@ -349,6 +403,11 @@ const schema = a
     Blanket: a.model({
       accountId: a.id().required(),
       account: a.belongsTo("Account", "accountId"),
+      // Who made this write. Set by the actor proxy in `src/lib/client.ts`,
+      // read by the activity-log stream handler and then excluded from the
+      // diff so it never renders as a change. A write that arrives without
+      // one is attributed to "system" — see STREAMED_MODELS in backend.ts.
+      lastWriteBy: a.string(),
       blanketNumber: a.string(),
       amount: a.float(),
       type: a.string(),
@@ -364,6 +423,11 @@ const schema = a
     GlApplication: a.model({
       accountId: a.id().required(),
       account: a.belongsTo("Account", "accountId"),
+      // Who made this write. Set by the actor proxy in `src/lib/client.ts`,
+      // read by the activity-log stream handler and then excluded from the
+      // diff so it never renders as a change. A write that arrives without
+      // one is attributed to "system" — see STREAMED_MODELS in backend.ts.
+      lastWriteBy: a.string(),
 
       // ── Limits ──
       eachOccurrence: a.float(),
@@ -401,6 +465,11 @@ const schema = a
     GlClassCode: a.model({
       accountId: a.id().required(),
       account: a.belongsTo("Account", "accountId"),
+      // Who made this write. Set by the actor proxy in `src/lib/client.ts`,
+      // read by the activity-log stream handler and then excluded from the
+      // diff so it never renders as a change. A write that arrives without
+      // one is attributed to "system" — see STREAMED_MODELS in backend.ts.
+      lastWriteBy: a.string(),
       hazardNumber: a.string(),
       classCode: a.string(),
       premiumBasis: a.ref("GlPremiumBasis"),
@@ -416,6 +485,11 @@ const schema = a
     DoCoveragePart: a.model({
       accountId: a.id().required(),
       account: a.belongsTo("Account", "accountId"),
+      // Who made this write. Set by the actor proxy in `src/lib/client.ts`,
+      // read by the activity-log stream handler and then excluded from the
+      // diff so it never renders as a change. A write that arrives without
+      // one is attributed to "system" — see STREAMED_MODELS in backend.ts.
+      lastWriteBy: a.string(),
       part: a.ref("DoPart").required(),
       coverageType: a.ref("DoCoverageType"),
       perClaimLimit: a.float(),
@@ -427,6 +501,11 @@ const schema = a
     DoApplication: a.model({
       accountId: a.id().required(),
       account: a.belongsTo("Account", "accountId"),
+      // Who made this write. Set by the actor proxy in `src/lib/client.ts`,
+      // read by the activity-log stream handler and then excluded from the
+      // diff so it never renders as a change. A write that arrives without
+      // one is attributed to "system" — see STREAMED_MODELS in backend.ts.
+      lastWriteBy: a.string(),
       separateDefenseLimit: a.boolean(),
       defenseLimit: a.float(),
       defenseLimitPosition: a.ref("DefenseLimitPosition"),
@@ -442,6 +521,11 @@ const schema = a
     Building: a.model({
       accountId: a.id().required(),
       account: a.belongsTo("Account", "accountId"),
+      // Who made this write. Set by the actor proxy in `src/lib/client.ts`,
+      // read by the activity-log stream handler and then excluded from the
+      // diff so it never renders as a change. A write that arrives without
+      // one is attributed to "system" — see STREAMED_MODELS in backend.ts.
+      lastWriteBy: a.string(),
       label: a.string(), // "Building A", "Clubhouse", …
       sqft: a.integer(),
       // Each building is its own premises row on ACORD 125, so it needs a
@@ -503,6 +587,8 @@ const schema = a
     Quote: a.model({
       accountId: a.id().required(),
       account: a.belongsTo("Account", "accountId"),
+      // Who made this write — see the Contact model's note.
+      lastWriteBy: a.string(),
       carrierId: a.id(),
       carrier: a.belongsTo("Carrier", "carrierId"),
       status: a.ref("QuoteStatus").required(),
@@ -548,6 +634,8 @@ const schema = a
     Policy: a.model({
       accountId: a.id().required(),
       account: a.belongsTo("Account", "accountId"),
+      // Who made this write — see the Contact model's note.
+      lastWriteBy: a.string(),
       quoteId: a.id(),
       quote: a.belongsTo("Quote", "quoteId"),
       carrierId: a.id(),
@@ -634,6 +722,8 @@ const schema = a
         ocrText: a.string(), // full extracted text, searched in-app
         ocrTables: a.json(), // Textract TABLES output (budgets, dues schedules)
         ocrError: a.string(),
+        // Who made this write — see the Contact model's note.
+        lastWriteBy: a.string(),
       })
       .secondaryIndexes((index) => [index("entityId")]),
 
@@ -686,6 +776,8 @@ const schema = a
     Certificate: a.model({
       accountId: a.id().required(),
       account: a.belongsTo("Account", "accountId"),
+      // Who made this write — see the Contact model's note.
+      lastWriteBy: a.string(),
       certificateNumber: a.string(), // unique record-keeping ID, e.g. HOA-2026-00011
       policyIds: a.string().array(),
       holderName: a.string().required(),
@@ -902,6 +994,13 @@ const schema = a
     allow.resource(extractLead),
     // The daily sweep reads policies/carriers/quotes and writes MarketingTasks.
     allow.resource(renewalTasks),
+    // The stream handler writes Activity and reads UserProfile to name an
+    // actor. Note what the block above says: this is not a per-model grant,
+    // so this function has full API access whatever any model declares. What
+    // keeps Activity write-only-from-here is the model's own rule denying
+    // create/update/delete to a signed-in user — an IAM principal is not
+    // subject to it, and a Cognito one is.
+    allow.resource(activityLog),
   ]);
 
 export type Schema = ClientSchema<typeof schema>;

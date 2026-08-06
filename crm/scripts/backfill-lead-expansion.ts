@@ -85,6 +85,15 @@ const PRIOR_CARRIER_KEY = "backfill:priorcarrier";
 const BUILDING_KEY = "backfill:building";
 
 /**
+ * How this script's writes are attributed in the activity log (W7).
+ *
+ * Named rather than left blank, so a migration that touched every account in
+ * one minute reads as the migration it was rather than as an unattributed
+ * "System" write nobody can account for.
+ */
+const WRITER = "backfill";
+
+/**
  * The line the five prior-carrier columns described.
  *
  * Not a guess: those columns fed `PriorCoverage_GeneralLiability_*` on the
@@ -254,6 +263,7 @@ async function plan(): Promise<Planned[]> {
           effectiveDate: effective,
           expirationDate: expiration,
           extractionSourceKey: PRIOR_CARRIER_KEY,
+          lastWriteBy: WRITER,
         },
       });
     }
@@ -312,6 +322,7 @@ async function plan(): Promise<Planned[]> {
               streetAddress: trim(a.address),
               ...Object.fromEntries(setColumns),
               extractionSourceKey: BUILDING_KEY,
+              lastWriteBy: WRITER,
             },
           });
         }
@@ -330,7 +341,7 @@ async function plan(): Promise<Planned[]> {
             action: "update",
             id: b.id,
             reason: `${b.label ?? b.id}: filling ${gaps.map(([k]) => k).join(", ")}`,
-            row: { id: b.id, ...Object.fromEntries(gaps) },
+            row: { id: b.id, ...Object.fromEntries(gaps), lastWriteBy: WRITER },
             warning:
               buildings.length > 1
                 ? `account-level construction copied onto ${buildings.length} buildings — verify before dropping the columns`

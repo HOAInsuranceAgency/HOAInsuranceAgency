@@ -1,9 +1,107 @@
 import { generateClient } from "aws-amplify/data";
+import { getCurrentUser } from "aws-amplify/auth";
 import type { Schema } from "../../amplify/data/resource";
 import { urgencyBadge, LICENSE_EXPIRY_SCALE, type BadgeClass } from "./badges";
 import { LICENSE_STATUS_LABELS } from "./enums";
 
-export const client = generateClient<Schema>();
+/**
+ * Models that carry `lastWriteBy`, and therefore get an actor stamped on
+ * every create and update.
+ *
+ * Kept in step with `STREAMED_MODELS` in `amplify/backend.ts` — a model
+ * streamed without the column is attributed to "system" forever, and a model
+ * with the column but no stream just carries an unread value. The enums test
+ * asserts the two lists match, which is cheaper than finding out from an
+ * activity log that says "System" for everything.
+ */
+export const ATTRIBUTED_MODELS: ReadonlySet<string> = new Set([
+  "Account",
+  "Contact",
+  "PriorCarrier",
+  "Building",
+  "Blanket",
+  "GlApplication",
+  "GlClassCode",
+  "DoApplication",
+  "DoCoveragePart",
+  "Loss",
+  "Quote",
+  "Policy",
+  "Certificate",
+  "Document",
+]);
+
+/**
+ * The signed-in user's Cognito sub, cached for the tab's lifetime.
+ *
+ * One `getCurrentUser()` per session rather than per write. The sub does not
+ * change while a session lasts, and a failed lookup resolves to `null` — the
+ * write then carries no actor and the stream handler calls it "system",
+ * which is the honest answer rather than a blocked save.
+ */
+let actorPromise: Promise<string | null> | undefined;
+function currentActor(): Promise<string | null> {
+  actorPromise ??= getCurrentUser()
+    .then((u) => u.userId)
+    .catch(() => null);
+  return actorPromise;
+}
+
+/**
+ * Stamp `lastWriteBy` on every create and update, once, here.
+ *
+ * ## Why a proxy and not a helper at each call site
+ *
+ * The spec's sketch was a `write()` wrapper that each mutation calls. There
+ * are around forty write sites, and the ones that matter most are the ones
+ * somebody adds next year — a wrapper you have to remember is a wrapper that
+ * gets forgotten, and the symptom is an activity log that says "System" for a
+ * change a person made. Nobody would notice for months.
+ *
+ * Wrapping the client instead makes attribution a property of writing at all.
+ * A new screen gets it without knowing it exists, and the only way to write
+ * without an actor is to reach past `client`, which nothing does.
+ *
+ * The cost is one cast: `generateClient` returns a deeply generic type that
+ * a `Proxy` cannot preserve structurally. The proxy adds a key to an
+ * argument object and changes nothing else, so the cast is describing what is
+ * true rather than papering over what isn't.
+ *
+ * Only `create` and `update` are wrapped. A `delete` takes `{ id }` and has
+ * nowhere to put an actor — the stream still sees the removal, and the row it
+ * writes is attributed to "system". That is a real gap in attribution and it
+ * is called out in the Activity tab rather than hidden.
+ */
+function withActor<T extends object>(raw: T): T {
+  const models = (raw as { models: Record<string, Record<string, unknown>> }).models;
+  const wrapped = new Proxy(models, {
+    get(target, modelName: string) {
+      const model = target[modelName];
+      if (!model || !ATTRIBUTED_MODELS.has(modelName)) return model;
+      return new Proxy(model, {
+        get(m, op: string) {
+          const fn = m[op];
+          if (typeof fn !== "function" || (op !== "create" && op !== "update")) {
+            return fn;
+          }
+          return async (input: Record<string, unknown>, ...rest: unknown[]) => {
+            const actor = await currentActor();
+            const stamped = actor ? { ...input, lastWriteBy: actor } : input;
+            return (fn as (...a: unknown[]) => unknown).call(m, stamped, ...rest);
+          };
+        },
+      });
+    },
+  });
+  return new Proxy(raw, {
+    get(target, prop: string) {
+      if (prop === "models") return wrapped;
+      return (target as Record<string, unknown>)[prop];
+    },
+  }) as T;
+}
+
+export const client = withActor(generateClient<Schema>());
 
 export type Account = Schema["Account"]["type"];
 export type Building = Schema["Building"]["type"];
@@ -11,6 +109,7 @@ export type Contact = Schema["Contact"]["type"];
 export type PriorCarrier = Schema["PriorCarrier"]["type"];
 export type Blanket = Schema["Blanket"]["type"];
 export type Loss = Schema["Loss"]["type"];
+export type Activity = Schema["Activity"]["type"];
 export type GlApplication = Schema["GlApplication"]["type"];
 export type GlClassCode = Schema["GlClassCode"]["type"];
 export type DoApplication = Schema["DoApplication"]["type"];

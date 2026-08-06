@@ -1,12 +1,17 @@
 import { defineBackend } from "@aws-amplify/backend";
+import { Duration } from "aws-cdk-lib";
 import { PolicyStatement } from "aws-cdk-lib/aws-iam";
 import { Secret } from "aws-cdk-lib/aws-secretsmanager";
 import {
   AttributeType,
   BillingMode,
+  StreamViewType,
   Table,
   TableEncryption,
+  type CfnTable,
 } from "aws-cdk-lib/aws-dynamodb";
+import { StartingPosition } from "aws-cdk-lib/aws-lambda";
+import { DynamoEventSource } from "aws-cdk-lib/aws-lambda-event-sources";
 import { auth } from "./auth/resource";
 import { data } from "./data/resource";
 import { storage } from "./storage/resource";
@@ -16,6 +21,7 @@ import { teamAdmin } from "./functions/team-admin/resource";
 import { extractLead } from "./functions/extract-lead/resource";
 import { certNumber } from "./functions/cert-number/resource";
 import { renewalTasks } from "./functions/renewal-tasks/resource";
+import { activityLog } from "./functions/activity-log/resource";
 import {
   magicLinkDefine,
   magicLinkCreate,
@@ -32,6 +38,7 @@ const backend = defineBackend({
   extractLead,
   certNumber,
   renewalTasks,
+  activityLog,
   magicLinkDefine,
   magicLinkCreate,
   magicLinkVerify,
@@ -79,6 +86,64 @@ backend.certNumber.addEnvironment(
   "CERT_SEQ_BASES",
   JSON.stringify({ "2026": 10 })
 );
+
+// ── Activity log: DynamoDB Streams → Activity rows ───────────────────
+//
+// Every model whose changes belong in an account's timeline. Adding one is a
+// line here plus `lastWriteBy` on the model.
+//
+// NOT streamed: Activity itself (it would loop, and with no mapping it
+// cannot), plus Carrier, AppetiteGuide, MarketingTask, UserProfile, License
+// and ProducerLicense — none of them hangs off an account, and the tab is
+// account-scoped. Adding any of them later is one entry each plus somewhere
+// to show it.
+const STREAMED_MODELS = [
+  "Account",
+  "Contact",
+  "PriorCarrier",
+  "Building",
+  "Blanket",
+  "GlApplication",
+  "GlClassCode",
+  "DoApplication",
+  "DoCoveragePart",
+  "Loss",
+  "Quote",
+  "Policy",
+  "Certificate",
+  "Document",
+] as const;
+
+for (const model of STREAMED_MODELS) {
+  const table = backend.data.resources.tables[model];
+
+  // Set explicitly rather than relied upon. Amplify enables a stream for its
+  // subscriptions, but the VIEW TYPE is what matters here and is not ours to
+  // assume: OLD_IMAGE is required for the diff and is the *only* thing a
+  // DELETE record carries. Asserting it costs one line and removes the
+  // question — a stream that turned out to be NEW_IMAGE would produce an
+  // activity log where every update looked like a creation and every delete
+  // was invisible.
+  (table.node.defaultChild as CfnTable).streamSpecification = {
+    streamViewType: StreamViewType.NEW_AND_OLD_IMAGES,
+  };
+
+  backend.activityLog.resources.lambda.addEventSource(
+    new DynamoEventSource(table, {
+      startingPosition: StartingPosition.LATEST,
+      // A form save that writes three rows should be one invocation, not
+      // three. Five seconds is short enough that the tab feels live.
+      batchSize: 25,
+      maxBatchingWindow: Duration.seconds(5),
+      // A poison record must not replay until the stream's 24-hour retention
+      // drops it. The handler already swallows per-record failures; these are
+      // the backstop for anything it cannot.
+      retryAttempts: 2,
+      bisectBatchOnError: false,
+      reportBatchItemFailures: false,
+    })
+  );
+}
 
 // ── Auth behavior ────────────────────────────────────────────────────
 const { cfnUserPool, cfnUserPoolClient } = backend.auth.resources.cfnResources;
