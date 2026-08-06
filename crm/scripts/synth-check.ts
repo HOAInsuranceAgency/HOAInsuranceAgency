@@ -31,11 +31,83 @@
  * account will not accept, a DynamoDB table property that cannot be changed on
  * an existing table. Those need a real deploy. This is the cheap gate that
  * removes the class of failure that cost this workstream a week.
+ *
+ * ## Also does not catch: module resolution
+ *
+ * This runs under `tsx`, which transpiles any TypeScript it is pointed at.
+ * `ampx pipeline-deploy` loads `amplify/backend.ts` with a loader scoped to
+ * `amplify/`, so an import reaching OUTSIDE that directory resolves to a
+ * module with no exports and the deploy fails with "does not provide an
+ * export named 'X'". Deployment 59 died that way on a
+ * `../../shared/agency` import that `tsc`, the tests and this script all
+ * passed. Lambda handlers are exempt — esbuild bundles those, which is why
+ * `renewal-tasks/handler.ts` imports `src/lib/pagination` and always has.
+ *
+ * So: keep `backend.ts` and everything it imports at synth time inside
+ * `amplify/`. If a value has to be shared with the app, read it in the
+ * handler rather than passing it down from here. `assertNoEscapingImports`
+ * below enforces that, because a note in a comment would not have.
  */
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import type { App } from "aws-cdk-lib";
+
+const AMPLIFY = resolve(process.cwd(), "amplify");
+
+/**
+ * Walk the synth-time import graph from `backend.ts` and reject any relative
+ * import that leaves `amplify/`.
+ *
+ * Handlers are absent from this graph for free: `defineFunction` names its
+ * entry as a path *string* (`entry: "./handler.ts"`), so nothing imports a
+ * handler at synth time and the walk never reaches one. That is the
+ * distinction that matters — handlers are esbuild-bundled at deploy and may
+ * import from `src/` and `shared/`, as `renewal-tasks` does.
+ */
+function assertNoEscapingImports(): void {
+  const seen = new Set<string>();
+  const bad: string[] = [];
+
+  const resolveFile = (spec: string, from: string): string | null => {
+    const base = resolve(dirname(from), spec);
+    for (const c of [base, `${base}.ts`, `${base}.tsx`, join(base, "index.ts")]) {
+      if (existsSync(c) && !c.endsWith("/")) return c;
+    }
+    return null;
+  };
+
+  const walk = (file: string): void => {
+    if (seen.has(file)) return;
+    seen.add(file);
+    const src = readFileSync(file, "utf8");
+    // Bare specifiers are packages — node_modules is not the concern here.
+    for (const m of src.matchAll(/^\s*import\s[^'"]*?['"](\.[^'"]+)['"]/gm)) {
+      const target = resolveFile(m[1], file);
+      if (!target) continue;
+      if (relative(AMPLIFY, target).startsWith("..")) {
+        bad.push(`${relative(process.cwd(), file)} → ${m[1]}`);
+        continue;
+      }
+      walk(target);
+    }
+  };
+
+  walk(join(AMPLIFY, "backend.ts"));
+
+  if (bad.length) {
+    console.error(
+      "✘ Synth-time import escapes amplify/ — this deploys fine locally and " +
+        "fails in the pipeline with \"does not provide an export named …\":\n" +
+        bad.map((b) => `    ${b}`).join("\n") +
+        "\n\n  Read the value in the Lambda handler instead; handlers are " +
+        "bundled by esbuild and have no such limit."
+    );
+    process.exit(1);
+  }
+}
+
+assertNoEscapingImports();
 
 // `defineBackend` reads these three from CDK context. The pipeline supplies
 // them; a local run has to. The values only name the assembly — nothing is

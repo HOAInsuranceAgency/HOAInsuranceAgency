@@ -23,7 +23,6 @@ import { certNumber } from "./functions/cert-number/resource";
 import { renewalTasks } from "./functions/renewal-tasks/resource";
 import { licenseAlerts } from "./functions/license-alerts/resource";
 import { activityLog } from "./functions/activity-log/resource";
-import { AGENCY, AGENCY_FMT } from "../../shared/agency";
 import {
   magicLinkDefine,
   magicLinkCreate,
@@ -230,16 +229,18 @@ backend.teamAdmin.resources.lambda.addToRolePolicy(
 );
 
 // ── License expiry alerts ────────────────────────────────────────────
-// Same verified sender as everything else we send. The recipient is the
-// agency's own inbox, taken from `shared/agency.ts` rather than typed here
-// again — that module exists so the CRM and the marketing site cannot end up
-// disagreeing about the agency's address, and a cron that emails a fourth
-// spelling of it would be exactly that drift.
+// Same verified sender as everything else we send.
+//
+// The RECIPIENT is deliberately not here. It comes from `shared/agency.ts`,
+// and this file cannot import that: Amplify's CDK assembly builder loads
+// `backend.ts` through a TS loader scoped to `amplify/`, so a path reaching
+// outside resolves to a module with no exports and the deploy dies with
+// "does not provide an export named 'AGENCY'". Handlers are different — they
+// are bundled by esbuild, which is why `renewal-tasks/handler.ts` can import
+// `src/lib/pagination` — so the address is read there instead. `tsc` and
+// `npm run synth:check` both pass on the import that fails; only a real
+// pipeline deploy catches it.
 backend.licenseAlerts.addEnvironment("LICENSE_ALERT_FROM", magicLinkFrom);
-backend.licenseAlerts.addEnvironment(
-  "LICENSE_ALERT_TO",
-  `${AGENCY.name} <${AGENCY_FMT.emailLower}>`
-);
 backend.licenseAlerts.resources.lambda.addToRolePolicy(
   new PolicyStatement({
     actions: ["ses:SendEmail"],

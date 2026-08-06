@@ -4,6 +4,7 @@ import { generateClient } from "aws-amplify/data";
 import { getAmplifyDataClientConfig } from "@aws-amplify/backend/function/runtime";
 import type { Schema } from "../../data/resource";
 import { listAllPages } from "../../../src/lib/pagination";
+import { AGENCY, AGENCY_FMT } from "../../../../shared/agency";
 import { dueReminders, isoDay, renderDigest } from "./digest";
 
 /**
@@ -32,6 +33,18 @@ async function getDataClient() {
 }
 
 const ses = new SESv2Client();
+
+/**
+ * The agency's own inbox, from the module that exists so the CRM and the
+ * marketing site cannot disagree about the agency's address — rather than a
+ * fourth spelling of it typed into a config.
+ *
+ * Read here rather than passed in as an env var from `backend.ts`, which
+ * cannot import it: the CDK assembly builder loads that file with a TS loader
+ * scoped to `amplify/`, and a path reaching outside comes back with no
+ * exports. A handler is bundled by esbuild and has no such limit.
+ */
+const TO = `${AGENCY.name} <${AGENCY_FMT.emailLower}>`;
 
 export const handler = async () => {
   const client = await getDataClient();
@@ -63,7 +76,7 @@ export const handler = async () => {
   await ses.send(
     new SendEmailCommand({
       FromEmailAddress: process.env.LICENSE_ALERT_FROM,
-      Destination: { ToAddresses: [process.env.LICENSE_ALERT_TO as string] },
+      Destination: { ToAddresses: [TO] },
       Content: {
         Simple: {
           Subject: { Data: subject },

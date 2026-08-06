@@ -38,6 +38,7 @@ vi.mock("@aws-amplify/backend/function/runtime", () => ({
 
 import { handler } from "../../amplify/functions/license-alerts/handler";
 import { addDays, dedupeKeyFor, isoDay } from "../../amplify/functions/license-alerts/digest";
+import { AGENCY, AGENCY_FMT } from "../../../shared/agency";
 
 const TODAY = isoDay(new Date());
 
@@ -67,8 +68,10 @@ const sentEmail = () => sesSend.mock.calls[0]?.[0]?.input;
 beforeEach(() => {
   vi.clearAllMocks();
   vi.spyOn(console, "error").mockImplementation(() => {});
+  // Only the sender is an env var. The recipient is read from
+  // `shared/agency.ts` inside the handler — `backend.ts` cannot import that
+  // module without failing the pipeline, so there is nothing to pass down.
   process.env.LICENSE_ALERT_FROM = "HOA Insurance Agency <noreply@protectmyhoa.com>";
-  process.env.LICENSE_ALERT_TO = "HOA Insurance Agency LLC <insurance@protectmyhoa.com>";
   sesSend.mockResolvedValue({});
   models.LicenseReminder.create.mockResolvedValue({ errors: undefined });
 });
@@ -83,9 +86,15 @@ describe("license-alerts sweep", () => {
     const summary = await handler();
 
     expect(sesSend).toHaveBeenCalledTimes(1);
+    // Spelled out rather than only compared to the constant: this is the
+    // address in the original ask, and an assertion that just re-derives it
+    // would pass just as happily if the constant changed underneath.
     expect(sentEmail().Destination.ToAddresses).toEqual([
       "HOA Insurance Agency LLC <insurance@protectmyhoa.com>",
     ]);
+    expect(sentEmail().Destination.ToAddresses[0]).toBe(
+      `${AGENCY.name} <${AGENCY_FMT.emailLower}>`
+    );
     expect(sentEmail().FromEmailAddress).toContain("noreply@protectmyhoa.com");
     expect(sentEmail().Content.Simple.Subject.Data).toContain("License expirations");
     expect(summary.remindersSent).toBe(2);
