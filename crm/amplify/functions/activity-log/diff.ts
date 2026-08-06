@@ -115,17 +115,28 @@ export function diffImages(
 /**
  * The account this record hangs off, or `null` when it hangs off nothing.
  *
- * Everything account-scoped carries `accountId`. `Document` is the exception:
- * it is polymorphic, so its account id is in `entityId` and only when
- * `entityType` says so — a document attached to a carrier or a licence has an
- * `entityId` that is not an account, and filing it under one would put a
- * licence upload in some association's timeline.
+ * Everything account-scoped carries `accountId` — except the account, which
+ * IS the account and so carries none. `Account` was streamed from the start
+ * and every one of its changes was silently dropped here for exactly that
+ * reason: the tab claimed to show "every write to this account and everything
+ * under it", and showed only the second half. Renaming the association,
+ * setting its entity type, its annual revenue, its fire district, or
+ * converting the lead to a client left no trace at all.
+ *
+ * `Document` is the other exception, for the opposite reason: it is
+ * polymorphic, so its account id is in `entityId` and only when `entityType`
+ * says so — a document attached to a carrier or a licence has an `entityId`
+ * that is not an account, and filing it under one would put a licence upload
+ * in some association's timeline.
  */
 export function resolveEntityId(
   subjectType: string,
   image: Record<string, unknown> | undefined
 ): string | null {
   if (!image) return null;
+  if (subjectType === "Account") {
+    return typeof image.id === "string" ? image.id : null;
+  }
   if (subjectType === "Document") {
     return image.entityType === "ACCOUNT" && typeof image.entityId === "string"
       ? image.entityId

@@ -111,6 +111,18 @@ describe("resolveEntityId", () => {
     expect(resolveEntityId("Building", { accountId: "a1" })).toBe("a1");
   });
 
+  it("takes the Account's own id, because it hangs off nothing", () => {
+    // The account is the one streamed model with no `accountId` — it IS the
+    // account. Falling through to `image.accountId` returned null for every
+    // one of its changes, so the tab that promises "every write to this
+    // account and everything under it" showed only the second half: renaming
+    // the association, its entity type, its annual revenue, its fire district
+    // and the lead → client conversion all left no trace.
+    expect(resolveEntityId("Account", { id: "a1", name: "Willow Creek" })).toBe(
+      "a1"
+    );
+  });
+
   it("takes Document's entityId only when it is an account", () => {
     // Document is polymorphic. A licence or carrier upload has an entityId
     // that is not an account, and filing it under one would put a licence in
