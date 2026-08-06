@@ -17,6 +17,10 @@ import StateCoverage from "./licensing/StateCoverage";
  * Lazy because of what it drags in: `usMap.ts` is 78KB of Census outlines,
  * and the app ships one bundle. Loading that for everyone who opens Settings
  * to change their signature would be paying for a map on every page.
+ *
+ * Still worth it now that the map is this tab's default view: Licensing is
+ * one of Settings' four tabs, so the other three — and every other screen in
+ * the app — still never fetch the chunk.
  */
 const LicenseMap = lazy(() => import("./licensing/LicenseMap"));
 
@@ -33,7 +37,11 @@ const LicenseMap = lazy(() => import("./licensing/LicenseMap"));
  * for the question the tables answer badly, which is where the gaps are.
  */
 export default function Licensing() {
-  const [view, setView] = useState<"tables" | "map">("tables");
+  // Map first. Opening this screen is usually prompted by "can we write this
+  // one?" rather than by a particular licence, and that is the question the
+  // map answers in a glance and the tables answer only after you have read
+  // three of them.
+  const [view, setView] = useState<"tables" | "map">("map");
   const [adding, setAdding] = useState<HolderType | null>(null);
   const [editing, setEditing] = useState<License | null>(null);
   const [openDocsFor, setOpenDocsFor] = useState<string | null>(null);
