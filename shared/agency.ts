@@ -22,6 +22,14 @@
  *
  * To change the agency's phone/email/address: edit `AGENCY` only. Never edit a
  * value in `AGENCY_FMT` — add a new derivation instead.
+ *
+ * ─ Two addresses, not one ────────────────────────────────────────────────────
+ * `email` is the agency's general address and `leadEmail` is sales. They are
+ * separate stored fields rather than one value because they are read by things
+ * that must not move together: `email` is printed on ACORD forms already sent
+ * to carriers and on certificates already issued, while `leadEmail` is only
+ * ever where a website enquiry is delivered. A single field would mean routing
+ * leads somewhere new also rewrites the producer block on a regulatory form.
  */
 
 export const AGENCY = {
@@ -39,6 +47,14 @@ export const AGENCY = {
   /** Display format. Every machine format (tel:, E.164) is derived from it. */
   phone: "508-233-2261",
   /**
+   * The agency's general address: the one on the ACORD producer block, the
+   * certificate, the footer, the legal pages and the JSON-LD.
+   *
+   * NOT where enquiries from the website go — that is `leadEmail` below. The
+   * two were one address until sales was split out, and the reason they are
+   * now two fields rather than one edited value is that this one is on forms
+   * already sent to carriers.
+   *
    * CANONICAL SPELLING — mixed case. This is the branded spelling every
    * rendered surface already shows, and mailbox local-parts are case-sensitive
    * per RFC 5321 only in theory; the domain is case-insensitive. Anywhere a
@@ -46,6 +62,14 @@ export const AGENCY = {
    * with `AGENCY_FMT.emailLower` rather than storing a second spelling.
    */
   email: "insurance@ProtectMyHOA.com",
+  /**
+   * Where a prospective customer reaches sales, and where every website lead
+   * form delivers.
+   *
+   * Same canonical-mixed-case rule as `email`; `AGENCY_FMT.leadEmailLower` is
+   * the transport form, and `formsubmitUrl` is built from it.
+   */
+  leadEmail: "sales@ProtectMyHOA.com",
 } as const;
 
 const phoneDigits = AGENCY.phone.replace(/\D/g, "");
@@ -65,8 +89,18 @@ export const AGENCY_FMT = {
   emailHref: `mailto:${AGENCY.email}`,
   /** Lowercase transport form, for URL paths and form-endpoint identifiers. */
   emailLower: AGENCY.email.toLowerCase(),
-  /** FormSubmit AJAX endpoint; the address is part of the URL path. */
-  formsubmitUrl: `https://formsubmit.co/ajax/${AGENCY.email.toLowerCase()}`,
+  /** `mailto:` href for the sales address, canonical mixed-case spelling. */
+  leadEmailHref: `mailto:${AGENCY.leadEmail}`,
+  /** Lowercase transport form of the sales address. */
+  leadEmailLower: AGENCY.leadEmail.toLowerCase(),
+  /**
+   * FormSubmit AJAX endpoint; the address is part of the URL path.
+   *
+   * Built from `leadEmail`, not `email` — this endpoint has exactly one class
+   * of caller, the five website lead forms, so a website enquiry lands in
+   * sales rather than in the inbox the ACORD forms point carriers at.
+   */
+  formsubmitUrl: `https://formsubmit.co/ajax/${AGENCY.leadEmail.toLowerCase()}`,
 } as const;
 
 export type Agency = typeof AGENCY;

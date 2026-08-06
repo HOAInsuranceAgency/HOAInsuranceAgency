@@ -46,7 +46,15 @@ export const ACORD_FORMS: AcordFormDef[] = [
   { key: "acord141", path: "templates/acord141.pdf", label: "ACORD 141 — Crime Section", note: "Carrier submissions." },
   { key: "acord159", path: "templates/acord159.pdf", label: "ACORD 159 — Contractors Supplement", note: "Carrier submissions." },
   { key: "acord160", path: "templates/acord160.pdf", label: "ACORD 160 — Business Owners Section", note: "Carrier submissions." },
-  { key: "acord810", path: "templates/acord810.pdf", label: "ACORD 810 — Directors & Officers Application", note: "Carrier submissions." },
+  // ACORD 810 is the Business Income Report / Work Sheet, NOT a D&O
+  // application — the uploaded template's 152 fields are all
+  // `CommercialPropertyCoverage_BusinessIncome…` and not one of them mentions a
+  // director or an officer. It was labelled "Directors & Officers Application"
+  // here and the D&O card on the Overview tab told producers it "feeds the
+  // ACORD 810", which sent anyone looking for a D&O submission to a business
+  // income worksheet. ACORD publishes no standard D&O application; carriers
+  // use their own, so the CRM's D&O data has no ACORD form to fill.
+  { key: "acord810", path: "templates/acord810.pdf", label: "ACORD 810 — Business Income Report / Work Sheet", note: "Carrier submissions." },
   { key: "acord823", path: "templates/acord823.pdf", label: "ACORD 823 — Condominium Association Supplement", note: "Carrier submissions." },
   { key: "acord45", path: "templates/acord45.pdf", label: "ACORD 45 — Additional Interest Schedule", note: "Attaches to an application." },
   { key: "acord101", path: "templates/acord101.pdf", label: "ACORD 101 — Additional Remarks Schedule", note: "Overflow remarks for any form." },

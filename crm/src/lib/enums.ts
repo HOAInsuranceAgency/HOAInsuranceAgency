@@ -50,7 +50,20 @@ export type LicenseResidency = Schema["LicenseResidency"]["type"];
 export type LicenseStatus = Schema["LicenseStatus"]["type"];
 export type ConstructionType = Schema["ConstructionType"]["type"];
 export type ReplacementCostType = Schema["ReplacementCostType"]["type"];
+export type BuildingDeductibleType = NonNullable<
+  Schema["BuildingDeductibleType"]["type"]
+>;
+export type CauseOfLoss = NonNullable<Schema["CauseOfLoss"]["type"]>;
 export type AggregateAppliesTo = Schema["AggregateAppliesTo"]["type"];
+export type ContactType = NonNullable<Schema["ContactType"]["type"]>;
+export type LegalEntityType = NonNullable<Schema["LegalEntityType"]["type"]>;
+export type GlDeductibleType = NonNullable<Schema["GlDeductibleType"]["type"]>;
+export type GlPremiumBasis = NonNullable<Schema["GlPremiumBasis"]["type"]>;
+export type DoPart = NonNullable<Schema["DoPart"]["type"]>;
+export type DoCoverageType = NonNullable<Schema["DoCoverageType"]["type"]>;
+export type DefenseLimitPosition = NonNullable<
+  Schema["DefenseLimitPosition"]["type"]
+>;
 
 /**
  * `AccountType` is re-exported from `shared/` rather than derived here: `web`
@@ -168,6 +181,54 @@ const REPLACEMENT_COST = {
 
 export const REPLACEMENT_COST_OPTIONS = optionsByLabel(REPLACEMENT_COST);
 
+// ── Per-building property terms ──────────────────────────────────────────────
+
+/**
+ * The 140's subject-of-insurance row asks for a deductible type and a cause of
+ * loss as **text**, not as checkboxes.
+ *
+ * The field inventory (docs/acord/acord-140-fields.txt) gives field names; it
+ * does not give the code vocabulary those fields expect. So the mapping writes
+ * the label below rather than an invented ACORD code: an underwriter reads
+ * this row, "Per occurrence" is unambiguous to a human, and a guessed code
+ * that is wrong is a wrong value rather than a blank.
+ */
+const BUILDING_DEDUCTIBLE_TYPE = {
+  PER_OCCURRENCE: "Per occurrence",
+  OTHER: "Other",
+} satisfies Record<BuildingDeductibleType, string>;
+
+export const BUILDING_DEDUCTIBLE_TYPE_OPTIONS = optionsByLabel(
+  BUILDING_DEDUCTIBLE_TYPE
+);
+
+export const BUILDING_DEDUCTIBLE_TYPE_LABELS: Record<string, string> =
+  Object.freeze({ ...BUILDING_DEDUCTIBLE_TYPE });
+
+/** The three standard commercial property causes-of-loss forms. */
+const CAUSE_OF_LOSS = {
+  SPECIAL: "Special",
+  BASIC: "Basic",
+  BROAD: "Broad",
+} satisfies Record<CauseOfLoss, string>;
+
+export const CAUSE_OF_LOSS_OPTIONS = optionsByLabel(CAUSE_OF_LOSS);
+
+export const CAUSE_OF_LOSS_LABELS: Record<string, string> = Object.freeze({
+  ...CAUSE_OF_LOSS,
+});
+
+/**
+ * `ReplacementCostType`'s labels carry an "RC — " prefix for the dropdown,
+ * which is not what should land in the 140's valuation field. This is the
+ * short form for the form.
+ */
+export const REPLACEMENT_COST_CODES: Record<string, string> = Object.freeze({
+  RC: "RC",
+  ERC: "ERC",
+  GRC: "GRC",
+} satisfies Record<ReplacementCostType, string>);
+
 // ── AggregateAppliesTo ───────────────────────────────────────────────────────
 
 /**
@@ -218,6 +279,245 @@ export const ACORD25_AGGREGATE_FIELDS: Record<string, string> = Object.freeze(
     ])
   ) as Record<AggregateAppliesTo, string>
 );
+
+// ── LegalEntityType ──────────────────────────────────────────────────────────
+
+/**
+ * How the applicant is organised, and the ACORD 125 checkbox each choice
+ * ticks. Same shape as `AGGREGATE_APPLIES_TO` above and for the same reason:
+ * the dropdown and the PDF mapping read one table, so they cannot come to
+ * offer different member sets.
+ *
+ * **Every name here is confirmed** against the agency's own template — see
+ * `docs/acord/acord-125-fields.txt`, which is the full field inventory read
+ * with Settings → Inspect fields. Seven of the eight were derived guesses
+ * when W2 shipped; the inventory confirmed all seven and settled the one
+ * genuine coin-flip: an LLC is `LimitedLiabilityCorporation`, not
+ * `…Company`, so the second candidate that covered it is gone.
+ *
+ * The member set matches the form's exactly, minus its `OtherIndicator_A`
+ * box — the enum has no OTHER member, so nothing can select it. The form also
+ * carries `MemberManagerCount_A` beside the LLC box, which the CRM does not
+ * record.
+ *
+ * Lists rather than single names, unlike `AGGREGATE_APPLIES_TO`, because the
+ * form has an _A/_B/_C set of these for three named insureds and a later
+ * workstream filling the second one will add candidates here rather than a
+ * second table.
+ */
+const LEGAL_ENTITY = {
+  CORPORATION: {
+    label: "Corporation",
+    acord125Fields: ["NamedInsured_LegalEntity_CorporationIndicator_A"],
+  },
+  INDIVIDUAL: {
+    label: "Individual",
+    acord125Fields: ["NamedInsured_LegalEntity_IndividualIndicator_A"],
+  },
+  JOINT_VENTURE: {
+    label: "Joint Venture",
+    acord125Fields: ["NamedInsured_LegalEntity_JointVentureIndicator_A"],
+  },
+  LLC: {
+    label: "LLC",
+    acord125Fields: [
+      "NamedInsured_LegalEntity_LimitedLiabilityCorporationIndicator_A",
+    ],
+  },
+  NOT_FOR_PROFIT: {
+    label: "Not For Profit",
+    acord125Fields: ["NamedInsured_LegalEntity_NotForProfitIndicator_A"],
+  },
+  PARTNERSHIP: {
+    label: "Partnership",
+    acord125Fields: ["NamedInsured_LegalEntity_PartnershipIndicator_A"],
+  },
+  SUBCHAPTER_S_CORP: {
+    label: "Subchapter S Corporation",
+    acord125Fields: ["NamedInsured_LegalEntity_SubchapterSCorporationIndicator_A"],
+  },
+  TRUST: {
+    label: "Trust",
+    acord125Fields: ["NamedInsured_LegalEntity_TrustIndicator_A"],
+  },
+} satisfies Record<
+  LegalEntityType,
+  { label: string; acord125Fields: readonly string[] }
+>;
+
+export const LEGAL_ENTITY_OPTIONS = optionsByLabel(
+  Object.fromEntries(
+    (Object.keys(LEGAL_ENTITY) as LegalEntityType[]).map((k) => [
+      k,
+      LEGAL_ENTITY[k].label,
+    ])
+  ) as Record<LegalEntityType, string>
+);
+
+export const LEGAL_ENTITY_LABELS: Record<string, string> = Object.freeze(
+  Object.fromEntries(
+    (Object.keys(LEGAL_ENTITY) as LegalEntityType[]).map((k) => [
+      k,
+      LEGAL_ENTITY[k].label,
+    ])
+  ) as Record<LegalEntityType, string>
+);
+
+export const ACORD125_LEGAL_ENTITY_FIELDS: Record<string, readonly string[]> =
+  Object.freeze(
+    Object.fromEntries(
+      (Object.keys(LEGAL_ENTITY) as LegalEntityType[]).map((k) => [
+        k,
+        Object.freeze([...LEGAL_ENTITY[k].acord125Fields]),
+      ])
+    ) as Record<LegalEntityType, readonly string[]>
+  );
+
+/**
+ * What an ASSOCIATION with no stated entity type is treated as on the 125.
+ *
+ * Before `legalEntityType` existed, `acordApp` ticked Not-For-Profit for
+ * every ASSOCIATION and nothing else, unconditionally. Every account already
+ * in the system predates the column, so without this fallback shipping W2
+ * would silently *untick* a box on every existing association's next
+ * submission — a regression dressed as a new feature.
+ */
+export const DEFAULT_ASSOCIATION_LEGAL_ENTITY =
+  "NOT_FOR_PROFIT" satisfies LegalEntityType;
+
+// ── ContactType ──────────────────────────────────────────────────────────────
+
+/**
+ * What a contact is *for*. Labels only — the ACORD 125 does not have a
+ * per-role checkbox; it has one contact slot with a free-text description, and
+ * `acordApp` writes the label of the contact it picked into it. So unlike
+ * `AGGREGATE_APPLIES_TO` there is no field name to carry alongside.
+ *
+ * `INSPECTION` is load-bearing rather than decorative: the 125's inspection
+ * block is filled from the first contact carrying it, which is what replaced
+ * `Account.inspectionContactName` / `…Phone`.
+ */
+const CONTACT_TYPE = {
+  INSPECTION: "Inspection",
+  CLAIMS: "Claims",
+  ACCOUNTING: "Accounting",
+  MANAGER: "Manager",
+  TRUSTEE: "Trustee",
+  DIRECTOR: "Director",
+  PRESIDENT: "President",
+  OTHER: "Other",
+} satisfies Record<ContactType, string>;
+
+/**
+ * Every role, in schema order. The extraction Lambda interpolates this into
+ * its prompt and its JSON schema, the same way `CONSTRUCTION_TYPES` is — so
+ * the model can only ever return a role the app knows how to store.
+ */
+export const CONTACT_TYPES: readonly ContactType[] = Object.freeze(
+  Object.keys(CONTACT_TYPE) as ContactType[]
+);
+
+export const CONTACT_TYPE_LABELS: Record<string, string> = Object.freeze({
+  ...CONTACT_TYPE,
+});
+
+export const CONTACT_TYPE_OPTIONS = optionsByLabel(CONTACT_TYPE);
+
+/**
+ * What a contact with no stated role is recorded as — by the backfill, which
+ * is turning two anonymous columns into people, and by the extraction apply
+ * path when the documents name someone without saying what they do.
+ */
+export const DEFAULT_CONTACT_TYPE = "OTHER" satisfies ContactType;
+
+// ── General liability application ────────────────────────────────────────────
+
+const GL_DEDUCTIBLE_TYPE = {
+  PER_OCCURRENCE: "Per occurrence",
+  PER_CLAIM: "Per claim",
+} satisfies Record<GlDeductibleType, string>;
+
+export const GL_DEDUCTIBLE_TYPE_OPTIONS = optionsByLabel(GL_DEDUCTIBLE_TYPE);
+
+export const GL_DEDUCTIBLE_TYPE_LABELS: Record<string, string> = Object.freeze({
+  ...GL_DEDUCTIBLE_TYPE,
+});
+
+/**
+ * What a class code's exposure is measured in. "Unit" is the one that matters
+ * for this agency — an association's GL exposure is rated per residential
+ * unit — and OTHER covers the class codes that are rated on area, payroll or
+ * receipts, where the basis is written into the description instead.
+ */
+const GL_PREMIUM_BASIS = {
+  UNIT: "Per unit",
+  OTHER: "Other",
+} satisfies Record<GlPremiumBasis, string>;
+
+export const GL_PREMIUM_BASIS_OPTIONS = optionsByLabel(GL_PREMIUM_BASIS);
+
+export const GL_PREMIUM_BASIS_LABELS: Record<string, string> = Object.freeze({
+  ...GL_PREMIUM_BASIS,
+});
+
+// ── Directors & Officers ─────────────────────────────────────────────────────
+
+/**
+ * The three coverage parts, labelled neutrally.
+ *
+ * **Deliberately not "Side A / Side B / Side C".** That is standard D&O
+ * terminology for a specific split — personal liability the entity cannot
+ * indemnify, reimbursement of the entity for indemnification, and entity
+ * securities cover — and this agency's parts carry a primary/excess type and
+ * their own retentions per part, which reads more like layers of a tower than
+ * the Side split. Naming them Side A/B/C would assert a meaning nobody has
+ * confirmed, on a form that goes to a carrier.
+ *
+ * Open question 4 in docs/specs/lead-client-expansion.md. When it is
+ * answered, the labels change here and nowhere else.
+ */
+const DO_PART = {
+  A: "Part A",
+  B: "Part B",
+  C: "Part C",
+} satisfies Record<DoPart, string>;
+
+/** Schema order — A, B, C — which is the order the form prints them in. */
+export const DO_PARTS: readonly DoPart[] = Object.freeze(
+  Object.keys(DO_PART) as DoPart[]
+);
+
+export const DO_PART_LABELS: Record<string, string> = Object.freeze({
+  ...DO_PART,
+});
+
+const DO_COVERAGE_TYPE = {
+  PRIMARY: "Primary",
+  EXCESS: "Excess",
+} satisfies Record<DoCoverageType, string>;
+
+export const DO_COVERAGE_TYPE_OPTIONS = optionsByLabel(DO_COVERAGE_TYPE);
+
+export const DO_COVERAGE_TYPE_LABELS: Record<string, string> = Object.freeze({
+  ...DO_COVERAGE_TYPE,
+});
+
+/**
+ * Whether defence costs erode the limit ("inside") or sit on top of it
+ * ("outside"). The distinction is worth real money on a claim, which is why
+ * it is a stored answer rather than a note.
+ */
+const DEFENSE_LIMIT_POSITION = {
+  INSIDE: "Inside the limit",
+  OUTSIDE: "Outside the limit",
+} satisfies Record<DefenseLimitPosition, string>;
+
+export const DEFENSE_LIMIT_POSITION_OPTIONS = optionsByLabel(
+  DEFENSE_LIMIT_POSITION
+);
+
+export const DEFENSE_LIMIT_POSITION_LABELS: Record<string, string> =
+  Object.freeze({ ...DEFENSE_LIMIT_POSITION });
 
 // ── DocumentCategory ─────────────────────────────────────────────────────────
 
@@ -303,6 +603,31 @@ export const DEFAULT_USER_ROLE = "STAFF" satisfies UserRole;
 export function isUserRole(v: string | null | undefined): v is UserRole {
   return v != null && (USER_ROLES as readonly string[]).includes(v);
 }
+
+// ── MarketingTaskResolution ──────────────────────────────────────────────────
+
+/**
+ * The resolutions a person can pick when closing a task by hand, in menu
+ * order — worst-fit first, missed-deadline last.
+ *
+ * `QUOTED` is absent by design and is the reason this list exists rather than
+ * the enum being used directly: a task becomes QUOTED because a quote was
+ * found for that carrier, detected by the nightly sweep and again on load.
+ * Offering it in the menu would let someone record a quote that isn't there.
+ *
+ * Only the keys live here. The labels are `MARKETING_RESOLUTION_BADGE`'s, so
+ * the menu and the badge on the closed row cannot end up saying different
+ * things about the same value — which is exactly what a second label table
+ * would eventually do.
+ */
+export const MANUAL_TASK_RESOLUTIONS = [
+  "OUT_OF_APPETITE",
+  "OUT_OF_AGENCY_APPETITE",
+  "NOT_SUBMITTED_ON_TIME",
+] as const satisfies readonly MarketingTaskResolution[];
+
+/** A resolution a person may choose — everything but `QUOTED`. */
+export type ManualTaskResolution = (typeof MANUAL_TASK_RESOLUTIONS)[number];
 
 // ── Licensing ────────────────────────────────────────────────────────────────
 

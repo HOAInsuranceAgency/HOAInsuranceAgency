@@ -1,12 +1,119 @@
 import { generateClient } from "aws-amplify/data";
+import { getCurrentUser } from "aws-amplify/auth";
 import type { Schema } from "../../amplify/data/resource";
 import { urgencyBadge, LICENSE_EXPIRY_SCALE, type BadgeClass } from "./badges";
 import { LICENSE_STATUS_LABELS } from "./enums";
 
-export const client = generateClient<Schema>();
+/**
+ * Models that carry `lastWriteBy`, and therefore get an actor stamped on
+ * every create and update.
+ *
+ * Kept in step with `STREAMED_MODELS` in `amplify/backend.ts` — a model
+ * streamed without the column is attributed to "system" forever, and a model
+ * with the column but no stream just carries an unread value. The enums test
+ * asserts the two lists match, which is cheaper than finding out from an
+ * activity log that says "System" for everything.
+ */
+export const ATTRIBUTED_MODELS: ReadonlySet<string> = new Set([
+  "Account",
+  "Contact",
+  "PriorCarrier",
+  "Building",
+  "Blanket",
+  "GlApplication",
+  "GlClassCode",
+  "DoApplication",
+  "DoCoveragePart",
+  "Loss",
+  "Quote",
+  "Policy",
+  "Certificate",
+  "Document",
+]);
+
+/**
+ * The signed-in user's Cognito sub, cached for the tab's lifetime.
+ *
+ * One `getCurrentUser()` per session rather than per write. The sub does not
+ * change while a session lasts, and a failed lookup resolves to `null` — the
+ * write then carries no actor and the stream handler calls it "system",
+ * which is the honest answer rather than a blocked save.
+ */
+let actorPromise: Promise<string | null> | undefined;
+function currentActor(): Promise<string | null> {
+  actorPromise ??= getCurrentUser()
+    .then((u) => u.userId)
+    .catch(() => null);
+  return actorPromise;
+}
+
+/**
+ * Stamp `lastWriteBy` on every create and update, once, here.
+ *
+ * ## Why a proxy and not a helper at each call site
+ *
+ * The spec's sketch was a `write()` wrapper that each mutation calls. There
+ * are around forty write sites, and the ones that matter most are the ones
+ * somebody adds next year — a wrapper you have to remember is a wrapper that
+ * gets forgotten, and the symptom is an activity log that says "System" for a
+ * change a person made. Nobody would notice for months.
+ *
+ * Wrapping the client instead makes attribution a property of writing at all.
+ * A new screen gets it without knowing it exists, and the only way to write
+ * without an actor is to reach past `client`, which nothing does.
+ *
+ * The cost is one cast: `generateClient` returns a deeply generic type that
+ * a `Proxy` cannot preserve structurally. The proxy adds a key to an
+ * argument object and changes nothing else, so the cast is describing what is
+ * true rather than papering over what isn't.
+ *
+ * Only `create` and `update` are wrapped. A `delete` takes `{ id }` and has
+ * nowhere to put an actor — the stream still sees the removal, and the row it
+ * writes is attributed to "system". That is a real gap in attribution and it
+ * is called out in the Activity tab rather than hidden.
+ */
+function withActor<T extends object>(raw: T): T {
+  const models = (raw as { models: Record<string, Record<string, unknown>> }).models;
+  const wrapped = new Proxy(models, {
+    get(target, modelName: string) {
+      const model = target[modelName];
+      if (!model || !ATTRIBUTED_MODELS.has(modelName)) return model;
+      return new Proxy(model, {
+        get(m, op: string) {
+          const fn = m[op];
+          if (typeof fn !== "function" || (op !== "create" && op !== "update")) {
+            return fn;
+          }
+          return async (input: Record<string, unknown>, ...rest: unknown[]) => {
+            const actor = await currentActor();
+            const stamped = actor ? { ...input, lastWriteBy: actor } : input;
+            return (fn as (...a: unknown[]) => unknown).call(m, stamped, ...rest);
+          };
+        },
+      });
+    },
+  });
+  return new Proxy(raw, {
+    get(target, prop: string) {
+      if (prop === "models") return wrapped;
+      return (target as Record<string, unknown>)[prop];
+    },
+  }) as T;
+}
+
+export const client = withActor(generateClient<Schema>());
 
 export type Account = Schema["Account"]["type"];
 export type Building = Schema["Building"]["type"];
+export type Contact = Schema["Contact"]["type"];
+export type PriorCarrier = Schema["PriorCarrier"]["type"];
+export type Blanket = Schema["Blanket"]["type"];
+export type Loss = Schema["Loss"]["type"];
+export type Activity = Schema["Activity"]["type"];
+export type GlApplication = Schema["GlApplication"]["type"];
+export type GlClassCode = Schema["GlClassCode"]["type"];
+export type DoApplication = Schema["DoApplication"]["type"];
+export type DoCoveragePart = Schema["DoCoveragePart"]["type"];
 export type Quote = Schema["Quote"]["type"];
 export type Policy = Schema["Policy"]["type"];
 export type Carrier = Schema["Carrier"]["type"];
@@ -116,6 +223,98 @@ export function fmtDate(d: string | null | undefined): string {
   return new Date(d + (d.length === 10 ? "T00:00:00" : "")).toLocaleDateString("en-US");
 }
 
+/**
+ * A phone number as this agency writes it: `(555) 123-4567` for a plain
+ * 10-digit US entry, and **the input verbatim** for everything else.
+ *
+ * The verbatim half is the important half. `Account.contactPhone` and friends
+ * are freeform `a.string()` columns — the schema comment at
+ * `amplify/data/resource.ts:118` explains that `a.phone()` only accepts E.164,
+ * which this agency's data is not — so the column legitimately holds
+ * `+44 20 7123 4567`, `(555) 123-4567 x212`, and a 7-digit local number an
+ * office manager gave over the phone. A formatter that reshaped those would be
+ * corrupting data, not tidying it, so three things opt out of reformatting:
+ *
+ *  - a leading `+`, which is the caller saying "this is an E.164/international
+ *    number, the digits after me are not an area code";
+ *  - any letter, which means an extension (`x212`) or a vanity number;
+ *  - a digit count that isn't exactly 10 — 7 digits has no area code to place
+ *    and 11+ has something in front of one, and inventing either is a guess.
+ *
+ * Punctuation is otherwise ignored, so `555.123.4567`, `555-123-4567` and
+ * `(555) 123-4567` all land on the same rendering, and applying this to its
+ * own output is a no-op. That idempotence is what lets `PhoneInput` store the
+ * formatted string and this function render it again on read.
+ */
+export function normalizePhone(v: string): string {
+  const s = v.trim();
+  if (s.startsWith("+") || /[A-Za-z]/.test(s)) return s;
+  const digits = s.replace(/\D/g, "");
+  if (digits.length !== 10) return s;
+  return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`;
+}
+
+/**
+ * The display counterpart of `normalizePhone`, in the shape of `fmtMoney` and
+ * `fmtDate`: `"—"` for a value that isn't there. Every read-only phone render
+ * goes through this.
+ */
+export function fmtPhone(v: string | null | undefined): string {
+  if (blank(v)) return "—";
+  return normalizePhone(String(v));
+}
+
+/**
+ * Throws on GraphQL errors or a null payload; returns the data.
+ *
+ * Amplify **resolves** a failed mutation rather than rejecting it, so every
+ * write has to check `{ data, errors }` by hand. INVENTORY §1.2 counts 36 such
+ * checks across 24 files in three mutually inconsistent spellings, ten of
+ * which do not throw at all — a rejected create that clears the form and says
+ * nothing. Two details this fixes rather than merely centralises:
+ *
+ *  - **The null-data message is not empty.** The most common spelling,
+ *    `if (errors?.length || !data) throw new Error(errors?.[0]?.message)`,
+ *    constructs `new Error(undefined)` whenever `data` is null and `errors` is
+ *    empty, and is rescued only by `friendlyError`'s `msg || fallback`. Here
+ *    that case has its own sentence.
+ *  - **Every error is reported, not just the first.** AppSync returns one
+ *    entry per failed field; `errors[0].message` throws the rest away.
+ *    `friendlyError`'s rules are substring tests, so they still classify a
+ *    joined message.
+ *
+ * For mutations and for reads that must find something. A `get` whose miss is
+ * a legitimate outcome (`data: null`, no errors) should branch on `data`
+ * itself — this would turn "not found" into a thrown failure.
+ */
+export function unwrap<T>(r: {
+  data: T | null;
+  errors?: { message: string }[];
+}): T {
+  assertNoErrors(r);
+  if (r.data == null) {
+    throw new Error("The server accepted that but returned nothing.");
+  }
+  return r.data;
+}
+
+/**
+ * `unwrap` without the payload check: throws on GraphQL errors and returns
+ * nothing.
+ *
+ * For a **delete**, and for the writes whose result is genuinely unused. A
+ * delete resolves with `data: null` and no errors when the row was already
+ * gone — two tabs open, or two people on the same account — and that is the
+ * state the caller was asking for, not a failure. Putting `unwrap` there would
+ * report "couldn't remove that" about a row that does not exist, and keep
+ * reporting it on every retry.
+ */
+export function assertNoErrors(r: { errors?: { message: string }[] }): void {
+  if (r.errors?.length) {
+    throw new Error(r.errors.map((e) => e.message).join("; "));
+  }
+}
+
 // ── Shared form validation ───────────────────────────────────────────
 // Returns a list of human-readable problems; empty = valid. All fields
 // optional — only filled-in values are checked.
@@ -123,7 +322,6 @@ export function validateAccountFields(f: {
   contactEmail?: string;
   zip?: string;
   unitCount?: string;
-  yearBuilt?: string;
   totalInsuredValue?: string;
 }): string[] {
   const problems: string[] = [];
@@ -140,12 +338,9 @@ export function validateAccountFields(f: {
     if (!Number.isInteger(n) || n < 0 || n > 100000)
       problems.push("Unit count should be a whole number of at least 0.");
   }
-  if (f.yearBuilt) {
-    const n = Number(f.yearBuilt);
-    const maxYear = new Date().getFullYear() + 5;
-    if (!Number.isInteger(n) || n < 1600 || n > maxYear)
-      problems.push(`Year built should be between 1600 and ${maxYear}.`);
-  }
+  // `yearBuilt` is not checked here any more: it is a property of a building
+  // and `BuildingsCard` validates it with `validateYear`, which is where the
+  // +5 bound and its reasoning now live.
   if (f.totalInsuredValue) {
     const n = Number(f.totalInsuredValue);
     if (!Number.isFinite(n) || n < 0)

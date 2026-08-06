@@ -1,10 +1,14 @@
 import {
   client,
+  unwrap,
   validateAccountFields,
   type Account,
 } from "../../lib/client";
 import { SaveStatus, useSaveStatus } from "../../components/SaveStatus";
 import { useFormState } from "../../lib/useFormState";
+import { inputValue, num, str } from "../../lib/formCodec";
+import { DateInput, FeinInput, MoneyInput } from "../../components/inputs";
+import { LEGAL_ENTITY_OPTIONS } from "../../lib/enums";
 
 export function OverviewTab({
   account,
@@ -20,26 +24,17 @@ export function OverviewTab({
   const saveStatus = useSaveStatus();
   const { form, setF } = useFormState({
     name: account.name,
-    legalName: account.legalName ?? "",
-    fein: account.fein ?? "",
-    sicCode: account.sicCode ?? "",
-    naicsCode: account.naicsCode ?? "",
-    inspectionContactName: account.inspectionContactName ?? "",
-    inspectionContactPhone: account.inspectionContactPhone ?? "",
-    priorCarrierName: account.priorCarrierName ?? "",
-    priorPolicyNumber: account.priorPolicyNumber ?? "",
-    priorPremium: account.priorPremium?.toString() ?? "",
-    priorTermEffective: account.priorTermEffective ?? "",
-    priorTermExpiration: account.priorTermExpiration ?? "",
-    contactFirstName: account.contactFirstName ?? "",
-    contactLastName: account.contactLastName ?? "",
-    contactEmail: account.contactEmail ?? "",
-    contactPhone: account.contactPhone ?? "",
-    totalInsuredValue: account.totalInsuredValue?.toString() ?? "",
-    currentAgent: account.currentAgent ?? "",
-    currentPolicyExpiration: account.currentPolicyExpiration ?? "",
-    source: account.source ?? "",
-    notes: account.notes ?? "",
+    legalName: inputValue(account.legalName),
+    fein: inputValue(account.fein),
+    sicCode: inputValue(account.sicCode),
+    naicsCode: inputValue(account.naicsCode),
+    legalEntityType: inputValue(account.legalEntityType),
+    annualRevenue: inputValue(account.annualRevenue),
+    totalInsuredValue: inputValue(account.totalInsuredValue),
+    currentAgent: inputValue(account.currentAgent),
+    currentPolicyExpiration: inputValue(account.currentPolicyExpiration),
+    source: inputValue(account.source),
+    notes: inputValue(account.notes),
   }, { onEdit: saveStatus.markDirty });
 
   async function save() {
@@ -50,34 +45,27 @@ export function OverviewTab({
     }
     await saveStatus.run(
       async () => {
-        const { data, errors } = await client.models.Account.update({
-          id: account.id,
-          name: form.name.trim() || account.name,
-          legalName: form.legalName.trim() || null,
-          fein: form.fein.trim() || null,
-          sicCode: form.sicCode.trim() || null,
-          naicsCode: form.naicsCode.trim() || null,
-          inspectionContactName: form.inspectionContactName.trim() || null,
-          inspectionContactPhone: form.inspectionContactPhone.trim() || null,
-          priorCarrierName: form.priorCarrierName.trim() || null,
-          priorPolicyNumber: form.priorPolicyNumber.trim() || null,
-          priorPremium: form.priorPremium ? Number(form.priorPremium) : null,
-          priorTermEffective: form.priorTermEffective || null,
-          priorTermExpiration: form.priorTermExpiration || null,
-          contactFirstName: form.contactFirstName.trim() || null,
-          contactLastName: form.contactLastName.trim() || null,
-          contactEmail: form.contactEmail.trim() || null,
-          contactPhone: form.contactPhone.trim() || null,
-          totalInsuredValue: form.totalInsuredValue
-            ? Number(form.totalInsuredValue)
-            : null,
-          currentAgent: form.currentAgent.trim() || null,
-          currentPolicyExpiration: form.currentPolicyExpiration || null,
-          source: form.source.trim() || null,
-          notes: form.notes.trim() || null,
-        });
-        if (errors?.length || !data) throw new Error(errors?.[0]?.message);
-        onChange(data);
+        onChange(
+          unwrap(
+            await client.models.Account.update({
+              id: account.id,
+              name: str(form.name) ?? account.name,
+              legalName: str(form.legalName),
+              fein: str(form.fein),
+              sicCode: str(form.sicCode),
+              naicsCode: str(form.naicsCode),
+              legalEntityType: str(
+                form.legalEntityType
+              ) as Account["legalEntityType"],
+              annualRevenue: num(form.annualRevenue),
+              totalInsuredValue: num(form.totalInsuredValue),
+              currentAgent: str(form.currentAgent),
+              currentPolicyExpiration: str(form.currentPolicyExpiration),
+              source: str(form.source),
+              notes: str(form.notes),
+            })
+          )
+        );
       },
       { errorMessage: "Save failed" }
     );
@@ -101,7 +89,7 @@ export function OverviewTab({
         </div>
         <div className="field">
           <label>FEIN</label>
-          <input value={form.fein} onChange={(e) => setF("fein", e.target.value)} />
+          <FeinInput value={form.fein} onChange={(v) => setF("fein", v)} />
         </div>
         <div className="field">
           <label>SIC</label>
@@ -112,87 +100,54 @@ export function OverviewTab({
           <input value={form.naicsCode} onChange={(e) => setF("naicsCode", e.target.value)} />
         </div>
         <div className="field">
-          <label>Inspection contact</label>
-          <input
-            value={form.inspectionContactName}
-            onChange={(e) => setF("inspectionContactName", e.target.value)}
+          <label>Legal entity type</label>
+          <select
+            value={form.legalEntityType}
+            onChange={(e) => setF("legalEntityType", e.target.value)}
+          >
+            {/* An association left blank still ticks Not For Profit on the
+                125 — the placeholder says so rather than reading as "none". */}
+            <option value="">
+              {account.type === "ASSOCIATION" ? "— (Not For Profit)" : "—"}
+            </option>
+            {LEGAL_ENTITY_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="field">
+          <label>Annual revenue ($)</label>
+          <MoneyInput
+            value={form.annualRevenue}
+            onChange={(v) => setF("annualRevenue", v)}
           />
         </div>
-        <div className="field">
-          <label>Inspection contact phone</label>
-          <input
-            value={form.inspectionContactPhone}
-            onChange={(e) => setF("inspectionContactPhone", e.target.value)}
-          />
-        </div>
-        <div className="field">
-          <label>Contact first name</label>
-          <input value={form.contactFirstName} onChange={(e) => setF("contactFirstName", e.target.value)} />
-        </div>
-        <div className="field">
-          <label>Contact last name</label>
-          <input value={form.contactLastName} onChange={(e) => setF("contactLastName", e.target.value)} />
-        </div>
-        <div className="field">
-          <label>Contact email</label>
-          <input value={form.contactEmail} onChange={(e) => setF("contactEmail", e.target.value)} />
-        </div>
-        <div className="field">
-          <label>Contact phone</label>
-          <input value={form.contactPhone} onChange={(e) => setF("contactPhone", e.target.value)} />
-        </div>
+        {/* The four contact fields and the inspection pair moved to the
+            Contacts card below — an association has more than two people, and
+            these six columns could hold exactly two. */}
         <div className="field">
           <label>Total insured value ($)</label>
-          <input
-            type="number"
+          <MoneyInput
             value={form.totalInsuredValue}
-            onChange={(e) => setF("totalInsuredValue", e.target.value)}
+            onChange={(v) => setF("totalInsuredValue", v)}
           />
         </div>
         <div className="field">
           <label>Current agent / broker</label>
           <input value={form.currentAgent} onChange={(e) => setF("currentAgent", e.target.value)} />
         </div>
-        <div className="field">
-          <label>Prior carrier</label>
-          <input value={form.priorCarrierName} onChange={(e) => setF("priorCarrierName", e.target.value)} />
-        </div>
-        <div className="field">
-          <label>Prior policy number</label>
-          <input value={form.priorPolicyNumber} onChange={(e) => setF("priorPolicyNumber", e.target.value)} />
-        </div>
-        <div className="field">
-          <label>Prior premium ($)</label>
-          <input
-            type="number"
-            value={form.priorPremium}
-            onChange={(e) => setF("priorPremium", e.target.value)}
-          />
-        </div>
-        <div className="field">
-          <label>Prior term effective</label>
-          <input
-            type="date"
-            value={form.priorTermEffective}
-            onChange={(e) => setF("priorTermEffective", e.target.value)}
-          />
-        </div>
-        <div className="field">
-          <label>Prior term expiration</label>
-          <input
-            type="date"
-            value={form.priorTermExpiration}
-            onChange={(e) => setF("priorTermExpiration", e.target.value)}
-          />
-        </div>
+        {/* The five prior-carrier fields moved to the Prior coverage tab —
+            an association carries property, GL, D&O and crime with different
+            carriers on different terms, and these five could describe one. */}
         {/* Lead-only: once bound, the Policy records are authoritative. */}
         {account.stage !== "CLIENT" && (
         <div className="field">
           <label>Current policy expiration</label>
-          <input
-            type="date"
+          <DateInput
             value={form.currentPolicyExpiration}
-            onChange={(e) => setF("currentPolicyExpiration", e.target.value)}
+            onChange={(v) => setF("currentPolicyExpiration", v)}
           />
         </div>
         )}

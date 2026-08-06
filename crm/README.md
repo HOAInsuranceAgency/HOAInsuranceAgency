@@ -11,12 +11,27 @@ Internal agency management system replacing EzLynx for the commercial
   secret (15-min expiry) → clicking it signs you in. Sessions last 7 days.
   No self-signup: users are created by an admin (Cognito console/CLI).
   The sender address must be SES-verified (`MAGIC_LINK_FROM` in
-  [amplify/backend.ts](amplify/backend.ts), currently `noreply@gim.llc`;
-  branch URLs for the link live in `BRANCH_URLS` there too).
+  [amplify/backend.ts](amplify/backend.ts), currently
+  `noreply@protectmyhoa.com` — also the sender for team invites and license
+  alerts; branch URLs for the link live in `BRANCH_URLS` there too).
   Groups `ADMIN` / `STAFF` / `PRODUCER` exist as placeholders; privileges
   are not enforced yet. First login runs an onboarding flow
   ([src/pages/Onboarding.tsx](src/pages/Onboarding.tsx)); producers must
   supply an NPN and at least one state license.
+- **Lead texts** — a website enquiry texts every team member who turned the
+  switch on in Settings → Team and saved a mobile number
+  ([amplify/functions/lead-intake](amplify/functions/lead-intake)). Sent with
+  Amazon SNS, so there is **no code to configure** — but there is account
+  setup, and without it `Publish` succeeds and the message is silently
+  dropped, which looks exactly like working:
+  1. Move the account out of the **SNS SMS sandbox** (until then only
+     numbers verified in the SNS console receive anything).
+  2. Register an **origination identity** — US carriers require a 10DLC
+     brand + campaign for a long code, or a toll-free number with verified
+     use case. This takes days, not minutes.
+  3. Check the SMS **monthly spend limit**; the default is $1.
+  Delivery failures land in CloudWatch under the `lead-intake` log group.
+  Texting is deliberately non-fatal: an SNS outage still captures the lead.
 - **Data** — AppSync + DynamoDB, schema in
   [amplify/data/resource.ts](amplify/data/resource.ts).
 - **Documents** — S3 ([amplify/storage/resource.ts](amplify/storage/resource.ts)).
@@ -91,6 +106,5 @@ expires after 365 days and must be rotated.
 ## Next phases
 
 1. **Role enforcement** — wire the Cognito groups into per-model auth rules.
-2. **License expiration alerts** — data is already captured per producer.
-3. **ACORD carrier-submission forms** (125/126/140) on the template+mapping
+2. **ACORD carrier-submission forms** (125/126/140) on the template+mapping
    engine above.

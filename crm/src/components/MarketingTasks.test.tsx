@@ -1,17 +1,20 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // ./client calls generateClient() at module scope, so importing anything from
 // it would blow up on an unconfigured Amplify. Stubbing generateClient rather
 // than the whole ./client module keeps client.ts's real exports intact — the
 // same approach as client.test.ts and storage.test.ts.
-const MarketingTask = vi.hoisted(() => ({ list: vi.fn(), update: vi.fn() }));
-vi.mock("aws-amplify/data", () => ({
-  generateClient: () => ({ models: { MarketingTask } }),
+const models = vi.hoisted(() => ({
+  MarketingTask: { list: vi.fn(), update: vi.fn() },
+  Quote: { list: vi.fn() },
 }));
+vi.mock("aws-amplify/data", () => ({ generateClient: () => ({ models }) }));
+const { MarketingTask } = models;
 
-import { AllMarketingTasks } from "./MarketingTasks";
+import AccountMarketingTasks, { AllMarketingTasks } from "./MarketingTasks";
 
 /**
  * The four render states of a migrated read.
@@ -88,5 +91,143 @@ describe("AllMarketingTasks read states", () => {
     ).toBeInTheDocument();
     expect(screen.queryByText("Loading…")).not.toBeInTheDocument();
     expect(screen.queryByText(/No open marketing tasks\./)).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * Closing a task, and saying why.
+ *
+ * The reason is the reportable part: two carriers that keep coming back out
+ * of appetite is an appointment problem and a run of not-submitted-on-time is
+ * a staffing one, and neither shows up if every manual close records the same
+ * value. So what these hold is that the menu offers exactly the reasons a
+ * person may pick, and that the one they picked is the one that gets stored.
+ */
+const TASK = {
+  id: "t1",
+  accountId: "a1",
+  carrierId: "c1",
+  accountName: "Elm Street Condominium",
+  carrierName: "Acme Mutual",
+  status: "OPEN",
+  sourceType: "POLICY",
+  lines: ["Property"],
+  expirationDate: "2026-10-01",
+  submitBy: "2026-09-01",
+  triggerDate: "2026-08-18",
+};
+
+function renderCard(tasks: Record<string, unknown>[] = [TASK]) {
+  MarketingTask.list.mockResolvedValue({ data: tasks, nextToken: null });
+  // No quotes, so the settle-on-load pass closes nothing and every update
+  // recorded below came from the menu.
+  models.Quote.list.mockResolvedValue({ data: [], nextToken: null });
+  render(
+    <MemoryRouter>
+      <AccountMarketingTasks accountId="a1" completedByName="Dana Reyes" />
+    </MemoryRouter>
+  );
+  return screen.findByRole("combobox", { name: "Close Acme Mutual" });
+}
+
+/** The `update` call that closed a task, if any. */
+const closeCall = () =>
+  MarketingTask.update.mock.calls.find(([arg]) => arg.status === "COMPLETE")?.[0];
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  MarketingTask.update.mockImplementation(async (input: Record<string, unknown>) => ({
+    data: { ...TASK, ...input },
+    errors: undefined,
+  }));
+});
+
+describe("closing a marketing task", () => {
+  it("offers every reason a person may pick, and no others", async () => {
+    const menu = await renderCard();
+    const labels = within(menu)
+      .getAllByRole("option")
+      .map((o) => o.textContent);
+
+    expect(labels).toEqual([
+      "Close as…",
+      "Out of carrier appetite",
+      "Out of agency appetite",
+      "Not submitted on time",
+    ]);
+    // QUOTED is detected from an existing quote, never asserted by hand —
+    // offering it here would let someone record a quote that isn't there.
+    expect(labels).not.toContain("Quoted");
+  });
+
+  it.each([
+    ["OUT_OF_APPETITE", "out of carrier appetite"],
+    ["OUT_OF_AGENCY_APPETITE", "out of agency appetite"],
+    ["NOT_SUBMITTED_ON_TIME", "not submitted on time"],
+  ])("stores %s and names it back", async (resolution, spoken) => {
+    const user = userEvent.setup();
+    const menu = await renderCard();
+
+    await user.selectOptions(menu, resolution);
+
+    await waitFor(() =>
+      expect(closeCall()).toEqual({
+        id: "t1",
+        status: "COMPLETE",
+        resolution,
+        completedAt: expect.any(String),
+        completedBy: "Dana Reyes",
+      })
+    );
+    // The menu commits on selection, so the confirmation is where a mis-pick
+    // gets caught — "closed" alone would not be enough to notice.
+    expect(await screen.findByText(new RegExp(spoken))).toBeInTheDocument();
+  });
+
+  it("badges the closed row with the reason it was closed", async () => {
+    const user = userEvent.setup();
+    const menu = await renderCard();
+
+    await user.selectOptions(menu, "NOT_SUBMITTED_ON_TIME");
+    await user.click(await screen.findByRole("button", { name: /Show 1 completed/ }));
+
+    expect(await screen.findByText("Not submitted on time")).toBeInTheDocument();
+  });
+
+  it("still reads a resolution-less row as out of carrier appetite", async () => {
+    // Rows closed before the reason was recorded. Back then a manual close
+    // could only mean one thing, so the fallback names what happened.
+    const user = userEvent.setup();
+    MarketingTask.list.mockResolvedValue({
+      data: [{ ...TASK, status: "COMPLETE", resolution: null }],
+      nextToken: null,
+    });
+    models.Quote.list.mockResolvedValue({ data: [], nextToken: null });
+    render(
+      <MemoryRouter>
+        <AccountMarketingTasks accountId="a1" completedByName="Dana Reyes" />
+      </MemoryRouter>
+    );
+
+    await user.click(await screen.findByRole("button", { name: /Show 1 completed/ }));
+    expect(await screen.findByText("Out of carrier appetite")).toBeInTheDocument();
+  });
+
+  it("leaves the row open when the write fails", async () => {
+    const user = userEvent.setup();
+    MarketingTask.update.mockResolvedValue({
+      data: null,
+      errors: [{ message: "Not authorized" }],
+    });
+    const menu = await renderCard();
+
+    await user.selectOptions(menu, "OUT_OF_APPETITE");
+
+    // `errors` on an Amplify write does not throw; dropping it would move the
+    // row to the completed table on a save that never landed.
+    expect(await screen.findByText(/permission/i)).toBeInTheDocument();
+    expect(
+      screen.getByRole("combobox", { name: "Close Acme Mutual" })
+    ).toBeInTheDocument();
   });
 });

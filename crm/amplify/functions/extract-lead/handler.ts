@@ -4,9 +4,11 @@ import { getAmplifyDataClientConfig } from "@aws-amplify/backend/function/runtim
 import { LambdaClient, InvokeCommand } from "@aws-sdk/client-lambda";
 import Anthropic from "@anthropic-ai/sdk";
 import type { Schema } from "../../data/resource";
+import { CLAUDE_MODEL } from "../model";
 import { listAllPages } from "../../../src/lib/pagination";
 import {
   CONSTRUCTION_TYPES,
+  CONTACT_TYPES,
   DEFAULT_DOCUMENT_CATEGORY,
   DOCUMENT_CATEGORY_EXTRACTION_PRIORITY,
 } from "../../../src/lib/enums";
@@ -80,10 +82,6 @@ const enumField = (values: string[]) => ({
 const EXTRACTION_SCHEMA = {
   type: "object",
   properties: {
-    contactFirstName: field("string"),
-    contactLastName: field("string"),
-    contactEmail: field("string"),
-    contactPhone: field("string"),
     address: field("string"),
     city: field("string"),
     state: {
@@ -92,16 +90,9 @@ const EXTRACTION_SCHEMA = {
     },
     zip: field("string"),
     unitCount: field("integer"),
-    yearBuilt: field("integer"),
     totalInsuredValue: field("number"),
-    constructionType: enumField([...CONSTRUCTION_TYPES]),
-    stories: field("integer"),
     coastal: field("boolean"),
     milesToCoast: field("number"),
-    roofUpdatedYear: field("integer"),
-    hvacUpdatedYear: field("integer"),
-    electricalUpdatedYear: field("integer"),
-    plumbingUpdatedYear: field("integer"),
     firewallsVerified: field("boolean"),
     currentCarrier: field("string"),
     currentAgent: {
@@ -113,16 +104,95 @@ const EXTRACTION_SCHEMA = {
       ...field("string"),
       description: "ISO date YYYY-MM-DD of current policy expiration",
     },
+    // An array, not four flat columns, because a prior policy packet names
+    // the manager, the board president and whoever the inspector called, and
+    // the flat shape could carry exactly one of them. Same shape as
+    // `buildings` — no per-field confidence, because the reviewer accepts or
+    // rejects a whole person rather than their phone number separately.
+    contacts: {
+      type: "array",
+      description:
+        "People named in the documents: manager, board officers, accounting, whoever an inspector should call",
+      items: {
+        type: "object",
+        properties: {
+          name: { type: "string", description: "Full name, or empty string" },
+          email: { type: "string", description: "Email address, or empty string" },
+          phone: {
+            type: "string",
+            description: "Phone as written in the document, or empty string",
+          },
+          type: { type: "string", enum: [...CONTACT_TYPES, ""] },
+        },
+        required: ["name", "email", "phone", "type"],
+        additionalProperties: false,
+      },
+    },
+    // Construction is per building, not per account. These seven used to be
+    // flat fields, which meant an association with a 1978 clubhouse and 2016
+    // townhouses got one year built and one construction class for the site.
     buildings: {
       type: "array",
-      description: "Individual buildings with square footage, if documented",
+      description:
+        "Individual buildings, each with its own construction and square footage",
       items: {
         type: "object",
         properties: {
           label: { type: "string", description: "Building name/label, or empty string" },
           sqft: { type: "string", description: "Square footage as digits only, or empty string" },
+          yearBuilt: { type: "string", description: "Year built, or empty string" },
+          stories: { type: "string", description: "Storey count, or empty string" },
+          constructionType: { type: "string", enum: [...CONSTRUCTION_TYPES, ""] },
+          roofYear: { type: "string", description: "Year the roof was last replaced, or empty string" },
+          heatingYear: { type: "string", description: "Year heating was last updated, or empty string" },
+          wiringYear: { type: "string", description: "Year wiring was last updated, or empty string" },
+          plumbingYear: { type: "string", description: "Year plumbing was last updated, or empty string" },
         },
-        required: ["label", "sqft"],
+        required: [
+          "label",
+          "sqft",
+          "yearBuilt",
+          "stories",
+          "constructionType",
+          "roofYear",
+          "heatingYear",
+          "wiringYear",
+          "plumbingYear",
+        ],
+        additionalProperties: false,
+      },
+    },
+    // LOSS_RUNS is already a document category with its own extraction
+    // priority, so a loss run reaching this handler is expected. What was
+    // missing was anywhere for what it says to go.
+    losses: {
+      type: "array",
+      description:
+        "Individual losses from any loss run: one entry per occurrence, not per claim transaction",
+      items: {
+        type: "object",
+        properties: {
+          dateOfLoss: { type: "string", description: "ISO date YYYY-MM-DD, or empty string" },
+          lineOfBusiness: { type: "string", description: "Line of business, or empty string" },
+          typeOfLoss: { type: "string", description: 'Cause, e.g. "Water damage", or empty string' },
+          description: { type: "string", description: "What happened, or empty string" },
+          claimDate: { type: "string", description: "ISO date the claim was reported, or empty string" },
+          amountPaid: { type: "string", description: "Digits only, or empty string" },
+          amountReserved: { type: "string", description: "Digits only, or empty string" },
+          amountOfLoss: { type: "string", description: "Total incurred, digits only, or empty string" },
+          claimOpen: { type: "string", description: '"Yes", "No", or empty string when the run does not say' },
+        },
+        required: [
+          "dateOfLoss",
+          "lineOfBusiness",
+          "typeOfLoss",
+          "description",
+          "claimDate",
+          "amountPaid",
+          "amountReserved",
+          "amountOfLoss",
+          "claimOpen",
+        ],
         additionalProperties: false,
       },
     },
@@ -132,31 +202,22 @@ const EXTRACTION_SCHEMA = {
     },
   },
   required: [
-    "contactFirstName",
-    "contactLastName",
-    "contactEmail",
-    "contactPhone",
     "address",
     "city",
     "state",
     "zip",
     "unitCount",
-    "yearBuilt",
     "totalInsuredValue",
-    "constructionType",
-    "stories",
     "coastal",
     "milesToCoast",
-    "roofUpdatedYear",
-    "hvacUpdatedYear",
-    "electricalUpdatedYear",
-    "plumbingUpdatedYear",
     "firewallsVerified",
     "currentCarrier",
     "currentAgent",
     "currentAnnualPremium",
     "currentPolicyExpiration",
+    "contacts",
     "buildings",
+    "losses",
     "summary",
   ],
   additionalProperties: false,
@@ -244,21 +305,29 @@ async function runExtraction(accountId: string) {
 
     // Strict structured-output grammar can't compile for a schema this wide
     // ("compiled grammar too large"). Describe the exact JSON shape in the
-    // prompt instead and parse defensively — Opus 4.8 returns clean JSON.
+    // prompt instead and parse defensively.
     const dataKeys = Object.keys(EXTRACTION_SCHEMA.properties).filter(
-      (k) => k !== "buildings" && k !== "summary"
+      (k) =>
+        k !== "contacts" &&
+        k !== "buildings" &&
+        k !== "losses" &&
+        k !== "summary"
     );
     const shapeInstruction = `Respond with ONLY a JSON object — no markdown fences, no commentary. The object has exactly these keys:
 ${dataKeys.join(", ")}
 Each of those keys maps to: { "value": <string>, "confidence": "high"|"medium"|"low", "evidence": <string>, "source": <string> }.
 Also include:
-  "buildings": array of { "label": <string>, "sqft": <string, digits only> } — [] if none documented,
+  "contacts": array of { "name": <string>, "email": <string>, "phone": <string>, "type": <string> } — [] if nobody is named,
+  "buildings": array of { "label", "sqft", "yearBuilt", "stories", "constructionType", "roofYear", "heatingYear", "wiringYear", "plumbingYear" } — all strings, "" where the documents don't say, [] if no buildings are documented,
+  "losses": array of { "dateOfLoss", "lineOfBusiness", "typeOfLoss", "description", "claimDate", "amountPaid", "amountReserved", "amountOfLoss", "claimOpen" } — all strings, [] if no loss run is attached,
   "summary": <string, 2-3 sentence underwriting summary>.
-For "constructionType".value use exactly one of: ${CONSTRUCTION_TYPES.join(", ")}, or "".`;
+For a building's "constructionType" use exactly one of: ${CONSTRUCTION_TYPES.join(", ")}, or "". Construction, storeys and the update years are per building — do not repeat one building's answers across the others unless the documents state them for each.
+A loss run lists one entry per occurrence. Do not emit a separate entry for each payment or reserve change on the same claim, and leave "claimOpen" empty rather than guessing when the run does not state a status.
+For a contact's "type" use exactly one of: ${CONTACT_TYPES.join(", ")}, or "" when the documents don't say what the person's role is. One entry per person — do not repeat the same person under two roles.`;
 
     const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
     const response = await anthropic.messages.create({
-      model: "claude-opus-4-8",
+      model: CLAUDE_MODEL,
       max_tokens: 16000,
       thinking: { type: "adaptive" },
       system: SYSTEM_PROMPT + "\n\n" + shapeInstruction,
@@ -299,6 +368,9 @@ For "constructionType".value use exactly one of: ${CONSTRUCTION_TYPES.join(", ")
         },
       }),
       extractionError: null,
+      // Attributed to the extraction rather than to "system", so the activity
+      // log distinguishes a robot's write from an unattributed one.
+      lastWriteBy: "extract-lead",
     });
     if (errors?.length) throw new Error(errors[0].message);
     console.log(
@@ -311,6 +383,7 @@ For "constructionType".value use exactly one of: ${CONSTRUCTION_TYPES.join(", ")
       id: accountId,
       extractionStatus: "FAILED",
       extractionError: err instanceof Error ? err.message : String(err),
+      lastWriteBy: "extract-lead",
     });
   }
 }

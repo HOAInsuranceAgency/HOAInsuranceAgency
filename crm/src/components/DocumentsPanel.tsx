@@ -8,6 +8,7 @@ import ConfirmButton from "./ConfirmButton";
 import { SaveStatus, useSaveStatus } from "./SaveStatus";
 import { Badge, statusBadge, OCR_STATUS_BADGE } from "../lib/badges";
 import { useSort, SortTh } from "../lib/useSort";
+import { withExtension } from "../../amplify/functions/process-document/name";
 import {
   DEFAULT_DOCUMENT_CATEGORY,
   DOCUMENT_CATEGORY_OPTIONS,
@@ -29,6 +30,14 @@ const CATEGORIES = DOCUMENT_CATEGORY_OPTIONS;
  * Attach-to-anything documents panel: uploads to
  * documents/{entityType}/{entityId}/{documentId}/{filename}, which the
  * Textract Lambda watches. observeQuery keeps OCR status live in the UI.
+ *
+ * Names are editable. `name` is only ever a display string — it is captured
+ * from the file at upload and is not the S3 key — so renaming is a plain
+ * field update: the object does not move, the download URL does not change,
+ * and nothing re-OCRs (the pipeline fires on `s3:ObjectCreated`, which a
+ * DynamoDB write is not). The one invariant the edit has to hold is the
+ * extension, because `canPreview` reads it off `name`; `withExtension` is
+ * shared with the Lambda's auto-namer so both paths hold it the same way.
  */
 export default function DocumentsPanel({
   entityType,
@@ -42,9 +51,13 @@ export default function DocumentsPanel({
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
   const [openDocId, setOpenDocId] = useState<string | null>(null);
-  // Auto-clearing: the row this confirmation names is gone from the table, so
-  // nothing on screen would ever go dirty and retire the message.
-  const delStatus = useSaveStatus({ autoClearMs: 4000 });
+  const [renameId, setRenameId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState("");
+  // Auto-clearing: these are per-row actions with no form to go dirty and
+  // retire the message — the deleted row is gone from the table entirely, and
+  // the renamed one is back to plain text — so nothing on screen would ever
+  // clear it.
+  const rowStatus = useSaveStatus({ autoClearMs: 4000 });
   const [previewDoc, setPreviewDoc] = useState<CrmDocument | null>(null);
   const [ocrSearch, setOcrSearch] = useState("");
   const [matchIdx, setMatchIdx] = useState(0);
@@ -105,8 +118,45 @@ export default function DocumentsPanel({
     window.open(url.toString(), "_blank");
   }
 
+  function startRename(doc: CrmDocument) {
+    setRenameId(doc.id);
+    // Seeded with the whole current name, extension included. Deleting it is
+    // allowed — `withExtension` puts it back — but a producer editing
+    // "scan_0043.pdf" should see what they are editing, not a stem.
+    setRenameValue(doc.name);
+    rowStatus.markDirty();
+  }
+
+  async function saveRename(doc: CrmDocument) {
+    // The extension comes from the stored object, not from the name being
+    // replaced: a name that has already been edited may no longer carry the
+    // right one, and the key always does.
+    const source = doc.s3Key && doc.s3Key !== "pending" ? doc.s3Key : doc.name;
+    const name = withExtension(renameValue, source);
+    if (!name) {
+      rowStatus.markError("A document needs a name.");
+      return;
+    }
+    setRenameId(null);
+    if (name === doc.name) return;
+
+    await rowStatus.run(
+      async () => {
+        const { errors } = await client.models.Document.update({
+          id: doc.id,
+          name,
+        });
+        if (errors?.length) throw new Error(errors[0].message);
+      },
+      {
+        savedMessage: `Renamed to "${name}".`,
+        errorMessage: "Couldn't rename that document.",
+      }
+    );
+  }
+
   async function deleteDoc(doc: CrmDocument) {
-    await delStatus.run(
+    await rowStatus.run(
       async () => {
         if (doc.s3Key && doc.s3Key !== "pending") {
           await remove({ path: doc.s3Key }).catch(() => {});
@@ -203,9 +253,9 @@ export default function DocumentsPanel({
           />
         </div>
         {error && <span className="error-text">{error}</span>}
-        {/* Deletes are per-row with no per-row place to report; this is the
-            panel's one status line. */}
-        <SaveStatus {...delStatus.status} />
+        {/* Renames and deletes are per-row with no per-row place to report;
+            this is the panel's one status line. */}
+        <SaveStatus {...rowStatus.status} />
       </div>
 
       {docs.length === 0 ? (
@@ -232,9 +282,27 @@ export default function DocumentsPanel({
                   d.ocrStatus,
                   OCR_STATUS_BADGE.PENDING
                 );
+                const renaming = renameId === d.id;
                 return (
                   <tr key={d.id}>
-                    <td>{d.name}</td>
+                    <td>
+                      {renaming ? (
+                        <div className="field">
+                          <input
+                            aria-label="Document name"
+                            autoFocus
+                            value={renameValue}
+                            onChange={(e) => setRenameValue(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") void saveRename(d);
+                              if (e.key === "Escape") setRenameId(null);
+                            }}
+                          />
+                        </div>
+                      ) : (
+                        d.name
+                      )}
+                    </td>
                     <td>
                       <span className="badge gray">
                         {CATEGORIES.find((c) => c.value === d.category)?.label ?? "—"}
@@ -250,29 +318,61 @@ export default function DocumentsPanel({
                       {d.sizeBytes ? `${Math.max(1, Math.round(d.sizeBytes / 1024))} KB` : "—"}
                     </td>
                     <td style={{ whiteSpace: "nowrap" }}>
-                      {d.s3Key !== "pending" && canPreview(d.name) && (
-                        <button className="link" onClick={() => setPreviewDoc(d)}>
-                          Preview
-                        </button>
+                      {/* While a row is being renamed its other actions are
+                          hidden rather than disabled: Preview and Download
+                          would still work, but leaving them there invites a
+                          click that discards the edit without saying so. */}
+                      {renaming ? (
+                        <>
+                          <button
+                            className="link"
+                            onClick={() => void saveRename(d)}
+                          >
+                            Save name
+                          </button>
+                          <button
+                            className="link"
+                            onClick={() => setRenameId(null)}
+                          >
+                            Cancel
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <button
+                            className="link"
+                            onClick={() => startRename(d)}
+                          >
+                            Rename
+                          </button>
+                          {d.s3Key !== "pending" && canPreview(d.name) && (
+                            <button
+                              className="link"
+                              onClick={() => setPreviewDoc(d)}
+                            >
+                              Preview
+                            </button>
+                          )}
+                          <button className="link" onClick={() => download(d)}>
+                            Download
+                          </button>
+                          {d.ocrStatus === "COMPLETE" && d.ocrText && (
+                            <button
+                              className="link"
+                              onClick={() =>
+                                setOpenDocId(openDocId === d.id ? null : d.id)
+                              }
+                            >
+                              {openDocId === d.id ? "Hide text" : "View text"}
+                            </button>
+                          )}
+                          <ConfirmButton
+                            confirmLabel="Confirm delete"
+                            cancelLabel="Keep"
+                            onConfirm={() => deleteDoc(d)}
+                          />
+                        </>
                       )}
-                      <button className="link" onClick={() => download(d)}>
-                        Download
-                      </button>
-                      {d.ocrStatus === "COMPLETE" && d.ocrText && (
-                        <button
-                          className="link"
-                          onClick={() =>
-                            setOpenDocId(openDocId === d.id ? null : d.id)
-                          }
-                        >
-                          {openDocId === d.id ? "Hide text" : "View text"}
-                        </button>
-                      )}
-                      <ConfirmButton
-                        confirmLabel="Confirm delete"
-                        cancelLabel="Keep"
-                        onConfirm={() => deleteDoc(d)}
-                      />
                     </td>
                   </tr>
                 );

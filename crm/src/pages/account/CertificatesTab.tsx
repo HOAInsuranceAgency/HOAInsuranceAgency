@@ -12,9 +12,15 @@ import {
   type Policy,
   type UserProfile,
 } from "../../lib/client";
-import { fillAcord25, signatureFor } from "../../lib/acord";
+import {
+  aiFillGaps,
+  fillAcord25,
+  signatureFor,
+  type AiFilledField,
+} from "../../lib/acord";
 import { useSort, SortTh } from "../../lib/useSort";
 import { useAsyncResource } from "../../lib/useAsyncResource";
+import AiFilledList from "../../components/AiFilledList";
 import FilePreviewModal from "../../components/FilePreview";
 import { SaveStatus, useSaveStatus } from "../../components/SaveStatus";
 import { useFormState } from "../../lib/useFormState";
@@ -82,6 +88,9 @@ export function CertificatesTab({
   const genStatus = useSaveStatus();
   const [error, setError] = useState("");
   const [previewCert, setPreviewCert] = useState<Certificate | null>(null);
+  // What the AI put on the certificate just generated. Cleared at the start
+  // of every run, so a stale list can never sit under a fresh outcome.
+  const [aiFilled, setAiFilled] = useState<AiFilledField[]>([]);
 
   async function issue() {
     if (!form.holderName.trim()) return;
@@ -132,19 +141,26 @@ export function CertificatesTab({
   async function generatePdf(cert: Certificate) {
     setGenerating(cert.id);
     setError("");
+    setAiFilled([]);
     await genStatus.run(async () => {
       try {
-        const { bytes, missing, unsigned } = await fillAcord25(
+        const { bytes, missing, unsigned, pdf, empty } = await fillAcord25(
           account,
           cert,
           policies,
           carriers,
           await signatureFor(profile.id)
         );
+        // Deterministic first, AI only in the gaps — and on a certificate the
+        // review list below matters more than anywhere else in the app: this
+        // is the document a holder relies on, and a wrong limit on it is a
+        // representation the agency made.
+        const ai = await aiFillGaps(pdf, bytes, empty, account.id, "acord25");
+        setAiFilled(ai.applied);
         const path = `certificates/${account.id}/${cert.id}.pdf`;
         await uploadData({
           path,
-          data: new Blob([bytes as BlobPart], { type: "application/pdf" }),
+          data: new Blob([ai.bytes as BlobPart], { type: "application/pdf" }),
           options: { contentType: "application/pdf" },
         }).result;
         const { data, errors } = await client.models.Certificate.update({
@@ -173,6 +189,12 @@ export function CertificatesTab({
             `The certificate went out UNSIGNED — ${unsigned}. Sign it by hand before sending it to the holder.`
           );
         }
+        if (ai.applied.length) {
+          notes.push(
+            `${ai.applied.length} blank field${ai.applied.length === 1 ? " was" : "s were"} completed by AI — check the list below before sending this to the holder.`
+          );
+        }
+        if (ai.note) notes.push(ai.note);
         // A note means the PDF exists but the user has to act on it: that is
         // `run`'s warning arm, not a second success flag.
         return notes.join(" ");
@@ -300,6 +322,7 @@ export function CertificatesTab({
               <SaveStatus {...genStatus.status} />
             </p>
           )}
+          <AiFilledList fields={aiFilled} />
           {/* `error` is the issue/generate failure; the reads have their own. */}
           {error && <p className="error-text">{error}</p>}
           {carrierRes.error && <p className="error-text">{carrierRes.error}</p>}

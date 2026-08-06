@@ -11,10 +11,14 @@ vi.mock("aws-amplify/data", () => ({
 import {
   EMAIL_RE,
   TEMPLATE_MISSING_MESSAGE,
+  assertNoErrors,
   daysUntil,
   fmtDate,
   fmtDateTime,
+  fmtPhone,
   friendlyError,
+  normalizePhone,
+  unwrap,
   validateDateRange,
   validatePositiveInt,
   validateYear,
@@ -707,5 +711,122 @@ describe("fmtDateTime", () => {
     pin("America/Los_Angeles", STAMP);
     expect(fmtDateTime(` ${STAMP} `)).toBe("7/31/2026, 3:04 PM");
     expect(fmtDateTime(" 2026-07-31 ")).toBe("7/31/2026");
+  });
+});
+
+describe("normalizePhone", () => {
+  it("formats a plain 10-digit US number however it was punctuated", () => {
+    for (const raw of [
+      "5551234567",
+      "555-123-4567",
+      "555.123.4567",
+      "(555) 123-4567",
+      "555 123 4567",
+      " 5551234567 ",
+    ]) {
+      expect(normalizePhone(raw)).toBe("(555) 123-4567");
+    }
+  });
+
+  it("is idempotent — its own output formats to itself", () => {
+    const once = normalizePhone("5551234567");
+    expect(normalizePhone(once)).toBe(once);
+  });
+
+  it("leaves an extension untouched", () => {
+    // The `x` is the whole point: strip it and the caller reaches a switchboard.
+    expect(normalizePhone("555-123-4567 x212")).toBe("555-123-4567 x212");
+    expect(normalizePhone("5551234567 ext 212")).toBe("5551234567 ext 212");
+  });
+
+  it("leaves an international number untouched", () => {
+    expect(normalizePhone("+44 20 7123 4567")).toBe("+44 20 7123 4567");
+    expect(normalizePhone("+1 555 123 4567")).toBe("+1 555 123 4567");
+    // Ten digits, but the leading + says they are not an area code.
+    expect(normalizePhone("+1234567890")).toBe("+1234567890");
+  });
+
+  it("leaves a 7-digit local number untouched", () => {
+    // There is no area code to place, and inventing one would be a guess.
+    expect(normalizePhone("123-4567")).toBe("123-4567");
+  });
+
+  it("leaves anything that isn't ten digits untouched", () => {
+    expect(normalizePhone("15551234567")).toBe("15551234567");
+    expect(normalizePhone("")).toBe("");
+    expect(normalizePhone("n/a")).toBe("n/a");
+  });
+});
+
+describe("fmtPhone", () => {
+  it("is normalizePhone for a value that is there", () => {
+    expect(fmtPhone("5551234567")).toBe("(555) 123-4567");
+    expect(fmtPhone("+44 20 7123 4567")).toBe("+44 20 7123 4567");
+  });
+
+  it("returns an em dash for absent input, like fmtMoney and fmtDate", () => {
+    expect(fmtPhone(null)).toBe("—");
+    expect(fmtPhone(undefined)).toBe("—");
+    expect(fmtPhone("")).toBe("—");
+    expect(fmtPhone("   ")).toBe("—");
+  });
+});
+
+describe("unwrap", () => {
+  it("returns the data when there are no errors", () => {
+    expect(unwrap({ data: { id: "b1" } })).toEqual({ id: "b1" });
+    expect(unwrap({ data: { id: "b1" }, errors: [] })).toEqual({ id: "b1" });
+  });
+
+  it("throws on errors, even when data came back too", () => {
+    expect(() =>
+      unwrap({ data: { id: "b1" }, errors: [{ message: "Not Authorized" }] })
+    ).toThrow("Not Authorized");
+  });
+
+  it("reports every error, not just the first", () => {
+    // `errors[0].message` — the spelling at 11 of the 36 sites — throws the
+    // rest away, and AppSync returns one entry per failed field.
+    expect(() =>
+      unwrap({
+        data: null,
+        errors: [{ message: "sqft is invalid" }, { message: "label is required" }],
+      })
+    ).toThrow("sqft is invalid; label is required");
+  });
+
+  it("throws a message — not an empty one — on a null payload", () => {
+    // The regression: `throw new Error(errors?.[0]?.message)` with no errors
+    // constructs `new Error(undefined)`, whose message is "".
+    let caught: unknown;
+    try {
+      unwrap({ data: null });
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(Error);
+    expect((caught as Error).message).not.toBe("");
+    expect(new Error(undefined as unknown as string).message).toBe("");
+  });
+
+  it("keeps a message friendlyError can still classify", () => {
+    expect(() => unwrap({ data: null, errors: [{ message: "Not Authorized" }] }))
+      .toThrow();
+    expect(friendlyError(new Error("Not Authorized; also this"), "fallback")).toBe(
+      "You don't have permission to do that."
+    );
+  });
+});
+
+describe("assertNoErrors", () => {
+  it("throws on errors", () => {
+    expect(() => assertNoErrors({ errors: [{ message: "boom" }] })).toThrow("boom");
+  });
+
+  it("accepts a null payload — a delete of a row that is already gone", () => {
+    expect(() => assertNoErrors({})).not.toThrow();
+    expect(() => assertNoErrors({ errors: [] })).not.toThrow();
+    // The distinction from `unwrap`, which is why both exist.
+    expect(() => unwrap({ data: null })).toThrow();
   });
 });

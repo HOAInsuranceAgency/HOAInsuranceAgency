@@ -14,6 +14,136 @@ export interface FillResult {
   filled: string[]; // logical fields written
   missing: string[]; // logical fields with no matching PDF field
   unsigned?: string; // why the signature isn't on the document, if it isn't
+  /**
+   * The filled document itself, so a second pass (W8's AI gap-fill) can write
+   * into it without re-parsing the template — and so `bytes` above stays what
+   * it has always been: the deterministic result, complete on its own if the
+   * gap-fill is skipped or fails.
+   */
+  pdf: PDFDocument;
+  /** Text fields still empty after the deterministic fill. */
+  empty: EmptyField[];
+}
+
+/** An unanswered text field, with what the template will accept in it. */
+export interface EmptyField {
+  name: string;
+  /** The field's `MaxLen`, when the template sets one. */
+  maxLength?: number;
+}
+
+/**
+ * Text fields still blank after a deterministic fill.
+ *
+ * Text only, and empty only: a checkbox has no value an AI should be guessing
+ * at (ticking "yes, there are firewalls" is a coverage-affecting claim), and
+ * a field the mapping already answered is not up for revision. That last part
+ * is the mechanism, not a convention — a field that has text is simply not in
+ * this list, so nothing downstream can be handed it.
+ */
+export function emptyTextFields(pdf: PDFDocument): EmptyField[] {
+  const out: EmptyField[] = [];
+  for (const field of pdf.getForm().getFields()) {
+    if (!(field instanceof PDFTextField)) continue;
+    try {
+      if (field.getText()) continue;
+      const maxLength = field.getMaxLength();
+      out.push({
+        name: field.getName(),
+        ...(typeof maxLength === "number" && maxLength > 0 ? { maxLength } : {}),
+      });
+    } catch {
+      // A field pdf-lib can't read is one nothing should try to write.
+    }
+  }
+  return out;
+}
+
+/**
+ * Save, falling back when pdf-lib can't rebuild the template's fonts.
+ *
+ * Complex ACORD templates reference fonts pdf-lib can't regenerate
+ * appearances for, and that throws during save. Setting NeedAppearances hands
+ * rendering to the PDF viewer instead. Deliberately NOT flattened either way
+ * — the PDF stays editable for manual touch-ups.
+ */
+async function savePdf(pdf: PDFDocument): Promise<Uint8Array> {
+  try {
+    return await pdf.save();
+  } catch {
+    try {
+      pdf.getForm().acroForm.dict.set(PDFName.of("NeedAppearances"), PDFBool.True);
+    } catch {
+      /* older pdf-lib internals — best effort */
+    }
+    return pdf.save({ updateFieldAppearances: false });
+  }
+}
+
+/** Why a suggested value didn't make it onto the page. */
+export type RejectReason =
+  /** The deterministic pass had already answered it. */
+  | "already-filled"
+  /** Longer than the template's MaxLen. */
+  | "too-long"
+  /** No such text field, or one pdf-lib couldn't write. */
+  | "no-such-field";
+
+export interface Rejection {
+  field: string;
+  reason: RejectReason;
+}
+
+/**
+ * Write AI-suggested values into an already-filled document.
+ *
+ * The second gate on W8's gap-fill, and the one that has the PDF in front of
+ * it: the Lambda drops placeholders and unrequested names, and this drops
+ * anything that doesn't fit the field or would overwrite an answer the
+ * mapping gave. A value rejected here is reported with its reason, not
+ * swallowed — a producer who is shown a value has to be able to find it on
+ * the page, and one who is told a value was dropped should be told why.
+ */
+export async function applySuggestions(
+  pdf: PDFDocument,
+  values: { field: string; value: string }[]
+): Promise<{ bytes: Uint8Array; applied: string[]; rejected: Rejection[] }> {
+  const form = pdf.getForm();
+  const applied: string[] = [];
+  const rejected: Rejection[] = [];
+
+  for (const { field: name, value } of values) {
+    try {
+      const field = form.getField(name);
+      if (!(field instanceof PDFTextField)) {
+        rejected.push({ field: name, reason: "no-such-field" });
+        continue;
+      }
+      // Re-checked rather than trusted: the list of blanks was taken before
+      // the round trip, and a deterministic value must never lose to a
+      // suggested one.
+      if (field.getText()) {
+        rejected.push({ field: name, reason: "already-filled" });
+        continue;
+      }
+      const max = field.getMaxLength();
+      if (typeof max === "number" && max > 0 && value.length > max) {
+        // pdf-lib would throw here too, and the catch below would call it a
+        // missing field. Checking first is what makes the producer's note say
+        // "too long for the box" instead of "that field doesn't exist" —
+        // truncating is not on the table either way, because half a legal
+        // name on a carrier form reads as deliberate.
+        rejected.push({ field: name, reason: "too-long" });
+        continue;
+      }
+      field.setText(value);
+      applied.push(name);
+    } catch {
+      rejected.push({ field: name, reason: "no-such-field" });
+    }
+  }
+
+  return { bytes: await savePdf(pdf), applied, rejected };
 }
 
 /**
@@ -221,21 +351,8 @@ export async function fillTemplate(
     }
   }
 
-  // Deliberately NOT flattened — the PDF stays editable for manual touch-ups.
-  // pdf-lib regenerates field appearances on save; complex ACORD templates
-  // reference fonts pdf-lib can't rebuild, throwing during save. If that
-  // happens, set NeedAppearances so the PDF viewer renders values itself
-  // and save without pdf-lib's (failing) appearance generation.
-  let bytes: Uint8Array;
-  try {
-    bytes = await pdf.save();
-  } catch {
-    try {
-      form.acroForm.dict.set(PDFName.of("NeedAppearances"), PDFBool.True);
-    } catch {
-      /* older pdf-lib internals — best effort */
-    }
-    bytes = await pdf.save({ updateFieldAppearances: false });
-  }
-  return { bytes, filled, missing, unsigned };
+  // Read before saving: `savePdf` may set NeedAppearances, and the blanks are
+  // a property of the fields either way.
+  const empty = emptyTextFields(pdf);
+  return { bytes: await savePdf(pdf), filled, missing, unsigned, pdf, empty };
 }

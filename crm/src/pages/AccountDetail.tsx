@@ -11,6 +11,7 @@ import DocumentsPanel from "../components/DocumentsPanel";
 import QuotesPanel from "../components/QuotesPanel";
 import AccountMarketingTasks from "../components/MarketingTasks";
 import PropertyPanel from "../components/PropertyPanel";
+import ContactsCard from "../components/ContactsCard";
 import FormsTab from "../components/FormsTab";
 import ExtractionPanel from "../components/ExtractionPanel";
 import Celebration from "../components/Celebration";
@@ -18,25 +19,101 @@ import { useAsyncResource } from "../lib/useAsyncResource";
 import { OverviewTab } from "./account/OverviewTab";
 import { DeleteLeadZone } from "./account/DeleteLeadZone";
 import { PoliciesTab } from "./account/PoliciesTab";
+import { PriorCarrierTab } from "./account/PriorCarrierTab";
+import { LossesTab } from "./account/LossesTab";
+import { ActivityTab } from "./account/ActivityTab";
 import { CertificatesTab } from "./account/CertificatesTab";
 
-type Tab = "overview" | "quotes" | "policies" | "documents" | "certificates";
+type Tab =
+  | "overview"
+  | "priorcarrier"
+  | "losses"
+  | "quotes"
+  | "policies"
+  | "documents"
+  | "certificates"
+  | "activity";
 
 const VALID_TABS: Tab[] = [
   "overview",
+  "priorcarrier",
+  "losses",
   "quotes",
   "policies",
   "documents",
   "certificates",
+  "activity",
 ];
+
+/**
+ * Tabs that only make sense while the account is still a prospect.
+ *
+ * Prior coverage is what the association is insured under *today*; once a
+ * quote binds, the Policy records answer that question and a second tab
+ * claiming to invites someone to maintain two answers to it. The rows stay in
+ * the table either way — every renewal submission fills the ACORD 125's
+ * prior-coverage block from them.
+ */
+const LEAD_ONLY_TABS: ReadonlySet<Tab> = new Set<Tab>(["priorcarrier"]);
+
+/** The tabs an account of this stage offers, in display order. */
+export function tabsFor(stage: string | null | undefined): [Tab, string][] {
+  const isLead = stage !== "CLIENT";
+  return [
+    ["overview", "Overview"],
+    ...(isLead ? ([["priorcarrier", "Prior coverage"]] as [Tab, string][]) : []),
+    // Not lead-only: loss history follows the account, and a renewal
+    // submission declares the same losses a new-business one did.
+    ["losses", "Losses"],
+    ["quotes", "Quotes"],
+    ["policies", "Policies"],
+    ["documents", "Documents"],
+    ["certificates", "Certificates"],
+    ["activity", "Activity"],
+  ];
+}
+
+/**
+ * The tab actually rendered, given the one the URL or a click asked for.
+ *
+ * `?tab=` is read before the account has loaded, so at that moment there is
+ * nothing to check the stage against. A client reached by a bookmarked
+ * `?tab=priorcarrier` would otherwise sit on a tab with no button to leave it
+ * by — the tab list would not contain it, so nothing would be highlighted and
+ * the panel would be one nobody can navigate back to.
+ *
+ * Derived rather than corrected in an effect: correcting state after the fact
+ * renders the wrong tab for a frame first, and leaves two places that know
+ * the rule.
+ */
+export function resolveTab(requested: Tab, stage: string | null | undefined): Tab {
+  return stage === "CLIENT" && LEAD_ONLY_TABS.has(requested) ? "overview" : requested;
+}
 
 export default function AccountDetail({ profile }: { profile: UserProfile }) {
   const { id } = useParams<{ id: string }>();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const initialTab = searchParams.get("tab") as Tab | null;
   const [tab, setTab] = useState<Tab>(
     initialTab && VALID_TABS.includes(initialTab) ? initialTab : "overview"
   );
+
+  /**
+   * Clicking a tab puts it in the URL, the way Settings already does.
+   *
+   * `?tab=` was read on mount and never written, so the address bar kept
+   * whatever it was opened with however far the user then navigated — which
+   * makes every link copied out of it point at the wrong panel, and a refresh
+   * land somewhere other than where the reader was. `replace` rather than
+   * `push`: switching tabs is not a navigation Back should have to walk out of
+   * one step at a time.
+   */
+  function selectTab(t: Tab) {
+    setTab(t);
+    const next = new URLSearchParams(searchParams);
+    next.set("tab", t);
+    setSearchParams(next, { replace: true });
+  }
   const [celebrate, setCelebrate] = useState(false);
   const prevStage = useRef<string | null>(null);
 
@@ -71,6 +148,9 @@ export default function AccountDetail({ profile }: { profile: UserProfile }) {
   if (notFound) return <p>Account not found.</p>;
   if (!account) return <p className="muted">Loading…</p>;
 
+  const tabs = tabsFor(account.stage);
+  const activeTab = resolveTab(tab, account.stage);
+
   return (
     <>
       {celebrate && (
@@ -88,33 +168,26 @@ export default function AccountDetail({ profile }: { profile: UserProfile }) {
       </p>
 
       <div className="tabs">
-        {(
-          [
-            ["overview", "Overview"],
-            ["quotes", "Quotes"],
-            ["policies", "Policies"],
-            ["documents", "Documents"],
-            ["certificates", "Certificates"],
-          ] as [Tab, string][]
-        ).map(([t, label]) => (
+        {tabs.map(([t, label]) => (
           <button
             key={t}
-            className={tab === t ? "active" : ""}
-            onClick={() => setTab(t)}
+            className={activeTab === t ? "active" : ""}
+            onClick={() => selectTab(t)}
           >
             {label}
           </button>
         ))}
       </div>
 
-      {tab === "overview" && (
+      {activeTab === "overview" && (
         <>
           <OverviewTab account={account} onChange={setAccount} />
+          <ContactsCard accountId={account.id} />
           <PropertyPanel account={account} onChange={setAccount} />
           {account.stage === "LEAD" && <DeleteLeadZone account={account} />}
         </>
       )}
-      {tab === "quotes" && (
+      {activeTab === "quotes" && (
         <>
           <div className="card">
             <QuotesPanel account={account} onAccountChange={setAccount} />
@@ -125,8 +198,10 @@ export default function AccountDetail({ profile }: { profile: UserProfile }) {
           />
         </>
       )}
-      {tab === "policies" && <PoliciesTab accountId={account.id} />}
-      {tab === "documents" && (
+      {activeTab === "priorcarrier" && <PriorCarrierTab accountId={account.id} />}
+      {activeTab === "losses" && <LossesTab accountId={account.id} />}
+      {activeTab === "policies" && <PoliciesTab accountId={account.id} />}
+      {activeTab === "documents" && (
         <>
           <div className="card">
             <DocumentsPanel entityType="ACCOUNT" entityId={account.id} />
@@ -135,9 +210,10 @@ export default function AccountDetail({ profile }: { profile: UserProfile }) {
           <FormsTab account={account} profile={profile} />
         </>
       )}
-      {tab === "certificates" && (
+      {activeTab === "certificates" && (
         <CertificatesTab account={account} profile={profile} />
       )}
+      {activeTab === "activity" && <ActivityTab accountId={account.id} />}
     </>
   );
 }

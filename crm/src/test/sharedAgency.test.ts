@@ -73,6 +73,7 @@ const CRM_CANONICAL: Record<string, string> = {
   zip: AGENCY.zip,
   phone: AGENCY.phone,
   email: AGENCY.email,
+  leadEmail: AGENCY.leadEmail,
 };
 
 /** What each `web/src/constants.ts` export must equal. */
@@ -81,6 +82,8 @@ const WEB_CANONICAL: Record<string, string> = {
   PHONE_HREF: AGENCY_FMT.phoneHref,
   EMAIL: AGENCY.email,
   EMAIL_HREF: AGENCY_FMT.emailHref,
+  LEAD_EMAIL: AGENCY.leadEmail,
+  LEAD_EMAIL_HREF: AGENCY_FMT.leadEmailHref,
   ADDRESS_LINE1: AGENCY.addressLine1,
   ADDRESS_LINE2: AGENCY_FMT.addressLine2,
   FORMSUBMIT_URL: AGENCY_FMT.formsubmitUrl,
@@ -97,6 +100,7 @@ describe("shared/agency — stored fields", () => {
       zip: "01752",
       phone: "508-233-2261",
       email: "insurance@ProtectMyHOA.com",
+      leadEmail: "sales@ProtectMyHOA.com",
     });
   });
 
@@ -132,20 +136,34 @@ describe("shared/agency — derived shapes", () => {
     expect(AGENCY_FMT.phoneIntl.replace(/\D/g, "")).toBe(`1${digits}`);
   });
 
-  it("derives every email shape from the one stored address", () => {
+  it("derives every email shape from the stored address it belongs to", () => {
     expect(AGENCY_FMT.emailHref).toBe(`mailto:${AGENCY.email}`);
     expect(AGENCY_FMT.emailLower).toBe(AGENCY.email.toLowerCase());
-    expect(AGENCY_FMT.formsubmitUrl).toBe(
-      `https://formsubmit.co/ajax/${AGENCY_FMT.emailLower}`
-    );
+    expect(AGENCY_FMT.leadEmailHref).toBe(`mailto:${AGENCY.leadEmail}`);
+    expect(AGENCY_FMT.leadEmailLower).toBe(AGENCY.leadEmail.toLowerCase());
     // The two spellings differ only by case — they are one address, not two.
     expect(AGENCY_FMT.emailLower).not.toBe(AGENCY.email);
     expect(AGENCY_FMT.emailLower.toLowerCase()).toBe(AGENCY.email.toLowerCase());
+    expect(AGENCY_FMT.leadEmailLower).not.toBe(AGENCY.leadEmail);
+  });
+
+  it("delivers website forms to sales, not to the general inbox", () => {
+    // The point of the split. `email` is printed on ACORD forms already sent
+    // to carriers and on issued certificates; a lead-routing change must not
+    // be able to reach it, which is why these are two stored fields and the
+    // FormSubmit endpoint is built from the lead one.
+    expect(AGENCY_FMT.formsubmitUrl).toBe(
+      `https://formsubmit.co/ajax/${AGENCY_FMT.leadEmailLower}`
+    );
+    expect(AGENCY_FMT.formsubmitUrl).not.toContain(AGENCY_FMT.emailLower);
+    expect(AGENCY.leadEmail).not.toBe(AGENCY.email);
   });
 
   it("keeps mixed case canonical and lowercase strictly a transport form", () => {
     expect(AGENCY.email).toBe("insurance@ProtectMyHOA.com");
+    expect(AGENCY.leadEmail).toBe("sales@ProtectMyHOA.com");
     expect(AGENCY_FMT.emailHref).toContain("ProtectMyHOA");
+    expect(AGENCY_FMT.leadEmailHref).toContain("ProtectMyHOA");
     expect(AGENCY_FMT.formsubmitUrl).not.toContain("ProtectMyHOA");
     expect(AGENCY_FMT.formsubmitUrl).toBe(
       AGENCY_FMT.formsubmitUrl.toLowerCase()
@@ -158,10 +176,12 @@ describe("shared/agency — derived shapes", () => {
     expect(AGENCY_FMT.addressLine2).toBe("Marlborough, MA 01752"); // constants.ts
     expect(AGENCY_FMT.phoneHref).toBe("tel:+15082332261"); // constants.ts
     expect(AGENCY_FMT.emailHref).toBe("mailto:insurance@ProtectMyHOA.com");
+    expect(AGENCY_FMT.leadEmailHref).toBe("mailto:sales@ProtectMyHOA.com");
     expect(AGENCY_FMT.formsubmitUrl).toBe(
-      "https://formsubmit.co/ajax/insurance@protectmyhoa.com"
+      "https://formsubmit.co/ajax/sales@protectmyhoa.com"
     );
-    expect(AGENCY_FMT.emailLower).toBe("insurance@protectmyhoa.com"); // QuoteApp SUBMIT_TO
+    expect(AGENCY_FMT.emailLower).toBe("insurance@protectmyhoa.com"); // license-alerts recipient
+    expect(AGENCY_FMT.leadEmailLower).toBe("sales@protectmyhoa.com");
     expect(AGENCY_FMT.phoneIntl).toBe("+1-508-233-2261"); // Layout.astro JSON-LD
   });
 });

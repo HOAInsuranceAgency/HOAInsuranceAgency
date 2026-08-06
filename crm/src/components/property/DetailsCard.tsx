@@ -1,13 +1,15 @@
 import {
   client,
   US_STATES,
+  unwrap,
   validateAccountFields,
   type Account,
 } from "../../lib/client";
 import { AddressAutocomplete } from "../../lib/googlePlaces";
 import { useFormState } from "../../lib/useFormState";
 import { SaveStatus, useSaveStatus } from "../SaveStatus";
-import { CONSTRUCTION_OPTIONS } from "../../lib/enums";
+import { inputValue, num, str } from "../../lib/formCodec";
+import { IntegerInput } from "../inputs";
 
 export default function DetailsCard({
   account,
@@ -20,49 +22,25 @@ export default function DetailsCard({
   // is left unread and `useSaveStatus` carries saving/saved/error together.
   const saveStatus = useSaveStatus();
   const { form, setF, patch } = useFormState({
-    address: account.address ?? "",
-    city: account.city ?? "",
-    county: account.county ?? "",
-    state: account.state ?? "",
-    zip: account.zip ?? "",
-    unitCount: account.unitCount?.toString() ?? "",
-    yearBuilt: account.yearBuilt?.toString() ?? "",
-    constructionType: account.constructionType ?? "",
+    address: inputValue(account.address),
+    city: inputValue(account.city),
+    county: inputValue(account.county),
+    state: inputValue(account.state),
+    zip: inputValue(account.zip),
+    unitCount: inputValue(account.unitCount),
     firewallsVerified: account.firewallsVerified ?? false,
-    stories: account.stories?.toString() ?? "",
     coastal: account.coastal ?? false,
-    milesToCoast: account.milesToCoast?.toString() ?? "",
-    roofUpdatedYear: account.roofUpdatedYear?.toString() ?? "",
-    hvacUpdatedYear: account.hvacUpdatedYear?.toString() ?? "",
-    electricalUpdatedYear: account.electricalUpdatedYear?.toString() ?? "",
-    plumbingUpdatedYear: account.plumbingUpdatedYear?.toString() ?? "",
-    otherUpdates: account.otherUpdates ?? "",
+    milesToCoast: inputValue(account.milesToCoast),
+    otherUpdates: inputValue(account.otherUpdates),
+    fireDistrict: inputValue(account.fireDistrict),
   }, { onEdit: saveStatus.markDirty });
 
-  const yearOk = (v: string) => {
-    if (!v) return true;
-    const n = Number(v);
-    return Number.isInteger(n) && n >= 1600 && n <= new Date().getFullYear() + 1;
-  };
-
   async function save() {
+    // The four system-update year checks moved with the years themselves:
+    // they are per-building now, in `BuildingsCard`'s validator.
     const problems = validateAccountFields(form);
     if (problems.length) {
       saveStatus.markError(problems.join(" "));
-      return;
-    }
-    const badYears = (
-      [
-        ["roofUpdatedYear", "Roof"],
-        ["hvacUpdatedYear", "HVAC"],
-        ["electricalUpdatedYear", "Electrical"],
-        ["plumbingUpdatedYear", "Plumbing"],
-      ] as const
-    ).filter(([k]) => !yearOk(form[k]));
-    if (badYears.length) {
-      saveStatus.markError(
-        `Check the ${badYears.map(([, l]) => l).join(", ")} year${badYears.length > 1 ? "s" : ""}.`
-      );
       return;
     }
     if (form.coastal && form.milesToCoast && Number(form.milesToCoast) < 0) {
@@ -71,33 +49,24 @@ export default function DetailsCard({
     }
     await saveStatus.run(
       async () => {
-        const { data, errors } = await client.models.Account.update({
-          id: account.id,
-          address: form.address.trim() || null,
-          city: form.city.trim() || null,
-          county: form.county.trim() || null,
-          state: form.state || null,
-          zip: form.zip.trim() || null,
-          unitCount: form.unitCount ? Number(form.unitCount) : null,
-          yearBuilt: form.yearBuilt ? Number(form.yearBuilt) : null,
-          constructionType: (form.constructionType || null) as Account["constructionType"],
-          firewallsVerified: form.firewallsVerified,
-          stories: form.stories ? Number(form.stories) : null,
-          coastal: form.coastal,
-          milesToCoast:
-            form.coastal && form.milesToCoast ? Number(form.milesToCoast) : null,
-          roofUpdatedYear: form.roofUpdatedYear ? Number(form.roofUpdatedYear) : null,
-          hvacUpdatedYear: form.hvacUpdatedYear ? Number(form.hvacUpdatedYear) : null,
-          electricalUpdatedYear: form.electricalUpdatedYear
-            ? Number(form.electricalUpdatedYear)
-            : null,
-          plumbingUpdatedYear: form.plumbingUpdatedYear
-            ? Number(form.plumbingUpdatedYear)
-            : null,
-          otherUpdates: form.otherUpdates.trim() || null,
-        });
-        if (errors?.length || !data) throw new Error(errors?.[0]?.message);
-        onChange(data);
+        onChange(
+          unwrap(
+            await client.models.Account.update({
+              id: account.id,
+              address: str(form.address),
+              city: str(form.city),
+              county: str(form.county),
+              state: str(form.state),
+              zip: str(form.zip),
+              unitCount: num(form.unitCount),
+              firewallsVerified: form.firewallsVerified,
+              coastal: form.coastal,
+              milesToCoast: form.coastal ? num(form.milesToCoast) : null,
+              otherUpdates: str(form.otherUpdates),
+              fireDistrict: str(form.fireDistrict),
+            })
+          )
+        );
       },
       { errorMessage: "Save failed" }
     );
@@ -149,42 +118,17 @@ export default function DetailsCard({
         </div>
         <div className="field">
           <label>Unit count</label>
-          <input
-            type="number"
-            min={0}
+          <IntegerInput
             value={form.unitCount}
-            onChange={(e) => setF("unitCount", e.target.value)}
+            onChange={(v) => setF("unitCount", v)}
           />
         </div>
         <div className="field">
-          <label>Year built</label>
+          <label>Fire district</label>
           <input
-            type="number"
-            value={form.yearBuilt}
-            onChange={(e) => setF("yearBuilt", e.target.value)}
-          />
-        </div>
-        <div className="field">
-          <label>Construction type</label>
-          <select
-            value={form.constructionType}
-            onChange={(e) => setF("constructionType", e.target.value)}
-          >
-            <option value="">—</option>
-            {CONSTRUCTION_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="field">
-          <label>Stories</label>
-          <input
-            type="number"
-            min={1}
-            value={form.stories}
-            onChange={(e) => setF("stories", e.target.value)}
+            placeholder="Middlesex FD #3"
+            value={form.fireDistrict}
+            onChange={(e) => setF("fireDistrict", e.target.value)}
           />
         </div>
         <div className="field">
@@ -209,9 +153,21 @@ export default function DetailsCard({
             Coastal exposure
           </label>
         </div>
+        <div className="field full">
+          <label>Other updates</label>
+          <textarea
+            rows={2}
+            placeholder="Elevators 2019, windows 2021…"
+            value={form.otherUpdates}
+            onChange={(e) => setF("otherUpdates", e.target.value)}
+          />
+        </div>
         {form.coastal && (
           <div className="field">
             <label>Miles to coast</label>
+            {/* Left as a native number input: a distance under 100 miles gains
+                nothing from thousands separators, and none of the six
+                formatted inputs is a fractional non-money quantity. */}
             <input
               type="number"
               min={0}
@@ -223,51 +179,10 @@ export default function DetailsCard({
         )}
       </div>
 
-      <h3>System updates (year completed)</h3>
-      <div className="form-grid">
-        <div className="field">
-          <label>Roof</label>
-          <input
-            type="number"
-            value={form.roofUpdatedYear}
-            onChange={(e) => setF("roofUpdatedYear", e.target.value)}
-          />
-        </div>
-        <div className="field">
-          <label>HVAC</label>
-          <input
-            type="number"
-            value={form.hvacUpdatedYear}
-            onChange={(e) => setF("hvacUpdatedYear", e.target.value)}
-          />
-        </div>
-        <div className="field">
-          <label>Electrical</label>
-          <input
-            type="number"
-            value={form.electricalUpdatedYear}
-            onChange={(e) => setF("electricalUpdatedYear", e.target.value)}
-          />
-        </div>
-        <div className="field">
-          <label>Plumbing</label>
-          <input
-            type="number"
-            value={form.plumbingUpdatedYear}
-            onChange={(e) => setF("plumbingUpdatedYear", e.target.value)}
-          />
-        </div>
-        <div className="field full">
-          <label>Other updates</label>
-          <textarea
-            rows={2}
-            placeholder="Elevators 2019, windows 2021…"
-            value={form.otherUpdates}
-            onChange={(e) => setF("otherUpdates", e.target.value)}
-          />
-        </div>
-      </div>
-
+      {/* The "System updates (year completed)" section is gone: the roof,
+          HVAC, electrical and plumbing years are properties of a building,
+          not of a site, and live on each Building now. `otherUpdates` stays
+          here — it is a site-level note — and has moved into the grid above. */}
       <div className="form-actions">
         <button className="primary" disabled={saveStatus.busy} onClick={save}>
           {saveStatus.busy ? "Saving…" : "Save property"}

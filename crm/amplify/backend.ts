@@ -1,12 +1,16 @@
 import { defineBackend } from "@aws-amplify/backend";
+import { Duration } from "aws-cdk-lib";
 import { PolicyStatement } from "aws-cdk-lib/aws-iam";
 import { Secret } from "aws-cdk-lib/aws-secretsmanager";
 import {
   AttributeType,
   BillingMode,
+  StreamViewType,
   Table,
   TableEncryption,
 } from "aws-cdk-lib/aws-dynamodb";
+import { StartingPosition } from "aws-cdk-lib/aws-lambda";
+import { DynamoEventSource } from "aws-cdk-lib/aws-lambda-event-sources";
 import { auth } from "./auth/resource";
 import { data } from "./data/resource";
 import { storage } from "./storage/resource";
@@ -14,15 +18,21 @@ import { processDocument } from "./functions/process-document/resource";
 import { leadIntake } from "./functions/lead-intake/resource";
 import { teamAdmin } from "./functions/team-admin/resource";
 import { extractLead } from "./functions/extract-lead/resource";
+import { formFiller } from "./functions/form-filler/resource";
 import { certNumber } from "./functions/cert-number/resource";
 import { renewalTasks } from "./functions/renewal-tasks/resource";
+import { licenseAlerts } from "./functions/license-alerts/resource";
+import { activityLog } from "./functions/activity-log/resource";
 import {
   magicLinkDefine,
   magicLinkCreate,
   magicLinkVerify,
 } from "./functions/magic-link/resource";
 
-const backend = defineBackend({
+// Exported only so `scripts/synth-check.ts` can reach the CDK app and force a
+// real synth. Nothing else imports it; `ampx` uses this file for its side
+// effects, as it always has.
+export const backend = defineBackend({
   auth,
   data,
   storage,
@@ -30,8 +40,11 @@ const backend = defineBackend({
   leadIntake,
   teamAdmin,
   extractLead,
+  formFiller,
   certNumber,
   renewalTasks,
+  licenseAlerts,
+  activityLog,
   magicLinkDefine,
   magicLinkCreate,
   magicLinkVerify,
@@ -79,6 +92,70 @@ backend.certNumber.addEnvironment(
   "CERT_SEQ_BASES",
   JSON.stringify({ "2026": 10 })
 );
+
+// ── Activity log: DynamoDB Streams → Activity rows ───────────────────
+//
+// Every model whose changes belong in an account's timeline. Adding one is a
+// line here plus `lastWriteBy` on the model.
+//
+// NOT streamed: Activity itself (it would loop, and with no mapping it
+// cannot), plus Carrier, AppetiteGuide, MarketingTask, UserProfile, License
+// and ProducerLicense — none of them hangs off an account, and the tab is
+// account-scoped. Adding any of them later is one entry each plus somewhere
+// to show it.
+const STREAMED_MODELS = [
+  "Account",
+  "Contact",
+  "PriorCarrier",
+  "Building",
+  "Blanket",
+  "GlApplication",
+  "GlClassCode",
+  "DoApplication",
+  "DoCoveragePart",
+  "Loss",
+  "Quote",
+  "Policy",
+  "Certificate",
+  "Document",
+] as const;
+
+for (const model of STREAMED_MODELS) {
+  const table = backend.data.resources.tables[model];
+
+  // Set explicitly rather than relied upon. Amplify enables a stream for its
+  // subscriptions, but the VIEW TYPE is what matters here and is not ours to
+  // assume: OLD_IMAGE is required for the diff and is the *only* thing a
+  // DELETE record carries. Asserting it costs one line and removes the
+  // question — a stream that turned out to be NEW_IMAGE would produce an
+  // activity log where every update looked like a creation and every delete
+  // was invisible.
+  //
+  // Through the wrapper, NOT `table.node.defaultChild`. An Amplify data table
+  // is a `Custom::AmplifyDynamoDBTable` custom resource, not a CDK L2 Table,
+  // so it has no CfnTable default child — reaching for one yields undefined
+  // and fails synth with "Cannot set properties of undefined". `tsc` cannot
+  // see that, because the cast asserts the type it wanted; the only thing
+  // that catches it is a synth, which is why `npm run synth:check` exists.
+  backend.data.resources.cfnResources.amplifyDynamoDbTables[model].streamSpecification =
+    { streamViewType: StreamViewType.NEW_AND_OLD_IMAGES };
+
+  backend.activityLog.resources.lambda.addEventSource(
+    new DynamoEventSource(table, {
+      startingPosition: StartingPosition.LATEST,
+      // A form save that writes three rows should be one invocation, not
+      // three. Five seconds is short enough that the tab feels live.
+      batchSize: 25,
+      maxBatchingWindow: Duration.seconds(5),
+      // A poison record must not replay until the stream's 24-hour retention
+      // drops it. The handler already swallows per-record failures; these are
+      // the backstop for anything it cannot.
+      retryAttempts: 2,
+      bisectBatchOnError: false,
+      reportBatchItemFailures: false,
+    })
+  );
+}
 
 // ── Auth behavior ────────────────────────────────────────────────────
 const { cfnUserPool, cfnUserPoolClient } = backend.auth.resources.cfnResources;
@@ -145,6 +222,47 @@ backend.teamAdmin.resources.lambda.addToRolePolicy(
   })
 );
 backend.teamAdmin.resources.lambda.addToRolePolicy(
+  new PolicyStatement({
+    actions: ["ses:SendEmail"],
+    resources: ["*"],
+  })
+);
+
+// ── License expiry alerts ────────────────────────────────────────────
+// Same verified sender as everything else we send.
+//
+// The RECIPIENT is deliberately not here. It comes from `shared/agency.ts`,
+// and this file cannot import that: Amplify's CDK assembly builder loads
+// `backend.ts` through a TS loader scoped to `amplify/`, so a path reaching
+// outside resolves to a module with no exports and the deploy dies with
+// "does not provide an export named 'AGENCY'". Handlers are different — they
+// are bundled by esbuild, which is why `renewal-tasks/handler.ts` can import
+// `src/lib/pagination` — so the address is read there instead. `tsc` and
+// `npm run synth:check` both pass on the import that fails; only a real
+// pipeline deploy catches it.
+// ── Lead text alerts ─────────────────────────────────────────────────
+// The intake handler texts every UserProfile with leadTextAlerts on. The
+// link in the message is this branch's portal, so it opens the lead the
+// recipient is being told about rather than the wrong environment's.
+//
+// `sns:Publish` on `*` because SMS-to-a-phone-number has no topic ARN to
+// scope to — the resource being published to is the number itself.
+//
+// ⚠️ Provisioning is NOT in this stack. Amazon SNS will not deliver to US
+// numbers until the account is out of the SMS sandbox AND has a registered
+// origination identity (10DLC for a long code, or a toll-free number).
+// Until then Publish succeeds and the message is dropped downstream, which
+// looks identical to working. See README.
+backend.leadIntake.addEnvironment("CRM_BASE_URL", magicLinkBaseUrl);
+backend.leadIntake.resources.lambda.addToRolePolicy(
+  new PolicyStatement({
+    actions: ["sns:Publish"],
+    resources: ["*"],
+  })
+);
+
+backend.licenseAlerts.addEnvironment("LICENSE_ALERT_FROM", magicLinkFrom);
+backend.licenseAlerts.resources.lambda.addToRolePolicy(
   new PolicyStatement({
     actions: ["ses:SendEmail"],
     resources: ["*"],

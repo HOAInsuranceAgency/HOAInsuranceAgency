@@ -4,17 +4,40 @@ import { describe, expect, it } from "vitest";
 import {
   ACCOUNT_TYPES,
   ACCOUNT_TYPE_OPTIONS,
+  ACORD125_LEGAL_ENTITY_FIELDS,
+  BUILDING_DEDUCTIBLE_TYPE_LABELS,
+  BUILDING_DEDUCTIBLE_TYPE_OPTIONS,
+  CAUSE_OF_LOSS_LABELS,
+  CAUSE_OF_LOSS_OPTIONS,
+  REPLACEMENT_COST_CODES,
   ACORD25_AGGREGATE_FIELDS,
   AGGREGATE_APPLIES_TO_OPTIONS,
   CONSTRUCTION_LABELS,
   CONSTRUCTION_OPTIONS,
   CONSTRUCTION_PHRASES,
   CONSTRUCTION_TYPES,
+  CONTACT_TYPE_LABELS,
+  CONTACT_TYPE_OPTIONS,
+  DEFAULT_ASSOCIATION_LEGAL_ENTITY,
+  DEFENSE_LIMIT_POSITION_LABELS,
+  DEFENSE_LIMIT_POSITION_OPTIONS,
+  DO_COVERAGE_TYPE_LABELS,
+  DO_COVERAGE_TYPE_OPTIONS,
+  DO_PARTS,
+  DO_PART_LABELS,
+  GL_DEDUCTIBLE_TYPE_LABELS,
+  GL_DEDUCTIBLE_TYPE_OPTIONS,
+  GL_PREMIUM_BASIS_LABELS,
+  GL_PREMIUM_BASIS_OPTIONS,
+  DEFAULT_CONTACT_TYPE,
   DOCUMENT_CATEGORY_EXTRACTION_PRIORITY,
   DOCUMENT_CATEGORY_OPTIONS,
+  LEGAL_ENTITY_LABELS,
+  LEGAL_ENTITY_OPTIONS,
   LICENSE_CLASS_LABELS,
   LICENSE_RESIDENCY_OPTIONS,
   LICENSE_STATUS_LABELS,
+  MANUAL_TASK_RESOLUTIONS,
   POLICY_STATUSES,
   REPLACEMENT_COST_OPTIONS,
   USER_ROLES,
@@ -24,8 +47,17 @@ import {
   type AccountStage,
   type AccountType,
   type AggregateAppliesTo,
+  type BuildingDeductibleType,
+  type CauseOfLoss,
   type ConstructionType,
+  type ContactType,
+  type DefenseLimitPosition,
+  type DoCoverageType,
+  type DoPart,
+  type GlDeductibleType,
+  type GlPremiumBasis,
   type DocumentCategory,
+  type LegalEntityType,
   type LicenseClass,
   type LicenseHolderType,
   type LicenseResidency,
@@ -61,9 +93,18 @@ const stillLiteralUnions: [
   NotWidened<ConstructionType>,
   NotWidened<ReplacementCostType>,
   NotWidened<AggregateAppliesTo>,
+  NotWidened<ContactType>,
+  NotWidened<LegalEntityType>,
+  NotWidened<GlDeductibleType>,
+  NotWidened<GlPremiumBasis>,
+  NotWidened<DoPart>,
+  NotWidened<DoCoverageType>,
+  NotWidened<DefenseLimitPosition>,
+  NotWidened<BuildingDeductibleType>,
+  NotWidened<CauseOfLoss>,
 ] = [
   true, true, true, true, true, true, true, true, true, true, true, true, true,
-  true, true,
+  true, true, true, true, true, true, true, true, true, true, true,
 ];
 
 /**
@@ -119,6 +160,18 @@ describe("every table covers its schema enum exactly", () => {
     );
   });
 
+  it("MarketingTaskResolution — the menu is every member but QUOTED", () => {
+    // The close menu is built from MANUAL_TASK_RESOLUTIONS, so a resolution
+    // added to the schema and not to that list is one nobody can ever pick —
+    // it would compile, render, and simply be missing from the dropdown.
+    expect([...MANUAL_TASK_RESOLUTIONS, "QUOTED"].sort()).toEqual(
+      schemaEnum("MarketingTaskResolution").sort()
+    );
+    // And QUOTED stays out of it: it is detected from an existing quote, so
+    // offering it would let someone record a quote that isn't there.
+    expect(MANUAL_TASK_RESOLUTIONS).not.toContain("QUOTED");
+  });
+
   it("LicenseClass / LicenseStatus / LicenseResidency", () => {
     expect(Object.keys(LICENSE_CLASS_LABELS).sort()).toEqual(
       schemaEnum("LicenseClass").sort()
@@ -131,16 +184,66 @@ describe("every table covers its schema enum exactly", () => {
     );
   });
 
-  it("ReplacementCostType", () => {
-    expect(valuesOf(REPLACEMENT_COST_OPTIONS).sort()).toEqual(
-      schemaEnum("ReplacementCostType").sort()
-    );
+  it("ReplacementCostType — options and the 140's short codes agree", () => {
+    const members = schemaEnum("ReplacementCostType").sort();
+    expect(valuesOf(REPLACEMENT_COST_OPTIONS).sort()).toEqual(members);
+    expect(Object.keys(REPLACEMENT_COST_CODES).sort()).toEqual(members);
+    // The dropdown label carries an explanatory prefix; the form field takes
+    // the bare code. Both come off the same member set, which is the point.
+    expect(REPLACEMENT_COST_CODES.ERC).toBe("ERC");
   });
 
   it("AggregateAppliesTo — options and ACORD fields agree", () => {
     const members = schemaEnum("AggregateAppliesTo").sort();
     expect(valuesOf(AGGREGATE_APPLIES_TO_OPTIONS).sort()).toEqual(members);
     expect(Object.keys(ACORD25_AGGREGATE_FIELDS).sort()).toEqual(members);
+  });
+
+  it("ContactType — labels and options agree", () => {
+    const members = schemaEnum("ContactType").sort();
+    expect(Object.keys(CONTACT_TYPE_LABELS).sort()).toEqual(members);
+    expect(valuesOf(CONTACT_TYPE_OPTIONS).sort()).toEqual(members);
+    expect(members).toContain(DEFAULT_CONTACT_TYPE);
+  });
+
+  it("LegalEntityType — labels, options and ACORD fields agree", () => {
+    const members = schemaEnum("LegalEntityType").sort();
+    expect(Object.keys(LEGAL_ENTITY_LABELS).sort()).toEqual(members);
+    expect(valuesOf(LEGAL_ENTITY_OPTIONS).sort()).toEqual(members);
+    expect(Object.keys(ACORD125_LEGAL_ENTITY_FIELDS).sort()).toEqual(members);
+    expect(members).toContain(DEFAULT_ASSOCIATION_LEGAL_ENTITY);
+  });
+
+  it("the W4 property enums — labels and options agree", () => {
+    const pairs: [string, Record<string, string>, readonly { value: string }[]][] = [
+      ["GlDeductibleType", GL_DEDUCTIBLE_TYPE_LABELS, GL_DEDUCTIBLE_TYPE_OPTIONS],
+      [
+        "BuildingDeductibleType",
+        BUILDING_DEDUCTIBLE_TYPE_LABELS,
+        BUILDING_DEDUCTIBLE_TYPE_OPTIONS,
+      ],
+      ["CauseOfLoss", CAUSE_OF_LOSS_LABELS, CAUSE_OF_LOSS_OPTIONS],
+      ["GlPremiumBasis", GL_PREMIUM_BASIS_LABELS, GL_PREMIUM_BASIS_OPTIONS],
+      ["DoCoverageType", DO_COVERAGE_TYPE_LABELS, DO_COVERAGE_TYPE_OPTIONS],
+      [
+        "DefenseLimitPosition",
+        DEFENSE_LIMIT_POSITION_LABELS,
+        DEFENSE_LIMIT_POSITION_OPTIONS,
+      ],
+    ];
+    for (const [name, labels, options] of pairs) {
+      const members = schemaEnum(name).sort();
+      expect(Object.keys(labels).sort(), name).toEqual(members);
+      expect(valuesOf(options).sort(), name).toEqual(members);
+    }
+  });
+
+  it("DoPart — schema order is preserved, because the form prints A, B, C", () => {
+    // The one list here that is NOT sorted by label: the parts are a fixed
+    // sequence on the form, and rendering them alphabetically would be a
+    // coincidence rather than a decision.
+    expect([...DO_PARTS]).toEqual(schemaEnum("DoPart"));
+    expect(Object.keys(DO_PART_LABELS).sort()).toEqual(schemaEnum("DoPart").sort());
   });
 
   it("AccountType — the shared copy matches the schema", () => {
@@ -311,6 +414,54 @@ describe("option lists reproduce the hand-written ones they replaced", () => {
       "Producer",
       "Surplus lines",
     ]);
+  });
+
+  it("CONTACT_TYPE_OPTIONS — the contacts card's role picker", () => {
+    // No hand-written list preceded this one — the members are new in W1 — so
+    // this locks the rendered order rather than reproducing an old one. It is
+    // alphabetical by label, which is what `optionsByLabel` gives every list
+    // in this file, and it means the schema's INSPECTION-first declaration
+    // order does not decide what a producer sees first.
+    expect(CONTACT_TYPE_OPTIONS.map((o) => [o.value, o.label])).toEqual([
+      ["ACCOUNTING", "Accounting"],
+      ["CLAIMS", "Claims"],
+      ["DIRECTOR", "Director"],
+      ["INSPECTION", "Inspection"],
+      ["MANAGER", "Manager"],
+      ["OTHER", "Other"],
+      ["PRESIDENT", "President"],
+      ["TRUSTEE", "Trustee"],
+    ]);
+  });
+
+  it("LEGAL_ENTITY_OPTIONS — the Overview tab's entity picker", () => {
+    expect(LEGAL_ENTITY_OPTIONS.map((o) => [o.value, o.label])).toEqual([
+      ["CORPORATION", "Corporation"],
+      ["INDIVIDUAL", "Individual"],
+      ["JOINT_VENTURE", "Joint Venture"],
+      ["LLC", "LLC"],
+      ["NOT_FOR_PROFIT", "Not For Profit"],
+      ["PARTNERSHIP", "Partnership"],
+      ["SUBCHAPTER_S_CORP", "Subchapter S Corporation"],
+      ["TRUST", "Trust"],
+    ]);
+  });
+
+  it("ACORD125_LEGAL_ENTITY_FIELDS — the one confirmed name is unchanged", () => {
+    // This is the field acordApp.ts hardcoded before W2, and the only one in
+    // the table that has been seen on a real template. Every other name is
+    // derived from its convention, so if this one ever changes the derivation
+    // it anchors is no longer sound. The rest are pinned only to catch an
+    // accidental edit — they are not evidence of anything.
+    expect(ACORD125_LEGAL_ENTITY_FIELDS.NOT_FOR_PROFIT).toEqual([
+      "NamedInsured_LegalEntity_NotForProfitIndicator_A",
+    ]);
+    for (const [member, fields] of Object.entries(ACORD125_LEGAL_ENTITY_FIELDS)) {
+      expect(fields.length, `${member} has no candidates`).toBeGreaterThan(0);
+      for (const f of fields) {
+        expect(f).toMatch(/^NamedInsured_LegalEntity_\w+Indicator_A$/);
+      }
+    }
   });
 
   it("ACCOUNT_TYPE_OPTIONS — NewLead type <option>s", () => {
