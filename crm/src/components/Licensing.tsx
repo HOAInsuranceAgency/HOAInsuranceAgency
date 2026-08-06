@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { Suspense, lazy, useMemo, useState } from "react";
 import {
   client,
   licenseHealth,
@@ -14,14 +14,26 @@ import LicenseForm from "./licensing/LicenseForm";
 import StateCoverage from "./licensing/StateCoverage";
 
 /**
+ * Lazy because of what it drags in: `usMap.ts` is 78KB of Census outlines,
+ * and the app ships one bundle. Loading that for everyone who opens Settings
+ * to change their signature would be paying for a map on every page.
+ */
+const LicenseMap = lazy(() => import("./licensing/LicenseMap"));
+
+/**
  * Firm + personal licensing.
  *
  * Both kinds live in one License table separated by holderType, so renewal
  * tracking, document attachment and the state-coverage matrix are written
  * once. Supporting files (the license PDF, renewal receipts, CE certificates)
  * attach per-license as Documents with entityType=LICENSE.
+ *
+ * Two views over the same rows. The tables are for working through licences
+ * one at a time — filter, sort, edit, attach the renewal receipt. The map is
+ * for the question the tables answer badly, which is where the gaps are.
  */
 export default function Licensing() {
+  const [view, setView] = useState<"tables" | "map">("tables");
   const [adding, setAdding] = useState<HolderType | null>(null);
   const [editing, setEditing] = useState<License | null>(null);
   const [openDocsFor, setOpenDocsFor] = useState<string | null>(null);
@@ -150,36 +162,56 @@ export default function Licensing() {
         </div>
 
         <div className="lic-controls">
-          <input
-            className="lic-search"
-            type="search"
-            placeholder="Filter by state, license #, NPN, person…"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-          />
-          {attentionCount > 0 && (
-            <button
-              className={`lic-chip${attentionOnly ? " on" : ""}`}
-              onClick={() => setAttentionOnly((v) => !v)}
-              title="Expired, inactive, or expiring within 60 days"
-            >
-              ⚠ {attentionCount} need{attentionCount === 1 ? "s" : ""} attention
-            </button>
-          )}
-          {filtering && (
-            <button
-              className="link"
-              onClick={() => {
-                setQuery("");
-                setAttentionOnly(false);
-              }}
-            >
-              Clear
-            </button>
+          <div className="view-switch" role="group" aria-label="Licensing view">
+            {(["tables", "map"] as const).map((v) => (
+              <button
+                key={v}
+                aria-pressed={view === v}
+                onClick={() => setView(v)}
+              >
+                {v === "tables" ? "Tables" : "Map"}
+              </button>
+            ))}
+          </div>
+
+          {/* The filter belongs to the tables. On the map it would be a lie:
+              narrowing the rows to "NH" would repaint the other fifty states
+              red, and red there means "we can't write here" rather than "you
+              filtered them out". */}
+          {view === "tables" && (
+            <>
+              <input
+                className="lic-search"
+                type="search"
+                placeholder="Filter by state, license #, NPN, person…"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+              />
+              {attentionCount > 0 && (
+                <button
+                  className={`lic-chip${attentionOnly ? " on" : ""}`}
+                  onClick={() => setAttentionOnly((v) => !v)}
+                  title="Expired, inactive, or expiring within 60 days"
+                >
+                  ⚠ {attentionCount} need{attentionCount === 1 ? "s" : ""} attention
+                </button>
+              )}
+              {filtering && (
+                <button
+                  className="link"
+                  onClick={() => {
+                    setQuery("");
+                    setAttentionOnly(false);
+                  }}
+                >
+                  Clear
+                </button>
+              )}
+            </>
           )}
         </div>
 
-        {filtering && (
+        {view === "tables" && filtering && (
           <p className="muted small" style={{ margin: "8px 0 0" }}>
             Showing {firm.length + personal.length} of{" "}
             {allFirm.length + allPersonal.length} licenses.
@@ -187,6 +219,24 @@ export default function Licensing() {
         )}
       </div>
 
+      {view === "map" && (
+        <Suspense fallback={<p className="muted small">Loading map…</p>}>
+          {/* Unfiltered on purpose — see the note on the filter above. */}
+          <LicenseMap
+            firm={allFirm}
+            personal={allPersonal}
+            profiles={profiles}
+            canEdit={isAdmin}
+            onEdit={(l) => {
+              setAdding(null);
+              setEditing(l);
+            }}
+          />
+        </Suspense>
+      )}
+
+      {view === "tables" && (
+      <>
       <LicenseTable
         title="Firm licenses"
         blurb="The agency's own business-entity licenses, one per state you write in."
@@ -226,6 +276,8 @@ export default function Licensing() {
         openDocsFor={openDocsFor}
         setOpenDocsFor={setOpenDocsFor}
       />
+      </>
+      )}
 
       {(adding || editing) && (
         <LicenseForm
@@ -250,7 +302,11 @@ export default function Licensing() {
         />
       )}
 
-      <StateCoverage firm={firm} personal={personal} profiles={profiles} />
+      {/* The coverage matrix is the map's own question in table form, so it
+          belongs to the view that isn't already answering it. */}
+      {view === "tables" && (
+        <StateCoverage firm={firm} personal={personal} profiles={profiles} />
+      )}
     </>
   );
 }

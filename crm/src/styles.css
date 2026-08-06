@@ -517,6 +517,59 @@ mark.ocr-current { background: #f79b32; color: #fff; border-radius: 2px; }
   color: var(--accent-dark);
 }
 
+/* ── Licensing: tables / map view switch ── */
+/* Two chips sharing one pill outline, so they read as one control with two
+   positions rather than two buttons that happen to be adjacent. */
+.view-switch { display: inline-flex; border: 1px solid var(--border); border-radius: 999px; padding: 2px; gap: 2px; }
+.view-switch button {
+  padding: 6px 14px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.view-switch button:hover { color: var(--accent-dark); }
+.view-switch button[aria-pressed="true"] { background: var(--blue-bg); color: var(--accent-dark); }
+
+/* ── Licensing: coverage map ── */
+.us-map { display: block; width: 100%; height: auto; max-height: 62vh; }
+.us-state {
+  stroke: var(--card);
+  stroke-width: 1.2;
+  stroke-linejoin: round;
+  cursor: pointer;
+  /* Fill only. A transition on `all` animates the selected outline's width
+     too, which reads as the border wobbling on every click. */
+  transition: fill 120ms ease;
+}
+.us-state.is-covered { fill: var(--green); }
+.us-state.is-gap { fill: var(--red); }
+/* Lightened, not recoloured. Swapping the fill for an accent colour on hover
+   throws away the one thing the state is on screen to tell you. */
+.us-state:hover { filter: brightness(1.25); }
+/* Chrome draws a focus ring around an SVG path's bounding BOX, which for a
+   coastal state is a rectangle out in the Atlantic. Suppressed for both, then
+   given back as a stroke for keyboard users only — `:focus-visible` is what
+   distinguishes them, so `:focus` alone must not paint anything. */
+.us-state:focus { outline: none; }
+.us-state.is-selected,
+.us-state:focus-visible {
+  stroke: var(--text);
+  stroke-width: 2.5;
+  /* Otherwise a shared border is half-painted over by whichever neighbour
+     draws last, and the highlight comes out thinner on one side. */
+  paint-order: stroke;
+}
+.us-state:focus-visible { stroke: var(--accent-dark); }
+
+.map-key { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; white-space: nowrap; }
+.map-key-swatch { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+.map-key-swatch.is-covered { background: var(--green); }
+.map-key-swatch.is-gap { background: var(--red); margin-left: 10px; }
+
 /* ── Draw-to-sign pad ── */
 .sig-pad { max-width: 460px; }
 .sig-canvas {
