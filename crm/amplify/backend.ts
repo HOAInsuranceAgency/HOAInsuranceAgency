@@ -19,6 +19,7 @@ import { processDocument } from "./functions/process-document/resource";
 import { leadIntake } from "./functions/lead-intake/resource";
 import { teamAdmin } from "./functions/team-admin/resource";
 import { extractLead } from "./functions/extract-lead/resource";
+import { formFiller } from "./functions/form-filler/resource";
 import { certNumber } from "./functions/cert-number/resource";
 import { renewalTasks } from "./functions/renewal-tasks/resource";
 import { activityLog } from "./functions/activity-log/resource";
@@ -36,6 +37,7 @@ const backend = defineBackend({
   leadIntake,
   teamAdmin,
   extractLead,
+  formFiller,
   certNumber,
   renewalTasks,
   activityLog,

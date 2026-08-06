@@ -4,6 +4,7 @@ import { getAmplifyDataClientConfig } from "@aws-amplify/backend/function/runtim
 import { LambdaClient, InvokeCommand } from "@aws-sdk/client-lambda";
 import Anthropic from "@anthropic-ai/sdk";
 import type { Schema } from "../../data/resource";
+import { CLAUDE_MODEL } from "../model";
 import { listAllPages } from "../../../src/lib/pagination";
 import {
   CONSTRUCTION_TYPES,
@@ -304,7 +305,7 @@ async function runExtraction(accountId: string) {
 
     // Strict structured-output grammar can't compile for a schema this wide
     // ("compiled grammar too large"). Describe the exact JSON shape in the
-    // prompt instead and parse defensively — Opus 4.8 returns clean JSON.
+    // prompt instead and parse defensively.
     const dataKeys = Object.keys(EXTRACTION_SCHEMA.properties).filter(
       (k) =>
         k !== "contacts" &&
@@ -326,7 +327,7 @@ For a contact's "type" use exactly one of: ${CONTACT_TYPES.join(", ")}, or "" wh
 
     const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
     const response = await anthropic.messages.create({
-      model: "claude-opus-4-8",
+      model: CLAUDE_MODEL,
       max_tokens: 16000,
       thinking: { type: "adaptive" },
       system: SYSTEM_PROMPT + "\n\n" + shapeInstruction,

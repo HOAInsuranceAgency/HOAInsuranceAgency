@@ -3,6 +3,7 @@ import { processDocument } from "../functions/process-document/resource";
 import { leadIntake } from "../functions/lead-intake/resource";
 import { teamAdmin } from "../functions/team-admin/resource";
 import { extractLead } from "../functions/extract-lead/resource";
+import { formFiller } from "../functions/form-filler/resource";
 import { certNumber } from "../functions/cert-number/resource";
 import { renewalTasks } from "../functions/renewal-tasks/resource";
 import { activityLog } from "../functions/activity-log/resource";
@@ -958,6 +959,22 @@ const schema = a
       .authorization((allow) => [allow.authenticated()])
       .handler(a.handler.function(extractLead)),
 
+    // ── AI form filling: complete the blanks a mapping cannot ──────────
+    // Called after a deterministic fill, with the names of the text fields
+    // still empty. Returns { ok, values: [{ field, value, why }], skipped }.
+    // Nothing here writes: the browser holds the PDF and shows every value
+    // to the producer before the document is stored.
+    suggestFormFields: a
+      .mutation()
+      .arguments({
+        accountId: a.string().required(),
+        formKey: a.string().required(),
+        fieldNames: a.string().array().required(),
+      })
+      .returns(a.json())
+      .authorization((allow) => [allow.authenticated()])
+      .handler(a.handler.function(formFiller)),
+
     // ── Certificate numbering: atomically reserve the next COI number ──
     // Returns { certificateNumber, year, seq }. Uniqueness is guaranteed by
     // an atomic DynamoDB counter — see the cert-number function.
@@ -992,6 +1009,10 @@ const schema = a
     allow.resource(leadIntake),
     // The AI extraction function reads Documents and updates Accounts.
     allow.resource(extractLead),
+    // The form filler reads an account and everything under it. It writes
+    // nothing — the grant above is API-wide (see the block at the top of
+    // this list), so that is a property of the handler, not of the schema.
+    allow.resource(formFiller),
     // The daily sweep reads policies/carriers/quotes and writes MarketingTasks.
     allow.resource(renewalTasks),
     // The stream handler writes Activity and reads UserProfile to name an

@@ -17,5 +17,6 @@
 
 export { ACORD_FORMS, type AcordFormDef } from "./acordRegistry";
 export { listTemplateFields, signatureFor } from "./acordPdf";
+export { aiFillGaps, type AiFilledField } from "./aiFill";
 export { fillAcord25 } from "./acord25";
 export { MAPPED_APP_FORM_KEYS, buildingPages, fillAcordApp } from "./acordApp";

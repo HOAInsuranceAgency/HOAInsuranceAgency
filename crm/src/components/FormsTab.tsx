@@ -12,14 +12,17 @@ import {
 import {
   ACORD_FORMS,
   MAPPED_APP_FORM_KEYS,
+  aiFillGaps,
   buildingPages,
   fillAcordApp,
   signatureFor,
   type AcordFormDef,
+  type AiFilledField,
 } from "../lib/acord";
 import type { UserProfile } from "../lib/client";
 import { useSort, SortTh } from "../lib/useSort";
 import { useAsyncResource } from "../lib/useAsyncResource";
+import AiFilledList from "./AiFilledList";
 import FilePreviewModal from "./FilePreview";
 import { SaveStatus, useSaveStatus } from "./SaveStatus";
 
@@ -66,6 +69,12 @@ export default function FormsTab({
   // note is now `run`'s warning arm and a clean generation is green.
   const genStatus = useSaveStatus();
   const [preview, setPreview] = useState<CrmDocument | null>(null);
+  // What the AI put on the last document generated here, per page. Cleared at
+  // the start of every run so the panel can never show one form's review list
+  // beside another form's outcome.
+  const [aiFilled, setAiFilled] = useState<{ page: string; fields: AiFilledField[] }[]>(
+    []
+  );
 
 
   // Most recently generated first, as the fetch used to order them.
@@ -81,6 +90,7 @@ export default function FormsTab({
 
   async function generate(form: AcordFormDef) {
     setBusyKey(form.key);
+    setAiFilled([]);
     await genStatus.run(
       async () => {
         try {
@@ -181,6 +191,8 @@ export default function FormsTab({
           const safeName = account.name.replace(/[^\w-]+/g, "_");
           const allMissing = new Set<string>();
           let unsigned: string | undefined;
+          const aiNotes: string[] = [];
+          const reviewed: { page: string; fields: AiFilledField[] }[] = [];
 
           for (const [page, pageBuildings] of pages.entries()) {
             const filled = await fillAcordApp(
@@ -199,6 +211,20 @@ export default function FormsTab({
             for (const m of filled.missing) allMissing.add(m);
             unsigned = unsigned ?? filled.unsigned;
 
+            // Deterministic first, AI only in the gaps. A value the mapping
+            // wrote is not on the table: `filled.empty` is the fields that
+            // came out blank, and it is the only thing offered.
+            const ai = await aiFillGaps(
+              filled.pdf,
+              filled.bytes,
+              filled.empty,
+              account.id,
+              form.key
+            );
+            const label = pages.length > 1 ? `${page + 1} of ${pages.length}` : "";
+            if (ai.applied.length) reviewed.push({ page: label, fields: ai.applied });
+            if (ai.note) aiNotes.push(label ? `Page ${label}: ${ai.note}` : ai.note);
+
             // Numbered only when there is more than one, so the common case
             // keeps the filename it has always had.
             const suffix = pages.length > 1 ? `-${page + 1}of${pages.length}` : "";
@@ -206,7 +232,7 @@ export default function FormsTab({
             const path = `generated/${account.id}/${Date.now()}-${filename}`;
             await uploadData({
               path,
-              data: new Blob([filled.bytes as BlobPart], { type: "application/pdf" }),
+              data: new Blob([ai.bytes as BlobPart], { type: "application/pdf" }),
               options: { contentType: "application/pdf" },
             }).result;
 
@@ -217,7 +243,7 @@ export default function FormsTab({
               name: filename,
               s3Key: path,
               contentType: "application/pdf",
-              sizeBytes: filled.bytes.byteLength,
+              sizeBytes: ai.bytes.byteLength,
               ocrStatus: "SKIPPED",
             });
             // The PDF is in S3 either way, but without the Document row it
@@ -232,6 +258,10 @@ export default function FormsTab({
             setGenerated((ds) => [doc, ...ds]);
           }
           const missing = [...allMissing];
+          // Set before the outcome sentence is composed, so the list is on
+          // screen with the message that refers to it.
+          setAiFilled(reviewed);
+          const aiCount = reviewed.reduce((n, r) => n + r.fields.length, 0);
 
           // Same sentences as before, composed the same way. What changed is
           // severity: unmatched fields or an unsigned form are things the
@@ -244,10 +274,15 @@ export default function FormsTab({
               : `Generated${pages.length > 1 ? ` ${pages.length} pages` : ""} — every mapped field matched.`,
             unsigned &&
               `The form went out UNSIGNED — ${unsigned}. Sign it by hand before submitting.`,
+            // A count, not a verdict: the values are below and the producer
+            // is being told to go and read them.
+            aiCount &&
+              `${aiCount} blank field${aiCount === 1 ? " was" : "s were"} completed by AI — check the list below before submitting.`,
+            ...aiNotes,
           ]
             .filter(Boolean)
             .join(" ");
-          return missing.length || unsigned ? note : "";
+          return missing.length || unsigned || aiCount || aiNotes.length ? note : "";
         } catch (err) {
           const msg = friendlyError(err, "unknown error");
           // A classified template failure already explains itself and says
@@ -311,6 +346,9 @@ export default function FormsTab({
             <SaveStatus {...genStatus.status} />
           </p>
         )}
+        {aiFilled.map((r) => (
+          <AiFilledList key={r.page} fields={r.fields} page={r.page || undefined} />
+        ))}
       </div>
 
       <div className="card">
