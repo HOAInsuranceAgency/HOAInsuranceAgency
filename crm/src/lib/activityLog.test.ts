@@ -54,6 +54,47 @@ describe("diffImages", () => {
     expect(diffImages(before, after)).toEqual([]);
   });
 
+  it("keeps identifiers out of the timeline", () => {
+    // Found by reading a real timeline: adding one contact rendered three
+    // lines of bookkeeping above the two a person came to read. None of them
+    // can ever say anything — an id is assigned and never changes, accountId
+    // is the account whose timeline this already is, and extractionSourceKey
+    // is the key W9 matches on.
+    const changes = diffImages(undefined, {
+      id: "c1",
+      accountId: "a1",
+      extractionSourceKey: "name:dana whitfield|",
+      name: "Dana Whitfield",
+    });
+    expect(changes).toEqual([{ field: "name", from: null, to: "Dana Whitfield" }]);
+  });
+
+  it("keeps the extraction marker out but leaves the extraction itself in", () => {
+    // The line this draws: a field describing the association stays, one
+    // describing the app's bookkeeping about it goes. An extraction that ran
+    // and failed is an event somebody started — and with the aiExtraction
+    // blob filtered out, these two columns are the only trace of it left.
+    expect(
+      diffImages(
+        { extractionStatus: "PENDING" },
+        {
+          extractionStatus: "FAILED",
+          extractionError: "No OCR-complete documents on this account.",
+          aiExtractionAppliedAt: "2026-08-01T10:00:00.000Z",
+          aiExtraction: "{...}",
+        }
+      ).map((c) => c.field)
+    ).toEqual(["extractionError", "extractionStatus"]);
+  });
+
+  it("does not swallow an identifier that means something to a person", () => {
+    // `buildiumId` is the property manager's own reference. A pattern like
+    // /Id$/ would have been shorter and would have hidden it.
+    expect(
+      diffImages({ buildiumId: "111" }, { buildiumId: "222" })
+    ).toEqual([{ field: "buildiumId", from: "111", to: "222" }]);
+  });
+
   it("compares arrays and JSON blobs by value, not by reference", () => {
     expect(diffImages({ lines: ["a", "b"] }, { lines: ["a", "b"] })).toEqual([]);
     expect(diffImages({ lines: ["a"] }, { lines: ["a", "b"] })).toHaveLength(1);

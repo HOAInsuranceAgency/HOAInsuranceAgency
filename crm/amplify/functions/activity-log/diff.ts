@@ -27,18 +27,50 @@ export type ActivityAction = "CREATE" | "UPDATE" | "DELETE";
  * describes. The OCR and extraction blobs are megabytes of text nobody wants
  * rendered as a before/after, and `_version`/`_lastChangedAt` only exist if
  * conflict resolution is ever switched on.
+ *
+ * The identifiers below are here for a different reason, found by reading a
+ * real timeline on staging: adding one contact rendered
+ *
+ *     Account id: — → 66904aa2-3dfe-4bc9-b606-3b4ea4bb3402
+ *     Extraction source key: — → name:dana whitfield|
+ *     Id: — → c675ec80-a7e4-4a81-8e4b-4083761b2096
+ *     Is primary: — → Yes
+ *     Name: — → Dana Whitfield
+ *
+ * — three lines of bookkeeping above the two a person came to read. None of
+ * them can ever say anything: `id` is assigned and never changes, `accountId`
+ * is the account whose timeline this already is, and `extractionSourceKey` is
+ * the matching key W9 dedupes on.
+ *
+ * The line this list draws is whether a field describes the **association** or
+ * the app's **bookkeeping about** the association. That is why
+ * `extractionStatus` and `extractionError` are deliberately NOT here: an
+ * extraction that ran and failed is an event somebody started and needs to
+ * know about, and with `aiExtraction` filtered out those two columns are the
+ * only trace of it left. `aiExtractionAppliedAt` is the other side of the
+ * same line — a marker recording which result was applied, sitting on the
+ * very update that already lists the fields it applied.
+ *
+ * Kept as an explicit list rather than a pattern like `/Id$/`: that would
+ * also swallow `buildiumId`, which is the property manager's own reference
+ * and exactly the kind of thing a producer would want to see change.
  */
 export const NOISE_FIELDS: ReadonlySet<string> = new Set([
   "updatedAt",
   "createdAt",
   "lastWriteBy",
   "aiExtraction",
+  "aiExtractionAppliedAt",
   "ocrText",
   "ocrTables",
   "__typename",
   "_version",
   "_lastChangedAt",
   "_deleted",
+  // Identifiers — see the note above.
+  "id",
+  "accountId",
+  "extractionSourceKey",
 ]);
 
 /** Deep-ish equality: enough for the scalars, arrays and JSON blobs stored here. */
