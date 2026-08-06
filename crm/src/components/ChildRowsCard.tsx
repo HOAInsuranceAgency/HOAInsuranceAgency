@@ -226,6 +226,10 @@ export default function ChildRowsCard<T extends { id: string }, F extends object
             <Modal
               title={editTitle?.(editingRow) ?? `Edit ${title}`}
               onClose={child.cancelEdit}
+              // The `.preview-*` shell defaults to a fixed box that centres one
+              // object in it — right for the file preview it grew out of, and
+              // unusable for a form, which has to start at the top and grow.
+              className="modal-form"
             >
               <div className="form-grid">{editFields}</div>
               <div className="form-actions">{editActions}</div>

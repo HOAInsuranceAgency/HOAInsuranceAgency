@@ -232,6 +232,25 @@ describe("edit", () => {
     expect(Building.list).toHaveBeenCalledTimes(1);
   });
 
+  it("opens the editor as a form modal, not the centred file-preview box", async () => {
+    // The `.preview-*` shell grew out of the file preview: a fixed 720px box
+    // whose body centres one object on both axes. A form taller than the box
+    // then overflows it in BOTH directions, and the half above the top is
+    // unreachable — the scroll range starts at the body's top edge and the
+    // content starts above it. On staging that hid the first twelve fields of
+    // this form (label, address, year built, stories, construction type…) at
+    // every scroll position and every window size.
+    //
+    // jsdom has no layout, so the assertion is on the class that selects the
+    // form rules rather than on the geometry they fix.
+    const user = userEvent.setup();
+    renderCard();
+    await screen.findByText("Clubhouse");
+
+    await user.click(screen.getAllByText("Edit")[0]);
+    expect(screen.getByRole("dialog")).toHaveClass("modal-form");
+  });
+
   it("keeps the form open on a failed save, with the values still in it", async () => {
     const user = userEvent.setup();
     Building.update.mockResolvedValue({

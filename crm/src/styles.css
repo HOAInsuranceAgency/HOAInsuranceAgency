@@ -366,6 +366,26 @@ mark.ocr-current { background: #f79b32; color: #fff; border-radius: 2px; }
 .preview-body iframe { width: 100%; height: 100%; border: none; }
 .preview-body img { max-width: 100%; max-height: 100%; object-fit: contain; }
 
+/* A form in the modal, not a file.
+   The rules above are built for one centred object of unknown size: a fixed
+   720px box, and a body that centres its child on both axes. That is right for
+   a page image and wrong for a form — a form taller than the box overflows it
+   in BOTH directions, and the half above the top is unreachable, because the
+   scroll range starts at the body's top edge and the content starts above it.
+   A building's twenty-eight fields did exactly that.
+   So: size the box to its content instead of centring content in the box, and
+   let the viewport cap it. `flex: 0 1 auto` rather than the `flex: 1` above —
+   with `height: auto` on the box, a `flex-basis: 0` child would resolve to no
+   height at all and collapse the modal to its header. */
+.preview-modal.modal-form { height: auto; max-height: 92vh; }
+.preview-modal.modal-form .preview-body {
+  display: block;
+  flex: 0 1 auto;
+  min-height: 0;
+  background: var(--card);
+  padding: 14px 16px;
+}
+
 /* ── Photo slots ───────────────────────────────────────────────────── */
 .photo-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; }
 .photo-slot { border: 1px dashed var(--border); border-radius: 8px; padding: 10px; text-align: center; }
