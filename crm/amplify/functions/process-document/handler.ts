@@ -9,6 +9,8 @@ import { Amplify } from "aws-amplify";
 import { generateClient } from "aws-amplify/data";
 import { getAmplifyDataClientConfig } from "@aws-amplify/backend/function/runtime";
 import type { Schema } from "../../data/resource";
+import { suggestDocumentName } from "./autoName";
+import { withExtension } from "./name";
 
 /**
  * Textract OCR pipeline.
@@ -17,6 +19,11 @@ import type { Schema } from "../../data/resource";
  *   documents/{entityType}/{entityId}/{documentId}/{filename}
  * — the documentId segment links the S3 object back to its Document record.
  * Anything else (e.g. certificates/) is ignored.
+ *
+ * The trigger is `s3:ObjectCreated` and nothing else, which is what makes the
+ * rename feature safe: updating a Document row — by hand or by the naming
+ * step below — is a DynamoDB write, so it cannot re-enter this handler and
+ * re-run Textract over a file that was only renamed.
  */
 
 const textract = new TextractClient();
@@ -31,7 +38,9 @@ const MAX_TABLES_CHARS = 100_000;
 const POLL_INTERVAL_MS = 5_000;
 const MAX_POLL_MS = 13 * 60 * 1000; // stay under the 15 min Lambda timeout
 
-let dataClient: ReturnType<typeof generateClient<Schema>> | undefined;
+type DataClient = ReturnType<typeof generateClient<Schema>>;
+
+let dataClient: DataClient | undefined;
 
 async function getDataClient() {
   if (!dataClient) {
@@ -132,6 +141,56 @@ function extractTables(blocks: Block[]): string[][][] {
   return tables;
 }
 
+/** What the timeline attributes an automatic rename to. */
+const WRITER = "process-document";
+
+/**
+ * Replace the uploaded filename with a name that says what the document is.
+ *
+ * Guarded on the current name still being the uploaded one. Textract can take
+ * minutes on a thick condo-doc packet, and a producer who renamed the row in
+ * that window has said what they want it called — the model does not get to
+ * argue. That is also why this reads the record back rather than trusting the
+ * name it saw on the way in.
+ *
+ * Swallows everything. The extracted text is already committed by the time
+ * this runs, and a document the agency can search but is still called
+ * `scan_0043.pdf` is a far better outcome than one marked FAILED.
+ */
+async function autoName(
+  client: DataClient,
+  documentId: string,
+  filename: string,
+  ocrText: string
+): Promise<void> {
+  try {
+    const { data: doc } = await client.models.Document.get({ id: documentId });
+    if (!doc || doc.name !== filename) return;
+
+    const suggested = await suggestDocumentName({
+      ocrText,
+      category: doc.category,
+      filename,
+    });
+    if (!suggested) return;
+
+    // The extension comes from the key, not from `doc.name`: they are the
+    // same string today, and this is the one that stays true if that changes.
+    const name = withExtension(suggested, filename);
+    if (!name || name === doc.name) return;
+
+    const { errors } = await client.models.Document.update({
+      id: documentId,
+      name,
+      lastWriteBy: WRITER,
+    });
+    if (errors?.length) throw new Error(JSON.stringify(errors));
+    console.log(`Named ${documentId}: "${filename}" -> "${name}"`);
+  } catch (err) {
+    console.error(`Naming failed for ${documentId}; keeping "${filename}"`, err);
+  }
+}
+
 export const handler: S3Handler = async (event) => {
   const client = await getDataClient();
 
@@ -175,6 +234,11 @@ export const handler: S3Handler = async (event) => {
       });
       if (errors?.length) throw new Error(JSON.stringify(errors));
       console.log(`OCR complete for ${documentId} (${key})`);
+
+      // Outside the OCR try/catch's failure path by construction: `autoName`
+      // never throws, so nothing here can retroactively mark a completed
+      // extraction as FAILED.
+      await autoName(client, documentId, filename, text);
     } catch (err) {
       console.error(`OCR failed for ${documentId} (${key})`, err);
       await client.models.Document.update({
