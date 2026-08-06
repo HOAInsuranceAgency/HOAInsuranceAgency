@@ -10,6 +10,7 @@ import {
   type Building,
 } from "../../lib/client";
 import { bool, boolValue, inputValue, num, str } from "../../lib/formCodec";
+import { buildingKey } from "../../lib/extractionKeys";
 import { useAsyncResource } from "../../lib/useAsyncResource";
 import { useChildRows } from "../../lib/useChildRows";
 import type { FormState } from "../../lib/useFormState";
@@ -144,7 +145,16 @@ export default function BuildingsCard({ accountId }: { accountId: string }) {
   }
 
   function toCreate(form: BuildingForm) {
-    return { ...toUpdate(form), label: labelFor(form) };
+    const label = labelFor(form);
+    // Stamped here for the same reason the contact, blanket, prior-carrier and
+    // loss cards stamp theirs: a hand-added row that carries its natural key is
+    // a row a later extraction updates instead of filing a second copy of.
+    // This card was the one that never did it, and staging duplicated the
+    // property schedule on the first apply as a result. Matching now also
+    // recomputes the key from the row (see `buildingAliases`), so this is the
+    // belt to that braces — but a row that states its own identity is worth
+    // having whatever the matcher does.
+    return { ...toUpdate(form), label, extractionSourceKey: buildingKey({ label }) };
   }
 
   const totalSqft = child.rows.reduce((s, b) => s + (b.sqft ?? 0), 0);

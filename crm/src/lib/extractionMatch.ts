@@ -6,6 +6,13 @@
  * extraction", which invites exactly that. Re-running and applying again
  * duplicated everything.
  *
+ * Matching on the *stored* key alone was not enough either, which staging
+ * showed by duplicating three contacts and a building on a first apply. See
+ * `aliasesOf` below and the note above `contactAliases` in extractionKeys.ts:
+ * a row's identity is a set of names, not one string, because the string a row
+ * was stored under is derived from whichever identifying fields it had at the
+ * time and the candidate may not have the same ones.
+ *
  * Matching alone is not enough to fix it, because a candidate that matches a
  * stored row and changes nothing about it is still a write — one that shows
  * as an edit in the activity log, bumps `updatedAt`, and tells a reviewer
@@ -68,12 +75,53 @@ function same(a: unknown, b: unknown): boolean {
   return String(a) === String(b);
 }
 
+/**
+ * Every name a row answers to: what it was stored under, plus what its current
+ * contents say it is.
+ *
+ * Both, not either. The stored key is the only record of an identity the row
+ * has since edited away from — a loss keyed on its amount before anyone knew
+ * the amount — and the recomputed aliases are the only identity a row that was
+ * never keyed at all has.
+ *
+ * Applied to stored rows, this is also where the asymmetry that makes late
+ * edits safe comes from: a stored row answers to its history as well as its
+ * contents, and a candidate — which has no history — answers only to its
+ * contents. That is what lets a row be recognised after the field its key was
+ * derived from changed, without letting two candidates that merely resemble
+ * each other collapse into one.
+ *
+ * Blank entries are dropped so that two rows which have said nothing about
+ * themselves do not collide on "".
+ */
+function namesOf(
+  stored: string | null | undefined,
+  computed: readonly string[]
+): string[] {
+  return [stored ?? "", ...computed].filter(Boolean);
+}
+
 export function classifyCandidate<E extends Keyed>(
   key: string,
   supplied: Record<string, unknown>,
-  existing: readonly E[]
+  existing: readonly E[],
+  /**
+   * How to derive a row's identities from its fields. Applied to stored rows
+   * and to `supplied` alike — which is why it takes the loose shape both are.
+   *
+   * Optional so a model with a single stable key can go on passing three
+   * arguments. Omitting it matches on the stored key alone, which is the
+   * behaviour that let staging duplicate three contacts and a building.
+   */
+  aliasesOf?: (row: Record<string, unknown>) => string[]
 ): Match<E> {
-  const found = existing.find((e) => e.extractionSourceKey === key);
+  const wanted = new Set(namesOf(key, aliasesOf?.(supplied) ?? []));
+  const found = existing.find((e) =>
+    namesOf(
+      e.extractionSourceKey,
+      aliasesOf?.(e as unknown as Record<string, unknown>) ?? []
+    ).some((n) => wanted.has(n))
+  );
   if (!found) return { verdict: "new", changes: [] };
 
   const row = found as unknown as Record<string, unknown>;

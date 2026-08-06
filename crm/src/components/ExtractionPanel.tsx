@@ -15,7 +15,14 @@ import {
 import { Badge, statusBadge, CONFIDENCE_BADGE } from "../lib/badges";
 import { CONSTRUCTION_LABELS, CONTACT_TYPE_LABELS } from "../lib/enums";
 import { str } from "../lib/formCodec";
-import { buildingKey, contactKey, lossKey } from "../lib/extractionKeys";
+import {
+  buildingAliases,
+  buildingKey,
+  contactAliases,
+  contactKey,
+  lossAliases,
+  lossKey,
+} from "../lib/extractionKeys";
 import {
   VERDICT_LABEL,
   classifyCandidate,
@@ -489,7 +496,12 @@ export default function ExtractionPanel({
         .filter((x) => namedContact(x.row))
         .map((x) => ({
           ...x,
-          match: classifyCandidate(x.key, x.supplied, contactsRes.data),
+          match: classifyCandidate(
+            x.key,
+            x.supplied,
+            contactsRes.data,
+            contactAliases
+          ),
         })),
     [result, contactsRes.data]
   );
@@ -501,7 +513,7 @@ export default function ExtractionPanel({
         .filter((x) => usableLoss(x.row))
         .map((x) => ({
           ...x,
-          match: classifyCandidate(x.key, x.supplied, lossesRes.data),
+          match: classifyCandidate(x.key, x.supplied, lossesRes.data, lossAliases),
         })),
     [result, lossesRes.data]
   );
@@ -513,7 +525,12 @@ export default function ExtractionPanel({
         .filter((x) => usableBuilding(x.row))
         .map((x) => ({
           ...x,
-          match: classifyCandidate(x.key, x.supplied, buildingsRes.data),
+          match: classifyCandidate(
+            x.key,
+            x.supplied,
+            buildingsRes.data,
+            buildingAliases
+          ),
         })),
     [result, buildingsRes.data]
   );

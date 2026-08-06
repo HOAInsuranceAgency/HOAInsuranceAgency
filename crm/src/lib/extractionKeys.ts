@@ -36,6 +36,37 @@ function norm(v: string | null | undefined): string {
 }
 
 /**
+ * ## Why the `*Aliases` functions exist
+ *
+ * A single key per row turned out to be too few, and staging proved it: an
+ * extraction re-created three contacts that were already on the account.
+ *
+ * The reason is that a key here is derived from whichever identifying fields
+ * happen to be *present*. `contactKey` prefers the email and falls back to
+ * name+role, so the same person is `email:marion@…` when the CRM knows their
+ * address and `name:marion delacroix|MANAGER` when a document names them
+ * without one. Two strings, one human — and comparing the two strings says
+ * "different person", which is a new row.
+ *
+ * So identity is a *set* of names a row can be known by, and two rows are the
+ * same when their sets intersect. The primary key — what gets stored in
+ * `extractionSourceKey` — stays the first alias, so nothing about what is
+ * written changes; what changes is that matching no longer depends on the
+ * stored key having been derived from the same fields the candidate has.
+ *
+ * That also makes matching survive the two things a stored key cannot:
+ * a row edited after it was created (adding an email rewrites its identity but
+ * not the column), and a row created by a path that never set the column at
+ * all.
+ *
+ * Aliases are computed from stored rows and from candidate payloads alike, so
+ * they take the loose shape both satisfy and coerce what they read.
+ */
+type Fields = Record<string, unknown>;
+
+const text = (v: unknown): string => (typeof v === "string" ? v : "");
+
+/**
  * A person is the same person if the email matches; failing that, if the name
  * and the role do.
  *
@@ -55,9 +86,33 @@ export function contactKey(c: {
   name?: string | null;
   type?: string | null;
 }): string {
-  const email = norm(c.email);
-  if (email) return `email:${email}`;
-  return `name:${norm(c.name)}|${c.type ?? ""}`;
+  return contactAliases(c)[0];
+}
+
+/**
+ * Every name this person can be matched by, most specific first.
+ *
+ * Both are emitted when both are knowable, which is the whole point: a stored
+ * contact with an email still answers to name+role, so a document that names
+ * them without an address lands on them instead of beside them.
+ *
+ * A nameless, addressless contact gets the empty-name alias dropped rather
+ * than kept. `name:|` would otherwise be a key that every other anonymous row
+ * shares, and merging two rows that have nothing in common is a worse error
+ * than the duplicate this file exists to prevent. Such a row is left with no
+ * alias at all, so it never matches anything — and `ExtractionPanel` filters
+ * nameless candidates out before they get here anyway.
+ */
+export function contactAliases(c: Fields): string[] {
+  const out: string[] = [];
+  const email = norm(text(c.email));
+  if (email) out.push(`email:${email}`);
+  const name = norm(text(c.name));
+  if (name) out.push(`name:${name}|${text(c.type)}`);
+  // Never empty: `contactKey` reads `[0]`, and a key of "" is still a
+  // deterministic key. It simply matches nothing, which is correct for a row
+  // that has said nothing about who it is.
+  return out.length ? out : [""];
 }
 
 /**
@@ -79,6 +134,18 @@ export function contactKey(c: {
  */
 export function buildingKey(b: { label?: string | null }): string {
   return `building:${norm(b.label)}`;
+}
+
+/**
+ * A building has one name, so this is a list of one — and it is still worth
+ * having, because the value of an alias list is not only its length. Matching
+ * against a *recomputed* key is what lets a building that was added by hand be
+ * recognised at all: `BuildingsCard` never wrote `extractionSourceKey`, so
+ * every such row was invisible to the stored-key comparison and an extraction
+ * filed a second copy of the property schedule beside it.
+ */
+export function buildingAliases(b: Fields): string[] {
+  return [buildingKey({ label: text(b.label) })];
 }
 
 /**
@@ -137,4 +204,36 @@ export function lossKey(l: {
 }): string {
   const amount = l.amountOfLoss == null ? "" : String(l.amountOfLoss);
   return `loss:${norm(l.dateOfLoss)}|${norm(l.lineOfBusiness)}|${norm(amount)}`;
+}
+
+/**
+ * One name, recomputed from the row's current fields.
+ *
+ * A shorter date-and-line alias was tried and removed. The reasoning for it
+ * was sound — the amount is in the key and is also the field most likely to
+ * arrive late, so a loss whose amount was typed in afterwards no longer
+ * answers to the key it was stored under — but emitting that alias from *both*
+ * sides collapses the case the amount is in the key for: two occurrences on
+ * one day under one line both claim `loss:date|line|` and get merged. Losing a
+ * loss off a submission is a worse error than filing one twice.
+ *
+ * The late amount is handled anyway, and without the risk, by `namesOf` in
+ * extractionMatch: a stored row is known by its remembered key *and* its
+ * recomputed one, so the row keeps answering to the identity it was written
+ * under. A candidate has no history to be known by, which is exactly the
+ * asymmetry this needs.
+ */
+export function lossAliases(l: Fields): string[] {
+  const date = norm(text(l.dateOfLoss));
+  const line = norm(text(l.lineOfBusiness));
+  // Same rule as a nameless contact: a loss with no date and no line has said
+  // nothing that identifies it, so it gets no alias to collide on.
+  if (!date && !line) return [""];
+  return [
+    lossKey({
+      dateOfLoss: date,
+      lineOfBusiness: line,
+      amountOfLoss: l.amountOfLoss as number | string | null | undefined,
+    }),
+  ];
 }

@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { classifyCandidate } from "./extractionMatch";
-import { buildingKey, contactKey, lossKey } from "./extractionKeys";
+import {
+  buildingAliases,
+  buildingKey,
+  contactAliases,
+  contactKey,
+  lossAliases,
+  lossKey,
+} from "./extractionKeys";
 
 /**
  * The rule that stops re-running an extraction from duplicating everything it
@@ -151,6 +158,167 @@ describe("classifyCandidate", () => {
         { amountPaid: 900 },
         losses
       ).verdict
+    ).toBe("new");
+  });
+});
+
+/**
+ * Matching on the stored key alone, which is all this did until staging showed
+ * otherwise. Each case below is a row that was already on the account and got
+ * a second copy filed beside it on the first apply.
+ */
+describe("classifyCandidate with identity aliases", () => {
+  it("matches a stored contact known by email against a candidate known by name", () => {
+    // The case that duplicated Marion and Rosalind. The CRM holds their email,
+    // so they were stored under `email:…`; the prior-policy packet named them
+    // with a role and no address, so the candidate is `name:…|MANAGER`. Two
+    // strings, one person — and comparing the strings said "new".
+    const contacts = [
+      {
+        id: "c1",
+        extractionSourceKey: contactKey({ email: "marion@willowcreek.example" }),
+        name: "Marion Delacroix",
+        email: "marion@willowcreek.example",
+        type: "MANAGER",
+        phone: "(617) 555-0142",
+      },
+    ];
+    const supplied = {
+      name: "Marion Delacroix",
+      type: "MANAGER",
+      phone: "(617) 555-0142",
+    };
+    const key = contactKey(supplied);
+
+    expect(classifyCandidate(key, supplied, contacts).verdict).toBe("new");
+    expect(
+      classifyCandidate(key, supplied, contacts, contactAliases).verdict
+    ).toBe("identical");
+  });
+
+  it("matches a contact whose email was added after it was stored", () => {
+    // Terrence: created from a document with no address, so keyed on
+    // name+role; someone then typed his email in, which changes what his
+    // identity *derives* to but not the column it was stored under. Both names
+    // have to keep working.
+    const contacts = [
+      {
+        id: "c2",
+        extractionSourceKey: contactKey({ name: "Terrence Bowe", type: "TRUSTEE" }),
+        name: "Terrence Bowe",
+        email: "terrence@willowcreek.example",
+        type: "TRUSTEE",
+      },
+    ];
+    const supplied = { name: "Terrence Bowe", type: "TRUSTEE" };
+    expect(
+      classifyCandidate(contactKey(supplied), supplied, contacts, contactAliases)
+        .verdict
+    ).toBe("identical");
+  });
+
+  it("matches a building that was added by hand and carries no key at all", () => {
+    // `BuildingsCard` never wrote `extractionSourceKey`, so every hand-added
+    // building was invisible to the stored-key comparison and an extraction
+    // filed a second copy of the whole property schedule.
+    // Typed with the column present but unset, which is what the row actually
+    // is: `Building.extractionSourceKey` exists in the schema and this card
+    // never wrote it.
+    const stored: {
+      id: string;
+      label: string;
+      sqft: number;
+      extractionSourceKey?: string | null;
+    }[] = [{ id: "b9", label: "Building A", sqft: 24500 }];
+    const supplied = { label: "Building A", sqft: 24500 };
+    const key = buildingKey(supplied);
+
+    expect(classifyCandidate(key, supplied, stored).verdict).toBe("new");
+    expect(
+      classifyCandidate(key, supplied, stored, buildingAliases).verdict
+    ).toBe("identical");
+  });
+
+  it("matches a loss whose amount was filled in after it was stored", () => {
+    // A loss run gives a date and a line long before the adjuster settles on a
+    // number, so the amount is the field most likely to arrive late — and it
+    // is in the key.
+    const losses = [
+      {
+        id: "l2",
+        extractionSourceKey: lossKey({
+          dateOfLoss: "2024-02-11",
+          lineOfBusiness: "Property",
+          amountOfLoss: null,
+        }),
+        dateOfLoss: "2024-02-11",
+        lineOfBusiness: "Property",
+        amountOfLoss: 52000,
+        typeOfLoss: "Frozen pipe",
+      },
+    ];
+    const supplied = {
+      dateOfLoss: "2024-02-11",
+      lineOfBusiness: "Property",
+      amountOfLoss: 52000,
+      typeOfLoss: "Frozen pipe",
+    };
+    expect(
+      classifyCandidate(lossKey(supplied), supplied, losses, lossAliases).verdict
+    ).toBe("identical");
+  });
+
+  it("still keeps two genuinely different losses apart", () => {
+    // The weaker date-and-line alias must not collapse the case the amount is
+    // in the key for: two occurrences on one day under one line.
+    const losses = [
+      {
+        id: "l3",
+        extractionSourceKey: lossKey({
+          dateOfLoss: "2024-03-14",
+          lineOfBusiness: "Property",
+          amountOfLoss: 18400,
+        }),
+        dateOfLoss: "2024-03-14",
+        lineOfBusiness: "Property",
+        amountOfLoss: 18400,
+      },
+    ];
+    const supplied = {
+      dateOfLoss: "2024-03-14",
+      lineOfBusiness: "Property",
+      amountOfLoss: 900,
+    };
+    expect(
+      classifyCandidate(lossKey(supplied), supplied, losses, lossAliases).verdict
+    ).toBe("new");
+  });
+
+  it("does not merge two rows that have said nothing about who they are", () => {
+    // A blank alias would be a name every anonymous row shares, and merging
+    // two rows with nothing in common is a worse error than the duplicate this
+    // whole mechanism exists to prevent.
+    const contacts = [{ id: "c3", extractionSourceKey: null, name: "", type: "" }];
+    const supplied = { name: "", type: "" };
+    expect(
+      classifyCandidate(contactKey(supplied), supplied, contacts, contactAliases)
+        .verdict
+    ).toBe("new");
+  });
+
+  it("keeps two people who share a name but not a role apart", () => {
+    const contacts = [
+      {
+        id: "c4",
+        extractionSourceKey: contactKey({ name: "Dana Whitfield", type: "TRUSTEE" }),
+        name: "Dana Whitfield",
+        type: "TRUSTEE",
+      },
+    ];
+    const supplied = { name: "Dana Whitfield", type: "ACCOUNTING" };
+    expect(
+      classifyCandidate(contactKey(supplied), supplied, contacts, contactAliases)
+        .verdict
     ).toBe("new");
   });
 });
