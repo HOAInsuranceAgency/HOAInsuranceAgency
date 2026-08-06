@@ -69,7 +69,7 @@ export function PriorCarrierTab({ accountId }: { accountId: string }) {
         effectiveDate: inputValue(p.effectiveDate),
         expirationDate: inputValue(p.expirationDate),
       }),
-      toCreate: toWrite,
+      toCreate: (f) => ({ ...toWrite(f), extractionSourceKey: priorCarrierKey(f) }),
       toUpdate: toWrite,
       validate,
       describe: (form) =>
@@ -153,7 +153,6 @@ function toWrite(form: PriorCarrierForm) {
     // Recomputed on every write, not just the create — correcting a mistyped
     // policy number moves the policy, and a stale key would let the next
     // extraction file the corrected row a second time.
-    extractionSourceKey: priorCarrierKey(form),
   };
 }
 

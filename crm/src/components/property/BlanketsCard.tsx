@@ -32,7 +32,7 @@ export default function BlanketsCard({ accountId }: { accountId: string }) {
       type: inputValue(b.type),
       amount: inputValue(b.amount),
     }),
-    toCreate: toWrite,
+    toCreate: (f) => ({ ...toWrite(f), extractionSourceKey: blanketKey(f) }),
     toUpdate: toWrite,
     describe: (form) => form.blanketNumber.trim() || "Blanket",
     describeRow: (b) => b.blanketNumber ?? "this blanket",
@@ -76,7 +76,6 @@ function toWrite(form: BlanketForm) {
     blanketNumber: str(form.blanketNumber),
     type: str(form.type),
     amount: num(form.amount),
-    extractionSourceKey: blanketKey(form),
   };
 }
 

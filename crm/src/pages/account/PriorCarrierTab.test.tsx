@@ -123,7 +123,7 @@ describe("add", () => {
 });
 
 describe("edit", () => {
-  it("recomputes the key when the policy number is corrected", async () => {
+  it("leaves the key alone when the policy number is corrected", async () => {
     const user = userEvent.setup();
     PriorCarrier.update.mockResolvedValue({
       data: { ...rows()[0], policyNumber: "GL-1002" },
@@ -137,12 +137,15 @@ describe("edit", () => {
     await user.type(number, "GL-1002");
     await user.click(screen.getByText("Save"));
 
+    // The key is written once, on the create, and is a record of what the row
+    // was called then — see the note in `ContactsCard`'s `toCreate`. The
+    // corrected number is still matchable, because matching recomputes a
+    // stored row's identity as well as reading its stored key.
     expect(PriorCarrier.update).toHaveBeenCalledWith(
-      expect.objectContaining({
-        id: "p1",
-        policyNumber: "GL-1002",
-        extractionSourceKey: "travelers|gl-1002|general liability",
-      })
+      expect.objectContaining({ id: "p1", policyNumber: "GL-1002" })
+    );
+    expect(PriorCarrier.update.mock.calls[0][0]).not.toHaveProperty(
+      "extractionSourceKey"
     );
   });
 });

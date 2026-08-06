@@ -64,7 +64,7 @@ export function LossesTab({ accountId }: { accountId: string }) {
       amountReserved: inputValue(l.amountReserved),
       claimOpen: boolValue(l.claimOpen),
     }),
-    toCreate: toWrite,
+    toCreate: (f) => ({ ...toWrite(f), extractionSourceKey: lossKey(f) }),
     toUpdate: toWrite,
     validate,
     describe: (f) =>
@@ -161,7 +161,6 @@ function toWrite(form: LossForm) {
     amountPaid: num(form.amountPaid),
     amountReserved: num(form.amountReserved),
     claimOpen: bool(form.claimOpen),
-    extractionSourceKey: lossKey(form),
   };
 }
 

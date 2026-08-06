@@ -78,6 +78,19 @@ export default function ContactsCard({ accountId }: { accountId: string }) {
       // The first contact on an account is the primary one by arithmetic, not
       // by choice — there is nothing else for the ACORD block to use.
       isPrimary: child.rows.length === 0,
+      // On the create and NOT on the update. This used to be recomputed on
+      // every write, on the reasoning that correcting a typo'd email moves the
+      // person and a key pointing at the old address would let the next
+      // extraction file a second row for them. That was right when the stored
+      // key was the only thing matching compared — and it is wrong now.
+      //
+      // Matching derives a row's current identity itself (see
+      // `contactAliases`), so the correction is covered either way. What only
+      // the stored key can say is what the row was called *before* the edit,
+      // and recomputing it throws that away — which is how a loss whose amount
+      // was filled in afterwards stopped answering to the key it was created
+      // under and came back from an extraction as a new loss.
+      extractionSourceKey: contactKey(form),
     };
   }
 
@@ -173,10 +186,6 @@ function toUpdate(form: ContactForm) {
     email: str(form.email),
     phone: str(form.phone),
     notes: str(form.notes),
-    // Recomputed on every write, not just the create: correcting a typo'd
-    // email moves the person, and a key left pointing at the old address
-    // would let the next extraction create a second row for them.
-    extractionSourceKey: contactKey(form),
   };
 }
 

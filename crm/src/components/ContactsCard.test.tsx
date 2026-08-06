@@ -180,7 +180,7 @@ describe("add", () => {
 });
 
 describe("edit", () => {
-  it("recomputes the extraction key when the email changes", async () => {
+  it("leaves the extraction key alone when the email changes", async () => {
     const user = userEvent.setup();
     Contact.list.mockResolvedValue({ data: rows(), nextToken: null });
     Contact.update.mockResolvedValue({
@@ -195,14 +195,18 @@ describe("edit", () => {
     await user.type(email, "p.alvarez@maplehoa.org");
     await user.click(screen.getByText("Save"));
 
-    // A key left pointing at the old address would let the next extraction
-    // create a second row for the same person.
+    // This used to assert the opposite, on the reasoning that a key pointing
+    // at the old address would let the next extraction file a second row for
+    // the same person. Matching now derives a row's current identity itself
+    // (`contactAliases`), so the new address is covered without the rewrite —
+    // and the rewrite costs the one thing only the stored key can say, which
+    // is what this person was called when the row was written. A packet filed
+    // before the correction still names the old address.
     expect(Contact.update).toHaveBeenCalledWith(
-      expect.objectContaining({
-        id: "c1",
-        email: "p.alvarez@maplehoa.org",
-        extractionSourceKey: "email:p.alvarez@maplehoa.org",
-      })
+      expect.objectContaining({ id: "c1", email: "p.alvarez@maplehoa.org" })
+    );
+    expect(Contact.update.mock.calls[0][0]).not.toHaveProperty(
+      "extractionSourceKey"
     );
   });
 

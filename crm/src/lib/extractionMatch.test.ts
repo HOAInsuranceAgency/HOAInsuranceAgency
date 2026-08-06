@@ -322,3 +322,108 @@ describe("classifyCandidate with identity aliases", () => {
     ).toBe("new");
   });
 });
+
+/**
+ * The stored key is a record of the past, not a copy of the present.
+ *
+ * Cards used to recompute `extractionSourceKey` on every write. With only the
+ * stored key to match on that was necessary — a corrected email had to move
+ * the key with it. With aliases it is actively harmful: the row's *current*
+ * identity is derived anyway, so all the recompute does is erase the one
+ * thing only the stored key can say, which is what the row used to be called.
+ *
+ * Found on staging after the alias fix shipped: a loss created before anyone
+ * knew its amount, then edited to add one, came back from a re-run as a new
+ * loss — its stored key had been rewritten to include the amount, and the
+ * document (which never stated one) could not name it.
+ */
+describe("a row keeps answering to the key it was created under", () => {
+  it("matches a loss whose key was written before its amount was known", () => {
+    const losses = [
+      {
+        id: "l4",
+        // Created with no amount. NOT rewritten when the amount arrived.
+        extractionSourceKey: lossKey({
+          dateOfLoss: "2024-02-11",
+          lineOfBusiness: "Property",
+          amountOfLoss: null,
+        }),
+        dateOfLoss: "2024-02-11",
+        lineOfBusiness: "Property",
+        amountOfLoss: 52000,
+      },
+    ];
+    // The loss run names the date and the line and no amount, as loss runs do.
+    const supplied = { dateOfLoss: "2024-02-11", lineOfBusiness: "Property" };
+    expect(
+      classifyCandidate(lossKey(supplied), supplied, losses, lossAliases).verdict
+    ).toBe("identical");
+  });
+
+  it("matches a contact by the email they had when the row was written", () => {
+    const contacts = [
+      {
+        id: "c5",
+        extractionSourceKey: contactKey({ email: "old@willowcreek.example" }),
+        name: "Marion Delacroix",
+        email: "new@willowcreek.example",
+        type: "MANAGER",
+      },
+    ];
+    // A packet filed before the correction still names the old address.
+    const supplied = { name: "Marion Delacroix", email: "old@willowcreek.example" };
+    expect(
+      classifyCandidate(contactKey(supplied), supplied, contacts, contactAliases)
+        .verdict
+    ).toBe("update");
+  });
+
+  it("and by the one they have now", () => {
+    const contacts = [
+      {
+        id: "c6",
+        extractionSourceKey: contactKey({ email: "old@willowcreek.example" }),
+        name: "Marion Delacroix",
+        email: "new@willowcreek.example",
+        type: "MANAGER",
+      },
+    ];
+    const supplied = { name: "Marion Delacroix", email: "new@willowcreek.example" };
+    expect(
+      classifyCandidate(contactKey(supplied), supplied, contacts, contactAliases)
+        .verdict
+    ).toBe("identical");
+  });
+});
+
+/**
+ * The cards agree that the key is written once.
+ *
+ * A card that recomputes it on update reintroduces the loss bug above, and
+ * the failure is silent — everything still saves, and the duplicate only
+ * appears the next time somebody applies an extraction.
+ */
+describe("no card rewrites the key on update", () => {
+  it("keeps extractionSourceKey out of every update path", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { resolve } = await import("node:path");
+    const cards = [
+      "src/components/ContactsCard.tsx",
+      "src/components/property/BlanketsCard.tsx",
+      "src/components/property/BuildingsCard.tsx",
+      "src/pages/account/LossesTab.tsx",
+      "src/pages/account/PriorCarrierTab.tsx",
+    ];
+    for (const file of cards) {
+      const src = readFileSync(resolve(process.cwd(), file), "utf8");
+      expect(src, `${file} never sets the key`).toMatch(/extractionSourceKey/);
+      // The shared write helper is used by both paths, so the key must not be
+      // in it — it belongs to the create alone.
+      expect(
+        /toUpdate:\s*toWrite/.test(src) &&
+          /extractionSourceKey/.test(src.slice(src.indexOf("function toWrite"))),
+        `${file} recomputes the key inside a shared toWrite`
+      ).toBe(false);
+    }
+  });
+});
