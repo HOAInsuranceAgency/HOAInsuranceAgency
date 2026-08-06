@@ -160,6 +160,36 @@ describe("the model pin", () => {
   });
 });
 
+describe("the field cap", () => {
+  it("is one constant both halves import", async () => {
+    // The browser slices before it sends and the Lambda slices before it
+    // asks, so these have to agree. Two numbers would eventually not, and the
+    // failure is silent in the worst direction: the browser reports only what
+    // *it* dropped, so a lower cap on the Lambda would trim the tail with
+    // nobody told — a silent cap, which is the one thing this feature's
+    // reporting exists to prevent.
+    const { MAX_FIELDS } = await import(
+      "../../amplify/functions/form-filler/sanitise"
+    );
+    expect(MAX_FIELDS).toBeGreaterThan(0);
+
+    for (const file of [
+      "amplify/functions/form-filler/handler.ts",
+      "src/lib/aiFill.ts",
+    ]) {
+      const src = readFileSync(resolve(process.cwd(), file), "utf8");
+      expect(src, `${file} does not import the shared cap`).toMatch(
+        /import \{[^}]*MAX_FIELDS/
+      );
+      // A second number to slice by is the drift this prevents.
+      expect(
+        /\.slice\(0,\s*\d/.test(src),
+        `${file} slices by a literal instead of the shared cap`
+      ).toBe(false);
+    }
+  });
+});
+
 describe("PLACEHOLDER_RE", () => {
   it("is anchored, so it cannot swallow a whole value on a partial match", () => {
     expect(PLACEHOLDER_RE.source.startsWith("^")).toBe(true);

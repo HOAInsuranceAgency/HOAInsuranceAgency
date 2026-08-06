@@ -1,6 +1,10 @@
 import type { PDFDocument } from "pdf-lib";
 import { client } from "./client";
 import { applySuggestions, type EmptyField } from "./acordPdf";
+// The Lambda's own cap, imported rather than restated. `sanitise.ts` imports
+// nothing, so it costs the browser bundle a number and no dependency — the
+// same arrangement `ActivityTab` has with the stream handler's `diff.ts`.
+import { MAX_FIELDS } from "../../amplify/functions/form-filler/sanitise";
 
 /**
  * W8's AI gap-fill, from the browser's side.
@@ -36,8 +40,6 @@ export interface AiFillResult {
   note?: string;
 }
 
-/** Values above this never leave the browser; see `MAX_FIELDS` in the Lambda. */
-const ASK_LIMIT = 150;
 
 interface SuggestResponse {
   ok?: boolean;
@@ -55,7 +57,7 @@ export async function aiFillGaps(
 ): Promise<AiFillResult> {
   if (!empty.length) return { bytes, applied: [] };
 
-  const asked = empty.slice(0, ASK_LIMIT);
+  const asked = empty.slice(0, MAX_FIELDS);
   const capped = empty.length - asked.length;
 
   let payload: SuggestResponse;

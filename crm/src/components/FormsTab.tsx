@@ -269,8 +269,13 @@ export default function FormsTab({
           // neither is a clean success and takes `savedMessage` instead of
           // the same amber span every outcome used to share.
           const note = [
+            // Every segment here ends in a full stop, because they are joined
+            // with a space into one paragraph. This one did not, and on
+            // staging it read "…producerEmail, insuredPhone The AI answered
+            // none of the blanks" — two sentences run together at the exact
+            // point a reader is scanning for what to do next.
             missing.length
-              ? `Generated${pages.length > 1 ? ` ${pages.length} pages` : ""}. Unmatched fields (extend the mapping via Settings → Inspect fields): ${missing.join(", ")}`
+              ? `Generated${pages.length > 1 ? ` ${pages.length} pages` : ""}. Unmatched fields (extend the mapping via Settings → Inspect fields): ${missing.join(", ")}.`
               : `Generated${pages.length > 1 ? ` ${pages.length} pages` : ""} — every mapped field matched.`,
             unsigned &&
               `The form went out UNSIGNED — ${unsigned}. Sign it by hand before submitting.`,

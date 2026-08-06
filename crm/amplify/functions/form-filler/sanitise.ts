@@ -7,6 +7,25 @@
  * a model — see `src/lib/formFiller.test.ts`.
  */
 
+/**
+ * How many field names one call will answer.
+ *
+ * Both halves of the feature enforce this — the browser slices before it
+ * sends, the Lambda slices before it asks — so it lives here, in the one
+ * module in this folder that imports nothing and both can reach. Two
+ * constants that had to agree would eventually not, and the failure is
+ * silent in the worst direction: the browser reports what *it* dropped, so a
+ * lower cap on the Lambda would trim the tail with nobody told.
+ *
+ * 600 rather than the 150 this shipped with. That number was a guess made
+ * before the feature had ever run; measured on staging, a 125 asks for 150
+ * names in 3,339 input tokens and 5.7 seconds against a 29-second budget —
+ * and left 223 of its blanks unoffered. 600 covers a whole 125 (373 blanks)
+ * and a whole 140 (276) in one call, so the cap stops being something a
+ * producer has to work around and goes back to being a backstop.
+ */
+export const MAX_FIELDS = 600;
+
 export interface Suggestion {
   /** The PDF text-field name the value belongs in. */
   field: string;

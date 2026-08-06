@@ -5,7 +5,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import type { Schema } from "../../data/resource";
 import { CLAUDE_MODEL } from "../model";
 import { listAllPages } from "../../../src/lib/pagination";
-import { sanitiseSuggestions, type Suggestion } from "./sanitise";
+import { MAX_FIELDS, sanitiseSuggestions, type Suggestion } from "./sanitise";
 
 /**
  * AI gap-filling for a carrier-submission PDF.
@@ -33,17 +33,6 @@ async function getDataClient() {
   }
   return dataClient;
 }
-
-/**
- * How many field names one call will answer.
- *
- * A 125 has several hundred text fields and most of a fresh one is empty, so
- * an uncapped request is mostly the model writing "" a few hundred times. The
- * cap is reported back rather than applied silently — a producer who is told
- * "the last N fields were not offered to the AI" can go and fill them; one
- * who is not told assumes the blanks were considered and rejected.
- */
-const MAX_FIELDS = 150;
 
 /** Columns present on every row and interesting on none of them. */
 const DROP_KEYS = new Set([
