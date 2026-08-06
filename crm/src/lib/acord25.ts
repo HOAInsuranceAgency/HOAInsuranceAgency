@@ -29,7 +29,15 @@ function buildAcord25Values(
       value: todayUs(),
     },
     certificateNumber: {
+      // First name is the 2016/03 eForm's, read off the uploaded template via
+      // Settings → Inspect fields. The longer
+      // `CertificateOfLiabilityInsurance_ACORDForm_…` spelling that used to
+      // lead this list matches no field on it, which is why every issued COI
+      // came out with a blank CERTIFICATE NUMBER box and a warning naming this
+      // as the one field the mapping missed. The rest stay as fallbacks for
+      // older editions.
       candidates: [
+        "CertificateOfInsurance_CertificateNumberIdentifier_A",
         "CertificateOfLiabilityInsurance_ACORDForm_CertificateNumberIdentifier_A",
         "Certificate_Number_A",
         "CERTIFICATE NUMBER",

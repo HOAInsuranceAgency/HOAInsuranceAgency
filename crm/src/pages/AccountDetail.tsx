@@ -92,11 +92,28 @@ export function resolveTab(requested: Tab, stage: string | null | undefined): Ta
 
 export default function AccountDetail({ profile }: { profile: UserProfile }) {
   const { id } = useParams<{ id: string }>();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const initialTab = searchParams.get("tab") as Tab | null;
   const [tab, setTab] = useState<Tab>(
     initialTab && VALID_TABS.includes(initialTab) ? initialTab : "overview"
   );
+
+  /**
+   * Clicking a tab puts it in the URL, the way Settings already does.
+   *
+   * `?tab=` was read on mount and never written, so the address bar kept
+   * whatever it was opened with however far the user then navigated — which
+   * makes every link copied out of it point at the wrong panel, and a refresh
+   * land somewhere other than where the reader was. `replace` rather than
+   * `push`: switching tabs is not a navigation Back should have to walk out of
+   * one step at a time.
+   */
+  function selectTab(t: Tab) {
+    setTab(t);
+    const next = new URLSearchParams(searchParams);
+    next.set("tab", t);
+    setSearchParams(next, { replace: true });
+  }
   const [celebrate, setCelebrate] = useState(false);
   const prevStage = useRef<string | null>(null);
 
@@ -155,7 +172,7 @@ export default function AccountDetail({ profile }: { profile: UserProfile }) {
           <button
             key={t}
             className={activeTab === t ? "active" : ""}
-            onClick={() => setTab(t)}
+            onClick={() => selectTab(t)}
           >
             {label}
           </button>

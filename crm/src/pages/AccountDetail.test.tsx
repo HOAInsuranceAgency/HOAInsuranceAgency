@@ -95,3 +95,40 @@ describe("resolveTab", () => {
     }
   });
 });
+
+/**
+ * The tab in the URL.
+ *
+ * `?tab=` was read on mount and never written, so the address bar kept
+ * whatever the page was opened with however far the user then navigated:
+ * every link copied out of it pointed at the wrong panel, and a refresh landed
+ * somewhere other than where the reader was.
+ *
+ * Asserted against the source rather than through a render, the way
+ * `formFiller.test.ts` asserts the shared field cap. Rendering this component
+ * means a router, a profile, an account read and all eight tab panels — a lot
+ * of scaffolding to observe one search param, and none of it would catch the
+ * failure this actually guards: a *second* way to change tabs that forgets to
+ * write the URL.
+ */
+describe("the tab in the URL", () => {
+  it("is written by every path that changes the tab", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { resolve } = await import("node:path");
+    const src = readFileSync(
+      resolve(process.cwd(), "src/pages/AccountDetail.tsx"),
+      "utf8"
+    );
+
+    // One writer, and it does write.
+    expect(src).toMatch(/function selectTab\(/);
+    expect(src).toMatch(/setSearchParams\(/);
+    // `setTab` is the raw state setter behind it; a call site that reaches for
+    // it directly is a tab change the URL never hears about.
+    const rawSetterCalls = src.match(/(?<!function )\bsetTab\(/g) ?? [];
+    expect(
+      rawSetterCalls.length,
+      "setTab is called outside selectTab — that path leaves the URL stale"
+    ).toBe(1);
+  });
+});

@@ -22,7 +22,7 @@ import { SaveStatus, useSaveStatus } from "../SaveStatus";
 import { DateInput, MoneyInput, YesNoRadio } from "../inputs";
 
 /**
- * Directors & Officers — ACORD 810 input.
+ * Directors & Officers.
  *
  * **Not an add/remove table.** The three coverage parts are fixed by the
  * form: there is no fourth to add and removing one would mean the form has a
@@ -34,11 +34,14 @@ import { DateInput, MoneyInput, YesNoRadio } from "../inputs";
  * `DO_PART_LABELS` — naming them after the standard D&O Side split would
  * assert a meaning nobody has confirmed, on a document that goes to a carrier.
  *
- * The 810 is in the form registry but has no deterministic mapping yet, and
- * this commit does not add one: nobody has read that template's field
- * inventory. Until someone does, these answers are stored, editable, and
- * feed W8's AI gap-filler — see docs/acord/acord-125-fields.txt for what
- * "read the inventory first" now means in this codebase.
+ * There is no ACORD form for this, which is worth stating plainly because
+ * this card used to claim there was. It said it fed the ACORD 810; the 810 is
+ * the Business Income Report / Work Sheet, and reading its uploaded template
+ * turns up 152 fields of which not one mentions a director or an officer. The
+ * registry was mislabelled too. ACORD publishes no standard D&O application —
+ * carriers use their own — so these answers exist to be read on screen, to be
+ * copied into a carrier's own form, and to feed W8's AI gap-filler, which is
+ * what puts them on a submission today.
  */
 
 interface DoForm {
@@ -103,7 +106,9 @@ export default function DirectorsOfficersCard({
     <div className="card">
       <h2>Directors &amp; officers</h2>
       <p className="muted small">
-        Coverage parts and defence terms as applied for. Feeds the ACORD 810.
+        Coverage parts and defence terms as applied for. There is no ACORD
+        form for D&amp;O — carriers use their own — so these feed the AI
+        gap-filler and the carrier's own application.
       </p>
 
       {!app.loaded ? (
