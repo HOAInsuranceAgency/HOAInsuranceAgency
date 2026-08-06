@@ -12,6 +12,7 @@ import {
   BLANKET_SUMMARY_ROWS,
   BUILDINGS_PER_140,
   BUILDING_BLOCKS,
+  GL_CLASS_CODE_ROWS,
   LOB_OTHER_ROWS,
   LOSS_HISTORY_ROWS,
   PREMISES_ROWS,
@@ -197,8 +198,8 @@ describe("priorCoverageBlocks", () => {
  * name the 125 mapping can emit against it, so an invented one fails here
  * instead.
  *
- * Scoped to the shared header and the 125 branch; the 140 branch has its own
- * inventory and its own block of assertions below.
+ * Scoped to the shared header and the 125 branch; the 126 and 140 branches
+ * have their own inventories and their own blocks of assertions below.
  */
 describe("every ACORD 125 field name exists on the template", () => {
   const read = (p: string) => readFileSync(resolve(process.cwd(), p), "utf8");
@@ -211,11 +212,18 @@ describe("every ACORD 125 field name exists on the template", () => {
       .map((l) => l.split("  (")[0])
   );
 
-  /** Source down to the 140 branch: the shared header plus the 125 block. */
+  /**
+   * Source down to the 126 branch: the shared header plus the 125 block.
+   *
+   * The cut used to be at the 140 branch, which was right only while the 126
+   * branch between them was an empty comment. Once it had field names in it,
+   * they were being checked against the 125's inventory — and the first thing
+   * that fell out was a real 126 field reported as not existing.
+   */
   const region = (() => {
     const src = read("src/lib/acordApp.ts");
-    const cut = src.indexOf('if (formKey === "acord140")');
-    expect(cut, "the acord140 branch marker moved").toBeGreaterThan(0);
+    const cut = src.indexOf('if (formKey === "acord126")');
+    expect(cut, "the acord126 branch marker moved").toBeGreaterThan(0);
     return src.slice(0, cut);
   })();
 
@@ -402,6 +410,83 @@ describe("operationsSummary", () => {
 
   it("says nothing for a non-association", () => {
     expect(operationsSummary({ type: "PERSONAL", unitCount: 1 }, [b(2)])).toBe("");
+  });
+});
+
+/**
+ * The 126's inventory, guarding its mapping the same way the other two do.
+ *
+ * The 126 is the form the GL card on the Overview tab was built to feed, and
+ * it sat at "Mapping not built yet" while that card collected exactly the
+ * fields it wants. Every name in the branch was read off the agency's uploaded
+ * template via Settings → Inspect fields; this is what keeps it that way.
+ */
+describe("every ACORD 126 field name exists on the template", () => {
+  const read = (p: string) => readFileSync(resolve(process.cwd(), p), "utf8");
+
+  const inventory = new Set(
+    read("../docs/acord/acord-126-fields.txt")
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l && !l.startsWith("#"))
+      .map((l) => l.split("  (")[0])
+  );
+
+  /** Source from the 126 branch to the start of the 140's. */
+  const region = (() => {
+    const src = read("src/lib/acordApp.ts");
+    const from = src.indexOf('if (formKey === "acord126")');
+    const to = src.indexOf('if (formKey === "acord140")');
+    expect(from, "the acord126 branch marker moved").toBeGreaterThan(0);
+    expect(to, "the acord140 branch marker moved").toBeGreaterThan(from);
+    return src.slice(from, to);
+  })();
+
+  it("has an inventory to check against", () => {
+    // Guards the vacuous pass: an empty or moved file makes everything below
+    // trivially true.
+    expect(inventory.size).toBeGreaterThan(200);
+    expect(inventory.has("GeneralLiability_EachOccurrence_LimitAmount_A")).toBe(true);
+  });
+
+  it("names no field the template does not have", () => {
+    const literals = new Set(
+      [...region.matchAll(/"([A-Za-z][A-Za-z0-9]*(?:_[A-Za-z0-9]+)+_[A-Z])"/g)].map(
+        (m) => m[1]
+      )
+    );
+    expect(literals.size).toBeGreaterThan(15);
+    expect([...literals].filter((f) => !inventory.has(f))).toEqual([]);
+  });
+
+  it("names no row-suffixed field the template does not have", () => {
+    const prefixes = [
+      ...region.matchAll(/`([A-Za-z][A-Za-z0-9]*(?:_[A-Za-z0-9]+)+_)\$\{row\}`/g),
+    ].map((m) => m[1]);
+    expect(prefixes.length, "no interpolated candidates found").toBeGreaterThan(3);
+    for (const prefix of prefixes) {
+      for (const row of GL_CLASS_CODE_ROWS) {
+        expect(inventory.has(`${prefix}${row}`), `${prefix}${row}`).toBe(true);
+      }
+    }
+  });
+
+  it("iterates exactly the three classification rows the form prints", () => {
+    // A fourth row would write into fields that do not exist; two would drop a
+    // class code the producer entered.
+    expect([...GL_CLASS_CODE_ROWS]).toEqual(["A", "B", "C"]);
+    expect(inventory.has("GeneralLiability_Hazard_ClassCode_C")).toBe(true);
+    expect(inventory.has("GeneralLiability_Hazard_ClassCode_D")).toBe(false);
+  });
+
+  it("maps none of the opaque question codes", () => {
+    // `Contractors_Question_<XXX>Code_A` and its GeneralLiabilityLineOfBusiness
+    // twin are ACORD question identifiers, and nothing in the field name says
+    // which question each asks — AAB sits beside a different explanation field
+    // in each family. A Y in the wrong box is a misstatement on a document an
+    // underwriter prices from, so these stay unmapped until the codes can be
+    // confirmed against the printed form.
+    expect(region).not.toMatch(/Question_[A-Z]{3}Code/);
   });
 });
 

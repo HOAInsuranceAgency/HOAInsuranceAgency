@@ -163,6 +163,14 @@ export default function FormsTab({
             })
           );
 
+          // The 126's classification schedule.
+          const glClassCodes = await listAllPages((nextToken) =>
+            client.models.GlClassCode.list({
+              filter: { accountId: { eq: account.id } },
+              nextToken,
+            })
+          );
+
           // The blanket schedule: the 140's summary rows, repeated on every
           // page of a multi-page set.
           const blankets = await listAllPages((nextToken) =>
@@ -204,6 +212,7 @@ export default function FormsTab({
               blankets,
               losses,
               glRows[0] ?? null,
+              glClassCodes,
               signature,
               renewalDate,
               lines

@@ -4,7 +4,7 @@
 import { AGENCY } from "./agency";
 import type { Account } from "./client";
 import type { AcordFormDef } from "./acordRegistry";
-import { fmtUs, todayUs } from "./acordFormat";
+import { amt, fmtUs, todayUs } from "./acordFormat";
 import { inspectionContact, primaryContact, type ContactLike } from "./contacts";
 import {
   ACORD125_LEGAL_ENTITY_FIELDS,
@@ -160,11 +160,47 @@ function mostCommon<T>(values: (T | null | undefined)[]): T | undefined {
 
 type ContactInfo = ContactLike;
 
-/** The slice of the GL application the 125 reads. */
+/**
+ * The GL application, as the 125 and the 126 read it.
+ *
+ * The 125 only ever wanted the two employee counts. The 126 is the form this
+ * data was captured for — the GL card on the Overview tab says so — and needs
+ * the limits and deductibles as well.
+ */
 interface GlInfo {
+  eachOccurrence?: number | null;
+  generalAggregate?: number | null;
+  limitAppliesPer?: string | null;
+  productsCompletedOpsAggregate?: number | null;
+  personalAdvInjury?: number | null;
+  damageToRentedPremises?: number | null;
+  medicalExpense?: number | null;
+  deductibleType?: string | null;
+  propertyDamageDeductible?: number | null;
+  bodilyInjuryDeductible?: number | null;
+  paidToSubcontractors?: number | null;
+  workSubcontractedPct?: number | null;
+  subcontractedWorkDescription?: string | null;
   fullTimeEmployees?: number | null;
   partTimeEmployees?: number | null;
 }
+
+/** One row of the 126's classification schedule. */
+export interface GlClassCodeInfo {
+  hazardNumber?: string | null;
+  classCode?: string | null;
+  premiumBasis?: string | null;
+  exposure?: number | null;
+  description?: string | null;
+}
+
+/**
+ * The 126's classification schedule has three rows on the face of the form.
+ * A fourth class code needs an ACORD 101, the same way a fifth building needs
+ * a second 140 — and, like the 140's overflow, it is reported rather than
+ * dropped silently.
+ */
+export const GL_CLASS_CODE_ROWS = ["A", "B", "C"] as const;
 
 interface PriorCarrierInfo {
   carrierName?: string | null;
@@ -374,7 +410,7 @@ export function operationsSummary(
  * other entry would generate with nothing but the shared header, so the UI
  * keeps its Generate button off. Add a key here when you add its branch.
  */
-export const MAPPED_APP_FORM_KEYS = new Set(["acord125", "acord140"]);
+export const MAPPED_APP_FORM_KEYS = new Set(["acord125", "acord126", "acord140"]);
 
 /**
  * Shared applicant/producer values for the application-section forms.
@@ -395,6 +431,8 @@ function buildAppFormValues(
   losses: LossInfo[],
   /** The account's GL application, when it has one. */
   gl: GlInfo | null,
+  /** The account's GL classification schedule — the 126's rated rows. */
+  glClassCodes: GlClassCodeInfo[],
   /**
    * When the coverage being applied for starts. For a lead that's the
    * incumbent's expiration; for a client it's the expiring policy's end date
@@ -810,8 +848,163 @@ function buildAppFormValues(
   }
 
   if (formKey === "acord126") {
-    // GL section — only the header maps from account data; GL limits are
-    // entered per submission. Named insured / producer / effective already set.
+    // ── General liability section ──
+    //
+    // This block used to be a comment saying GL limits are "entered per
+    // submission", which left the form listed as "Mapping not built yet" while
+    // the Overview tab collected exactly these fields and told the producer
+    // they were "the ACORD 126's input". The data was being captured and
+    // then not used.
+    //
+    // Every field name below was read off the agency's uploaded template via
+    // Settings → Inspect fields, not guessed. What is deliberately NOT mapped:
+    // the `Contractors_Question_*` block, which is the sub-contractor
+    // questionnaire. Those are opaque three-letter ACORD question codes and
+    // nothing on the template says which code is which question — and a Y in
+    // the wrong box on a form an underwriter reads is a misstatement, not a
+    // formatting slip. The four sub-contractor answers the CRM holds stay on
+    // the Overview tab until the codes can be confirmed against the printed
+    // form, and the AI gap-fill is offered the blanks like any other.
+    Object.assign(values, {
+      glEachOccurrence: {
+        candidates: ["GeneralLiability_EachOccurrence_LimitAmount_A"],
+        value: amt(gl?.eachOccurrence),
+      },
+      glGeneralAggregate: {
+        candidates: ["GeneralLiability_GeneralAggregate_LimitAmount_A"],
+        value: amt(gl?.generalAggregate),
+      },
+      glProductsAggregate: {
+        candidates: [
+          "GeneralLiability_ProductsAndCompletedOperations_AggregateLimitAmount_A",
+        ],
+        value: amt(gl?.productsCompletedOpsAggregate),
+      },
+      glPersonalAdvInjury: {
+        candidates: ["GeneralLiability_PersonalAndAdvertisingInjury_LimitAmount_A"],
+        value: amt(gl?.personalAdvInjury),
+      },
+      // ACORD calls damage to rented premises "fire damage" here; the CRM uses
+      // the modern name. Same box.
+      glDamageToRented: {
+        candidates: [
+          "GeneralLiability_FireDamageRentedPremises_EachOccurrenceLimitAmount_A",
+        ],
+        value: amt(gl?.damageToRentedPremises),
+      },
+      glMedicalExpense: {
+        candidates: ["GeneralLiability_MedicalExpense_EachPersonLimitAmount_A"],
+        value: amt(gl?.medicalExpense),
+      },
+
+      // ── Deductibles ──
+      // The indicator beside each amount is what makes the box read as an
+      // answer rather than a stray number, so it is ticked with the figure.
+      glPropertyDamageDed: {
+        candidates: ["GeneralLiability_PropertyDamage_DeductibleAmount_A"],
+        value: amt(gl?.propertyDamageDeductible),
+      },
+      glPropertyDamageDedInd: {
+        candidates: ["GeneralLiability_PropertyDamage_DeductibleIndicator_A"],
+        value: gl?.propertyDamageDeductible != null ? "x" : "",
+      },
+      glBodilyInjuryDed: {
+        candidates: ["GeneralLiability_BodilyInjury_DeductibleAmount_A"],
+        value: amt(gl?.bodilyInjuryDeductible),
+      },
+      glBodilyInjuryDedInd: {
+        candidates: ["GeneralLiability_BodilyInjury_DeductibleIndicator_A"],
+        value: gl?.bodilyInjuryDeductible != null ? "x" : "",
+      },
+      glDedPerClaim: {
+        candidates: ["GeneralLiability_DeductiblePerClaimIndicator_A"],
+        value: gl?.deductibleType === "PER_CLAIM" ? "x" : "",
+      },
+      glDedPerOccurrence: {
+        candidates: ["GeneralLiability_DeductiblePerOccurrenceIndicator_A"],
+        value: gl?.deductibleType === "PER_OCCURRENCE" ? "x" : "",
+      },
+    } satisfies FieldValues);
+
+    // ── "General aggregate limit applies per" ──
+    // A checkbox each, plus the code box beside them. `AggregateAppliesTo` has
+    // four members and the form has four boxes, so this is a straight map and
+    // an unanswered application ticks nothing.
+    const APPLIES_PER: Record<string, string> = {
+      POLICY: "GeneralLiability_GeneralAggregate_LimitAppliesPerPolicyIndicator_A",
+      PROJECT: "GeneralLiability_GeneralAggregate_LimitAppliesPerProjectIndicator_A",
+      LOCATION: "GeneralLiability_GeneralAggregate_LimitAppliesPerLocationIndicator_A",
+      OTHER: "GeneralLiability_GeneralAggregate_LimitAppliesToOtherIndicator_A",
+    };
+    for (const [member, field] of Object.entries(APPLIES_PER)) {
+      values[`glAppliesPer${member}`] = {
+        candidates: [field],
+        value: gl?.limitAppliesPer === member ? "x" : "",
+      };
+    }
+    values.glAppliesPerCode = {
+      candidates: ["GeneralLiability_GeneralAggregate_LimitAppliesToCode_A"],
+      value: gl?.limitAppliesPer ?? "",
+    };
+
+    // ── Sub-contractors ──
+    // The five boxes whose names say what they hold. The four Yes/No answers
+    // beside them on the printed form are `Contractors_Question_<XXX>Code_A`
+    // and are not mapped — see the note above and in the inventory file.
+    Object.assign(values, {
+      glPaidToSubs: {
+        candidates: ["Contractors_SubcontractorsPaidAmount_A"],
+        value: amt(gl?.paidToSubcontractors),
+      },
+      glWorkSubbedPct: {
+        candidates: ["Contractors_WorkSubcontractedPercent_A"],
+        value: gl?.workSubcontractedPct != null ? String(gl.workSubcontractedPct) : "",
+      },
+      glFullTime: {
+        candidates: ["Contractors_FullTimeEmployeeCount_A"],
+        value: gl?.fullTimeEmployees != null ? String(gl.fullTimeEmployees) : "",
+      },
+      glPartTime: {
+        candidates: ["Contractors_PartTimeEmployeeCount_A"],
+        value: gl?.partTimeEmployees != null ? String(gl.partTimeEmployees) : "",
+      },
+      glSubbedWorkDesc: {
+        candidates: [
+          "GeneralLiabilityLineOfBusiness_TypeOfWorkSubcontractedDescription_A",
+        ],
+        value: gl?.subcontractedWorkDescription ?? "",
+      },
+    } satisfies FieldValues);
+
+    // ── Classification schedule ──
+    glClassCodes.slice(0, GL_CLASS_CODE_ROWS.length).forEach((cc, i) => {
+      const row = GL_CLASS_CODE_ROWS[i];
+      Object.assign(values, {
+        [`glHazard${row}`]: {
+          candidates: [`GeneralLiability_Hazard_HazardProducerIdentifier_${row}`],
+          value: cc.hazardNumber ?? "",
+        },
+        [`glClassCode${row}`]: {
+          candidates: [`GeneralLiability_Hazard_ClassCode_${row}`],
+          value: cc.classCode ?? "",
+        },
+        [`glPremiumBasis${row}`]: {
+          candidates: [`GeneralLiability_Hazard_PremiumBasisCode_${row}`],
+          // ACORD's own basis codes are a controlled list this CRM does not
+          // model; the two members it does have are written as words, which is
+          // what an underwriter reads off the box either way.
+          value: cc.premiumBasis === "UNIT" ? "Unit" : cc.premiumBasis ? "Other" : "",
+        },
+        [`glExposure${row}`]: {
+          candidates: [`GeneralLiability_Hazard_Exposure_${row}`],
+          value: cc.exposure != null ? amt(cc.exposure) : "",
+        },
+        [`glClassification${row}`]: {
+          candidates: [`GeneralLiability_Hazard_Classification_${row}`],
+          value: cc.description ?? "",
+        },
+      } satisfies FieldValues);
+    });
   }
 
   if (formKey === "acord140") {
@@ -1026,6 +1219,7 @@ export async function fillAcordApp(
   blankets: BlanketInfo[],
   losses: LossInfo[],
   gl: GlInfo | null,
+  glClassCodes: GlClassCodeInfo[],
   signature?: SignatureInfo | null,
   renewalDate?: string | null,
   lines: string[] = []
@@ -1041,6 +1235,7 @@ export async function fillAcordApp(
       blankets,
       losses,
       gl,
+      glClassCodes,
       renewalDate,
       lines
     ),
