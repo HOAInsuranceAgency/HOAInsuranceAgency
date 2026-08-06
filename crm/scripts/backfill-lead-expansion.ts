@@ -13,10 +13,10 @@
  * The ordering in docs/specs/lead-client-expansion.md is what keeps this
  * reversible, and it is not negotiable:
  *
- *   1. Add the new models. Deploy.               ← W1 and W3 did this
+ *   1. Add the new models. Deploy.               ← W1, W3 and W5 did this
  *   2. Run this, dry, and read the summary.
  *   3. Run it with --apply. Verify.
- *   4. Ship the UI reading the new rows.         ← W1 and W3 did this too
+ *   4. Ship the UI reading the new rows.         ← W1, W3 and W5 did this too
  *   5. Only then delete the old columns.         ← NOT DONE YET
  *
  * Steps 1 and 4 landed together because the UI half is what makes the columns
@@ -24,7 +24,8 @@
  * runs. Step 5 is a separate commit, deliberately: dropping a field from an
  * Amplify model does not delete the DynamoDB attribute, so until something
  * overwrites it the whole workstream is revertible by putting the fields back.
- * Nothing in W1 or W3 writes to a column it is about to drop. Keep it that way.
+ * Nothing in W1, W3 or W5 writes to a column it is about to drop. Keep it that
+ * way.
  *
  * ## What it covers
  *
@@ -33,10 +34,16 @@
  * | `contactFirstName`/`contactLastName`/`contactEmail`/`contactPhone` | one primary `Contact` |
  * | `inspectionContactName`/`inspectionContactPhone` | one INSPECTION `Contact` |
  * | `priorCarrierName`/`priorPolicyNumber`/`priorPremium`/`priorTermEffective`/`priorTermExpiration` | one General Liability `PriorCarrier` |
+ * | `yearBuilt`/`stories`/`constructionType`/the four update years | one `Building`, or the empty fields of every existing one |
  *
- * W5's buildings backfill is not here yet. It is the one that can produce
- * wrong data — an account-level "roof updated 2019" is not necessarily true
- * of all thirteen buildings — so it needs its own review pass.
+ * That last row is the one the spec warns about, and it is the reason this
+ * script prints a warning block rather than only a tally. An account-level
+ * "roof updated 2019" is a fact about whichever building somebody had in
+ * mind, and copying it onto all thirteen asserts it of twelve nobody checked.
+ * The information about which building it described was never recorded, so
+ * there is nothing better available — what the script does instead is fill
+ * only EMPTY fields, never overwrite a typed value, and name every account
+ * where the fan-out happened so the dry run can be read rather than skimmed.
  *
  * ## Authentication
  *
@@ -75,6 +82,7 @@ const only = args.includes("--account") ? ONLY : null;
 const PRIMARY_KEY = "backfill:contact";
 const INSPECTION_KEY = "backfill:inspection";
 const PRIOR_CARRIER_KEY = "backfill:priorcarrier";
+const BUILDING_KEY = "backfill:building";
 
 /**
  * The line the five prior-carrier columns described.
@@ -90,15 +98,19 @@ const BACKFILLED_LINE = "General Liability";
 
 const trim = (v: string | null | undefined) => v?.trim() || null;
 
-type TargetModel = "Contact" | "PriorCarrier";
+type TargetModel = "Contact" | "PriorCarrier" | "Building";
 
 interface Planned {
   accountId: string;
   accountName: string;
   model: TargetModel;
-  action: "create" | "skip";
+  action: "create" | "update" | "skip";
   reason: string;
+  /** Set on an update: the row being changed. */
+  id?: string;
   row?: Record<string, unknown>;
+  /** Louder than a row of values — see the fan-out warning in main(). */
+  warning?: string;
 }
 
 async function plan(): Promise<Planned[]> {
@@ -245,6 +257,88 @@ async function plan(): Promise<Planned[]> {
         },
       });
     }
+
+    // ── The construction columns, from Account onto every building ──
+    //
+    // THIS IS THE ONE THAT CAN PRODUCE WRONG DATA, and the spec says so. An
+    // account-level "roof updated 2019" is a fact about whichever building
+    // somebody had in mind, and copying it onto all thirteen asserts it of
+    // twelve buildings nobody checked. There is no way to do better from
+    // here — the information about which building it described was never
+    // recorded — so the script does the only defensible thing: it copies only
+    // into fields that are EMPTY, never overwriting a value somebody typed,
+    // and it prints a warning per account that fans out to more than one
+    // building so the output can be reviewed rather than skimmed.
+    const construction: Record<string, number | string | null> = {
+      yearBuilt: a.yearBuilt ?? null,
+      stories: a.stories ?? null,
+      constructionType: a.constructionType ?? null,
+      roofYear: a.roofUpdatedYear ?? null,
+      heatingYear: a.hvacUpdatedYear ?? null,
+      wiringYear: a.electricalUpdatedYear ?? null,
+      plumbingYear: a.plumbingUpdatedYear ?? null,
+    };
+    const setColumns = Object.entries(construction).filter(([, v]) => v != null);
+
+    if (setColumns.length > 0) {
+      const buildings = await listAllPages((nextToken) =>
+        client.models.Building.list({
+          filter: { accountId: { eq: a.id } },
+          nextToken,
+        })
+      );
+
+      if (buildings.length === 0) {
+        // No buildings at all: the account's own construction answers become
+        // the one building it evidently has.
+        if (buildings.some((b) => b.extractionSourceKey === BUILDING_KEY)) {
+          planned.push({
+            accountId: a.id,
+            accountName: a.name,
+            model: "Building",
+            action: "skip",
+            reason: "building already backfilled",
+          });
+        } else {
+          planned.push({
+            accountId: a.id,
+            accountName: a.name,
+            model: "Building",
+            action: "create",
+            reason: "one building from the account's construction columns",
+            row: {
+              accountId: a.id,
+              label: "Building 1",
+              streetAddress: trim(a.address),
+              ...Object.fromEntries(setColumns),
+              extractionSourceKey: BUILDING_KEY,
+            },
+          });
+        }
+      } else {
+        // Buildings exist: fill only the gaps, one planned update per
+        // building that has any.
+        for (const b of buildings) {
+          const gaps = setColumns.filter(
+            ([k]) => (b as Record<string, unknown>)[k] == null
+          );
+          if (gaps.length === 0) continue;
+          planned.push({
+            accountId: a.id,
+            accountName: a.name,
+            model: "Building",
+            action: "update",
+            id: b.id,
+            reason: `${b.label ?? b.id}: filling ${gaps.map(([k]) => k).join(", ")}`,
+            row: { id: b.id, ...Object.fromEntries(gaps) },
+            warning:
+              buildings.length > 1
+                ? `account-level construction copied onto ${buildings.length} buildings — verify before dropping the columns`
+                : undefined,
+          });
+        }
+      }
+    }
   }
 
   return planned;
@@ -258,7 +352,7 @@ async function main() {
   );
 
   const planned = await plan();
-  const creates = planned.filter((p) => p.action === "create");
+  const writes = planned.filter((p) => p.action !== "skip");
 
   for (const p of planned) {
     const row = p.row;
@@ -277,21 +371,37 @@ async function main() {
           .filter(Boolean)
           .join(" · ")
       : p.reason;
+    const mark = p.action === "create" ? "+" : p.action === "update" ? "~" : "·";
     console.log(
-      `${p.action === "create" ? "+" : "·"} ${p.accountName} (${p.accountId})` +
-        `\n    ${p.model}: ${
-          p.action === "create" ? detail : `skipped — ${p.reason}`
-        }`
+      `${mark} ${p.accountName} (${p.accountId})` +
+        `\n    ${p.model}: ${p.action === "skip" ? `skipped — ${p.reason}` : `${p.reason}${detail ? ` — ${detail}` : ""}`}`
     );
   }
 
-  const tally = (m: TargetModel) =>
-    creates.filter((p) => p.model === m).length;
+  // ── The fan-out warning, printed together rather than scattered ──
+  //
+  // W5's buildings pass is the one the spec says can produce wrong data: an
+  // account-level "roof updated 2019" copied onto thirteen buildings asserts
+  // it of twelve nobody checked. These accounts are the ones to read before
+  // running with --apply, and burying the warning next to each row would let
+  // it be skimmed past.
+  const fannedOut = [...new Set(writes.filter((p) => p.warning).map((p) => `${p.accountName} (${p.accountId})`))];
+  if (fannedOut.length) {
+    console.warn(
+      `\n!! ${fannedOut.length} account(s) have account-level construction ` +
+        `values being copied onto more than one building. Only EMPTY fields ` +
+        `are filled — nothing typed by hand is overwritten — but the values ` +
+        `themselves were never per-building, so review these before --apply:`
+    );
+    for (const a of fannedOut) console.warn(`     ${a}`);
+  }
+
+  const tally = (m: TargetModel) => writes.filter((p) => p.model === m).length;
   console.log(
-    `\n${tally("Contact")} contact row(s) and ${tally("PriorCarrier")} prior ` +
-      `carrier row(s) to create across ` +
-      `${new Set(creates.map((p) => p.accountId)).size} account(s); ` +
-      `${planned.length - creates.length} skipped.`
+    `\n${tally("Contact")} contact, ${tally("PriorCarrier")} prior carrier ` +
+      `and ${tally("Building")} building row(s) to write across ` +
+      `${new Set(writes.map((p) => p.accountId)).size} account(s); ` +
+      `${planned.length - writes.length} skipped.`
   );
 
   if (!APPLY) {
@@ -301,17 +411,26 @@ async function main() {
 
   let written = 0;
   const failures: string[] = [];
-  for (const p of creates) {
-    // The two models take different payloads, so this dispatches rather than
-    // pretending one create signature covers both.
+  for (const p of writes) {
+    // The models take different payloads and buildings can be updated rather
+    // than created, so this dispatches rather than pretending one signature
+    // covers everything.
     const { errors } =
-      p.model === "Contact"
-        ? await client.models.Contact.create(
-            p.row as Parameters<typeof client.models.Contact.create>[0]
+      p.action === "update"
+        ? await client.models.Building.update(
+            p.row as Parameters<typeof client.models.Building.update>[0]
           )
-        : await client.models.PriorCarrier.create(
-            p.row as Parameters<typeof client.models.PriorCarrier.create>[0]
-          );
+        : p.model === "Contact"
+          ? await client.models.Contact.create(
+              p.row as Parameters<typeof client.models.Contact.create>[0]
+            )
+          : p.model === "PriorCarrier"
+            ? await client.models.PriorCarrier.create(
+                p.row as Parameters<typeof client.models.PriorCarrier.create>[0]
+              )
+            : await client.models.Building.create(
+                p.row as Parameters<typeof client.models.Building.create>[0]
+              );
     if (errors?.length) {
       failures.push(
         `${p.accountName} (${p.accountId}) ${p.model}: ${errors[0].message}`
@@ -337,7 +456,21 @@ async function main() {
   // remember to run.
   console.log("\nVerifying…");
   const stillMissing: string[] = [];
-  for (const p of creates) {
+  for (const p of writes) {
+    if (p.action === "update") {
+      // An update has no provenance key to look for — it filled gaps on a row
+      // that already existed. Verify the gaps are gone instead.
+      const { data } = await client.models.Building.get({ id: p.id as string });
+      const unfilled = Object.keys(p.row ?? {})
+        .filter((k) => k !== "id")
+        .filter((k) => (data as Record<string, unknown> | null)?.[k] == null);
+      if (unfilled.length) {
+        stillMissing.push(
+          `${p.accountName} (${p.accountId}) Building ${p.id}: ${unfilled.join(", ")}`
+        );
+      }
+      continue;
+    }
     const rows =
       p.model === "Contact"
         ? await listAllPages((nextToken) =>
@@ -346,12 +479,19 @@ async function main() {
               nextToken,
             })
           )
-        : await listAllPages((nextToken) =>
-            client.models.PriorCarrier.list({
-              filter: { accountId: { eq: p.accountId } },
-              nextToken,
-            })
-          );
+        : p.model === "PriorCarrier"
+          ? await listAllPages((nextToken) =>
+              client.models.PriorCarrier.list({
+                filter: { accountId: { eq: p.accountId } },
+                nextToken,
+              })
+            )
+          : await listAllPages((nextToken) =>
+              client.models.Building.list({
+                filter: { accountId: { eq: p.accountId } },
+                nextToken,
+              })
+            );
     const keys = new Set(rows.map((r) => r.extractionSourceKey));
     if (!keys.has(p.row?.extractionSourceKey as string)) {
       stillMissing.push(

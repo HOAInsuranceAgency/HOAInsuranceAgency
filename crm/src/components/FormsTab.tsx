@@ -12,6 +12,7 @@ import {
 import {
   ACORD_FORMS,
   MAPPED_APP_FORM_KEYS,
+  buildingPages,
   fillAcordApp,
   signatureFor,
   type AcordFormDef,
@@ -152,47 +153,75 @@ export default function FormsTab({
             })
           );
 
-          const { bytes, missing, unsigned } = await fillAcordApp(
-            form,
-            account,
-            buildings,
-            contacts,
-            priorCarriers,
-            glRows[0] ?? null,
-            await signatureFor(profile.id),
-            renewalDate,
-            lines
+          // The blanket schedule: the 140's summary rows, repeated on every
+          // page of a multi-page set.
+          const blankets = await listAllPages((nextToken) =>
+            client.models.Blanket.list({
+              filter: { accountId: { eq: account.id } },
+              nextToken,
+            })
           );
 
+          // The 140 describes two buildings per PDF, so an account with five
+          // of them produces three documents. Every other form is one page of
+          // buildings — `buildingPages` returns a single group for them.
+          const pages =
+            form.key === "acord140" ? buildingPages(buildings) : [buildings];
+          const signature = await signatureFor(profile.id);
           const stamp = new Date().toISOString().slice(0, 10);
-          const filename = `${form.key}-${account.name.replace(/[^\w-]+/g, "_")}-${stamp}.pdf`;
-          const path = `generated/${account.id}/${Date.now()}-${filename}`;
-          await uploadData({
-            path,
-            data: new Blob([bytes as BlobPart], { type: "application/pdf" }),
-            options: { contentType: "application/pdf" },
-          }).result;
+          const safeName = account.name.replace(/[^\w-]+/g, "_");
+          const allMissing = new Set<string>();
+          let unsigned: string | undefined;
 
-          const { data: doc, errors } = await client.models.Document.create({
-            entityType: "ACCOUNT",
-            entityId: account.id,
-            category: "ACORD_FORM",
-            name: filename,
-            s3Key: path,
-            contentType: "application/pdf",
-            sizeBytes: bytes.byteLength,
-            ocrStatus: "SKIPPED",
-          });
-          // The PDF is in S3 either way, but without the Document row it
-          // never appears in "Generated forms" — previously that failure was
-          // silent and the panel still said "Generated".
-          if (errors?.length || !doc) {
-            throw new Error(
-              errors?.[0]?.message ??
-                "The PDF was created but couldn't be recorded — it won't appear in the list below."
+          for (const [page, pageBuildings] of pages.entries()) {
+            const filled = await fillAcordApp(
+              form,
+              account,
+              pageBuildings,
+              contacts,
+              priorCarriers,
+              blankets,
+              glRows[0] ?? null,
+              signature,
+              renewalDate,
+              lines
             );
+            for (const m of filled.missing) allMissing.add(m);
+            unsigned = unsigned ?? filled.unsigned;
+
+            // Numbered only when there is more than one, so the common case
+            // keeps the filename it has always had.
+            const suffix = pages.length > 1 ? `-${page + 1}of${pages.length}` : "";
+            const filename = `${form.key}-${safeName}-${stamp}${suffix}.pdf`;
+            const path = `generated/${account.id}/${Date.now()}-${filename}`;
+            await uploadData({
+              path,
+              data: new Blob([filled.bytes as BlobPart], { type: "application/pdf" }),
+              options: { contentType: "application/pdf" },
+            }).result;
+
+            const { data: doc, errors } = await client.models.Document.create({
+              entityType: "ACCOUNT",
+              entityId: account.id,
+              category: "ACORD_FORM",
+              name: filename,
+              s3Key: path,
+              contentType: "application/pdf",
+              sizeBytes: filled.bytes.byteLength,
+              ocrStatus: "SKIPPED",
+            });
+            // The PDF is in S3 either way, but without the Document row it
+            // never appears in "Generated forms" — previously that failure was
+            // silent and the panel still said "Generated".
+            if (errors?.length || !doc) {
+              throw new Error(
+                errors?.[0]?.message ??
+                  "The PDF was created but couldn't be recorded — it won't appear in the list below."
+              );
+            }
+            setGenerated((ds) => [doc, ...ds]);
           }
-          setGenerated((ds) => [doc, ...ds]);
+          const missing = [...allMissing];
 
           // Same sentences as before, composed the same way. What changed is
           // severity: unmatched fields or an unsigned form are things the
@@ -201,8 +230,8 @@ export default function FormsTab({
           // the same amber span every outcome used to share.
           const note = [
             missing.length
-              ? `Generated. Unmatched fields (extend the mapping via Settings → Inspect fields): ${missing.join(", ")}`
-              : "Generated — every mapped field matched.",
+              ? `Generated${pages.length > 1 ? ` ${pages.length} pages` : ""}. Unmatched fields (extend the mapping via Settings → Inspect fields): ${missing.join(", ")}`
+              : `Generated${pages.length > 1 ? ` ${pages.length} pages` : ""} — every mapped field matched.`,
             unsigned &&
               `The form went out UNSIGNED — ${unsigned}. Sign it by hand before submitting.`,
           ]

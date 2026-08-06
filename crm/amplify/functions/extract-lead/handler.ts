@@ -89,16 +89,9 @@ const EXTRACTION_SCHEMA = {
     },
     zip: field("string"),
     unitCount: field("integer"),
-    yearBuilt: field("integer"),
     totalInsuredValue: field("number"),
-    constructionType: enumField([...CONSTRUCTION_TYPES]),
-    stories: field("integer"),
     coastal: field("boolean"),
     milesToCoast: field("number"),
-    roofUpdatedYear: field("integer"),
-    hvacUpdatedYear: field("integer"),
-    electricalUpdatedYear: field("integer"),
-    plumbingUpdatedYear: field("integer"),
     firewallsVerified: field("boolean"),
     currentCarrier: field("string"),
     currentAgent: {
@@ -134,16 +127,37 @@ const EXTRACTION_SCHEMA = {
         additionalProperties: false,
       },
     },
+    // Construction is per building, not per account. These seven used to be
+    // flat fields, which meant an association with a 1978 clubhouse and 2016
+    // townhouses got one year built and one construction class for the site.
     buildings: {
       type: "array",
-      description: "Individual buildings with square footage, if documented",
+      description:
+        "Individual buildings, each with its own construction and square footage",
       items: {
         type: "object",
         properties: {
           label: { type: "string", description: "Building name/label, or empty string" },
           sqft: { type: "string", description: "Square footage as digits only, or empty string" },
+          yearBuilt: { type: "string", description: "Year built, or empty string" },
+          stories: { type: "string", description: "Storey count, or empty string" },
+          constructionType: { type: "string", enum: [...CONSTRUCTION_TYPES, ""] },
+          roofYear: { type: "string", description: "Year the roof was last replaced, or empty string" },
+          heatingYear: { type: "string", description: "Year heating was last updated, or empty string" },
+          wiringYear: { type: "string", description: "Year wiring was last updated, or empty string" },
+          plumbingYear: { type: "string", description: "Year plumbing was last updated, or empty string" },
         },
-        required: ["label", "sqft"],
+        required: [
+          "label",
+          "sqft",
+          "yearBuilt",
+          "stories",
+          "constructionType",
+          "roofYear",
+          "heatingYear",
+          "wiringYear",
+          "plumbingYear",
+        ],
         additionalProperties: false,
       },
     },
@@ -158,16 +172,9 @@ const EXTRACTION_SCHEMA = {
     "state",
     "zip",
     "unitCount",
-    "yearBuilt",
     "totalInsuredValue",
-    "constructionType",
-    "stories",
     "coastal",
     "milesToCoast",
-    "roofUpdatedYear",
-    "hvacUpdatedYear",
-    "electricalUpdatedYear",
-    "plumbingUpdatedYear",
     "firewallsVerified",
     "currentCarrier",
     "currentAgent",
@@ -271,9 +278,9 @@ ${dataKeys.join(", ")}
 Each of those keys maps to: { "value": <string>, "confidence": "high"|"medium"|"low", "evidence": <string>, "source": <string> }.
 Also include:
   "contacts": array of { "name": <string>, "email": <string>, "phone": <string>, "type": <string> } — [] if nobody is named,
-  "buildings": array of { "label": <string>, "sqft": <string, digits only> } — [] if none documented,
+  "buildings": array of { "label", "sqft", "yearBuilt", "stories", "constructionType", "roofYear", "heatingYear", "wiringYear", "plumbingYear" } — all strings, "" where the documents don't say, [] if no buildings are documented,
   "summary": <string, 2-3 sentence underwriting summary>.
-For "constructionType".value use exactly one of: ${CONSTRUCTION_TYPES.join(", ")}, or "".
+For a building's "constructionType" use exactly one of: ${CONSTRUCTION_TYPES.join(", ")}, or "". Construction, storeys and the update years are per building — do not repeat one building's answers across the others unless the documents state them for each.
 For a contact's "type" use exactly one of: ${CONTACT_TYPES.join(", ")}, or "" when the documents don't say what the person's role is. One entry per person — do not repeat the same person under two roles.`;
 
     const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });

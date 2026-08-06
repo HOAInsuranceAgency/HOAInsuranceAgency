@@ -8,10 +8,13 @@ import { fmtUs, todayUs } from "./acordFormat";
 import { inspectionContact, primaryContact, type ContactLike } from "./contacts";
 import {
   ACORD125_LEGAL_ENTITY_FIELDS,
+  BUILDING_DEDUCTIBLE_TYPE_LABELS,
+  CAUSE_OF_LOSS_LABELS,
   CONSTRUCTION_LABELS,
   CONSTRUCTION_PHRASES,
   CONTACT_TYPE_LABELS,
   DEFAULT_ASSOCIATION_LEGAL_ENTITY,
+  REPLACEMENT_COST_CODES,
   type LegalEntityType,
 } from "./enums";
 import {
@@ -28,6 +31,116 @@ interface BuildingInfo {
   sqft?: number | null;
   streetAddress?: string | null;
   description?: string | null;
+  yearBuilt?: number | null;
+  stories?: number | null;
+  basements?: number | null;
+  constructionType?: string | null;
+  roofType?: string | null;
+  roofYear?: number | null;
+  heatingYear?: number | null;
+  wiringYear?: number | null;
+  plumbingYear?: number | null;
+  distanceToHydrantFt?: number | null;
+  distanceToFireStationMi?: number | null;
+  fireProtectionType?: string | null;
+  sprinklerPct?: number | null;
+  individualBuildingValue?: number | null;
+  coinsurancePct?: number | null;
+  valuation?: string | null;
+  deductibleType?: string | null;
+  deductibleAmount?: number | null;
+  blanketNumber?: string | null;
+  causeOfLoss?: string | null;
+  formsConditions?: string | null;
+  otherOccupancies?: string | null;
+  historicalLandmark?: boolean | null;
+  sinkholeCoverageAccepted?: boolean | null;
+  mineSubsidenceCoverage?: boolean | null;
+  remarks?: string | null;
+}
+
+interface BlanketInfo {
+  blanketNumber?: string | null;
+  amount?: number | null;
+  type?: string | null;
+}
+
+/**
+ * The ACORD 140 describes **two buildings per PDF**, so an account with N
+ * buildings needs `ceil(N / 2)` of them.
+ *
+ * The suffixes are the trap in this form and the reason this is a table
+ * rather than an interpolated letter. Nothing lines up:
+ *
+ *  - the per-building fields use `_A` and `_B`;
+ *  - the subject-of-insurance rows run `_A.._E` and `_G.._K` — there is no
+ *    `_F`, and this mapping fills the first row of each run;
+ *  - the premises remark is `_A` and `_C`.
+ *
+ * See docs/acord/acord-140-fields.txt.
+ */
+export const BUILDING_BLOCKS = [
+  { fields: "A", subject: "A", remark: "A" },
+  { fields: "B", subject: "G", remark: "C" },
+] as const;
+
+/**
+ * The subject-of-insurance runs each block's rows are drawn from.
+ *
+ * Named so the table above can be checked structurally rather than only by
+ * whether its names exist. That distinction is the whole point here: the
+ * second block's first row is `_G`, and writing `_B` instead would name a
+ * field that **does exist** — it is the second row of the *first* block — so
+ * an existence check passes while the form comes out with two rows of one
+ * building's coverage and none of the other's.
+ */
+export const SUBJECT_ROW_RUNS = [
+  ["A", "B", "C", "D", "E"],
+  ["G", "H", "I", "J", "K"],
+] as const;
+
+/** How many buildings one ACORD 140 can describe. */
+export const BUILDINGS_PER_140 = BUILDING_BLOCKS.length;
+
+/** The 140's blanket summary has four rows. */
+const BLANKET_SUMMARY_ROWS = ["A", "B", "C", "D"] as const;
+
+/**
+ * Buildings → one group per PDF. An account with no buildings still gets one
+ * page, so the form carries the account's own address and the blanket summary
+ * rather than generating nothing.
+ */
+export function buildingPages<T>(buildings: T[]): T[][] {
+  if (buildings.length === 0) return [[]];
+  const pages: T[][] = [];
+  for (let i = 0; i < buildings.length; i += BUILDINGS_PER_140) {
+    pages.push(buildings.slice(i, i + BUILDINGS_PER_140));
+  }
+  return pages;
+}
+
+/**
+ * The value that appears most often across the buildings, for the fields the
+ * 125 asks once about a site the 140 describes building by building.
+ *
+ * Ties break toward the first in read order rather than arbitrarily, so the
+ * same set of buildings always produces the same sentence.
+ */
+function mostCommon<T>(values: (T | null | undefined)[]): T | undefined {
+  const counts = new Map<T, number>();
+  for (const v of values) {
+    if (v == null) continue;
+    counts.set(v, (counts.get(v) ?? 0) + 1);
+  }
+  let best: T | undefined;
+  let bestCount = 0;
+  for (const [v, n] of counts) {
+    if (n > bestCount) {
+      best = v;
+      bestCount = n;
+    }
+  }
+  return best;
 }
 
 type ContactInfo = ContactLike;
@@ -203,9 +316,9 @@ const STOREY_WORD: Record<number, string> = {
  * wood-frame buildings constructed 2016-2017" — rather than emitting a
  * generic label that tells them nothing.
  */
-function operationsSummary(
-  account: Account,
-  buildingCount: number
+export function operationsSummary(
+  account: Pick<Account, "type" | "unitCount">,
+  buildings: BuildingInfo[]
 ): string {
   if (account.type !== "ASSOCIATION") return "";
   const bits: string[] = [];
@@ -214,24 +327,30 @@ function operationsSummary(
       ? `${account.unitCount}-unit residential condominium association`
       : "Residential condominium association"
   );
+  // Storeys, construction and the build year now come from the buildings
+  // rather than from three Account columns that could describe one building.
+  // The most common value across the rows: a site with a 1978 clubhouse and
+  // twelve 2016 townhouses is a 2016 site with an old clubhouse, and saying
+  // "constructed 1978" of it would be the wrong headline.
+  const storeys = mostCommon(buildings.map((b) => b.stories));
+  const construction = mostCommon(buildings.map((b) => b.constructionType));
+  const built = mostCommon(buildings.map((b) => b.yearBuilt));
   const shape = [
-    account.stories ? STOREY_WORD[account.stories] ?? `${account.stories}-story` : "",
-    account.constructionType
-      ? CONSTRUCTION_PHRASES[account.constructionType] ?? ""
-      : "",
+    storeys ? STOREY_WORD[storeys] ?? `${storeys}-story` : "",
+    construction ? CONSTRUCTION_PHRASES[construction] ?? "" : "",
   ]
     .filter(Boolean)
     .join(" ");
-  if (buildingCount > 0) {
+  if (buildings.length > 0) {
     bits.push(
-      `consisting of ${buildingCount} ${shape ? shape + " " : ""}building${
-        buildingCount === 1 ? "" : "s"
+      `consisting of ${buildings.length} ${shape ? shape + " " : ""}building${
+        buildings.length === 1 ? "" : "s"
       }`
     );
   } else if (shape) {
     bits.push(`${shape} construction`);
   }
-  if (account.yearBuilt) bits.push(`constructed ${account.yearBuilt}`);
+  if (built) bits.push(`constructed ${built}`);
   return bits.join(" ") + ".";
 }
 
@@ -255,6 +374,8 @@ function buildAppFormValues(
   buildings: BuildingInfo[],
   contacts: ContactInfo[],
   priorCarriers: PriorCarrierInfo[],
+  /** The account's blanket schedule — the 140's summary rows. */
+  blankets: BlanketInfo[],
   /** The account's GL application, when it has one. */
   gl: GlInfo | null,
   /**
@@ -275,12 +396,6 @@ function buildAppFormValues(
   const state = account.state ?? "";
   const city = account.city ?? "";
   const addr = account.address ?? "";
-  const yb = account.yearBuilt?.toString() ?? "";
-  const stories = account.stories?.toString() ?? "";
-  const area = totalSqft ? totalSqft.toString() : "";
-  const construction = account.constructionType
-    ? CONSTRUCTION_LABELS[account.constructionType] ?? ""
-    : "";
 
   // ── Shared header ──
   // Every ACORD eForm uses this naming convention, so this block applies to
@@ -408,7 +523,7 @@ function buildAppFormValues(
           "CommercialPolicy_OperationsDescription_A",
           "BuildingOccupancy_OperationsDescription_A",
         ],
-        value: operationsSummary(account, buildings.length),
+        value: operationsSummary(account, buildings),
       },
     } satisfies FieldValues);
 
@@ -607,39 +722,203 @@ function buildAppFormValues(
   }
 
   if (formKey === "acord140") {
-    // Property section — the richest mapping (construction, improvements, TIV).
-    Object.assign(values, {
-      structureAddr1: { candidates: ["CommercialStructure_PhysicalAddress_LineOne_A"], value: addr },
-      constructionCode: { candidates: ["Construction_ConstructionCode_A"], value: construction },
-      stories: { candidates: ["Construction_StoreyCount_A"], value: stories },
-      builtYear: { candidates: ["CommercialStructure_BuiltYear_A"], value: yb },
-      buildingArea: { candidates: ["Construction_BuildingArea_A"], value: area },
-      tivLimit: {
-        candidates: ["CommercialProperty_Premises_LimitAmount_A"],
-        value: account.totalInsuredValue != null ? Math.round(account.totalInsuredValue).toString() : "",
-      },
-      // System-improvement years + their "improved" indicators.
-      wiringYear: { candidates: ["BuildingImprovement_WiringYear_A"], value: account.electricalUpdatedYear?.toString() ?? "" },
-      wiringInd: {
-        candidates: ["BuildingImprovement_WiringIndicator_A"],
-        value: account.electricalUpdatedYear ? "x" : "",
-      },
-      roofYear: { candidates: ["BuildingImprovement_RoofingYear_A"], value: account.roofUpdatedYear?.toString() ?? "" },
-      roofInd: {
-        candidates: ["BuildingImprovement_RoofingIndicator_A"],
-        value: account.roofUpdatedYear ? "x" : "",
-      },
-      plumbingYear: { candidates: ["BuildingImprovement_PlumbingYear_A"], value: account.plumbingUpdatedYear?.toString() ?? "" },
-      plumbingInd: {
-        candidates: ["BuildingImprovement_PlumbingIndicator_A"],
-        value: account.plumbingUpdatedYear ? "x" : "",
-      },
-      heatingYear: { candidates: ["BuildingImprovement_HeatingYear_A"], value: account.hvacUpdatedYear?.toString() ?? "" },
-      heatingInd: {
-        candidates: ["BuildingImprovement_HeatingIndicator_A"],
-        value: account.hvacUpdatedYear ? "x" : "",
-      },
-    } satisfies FieldValues);
+    // ── Property section: two buildings per PDF ──
+    //
+    // This used to fill one building block from Account columns — a single
+    // yearBuilt, a single roof year, one construction class for a site with a
+    // 1978 clubhouse and 2016 townhouses. `buildings` here is one page's
+    // worth; `buildingPages` decides what a page is and `FormsTab` loops.
+
+    // Blanket summary, at the top of the form and about the account rather
+    // than either building on this page. Repeated on every page of a
+    // multi-page set, which is what an underwriter reading page 3 needs.
+    blankets.slice(0, BLANKET_SUMMARY_ROWS.length).forEach((bl, i) => {
+      const row = BLANKET_SUMMARY_ROWS[i];
+      Object.assign(values, {
+        [`blanketNumber${row}`]: {
+          candidates: [`CommercialProperty_Summary_BlanketNumberIdentifier_${row}`],
+          value: bl.blanketNumber ?? "",
+        },
+        [`blanketLimit${row}`]: {
+          candidates: [`CommercialProperty_Summary_BlanketLimitAmount_${row}`],
+          value: bl.amount != null ? Math.round(bl.amount).toString() : "",
+        },
+        [`blanketType${row}`]: {
+          candidates: [`CommercialCoverage_Summary_BlanketTypeDescription_${row}`],
+          value: bl.type ?? "",
+        },
+      } satisfies FieldValues);
+    });
+
+    buildings.slice(0, BUILDINGS_PER_140).forEach((b, i) => {
+      const { fields: F, subject: S, remark: R } = BUILDING_BLOCKS[i];
+      const n = (v: number | null | undefined) => (v != null ? String(v) : "");
+      const money = (v: number | null | undefined) =>
+        v != null ? Math.round(v).toString() : "";
+      /** A nullable boolean as the form's Yes/No indicator pair. */
+      const yesNo = (v: boolean | null | undefined, yes: string, no: string) => ({
+        [`${yes.replace(/\W+/g, "")}${F}`]: {
+          candidates: [yes],
+          value: v === true ? "x" : "",
+        },
+        [`${no.replace(/\W+/g, "")}${F}`]: {
+          candidates: [no],
+          value: v === false ? "x" : "",
+        },
+      });
+      /** A system-improvement year and the "was improved" box beside it. */
+      const improvement = (kind: string, year: number | null | undefined) => ({
+        [`${kind}Year${F}`]: {
+          candidates: [`BuildingImprovement_${kind}Year_${F}`],
+          value: n(year),
+        },
+        [`${kind}Ind${F}`]: {
+          candidates: [`BuildingImprovement_${kind}Indicator_${F}`],
+          value: year ? "x" : "",
+        },
+      });
+
+      Object.assign(values, {
+        [`premisesNumber${F}`]: {
+          candidates: [`CommercialStructure_Location_ProducerIdentifier_${F}`],
+          value: String(i + 1),
+        },
+        [`buildingNumber${F}`]: {
+          candidates: [`CommercialStructure_Building_ProducerIdentifier_${F}`],
+          value: String(i + 1),
+        },
+        [`buildingAddr${F}`]: {
+          candidates: [`CommercialStructure_PhysicalAddress_LineOne_${F}`],
+          value: b.streetAddress?.trim() || addr,
+        },
+        [`buildingLabel${F}`]: {
+          candidates: [`CommercialStructure_Building_SublocationDescription_${F}`],
+          value: b.label ?? "",
+        },
+
+        // ── Construction ──
+        [`constructionCode${F}`]: {
+          candidates: [`Construction_ConstructionCode_${F}`],
+          value: b.constructionType ? CONSTRUCTION_LABELS[b.constructionType] ?? "" : "",
+        },
+        [`stories${F}`]: {
+          candidates: [`Construction_StoreyCount_${F}`],
+          value: n(b.stories),
+        },
+        [`basements${F}`]: {
+          candidates: [`Construction_BasementCount_${F}`],
+          value: n(b.basements),
+        },
+        [`builtYear${F}`]: {
+          candidates: [`CommercialStructure_BuiltYear_${F}`],
+          value: n(b.yearBuilt),
+        },
+        [`buildingArea${F}`]: {
+          candidates: [`Construction_BuildingArea_${F}`],
+          value: n(b.sqft),
+        },
+        [`roofMaterial${F}`]: {
+          candidates: [`Construction_RoofMaterialCode_${F}`],
+          value: b.roofType ?? "",
+        },
+        ...improvement("Roofing", b.roofYear),
+        ...improvement("Heating", b.heatingYear),
+        ...improvement("Wiring", b.wiringYear),
+        ...improvement("Plumbing", b.plumbingYear),
+
+        // ── Protection ──
+        [`hydrantDistance${F}`]: {
+          candidates: [`BuildingFireProtection_HydrantDistanceFeetCount_${F}`],
+          value: n(b.distanceToHydrantFt),
+        },
+        [`fireStationDistance${F}`]: {
+          candidates: [`BuildingFireProtection_FireStationDistanceMileCount_${F}`],
+          value: n(b.distanceToFireStationMi),
+        },
+        // Site-level on the Account, per building on the form — every
+        // building on one site is in the same district.
+        [`fireDistrict${F}`]: {
+          candidates: [`BuildingFireProtection_FireDistrictName_${F}`],
+          value: account.fireDistrict ?? "",
+        },
+        [`fireProtection${F}`]: {
+          candidates: [`BuildingFireProtection_Alarm_ProtectionDescription_${F}`],
+          value: b.fireProtectionType ?? "",
+        },
+        [`sprinklerPct${F}`]: {
+          candidates: [`BuildingFireProtection_Alarm_SprinklerPercent_${F}`],
+          value: n(b.sprinklerPct),
+        },
+
+        // ── Coverage: the first subject-of-insurance row of this block ──
+        [`subjectCode${S}`]: {
+          candidates: [`CommercialProperty_Premises_SubjectOfInsuranceCode_${S}`],
+          value: b.individualBuildingValue != null ? "Building" : "",
+        },
+        [`subjectLimit${S}`]: {
+          candidates: [`CommercialProperty_Premises_LimitAmount_${S}`],
+          value: money(b.individualBuildingValue),
+        },
+        [`subjectCoinsurance${S}`]: {
+          candidates: [`CommercialProperty_Premises_CoinsurancePercent_${S}`],
+          value: n(b.coinsurancePct),
+        },
+        // Text fields, and the inventory names them without saying what code
+        // vocabulary they take — so these write the label rather than an
+        // invented code. An underwriter reads this row.
+        [`subjectValuation${S}`]: {
+          candidates: [`CommercialProperty_Premises_ValuationCode_${S}`],
+          value: b.valuation ? REPLACEMENT_COST_CODES[b.valuation] ?? "" : "",
+        },
+        [`subjectCauseOfLoss${S}`]: {
+          candidates: [`CommercialProperty_Premises_CauseOfLossCode_${S}`],
+          value: b.causeOfLoss ? CAUSE_OF_LOSS_LABELS[b.causeOfLoss] ?? "" : "",
+        },
+        [`subjectDeductible${S}`]: {
+          candidates: [`CommercialProperty_Premises_DeductibleAmount_${S}`],
+          value: money(b.deductibleAmount),
+        },
+        [`subjectDeductibleType${S}`]: {
+          candidates: [`CommercialProperty_Premises_DeductibleTypeCode_${S}`],
+          value: b.deductibleType
+            ? BUILDING_DEDUCTIBLE_TYPE_LABELS[b.deductibleType] ?? ""
+            : "",
+        },
+        [`subjectBlanket${S}`]: {
+          candidates: [`CommercialProperty_Premises_BlanketNumber_${S}`],
+          value: b.blanketNumber ?? "",
+        },
+        [`subjectForms${S}`]: {
+          candidates: [`CommercialProperty_Premises_FormsAndConditions_${S}`],
+          value: b.formsConditions ?? "",
+        },
+
+        // ── Other ──
+        [`otherOccupancies${F}`]: {
+          candidates: [`BuildingOccupancy_OtherOccupanciesDescription_${F}`],
+          value: b.otherOccupancies ?? "",
+        },
+        [`historicalLandmark${F}`]: {
+          candidates: [`BuildingFeatures_HistoricalPropertyIndicator_${F}`],
+          value: b.historicalLandmark ? "x" : "",
+        },
+        ...yesNo(
+          b.sinkholeCoverageAccepted,
+          `CommercialPropertyCoverage_SinkHoleCollapse_YesIndicator_${F}`,
+          `CommercialPropertyCoverage_SinkHoleCollapse_NoIndicator_${F}`
+        ),
+        ...yesNo(
+          b.mineSubsidenceCoverage,
+          `CommercialPropertyCoverage_MineSubsidence_YesIndicator_${F}`,
+          `CommercialPropertyCoverage_MineSubsidenceOption_NoIndicator_${F}`
+        ),
+        // The remark suffix is the one that does not follow the block letter.
+        [`remarks${R}`]: {
+          candidates: [`CommercialProperty_Premises_RemarkText_${R}`],
+          value: b.remarks ?? "",
+        },
+      } satisfies FieldValues);
+    });
   }
 
   return values;
@@ -651,6 +930,7 @@ export async function fillAcordApp(
   buildings: BuildingInfo[],
   contacts: ContactInfo[],
   priorCarriers: PriorCarrierInfo[],
+  blankets: BlanketInfo[],
   gl: GlInfo | null,
   signature?: SignatureInfo | null,
   renewalDate?: string | null,
@@ -664,6 +944,7 @@ export async function fillAcordApp(
       buildings,
       contacts,
       priorCarriers,
+      blankets,
       gl,
       renewalDate,
       lines

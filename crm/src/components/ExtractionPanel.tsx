@@ -7,6 +7,7 @@ import {
   friendlyError,
   listAllPages,
   type Account,
+  type Building,
   type Contact,
 } from "../lib/client";
 import { Badge, statusBadge, CONFIDENCE_BADGE } from "../lib/badges";
@@ -40,10 +41,22 @@ interface ExtractedContact {
 interface ExtractionResult {
   [key: string]: unknown;
   contacts?: ExtractedContact[];
-  buildings?: { label?: string | null; sqft?: string | number | null }[];
+  buildings?: ExtractedBuilding[];
   summary?: string;
   extractedAt?: string;
   documentCount?: number;
+}
+
+interface ExtractedBuilding {
+  label?: string | null;
+  sqft?: string | number | null;
+  yearBuilt?: string | null;
+  stories?: string | null;
+  constructionType?: string | null;
+  roofYear?: string | null;
+  heatingYear?: string | null;
+  wiringYear?: string | null;
+  plumbingYear?: string | null;
 }
 
 /** A candidate worth showing: the model returned an entry with a name on it. */
@@ -71,6 +84,20 @@ const fmtVal = (v: ExtractedField["value"]): string => {
 // Values arrive as strings ("" = not found). Coerce to the Account field's
 // type before writing.
 const isEmpty = (v: ExtractedField["value"]) => v == null || v === "";
+
+/**
+ * A digit string from the model → the integer column, or `null`.
+ *
+ * The model is asked for digits only and mostly obliges, but "1,985" and
+ * "12,000 sq ft" both turn up. Not `formCodec.num`, which returns `null` for
+ * both of those by design — this is the tolerant parser for text the model
+ * wrote, which is a different job with a different answer.
+ */
+function digits(v: unknown): number | null {
+  if (v == null || v === "") return null;
+  const n = Math.round(Number(String(v).replace(/[^0-9.]/g, "")));
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
 function coerce(def: FieldDef, v: ExtractedField["value"]): unknown {
   if (isEmpty(v)) return undefined;
   const s = String(v).trim();
@@ -101,7 +128,6 @@ const ALL_FIELD_DEFS: FieldDef[] = [
   { key: "state", label: "State", kind: "patch", current: (a) => a.state ?? "" },
   { key: "zip", label: "ZIP", kind: "patch", current: (a) => a.zip ?? "" },
   { key: "unitCount", label: "Unit count", kind: "patch", vtype: "int", current: (a) => a.unitCount?.toString() ?? "" },
-  { key: "yearBuilt", label: "Year built", kind: "patch", vtype: "int", current: (a) => a.yearBuilt?.toString() ?? "" },
   {
     key: "totalInsuredValue",
     label: "Total insured value",
@@ -110,20 +136,8 @@ const ALL_FIELD_DEFS: FieldDef[] = [
     current: (a) => (a.totalInsuredValue != null ? fmtMoney(a.totalInsuredValue) : ""),
     display: moneyDisplay,
   },
-  {
-    key: "constructionType",
-    label: "Construction type",
-    kind: "patch",
-    current: (a) => (a.constructionType ? CONSTRUCTION_LABELS[a.constructionType] ?? a.constructionType : ""),
-    display: (v) => (typeof v === "string" && v ? CONSTRUCTION_LABELS[v] ?? v : fmtVal(v)),
-  },
-  { key: "stories", label: "Stories", kind: "patch", vtype: "int", current: (a) => a.stories?.toString() ?? "" },
   { key: "coastal", label: "Coastal", kind: "patch", vtype: "bool", current: (a) => (a.coastal == null ? "" : a.coastal ? "Yes" : "No") },
   { key: "milesToCoast", label: "Miles to coast", kind: "patch", vtype: "float", current: (a) => a.milesToCoast?.toString() ?? "" },
-  { key: "roofUpdatedYear", label: "Roof updated", kind: "patch", vtype: "int", current: (a) => a.roofUpdatedYear?.toString() ?? "" },
-  { key: "hvacUpdatedYear", label: "HVAC updated", kind: "patch", vtype: "int", current: (a) => a.hvacUpdatedYear?.toString() ?? "" },
-  { key: "electricalUpdatedYear", label: "Electrical updated", kind: "patch", vtype: "int", current: (a) => a.electricalUpdatedYear?.toString() ?? "" },
-  { key: "plumbingUpdatedYear", label: "Plumbing updated", kind: "patch", vtype: "int", current: (a) => a.plumbingUpdatedYear?.toString() ?? "" },
   { key: "firewallsVerified", label: "Firewalls verified", kind: "patch", vtype: "bool", current: (a) => (a.firewallsVerified == null ? "" : a.firewallsVerified ? "Yes" : "No") },
   { key: "currentAgent", label: "Current agent / broker", kind: "patch", current: (a) => a.currentAgent ?? "" },
   { key: "currentCarrier", label: "Current carrier → notes", kind: "note", current: () => "" },
@@ -347,11 +361,22 @@ export default function ExtractionPanel({
         // failure: it comes back as `run`'s warning, not a throw.
         let buildingFailures = 0;
         for (const [i, b] of buildings.entries()) {
-          const sqftNum = Math.round(Number(String(b.sqft ?? "").replace(/[^0-9.]/g, "")));
           const { data: made, errors: bErrors } = await client.models.Building.create({
             accountId: account.id,
             label: (b.label as string) || `Building ${i + 1}`,
-            sqft: Number.isFinite(sqftNum) && sqftNum > 0 ? sqftNum : undefined,
+            sqft: digits(b.sqft),
+            // The seven construction answers arrive per building now. They
+            // used to be flat fields patched onto the Account, which gave a
+            // thirteen-building association one year built and one
+            // construction class for the whole site.
+            yearBuilt: digits(b.yearBuilt),
+            stories: digits(b.stories),
+            constructionType: (b.constructionType ||
+              undefined) as Building["constructionType"],
+            roofYear: digits(b.roofYear),
+            heatingYear: digits(b.heatingYear),
+            wiringYear: digits(b.wiringYear),
+            plumbingYear: digits(b.plumbingYear),
           });
           if (bErrors?.length || !made) buildingFailures++;
         }
@@ -523,9 +548,20 @@ export default function ExtractionPanel({
                   );
                 })}
                 {(result.buildings ?? []).map((b, i) => {
-                  const sqftNum = Number(String(b.sqft ?? "").replace(/[^0-9.]/g, ""));
-                  const hasSqft = Number.isFinite(sqftNum) && sqftNum > 0;
+                  const sqftNum = digits(b.sqft);
+                  const hasSqft = sqftNum != null;
                   if (isEmpty(b.label as never) && !hasSqft) return null;
+                  const detail = [
+                    b.yearBuilt && `built ${b.yearBuilt}`,
+                    b.stories && `${b.stories} storeys`,
+                    b.constructionType
+                      ? CONSTRUCTION_LABELS[b.constructionType] ?? b.constructionType
+                      : "",
+                    b.roofYear && `roof ${b.roofYear}`,
+                    b.heatingYear && `heating ${b.heatingYear}`,
+                    b.wiringYear && `wiring ${b.wiringYear}`,
+                    b.plumbingYear && `plumbing ${b.plumbingYear}`,
+                  ].filter(Boolean);
                   return (
                   <tr key={`b-${i}`}>
                     <td>
@@ -544,6 +580,9 @@ export default function ExtractionPanel({
                         {(b.label as string) || `Building ${i + 1}`}
                         {hasSqft ? ` · ${fmtNum(sqftNum)} sq ft` : ""}
                       </strong>
+                      {detail.length ? (
+                        <div className="small muted">{detail.join(" · ")}</div>
+                      ) : null}
                     </td>
                     <td>
                       <span className="badge gray">add</span>

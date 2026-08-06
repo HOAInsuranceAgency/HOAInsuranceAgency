@@ -222,7 +222,6 @@ export function validateAccountFields(f: {
   contactEmail?: string;
   zip?: string;
   unitCount?: string;
-  yearBuilt?: string;
   totalInsuredValue?: string;
 }): string[] {
   const problems: string[] = [];
@@ -239,12 +238,9 @@ export function validateAccountFields(f: {
     if (!Number.isInteger(n) || n < 0 || n > 100000)
       problems.push("Unit count should be a whole number of at least 0.");
   }
-  if (f.yearBuilt) {
-    const n = Number(f.yearBuilt);
-    const maxYear = new Date().getFullYear() + 5;
-    if (!Number.isInteger(n) || n < 1600 || n > maxYear)
-      problems.push(`Year built should be between 1600 and ${maxYear}.`);
-  }
+  // `yearBuilt` is not checked here any more: it is a property of a building
+  // and `BuildingsCard` validates it with `validateYear`, which is where the
+  // +5 bound and its reasoning now live.
   if (f.totalInsuredValue) {
     const n = Number(f.totalInsuredValue);
     if (!Number.isFinite(n) || n < 0)

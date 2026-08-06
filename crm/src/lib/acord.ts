@@ -18,4 +18,4 @@
 export { ACORD_FORMS, type AcordFormDef } from "./acordRegistry";
 export { listTemplateFields, signatureFor } from "./acordPdf";
 export { fillAcord25 } from "./acord25";
-export { MAPPED_APP_FORM_KEYS, fillAcordApp } from "./acordApp";
+export { MAPPED_APP_FORM_KEYS, buildingPages, fillAcordApp } from "./acordApp";

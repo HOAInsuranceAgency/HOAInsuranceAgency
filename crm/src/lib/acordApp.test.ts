@@ -9,10 +9,15 @@ vi.mock("aws-amplify/data", () => ({
 }));
 
 import {
+  BUILDINGS_PER_140,
+  BUILDING_BLOCKS,
+  SUBJECT_ROW_RUNS,
   LOB_FIELDS,
   PRIOR_COVERAGE_LINE_ROWS,
+  buildingPages,
   legalEntityFor,
   newestPriorByLine,
+  operationsSummary,
   priorCoverageBlocks,
 } from "./acordApp";
 import { LINES_OF_BUSINESS } from "./client";
@@ -187,9 +192,8 @@ describe("priorCoverageBlocks", () => {
  * name the 125 mapping can emit against it, so an invented one fails here
  * instead.
  *
- * Scoped to the shared header and the 125 branch. The 140 branch names fields
- * on a different template whose inventory has not been read — those are still
- * unverified, and this test is careful not to imply otherwise.
+ * Scoped to the shared header and the 125 branch; the 140 branch has its own
+ * inventory and its own block of assertions below.
  */
 describe("every ACORD 125 field name exists on the template", () => {
   const read = (p: string) => readFileSync(resolve(process.cwd(), p), "utf8");
@@ -287,6 +291,170 @@ describe("every ACORD 125 field name exists on the template", () => {
     // ticked nor written into an Other row.
     for (const absent of ["Workers Comp", "Flood", "Earthquake", "D&O"]) {
       expect(LOB_FIELDS[absent], `${absent} has no box on this form`).toBeUndefined();
+    }
+  });
+});
+
+
+describe("buildingPages", () => {
+  it("puts two buildings on a PDF, because that is what the form holds", () => {
+    const pages = buildingPages([1, 2, 3, 4, 5]);
+    expect(BUILDINGS_PER_140).toBe(2);
+    expect(pages).toEqual([[1, 2], [3, 4], [5]]);
+  });
+
+  it("still produces one page for an account with no buildings", () => {
+    // The form still carries the account's address, the blanket summary and
+    // the signature block — generating nothing would be worse than a page
+    // with the building sections empty.
+    expect(buildingPages([])).toEqual([[]]);
+  });
+});
+
+describe("operationsSummary", () => {
+  const b = (stories?: number, constructionType?: string, yearBuilt?: number) => ({
+    stories,
+    constructionType,
+    yearBuilt,
+  });
+
+  it("describes the site from the buildings, not from the Account", () => {
+    const summary = operationsSummary({ type: "ASSOCIATION", unitCount: 52 }, [
+      b(2, "FRAME", 2016),
+      b(2, "FRAME", 2016),
+      b(2, "FRAME", 2017),
+    ]);
+    expect(summary).toBe(
+      "52-unit residential condominium association consisting of 3 two-story wood-frame buildings constructed 2016."
+    );
+  });
+
+  it("takes the most common answer, not the first or the oldest", () => {
+    // A 1978 clubhouse among twelve 2016 townhouses is a 2016 site with an
+    // old clubhouse. "Constructed 1978" would be the wrong headline, and it
+    // is what a first-row or a minimum would have produced.
+    const summary = operationsSummary(
+      { type: "ASSOCIATION", unitCount: 13 },
+      [b(1, "JOISTED_MASONRY", 1978), ...Array(12).fill(b(2, "FRAME", 2016))]
+    );
+    expect(summary).toContain("two-story wood-frame");
+    expect(summary).toContain("constructed 2016");
+  });
+
+  it("says nothing for a non-association", () => {
+    expect(operationsSummary({ type: "PERSONAL", unitCount: 1 }, [b(2)])).toBe("");
+  });
+});
+
+/**
+ * The 140's inventory, guarding the mapping the same way the 125's does.
+ *
+ * This form is the one where the suffixes do not line up — the
+ * subject-of-insurance rows run _A.._E and _G.._K with no _F, and the premises
+ * remark is _A and _C — so an interpolated block letter would produce five
+ * names that match nothing. The assertions below are what makes that a build
+ * failure rather than five silently empty boxes.
+ */
+describe("every ACORD 140 field name exists on the template", () => {
+  const read = (p: string) => readFileSync(resolve(process.cwd(), p), "utf8");
+
+  const inventory = new Set(
+    read("../docs/acord/acord-140-fields.txt")
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l && !l.startsWith("#"))
+      .map((l) => l.split("  (")[0])
+  );
+
+  /** Source from the 140 branch to the end of the mapping function. */
+  const region = (() => {
+    const src = read("src/lib/acordApp.ts");
+    const cut = src.indexOf('if (formKey === "acord140")');
+    expect(cut, "the acord140 branch marker moved").toBeGreaterThan(0);
+    return src.slice(cut);
+  })();
+
+  it("has an inventory to check against", () => {
+    expect(inventory.size).toBeGreaterThan(300);
+    expect(inventory.has("Construction_ConstructionCode_A")).toBe(true);
+    // The quirks this form is guarded for, asserted as facts about the file
+    // rather than trusted from a comment.
+    expect(inventory.has("CommercialProperty_Premises_LimitAmount_F")).toBe(false);
+    expect(inventory.has("CommercialProperty_Premises_LimitAmount_G")).toBe(true);
+    expect(inventory.has("CommercialProperty_Premises_RemarkText_C")).toBe(true);
+    expect(inventory.has("CommercialProperty_Premises_RemarkText_B")).toBe(false);
+  });
+
+  it("names no interpolated field the template does not have", () => {
+    // Every candidate in the 140 branch is built from a template literal, so
+    // this evaluates them the way the mapping does: over both blocks.
+    // The real table, not a copy of it — a copy would keep passing while the
+    // mapping used different suffixes, which is precisely the failure this
+    // exists to catch.
+    const blocks = BUILDING_BLOCKS.map((b) => ({
+      F: b.fields,
+      S: b.subject,
+      R: b.remark,
+    }));
+    const patterns = [
+      ...region.matchAll(/`([A-Za-z][\w]*(?:_[\w]+)*_)\$\{([FSR])\}`/g),
+    ];
+    expect(patterns.length, "no interpolated candidates found").toBeGreaterThan(20);
+    for (const [, prefix, which] of patterns) {
+      for (const block of blocks) {
+        const field = `${prefix}${block[which as "F" | "S" | "R"]}`;
+        expect(inventory.has(field), field).toBe(true);
+      }
+    }
+  });
+
+  it("draws each block's rows from its own run, not from the other's", () => {
+    // The assertion a name check cannot make. `subject: "B"` on the second
+    // block names CommercialProperty_Premises_*_B, which exists — it is the
+    // FIRST block's second row — so the form would come out with two rows of
+    // building one's coverage and none of building two's, and every field
+    // name in it would be valid.
+    expect(BUILDING_BLOCKS.length).toBe(SUBJECT_ROW_RUNS.length);
+    BUILDING_BLOCKS.forEach((block, i) => {
+      expect(SUBJECT_ROW_RUNS[i], `block ${i} subject row`).toContain(block.subject);
+      // And the runs must not overlap, or "its own run" means nothing.
+      for (const [j, run] of SUBJECT_ROW_RUNS.entries()) {
+        if (j !== i) expect(run).not.toContain(block.subject);
+      }
+    });
+    // Every row of both runs is real, and the gap between them is too.
+    for (const run of SUBJECT_ROW_RUNS) {
+      for (const row of run) {
+        expect(
+          inventory.has(`CommercialProperty_Premises_LimitAmount_${row}`),
+          row
+        ).toBe(true);
+      }
+    }
+  });
+
+  it("covers the improvement pairs, which build their names twice over", () => {
+    for (const kind of ["Roofing", "Heating", "Wiring", "Plumbing"]) {
+      for (const block of ["A", "B"]) {
+        expect(inventory.has(`BuildingImprovement_${kind}Year_${block}`)).toBe(true);
+        expect(inventory.has(`BuildingImprovement_${kind}Indicator_${block}`)).toBe(
+          true
+        );
+      }
+    }
+  });
+
+  it("covers the four blanket summary rows", () => {
+    for (const row of ["A", "B", "C", "D"]) {
+      expect(
+        inventory.has(`CommercialProperty_Summary_BlanketNumberIdentifier_${row}`)
+      ).toBe(true);
+      expect(
+        inventory.has(`CommercialProperty_Summary_BlanketLimitAmount_${row}`)
+      ).toBe(true);
+      expect(
+        inventory.has(`CommercialCoverage_Summary_BlanketTypeDescription_${row}`)
+      ).toBe(true);
     }
   });
 });

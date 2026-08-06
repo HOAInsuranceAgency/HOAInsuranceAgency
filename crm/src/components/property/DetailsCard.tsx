@@ -3,15 +3,13 @@ import {
   US_STATES,
   unwrap,
   validateAccountFields,
-  validateYear,
   type Account,
 } from "../../lib/client";
 import { AddressAutocomplete } from "../../lib/googlePlaces";
 import { useFormState } from "../../lib/useFormState";
 import { SaveStatus, useSaveStatus } from "../SaveStatus";
-import { CONSTRUCTION_OPTIONS } from "../../lib/enums";
 import { inputValue, num, str } from "../../lib/formCodec";
-import { IntegerInput, YearInput } from "../inputs";
+import { IntegerInput } from "../inputs";
 
 export default function DetailsCard({
   account,
@@ -30,35 +28,17 @@ export default function DetailsCard({
     state: inputValue(account.state),
     zip: inputValue(account.zip),
     unitCount: inputValue(account.unitCount),
-    yearBuilt: inputValue(account.yearBuilt),
-    constructionType: inputValue(account.constructionType),
     firewallsVerified: account.firewallsVerified ?? false,
-    stories: inputValue(account.stories),
     coastal: account.coastal ?? false,
     milesToCoast: inputValue(account.milesToCoast),
-    roofUpdatedYear: inputValue(account.roofUpdatedYear),
-    hvacUpdatedYear: inputValue(account.hvacUpdatedYear),
-    electricalUpdatedYear: inputValue(account.electricalUpdatedYear),
-    plumbingUpdatedYear: inputValue(account.plumbingUpdatedYear),
     otherUpdates: inputValue(account.otherUpdates),
     fireDistrict: inputValue(account.fireDistrict),
   }, { onEdit: saveStatus.markDirty });
 
   async function save() {
-    // The composition `client.ts:200-211` describes, replacing a file-local
-    // `yearOk` that hard-coded the +1 bound and reported all four bad years as
-    // one "Check the Roof, HVAC years." with no bounds in it.
-    const problems = [
-      ...validateAccountFields(form),
-      ...validateYear(form.roofUpdatedYear, "Roof updated year", { maxYearsAhead: 1 }),
-      ...validateYear(form.hvacUpdatedYear, "HVAC updated year", { maxYearsAhead: 1 }),
-      ...validateYear(form.electricalUpdatedYear, "Electrical updated year", {
-        maxYearsAhead: 1,
-      }),
-      ...validateYear(form.plumbingUpdatedYear, "Plumbing updated year", {
-        maxYearsAhead: 1,
-      }),
-    ];
+    // The four system-update year checks moved with the years themselves:
+    // they are per-building now, in `BuildingsCard`'s validator.
+    const problems = validateAccountFields(form);
     if (problems.length) {
       saveStatus.markError(problems.join(" "));
       return;
@@ -79,18 +59,9 @@ export default function DetailsCard({
               state: str(form.state),
               zip: str(form.zip),
               unitCount: num(form.unitCount),
-              yearBuilt: num(form.yearBuilt),
-              constructionType: str(
-                form.constructionType
-              ) as Account["constructionType"],
               firewallsVerified: form.firewallsVerified,
-              stories: num(form.stories),
               coastal: form.coastal,
               milesToCoast: form.coastal ? num(form.milesToCoast) : null,
-              roofUpdatedYear: num(form.roofUpdatedYear),
-              hvacUpdatedYear: num(form.hvacUpdatedYear),
-              electricalUpdatedYear: num(form.electricalUpdatedYear),
-              plumbingUpdatedYear: num(form.plumbingUpdatedYear),
               otherUpdates: str(form.otherUpdates),
               fireDistrict: str(form.fireDistrict),
             })
@@ -153,31 +124,6 @@ export default function DetailsCard({
           />
         </div>
         <div className="field">
-          <label>Year built</label>
-          <YearInput
-            value={form.yearBuilt}
-            onChange={(v) => setF("yearBuilt", v)}
-          />
-        </div>
-        <div className="field">
-          <label>Construction type</label>
-          <select
-            value={form.constructionType}
-            onChange={(e) => setF("constructionType", e.target.value)}
-          >
-            <option value="">—</option>
-            {CONSTRUCTION_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="field">
-          <label>Stories</label>
-          <IntegerInput value={form.stories} onChange={(v) => setF("stories", v)} />
-        </div>
-        <div className="field">
           <label>Fire district</label>
           <input
             placeholder="Middlesex FD #3"
@@ -207,6 +153,15 @@ export default function DetailsCard({
             Coastal exposure
           </label>
         </div>
+        <div className="field full">
+          <label>Other updates</label>
+          <textarea
+            rows={2}
+            placeholder="Elevators 2019, windows 2021…"
+            value={form.otherUpdates}
+            onChange={(e) => setF("otherUpdates", e.target.value)}
+          />
+        </div>
         {form.coastal && (
           <div className="field">
             <label>Miles to coast</label>
@@ -224,47 +179,10 @@ export default function DetailsCard({
         )}
       </div>
 
-      <h3>System updates (year completed)</h3>
-      <div className="form-grid">
-        <div className="field">
-          <label>Roof</label>
-          <YearInput
-            value={form.roofUpdatedYear}
-            onChange={(v) => setF("roofUpdatedYear", v)}
-          />
-        </div>
-        <div className="field">
-          <label>HVAC</label>
-          <YearInput
-            value={form.hvacUpdatedYear}
-            onChange={(v) => setF("hvacUpdatedYear", v)}
-          />
-        </div>
-        <div className="field">
-          <label>Electrical</label>
-          <YearInput
-            value={form.electricalUpdatedYear}
-            onChange={(v) => setF("electricalUpdatedYear", v)}
-          />
-        </div>
-        <div className="field">
-          <label>Plumbing</label>
-          <YearInput
-            value={form.plumbingUpdatedYear}
-            onChange={(v) => setF("plumbingUpdatedYear", v)}
-          />
-        </div>
-        <div className="field full">
-          <label>Other updates</label>
-          <textarea
-            rows={2}
-            placeholder="Elevators 2019, windows 2021…"
-            value={form.otherUpdates}
-            onChange={(e) => setF("otherUpdates", e.target.value)}
-          />
-        </div>
-      </div>
-
+      {/* The "System updates (year completed)" section is gone: the roof,
+          HVAC, electrical and plumbing years are properties of a building,
+          not of a site, and live on each Building now. `otherUpdates` stays
+          here — it is a site-level note — and has moved into the grid above. */}
       <div className="form-actions">
         <button className="primary" disabled={saveStatus.busy} onClick={save}>
           {saveStatus.busy ? "Saving…" : "Save property"}
