@@ -21,7 +21,9 @@ import { extractLead } from "./functions/extract-lead/resource";
 import { formFiller } from "./functions/form-filler/resource";
 import { certNumber } from "./functions/cert-number/resource";
 import { renewalTasks } from "./functions/renewal-tasks/resource";
+import { licenseAlerts } from "./functions/license-alerts/resource";
 import { activityLog } from "./functions/activity-log/resource";
+import { AGENCY, AGENCY_FMT } from "../../shared/agency";
 import {
   magicLinkDefine,
   magicLinkCreate,
@@ -42,6 +44,7 @@ export const backend = defineBackend({
   formFiller,
   certNumber,
   renewalTasks,
+  licenseAlerts,
   activityLog,
   magicLinkDefine,
   magicLinkCreate,
@@ -220,6 +223,24 @@ backend.teamAdmin.resources.lambda.addToRolePolicy(
   })
 );
 backend.teamAdmin.resources.lambda.addToRolePolicy(
+  new PolicyStatement({
+    actions: ["ses:SendEmail"],
+    resources: ["*"],
+  })
+);
+
+// ── License expiry alerts ────────────────────────────────────────────
+// Same verified sender as everything else we send. The recipient is the
+// agency's own inbox, taken from `shared/agency.ts` rather than typed here
+// again — that module exists so the CRM and the marketing site cannot end up
+// disagreeing about the agency's address, and a cron that emails a fourth
+// spelling of it would be exactly that drift.
+backend.licenseAlerts.addEnvironment("LICENSE_ALERT_FROM", magicLinkFrom);
+backend.licenseAlerts.addEnvironment(
+  "LICENSE_ALERT_TO",
+  `${AGENCY.name} <${AGENCY_FMT.emailLower}>`
+);
+backend.licenseAlerts.resources.lambda.addToRolePolicy(
   new PolicyStatement({
     actions: ["ses:SendEmail"],
     resources: ["*"],

@@ -11,8 +11,9 @@ Internal agency management system replacing EzLynx for the commercial
   secret (15-min expiry) → clicking it signs you in. Sessions last 7 days.
   No self-signup: users are created by an admin (Cognito console/CLI).
   The sender address must be SES-verified (`MAGIC_LINK_FROM` in
-  [amplify/backend.ts](amplify/backend.ts), currently `noreply@gim.llc`;
-  branch URLs for the link live in `BRANCH_URLS` there too).
+  [amplify/backend.ts](amplify/backend.ts), currently
+  `noreply@protectmyhoa.com` — also the sender for team invites and license
+  alerts; branch URLs for the link live in `BRANCH_URLS` there too).
   Groups `ADMIN` / `STAFF` / `PRODUCER` exist as placeholders; privileges
   are not enforced yet. First login runs an onboarding flow
   ([src/pages/Onboarding.tsx](src/pages/Onboarding.tsx)); producers must
@@ -91,6 +92,5 @@ expires after 365 days and must be rotated.
 ## Next phases
 
 1. **Role enforcement** — wire the Cognito groups into per-model auth rules.
-2. **License expiration alerts** — data is already captured per producer.
-3. **ACORD carrier-submission forms** (125/126/140) on the template+mapping
+2. **ACORD carrier-submission forms** (125/126/140) on the template+mapping
    engine above.

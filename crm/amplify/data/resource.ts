@@ -6,6 +6,7 @@ import { extractLead } from "../functions/extract-lead/resource";
 import { formFiller } from "../functions/form-filler/resource";
 import { certNumber } from "../functions/cert-number/resource";
 import { renewalTasks } from "../functions/renewal-tasks/resource";
+import { licenseAlerts } from "../functions/license-alerts/resource";
 import { activityLog } from "../functions/activity-log/resource";
 
 /**
@@ -895,7 +896,10 @@ const schema = a
      * make the agency look licensed where it isn't — are ADMIN-only, which is
      * what the Licensing screen already gates its edit/delete controls on.
      * userProfileId is caller-supplied and unverified, so it can't anchor
-     * owner-scoping. No Lambda touches this model.
+     * owner-scoping. One Lambda reads this model — the `license-alerts`
+     * expiry sweep — and writes nothing back to it; what it sent is recorded
+     * on `LicenseReminder` below rather than as a field here, so the daily
+     * job cannot touch a compliance record it has no business editing.
      */
     License: a.model({
       holderType: a.ref("LicenseHolderType").required(),
@@ -926,6 +930,38 @@ const schema = a
         allow.authenticated().to(["read", "create"]),
         allow.groups(["ADMIN"]),
       ]),
+
+    /**
+     * One row per licence-expiry email the agency has already been sent.
+     *
+     * The ledger behind `license-alerts`, and the same trick as
+     * `MarketingTask.dedupeKey`: the sweep skips any key it has already
+     * written, so a retry, a double delivery from EventBridge or a manual
+     * re-invoke sends nothing twice.
+     *
+     * It also decides what a *missed* run costs. Because the rule is "is this
+     * licence inside the 60/30/3-day window and unrecorded" rather than "does
+     * it expire exactly N days from today", a day the job doesn't run is
+     * caught up the next day instead of skipping a deadline silently.
+     *
+     * `expirationDate` is part of `dedupeKey`, so renewing a licence mints
+     * fresh keys and re-arms all three rungs for the new term.
+     *
+     * Nobody writes this from the app — the Lambda is the only author, and
+     * `allow.resource()` is what lets it (see the block at the bottom of this
+     * file). Read stays open so the Licensing screen can show when the agency
+     * was last told, without another round of plumbing.
+     */
+    LicenseReminder: a
+      .model({
+        licenseId: a.id().required(),
+        // "<licenseId>:<expirationDate>:<threshold>"
+        dedupeKey: a.string().required(),
+        threshold: a.integer().required(), // 60 | 30 | 3
+        expirationDate: a.date().required(),
+        sentAt: a.datetime().required(),
+      })
+      .authorization((allow) => [allow.authenticated().to(["read"])]),
 
     // ── Public website → CRM lead intake ───────────────────────────────
     // API-key-only surface for protectmyhoa.com forms. The handler forces
@@ -1034,6 +1070,11 @@ const schema = a
     allow.resource(formFiller),
     // The daily sweep reads policies/carriers/quotes and writes MarketingTasks.
     allow.resource(renewalTasks),
+    // The licence-expiry sweep reads Licenses and writes LicenseReminders.
+    // Note what the block above says: this is API-wide, so "reads Licenses"
+    // is a property of the handler, not something the schema enforces —
+    // License's own rules gate a signed-in user, not an IAM principal.
+    allow.resource(licenseAlerts),
     // The stream handler writes Activity and reads UserProfile to name an
     // actor. Note what the block above says: this is not a per-model grant,
     // so this function has full API access whatever any model declares. What
