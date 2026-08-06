@@ -105,23 +105,40 @@ export const handler: Schema["submitWebLead"]["functionHandler"] = async (
       .filter(Boolean)
       .join(" ") || undefined;
   if (contactName || validEmail || clean(args.contactPhone)) {
-    const { errors: contactErrors } = await client.models.Contact.create({
-      accountId: data.id,
-      // `name` is required on the model, and a form that gave only a phone
-      // number still describes a person worth keeping.
+    // `name` is required on the model, and a form that gave only a phone
+    // number still describes a person worth keeping.
+    const person = {
       name: contactName ?? name,
       email: validEmail,
       phone: clean(args.contactPhone, 50),
-      type: DEFAULT_CONTACT_TYPE,
+      type: DEFAULT_CONTACT_TYPE as Schema["Contact"]["type"]["type"],
+    };
+    // The same key the app computes, from the same function, so a form
+    // submitted twice matches one contact instead of creating two.
+    // W9 asks this handler to match-then-create so "a web form submitted twice
+    // must not produce two contacts". It is written as a plain create anyway,
+    // because the duplicate that rule describes cannot happen here and the
+    // read that would prove it is guaranteed to come back empty:
+    // `data.id` is the account created three statements ago, so no contact
+    // can already be on it.
+    //
+    // The real duplicate a resubmitted form produces is two *accounts*, each
+    // with one contact. Deduplicating those means matching an incoming lead
+    // against existing LEAD accounts on name and address, which is a decision
+    // about what counts as the same association — a different question from
+    // this one, with a worse failure mode (two genuinely separate buildings
+    // for one management company merged into one lead). It is not in scope
+    // here and is called out in the report rather than half-built.
+    //
+    // The key below is not idle: it is what lets the extraction panel later
+    // recognise this person in a prior policy packet and update this row
+    // instead of filing a second copy of them.
+    const { errors: contactErrors } = await client.models.Contact.create({
+      accountId: data.id,
+      ...person,
       isPrimary: true,
       lastWriteBy: WRITER,
-      // The same key the app computes, from the same function, so a form
-      // submitted twice matches one contact instead of creating two — see W9.
-      extractionSourceKey: contactKey({
-        email: validEmail,
-        name: contactName ?? name,
-        type: DEFAULT_CONTACT_TYPE,
-      }),
+      extractionSourceKey: contactKey(person),
     });
     if (contactErrors?.length) {
       console.error(

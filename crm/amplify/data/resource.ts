@@ -213,6 +213,13 @@ const schema = a
         extractionStatus: a.ref("ExtractionStatus"),
         aiExtraction: a.json(), // per-field values + confidence + evidence
         extractionError: a.string(),
+        // The `extractedAt` of the extraction that was last applied — the
+        // identity of a result, not the moment somebody pressed the button.
+        // That is what answers "has this one already been applied", which is
+        // the question W9's idempotency rule asks. A plain string rather than
+        // a.datetime() so a malformed value in an old result can never make
+        // the whole apply fail on a validation error.
+        aiExtractionAppliedAt: a.string(),
         buildings: a.hasMany("Building", "accountId"),
         // Incumbent broker/agent currently servicing the account
         currentAgent: a.string(),

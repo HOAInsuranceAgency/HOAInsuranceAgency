@@ -61,6 +61,27 @@ export function contactKey(c: {
 }
 
 /**
+ * A building is identified by its label, which is the only thing about it a
+ * document names consistently.
+ *
+ * Not the square footage or the year built: those are what an extraction is
+ * for, they are exactly what a second pass over a better document is expected
+ * to change, and keying on them would file the corrected version beside the
+ * old one instead of over it. A label is also what a person types when they
+ * add a building by hand, which is what lets a hand-made row be matched by a
+ * later extraction rather than duplicated.
+ *
+ * A blank label is a real key — "" — and deliberately so. `ExtractionPanel`
+ * names an unlabelled candidate "Building N" before it writes, so the stored
+ * row always has a label; a candidate that reaches here unnamed is one the
+ * panel is about to name, and two of them in the same result are two
+ * buildings the documents never distinguished.
+ */
+export function buildingKey(b: { label?: string | null }): string {
+  return `building:${norm(b.label)}`;
+}
+
+/**
  * A prior policy is the same policy if the carrier, the policy number and the
  * line all match.
  *
