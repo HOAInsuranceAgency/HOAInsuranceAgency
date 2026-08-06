@@ -18,13 +18,20 @@ import {
   MARKETING_RESOLUTION_BADGE,
   MARKETING_SUBMIT_SCALE,
 } from "../lib/badges";
+import {
+  MANUAL_TASK_RESOLUTIONS,
+  type ManualTaskResolution,
+} from "../lib/enums";
 
 /**
  * Renewal marketing tasks — "submit this expiring risk to this carrier".
  *
- * Raised by the nightly renewal-tasks sweep. Per the agency rule a task
- * closes exactly two ways: a quote exists for that carrier (detected, not
- * clicked), or someone marks the carrier out of appetite.
+ * Raised by the nightly renewal-tasks sweep. A task closes one of two ways: a
+ * quote exists for that carrier (detected, never clicked), or a person closes
+ * it and says why. The why is a resolution rather than a note because the
+ * three reasons answer different questions later — two carriers that keep
+ * coming back out of appetite is an appointment problem, and a run of
+ * not-submitted-on-time is a staffing one.
  */
 
 /** How close this task is to its submit-by. The 7/21 cutoffs and the wording
@@ -138,7 +145,7 @@ export default function AccountMarketingTasks({
   const setTasks = taskRes.setData;
   const { loaded, error } = taskRes;
 
-  async function markOutOfAppetite(t: MarketingTask) {
+  async function closeTask(t: MarketingTask, resolution: ManualTaskResolution) {
     setBusyId(t.id);
     await saveStatus.run(
       async () => {
@@ -147,7 +154,7 @@ export default function AccountMarketingTasks({
         const { data, errors } = await client.models.MarketingTask.update({
           id: t.id,
           status: "COMPLETE",
-          resolution: "OUT_OF_APPETITE",
+          resolution,
           completedAt: new Date().toISOString(),
           completedBy: completedByName,
         });
@@ -155,7 +162,11 @@ export default function AccountMarketingTasks({
         setTasks((ts) => ts.map((x) => (x.id === t.id ? data : x)));
       },
       {
-        savedMessage: `${t.carrierName ?? "Task"} marked out of appetite.`,
+        // The reason is in the confirmation, not just "closed": the menu
+        // commits on selection, so this line is where a mis-pick is caught.
+        savedMessage: `${t.carrierName ?? "Task"} closed — ${MARKETING_RESOLUTION_BADGE[
+          resolution
+        ].label.toLowerCase()}.`,
         errorMessage: "Couldn't close that task.",
       }
     );
@@ -217,8 +228,9 @@ export default function AccountMarketingTasks({
         <div>
           <h2 style={{ margin: 0 }}>Marketing tasks</h2>
           <p className="muted small" style={{ margin: "4px 0 0" }}>
-            Carriers to submit this renewal to. A task closes when a quote is
-            created for that carrier, or when you mark it out of appetite.
+            Carriers to submit this renewal to. A task closes on its own when a
+            quote is created for that carrier — otherwise close it yourself and
+            say why.
           </p>
         </div>
         <div className="grow" />
@@ -264,13 +276,26 @@ export default function AccountMarketingTasks({
                       <Badge {...u} />
                     </td>
                     <td style={{ whiteSpace: "nowrap" }}>
-                      <button
-                        className="link"
+                      {/* Committing on selection rather than behind a confirm
+                          step: closing is one click to undo (Reopen, in the
+                          completed table) and the outcome is named back in
+                          the status line, so a mis-pick costs a click. */}
+                      <select
+                        aria-label={`Close ${t.carrierName ?? "task"}`}
+                        value=""
                         disabled={busyId === t.id}
-                        onClick={() => markOutOfAppetite(t)}
+                        onChange={(e) => {
+                          const r = e.target.value as ManualTaskResolution | "";
+                          if (r) void closeTask(t, r);
+                        }}
                       >
-                        Out of appetite
-                      </button>
+                        <option value="">Close as…</option>
+                        {MANUAL_TASK_RESOLUTIONS.map((r) => (
+                          <option key={r} value={r}>
+                            {MARKETING_RESOLUTION_BADGE[r].label}
+                          </option>
+                        ))}
+                      </select>
                     </td>
                   </tr>
                 );
@@ -289,8 +314,10 @@ export default function AccountMarketingTasks({
                   <td>{t.carrierName ?? "—"}</td>
                   <td>
                     {/* A completed task with no resolution recorded reads as
-                        out-of-appetite, which is what the ternary this
-                        replaces did — the only two ways a task closes. */}
+                        out of carrier appetite. Those rows are historical:
+                        back when they were closed that was the only thing a
+                        manual close could mean, so the fallback still names
+                        what actually happened. */}
                     <Badge
                       {...statusBadge(
                         MARKETING_RESOLUTION_BADGE,

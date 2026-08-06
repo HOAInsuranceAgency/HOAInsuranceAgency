@@ -37,6 +37,7 @@ import {
   LICENSE_CLASS_LABELS,
   LICENSE_RESIDENCY_OPTIONS,
   LICENSE_STATUS_LABELS,
+  MANUAL_TASK_RESOLUTIONS,
   POLICY_STATUSES,
   REPLACEMENT_COST_OPTIONS,
   USER_ROLES,
@@ -157,6 +158,18 @@ describe("every table covers its schema enum exactly", () => {
     expect(Object.keys(USER_ROLE_LABELS).sort()).toEqual(
       schemaEnum("UserRole").sort()
     );
+  });
+
+  it("MarketingTaskResolution — the menu is every member but QUOTED", () => {
+    // The close menu is built from MANUAL_TASK_RESOLUTIONS, so a resolution
+    // added to the schema and not to that list is one nobody can ever pick —
+    // it would compile, render, and simply be missing from the dropdown.
+    expect([...MANUAL_TASK_RESOLUTIONS, "QUOTED"].sort()).toEqual(
+      schemaEnum("MarketingTaskResolution").sort()
+    );
+    // And QUOTED stays out of it: it is detected from an existing quote, so
+    // offering it would let someone record a quote that isn't there.
+    expect(MANUAL_TASK_RESOLUTIONS).not.toContain("QUOTED");
   });
 
   it("LicenseClass / LicenseStatus / LicenseResidency", () => {

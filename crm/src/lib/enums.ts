@@ -604,6 +604,31 @@ export function isUserRole(v: string | null | undefined): v is UserRole {
   return v != null && (USER_ROLES as readonly string[]).includes(v);
 }
 
+// ── MarketingTaskResolution ──────────────────────────────────────────────────
+
+/**
+ * The resolutions a person can pick when closing a task by hand, in menu
+ * order — worst-fit first, missed-deadline last.
+ *
+ * `QUOTED` is absent by design and is the reason this list exists rather than
+ * the enum being used directly: a task becomes QUOTED because a quote was
+ * found for that carrier, detected by the nightly sweep and again on load.
+ * Offering it in the menu would let someone record a quote that isn't there.
+ *
+ * Only the keys live here. The labels are `MARKETING_RESOLUTION_BADGE`'s, so
+ * the menu and the badge on the closed row cannot end up saying different
+ * things about the same value — which is exactly what a second label table
+ * would eventually do.
+ */
+export const MANUAL_TASK_RESOLUTIONS = [
+  "OUT_OF_APPETITE",
+  "OUT_OF_AGENCY_APPETITE",
+  "NOT_SUBMITTED_ON_TIME",
+] as const satisfies readonly MarketingTaskResolution[];
+
+/** A resolution a person may choose — everything but `QUOTED`. */
+export type ManualTaskResolution = (typeof MANUAL_TASK_RESOLUTIONS)[number];
+
 // ── Licensing ────────────────────────────────────────────────────────────────
 
 const LICENSE_CLASS = {

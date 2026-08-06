@@ -125,10 +125,24 @@ export const ACCOUNT_STAGE_BADGE = {
   CLIENT: { cls: "green", label: "Client" },
 } satisfies Record<AccountStage, BadgeSpec>;
 
-/** `MarketingTaskResolution` — how a closed marketing task was satisfied. */
+/**
+ * `MarketingTaskResolution` — how a closed marketing task ended.
+ *
+ * The two out-of-appetite outcomes are grey because neither is a failure:
+ * somebody decided this carrier was wrong for this risk. `NOT_SUBMITTED_ON_TIME`
+ * is amber because it is the one that got away — the task was right, the
+ * window closed anyway — and a list of closed tasks should not render that the
+ * same as a deliberate pass.
+ *
+ * `OUT_OF_APPETITE` is *carrier* appetite; it keeps the narrower name it was
+ * written with because live rows carry that value. See the enum in
+ * `amplify/data/resource.ts` for why renaming it is not a one-line change.
+ */
 export const MARKETING_RESOLUTION_BADGE = {
   QUOTED: { cls: "green", label: "Quoted" },
-  OUT_OF_APPETITE: { cls: "gray", label: "Out of appetite" },
+  OUT_OF_APPETITE: { cls: "gray", label: "Out of carrier appetite" },
+  OUT_OF_AGENCY_APPETITE: { cls: "gray", label: "Out of agency appetite" },
+  NOT_SUBMITTED_ON_TIME: { cls: "amber", label: "Not submitted on time" },
 } satisfies Record<MarketingTaskResolution, BadgeSpec>;
 
 // ── Two-state flags ──────────────────────────────────────────────────

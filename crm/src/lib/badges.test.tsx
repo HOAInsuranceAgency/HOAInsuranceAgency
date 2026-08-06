@@ -92,10 +92,24 @@ describe("statusBadge", () => {
         cls: "green",
         label: "Quoted",
       });
+      // The stored value is the original narrow name; the label says which
+      // appetite it means, now that there are two.
       expect(statusBadge(MARKETING_RESOLUTION_BADGE, "OUT_OF_APPETITE")).toEqual({
         cls: "gray",
-        label: "Out of appetite",
+        label: "Out of carrier appetite",
       });
+      expect(
+        statusBadge(MARKETING_RESOLUTION_BADGE, "OUT_OF_AGENCY_APPETITE")
+      ).toEqual({ cls: "gray", label: "Out of agency appetite" });
+    });
+
+    it("sets a missed deadline apart from a deliberate pass", () => {
+      // Both out-of-appetite outcomes are a decision; this one is the task
+      // that got away, and a closed-task list that rendered them alike would
+      // hide the only resolution worth acting on.
+      expect(
+        statusBadge(MARKETING_RESOLUTION_BADGE, "NOT_SUBMITTED_ON_TIME")
+      ).toEqual({ cls: "amber", label: "Not submitted on time" });
     });
   });
 

@@ -62,7 +62,22 @@ const schema = a
     // ── Renewal marketing tasks ──
     MarketingTaskStatus: a.enum(["OPEN", "COMPLETE"]),
     // The only two ways a marketing task can be satisfied.
-    MarketingTaskResolution: a.enum(["QUOTED", "OUT_OF_APPETITE"]),
+    /**
+     * How a closed marketing task ended.
+     *
+     * `OUT_OF_APPETITE` means *carrier* appetite and is labelled that way in
+     * the app. The member keeps its original name because it is the value
+     * already written on live rows: an enum member removed here is a value
+     * AppSync will not serialise, so renaming it would break every completed
+     * task in the list until a migration caught up. Renaming is a three-step
+     * change — add, migrate, drop — not a one-line one.
+     */
+    MarketingTaskResolution: a.enum([
+      "QUOTED",
+      "OUT_OF_APPETITE",
+      "OUT_OF_AGENCY_APPETITE",
+      "NOT_SUBMITTED_ON_TIME",
+    ]),
     MarketingTaskSource: a.enum(["POLICY", "LEAD"]),
     // ── Licensing ──
     // FIRM  = the agency entity licensed in a state (agency/business entity license)
@@ -755,9 +770,12 @@ const schema = a
      * submission window (carrier lead time + 14 days before expiration), one
      * per appetite-matched appointed carrier.
      *
-     * Closed only two ways, per the agency's rule: a quote gets created for
-     * that carrier (QUOTED), or someone marks the carrier as not interested
-     * (OUT_OF_APPETITE).
+     * Closes one of two ways: a quote gets created for that carrier, which
+     * the sweep and the UI both detect rather than anyone clicking (QUOTED),
+     * or a person closes it by hand and says why — the carrier wouldn't want
+     * it, the agency didn't want to place it there, or the submission window
+     * was missed. The last of those is the one worth counting later, which is
+     * why it is a resolution and not a note.
      *
      * All foreign keys are plain fields, not belongsTo — relationships make
      * them GSI keys, and policyId is legitimately empty for lead-sourced
