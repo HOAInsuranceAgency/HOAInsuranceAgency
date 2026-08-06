@@ -1,9 +1,8 @@
 import { useEffect, useRef } from "react";
-import { listAllPages, unwrap } from "./client";
+import { assertNoErrors, unwrap } from "./client";
 import { useAsyncResource } from "./useAsyncResource";
 import { useFormState, type FormState } from "./useFormState";
 import { useSaveStatus, type SaveStatusApi } from "../components/SaveStatus";
-import type { ChildRowsModel } from "./useChildRows";
 
 /**
  * One account, one optional child record, one form.
@@ -22,6 +21,21 @@ import type { ChildRowsModel } from "./useChildRows";
  * every account in the system to the first. So the first save creates, and
  * every save after that updates.
  *
+ * ## The account is the key
+ *
+ * Both models declare `.identifier(["accountId"])`, so "one account, one
+ * record" is enforced by the primary key rather than by this hook being
+ * careful. It used to be the latter: the read listed rows and took the first,
+ * and `save()` branched on whether one existed — a check-then-act with a
+ * network round trip in the middle. Two people first-saving the same blank
+ * section at the same moment each saw nothing and each created a row, and one
+ * of them was invisible from then on, including to the ACORD 125 mapping.
+ *
+ * With the account as the key that race resolves in the database: the second
+ * create is rejected, and `save()` folds it into an update rather than
+ * reporting a failure over a section the user did fill in. It also makes the
+ * read a point lookup instead of a filtered list.
+ *
  * ## Seeding
  *
  * `useFormState` reads its seed once, at mount, and this record arrives from
@@ -32,6 +46,30 @@ import type { ChildRowsModel } from "./useChildRows";
  * caller would need the loaded record to compute the key, which is precisely
  * what it does not have yet.
  */
+
+/**
+ * The slice of a generated model client this needs.
+ *
+ * Its own interface rather than `ChildRowsModel`, because these models have
+ * no `id`: the account is the key, so `get` and `update` take `accountId` and
+ * there is no `delete` (a section is emptied, not removed). Method syntax on
+ * purpose — the parameter bivariance is what makes `client.models.GlApplication`
+ * assignable to it; see the same note on `ChildRowsModel`.
+ */
+export interface SingletonChildModel<T> {
+  get(input: { accountId: string }): Promise<{
+    data: T | null;
+    errors?: { message: string }[];
+  }>;
+  create(input: Record<string, unknown>): Promise<{
+    data: T | null;
+    errors?: { message: string }[];
+  }>;
+  update(input: Record<string, unknown>): Promise<{
+    data: T | null;
+    errors?: { message: string }[];
+  }>;
+}
 
 export interface SingletonChildOptions<T, F extends object> {
   accountId: string;
@@ -57,25 +95,26 @@ export interface SingletonChild<T, F extends object> {
   save: () => Promise<void>;
 }
 
-export function useSingletonChild<T extends { id: string }, F extends object>(
-  model: ChildRowsModel<T>,
+export function useSingletonChild<T, F extends object>(
+  model: SingletonChildModel<T>,
   options: SingletonChildOptions<T, F>
 ): SingletonChild<T, F> {
   const { accountId, noun, initialForm, toForm, toWrite, validate } = options;
 
   const res = useAsyncResource(
-    () =>
-      listAllPages((nextToken) =>
-        model.list({ filter: { accountId: { eq: accountId } }, nextToken })
-      ),
+    async () => {
+      const got = await model.get({ accountId });
+      // `assertNoErrors`, not `unwrap`: a section nobody has filled in comes
+      // back as `{ data: null }` with no errors, and that is the answer —
+      // "nobody has been asked" — not a failed read.
+      assertNoErrors(got);
+      return got.data;
+    },
     [accountId],
-    { initialData: [] as T[], errorMessage: `Failed to load the ${noun}` }
+    { initialData: null as T | null, errorMessage: `Failed to load the ${noun}` }
   );
 
-  // First wins if two ever exist. A duplicate can only come from two tabs
-  // saving an empty section at the same moment; picking deterministically
-  // beats rendering whichever the list happened to return second.
-  const row = res.data[0] ?? null;
+  const row = res.data;
 
   const status = useSaveStatus();
   const form = useFormState<F>(initialForm, { onEdit: status.markDirty });
@@ -93,7 +132,33 @@ export function useSingletonChild<T extends { id: string }, F extends object>(
     // `toForm` is a fresh closure each render and `reset` is identity-stable;
     // the ref is what makes this run once, not the dependency list.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [res.loaded, row?.id]);
+  }, [res.loaded]);
+
+  /**
+   * Create the record, unless somebody else just did.
+   *
+   * The account is the primary key, so a second create for an account that
+   * already has a record is rejected outright — which is the point, and also
+   * the moment this hook has to be useful rather than merely correct. Left
+   * alone it would report "couldn't save" over a section the user did fill
+   * in, and pressing Save again would fail the same way until they reloaded,
+   * because `row` is still null on this side.
+   *
+   * So a failed create is re-read before it is believed. If a record now
+   * exists, the two saves are folded into one update — last write wins, the
+   * same as any two people editing a saved section. If none exists, the
+   * create failed for its own reasons and that error is the one reported.
+   */
+  async function createOrFold(): Promise<T> {
+    const payload = toWrite(form.form);
+    const created = await model.create({ accountId, ...payload });
+    if (created.data) return created.data;
+
+    const existing = await model.get({ accountId });
+    if (existing.data) return unwrap(await model.update({ accountId, ...payload }));
+
+    throw new Error(created.errors?.[0]?.message ?? `Couldn't save the ${noun}.`);
+  }
 
   async function save() {
     const problems = validate?.(form.form) ?? [];
@@ -104,12 +169,10 @@ export function useSingletonChild<T extends { id: string }, F extends object>(
     const payload = toWrite(form.form);
     await status.run(
       async () => {
-        const saved = unwrap(
-          row
-            ? await model.update({ id: row.id, ...payload })
-            : await model.create({ accountId, ...payload })
-        );
-        res.setData([saved]);
+        const saved = row
+          ? unwrap(await model.update({ accountId, ...payload }))
+          : await createOrFold();
+        res.setData(saved);
         // Moves the baseline, so `dirty` goes false and the next edit is
         // measured against what was actually persisted.
         form.markSaved();

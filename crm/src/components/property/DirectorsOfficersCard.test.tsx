@@ -2,11 +2,12 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+// `get`, not `list`: DoApplication declares `.identifier(["accountId"])`, so
+// the account is its primary key and the hook does a point read.
 const DoApplication = vi.hoisted(() => ({
-  list: vi.fn(),
+  get: vi.fn(),
   create: vi.fn(),
   update: vi.fn(),
-  delete: vi.fn(),
 }));
 const DoCoveragePart = vi.hoisted(() => ({
   list: vi.fn(),
@@ -47,12 +48,9 @@ const rowFor = (label: string) =>
 
 beforeEach(() => {
   for (const m of [DoApplication, DoCoveragePart]) {
-    m.list.mockReset();
-    m.create.mockReset();
-    m.update.mockReset();
-    m.delete.mockReset();
+    for (const fn of Object.values(m)) fn.mockReset();
   }
-  DoApplication.list.mockResolvedValue(empty);
+  DoApplication.get.mockResolvedValue({ data: null });
   DoCoveragePart.list.mockResolvedValue(empty);
 });
 
@@ -67,10 +65,10 @@ describe("the D&O application record", () => {
   it("is created by the first save and updated by the second", async () => {
     const user = userEvent.setup();
     DoApplication.create.mockResolvedValue({
-      data: { id: "d1", accountId: "a1", defenseLimit: 500000 },
+      data: { accountId: "a1", defenseLimit: 500000 },
     });
     DoApplication.update.mockResolvedValue({
-      data: { id: "d1", accountId: "a1", defenseLimit: 750000 },
+      data: { accountId: "a1", defenseLimit: 750000 },
     });
     renderCard();
     await screen.findByText("Coverage parts");
@@ -91,13 +89,13 @@ describe("the D&O application record", () => {
     // create a second application for the same account.
     expect(DoApplication.create).toHaveBeenCalledTimes(1);
     expect(DoApplication.update).toHaveBeenCalledWith(
-      expect.objectContaining({ id: "d1", defenseLimit: 750000 })
+      expect.objectContaining({ accountId: "a1", defenseLimit: 750000 })
     );
   });
 
   it("records an unanswered question as null, not as false", async () => {
     const user = userEvent.setup();
-    DoApplication.create.mockResolvedValue({ data: { id: "d1", accountId: "a1" } });
+    DoApplication.create.mockResolvedValue({ data: { accountId: "a1" } });
     renderCard();
     await screen.findByText("Coverage parts");
 

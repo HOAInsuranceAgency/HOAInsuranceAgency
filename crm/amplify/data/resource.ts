@@ -428,6 +428,17 @@ const schema = a
     // already ~50 wide. Application data — what is carried or applied for,
     // the ACORD 126's input — which is a different thing from the `gl*`
     // columns on Quote and Policy, where a carrier's answer lives.
+    // The account IS the key. Both application sections are 1:1 with an
+    // account, and `.identifier(["accountId"])` is what makes that true in
+    // the database rather than true by convention: a second create for an
+    // account that already has one is rejected by the primary key.
+    //
+    // Without it, two people first-saving the same blank section at the same
+    // moment each see no row, each create one, and one of them is invisible
+    // from then on — including to the ACORD 125 mapping, which reads
+    // `glRows[0]`. That is a carrier submission missing answers somebody
+    // typed. Enforcing it here costs nothing today and cannot be done later
+    // without recreating the table.
     GlApplication: a.model({
       accountId: a.id().required(),
       account: a.belongsTo("Account", "accountId"),
@@ -467,7 +478,7 @@ const schema = a
       workSubcontractedPct: a.float(),
       fullTimeEmployees: a.integer(),
       partTimeEmployees: a.integer(),
-    }),
+    }).identifier(["accountId"]),
 
     // Class codes are a list, so they are rows rather than columns.
     GlClassCode: a.model({
@@ -506,6 +517,7 @@ const schema = a
       aggregateRetention: a.float(),
     }),
 
+    // Keyed on the account for the same reason as GlApplication above.
     DoApplication: a.model({
       accountId: a.id().required(),
       account: a.belongsTo("Account", "accountId"),
@@ -518,7 +530,7 @@ const schema = a
       defenseLimit: a.float(),
       defenseLimitPosition: a.ref("DefenseLimitPosition"),
       pendingPriorLitigationDate: a.date(),
-    }),
+    }).identifier(["accountId"]),
 
     // ── Buildings: the ACORD 140's unit of description ─────────────────
     //

@@ -82,6 +82,10 @@ async function actorName(client: DataClient, actor: string): Promise<string> {
 /** What a write with no `lastWriteBy` is attributed to. */
 const SYSTEM_ACTOR = "system";
 
+/** The create rejected because this stream record already has its row. */
+const isAlreadyRecorded = (e: { message?: string }) =>
+  /conditional request failed|ConditionalCheckFailed/i.test(e.message ?? "");
+
 /** `arn:…:table/Account-abc123-NONE/stream/…` → `Account`. */
 export function subjectTypeFromArn(arn: string | undefined): string | null {
   const table = /table\/([^/]+)/.exec(arn ?? "")?.[1];
@@ -124,7 +128,10 @@ export const handler = async (event: DynamoDBStreamEvent): Promise<void> => {
       // save of an unchanged form would add a row saying nothing happened.
       if (action === "UPDATE" && changes.length === 0) continue;
 
-      const subjectId = String(image?.id ?? "");
+      // Falls back to the account for a model keyed on it — `GlApplication`
+      // and `DoApplication` declare `.identifier(["accountId"])`, so they
+      // have no `id` attribute at all and this would otherwise be blank.
+      const subjectId = String(image?.id ?? image?.accountId ?? "");
       const label = subjectLabel(subjectType, image);
       const actor =
         typeof newImage?.lastWriteBy === "string" && newImage.lastWriteBy
@@ -132,6 +139,24 @@ export const handler = async (event: DynamoDBStreamEvent): Promise<void> => {
           : SYSTEM_ACTOR;
 
       const { errors } = await client.models.Activity.create({
+        // One row per stream record, not per delivery of one.
+        //
+        // A stream event source mapping is at-least-once. A batch that fails
+        // part-way — a timeout, a shard rebalance, a lost response — is
+        // redelivered whole, and `retryAttempts: 2` in backend.ts means that
+        // can happen twice more; `reportBatchItemFailures` is off, so there
+        // is no per-record checkpoint to resume from. Every record already
+        // written would be written again.
+        //
+        // `eventID` identifies the stream record and is stable across those
+        // redeliveries, so using it as the row's id makes a replay collide
+        // with what the first delivery wrote. Amplify conditions every create
+        // on the id not existing, so the collision is rejected rather than
+        // duplicated. The SequenceNumber fallback is for the types' sake —
+        // DynamoDB always sends an eventID.
+        id:
+          record.eventID ??
+          `${subjectType}:${record.dynamodb?.SequenceNumber ?? subjectId}`,
         entityId,
         subjectType,
         subjectId,
@@ -147,12 +172,16 @@ export const handler = async (event: DynamoDBStreamEvent): Promise<void> => {
           (record.dynamodb?.ApproximateCreationDateTime ?? Date.now() / 1000) * 1000
         ).toISOString(),
       });
-      if (errors?.length) {
+      // A redelivered record loses the id condition, which is the mechanism
+      // working rather than a failure. Matched on the message because AppSync
+      // does not type its errors — a miss costs a log line, not a row.
+      if (errors?.length && !errors.some(isAlreadyRecorded)) {
         console.error("Activity write failed", JSON.stringify(errors));
       }
     } catch (err) {
-      // Per record, so one malformed image does not cost the batch. The
-      // batch is not retried — see the note in ./resource.ts.
+      // Per record, so one malformed image does not cost the batch. A record
+      // dropped here is not retried on its own — the batch as a whole may be
+      // redelivered, which is what the id above makes safe.
       console.error("Activity record failed", err);
     }
   }
