@@ -96,3 +96,24 @@ export function priorCarrierKey(p: {
 export function blanketKey(b: { blanketNumber?: string | null }): string {
   return `blanket:${norm(b.blanketNumber)}`;
 }
+
+/**
+ * A loss is identified by when it happened, what line it fell under, and what
+ * it cost.
+ *
+ * Not the claim number, which the CRM does not record and loss runs report
+ * inconsistently across carriers. Not the description either — the same event
+ * is written up differently by every adjuster, so keying on it would make one
+ * loss into several. Date, line and amount together are what a loss run
+ * actually pins down, and two genuine losses on the same day under the same
+ * line for the same amount are rare enough that merging them is the better
+ * error than duplicating every re-import.
+ */
+export function lossKey(l: {
+  dateOfLoss?: string | null;
+  lineOfBusiness?: string | null;
+  amountOfLoss?: number | string | null;
+}): string {
+  const amount = l.amountOfLoss == null ? "" : String(l.amountOfLoss);
+  return `loss:${norm(l.dateOfLoss)}|${norm(l.lineOfBusiness)}|${norm(amount)}`;
+}

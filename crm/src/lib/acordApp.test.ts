@@ -9,8 +9,13 @@ vi.mock("aws-amplify/data", () => ({
 }));
 
 import {
+  BLANKET_SUMMARY_ROWS,
   BUILDINGS_PER_140,
   BUILDING_BLOCKS,
+  LOB_OTHER_ROWS,
+  LOSS_HISTORY_ROWS,
+  PREMISES_ROWS,
+  PRIOR_COVERAGE_BLOCKS,
   SUBJECT_ROW_RUNS,
   LOB_FIELDS,
   PRIOR_COVERAGE_LINE_ROWS,
@@ -231,15 +236,46 @@ describe("every ACORD 125 field name exists on the template", () => {
     expect([...literals].filter((f) => !inventory.has(f))).toEqual([]);
   });
 
-  it("names no row-suffixed field the template does not have, A through D", () => {
-    // The premises block builds names by interpolation, so the literals above
-    // never see them.
-    for (const [, prefix] of region.matchAll(
-      /`([A-Za-z][A-Za-z0-9]*(?:_[A-Za-z0-9]+)+_)\$\{row\}`/g
-    )) {
-      for (const row of ["A", "B", "C", "D"]) {
-        expect(inventory.has(`${prefix}${row}`), `${prefix}${row}`).toBe(true);
+  it("names no row-suffixed field the template does not have", () => {
+    // Interpolated names — the premises block, the loss rows, the Other
+    // line-of-business rows — are invisible to the literal scan above.
+    //
+    // The row COUNT differs per section (premises has four, loss history
+    // three, Other six), so this asserts each prefix's first row exists and
+    // that its run is contiguous from A, then the row constants below assert
+    // that the code iterates the right number of them. Assuming one count for
+    // every section is what failed when the loss rows arrived.
+    const prefixes = [
+      ...region.matchAll(/`([A-Za-z][A-Za-z0-9]*(?:_[A-Za-z0-9]+)+_)\$\{row\}`/g),
+    ].map((m) => m[1]);
+    expect(prefixes.length, "no interpolated candidates found").toBeGreaterThan(5);
+    for (const prefix of new Set(prefixes)) {
+      expect(inventory.has(`${prefix}A`), `${prefix}A`).toBe(true);
+    }
+  });
+
+  it("iterates the number of rows each section actually has", () => {
+    // The constants the loops run over, checked against the form rather than
+    // against each other. A section given one row too many writes into a
+    // field that does not exist; one too few silently drops a row.
+    const runs: [string, readonly string[], string][] = [
+      ["premises", PREMISES_ROWS, "CommercialStructure_PhysicalAddress_LineOne_"],
+      ["loss history", LOSS_HISTORY_ROWS, "LossHistory_OccurrenceDate_"],
+      ["other lines of business", LOB_OTHER_ROWS, "Policy_LineOfBusiness_OtherIndicator_"],
+      ["prior coverage", PRIOR_COVERAGE_BLOCKS, "PriorCoverage_PolicyYear_"],
+    ];
+    for (const [name, rows, prefix] of runs) {
+      for (const row of rows) {
+        expect(inventory.has(`${prefix}${row}`), `${name}: ${prefix}${row}`).toBe(true);
       }
+      // And one past the end must NOT exist, or the constant is short.
+      const next = String.fromCharCode(
+        rows[rows.length - 1].charCodeAt(0) + 1
+      );
+      expect(
+        inventory.has(`${prefix}${next}`),
+        `${name}: the form has a ${prefix}${next} the code never fills`
+      ).toBe(false);
     }
   });
 
@@ -268,6 +304,29 @@ describe("every ACORD 125 field name exists on the template", () => {
         inventory.has(`Policy_LineOfBusiness_OtherLineOfBusinessDescription_${row}`)
       ).toBe(true);
     }
+  });
+
+  it("never ticks 'no prior losses' automatically", () => {
+    // The single most consequential assertion this app could make on a
+    // carrier submission, and the one a field-name guard cannot catch: the
+    // box exists, so emitting it would pass every other check here.
+    //
+    // The form asks "no prior losses", not "any losses", so the naive reading
+    // of an account with no Loss rows is to tick it. An account with no rows
+    // far more often means nobody has entered a loss run than that there were
+    // none, and this app cannot tell the difference. A producer ticks it.
+    expect(inventory.has("LossHistory_NoPriorLossesIndicator_A")).toBe(true);
+    // Matched inside a `candidates:` list rather than anywhere in the file:
+    // the comment explaining this decision names the field, and a bare
+    // substring check fails on the explanation itself.
+    const emitted = [
+      ...region.matchAll(/candidates:\s*\[([^\]]*)\]/g),
+    ].map((m) => m[1]);
+    expect(emitted.length).toBeGreaterThan(20);
+    expect(
+      emitted.filter((c) => c.includes("NoPriorLosses")),
+      "the mapping emits the no-prior-losses box"
+    ).toEqual([]);
   });
 
   it("covers the legal-entity boxes, which live in enums.ts", () => {
@@ -445,7 +504,8 @@ describe("every ACORD 140 field name exists on the template", () => {
   });
 
   it("covers the four blanket summary rows", () => {
-    for (const row of ["A", "B", "C", "D"]) {
+    expect([...BLANKET_SUMMARY_ROWS]).toEqual(["A", "B", "C", "D"]);
+    for (const row of BLANKET_SUMMARY_ROWS) {
       expect(
         inventory.has(`CommercialProperty_Summary_BlanketNumberIdentifier_${row}`)
       ).toBe(true);

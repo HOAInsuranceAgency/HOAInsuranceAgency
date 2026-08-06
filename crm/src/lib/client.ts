@@ -10,6 +10,7 @@ export type Building = Schema["Building"]["type"];
 export type Contact = Schema["Contact"]["type"];
 export type PriorCarrier = Schema["PriorCarrier"]["type"];
 export type Blanket = Schema["Blanket"]["type"];
+export type Loss = Schema["Loss"]["type"];
 export type GlApplication = Schema["GlApplication"]["type"];
 export type GlClassCode = Schema["GlClassCode"]["type"];
 export type DoApplication = Schema["DoApplication"]["type"];

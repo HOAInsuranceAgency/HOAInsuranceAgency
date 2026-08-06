@@ -195,6 +195,7 @@ const schema = a
         // and there is no list to pick from.
         fireDistrict: a.string(),
         blankets: a.hasMany("Blanket", "accountId"),
+        losses: a.hasMany("Loss", "accountId"),
         // 1:1. Created lazily, on the first save of either section — an
         // account that has never been asked about GL should not carry an
         // empty row implying it was.
@@ -307,6 +308,31 @@ const schema = a
       premium: a.float(),
       effectiveDate: a.date(),
       expirationDate: a.date(),
+      extractionSourceKey: a.string(),
+    }),
+
+    // ── Loss history ───────────────────────────────────────────────────
+    //
+    // Kept for leads and clients alike: loss history follows the account, and
+    // a renewal submission declares the same losses a new-business one did.
+    //
+    // `dateOfLoss` and `lineOfBusiness` are required because a loss with
+    // neither cannot be placed on the ACORD 125's loss-history rows, which
+    // are ordered by date and labelled by line — a row missing either is a
+    // row that cannot be submitted.
+    Loss: a.model({
+      accountId: a.id().required(),
+      account: a.belongsTo("Account", "accountId"),
+      dateOfLoss: a.date().required(),
+      // LINES_OF_BUSINESS (client.ts), same reasoning as PriorCarrier's.
+      lineOfBusiness: a.string().required(),
+      description: a.string(),
+      claimDate: a.date(),
+      amountPaid: a.float(),
+      amountReserved: a.float(),
+      claimOpen: a.boolean(),
+      amountOfLoss: a.float(),
+      typeOfLoss: a.string(),
       extractionSourceKey: a.string(),
     }),
 

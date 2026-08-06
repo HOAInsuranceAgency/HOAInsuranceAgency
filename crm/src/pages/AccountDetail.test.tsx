@@ -21,6 +21,7 @@ describe("tabsFor", () => {
     expect(tabsFor("LEAD").map(([t]) => t)).toEqual([
       "overview",
       "priorcarrier",
+      "losses",
       "quotes",
       "policies",
       "documents",
@@ -31,6 +32,7 @@ describe("tabsFor", () => {
   it("hides it from a client, leaving the other five in order", () => {
     expect(tabsFor("CLIENT").map(([t]) => t)).toEqual([
       "overview",
+      "losses",
       "quotes",
       "policies",
       "documents",
@@ -56,9 +58,17 @@ describe("resolveTab", () => {
     expect(resolveTab("priorcarrier", "LEAD")).toBe("priorcarrier");
   });
 
+  it("keeps Losses for a client — loss history follows the account", () => {
+    // The difference between this tab and Prior coverage: a bound policy
+    // answers "what is this insured under" better than a prior-carrier row,
+    // but nothing supersedes a loss that happened.
+    expect(tabsFor("CLIENT").map(([t]) => t)).toContain("losses");
+    expect(resolveTab("losses", "CLIENT")).toBe("losses");
+  });
+
   it("touches nothing else, for either stage", () => {
     for (const stage of ["LEAD", "CLIENT"]) {
-      for (const t of ["overview", "quotes", "policies", "documents", "certificates"] as const) {
+      for (const t of ["overview", "losses", "quotes", "policies", "documents", "certificates"] as const) {
         expect(resolveTab(t, stage)).toBe(t);
       }
     }

@@ -162,6 +162,15 @@ export default function FormsTab({
             })
           );
 
+          // Loss history: the 125's three loss rows, its total, and the
+          // loss-summary attachment box when there are more than three.
+          const losses = await listAllPages((nextToken) =>
+            client.models.Loss.list({
+              filter: { accountId: { eq: account.id } },
+              nextToken,
+            })
+          );
+
           // The 140 describes two buildings per PDF, so an account with five
           // of them produces three documents. Every other form is one page of
           // buildings — `buildingPages` returns a single group for them.
@@ -181,6 +190,7 @@ export default function FormsTab({
               contacts,
               priorCarriers,
               blankets,
+              losses,
               glRows[0] ?? null,
               signature,
               renewalDate,

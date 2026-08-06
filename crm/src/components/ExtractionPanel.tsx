@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   client,
+  fmtDate,
   fmtMoney,
   fmtNum,
   fmtPhone,
@@ -9,11 +10,12 @@ import {
   type Account,
   type Building,
   type Contact,
+  type Loss,
 } from "../lib/client";
 import { Badge, statusBadge, CONFIDENCE_BADGE } from "../lib/badges";
 import { CONSTRUCTION_LABELS, CONTACT_TYPE_LABELS } from "../lib/enums";
 import { str } from "../lib/formCodec";
-import { contactKey } from "../lib/extractionKeys";
+import { contactKey, lossKey } from "../lib/extractionKeys";
 import { useAsyncResource } from "../lib/useAsyncResource";
 import { SaveStatus, useSaveStatus } from "./SaveStatus";
 
@@ -38,10 +40,23 @@ interface ExtractedContact {
   type?: string | null;
 }
 
+interface ExtractedLoss {
+  dateOfLoss?: string | null;
+  lineOfBusiness?: string | null;
+  typeOfLoss?: string | null;
+  description?: string | null;
+  claimDate?: string | null;
+  amountPaid?: string | null;
+  amountReserved?: string | null;
+  amountOfLoss?: string | null;
+  claimOpen?: string | null;
+}
+
 interface ExtractionResult {
   [key: string]: unknown;
   contacts?: ExtractedContact[];
   buildings?: ExtractedBuilding[];
+  losses?: ExtractedLoss[];
   summary?: string;
   extractedAt?: string;
   documentCount?: number;
@@ -61,6 +76,24 @@ interface ExtractedBuilding {
 
 /** A candidate worth showing: the model returned an entry with a name on it. */
 const namedContact = (c: ExtractedContact) => Boolean(c?.name?.trim());
+
+/**
+ * A loss the app can actually store: both required columns present.
+ *
+ * A loss run line with no date or no line of business cannot go on the ACORD
+ * 125 — its rows are ordered by date and labelled by line — so a candidate
+ * missing either is not shown rather than being offered and then rejected by
+ * the model on write.
+ */
+const usableLoss = (l: ExtractedLoss) =>
+  Boolean(l?.dateOfLoss?.trim() && l?.lineOfBusiness?.trim());
+
+/** "Yes"/"No" from the model → the nullable column. Anything else is unknown. */
+function yesNo(v: string | null | undefined): boolean | null {
+  if (/^y(es)?$/i.test(v ?? "")) return true;
+  if (/^n(o)?$/i.test(v ?? "")) return false;
+  return null;
+}
 
 // Field definitions: extraction key → label, current-value accessor, and
 // how the value lands on the Account record ("patch") or in notes ("note").
@@ -190,6 +223,7 @@ export default function ExtractionPanel({
   const [selected, setSelected] = useState<Record<string, boolean>>({});
   const [selectedBuildings, setSelectedBuildings] = useState<Record<number, boolean>>({});
   const [selectedContacts, setSelectedContacts] = useState<Record<number, boolean>>({});
+  const [selectedLosses, setSelectedLosses] = useState<Record<number, boolean>>({});
   const [showReview, setShowReview] = useState(true);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -219,6 +253,26 @@ export default function ExtractionPanel({
   const matchFor = (c: ExtractedContact): Contact | undefined => {
     const key = contactKey(c);
     return contactsRes.data.find((e) => e.extractionSourceKey === key);
+  };
+
+  // Same shape and the same reason as the contacts read: a candidate has to
+  // be classified against what exists before it is written, or re-applying an
+  // extraction files every loss a second time.
+  const lossesRes = useAsyncResource(
+    () =>
+      listAllPages((nextToken) =>
+        client.models.Loss.list({
+          filter: { accountId: { eq: account.id } },
+          nextToken,
+        })
+      ),
+    [account.id],
+    { initialData: [] as Loss[] }
+  );
+
+  const lossMatchFor = (l: ExtractedLoss): Loss | undefined => {
+    const key = lossKey({ ...l, amountOfLoss: l.amountOfLoss ?? null });
+    return lossesRes.data.find((e) => e.extractionSourceKey === key);
   };
 
   const status = account.extractionStatus;
@@ -257,6 +311,11 @@ export default function ExtractionPanel({
       if (namedContact(ct)) c[i] = true;
     });
     setSelectedContacts(c);
+    const ls: Record<number, boolean> = {};
+    (result.losses ?? []).forEach((l, i) => {
+      if (usableLoss(l)) ls[i] = true;
+    });
+    setSelectedLosses(ls);
     // A fresh extraction means the previous "Applied" no longer describes
     // what is on screen — the same event the form setters signal elsewhere.
     applyStatus.markDirty();
@@ -354,6 +413,40 @@ export default function ExtractionPanel({
         // first one wrote, rather than re-creating it.
         if (result.contacts?.length) await contactsRes.refetch();
 
+        // Losses, matched before written for the same reason contacts are.
+        let lossFailures = 0;
+        for (const l of (result.losses ?? []).filter((_, i) => selectedLosses[i])) {
+          if (!usableLoss(l)) continue;
+          const found = lossMatchFor(l);
+          const payload = {
+            dateOfLoss: str(l.dateOfLoss) as string,
+            lineOfBusiness: str(l.lineOfBusiness) as string,
+            ...(str(l.typeOfLoss) ? { typeOfLoss: str(l.typeOfLoss) } : {}),
+            ...(str(l.description) ? { description: str(l.description) } : {}),
+            ...(str(l.claimDate) ? { claimDate: str(l.claimDate) } : {}),
+            ...(digits(l.amountPaid) != null ? { amountPaid: digits(l.amountPaid) } : {}),
+            ...(digits(l.amountReserved) != null
+              ? { amountReserved: digits(l.amountReserved) }
+              : {}),
+            ...(digits(l.amountOfLoss) != null
+              ? { amountOfLoss: digits(l.amountOfLoss) }
+              : {}),
+            ...(yesNo(l.claimOpen) != null ? { claimOpen: yesNo(l.claimOpen) } : {}),
+          };
+          const written = found
+            ? await client.models.Loss.update({ id: found.id, ...payload })
+            : await client.models.Loss.create({
+                accountId: account.id,
+                ...payload,
+                extractionSourceKey: lossKey({
+                  ...l,
+                  amountOfLoss: l.amountOfLoss ?? null,
+                }),
+              });
+          if (written.errors?.length || !written.data) lossFailures++;
+        }
+        if (result.losses?.length) await lossesRes.refetch();
+
         const buildings = (result.buildings ?? []).filter((_, i) => selectedBuildings[i]);
         // These `errors` used to be dropped entirely, so a building that
         // failed to create reported the same green "Applied" as one that did.
@@ -390,12 +483,14 @@ export default function ExtractionPanel({
             `${buildingFailures} building${buildingFailures === 1 ? "" : "s"} under Property`,
           contactFailures &&
             `${contactFailures} contact${contactFailures === 1 ? "" : "s"} on the Contacts card`,
+          lossFailures &&
+            `${lossFailures} loss${lossFailures === 1 ? "" : "es"} on the Losses tab`,
         ].filter(Boolean);
         return unfinished.length
           ? `Fields applied — review the Overview tab. Couldn't save ${unfinished.join(
               " and "
             )}; add ${
-              buildingFailures + contactFailures === 1 ? "it" : "them"
+              buildingFailures + contactFailures + lossFailures === 1 ? "it" : "them"
             } by hand.`
           : "";
       },
@@ -543,6 +638,59 @@ export default function ExtractionPanel({
                         {found
                           ? "Updates the matching contact; blank fields are left alone"
                           : "Creates a Contact record"}
+                      </td>
+                    </tr>
+                  );
+                })}
+                {(result.losses ?? []).map((l, i) => {
+                  if (!usableLoss(l)) return null;
+                  const found = lossMatchFor(l);
+                  const bits = [
+                    l.typeOfLoss?.trim(),
+                    digits(l.amountPaid) != null
+                      ? `${fmtMoney(digits(l.amountPaid))} paid`
+                      : "",
+                    digits(l.amountReserved) != null
+                      ? `${fmtMoney(digits(l.amountReserved))} reserved`
+                      : "",
+                    yesNo(l.claimOpen) === true
+                      ? "open"
+                      : yesNo(l.claimOpen) === false
+                        ? "closed"
+                        : "",
+                  ].filter(Boolean);
+                  return (
+                    <tr key={`l-${i}`}>
+                      <td>
+                        <input
+                          type="checkbox"
+                          checked={!!selectedLosses[i]}
+                          onChange={(e) =>
+                            setSelectedLosses((s) => ({ ...s, [i]: e.target.checked }))
+                          }
+                        />
+                      </td>
+                      <td>Loss</td>
+                      <td className="small muted">
+                        {found
+                          ? `${fmtDate(found.dateOfLoss)} ${found.lineOfBusiness}`
+                          : "—"}
+                      </td>
+                      <td>
+                        <strong>
+                          {fmtDate(l.dateOfLoss)} · {l.lineOfBusiness}
+                        </strong>
+                        {bits.length ? (
+                          <div className="small muted">{bits.join(" · ")}</div>
+                        ) : null}
+                      </td>
+                      <td>
+                        <span className="badge gray">{found ? "update" : "add"}</span>
+                      </td>
+                      <td className="small muted">
+                        {found
+                          ? "Updates the matching loss; blank fields are left alone"
+                          : "Creates a Loss record"}
                       </td>
                     </tr>
                   );

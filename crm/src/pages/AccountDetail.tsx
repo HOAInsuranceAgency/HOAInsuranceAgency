@@ -20,11 +20,13 @@ import { OverviewTab } from "./account/OverviewTab";
 import { DeleteLeadZone } from "./account/DeleteLeadZone";
 import { PoliciesTab } from "./account/PoliciesTab";
 import { PriorCarrierTab } from "./account/PriorCarrierTab";
+import { LossesTab } from "./account/LossesTab";
 import { CertificatesTab } from "./account/CertificatesTab";
 
 type Tab =
   | "overview"
   | "priorcarrier"
+  | "losses"
   | "quotes"
   | "policies"
   | "documents"
@@ -33,6 +35,7 @@ type Tab =
 const VALID_TABS: Tab[] = [
   "overview",
   "priorcarrier",
+  "losses",
   "quotes",
   "policies",
   "documents",
@@ -56,6 +59,9 @@ export function tabsFor(stage: string | null | undefined): [Tab, string][] {
   return [
     ["overview", "Overview"],
     ...(isLead ? ([["priorcarrier", "Prior coverage"]] as [Tab, string][]) : []),
+    // Not lead-only: loss history follows the account, and a renewal
+    // submission declares the same losses a new-business one did.
+    ["losses", "Losses"],
     ["quotes", "Quotes"],
     ["policies", "Policies"],
     ["documents", "Documents"],
@@ -172,6 +178,7 @@ export default function AccountDetail({ profile }: { profile: UserProfile }) {
         </>
       )}
       {activeTab === "priorcarrier" && <PriorCarrierTab accountId={account.id} />}
+      {activeTab === "losses" && <LossesTab accountId={account.id} />}
       {activeTab === "policies" && <PoliciesTab accountId={account.id} />}
       {activeTab === "documents" && (
         <>

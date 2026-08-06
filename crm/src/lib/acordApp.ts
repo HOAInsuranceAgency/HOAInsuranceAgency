@@ -59,6 +59,21 @@ interface BuildingInfo {
   remarks?: string | null;
 }
 
+interface LossInfo {
+  dateOfLoss?: string | null;
+  lineOfBusiness?: string | null;
+  description?: string | null;
+  claimDate?: string | null;
+  amountPaid?: number | null;
+  amountReserved?: number | null;
+  claimOpen?: boolean | null;
+  amountOfLoss?: number | null;
+  typeOfLoss?: string | null;
+}
+
+/** The 125's loss-history section has three rows. */
+export const LOSS_HISTORY_ROWS = ["A", "B", "C"] as const;
+
 interface BlanketInfo {
   blanketNumber?: string | null;
   amount?: number | null;
@@ -103,7 +118,7 @@ export const SUBJECT_ROW_RUNS = [
 export const BUILDINGS_PER_140 = BUILDING_BLOCKS.length;
 
 /** The 140's blanket summary has four rows. */
-const BLANKET_SUMMARY_ROWS = ["A", "B", "C", "D"] as const;
+export const BLANKET_SUMMARY_ROWS = ["A", "B", "C", "D"] as const;
 
 /**
  * Buildings → one group per PDF. An account with no buildings still gets one
@@ -180,7 +195,7 @@ export const LOB_FIELDS: Record<string, readonly string[]> = {
 };
 
 /** The 125 has six free-text "other line of business" rows. */
-const LOB_OTHER_ROWS = ["A", "B", "C", "D", "E", "F"] as const;
+export const LOB_OTHER_ROWS = ["A", "B", "C", "D", "E", "F"] as const;
 
 /**
  * The prior-coverage section is a **three-year grid**, not a list of lines.
@@ -194,7 +209,7 @@ const LOB_OTHER_ROWS = ["A", "B", "C", "D", "E", "F"] as const;
  * Automobile has a row here that nothing fills: `LINES_OF_BUSINESS` has no
  * auto line, because this agency does not write it.
  */
-const PRIOR_COVERAGE_BLOCKS = ["A", "B", "C"] as const;
+export const PRIOR_COVERAGE_BLOCKS = ["A", "B", "C"] as const;
 
 /** Lines with a row of their own inside a block. Everything else shares one. */
 export const PRIOR_COVERAGE_LINE_ROWS: Record<string, string> = {
@@ -301,7 +316,7 @@ export function legalEntityFor(account: {
 }
 
 /** ACORD 125 has four premises rows on the form; the rest go on a schedule. */
-const PREMISES_ROWS = ["A", "B", "C", "D"] as const;
+export const PREMISES_ROWS = ["A", "B", "C", "D"] as const;
 
 const STOREY_WORD: Record<number, string> = {
   1: "one-story",
@@ -376,6 +391,8 @@ function buildAppFormValues(
   priorCarriers: PriorCarrierInfo[],
   /** The account's blanket schedule — the 140's summary rows. */
   blankets: BlanketInfo[],
+  /** Loss history — the 125's loss rows. */
+  losses: LossInfo[],
   /** The account's GL application, when it has one. */
   gl: GlInfo | null,
   /**
@@ -579,6 +596,82 @@ function buildAppFormValues(
         };
       }
     });
+
+    // ── Loss history ──
+    //
+    // Most recent first, because that is what an underwriter weighs and the
+    // form has three rows for however many there are.
+    const recentLosses = [...losses].sort((a, b) =>
+      (b.dateOfLoss ?? "").localeCompare(a.dateOfLoss ?? "")
+    );
+    recentLosses.slice(0, LOSS_HISTORY_ROWS.length).forEach((l, i) => {
+      const row = LOSS_HISTORY_ROWS[i];
+      Object.assign(values, {
+        [`lossDate${row}`]: {
+          candidates: [`LossHistory_OccurrenceDate_${row}`],
+          value: fmtUs(l.dateOfLoss),
+        },
+        [`lossLine${row}`]: {
+          candidates: [`LossHistory_LineOfBusiness_${row}`],
+          value: l.lineOfBusiness ?? "",
+        },
+        [`lossDescription${row}`]: {
+          candidates: [`LossHistory_OccurrenceDescription_${row}`],
+          // The type of loss is the headline an adjuster gives it; the
+          // description is the sentence. Both, when both exist.
+          value: [l.typeOfLoss, l.description].filter(Boolean).join(" — "),
+        },
+        [`lossClaimDate${row}`]: {
+          candidates: [`LossHistory_ClaimDate_${row}`],
+          value: fmtUs(l.claimDate),
+        },
+        [`lossPaid${row}`]: {
+          candidates: [`LossHistory_PaidAmount_${row}`],
+          value: l.amountPaid != null ? l.amountPaid.toFixed(2) : "",
+        },
+        [`lossReserved${row}`]: {
+          candidates: [`LossHistory_ReservedAmount_${row}`],
+          value: l.amountReserved != null ? l.amountReserved.toFixed(2) : "",
+        },
+        // A text field, and the inventory gives no code vocabulary for it —
+        // same call as the 140's valuation codes, so it takes the word.
+        [`lossStatus${row}`]: {
+          candidates: [`LossHistory_ClaimStatus_OpenCode_${row}`],
+          value: l.claimOpen == null ? "" : l.claimOpen ? "Open" : "Closed",
+        },
+      } satisfies FieldValues);
+    });
+
+    if (losses.length) {
+      values.lossTotal = {
+        candidates: ["LossHistory_TotalAmount_A"],
+        // Total incurred — paid plus reserved — which is what a carrier means
+        // by the total of a loss history.
+        value: losses
+          .reduce((s, l) => s + (l.amountPaid ?? 0) + (l.amountReserved ?? 0), 0)
+          .toFixed(2),
+      };
+    }
+    // More losses than the form has rows: tick the loss-summary attachment,
+    // which is the box this form actually has for it.
+    values.attachLossSummary = {
+      candidates: ["CommercialPolicy_Attachment_LossSummaryIndicator_A"],
+      value: losses.length > LOSS_HISTORY_ROWS.length ? "x" : "",
+    };
+
+    // ── `LossHistory_NoPriorLossesIndicator_A` is deliberately NOT ticked ──
+    //
+    // The form asks "no prior losses", not "any losses", so the automatic
+    // reading of an account with no Loss rows would be to tick it. That is a
+    // factual claim about the association's history, and an account with no
+    // rows far more often means nobody has entered a loss run than that there
+    // were none. Ticking it would be asserting, on a document that goes to a
+    // carrier, something this app cannot know — and on the one section of the
+    // application where being wrong is most consequential.
+    //
+    // A producer ticks it by hand. Automating it needs a stored "we asked and
+    // there are none" answer, which is a deliberate decision and a column
+    // nobody has asked for yet.
 
     // ── Lines of business ──
     for (const line of lines) {
@@ -931,6 +1024,7 @@ export async function fillAcordApp(
   contacts: ContactInfo[],
   priorCarriers: PriorCarrierInfo[],
   blankets: BlanketInfo[],
+  losses: LossInfo[],
   gl: GlInfo | null,
   signature?: SignatureInfo | null,
   renewalDate?: string | null,
@@ -945,6 +1039,7 @@ export async function fillAcordApp(
       contacts,
       priorCarriers,
       blankets,
+      losses,
       gl,
       renewalDate,
       lines

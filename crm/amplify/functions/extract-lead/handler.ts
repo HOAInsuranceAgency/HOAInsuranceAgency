@@ -161,6 +161,40 @@ const EXTRACTION_SCHEMA = {
         additionalProperties: false,
       },
     },
+    // LOSS_RUNS is already a document category with its own extraction
+    // priority, so a loss run reaching this handler is expected. What was
+    // missing was anywhere for what it says to go.
+    losses: {
+      type: "array",
+      description:
+        "Individual losses from any loss run: one entry per occurrence, not per claim transaction",
+      items: {
+        type: "object",
+        properties: {
+          dateOfLoss: { type: "string", description: "ISO date YYYY-MM-DD, or empty string" },
+          lineOfBusiness: { type: "string", description: "Line of business, or empty string" },
+          typeOfLoss: { type: "string", description: 'Cause, e.g. "Water damage", or empty string' },
+          description: { type: "string", description: "What happened, or empty string" },
+          claimDate: { type: "string", description: "ISO date the claim was reported, or empty string" },
+          amountPaid: { type: "string", description: "Digits only, or empty string" },
+          amountReserved: { type: "string", description: "Digits only, or empty string" },
+          amountOfLoss: { type: "string", description: "Total incurred, digits only, or empty string" },
+          claimOpen: { type: "string", description: '"Yes", "No", or empty string when the run does not say' },
+        },
+        required: [
+          "dateOfLoss",
+          "lineOfBusiness",
+          "typeOfLoss",
+          "description",
+          "claimDate",
+          "amountPaid",
+          "amountReserved",
+          "amountOfLoss",
+          "claimOpen",
+        ],
+        additionalProperties: false,
+      },
+    },
     summary: {
       type: "string",
       description: "2-3 sentence underwriting summary of what the documents show",
@@ -182,6 +216,7 @@ const EXTRACTION_SCHEMA = {
     "currentPolicyExpiration",
     "contacts",
     "buildings",
+    "losses",
     "summary",
   ],
   additionalProperties: false,
@@ -271,7 +306,11 @@ async function runExtraction(accountId: string) {
     // ("compiled grammar too large"). Describe the exact JSON shape in the
     // prompt instead and parse defensively — Opus 4.8 returns clean JSON.
     const dataKeys = Object.keys(EXTRACTION_SCHEMA.properties).filter(
-      (k) => k !== "contacts" && k !== "buildings" && k !== "summary"
+      (k) =>
+        k !== "contacts" &&
+        k !== "buildings" &&
+        k !== "losses" &&
+        k !== "summary"
     );
     const shapeInstruction = `Respond with ONLY a JSON object — no markdown fences, no commentary. The object has exactly these keys:
 ${dataKeys.join(", ")}
@@ -279,8 +318,10 @@ Each of those keys maps to: { "value": <string>, "confidence": "high"|"medium"|"
 Also include:
   "contacts": array of { "name": <string>, "email": <string>, "phone": <string>, "type": <string> } — [] if nobody is named,
   "buildings": array of { "label", "sqft", "yearBuilt", "stories", "constructionType", "roofYear", "heatingYear", "wiringYear", "plumbingYear" } — all strings, "" where the documents don't say, [] if no buildings are documented,
+  "losses": array of { "dateOfLoss", "lineOfBusiness", "typeOfLoss", "description", "claimDate", "amountPaid", "amountReserved", "amountOfLoss", "claimOpen" } — all strings, [] if no loss run is attached,
   "summary": <string, 2-3 sentence underwriting summary>.
 For a building's "constructionType" use exactly one of: ${CONSTRUCTION_TYPES.join(", ")}, or "". Construction, storeys and the update years are per building — do not repeat one building's answers across the others unless the documents state them for each.
+A loss run lists one entry per occurrence. Do not emit a separate entry for each payment or reserve change on the same claim, and leave "claimOpen" empty rather than guessing when the run does not state a status.
 For a contact's "type" use exactly one of: ${CONTACT_TYPES.join(", ")}, or "" when the documents don't say what the person's role is. One entry per person — do not repeat the same person under two roles.`;
 
     const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
