@@ -2,11 +2,21 @@ import { AGENCY, AGENCY_FMT } from "../../shared/agency";
 
 export const PHONE = AGENCY.phone;
 export const PHONE_HREF = AGENCY_FMT.phoneHref;
+/** The agency's general address — footer, legal pages, JSON-LD. */
 export const EMAIL = AGENCY.email;
 export const EMAIL_HREF = AGENCY_FMT.emailHref;
+/**
+ * Sales. Shown on the lead-capture surfaces — the contact card beside the
+ * enquiry form, and the "Prefer to talk?" block on the quote forms — so the
+ * address a prospect is invited to write to is the one their form submission
+ * already goes to.
+ */
+export const LEAD_EMAIL = AGENCY.leadEmail;
+export const LEAD_EMAIL_HREF = AGENCY_FMT.leadEmailHref;
 export const ADDRESS_LINE1 = AGENCY.addressLine1;
 export const ADDRESS_LINE2 = AGENCY_FMT.addressLine2;
 export const QUOTE_URL = "/quote";
+/** Delivers to `LEAD_EMAIL` — see `AGENCY_FMT.formsubmitUrl`. */
 export const FORMSUBMIT_URL = AGENCY_FMT.formsubmitUrl;
 
 /**

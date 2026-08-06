@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { FORMSUBMIT_URL, fireConversion } from "../constants";
+import { FORMSUBMIT_URL, LEAD_EMAIL, LEAD_EMAIL_HREF, fireConversion } from "../constants";
 import { submitCrmLead } from "../lib/crmLead";
 import "./InstantAssessment.css";
 
@@ -260,7 +260,7 @@ export function InstantAssessment({
         <div className="ia-contact-alt">
           <p>Prefer to talk?</p>
           <a href="tel:+15082332261">508-233-2261</a>
-          <a href="mailto:insurance@ProtectMyHOA.com">insurance@ProtectMyHOA.com</a>
+          <a href={LEAD_EMAIL_HREF}>{LEAD_EMAIL}</a>
         </div>
       </div>
     </div>

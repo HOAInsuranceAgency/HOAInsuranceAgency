@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { FORMSUBMIT_URL, fireConversion } from "../constants";
+import { FORMSUBMIT_URL, LEAD_EMAIL, LEAD_EMAIL_HREF, fireConversion } from "../constants";
 import { submitCrmLead } from "../lib/crmLead";
 import "./AssociationLeadForm.css";
 
@@ -242,7 +242,7 @@ export function AssociationLeadForm({ property }: Props) {
         <div className="alf-contact-alt">
           <p>Prefer to talk?</p>
           <a href="tel:+15082332261">508-233-2261</a>
-          <a href="mailto:insurance@ProtectMyHOA.com">insurance@ProtectMyHOA.com</a>
+          <a href={LEAD_EMAIL_HREF}>{LEAD_EMAIL}</a>
         </div>
       </div>
     </div>
