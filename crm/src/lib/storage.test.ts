@@ -307,45 +307,114 @@ describe("uploadDocument", () => {
 });
 
 describe("downloadFile", () => {
-  it("opens a signed url in a new tab", async () => {
-    const tab = { closed: false, opener: {} } as unknown as Window;
-    const open = vi.spyOn(window, "open").mockReturnValue(tab);
+  /** The anchor the download is driven through, captured at click time. */
+  function captureAnchorClick() {
+    const clicked: { href: string; download: string; inDom: boolean }[] = [];
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (
+      this: HTMLAnchorElement
+    ) {
+      clicked.push({
+        href: this.href,
+        download: this.download,
+        // A detached anchor's click is a no-op in some browsers, so the
+        // element has to be in the document when it fires.
+        inDom: document.body.contains(this),
+      });
+    });
+    return clicked;
+  }
 
-    const result = await downloadFile("documents/ACCOUNT/a1/d1/budget.pdf");
+  it("saves the file without opening a tab", async () => {
+    const clicked = captureAnchorClick();
+    const open = vi.spyOn(window, "open").mockReturnValue(null);
+
+    const url = await downloadFile("documents/ACCOUNT/a1/d1/budget.pdf");
+
+    expect(url).toBe("https://s3.example/signed?sig=1");
+    expect(clicked).toEqual([
+      { href: "https://s3.example/signed?sig=1", download: "budget.pdf", inDom: true },
+    ]);
+    // No popup, so nothing for a blocker to refuse.
+    expect(open).not.toHaveBeenCalled();
+  });
+
+  /**
+   * S3 is cross-origin, where the anchor's `download` filename hint does not
+   * apply, so the signed URL has to carry the disposition itself — otherwise
+   * the PDF renders in the tab instead of being saved, under the wrong name.
+   */
+  it("signs an attachment disposition into the url", async () => {
+    captureAnchorClick();
+
+    await downloadFile("documents/ACCOUNT/a1/d1/budget.pdf", {
+      filename: "2026 budget.pdf",
+    });
 
     expect(s3.getUrl).toHaveBeenCalledWith({
       path: "documents/ACCOUNT/a1/d1/budget.pdf",
-      options: { validateObjectExistence: true },
+      options: {
+        validateObjectExistence: true,
+        contentDisposition: { type: "attachment", filename: "2026 budget.pdf" },
+      },
     });
-    expect(open).toHaveBeenCalledWith("https://s3.example/signed?sig=1", "_blank");
-    expect(result).toEqual({ url: "https://s3.example/signed?sig=1", opened: true });
-    expect(tab.opener).toBeNull();
   });
 
-  it("reports a blocked popup instead of looking like a dead button", async () => {
-    vi.spyOn(window, "open").mockReturnValue(null);
+  it("falls back to the key's last segment when the caller names nothing", async () => {
+    captureAnchorClick();
 
-    const result = await downloadFile("documents/ACCOUNT/a1/d1/budget.pdf");
+    await downloadFile("documents/ACCOUNT/a1/d1/budget.pdf", { filename: "  " });
 
-    expect(result).toEqual({ url: "https://s3.example/signed?sig=1", opened: false });
+    expect(s3.getUrl).toHaveBeenCalledWith(
+      expect.objectContaining({
+        options: expect.objectContaining({
+          contentDisposition: { type: "attachment", filename: "budget.pdf" },
+        }),
+      })
+    );
+  });
+
+  /** A quote would close `filename="…"` early; a newline would end the header. */
+  it("strips characters that would break out of the header", async () => {
+    captureAnchorClick();
+
+    await downloadFile("documents/ACCOUNT/a1/d1/x.pdf", {
+      filename: 'a"; evil=1\n/b.pdf',
+    });
+
+    expect(s3.getUrl).toHaveBeenCalledWith(
+      expect.objectContaining({
+        options: expect.objectContaining({
+          contentDisposition: { type: "attachment", filename: "a; evil=1_b.pdf" },
+        }),
+      })
+    );
+  });
+
+  it("leaves no anchor behind in the document", async () => {
+    captureAnchorClick();
+    const before = document.querySelectorAll("a").length;
+
+    await downloadFile("documents/ACCOUNT/a1/d1/budget.pdf");
+
+    expect(document.querySelectorAll("a").length).toBe(before);
   });
 
   it("throws for a key with no object behind it", async () => {
-    vi.spyOn(window, "open").mockReturnValue(null);
+    const clicked = captureAnchorClick();
     s3.getUrl.mockRejectedValue(new Error("NoSuchKey"));
 
     await expect(downloadFile("documents/ACCOUNT/a1/d1/gone.pdf")).rejects.toThrow("NoSuchKey");
-    expect(window.open).not.toHaveBeenCalled();
+    expect(clicked).toEqual([]);
   });
 
   it("refuses a record whose upload never landed", async () => {
-    const open = vi.spyOn(window, "open").mockReturnValue(null);
+    const clicked = captureAnchorClick();
 
     await expect(downloadFile(PENDING_KEY)).rejects.toThrow(/hasn't finished uploading/);
     await expect(downloadFile("")).rejects.toThrow(/hasn't finished uploading/);
     await expect(downloadFile(null)).rejects.toThrow(/hasn't finished uploading/);
     expect(s3.getUrl).not.toHaveBeenCalled();
-    expect(open).not.toHaveBeenCalled();
+    expect(clicked).toEqual([]);
   });
 });
 

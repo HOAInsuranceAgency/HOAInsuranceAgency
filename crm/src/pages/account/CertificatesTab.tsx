@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { uploadData, getUrl } from "aws-amplify/storage";
+import { uploadData } from "aws-amplify/storage";
 import {
   client,
   fmtDate,
@@ -18,6 +18,7 @@ import {
   signatureFor,
   type AiFilledField,
 } from "../../lib/acord";
+import { downloadFile } from "../../lib/storage";
 import { useSort, SortTh } from "../../lib/useSort";
 import { useAsyncResource } from "../../lib/useAsyncResource";
 import AiFilledList from "../../components/AiFilledList";
@@ -214,8 +215,20 @@ export function CertificatesTab({
 
   async function downloadPdf(cert: Certificate) {
     if (!cert.s3Key) return;
-    const { url } = await getUrl({ path: cert.s3Key });
-    window.open(url.toString(), "_blank");
+    setError("");
+    try {
+      // Certificate keys are generated, so their last segment is already a
+      // reasonable filename — but the number is what the row is identified by.
+      await downloadFile(cert.s3Key, {
+        filename: cert.certificateNumber
+          ? `Certificate ${cert.certificateNumber}.pdf`
+          : undefined,
+      });
+    } catch (err) {
+      setError(
+        `That certificate couldn't be downloaded — ${friendlyError(err, "unknown error")}`
+      );
+    }
   }
 
   // Most recently issued first, as the fetch used to order them.

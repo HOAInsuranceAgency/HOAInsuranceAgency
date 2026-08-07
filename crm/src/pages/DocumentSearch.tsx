@@ -1,12 +1,13 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { getUrl } from "aws-amplify/storage";
 import {
   client,
   fmtDate,
+  friendlyError,
   listAllPages,
   type CrmDocument,
 } from "../lib/client";
+import { downloadFile } from "../lib/storage";
 import FilePreviewModal, { canPreview } from "../components/FilePreview";
 import { useAsyncResource } from "../lib/useAsyncResource";
 import { useSort, SortTh } from "../lib/useSort";
@@ -23,6 +24,9 @@ const NO_RESULTS: CrmDocument[] = [];
 export default function DocumentSearch() {
   const [query, setQuery] = useState("");
   const [previewDoc, setPreviewDoc] = useState<CrmDocument | null>(null);
+  // Separate from the search `error` below — a failed download shouldn't read
+  // as a failed search, and shouldn't be wiped out by the next one either.
+  const [downloadError, setDownloadError] = useState("");
 
   // `manual` because this resource has no deps to watch — it exists only when
   // someone presses Search. The hook has no "don't run" escape, so the
@@ -59,8 +63,14 @@ export default function DocumentSearch() {
   }
 
   async function download(doc: CrmDocument) {
-    const { url } = await getUrl({ path: doc.s3Key });
-    window.open(url.toString(), "_blank");
+    setDownloadError("");
+    try {
+      await downloadFile(doc.s3Key, { filename: doc.name });
+    } catch (err) {
+      setDownloadError(
+        `"${doc.name}" couldn't be downloaded — ${friendlyError(err, "unknown error")}`
+      );
+    }
   }
 
   function snippet(doc: CrmDocument): string | null {
@@ -120,6 +130,7 @@ export default function DocumentSearch() {
         </button>
       </div>
       {error && <p className="error-text">{error}</p>}
+      {downloadError && <p className="error-text">{downloadError}</p>}
 
       {loaded && !error && (
         <div className="card">
