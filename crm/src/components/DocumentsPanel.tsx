@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { uploadData, getUrl, remove } from "aws-amplify/storage";
+import { uploadData, remove } from "aws-amplify/storage";
 import { client, friendlyError, type CrmDocument } from "../lib/client";
+import { downloadFile } from "../lib/storage";
 import type { Schema } from "../../amplify/data/resource";
 import FilePreviewModal, { canPreview } from "./FilePreview";
 import FileButton from "./FileButton";
@@ -114,8 +115,15 @@ export default function DocumentsPanel({
   }
 
   async function download(doc: CrmDocument) {
-    const { url } = await getUrl({ path: doc.s3Key });
-    window.open(url.toString(), "_blank");
+    try {
+      // `doc.name`, not the key: the row is renameable, and Downloads should
+      // agree with what the row says.
+      await downloadFile(doc.s3Key, { filename: doc.name });
+    } catch (err) {
+      setError(
+        `"${doc.name}" couldn't be downloaded — ${friendlyError(err, "unknown error")}`
+      );
+    }
   }
 
   function startRename(doc: CrmDocument) {

@@ -221,53 +221,86 @@ export async function uploadDocument(opts: {
 /**
  * Signed URL for an object. `validate` costs an extra HEAD but turns a
  * missing key into a catchable error instead of a tab full of S3 XML.
+ *
+ * `downloadAs` signs `response-content-disposition: attachment` into the URL,
+ * so S3 itself tells the browser to save the response rather than display it.
+ * Omit it for anything rendered in the page — a preview iframe, an <img> — or
+ * the browser will download the file instead of showing it.
  */
 export async function getFileUrl(
   path: string,
-  opts?: { validate?: boolean }
+  opts?: { validate?: boolean; downloadAs?: string }
 ): Promise<string> {
   const { url } = await getUrl({
     path,
-    options: { validateObjectExistence: opts?.validate ?? false },
+    options: {
+      validateObjectExistence: opts?.validate ?? false,
+      ...(opts?.downloadAs
+        ? {
+            contentDisposition: {
+              type: "attachment" as const,
+              filename: headerSafeFilename(opts.downloadAs),
+            },
+          }
+        : {}),
+    },
   });
   return url.toString();
 }
 
-export type DownloadResult = {
-  url: string;
-  /**
-   * False when the browser refused the new tab. The three existing copies of
-   * this open couldn't tell, so a blocked popup looked like a dead button.
-   * Callers should offer `url` as a plain link when this is false.
-   */
-  opened: boolean;
-};
+/**
+ * A filename safe to sit inside `attachment; filename="…"`. A quote would end
+ * the field early and a newline would end the header, so both are dropped
+ * rather than escaped — this only names a download, and mangling one filename
+ * beats emitting a header the browser reads as something else.
+ */
+function headerSafeFilename(name: string): string {
+  const cleaned = name
+    .replace(CONTROL_CHARS, "")
+    .replace(/["\\]/g, "")
+    .replace(/[/]+/g, "_")
+    .trim();
+  return cleaned || "download";
+}
 
 /**
- * Open an object in a new tab.
+ * Save an object to the user's downloads, without leaving the page.
  *
- * Throws if no URL could be produced (missing object, no permission, key not
- * uploaded yet) — that is a real failure the caller should show. A blocked
- * popup is not a failure of the download, so it comes back as `opened: false`.
+ * The naming is done by the signed URL's own `Content-Disposition`, not by the
+ * anchor's `download` attribute: a browser ignores that attribute's filename
+ * hint for a cross-origin response, and S3 is always cross-origin from the
+ * app. So the header is what makes the file arrive under the right name, and
+ * what makes a PDF save instead of rendering in the tab. The attribute is kept
+ * for the same-origin case (tests, a future proxy) and costs nothing.
+ *
+ * A synthetic anchor click, rather than `window.open`: an attachment response
+ * never becomes a document, so there is no tab to block and no popup blocker
+ * in the way. That is why nothing here reports "the browser refused" — the
+ * only failures left are real ones, and they throw.
+ *
+ * `filename` should be what the UI calls the file, which is not always the
+ * object key's last segment: documents are renameable, and a renamed one
+ * otherwise lands in Downloads under the name it was uploaded with.
  */
 export async function downloadFile(
-  path: string | null | undefined
-): Promise<DownloadResult> {
+  path: string | null | undefined,
+  opts?: { filename?: string }
+): Promise<string> {
   if (!path || !path.trim() || path === PENDING_KEY) {
     throw new Error("That file hasn't finished uploading yet.");
   }
-  const url = await getFileUrl(path, { validate: true });
-  // No "noopener" in the feature string: browsers return null for it even on
-  // success, which would make every open look blocked. Drop the back-reference
-  // afterwards instead.
-  const opened = window.open(url, "_blank");
-  if (!opened || opened.closed) return { url, opened: false };
-  try {
-    opened.opener = null;
-  } catch {
-    // Cross-origin by the time it navigated; nothing to do.
-  }
-  return { url, opened: true };
+  const filename = opts?.filename?.trim() || path.split("/").pop() || "download";
+  const url = await getFileUrl(path, { validate: true, downloadAs: filename });
+
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.rel = "noopener";
+  a.style.display = "none";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  return url;
 }
 
 // ── Delete ───────────────────────────────────────────────────────────
