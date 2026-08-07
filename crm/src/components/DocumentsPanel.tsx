@@ -73,11 +73,11 @@ export default function DocumentsPanel({
     return () => sub.unsubscribe();
   }, [entityId]);
 
-  async function handleUpload(files: FileList | null) {
+  async function handleUpload(files: File[] | null) {
     if (!files?.length) return;
     setUploading(true);
     setError("");
-    for (const file of Array.from(files)) {
+    for (const file of files) {
       let docId: string | null = null;
       try {
         const { data: doc, errors } = await client.models.Document.create({
