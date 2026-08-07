@@ -14,11 +14,20 @@ export default function FileButton({
   accept?: string;
   disabled?: boolean;
   busy?: boolean;
-  onFiles: (files: FileList | null) => void;
+  /**
+   * Receives a plain array, deliberately — not the input's `FileList`.
+   *
+   * Resetting `value` below empties that FileList *in place*, so a handler
+   * that read it any later than synchronously (say, from inside a React state
+   * updater, which only runs eagerly on a component's first update) would see
+   * zero files and silently drop the selection.
+   */
+  onFiles: (files: File[] | null) => void;
 }) {
   function handle(e: ChangeEvent<HTMLInputElement>) {
-    onFiles(e.target.files);
+    const files = e.target.files ? Array.from(e.target.files) : null;
     e.target.value = ""; // allow re-selecting the same file
+    onFiles(files);
   }
 
   return (

@@ -318,8 +318,7 @@ export default function NewLead() {
             label="Add documents…"
             multiple
             onFiles={(files) =>
-              files &&
-              setStagedFiles((prev) => [...prev, ...Array.from(files)])
+              files && setStagedFiles((prev) => [...prev, ...files])
             }
           />
         </div>
