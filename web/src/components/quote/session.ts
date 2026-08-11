@@ -1,4 +1,5 @@
-import type { FormData } from "./schema";
+import { FLOW_SIGNATURE, type FormData } from "./schema";
+import { states } from "../../data/states";
 
 /* ──────────────────────────────────────────────────────────
    AGENT ROSTER — rotates per session
@@ -35,11 +36,18 @@ type PersistedState = {
   multiVal: string[];
 };
 
+/**
+ * What is actually stored: a session, tagged with the flow it was recorded
+ * against. `stepIndex` and the `data` keys are both meaningless outside that
+ * flow, so the tag is what makes them safe to trust on the way back in.
+ */
+type StoredSession = PersistedState & { flowSignature: string };
+
 export function loadState(): PersistedState | null {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as Partial<PersistedState>;
+    const parsed = JSON.parse(raw) as Partial<StoredSession>;
     if (
       typeof parsed.stepIndex !== "number" ||
       !parsed.data ||
@@ -47,6 +55,18 @@ export function loadState(): PersistedState | null {
     ) {
       return null;
     }
+    /**
+     * Written by a different version of the flow, so none of it transfers:
+     * the index points at a question that has moved or gone, and the answers
+     * are keyed by fields the new steps never read. Discarding beats guessing
+     * — a returning visitor starts over, which is the honest outcome. Note
+     * this also rejects the untagged shape saved before this check existed.
+     *
+     * No need to remove the key: the next `saveState` overwrites it, so there
+     * is nothing orphaned to clean up (which is why this is a tag rather than
+     * a bumped `qf:state:v2`, that would have stranded every v1 blob).
+     */
+    if (parsed.flowSignature !== FLOW_SIGNATURE) return null;
     return {
       stepIndex: parsed.stepIndex,
       data: parsed.data as FormData,
@@ -62,7 +82,8 @@ export function loadState(): PersistedState | null {
 
 export function saveState(s: PersistedState) {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(s));
+    const stored: StoredSession = { ...s, flowSignature: FLOW_SIGNATURE };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(stored));
   } catch {
     /* quota exceeded or private mode — silently ignore */
   }
@@ -76,15 +97,13 @@ export function clearState() {
   }
 }
 
-/* ── Smart prefill from URL params ── */
-const STATE_SLUGS: Record<string, string> = {
-  massachusetts: "MA",
-  "rhode-island": "RI",
-  connecticut: "CT",
-  "new-hampshire": "NH",
-  "new-york": "NY",
-  oklahoma: "OK",
-};
+/* ── Smart prefill from URL params ──
+   Built from states.ts, not hand-listed. The hardcoded six-state map here meant
+   that once the site gained a page per state, arriving from any of the other 45
+   prefilled nothing and the visitor had to pick their state manually. */
+const STATE_SLUGS: Record<string, string> = Object.fromEntries(
+  states.map((s) => [s.slug, s.abbr])
+);
 
 export function getPrefillFromUrl(): Partial<{ state: string }> {
   try {
