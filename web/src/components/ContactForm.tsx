@@ -1,10 +1,15 @@
 import { useState, type FormEvent } from "react";
-import { FORMSUBMIT_URL, PHONE, PHONE_HREF, LEAD_EMAIL, LEAD_EMAIL_HREF, ADDRESS_LINE1, ADDRESS_LINE2 } from "../constants";
+import { FORMSUBMIT_URL, PHONE, PHONE_HREF, EMAIL, LEAD_EMAIL, LEAD_EMAIL_HREF, ADDRESS_LINE1, ADDRESS_LINE2 } from "../constants";
 import { submitCrmLead } from "../lib/crmLead";
 import "./ContactForm.css";
 
 /* Pre-filled claim notice. The body prompts for the four things always asked
-   first, so the reply is not a request for basics. Encoded so newlines survive. */
+   first, so the reply is not a request for basics. Encoded so newlines survive.
+
+   Addressed to EMAIL (service), not LEAD_EMAIL (sales) — a claim from an
+   existing insured is not a new enquiry, which is what "only website leads go
+   to sales" meant. The enquiry card below is the lead surface and does use
+   LEAD_EMAIL; the two are deliberately different and both are needed here. */
 const CLAIM_HREF =
   `mailto:${EMAIL}` +
   `?subject=${encodeURIComponent("Claim notification")}` +
