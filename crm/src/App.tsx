@@ -291,7 +291,14 @@ function Shell({ profile, signOut }: { profile: UserProfile; signOut: () => void
           <Route path="/accounts/:id" element={<AccountDetail profile={profile} />} />
           <Route path="/carriers" element={<Carriers />} />
           <Route path="/carriers/:id" element={<CarrierDetail />} />
-          <Route path="/tasks" element={<AllMarketingTasks />} />
+          <Route
+            path="/tasks"
+            element={
+              <AllMarketingTasks
+                completedByName={`${profile.firstName} ${profile.lastName}`}
+              />
+            }
+          />
           <Route path="/quotes" element={<QuotesList />} />
           <Route path="/policies" element={<PoliciesList />} />
           <Route path="/documents" element={<DocumentSearch />} />
