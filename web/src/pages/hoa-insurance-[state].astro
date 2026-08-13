@@ -1,10 +1,41 @@
 ---
+/**
+ * State landing page — one template, 51 states.
+ *
+ * Section order mirrors the homepage and /what-we-do so a state page reads as
+ * part of the same site rather than a thinner template:
+ *
+ *   01 hero (with address lookup)   02 the master policy in this state
+ *   03 coverages                    04 considerations (navy accordion)
+ *   05 Review. Compare. Place. Record.   06 our markets
+ *   07 association types            08 cities (only where the state has them)
+ *   09 who we work with             10 close + contact
+ *
+ * Sections 05, 06 and 09 are not copies. They read `data/process.ts`,
+ * `data/markets.ts` and the `.stage-grid` / `.carrier-marquee` / `.aud-grid`
+ * rules in global.css — the same sources the homepage and /why-choose-us render
+ * from, so the three pages state those things once and cannot drift apart.
+ *
+ * ── What this template does NOT own ──
+ * `title`, `description` and `heroTitle` come from data/states.ts and are the
+ * ranking signals for the six reviewed states. This file renders them; it must
+ * never rewrite them. See docs/WEBSITE-STRUCTURE.md §6.
+ *
+ * `noindex={!state.reviewed}` is what keeps the 45 pending states out of the
+ * index. Do not remove it — flipping a state on is a data edit in states.ts,
+ * made once its own statutory and market detail has been written and reviewed.
+ */
 import Layout from "../layouts/Layout.astro";
 import Hero from "../components/Hero.astro";
+import HeroLookup from "../components/HeroLookup.astro";
 import { ContactForm } from "../components/ContactForm";
 import { QUOTE_URL } from "../constants";
 import { states } from "../data/states";
 import { cities } from "../data/cities";
+import { STAGES } from "../data/process";
+import { MARKETS } from "../data/markets";
+import { COVERAGES } from "../data/coverages";
+import "./StatePage.css";
 
 export function getStaticPaths() {
   return states.map((s) => ({
@@ -18,14 +49,13 @@ const stateCities = cities.filter(
   (c) => c.stateSlug === state.slug
 );
 
-const COVERAGES = [
-  "HOA Master Property Insurance",
-  "General Liability",
-  "Umbrella / Excess Liability",
-  "Directors & Officers (D&O)",
-  "Crime / Fidelity",
-  "Ordinance or Law",
-  "HO-6 Condo Unit Owner Coverage",
+/* Same four audiences and the same marks as the homepage and /what-we-do, so the
+   three pages say this once and say it identically. */
+const AUDIENCES = [
+  { icon: "board",     title: "Boards & trustees",     cta: "Request a board review",       href: QUOTE_URL },
+  { icon: "manager",   title: "Property managers",     cta: "Talk to us about a portfolio", href: "/contact" },
+  { icon: "developer", title: "Developers & sponsors", cta: "Discuss a new project",        href: "/contact" },
+  { icon: "owner",     title: "Unit owners",           cta: "Get HO-6 coverage",            href: "/what-we-do" },
 ];
 ---
 
@@ -35,133 +65,246 @@ const COVERAGES = [
   canonicalPath={`/hoa-insurance-${state.slug}`}
   noindex={!state.reviewed}
 >
+  {/* ═══ 01 · Hero — same treatment as the homepage ═══════════════════ */}
   <Hero
+    eyebrow="ProtectMyHOA&trade;"
     title={state.heroTitle}
-    subtitle={`Specialists in HOA master insurance and HO-6 condo coverage for ${state.name} associations.`}
+    subtitle={`Master insurance for the association, HO-6 for the unit owner, and a written record of why each was placed the way it was — for ${state.name} community associations.`}
     backgroundImage="/images/hero-people.jpg"
     backgroundVideo="/images/hero-video.mp4"
-    ctaText="Request Insurance Review"
-    ctaHref={`${QUOTE_URL}?state=${state.abbr}`}
-    compact
-  />
+  >
+    <HeroLookup slot="action" />
+  </Hero>
 
-  <section class="section">
-    <div class="container reveal" style="max-width: 800px">
-      <h2 class="section-title">HOA Insurance for {state.name} Associations</h2>
-      <p style="font-size: 17px; color: var(--color-gray-600); line-height: 1.7; margin-bottom: 32px">{state.intro}</p>
+  {/* ═══ 02 · The master policy in this state ════════════════════════ */}
+  <section class="section" aria-labelledby="intro-h">
+    <div class="container">
+      <div class="st-split">
+        <div class="st-split__lead">
+          <p class="eyebrow">The master policy</p>
+          <h2 class="section-title" id="intro-h">HOA Insurance for {state.name} Associations</h2>
+          <p class="st-lead">{state.intro}</p>
+          <p class="st-closer">
+            Where the master policy ends and a unit owner's HO-6 begins is set by your
+            governing documents. It is the question {state.name} boards raise with us most often.
+          </p>
+          <div class="st-cta">
+            <a href={`${QUOTE_URL}?state=${state.abbr}`} class="btn btn-primary">Request Insurance Review</a>
+            <span class="st-cta__note">Free review. No broker fee, now or at renewal.</span>
+          </div>
+        </div>
+        <div class="st-split__media">
+          <img
+            src="/images/master-policy-community.jpg"
+            alt="Residents walking through a managed condominium community past shared buildings, landscaped common areas and a gazebo"
+            width="1200"
+            height="900"
+            loading="lazy"
+            decoding="async"
+          />
+        </div>
+      </div>
     </div>
   </section>
 
-  <section class="section section--alt">
+  {/* ═══ 03 · Coverages — same cards and copy as /what-we-do ═════════ */}
+  <section class="section section--alt" aria-labelledby="cov-h">
     <div class="container">
-      <h2 class="section-title">Coverages We Place in {state.name}</h2>
-      <div class="card-grid">
+      <div class="sec-head sec-head--center">
+        <p class="eyebrow">Coverage</p>
+        <h2 class="section-title" id="cov-h">Coverages We Place in {state.name}</h2>
+        <p class="section-subtitle">
+          Placed as one program, so the limits and deductibles agree with each other rather
+          than being bought in isolation.
+        </p>
+      </div>
+      <div class="st-cov-grid">
         {COVERAGES.map((c) => (
-          <div class="card reveal">
-            <h3>{c}</h3>
-          </div>
+          <article class="st-cov-card">
+            <span class="st-cov-card__mark" aria-hidden="true">
+              {c.icon === "building" && <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="18" rx="1"/><path d="M8 7h.01M12 7h.01M16 7h.01M8 11h.01M12 11h.01M16 11h.01"/><path d="M10 21v-3h4v3"/></svg>}
+              {c.icon === "shield" && <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l8 4v6c0 5-3.5 9.5-8 10-4.5-.5-8-5-8-10V6l8-4z"/></svg>}
+              {c.icon === "umbrella" && <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v2"/><path d="M2 12a10 10 0 0120 0H2z"/><path d="M12 12v7a3 3 0 01-6 0"/></svg>}
+              {c.icon === "briefcase" && <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M9 7V5a2 2 0 012-2h2a2 2 0 012 2v2"/><path d="M3 13h18"/></svg>}
+              {c.icon === "lock" && <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 018 0v4"/></svg>}
+              {c.icon === "scale" && <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18"/><path d="M5 7h14"/><path d="M5 7l-2 6a4 4 0 008 0L9 7"/><path d="M17 7l-2 6a4 4 0 008 0l-2-6"/></svg>}
+              {c.icon === "home" && <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.6L12 3l9 7.6"/><path d="M5.4 9.6V20h13.2V9.6"/><path d="M10 20v-5.2h4V20"/></svg>}
+            </span>
+            <div class="st-cov-card__body">
+              <h3>{c.title}</h3>
+              <p>{c.desc}</p>
+            </div>
+          </article>
         ))}
       </div>
-      <div style="text-align: center; margin-top: 40px">
+      <p class="st-cov-note">
+        Workers compensation and earthquake are available separately, and are quoted
+        alongside the program where an association needs them.
+      </p>
+      <div class="st-cta st-cta--center">
         <a href="/what-we-do" class="btn btn-primary">Learn More About Our Coverages</a>
       </div>
     </div>
   </section>
 
-  <section class="section">
-    <div class="container" style="max-width: 800px">
-      <h2 class="section-title">{state.name} HOA Insurance Considerations</h2>
-      <ul class="geo-list">
-        {state.regulations.map((r) => <li class="geo-list-item">{r}</li>)}
+  {/* ═══ 04 · Considerations — navy accordion, as /what-we-do §03 ════ */}
+  <section class="section section--navy" aria-labelledby="reg-h">
+    <div class="container">
+      <div class="sec-head sec-head--center">
+        <p class="eyebrow eyebrow--gold">What we find</p>
+        <h2 class="section-title st-invert" id="reg-h">{state.name} HOA Insurance Considerations</h2>
+        <p class="section-subtitle st-invert-sub">
+          What we check first on a {state.name} association's master policy. Each can be
+          verified before a claim rather than after one.
+        </p>
+      </div>
+      <div class="st-acc">
+        {state.regulations.map((r, i) => (
+          <details class="st-acc__item">
+            <summary>
+              <span class="st-acc__num">{String(i + 1).padStart(2, "0")}</span>
+              <span class="st-acc__title">{r}</span>
+              <span class="st-acc__chev" aria-hidden="true">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+              </span>
+            </summary>
+            <p>We confirm this against your current policy and set the finding out in writing.</p>
+          </details>
+        ))}
+      </div>
+      <div class="st-acc-foot">
+        <p class="st-acc-foot__text">
+          We identify which of these apply to your association, and put the findings in writing.
+        </p>
+        <a href={QUOTE_URL} class="btn btn-gold st-acc-foot__cta">Request Insurance Review</a>
+      </div>
+    </div>
+  </section>
+
+  {/* ═══ 05 · Process — the same STAGES as / and /why-choose-us ══════ */}
+  <section class="section" aria-labelledby="stages-h">
+    <div class="container">
+      <div class="sec-head sec-head--center">
+        <p class="eyebrow">The process</p>
+        <h2 class="section-title" id="stages-h">Review. Compare. Place. Record.</h2>
+        <p class="section-subtitle">
+          Four stages, in order, on a schedule the board can hold us to.
+        </p>
+      </div>
+      <ol class="stage-grid">
+        {STAGES.map((s) => (
+          <li class="stage-card reveal">
+            <span class="stage-num">{s.num}</span>
+            <h3>{s.title}</h3>
+            <p>{s.desc}</p>
+          </li>
+        ))}
+      </ol>
+      <div class="section-cta-wrap">
+        <a href={QUOTE_URL} class="btn btn-primary">Start stage one</a>
+      </div>
+    </div>
+  </section>
+
+  {/* ═══ 06 · Markets — the same wall as / and /why-choose-us ════════ */}
+  <section class="section section--alt" aria-labelledby="markets-h">
+    <div class="container">
+      <div class="sec-head sec-head--center">
+        <p class="eyebrow">Our markets</p>
+        <h2 class="section-title" id="markets-h">Markets a board will recognize</h2>
+        <p class="section-subtitle">National insurers alongside the specialists.</p>
+      </div>
+      <div class="carrier-marquee">
+        <ul class="carrier-track">
+          {MARKETS.map((m) => (
+            <li class="carrier">
+              <img class="carrier__logo" src={`/images/carriers/${m.slug}.png`} alt={m.name} width="240" height="120" loading="lazy" decoding="async" />
+            </li>
+          ))}
+          {MARKETS.map((m) => (
+            <li class="carrier" aria-hidden="true">
+              <img class="carrier__logo" src={`/images/carriers/${m.slug}.png`} alt="" width="240" height="120" loading="lazy" decoding="async" />
+            </li>
+          ))}
+        </ul>
+      </div>
+      <p class="carrier-note">
+        Carrier availability varies by state, association type and risk profile. Not every
+        market is approached on every placement.
+      </p>
+    </div>
+  </section>
+
+  {/* ═══ 07 · Association types ══════════════════════════════════════ */}
+  <section class="section" aria-labelledby="types-h">
+    <div class="container">
+      <div class="sec-head sec-head--center">
+        <p class="eyebrow">Who qualifies</p>
+        <h2 class="section-title" id="types-h">Types of Associations We Serve in {state.name}</h2>
+      </div>
+      <ul class="st-types">
+        {state.hoaTypes.map((t) => <li class="st-type">{t}</li>)}
       </ul>
     </div>
   </section>
 
-  <section class="section section--alt">
-    <div class="container" style="max-width: 800px">
-      <h2 class="section-title">Types of Associations We Serve in {state.name}</h2>
-      <ul class="geo-list">
-        {state.hoaTypes.map((t) => <li class="geo-list-item">{t}</li>)}
-      </ul>
-    </div>
-  </section>
-
+  {/* ═══ 08 · Cities — the state→city hub links ══════════════════════
+       Only renders where `cities` is populated. This is the only crawl path from
+       a state hub to its city pages: removing a name here orphans that city page.
+       See docs/WEBSITE-STRUCTURE.md §6 (🟡 CAREFUL). */}
   {stateCities.length > 0 && (
-    <section class="section">
-      <div class="container" style="max-width: 800px">
-        <h2 class="section-title">Cities We Serve in {state.name}</h2>
-        <div class="city-links">
+    <section class="section section--alt" aria-labelledby="cities-h">
+      <div class="container">
+        <div class="sec-head sec-head--center">
+          <p class="eyebrow">Coverage area</p>
+          <h2 class="section-title" id="cities-h">Cities We Serve in {state.name}</h2>
+        </div>
+        <div class="st-cities">
           {stateCities.map((c) => (
-            <a href={`/hoa-insurance-${c.slug}-${c.stateAbbr}`} class="city-link">
-              {c.name}
-            </a>
+            <a href={`/hoa-insurance-${c.slug}-${c.stateAbbr}`} class="st-city">{c.name}</a>
           ))}
         </div>
       </div>
     </section>
   )}
 
+  {/* ═══ 09 · Who we work with — as / and /what-we-do ════════════════ */}
+  <section class="section" aria-labelledby="aud-h">
+    <div class="container">
+      <div class="sec-head sec-head--center">
+        <p class="eyebrow">Who we serve</p>
+        <h2 class="section-title" id="aud-h">Who we work with</h2>
+        <p class="section-subtitle">
+          Four groups, each needing something different from the same placement.
+        </p>
+      </div>
+      <div class="aud-grid">
+        {AUDIENCES.map((a) => (
+          <div class="aud-card">
+            <span class="aud-card__mark" aria-hidden="true">
+              {a.icon === "board" && <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M15.5 19v-1.4a3.4 3.4 0 00-3.4-3.4H7.4A3.4 3.4 0 004 17.6V19"/><circle cx="9.75" cy="7.6" r="3.4"/><path d="M16.6 11.1a3.2 3.2 0 000-6.3"/><path d="M20 19v-1.4a3.3 3.3 0 00-2.3-3.1"/></svg>}
+              {a.icon === "manager" && <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="18" rx="1"/><path d="M8 7h.01M12 7h.01M16 7h.01M8 11h.01M12 11h.01M16 11h.01"/><path d="M10 21v-3h4v3"/></svg>}
+              {a.icon === "developer" && <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16M3 10h6M15 9h6M15 14h6"/></svg>}
+              {a.icon === "owner" && <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.6L12 3l9 7.6"/><path d="M5.4 9.6V20h13.2V9.6"/><path d="M10 20v-5.2h4V20"/></svg>}
+            </span>
+            <h3>{a.title}</h3>
+            <a href={a.href} class="text-link aud-card__cta">{a.cta} &gt;</a>
+          </div>
+        ))}
+      </div>
+    </div>
+  </section>
+
+  {/* ═══ 10 · Close ══════════════════════════════════════════════════ */}
   <section class="section section--navy" style="text-align: center">
     <div class="container">
-      <h2 class="section-title">Ready to review your {state.name} HOA insurance?</h2>
-      <p class="section-subtitle" style="margin: 0 auto 32px">Start with a free insurance review — no commitment, no pressure.</p>
+      <h2 class="section-title st-invert">Ready to review your {state.name} HOA insurance?</h2>
+      <p class="section-subtitle st-invert-sub" style="margin: 0 auto 32px">
+        Start with a free insurance review — no commitment, no pressure.
+      </p>
       <a href={QUOTE_URL} class="btn btn-gold">Request Insurance Review</a>
     </div>
   </section>
 
-  <ContactForm client:visible />
+  <ContactForm showClaims client:visible />
 </Layout>
-
-<style>
-  .geo-list {
-    display: flex;
-    flex-direction: column;
-    gap: 14px;
-    margin-top: 24px;
-  }
-  .geo-list-item {
-    display: flex;
-    align-items: flex-start;
-    gap: 12px;
-    font-size: 16px;
-    color: var(--color-gray-700);
-    line-height: 1.6;
-    padding: 16px 20px;
-    background: var(--color-white);
-    border: 1px solid var(--color-gray-200);
-    border-radius: 10px;
-    list-style: none;
-  }
-  .geo-list-item::before {
-    content: "";
-    display: inline-block;
-    width: 22px;
-    height: 22px;
-    min-width: 22px;
-    margin-top: 2px;
-    border-radius: 50%;
-    background: var(--color-gold-dim) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23e5c16a' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12l5 5 9-11'/%3E%3C/svg%3E") no-repeat center;
-  }
-  .city-links {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 12px;
-    margin-top: 24px;
-  }
-  .city-link {
-    display: inline-flex;
-    padding: 12px 24px;
-    border-radius: 10px;
-    background: var(--color-gray-50);
-    border: 1px solid var(--color-gray-200);
-    font-size: 15px;
-    font-weight: 600;
-    color: var(--color-accent);
-    transition: all 0.2s ease;
-  }
-  .city-link:hover {
-    background: var(--color-sky);
-    border-color: var(--color-accent);
-    transform: translateY(-2px);
-  }
-</style>

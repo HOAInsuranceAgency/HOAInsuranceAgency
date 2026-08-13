@@ -2,8 +2,10 @@
 
 **Purpose:** a pre-edit reference for updating site content **without disturbing the SEO surface that is currently producing organic leads.**
 
-Generated from a full read of `web/` plus a production build (`npm --prefix web run build`) on 2026-08-06.
+Generated from a full read of `web/` plus a production build (`npm --prefix web run build`) on 2026-08-13.
 All page counts, titles, and URLs in this document were extracted from the built `dist/` output — they are what the site actually ships, not what the templates suggest.
+
+> **Revised 2026-08-13.** Three things changed under this document since the 2026-08-06 pass and are now folded in: GA4 was added and the broken conversion tag was fixed (§1), `states.ts` grew from 6 states to all 50 plus DC and the site went from 107 pages to 153 (§3), and `/contact` became a real route (§4). Every figure below was re-measured against a fresh build.
 
 ---
 
@@ -28,27 +30,30 @@ All page counts, titles, and URLs in this document were extracted from the built
 
 ## 1. Read this first — the analytics situation
 
-**There is no Google Analytics on this site.** No GA4, no `G-XXXXXXXXXX` measurement ID, no Universal Analytics property. What is actually installed:
+Three tags, all declared once in [`web/src/constants.ts`](../web/src/constants.ts) and emitted by one component, [`web/src/components/Analytics.astro`](../web/src/components/Analytics.astro):
 
 | Tag | ID | What it does |
 | --- | --- | --- |
-| Google **Ads** (gtag.js) | `AW-18085022517` | Ad conversion tracking only |
+| GA4 | `G-VWMS4RWTRX` | Organic + all-channel traffic. **Added 2026-08-11** |
+| Google **Ads** (gtag.js) | `AW-18085022517` | Ad conversion tracking |
 | Microsoft Clarity | `wamnker55b` | Session recordings + heatmaps |
 
-`gtag.js` loaded with an `AW-` account ID reports to **Google Ads**, not to GA4. Two consequences:
+GA4 and Google Ads share one library, so `gtag/js` is requested **once** and followed by a `config` call per measurement ID. Two script tags would download the same library twice and race to initialize the same `dataLayer`.
 
-- Your organic traffic data is coming from **Google Search Console**, which is external to this repo. No content edit can break it.
-- There is **no on-site organic analytics baseline** in the codebase to preserve or compare against.
+### What changed since the last pass
 
-### Conversion tracking is already broken
+Both of the analytics problems this section used to record are fixed.
 
-Documented in-code at [`web/src/constants.ts:44-51`](../web/src/constants.ts#L44-L51):
+**GA4 now exists.** Before 2026-08-11 the only `gtag.js` account was an `AW-` Ads ID, which reports to Google Ads and not to GA4 — so there was no on-site organic analytics at all and Search Console was the only source. There is now an on-site baseline.
 
-> `window.gtag` is never defined, because Astro compiles the `<head>` snippet to `type="module"`, which keeps its `gtag` function out of global scope. **Verified on production.** Left as-is deliberately: making conversions actually fire is a behaviour change, not an env change.
+**Conversion tracking fires.** The old snippet was compiled by Astro to `type="module"`, which kept its `gtag` function out of global scope: pageviews still worked, because `config` pushes to the global `window.dataLayer`, but `window.gtag` was never defined and every later call from application code silently did nothing. `Analytics.astro` emits the snippet with `is:inline`, which produces a classic script, so `gtag` is global and `fireConversion()` in `constants.ts` reaches it.
 
-So `fireConversion()` silently no-ops on every page. **Leads still arrive** — the forms post to email, the CRM, and Zapier independently of gtag. But Google Ads is never told about them.
+One consequence worth knowing: conversions that were silently dropped before 2026-08-11 will never appear in Ads, so **do not compare conversion volume across that date.** Lead volume is unaffected — the forms always posted to email, the CRM, and Zapier independently of gtag.
 
-This is pre-existing and **not** something a content edit would cause. It is recorded here because "leads are coming through" and "conversions are being recorded" are currently two different facts.
+### Still true
+
+- `ContactForm.tsx` fires **no** conversion — the only one of the five lead surfaces that doesn't. See INVENTORY §1.5.
+- The kill switch is on by default; staging must set `PUBLIC_ANALYTICS_DISABLED=true`. See §11.
 
 ---
 
@@ -76,20 +81,25 @@ web/
 ├── scripts/
 │   └── sync-buildium.ts        # generates data/properties.json
 └── src/
-    ├── constants.ts            # analytics switch, conversion fn, nav links, socials
+    ├── constants.ts            # measurement IDs, analytics switch, conversion fn,
+    │                           #   nav links, socials
     ├── layouts/
-    │   └── Layout.astro        # THE SEO HEAD for 34 of 43 indexable pages
-    ├── pages/                  # 11 templates → 107 pages
+    │   └── Layout.astro        # THE SEO HEAD for 35 of 44 indexable pages
+    ├── pages/                  # 12 templates → 153 pages
     ├── components/
-    │   ├── Navbar.astro, Footer.astro, Hero.astro
+    │   ├── Navbar.astro, Footer.astro, Hero.astro, HeroLookup.astro
+    │   ├── Analytics.astro     # the ONLY analytics block; all 4 heads import it
+    │   ├── CoverageMap.astro   # build-time TopoJSON map; links all 51 states
     │   ├── ContactForm.tsx, CoverageCalculator.tsx
     │   ├── InstantAssessment.tsx, AssociationLeadForm.tsx
     │   ├── QuoteApp.tsx
     │   └── quote/              # schema, session, submission, ui, icons, theme
     ├── data/
-    │   ├── states.ts           # 6 state pages
+    │   ├── states.ts           # 51 state pages — 6 reviewed, 45 noindex
     │   ├── cities.ts           # 22 city pages
     │   ├── landing-pages.ts    # 8 get-started pages
+    │   ├── markets.ts          # 12 carrier logos, shared by 2 pages
+    │   ├── process.ts          # the 4 placement stages, shared by 2 pages
     │   └── properties.json     # 64 association pages
     ├── lib/crmLead.ts          # web → CRM AppSync write
     └── styles/                 # global.css, quote.css + per-page CSS
@@ -99,16 +109,37 @@ web/
 
 ## 3. Page inventory
 
-**107 HTML pages** from **11 templates**. 43 indexable, 64 deliberately hidden.
+**153 HTML pages** from **12 templates**. 44 indexable, 109 deliberately hidden.
 
 | Group | Count | Template | Data source | In sitemap |
 | --- | --- | --- | --- | --- |
-| Static pages | 7 | one `.astro` each | hand-written | Yes |
-| State pages | 6 | `hoa-insurance-[state].astro` | `states.ts` | Yes |
+| Static pages | 8 | one `.astro` each | hand-written | Yes |
+| State pages — reviewed | 6 | `hoa-insurance-[state].astro` | `states.ts` (`reviewed: true`) | Yes |
+| State pages — pending | 45 | same template | `states.ts` (`reviewed: false`) | **No — noindex** |
 | City pages | 22 | `hoa-insurance-[city]-[stateAbbr].astro` | `cities.ts` | Yes |
 | Get-started landers | 8 | `get-started/[...slug].astro` | `landing-pages.ts` | Yes |
 | Association pages | 64 | `associations/[slug].astro` | `properties.json` | **No — noindex** |
-| **Total** | **107** | | | **43 indexed** |
+| **Total** | **153** | | | **44 indexed** |
+
+### The 45 pending state pages are hidden on purpose
+
+`states.ts` covers all 50 states plus DC, but only six carry checked, state-specific
+substance — chiefly the statutory citations in `regulations`, which differ in every state
+and must not be guessed on an insurance site. The other 45 are built from one `pending()`
+helper whose copy is deliberately generic, and they are **`noindex, follow` and excluded
+from the sitemap**. Publishing 45 pages built from one template with no state-specific
+substance is the textbook definition of doorway content and would put the six pages that
+currently rank at risk.
+
+Two guards, and both are driven off the same flag so they cannot disagree:
+
+1. `noindex={!state.reviewed}` → the `noindex` prop on `Layout.astro` —
+   [`hoa-insurance-[state].astro:36`](../web/src/pages/hoa-insurance-%5Bstate%5D.astro#L36)
+2. Sitemap exclusion via `reviewedStateSlugs` —
+   [`astro.config.mjs:13-21`](../web/astro.config.mjs#L13-L21)
+
+**Flipping a state to `reviewed: true` indexes it and adds it to the sitemap in one edit.**
+Only do that once its own statute, market and exposure detail has been written and reviewed.
 
 ### The 64 association pages are hidden on purpose
 
@@ -132,19 +163,22 @@ Sitemap: https://www.protectmyhoa.com/sitemap-index.xml
 
 ## 4. Complete title list
 
-### Static pages (7)
+### Static pages (8)
+
+Lengths are decoded character counts (`&amp;` counted as one character).
 
 | URL | `<title>` | Len |
 | --- | --- | --- |
-| `/` | HOA Insurance for Condominium Associations & Unit Owners — ProtectMyHOA | 73 |
-| `/about-us` | About HOA Insurance Agency — Independent HOA & Condo Insurance Brokerage | 74 |
-| `/what-we-do` | HOA Insurance & HO-6 Coverage — ProtectMyHOA | 43 |
-| `/why-choose-us` | Why Choose HOA Insurance Agency — Specialists in HOA & Condo Insurance | 72 |
+| `/` | HOA Insurance for Condominium Associations & Unit Owners — ProtectMyHOA | 71 |
+| `/about-us` | About HOA Insurance Agency — Independent HOA & Condo Insurance Brokerage | 72 |
+| `/what-we-do` | HOA Insurance & HO-6 Coverage — ProtectMyHOA | 44 |
+| `/why-choose-us` | Why Choose HOA Insurance Agency — Specialists in HOA & Condo Insurance | 70 |
+| `/contact` | Contact HOA Insurance Agency — HOA & Condo Insurance Specialists | 64 |
 | `/quote` | HOA Insurance Quote · ProtectMyHOA | 34 |
 | `/privacy-policy` | Privacy Policy — HOA Insurance Agency | 37 |
 | `/terms-of-service` | Terms of Service — HOA Insurance Agency | 39 |
 
-### State pages (6) — `states.ts` → `title`
+### State pages — indexed (6) — `states.ts` → `title`
 
 | URL | `<title>` |
 | --- | --- |
@@ -154,6 +188,22 @@ Sitemap: https://www.protectmyhoa.com/sitemap-index.xml
 | `/hoa-insurance-connecticut` | HOA Insurance in Connecticut — ProtectMyHOA |
 | `/hoa-insurance-new-york` | HOA Insurance in New York — ProtectMyHOA |
 | `/hoa-insurance-oklahoma` | HOA Insurance in Oklahoma — ProtectMyHOA |
+
+### State pages — pending (45, noindex) — `states.ts` → `pending()`
+
+Built, reachable from the coverage map, kept out of the index and the sitemap. All 45 take
+one generated title:
+
+```
+HOA Insurance in {State} — ProtectMyHOA
+```
+
+The 45: Alabama · Alaska · Arizona · Arkansas · California · Colorado · Delaware ·
+District of Columbia · Florida · Georgia · Hawaii · Idaho · Illinois · Indiana · Iowa ·
+Kansas · Kentucky · Louisiana · Maine · Maryland · Michigan · Minnesota · Mississippi ·
+Missouri · Montana · Nebraska · Nevada · New Jersey · New Mexico · North Carolina ·
+North Dakota · Ohio · Oregon · Pennsylvania · South Carolina · South Dakota · Tennessee ·
+Texas · Utah · Vermont · Virginia · Washington · West Virginia · Wisconsin · Wyoming
 
 ### City pages (22) — `cities.ts` → `title`
 
@@ -211,7 +261,7 @@ HO-6 Condo Insurance for {property.name} — ProtectMyHOA
 
 ### One shared head for most of the site
 
-[`web/src/layouts/Layout.astro`](../web/src/layouts/Layout.astro) is the single `<head>` for **34 of 43** indexable pages. It owns:
+[`web/src/layouts/Layout.astro`](../web/src/layouts/Layout.astro) is the single `<head>` for **35 of 44** indexable pages (80 of the 153 built). It owns:
 
 - `<title>`, `<meta name="description">`
 - `<link rel="canonical">` — built as `https://www.protectmyhoa.com` + `canonicalPath`
@@ -220,20 +270,28 @@ HO-6 Condo Insurance for {property.name} — ProtectMyHOA
 - The `InsuranceAgency` JSON-LD block
 - Both analytics tags
 
-Pages feed it four props: `title`, `description`, `canonicalPath`, `jsonLd`.
+Pages feed it five props: `title`, `description`, `canonicalPath`, `jsonLd`, `noindex`.
 
-### Three pages bypass the layout
+`noindex` is opt-in and defaults to false, so the pages that already used this layout were
+unaffected when it was added. Its only caller is the state template, which passes
+`!state.reviewed` — see §3.
 
-`/quote`, `/get-started/*`, and `/associations/*` each hand-roll their own `<html>`/`<head>`. This is why the analytics snippet is duplicated **four times**. Change one, change all four:
+### Three templates bypass the layout
 
-| File | Analytics lines |
+`/quote`, `/get-started/*`, and `/associations/*` each hand-roll their own `<html>`/`<head>`.
+
+**The analytics block is no longer duplicated.** All four heads now import the same
+[`components/Analytics.astro`](../web/src/components/Analytics.astro), which reads its
+measurement IDs from `constants.ts`. A tag change is one edit in one file.
+
+| File | Analytics |
 | --- | --- |
-| [`layouts/Layout.astro`](../web/src/layouts/Layout.astro#L74-L95) | 74–95 |
-| [`pages/quote.astro`](../web/src/pages/quote.astro#L23-L44) | 23–44 |
-| [`pages/get-started/[...slug].astro`](../web/src/pages/get-started/%5B...slug%5D.astro#L63-L84) | 63–84 |
-| [`pages/associations/[slug].astro`](../web/src/pages/associations/%5Bslug%5D.astro#L52-L73) | 52–73 |
+| [`layouts/Layout.astro`](../web/src/layouts/Layout.astro#L81) | `<Analytics />` |
+| [`pages/quote.astro`](../web/src/pages/quote.astro#L23) | `<Analytics />` |
+| [`pages/get-started/[...slug].astro`](../web/src/pages/get-started/%5B...slug%5D.astro#L63) | `<Analytics />` |
+| [`pages/associations/[slug].astro`](../web/src/pages/associations/%5Bslug%5D.astro#L52) | `<Analytics />` |
 
-Consequences of the bypass:
+What the bypass still costs, verified in the built HTML:
 - `/quote` and `/get-started/*` have **no Twitter card and no `og:image`**.
 - `/associations/*` has **no canonical and no JSON-LD** (fine — it is noindex).
 
@@ -241,14 +299,21 @@ Consequences of the bypass:
 
 | Page | H1 | H2 | H3 | JSON-LD blocks |
 | --- | --- | --- | --- | --- |
-| `/` | 1 | 8 | 12 | 2 |
+| `/` | 1 | 11 | 19 | 2 |
 | `/about-us` | 1 | 4 | 1 | 1 |
-| `/what-we-do` | 1 | 6 | 9 | 2 |
-| `/why-choose-us` | 1 | 5 | 1 | 1 |
+| `/what-we-do` | 1 | 7 | 22 | 2 |
+| `/why-choose-us` | 1 | 4 | 9 | 1 |
+| `/contact` | 1 | 1 | 2 | 1 |
 | `/hoa-insurance-massachusetts` | 1 | 6 | 8 | 1 |
+| `/hoa-insurance-texas` (pending) | 1 | 5 | 8 | 1 |
 | `/hoa-insurance-boston-ma` | 1 | 4 | 1 | 1 |
+| `/privacy-policy` | 1 | 13 | 6 | 1 |
+| `/terms-of-service` | 1 | 15 | 0 | 1 |
 | `/get-started` | 1 | 0 | 1 | 1 |
 | `/quote` | **0** | 0 | 0 | **0** |
+
+A pending state page carries one H2 fewer than a reviewed one: the "Cities We Serve"
+section is gated on `stateCities.length > 0` and `cities` is empty for all 45.
 
 Every page has exactly one H1 except `/quote` (see [Known issues](#13-known-issues)). H1 text comes from:
 
@@ -269,12 +334,13 @@ Every page has exactly one H1 except `/quote` (see [Known issues](#13-known-issu
 | Filenames in `src/pages/` | renaming = new URL = lost ranking |
 | `title` / `description` | `states.ts`, `cities.ts` |
 | `metaTitle` / `metaDescription` | `landing-pages.ts` |
-| `title=` / `description=` / `canonicalPath=` props | the 7 static pages |
+| `title=` / `description=` / `canonicalPath=` props | the 8 static pages |
 | `faqJsonLd` blocks | [`index.astro:33-50`](../web/src/pages/index.astro#L33-L50), [`what-we-do.astro:33-47`](../web/src/pages/what-we-do.astro#L33-L47) |
 | `baseSchema` | [`Layout.astro:28-57`](../web/src/layouts/Layout.astro#L28-L57) |
 | The `<head>` of `Layout.astro` | canonical / OG / Twitter machinery |
 | `robots.txt`, `astro.config.mjs` | crawl directives + sitemap filter |
-| The 3 noindex guards | see §3 |
+| The association noindex guards | see §3 |
+| `reviewed: true/false` in `states.ts` | flips both indexing and sitemap inclusion — see §3 |
 
 ### 🟡 CAREFUL — H1s, link graph, NAP
 
@@ -285,7 +351,7 @@ Every page has exactly one H1 except `/quote` (see [Known issues](#13-known-issu
 
 ### 🟢 SAFE — pure content
 
-- All body copy in the 7 static pages (everything below the `<Layout ...>` props)
+- All body copy in the 8 static pages (everything below the `<Layout ...>` props)
 - `intro`, `regulations`, `hoaTypes` in `states.ts`
 - `subheadline`, `trustSignals`, `urgencyText` in `landing-pages.ts`
 - `Hero` `subtitle` and `eyebrow` props
@@ -331,18 +397,34 @@ Homepage questions: what is HOA master insurance · master vs HO-6 · do unit ow
 Hub-and-spoke, correctly built:
 
 ```
-/  ──────────────► all 6 state pages
+/  ──────────────► all 51 state pages   (via CoverageMap)
+/contact ────────► all 51 state pages   (same component)
                    │
 state page ────────┼──► its own city pages (from the `cities` array)
                    └──► /about-us /what-we-do /why-choose-us /quote
 city page ─────────────► its parent state page
-Navbar   (every page) ─► / /about-us /what-we-do /why-choose-us /#contact
+Navbar   (every page) ─► / /what-we-do /why-choose-us / /contact
 Footer   (every page) ─► /privacy-policy /terms-of-service
 ```
 
-Verified counts: `/` has 6 state links · `/hoa-insurance-massachusetts` links to all 5 MA cities · `/hoa-insurance-boston-ma` links back to MA.
+[`CoverageMap.astro`](../web/src/components/CoverageMap.astro) is the **only** crawl path
+from the homepage to the state pages. Every state is a real `<a href>` around its SVG
+outline, including the 45 that are `noindex` — they are crawlable but not indexable, which
+is the intent (`noindex, follow` passes link equity onward). It renders on `/` and
+`/contact`.
 
-Nav links are defined once in [`constants.ts:71-77`](../web/src/constants.ts#L71-L77). `NAV_LINKS` intentionally omits `/quote` and `/get-started`; the quote CTA is rendered separately.
+The 45 pending state pages have an empty `cities` array, so they link to no city page.
+
+Nav links are defined once in [`constants.ts:95-114`](../web/src/constants.ts#L95-L114).
+Two things there are deliberate and easy to misread:
+
+- **"About Us" points at `/`, not `/about-us`.** `/about-us` still exists and is still
+  indexed, but its only internal link is now the "About our brokerage" link in the
+  homepage practice section. Do not remove that link without restoring the nav path.
+- **"Contact" is a real route** (`/contact`), no longer the `/#contact` anchor.
+
+`NAV_LINKS` intentionally omits `/quote` and `/get-started`; the quote CTA is rendered
+separately.
 
 **Note:** no page links to `/get-started/*` — those 8 pages are reachable only from ads and the sitemap. That is by design for paid traffic, but it means they receive no internal link equity.
 
@@ -414,7 +496,7 @@ From [`web/.env.example`](../web/.env.example). All are optional — the site bu
 ```sh
 cd web && npm install
 npm run dev      # → http://localhost:4321
-npm run build    # → web/dist  (107 pages, ~4.4s)
+npm run build    # → web/dist  (153 pages, ~4.0s)
 npm run preview
 npm run sync     # regenerate data/properties.json from Buildium
 ```
@@ -431,23 +513,35 @@ Deploy via [`amplify.yml`](../amplify.yml) — two `applications` entries keyed 
 
 Recorded for awareness. **None should be fixed as part of a content pass** — each is a separate, measurable change.
 
-1. **Google Ads conversions never fire.** `window.gtag` is undefined because Astro compiles the head snippet as a module. Verified on production, documented at [`constants.ts:44-51`](../web/src/constants.ts#L44-L51).
+> **Closed since the 2026-08-06 pass:** *Google Ads conversions never fire* (fixed by `is:inline` in `Analytics.astro`), *No GA4 anywhere* (added 2026-08-11), and *Analytics snippet duplicated 4×* (consolidated into one component). See §1 and §5. The numbering below keeps the surviving items.
 
-2. **No GA4 anywhere.** Only an `AW-` Ads tag and Clarity. If organic reporting is wanted on-site, GA4 would need to be added.
+1. **The homepage state count renders wrong.** [`index.astro:96`](../web/src/pages/index.astro#L96) sets `withGuides = states` — all 51 — so §11 of the page reads *"Licensed in all 50 states and the District of Columbia, with dedicated guides for the 51 where we place the most association business."* It should count the reviewed states only; `reviewedStateSlugs` already exists at [`states.ts:232`](../web/src/data/states.ts#L232). Introduced when `states.ts` grew from 6 to 51.
+
+2. **The footprint claim disagrees across four surfaces.** A direct consequence of the same growth — the state data expanded, the things that describe it did not:
+
+   | Surface | Says |
+   | --- | --- |
+   | [`index.astro:36`](../web/src/pages/index.astro#L36) figure | "Licensed in 50 states" — omits DC |
+   | `/`, `/contact`, `/what-we-do` body copy | "all 50 states and the District of Columbia" |
+   | [`Layout.astro:50-57`](../web/src/layouts/Layout.astro#L50-L57) JSON-LD `areaServed` | 6 states — on **every** page |
+   | [`get-started/[...slug].astro:18`](../web/src/pages/get-started/%5B...slug%5D.astro#L18) | "Serving MA, RI, NH, CT, NY, and OK" |
+   | [`CoverageCalculator.tsx:46-48`](../web/src/components/CoverageCalculator.tsx#L46-L48) | 6-state map; rejects any other state at [`:349`](../web/src/components/CoverageCalculator.tsx#L349) |
+
+   The quote wizard was already fixed for this — [`quote/schema.ts:83-85`](../web/src/components/quote/schema.ts#L83-L85) derives its state list from `states.ts`. The calculator was not, so a visitor arriving from `/hoa-insurance-texas` is told the agency does not serve their state.
 
 3. **`/quote` is in the sitemap with zero crawlable content.** H1=0, H2=0, no JSON-LD, no body text — it renders `<QuoteApp client:only="react" />`, so crawlers get an empty shell. Submitted for indexing with nothing to index.
 
 4. **8 ad landing pages are in the organic sitemap.** `/get-started/{state}` targets the same keywords as `/hoa-insurance-{state}` ("Massachusetts HOA insurance"), risking self-competition against the pages actually earning organic leads.
 
-5. **Three titles exceed the ~60-char SERP limit** and are truncated in results: `/about-us` (74), `/` (73), `/why-choose-us` (72).
+5. **Four titles exceed the ~60-char SERP limit** and are truncated in results: `/about-us` (72), `/` (71), `/why-choose-us` (70), `/contact` (64). Lengths re-measured 2026-08-13 as decoded characters; the earlier figures counted the `&amp;` entity.
 
-6. **`/quote` uses `·` as its title separator** while all 106 other pages use `—`.
+6. **`/quote` uses `·` as its title separator** while all 152 other pages use `—`.
 
 7. **Two city titles drop the state abbreviation** — "HOA Insurance in New York City" and "HOA Insurance in Oklahoma City" break the `{City}, {ST}` pattern the other 20 follow. Data inconsistency in `cities.ts`.
 
 8. **Near-duplicate titles:** `/hoa-insurance-new-york` ("...in New York") vs `/hoa-insurance-new-york-city-ny` ("...in New York City") — cannibalization risk between the state hub and its largest city page.
 
-9. **Analytics snippet duplicated 4×** (see §5). A tag change must be made in all four files.
+9. **`web/seo-baseline.json` predates the 51-state expansion** and no longer matches a clean build (see §14). Re-save it before using the fingerprint check.
 
 10. **Committed live credentials.** [`web/scripts/sync-buildium.ts:56-60`](../web/scripts/sync-buildium.ts#L56-L60) hardcodes `BUILDIUM_CLIENT_ID` and `BUILDIUM_CLIENT_SECRET` as `||` fallback defaults, while the file's own header documents both as required env vars. Present in the working tree and in git history on `staging`. **Rotating the credentials is the only effective remediation** — deleting the lines does not clear history. Carried over from a previous audit; see [`docs/audit/INVENTORY.md`](audit/INVENTORY.md) §6.
 
@@ -459,7 +553,9 @@ Recorded for awareness. **None should be fixed as part of a content pass** — e
 
 This is how you **prove** a content edit left the SEO surface untouched, rather than hoping it did.
 
-Save the following as `web/seo-fingerprint.ps1`. It has been tested on this repo against all 107 pages — both that it passes on an unchanged build, and that it catches a single tampered `<title>` and names the page.
+Save the following as `web/seo-fingerprint.ps1`. It was tested on this repo against the then-107 pages — both that it passes on an unchanged build, and that it catches a single tampered `<title>` and names the page. It is page-count agnostic, so it covers all 153 unchanged.
+
+**Your existing baseline is stale.** `web/seo-baseline.json` was captured at 107 pages and the site now builds 153, so a comparison against it flags the 46 added pages as differences. Re-run with `-Save` once before relying on it again.
 
 ```powershell
 # Fingerprints the SEO-bearing parts of every built page.
@@ -531,10 +627,10 @@ npm --prefix web run build
 Also confirm the sitemap is stable:
 
 ```powershell
-([xml](Get-Content web\dist\sitemap-0.xml -Raw)).urlset.url.loc.Count   # expect 43
+([xml](Get-Content web\dist\sitemap-0.xml -Raw)).urlset.url.loc.Count   # expect 44
 ```
 
-**`PASS` means** every title, description, canonical, robots directive, H1 count, and JSON-LD payload on all 107 pages is identical to before your edit. Your organic rankings have nothing to react to.
+**`PASS` means** every title, description, canonical, robots directive, H1 count, and JSON-LD payload on all 153 pages is identical to before your edit. Your organic rankings have nothing to react to.
 
 **If it flags a row**, `SideIndicator` tells you which side changed (`<=` baseline, `=>` current) and `url` names the page — check it against the [edit safety classification](#6-edit-safety-classification) before deciding whether the change was intended.
 

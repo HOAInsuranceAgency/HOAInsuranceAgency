@@ -78,8 +78,6 @@ const allSchemas = [baseSchema, ...jsonLd];
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
 
-    <Analytics />
-
     <title>{title}</title>
     <meta name="description" content={description} />
     <link rel="canonical" href={canonicalUrl} />
@@ -105,6 +103,20 @@ const allSchemas = [baseSchema, ...jsonLd];
     {allSchemas.map((schema) => (
       <script type="application/ld+json" set:html={JSON.stringify(schema)} />
     ))}
+
+    {/*
+      Analytics MUST stay below <title>.
+
+      gtag's `config` call reads `document.title` synchronously to populate GA4's
+      `page_title`. This block used to sit above the <title> tag, so on every page
+      rendered through this layout the title had not been parsed yet, GA4 recorded an
+      empty page_title, and the Pages report fell back to the raw path — the homepage
+      showed as "/" rather than by name. The three templates that hand-roll their own
+      <head> never had the bug because they already ordered it this way.
+
+      Anything added here must go after the title, not before it.
+    */}
+    <Analytics />
   </head>
   <body>
     <Navbar currentPath={Astro.url.pathname} />

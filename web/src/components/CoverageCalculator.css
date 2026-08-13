@@ -1,6 +1,6 @@
 /* ── Calculator section ──
    Matched to the homepage's section rhythm so the tool reads as part of the page
-   rather than an embedded widget: same alternating grey ground as .section--alt,
+   rather than an embedded widget: same alternating gray ground as .section--alt,
    no boxing rules, and a header that uses the same eyebrow → title → standfirst
    treatment as every other section.
    Bottom padding is cut from the global 80px because this is the page's tallest

@@ -13,12 +13,35 @@ import Layout from "../layouts/Layout.astro";
 import Hero from "../components/Hero.astro";
 import CoverageMap from "../components/CoverageMap.astro";
 import { ContactForm } from "../components/ContactForm";
-import { QUOTE_URL } from "../constants";
+import { QUOTE_URL, PHONE, PHONE_HREF } from "../constants";
 
+/* Named producer, shown above the enquiry form so a visitor who wants a person
+   rather than a form gets one without scrolling past it.
+
+   ── Phone comes from constants, never typed here ──
+   `PHONE` / `PHONE_HREF` resolve through shared/agency.ts, so this block shows
+   the same number as the navbar, the footer, the ACORD producer header and every
+   other surface. A literal here would be the fourth spelling of that number in
+   `web/` (INVENTORY §1.9 documents the three that already exist) and would
+   survive any edit to shared/agency.ts. Do not hardcode it.
+
+   ── Why the email is local and not in shared/agency.ts ──
+   `AGENCY.email` and `AGENCY.leadEmail` are the agency's addresses; they are
+   printed on ACORD forms already sent to carriers and on issued certificates.
+   This is one producer's personal address on one marketing page, so it is scoped
+   to the page that renders it. If a second specialist is ever added, lift this
+   const into `data/specialists.ts` — the same move markets.ts and process.ts
+   record for content a second page needs. */
+const SPECIALIST = {
+  name: "Brian Cole",
+  role: "Insurance Producer",
+  email: "brian@protectmyhoa.com",
+  photo: "/images/brian-cole.jpg",
+};
 ---
 
 <Layout
-  title="Contact HOA Insurance Agency — HOA & Condo Insurance Specialists"
+  title="Contact HOA Insurance Agency — ProtectMyHOA"
   description="Contact HOA Insurance Agency about HOA master insurance or HO-6 condo coverage. Call 508-233-2261, report a claim, or send your association's details for a free review. No broker fee."
   canonicalPath="/contact"
 >
@@ -33,13 +56,68 @@ import { QUOTE_URL } from "../constants";
   />
 
   {/* ═══ 02 · Contact form ══════════════════════════════════════════ */}
-  {/* ContactForm brings its own <section> and the id="contact" anchor.
-       showClaims renders the claims + urgent block beneath the address, inside
-       the contact-info column, replacing the standalone navy band this page
-       used to carry. */}
+  {/* ContactForm brings its own <section>, the "Contact Us Today" heading and
+       the id="contact" anchor. showClaims renders the claims + urgent block
+       beneath the address, inside the contact-info column, replacing the
+       standalone navy band this page used to carry. */}
   <ContactForm showClaims client:visible />
 
-  {/* ═══ 03 · Where we cover ════════════════════════════════════════ */}
+  {/* ═══ 03 · Speak to a specialist ═════════════════════════════════ */}
+  {/* Sits directly beneath the "Contact Us Today" block by request: the form and
+       the agency's own details come first, then the named producer as the direct
+       route for anyone who does not want to wait on a form. */}
+  <section class="section specialist" aria-labelledby="specialist-h">
+    <div class="container">
+      <div class="sec-head sec-head--center">
+        <p class="eyebrow">Speak to a specialist</p>
+        <h2 class="section-title" id="specialist-h">Contact {SPECIALIST.name} directly</h2>
+        <p class="section-subtitle">
+          For an immediate response, call or email our producer rather than waiting on the
+          form. You will reach the person who handles the placement, not a call center.
+        </p>
+      </div>
+
+      <div class="spec-card">
+        <img
+          class="spec-card__photo"
+          src={SPECIALIST.photo}
+          alt={`${SPECIALIST.name}, ${SPECIALIST.role} at HOA Insurance Agency`}
+          width="560"
+          height="560"
+          loading="lazy"
+          decoding="async"
+        />
+        <div class="spec-card__body">
+          <p class="spec-card__role">{SPECIALIST.role}</p>
+          <h3 class="spec-card__name">{SPECIALIST.name}</h3>
+          <p class="spec-card__blurb">
+            Brian works directly with association boards and property managers on master
+            policy placements and HO-6 coordination.
+          </p>
+          <ul class="spec-card__contacts">
+            <li>
+              <span class="spec-card__ico" aria-hidden="true">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.13.96.37 1.9.72 2.81a2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.91.35 1.85.59 2.81.72A2 2 0 0122 16.92z"/></svg>
+              </span>
+              <a href={PHONE_HREF}>{PHONE}</a>
+            </li>
+            <li>
+              <span class="spec-card__ico" aria-hidden="true">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><path d="M22 6l-10 7L2 6"/></svg>
+              </span>
+              <a href={`mailto:${SPECIALIST.email}`}>{SPECIALIST.email}</a>
+            </li>
+          </ul>
+          <div class="spec-card__actions">
+            <a href={PHONE_HREF} class="btn btn-primary">Call {PHONE}</a>
+            <a href={`mailto:${SPECIALIST.email}`} class="btn btn-outline-dark">Email {SPECIALIST.name.split(" ")[0]}</a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  {/* ═══ 04 · Where we cover ════════════════════════════════════════ */}
   <section class="section section--alt" id="states" aria-labelledby="states-h">
     <div class="container" style="text-align: center">
       <div class="sec-head sec-head--center">
@@ -55,3 +133,152 @@ import { QUOTE_URL } from "../constants";
     </div>
   </section>
 </Layout>
+
+<style>
+  /* Scoped to this page — Astro adds a per-component attribute, so nothing here
+     can reach the other 152 pages. The section furniture (.section, .sec-head,
+     .eyebrow, .section-title, .btn) comes from global.css via Layout. */
+
+  .spec-card {
+    display: grid;
+    grid-template-columns: 220px 1fr;
+    gap: 40px;
+    align-items: center;
+    max-width: 860px;
+    margin: 0 auto;
+    padding: 32px 36px;
+    background: var(--color-white);
+    border: 1px solid var(--color-gray-200);
+    border-radius: 18px;
+    box-shadow: 0 16px 40px -18px rgba(15, 23, 42, 0.16);
+  }
+
+  /* Square source cropped to a circle. object-fit keeps the crop honest at any
+     rendered size rather than squashing the headshot. */
+  .spec-card__photo {
+    width: 220px;
+    height: 220px;
+    border-radius: 50%;
+    object-fit: cover;
+    display: block;
+    border: 4px solid var(--color-gold-dim);
+  }
+
+  .spec-card__role {
+    font-size: 11.5px;
+    font-weight: 700;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--color-gold);
+    margin: 0 0 6px;
+  }
+
+  .spec-card__name {
+    font-size: 28px;
+    font-weight: 800;
+    line-height: 1.15;
+    letter-spacing: -0.02em;
+    color: var(--color-navy);
+    margin: 0 0 12px;
+  }
+
+  .spec-card__blurb {
+    font-size: 15.5px;
+    line-height: 1.65;
+    color: var(--color-gray-600);
+    margin: 0 0 18px;
+    max-width: 46ch;
+  }
+
+  .spec-card__contacts {
+    list-style: none;
+    padding: 0;
+    margin: 0 0 22px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .spec-card__contacts li {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-size: 15.5px;
+  }
+
+  .spec-card__ico {
+    display: inline-flex;
+    color: var(--color-gold);
+    flex: 0 0 auto;
+  }
+
+  .spec-card__contacts a {
+    color: var(--color-navy);
+    font-weight: 600;
+    text-decoration: none;
+    word-break: break-word;
+  }
+
+  .spec-card__contacts a:hover {
+    color: var(--color-accent);
+    text-decoration: underline;
+  }
+
+  .spec-card__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+
+  /* global.css ships .btn-outline for navy grounds — white border, white text —
+     which is invisible on this white card. This is the light-ground counterpart,
+     matching the one the city page declares for the same reason. */
+  .spec-card__actions .btn-outline-dark {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 14px 28px;
+    border-radius: 8px;
+    font-size: 15px;
+    font-weight: 600;
+    background: transparent;
+    color: var(--color-accent);
+    border: 2px solid var(--color-gray-200);
+    transition: all 0.25s ease;
+  }
+
+  .spec-card__actions .btn-outline-dark:hover {
+    border-color: var(--color-accent);
+    background: var(--color-sky);
+  }
+
+  @media (max-width: 760px) {
+    .spec-card {
+      grid-template-columns: 1fr;
+      justify-items: center;
+      text-align: center;
+      gap: 24px;
+      padding: 28px 22px;
+    }
+
+    .spec-card__photo {
+      width: 160px;
+      height: 160px;
+    }
+
+    .spec-card__blurb {
+      max-width: none;
+    }
+
+    .spec-card__contacts li,
+    .spec-card__actions {
+      justify-content: center;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .spec-card__actions .btn-outline-dark {
+      transition: none;
+    }
+  }
+</style>

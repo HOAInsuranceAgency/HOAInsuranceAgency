@@ -1,14 +1,14 @@
 # Carrier logos — section 06 of the homepage
 
 Twelve logos, rendered as a single-line marquee scrolling right to left. Source
-artwork came from `crm/CREATIVE/HOME/insurance/`; these files are normalised
+artwork came from `crm/CREATIVE/HOME/insurance/`; these files are normalized
 copies, so re-derive them from that folder rather than editing them in place.
 
 ## Files
 
 Source filenames were abbreviated and inconsistent, so each was renamed to match
 the `slug` in the `MARKETS` array in
-[`web/src/pages/index.astro`](../../../src/pages/index.astro).
+[`web/src/data/markets.ts`](../../../src/data/markets.ts).
 
 | Carrier | Source | This folder |
 | --- | --- | --- |
@@ -34,12 +34,15 @@ wordmarks. Uniform *size* comes from CSS instead: each marquee slide is a fixed
 200 × 92 box and `object-fit: contain` fits the mark inside it, so every logo
 occupies exactly the same footprint undistorted.
 
-No filter, tint or greyscale is applied. Each mark appears in its own colours.
+No filter, tint or grayscale is applied. Each mark appears in its own colors.
 
 ## Adding or replacing a carrier
 
 1. Add the file here using the carrier's slug as the filename.
-2. Add an entry to `MARKETS` in `index.astro` with `name` and `slug`.
+2. Add an entry to `MARKETS` in `data/markets.ts` with `name` and `slug`.
+
+`MARKETS` moved out of `index.astro` when `/why-choose-us` began rendering the same wall.
+Both pages read the one array, so a carrier added here appears on both.
 
 `name` becomes the image's `alt` text. Since the wall shows logos only, that alt
 is the sole accessible label for the carrier — keep it accurate.
@@ -52,7 +55,7 @@ list length changes.
 
 **`rps.png` is white-on-green.** It is RPS's own lockup on their brand green, so
 it renders as a green tile among eleven predominantly white ones. Nothing in the
-CSS causes this and recolouring a carrier's mark would be a worse trademark
+CSS causes this and recoloring a carrier's mark would be a worse trademark
 problem than the visual inconsistency. If it should match the others, request a
 version on a transparent or white ground from RPS.
 

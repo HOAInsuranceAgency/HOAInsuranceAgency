@@ -7,7 +7,7 @@ export const EMAIL = AGENCY.email;
 export const EMAIL_HREF = AGENCY_FMT.emailHref;
 /**
  * Sales. Shown on the lead-capture surfaces — the contact card beside the
- * enquiry form, and the "Prefer to talk?" block on the quote forms — so the
+ * inquiry form, and the "Prefer to talk?" block on the quote forms — so the
  * address a prospect is invited to write to is the one their form submission
  * already goes to.
  */
@@ -72,7 +72,7 @@ type Gtag = (
  * `window.gtag` is never defined, because Astro compiles the <head> snippet to
  * `type="module"`, which keeps its `gtag` function out of global scope.
  * Verified on production. Left as-is deliberately: making conversions actually
- * fire is a behaviour change, not an env change. See INVENTORY §6.
+ * fire is a behavior change, not an env change. See INVENTORY §6.
  */
 export function fireConversion(): void {
   if (ANALYTICS_DISABLED) return;

@@ -102,7 +102,7 @@ function QuoteFlow({ isDay, onToggleTheme }: { isDay: boolean; onToggleTheme: ()
    * A restored index has to be a real question in *this* flow.
    *
    * `loadState()` already rejects a session saved against a different flow, so
-   * this is the second line of defence — for a hand-edited or truncated blob,
+   * this is the second line of defense — for a hand-edited or truncated blob,
    * or a persisted `role` whose flow is shorter than the one that was saved.
    * The upper bound is exclusive of the last entry on purpose: that entry is
    * `submitted`, and resuming onto it would show a confirmation for a request
@@ -377,7 +377,7 @@ function QuoteFlow({ isDay, onToggleTheme }: { isDay: boolean; onToggleTheme: ()
       <Confetti active={showConfetti} />
       <ProgressBar current={Math.min(stepIndex, totalSteps)} total={totalSteps} />
 
-      {/* Fixed bar on every screen: back on the left, wordmark centred, controls
+      {/* Fixed bar on every screen: back on the left, wordmark centered, controls
           right. Back is rendered as a disabled placeholder on the splash rather
           than removed, so the bar does not reflow between steps. */}
       <header className="qf-bar">
@@ -413,7 +413,7 @@ function QuoteFlow({ isDay, onToggleTheme }: { isDay: boolean; onToggleTheme: ()
       <SupportChip phone={PHONE} href={PHONE_HREF} />
 
       <div className="qf-stage">
-        {/* No `progress` prop: the ring around the avatar is gone in favour of the
+        {/* No `progress` prop: the ring around the avatar is gone in favor of the
             single linear bar at the top of the screen. Two competing progress
             indicators read as two different measurements. */}
         {showAgentHeader && (

@@ -5,7 +5,9 @@
 }
 
 /* Even split rather than 1.25fr — the enlarged marks and 26px figure text need
-   the width, and "Licensed in 50 states" has to stay on one line. */
+   the width, and "Licensed in all 50 states" has to stay on one line. The rest
+   of that claim ("and the District of Columbia") is carried by the figure's
+   label, not the value, precisely because it will not fit on the gold line. */
 .band-assoc__grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -45,8 +47,8 @@
   margin: 0;
 }
 
-/* Mark and text sit on one row; align-items centres a single-line figure
-   (no label) against its two-line neighbours. */
+/* Mark and text sit on one row; align-items centers a single-line figure
+   (no label) against its two-line neighbors. */
 .assoc-fig {
   background: var(--color-navy);
   padding: 26px 30px;
@@ -78,7 +80,9 @@
 /* Two of the three figures are phrases rather than numbers, so this is sized to
    hold "Written rationale" on one line instead of scaled for digits. */
 /* Clamped rather than fixed: between 900px and ~1250px the two-column band is
-   tight, and a hard 26px would wrap "Licensed in 50 states" onto a second line. */
+   tight, and a hard 26px would wrap "Licensed in all 50 states" onto a second
+   line. That string is the longest value of the three — check this range first
+   if a figure ever starts wrapping. */
 .assoc-fig__v {
   font-size: clamp(21px, 1.9vw, 26px);
   font-weight: 800;
@@ -133,7 +137,7 @@
 }
 
 /* Modern treatment: the accent is carried by a marked icon chip rather than a
-   coloured edge, the card sits on a soft raised plane, and a hairline gold rule
+   colored edge, the card sits on a soft raised plane, and a hairline gold rule
    slides in under the title on hover. */
 .practice-card {
   position: relative;
@@ -151,7 +155,7 @@
   box-shadow: 0 16px 40px -12px rgba(15, 23, 42, 0.18);
 }
 
-/* The mark. Each card is labelled with its own glyph so the four read as a
+/* The mark. Each card is labeled with its own glyph so the four read as a
    deliberate set rather than four paragraphs in boxes. */
 .practice-card__mark {
   display: inline-flex;
@@ -409,7 +413,7 @@
 }
 
 /* ══ 09 · Who we work with ═══════════════════════════════════════════ */
-/* White against the calculator's grey, with a hairline rule on the seam, so the
+/* White against the calculator's gray, with a hairline rule on the seam, so the
    section boundary is visible from inside the tool above it. Top padding is
    tighter than the global 80px to bring the heading into view sooner — the
    calculator is a tall interactive block and every pixel of gap pushes this

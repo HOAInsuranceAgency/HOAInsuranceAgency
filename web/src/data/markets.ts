@@ -6,7 +6,7 @@
  * would drift, and drift here means a page claiming an appointment that has
  * lapsed.
  *
- * Logos live in web/public/images/carriers/<slug>.png, normalised to 120px
+ * Logos live in web/public/images/carriers/<slug>.png, normalized to 120px
  * height. `name` is the img alt text: the wall shows logos only, so that alt is
  * the sole accessible label for each carrier.
  *

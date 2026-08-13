@@ -478,7 +478,7 @@ ul {
   width: auto;
   height: auto;
   object-fit: contain;
-  /* No filter, tint or greyscale: a carrier's mark appears in its own colours. */
+  /* No filter, tint or grayscale: a carrier's mark appears in its own colors. */
 }
 
 .carrier-note {

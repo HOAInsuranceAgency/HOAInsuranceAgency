@@ -11,7 +11,7 @@
  * GA4 and Google Ads share the same library. The correct pattern is one
  * gtag/js request followed by a `config` call per measurement ID, NOT two
  * script tags. Two requests would download the same library twice and race to
- * initialise the same dataLayer.
+ * initialize the same dataLayer.
  *
  * ── is:inline matters ─────────────────────────────────────────────────────
  * Without it Astro compiles the snippet to `type="module"`, which keeps the

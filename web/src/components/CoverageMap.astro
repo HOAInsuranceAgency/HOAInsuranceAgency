@@ -15,7 +15,7 @@
  * viewBox starts at x = -64 because the Albers Alaska inset reaches x = -58; at
  * x = 0 Alaska was clipped down its western edge.
  *
- * Every state is a link now, labelled with its postal abbreviation. Leader lines
+ * Every state is a link now, labeled with its postal abbreviation. Leader lines
  * and the right-hand name gutter are gone by request. The small northeastern
  * states cannot hold a label inside their own outline at this scale — RI's
  * mainland is 11 units wide — so those carry a hand-tuned offset in NUDGE that
@@ -142,7 +142,7 @@ function distToRing(pt: number[], ring: Ring) {
  * This replaces a vertex-average centroid, which is what made the labels look
  * misaligned. Averaging vertices biases the point toward whichever side carries
  * more coastline detail, so Idaho, Nebraska, West Virginia and Kentucky all
- * pulled off-centre. The pole is guaranteed to be inside the shape and sits in
+ * pulled off-center. The pole is guaranteed to be inside the shape and sits in
  * its visually open part, which is what a label wants.
  *
  * `r` doubles as the room available, so whether a label fits is measured rather

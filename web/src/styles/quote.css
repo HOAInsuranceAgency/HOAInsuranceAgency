@@ -30,7 +30,7 @@
 }
 
 /* Brand light theme: white ground, near-black type, gold borders. Gold is an
-   edge and focus colour only — it cannot carry white text at an accessible
+   edge and focus color only — it cannot carry white text at an accessible
    contrast, so navy takes the buttons and the progress fill. */
 :root[data-theme="light"] {
   --qf-bg: #ffffff;
@@ -158,7 +158,7 @@ a {
   gap: 4px;
 }
 
-/* Holds the column open so the wordmark stays centred when back is absent. */
+/* Holds the column open so the wordmark stays centered when back is absent. */
 .qf-bar-spacer {
   display: block;
   width: 36px;

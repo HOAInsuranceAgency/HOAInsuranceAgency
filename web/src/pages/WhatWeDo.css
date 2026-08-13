@@ -52,7 +52,7 @@
   max-width: 52ch;
 }
 
-/* On the navy band the standard title/subtitle colours are unreadable. */
+/* On the navy band the standard title/subtitle colors are unreadable. */
 .wwd-invert { color: var(--color-white); }
 .wwd-invert-sub { color: rgba(255, 255, 255, 0.78); }
 

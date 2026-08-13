@@ -41,9 +41,9 @@ export const DARK: Palette = {
 /**
  * Brand light theme: white ground, near-black type, gold field borders.
  *
- * Gold is the border and the focus colour so the form matches the logo, while
+ * Gold is the border and the focus color so the form matches the logo, while
  * navy carries the buttons and the progress fill — gold-on-white cannot hold
- * white button text at an accessible contrast, so it stays an edge colour rather
+ * white button text at an accessible contrast, so it stays an edge color rather
  * than a fill. Resting borders use a softened gold; the full brand gold appears
  * on hover, focus and selection, which gives the form somewhere to go.
  */

@@ -1,0 +1,345 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   State page — redesigned layout.
+
+   Mirrors the section furniture of the homepage and /what-we-do so a state page
+   reads as part of the same site rather than a thinner template. Values here are
+   copied from WhatWeDo.css deliberately: the two pages should be visually
+   identical section for section.
+
+   ── Why every class is `st-` prefixed ──
+   This stylesheet is imported by hoa-insurance-[state].astro, which serves ALL
+   51 states — including the six that currently rank. Only Texas renders the new
+   markup today (see the preview gate in that file), so these rules must not be
+   able to touch the other fifty. A distinct prefix guarantees that: nothing here
+   can collide with a class the old layout uses.
+
+   The shared sections are NOT restyled here — `.stage-grid`, `.carrier-marquee`
+   and `.aud-grid` already live in global.css and are used as-is, exactly as
+   /why-choose-us uses them. That is the whole point: one definition, three pages.
+
+   ON ROLLOUT: when the old branch is deleted, these `st-` rules and WhatWeDo.css's
+   `.cov-*` / `.issue-acc-*` rules are the same design in two places. Promote one
+   set into global.css and delete the other rather than leaving both.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Intro split — mirrors .wwd-split ── */
+.st-split {
+  display: grid;
+  grid-template-columns: 1.05fr 1fr;
+  gap: 56px;
+  align-items: center;
+}
+
+.st-split__media img {
+  width: 100%;
+  border-radius: 16px;
+  display: block;
+}
+
+.st-lead {
+  font-size: 17px;
+  line-height: 1.7;
+  color: var(--color-gray-700);
+  margin-bottom: 16px;
+  max-width: 56ch;
+}
+
+.st-closer {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--color-navy);
+  border-left: 3px solid var(--color-gold);
+  padding-left: 16px;
+  margin-bottom: 26px;
+  max-width: 52ch;
+}
+
+/* ── CTA cluster — mirrors .wwd-cta ── */
+.st-cta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 18px;
+  margin-top: 26px;
+}
+
+.st-cta--center {
+  justify-content: center;
+  margin-top: 26px;
+}
+
+.st-cta__note {
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--color-gray-500);
+  max-width: 34ch;
+}
+
+/* ── Coverage cards — mirrors .cov-grid / .cov-card ── */
+.st-cov-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px;
+  background: var(--color-gray-200);
+  border: 1px solid var(--color-gray-200);
+  border-radius: 16px;
+  overflow: hidden;
+}
+
+.st-cov-card {
+  background: var(--color-white);
+  padding: 22px 22px 24px;
+  display: flex;
+  gap: 14px;
+  transition: background 0.2s ease;
+}
+
+.st-cov-card:hover {
+  background: var(--color-gray-50);
+}
+
+.st-cov-card__mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 38px;
+  height: 38px;
+  border-radius: 11px;
+  background: var(--color-gold-dim);
+  color: var(--color-gold);
+  transition: background 0.2s ease, color 0.2s ease;
+}
+
+.st-cov-card:hover .st-cov-card__mark {
+  background: var(--color-gold);
+  color: var(--color-navy-dark);
+}
+
+.st-cov-card__body {
+  min-width: 0;
+}
+
+.st-cov-card h3 {
+  font-size: 15.5px;
+  font-weight: 700;
+  color: var(--color-navy);
+  margin-bottom: 5px;
+  line-height: 1.3;
+}
+
+.st-cov-card p {
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--color-gray-600);
+}
+
+.st-cov-note {
+  margin: 22px auto 0;
+  max-width: 64ch;
+  text-align: center;
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--color-gray-500);
+}
+
+/* ── Considerations accordion on navy — mirrors .issues-acc ── */
+.st-invert { color: var(--color-white); }
+.st-invert-sub { color: rgba(255, 255, 255, 0.78); }
+
+.st-acc {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  background: rgba(255, 255, 255, 0.14);
+  border-radius: 14px;
+  overflow: hidden;
+}
+
+.st-acc__item {
+  background: var(--color-navy);
+  transition: background 0.2s ease;
+}
+
+.st-acc__item:hover,
+.st-acc__item[open] {
+  background: #1e3f6d;
+}
+
+.st-acc__item summary {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 17px 22px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.st-acc__item summary::-webkit-details-marker { display: none; }
+
+.st-acc__item summary:focus-visible {
+  outline: 2px solid var(--color-gold);
+  outline-offset: -3px;
+}
+
+.st-acc__num {
+  flex: 0 0 auto;
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: var(--color-gold);
+  font-variant-numeric: tabular-nums;
+}
+
+.st-acc__title {
+  flex: 1 1 auto;
+  font-size: 15.5px;
+  font-weight: 700;
+  color: var(--color-white);
+  line-height: 1.35;
+}
+
+.st-acc__chev {
+  flex: 0 0 auto;
+  display: inline-flex;
+  color: rgba(255, 255, 255, 0.5);
+  transition: transform 0.22s ease, color 0.22s ease;
+}
+
+.st-acc__item[open] .st-acc__chev {
+  transform: rotate(180deg);
+  color: var(--color-gold);
+}
+
+.st-acc__item > p {
+  padding: 0 22px 18px 50px;
+  font-size: 14px;
+  line-height: 1.65;
+  color: rgba(255, 255, 255, 0.74);
+}
+
+.st-acc-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px 24px;
+  margin-top: 26px;
+}
+
+.st-acc-foot__text {
+  font-size: 14.5px;
+  line-height: 1.55;
+  color: rgba(255, 255, 255, 0.7);
+  margin: 0;
+  max-width: 56ch;
+}
+
+.st-acc-foot__cta { white-space: nowrap; }
+
+/* ── Association types — hairline list, two up ── */
+.st-types {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  background: var(--color-gray-200);
+  border: 1px solid var(--color-gray-200);
+  border-radius: 16px;
+  overflow: hidden;
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.st-type {
+  background: var(--color-white);
+  padding: 20px 24px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  font-size: 15.5px;
+  font-weight: 600;
+  color: var(--color-navy);
+}
+
+.st-type::before {
+  content: "";
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--color-gold-dim) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23e5c16a' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12l5 5 9-11'/%3E%3C/svg%3E") no-repeat center;
+}
+
+/* ── Cities ── */
+.st-cities {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  justify-content: center;
+}
+
+.st-city {
+  display: inline-flex;
+  padding: 12px 24px;
+  border-radius: 10px;
+  background: var(--color-white);
+  border: 1px solid var(--color-gray-200);
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-accent);
+  transition: all 0.2s ease;
+}
+
+.st-city:hover {
+  background: var(--color-sky);
+  border-color: var(--color-accent);
+  transform: translateY(-2px);
+}
+
+/* ── Responsive — same breakpoints as WhatWeDo.css ── */
+@media (max-width: 900px) {
+  .st-split {
+    grid-template-columns: 1fr;
+    gap: 32px;
+  }
+
+  .st-cov-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .st-acc,
+  .st-types {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 620px) {
+  .st-cov-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .st-acc-foot,
+  .st-cta {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .st-cta--center {
+    align-items: center;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .st-cov-card,
+  .st-cov-card__mark,
+  .st-acc__item,
+  .st-acc__chev,
+  .st-city {
+    transition: none;
+  }
+
+  .st-city:hover {
+    transform: none;
+  }
+}

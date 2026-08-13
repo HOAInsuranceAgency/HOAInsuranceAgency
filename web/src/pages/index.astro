@@ -27,14 +27,14 @@ import "../pages/Home.css";
    both state all 50 states plus DC. Note this supersedes the earlier 48-item
    footprint, which deliberately excluded CA, FL and IA; those three are now
    included by implication. Misstating licensure is a state-DOI matter, so the
-   50-state claim should be confirmed against the agency's actual licences. */
+   50-state claim should be confirmed against the agency's actual licenses. */
 /* Brand marks from crm/CREATIVE/HOME, resized 1536×192 → 288×192 (3.5 MB → 60 KB
    for the set) and copied into public/images/figures. They are transparent PNGs
    with white artwork, so they sit directly on the navy band with no blend mode.
    Decorative: each repeats its own label, so alt is empty. */
 const ASSOC_FIGURES: { img: string; value: string; label?: string }[] = [
-  { img: "states", value: "Licensed in 50 states" },
-  { img: "coverage", value: "12 markets", label: "one programme" },
+  { img: "states", value: "Licensed in all 50 states", label: "and the District of Columbia" },
+  { img: "coverage", value: "12 markets", label: "one program" },
   { img: "written", value: "Written rationale", label: "on every placement" },
 ];
 
@@ -332,7 +332,7 @@ const faqJsonLd = {
     <div class="container">
       <div class="sec-head sec-head--center">
         <p class="eyebrow">Our markets</p>
-        <h2 class="section-title" id="markets-h">Markets a board will recognise</h2>
+        <h2 class="section-title" id="markets-h">Markets a board will recognize</h2>
         <p class="section-subtitle">National insurers alongside the specialists.</p>
       </div>
 
@@ -428,7 +428,7 @@ const faqJsonLd = {
   <CoverageCalculator client:visible />
 
   {/* ═══ 09 · Who we work with ═══════════════════════════════════════ */}
-  {/* NOT section--alt: that is the same grey as .calc-section above it, so the
+  {/* NOT section--alt: that is the same gray as .calc-section above it, so the
        two ran together as one continuous band with no visible boundary. White
        plus a hairline rule makes the change of section read while the tool is
        still on screen. */}
