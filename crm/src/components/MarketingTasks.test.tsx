@@ -33,7 +33,7 @@ import AccountMarketingTasks, { AllMarketingTasks } from "./MarketingTasks";
 const renderPage = () =>
   render(
     <MemoryRouter>
-      <AllMarketingTasks />
+      <AllMarketingTasks completedByName="Dana Reyes" />
     </MemoryRouter>
   );
 
@@ -229,5 +229,116 @@ describe("closing a marketing task", () => {
     expect(
       screen.getByRole("combobox", { name: "Close Acme Mutual" })
     ).toBeInTheDocument();
+  });
+});
+
+/**
+ * Closing from the agency-wide list, without opening the account.
+ *
+ * Same write as the card, but the surrounding affordances differ because the
+ * screen does: it reads open tasks only, so a closed row leaves the list and
+ * there is no completed table to reopen it from. The undo is what keeps
+ * commit-on-selection defensible here.
+ */
+describe("closing from the agency-wide list", () => {
+  const OTHER = {
+    ...TASK,
+    id: "t2",
+    accountId: "a2",
+    accountName: "Maple Ridge Trust",
+    submitBy: "2026-09-05",
+  };
+
+  /** Both rows carry the same carrier — the case the row label has to survive. */
+  const renderList = async (tasks: Record<string, unknown>[] = [TASK, OTHER]) => {
+    MarketingTask.list.mockResolvedValue({ data: tasks, nextToken: null });
+    renderPage();
+    return screen.findByRole("combobox", {
+      name: "Close Acme Mutual for Elm Street Condominium",
+    });
+  };
+
+  it("names each row's menu by account, so one carrier on many rows stays distinct", async () => {
+    await renderList();
+
+    // Carrier alone would leave these two controls sharing an accessible name.
+    expect(
+      screen.getByRole("combobox", { name: "Close Acme Mutual for Maple Ridge Trust" })
+    ).toBeInTheDocument();
+    expect(
+      screen.getAllByRole("combobox", { name: /^Close Acme Mutual for / })
+    ).toHaveLength(2);
+  });
+
+  it("records the reason and the person, without opening the account", async () => {
+    const user = userEvent.setup();
+    const menu = await renderList();
+
+    await user.selectOptions(menu, "NOT_SUBMITTED_ON_TIME");
+
+    await waitFor(() =>
+      expect(closeCall()).toEqual({
+        id: "t1",
+        status: "COMPLETE",
+        resolution: "NOT_SUBMITTED_ON_TIME",
+        completedAt: expect.any(String),
+        completedBy: "Dana Reyes",
+      })
+    );
+    expect(
+      await screen.findByText(/not submitted on time/)
+    ).toBeInTheDocument();
+  });
+
+  it("drops the closed row and leaves the others alone", async () => {
+    const user = userEvent.setup();
+    const menu = await renderList();
+
+    await user.selectOptions(menu, "OUT_OF_APPETITE");
+
+    await waitFor(() =>
+      expect(screen.queryByText("Elm Street Condominium")).not.toBeInTheDocument()
+    );
+    expect(screen.getByText("Maple Ridge Trust")).toBeInTheDocument();
+  });
+
+  it("puts the row back when the close is undone", async () => {
+    const user = userEvent.setup();
+    const menu = await renderList();
+
+    await user.selectOptions(menu, "OUT_OF_APPETITE");
+    await user.click(await screen.findByRole("button", { name: "Undo" }));
+
+    // Reopening is the inverse write, not a local un-hide: a row restored
+    // without it would come back here and stay closed in the database.
+    await waitFor(() =>
+      expect(
+        MarketingTask.update.mock.calls.find(([a]) => a.status === "OPEN")?.[0]
+      ).toEqual({
+        id: "t1",
+        status: "OPEN",
+        resolution: null,
+        completedAt: null,
+        completedBy: null,
+      })
+    );
+    expect(await screen.findByText("Elm Street Condominium")).toBeInTheDocument();
+  });
+
+  it("keeps the row when the write fails, and offers no undo", async () => {
+    const user = userEvent.setup();
+    MarketingTask.update.mockResolvedValue({
+      data: null,
+      errors: [{ message: "Not authorized" }],
+    });
+    const menu = await renderList();
+
+    await user.selectOptions(menu, "OUT_OF_APPETITE");
+
+    expect(await screen.findByText(/permission/i)).toBeInTheDocument();
+    expect(screen.getByText("Elm Street Condominium")).toBeInTheDocument();
+    // Undo is offered off the back of a success; a failed close has nothing
+    // to undo and offering it would write COMPLETE's inverse over an open row.
+    expect(screen.queryByRole("button", { name: "Undo" })).not.toBeInTheDocument();
   });
 });

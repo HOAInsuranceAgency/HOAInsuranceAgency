@@ -77,6 +77,89 @@ async function settleSatisfiedTasks(
   return settled;
 }
 
+/* ── The manual close, shared by both tables ─────────────────────────
+   Both the per-account card and the agency-wide list close a task the same
+   way, so the write lives here once. Amplify's `{ data, errors }` does not
+   throw, and dropping `errors` would move a row on a write that never landed
+   — these throw instead, which is what `saveStatus.run` reports on. */
+
+async function writeClose(
+  t: MarketingTask,
+  resolution: ManualTaskResolution,
+  completedByName: string
+): Promise<MarketingTask> {
+  const { data, errors } = await client.models.MarketingTask.update({
+    id: t.id,
+    status: "COMPLETE",
+    resolution,
+    completedAt: new Date().toISOString(),
+    completedBy: completedByName,
+  });
+  if (errors?.length || !data) throw new Error(errors?.[0]?.message);
+  return data;
+}
+
+async function writeReopen(t: MarketingTask): Promise<MarketingTask> {
+  const { data, errors } = await client.models.MarketingTask.update({
+    id: t.id,
+    status: "OPEN",
+    resolution: null,
+    completedAt: null,
+    completedBy: null,
+  });
+  if (errors?.length || !data) throw new Error(errors?.[0]?.message);
+  return data;
+}
+
+/**
+ * The reason is in the confirmation, not just "closed": the menu commits on
+ * selection, so this line is where a mis-pick is caught.
+ */
+const closedMessage = (t: MarketingTask, resolution: ManualTaskResolution) =>
+  `${t.carrierName ?? "Task"} closed — ${MARKETING_RESOLUTION_BADGE[
+    resolution
+  ].label.toLowerCase()}.`;
+
+const reopenedMessage = (t: MarketingTask) =>
+  `${t.carrierName ?? "Task"} reopened.`;
+
+/**
+ * Commit-on-selection close menu.
+ *
+ * No confirm step, because the outcome is named back in the status line and is
+ * one click to undo. `label` is the accessible name and has to identify the
+ * row: on the agency-wide list one carrier legitimately appears against many
+ * accounts, so the carrier alone would leave several controls sharing a name.
+ */
+function CloseAsMenu({
+  label,
+  disabled,
+  onPick,
+}: {
+  label: string;
+  disabled: boolean;
+  onPick: (resolution: ManualTaskResolution) => void;
+}) {
+  return (
+    <select
+      aria-label={label}
+      value=""
+      disabled={disabled}
+      onChange={(e) => {
+        const r = e.target.value as ManualTaskResolution | "";
+        if (r) onPick(r);
+      }}
+    >
+      <option value="">Close as…</option>
+      {MANUAL_TASK_RESOLUTIONS.map((r) => (
+        <option key={r} value={r}>
+          {MARKETING_RESOLUTION_BADGE[r].label}
+        </option>
+      ))}
+    </select>
+  );
+}
+
 /** Marketing tasks for one account, shown under its quotes. */
 export default function AccountMarketingTasks({
   accountId,
@@ -149,24 +232,11 @@ export default function AccountMarketingTasks({
     setBusyId(t.id);
     await saveStatus.run(
       async () => {
-        // `errors` used to be dropped: the row simply stayed open, which is
-        // exactly what it looks like when nothing was clicked.
-        const { data, errors } = await client.models.MarketingTask.update({
-          id: t.id,
-          status: "COMPLETE",
-          resolution,
-          completedAt: new Date().toISOString(),
-          completedBy: completedByName,
-        });
-        if (errors?.length || !data) throw new Error(errors?.[0]?.message);
+        const data = await writeClose(t, resolution, completedByName);
         setTasks((ts) => ts.map((x) => (x.id === t.id ? data : x)));
       },
       {
-        // The reason is in the confirmation, not just "closed": the menu
-        // commits on selection, so this line is where a mis-pick is caught.
-        savedMessage: `${t.carrierName ?? "Task"} closed — ${MARKETING_RESOLUTION_BADGE[
-          resolution
-        ].label.toLowerCase()}.`,
+        savedMessage: closedMessage(t, resolution),
         errorMessage: "Couldn't close that task.",
       }
     );
@@ -177,19 +247,11 @@ export default function AccountMarketingTasks({
     setBusyId(t.id);
     await saveStatus.run(
       async () => {
-        // Same previously-dropped `errors` as above.
-        const { data, errors } = await client.models.MarketingTask.update({
-          id: t.id,
-          status: "OPEN",
-          resolution: null,
-          completedAt: null,
-          completedBy: null,
-        });
-        if (errors?.length || !data) throw new Error(errors?.[0]?.message);
+        const data = await writeReopen(t);
         setTasks((ts) => ts.map((x) => (x.id === t.id ? data : x)));
       },
       {
-        savedMessage: `${t.carrierName ?? "Task"} reopened.`,
+        savedMessage: reopenedMessage(t),
         errorMessage: "Couldn't reopen that task.",
       }
     );
@@ -276,26 +338,12 @@ export default function AccountMarketingTasks({
                       <Badge {...u} />
                     </td>
                     <td style={{ whiteSpace: "nowrap" }}>
-                      {/* Committing on selection rather than behind a confirm
-                          step: closing is one click to undo (Reopen, in the
-                          completed table) and the outcome is named back in
-                          the status line, so a mis-pick costs a click. */}
-                      <select
-                        aria-label={`Close ${t.carrierName ?? "task"}`}
-                        value=""
+                      {/* Undo here is Reopen, in the completed table below. */}
+                      <CloseAsMenu
+                        label={`Close ${t.carrierName ?? "task"}`}
                         disabled={busyId === t.id}
-                        onChange={(e) => {
-                          const r = e.target.value as ManualTaskResolution | "";
-                          if (r) void closeTask(t, r);
-                        }}
-                      >
-                        <option value="">Close as…</option>
-                        {MANUAL_TASK_RESOLUTIONS.map((r) => (
-                          <option key={r} value={r}>
-                            {MARKETING_RESOLUTION_BADGE[r].label}
-                          </option>
-                        ))}
-                      </select>
+                        onPick={(r) => void closeTask(t, r)}
+                      />
                     </td>
                   </tr>
                 );
@@ -350,8 +398,34 @@ export default function AccountMarketingTasks({
 }
 
 /** Agency-wide open tasks — the dashboard tile drills through to this. */
-export function AllMarketingTasks() {
+export function AllMarketingTasks({
+  completedByName,
+}: {
+  completedByName: string;
+}) {
   const [query, setQuery] = useState("");
+  // Per-row, for the same reason as the account card: one panel-level flag
+  // would disable every row's menu at once.
+  const [busyId, setBusyId] = useState<string | null>(null);
+  /**
+   * The row just closed, kept only so it can be put back.
+   *
+   * This screen reads open tasks only, so closing one makes its row vanish —
+   * and unlike the account card there is no completed table here to reopen it
+   * from. That is the whole justification for committing on selection, so
+   * without an undo the menu would be a one-click write with no way back short
+   * of finding the account.
+   *
+   * One level deep: closing a second row replaces the offer, which is why the
+   * confirmation names the row it belongs to. The offer is rendered off the
+   * back of the `saved` state, so it retires when that does rather than sitting
+   * there over unrelated work.
+   */
+  const [undoTask, setUndoTask] = useState<MarketingTask | null>(null);
+  // Longer than the account card's 4s: this one is an undo window, not just a
+  // receipt. Auto-clearing at all is what stops a stale offer to undo a close
+  // from several minutes ago.
+  const saveStatus = useSaveStatus({ autoClearMs: 8000 });
 
   /**
    * `setLoaded(true)` used to be on the success path only, with no `.catch()`,
@@ -375,7 +449,44 @@ export function AllMarketingTasks() {
     }
   );
   const tasks = res.data;
+  const setTasks = res.setData;
   const loaded = res.loaded;
+
+  async function closeTask(t: MarketingTask, resolution: ManualTaskResolution) {
+    setBusyId(t.id);
+    await saveStatus.run(
+      async () => {
+        await writeClose(t, resolution, completedByName);
+        // Drop the row rather than restyle it: this list is defined as the open
+        // ones, and a closed row sitting in it is the thing the user came here
+        // to get rid of. `t` is kept for the undo.
+        setTasks((ts) => ts.filter((x) => x.id !== t.id));
+        setUndoTask(t);
+      },
+      {
+        savedMessage: closedMessage(t, resolution),
+        errorMessage: "Couldn't close that task.",
+      }
+    );
+    setBusyId(null);
+  }
+
+  async function undoClose(t: MarketingTask) {
+    setBusyId(t.id);
+    await saveStatus.run(
+      async () => {
+        const data = await writeReopen(t);
+        // Straight back into the list; `useSort` puts it back in its place.
+        setTasks((ts) => [...ts, data]);
+        setUndoTask(null);
+      },
+      {
+        savedMessage: reopenedMessage(t),
+        errorMessage: "Couldn't reopen that task.",
+      }
+    );
+    setBusyId(null);
+  }
 
   const q = query.trim().toLowerCase();
   const filtered = q
@@ -425,6 +536,19 @@ export function AllMarketingTasks() {
               </button>
             </>
           )}
+          <div className="grow" />
+          {/* Closing is a per-row action and the row is gone by the time it
+              lands, so this is the only place it can be reported. */}
+          <SaveStatus {...saveStatus.status} />
+          {undoTask && saveStatus.status.state === "saved" && (
+            <button
+              className="link"
+              disabled={busyId !== null}
+              onClick={() => void undoClose(undoTask)}
+            >
+              Undo
+            </button>
+          )}
         </div>
         {!loaded ? (
           <p className="muted small">Loading…</p>
@@ -447,6 +571,7 @@ export function AllMarketingTasks() {
                   <SortTh label="Expires" colKey="expires" sortKey={sortKey} dir={dir} onToggle={toggle} />
                   <SortTh label="Submit by" colKey="submitBy" sortKey={sortKey} dir={dir} onToggle={toggle} />
                   <th>Urgency</th>
+                  <th></th>
                 </tr>
               </thead>
               <tbody>
@@ -467,6 +592,18 @@ export function AllMarketingTasks() {
                       <td className="small">{fmtDate(t.submitBy)}</td>
                       <td>
                         <Badge {...u} />
+                      </td>
+                      <td style={{ whiteSpace: "nowrap" }}>
+                        {/* Named by account as well as carrier: one carrier
+                            appears against many accounts here, so the carrier
+                            alone would not say which row this closes. */}
+                        <CloseAsMenu
+                          label={`Close ${t.carrierName ?? "task"} for ${
+                            t.accountName ?? "account"
+                          }`}
+                          disabled={busyId === t.id}
+                          onPick={(r) => void closeTask(t, r)}
+                        />
                       </td>
                     </tr>
                   );
