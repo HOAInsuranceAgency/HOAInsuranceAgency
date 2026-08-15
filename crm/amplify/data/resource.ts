@@ -7,6 +7,7 @@ import { formFiller } from "../functions/form-filler/resource";
 import { certNumber } from "../functions/cert-number/resource";
 import { renewalTasks } from "../functions/renewal-tasks/resource";
 import { licenseAlerts } from "../functions/license-alerts/resource";
+import { taskDigest } from "../functions/task-digest/resource";
 import { activityLog } from "../functions/activity-log/resource";
 
 /**
@@ -1108,6 +1109,10 @@ const schema = a
     // is a property of the handler, not something the schema enforces —
     // License's own rules gate a signed-in user, not an IAM principal.
     allow.resource(licenseAlerts),
+    // The weekday digest reads open MarketingTasks and writes nothing at all.
+    // As with the two above, the grant is API-wide, so read-only is a property
+    // of the handler rather than something the schema holds it to.
+    allow.resource(taskDigest),
     // The stream handler writes Activity and reads UserProfile to name an
     // actor. Note what the block above says: this is not a per-model grant,
     // so this function has full API access whatever any model declares. What

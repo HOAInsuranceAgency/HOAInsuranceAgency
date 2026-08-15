@@ -22,6 +22,7 @@ import { formFiller } from "./functions/form-filler/resource";
 import { certNumber } from "./functions/cert-number/resource";
 import { renewalTasks } from "./functions/renewal-tasks/resource";
 import { licenseAlerts } from "./functions/license-alerts/resource";
+import { taskDigest } from "./functions/task-digest/resource";
 import { activityLog } from "./functions/activity-log/resource";
 import {
   magicLinkDefine,
@@ -44,6 +45,7 @@ export const backend = defineBackend({
   certNumber,
   renewalTasks,
   licenseAlerts,
+  taskDigest,
   activityLog,
   magicLinkDefine,
   magicLinkCreate,
@@ -263,6 +265,18 @@ backend.leadIntake.resources.lambda.addToRolePolicy(
 
 backend.licenseAlerts.addEnvironment("LICENSE_ALERT_FROM", magicLinkFrom);
 backend.licenseAlerts.resources.lambda.addToRolePolicy(
+  new PolicyStatement({
+    actions: ["ses:SendEmail"],
+    resources: ["*"],
+  })
+);
+
+// Same verified sender as every other outbound mail. `CRM_BASE_URL` is what
+// turns the digest into a worklist rather than a notification — without it
+// the rows still render, just without deep links into the CRM.
+backend.taskDigest.addEnvironment("TASK_DIGEST_FROM", magicLinkFrom);
+backend.taskDigest.addEnvironment("CRM_BASE_URL", magicLinkBaseUrl);
+backend.taskDigest.resources.lambda.addToRolePolicy(
   new PolicyStatement({
     actions: ["ses:SendEmail"],
     resources: ["*"],
