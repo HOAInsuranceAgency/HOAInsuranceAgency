@@ -25,6 +25,7 @@ export default function LicenseTable({
   onDelete,
   openDocsFor,
   setOpenDocsFor,
+  autoExpand,
 }: {
   title: string;
   blurb: string;
@@ -39,8 +40,25 @@ export default function LicenseTable({
   onDelete: (id: string) => void | Promise<unknown>;
   openDocsFor: string | null;
   setOpenDocsFor: (id: string | null) => void;
+  /**
+   * Show every group open regardless of what has been clicked. Passed while a
+   * filter is active: a search for "NH" that returned matches inside eleven
+   * collapsed people would read as eleven rows of nothing.
+   */
+  autoExpand?: boolean;
 }) {
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  /**
+   * Which groups the user has opened — not which are closed.
+   *
+   * Grouped tables start fully collapsed, which is the point: a hundred
+   * personal licenses across a dozen producers is a hundred rows to scroll
+   * before the second table even begins, and the row you want is under a name
+   * you already know. Twelve names, one click.
+   *
+   * Only read in grouped mode — `groups` is null otherwise, so a flat table
+   * never consults this.
+   */
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   // Grouped tables carry the holder in the group header, so the per-row
   // Holder column would just repeat it.
@@ -74,13 +92,21 @@ export default function LicenseTable({
   }, [sorted, groupByHolder, profiles]);
 
   function toggleGroup(name: string) {
-    setCollapsed((prev) => {
+    setExpanded((prev) => {
       const next = new Set(prev);
       if (next.has(name)) next.delete(name);
       else next.add(name);
       return next;
     });
   }
+
+  /**
+   * A filter overrides the collapsed default, and so does having only one
+   * group — collapsing a sole producer hides the whole table behind a click
+   * that tells you nothing you didn't already know.
+   */
+  const forceOpen = !!autoExpand || (groups?.length ?? 0) === 1;
+  const allOpen = forceOpen || (groups?.length ?? 0) === expanded.size;
 
   // state, number, class, LOA, expires, status, files (+holder, +actions)
   const colSpan = 7 + (showHolderCol ? 1 : 0) + (canEdit ? 1 : 0);
@@ -111,6 +137,20 @@ export default function LicenseTable({
           </p>
         </div>
         <div className="grow" />
+        {/* Hidden while a filter forces every group open — it would be a
+            no-op control claiming to do something. */}
+        {groups && groups.length > 1 && !forceOpen && (
+          <button
+            className="link"
+            onClick={() =>
+              setExpanded(
+                allOpen ? new Set() : new Set(groups.map(([n]) => n))
+              )
+            }
+          >
+            {allOpen ? "Collapse all" : "Expand all"}
+          </button>
+        )}
         {canEdit && (
           <button className="primary" onClick={onAdd}>
             + Add license
@@ -145,7 +185,7 @@ export default function LicenseTable({
             <tbody>
               {groups
                 ? groups.map(([name, groupRows]) => {
-                    const isCollapsed = collapsed.has(name);
+                    const isCollapsed = !forceOpen && !expanded.has(name);
                     const needsAttention = groupRows.filter((l) => {
                       const lvl = licenseHealth(l).level;
                       return lvl === "expired" || lvl === "urgent" || lvl === "soon";

@@ -7,6 +7,7 @@ import {
 } from "../lib/client";
 import { useAsyncResource } from "../lib/useAsyncResource";
 import { useIsAdmin } from "../lib/auth";
+import Modal from "./Modal";
 import { holderLabel, type HolderType } from "./licensing/holder";
 import LegacyBackfill from "./licensing/LegacyBackfill";
 import LicenseTable from "./licensing/LicenseTable";
@@ -36,12 +37,30 @@ const LicenseMap = lazy(() => import("./licensing/LicenseMap"));
  * one at a time — filter, sort, edit, attach the renewal receipt. The map is
  * for the question the tables answer badly, which is where the gaps are.
  */
+/**
+ * One view on screen at a time.
+ *
+ * These used to be two: "map", and a "tables" that stacked the firm table, the
+ * personal table and the coverage matrix into a single column. Past a hundred
+ * licences of each that is thousands of pixels of scroll to reach the third
+ * thing, and the two tables answer different questions — nobody reads both at
+ * once. Splitting them costs one click and removes the scroll entirely.
+ */
+const VIEWS = [
+  { key: "map", label: "Map" },
+  { key: "firm", label: "Firm" },
+  { key: "people", label: "People" },
+  { key: "coverage", label: "Coverage" },
+] as const;
+
+type View = (typeof VIEWS)[number]["key"];
+
 export default function Licensing() {
   // Map first. Opening this screen is usually prompted by "can we write this
   // one?" rather than by a particular licence, and that is the question the
   // map answers in a glance and the tables answer only after you have read
   // three of them.
-  const [view, setView] = useState<"tables" | "map">("map");
+  const [view, setView] = useState<View>("map");
   const [adding, setAdding] = useState<HolderType | null>(null);
   const [editing, setEditing] = useState<License | null>(null);
   const [openDocsFor, setOpenDocsFor] = useState<string | null>(null);
@@ -107,6 +126,21 @@ export default function Licensing() {
   const personal = allPersonal.filter(matches);
   const filtering = query.trim().length > 0 || attentionOnly;
 
+  /**
+   * Scoped to the table on screen. Summing both tables would name a total that
+   * isn't in front of you — "showing 30 of 214" over a firm table holding 8.
+   */
+  const counts =
+    view === "firm"
+      ? { shown: firm.length, total: allFirm.length, noun: "firm licenses" }
+      : view === "people"
+        ? { shown: personal.length, total: allPersonal.length, noun: "personal licenses" }
+        : {
+            shown: firm.length + personal.length,
+            total: allFirm.length + allPersonal.length,
+            noun: "licenses",
+          };
+
   // Compliance roll-up: expired, inactive, or expiring within 60 days.
   const attentionCount = useMemo(
     () =>
@@ -171,13 +205,13 @@ export default function Licensing() {
 
         <div className="lic-controls">
           <div className="view-switch" role="group" aria-label="Licensing view">
-            {(["tables", "map"] as const).map((v) => (
+            {VIEWS.map((v) => (
               <button
-                key={v}
-                aria-pressed={view === v}
-                onClick={() => setView(v)}
+                key={v.key}
+                aria-pressed={view === v.key}
+                onClick={() => setView(v.key)}
               >
-                {v === "tables" ? "Tables" : "Map"}
+                {v.label}
               </button>
             ))}
           </div>
@@ -186,7 +220,7 @@ export default function Licensing() {
               narrowing the rows to "NH" would repaint the other fifty states
               red, and red there means "we can't write here" rather than "you
               filtered them out". */}
-          {view === "tables" && (
+          {view !== "map" && (
             <>
               <input
                 className="lic-search"
@@ -219,10 +253,9 @@ export default function Licensing() {
           )}
         </div>
 
-        {view === "tables" && filtering && (
+        {view !== "map" && filtering && (
           <p className="muted small" style={{ margin: "8px 0 0" }}>
-            Showing {firm.length + personal.length} of{" "}
-            {allFirm.length + allPersonal.length} licenses.
+            Showing {counts.shown} of {counts.total} {counts.noun}.
           </p>
         )}
       </div>
@@ -243,77 +276,102 @@ export default function Licensing() {
         </Suspense>
       )}
 
-      {view === "tables" && (
-      <>
-      <LicenseTable
-        title="Firm licenses"
-        blurb="The agency's own business-entity licenses, one per state you write in."
-        rows={firm}
-        profiles={profiles}
-        canEdit={isAdmin}
-        onAdd={() => {
-          setEditing(null);
-          setAdding("FIRM");
-        }}
-        onEdit={(l) => {
-          setAdding(null);
-          setEditing(l);
-        }}
-        onDelete={del}
-        openDocsFor={openDocsFor}
-        setOpenDocsFor={setOpenDocsFor}
-      />
-
-      <LicenseTable
-        title="Personal licenses"
-        blurb="Individual producer licenses, tied to a team member."
-        rows={personal}
-        profiles={profiles}
-        canEdit={isAdmin}
-        showHolder
-        groupByHolder
-        onAdd={() => {
-          setEditing(null);
-          setAdding("PRODUCER");
-        }}
-        onEdit={(l) => {
-          setAdding(null);
-          setEditing(l);
-        }}
-        onDelete={del}
-        openDocsFor={openDocsFor}
-        setOpenDocsFor={setOpenDocsFor}
-      />
-      </>
+      {view === "firm" && (
+        <LicenseTable
+          title="Firm licenses"
+          blurb="The agency's own business-entity licenses, one per state you write in."
+          rows={firm}
+          profiles={profiles}
+          canEdit={isAdmin}
+          onAdd={() => {
+            setEditing(null);
+            setAdding("FIRM");
+          }}
+          onEdit={(l) => {
+            setAdding(null);
+            setEditing(l);
+          }}
+          onDelete={del}
+          openDocsFor={openDocsFor}
+          setOpenDocsFor={setOpenDocsFor}
+        />
       )}
 
-      {(adding || editing) && (
-        <LicenseForm
-          // Remount per subject: without this the form keeps the previously
-          // edited licence's values and saves them onto the next one.
-          key={editing?.id ?? "new"}
-          holderType={editing ? (editing.holderType as HolderType) : adding!}
-          existing={editing}
+      {view === "people" && (
+        <LicenseTable
+          title="Personal licenses"
+          blurb="Individual producer licenses, tied to a team member. Pick a name to see theirs."
+          rows={personal}
           profiles={profiles}
-          onCancel={() => {
-            setAdding(null);
+          canEdit={isAdmin}
+          showHolder
+          groupByHolder
+          // A filter has to open the groups it matched inside, or the results
+          // are hidden behind the names that contain them.
+          autoExpand={filtering}
+          onAdd={() => {
             setEditing(null);
+            setAdding("PRODUCER");
           }}
-          onSaved={(l) => {
-            setLicenses((ls) => {
-              const without = ls.filter((x) => x.id !== l.id);
-              return [...without, l];
-            });
+          onEdit={(l) => {
             setAdding(null);
-            setEditing(null);
+            setEditing(l);
           }}
+          onDelete={del}
+          openDocsFor={openDocsFor}
+          setOpenDocsFor={setOpenDocsFor}
         />
       )}
 
       {/* The coverage matrix is the map's own question in table form, so it
           belongs to the view that isn't already answering it. */}
-      {view === "tables" && (
+      {view === "coverage" && (
         <StateCoverage firm={firm} personal={personal} profiles={profiles} />
+      )}
+
+      {/*
+        In a modal, not appended to the page.
+
+        This used to render after both tables and the coverage matrix, so
+        clicking Edit on the first row scrolled nothing — the form opened
+        thousands of pixels below, and from the map view it was off-screen
+        entirely. `modal-form` is the variant the other editors already use:
+        the `.preview-*` shell is sized to centre one object, which a form has
+        to override to start at the top and grow.
+      */}
+      {(adding || editing) && (
+        <Modal
+          title={`${editing ? "Edit" : "Add"} ${
+            (editing ? editing.holderType : adding) === "FIRM" ? "firm" : "personal"
+          } license`}
+          className="modal-form"
+          closeLabel="Cancel"
+          onClose={() => {
+            setAdding(null);
+            setEditing(null);
+          }}
+        >
+          <LicenseForm
+            // Remount per subject: without this the form keeps the previously
+            // edited licence's values and saves them onto the next one.
+            key={editing?.id ?? "new"}
+            holderType={editing ? (editing.holderType as HolderType) : adding!}
+            existing={editing}
+            profiles={profiles}
+            onCancel={() => {
+              setAdding(null);
+              setEditing(null);
+            }}
+            onSaved={(l) => {
+              setLicenses((ls) => {
+                const without = ls.filter((x) => x.id !== l.id);
+                return [...without, l];
+              });
+              setAdding(null);
+              setEditing(null);
+            }}
+          />
+        </Modal>
       )}
     </>
   );

@@ -103,12 +103,14 @@ export default function LicenseForm({
     onSaved(data);
   }
 
+  /**
+   * Body only — no card, no heading. The caller renders this inside `Modal`,
+   * which supplies the box and the title, and a second heading inside it read
+   * as a nested panel. Kept as a fragment so the modal's own scrolling body is
+   * the only scroll container.
+   */
   return (
-    <div className="card" style={{ background: "#f8fafc" }}>
-      <h2>
-        {existing ? "Edit" : "Add"}{" "}
-        {holderType === "FIRM" ? "firm" : "personal"} license
-      </h2>
+    <>
       <div className="form-grid">
         {holderType === "PRODUCER" && (
           <div className="field">
@@ -239,6 +241,6 @@ export default function LicenseForm({
           the license PDF and renewal paperwork.
         </p>
       )}
-    </div>
+    </>
   );
 }
