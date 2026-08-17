@@ -64,8 +64,21 @@ export default function LicenseTable({
   // Holder column would just repeat it.
   const showHolderCol = !!showHolder && !groupByHolder;
 
-  // Grouped: state order within each person. Flat: soonest expiration first,
-  // so whatever needs action floats to the top.
+  /**
+   * Alphabetical by state, in both tables — grouped and flat.
+   *
+   * The flat table used to open on soonest expiration, on the reasoning that
+   * whatever needs action floats to the top. At fifty-odd states that reads as
+   * no order at all: you come here knowing the state you want, and scanning an
+   * expiry-ordered list for "NH" means reading every row. Urgency has its own
+   * affordances that survive this — the health badge on every row, and the
+   * "needs attention" chip that filters the page to exactly those — and the
+   * Expires header is still one click away.
+   *
+   * The grouped table already ordered by state within a person; the groups
+   * themselves are sorted by holder name in the memo below, so it is
+   * alphabetical on both axes.
+   */
   const { sorted, sortKey, dir, toggle } = useSort(
     rows,
     {
@@ -75,7 +88,7 @@ export default function LicenseTable({
       class: (l) => l.licenseClass,
       expires: (l) => l.expirationDate,
     },
-    groupByHolder ? "state" : "expires"
+    "state"
   );
 
   // Built off `sorted`, so the active column sort applies inside each group.

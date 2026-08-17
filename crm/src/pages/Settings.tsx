@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { list, uploadData } from "aws-amplify/storage";
 import { ACORD_FORMS, listTemplateFields, type AcordFormDef } from "../lib/acord";
@@ -10,9 +10,16 @@ import { friendlyError, type UserProfile } from "../lib/client";
 import { Badge, flagBadge } from "../lib/badges";
 import { useIsAdmin } from "../lib/auth";
 import { useAsyncResource } from "../lib/useAsyncResource";
+import { SaveStatus, useSaveStatus } from "../components/SaveStatus";
+import {
+  EMPTY_NPNS,
+  loadAgencyNpns,
+  saveAgencyNpns,
+  type AgencyNpns,
+} from "../lib/agencySettings";
 
 type TemplateDef = AcordFormDef;
-type Tab = "templates" | "licensing" | "signature" | "team";
+type Tab = "templates" | "licensing" | "signature" | "agency" | "team";
 
 /** New ACORD forms: add to ACORD_FORMS + a mapping in lib/acord.ts. */
 const TEMPLATES: TemplateDef[] = ACORD_FORMS;
@@ -26,7 +33,14 @@ export default function Settings({ profile }: { profile: UserProfile }) {
     ["licensing", "Licensing"],
     // Everyone manages their own signature; the Team tab manages others'.
     ["signature", "My signature"],
-    ...(isAdmin ? ([["team", "Team"]] as [Tab, string][]) : []),
+    // Admin-only, matching who the schema lets write these. Everyone still
+    // *sees* the NPNs — they are in the sidebar, which is the point of them.
+    ...(isAdmin
+      ? ([
+          ["agency", "Agency"],
+          ["team", "Team"],
+        ] as [Tab, string][])
+      : []),
   ];
 
   const requested = searchParams.get("tab") as Tab | null;
@@ -45,7 +59,7 @@ export default function Settings({ profile }: { profile: UserProfile }) {
   return (
     <>
       <h1>Settings</h1>
-      <p className="sub">Form templates, licensing, and team</p>
+      <p className="sub">Form templates, licensing, agency details, and team</p>
 
       <div className="tabs">
         {TABS.map(([t, label]) => (
@@ -62,6 +76,7 @@ export default function Settings({ profile }: { profile: UserProfile }) {
       {tab === "templates" && <TemplatesPanel />}
       {tab === "licensing" && <Licensing />}
       {tab === "signature" && <MySignature profile={profile} />}
+      {tab === "agency" && isAdmin && <AgencyPanel profile={profile} />}
       {tab === "team" && isAdmin && <Team profile={profile} />}
     </>
   );
@@ -269,6 +284,99 @@ function TemplateRow({
         </tr>
       ) : null}
     </>
+  );
+}
+
+/**
+ * The agency's NPNs, which the sidebar shows everyone for copying.
+ *
+ * Two fields and one save, so `useSaveStatus` carries the whole lifecycle
+ * rather than a hand-rolled saving/saved/error trio. `markDirty` on each
+ * keystroke is what stops "Saved." sitting over an edited field.
+ */
+function AgencyPanel({ profile }: { profile: UserProfile }) {
+  const saveStatus = useSaveStatus();
+  const [npns, setNpns] = useState<AgencyNpns>(EMPTY_NPNS);
+
+  const res = useAsyncResource(loadAgencyNpns, [], {
+    initialData: null as AgencyNpns | null,
+    errorMessage: "Couldn't load the agency NPNs",
+  });
+
+  // Seeded from the read rather than initialised from it: the fetch resolves
+  // after first paint, so the inputs have to be told about it.
+  useEffect(() => {
+    if (res.data) setNpns(res.data);
+  }, [res.data]);
+
+  function edit(field: keyof AgencyNpns, value: string) {
+    setNpns((n) => ({ ...n, [field]: value }));
+    saveStatus.markDirty();
+  }
+
+  async function save() {
+    await saveStatus.run(
+      async () => {
+        const saved = await saveAgencyNpns(
+          npns,
+          `${profile.firstName} ${profile.lastName}`
+        );
+        // Reflect what was actually stored: the save trims, so a value typed
+        // with a stray space would otherwise still show it in the field.
+        setNpns({
+          agencyNpn: saved.agencyNpn ?? "",
+          drlpNpn: saved.drlpNpn ?? "",
+        });
+      },
+      { savedMessage: "NPNs saved.", errorMessage: "Couldn't save the NPNs." }
+    );
+  }
+
+  return (
+    <div className="card">
+      <h2>Agency identifiers</h2>
+      <p className="muted small" style={{ marginTop: 0 }}>
+        Shown to everyone in the sidebar, with a copy button, because carriers
+        and state portals ask for both constantly. Only admins can change them.
+      </p>
+
+      {res.error && <p className="error-text">{res.error}</p>}
+      {!res.loaded ? (
+        <p className="muted small">Loading…</p>
+      ) : (
+        <>
+          <div className="form-grid">
+            <div className="field">
+              <label htmlFor="agency-npn">Agency NPN</label>
+              <input
+                id="agency-npn"
+                inputMode="numeric"
+                value={npns.agencyNpn}
+                onChange={(e) => edit("agencyNpn", e.target.value)}
+              />
+            </div>
+            <div className="field">
+              <label htmlFor="drlp-npn">DRLP NPN</label>
+              <input
+                id="drlp-npn"
+                inputMode="numeric"
+                value={npns.drlpNpn}
+                onChange={(e) => edit("drlpNpn", e.target.value)}
+              />
+              <p className="muted small" style={{ margin: "4px 0 0" }}>
+                The Designated Responsible Licensed Producer's own number.
+              </p>
+            </div>
+          </div>
+          <div className="form-actions">
+            <button className="primary" disabled={saveStatus.busy} onClick={save}>
+              {saveStatus.busy ? "Saving…" : "Save"}
+            </button>
+            <SaveStatus {...saveStatus.status} />
+          </div>
+        </>
+      )}
+    </div>
   );
 }
 

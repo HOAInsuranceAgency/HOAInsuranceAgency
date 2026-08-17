@@ -123,6 +123,7 @@ export type Certificate = Schema["Certificate"]["type"];
 export type UserProfile = Schema["UserProfile"]["type"];
 export type ProducerLicense = Schema["ProducerLicense"]["type"];
 export type License = Schema["License"]["type"];
+export type AgencySettings = Schema["AgencySettings"]["type"];
 export type MarketingTask = Schema["MarketingTask"]["type"];
 
 /** The one paginated-list helper. Defined in pagination.ts so the Lambdas

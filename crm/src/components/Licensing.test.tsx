@@ -104,6 +104,72 @@ describe("one view at a time", () => {
   });
 });
 
+/**
+ * Both tables open alphabetically by state.
+ *
+ * The flat one used to open on soonest expiration, which at fifty-odd states
+ * reads as no order at all when you already know the state you are looking
+ * for. These fixtures give the two orderings different answers on purpose —
+ * expiry order would put NY first, alphabetical puts CA first — so the test
+ * fails if the default reverts.
+ */
+describe("alphabetical by default", () => {
+  const UNSORTED: License[] = [
+    lic({ id: "x1", state: "NY", holderType: "FIRM", licenseNumber: "F-NY", expirationDate: "2027-01-01" }),
+    lic({ id: "x2", state: "CA", holderType: "FIRM", licenseNumber: "F-CA", expirationDate: "2099-01-01" }),
+    lic({ id: "x3", state: "MA", holderType: "FIRM", licenseNumber: "F-MA", expirationDate: "2050-01-01" }),
+  ];
+
+  /** The State cell of every rendered row, in the order they appear. */
+  const statesShown = () =>
+    [...document.querySelectorAll("tbody tr")]
+      .map((tr) => tr.querySelector("td")?.textContent?.trim().slice(0, 2))
+      .filter((s) => s && /^[A-Z]{2}$/.test(s));
+
+  it("orders the firm table by state, not by expiration", async () => {
+    const user = userEvent.setup();
+    models.License.list.mockResolvedValue({ data: UNSORTED });
+    renderPage();
+    await waitFor(() => expect(view("Firm")).toBeInTheDocument());
+    await goTo(user, "Firm");
+
+    await screen.findByText("Firm licenses");
+    // Expiry order would be NY, MA, CA.
+    expect(statesShown()).toEqual(["CA", "MA", "NY"]);
+  });
+
+  it("orders each person's rows by state", async () => {
+    const user = userEvent.setup();
+    models.License.list.mockResolvedValue({
+      data: [
+        lic({ id: "p1c", state: "RI", userProfileId: "p1", licenseNumber: "B-RI" }),
+        lic({ id: "p1a", state: "CT", userProfileId: "p1", licenseNumber: "B-CT" }),
+        lic({ id: "p1b", state: "NH", userProfileId: "p1", licenseNumber: "B-NH" }),
+      ],
+    });
+    renderPage();
+    await waitFor(() => expect(view("People")).toBeInTheDocument());
+    await goTo(user, "People");
+
+    // A lone producer's group is open already, so the rows are on screen.
+    await screen.findByText("Brian Cole");
+    expect(statesShown()).toEqual(["CT", "NH", "RI"]);
+  });
+
+  it("still lets Expires be chosen", async () => {
+    const user = userEvent.setup();
+    models.License.list.mockResolvedValue({ data: UNSORTED });
+    renderPage();
+    await waitFor(() => expect(view("Firm")).toBeInTheDocument());
+    await goTo(user, "Firm");
+
+    // `SortTh` is a clickable <th>, not a button — hence columnheader.
+    await user.click(await screen.findByRole("columnheader", { name: /Expires/ }));
+
+    expect(statesShown()).toEqual(["NY", "MA", "CA"]);
+  });
+});
+
 describe("people start collapsed", () => {
   it("lists producers, not their licences, until one is picked", async () => {
     const user = userEvent.setup();

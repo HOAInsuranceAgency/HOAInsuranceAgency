@@ -1,9 +1,15 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { NavLink, Route, Routes } from "react-router-dom";
 import { Authenticator, useAuthenticator } from "@aws-amplify/ui-react";
 import type { AuthUser } from "aws-amplify/auth";
 import { client, listAllPages, type UserProfile } from "./lib/client";
 import { useAsyncResource } from "./lib/useAsyncResource";
+import CopyValue from "./components/CopyValue";
+import {
+  AGENCY_SETTINGS_ID,
+  EMPTY_NPNS,
+  type AgencyNpns as AgencyNpnValues,
+} from "./lib/agencySettings";
 import {
   AdminContext,
   fetchUserGroups,
@@ -246,6 +252,51 @@ const NAV_ITEMS = [
   { to: "/settings", label: "Settings", icon: <IconGear /> },
 ];
 
+/**
+ * The agency's NPNs, above the signed-in user in the rail.
+ *
+ * Subscribed rather than fetched once, so an admin correcting a digit in
+ * Settings → Agency is reflected in everyone's sidebar without a reload. It is
+ * one row, so the subscription is cheap.
+ *
+ * Deliberately NOT part of `ProfileGate`'s loading gate. That gate exists to
+ * settle admin status before first paint, because admin-only controls flashing
+ * in or out is jarring; these are two reference numbers, and blocking the whole
+ * app's front door on them would trade a real cost for a cosmetic one. If the
+ * read fails or the row has never been written, the block renders nothing at
+ * all rather than an empty label.
+ */
+function AgencyNpns() {
+  const [npns, setNpns] = useState<AgencyNpnValues>(EMPTY_NPNS);
+
+  useEffect(() => {
+    const sub = client.models.AgencySettings.observeQuery({
+      filter: { id: { eq: AGENCY_SETTINGS_ID } },
+    }).subscribe({
+      next: ({ items }) => {
+        const row = items[0];
+        setNpns({
+          agencyNpn: row?.agencyNpn ?? "",
+          drlpNpn: row?.drlpNpn ?? "",
+        });
+      },
+      // A failed subscription leaves the block hidden, which is what it looks
+      // like before anyone has set them — no error belongs in the sidebar.
+      error: () => setNpns(EMPTY_NPNS),
+    });
+    return () => sub.unsubscribe();
+  }, []);
+
+  if (!npns.agencyNpn && !npns.drlpNpn) return null;
+
+  return (
+    <div className="user-npns">
+      {npns.agencyNpn && <CopyValue label="Agency NPN" value={npns.agencyNpn} />}
+      {npns.drlpNpn && <CopyValue label="DRLP NPN" value={npns.drlpNpn} />}
+    </div>
+  );
+}
+
 function Shell({ profile, signOut }: { profile: UserProfile; signOut: () => void }) {
   const [menuOpen, setMenuOpen] = useState(false);
 
@@ -275,6 +326,7 @@ function Shell({ profile, signOut }: { profile: UserProfile; signOut: () => void
         </nav>
         <div className="spacer" />
         <div className="user">
+          <AgencyNpns />
           <div>
             {profile.firstName} {profile.lastName}
           </div>

@@ -27,6 +27,23 @@ a:hover { text-decoration: underline; }
 /* ── App shell ─────────────────────────────────────────────────────── */
 .shell { display: flex; min-height: 100vh; }
 
+/**
+ * Pinned to the viewport, so the user block at its foot is always reachable.
+ *
+ * `align-self: flex-start` is required, not decorative: `.shell` is a flex row,
+ * so its default `stretch` would size this to the full page height and a
+ * sticky element with no spare room in its container never moves. With an
+ * explicit viewport height and no stretch, the rail sticks and `.main` scrolls
+ * past it.
+ *
+ * `overflow: hidden` here plus `overflow-y: auto` on the nav puts any overflow
+ * in the link list rather than on the rail — otherwise a short window would
+ * scroll Sign out off the bottom, which is the thing this is fixing.
+ *
+ * `dvh` first: on mobile browsers `100vh` is the tallest the viewport ever
+ * gets, so the foot of a `100vh` column sits behind the address bar. The
+ * `100vh` line above it is the fallback for anything without `dvh`.
+ */
 .sidebar {
   width: 230px;
   flex-shrink: 0;
@@ -35,6 +52,12 @@ a:hover { text-decoration: underline; }
   display: flex;
   flex-direction: column;
   padding: 12px 0 16px;
+  position: sticky;
+  top: 0;
+  align-self: flex-start;
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
 }
 .sidebar-top { display: flex; align-items: center; justify-content: space-between; padding: 8px 18px 18px; }
 .sidebar .brand img {
@@ -50,7 +73,8 @@ a:hover { text-decoration: underline; }
   cursor: pointer;
   padding: 6px;
 }
-.sidebar nav { display: flex; flex-direction: column; gap: 2px; }
+/* The one scrolling region in the rail — see the note on `.sidebar`. */
+.sidebar nav { display: flex; flex-direction: column; gap: 2px; overflow-y: auto; }
 .sidebar nav a {
   display: flex;
   align-items: center;
@@ -88,13 +112,72 @@ a:hover { text-decoration: underline; }
 }
 .sidebar .user button:hover { background: rgba(255,255,255,0.1); }
 
+/* ── Agency NPNs in the rail ───────────────────────────────────────── */
+/* Above the signed-in user, separated by a rule so the two blocks read as
+   agency-then-you rather than one list of four things. */
+.user-npns {
+  padding-bottom: 10px;
+  margin-bottom: 10px;
+  border-bottom: 1px solid rgba(255,255,255,0.12);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.copy-value__label {
+  display: block;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #8ba3c7;
+}
+.copy-value__row { display: flex; align-items: center; gap: 6px; }
+/* Tabular figures so two numbers of the same length line up under each other. */
+.copy-value__num {
+  font-size: 13px;
+  color: #fff;
+  font-variant-numeric: tabular-nums;
+  /* The value is the fallback when the clipboard API is unavailable, so it has
+     to stay selectable — see CopyValue.tsx. */
+  user-select: all;
+}
+/* Scoped through `.sidebar .user` deliberately: that selector already styles
+   every button inside the block as a bordered pill, and it is more specific
+   than a lone class — so this has to match it to win. The pill is Sign out's,
+   and two controls of equal weight beside a name stop the destructive one from
+   reading as the action; this is a quiet text button instead. */
+.sidebar .user .copy-value__btn {
+  margin: 0;
+  border: none;
+  background: none;
+  color: #8ba3c7;
+  font-size: 11px;
+  padding: 2px 4px;
+  border-radius: 4px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.sidebar .user .copy-value__btn:hover {
+  color: #fff;
+  background: rgba(255,255,255,0.1);
+}
+
 .main { flex: 1; padding: 24px 32px 64px; min-width: 0; }
 .main h1 { font-size: 22px; margin: 0 0 4px; }
 .main .sub { color: var(--muted); font-size: 14px; margin: 0 0 20px; }
 
 @media (max-width: 800px) {
   .shell { flex-direction: column; }
-  .sidebar { width: 100%; padding: 0; }
+  /* The rail is a stacked header here, not a column, so the pinning above is
+     undone: a sticky 100dvh block would take the whole screen before any
+     content. Height goes back to auto so the collapsed bar is bar-height. */
+  .sidebar {
+    width: 100%;
+    padding: 0;
+    position: static;
+    height: auto;
+    align-self: auto;
+    overflow: visible;
+  }
   .sidebar-top { padding: 10px 16px; }
   .sidebar .brand img { height: 26px; }
   .hamburger { display: block; }

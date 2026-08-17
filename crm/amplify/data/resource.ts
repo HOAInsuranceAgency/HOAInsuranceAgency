@@ -966,6 +966,54 @@ const schema = a
       ]),
 
     /**
+     * Agency-wide identifiers that every user needs to hand and nobody should
+     * have to look up — the agency's NPN and its DRLP's NPN. Carriers and
+     * state portals ask for both constantly, so they are shown in the sidebar
+     * for copying rather than kept on a screen someone has to navigate to.
+     *
+     * ── One row, id `AGENCY` ──
+     * A singleton, not a table of settings. The id is the fixed constant in
+     * `src/lib/agencySettings.ts`, so a read is a `get` rather than a `list`
+     * whose first element you hope is the right one. Nothing enforces
+     * singularity at the API — an admin could create a second row by id — but
+     * nothing in the app offers a way to, and a stray row is invisible rather
+     * than harmful.
+     *
+     * ── Why not `shared/agency.ts` ──
+     * The address, phone and email live there because they are printed on
+     * ACORD forms already sent to carriers and changing one is a deploy you
+     * want to review. These two are asked to change without one, which is the
+     * whole reason they are a record: an NPN correction should not wait on a
+     * release. If that ever stops being true they belong in that module with
+     * the rest of the agency's identity.
+     *
+     * Everyone reads; only ADMIN writes. These appear on submissions, so a
+     * wrong value is a filing problem rather than a display bug.
+     */
+    AgencySettings: a
+      .model({
+        /** The agency's own National Producer Number. */
+        agencyNpn: a.string(),
+        /** The Designated Responsible Licensed Producer's NPN. */
+        drlpNpn: a.string(),
+        /**
+         * Who last changed these, for the obvious "who typed that?" question.
+         *
+         * Deliberately NOT `lastWriteBy`. That name belongs to the streamed
+         * models, where the activity-log handler stamps it to attribute an
+         * entry in an account's timeline — this model is not streamed and has
+         * no timeline, so borrowing the name would imply a mechanism that does
+         * not run here. `activityLog.test.ts` counts the declarations and
+         * would have caught it.
+         */
+        updatedBy: a.string(),
+      })
+      .authorization((allow) => [
+        allow.authenticated().to(["read"]),
+        allow.groups(["ADMIN"]),
+      ]),
+
+    /**
      * One row per licence-expiry email the agency has already been sent.
      *
      * The ledger behind `license-alerts`, and the same trick as
