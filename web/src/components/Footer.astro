@@ -5,7 +5,7 @@ import { PHONE, PHONE_HREF, EMAIL, EMAIL_HREF, ADDRESS_LINE1, ADDRESS_LINE2, SOC
 <footer class="site-footer">
   <div class="site-footer__main">
     <a href="/" class="site-footer__logo-link">
-      <img src="/logo.png" alt="HOA Insurance Agency" class="site-footer__logo" />
+      <img src="/logo-on-dark.png" alt="HOA Insurance Agency" class="site-footer__logo" />
     </a>
     <p class="site-footer__addr">{ADDRESS_LINE1}<br />{ADDRESS_LINE2}</p>
     <p class="site-footer__contact">
@@ -54,11 +54,12 @@ import { PHONE, PHONE_HREF, EMAIL, EMAIL_HREF, ADDRESS_LINE1, ADDRESS_LINE2, SOC
     gap: 16px;
   }
 
+  /* No filter: the footer is always navy, so it uses the on-dark asset
+     directly and keeps the gold sun that `brightness(0)` used to flatten. */
   .site-footer__logo {
     display: block;
     height: 44px;
     width: auto;
-    filter: brightness(0) invert(1);
     margin-bottom: 8px;
   }
 
