@@ -1,25 +1,10 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { FORMSUBMIT_URL, LEAD_EMAIL, LEAD_EMAIL_HREF, fireConversion } from "../constants";
 import { submitCrmLead } from "../lib/crmLead";
+// One loader for the whole site — see lib/googlePlaces.ts.
+import { loadGooglePlaces } from "../lib/googlePlaces";
 import LeadUploadPanel from "./LeadUploadPanel";
 import "./InstantAssessment.css";
-
-/* ── Google Places ── */
-const GOOGLE_API_KEY = import.meta.env.PUBLIC_GOOGLE_PLACES_KEY || "";
-
-function loadGooglePlaces(): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (window.google?.maps?.places) { resolve(); return; }
-    const existing = document.querySelector(`script[src*="maps.googleapis.com"]`);
-    if (existing) { existing.addEventListener("load", () => resolve()); return; }
-    const s = document.createElement("script");
-    s.src = `https://maps.googleapis.com/maps/api/js?key=${GOOGLE_API_KEY}&libraries=places`;
-    s.async = true;
-    s.onload = () => resolve();
-    s.onerror = () => reject();
-    document.head.appendChild(s);
-  });
-}
 
 /* ── Types ── */
 interface Props {

@@ -1,7 +1,8 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { fireConversion, PHONE, PHONE_HREF } from "../constants";
 import { submitCrmLead } from "../lib/crmLead";
 import LeadUploadPanel from "./LeadUploadPanel";
+import { attachAddressAutocomplete, loadGooglePlaces } from "../lib/googlePlaces";
 import { DARK, LIGHT, ThemeContext, isDaytime, useTheme, type ThemeMode } from "./quote/theme";
 import { Icon } from "./quote/icons";
 import { STEPS, getFlow, validateText, type FormData, type GroupField } from "./quote/schema";
@@ -268,6 +269,49 @@ function QuoteFlow({ isDay, onToggleTheme }: { isDay: boolean; onToggleTheme: ()
     goNext();
   }
 
+  /**
+   * Google Places on any group field marked `places`.
+   *
+   * Re-run per step because the input only exists while that step is mounted,
+   * and the library is loaded lazily so the script cost falls on the one screen
+   * that needs it rather than on the whole wizard.
+   *
+   * Everything here is best-effort. No key, a blocked script, an offline
+   * visitor: the field stays a plain text input that still takes a typed
+   * address, which is why nothing below reports an error.
+   */
+  const placesInputRef = useRef<HTMLInputElement | null>(null);
+  useEffect(() => {
+    if (step?.type !== "group") return;
+    if (!step.fields.some((f) => f.places)) return;
+    let detach: (() => void) | null = null;
+    let cancelled = false;
+    loadGooglePlaces()
+      .then(() => {
+        if (cancelled || !placesInputRef.current) return;
+        detach = attachAddressAutocomplete(placesInputRef.current, (place) => {
+          // The street line goes in the field they are typing in; the rest
+          // fills its neighbours, but never overwrites an answer already
+          // given — a visitor who picked their state first keeps it.
+          setGroupVal((g) => {
+            const next = { ...g };
+            next.propertyAddress = place.address || place.formatted;
+            if (place.state && !next.state) next.state = place.state;
+            if (place.city && !next.city) next.city = place.city;
+            return next;
+          });
+          setGroupErr({});
+          setError("");
+        });
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+      detach?.();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stepKey]);
+
   /* ── group steps ── */
   function setGroupField(f: GroupField, value: string | string[]) {
     setGroupVal((g) => ({ ...g, [f.field]: value }));
@@ -525,6 +569,7 @@ function QuoteFlow({ isDay, onToggleTheme }: { isDay: boolean; onToggleTheme: ()
                     {f.kind === "text" && (
                       <input
                         id={`qf-${f.field}`}
+                        ref={f.places ? placesInputRef : undefined}
                         className="qf-input"
                         type={f.inputType || "text"}
                         value={(groupVal[f.field] as string) || ""}

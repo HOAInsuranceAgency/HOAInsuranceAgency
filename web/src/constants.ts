@@ -17,7 +17,20 @@ export const ADDRESS_LINE1 = AGENCY.addressLine1;
 export const ADDRESS_LINE2 = AGENCY_FMT.addressLine2;
 export const QUOTE_URL = "/quote";
 /** Delivers to `LEAD_EMAIL` — see `AGENCY_FMT.formsubmitUrl`. */
-export const FORMSUBMIT_URL = AGENCY_FMT.formsubmitUrl;
+/**
+ * Where the FormSubmit notification lands.
+ *
+ * `PUBLIC_LEAD_NOTIFY_EMAIL` overrides the address per branch, so staging can
+ * submit real forms without dropping test enquiries in the queue the team works
+ * from. Unset falls back to the agency's sales address, which is what
+ * production wants and what this always did.
+ *
+ * NOTE: FormSubmit activates per recipient. The first submission to a new
+ * address emails that address a confirmation link, and nothing is delivered
+ * until someone clicks it.
+ */
+const NOTIFY_EMAIL = import.meta.env.PUBLIC_LEAD_NOTIFY_EMAIL || AGENCY.leadEmail;
+export const FORMSUBMIT_URL = `https://formsubmit.co/ajax/${NOTIFY_EMAIL.toLowerCase()}`;
 
 /**
  * Analytics kill switch — Google Ads and Microsoft Clarity.

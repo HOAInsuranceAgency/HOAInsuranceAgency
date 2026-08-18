@@ -28,6 +28,11 @@ export type GroupField = {
   optional?: boolean;
   inputType?: string;
   validation?: "email" | "phone";
+  /**
+   * Attach Google Places autocomplete, and let a chosen address fill the other
+   * location fields in the same group. Only meaningful on `kind: "text"`.
+   */
+  places?: boolean;
   /** Render at half width so two can share a row. */
   half?: boolean;
 };
@@ -152,8 +157,11 @@ export const STEPS: Record<string, Step> = {
         kind: "text",
         field: "propertyAddress",
         label: "Primary property address",
-        placeholder: "Street address",
+        placeholder: "Start typing your address",
         optional: true,
+        // Picking a suggestion also fills the state and city above, which are
+        // the two fields a visitor would otherwise type by hand right after.
+        places: true,
       },
     ],
   },
@@ -190,7 +198,9 @@ export const STEPS: Record<string, Step> = {
         kind: "text",
         field: "renewalDate",
         label: "Program expiry date",
-        placeholder: "e.g. 1 September 2026",
+        // A date input ignores `placeholder` and shows its own format hint.
+        // Free text here produced "Sep 15": no year, and nothing could parse it.
+        inputType: "date",
         optional: true,
         half: true,
       },
