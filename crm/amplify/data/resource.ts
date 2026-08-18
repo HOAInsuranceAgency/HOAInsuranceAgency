@@ -1124,6 +1124,15 @@ const schema = a
         zip: a.string(),
         unitNumber: a.string(),
         currentCarrier: a.string(),
+        /**
+         * Both are strings on this surface even though their columns are
+         * `a.integer()` and `a.date()`, for the same reason `contactEmail` is:
+         * a typed argument makes AppSync reject the whole mutation over one
+         * malformed value, and losing a lead is worse than losing a field. The
+         * handler parses them and files anything it cannot read into `notes`.
+         */
+        unitCount: a.string(),
+        currentPolicyExpiration: a.string(),
         buildiumId: a.string(),
         source: a.string(),
         notes: a.string(),

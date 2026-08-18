@@ -9,6 +9,7 @@ import { listAllPages } from "../../../src/lib/pagination";
 import { AGENCY, AGENCY_FMT } from "../../../../shared/agency";
 import { CLAUDE_MODEL } from "../model";
 import { decide } from "./decide";
+import { flattenExtraction } from "./extraction";
 import {
   REPLY_SCHEMA,
   buildPrompt,
@@ -271,25 +272,6 @@ function toContext(
     // extraction can never leak half-read values into the prose.
     extracted: withDocuments ? flattenExtraction(account.aiExtraction) : null,
   };
-}
-
-/**
- * `aiExtraction` is `{ field: { value, confidence, evidence } }`. The prompt
- * gets values only — a model shown a confidence score starts hedging in prose,
- * and evidence strings are long enough to crowd out the instructions.
- */
-function flattenExtraction(raw: unknown): Record<string, string> | null {
-  if (!raw || typeof raw !== "object") return null;
-  const out: Record<string, string> = {};
-  for (const [key, cell] of Object.entries(raw as Record<string, unknown>)) {
-    const value =
-      cell && typeof cell === "object" && "value" in cell
-        ? (cell as { value?: unknown }).value
-        : cell;
-    if (typeof value === "string" && value.trim()) out[key] = value.trim();
-    else if (typeof value === "number") out[key] = String(value);
-  }
-  return Object.keys(out).length ? out : null;
 }
 
 /** One model call, forced through the reply schema. */

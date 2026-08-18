@@ -29,15 +29,27 @@ export interface CrmLeadInput {
   zip?: string;
   unitNumber?: string;
   currentCarrier?: string;
+  /** Sent as a string: the mutation parses it into `Account.unitCount`. */
+  unitCount?: string;
+  /** `YYYY-MM-DD`. Becomes `Account.currentPolicyExpiration`. */
+  currentPolicyExpiration?: string;
   buildiumId?: string;
   source?: string;
   notes?: string;
 }
 
+/**
+ * Hand-written, and every variable has to be named three times: once in the
+ * signature, once in the call, and once as a key of `CrmLeadInput`. A field
+ * missing from any of the three is dropped in silence with no type error, which
+ * is how a unit count reached the CRM only as prose for months.
+ * `webLeadFields.test.ts` in the CRM compares all three and fails on a mismatch.
+ */
 const MUTATION = `mutation SubmitWebLead(
   $type: String, $name: String!, $contactFirstName: String, $contactLastName: String,
   $contactEmail: String, $contactPhone: String, $address: String, $city: String,
   $state: String, $zip: String, $unitNumber: String, $currentCarrier: String,
+  $unitCount: String, $currentPolicyExpiration: String,
   $buildiumId: String, $source: String, $notes: String
 ) {
   submitWebLead(
@@ -45,6 +57,7 @@ const MUTATION = `mutation SubmitWebLead(
     contactLastName: $contactLastName, contactEmail: $contactEmail,
     contactPhone: $contactPhone, address: $address, city: $city, state: $state,
     zip: $zip, unitNumber: $unitNumber, currentCarrier: $currentCarrier,
+    unitCount: $unitCount, currentPolicyExpiration: $currentPolicyExpiration,
     buildiumId: $buildiumId, source: $source, notes: $notes
   )
 }`;

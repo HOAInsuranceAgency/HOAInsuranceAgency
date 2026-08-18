@@ -232,8 +232,8 @@ export function CoverageCalculator() {
       address: address || undefined,
       state: stateAbbr || undefined,
       source: "website-coverage-calculator",
+      unitCount: units ? String(units) : undefined,
       notes: [
-        units ? `Unit count: ${units}` : undefined,
         coverages.length
           ? `Coverages shown: ${coverages.map((c) => c.name).join(", ")}`
           : undefined,

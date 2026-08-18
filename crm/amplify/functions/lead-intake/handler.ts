@@ -15,6 +15,7 @@ import {
 import { contactKey } from "../../../src/lib/extractionKeys";
 import { listAllPages } from "../../../src/lib/pagination";
 import { NO_UPLOAD_WINDOW_MINUTES } from "../../../../shared/leadUpload";
+import { parsePolicyExpiration, parseUnitCount } from "./fields";
 import {
   leadText,
   profileName,
@@ -154,11 +155,26 @@ export const handler: Schema["submitWebLead"]["functionHandler"] = async (
   // of losing the whole lead over a typo'd email.
   const validEmail = email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : undefined;
 
+  /**
+   * Both have a real column, so `notes` is only the fallback for a value that
+   * would not go in one. Recorded rather than dropped: a producer reading
+   * "Units (unparsed): twelve-ish" can fix it, and a silent discard is how a
+   * lead arrives looking like it never answered the question.
+   */
+  const unitCount = parseUnitCount(args.unitCount);
+  const policyExpiration = parsePolicyExpiration(args.currentPolicyExpiration);
+  const rawUnits = clean(args.unitCount, 50);
+  const rawExpiration = clean(args.currentPolicyExpiration, 50);
+
   const extraNotes = [
     clean(args.notes, 2000),
     validEmail !== email && email ? `Email (unvalidated): ${email}` : undefined,
     clean(args.unitNumber) && `Unit: ${clean(args.unitNumber)}`,
     clean(args.currentCarrier) && `Current carrier: ${clean(args.currentCarrier)}`,
+    unitCount === null && rawUnits ? `Units (unparsed): ${rawUnits}` : undefined,
+    policyExpiration === null && rawExpiration
+      ? `Program expiry (unparsed): ${rawExpiration}`
+      : undefined,
   ]
     .filter(Boolean)
     .join("\n");
@@ -171,6 +187,10 @@ export const handler: Schema["submitWebLead"]["functionHandler"] = async (
     city: clean(args.city, 100),
     state: clean(args.state, 2)?.toUpperCase(),
     zip: clean(args.zip, 10),
+    // Drives the Units column on the accounts list.
+    unitCount: unitCount ?? undefined,
+    // Drives "Incumbent expires" there and the dashboard renewal pipeline.
+    currentPolicyExpiration: policyExpiration ?? undefined,
     buildiumId: clean(args.buildiumId, 50),
     source: clean(args.source, 100) ?? "website",
     notes: extraNotes || undefined,

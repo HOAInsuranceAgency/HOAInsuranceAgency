@@ -94,7 +94,7 @@ export function InstantAssessment({
       address: address.trim() || undefined,
       state: detectedState || undefined,
       source: `website-assessment:${source}`,
-      notes: units ? `Unit count: ${units}` : undefined,
+      unitCount: units ? String(units) : undefined,
     }).then((r) => setUploadToken(r?.uploadToken ?? null));
     try {
       const res = await fetch(FORMSUBMIT_URL, {

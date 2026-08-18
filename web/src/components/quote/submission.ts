@@ -104,11 +104,11 @@ export function buildCrmLead(data: FormData, agentName: string): CrmLeadInput {
     `Role: ${ROLE_LABELS[role] || role || "—"}`,
     `Assigned agent: ${agentName}`,
     isOwner && association ? `Association: ${association}` : undefined,
-    !isOwner && get("unitCount") ? `Unit count: ${get("unitCount")}` : undefined,
+    // `unitCount` and `renewalDate` are omitted here: both now have a real
+    // column, and repeating them in prose is how the two copies drift.
     !isOwner && Array.isArray(coverage) && coverage.length
       ? `Lines to review: ${coverage.map((v) => COVERAGE_LABELS[v] || v).join(", ")}`
       : undefined,
-    !isOwner && get("renewalDate") ? `Program expiry: ${get("renewalDate")}` : undefined,
     isOwner && get("ho6Need")
       ? `What they need: ${HO6_LABELS[get("ho6Need")] || get("ho6Need")}`
       : undefined,
@@ -136,6 +136,9 @@ export function buildCrmLead(data: FormData, agentName: string): CrmLeadInput {
     state: state && state !== "OTHER" ? state : undefined,
     zip: get("zip") || undefined,
     currentCarrier: (!isOwner && get("currentCarrier")) || undefined,
+    // A unit owner is asked for their own unit, not the association's size.
+    unitCount: (!isOwner && get("unitCount")) || undefined,
+    currentPolicyExpiration: (!isOwner && get("renewalDate")) || undefined,
     source: "website-quote",
     notes,
   };
