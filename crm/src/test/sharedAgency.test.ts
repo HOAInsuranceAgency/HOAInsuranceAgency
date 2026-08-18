@@ -74,6 +74,9 @@ const CRM_CANONICAL: Record<string, string> = {
   phone: AGENCY.phone,
   email: AGENCY.email,
   leadEmail: AGENCY.leadEmail,
+  site: AGENCY.site,
+  siteLabel: AGENCY.siteLabel,
+  tagline: AGENCY.tagline,
 };
 
 /** What each `web/src/constants.ts` export must equal. */
@@ -101,17 +104,31 @@ describe("shared/agency — stored fields", () => {
       phone: "508-233-2261",
       email: "insurance@ProtectMyHOA.com",
       leadEmail: "sales@ProtectMyHOA.com",
+      site: "https://www.protectmyhoa.com",
+      siteLabel: "ProtectMyHOA.com",
+      tagline: "Insurance Built for Associations.",
     });
   });
 
   it("stores no joined or reformatted duplicate of a split field", () => {
     // If a stored field ever contained a comma-joined address or a `tel:`/
     // `mailto:` scheme, the same fact would be living in two places again.
-    for (const value of Object.values(AGENCY)) {
+    // `site` is the one exception: an origin is the fact, not a formatting of
+    // one, and the `mailto:`/`tel:`/logo forms are all derived from it.
+    for (const [key, value] of Object.entries(AGENCY)) {
+      if (key === "site") continue;
       expect(value).not.toMatch(/^(tel:|mailto:|https?:)/);
     }
     expect(AGENCY.city).not.toContain(",");
     expect(AGENCY.addressLine1).not.toContain(AGENCY.zip);
+    // Bare origin only. The trailing slash and the logo path are derivations,
+    // so storing either here would put the same fact in two places.
+    expect(AGENCY.site).toMatch(/^https:\/\/[^/]+$/);
+    expect(AGENCY.siteLabel).not.toMatch(/^https?:|\/|^www\./);
+    // The printed domain and the mailbox domains are the same brand spelling.
+    expect(AGENCY.email.endsWith(`@${AGENCY.siteLabel}`)).toBe(true);
+    expect(AGENCY.leadEmail.endsWith(`@${AGENCY.siteLabel}`)).toBe(true);
+    expect(AGENCY.site).toBe(`https://www.${AGENCY.siteLabel.toLowerCase()}`);
   });
 });
 
@@ -123,6 +140,17 @@ describe("shared/agency — derived shapes", () => {
     expect(AGENCY_FMT.addressLine2).toContain(AGENCY.city);
     expect(AGENCY_FMT.addressLine2).toContain(AGENCY.state);
     expect(AGENCY_FMT.addressLine2).toContain(AGENCY.zip);
+  });
+
+  it("derives the signature's link, logo and trading name from the stored site", () => {
+    expect(AGENCY_FMT.siteHref).toBe(`${AGENCY.site}/`);
+    expect(AGENCY_FMT.logoUrl).toBe(`${AGENCY.site}/logo.png`);
+    // Absolute, because an email signature has no base URL to resolve against.
+    expect(AGENCY_FMT.logoUrl.startsWith("https://")).toBe(true);
+    // The signature and letterhead drop the entity suffix; ACORD keeps it.
+    expect(AGENCY_FMT.displayName).toBe("HOA Insurance Agency");
+    expect(AGENCY_FMT.displayName).not.toContain("LLC");
+    expect(AGENCY.name).toContain("LLC");
   });
 
   it("derives both phone formats from the one stored phone", () => {

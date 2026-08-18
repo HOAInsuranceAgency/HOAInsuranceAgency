@@ -15,7 +15,7 @@ import {
   TEST_MAILBOX,
   resolveMailbox,
 } from "../../amplify/functions/mailbox";
-import { AGENCY_FMT } from "../../../shared/agency";
+import { AGENCY, AGENCY_FMT } from "../../../shared/agency";
 import {
   MAX_FILES,
   MAX_FILE_BYTES,
@@ -272,20 +272,55 @@ describe("the rendered email", () => {
     expect(html).toContain("Second paragraph");
   });
 
+  it("signs off by name, above the signature", () => {
+    const { text, html } = renderReply({
+      generated,
+      lead: lead(),
+      producerName: "Brian Cole",
+    });
+    expect(text).toContain("Thanks,\nBrian Cole");
+    expect(html).toContain("Thanks,<br>Brian Cole");
+  });
+
   /**
-   * The one line that is never left to generation: an email that reads as
-   * confirmation of coverage is the misunderstanding worth preventing outright.
+   * The whole point of this email is that a board member reads it as something
+   * a broker typed, so the things that gave it away as machinery are asserted
+   * absent rather than left to whoever edits the template next: no card on a
+   * grey page, no coloured header bar with the entity name in it, and no
+   * small-print block under the signature.
    */
-  it("always carries the not-a-quote disclosure", () => {
+  it("reads as a plain email, not a notification", () => {
+    const { html } = renderReply({
+      generated,
+      lead: lead(),
+      producerName: "Brian Cole",
+    });
+    expect(html).toContain('background:#ffffff');
+    expect(html).not.toMatch(/border-radius:\s*10px/);
+    expect(html).not.toMatch(/box-shadow/);
+    expect(html).not.toMatch(/background:\s*#142a4c/);
+    expect(html).not.toMatch(/not a quote/i);
+  });
+
+  /** Every fact in the signature comes from `AGENCY`, in both parts. */
+  it("carries the agency signature", () => {
     const { text, html } = renderReply({
       generated,
       lead: lead(),
       producerName: "Brian Cole",
     });
     for (const out of [text, html]) {
-      expect(out).toMatch(/not a quote/i);
-      expect(out).toMatch(/nothing is bound/i);
+      expect(out).toContain(AGENCY.phone);
+      expect(out).toContain(AGENCY.email);
+      expect(out).toContain(AGENCY.siteLabel);
+      expect(out).toContain(AGENCY.addressLine1);
+      expect(out).toContain(AGENCY.tagline);
     }
+    // The logo has to be absolute; a relative path resolves against nothing.
+    expect(html).toContain(`src="${AGENCY.site}/logo.png"`);
+    // Table-based and inline-styled, because Outlook renders nothing else.
+    expect(html).toContain("<table");
+    expect(html).not.toContain("<style");
   });
 
   it("falls back to a plain greeting with no name", () => {
@@ -307,7 +342,7 @@ describe("the rendered email", () => {
     expect(html).toContain("&lt;script&gt;");
   });
 
-  it("declares a charset, so the em dashes in the disclosure survive", () => {
+  it("declares a charset, so accented names and the strapline survive", () => {
     const { html } = renderReply({ generated, lead: lead(), producerName: "Brian Cole" });
     expect(html).toContain('<meta charset="utf-8">');
   });
@@ -576,16 +611,14 @@ describe("sounding like a person wrote it", () => {
     expect(p).toMatch(/runway/);
   });
 
-  it("keeps the disclosure to one sentence but not one clause fewer", () => {
-    const { text } = renderReply({
+  it("keeps dashes out of the frame we write, not just the generated body", () => {
+    const { text, html } = renderReply({
       generated: { subject: "s", body: "b" },
       lead: lead(),
       producerName: "Brian Cole",
     });
-    expect(text).toMatch(/Not a quote or confirmation of coverage/);
-    expect(text).toMatch(/[Nn]othing is bound/);
-    expect(text).toMatch(/written offer/);
-    // Still no dash anywhere, including the parts we write.
+    // Greeting, sign-off and signature are ours; none of them may introduce one.
     expect(text).not.toMatch(/[—–]/);
+    expect(html).not.toMatch(/[—–]/);
   });
 });

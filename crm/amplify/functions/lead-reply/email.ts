@@ -87,6 +87,8 @@ VOICE:
 - One mild, concrete aside is welcome if the facts support it ("September gives us room" beats "that gives us plenty of runway, which helps").
 - Never explain your own process in the abstract. "I'll pull the underwriting picture together" is broker-speak; "I'll get your program in front of the markets that write this" is what one would actually say.
 
+BE EASY TO DEAL WITH. This is the first thing they have ever received from the agency and the only thing it has to earn is a reply. Warm, not formal. You are glad they got in touch. Make anything you ask for sound optional and low effort: "if you can lay hands on it" beats "please provide". Say you will work with whatever they have. Offering to get on a quick call instead reads as helpful; a list of requirements reads as a gate.
+
 NEVER use an em dash or an en dash. Not for asides, not for emphasis, not anywhere. A comma, a full stop, or brackets.
 
 NEVER open with: "I hope this email finds you well", "I wanted to reach out", "Thank you for reaching out", "Thanks for the request", "I'm writing to", "Just following up".
@@ -251,12 +253,79 @@ export interface RenderedReply {
 }
 
 /**
- * Wrap the generated body in the greeting, sign-off and disclosure.
+ * The agency signature block, as supplied by the agency.
+ *
+ * Table-based and inline-styled because that is the only thing Outlook renders
+ * predictably, and every fact in it comes from `AGENCY` so the signature cannot
+ * drift from the ACORD producer block. The logo is an absolute URL and many
+ * clients will block it, which is why the wordmark beside it is real text: with
+ * images off the block still reads as a signature rather than a broken frame.
+ *
+ * The logo is 750x148, so 284 wide is 56 high. The dimensions are stated in both
+ * the attributes and the style because Outlook reads only the attributes and
+ * ignores `max-width`, while every other client needs the style to let the image
+ * shrink on a phone. Getting them to disagree is how a logo ends up stretched.
+ */
+function signatureHtml(): string {
+  const cell =
+    'style="padding:1px 8px 1px 0;color:#1A365D;font-weight:700;' +
+    'text-transform:uppercase;letter-spacing:0.06em;font-size:11px"';
+  const link = 'style="color:#1A1A1A;text-decoration:none"';
+  const row = (label: string, inner: string) =>
+    `        <tr><td ${cell}>${label}</td><td style="padding:1px 0">${inner}</td></tr>`;
+
+  return `<table style="font-family:Arial,Helvetica,sans-serif;color:#1A1A1A;font-size:14px;line-height:1.4;border-collapse:collapse" border="0" cellspacing="0" cellpadding="0"><tbody>
+  <tr>
+    <td style="padding:0 20px 0 0;border-right:3px solid #D1B378" valign="top">
+      <a href="${AGENCY_FMT.siteHref}" style="text-decoration:none" target="_blank" rel="noopener noreferrer"><img src="${AGENCY_FMT.logoUrl}" height="56" width="284" alt="${escapeHtml(AGENCY_FMT.displayName)}" style="display:block;border:0;outline:none;text-decoration:none;max-width:100%;height:auto"></a>
+    </td>
+    <td style="padding:0 0 0 20px" valign="top">
+      <div style="font-family:'Arial Black','Helvetica Neue',Impact,sans-serif;font-weight:900;font-size:22px;letter-spacing:0.02em;line-height:1;color:#1A365D;text-transform:uppercase;margin:0 0 4px"><span style="color:#D1B378">HOA</span> INSURANCE AGENCY</div>
+      <div style="font-family:Arial,Helvetica,sans-serif;font-style:italic;font-weight:600;font-size:12px;color:#9A7D3F;margin:0 0 12px">${escapeHtml(AGENCY.tagline)}</div>
+      <table style="border-collapse:collapse;font-family:Arial,Helvetica,sans-serif;font-size:13px;line-height:1.5;color:#1A1A1A" border="0" cellspacing="0" cellpadding="0"><tbody>
+${[
+  row("P", `<a href="${AGENCY_FMT.phoneHref}" ${link}>${escapeHtml(AGENCY.phone)}</a>`),
+  row("E", `<a href="${AGENCY_FMT.emailHref}" ${link}>${escapeHtml(AGENCY.email)}</a>`),
+  row("W", `<a href="${AGENCY_FMT.siteHref}" ${link} target="_blank" rel="noopener noreferrer">${escapeHtml(AGENCY.siteLabel)}</a>`),
+  row(
+    "A",
+    `${escapeHtml(AGENCY.addressLine1)}<br>${escapeHtml(AGENCY_FMT.addressLine2)}`
+  ),
+].join("\n")}
+      </tbody></table>
+    </td>
+  </tr>
+</tbody></table>`;
+}
+
+/** The same facts for the plain-text part, where the table cannot go. */
+function signatureText(): string[] {
+  return [
+    AGENCY_FMT.displayName,
+    AGENCY.tagline,
+    "",
+    `P  ${AGENCY.phone}`,
+    `E  ${AGENCY.email}`,
+    `W  ${AGENCY.siteLabel}`,
+    `A  ${AGENCY.addressLine1}`,
+    `   ${AGENCY_FMT.addressLine2}`,
+  ];
+}
+
+/**
+ * Wrap the generated body in the greeting, sign-off and signature.
  *
  * The frame is ours, not the model's: the greeting has to use the right first
- * name, the sign-off has to name a real producer with the agency's real phone,
- * and the closing line has to say the review has not happened yet. Leaving any
- * of those to generation is how an email ends up signed by nobody.
+ * name and the sign-off has to name a real producer. Leaving either to
+ * generation is how an email ends up signed by nobody.
+ *
+ * There is no card, no coloured header bar and no small-print footer. Those
+ * were the three things that made this read as a notification from a system
+ * rather than an email from a broker, which is the opposite of the point: this
+ * is the first thing a board member ever receives from the agency, and it has
+ * to look like a person typed it in their mail client. So the body is plain
+ * paragraphs on white, set in the same Arial the signature uses, and the only
+ * styled thing in the message is the signature itself.
  */
 export function renderReply(opts: {
   generated: { subject: string; body: string };
@@ -290,75 +359,33 @@ export function renderReply(opts: {
     .map((p) => p.trim())
     .filter(Boolean);
 
-  const signOff = [
-    producerName,
-    `${AGENCY.name}`,
-    AGENCY.phone,
-    AGENCY_FMT.emailLower,
-  ];
-
-  /**
-   * Said plainly, every time, and not by the model.
-   *
-   * The email describes and asks; it does not quote or bind. A reader who takes
-   * it as confirmation of cover is the one misunderstanding worth spending two
-   * sentences to prevent.
-   */
-  /**
-   * One sentence, not three.
-   *
-   * The substance is unchanged and non-negotiable: not a quote, not confirmation
-   * of coverage, nothing bound without a written offer. But a long legalistic
-   * block under the signature is itself a tell, and the whole point of this
-   * email is that it reads as written by a person.
-   */
-  const disclosure =
-    "Not a quote or confirmation of coverage. Nothing is bound until you've " +
-    "accepted a written offer.";
-
   const text = [
     greeting,
     "",
     ...paragraphs.flatMap((p) => [p, ""]),
-    ...signOff,
+    "Thanks,",
+    producerName,
     "",
-    // A rule of hyphens, not an em dash: the email forbids the character and
-    // that has to include the parts we write.
-    "---",
-    disclosure,
+    ...signatureText(),
   ].join("\n");
+
+  /**
+   * `line-height` and `font-family` are set on every paragraph rather than once
+   * on a wrapper: Outlook drops inherited styles on block elements inside a
+   * table cell, and Gmail strips a `<style>` block entirely.
+   */
+  const para = (content: string, margin: string) =>
+    `  <p style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.55;color:#1A1A1A;margin:${margin}">${content}</p>`;
 
   const html = `<!doctype html>
 <html><head><meta charset="utf-8"><meta name="color-scheme" content="light only"></head>
-<body style="margin:0;padding:0;background:#f1f5f9">
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f1f5f9;padding:24px 12px">
-    <tr><td align="center">
-      <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="width:600px;max-width:100%;background:#ffffff;border-radius:10px;overflow:hidden;box-shadow:0 1px 3px rgba(15,23,42,.08)">
-        <tr><td style="background:#142a4c;padding:18px 28px">
-          <div style="font:700 15px/1.3 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#ffffff">${escapeHtml(AGENCY.name)}</div>
-        </td></tr>
-        <tr><td style="padding:26px 28px 8px">
-          <p style="font:400 15px/1.65 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#0f172a;margin:0 0 14px">${escapeHtml(greeting)}</p>
-${paragraphs
-  .map(
-    (p) =>
-      `          <p style="font:400 15px/1.65 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#334155;margin:0 0 14px">${escapeHtml(p)}</p>`
-  )
-  .join("\n")}
-        </td></tr>
-        <tr><td style="padding:6px 28px 20px">
-          <div style="font:400 15px/1.6 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#0f172a">
-            <div style="font-weight:600">${escapeHtml(producerName)}</div>
-            <div style="color:#475569;font-size:14px">${escapeHtml(AGENCY.name)}</div>
-            <div style="font-size:14px"><a href="${AGENCY_FMT.phoneHref}" style="color:#142a4c">${escapeHtml(AGENCY.phone)}</a> · <a href="mailto:${AGENCY_FMT.emailLower}" style="color:#142a4c">${escapeHtml(AGENCY_FMT.emailLower)}</a></div>
-          </div>
-        </td></tr>
-        <tr><td style="padding:0 28px 26px">
-          <div style="border-top:1px solid #e2e8f0;padding-top:14px;font:400 12px/1.6 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#94a3b8">${escapeHtml(disclosure)}</div>
-        </td></tr>
-      </table>
-    </td></tr>
-  </table>
+<body style="margin:0;padding:16px 14px;background:#ffffff">
+${[
+  para(escapeHtml(greeting), "0 0 14px"),
+  ...paragraphs.map((p) => para(escapeHtml(p), "0 0 14px")),
+  para(`Thanks,<br>${escapeHtml(producerName)}`, "0 0 22px"),
+].join("\n")}
+${signatureHtml()}
 </body></html>`;
 
   return { subject: generated.subject, text, html };

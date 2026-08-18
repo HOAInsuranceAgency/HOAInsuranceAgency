@@ -70,6 +70,21 @@ export const AGENCY = {
    * the transport form, and `formsubmitUrl` is built from it.
    */
   leadEmail: "sales@ProtectMyHOA.com",
+  /**
+   * Public marketing site. Must match `site` in `web/astro.config.mjs`, which
+   * cannot be imported from here (Astro config is not value-only).
+   */
+  site: "https://www.protectmyhoa.com",
+  /**
+   * The domain as it is *printed* — branded mixed case, no scheme, no `www`.
+   *
+   * Stored rather than derived from `site` because the casing is a brand
+   * decision the lowercase URL cannot carry. Same spelling as the domain in
+   * `email` and `leadEmail`; if one changes, all three do.
+   */
+  siteLabel: "ProtectMyHOA.com",
+  /** Strapline under the wordmark in the email signature. */
+  tagline: "Insurance Built for Associations.",
 } as const;
 
 const phoneDigits = AGENCY.phone.replace(/\D/g, "");
@@ -101,6 +116,12 @@ export const AGENCY_FMT = {
    * sales rather than in the inbox the ACORD forms point carriers at.
    */
   formsubmitUrl: `https://formsubmit.co/ajax/${AGENCY.leadEmail.toLowerCase()}`,
+  /** Trading name without the entity suffix, for signatures and letterheads. */
+  displayName: AGENCY.name.replace(/\s+LLC$/, ""),
+  /** Site href with the trailing slash links are written with. */
+  siteHref: `${AGENCY.site}/`,
+  /** Absolute logo URL. Email signatures cannot use a relative path. */
+  logoUrl: `${AGENCY.site}/logo.png`,
 } as const;
 
 export type Agency = typeof AGENCY;
