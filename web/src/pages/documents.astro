@@ -1,0 +1,57 @@
+---
+import Layout from "../layouts/Layout.astro";
+import { DocumentPortal } from "../components/DocumentPortal";
+
+/**
+ * A lead's document upload page, reached from the link in their auto-reply.
+ *
+ * ── `private` and `noindex` are both load-bearing ────────────────────────────
+ *
+ * The URL carries a live upload token as `?t=…`. `private` keeps `<Analytics />`
+ * off this page, and that is the whole point of the flag: gtag's config call
+ * reports `page_location`, which is the full URL including the query string, so
+ * with analytics on, every token a lead ever opened would sit in GA4, Google Ads
+ * and Microsoft Clarity, readable by anyone with report access and usable to
+ * upload files into a client's account. It also sets `no-referrer`, so the token
+ * cannot leak through a Referer header either.
+ *
+ * `noindex` because a tokenised URL in a search index is the same leak by a
+ * different route.
+ *
+ * Do not remove either, and do not add anything to this page that loads from a
+ * third-party host.
+ *
+ * ── Why the token is in the query string at all ──────────────────────────────
+ * It has to be somewhere, and this is a statically-built site with no server to
+ * read a path segment.
+ *
+ * The island reads it off `window.location` and scrubs it from the address bar
+ * itself, rather than this page passing it as a prop. Two reasons: the page is
+ * prerendered, so at build time there is no query string to read a prop from;
+ * and an inline script doing the scrub would race the island's hydration for the
+ * value. Doing both in one place cannot race.
+ *
+ * The scrub is cosmetic — it keeps a token out of what a lead bookmarks or
+ * screenshots. The real protections are the two flags above.
+ */
+---
+
+<Layout
+  title="Send us your documents · HOA Insurance Agency"
+  description="Upload your association's insurance documents securely."
+  canonicalPath="/documents/"
+  noindex
+  private
+  solidNav
+>
+  {/* The site's own section/container wrapper, plus explicit navbar clearance.
+      `main` has no top padding and the header is fixed, overlaying the first
+      `--nav-height` of the page, so `.section`'s 80px alone leaves 8px and the
+      heading sits right against the bar. Every other page hides this because it
+      opens with a hero that has its own generous padding. */}
+  <section class="section dp-section">
+    <div class="container">
+      <DocumentPortal client:only="react" />
+    </div>
+  </section>
+</Layout>

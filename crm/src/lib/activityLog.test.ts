@@ -322,13 +322,19 @@ describe("the attributed and streamed model lists agree", () => {
     }
   });
 
+  /** Kept beside the assertion it explains: STREAMED_MODELS in backend.ts. */
+  const STREAMED_MODEL_COUNT = 14;
+
   it("gives every streamed model the column to be stamped into", () => {
     const schema = readFileSync(
       resolve(process.cwd(), "amplify/data/resource.ts"),
       "utf8"
     );
-    // One `lastWriteBy` per streamed model, and not one more.
+    // One `lastWriteBy` per streamed model, and not one more. A model that is
+    // not streamed uses `updatedBy` instead — see AgencySettings and
+    // UploadPortal, both of which tripped this test by naming the column
+    // `lastWriteBy` first.
     const declared = [...schema.matchAll(/lastWriteBy: a\.string\(\)/g)].length;
-    expect(declared).toBe(14);
+    expect(declared).toBe(STREAMED_MODEL_COUNT);
   });
 });

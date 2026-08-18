@@ -9,6 +9,7 @@ import { renewalTasks } from "../functions/renewal-tasks/resource";
 import { licenseAlerts } from "../functions/license-alerts/resource";
 import { taskDigest } from "../functions/task-digest/resource";
 import { leadUpload } from "../functions/lead-upload/resource";
+import { uploadPortal } from "../functions/upload-portal/resource";
 import { leadReply } from "../functions/lead-reply/resource";
 import { activityLog } from "../functions/activity-log/resource";
 
@@ -57,6 +58,11 @@ const schema = a
       "POLICY_DOC",
       "LICENSE",
       "ACORD_FORM", // generated carrier-submission forms
+      // The two the upload portal asks for that had no home. Both are things a
+      // carrier prices on, so filing them as OTHER lost the distinction that
+      // makes them worth having — see shared/leadDocuments.ts.
+      "STATEMENT_OF_VALUES", // building schedule: sqft and insured value per building
+      "PROPERTY_UPDATES", // roof/electrical/plumbing/heating work
       "OTHER",
     ]),
     OcrStatus: a.enum(["PENDING", "PROCESSING", "COMPLETE", "FAILED", "SKIPPED"]),
@@ -1075,6 +1081,68 @@ const schema = a
       .authorization((allow) => [allow.authenticated().to(["read"])]),
 
     /**
+     * A lead's document upload link, and what it has collected.
+     *
+     * ── Why this is not `LeadReply.uploadToken` ──────────────────────────────
+     * That token means one thing: hold the auto-reply open, and close when the
+     * deadline passes. `decide.ts` consumes it and the reply going out ends it.
+     * A document request is the opposite shape — it is *created* by the reply
+     * going out, has no deadline, and has to keep working for weeks while a
+     * board finds its paperwork. Reusing one token for both would mean either
+     * the reply waits sixty days or the link dies when the email sends.
+     *
+     * ── Why not a column on Account ─────────────────────────────────────────
+     * A token needs its own index to be looked up by, and Account is the widest
+     * table in the schema. It also needs to be revocable and reissuable without
+     * writing to the account, and to carry its own counters — none of which
+     * belongs beside the ACORD producer block.
+     *
+     * One live portal per account is the intent, not a constraint the schema
+     * enforces: `uploadPortal` reuses an unexpired one and mints a new one
+     * otherwise, so reissuing after sixty days leaves the old row in place as
+     * history rather than overwriting it.
+     *
+     * Not readable with the API key. Every public path goes through the
+     * `uploadPortal` function, which resolves the token itself — so a token is
+     * never a way to list rows, only to act on the one it names.
+     */
+    UploadPortal: a
+      .model({
+        // Plain id, no `belongsTo` — same as LeadReply. A relationship would
+        // need a matching `hasMany` on Account, and nothing traverses it: the
+        // portal function reads the account by id, and the id is all the
+        // checklist query needs.
+        accountId: a.id().required(),
+        /** Unguessable secret. The only thing the link carries. */
+        token: a.string().required(),
+        expiresAt: a.datetime().required(),
+        /** Set when a producer kills a link early. Checked before expiry. */
+        revokedAt: a.datetime(),
+        /** For the "someone is sending things" notification, and the digest. */
+        lastUploadAt: a.datetime(),
+        /** Counted across every section, against PORTAL_MAX_FILES. */
+        uploadCount: a.integer(),
+        /**
+         * The `lastUploadAt` the team was last told about.
+         *
+         * Compared against `lastUploadAt` rather than being a boolean, so a
+         * second batch two days later notifies again and a sweep that runs every
+         * minute does not notify fifteen times for fifteen loss runs.
+         */
+        notifiedUpTo: a.datetime(),
+        /**
+         * `updatedBy`, not `lastWriteBy`. That name is reserved for the models in
+         * STREAMED_MODELS, and a test asserts there is exactly one per streamed
+         * model and not one more. This is deliberately not streamed: `Document`
+         * already is, so every portal upload is in the account's activity log
+         * once, and streaming the portal row as well would log it twice.
+         */
+        updatedBy: a.string(),
+      })
+      .secondaryIndexes((index) => [index("token")])
+      .authorization((allow) => [allow.authenticated().to(["read", "update"])]),
+
+    /**
      * One row per licence-expiry email the agency has already been sent.
      *
      * The ledger behind `license-alerts`, and the same trick as
@@ -1180,6 +1248,51 @@ const schema = a
       .authorization((allow) => [allow.publicApiKey()])
       .handler(a.handler.function(leadUpload)),
 
+    /**
+     * What one upload link is for: the association's name, the checklist, and
+     * which parts of it have already arrived.
+     *
+     * A query rather than a mutation, and it deliberately returns nothing that
+     * would help someone who guessed a token do anything with an account: the
+     * display name, counts per section, and the expiry. No contact details, no
+     * addresses, no document contents, no ids.
+     */
+    /**
+     * NOT `getUploadPortal`. Declaring a model called `UploadPortal` makes
+     * Amplify generate `getUploadPortal(id: ID!)` on Query, and a custom field
+     * of the same name fails synth with "Object type extension 'Query' cannot
+     * redeclare field getUploadPortal". Any custom field named
+     * `get`/`list`/`create`/`update`/`delete` + a model name has the same
+     * problem.
+     */
+    uploadPortalStatus: a
+      .query()
+      .arguments({ token: a.string().required() })
+      .returns(a.json())
+      .authorization((allow) => [allow.publicApiKey()])
+      .handler(a.handler.function(uploadPortal)),
+
+    /**
+     * Somewhere to put one file, filed against the checklist section it came
+     * from. Same presigned-PUT shape as `requestLeadUpload`.
+     *
+     * `documentKey` is a key from `shared/leadDocuments.ts`, not a category: the
+     * caller says which question it is answering and the server decides what
+     * that means, so a public caller cannot invent a category.
+     */
+    requestPortalUpload: a
+      .mutation()
+      .arguments({
+        token: a.string().required(),
+        documentKey: a.string().required(),
+        filename: a.string().required(),
+        contentType: a.string(),
+        sizeBytes: a.integer(),
+      })
+      .returns(a.json())
+      .authorization((allow) => [allow.publicApiKey()])
+      .handler(a.handler.function(uploadPortal)),
+
     // ── Team administration (ADMIN group only) ─────────────────────────
     inviteUser: a
       .mutation()
@@ -1276,6 +1389,8 @@ const schema = a
     // The auto-reply sweep reads LeadReply, the Account and its Documents,
     // and marks the reply sent.
     allow.resource(leadReply),
+    // The upload portal resolves link tokens and writes Documents for them.
+    allow.resource(uploadPortal),
     // The stream handler writes Activity and reads UserProfile to name an
     // actor. Note what the block above says: this is not a per-model grant,
     // so this function has full API access whatever any model declares. What

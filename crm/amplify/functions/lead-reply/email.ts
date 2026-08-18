@@ -38,6 +38,13 @@ export interface LeadContext {
   /** Filenames the visitor attached, if any. */
   documentNames: string[];
   /**
+   * Whether a document-request link is being appended to this reply.
+   *
+   * The prompt needs to know, because the whole point of the link is that the
+   * body stops asking for documents itself.
+   */
+  hasUploadLink?: boolean;
+  /**
    * Extraction output, already narrowed to fields that were found. Shape is
    * `{ field: value }` — confidence and evidence are dropped before we get
    * here, because a model shown a confidence score starts hedging in prose.
@@ -64,6 +71,8 @@ WHAT MAKES THIS EMAIL WORTH SENDING:
 - Where a document was attached and read, refer to what it shows concretely: the carrier on the declaration page, the expiry date, the lines listed. Describing what their own document says is reporting, not advising.
 - Say what happens next and roughly when.
 - Ask for at most two specific things that would speed the review up, chosen from what is actually missing.
+
+DOCUMENTS. If the lead context says a document link is being included, DO NOT ask them to send anything and DO NOT list documents. A link to a page listing exactly what we need is added below your text, and asking as well means the email asks twice and contradicts the page. One clause noting that a list is attached is the most you should write, and even that is optional. This is most of what keeps the email short.
 
 HOW TO SOUND LIKE A PERSON. This matters as much as the content. A reader who suspects this was generated will not reply to it.
 
@@ -150,6 +159,13 @@ export function buildPrompt(lead: LeadContext): string {
 
   if (lead.documentNames.length) {
     lines.push("", `They attached: ${lead.documentNames.join(", ")}`);
+  }
+
+  if (lead.hasUploadLink) {
+    lines.push(
+      "",
+      "A document link IS being included below your text. Do not ask them to send anything and do not list documents."
+    );
   }
 
   const extracted = Object.entries(lead.extracted ?? {}).filter(
@@ -351,6 +367,14 @@ export function renderReply(opts: {
   generated: { subject: string; body: string };
   lead: LeadContext;
   producerName: string;
+  /**
+   * The lead's document-upload page, if one was minted for them.
+   *
+   * Rendered by us, never generated. A model asked to include a URL will
+   * eventually produce one that is subtly wrong, and a broken link in the first
+   * email is worse than no link.
+   */
+  uploadUrl?: string | null;
 }): RenderedReply {
   const { lead, producerName } = opts;
   /**
@@ -379,10 +403,24 @@ export function renderReply(opts: {
     .map((p) => p.trim())
     .filter(Boolean);
 
+  /**
+   * One sentence and the link, in our words.
+   *
+   * Deliberately undersold. "Whenever you get a chance" and "send what you have"
+   * are doing work: a board member who reads a seven-item list as a precondition
+   * sends nothing until they have all seven, which is months. The page says the
+   * same thing again per section.
+   */
+  const uploadUrl = opts.uploadUrl?.trim() || null;
+  const uploadLine = uploadUrl
+    ? `I've put a page together with the documents that would help, so you don't have to hunt through email for them. Send what you have whenever you get a chance:`
+    : null;
+
   const text = [
     greeting,
     "",
     ...paragraphs.flatMap((p) => [p, ""]),
+    ...(uploadLine ? [uploadLine, "", uploadUrl as string, ""] : []),
     "Thanks,",
     producerName,
     "",
@@ -403,6 +441,19 @@ export function renderReply(opts: {
 ${[
   para(escapeHtml(greeting), "0 0 14px"),
   ...paragraphs.map((p) => para(escapeHtml(p), "0 0 14px")),
+  ...(uploadLine && uploadUrl
+    ? [
+        para(escapeHtml(uploadLine), "0 0 10px"),
+        // The href and the visible text are the same string on purpose. A
+        // masked link in a first email from a stranger reads as phishing, and a
+        // trustee forwarding this to their board should be able to see where it
+        // goes.
+        para(
+          `<a href="${escapeHtml(uploadUrl)}" style="color:#1A365D;font-weight:700">${escapeHtml(uploadUrl)}</a>`,
+          "0 0 22px"
+        ),
+      ]
+    : []),
   para(`Thanks,<br>${escapeHtml(producerName)}`, "0 0 22px"),
 ].join("\n")}
 ${signatureHtml()}

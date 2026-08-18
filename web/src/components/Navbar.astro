@@ -3,9 +3,18 @@ import { NAV_LINKS, QUOTE_URL } from "../constants";
 
 interface Props {
   currentPath: string;
+  /**
+   * Render solid from the top, rather than transparent-until-scrolled.
+   *
+   * The transparent state only works over a dark hero, and every page in the
+   * site has one — even the legal pages use `hero--compact`. A page without one
+   * gets a white logo and white links on a white background, which is to say an
+   * invisible header. `/documents/` is the first such page.
+   */
+  solid?: boolean;
 }
 
-const { currentPath } = Astro.props;
+const { currentPath, solid = false } = Astro.props;
 
 /* Trailing slashes are not significant, so "/contact/" and "/contact" are the
    same page. "/" normalises to itself rather than to "". */
@@ -20,7 +29,11 @@ const activeIndex = NAV_LINKS.findIndex(
 );
 ---
 
-<nav class="navbar" id="navbar">
+<nav
+  class={"navbar" + (solid ? " navbar--scrolled" : "")}
+  id="navbar"
+  data-solid={solid ? "true" : undefined}
+>
   <div class="navbar-inner container">
     <a href="/" class="navbar-logo">
       {/* Two files, not one filtered file. The bar is transparent over the hero
@@ -84,8 +97,19 @@ const activeIndex = NAV_LINKS.findIndex(
     });
   });
 
+  /**
+   * Server-rendered, because this script cannot see Astro props. Read once: it
+   * never changes for the life of the page.
+   */
+  const alwaysSolid = navbar.dataset.solid === "true";
+
   function onScroll() {
-    navbar.classList.toggle("navbar--scrolled", window.scrollY > 60);
+    // `|| alwaysSolid`, so a page rendered solid does not go transparent the
+    // moment someone scrolls back to the top.
+    navbar.classList.toggle(
+      "navbar--scrolled",
+      window.scrollY > 60 || alwaysSolid
+    );
   }
   onScroll();
   window.addEventListener("scroll", onScroll, { passive: true });

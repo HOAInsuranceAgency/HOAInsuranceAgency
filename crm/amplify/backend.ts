@@ -25,6 +25,7 @@ import { licenseAlerts } from "./functions/license-alerts/resource";
 import { taskDigest } from "./functions/task-digest/resource";
 import { leadUpload } from "./functions/lead-upload/resource";
 import { leadReply } from "./functions/lead-reply/resource";
+import { uploadPortal } from "./functions/upload-portal/resource";
 import { resolveMailbox } from "./functions/mailbox";
 import { activityLog } from "./functions/activity-log/resource";
 import {
@@ -51,6 +52,7 @@ export const backend = defineBackend({
   taskDigest,
   leadUpload,
   leadReply,
+  uploadPortal,
   activityLog,
   magicLinkDefine,
   magicLinkCreate,
@@ -195,6 +197,26 @@ const BRANCH_URLS: Record<string, string> = {
 };
 const magicLinkBaseUrl =
   BRANCH_URLS[process.env.AWS_BRANCH ?? ""] ?? "http://localhost:5173";
+
+/**
+ * The marketing site's host, per branch. Where a lead's upload link points.
+ *
+ * A second map rather than a reuse of the one above: the portal page is a static
+ * route on the *website* app, a different Amplify app on a different domain, and
+ * the CRM is behind a login. A staging link has to point at the staging site or
+ * the page cannot resolve its own token — the API key is baked in per build.
+ *
+ * Literals, not `AGENCY.site`, because this file cannot import `shared/` (see
+ * the note under the mailbox block). Both `tsc` and `synth:check` pass on that
+ * import and only a real pipeline deploy fails, so it is not a mistake worth
+ * being clever near.
+ */
+const SITE_BRANCH_URLS: Record<string, string> = {
+  staging: "https://staging.dx1256wpowwzz.amplifyapp.com",
+  main: "https://www.protectmyhoa.com",
+};
+const siteBaseUrl =
+  SITE_BRANCH_URLS[process.env.AWS_BRANCH ?? ""] ?? "http://localhost:4321";
 // Sender must be SES-verified (protectmyhoa.com domain, DKIM verified).
 const magicLinkFrom = "HOA Insurance Agency <noreply@protectmyhoa.com>";
 
@@ -323,9 +345,23 @@ backend.storage.resources.bucket.grantPut(
   "documents/*"
 );
 
+// The document portal presigns the same way, and into the same prefix, for the
+// same reason. Its own grant rather than a shared role: the two functions have
+// different lifetimes and one should not inherit the other's reach.
+backend.uploadPortal.addEnvironment(
+  "DOCUMENTS_BUCKET",
+  backend.storage.resources.bucket.bucketName
+);
+backend.storage.resources.bucket.grantPut(
+  backend.uploadPortal.resources.lambda,
+  "documents/*"
+);
+
 // The sweep sends the reply and starts extraction for public leads —
 // `startLeadExtraction` is authenticated-only, so no visitor can reach it.
 backend.leadReply.addEnvironment("AGENCY_MAILBOX", leadReplyMailbox);
+// Where a lead's document-upload link points: the marketing site, not the CRM.
+backend.leadReply.addEnvironment("SITE_BASE_URL", siteBaseUrl);
 backend.leadReply.addEnvironment(
   "EXTRACT_LEAD_FUNCTION",
   backend.extractLead.resources.lambda.functionName

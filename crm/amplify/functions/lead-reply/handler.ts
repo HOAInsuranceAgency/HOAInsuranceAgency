@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import Anthropic from "@anthropic-ai/sdk";
 import { LambdaClient, InvokeCommand } from "@aws-sdk/client-lambda";
 import { SESv2Client, SendEmailCommand } from "@aws-sdk/client-sesv2";
@@ -10,6 +11,7 @@ import { AGENCY, AGENCY_FMT } from "../../../../shared/agency";
 import { CLAUDE_MODEL } from "../model";
 import { decide } from "./decide";
 import { flattenExtraction } from "./extraction";
+import { PORTAL_TTL_DAYS } from "../../../../shared/leadDocuments";
 import {
   REPLY_SCHEMA,
   WORD_BUDGET,
@@ -184,17 +186,26 @@ export const handler = async () => {
         continue;
       }
 
+      /**
+       * Before generating, not after: the prompt is told a link is coming so it
+       * stops asking for documents itself, which is most of what keeps the body
+       * inside its word budget.
+       */
+      const uploadUrl = await ensurePortal(client, reply.accountId);
+
       const lead = toContext(
         account.data,
         documents as { name?: string | null }[],
         contacts as { name?: string | null; isPrimary?: boolean | null }[],
-        decision.withDocuments
+        decision.withDocuments,
+        uploadUrl !== null
       );
       const generated = await generate(lead);
       const { subject, text, html } = renderReply({
         generated,
         lead,
         producerName: PRODUCER_NAME,
+        uploadUrl,
       });
 
       await ses.send(
@@ -254,7 +265,8 @@ function toContext(
   account: Schema["Account"]["type"],
   documents: { name?: string | null }[],
   contacts: { name?: string | null; isPrimary?: boolean | null }[],
-  withDocuments: boolean
+  withDocuments: boolean,
+  hasUploadLink: boolean
 ): LeadContext {
   // The primary if one is flagged, otherwise whichever came first — intake
   // creates exactly one, so the fallback is for accounts touched by hand.
@@ -273,7 +285,72 @@ function toContext(
     // Only passed when the decision says the documents are usable, so a failed
     // extraction can never leak half-read values into the prose.
     extracted: withDocuments ? flattenExtraction(account.aiExtraction) : null,
+    hasUploadLink,
   };
+}
+
+/**
+ * The lead's document-upload link, minted when their reply goes out.
+ *
+ * Here rather than at intake because most leads never reach this point — a form
+ * with no email address gets no reply and needs no portal — and because the link
+ * only exists to be put in this email.
+ *
+ * Reuses a live portal if the account already has one, so a second reply on the
+ * same account does not hand out a second link and split the uploads across two
+ * rows. `listUploadPortalByToken` indexes by token, not by account, so the reuse
+ * check is a filtered list; there is at most a handful per account.
+ *
+ * Returns null on any failure, and the caller sends the email without a link.
+ * A missing link costs us some documents. A thrown error costs the lead their
+ * reply, which is worse.
+ */
+async function ensurePortal(
+  client: DataClient,
+  accountId: string
+): Promise<string | null> {
+  const site = process.env.SITE_BASE_URL;
+  if (!site) {
+    console.warn("[lead-reply] SITE_BASE_URL unset; sending without an upload link");
+    return null;
+  }
+  try {
+    const now = new Date().toISOString();
+    const existing = await client.models.UploadPortal.list({
+      filter: { accountId: { eq: accountId } },
+      limit: 50,
+    });
+    const live = existing.data?.find((p) => !p.revokedAt && p.expiresAt > now);
+    const token =
+      live?.token ??
+      (await (async () => {
+        // Two UUIDs, hyphens stripped from the second: 32 hex characters of
+        // entropy either side, matching what `submitWebLead` mints for its own
+        // token. `looksLikeToken` in the portal function floors at 32.
+        const minted = randomUUID() + randomUUID().replace(/-/g, "");
+        const { data, errors } = await client.models.UploadPortal.create({
+          accountId,
+          token: minted,
+          expiresAt: new Date(
+            Date.now() + PORTAL_TTL_DAYS * 24 * 60 * 60 * 1000
+          ).toISOString(),
+          uploadCount: 0,
+          updatedBy: "lead-reply",
+        });
+        if (errors?.length || !data) {
+          throw new Error(errors?.[0]?.message ?? "portal create failed");
+        }
+        return data.token;
+      })());
+
+    // The token is a query parameter because a static route cannot read a path
+    // segment. `documents.astro` strips it from the URL on load, and that page
+    // deliberately mounts no analytics — see the note there.
+    return `${site.replace(/\/$/, "")}/documents/?t=${encodeURIComponent(token)}`;
+  } catch (err) {
+    console.error("[lead-reply] could not mint an upload portal", err);
+    return null;
+  }
 }
 
 /** One model call, forced through the reply schema. */

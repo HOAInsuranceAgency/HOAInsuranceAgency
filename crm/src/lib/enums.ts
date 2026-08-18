@@ -532,20 +532,60 @@ export const DEFENSE_LIMIT_POSITION_LABELS: Record<string, string> =
  * `extractionPriority` is the order the AI extraction Lambda feeds documents
  * to the model when it has to fit them in a character budget — lowest first.
  */
+/**
+ * ## `extractable`
+ *
+ * Whether the AI extraction pass is given this document's text at all.
+ *
+ * It is not a judgement about how useful the document is to a human. A budget
+ * and a master deed are both worth having on the account; neither is worth
+ * spending the extraction budget on. `extract-lead` works to a 400,000-character
+ * ceiling, and once the upload portal started asking for governing documents,
+ * a hundred-page master deed sorted above the declaration page would quietly eat
+ * that ceiling and starve the one document the reply actually needed. Truncation
+ * is silent, which is what makes it worth excluding these rather than ranking
+ * them last.
+ *
+ * The rule: extractable if a named datapoint in EXTRACTION_SCHEMA comes off it.
+ * Carrier, term, limits, values and loss history do. "Where the master policy
+ * ends" does not — that is a reading job, and a producer does it.
+ */
 const DOCUMENT_CATEGORY = {
-  PRIOR_POLICY: { label: "Prior policy packet", extractionPriority: 0 },
-  CONDO_DOCS: { label: "Condo documents", extractionPriority: 7 },
-  BUDGET: { label: "Budget", extractionPriority: 1 },
-  DUES_SCHEDULE: { label: "Dues per unit", extractionPriority: 2 },
-  LOSS_RUNS: { label: "Loss runs", extractionPriority: 3 },
-  QUOTE_DOC: { label: "Quote document", extractionPriority: 5 },
-  POLICY_DOC: { label: "Policy document", extractionPriority: 6 },
-  LICENSE: { label: "License", extractionPriority: 9 },
-  ACORD_FORM: { label: null, extractionPriority: 8 },
-  OTHER: { label: "Other", extractionPriority: 4 },
+  PRIOR_POLICY: {
+    label: "Prior policy packet",
+    extractionPriority: 0,
+    extractable: true,
+  },
+  CONDO_DOCS: { label: "Condo documents", extractionPriority: 7, extractable: false },
+  BUDGET: { label: "Budget", extractionPriority: 1, extractable: false },
+  DUES_SCHEDULE: { label: "Dues per unit", extractionPriority: 2, extractable: true },
+  LOSS_RUNS: { label: "Loss runs", extractionPriority: 3, extractable: true },
+  QUOTE_DOC: { label: "Quote document", extractionPriority: 5, extractable: true },
+  POLICY_DOC: { label: "Policy document", extractionPriority: 6, extractable: true },
+  LICENSE: { label: "License", extractionPriority: 9, extractable: false },
+  ACORD_FORM: { label: null, extractionPriority: 8, extractable: false },
+  STATEMENT_OF_VALUES: {
+    label: "Statement of values",
+    extractionPriority: 1,
+    extractable: true,
+  },
+  PROPERTY_UPDATES: {
+    label: "Building updates",
+    extractionPriority: 4,
+    extractable: true,
+  },
+  /**
+   * Extractable, unlike the other three that are not.
+   *
+   * OTHER is where every uncategorised document lands, including everything the
+   * post-submit panel accepts before anyone has looked at it. Excluding it would
+   * mean a lead who uploads their dec page from the confirmation screen gets no
+   * extraction at all, which is the case this whole pipeline was built for.
+   */
+  OTHER: { label: "Other", extractionPriority: 4, extractable: true },
 } satisfies Record<
   DocumentCategory,
-  { label: string | null; extractionPriority: number }
+  { label: string | null; extractionPriority: number; extractable: boolean }
 >;
 
 /** Categories a human may pick when uploading, sorted by label. */
@@ -572,6 +612,20 @@ export const DOCUMENT_CATEGORY_EXTRACTION_PRIORITY: Record<string, number> =
 
 /** Where an uncategorised document sorts, and what it is treated as. */
 export const DEFAULT_DOCUMENT_CATEGORY = "OTHER" satisfies DocumentCategory;
+
+/**
+ * Categories whose text the extraction pass reads. See `extractable` above.
+ *
+ * A plain predicate rather than a set the caller filters with, so an unknown
+ * category coming off an old row falls to whatever OTHER does rather than to
+ * `false` — a document nobody has categorised is the common case, not an
+ * excluded one.
+ */
+export function isExtractableCategory(category: string | null | undefined): boolean {
+  const key = (category ?? DEFAULT_DOCUMENT_CATEGORY) as DocumentCategory;
+  return (DOCUMENT_CATEGORY[key] ?? DOCUMENT_CATEGORY[DEFAULT_DOCUMENT_CATEGORY])
+    .extractable;
+}
 
 // ── UserRole ─────────────────────────────────────────────────────────────────
 

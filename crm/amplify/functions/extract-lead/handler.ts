@@ -11,6 +11,7 @@ import {
   CONTACT_TYPES,
   DEFAULT_DOCUMENT_CATEGORY,
   DOCUMENT_CATEGORY_EXTRACTION_PRIORITY,
+  isExtractableCategory,
 } from "../../../src/lib/enums";
 
 /**
@@ -279,7 +280,26 @@ async function runExtraction(accountId: string) {
 
     if (!docs.length) throw new Error("No OCR-complete documents on this account.");
 
-    const sorted = [...docs].sort(
+    /**
+     * Only categories a datapoint comes off.
+     *
+     * The character budget below truncates rather than failing, which is exactly
+     * why this filter exists: once the upload portal started asking for a master
+     * deed and a budget, a hundred pages of bylaws sorted above the declaration
+     * page would silently eat the ceiling and starve the one document the
+     * extraction was for. Nothing is lost by excluding them — they are still on
+     * the account, still OCR'd, still readable by a producer. See
+     * `extractable` in lib/enums.ts.
+     */
+    const readable = docs.filter((d) => isExtractableCategory(d.category));
+    if (!readable.length) {
+      throw new Error(
+        `None of this account's ${docs.length} document(s) are in a category ` +
+          `extraction reads.`
+      );
+    }
+
+    const sorted = [...readable].sort(
       (a, b) =>
         (CATEGORY_PRIORITY[a.category ?? DEFAULT_DOCUMENT_CATEGORY] ??
           DEFAULT_PRIORITY) -
@@ -374,7 +394,8 @@ For a contact's "type" use exactly one of: ${CONTACT_TYPES.join(", ")}, or "" wh
     });
     if (errors?.length) throw new Error(errors[0].message);
     console.log(
-      `Extraction complete for ${accountId}: ${included} docs, ` +
+      `Extraction complete for ${accountId}: ${included} of ${readable.length} ` +
+      `readable (${docs.length} total) docs, ` +
         `${response.usage.input_tokens} in / ${response.usage.output_tokens} out tokens`
     );
   } catch (err) {
