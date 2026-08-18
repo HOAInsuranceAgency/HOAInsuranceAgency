@@ -527,3 +527,65 @@ describe("lead-upload dispatch", () => {
     );
   });
 });
+
+/**
+ * The voice rules, and the one that mattered most.
+ *
+ * The first real reply opened "Hello," because the sweep read
+ * `Account.contactFirstName`, which intake never writes: the name lives on the
+ * Contact row. Nothing said "no name" — it just quietly addressed a stranger,
+ * which is the loudest possible signal that nobody read the enquiry.
+ */
+describe("sounding like a person wrote it", () => {
+  it("greets by first name when there is one", () => {
+    const { text, html } = renderReply({
+      generated: { subject: "s", body: "b" },
+      lead: lead({ contactName: "Pat Alvarez", contactFirstName: "Pat" }),
+      producerName: "Brian Cole",
+    });
+    expect(text.startsWith("Hi Pat,")).toBe(true);
+    expect(html).toContain("Hi Pat,");
+  });
+
+  it("derives the first name from a full name alone", () => {
+    // The Contact row stores one `name`, so this is the common case.
+    const { text } = renderReply({
+      generated: { subject: "s", body: "b" },
+      lead: lead({ contactName: "Jacob Greasley", contactFirstName: null }),
+      producerName: "Brian Cole",
+    });
+    expect(text.startsWith("Hi Jacob,")).toBe(true);
+  });
+
+  it("tells the model not to write its own greeting", () => {
+    // The frame adds it, using the real name. Both writing one gives two.
+    const p = systemPrompt("Brian Cole");
+    expect(p).toMatch(/DO NOT WRITE A GREETING/);
+    expect(p).toMatch(/added around your text/);
+  });
+
+  it("bans the structures that gave the first draft away", () => {
+    const p = systemPrompt("Brian Cole");
+    // The real reply enumerated ("Two things would move this along. First…"),
+    // justified every request, and ran three tidy equal paragraphs.
+    expect(p).toMatch(/Do NOT enumerate/);
+    expect(p).toMatch(/Do NOT justify each request/);
+    expect(p).toMatch(/three tidy paragraphs/);
+    expect(p).toMatch(/Hyphenate compound modifiers/);
+    // "that gives us plenty of runway, which helps" was in the first draft.
+    expect(p).toMatch(/runway/);
+  });
+
+  it("keeps the disclosure to one sentence but not one clause fewer", () => {
+    const { text } = renderReply({
+      generated: { subject: "s", body: "b" },
+      lead: lead(),
+      producerName: "Brian Cole",
+    });
+    expect(text).toMatch(/Not a quote or confirmation of coverage/);
+    expect(text).toMatch(/[Nn]othing is bound/);
+    expect(text).toMatch(/written offer/);
+    // Still no dash anywhere, including the parts we write.
+    expect(text).not.toMatch(/[—–]/);
+  });
+});

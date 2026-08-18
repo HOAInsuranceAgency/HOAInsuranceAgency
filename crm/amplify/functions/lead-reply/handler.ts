@@ -91,13 +91,28 @@ export const handler = async () => {
 
   for (const reply of due.slice(0, MAX_PER_TICK)) {
     try {
-      const [account, documents] = await Promise.all([
+      const [account, documents, contacts] = await Promise.all([
         client.models.Account.get({ id: reply.accountId }),
         listAllPages((nextToken) =>
           client.models.Document.list({
             filter: { entityId: { eq: reply.accountId } },
             nextToken,
             limit: 200,
+          })
+        ),
+        /**
+         * The person's name lives here, not on the Account.
+         *
+         * `Account.contactFirstName` is superseded by the Contact model and
+         * intake never writes it, so reading it produced a null and every
+         * single reply opened "Hello," — the loudest possible signal that
+         * nobody had read the enquiry.
+         */
+        listAllPages((nextToken) =>
+          client.models.Contact.list({
+            filter: { accountId: { eq: reply.accountId } },
+            nextToken,
+            limit: 50,
           })
         ),
       ]);
@@ -169,6 +184,7 @@ export const handler = async () => {
       const lead = toContext(
         account.data,
         documents as { name?: string | null }[],
+        contacts as { name?: string | null; isPrimary?: boolean | null }[],
         decision.withDocuments
       );
       const generated = await generate(lead);
@@ -234,14 +250,17 @@ export const handler = async () => {
 function toContext(
   account: Schema["Account"]["type"],
   documents: { name?: string | null }[],
+  contacts: { name?: string | null; isPrimary?: boolean | null }[],
   withDocuments: boolean
 ): LeadContext {
+  // The primary if one is flagged, otherwise whichever came first — intake
+  // creates exactly one, so the fallback is for accounts touched by hand.
+  const contact = contacts.find((c) => c.isPrimary) ?? contacts[0];
+  const contactName = contact?.name?.trim() || null;
   return {
     name: account.name,
-    contactName: account.contactFirstName
-      ? [account.contactFirstName, account.contactLastName].filter(Boolean).join(" ")
-      : null,
-    contactFirstName: account.contactFirstName ?? null,
+    contactName,
+    contactFirstName: contactName ? contactName.split(/\s+/)[0] : null,
     state: account.state ?? null,
     city: account.city ?? null,
     unitCount: account.unitCount ?? null,
