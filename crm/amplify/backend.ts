@@ -25,6 +25,7 @@ import { licenseAlerts } from "./functions/license-alerts/resource";
 import { taskDigest } from "./functions/task-digest/resource";
 import { leadUpload } from "./functions/lead-upload/resource";
 import { leadReply } from "./functions/lead-reply/resource";
+import { resolveMailbox } from "./functions/mailbox";
 import { activityLog } from "./functions/activity-log/resource";
 import {
   magicLinkDefine,
@@ -197,6 +198,23 @@ const magicLinkBaseUrl =
 // Sender must be SES-verified (protectmyhoa.com domain, DKIM verified).
 const magicLinkFrom = "HOA Insurance Agency <noreply@protectmyhoa.com>";
 
+/**
+ * The agency-side mailbox on outbound lead mail: the From, the Reply-To, and
+ * the team's BCC.
+ *
+ * Per branch, because staging sends real email. A test lead on staging would
+ * otherwise put a From of sales@ in front of the visitor, land a BCC in the
+ * inbox the team actually works out of, and route any reply there too. None of
+ * that is wrong in production and all of it is noise anywhere else.
+ *
+ * The map and its safe default live in `functions/mailbox.ts` so the direction
+ * of that default is unit tested rather than asserted here. `internal` is the
+ * general inbox: a digest or a licence deadline is not a sales conversation.
+ */
+const branch = process.env.AWS_BRANCH;
+const leadReplyMailbox = resolveMailbox("lead", branch);
+const internalMailbox = resolveMailbox("internal", branch);
+
 backend.magicLinkCreate.addEnvironment("MAGIC_LINK_SECRET_ARN", magicLinkSecret.secretArn);
 backend.magicLinkVerify.addEnvironment("MAGIC_LINK_SECRET_ARN", magicLinkSecret.secretArn);
 backend.magicLinkCreate.addEnvironment("MAGIC_LINK_BASE_URL", magicLinkBaseUrl);
@@ -268,6 +286,7 @@ backend.leadIntake.resources.lambda.addToRolePolicy(
 );
 
 backend.licenseAlerts.addEnvironment("LICENSE_ALERT_FROM", magicLinkFrom);
+backend.licenseAlerts.addEnvironment("AGENCY_MAILBOX", internalMailbox);
 backend.licenseAlerts.resources.lambda.addToRolePolicy(
   new PolicyStatement({
     actions: ["ses:SendEmail"],
@@ -279,6 +298,7 @@ backend.licenseAlerts.resources.lambda.addToRolePolicy(
 // turns the digest into a worklist rather than a notification — without it
 // the rows still render, just without deep links into the CRM.
 backend.taskDigest.addEnvironment("TASK_DIGEST_FROM", magicLinkFrom);
+backend.taskDigest.addEnvironment("AGENCY_MAILBOX", internalMailbox);
 backend.taskDigest.addEnvironment("CRM_BASE_URL", magicLinkBaseUrl);
 backend.taskDigest.resources.lambda.addToRolePolicy(
   new PolicyStatement({
@@ -305,6 +325,7 @@ backend.storage.resources.bucket.grantPut(
 
 // The sweep sends the reply and starts extraction for public leads —
 // `startLeadExtraction` is authenticated-only, so no visitor can reach it.
+backend.leadReply.addEnvironment("AGENCY_MAILBOX", leadReplyMailbox);
 backend.leadReply.addEnvironment(
   "EXTRACT_LEAD_FUNCTION",
   backend.extractLead.resources.lambda.functionName

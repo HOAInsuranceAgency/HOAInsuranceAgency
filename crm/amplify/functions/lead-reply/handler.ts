@@ -43,18 +43,29 @@ const lambda = new LambdaClient();
 /** The real producer these emails come from. Matches the website's wizard. */
 const PRODUCER_NAME = "Brian Cole";
 
-/** Sales, for both From and Reply-To. A mailbox that is actually read. */
-const FROM = `${PRODUCER_NAME} · ${AGENCY.name} <${AGENCY_FMT.leadEmailLower}>`;
+/**
+ * The agency-side mailbox: From, Reply-To and the team's BCC all use it.
+ *
+ * Set per branch in `backend.ts` — sales@ on main, a plus-addressed test box
+ * everywhere else — so staging can send real mail without putting a test
+ * conversation in front of the team or routing a reply into their queue. The
+ * fallback is the agency's sales address only if the variable is missing
+ * entirely, which should not happen once deployed.
+ */
+const MAILBOX = process.env.AGENCY_MAILBOX || AGENCY_FMT.leadEmailLower;
+
+/** Named sender, so it reads as a person rather than a system. */
+const FROM = `${PRODUCER_NAME} · ${AGENCY.name} <${MAILBOX}>`;
 
 /**
  * The team's own copy.
  *
- * SES sends straight to the lead, so a From of sales@ puts nothing in that
- * mailbox: there is no submission through it and no Sent folder. Without this
- * BCC the agency would have no idea what any lead had been told. BCC rather
- * than CC so the lead does not see an internal address on their own email.
+ * SES sends straight to the lead, so a From of the mailbox puts nothing in it:
+ * there is no submission through it and no Sent folder. Without this BCC the
+ * agency would have no idea what any lead had been told. BCC rather than CC so
+ * the lead does not see an internal address on their own email.
  */
-const BCC = [AGENCY_FMT.leadEmailLower];
+const BCC = [MAILBOX];
 
 /** How many leads one tick will send for. Keeps a backlog from timing out. */
 const MAX_PER_TICK = 8;
@@ -170,7 +181,7 @@ export const handler = async () => {
       await ses.send(
         new SendEmailCommand({
           FromEmailAddress: FROM,
-          ReplyToAddresses: [AGENCY_FMT.leadEmailLower],
+          ReplyToAddresses: [MAILBOX],
           Destination: { ToAddresses: [reply.contactEmail], BccAddresses: BCC },
           Content: {
             Simple: {

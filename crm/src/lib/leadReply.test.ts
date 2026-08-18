@@ -9,6 +9,13 @@ import {
   type LeadContext,
 } from "../../amplify/functions/lead-reply/email";
 import {
+  PRODUCTION_INTERNAL_MAILBOX,
+  PRODUCTION_LEAD_MAILBOX,
+  TEST_MAILBOX,
+  resolveMailbox,
+} from "../../amplify/functions/mailbox";
+import { AGENCY_FMT } from "../../../shared/agency";
+import {
   MAX_FILES,
   MAX_FILE_BYTES,
   rejectUpload,
@@ -420,5 +427,60 @@ describe("the prompt states the voice rules", () => {
 
   it("names the real producer", () => {
     expect(systemPrompt("Brian Cole")).toContain("Brian Cole");
+  });
+});
+
+/**
+ * Which mailbox outbound lead mail uses.
+ *
+ * Staging sends real email, so this is what keeps a test conversation out of
+ * the queue the team works from. The default direction matters more than the
+ * addresses: an unrecognised branch mailing the live inbox is invisible until
+ * someone notices test threads in Front, whereas a real reply landing at the
+ * test address is obvious.
+ */
+describe("the agency mailbox per branch", () => {
+  it("uses the sales inbox for lead mail on main", () => {
+    expect(resolveMailbox("lead", "main")).toBe(PRODUCTION_LEAD_MAILBOX);
+  });
+
+  it("uses the general inbox for internal reports on main", () => {
+    // A digest and a licence deadline are not sales conversations.
+    expect(resolveMailbox("internal", "main")).toBe(PRODUCTION_INTERNAL_MAILBOX);
+  });
+
+  it("sends everything to the test box on staging", () => {
+    expect(resolveMailbox("lead", "staging")).toBe(TEST_MAILBOX);
+    expect(resolveMailbox("internal", "staging")).toBe(TEST_MAILBOX);
+    expect(TEST_MAILBOX).toBe("jake+testing@protectmyhoa.com");
+  });
+
+  /**
+   * The direction of the default is the point. An unrecognised branch mailing
+   * the live inbox is invisible until someone notices test threads in the
+   * queue; a real message at the test address is obvious.
+   */
+  it("defaults an unknown branch to the test box, never production", () => {
+    for (const b of [undefined, "", "sandbox", "feature/foo", "Main", "MAIN", "master"]) {
+      expect(resolveMailbox("lead", b)).toBe(TEST_MAILBOX);
+      expect(resolveMailbox("internal", b)).toBe(TEST_MAILBOX);
+    }
+  });
+
+  /**
+   * These addresses are spelled out in `functions/mailbox.ts` rather than read
+   * from `shared/agency.ts`, because `backend.ts` cannot import outside
+   * `amplify/`. A test can import both, so this is what stops the copies
+   * drifting apart.
+   */
+  it("matches the addresses in shared/agency.ts", () => {
+    expect(PRODUCTION_LEAD_MAILBOX).toBe(AGENCY_FMT.leadEmailLower);
+    expect(PRODUCTION_INTERNAL_MAILBOX).toBe(AGENCY_FMT.emailLower);
+  });
+
+  it("keeps every address on the SES-verified domain", () => {
+    for (const box of [PRODUCTION_LEAD_MAILBOX, PRODUCTION_INTERNAL_MAILBOX, TEST_MAILBOX]) {
+      expect(box).toMatch(/@protectmyhoa\.com$/);
+    }
   });
 });
