@@ -37,8 +37,17 @@ export function LeadUploadPanel({
   };
   const [rows, setRows] = useState<Row[]>([]);
   const [closed, setClosed] = useState(false);
+  const [dragging, setDragging] = useState(false);
   const nextId = useRef(1);
   const inputRef = useRef<HTMLInputElement>(null);
+  /**
+   * Depth counter, not a boolean.
+   *
+   * `dragleave` fires every time the pointer crosses into a child element, so a
+   * boolean flickers the whole zone off and on as you move across the file list.
+   * Counting enters against leaves is the only thing that reads as steady.
+   */
+  const dragDepth = useRef(0);
 
   const uploaded = rows.filter((r) => r.state === "done").length;
   const busy = rows.some((r) => r.state === "uploading");
@@ -67,6 +76,28 @@ export function LeadUploadPanel({
     await closeLeadUploads(uploadToken);
     onDone?.();
   }, [uploadToken, onDone]);
+
+  function onDragEnter(e: React.DragEvent) {
+    e.preventDefault();
+    dragDepth.current += 1;
+    setDragging(true);
+  }
+
+  function onDragLeave(e: React.DragEvent) {
+    e.preventDefault();
+    dragDepth.current = Math.max(0, dragDepth.current - 1);
+    if (dragDepth.current === 0) setDragging(false);
+  }
+
+  function onDrop(e: React.DragEvent) {
+    // Without preventDefault the browser navigates to the dropped file, which
+    // loses the confirmation screen and the upload window with it.
+    e.preventDefault();
+    dragDepth.current = 0;
+    setDragging(false);
+    const dropped = e.dataTransfer?.files ? Array.from(e.dataTransfer.files) : null;
+    void handleFiles(dropped);
+  }
 
   async function handleFiles(files: File[] | null) {
     if (!files?.length) return;
@@ -110,20 +141,26 @@ export function LeadUploadPanel({
       <div className="lup lup--done">
         <p className="lup__done-text">
           {uploaded > 0
-            ? `Thanks — ${uploaded} ${uploaded === 1 ? "file" : "files"} received. We're reading ${uploaded === 1 ? "it" : "them"} now and your summary is on its way.`
-            : "No problem — your summary is on its way."}
+            ? `Thanks, ${uploaded} ${uploaded === 1 ? "file" : "files"} received. We're reading ${uploaded === 1 ? "it" : "them"} now and your summary is on its way.`
+            : "No problem, your summary is on its way."}
         </p>
       </div>
     );
   }
 
   return (
-    <div className="lup">
+    <div
+      className={"lup" + (dragging ? " lup--dragging" : "")}
+      onDragEnter={onDragEnter}
+      onDragOver={(e) => e.preventDefault()}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+    >
       <h3 className="lup__title">Have your current policy to hand?</h3>
       <p className="lup__sub">
         Send the declaration page, a recent budget, or your condo docs and we'll
-        read them before we reply. Optional — skip this and we'll still be in
-        touch.
+        read them before we reply. Drag them in or choose them below. Optional:
+        skip this and we'll still be in touch.
       </p>
 
       <label className="lup__pick">
@@ -145,6 +182,8 @@ export function LeadUploadPanel({
           {rows.length ? "Add another file" : "Choose files"}
         </span>
       </label>
+
+      {dragging && <p className="lup__drop-hint">Drop your files here</p>}
 
       {rows.length > 0 && (
         <ul className="lup__list">
@@ -168,7 +207,7 @@ export function LeadUploadPanel({
           disabled={busy}
           onClick={() => void finish()}
         >
-          {uploaded > 0 ? "Done uploading" : "Skip — send my summary"}
+          {uploaded > 0 ? "Done uploading" : "Skip, send my summary"}
         </button>
         {uploaded > 0 && (
           <p className="lup__note">

@@ -1,24 +1,60 @@
 /**
- * Post-submit upload panel.
+ * Post-submit upload panel, in the brand's gold.
  *
- * Renders on three different confirmation screens — the quote wizard (which has
- * its own dark/light palette), the association page and the get-started
- * landing — so it takes its colours from `currentColor` and translucent
- * overlays rather than the global tokens. That way it sits correctly on the
- * wizard's navy and on a white card without a variant per host.
+ * Renders on three confirmation screens: the quote wizard (which themes itself
+ * light or dark and stamps `data-theme` on the root), the association page and
+ * the get-started landing. So the palette lives in custom properties on `.lup`
+ * with the light values as the bare default, and only the wizard's dark mode
+ * overrides them. The other two hosts never set `data-theme`, so they always
+ * get the default.
+ *
+ * Gold values are the site's own: `--color-gold` #e5c16a, with the softened
+ * edge and active edge the quote wizard's light theme already uses.
  */
 
 .lup {
+  /* Light: gold edges on a warm tint, matching the wizard's field styling. */
+  --lup-edge: #e8d5a8;
+  --lup-edge-strong: #d4a940;
+  --lup-tint: rgba(229, 193, 106, 0.10);
+  --lup-tint-strong: rgba(229, 193, 106, 0.20);
+  --lup-gold: #e5c16a;
+  --lup-navy: #1a365d;
+  --lup-ok: #1f8b4c;
+  --lup-bad: #c0392b;
+  --lup-bad-tint: rgba(192, 57, 43, 0.10);
+
   text-align: left;
   max-width: 460px;
   margin: 28px auto 0;
-  padding: 20px 22px;
-  border: 1px solid rgba(127, 143, 170, 0.32);
+  padding: 22px;
+  /* Dashed, because this is a drop target and that is the one convention
+     everyone already reads as "you can put something here". */
+  border: 1.5px dashed var(--lup-edge);
   border-radius: 12px;
-  background: rgba(127, 143, 170, 0.06);
+  background: var(--lup-tint);
   display: flex;
   flex-direction: column;
   gap: 10px;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+/* The wizard's dark mode. Same gold, dialled down so it sits on near-black. */
+:root[data-theme="dark"] .lup {
+  --lup-edge: rgba(229, 193, 106, 0.38);
+  --lup-edge-strong: #e5c16a;
+  --lup-tint: rgba(229, 193, 106, 0.06);
+  --lup-tint-strong: rgba(229, 193, 106, 0.14);
+  --lup-ok: #5fd39b;
+  --lup-bad: #f3a49b;
+  --lup-bad-tint: rgba(243, 164, 155, 0.12);
+}
+
+/* Dragging over it: solid edge, stronger tint, so the target is unmistakable. */
+.lup--dragging {
+  border-style: solid;
+  border-color: var(--lup-edge-strong);
+  background: var(--lup-tint-strong);
 }
 
 .lup__title {
@@ -32,7 +68,14 @@
   margin: 0;
   font-size: 13.5px;
   line-height: 1.55;
-  opacity: 0.72;
+  opacity: 0.75;
+}
+
+.lup__drop-hint {
+  margin: 0;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--lup-edge-strong);
 }
 
 /* The native input is hidden behind the label, as elsewhere on the site. */
@@ -42,15 +85,18 @@
   gap: 8px;
   align-self: flex-start;
   padding: 9px 15px;
-  border: 1px solid rgba(127, 143, 170, 0.5);
+  border: 1px solid var(--lup-edge);
   border-radius: 8px;
   font-size: 13.5px;
   font-weight: 600;
   cursor: pointer;
-  background: rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.5);
+  color: inherit;
+  transition: border-color 0.15s ease;
 }
-.lup__pick:hover { border-color: currentColor; }
-.lup__pick:focus-within { outline: 2px solid currentColor; outline-offset: 2px; }
+:root[data-theme="dark"] .lup__pick { background: rgba(255, 255, 255, 0.04); }
+.lup__pick:hover { border-color: var(--lup-edge-strong); }
+.lup__pick:focus-within { outline: 2px solid var(--lup-edge-strong); outline-offset: 2px; }
 .lup__pick input[type="file"] { display: none; }
 .lup__pick:has(input:disabled) { opacity: 0.5; cursor: default; }
 
@@ -69,9 +115,9 @@
   justify-content: space-between;
   gap: 12px;
   font-size: 13px;
-  padding: 7px 10px;
+  padding: 8px 11px;
   border-radius: 6px;
-  background: rgba(127, 143, 170, 0.1);
+  background: var(--lup-tint-strong);
 }
 
 .lup__name {
@@ -87,11 +133,9 @@
   font-weight: 600;
   opacity: 0.75;
 }
-/* Semantic, and readable on either host palette: a failure has to be legible
-   on the wizard's navy as well as on a white card. */
-.lup__row--done .lup__state { color: #2f9e6b; opacity: 1; }
-.lup__row--failed { background: rgba(200, 70, 60, 0.14); }
-.lup__row--failed .lup__state { color: #e08a80; opacity: 1; font-weight: 500; }
+.lup__row--done .lup__state { color: var(--lup-ok); opacity: 1; }
+.lup__row--failed { background: var(--lup-bad-tint); }
+.lup__row--failed .lup__state { color: var(--lup-bad); opacity: 1; font-weight: 500; }
 
 .lup__actions {
   display: flex;
@@ -100,41 +144,48 @@
   margin-top: 4px;
 }
 
-.lup__btn {
-  align-self: flex-start;
-  font: 600 14px/1 inherit;
-  padding: 11px 18px;
-  border-radius: 8px;
-  border: 1px solid transparent;
-  cursor: pointer;
-}
-/* A translucent overlay rather than a filled `currentColor` button: a solid
-   fill would need its own foreground colour, and the host's text colour is the
-   only one this component knows. The overlay works on navy and on white. */
+/* Gold fill with navy text, the same treatment as the site's primary CTA. Gold
+   is light enough that navy stays readable on it in either theme, which is why
+   this needs no dark variant. */
 .lup__btn--primary {
-  background: rgba(127, 143, 170, 0.22);
-  border-color: rgba(127, 143, 170, 0.5);
-  color: inherit;
+  align-self: flex-start;
+  /* Longhands, not `font: 700 14px/1 inherit`. `inherit` is not a valid family
+     inside the shorthand, so the parser dropped the whole declaration and the
+     button rendered at the browser default 13.3px/400 instead. */
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 12px 20px;
+  border-radius: 8px;
+  border: 1px solid var(--lup-gold);
+  background: var(--lup-gold);
+  color: var(--lup-navy);
+  cursor: pointer;
+  transition: filter 0.15s ease;
 }
-.lup__btn--primary:hover { border-color: currentColor; }
-.lup__btn:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
-.lup__btn:disabled { opacity: 0.55; cursor: default; }
+.lup__btn--primary:hover { filter: brightness(1.06); }
+.lup__btn--primary:focus-visible { outline: 2px solid var(--lup-edge-strong); outline-offset: 2px; }
+.lup__btn--primary:disabled { opacity: 0.55; cursor: default; filter: none; }
 
 .lup__note {
   margin: 0;
   font-size: 12.5px;
   line-height: 1.5;
-  opacity: 0.65;
+  opacity: 0.7;
 }
 
-.lup--done { text-align: center; }
+.lup--done {
+  text-align: center;
+  border-style: solid;
+}
 .lup__done-text {
   margin: 0;
   font-size: 14px;
   line-height: 1.6;
-  opacity: 0.85;
+  opacity: 0.9;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .lup * { transition: none !important; }
+  .lup, .lup__pick, .lup__btn--primary { transition: none; }
 }

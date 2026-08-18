@@ -377,14 +377,32 @@ function QuoteFlow({ isDay, onToggleTheme }: { isDay: boolean; onToggleTheme: ()
   async function submitForm(finalData: FormData) {
     setSubmitting(true);
     setError("");
-    // CRM lead (fail-soft, runs alongside the notification email)
-    // Still not awaited before the email: intake must never delay the
-    // confirmation screen. The panel appears when the token arrives.
-    void submitCrmLead(buildCrmLead(finalData, agent.name)).then((r) =>
-      setUploadToken(r?.uploadToken ?? null)
-    );
+    /**
+     * Both go out together, and the token is in hand before the confirmation
+     * screen renders.
+     *
+     * Intake used to be fire-and-forget with the panel appearing whenever it
+     * answered, which meant the upload box popped in a beat after the "Thank
+     * you" screen. Since the notification email is awaited anyway and is the
+     * slower of the two, waiting on intake alongside it costs nothing in the
+     * normal case and the panel is there on first paint.
+     *
+     * Capped so a hanging intake cannot hold the confirmation hostage: past the
+     * cap we advance without a token and the `.then` below fills it in late,
+     * which is the old behaviour rather than a broken one.
+     */
+    const intake = submitCrmLead(buildCrmLead(finalData, agent.name));
+    void intake.then((r) => setUploadToken(r?.uploadToken ?? null));
+    const intakeOrGiveUp = Promise.race([
+      intake,
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 4000)),
+    ]);
     try {
-      await sendQuoteEmail(finalData, agent.name);
+      const [, leadResult] = await Promise.all([
+        sendQuoteEmail(finalData, agent.name),
+        intakeOrGiveUp,
+      ]);
+      if (leadResult?.uploadToken) setUploadToken(leadResult.uploadToken);
       setDirection(1);
       setStepIndex(flow.length - 1);
       resetInput();
