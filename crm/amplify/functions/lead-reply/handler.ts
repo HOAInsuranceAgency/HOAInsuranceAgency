@@ -12,7 +12,9 @@ import { decide } from "./decide";
 import { flattenExtraction } from "./extraction";
 import {
   REPLY_SCHEMA,
+  WORD_BUDGET,
   buildPrompt,
+  countWords,
   renderReply,
   systemPrompt,
   type LeadContext,
@@ -275,7 +277,7 @@ function toContext(
 }
 
 /** One model call, forced through the reply schema. */
-async function generate(lead: LeadContext) {
+async function callModel(lead: LeadContext, extraTurns: Anthropic.MessageParam[] = []) {
   const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
   const response = await anthropic.messages.create({
     model: CLAUDE_MODEL,
@@ -289,7 +291,7 @@ async function generate(lead: LeadContext) {
       },
     ],
     tool_choice: { type: "tool", name: "write_reply" },
-    messages: [{ role: "user", content: buildPrompt(lead) }],
+    messages: [{ role: "user", content: buildPrompt(lead) }, ...extraTurns],
   });
 
   const block = response.content.find((c) => c.type === "tool_use");
@@ -301,4 +303,53 @@ async function generate(lead: LeadContext) {
     throw new Error("The model returned an empty reply.");
   }
   return { subject: out.subject.trim(), body: out.body.trim() };
+}
+
+/**
+ * Generate a reply, and hold it to the word budget.
+ *
+ * A length in a prompt is a suggestion. The instruction said 80 to 140 and the
+ * first real lead came back at 153, because a stated range reads as a target to
+ * fill rather than a ceiling. So the count is checked here, and over the hard cap
+ * the model is asked again with its own draft quoted back at it.
+ *
+ * One retry, not a loop: the second attempt is nearly always inside the budget,
+ * and a lead waiting on an email should not wait on a model arguing with itself.
+ * Whichever draft is shorter wins, so the retry can never make things worse.
+ * Nothing is truncated — an email cut off at 80 words ends mid-clause, which is
+ * a worse failure than a long one.
+ */
+async function generate(lead: LeadContext) {
+  const first = await callModel(lead);
+  const words = countWords(first.body);
+  if (words <= WORD_BUDGET.HARD) return first;
+
+  console.warn(
+    `[lead-reply] body was ${words} words, over the ${WORD_BUDGET.HARD} cap; regenerating`
+  );
+  try {
+    const second = await callModel(lead, [
+      { role: "assistant", content: first.body },
+      {
+        role: "user",
+        content:
+          `That draft is ${words} words. The ceiling is ${WORD_BUDGET.MAX}. ` +
+          `Cut it to under ${WORD_BUDGET.MAX} words. Drop whole sentences rather ` +
+          `than trimming words out of every one, and keep the specific detail from ` +
+          `their documents over anything general. Do not add a greeting or sign-off.`,
+      },
+    ]);
+    const shorter = countWords(second.body) < words ? second : first;
+    console.log(
+      `[lead-reply] retry produced ${countWords(second.body)} words; sending ${countWords(shorter.body)}`
+    );
+    return shorter;
+  } catch (err) {
+    // A failed retry must not cost the lead their email. The long one is fine.
+    console.warn(
+      "[lead-reply] length retry failed, sending the first draft",
+      err instanceof Error ? err.message : err
+    );
+    return first;
+  }
 }

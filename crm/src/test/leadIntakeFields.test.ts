@@ -4,6 +4,7 @@ import {
   parseUnitCount,
 } from "../../amplify/functions/lead-intake/fields";
 import { flattenExtraction } from "../../amplify/functions/lead-reply/extraction";
+import { WORD_BUDGET, countWords, systemPrompt } from "../../amplify/functions/lead-reply/email";
 import { priorCarrierKey } from "../lib/extractionKeys";
 
 describe("parseUnitCount", () => {
@@ -170,5 +171,39 @@ describe("the intake carrier row is keyed like a hand-typed one", () => {
     expect(priorCarrierKey({ carrierName: "Acadia" })).not.toBe(
       priorCarrierKey({ carrierName: "" })
     );
+  });
+});
+
+describe("the reply's word budget", () => {
+  it("counts words the way a reader would", () => {
+    expect(countWords("one two three")).toBe(3);
+    // Paragraph breaks and runs of whitespace are not words.
+    expect(countWords("  one\n\n two   three \n")).toBe(3);
+    expect(countWords("")).toBe(0);
+    expect(countWords("   ")).toBe(0);
+  });
+
+  it("leaves headroom between what is asked for and what is rejected", () => {
+    // The prompt asks for MAX; the handler only regenerates above HARD. If they
+    // were equal, every reply one word long would burn a second model call.
+    expect(WORD_BUDGET.HARD).toBeGreaterThan(WORD_BUDGET.MAX);
+  });
+
+  it("asks the prompt for the same ceiling the handler enforces", () => {
+    // Two numbers in two files describing one rule: they have to agree, or the
+    // model is told 80 while the code rejects at something else.
+    expect(systemPrompt("Brian Cole")).toContain(`45 to ${WORD_BUDGET.MAX} words`);
+  });
+
+  /** The email that prompted the cap, measured. */
+  it("would have rejected the draft that was too long", () => {
+    const tooLong = `Got the binder for 420 Lakeside Office Condominium Trust and read through it. It shows Tri-State Insurance Company of Minnesota (Acadia) writing property and general liability through Gaudette, running to 09/30/2026, with the 420 Lakeside Ave building listed on a special form basis. You asked about property, GL and D&O, and I noticed there's no D&O line in the binder at all, so I'd want to sort out whether that sits on a separate policy somewhere.
+
+A September expiration gives us time to do this properly. I'll start putting the file together this week and come back to you with what I'm seeing.
+
+If you can lay hands on the full policy (the binder is thin on loss history) or anything on the 15 units and how the trust is set up, that helps. Whatever you have is fine, and I'm happy to do a quick call instead if that's easier.`;
+    expect(countWords(tooLong)).toBeGreaterThan(WORD_BUDGET.HARD);
+    // And roughly half of it is inside the new budget, which is what was asked for.
+    expect(Math.round(countWords(tooLong) / 2)).toBeLessThanOrEqual(WORD_BUDGET.MAX);
   });
 });

@@ -101,7 +101,9 @@ NEVER use: "It's worth noting that", "That said,", "Moreover", "Furthermore", "I
 
 No exclamation marks. No emoji. No headings. No bullets. No markdown. No bold.
 
-LENGTH: 80 to 140 words. Shorter than feels complete. If you are padding to reach a length, stop.
+LENGTH: 45 to 80 words. This is a hard ceiling, not a target to fill.
+
+That is short. It is meant to be. A first email that takes twenty seconds to read gets answered; one that takes ninety gets left for later. Say the one thing you noticed in their documents, say what happens next, stop. You do not have to mention everything you know. Anything you leave out, you can say on the phone.
 
 Return only the fields asked for. Plain text in the body. Separate paragraphs with a blank line.`;
 
@@ -119,7 +121,7 @@ export const REPLY_SCHEMA = {
     body: {
       type: "string",
       description:
-        "The email body as plain text, paragraphs separated by a blank line. No greeting line and no sign-off; both are added around it.",
+        "The email body as plain text, paragraphs separated by a blank line. 45-80 words, hard ceiling. No greeting line and no sign-off; both are added around it.",
     },
     askedFor: {
       type: "array",
@@ -244,6 +246,24 @@ export function stripDashes(text: string): string {
 export function findAiTells(text: string): string[] {
   const lower = text.toLowerCase();
   return AI_TELLS.filter((t) => lower.includes(t));
+}
+
+/**
+ * Word budget for the generated body.
+ *
+ * `MAX` is what the prompt asks for. `HARD` is where the handler stops trusting
+ * it and asks again: models treat a stated range as a target to fill and drift
+ * over it, and the first version of this prompt said 80-140 and produced 153.
+ *
+ * Nothing truncates. Cutting a body off at N words ends an email mid-clause,
+ * which is worse than a long one. Over the hard cap the handler regenerates and
+ * keeps whichever came back shorter.
+ */
+export const WORD_BUDGET = { MAX: 80, HARD: 100 } as const;
+
+/** Words in a generated body, counted the way a reader would. */
+export function countWords(text: string): number {
+  return text.trim().split(/\s+/).filter(Boolean).length;
 }
 
 export interface RenderedReply {
