@@ -4,6 +4,7 @@ import {
   parseUnitCount,
 } from "../../amplify/functions/lead-intake/fields";
 import { flattenExtraction } from "../../amplify/functions/lead-reply/extraction";
+import { priorCarrierKey } from "../lib/extractionKeys";
 
 describe("parseUnitCount", () => {
   it("takes what a form actually sends", () => {
@@ -130,5 +131,44 @@ describe("flattenExtraction", () => {
     expect(flattenExtraction("{}")).toBeNull();
     expect(flattenExtraction(JSON.stringify({ documentCount: 1 }))).toBeNull();
     expect(flattenExtraction(JSON.stringify({ a: { value: "   " } }))).toBeNull();
+  });
+});
+
+/**
+ * A web lead's incumbent carrier now gets a `PriorCarrier` row instead of a
+ * line of prose in `notes`, and the row has to be *matchable*: the account's
+ * Prior carriers tab computes `extractionSourceKey` from `priorCarrierKey` when
+ * someone types a row by hand, and a later extraction over the declarations
+ * page matches on the same string. Intake computing a different one would file
+ * a second copy of the carrier beside the first.
+ */
+describe("the intake carrier row is keyed like a hand-typed one", () => {
+  it("agrees with the tab for a carrier with no line or number", () => {
+    // What intake passes: nulls, because a form gives neither.
+    const fromIntake = priorCarrierKey({
+      carrierName: "Acadia",
+      policyNumber: null,
+      lineOfBusiness: null,
+    });
+    // What `PriorCarrierTab` passes: its blank form fields are empty strings.
+    const fromTab = priorCarrierKey({
+      carrierName: "Acadia",
+      policyNumber: "",
+      lineOfBusiness: "",
+    });
+    expect(fromIntake).toBe(fromTab);
+  });
+
+  it("normalises what a visitor types, so case and spacing do not split it", () => {
+    expect(
+      priorCarrierKey({ carrierName: "  ACADIA   Insurance ", policyNumber: null })
+    ).toBe(priorCarrierKey({ carrierName: "Acadia Insurance", policyNumber: "" }));
+  });
+
+  it("keys a named carrier distinctly from a nameless row", () => {
+    // A blank name must not collide with a real one.
+    expect(priorCarrierKey({ carrierName: "Acadia" })).not.toBe(
+      priorCarrierKey({ carrierName: "" })
+    );
   });
 });

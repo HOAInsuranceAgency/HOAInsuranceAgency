@@ -12,7 +12,7 @@ import {
   DEFAULT_CONTACT_TYPE,
   isAccountType,
 } from "../../../src/lib/enums";
-import { contactKey } from "../../../src/lib/extractionKeys";
+import { contactKey, priorCarrierKey } from "../../../src/lib/extractionKeys";
 import { listAllPages } from "../../../src/lib/pagination";
 import { NO_UPLOAD_WINDOW_MINUTES } from "../../../../shared/leadUpload";
 import { parsePolicyExpiration, parseUnitCount } from "./fields";
@@ -170,7 +170,6 @@ export const handler: Schema["submitWebLead"]["functionHandler"] = async (
     clean(args.notes, 2000),
     validEmail !== email && email ? `Email (unvalidated): ${email}` : undefined,
     clean(args.unitNumber) && `Unit: ${clean(args.unitNumber)}`,
-    clean(args.currentCarrier) && `Current carrier: ${clean(args.currentCarrier)}`,
     unitCount === null && rawUnits ? `Units (unparsed): ${rawUnits}` : undefined,
     policyExpiration === null && rawExpiration
       ? `Program expiry (unparsed): ${rawExpiration}`
@@ -261,6 +260,72 @@ export const handler: Schema["submitWebLead"]["functionHandler"] = async (
         `Web lead ${data.id} created, but its contact was not`,
         JSON.stringify(contactErrors)
       );
+    }
+  }
+
+  /**
+   * The incumbent carrier as a `PriorCarrier` row.
+   *
+   * It used to be a line of prose in `notes`, where the account's own Prior
+   * carriers tab could not see it and neither could the ACORD incumbent-coverage
+   * block that `acordApp.ts` builds from these rows. A producer retyped what the
+   * lead had already told us.
+   *
+   * `lineOfBusiness` is left empty on purpose. The form asks who the carrier is,
+   * not which line they write, and an association routinely splits property, GL
+   * and D&O across three of them. The wizard's "lines to review" answers say
+   * what the board wants looked at, not what this carrier covers, so filling the
+   * line from them would be inventing a fact about their program. The tab shows
+   * an empty line as "—" and takes one keystroke to set.
+   *
+   * Keyed with the same `priorCarrierKey` the tab uses on a hand-typed row, so a
+   * later extraction over the declarations page can recognise this row and
+   * update it rather than file a second copy beside it.
+   */
+  const carrierName = clean(args.currentCarrier, 200);
+  if (carrierName) {
+    const prior = {
+      carrierName,
+      policyNumber: null,
+      lineOfBusiness: null,
+    };
+    const { errors: carrierErrors } = await client.models.PriorCarrier.create({
+      accountId: data.id,
+      carrierName,
+      // The expiry they gave is this carrier's term ending. Also on the account,
+      // where it drives the lead renewal pipeline; here it is what makes the row
+      // useful on an ACORD form rather than a bare name.
+      expirationDate: policyExpiration ?? undefined,
+      lastWriteBy: WRITER,
+      extractionSourceKey: priorCarrierKey(prior),
+    });
+    if (carrierErrors?.length) {
+      console.error(
+        `Web lead ${data.id}: prior carrier row failed`,
+        JSON.stringify(carrierErrors)
+      );
+      /**
+       * Put it back in `notes` rather than lose it.
+       *
+       * This is the only field intake moves out of prose into a row of its own,
+       * so it is the only one a failed child write can drop entirely. A repair
+       * write in an already-failing path is cheap; a producer never learning who
+       * the incumbent is costs a call.
+       */
+      const repaired = [extraNotes, `Current carrier: ${carrierName}`]
+        .filter(Boolean)
+        .join("\n");
+      const { errors: noteErrors } = await client.models.Account.update({
+        id: data.id,
+        notes: repaired,
+        lastWriteBy: WRITER,
+      });
+      if (noteErrors?.length) {
+        console.error(
+          `Web lead ${data.id}: could not record the carrier in notes either`,
+          JSON.stringify(noteErrors)
+        );
+      }
     }
   }
 
