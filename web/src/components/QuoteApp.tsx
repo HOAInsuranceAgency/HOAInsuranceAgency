@@ -3,6 +3,7 @@ import { fireConversion, PHONE, PHONE_HREF } from "../constants";
 import { submitCrmLead } from "../lib/crmLead";
 import LeadUploadPanel from "./LeadUploadPanel";
 import { attachAddressAutocomplete, loadGooglePlaces } from "../lib/googlePlaces";
+import { takeHandoff } from "../lib/addressHandoff";
 import { DARK, LIGHT, ThemeContext, isDaytime, useTheme, type ThemeMode } from "./quote/theme";
 import { Icon } from "./quote/icons";
 import { STEPS, getFlow, validateText, type FormData, type GroupField } from "./quote/schema";
@@ -119,9 +120,19 @@ function QuoteFlow({ isDay, onToggleTheme }: { isDay: boolean; onToggleTheme: ()
   });
   const [data, setData] = useState<FormData>(() => {
     const base = persisted?.data ?? {};
-    // Apply URL prefill if no persisted data
-    if (!persisted && prefill.state) {
-      base.state = prefill.state;
+    // Only a fresh start takes either of these. Someone resuming has already
+    // answered these questions, and overwriting their answers with something
+    // they typed on the homepage twenty minutes ago would be worse than asking.
+    if (!persisted) {
+      if (prefill.state) base.state = prefill.state;
+      /**
+       * The address from a hero form on another page, handed over in
+       * sessionStorage rather than the URL. Applied after the state prefill so
+       * an actual address wins over a state inferred from the referrer, and
+       * consumed as it is read so it cannot reappear in a later session.
+       */
+      const handed = takeHandoff();
+      if (handed) Object.assign(base, handed);
     }
     return base;
   });
