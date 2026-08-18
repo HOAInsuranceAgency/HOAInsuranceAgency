@@ -559,6 +559,7 @@ function QuoteFlow({ isDay, onToggleTheme }: { isDay: boolean; onToggleTheme: ()
 
                     {f.kind === "select" && (
                       <SelectField
+                        id={`qf-${f.field}`}
                         value={(groupVal[f.field] as string) || ""}
                         onChange={(v) => setGroupField(f, v)}
                         options={f.options ?? []}

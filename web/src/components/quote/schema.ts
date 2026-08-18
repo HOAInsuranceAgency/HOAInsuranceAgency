@@ -143,7 +143,25 @@ export const STEPS: Record<string, Step> = {
   where: {
     type: "group",
     question: "Where is the property?",
+    sub: "Start with the address and we'll fill in the state and town.",
     fields: [
+      /**
+       * Address first, deliberately.
+       *
+       * It carries Places autocomplete and a chosen suggestion fills the state
+       * and town below it, so asking for those first made a visitor type what
+       * the next field was about to work out. Optional, and stays that way: a
+       * board member who does not have the street address to hand can still
+       * answer where the property is.
+       */
+      {
+        kind: "text",
+        field: "propertyAddress",
+        label: "Property address",
+        placeholder: "Start typing your address",
+        optional: true,
+        places: true,
+      },
       {
         kind: "select",
         field: "state",
@@ -153,16 +171,6 @@ export const STEPS: Record<string, Step> = {
         half: true,
       },
       { kind: "text", field: "city", label: "City or town", placeholder: "e.g. Marlborough", half: true },
-      {
-        kind: "text",
-        field: "propertyAddress",
-        label: "Primary property address",
-        placeholder: "Start typing your address",
-        optional: true,
-        // Picking a suggestion also fills the state and city above, which are
-        // the two fields a visitor would otherwise type by hand right after.
-        places: true,
-      },
     ],
   },
 

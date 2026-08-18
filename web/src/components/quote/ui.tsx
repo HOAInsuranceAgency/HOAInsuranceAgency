@@ -378,12 +378,20 @@ export function TextField({
  * native picker is also what mobile keyboards handle best.
  */
 export function SelectField({
+  id,
   value,
   onChange,
   options,
   placeholder = "Select…",
   autoFocus = false,
 }: {
+  /**
+   * Needed wherever a `<label htmlFor>` points at this select. Group steps
+   * render one for every field, so without it the label was attached to
+   * nothing: clicking "State" did not focus the select and a screen reader
+   * read it as unlabelled.
+   */
+  id?: string;
   value: string;
   onChange: (v: string) => void;
   options: { value: string; label: string }[];
@@ -400,6 +408,7 @@ export function SelectField({
   return (
     <select
       ref={ref}
+      id={id}
       className="qf-input qf-select"
       value={value}
       onChange={(e) => onChange(e.target.value)}
