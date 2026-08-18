@@ -49,13 +49,43 @@ const {
       id="hero-address"
       type="text"
       placeholder={placeholder}
-      autocomplete="street-address"
+      autocomplete="off"
       required
     />
     <button class="hero-lookup__btn" type="submit">{buttonText}</button>
   </div>
   <p class="hero-lookup__note">{microcopy}</p>
 </form>
+
+<script>
+  /**
+   * Google Places on the hero address field.
+   *
+   * `is:inline` is deliberately absent: this needs to be a module so it can
+   * import the shared loader rather than carrying a second copy of it.
+   *
+   * Purely an input affordance. The field is still unnamed, so nothing about a
+   * chosen address reaches the URL, and the value is still discarded on submit
+   * — the wizard asks for the address itself on step 3. Autocomplete here makes
+   * the box easier to fill, not more useful.
+   */
+  import { attachAddressAutocomplete, loadGooglePlaces } from "../lib/googlePlaces";
+
+  // Every hero on the page: the component renders on four different templates
+  // and a page could in principle carry more than one.
+  const inputs = document.querySelectorAll<HTMLInputElement>(".hero-lookup__input");
+  if (inputs.length) {
+    loadGooglePlaces()
+      .then(() => {
+        inputs.forEach((input) => attachAddressAutocomplete(input, (place) => {
+          input.value = place.formatted || place.address;
+        }));
+      })
+      // Silent by design: a blocked script leaves a plain text box that still
+      // takes a typed address, which is all this field ever did.
+      .catch(() => {});
+  }
+</script>
 
 <style>
   .hero-lookup {

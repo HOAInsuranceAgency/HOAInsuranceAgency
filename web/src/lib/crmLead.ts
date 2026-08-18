@@ -59,6 +59,31 @@ export interface CrmLeadResult {
   uploadToken: string | null;
 }
 
+/**
+ * Unwrap what AppSync returns for an `a.json()` mutation.
+ *
+ * It comes back as a JSON *string*, not an object — `AWSJSON` is serialised, so
+ * `data.submitWebLead` is `"{\"ok\":true,…}"`. Reading `.ok` off that is
+ * `undefined`, which silently looked exactly like a refusal: intake worked, the
+ * lead was created, and the browser concluded it had failed. That is why no
+ * upload panel ever appeared.
+ *
+ * Tolerates an object too, in case a future runtime stops stringifying.
+ */
+function unwrap(payload: unknown): Record<string, unknown> | null {
+  if (payload == null) return null;
+  if (typeof payload === "object") return payload as Record<string, unknown>;
+  if (typeof payload === "string") {
+    try {
+      const parsed = JSON.parse(payload);
+      return parsed && typeof parsed === "object" ? parsed : null;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
 export async function submitCrmLead(
   input: CrmLeadInput
 ): Promise<CrmLeadResult | null> {
@@ -75,9 +100,13 @@ export async function submitCrmLead(
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const body = await res.json();
     if (body.errors?.length) throw new Error(body.errors[0].message);
-    const result = body.data?.submitWebLead;
-    if (!result?.ok || !result.id) return null;
-    return { accountId: result.id, uploadToken: result.uploadToken ?? null };
+    const result = unwrap(body.data?.submitWebLead);
+    if (!result?.ok || typeof result.id !== "string") return null;
+    return {
+      accountId: result.id,
+      uploadToken:
+        typeof result.uploadToken === "string" ? result.uploadToken : null,
+    };
   } catch (err) {
     // Fail-soft by design; the FormSubmit email still captures the lead.
     console.warn("CRM lead intake failed", err);
@@ -125,7 +154,7 @@ async function crmMutation(
   const body = await res.json();
   if (body.errors?.length) throw new Error(body.errors[0].message);
   const [payload] = Object.values(body.data ?? {});
-  return (payload ?? null) as Record<string, unknown> | null;
+  return unwrap(payload);
 }
 
 /**

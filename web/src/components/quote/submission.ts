@@ -60,8 +60,10 @@ function buildSubmission(data: FormData, agentName: string) {
     /* ── Association ── */
     "Association": association,
     "Property Address": get("propertyAddress") || "—",
+    "Address Line 2": get("propertyAddress2") || "—",
     "City": get("city") || "—",
     "State": get("state") || "—",
+    "ZIP": get("zip") || "—",
   };
 
   if (role === "board" || role === "manager") {
@@ -121,11 +123,18 @@ export function buildCrmLead(data: FormData, agentName: string): CrmLeadInput {
     contactLastName: nameParts.slice(1).join(" ") || undefined,
     contactEmail: get("contactEmail") || undefined,
     contactPhone: get("contactPhone") || undefined,
-    address: get("propertyAddress") || undefined,
+    // `Account` has a single `address` column and no second line, so the two
+    // are joined here. Dropping line 2 would lose the unit number on exactly
+    // the leads where it matters most — a unit owner's own address.
+    address:
+      [get("propertyAddress"), get("propertyAddress2")]
+        .filter(Boolean)
+        .join(", ") || undefined,
     city: get("city") || undefined,
     // Every licensed state is now selectable, so "OTHER" no longer exists in the
     // options. The guard stays for leads persisted under the old schema.
     state: state && state !== "OTHER" ? state : undefined,
+    zip: get("zip") || undefined,
     currentCarrier: (!isOwner && get("currentCarrier")) || undefined,
     source: "website-quote",
     notes,

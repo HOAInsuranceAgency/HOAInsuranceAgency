@@ -296,8 +296,12 @@ function QuoteFlow({ isDay, onToggleTheme }: { isDay: boolean; onToggleTheme: ()
           setGroupVal((g) => {
             const next = { ...g };
             next.propertyAddress = place.address || place.formatted;
-            if (place.state && !next.state) next.state = place.state;
+            // Never overwrite an answer already given: someone who picked
+            // their state before typing the address keeps it. Line 2 is never
+            // touched, since Places has no notion of a unit number.
             if (place.city && !next.city) next.city = place.city;
+            if (place.state && !next.state) next.state = place.state;
+            if (place.zip && !next.zip) next.zip = place.zip;
             return next;
           });
           setGroupErr({});

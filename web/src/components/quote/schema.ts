@@ -143,25 +143,35 @@ export const STEPS: Record<string, Step> = {
   where: {
     type: "group",
     question: "Where is the property?",
-    sub: "Start with the address and we'll fill in the state and town.",
+    sub: "Start with the street address and we'll fill in the rest.",
     fields: [
       /**
-       * Address first, deliberately.
+       * A conventional postal address, in the order people write one.
        *
-       * It carries Places autocomplete and a chosen suggestion fills the state
-       * and town below it, so asking for those first made a visitor type what
-       * the next field was about to work out. Optional, and stays that way: a
-       * board member who does not have the street address to hand can still
-       * answer where the property is.
+       * Line 1 carries Places autocomplete and a chosen suggestion fills the
+       * town, state and ZIP below it, so those are usually confirmations rather
+       * than typing. Line 1 stays optional: a trustee who does not have the
+       * street address to hand can still say where the property is.
        */
       {
         kind: "text",
         field: "propertyAddress",
-        label: "Property address",
+        label: "Address line 1",
         placeholder: "Start typing your address",
         optional: true,
         places: true,
       },
+      {
+        kind: "text",
+        field: "propertyAddress2",
+        label: "Address line 2",
+        placeholder: "Unit, building, floor",
+        optional: true,
+      },
+      // City takes its own row and State/ZIP share the next. Three halves would
+      // have left ZIP stranded alone on a third row, and a town name needs the
+      // width more than a two-letter code and five digits do.
+      { kind: "text", field: "city", label: "City or town", placeholder: "e.g. Marlborough" },
       {
         kind: "select",
         field: "state",
@@ -170,7 +180,7 @@ export const STEPS: Record<string, Step> = {
         options: STATE_OPTIONS,
         half: true,
       },
-      { kind: "text", field: "city", label: "City or town", placeholder: "e.g. Marlborough", half: true },
+      { kind: "text", field: "zip", label: "ZIP", placeholder: "01752", optional: true, half: true },
     ],
   },
 
