@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { FORMSUBMIT_URL, LEAD_EMAIL, LEAD_EMAIL_HREF, fireConversion } from "../constants";
 import { submitCrmLead } from "../lib/crmLead";
+import LeadUploadPanel from "./LeadUploadPanel";
 import "./InstantAssessment.css";
 
 /* ── Google Places ── */
@@ -48,6 +49,8 @@ export function InstantAssessment({
   const [phone, setPhone] = useState("");
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
+  // Only set once intake accepts the lead — no token, no upload panel.
+  const [uploadToken, setUploadToken] = useState<string | null>(null);
   const [error, setError] = useState("");
   const addressRef = useRef<HTMLInputElement>(null);
   const acRef = useRef<google.maps.places.Autocomplete | null>(null);
@@ -107,7 +110,7 @@ export function InstantAssessment({
       state: detectedState || undefined,
       source: `website-assessment:${source}`,
       notes: units ? `Unit count: ${units}` : undefined,
-    });
+    }).then((r) => setUploadToken(r?.uploadToken ?? null));
     try {
       const res = await fetch(FORMSUBMIT_URL, {
         method: "POST",
@@ -150,6 +153,9 @@ export function InstantAssessment({
         <p className="ia-success-text">
           We'll review your information and reach out within one business day with a personalized coverage assessment.
         </p>
+        {/* Offered only after the lead is captured — an upload that
+            never happens costs nothing at this point. */}
+        {uploadToken && <LeadUploadPanel uploadToken={uploadToken} />}
         <a href="tel:+15082332261" className="ia-phone-link">
           Or call us now — 508-233-2261
         </a>

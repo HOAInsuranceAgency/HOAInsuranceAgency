@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { FORMSUBMIT_URL, LEAD_EMAIL, LEAD_EMAIL_HREF, fireConversion } from "../constants";
 import { submitCrmLead } from "../lib/crmLead";
+import LeadUploadPanel from "./LeadUploadPanel";
 import "./AssociationLeadForm.css";
 
 interface Property {
@@ -27,6 +28,8 @@ export function AssociationLeadForm({ property }: Props) {
   const [notes, setNotes] = useState("");
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
+  // Only set once intake accepts the lead — no token, no upload panel.
+  const [uploadToken, setUploadToken] = useState<string | null>(null);
   const [error, setError] = useState("");
 
   const fullAddress = [property.address, property.city, property.state, property.zip]
@@ -58,7 +61,7 @@ export function AssociationLeadForm({ property }: Props) {
       buildiumId: String(property.id),
       source: `website-ho6:${property.slug}`,
       notes: [`Association: ${property.name}`, notes.trim()].filter(Boolean).join("\n"),
-    });
+    }).then((r) => setUploadToken(r?.uploadToken ?? null));
     try {
       const res = await fetch(FORMSUBMIT_URL, {
         method: "POST",
@@ -106,6 +109,9 @@ export function AssociationLeadForm({ property }: Props) {
         <p className="alf-success-text">
           We've received your HO-6 quote request for your unit at <strong>{property.name}</strong>. We'll coordinate with your association's master policy and reach out within one business day with a personalized quote.
         </p>
+        {/* Offered only after the lead is captured — an upload that
+            never happens costs nothing at this point. */}
+        {uploadToken && <LeadUploadPanel uploadToken={uploadToken} />}
         <a href="tel:+15082332261" className="alf-phone-link">
           Have questions? Call us — 508-233-2261
         </a>

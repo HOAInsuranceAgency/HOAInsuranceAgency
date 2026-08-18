@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { fireConversion, PHONE, PHONE_HREF } from "../constants";
 import { submitCrmLead } from "../lib/crmLead";
+import LeadUploadPanel from "./LeadUploadPanel";
 import { DARK, LIGHT, ThemeContext, isDaytime, useTheme, type ThemeMode } from "./quote/theme";
 import { Icon } from "./quote/icons";
 import { STEPS, getFlow, validateText, type FormData, type GroupField } from "./quote/schema";
@@ -9,7 +10,7 @@ import {
   clearState,
   getPrefillFromUrl,
   loadState,
-  pickAgent,
+  PRODUCER,
   saveState,
   type Agent,
 } from "./quote/session";
@@ -133,8 +134,16 @@ function QuoteFlow({ isDay, onToggleTheme }: { isDay: boolean; onToggleTheme: ()
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [direction, setDirection] = useState<1 | -1>(1);
-  const [agent, setAgent] = useState<Agent>(() => persisted?.agent ?? pickAgent());
+  // A constant, not state: one real producer, never re-rolled, never restored
+  // from a saved session (see the note on PersistedState).
+  const agent: Agent = PRODUCER;
   const [showConfetti, setShowConfetti] = useState(false);
+  /**
+   * Set once intake accepts the lead, and only then does the confirmation
+   * screen offer to take documents. No token — an unconfigured build, or a
+   * lead with no email — means no panel, never a broken one.
+   */
+  const [uploadToken, setUploadToken] = useState<string | null>(null);
 
   function handleRestart() {
     if (stepIndex === 0) return;
@@ -148,14 +157,8 @@ function QuoteFlow({ isDay, onToggleTheme }: { isDay: boolean; onToggleTheme: ()
     setMultiVal([]);
     setError("");
     setSubmitting(false);
-    // Roll a new agent so the experience feels fresh
-    let next = pickAgent();
-    let tries = 0;
-    while (next.name === agent.name && tries < 5) {
-      next = pickAgent();
-      tries++;
-    }
-    setAgent(next);
+    // No re-roll: the producer is a real person, so starting over does not
+    // hand the visitor a different one.
     clearState();
   }
 
@@ -187,8 +190,8 @@ function QuoteFlow({ isDay, onToggleTheme }: { isDay: boolean; onToggleTheme: ()
       clearState();
       return;
     }
-    saveState({ stepIndex, data, role, agent, inputVal, multiVal });
-  }, [stepKey, stepIndex, data, role, agent, inputVal, multiVal]);
+    saveState({ stepIndex, data, role, inputVal, multiVal });
+  }, [stepKey, stepIndex, data, role, inputVal, multiVal]);
 
   const resetInput = useCallback(() => {
     setInputVal("");
@@ -316,7 +319,11 @@ function QuoteFlow({ isDay, onToggleTheme }: { isDay: boolean; onToggleTheme: ()
     setSubmitting(true);
     setError("");
     // CRM lead (fail-soft, runs alongside the notification email)
-    void submitCrmLead(buildCrmLead(finalData, agent.name));
+    // Still not awaited before the email: intake must never delay the
+    // confirmation screen. The panel appears when the token arrives.
+    void submitCrmLead(buildCrmLead(finalData, agent.name)).then((r) =>
+      setUploadToken(r?.uploadToken ?? null)
+    );
     try {
       await sendQuoteEmail(finalData, agent.name);
       setDirection(1);
@@ -617,6 +624,12 @@ function QuoteFlow({ isDay, onToggleTheme }: { isDay: boolean; onToggleTheme: ()
                 A member of our team will be in touch within one business day. We may ask for
                 your current declarations page — that is usually all we need to start.
               </p>
+              {/* The offer to take documents, only once the lead is safely in
+                  the CRM. The copy above already asks for a declarations page,
+                  so this is the place a visitor is most likely to have one to
+                  hand — and nothing here can cost the submission, which has
+                  already happened. */}
+              {uploadToken && <LeadUploadPanel uploadToken={uploadToken} />}
               <a href="tel:+15082332261" className="qf-phone-cta">
                 <Icon.Phone size={16} />
                 <span>Or call us — 508‑233‑2261</span>

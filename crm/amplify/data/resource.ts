@@ -8,6 +8,8 @@ import { certNumber } from "../functions/cert-number/resource";
 import { renewalTasks } from "../functions/renewal-tasks/resource";
 import { licenseAlerts } from "../functions/license-alerts/resource";
 import { taskDigest } from "../functions/task-digest/resource";
+import { leadUpload } from "../functions/lead-upload/resource";
+import { leadReply } from "../functions/lead-reply/resource";
 import { activityLog } from "../functions/activity-log/resource";
 
 /**
@@ -59,6 +61,14 @@ const schema = a
     ]),
     OcrStatus: a.enum(["PENDING", "PROCESSING", "COMPLETE", "FAILED", "SKIPPED"]),
     ExtractionStatus: a.enum(["PENDING", "PROCESSING", "COMPLETE", "FAILED"]),
+    /**
+     * The auto-reply window for one website lead.
+     *
+     * WAITING — the upload window is open, nothing sent.
+     * SENDING — a sweep has claimed it; stops a second sweep double-sending.
+     * SENT / FAILED — terminal.
+     */
+    LeadReplyStatus: a.enum(["WAITING", "SENDING", "SENT", "FAILED"]),
     UserRole: a.enum(["ADMIN", "STAFF", "PRODUCER"]),
     // ── Renewal marketing tasks ──
     MarketingTaskStatus: a.enum(["OPEN", "COMPLETE"]),
@@ -1014,6 +1024,57 @@ const schema = a
       ]),
 
     /**
+     * One row per website lead, holding the state of its auto-reply window.
+     *
+     * The window is what makes "wait for their documents, then reply once"
+     * possible without trusting the browser. A visitor who uploads nothing gets
+     * the reply 8 minutes after submitting; one who uploads gets it 8 minutes
+     * after their last upload, or as soon as they say they are done. The
+     * browser can only ever *bring the deadline forward* — `dueAt` lives here
+     * and the sweep is what reads it, so a closed laptop, a dead beacon or a
+     * hostile caller cannot stop the reply going out.
+     *
+     * `uploadToken` is an unguessable secret handed back by `submitWebLead` and
+     * required by both public mutations. It is the only thing standing between
+     * an anonymous caller and someone else's lead, which is why it is indexed
+     * (looked up by token, never by account) and never returned by a query.
+     *
+     * Nobody reads or writes this from the app — the three Lambdas are the only
+     * authors. Read is open to a signed-in user so a producer can see why a
+     * reply has not gone out yet.
+     */
+    LeadReply: a
+      .model({
+        accountId: a.id().required(),
+        contactEmail: a.string().required(),
+        contactName: a.string(),
+        status: a.ref("LeadReplyStatus").required(),
+        /** Secret for the two public mutations. */
+        uploadToken: a.string().required(),
+        submittedAt: a.datetime().required(),
+        /** When the window closes. Pushed out by each upload, pulled in by a
+         *  "done" signal. The sweep sends once this is in the past. */
+        dueAt: a.datetime().required(),
+        uploadCount: a.integer(),
+        lastUploadAt: a.datetime(),
+        /** Set when the visitor said they were finished, or their tab went away. */
+        closedAt: a.datetime(),
+        sentAt: a.datetime(),
+        /**
+         * Exactly what went out, kept so a producer can answer "what did we
+         * tell this lead?" without digging through a mailbox. The body is
+         * generated, so the record of it is the only account of what the agency
+         * said — worth storing even though the team is BCC'd.
+         */
+        sentSubject: a.string(),
+        sentBody: a.string(),
+        /** Why the reply did not go, or went without document context. */
+        note: a.string(),
+      })
+      .secondaryIndexes((index) => [index("uploadToken")])
+      .authorization((allow) => [allow.authenticated().to(["read"])]),
+
+    /**
      * One row per licence-expiry email the agency has already been sent.
      *
      * The ledger behind `license-alerts`, and the same trick as
@@ -1070,6 +1131,45 @@ const schema = a
       .returns(a.json())
       .authorization((allow) => [allow.publicApiKey()])
       .handler(a.handler.function(leadIntake)),
+
+    /**
+     * Ask for somewhere to put a file. Public, and gated entirely by the
+     * `uploadToken` from `submitWebLead` — no token, no upload.
+     *
+     * Returns a presigned S3 PUT plus the Document id it belongs to. The
+     * presign is signed with the Lambda's own credentials, which is what lets
+     * an unauthenticated visitor write into `documents/` without that prefix
+     * being opened up: the object lands at the same key layout a staff upload
+     * uses, so the OCR trigger and the Documents tab need no special case.
+     *
+     * Requesting an upload also pushes the reply window out — see LeadReply.
+     */
+    requestLeadUpload: a
+      .mutation()
+      .arguments({
+        uploadToken: a.string().required(),
+        filename: a.string().required(),
+        contentType: a.string(),
+        sizeBytes: a.integer(),
+      })
+      .returns(a.json())
+      .authorization((allow) => [allow.publicApiKey()])
+      .handler(a.handler.function(leadUpload)),
+
+    /**
+     * "I am done uploading" — or their tab went away. Brings the window's
+     * deadline forward to now so the next sweep sends.
+     *
+     * Idempotent, and can only ever *shorten* the wait: there is deliberately
+     * no public way to extend it, so the token cannot be used to hold a reply
+     * open indefinitely.
+     */
+    closeLeadUploadWindow: a
+      .mutation()
+      .arguments({ uploadToken: a.string().required() })
+      .returns(a.json())
+      .authorization((allow) => [allow.publicApiKey()])
+      .handler(a.handler.function(leadUpload)),
 
     // ── Team administration (ADMIN group only) ─────────────────────────
     inviteUser: a
@@ -1161,6 +1261,12 @@ const schema = a
     // As with the two above, the grant is API-wide, so read-only is a property
     // of the handler rather than something the schema holds it to.
     allow.resource(taskDigest),
+    // Public lead uploads: reads the LeadReply the token names, creates a
+    // Document and moves the window's deadline. Writes nothing else.
+    allow.resource(leadUpload),
+    // The auto-reply sweep reads LeadReply, the Account and its Documents,
+    // and marks the reply sent.
+    allow.resource(leadReply),
     // The stream handler writes Activity and reads UserProfile to name an
     // actor. Note what the block above says: this is not a per-model grant,
     // so this function has full API access whatever any model declares. What

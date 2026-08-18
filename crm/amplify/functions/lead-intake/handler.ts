@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { SNSClient, PublishCommand } from "@aws-sdk/client-sns";
 import { Amplify } from "aws-amplify";
 import { generateClient } from "aws-amplify/data";
@@ -13,6 +14,7 @@ import {
 } from "../../../src/lib/enums";
 import { contactKey } from "../../../src/lib/extractionKeys";
 import { listAllPages } from "../../../src/lib/pagination";
+import { NO_UPLOAD_WINDOW_MINUTES } from "../../../../shared/leadUpload";
 import {
   leadText,
   profileName,
@@ -256,5 +258,48 @@ export const handler: Schema["submitWebLead"]["functionHandler"] = async (
     source: data.source,
   });
 
-  return { ok: true, id: data.id };
+  /**
+   * Open the auto-reply window.
+   *
+   * Created after the contact and the text, so an email address failure here
+   * cannot cost the agency its instant alert. A lead with no email gets no
+   * window at all — there is nowhere to reply to — and that is not an error:
+   * the account and the alert are the parts that matter.
+   *
+   * The token is what the visitor uses to upload files and to say they are
+   * done. It is minted here, returned once, and never queryable, so it is the
+   * only thing standing between an anonymous caller and someone else's lead.
+   */
+  const contactEmail = clean(args.contactEmail, 200);
+  let uploadToken: string | null = null;
+  if (contactEmail) {
+    uploadToken = randomUUID() + randomUUID().replace(/-/g, "");
+    const { errors: replyErrors } = await client.models.LeadReply.create({
+      accountId: data.id,
+      contactEmail,
+      contactName,
+      status: "WAITING",
+      uploadToken,
+      submittedAt: new Date().toISOString(),
+      // No files yet, so the clock is the plain no-upload window.
+      dueAt: new Date(Date.now() + NO_UPLOAD_WINDOW_MINUTES * 60_000).toISOString(),
+      uploadCount: 0,
+    });
+    if (replyErrors?.length) {
+      // Same reasoning as the contact above: the lead is captured and the
+      // agency has been told. Losing the auto-reply is worse than losing the
+      // lead only if it takes the lead with it.
+      console.error("LeadReply create failed", JSON.stringify(replyErrors));
+      uploadToken = null;
+    }
+  }
+
+  return {
+    ok: true,
+    id: data.id,
+    // Absent when there is no email to reply to, or the window failed to open.
+    // The form treats a missing token as "no upload panel", never as an error.
+    uploadToken,
+    uploadWindowMinutes: uploadToken ? NO_UPLOAD_WINDOW_MINUTES : null,
+  };
 };

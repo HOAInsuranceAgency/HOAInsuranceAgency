@@ -49,10 +49,22 @@ const MUTATION = `mutation SubmitWebLead(
   )
 }`;
 
-export async function submitCrmLead(input: CrmLeadInput): Promise<void> {
+/**
+ * What intake handed back. `null` for every failure and for an unconfigured
+ * build — the caller shows no upload panel and the visitor sees nothing.
+ */
+export interface CrmLeadResult {
+  accountId: string;
+  /** Absent when the lead had no email address to reply to. */
+  uploadToken: string | null;
+}
+
+export async function submitCrmLead(
+  input: CrmLeadInput
+): Promise<CrmLeadResult | null> {
   const url = import.meta.env.PUBLIC_CRM_API_URL;
   const key = import.meta.env.PUBLIC_CRM_API_KEY;
-  if (!url || !key) return;
+  if (!url || !key) return null;
 
   try {
     const res = await fetch(url, {
@@ -63,8 +75,105 @@ export async function submitCrmLead(input: CrmLeadInput): Promise<void> {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const body = await res.json();
     if (body.errors?.length) throw new Error(body.errors[0].message);
+    const result = body.data?.submitWebLead;
+    if (!result?.ok || !result.id) return null;
+    return { accountId: result.id, uploadToken: result.uploadToken ?? null };
   } catch (err) {
     // Fail-soft by design; the FormSubmit email still captures the lead.
     console.warn("CRM lead intake failed", err);
+    return null;
+  }
+}
+
+/* ──────────────────────────────────────────────────────────
+   Post-submit document upload
+
+   Both calls are gated server-side on `uploadToken`. Nothing here sends an
+   account id — the token is the only thing that names the lead, so a stolen or
+   guessed value is the only attack surface and it is unguessable.
+   ────────────────────────────────────────────────────────── */
+
+const REQUEST_UPLOAD = `mutation RequestLeadUpload(
+  $uploadToken: String!, $filename: String!, $contentType: String, $sizeBytes: Int
+) {
+  requestLeadUpload(
+    uploadToken: $uploadToken, filename: $filename,
+    contentType: $contentType, sizeBytes: $sizeBytes
+  )
+}`;
+
+const CLOSE_WINDOW = `mutation CloseLeadUploadWindow($uploadToken: String!) {
+  closeLeadUploadWindow(uploadToken: $uploadToken)
+}`;
+
+async function crmMutation(
+  query: string,
+  variables: Record<string, unknown>,
+  opts?: { keepalive?: boolean }
+): Promise<Record<string, unknown> | null> {
+  const url = import.meta.env.PUBLIC_CRM_API_URL;
+  const key = import.meta.env.PUBLIC_CRM_API_KEY;
+  if (!url || !key) return null;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-api-key": key },
+    body: JSON.stringify({ query, variables }),
+    // `keepalive`, not sendBeacon: a beacon cannot set the x-api-key header
+    // AppSync requires, and this has to survive the page going away.
+    keepalive: opts?.keepalive,
+  });
+  const body = await res.json();
+  if (body.errors?.length) throw new Error(body.errors[0].message);
+  const [payload] = Object.values(body.data ?? {});
+  return (payload ?? null) as Record<string, unknown> | null;
+}
+
+/**
+ * Reserve somewhere for one file and PUT it there.
+ *
+ * Throws with a message meant for the visitor — the panel shows it against the
+ * row for that file. Unlike intake, this is not fail-soft: someone who just
+ * chose a file needs to know it did not arrive.
+ */
+export async function uploadLeadFile(
+  uploadToken: string,
+  file: File
+): Promise<void> {
+  const result = await crmMutation(REQUEST_UPLOAD, {
+    uploadToken,
+    filename: file.name,
+    contentType: file.type || undefined,
+    sizeBytes: file.size,
+  });
+  if (!result?.ok) {
+    throw new Error(
+      typeof result?.error === "string"
+        ? result.error
+        : "We couldn't accept that file."
+    );
+  }
+  const put = await fetch(String(result.uploadUrl), {
+    method: "PUT",
+    // Must match the type the URL was signed with, or S3 rejects it.
+    headers: file.type ? { "Content-Type": file.type } : undefined,
+    body: file,
+  });
+  if (!put.ok) throw new Error("That upload didn't complete. Please try again.");
+}
+
+/**
+ * "I'm finished" — or the tab is going away. Brings the reply forward.
+ *
+ * Never throws: both callers are places where an error has nowhere to go, and
+ * the server sends the reply on its own schedule regardless.
+ */
+export async function closeLeadUploads(
+  uploadToken: string,
+  opts?: { keepalive?: boolean }
+): Promise<void> {
+  try {
+    await crmMutation(CLOSE_WINDOW, { uploadToken }, opts);
+  } catch (err) {
+    console.warn("Closing the upload window failed", err);
   }
 }

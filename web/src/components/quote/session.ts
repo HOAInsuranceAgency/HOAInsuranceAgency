@@ -2,24 +2,30 @@ import { FLOW_SIGNATURE, type FormData } from "./schema";
 import { states } from "../../data/states";
 
 /* ──────────────────────────────────────────────────────────
-   AGENT ROSTER — rotates per session
+   THE PRODUCER
    ────────────────────────────────────────────────────────── */
 export type Agent = { name: string; photo: string };
 
-const AGENTS: Agent[] = [
-  { name: "Maya Chen",        photo: "/agents/1.jpg" },
-  { name: "David Reyes",      photo: "/agents/2.jpg" },
-  { name: "Sarah Kim",        photo: "/agents/3.jpg" },
-  { name: "Michael O'Brien",  photo: "/agents/4.jpg" },
-  { name: "Priya Patel",      photo: "/agents/5.jpg" },
-  { name: "Marcus Johnson",   photo: "/agents/6.jpg" },
-  { name: "Emma Hartley",     photo: "/agents/7.jpg" },
-  { name: "James Walker",     photo: "/agents/8.jpg" },
-];
-
-export function pickAgent(): Agent {
-  return AGENTS[Math.floor(Math.random() * AGENTS.length)];
-}
+/**
+ * The one real person who greets a visitor and is named on their submission.
+ *
+ * This used to be a roster of eight names and stock headshots, drawn at random
+ * per session and re-rolled whenever someone started over — and that invented
+ * name was written into the submission email as "Assigned Agent" and into the
+ * CRM lead as an assigned-agent note. None of the eight worked here. On a
+ * licensed agency's quote form that is not a friendly persona, it is a
+ * fabricated licensed representative, and the AI reply this feeds would have
+ * been correspondence about insurance signed by someone who does not exist.
+ *
+ * So: one producer, who is real, using the same photo the contact page shows.
+ * If a second ever greets visitors, this becomes a list and the choice is made
+ * by something meaningful — the state on the form, a round-robin over actual
+ * staff — never by `Math.random()`.
+ */
+export const PRODUCER: Agent = {
+  name: "Brian Cole",
+  photo: "/images/brian-cole.jpg",
+};
 
 /* ──────────────────────────────────────────────────────────
    PERSISTENCE — survive refresh
@@ -27,11 +33,20 @@ export function pickAgent(): Agent {
 const STORAGE_KEY = "qf:state:v1";
 export const THEME_KEY = "qf:theme:v1";
 
+/**
+ * No `agent` field, deliberately.
+ *
+ * It used to be stored, which means live localStorage out there still holds one
+ * of the eight invented names. Reading it back would resurrect a fabricated
+ * producer on a returning visitor's screen long after the roster was removed,
+ * and the flow signature would not catch it — the flow has not changed. The
+ * producer is a constant now, so there is nothing session-specific to keep.
+ * A stray `agent` key in an old blob is simply ignored.
+ */
 type PersistedState = {
   stepIndex: number;
   data: FormData;
   role: string | null;
-  agent: Agent;
   inputVal: string;
   multiVal: string[];
 };
@@ -48,11 +63,7 @@ export function loadState(): PersistedState | null {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<StoredSession>;
-    if (
-      typeof parsed.stepIndex !== "number" ||
-      !parsed.data ||
-      !parsed.agent
-    ) {
+    if (typeof parsed.stepIndex !== "number" || !parsed.data) {
       return null;
     }
     /**
@@ -71,7 +82,6 @@ export function loadState(): PersistedState | null {
       stepIndex: parsed.stepIndex,
       data: parsed.data as FormData,
       role: parsed.role ?? null,
-      agent: parsed.agent as Agent,
       inputVal: typeof parsed.inputVal === "string" ? parsed.inputVal : "",
       multiVal: Array.isArray(parsed.multiVal) ? parsed.multiVal : [],
     };

@@ -25,6 +25,10 @@
  */
 import { getUrl, remove, uploadData } from "aws-amplify/storage";
 import { client, type CrmDocument } from "./client";
+// Re-exported: `safeSegment` lives dependency-free in storageKeys.ts so the
+// lead-upload Lambda can build the same keys without importing this module.
+import { CONTROL_CHARS, safeSegment } from "./storageKeys";
+export { safeSegment };
 import type { Schema } from "../../amplify/data/resource";
 
 type DocumentEntityType = Schema["DocumentEntityType"]["type"];
@@ -68,27 +72,7 @@ export function assertGrantedPath(path: string): string {
   return p;
 }
 
-/** Control characters, which S3 keys must not contain. */
-const CONTROL_CHARS = new RegExp("[\\u0000-\\u001f\\u007f]", "g");
 
-/**
- * Make one user-supplied value safe to drop into a key. A filename containing
- * a slash would otherwise add a level to the key, which breaks the OCR
- * trigger's `documents/{type}/{entity}/{documentId}/{file}` parse — and any
- * surviving `..` would be rejected by `assertGrantedPath`, turning a merely
- * odd filename into a failed upload.
- */
-export function safeSegment(value: string): string {
-  const cleaned = value
-    .replace(CONTROL_CHARS, "")
-    .replace(/[/\\]+/g, "_")
-    // Flatten dot runs wherever they landed, not just at the front: the slash
-    // collapse above moves a leading "../" into the middle of the segment.
-    .replace(/\.{2,}/g, ".")
-    .replace(/^[._]+/, "")
-    .trim();
-  return cleaned || "file";
-}
 
 // ── Upload ───────────────────────────────────────────────────────────
 

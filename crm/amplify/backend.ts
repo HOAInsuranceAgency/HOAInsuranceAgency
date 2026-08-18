@@ -23,6 +23,8 @@ import { certNumber } from "./functions/cert-number/resource";
 import { renewalTasks } from "./functions/renewal-tasks/resource";
 import { licenseAlerts } from "./functions/license-alerts/resource";
 import { taskDigest } from "./functions/task-digest/resource";
+import { leadUpload } from "./functions/lead-upload/resource";
+import { leadReply } from "./functions/lead-reply/resource";
 import { activityLog } from "./functions/activity-log/resource";
 import {
   magicLinkDefine,
@@ -46,6 +48,8 @@ export const backend = defineBackend({
   renewalTasks,
   licenseAlerts,
   taskDigest,
+  leadUpload,
+  leadReply,
   activityLog,
   magicLinkDefine,
   magicLinkCreate,
@@ -277,6 +281,38 @@ backend.licenseAlerts.resources.lambda.addToRolePolicy(
 backend.taskDigest.addEnvironment("TASK_DIGEST_FROM", magicLinkFrom);
 backend.taskDigest.addEnvironment("CRM_BASE_URL", magicLinkBaseUrl);
 backend.taskDigest.resources.lambda.addToRolePolicy(
+  new PolicyStatement({
+    actions: ["ses:SendEmail"],
+    resources: ["*"],
+  })
+);
+
+// ── Website lead: public upload + auto-reply ─────────────────────────
+//
+// `lead-upload` presigns a PUT into the documents bucket with its own
+// credentials. That is what lets an unauthenticated visitor write a file
+// without `documents/*` being opened to public writes — the storage access
+// rules govern Amplify's client-side auth, while a presigned URL is plain
+// SigV4 against S3, so the grant below is the only thing that authorizes it.
+backend.leadUpload.addEnvironment(
+  "DOCUMENTS_BUCKET",
+  backend.storage.resources.bucket.bucketName
+);
+backend.storage.resources.bucket.grantPut(
+  backend.leadUpload.resources.lambda,
+  "documents/*"
+);
+
+// The sweep sends the reply and starts extraction for public leads —
+// `startLeadExtraction` is authenticated-only, so no visitor can reach it.
+backend.leadReply.addEnvironment(
+  "EXTRACT_LEAD_FUNCTION",
+  backend.extractLead.resources.lambda.functionName
+);
+backend.extractLead.resources.lambda.grantInvoke(
+  backend.leadReply.resources.lambda
+);
+backend.leadReply.resources.lambda.addToRolePolicy(
   new PolicyStatement({
     actions: ["ses:SendEmail"],
     resources: ["*"],
