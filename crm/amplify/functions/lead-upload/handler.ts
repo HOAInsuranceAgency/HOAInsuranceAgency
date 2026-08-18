@@ -5,6 +5,7 @@ import { generateClient } from "aws-amplify/data";
 import { getAmplifyDataClientConfig } from "@aws-amplify/backend/function/runtime";
 import type { Schema } from "../../data/resource";
 import { safeSegment } from "../../../src/lib/storageKeys";
+import { operationOf } from "./dispatch";
 import {
   IDLE_AFTER_UPLOAD_MINUTES,
   REJECTION_MESSAGE,
@@ -165,7 +166,10 @@ export const handler = async (event: {
   const client = await getDataClient();
   const args = event.arguments ?? {};
 
-  switch (event.info?.fieldName) {
+  // NOT `event.info.fieldName` — Amplify's generated resolver does not send
+  // `info`. See dispatch.ts; this dispatched to nothing until a live probe
+  // showed every call returning "Unknown operation."
+  switch (operationOf(event)) {
     case "requestLeadUpload":
       return handleRequestUpload(client, args);
     case "closeLeadUploadWindow":

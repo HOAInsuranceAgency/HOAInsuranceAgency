@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { decide } from "../../amplify/functions/lead-reply/decide";
+import { operationOf } from "../../amplify/functions/lead-upload/dispatch";
 import {
   buildPrompt,
   findAiTells,
@@ -482,5 +483,47 @@ describe("the agency mailbox per branch", () => {
     for (const box of [PRODUCTION_LEAD_MAILBOX, PRODUCTION_INTERNAL_MAILBOX, TEST_MAILBOX]) {
       expect(box).toMatch(/@protectmyhoa\.com$/);
     }
+  });
+});
+
+/**
+ * Which mutation a lead-upload invocation is.
+ *
+ * This shipped broken: the handler switched on `event.info.fieldName`, Amplify's
+ * generated resolver does not send `info`, and every call fell through to
+ * "Unknown operation." Nothing in the type system or the build could see it —
+ * only a live probe against the deployed endpoint. Hence these.
+ */
+describe("lead-upload dispatch", () => {
+  it("uses info.fieldName when a runtime supplies it", () => {
+    expect(operationOf({ info: { fieldName: "requestLeadUpload" }, arguments: {} })).toBe(
+      "requestLeadUpload"
+    );
+    expect(
+      operationOf({ info: { fieldName: "closeLeadUploadWindow" }, arguments: {} })
+    ).toBe("closeLeadUploadWindow");
+  });
+
+  /** The real path today: Amplify sends arguments and no info. */
+  it("tells them apart by their arguments when info is absent", () => {
+    expect(
+      operationOf({ arguments: { uploadToken: "t", filename: "dec.pdf", sizeBytes: 10 } })
+    ).toBe("requestLeadUpload");
+    expect(operationOf({ arguments: { uploadToken: "t" } })).toBe(
+      "closeLeadUploadWindow"
+    );
+  });
+
+  it("returns null rather than guessing when there is nothing to go on", () => {
+    expect(operationOf({})).toBeNull();
+    expect(operationOf({ arguments: {} })).toBeNull();
+    expect(operationOf({ info: { fieldName: "somethingElse" }, arguments: {} })).toBeNull();
+  });
+
+  it("ignores a non-string filename", () => {
+    // A malformed call must not be read as an upload request.
+    expect(operationOf({ arguments: { uploadToken: "t", filename: 42 } })).toBe(
+      "closeLeadUploadWindow"
+    );
   });
 });
