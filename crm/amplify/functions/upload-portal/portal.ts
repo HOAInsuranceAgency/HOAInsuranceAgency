@@ -59,13 +59,22 @@ export function refusalFor(
 }
 
 /**
+ * The shortest token we would ever have minted.
+ *
+ * 22 characters is 16 bytes of base64url, which is what `lead-reply` mints now.
+ * The floor was 32 when tokens were two concatenated UUIDs; lowering it keeps
+ * those older links working, since every one of them is longer than this.
+ */
+const MIN_TOKEN_LENGTH = 22;
+
+/**
  * A token worth spending a query on.
  *
- * The length floor is not security, it is a cheap way to refuse the empty string
- * and other obvious junk before it becomes a database read.
+ * The length floor is not security — the entropy is — it is a cheap way to
+ * refuse the empty string and other obvious junk before it becomes a read.
  */
 export function looksLikeToken(token: unknown): token is string {
-  return typeof token === "string" && token.length >= 32;
+  return typeof token === "string" && token.length >= MIN_TOKEN_LENGTH;
 }
 
 /** One checklist section, as the page renders it. */

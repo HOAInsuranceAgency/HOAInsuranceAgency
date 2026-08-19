@@ -192,10 +192,14 @@ describe("what a portal token may do", () => {
   });
 
   it("refuses obvious junk before it becomes a database read", () => {
-    for (const bad of ["", "short", "x".repeat(31), null, undefined, 12345, {}]) {
+    for (const bad of ["", "short", "x".repeat(21), null, undefined, 12345, {}]) {
       expect(looksLikeToken(bad)).toBe(false);
     }
-    expect(looksLikeToken("a".repeat(32))).toBe(true);
+    // 22 chars is what `randomBytes(16).toString("base64url")` produces, which
+    // is what lead-reply mints. Anything shorter was never one of ours.
+    expect(looksLikeToken("a".repeat(22))).toBe(true);
+    // The old two-UUID tokens are longer, so links already in inboxes still work.
+    expect(looksLikeToken("a".repeat(68))).toBe(true);
   });
 });
 

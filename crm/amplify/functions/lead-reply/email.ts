@@ -412,6 +412,21 @@ export function renderReply(opts: {
    * same thing again per section.
    */
   const uploadUrl = opts.uploadUrl?.trim() || null;
+  /**
+   * The bare host, for the "(protectmyhoa.com)" beside the link label.
+   *
+   * `www.` is stripped because nobody reads it as part of a brand, and a failed
+   * parse falls back to the empty string rather than throwing: a malformed URL
+   * should cost the reassurance, not the email.
+   */
+  let uploadHost = "";
+  if (uploadUrl) {
+    try {
+      uploadHost = new URL(uploadUrl).host.replace(/^www\./, "");
+    } catch {
+      uploadHost = "";
+    }
+  }
   const uploadLine = uploadUrl
     ? `I've put a page together with the documents that would help, so you don't have to hunt through email for them. Send what you have whenever you get a chance:`
     : null;
@@ -444,12 +459,25 @@ ${[
   ...(uploadLine && uploadUrl
     ? [
         para(escapeHtml(uploadLine), "0 0 10px"),
-        // The href and the visible text are the same string on purpose. A
-        // masked link in a first email from a stranger reads as phishing, and a
-        // trustee forwarding this to their board should be able to see where it
-        // goes.
+        /**
+         * Anchor text, not the URL.
+         *
+         * The first version printed the href verbatim, on the reasoning that a
+         * masked link from a stranger reads as phishing and a trustee forwarding
+         * this to their board should see where it goes. That reasoning was sound
+         * and the result was still wrong: a sixty-character token is its own
+         * credibility problem, and three wrapped lines of hex in the middle of a
+         * short personal email is the most machine-made thing in it.
+         *
+         * So the label describes the destination and the domain is named beside
+         * it in plain text. Someone deciding whether to trust this can see it
+         * goes to the same place as the address in the signature, without
+         * reading a token. The text/plain part still carries the full URL,
+         * because it has no way to hyperlink anything.
+         */
         para(
-          `<a href="${escapeHtml(uploadUrl)}" style="color:#1A365D;font-weight:700">${escapeHtml(uploadUrl)}</a>`,
+          `<a href="${escapeHtml(uploadUrl)}" style="color:#1A365D;font-weight:700;text-decoration:underline">Upload your documents</a>` +
+            ` <span style="color:#5b6472">(${escapeHtml(uploadHost)})</span>`,
           "0 0 22px"
         ),
       ]

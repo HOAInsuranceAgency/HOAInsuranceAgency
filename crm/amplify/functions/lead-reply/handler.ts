@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import Anthropic from "@anthropic-ai/sdk";
 import { LambdaClient, InvokeCommand } from "@aws-sdk/client-lambda";
 import { SESv2Client, SendEmailCommand } from "@aws-sdk/client-sesv2";
@@ -324,10 +324,20 @@ async function ensurePortal(
     const token =
       live?.token ??
       (await (async () => {
-        // Two UUIDs, hyphens stripped from the second: 32 hex characters of
-        // entropy either side, matching what `submitWebLead` mints for its own
-        // token. `looksLikeToken` in the portal function floors at 32.
-        const minted = randomUUID() + randomUUID().replace(/-/g, "");
+        /**
+         * 16 random bytes as base64url: 22 characters, 128 bits.
+         *
+         * The first version concatenated two UUIDs, which is what
+         * `submitWebLead` mints — 68 characters. That token is only ever passed
+         * as a mutation argument, so its length costs nothing. This one goes in
+         * a URL a person reads in an email, where 68 characters of hex wrapped
+         * over three lines was the single most machine-made thing in it.
+         *
+         * 128 bits is not a reduction in security in any practical sense: it is
+         * the same strength as a v4 UUID, guarding a link that expires in sixty
+         * days and grants upload-only access to one account.
+         */
+        const minted = randomBytes(16).toString("base64url");
         const { data, errors } = await client.models.UploadPortal.create({
           accountId,
           token: minted,
