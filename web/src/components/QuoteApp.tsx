@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { fireConversion, PHONE, PHONE_HREF } from "../constants";
+import { trackLead, PHONE, PHONE_HREF } from "../constants";
 import { submitCrmLead } from "../lib/crmLead";
 import { DARK, LIGHT, ThemeContext, isDaytime, useTheme, type ThemeMode } from "./quote/theme";
 import { Icon } from "./quote/icons";
@@ -323,7 +323,7 @@ function QuoteFlow({ isDay, onToggleTheme }: { isDay: boolean; onToggleTheme: ()
       setStepIndex(flow.length - 1);
       resetInput();
       clearState();
-      fireConversion();
+      trackLead("quote_wizard");
       // Celebrate!
       setShowConfetti(true);
       setTimeout(() => setShowConfetti(false), 4000);

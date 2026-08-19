@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { FORMSUBMIT_URL, LEAD_EMAIL, LEAD_EMAIL_HREF, fireConversion } from "../constants";
+import { FORMSUBMIT_URL, LEAD_EMAIL, LEAD_EMAIL_HREF, trackLead } from "../constants";
 import { submitCrmLead } from "../lib/crmLead";
 import "./InstantAssessment.css";
 
@@ -127,7 +127,7 @@ export function InstantAssessment({
         }),
       });
       if (!res.ok) throw new Error("fail");
-      fireConversion();
+      trackLead("instant_assessment");
       setSent(true);
     } catch {
       setError("Something went wrong. Please try again or call 508-233-2261.");

@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { FORMSUBMIT_URL, PHONE, PHONE_HREF, EMAIL, LEAD_EMAIL, LEAD_EMAIL_HREF, ADDRESS_LINE1, ADDRESS_LINE2 } from "../constants";
+import { FORMSUBMIT_URL, PHONE, PHONE_HREF, EMAIL, LEAD_EMAIL, LEAD_EMAIL_HREF, ADDRESS_LINE1, ADDRESS_LINE2, trackLead } from "../constants";
 import { submitCrmLead } from "../lib/crmLead";
 import "./ContactForm.css";
 
@@ -70,6 +70,7 @@ export function ContactForm({
         }),
       });
       if (!res.ok) throw new Error("failed");
+      trackLead("contact");
       setStatus("sent");
       setFirstName("");
       setLastName("");

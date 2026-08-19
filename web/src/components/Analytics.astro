@@ -18,21 +18,21 @@
  * `gtag` function inside module scope. Pageviews still worked, because `config`
  * pushes to the global `window.dataLayer` — but `window.gtag` was never defined,
  * so every later call from application code silently did nothing. That is the
- * bug documented in constants.ts `fireConversion`. `is:inline` emits a classic
+ * bug that used to break constants.ts `trackLead`. `is:inline` emits a classic
  * script, so `gtag` is global and event calls work.
  *
  * Gated by ANALYTICS_DISABLED, which is ON by default: production needs no
  * configuration, and staging sets PUBLIC_ANALYTICS_DISABLED=true so test traffic
  * cannot pollute the property or fire a conversion against the live campaign.
  */
-import { ANALYTICS_DISABLED, GA4_ID, ADS_ID, CLARITY_ID } from "../constants";
+import { ANALYTICS_DISABLED, GA4_ID, ADS_IDS, CLARITY_ID } from "../constants";
 ---
 
 {!ANALYTICS_DISABLED && (
   <Fragment>
     {/* Google tag — one library, configured for GA4 and Google Ads */}
     <script async is:inline src={`https://www.googletagmanager.com/gtag/js?id=${GA4_ID}`}></script>
-    <script is:inline define:vars={{ GA4_ID, ADS_ID }}>
+    <script is:inline define:vars={{ GA4_ID, ADS_IDS }}>
       window.dataLayer = window.dataLayer || [];
       function gtag() {
         dataLayer.push(arguments);
@@ -40,7 +40,7 @@ import { ANALYTICS_DISABLED, GA4_ID, ADS_ID, CLARITY_ID } from "../constants";
       window.gtag = gtag;
       gtag("js", new Date());
       gtag("config", GA4_ID);
-      gtag("config", ADS_ID);
+      for (const id of ADS_IDS) gtag("config", id);
     </script>
 
     {/* Microsoft Clarity */}
