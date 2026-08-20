@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { SNSClient, PublishCommand } from "@aws-sdk/client-sns";
 import { Amplify } from "aws-amplify";
 import { generateClient } from "aws-amplify/data";
@@ -11,8 +12,10 @@ import {
   DEFAULT_CONTACT_TYPE,
   isAccountType,
 } from "../../../src/lib/enums";
-import { contactKey } from "../../../src/lib/extractionKeys";
+import { contactKey, priorCarrierKey } from "../../../src/lib/extractionKeys";
 import { listAllPages } from "../../../src/lib/pagination";
+import { NO_UPLOAD_WINDOW_MINUTES } from "../../../../shared/leadUpload";
+import { parsePolicyExpiration, parseUnitCount } from "./fields";
 import {
   leadText,
   profileName,
@@ -152,11 +155,25 @@ export const handler: Schema["submitWebLead"]["functionHandler"] = async (
   // of losing the whole lead over a typo'd email.
   const validEmail = email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : undefined;
 
+  /**
+   * Both have a real column, so `notes` is only the fallback for a value that
+   * would not go in one. Recorded rather than dropped: a producer reading
+   * "Units (unparsed): twelve-ish" can fix it, and a silent discard is how a
+   * lead arrives looking like it never answered the question.
+   */
+  const unitCount = parseUnitCount(args.unitCount);
+  const policyExpiration = parsePolicyExpiration(args.currentPolicyExpiration);
+  const rawUnits = clean(args.unitCount, 50);
+  const rawExpiration = clean(args.currentPolicyExpiration, 50);
+
   const extraNotes = [
     clean(args.notes, 2000),
     validEmail !== email && email ? `Email (unvalidated): ${email}` : undefined,
     clean(args.unitNumber) && `Unit: ${clean(args.unitNumber)}`,
-    clean(args.currentCarrier) && `Current carrier: ${clean(args.currentCarrier)}`,
+    unitCount === null && rawUnits ? `Units (unparsed): ${rawUnits}` : undefined,
+    policyExpiration === null && rawExpiration
+      ? `Program expiry (unparsed): ${rawExpiration}`
+      : undefined,
   ]
     .filter(Boolean)
     .join("\n");
@@ -169,6 +186,10 @@ export const handler: Schema["submitWebLead"]["functionHandler"] = async (
     city: clean(args.city, 100),
     state: clean(args.state, 2)?.toUpperCase(),
     zip: clean(args.zip, 10),
+    // Drives the Units column on the accounts list.
+    unitCount: unitCount ?? undefined,
+    // Drives "Incumbent expires" there and the dashboard renewal pipeline.
+    currentPolicyExpiration: policyExpiration ?? undefined,
     buildiumId: clean(args.buildiumId, 50),
     source: clean(args.source, 100) ?? "website",
     notes: extraNotes || undefined,
@@ -242,6 +263,72 @@ export const handler: Schema["submitWebLead"]["functionHandler"] = async (
     }
   }
 
+  /**
+   * The incumbent carrier as a `PriorCarrier` row.
+   *
+   * It used to be a line of prose in `notes`, where the account's own Prior
+   * carriers tab could not see it and neither could the ACORD incumbent-coverage
+   * block that `acordApp.ts` builds from these rows. A producer retyped what the
+   * lead had already told us.
+   *
+   * `lineOfBusiness` is left empty on purpose. The form asks who the carrier is,
+   * not which line they write, and an association routinely splits property, GL
+   * and D&O across three of them. The wizard's "lines to review" answers say
+   * what the board wants looked at, not what this carrier covers, so filling the
+   * line from them would be inventing a fact about their program. The tab shows
+   * an empty line as "—" and takes one keystroke to set.
+   *
+   * Keyed with the same `priorCarrierKey` the tab uses on a hand-typed row, so a
+   * later extraction over the declarations page can recognise this row and
+   * update it rather than file a second copy beside it.
+   */
+  const carrierName = clean(args.currentCarrier, 200);
+  if (carrierName) {
+    const prior = {
+      carrierName,
+      policyNumber: null,
+      lineOfBusiness: null,
+    };
+    const { errors: carrierErrors } = await client.models.PriorCarrier.create({
+      accountId: data.id,
+      carrierName,
+      // The expiry they gave is this carrier's term ending. Also on the account,
+      // where it drives the lead renewal pipeline; here it is what makes the row
+      // useful on an ACORD form rather than a bare name.
+      expirationDate: policyExpiration ?? undefined,
+      lastWriteBy: WRITER,
+      extractionSourceKey: priorCarrierKey(prior),
+    });
+    if (carrierErrors?.length) {
+      console.error(
+        `Web lead ${data.id}: prior carrier row failed`,
+        JSON.stringify(carrierErrors)
+      );
+      /**
+       * Put it back in `notes` rather than lose it.
+       *
+       * This is the only field intake moves out of prose into a row of its own,
+       * so it is the only one a failed child write can drop entirely. A repair
+       * write in an already-failing path is cheap; a producer never learning who
+       * the incumbent is costs a call.
+       */
+      const repaired = [extraNotes, `Current carrier: ${carrierName}`]
+        .filter(Boolean)
+        .join("\n");
+      const { errors: noteErrors } = await client.models.Account.update({
+        id: data.id,
+        notes: repaired,
+        lastWriteBy: WRITER,
+      });
+      if (noteErrors?.length) {
+        console.error(
+          `Web lead ${data.id}: could not record the carrier in notes either`,
+          JSON.stringify(noteErrors)
+        );
+      }
+    }
+  }
+
   console.log(`Web lead created: ${data.id} (${name})`);
 
   // After the contact, so the text carries the caller's name and number —
@@ -256,5 +343,48 @@ export const handler: Schema["submitWebLead"]["functionHandler"] = async (
     source: data.source,
   });
 
-  return { ok: true, id: data.id };
+  /**
+   * Open the auto-reply window.
+   *
+   * Created after the contact and the text, so an email address failure here
+   * cannot cost the agency its instant alert. A lead with no email gets no
+   * window at all — there is nowhere to reply to — and that is not an error:
+   * the account and the alert are the parts that matter.
+   *
+   * The token is what the visitor uses to upload files and to say they are
+   * done. It is minted here, returned once, and never queryable, so it is the
+   * only thing standing between an anonymous caller and someone else's lead.
+   */
+  const contactEmail = clean(args.contactEmail, 200);
+  let uploadToken: string | null = null;
+  if (contactEmail) {
+    uploadToken = randomUUID() + randomUUID().replace(/-/g, "");
+    const { errors: replyErrors } = await client.models.LeadReply.create({
+      accountId: data.id,
+      contactEmail,
+      contactName,
+      status: "WAITING",
+      uploadToken,
+      submittedAt: new Date().toISOString(),
+      // No files yet, so the clock is the plain no-upload window.
+      dueAt: new Date(Date.now() + NO_UPLOAD_WINDOW_MINUTES * 60_000).toISOString(),
+      uploadCount: 0,
+    });
+    if (replyErrors?.length) {
+      // Same reasoning as the contact above: the lead is captured and the
+      // agency has been told. Losing the auto-reply is worse than losing the
+      // lead only if it takes the lead with it.
+      console.error("LeadReply create failed", JSON.stringify(replyErrors));
+      uploadToken = null;
+    }
+  }
+
+  return {
+    ok: true,
+    id: data.id,
+    // Absent when there is no email to reply to, or the window failed to open.
+    // The form treats a missing token as "no upload panel", never as an error.
+    uploadToken,
+    uploadWindowMinutes: uploadToken ? NO_UPLOAD_WINDOW_MINUTES : null,
+  };
 };

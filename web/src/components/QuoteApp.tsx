@@ -1,6 +1,9 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
-import { fireConversion, PHONE, PHONE_HREF } from "../constants";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { trackLead, PHONE, PHONE_HREF } from "../constants";
 import { submitCrmLead } from "../lib/crmLead";
+import LeadUploadPanel from "./LeadUploadPanel";
+import { attachAddressAutocomplete, loadGooglePlaces } from "../lib/googlePlaces";
+import { takeHandoff } from "../lib/addressHandoff";
 import { DARK, LIGHT, ThemeContext, isDaytime, useTheme, type ThemeMode } from "./quote/theme";
 import { Icon } from "./quote/icons";
 import { STEPS, getFlow, validateText, type FormData, type GroupField } from "./quote/schema";
@@ -9,7 +12,7 @@ import {
   clearState,
   getPrefillFromUrl,
   loadState,
-  pickAgent,
+  PRODUCER,
   saveState,
   type Agent,
 } from "./quote/session";
@@ -117,9 +120,19 @@ function QuoteFlow({ isDay, onToggleTheme }: { isDay: boolean; onToggleTheme: ()
   });
   const [data, setData] = useState<FormData>(() => {
     const base = persisted?.data ?? {};
-    // Apply URL prefill if no persisted data
-    if (!persisted && prefill.state) {
-      base.state = prefill.state;
+    // Only a fresh start takes either of these. Someone resuming has already
+    // answered these questions, and overwriting their answers with something
+    // they typed on the homepage twenty minutes ago would be worse than asking.
+    if (!persisted) {
+      if (prefill.state) base.state = prefill.state;
+      /**
+       * The address from a hero form on another page, handed over in
+       * sessionStorage rather than the URL. Applied after the state prefill so
+       * an actual address wins over a state inferred from the referrer, and
+       * consumed as it is read so it cannot reappear in a later session.
+       */
+      const handed = takeHandoff();
+      if (handed) Object.assign(base, handed);
     }
     return base;
   });
@@ -133,8 +146,16 @@ function QuoteFlow({ isDay, onToggleTheme }: { isDay: boolean; onToggleTheme: ()
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [direction, setDirection] = useState<1 | -1>(1);
-  const [agent, setAgent] = useState<Agent>(() => persisted?.agent ?? pickAgent());
+  // A constant, not state: one real producer, never re-rolled, never restored
+  // from a saved session (see the note on PersistedState).
+  const agent: Agent = PRODUCER;
   const [showConfetti, setShowConfetti] = useState(false);
+  /**
+   * Set once intake accepts the lead, and only then does the confirmation
+   * screen offer to take documents. No token — an unconfigured build, or a
+   * lead with no email — means no panel, never a broken one.
+   */
+  const [uploadToken, setUploadToken] = useState<string | null>(null);
 
   function handleRestart() {
     if (stepIndex === 0) return;
@@ -148,14 +169,8 @@ function QuoteFlow({ isDay, onToggleTheme }: { isDay: boolean; onToggleTheme: ()
     setMultiVal([]);
     setError("");
     setSubmitting(false);
-    // Roll a new agent so the experience feels fresh
-    let next = pickAgent();
-    let tries = 0;
-    while (next.name === agent.name && tries < 5) {
-      next = pickAgent();
-      tries++;
-    }
-    setAgent(next);
+    // No re-roll: the producer is a real person, so starting over does not
+    // hand the visitor a different one.
     clearState();
   }
 
@@ -187,8 +202,8 @@ function QuoteFlow({ isDay, onToggleTheme }: { isDay: boolean; onToggleTheme: ()
       clearState();
       return;
     }
-    saveState({ stepIndex, data, role, agent, inputVal, multiVal });
-  }, [stepKey, stepIndex, data, role, agent, inputVal, multiVal]);
+    saveState({ stepIndex, data, role, inputVal, multiVal });
+  }, [stepKey, stepIndex, data, role, inputVal, multiVal]);
 
   const resetInput = useCallback(() => {
     setInputVal("");
@@ -265,6 +280,53 @@ function QuoteFlow({ isDay, onToggleTheme }: { isDay: boolean; onToggleTheme: ()
     goNext();
   }
 
+  /**
+   * Google Places on any group field marked `places`.
+   *
+   * Re-run per step because the input only exists while that step is mounted,
+   * and the library is loaded lazily so the script cost falls on the one screen
+   * that needs it rather than on the whole wizard.
+   *
+   * Everything here is best-effort. No key, a blocked script, an offline
+   * visitor: the field stays a plain text input that still takes a typed
+   * address, which is why nothing below reports an error.
+   */
+  const placesInputRef = useRef<HTMLInputElement | null>(null);
+  useEffect(() => {
+    if (step?.type !== "group") return;
+    if (!step.fields.some((f) => f.places)) return;
+    let detach: (() => void) | null = null;
+    let cancelled = false;
+    loadGooglePlaces()
+      .then(() => {
+        if (cancelled || !placesInputRef.current) return;
+        detach = attachAddressAutocomplete(placesInputRef.current, (place) => {
+          // The street line goes in the field they are typing in; the rest
+          // fills its neighbours, but never overwrites an answer already
+          // given — a visitor who picked their state first keeps it.
+          setGroupVal((g) => {
+            const next = { ...g };
+            next.propertyAddress = place.address || place.formatted;
+            // Never overwrite an answer already given: someone who picked
+            // their state before typing the address keeps it. Line 2 is never
+            // touched, since Places has no notion of a unit number.
+            if (place.city && !next.city) next.city = place.city;
+            if (place.state && !next.state) next.state = place.state;
+            if (place.zip && !next.zip) next.zip = place.zip;
+            return next;
+          });
+          setGroupErr({});
+          setError("");
+        });
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+      detach?.();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stepKey]);
+
   /* ── group steps ── */
   function setGroupField(f: GroupField, value: string | string[]) {
     setGroupVal((g) => ({ ...g, [f.field]: value }));
@@ -315,15 +377,37 @@ function QuoteFlow({ isDay, onToggleTheme }: { isDay: boolean; onToggleTheme: ()
   async function submitForm(finalData: FormData) {
     setSubmitting(true);
     setError("");
-    // CRM lead (fail-soft, runs alongside the notification email)
-    void submitCrmLead(buildCrmLead(finalData, agent.name));
+    /**
+     * Both go out together, and the token is in hand before the confirmation
+     * screen renders.
+     *
+     * Intake used to be fire-and-forget with the panel appearing whenever it
+     * answered, which meant the upload box popped in a beat after the "Thank
+     * you" screen. Since the notification email is awaited anyway and is the
+     * slower of the two, waiting on intake alongside it costs nothing in the
+     * normal case and the panel is there on first paint.
+     *
+     * Capped so a hanging intake cannot hold the confirmation hostage: past the
+     * cap we advance without a token and the `.then` below fills it in late,
+     * which is the old behaviour rather than a broken one.
+     */
+    const intake = submitCrmLead(buildCrmLead(finalData, agent.name));
+    void intake.then((r) => setUploadToken(r?.uploadToken ?? null));
+    const intakeOrGiveUp = Promise.race([
+      intake,
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 4000)),
+    ]);
     try {
-      await sendQuoteEmail(finalData, agent.name);
+      const [, leadResult] = await Promise.all([
+        sendQuoteEmail(finalData, agent.name),
+        intakeOrGiveUp,
+      ]);
+      if (leadResult?.uploadToken) setUploadToken(leadResult.uploadToken);
       setDirection(1);
       setStepIndex(flow.length - 1);
       resetInput();
       clearState();
-      fireConversion();
+      trackLead("quote_wizard");
       // Celebrate!
       setShowConfetti(true);
       setTimeout(() => setShowConfetti(false), 4000);
@@ -508,6 +592,7 @@ function QuoteFlow({ isDay, onToggleTheme }: { isDay: boolean; onToggleTheme: ()
 
                     {f.kind === "select" && (
                       <SelectField
+                        id={`qf-${f.field}`}
                         value={(groupVal[f.field] as string) || ""}
                         onChange={(v) => setGroupField(f, v)}
                         options={f.options ?? []}
@@ -518,6 +603,7 @@ function QuoteFlow({ isDay, onToggleTheme }: { isDay: boolean; onToggleTheme: ()
                     {f.kind === "text" && (
                       <input
                         id={`qf-${f.field}`}
+                        ref={f.places ? placesInputRef : undefined}
                         className="qf-input"
                         type={f.inputType || "text"}
                         value={(groupVal[f.field] as string) || ""}
@@ -617,6 +703,12 @@ function QuoteFlow({ isDay, onToggleTheme }: { isDay: boolean; onToggleTheme: ()
                 A member of our team will be in touch within one business day. We may ask for
                 your current declarations page — that is usually all we need to start.
               </p>
+              {/* The offer to take documents, only once the lead is safely in
+                  the CRM. The copy above already asks for a declarations page,
+                  so this is the place a visitor is most likely to have one to
+                  hand — and nothing here can cost the submission, which has
+                  already happened. */}
+              {uploadToken && <LeadUploadPanel uploadToken={uploadToken} />}
               <a href="tel:+15082332261" className="qf-phone-cta">
                 <Icon.Phone size={16} />
                 <span>Or call us — 508‑233‑2261</span>

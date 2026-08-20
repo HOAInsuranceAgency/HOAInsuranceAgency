@@ -24,6 +24,10 @@ const models = vi.hoisted(() => ({
   Account: { create: vi.fn() },
   Contact: { create: vi.fn() },
   UserProfile: { list: vi.fn() },
+  // Intake also opens the auto-reply window now. Stubbed as succeeding: these
+  // tests are about the text alerts, and a LeadReply failure is deliberately
+  // non-fatal to them — see the handler.
+  LeadReply: { create: vi.fn(async () => ({ data: { id: "lr1" }, errors: undefined })) },
 }));
 vi.mock("aws-amplify/data", () => ({ generateClient: () => ({ models }) }));
 vi.mock("aws-amplify", () => ({ Amplify: { configure: vi.fn() } }));
@@ -94,7 +98,7 @@ describe("lead texts", () => {
 
     const res = await run();
 
-    expect(res).toEqual({ ok: true, id: "acct-1" });
+    expect(res).toMatchObject({ ok: true, id: "acct-1" });
     expect(textedNumbers().sort()).toEqual(["+15082332261", "+16175550143"]);
     const body = snsSend.mock.calls[0][0].input.Message;
     expect(body).toContain("Willow Creek Condominium Trust");
@@ -115,7 +119,7 @@ describe("lead texts", () => {
       nextToken: null,
     });
 
-    expect(await run()).toEqual({ ok: true, id: "acct-1" });
+    expect(await run()).toMatchObject({ ok: true, id: "acct-1" });
     expect(snsSend).not.toHaveBeenCalled();
   });
 
@@ -124,14 +128,14 @@ describe("lead texts", () => {
 
     // The whole point of the placement: a texting outage must not turn a
     // captured lead into a failed form submission.
-    expect(await run()).toEqual({ ok: true, id: "acct-1" });
+    expect(await run()).toMatchObject({ ok: true, id: "acct-1" });
     expect(models.Account.create).toHaveBeenCalled();
   });
 
   it("still captures the lead when the profile read fails", async () => {
     models.UserProfile.list.mockRejectedValue(new Error("AppSync 500"));
 
-    expect(await run()).toEqual({ ok: true, id: "acct-1" });
+    expect(await run()).toMatchObject({ ok: true, id: "acct-1" });
   });
 
   it("texts the reachable people even when one number is unusable", async () => {
@@ -151,7 +155,7 @@ describe("lead texts", () => {
   it("sends nothing rather than a broken link when the base URL is unset", async () => {
     delete process.env.CRM_BASE_URL;
 
-    expect(await run()).toEqual({ ok: true, id: "acct-1" });
+    expect(await run()).toMatchObject({ ok: true, id: "acct-1" });
     // A text whose link 404s is worse than no text: it reads as a bug in the
     // CRM rather than a missing environment variable.
     expect(snsSend).not.toHaveBeenCalled();

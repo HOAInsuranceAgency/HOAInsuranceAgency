@@ -28,6 +28,11 @@ export type GroupField = {
   optional?: boolean;
   inputType?: string;
   validation?: "email" | "phone";
+  /**
+   * Attach Google Places autocomplete, and let a chosen address fill the other
+   * location fields in the same group. Only meaningful on `kind: "text"`.
+   */
+  places?: boolean;
   /** Render at half width so two can share a row. */
   half?: boolean;
 };
@@ -138,7 +143,35 @@ export const STEPS: Record<string, Step> = {
   where: {
     type: "group",
     question: "Where is the property?",
+    sub: "Start with the street address and we'll fill in the rest.",
     fields: [
+      /**
+       * A conventional postal address, in the order people write one.
+       *
+       * Line 1 carries Places autocomplete and a chosen suggestion fills the
+       * town, state and ZIP below it, so those are usually confirmations rather
+       * than typing. Line 1 stays optional: a trustee who does not have the
+       * street address to hand can still say where the property is.
+       */
+      {
+        kind: "text",
+        field: "propertyAddress",
+        label: "Address line 1",
+        placeholder: "Start typing your address",
+        optional: true,
+        places: true,
+      },
+      {
+        kind: "text",
+        field: "propertyAddress2",
+        label: "Address line 2",
+        placeholder: "Unit, building, floor",
+        optional: true,
+      },
+      // City takes its own row and State/ZIP share the next. Three halves would
+      // have left ZIP stranded alone on a third row, and a town name needs the
+      // width more than a two-letter code and five digits do.
+      { kind: "text", field: "city", label: "City or town", placeholder: "e.g. Marlborough" },
       {
         kind: "select",
         field: "state",
@@ -147,14 +180,7 @@ export const STEPS: Record<string, Step> = {
         options: STATE_OPTIONS,
         half: true,
       },
-      { kind: "text", field: "city", label: "City or town", placeholder: "e.g. Marlborough", half: true },
-      {
-        kind: "text",
-        field: "propertyAddress",
-        label: "Primary property address",
-        placeholder: "Street address",
-        optional: true,
-      },
+      { kind: "text", field: "zip", label: "ZIP", placeholder: "01752", optional: true, half: true },
     ],
   },
 
@@ -190,7 +216,9 @@ export const STEPS: Record<string, Step> = {
         kind: "text",
         field: "renewalDate",
         label: "Program expiry date",
-        placeholder: "e.g. 1 September 2026",
+        // A date input ignores `placeholder` and shows its own format hint.
+        // Free text here produced "Sep 15": no year, and nothing could parse it.
+        inputType: "date",
         optional: true,
         half: true,
       },

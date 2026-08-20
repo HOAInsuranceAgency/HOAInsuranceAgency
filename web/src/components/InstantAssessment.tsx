@@ -1,24 +1,10 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { FORMSUBMIT_URL, LEAD_EMAIL, LEAD_EMAIL_HREF, fireConversion } from "../constants";
+import { FORMSUBMIT_URL, LEAD_EMAIL, LEAD_EMAIL_HREF, trackLead } from "../constants";
 import { submitCrmLead } from "../lib/crmLead";
+// One loader for the whole site — see lib/googlePlaces.ts.
+import { loadGooglePlaces } from "../lib/googlePlaces";
+import LeadUploadPanel from "./LeadUploadPanel";
 import "./InstantAssessment.css";
-
-/* ── Google Places ── */
-const GOOGLE_API_KEY = import.meta.env.PUBLIC_GOOGLE_PLACES_KEY || "";
-
-function loadGooglePlaces(): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (window.google?.maps?.places) { resolve(); return; }
-    const existing = document.querySelector(`script[src*="maps.googleapis.com"]`);
-    if (existing) { existing.addEventListener("load", () => resolve()); return; }
-    const s = document.createElement("script");
-    s.src = `https://maps.googleapis.com/maps/api/js?key=${GOOGLE_API_KEY}&libraries=places`;
-    s.async = true;
-    s.onload = () => resolve();
-    s.onerror = () => reject();
-    document.head.appendChild(s);
-  });
-}
 
 /* ── Types ── */
 interface Props {
@@ -48,6 +34,8 @@ export function InstantAssessment({
   const [phone, setPhone] = useState("");
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
+  // Only set once intake accepts the lead — no token, no upload panel.
+  const [uploadToken, setUploadToken] = useState<string | null>(null);
   const [error, setError] = useState("");
   const addressRef = useRef<HTMLInputElement>(null);
   const acRef = useRef<google.maps.places.Autocomplete | null>(null);
@@ -106,8 +94,8 @@ export function InstantAssessment({
       address: address.trim() || undefined,
       state: detectedState || undefined,
       source: `website-assessment:${source}`,
-      notes: units ? `Unit count: ${units}` : undefined,
-    });
+      unitCount: units ? String(units) : undefined,
+    }).then((r) => setUploadToken(r?.uploadToken ?? null));
     try {
       const res = await fetch(FORMSUBMIT_URL, {
         method: "POST",
@@ -127,7 +115,7 @@ export function InstantAssessment({
         }),
       });
       if (!res.ok) throw new Error("fail");
-      fireConversion();
+      trackLead("instant_assessment");
       setSent(true);
     } catch {
       setError("Something went wrong. Please try again or call 508-233-2261.");
@@ -150,6 +138,9 @@ export function InstantAssessment({
         <p className="ia-success-text">
           We'll review your information and reach out within one business day with a personalized coverage assessment.
         </p>
+        {/* Offered only after the lead is captured — an upload that
+            never happens costs nothing at this point. */}
+        {uploadToken && <LeadUploadPanel uploadToken={uploadToken} />}
         <a href="tel:+15082332261" className="ia-phone-link">
           Or call us now — 508-233-2261
         </a>

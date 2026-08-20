@@ -49,7 +49,7 @@ const {
       id="hero-address"
       type="text"
       placeholder={placeholder}
-      autocomplete="street-address"
+      autocomplete="off"
       required
     />
     <button class="hero-lookup__btn" type="submit">{buttonText}</button>
@@ -57,6 +57,12 @@ const {
   <p class="hero-lookup__note">{microcopy}</p>
 </form>
 
+<!--
+  The styles below are what make the field and the button read as one bar. They
+  are Astro-scoped to this component and defined nowhere else, so deleting them
+  leaves an unstyled native input and a default button on the hero image — which
+  is exactly what a rewrite of this file did once. There is no global fallback.
+-->
 <style>
   .hero-lookup {
     display: flex;
@@ -166,3 +172,60 @@ const {
     }
   }
 </style>
+
+<script>
+  /**
+   * Google Places on the hero address field, and the handoff to the wizard.
+   *
+   * A module rather than `is:inline`, so it imports the shared loader and the
+   * shared handoff instead of carrying copies of either.
+   *
+   * The field is still unnamed and the form still GETs a bare /quote: the
+   * address travels in sessionStorage, never in the URL. That is the whole
+   * point. See lib/addressHandoff.ts.
+   */
+  import { attachAddressAutocomplete, loadGooglePlaces } from "../lib/googlePlaces";
+  import { stashHandoff, type HandedAddress } from "../lib/addressHandoff";
+
+  const forms = document.querySelectorAll<HTMLFormElement>("form.hero-lookup");
+
+  forms.forEach((form) => {
+    const input = form.querySelector<HTMLInputElement>(".hero-lookup__input");
+    if (!input) return;
+
+    /**
+     * Set only when a visitor picks a suggestion, which is what lets the wizard
+     * prefill the town, state and ZIP as well as the street line. Someone who
+     * types an address and submits without choosing one hands over just the
+     * text, and the wizard asks for the rest as it always did.
+     */
+    let chosen: HandedAddress | null = null;
+
+    loadGooglePlaces()
+      .then(() => {
+        attachAddressAutocomplete(input, (place) => {
+          input.value = place.formatted || place.address;
+          chosen = {
+            propertyAddress: place.address || place.formatted,
+            city: place.city || undefined,
+            state: place.state || undefined,
+            zip: place.zip || undefined,
+          };
+        });
+      })
+      // Silent: a blocked script leaves a plain text box that still submits.
+      .catch(() => {});
+
+    form.addEventListener("submit", () => {
+      const typed = input.value.trim();
+      if (!typed) return;
+      // A chosen suggestion the visitor then edited is no longer that place, so
+      // the typed text wins on the street line either way.
+      stashHandoff(
+        chosen && chosen.propertyAddress === typed
+          ? chosen
+          : { propertyAddress: typed }
+      );
+    });
+  });
+</script>

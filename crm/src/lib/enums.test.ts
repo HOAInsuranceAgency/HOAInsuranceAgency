@@ -326,9 +326,16 @@ describe("option lists reproduce the hand-written ones they replaced", () => {
     });
   });
 
-  it("DOCUMENT_CATEGORY_OPTIONS — the panel's nine pickable categories", () => {
+  it("DOCUMENT_CATEGORY_OPTIONS — the panel's pickable categories", () => {
+    // Eleven since the upload portal added STATEMENT_OF_VALUES and
+    // PROPERTY_UPDATES. Both are pickable: a producer sorting a document by hand
+    // needs the same vocabulary the portal files them under, or a file that
+    // arrived correctly categorised cannot be re-categorised back to itself.
     expect(DOCUMENT_CATEGORY_OPTIONS.map((o) => [o.value, o.label])).toEqual([
+      // "Budget" sorts before "Building updates": localeCompare reaches the
+      // third character and 'd' precedes 'i'.
       ["BUDGET", "Budget"],
+      ["PROPERTY_UPDATES", "Building updates"],
       ["CONDO_DOCS", "Condo documents"],
       ["DUES_SCHEDULE", "Dues per unit"],
       ["LICENSE", "License"],
@@ -337,6 +344,7 @@ describe("option lists reproduce the hand-written ones they replaced", () => {
       ["POLICY_DOC", "Policy document"],
       ["PRIOR_POLICY", "Prior policy packet"],
       ["QUOTE_DOC", "Quote document"],
+      ["STATEMENT_OF_VALUES", "Statement of values"],
     ]);
   });
 
@@ -354,9 +362,13 @@ describe("option lists reproduce the hand-written ones they replaced", () => {
     expect({ ...DOCUMENT_CATEGORY_EXTRACTION_PRIORITY }).toEqual({
       PRIOR_POLICY: 0,
       BUDGET: 1,
+      // Shares BUDGET's rank. Ranks only order the feed, they are not unique
+      // keys, and a statement of values belongs right behind the policy.
+      STATEMENT_OF_VALUES: 1,
       DUES_SCHEDULE: 2,
       LOSS_RUNS: 3,
       OTHER: 4,
+      PROPERTY_UPDATES: 4,
       QUOTE_DOC: 5,
       POLICY_DOC: 6,
       CONDO_DOCS: 7,

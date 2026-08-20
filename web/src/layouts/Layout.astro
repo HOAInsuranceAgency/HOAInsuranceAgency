@@ -17,6 +17,25 @@ interface Props {
    * content is still generic — see data/states.ts `reviewed`.
    */
   noindex?: boolean;
+  /**
+   * Load no analytics on this page, and send no referrer from it.
+   *
+   * For routes whose URL carries a secret. GA4's `config` call reports
+   * `page_location`, which is the *full* URL including the query string, so a
+   * page reached as `?t=<token>` would hand every live upload token to GA4,
+   * Google Ads and Clarity — where anyone with report access could read one off
+   * and upload into a client's account. The referrer header would leak it to any
+   * third-party host the page touched, for the same reason.
+   *
+   * Opt-in and defaults to false so no existing page changes. Setting this is
+   * not optional on a tokenised route: see pages/documents.astro.
+   */
+  private?: boolean;
+  /**
+   * Render the header solid from the top. For pages with no dark hero behind it
+   * — see the Navbar's `solid` prop for why the default would be invisible.
+   */
+  solidNav?: boolean;
 }
 
 const {
@@ -26,6 +45,8 @@ const {
   canonicalPath = "",
   jsonLd = [],
   noindex = false,
+  private: isPrivate = false,
+  solidNav = false,
 } = Astro.props;
 
 const siteUrl = "https://www.protectmyhoa.com";
@@ -116,10 +137,11 @@ const allSchemas = [baseSchema, ...jsonLd];
 
       Anything added here must go after the title, not before it.
     */}
-    <Analytics />
+    {!isPrivate && <Analytics />}
+    {isPrivate && <meta name="referrer" content="no-referrer" />}
   </head>
   <body>
-    <Navbar currentPath={Astro.url.pathname} />
+    <Navbar currentPath={Astro.url.pathname} solid={solidNav} />
     <main>
       <slot />
     </main>

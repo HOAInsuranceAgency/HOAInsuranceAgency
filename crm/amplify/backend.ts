@@ -23,6 +23,10 @@ import { certNumber } from "./functions/cert-number/resource";
 import { renewalTasks } from "./functions/renewal-tasks/resource";
 import { licenseAlerts } from "./functions/license-alerts/resource";
 import { taskDigest } from "./functions/task-digest/resource";
+import { leadUpload } from "./functions/lead-upload/resource";
+import { leadReply } from "./functions/lead-reply/resource";
+import { uploadPortal } from "./functions/upload-portal/resource";
+import { resolveMailbox } from "./functions/mailbox";
 import { activityLog } from "./functions/activity-log/resource";
 import {
   magicLinkDefine,
@@ -46,6 +50,9 @@ export const backend = defineBackend({
   renewalTasks,
   licenseAlerts,
   taskDigest,
+  leadUpload,
+  leadReply,
+  uploadPortal,
   activityLog,
   magicLinkDefine,
   magicLinkCreate,
@@ -190,8 +197,45 @@ const BRANCH_URLS: Record<string, string> = {
 };
 const magicLinkBaseUrl =
   BRANCH_URLS[process.env.AWS_BRANCH ?? ""] ?? "http://localhost:5173";
+
+/**
+ * The marketing site's host, per branch. Where a lead's upload link points.
+ *
+ * A second map rather than a reuse of the one above: the portal page is a static
+ * route on the *website* app, a different Amplify app on a different domain, and
+ * the CRM is behind a login. A staging link has to point at the staging site or
+ * the page cannot resolve its own token — the API key is baked in per build.
+ *
+ * Literals, not `AGENCY.site`, because this file cannot import `shared/` (see
+ * the note under the mailbox block). Both `tsc` and `synth:check` pass on that
+ * import and only a real pipeline deploy fails, so it is not a mistake worth
+ * being clever near.
+ */
+const SITE_BRANCH_URLS: Record<string, string> = {
+  staging: "https://staging.dx1256wpowwzz.amplifyapp.com",
+  main: "https://www.protectmyhoa.com",
+};
+const siteBaseUrl =
+  SITE_BRANCH_URLS[process.env.AWS_BRANCH ?? ""] ?? "http://localhost:4321";
 // Sender must be SES-verified (protectmyhoa.com domain, DKIM verified).
 const magicLinkFrom = "HOA Insurance Agency <noreply@protectmyhoa.com>";
+
+/**
+ * The agency-side mailbox on outbound lead mail: the From, the Reply-To, and
+ * the team's BCC.
+ *
+ * Per branch, because staging sends real email. A test lead on staging would
+ * otherwise put a From of sales@ in front of the visitor, land a BCC in the
+ * inbox the team actually works out of, and route any reply there too. None of
+ * that is wrong in production and all of it is noise anywhere else.
+ *
+ * The map and its safe default live in `functions/mailbox.ts` so the direction
+ * of that default is unit tested rather than asserted here. `internal` is the
+ * general inbox: a digest or a licence deadline is not a sales conversation.
+ */
+const branch = process.env.AWS_BRANCH;
+const leadReplyMailbox = resolveMailbox("lead", branch);
+const internalMailbox = resolveMailbox("internal", branch);
 
 backend.magicLinkCreate.addEnvironment("MAGIC_LINK_SECRET_ARN", magicLinkSecret.secretArn);
 backend.magicLinkVerify.addEnvironment("MAGIC_LINK_SECRET_ARN", magicLinkSecret.secretArn);
@@ -264,6 +308,7 @@ backend.leadIntake.resources.lambda.addToRolePolicy(
 );
 
 backend.licenseAlerts.addEnvironment("LICENSE_ALERT_FROM", magicLinkFrom);
+backend.licenseAlerts.addEnvironment("AGENCY_MAILBOX", internalMailbox);
 backend.licenseAlerts.resources.lambda.addToRolePolicy(
   new PolicyStatement({
     actions: ["ses:SendEmail"],
@@ -275,8 +320,56 @@ backend.licenseAlerts.resources.lambda.addToRolePolicy(
 // turns the digest into a worklist rather than a notification — without it
 // the rows still render, just without deep links into the CRM.
 backend.taskDigest.addEnvironment("TASK_DIGEST_FROM", magicLinkFrom);
+backend.taskDigest.addEnvironment("AGENCY_MAILBOX", internalMailbox);
 backend.taskDigest.addEnvironment("CRM_BASE_URL", magicLinkBaseUrl);
 backend.taskDigest.resources.lambda.addToRolePolicy(
+  new PolicyStatement({
+    actions: ["ses:SendEmail"],
+    resources: ["*"],
+  })
+);
+
+// ── Website lead: public upload + auto-reply ─────────────────────────
+//
+// `lead-upload` presigns a PUT into the documents bucket with its own
+// credentials. That is what lets an unauthenticated visitor write a file
+// without `documents/*` being opened to public writes — the storage access
+// rules govern Amplify's client-side auth, while a presigned URL is plain
+// SigV4 against S3, so the grant below is the only thing that authorizes it.
+backend.leadUpload.addEnvironment(
+  "DOCUMENTS_BUCKET",
+  backend.storage.resources.bucket.bucketName
+);
+backend.storage.resources.bucket.grantPut(
+  backend.leadUpload.resources.lambda,
+  "documents/*"
+);
+
+// The document portal presigns the same way, and into the same prefix, for the
+// same reason. Its own grant rather than a shared role: the two functions have
+// different lifetimes and one should not inherit the other's reach.
+backend.uploadPortal.addEnvironment(
+  "DOCUMENTS_BUCKET",
+  backend.storage.resources.bucket.bucketName
+);
+backend.storage.resources.bucket.grantPut(
+  backend.uploadPortal.resources.lambda,
+  "documents/*"
+);
+
+// The sweep sends the reply and starts extraction for public leads —
+// `startLeadExtraction` is authenticated-only, so no visitor can reach it.
+backend.leadReply.addEnvironment("AGENCY_MAILBOX", leadReplyMailbox);
+// Where a lead's document-upload link points: the marketing site, not the CRM.
+backend.leadReply.addEnvironment("SITE_BASE_URL", siteBaseUrl);
+backend.leadReply.addEnvironment(
+  "EXTRACT_LEAD_FUNCTION",
+  backend.extractLead.resources.lambda.functionName
+);
+backend.extractLead.resources.lambda.grantInvoke(
+  backend.leadReply.resources.lambda
+);
+backend.leadReply.resources.lambda.addToRolePolicy(
   new PolicyStatement({
     actions: ["ses:SendEmail"],
     resources: ["*"],

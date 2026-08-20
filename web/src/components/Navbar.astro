@@ -3,9 +3,18 @@ import { NAV_LINKS, QUOTE_URL } from "../constants";
 
 interface Props {
   currentPath: string;
+  /**
+   * Render solid from the top, rather than transparent-until-scrolled.
+   *
+   * The transparent state only works over a dark hero, and every page in the
+   * site has one — even the legal pages use `hero--compact`. A page without one
+   * gets a white logo and white links on a white background, which is to say an
+   * invisible header. `/documents/` is the first such page.
+   */
+  solid?: boolean;
 }
 
-const { currentPath } = Astro.props;
+const { currentPath, solid = false } = Astro.props;
 
 /* Trailing slashes are not significant, so "/contact/" and "/contact" are the
    same page. "/" normalises to itself rather than to "". */
@@ -20,10 +29,18 @@ const activeIndex = NAV_LINKS.findIndex(
 );
 ---
 
-<nav class="navbar" id="navbar">
+<nav
+  class={"navbar" + (solid ? " navbar--scrolled" : "")}
+  id="navbar"
+  data-solid={solid ? "true" : undefined}
+>
   <div class="navbar-inner container">
     <a href="/" class="navbar-logo">
-      <img src="/logo.png" alt="HOA Insurance Agency" />
+      {/* Two files, not one filtered file. The bar is transparent over the hero
+          photo and solid white once scrolled, and no single asset reads on both.
+          The second is aria-hidden so the name is announced once. */}
+      <img src="/logo-on-dark.png" alt="HOA Insurance Agency" class="navbar-logo__on-dark" />
+      <img src="/logo.png" alt="" aria-hidden="true" class="navbar-logo__on-light" />
     </a>
 
     <div class="navbar-links" id="navbar-links">
@@ -80,8 +97,19 @@ const activeIndex = NAV_LINKS.findIndex(
     });
   });
 
+  /**
+   * Server-rendered, because this script cannot see Astro props. Read once: it
+   * never changes for the life of the page.
+   */
+  const alwaysSolid = navbar.dataset.solid === "true";
+
   function onScroll() {
-    navbar.classList.toggle("navbar--scrolled", window.scrollY > 60);
+    // `|| alwaysSolid`, so a page rendered solid does not go transparent the
+    // moment someone scrolls back to the top.
+    navbar.classList.toggle(
+      "navbar--scrolled",
+      window.scrollY > 60 || alwaysSolid
+    );
   }
   onScroll();
   window.addEventListener("scroll", onScroll, { passive: true });
@@ -115,16 +143,46 @@ const activeIndex = NAV_LINKS.findIndex(
     height: 100%;
   }
 
-  .navbar-logo img {
-    height: 44px;
-    width: auto;
-    filter: brightness(0) invert(1);
-    transition: filter 0.3s ease;
+  /* `line-height: 0` kills the descender gap the inline image would otherwise
+     add below itself, which is what keeps the bar's two halves aligned. */
+  .navbar-logo {
+    position: relative;
+    display: block;
+    line-height: 0;
   }
 
-  .navbar--scrolled .navbar-logo img,
-  .navbar--open .navbar-logo img {
-    filter: none;
+  .navbar-logo img {
+    display: block;
+    height: 44px;
+    width: auto;
+    transition: opacity 0.3s ease;
+  }
+
+  /* The light version sits exactly on top of the dark one and fades in as the
+     bar turns solid, so the swap rides the navbar's own transition rather than
+     snapping a frame ahead of it. `top`/`left` rather than `inset: 0`, which
+     would stretch it and ignore the height. */
+  .navbar-logo__on-light {
+    position: absolute;
+    top: 0;
+    left: 0;
+    opacity: 0;
+  }
+
+  .navbar--scrolled .navbar-logo__on-light,
+  .navbar--open .navbar-logo__on-light {
+    opacity: 1;
+  }
+
+  .navbar--scrolled .navbar-logo__on-dark,
+  .navbar--open .navbar-logo__on-dark {
+    opacity: 0;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .navbar-logo img {
+      transition: none;
+    }
   }
 
   .navbar-links {

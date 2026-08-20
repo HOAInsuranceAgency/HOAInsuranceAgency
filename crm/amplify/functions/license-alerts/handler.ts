@@ -35,16 +35,20 @@ async function getDataClient() {
 const ses = new SESv2Client();
 
 /**
- * The agency's own inbox, from the module that exists so the CRM and the
- * marketing site cannot disagree about the agency's address — rather than a
- * fourth spelling of it typed into a config.
+ * Where this report goes.
  *
- * Read here rather than passed in as an env var from `backend.ts`, which
- * cannot import it: the CDK assembly builder loads that file with a TS loader
- * scoped to `amplify/`, and a path reaching outside comes back with no
- * exports. A handler is bundled by esbuild and has no such limit.
+ * Per branch, from `functions/mailbox.ts`: the general inbox on main, a
+ * plus-addressed test box everywhere else. Without that, staging mails the live
+ * inbox every morning from an environment nobody is reading, which is how a real
+ * deadline ends up buried under duplicates of itself.
+ *
+ * Read from the environment rather than from `shared/agency.ts` directly,
+ * because `backend.ts` is the only place that knows the branch and it cannot
+ * import that module — the CDK loader is scoped to `amplify/`. The fallback
+ * below is the live inbox only if the variable is missing entirely, which should
+ * not happen once deployed.
  */
-const TO = `${AGENCY.name} <${AGENCY_FMT.emailLower}>`;
+const TO = `${AGENCY.name} <${process.env.AGENCY_MAILBOX || AGENCY_FMT.emailLower}>`;
 
 export const handler = async () => {
   const client = await getDataClient();
