@@ -26,6 +26,7 @@ import { taskDigest } from "./functions/task-digest/resource";
 import { leadUpload } from "./functions/lead-upload/resource";
 import { leadReply } from "./functions/lead-reply/resource";
 import { uploadPortal } from "./functions/upload-portal/resource";
+import { portalSweep } from "./functions/portal-sweep/resource";
 import { resolveMailbox } from "./functions/mailbox";
 import { activityLog } from "./functions/activity-log/resource";
 import {
@@ -53,6 +54,7 @@ export const backend = defineBackend({
   leadUpload,
   leadReply,
   uploadPortal,
+  portalSweep,
   activityLog,
   magicLinkDefine,
   magicLinkCreate,
@@ -362,6 +364,31 @@ backend.storage.resources.bucket.grantPut(
 backend.leadReply.addEnvironment("AGENCY_MAILBOX", leadReplyMailbox);
 // Where a lead's document-upload link points: the marketing site, not the CRM.
 backend.leadReply.addEnvironment("SITE_BASE_URL", siteBaseUrl);
+
+/**
+ * The document-upload notification sweep.
+ *
+ * Same three grants as `lead-reply`, because it does the same three things: it
+ * emails the agency mailbox, it links into the CRM, and it kicks off extraction
+ * for documents that arrived after the reply window closed — which is the only
+ * path that reads them, since `startLeadExtraction` is authenticated-only and no
+ * visitor can reach it.
+ */
+backend.portalSweep.addEnvironment("AGENCY_MAILBOX", leadReplyMailbox);
+backend.portalSweep.addEnvironment("CRM_BASE_URL", magicLinkBaseUrl);
+backend.portalSweep.addEnvironment(
+  "EXTRACT_LEAD_FUNCTION",
+  backend.extractLead.resources.lambda.functionName
+);
+backend.extractLead.resources.lambda.grantInvoke(
+  backend.portalSweep.resources.lambda
+);
+backend.portalSweep.resources.lambda.addToRolePolicy(
+  new PolicyStatement({
+    actions: ["ses:SendEmail"],
+    resources: ["*"],
+  })
+);
 backend.leadReply.addEnvironment(
   "EXTRACT_LEAD_FUNCTION",
   backend.extractLead.resources.lambda.functionName
