@@ -9,6 +9,8 @@ import Stripe from "stripe";
 import { invoiceTotals } from "../../../src/lib/invoiceTotals";
 import { renderInvoice } from "./invoice";
 import { createPaymentLink } from "./stripeLink";
+import { buildMimeMessage } from "./mime";
+import { pdfFilename, renderInvoicePdf } from "./pdf";
 
 /**
  * Custom mutation handler: sendInvoice. See resource.ts for the why.
@@ -156,7 +158,7 @@ export const handler = async (event: {
       invoiceTotals(lines).retail
     );
 
-    const { subject, text, html } = renderInvoice({
+    const view = {
       number: invoice.number,
       associationName: account.data.name,
       contactFirstName: primary?.name?.trim().split(/\s+/)[0] ?? null,
@@ -169,7 +171,26 @@ export const handler = async (event: {
       memo: invoice.memo,
       paymentUrl,
       lines: [...lines].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0)),
-    });
+    };
+    const { subject, text, html } = renderInvoice(view);
+
+    /**
+     * The PDF, which is the document they will actually forward.
+     *
+     * Failure here does not stop the send. An invoice that arrives with the
+     * amount, the lines and a Pay button but no attachment is still a working
+     * bill; one that never arrives because a logo fetch timed out is not.
+     */
+    let attachment: { filename: string; contentType: string; content: Uint8Array } | undefined;
+    try {
+      attachment = {
+        filename: pdfFilename(invoice.number),
+        contentType: "application/pdf",
+        content: await renderInvoicePdf(view),
+      };
+    } catch (err) {
+      console.error("[send-invoice] could not render the PDF; sending without it", err);
+    }
 
     /**
      * The agency keeps its own copy, for the reason the lead auto-reply BCCs
@@ -178,6 +199,20 @@ export const handler = async (event: {
      * SES would otherwise deliver it twice.
      */
     const selfAddressed = to.toLowerCase() === MAILBOX.toLowerCase();
+    /**
+     * `Raw`, not `Simple`, because Simple cannot carry an attachment. The Bcc
+     * stays on `Destination` rather than in a header — a `Bcc:` header travels
+     * with the message and is visible to everyone who receives it.
+     */
+    const raw = buildMimeMessage({
+      from: FROM,
+      to,
+      replyTo: MAILBOX,
+      subject,
+      text,
+      html,
+      attachment,
+    });
     await ses.send(
       new SendEmailCommand({
         FromEmailAddress: FROM,
@@ -185,16 +220,7 @@ export const handler = async (event: {
           ToAddresses: [to],
           ...(selfAddressed ? {} : { BccAddresses: [MAILBOX] }),
         },
-        ReplyToAddresses: [MAILBOX],
-        Content: {
-          Simple: {
-            Subject: { Data: subject, Charset: "UTF-8" },
-            Body: {
-              Text: { Data: text, Charset: "UTF-8" },
-              Html: { Data: html, Charset: "UTF-8" },
-            },
-          },
-        },
+        Content: { Raw: { Data: Buffer.from(raw, "utf8") } },
       })
     );
 
