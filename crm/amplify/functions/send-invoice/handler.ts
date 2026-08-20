@@ -146,6 +146,10 @@ export const handler = async (event: {
       ...(invoice.status === "DRAFT" ? { status: "SENT" as const } : {}),
       sentAt: new Date().toISOString(),
       sentTo: to,
+      // Named, because this write does not go through the browser's actor
+      // proxy. Without it the activity log would say "System" sent the bill,
+      // when a person pressed the button.
+      lastWriteBy: "send-invoice",
     });
 
     console.log(`send-invoice sent ${invoice.number ?? invoiceId} to ${to}`);

@@ -150,6 +150,15 @@ const STREAMED_MODELS = [
   "Policy",
   "Certificate",
   "Document",
+  // An invoice is a demand for money and its lifecycle is the part worth
+  // attributing: who sent it, who marked it paid, who voided it. Its `accountId`
+  // is what `resolveEntityId` files it under, so it needs nothing else.
+  //
+  // `InvoiceLine` is deliberately NOT here. It carries no `accountId`, so the
+  // stream would resolve nothing and every line change would be dropped in
+  // silence — the same failure the note on `Account` in diff.ts describes.
+  // Streaming lines means giving them an accountId first.
+  "Invoice",
 ] as const;
 
 for (const model of STREAMED_MODELS) {

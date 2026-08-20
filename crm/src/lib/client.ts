@@ -28,6 +28,7 @@ export const ATTRIBUTED_MODELS: ReadonlySet<string> = new Set([
   "Quote",
   "Policy",
   "Certificate",
+  "Invoice",
   "Document",
 ]);
 

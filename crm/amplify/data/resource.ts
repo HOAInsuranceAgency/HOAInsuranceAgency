@@ -801,10 +801,9 @@ const schema = a
       sentTo: a.string(),
       paidAt: a.date(),
       lines: a.hasMany("InvoiceLine", "invoiceId"),
-      // Not streamed, so `updatedBy` rather than `lastWriteBy` — see the note
-      // on UploadPortal. Invoices arguably deserve an activity trail; that is a
-      // change to STREAMED_MODELS and its test, not a rename here.
-      updatedBy: a.string(),
+      // Streamed. Money changing hands is the clearest case in the schema for
+      // "who did this, and when" — see STREAMED_MODELS in backend.ts.
+      lastWriteBy: a.string(),
     })
       .secondaryIndexes((index) => [index("accountId").sortKeys(["status"])])
       .authorization((allow) => [
