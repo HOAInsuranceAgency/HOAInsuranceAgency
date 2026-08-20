@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useMemo, useCallback } from "react";
-import { QUOTE_URL, FORMSUBMIT_URL, fireConversion } from "../constants";
+import { QUOTE_URL, FORMSUBMIT_URL, trackLead } from "../constants";
 import { submitCrmLead } from "../lib/crmLead";
 import "./CoverageCalculator.css";
 
@@ -259,7 +259,7 @@ export function CoverageCalculator() {
         }),
       });
       if (!res.ok) throw new Error("fail");
-      fireConversion();
+      trackLead("coverage_calculator");
       setEmailSent(true);
     } catch {
       setEmailError("Something went wrong. Please try again or call 508-233-2261.");

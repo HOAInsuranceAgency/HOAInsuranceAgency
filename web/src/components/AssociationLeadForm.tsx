@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { FORMSUBMIT_URL, LEAD_EMAIL, LEAD_EMAIL_HREF, fireConversion } from "../constants";
+import { FORMSUBMIT_URL, LEAD_EMAIL, LEAD_EMAIL_HREF, trackLead } from "../constants";
 import { submitCrmLead } from "../lib/crmLead";
 import LeadUploadPanel from "./LeadUploadPanel";
 import "./AssociationLeadForm.css";
@@ -86,7 +86,7 @@ export function AssociationLeadForm({ property }: Props) {
         }),
       });
       if (!res.ok) throw new Error("fail");
-      fireConversion();
+      trackLead("association_ho6");
       setSent(true);
     } catch {
       setError("Something went wrong. Please try again or call 508-233-2261.");
