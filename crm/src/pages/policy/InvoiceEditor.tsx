@@ -218,8 +218,8 @@ export function InvoiceEditor({
           onBlur={(e) => void patchInvoice({ paymentUrl: e.target.value.trim() || null })}
         />
         <p className="hint">
-          Optional. Without one the invoice still sends, with the amount and the
-          lines but no Pay button.
+          Leave blank and sending generates a Stripe link for bank transfer,
+          which costs $5 whatever the premium. Paste your own to override it.
         </p>
       </div>
 
@@ -401,7 +401,7 @@ export function InvoiceEditor({
       )}
 
       <div className="row-gap">
-        {invoice.status === "SENT" && (
+        {(invoice.status === "SENT" || invoice.status === "PROCESSING") && (
           <button
             type="button"
             onClick={() =>
@@ -413,6 +413,13 @@ export function InvoiceEditor({
           >
             Mark paid
           </button>
+        )}
+        {invoice.status === "PROCESSING" && (
+          <p className="hint">
+            A bank transfer has been authorised and is clearing. Stripe will mark
+            this paid when the money lands; the button is here for a cheque that
+            arrived another way.
+          </p>
         )}
         {!locked && (
           <ConfirmButton

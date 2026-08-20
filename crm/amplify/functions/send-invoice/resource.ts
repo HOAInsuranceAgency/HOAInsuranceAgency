@@ -1,4 +1,4 @@
-import { defineFunction } from "@aws-amplify/backend";
+import { defineFunction, secret } from "@aws-amplify/backend";
 
 /**
  * Emails an invoice to the insured, with a payment link.
@@ -17,4 +17,15 @@ export const sendInvoice = defineFunction({
   timeoutSeconds: 60,
   memoryMB: 512,
   resourceGroupName: "data",
+  environment: {
+    /**
+     * Mints the ACH payment link that goes in the email.
+     *
+     * Declared here rather than in backend.ts, as `lead-reply` declares its
+     * own: `secret()` resolves per branch, so staging signs with a test key and
+     * main with a live one and neither this file nor backend.ts needs to know
+     * which. Unset, the invoice still sends — with no Pay button.
+     */
+    STRIPE_SECRET_KEY: secret("STRIPE_SECRET_KEY"),
+  },
 });
