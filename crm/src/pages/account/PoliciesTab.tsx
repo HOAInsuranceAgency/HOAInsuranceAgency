@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import {
   client,
   fmtDate,
@@ -137,7 +138,11 @@ export function PoliciesTab({ accountId }: { accountId: string }) {
             <tbody>
               {sorted.map((p) => (
                 <tr key={p.id}>
-                  <td>{p.policyNumber || "—"}</td>
+                  <td>
+                    {/* The policy page is where billing lives; this is the only
+                        way into it, so every row links even when unnumbered. */}
+                    <Link to={`/policies/${p.id}`}>{p.policyNumber || "Open"}</Link>
+                  </td>
                   <td className="small">{carrierName(p.carrierId)}</td>
                   <td className="small">{(p.lines ?? []).filter(Boolean).join(", ") || "—"}</td>
                   <td>{fmtMoney(p.premium)}</td>
