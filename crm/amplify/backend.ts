@@ -9,7 +9,11 @@ import {
   Table,
   TableEncryption,
 } from "aws-cdk-lib/aws-dynamodb";
-import { CfnFunction, StartingPosition } from "aws-cdk-lib/aws-lambda";
+import {
+  CfnFunction,
+  FunctionUrlAuthType,
+  StartingPosition,
+} from "aws-cdk-lib/aws-lambda";
 import { DynamoEventSource } from "aws-cdk-lib/aws-lambda-event-sources";
 import { auth } from "./auth/resource";
 import { data } from "./data/resource";
@@ -29,6 +33,7 @@ import { leadReply } from "./functions/lead-reply/resource";
 import { uploadPortal } from "./functions/upload-portal/resource";
 import { portalSweep } from "./functions/portal-sweep/resource";
 import { sendInvoice } from "./functions/send-invoice/resource";
+import { stripeWebhook } from "./functions/stripe-webhook/resource";
 import { resolveMailbox } from "./functions/mailbox";
 import { activityLog } from "./functions/activity-log/resource";
 import {
@@ -59,6 +64,7 @@ export const backend = defineBackend({
   uploadPortal,
   portalSweep,
   sendInvoice,
+  stripeWebhook,
   activityLog,
   magicLinkDefine,
   magicLinkCreate,
@@ -365,6 +371,27 @@ backend.sendInvoice.resources.lambda.addToRolePolicy(
     resources: ["*"],
   })
 );
+
+/**
+ * Stripe.
+ *
+ * `send-invoice` mints the payment link; `stripe-webhook` hears back when the
+ * money moves. Both need the secret key, so both declare it — `secret()`
+ * resolves per branch, which means test keys on staging and live keys on main
+ * without a conditional anywhere in this file.
+ *
+ * The webhook is a Function URL with auth NONE. That is not an oversight:
+ * Stripe cannot sign SigV4, so the request is authenticated by the signature
+ * over its own payload, which the handler verifies before parsing anything.
+ * The URL is printed in the deploy output; it goes in Stripe's dashboard, and
+ * the signing secret they show once comes back as STRIPE_WEBHOOK_SECRET.
+ */
+const stripeWebhookUrl = backend.stripeWebhook.resources.lambda.addFunctionUrl({
+  authType: FunctionUrlAuthType.NONE,
+});
+backend.addOutput({
+  custom: { stripeWebhookUrl: stripeWebhookUrl.url },
+});
 backend.taskDigest.resources.lambda.addToRolePolicy(
   new PolicyStatement({
     actions: ["ses:SendEmail"],

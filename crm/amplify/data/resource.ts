@@ -79,12 +79,19 @@ const schema = a
      */
     LeadReplyStatus: a.enum(["WAITING", "SENDING", "SENT", "FAILED"]),
     /**
-     * DRAFT   — being built, nothing sent, freely editable.
-     * SENT    — emailed to the insured; the amount is now a claim on them.
-     * PAID    — settled. Recorded by hand until a processor webhook does it.
-     * VOID    — cancelled. Kept rather than deleted so the number is never reused.
+     * DRAFT      — being built, nothing sent, freely editable.
+     * SENT       — emailed to the insured; the amount is now a claim on them.
+     * PROCESSING — they have authorised payment but the money has not arrived.
+     * PAID       — settled, money received.
+     * VOID       — cancelled. Kept rather than deleted so the number is never reused.
+     *
+     * PROCESSING exists because of ACH. A bank debit is authorised in the
+     * checkout and clears days later, and it can still fail after the payer has
+     * done everything right. Marking such an invoice PAID the moment they press
+     * the button would be recording money that has not moved, which is the one
+     * kind of wrong a billing system must not be.
      */
-    InvoiceStatus: a.enum(["DRAFT", "SENT", "PAID", "VOID"]),
+    InvoiceStatus: a.enum(["DRAFT", "SENT", "PROCESSING", "PAID", "VOID"]),
     /**
      * What a line is, which is what decides whether it carries margin.
      *
@@ -800,6 +807,18 @@ const schema = a
       /** The address it actually went to, which may not be today's contact. */
       sentTo: a.string(),
       paidAt: a.date(),
+      /**
+       * The Stripe payment link backing `paymentUrl`, so a resend reuses the
+       * link rather than minting a second one for the same bill. Two live links
+       * for one invoice is how an association pays twice.
+       */
+      stripePaymentLinkId: a.string(),
+      /**
+       * The PaymentIntent that settled it. Written by the webhook, and what
+       * makes marking-paid idempotent: Stripe retries deliveries, and without
+       * this a redelivery would be indistinguishable from a second payment.
+       */
+      stripePaymentIntentId: a.string(),
       lines: a.hasMany("InvoiceLine", "invoiceId"),
       // Streamed. Money changing hands is the clearest case in the schema for
       // "who did this, and when" — see STREAMED_MODELS in backend.ts.

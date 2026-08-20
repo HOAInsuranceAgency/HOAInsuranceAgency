@@ -5,7 +5,10 @@ import { getAmplifyDataClientConfig } from "@aws-amplify/backend/function/runtim
 import type { Schema } from "../../data/resource";
 import { listAllPages } from "../../../src/lib/pagination";
 import { AGENCY, AGENCY_FMT } from "../../../../shared/agency";
+import Stripe from "stripe";
+import { invoiceTotals } from "../../../src/lib/invoiceTotals";
 import { renderInvoice } from "./invoice";
+import { createPaymentLink } from "./stripeLink";
 
 /**
  * Custom mutation handler: sendInvoice. See resource.ts for the why.
@@ -35,6 +38,53 @@ const MAILBOX = process.env.AGENCY_MAILBOX || AGENCY_FMT.emailLower;
 const FROM = `${AGENCY.name} <${MAILBOX}>`;
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/**
+ * The Stripe payment link for this invoice, or null.
+ *
+ * Reuses an existing link so a resend does not mint a second one — two live
+ * links for one bill is how an association pays twice. A producer who pasted
+ * their own URL keeps it: an explicit choice beats a generated default.
+ *
+ * Returns null on any failure, and the invoice sends without a Pay button. A
+ * bill with no link is a nuisance; a bill that never arrives because Stripe was
+ * down is worse.
+ */
+async function ensurePaymentLink(
+  client: DataClient,
+  invoice: { id: string; number?: string | null; paymentUrl?: string | null; stripePaymentLinkId?: string | null },
+  associationName: string,
+  total: number
+): Promise<string | null> {
+  if (invoice.paymentUrl?.trim()) return invoice.paymentUrl.trim();
+
+  const key = process.env.STRIPE_SECRET_KEY;
+  if (!key) {
+    console.warn("[send-invoice] STRIPE_SECRET_KEY unset; sending without a link");
+    return null;
+  }
+  if (total <= 0) return null;
+
+  try {
+    const stripe = new Stripe(key);
+    const { id, url } = await createPaymentLink(stripe, {
+      invoiceId: invoice.id,
+      invoiceNumber: invoice.number ?? null,
+      associationName,
+      total,
+    });
+    await client.models.Invoice.update({
+      id: invoice.id,
+      paymentUrl: url,
+      stripePaymentLinkId: id,
+      lastWriteBy: "send-invoice",
+    });
+    return url;
+  } catch (err) {
+    console.error("[send-invoice] could not create a payment link", err);
+    return null;
+  }
+}
 
 export const handler = async (event: {
   arguments?: { invoiceId?: string; toEmail?: string };
@@ -94,6 +144,18 @@ export const handler = async (event: {
       ? (await client.models.Carrier.get({ id: policy.carrierId })).data
       : null;
 
+    /**
+     * Before rendering, so the email carries the button. The total comes from
+     * the same `invoiceTotals` the screen ran, over rows read here rather than
+     * over anything the caller posted.
+     */
+    const paymentUrl = await ensurePaymentLink(
+      client,
+      invoice,
+      account.data.name,
+      invoiceTotals(lines).retail
+    );
+
     const { subject, text, html } = renderInvoice({
       number: invoice.number,
       associationName: account.data.name,
@@ -105,7 +167,7 @@ export const handler = async (event: {
       issuedAt: invoice.issuedAt,
       dueAt: invoice.dueAt,
       memo: invoice.memo,
-      paymentUrl: invoice.paymentUrl,
+      paymentUrl,
       lines: [...lines].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0)),
     });
 
