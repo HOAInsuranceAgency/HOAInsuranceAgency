@@ -20,6 +20,7 @@ import { teamAdmin } from "./functions/team-admin/resource";
 import { extractLead } from "./functions/extract-lead/resource";
 import { formFiller } from "./functions/form-filler/resource";
 import { certNumber } from "./functions/cert-number/resource";
+import { invoiceNumber } from "./functions/invoice-number/resource";
 import { renewalTasks } from "./functions/renewal-tasks/resource";
 import { licenseAlerts } from "./functions/license-alerts/resource";
 import { taskDigest } from "./functions/task-digest/resource";
@@ -27,6 +28,7 @@ import { leadUpload } from "./functions/lead-upload/resource";
 import { leadReply } from "./functions/lead-reply/resource";
 import { uploadPortal } from "./functions/upload-portal/resource";
 import { portalSweep } from "./functions/portal-sweep/resource";
+import { sendInvoice } from "./functions/send-invoice/resource";
 import { resolveMailbox } from "./functions/mailbox";
 import { activityLog } from "./functions/activity-log/resource";
 import {
@@ -48,6 +50,7 @@ export const backend = defineBackend({
   extractLead,
   formFiller,
   certNumber,
+  invoiceNumber,
   renewalTasks,
   licenseAlerts,
   taskDigest,
@@ -55,6 +58,7 @@ export const backend = defineBackend({
   leadReply,
   uploadPortal,
   portalSweep,
+  sendInvoice,
   activityLog,
   magicLinkDefine,
   magicLinkCreate,
@@ -103,6 +107,23 @@ backend.certNumber.addEnvironment(
   "CERT_SEQ_BASES",
   JSON.stringify({ "2026": 10 })
 );
+
+// The invoice counter. Its own stack and its own table rather than a `kind`
+// column on the certificate one: generalising that table means renaming its
+// construct, which changes the logical id and REPLACES it — resetting the
+// certificate counter and re-issuing numbers already printed on COIs sitting in
+// carriers' files. Forty duplicated lines is the cheaper mistake.
+const invoiceStack = backend.createStack("InvoiceNumberStack");
+const invoiceSeqTable = new Table(invoiceStack, "InvoiceSequence", {
+  partitionKey: { name: "year", type: AttributeType.STRING },
+  billingMode: BillingMode.PAY_PER_REQUEST,
+  encryption: TableEncryption.AWS_MANAGED,
+  // The numbering ledger — keep it recoverable.
+  pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true },
+});
+invoiceSeqTable.grantReadWriteData(backend.invoiceNumber.resources.lambda);
+backend.invoiceNumber.addEnvironment("SEQ_TABLE", invoiceSeqTable.tableName);
+backend.invoiceNumber.addEnvironment("INVOICE_PREFIX", "INV");
 
 // ── Activity log: DynamoDB Streams → Activity rows ───────────────────
 //
@@ -324,6 +345,17 @@ backend.licenseAlerts.resources.lambda.addToRolePolicy(
 backend.taskDigest.addEnvironment("TASK_DIGEST_FROM", magicLinkFrom);
 backend.taskDigest.addEnvironment("AGENCY_MAILBOX", internalMailbox);
 backend.taskDigest.addEnvironment("CRM_BASE_URL", magicLinkBaseUrl);
+
+// Invoices come from the general mailbox rather than sales: a bill is not a
+// sales conversation, and a reply to one should land where the people who
+// reconcile payments are looking.
+backend.sendInvoice.addEnvironment("AGENCY_MAILBOX", internalMailbox);
+backend.sendInvoice.resources.lambda.addToRolePolicy(
+  new PolicyStatement({
+    actions: ["ses:SendEmail"],
+    resources: ["*"],
+  })
+);
 backend.taskDigest.resources.lambda.addToRolePolicy(
   new PolicyStatement({
     actions: ["ses:SendEmail"],

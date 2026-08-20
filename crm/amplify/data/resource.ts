@@ -5,6 +5,8 @@ import { teamAdmin } from "../functions/team-admin/resource";
 import { extractLead } from "../functions/extract-lead/resource";
 import { formFiller } from "../functions/form-filler/resource";
 import { certNumber } from "../functions/cert-number/resource";
+import { invoiceNumber } from "../functions/invoice-number/resource";
+import { sendInvoice } from "../functions/send-invoice/resource";
 import { renewalTasks } from "../functions/renewal-tasks/resource";
 import { licenseAlerts } from "../functions/license-alerts/resource";
 import { taskDigest } from "../functions/task-digest/resource";
@@ -76,6 +78,30 @@ const schema = a
      * SENT / FAILED — terminal.
      */
     LeadReplyStatus: a.enum(["WAITING", "SENDING", "SENT", "FAILED"]),
+    /**
+     * DRAFT   — being built, nothing sent, freely editable.
+     * SENT    — emailed to the insured; the amount is now a claim on them.
+     * PAID    — settled. Recorded by hand until a processor webhook does it.
+     * VOID    — cancelled. Kept rather than deleted so the number is never reused.
+     */
+    InvoiceStatus: a.enum(["DRAFT", "SENT", "PAID", "VOID"]),
+    /**
+     * What a line is, which is what decides whether it carries margin.
+     *
+     * PREMIUM is the only kind that normally does: the agency bills the gross
+     * and remits it net of commission. Taxes, surplus lines and stamping fees
+     * are pass-through — billed at exactly what is owed, cost equal to retail —
+     * and are separate kinds so a zero margin on them reads as correct rather
+     * than as someone forgetting to enter a cost.
+     */
+    InvoiceLineKind: a.enum([
+      "PREMIUM",
+      "ENDORSEMENT",
+      "TAX",
+      "SURPLUS_LINES",
+      "STAMPING_FEE",
+      "OTHER",
+    ]),
     UserRole: a.enum(["ADMIN", "STAFF", "PRODUCER"]),
     // ── Renewal marketing tasks ──
     MarketingTaskStatus: a.enum(["OPEN", "COMPLETE"]),
@@ -285,6 +311,7 @@ const schema = a
         lastWriteBy: a.string(),
         quotes: a.hasMany("Quote", "accountId"),
         policies: a.hasMany("Policy", "accountId"),
+        invoices: a.hasMany("Invoice", "accountId"),
         certificates: a.hasMany("Certificate", "accountId"),
       })
       .secondaryIndexes((index) => [index("stage").sortKeys(["name"])])
@@ -717,9 +744,89 @@ const schema = a
       effectiveDate: a.date(),
       expirationDate: a.date(),
       notes: a.string(),
+      invoices: a.hasMany("Invoice", "policyId"),
     })
       .authorization((allow) => [
         allow.authenticated().to(["read", "create", "update"]),
+        allow.groups(["ADMIN"]),
+      ]),
+
+    /**
+     * What the association is billed, and what it costs us.
+     *
+     * ── The billing model this assumes ──────────────────────────────────────
+     * Agency bill, commission inside the premium. The agency collects the gross
+     * premium from the association and remits it to the carrier net of
+     * commission, so on a premium line `retailAmount` is what the association
+     * pays and `costAmount` is what is owed to the carrier. The difference is
+     * the agency's revenue, and the association never sees it — the invoice
+     * shows retail only.
+     *
+     * That is why there is no agency-fee kind. A separate fee charged on top of
+     * premium would engage 940 CMR 38.00 and DOI Bulletin 2013-09, which
+     * require the fee to be itemised with its purpose stated and the total
+     * shown more prominently than any other figure. Adding such a line later is
+     * a compliance decision before it is a schema one.
+     *
+     * ── Totals are not stored ───────────────────────────────────────────────
+     * Retail, cost and margin are all computed from the lines by
+     * `lib/invoiceTotals.ts`. A stored total is a second copy of a number that
+     * can silently disagree with the rows under it, and this one would be
+     * disagreeing about money.
+     */
+    Invoice: a.model({
+      accountId: a.id().required(),
+      account: a.belongsTo("Account", "accountId"),
+      /** Optional: a policy can have several, and some bill no policy at all. */
+      policyId: a.id(),
+      policy: a.belongsTo("Policy", "policyId"),
+      /** INV-2026-00001. Reserved atomically — see reserveInvoiceNumber. */
+      number: a.string(),
+      status: a.ref("InvoiceStatus").required(),
+      issuedAt: a.date(),
+      dueAt: a.date(),
+      /**
+       * Where the association pays.
+       *
+       * A plain string a producer pastes from the payment processor, rather
+       * than an integration, because the processor has not been chosen yet.
+       * When one is, this is the single field it fills and nothing else about
+       * invoicing has to change.
+       */
+      paymentUrl: a.string(),
+      /** Shown to the insured, above the lines. */
+      memo: a.string(),
+      sentAt: a.datetime(),
+      /** The address it actually went to, which may not be today's contact. */
+      sentTo: a.string(),
+      paidAt: a.date(),
+      lines: a.hasMany("InvoiceLine", "invoiceId"),
+      // Not streamed, so `updatedBy` rather than `lastWriteBy` — see the note
+      // on UploadPortal. Invoices arguably deserve an activity trail; that is a
+      // change to STREAMED_MODELS and its test, not a rename here.
+      updatedBy: a.string(),
+    })
+      .secondaryIndexes((index) => [index("accountId").sortKeys(["status"])])
+      .authorization((allow) => [
+        allow.authenticated().to(["read", "create", "update"]),
+        allow.groups(["ADMIN"]),
+      ]),
+
+    InvoiceLine: a.model({
+      invoiceId: a.id().required(),
+      invoice: a.belongsTo("Invoice", "invoiceId"),
+      description: a.string(),
+      kind: a.ref("InvoiceLineKind"),
+      /** What the association pays for this line. */
+      retailAmount: a.float(),
+      /** What is owed to the carrier for it. Never shown to the insured. */
+      costAmount: a.float(),
+      /** Display order, so a reordered invoice does not depend on ids. */
+      sortOrder: a.integer(),
+      updatedBy: a.string(),
+    })
+      .authorization((allow) => [
+        allow.authenticated().to(["read", "create", "update", "delete"]),
         allow.groups(["ADMIN"]),
       ]),
 
@@ -1343,6 +1450,36 @@ const schema = a
       .returns(a.json())
       .authorization((allow) => [allow.authenticated()])
       .handler(a.handler.function(certNumber)),
+
+    /**
+     * The next invoice number. Atomic — see functions/invoice-number.
+     *
+     * Reserved when an invoice is created rather than when it is sent, so a
+     * voided draft leaves a gap in the sequence. Gaps are explainable; a number
+     * handed out twice is not.
+     */
+    reserveInvoiceNumber: a
+      .mutation()
+      .returns(a.json())
+      .authorization((allow) => [allow.authenticated()])
+      .handler(a.handler.function(invoiceNumber)),
+
+    /**
+     * Email an invoice to the insured.
+     *
+     * Takes an id, not amounts: the figures are read from the rows server-side.
+     * The browser has already computed the same totals for the screen, but this
+     * email is a demand for money and the number in it comes from the database.
+     *
+     * `toEmail` overrides the account's primary contact, for the case where the
+     * bill goes to a management company rather than to the board.
+     */
+    sendInvoice: a
+      .mutation()
+      .arguments({ invoiceId: a.string().required(), toEmail: a.string() })
+      .returns(a.json())
+      .authorization((allow) => [allow.authenticated()])
+      .handler(a.handler.function(sendInvoice)),
   })
   .authorization((allow) => [
     // Default for every model that doesn't declare its own rules. A model
@@ -1395,6 +1532,8 @@ const schema = a
     // The notification sweep reads portals, accounts and documents, and stamps
     // `notifiedUpTo` so a batch is reported once.
     allow.resource(portalSweep),
+    // Reads invoices, lines, accounts and contacts to build the emailed bill.
+    allow.resource(sendInvoice),
     // The stream handler writes Activity and reads UserProfile to name an
     // actor. Note what the block above says: this is not a per-model grant,
     // so this function has full API access whatever any model declares. What
