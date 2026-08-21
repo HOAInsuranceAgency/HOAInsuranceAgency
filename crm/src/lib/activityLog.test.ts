@@ -137,6 +137,25 @@ describe("resolveEntityId", () => {
 
   it("returns null for a record with no account, so it is dropped", () => {
     expect(resolveEntityId("Building", {})).toBeNull();
+  });
+
+  it("files an invoice under the account it bills", () => {
+    expect(
+      resolveEntityId("Invoice", { id: "i1", accountId: "a1", number: "INV-2026-00001" })
+    ).toBe("a1");
+  });
+
+  /**
+   * Why `InvoiceLine` is not streamed.
+   *
+   * A line carries only `invoiceId`, so the stream would resolve nothing and
+   * every change to an amount would be dropped in silence — the same failure
+   * the note on `Account` in diff.ts describes. Streaming lines means giving
+   * them an accountId first, and this asserts the trap rather than leaving it
+   * to be rediscovered.
+   */
+  it("would drop an invoice line, which is why lines are not streamed", () => {
+    expect(resolveEntityId("InvoiceLine", { id: "l1", invoiceId: "i1" })).toBeNull();
     expect(resolveEntityId("Building", undefined)).toBeNull();
   });
 });
@@ -156,6 +175,20 @@ describe("subjectLabel", () => {
 
   it("returns empty rather than an id nobody can read", () => {
     expect(subjectLabel("GlApplication", { id: "x" })).toBe("");
+  });
+});
+
+describe("an invoice in the timeline", () => {
+  it("is named by its number rather than by its id", () => {
+    expect(
+      subjectLabel("Invoice", { id: "0f3c-uuid", number: "INV-2026-00001" })
+    ).toBe("INV-2026-00001");
+  });
+
+  it("falls back to nothing rather than to a uuid when unnumbered", () => {
+    // A reserved number can fail to land. An empty label renders as the model
+    // name; a uuid renders as noise nobody can act on.
+    expect(subjectLabel("Invoice", { id: "0f3c-uuid" })).toBe("");
   });
 });
 
@@ -322,8 +355,14 @@ describe("the attributed and streamed model lists agree", () => {
     }
   });
 
-  /** Kept beside the assertion it explains: STREAMED_MODELS in backend.ts. */
-  const STREAMED_MODEL_COUNT = 14;
+  /**
+   * Kept beside the assertion it explains: STREAMED_MODELS in backend.ts.
+   *
+   * 15 since Invoice joined. Bumping this is meant to be a deliberate act —
+   * it is what stops a model quietly acquiring the column without a stream, or
+   * a stream without the column, and being attributed to "System" forever.
+   */
+  const STREAMED_MODEL_COUNT = 15;
 
   it("gives every streamed model the column to be stamped into", () => {
     const schema = readFileSync(

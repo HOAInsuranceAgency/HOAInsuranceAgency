@@ -5,6 +5,9 @@ import { teamAdmin } from "../functions/team-admin/resource";
 import { extractLead } from "../functions/extract-lead/resource";
 import { formFiller } from "../functions/form-filler/resource";
 import { certNumber } from "../functions/cert-number/resource";
+import { invoiceNumber } from "../functions/invoice-number/resource";
+import { sendInvoice } from "../functions/send-invoice/resource";
+import { voidInvoice } from "../functions/void-invoice/resource";
 import { renewalTasks } from "../functions/renewal-tasks/resource";
 import { licenseAlerts } from "../functions/license-alerts/resource";
 import { taskDigest } from "../functions/task-digest/resource";
@@ -40,6 +43,24 @@ const schema = a
       "LOST",
     ]),
     PolicyStatus: a.enum(["ACTIVE", "EXPIRED", "CANCELLED", "NON_RENEWED"]),
+    /**
+     * Who collects the premium from the association.
+     *
+     * AGENCY — the agency bills the insured, collects the gross premium and
+     * remits it to the carrier net of commission. These are the policies the
+     * Invoice model is about; see the note on it, which assumes exactly this
+     * arrangement.
+     *
+     * DIRECT — the carrier bills the insured itself and pays commission to the
+     * agency afterwards. Nothing passes through the agency's account, so a
+     * direct-bill policy is not something to raise a premium invoice for.
+     *
+     * Captured at bind because it is a term of the placement, not a property
+     * of the account: the same association can be agency bill with one carrier
+     * and direct bill with another, and which one it is decides whether anyone
+     * here is supposed to chase the money.
+     */
+    BillType: a.enum(["AGENCY", "DIRECT"]),
     DocumentEntityType: a.enum([
       "ACCOUNT",
       "QUOTE",
@@ -76,6 +97,48 @@ const schema = a
      * SENT / FAILED — terminal.
      */
     LeadReplyStatus: a.enum(["WAITING", "SENDING", "SENT", "FAILED"]),
+    /**
+     * DRAFT      — being built, nothing sent, freely editable.
+     * SENT       — emailed to the insured; the amount is now a claim on them.
+     * PROCESSING — they have authorised payment but the money has not arrived.
+     * PAID       — settled, money received.
+     * VOID       — cancelled. Kept rather than deleted so the number is never reused.
+     *
+     * PROCESSING exists because of ACH. A bank debit is authorised in the
+     * checkout and clears days later, and it can still fail after the payer has
+     * done everything right. Marking such an invoice PAID the moment they press
+     * the button would be recording money that has not moved, which is the one
+     * kind of wrong a billing system must not be.
+     */
+    InvoiceStatus: a.enum(["DRAFT", "SENT", "PROCESSING", "PAID", "VOID"]),
+    /**
+     * What a line is, which is what decides whether it carries margin.
+     *
+     * PREMIUM is the only kind that normally does: the agency bills the gross
+     * and remits it net of commission. Taxes, surplus lines and stamping fees
+     * are pass-through — billed at exactly what is owed, cost equal to retail —
+     * and are separate kinds so a zero margin on them reads as correct rather
+     * than as someone forgetting to enter a cost.
+     */
+    InvoiceLineKind: a.enum([
+      "PREMIUM",
+      "ENDORSEMENT",
+      "TAX",
+      "SURPLUS_LINES",
+      "STAMPING_FEE",
+      /**
+       * Interest charged on an in-house payment plan.
+       *
+       * Not yet offered, and here now because the remittance split sent to
+       * corporate accounting has to name it: interest is agency income of a
+       * different kind from commission — earned for lending rather than for
+       * placing — and the two are taxed and reported differently. Present as a
+       * category that reads zero rather than one bolted on later, so the first
+       * financed invoice needs a line, not a release.
+       */
+      "INTEREST",
+      "OTHER",
+    ]),
     UserRole: a.enum(["ADMIN", "STAFF", "PRODUCER"]),
     // ── Renewal marketing tasks ──
     MarketingTaskStatus: a.enum(["OPEN", "COMPLETE"]),
@@ -285,6 +348,7 @@ const schema = a
         lastWriteBy: a.string(),
         quotes: a.hasMany("Quote", "accountId"),
         policies: a.hasMany("Policy", "accountId"),
+        invoices: a.hasMany("Invoice", "accountId"),
         certificates: a.hasMany("Certificate", "accountId"),
       })
       .secondaryIndexes((index) => [index("stage").sortKeys(["name"])])
@@ -696,6 +760,15 @@ const schema = a
       carrier: a.belongsTo("Carrier", "carrierId"),
       policyNumber: a.string(),
       status: a.ref("PolicyStatus").required(),
+      /**
+       * Required by the bind form, optional here.
+       *
+       * Every policy created from now on has one — `BindForm` will not submit
+       * without it. Declaring it `.required()` in the schema would instead make
+       * AppSync fail the *read* of every policy bound before this field
+       * existed, turning a missing answer into an unopenable record.
+       */
+      billType: a.ref("BillType"),
       lines: a.string().array(),
       premium: a.float(),
       commissionPct: a.float(), // carried from the bound quote; baked into premium
@@ -717,9 +790,171 @@ const schema = a
       effectiveDate: a.date(),
       expirationDate: a.date(),
       notes: a.string(),
+      invoices: a.hasMany("Invoice", "policyId"),
+      invoiceLines: a.hasMany("InvoiceLine", "policyId"),
     })
       .authorization((allow) => [
         allow.authenticated().to(["read", "create", "update"]),
+        allow.groups(["ADMIN"]),
+      ]),
+
+    /**
+     * What the association is billed, and what it costs us.
+     *
+     * ── The billing model this assumes ──────────────────────────────────────
+     * Agency bill, commission inside the premium. The agency collects the gross
+     * premium from the association and remits it to the carrier net of
+     * commission, so on a premium line `retailAmount` is what the association
+     * pays and `costAmount` is what is owed to the carrier. The difference is
+     * the agency's revenue, and the association never sees it — the invoice
+     * shows retail only.
+     *
+     * That is why there is no agency-fee kind. A separate fee charged on top of
+     * premium would engage 940 CMR 38.00 and DOI Bulletin 2013-09, which
+     * require the fee to be itemised with its purpose stated and the total
+     * shown more prominently than any other figure. Adding such a line later is
+     * a compliance decision before it is a schema one.
+     *
+     * ── Totals are not stored ───────────────────────────────────────────────
+     * Retail, cost and margin are all computed from the lines by
+     * `lib/invoiceTotals.ts`. A stored total is a second copy of a number that
+     * can silently disagree with the rows under it, and this one would be
+     * disagreeing about money.
+     */
+    Invoice: a.model({
+      accountId: a.id().required(),
+      account: a.belongsTo("Account", "accountId"),
+      /** Optional: a policy can have several, and some bill no policy at all. */
+      policyId: a.id(),
+      policy: a.belongsTo("Policy", "policyId"),
+      /** INV-2026-00001. Reserved atomically — see reserveInvoiceNumber. */
+      number: a.string(),
+      status: a.ref("InvoiceStatus").required(),
+      issuedAt: a.date(),
+      dueAt: a.date(),
+      /**
+       * Where the association pays.
+       *
+       * A plain string a producer pastes from the payment processor, rather
+       * than an integration, because the processor has not been chosen yet.
+       * When one is, this is the single field it fills and nothing else about
+       * invoicing has to change.
+       */
+      paymentUrl: a.string(),
+      /** Shown to the insured, above the lines. */
+      memo: a.string(),
+      sentAt: a.datetime(),
+      /** The address it actually went to, which may not be today's contact. */
+      sentTo: a.string(),
+      paidAt: a.date(),
+      /**
+       * The Stripe payment link backing `paymentUrl`, so a resend reuses the
+       * link rather than minting a second one for the same bill. Two live links
+       * for one invoice is how an association pays twice.
+       */
+      stripePaymentLinkId: a.string(),
+      /**
+       * The PaymentIntent this invoice's state currently reflects. Written by
+       * the webhook.
+       */
+      stripePaymentIntentId: a.string(),
+      /**
+       * When the last event we acted on was created, per Stripe's clock.
+       *
+       * Stripe does not promise ordered delivery, and a redelivery of an old
+       * event is ordinary. Without this an out-of-order `processing` can revive
+       * a failed payment, and an out-of-order `payment_failed` can bury one
+       * that is still clearing — both of which misstate whether money is coming.
+       * Anything older than this is ignored.
+       */
+      stripeEventAt: a.datetime(),
+      /**
+       * When the PaymentIntent this state reflects was created.
+       *
+       * Stripe's event clock has one-second resolution, so two events from
+       * different attempts can tie. A replacement intent is always created after
+       * the one it replaces, which is what breaks that tie.
+       */
+      stripeIntentCreatedAt: a.datetime(),
+      /**
+       * The amount, in cents, the Stripe link was minted for.
+       *
+       * A Payment Link's Price is fixed. Editing an invoice's lines and sending
+       * again would otherwise show the new total while the Pay button charged
+       * the old one, so a change here is what forces the link to be replaced.
+       */
+      stripeLinkAmountCents: a.integer(),
+      /**
+       * How the money collected divides, in cents, as of the last send.
+       *
+       * ── Why stored and not computed on payment ──
+       * The webhook is what tells corporate accounting a payment landed, and it
+       * has the invoice row and nothing else. Recomputing from the lines would
+       * mean reading them, and — worse — would split whatever the lines say
+       * *now*, which is not necessarily what was charged: a Payment Link's
+       * price is fixed when it is minted, so an invoice edited after sending
+       * would report a division of an amount nobody paid.
+       *
+       * Written beside `stripeLinkAmountCents`, from the same totals, on every
+       * send. The three always sum to it, and all four describe one charge.
+       */
+      remittanceCarrierCents: a.integer(),
+      remittanceCommissionCents: a.integer(),
+      remittanceInterestCents: a.integer(),
+      lines: a.hasMany("InvoiceLine", "invoiceId"),
+      // Streamed. Money changing hands is the clearest case in the schema for
+      // "who did this, and when" — see STREAMED_MODELS in backend.ts.
+      lastWriteBy: a.string(),
+    })
+      .secondaryIndexes((index) => [index("accountId").sortKeys(["status"])])
+      .authorization((allow) => [
+        allow.authenticated().to(["read", "create", "update"]),
+        allow.groups(["ADMIN"]),
+      ]),
+
+    InvoiceLine: a.model({
+      invoiceId: a.id().required(),
+      invoice: a.belongsTo("Invoice", "invoiceId"),
+      /**
+       * The account, denormalised from the invoice.
+       *
+       * The Invoices tab reads every line the account has, once, to total each
+       * row and to work out which policies are already billed. Without this it
+       * would be one list call per invoice to render a summary table — six
+       * round trips to answer "what does this association owe us".
+       *
+       * Written by the only two things that create lines, and never edited: a
+       * line cannot move between accounts, because it cannot move between
+       * invoices.
+       */
+      accountId: a.id(),
+      /**
+       * Which policy this line bills, when it bills one.
+       *
+       * `Invoice.policyId` says what the invoice as a whole is about, which is
+       * enough when a bill covers one policy and not enough when it covers
+       * three — and covering several is the ordinary case at renewal, when an
+       * association's package, umbrella and D&O all fall due together.
+       *
+       * It is also what makes "which policies have not been billed yet"
+       * answerable. Without it the question can only be asked of the invoice,
+       * so a policy that appears as a line on a multi-policy invoice still
+       * reads as unbilled and gets seeded onto the next one.
+       */
+      policyId: a.id(),
+      policy: a.belongsTo("Policy", "policyId"),
+      description: a.string(),
+      kind: a.ref("InvoiceLineKind"),
+      /** What the association pays for this line. */
+      retailAmount: a.float(),
+      /** What is owed to the carrier for it. Never shown to the insured. */
+      costAmount: a.float(),
+      /** Display order, so a reordered invoice does not depend on ids. */
+      sortOrder: a.integer(),
+      updatedBy: a.string(),
+    })
+      .authorization((allow) => [
+        allow.authenticated().to(["read", "create", "update", "delete"]),
         allow.groups(["ADMIN"]),
       ]),
 
@@ -1366,6 +1601,50 @@ const schema = a
       .returns(a.json())
       .authorization((allow) => [allow.authenticated()])
       .handler(a.handler.function(certNumber)),
+
+    /**
+     * The next invoice number. Atomic — see functions/invoice-number.
+     *
+     * Reserved when an invoice is created rather than when it is sent, so a
+     * voided draft leaves a gap in the sequence. Gaps are explainable; a number
+     * handed out twice is not.
+     */
+    reserveInvoiceNumber: a
+      .mutation()
+      .returns(a.json())
+      .authorization((allow) => [allow.authenticated()])
+      .handler(a.handler.function(invoiceNumber)),
+
+    /**
+     * Email an invoice to the insured.
+     *
+     * Takes an id, not amounts: the figures are read from the rows server-side.
+     * The browser has already computed the same totals for the screen, but this
+     * email is a demand for money and the number in it comes from the database.
+     *
+     * `toEmail` overrides the account's primary contact, for the case where the
+     * bill goes to a management company rather than to the board.
+     */
+    sendInvoice: a
+      .mutation()
+      .arguments({ invoiceId: a.string().required(), toEmail: a.string() })
+      .returns(a.json())
+      .authorization((allow) => [allow.authenticated()])
+      .handler(a.handler.function(sendInvoice)),
+
+    /**
+     * Retire an invoice, and the payment link with it.
+     *
+     * A mutation rather than a status write from the browser because
+     * deactivating the Stripe link needs the secret key. See the function's
+     * resource.ts for what leaving the link alive costs.
+     */
+    voidInvoice: a
+      .mutation()
+      .arguments({ invoiceId: a.string().required() })
+      .returns(a.json())
+      .authorization((allow) => [allow.authenticated()])
+      .handler(a.handler.function(voidInvoice)),
   })
   .authorization((allow) => [
     // Default for every model that doesn't declare its own rules. A model
@@ -1418,6 +1697,8 @@ const schema = a
     // The notification sweep reads portals, accounts and documents, and stamps
     // `notifiedUpTo` so a batch is reported once.
     allow.resource(portalSweep),
+    // Reads invoices, lines, accounts and contacts to build the emailed bill.
+    allow.resource(sendInvoice),
     // The stream handler writes Activity and reads UserProfile to name an
     // actor. Note what the block above says: this is not a per-model grant,
     // so this function has full API access whatever any model declares. What

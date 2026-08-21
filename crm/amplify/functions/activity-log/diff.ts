@@ -160,6 +160,10 @@ const LABEL_FIELDS = [
   "classCode",
   "certificateNumber",
   "policyNumber",
+  // Before `policyNumber` would have been wrong: an invoice carries no policy
+  // number of its own, but it does carry `number`, and a timeline row reading
+  // "INV-2026-00001" beats one reading a uuid.
+  "number",
   "part",
 ] as const;
 

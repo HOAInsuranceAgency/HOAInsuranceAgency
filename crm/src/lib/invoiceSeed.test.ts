@@ -1,0 +1,147 @@
+import { describe, expect, it } from "vitest";
+import { seededLineDescription, unbilledAgencyPolicies } from "./invoiceSeed";
+
+/**
+ * Which policies a new invoice opens with.
+ *
+ * The failure mode this guards is asymmetric, and the tests are written around
+ * that: seeding one policy too few is an omission a producer notices when they
+ * look at the invoice, and seeding one too many is a bill sent for money that
+ * is not owed. So every exclusion below errs toward the empty table.
+ */
+
+const agency = (id: string, over: Record<string, unknown> = {}) => ({
+  id,
+  status: "ACTIVE",
+  billType: "AGENCY",
+  premium: 10000,
+  ...over,
+});
+
+describe("unbilledAgencyPolicies", () => {
+  const none = new Set<string>();
+
+  it("takes an active, agency-billed, unbilled policy", () => {
+    expect(unbilledAgencyPolicies([agency("a")], none).map((p) => p.id)).toEqual([
+      "a",
+    ]);
+  });
+
+  it("leaves out direct bill", () => {
+    // The carrier collects that premium. Seeding it would put a bill in front
+    // of a producer for money that is not ours to take.
+    const out = unbilledAgencyPolicies([agency("a", { billType: "DIRECT" })], none);
+    expect(out).toEqual([]);
+  });
+
+  it("leaves out a policy with no bill type recorded", () => {
+    // Bound before the field existed, so it has no answer. Guessing "agency"
+    // guesses in the direction that costs someone money.
+    for (const billType of [null, undefined, ""]) {
+      expect(
+        unbilledAgencyPolicies([agency("a", { billType })], none),
+        String(billType)
+      ).toEqual([]);
+    }
+  });
+
+  it("leaves out anything not active", () => {
+    for (const status of ["EXPIRED", "CANCELLED", "NON_RENEWED", null, undefined]) {
+      expect(
+        unbilledAgencyPolicies([agency("a", { status })], none),
+        String(status)
+      ).toEqual([]);
+    }
+  });
+
+  it("leaves out one that is already on a live invoice", () => {
+    const out = unbilledAgencyPolicies([agency("a"), agency("b")], new Set(["a"]));
+    expect(out.map((p) => p.id)).toEqual(["b"]);
+  });
+
+  it("keeps the order it was given", () => {
+    // The caller sorts; this must not resort, or the line order on the invoice
+    // stops matching the policies table it was read from.
+    const out = unbilledAgencyPolicies(
+      [agency("c"), agency("a"), agency("b")],
+      none
+    );
+    expect(out.map((p) => p.id)).toEqual(["c", "a", "b"]);
+  });
+
+  it("seeds a policy with no premium, so it is not silently dropped", () => {
+    // The line arrives with an empty cost box. That is a policy someone has to
+    // look at, and an empty row says so where an absent row says nothing.
+    expect(
+      unbilledAgencyPolicies([agency("a", { premium: null })], none).map((p) => p.id)
+    ).toEqual(["a"]);
+  });
+
+  it("returns nothing for an account with no policies", () => {
+    expect(unbilledAgencyPolicies([], none)).toEqual([]);
+  });
+});
+
+describe("seededLineDescription", () => {
+  it("leads with the policy number, then the lines of business", () => {
+    expect(
+      seededLineDescription({
+        id: "a",
+        policyNumber: "WC-2026-000841",
+        lines: ["Property", "General Liability"],
+      })
+    ).toBe("WC-2026-000841 — Property, General Liability");
+  });
+
+  it("falls back to whichever it has", () => {
+    expect(seededLineDescription({ id: "a", policyNumber: "P-1" })).toBe("P-1");
+    expect(seededLineDescription({ id: "a", lines: ["Umbrella"] })).toBe("Umbrella");
+  });
+
+  it("never returns an empty string", () => {
+    // An empty description renders as a blank row that reads as a bug.
+    expect(seededLineDescription({ id: "a" })).toBe("Premium");
+    expect(seededLineDescription({ id: "a", policyNumber: "  ", lines: [null] })).toBe(
+      "Premium"
+    );
+  });
+});
+
+/**
+ * The due date a new invoice opens with.
+ *
+ * Imported from the tab rather than duplicated, so a change to the term shows
+ * up here rather than passing silently.
+ */
+describe("addDays", () => {
+  it("gives fourteen days by default", async () => {
+    const { DEFAULT_TERM_DAYS, addDays } = await import(
+      "../pages/account/InvoicesTab"
+    );
+    expect(DEFAULT_TERM_DAYS).toBe(14);
+    expect(addDays("2026-08-21", DEFAULT_TERM_DAYS)).toBe("2026-09-04");
+  });
+
+  it("crosses a month, a year and a leap day without arithmetic of its own", async () => {
+    const { addDays } = await import("../pages/account/InvoicesTab");
+    expect(addDays("2026-12-24", 14)).toBe("2027-01-07");
+    expect(addDays("2028-02-20", 14)).toBe("2028-03-05"); // 2028 is a leap year
+    expect(addDays("2027-02-20", 14)).toBe("2027-03-06");
+  });
+
+  it("does not slip a day for a machine behind UTC", async () => {
+    // The reason it parses as `T00:00:00Z` and shifts in UTC: `new Date("2026-08-21")`
+    // is midnight UTC, and reading it back with local getters in New York is
+    // the 20th. Every invoice raised in the afternoon would have been dated a
+    // day early.
+    const { addDays } = await import("../pages/account/InvoicesTab");
+    const original = process.env.TZ;
+    process.env.TZ = "America/Los_Angeles";
+    try {
+      expect(addDays("2026-08-21", 14)).toBe("2026-09-04");
+      expect(addDays("2026-08-21", 0)).toBe("2026-08-21");
+    } finally {
+      process.env.TZ = original;
+    }
+  });
+});

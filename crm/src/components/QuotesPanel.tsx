@@ -18,6 +18,7 @@ import {
   isOpenQuoteStatus,
   SELECTABLE_QUOTE_STATUSES,
 } from "../lib/quoteStatus";
+import { BILL_TYPE_OPTIONS, type BillType } from "../lib/enums";
 
 /** Commission is baked into the premium — the $ figure is the agency's cut,
  * never an addition on top. */
@@ -277,6 +278,13 @@ function BindForm({
   onError: (msg: string) => void;
 }) {
   const [policyNumber, setPolicyNumber] = useState("");
+  /**
+   * No default. Bill type decides whether anyone here is supposed to collect
+   * the premium, and a pre-selected answer to that is one nobody reads — the
+   * first policy silently marked agency bill when the carrier is billing the
+   * association directly is an invoice sent for money already paid.
+   */
+  const [billType, setBillType] = useState<BillType | "">("");
   const [saving, setSaving] = useState(false);
 
   // A quote must carry real terms before it can become a policy.
@@ -288,6 +296,9 @@ function BindForm({
   ].filter(Boolean) as string[];
 
   async function bind() {
+    // Belt and braces: the button is disabled without one, but `bind` is the
+    // thing that writes the row and an unset bill type must never reach it.
+    if (!billType) return;
     setSaving(true);
     onError("");
     try {
@@ -298,6 +309,7 @@ function BindForm({
         carrierId: quote.carrierId ?? undefined,
         policyNumber: policyNumber.trim() || undefined,
         status: "ACTIVE",
+        billType,
         lines: (quote.lines ?? []).filter((l): l is string => !!l),
         premium: quote.premium ?? undefined,
         commissionPct: quote.commissionPct ?? undefined,
@@ -364,15 +376,39 @@ function BindForm({
         <>
           <div className="form-grid">
             <div className="field">
-              <label>Policy number (can be added later)</label>
+              <label htmlFor="bind-bill-type">Bill type (required)</label>
+              <select
+                id="bind-bill-type"
+                value={billType}
+                onChange={(e) => setBillType(e.target.value as BillType | "")}
+              >
+                <option value="">Choose…</option>
+                {BILL_TYPE_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="field">
+              <label htmlFor="bind-policy-number">
+                Policy number (can be added later)
+              </label>
               <input
+                id="bind-policy-number"
                 value={policyNumber}
                 onChange={(e) => setPolicyNumber(e.target.value)}
               />
             </div>
           </div>
+          {billType === "DIRECT" && (
+            <p className="small muted">
+              The carrier bills the association and pays us commission
+              afterwards, so there is nothing to invoice from here.
+            </p>
+          )}
           <div className="form-actions">
-            <button className="primary" disabled={saving} onClick={bind}>
+            <button className="primary" disabled={saving || !billType} onClick={bind}>
               {saving ? "Binding…" : "Confirm bind"}
             </button>
             <button className="secondary" onClick={() => onDone(null)}>

@@ -9,7 +9,11 @@ import {
   Table,
   TableEncryption,
 } from "aws-cdk-lib/aws-dynamodb";
-import { CfnFunction, StartingPosition } from "aws-cdk-lib/aws-lambda";
+import {
+  CfnFunction,
+  FunctionUrlAuthType,
+  StartingPosition,
+} from "aws-cdk-lib/aws-lambda";
 import { DynamoEventSource } from "aws-cdk-lib/aws-lambda-event-sources";
 import { auth } from "./auth/resource";
 import { data } from "./data/resource";
@@ -20,6 +24,7 @@ import { teamAdmin } from "./functions/team-admin/resource";
 import { extractLead } from "./functions/extract-lead/resource";
 import { formFiller } from "./functions/form-filler/resource";
 import { certNumber } from "./functions/cert-number/resource";
+import { invoiceNumber } from "./functions/invoice-number/resource";
 import { renewalTasks } from "./functions/renewal-tasks/resource";
 import { licenseAlerts } from "./functions/license-alerts/resource";
 import { taskDigest } from "./functions/task-digest/resource";
@@ -27,6 +32,9 @@ import { leadUpload } from "./functions/lead-upload/resource";
 import { leadReply } from "./functions/lead-reply/resource";
 import { uploadPortal } from "./functions/upload-portal/resource";
 import { portalSweep } from "./functions/portal-sweep/resource";
+import { sendInvoice } from "./functions/send-invoice/resource";
+import { stripeWebhook } from "./functions/stripe-webhook/resource";
+import { voidInvoice } from "./functions/void-invoice/resource";
 import { resolveMailbox } from "./functions/mailbox";
 import { activityLog } from "./functions/activity-log/resource";
 import {
@@ -48,6 +56,7 @@ export const backend = defineBackend({
   extractLead,
   formFiller,
   certNumber,
+  invoiceNumber,
   renewalTasks,
   licenseAlerts,
   taskDigest,
@@ -55,6 +64,9 @@ export const backend = defineBackend({
   leadReply,
   uploadPortal,
   portalSweep,
+  sendInvoice,
+  stripeWebhook,
+  voidInvoice,
   activityLog,
   magicLinkDefine,
   magicLinkCreate,
@@ -104,6 +116,23 @@ backend.certNumber.addEnvironment(
   JSON.stringify({ "2026": 10 })
 );
 
+// The invoice counter. Its own stack and its own table rather than a `kind`
+// column on the certificate one: generalising that table means renaming its
+// construct, which changes the logical id and REPLACES it — resetting the
+// certificate counter and re-issuing numbers already printed on COIs sitting in
+// carriers' files. Forty duplicated lines is the cheaper mistake.
+const invoiceStack = backend.createStack("InvoiceNumberStack");
+const invoiceSeqTable = new Table(invoiceStack, "InvoiceSequence", {
+  partitionKey: { name: "year", type: AttributeType.STRING },
+  billingMode: BillingMode.PAY_PER_REQUEST,
+  encryption: TableEncryption.AWS_MANAGED,
+  // The numbering ledger — keep it recoverable.
+  pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true },
+});
+invoiceSeqTable.grantReadWriteData(backend.invoiceNumber.resources.lambda);
+backend.invoiceNumber.addEnvironment("SEQ_TABLE", invoiceSeqTable.tableName);
+backend.invoiceNumber.addEnvironment("INVOICE_PREFIX", "INV");
+
 // ── Activity log: DynamoDB Streams → Activity rows ───────────────────
 //
 // Every model whose changes belong in an account's timeline. Adding one is a
@@ -129,6 +158,15 @@ const STREAMED_MODELS = [
   "Policy",
   "Certificate",
   "Document",
+  // An invoice is a demand for money and its lifecycle is the part worth
+  // attributing: who sent it, who marked it paid, who voided it. Its `accountId`
+  // is what `resolveEntityId` files it under, so it needs nothing else.
+  //
+  // `InvoiceLine` is deliberately NOT here. It carries no `accountId`, so the
+  // stream would resolve nothing and every line change would be dropped in
+  // silence — the same failure the note on `Account` in diff.ts describes.
+  // Streaming lines means giving them an accountId first.
+  "Invoice",
 ] as const;
 
 for (const model of STREAMED_MODELS) {
@@ -324,6 +362,104 @@ backend.licenseAlerts.resources.lambda.addToRolePolicy(
 backend.taskDigest.addEnvironment("TASK_DIGEST_FROM", magicLinkFrom);
 backend.taskDigest.addEnvironment("AGENCY_MAILBOX", internalMailbox);
 backend.taskDigest.addEnvironment("CRM_BASE_URL", magicLinkBaseUrl);
+
+// Invoices come from the general mailbox rather than sales: a bill is not a
+// sales conversation, and a reply to one should land where the people who
+// reconcile payments are looking.
+backend.sendInvoice.addEnvironment("AGENCY_MAILBOX", internalMailbox);
+backend.sendInvoice.resources.lambda.addToRolePolicy(
+  new PolicyStatement({
+    /**
+     * `SendRawEmail` as well, and this one is not optional.
+     *
+     * Every other sender here uses SES's `Simple` content and needs only
+     * `ses:SendEmail`. This one switched to `Raw` to carry the PDF attachment,
+     * which Simple content cannot do — and raw content is authorized by
+     * `ses:SendRawEmail` even when sent through the v2 SendEmail call. Without
+     * it every invoice send fails with AccessDenied at the SES call, after the
+     * link has been minted and the PDF rendered.
+     *
+     * Nothing local catches this: the tests, the typecheck and the CDK synth
+     * all pass. It took invoking the deployed function to see it.
+     */
+    actions: ["ses:SendEmail", "ses:SendRawEmail"],
+    resources: ["*"],
+  })
+);
+
+/**
+ * Stripe.
+ *
+ * `send-invoice` mints the payment link; `stripe-webhook` hears back when the
+ * money moves. Both need the secret key, so both declare it — `secret()`
+ * resolves per branch, which means test keys on staging and live keys on main
+ * without a conditional anywhere in this file.
+ *
+ * The webhook is a Function URL with auth NONE. That is not an oversight:
+ * Stripe cannot sign SigV4, so the request is authenticated by the signature
+ * over its own payload, which the handler verifies before parsing anything.
+ * The URL is printed in the deploy output; it goes in Stripe's dashboard, and
+ * the signing secret they show once comes back as STRIPE_WEBHOOK_SECRET.
+ */
+/**
+ * The webhook writes payment state with a conditional UpdateItem rather than
+ * through the data client, which cannot express one — see stripe-webhook/
+ * persist.ts. That needs the table by name and direct write access to it.
+ */
+const invoiceTable = backend.data.resources.tables.Invoice;
+backend.stripeWebhook.addEnvironment("INVOICE_TABLE", invoiceTable.tableName);
+invoiceTable.grantReadWriteData(backend.stripeWebhook.resources.lambda);
+
+/**
+ * Voiding needs the same direct access, for the same reason: its write is
+ * conditional on what it read — a void must lose to a payment that lands in
+ * the window where the Stripe link is being deactivated — and the data client
+ * cannot express a condition. See void-invoice/handler.ts.
+ */
+backend.voidInvoice.addEnvironment("INVOICE_TABLE", invoiceTable.tableName);
+invoiceTable.grantReadWriteData(backend.voidInvoice.resources.lambda);
+
+/**
+ * And the send, for one write: storing a freshly minted payment link
+ * conditionally on the link it replaced, so two overlapping sends cannot leave
+ * the loser's link live and tracked by nothing. Everything else in the send
+ * still goes through the data client.
+ */
+backend.sendInvoice.addEnvironment("INVOICE_TABLE", invoiceTable.tableName);
+invoiceTable.grantReadWriteData(backend.sendInvoice.resources.lambda);
+
+/**
+ * Reporting the split to corporate finance, when Stripe confirms a payment.
+ *
+ * The email names the association and the carrier, which the invoice row holds
+ * only as ids — so three more tables, read-only, by primary key. The webhook
+ * has no data client to ask instead; see stripe-webhook/persist.ts.
+ *
+ * `internalMailbox` is the From rather than the accounting address: the mail
+ * has to come from a domain SES has verified, and getgim.com is not one.
+ */
+const accountingMailbox = resolveMailbox("accounting", branch);
+backend.stripeWebhook.addEnvironment("ACCOUNTING_MAILBOX", accountingMailbox);
+backend.stripeWebhook.addEnvironment("AGENCY_MAILBOX", internalMailbox);
+for (const [name, model] of [
+  ["ACCOUNT_TABLE", "Account"],
+  ["POLICY_TABLE", "Policy"],
+  ["CARRIER_TABLE", "Carrier"],
+] as const) {
+  const table = backend.data.resources.tables[model];
+  backend.stripeWebhook.addEnvironment(name, table.tableName);
+  table.grantReadData(backend.stripeWebhook.resources.lambda);
+}
+backend.stripeWebhook.resources.lambda.addToRolePolicy(
+  new PolicyStatement({ actions: ["ses:SendEmail"], resources: ["*"] })
+);
+
+const stripeWebhookUrl = backend.stripeWebhook.resources.lambda.addFunctionUrl({
+  authType: FunctionUrlAuthType.NONE,
+});
+backend.addOutput({
+  custom: { stripeWebhookUrl: stripeWebhookUrl.url },
+});
 backend.taskDigest.resources.lambda.addToRolePolicy(
   new PolicyStatement({
     actions: ["ses:SendEmail"],

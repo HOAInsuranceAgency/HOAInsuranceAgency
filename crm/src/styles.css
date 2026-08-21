@@ -682,3 +682,124 @@ mark.ocr-current { background: #f79b32; color: #fff; border-radius: 2px; }
   width: 150px;
 }
 .lead-text-phone:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+
+/* ── Billing ───────────────────────────────────────────────────────────
+   The invoice editor was written against a class vocabulary that never
+   existed in this file — grid-2, card--inset, row-between, btn-primary,
+   link-danger, hint, num. Every one of them was inert, which is why the
+   panel rendered as a full-width stack of unstyled controls. These are the
+   real ones, named the way the rest of the sheet names things. */
+
+/* A heading with its actions on the right. */
+.card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.card-head h2 { margin-bottom: 14px; }
+.inline-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+.inline-actions p { margin: 0; }
+
+.invoice-title { display: flex; align-items: center; gap: 10px; }
+
+/* Right-aligned figures. Applies to the header cell and the money input
+   inside the body cell, so a column lines up on the decimal either way. */
+.num { text-align: right; }
+td.num input { text-align: right; }
+input.money { max-width: 120px; }
+
+/* Agency-only columns, tinted so the split from what the insured sees is
+   visible at a glance rather than something to remember. */
+.internal { background: #f3f5f9; }
+th.internal { color: var(--muted); }
+/* A hard edge where the agency-only band begins, because the tint alone is
+   easy to miss on a laptop screen in a bright room. */
+.band-start { border-left: 1px solid var(--border); }
+.group-head th { border-bottom: none; padding-bottom: 2px; font-size: 11px; }
+.group-head th.internal { border-radius: 4px 4px 0 0; }
+
+.invoice-lines td { vertical-align: middle; }
+.invoice-lines input, .invoice-lines select {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font: inherit;
+  font-size: 13px;
+  background: var(--card);
+}
+.invoice-lines input:focus, .invoice-lines select:focus { outline: none; border-color: var(--accent); }
+.invoice-lines .kind-col { width: 150px; }
+.invoice-lines .row-action { width: 1%; white-space: nowrap; }
+.invoice-lines tfoot th { border-bottom: none; border-top: 2px solid var(--border); font-size: 13px; text-transform: none; letter-spacing: 0; color: var(--text); padding-top: 10px; }
+/* The one number the association is asked to pay. */
+.invoice-lines tfoot .total { font-size: 16px; font-weight: 700; }
+
+/* The buttons that follow the lines table belong to it, but not glued to it. */
+.invoice-lines + .inline-actions, .table-wrap + .inline-actions { margin-top: 12px; }
+
+.invoice-details { margin-top: 18px; }
+
+/* A card nested inside a card — the send block. Tinted rather than bordered,
+   so it reads as part of the invoice and not as a second one. */
+.card.inset { background: var(--bg); border-color: var(--border); padding: 14px 16px; margin: 18px 0 0; }
+.card.inset h3 { margin-top: 0; }
+
+/* Collapsed detail nobody needs by default. */
+.tucked { margin: 4px 0 14px; }
+.tucked > summary { cursor: pointer; font-size: 13px; font-weight: 600; color: var(--accent-dark); padding: 4px 0; }
+.tucked > summary span { font-weight: 400; }
+.tucked > .field { margin-top: 8px; }
+
+.warn-list { margin: 0 0 14px; padding-left: 18px; color: var(--amber); font-size: 13px; }
+
+/* A warning attached to the control that caused it, rather than collected into
+   a list. Amber like .warn-list, but it has to carry its own weight without a
+   heading above it saying these are warnings. */
+.warn-inline {
+  margin: 6px 0 0;
+  padding: 8px 10px;
+  border-left: 3px solid var(--amber);
+  background: var(--amber-bg);
+  color: var(--amber);
+  font-size: 13px;
+  border-radius: 0 4px 4px 0;
+}
+
+/* Full-width row, but the control itself stays the size of its content — a
+   select stretched across a card reads as a text box. */
+.policy-field select { max-width: 420px; }
+
+/* A small square + that sits on a table row without competing with the text
+   in it. Sized to the row rather than to a form control. */
+.icon-btn {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  line-height: 1;
+  font-size: 16px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--card);
+  color: var(--muted);
+  cursor: pointer;
+}
+.icon-btn:hover { border-color: var(--accent); color: var(--accent-dark); }
+.row-tools { display: flex; align-items: center; gap: 6px; }
+
+/* Recipients. A checkbox each, so who is selected is readable without opening
+   anything — see the note in InvoiceEditor for why not a multiple <select>. */
+.check-list { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 2px; }
+.check-list label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--text);
+}
+.check-list label:hover { background: var(--blue-bg); }
+.check-list label > span { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.check-list input { margin: 0; }
+
+/* The invoice currently open, tied to the editor below the table. */
+.row-open td { background: var(--blue-bg); }

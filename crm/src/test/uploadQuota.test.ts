@@ -192,3 +192,146 @@ describe("bearer upload tokens are not readable by ordinary users", () => {
     expect(offenders).toEqual([]);
   });
 });
+
+/**
+ * The Stripe link and the invoice must agree about the amount.
+ *
+ * Source-read for the same reason as the rest of this file: the behaviour is a
+ * property of `ensurePaymentLink`'s control flow, which cannot be invoked
+ * without a Stripe client and a data client.
+ */
+describe("an edited invoice cannot charge its old total", () => {
+  const SEND = read("../../amplify/functions/send-invoice/handler.ts");
+
+  it("reuses a generated link only when it still bills the same amount", () => {
+    expect(SEND).toContain("stripeLinkAmountCents === wantedCents");
+  });
+
+  it("does not return early on the URL alone", () => {
+    // The bug: `if (invoice.paymentUrl?.trim()) return ...` handed back a link
+    // whose fixed Price was minted for the total before the lines were edited,
+    // so the email showed one number and the button charged another.
+    expect(SEND).not.toMatch(/if \(invoice\.paymentUrl\?\.trim\(\)\) return/);
+  });
+
+  it("replaces a URL that is not one of ours", () => {
+    // It used to be honoured outright, on the reasoning that an explicit human
+    // choice outranks a generated one. It does not: nothing knows what such a
+    // link charges, and the webhook that moves this row to PAID only hears
+    // about payments Stripe took — so a link outside that loop is a bill
+    // nobody can tell has been paid. The override is gone from the UI, and
+    // this is what stops it being honoured for rows that still carry one.
+    expect(SEND).not.toContain("if (existingUrl && !existingLinkId) return existingUrl");
+    expect(SEND).toMatch(/replacing a hand-set payment link/);
+  });
+
+  it("deactivates the superseded link before minting its replacement", () => {
+    expect(SEND).toContain("active: false");
+  });
+
+  /**
+   * The untracked-link finding. Two ways a live link could end up recorded
+   * nowhere — a failed deactivation followed by storing the new id, and two
+   * overlapping sends where the loser's link survives the last write. Either
+   * one collects money the webhook then skips, because a later void only
+   * deactivates the link the row remembers.
+   */
+  it("aborts the send when the old link cannot be closed", () => {
+    // Best-effort was the bug: continuing stores the new id and orphans the
+    // old link, live. Refusing leaves the old link live AND stored — a state
+    // the rest of the system already handles.
+    expect(SEND).toMatch(/throw new SendBlocked\(\s*"Couldn't replace the previous payment link/);
+    // Except when Stripe has already forgotten it, which is not a live link.
+    expect(SEND).toContain("resource_missing");
+  });
+
+  it("stores the minted link conditionally on the one it replaced", () => {
+    expect(SEND).toMatch(/attribute_not_exists\(#link\)/);
+    expect(SEND).toMatch(/#link = :seen/);
+    expect(SEND).toContain("ConditionalCheckFailedException");
+  });
+
+  /**
+   * Round five: the void/send interleaving from the send's side. Voiding
+   * leaves `stripePaymentLinkId` in place, so a link-only condition matched
+   * after a void and stored a fresh live link on the cancelled bill — and the
+   * final data-client update could flip a formerly-DRAFT invoice back to SENT,
+   * reviving the void outright.
+   */
+  it("also conditions the stored link on the status it read", () => {
+    const at = SEND.indexOf('const clauses: string[] = ["#s = :seenStatus"]');
+    expect(at).toBeGreaterThan(-1);
+  });
+
+  it("flips DRAFT to SENT only if the status has not moved", () => {
+    // The old form was one unconditional data-client update carrying the flip.
+    expect(SEND).not.toMatch(/models\.Invoice\.update\(\{\s*id: invoiceId,\s*\.\.\.\(invoice\.status === "DRAFT"/);
+    expect(SEND).toMatch(/flipToSent \? `\$\{factExpr\}, #s = :sent` : factExpr/);
+    expect(SEND).toContain('ConditionExpression: "#s = :seenStatus"');
+  });
+
+  it("records the send facts even when it lost the status race", () => {
+    // The email is already in the association's inbox by then. sentAt on a
+    // VOID invoice is true, and it is what whoever untangles the confusion
+    // will need — only the status belongs to whoever won.
+    expect(SEND).toContain("recorded the send without touching its status");
+    expect(SEND).toMatch(/ExpressionAttributeNames: factNames,/);
+  });
+
+  it("kills its own orphan when it loses the race", () => {
+    const lost = SEND.indexOf("if (!stored) {");
+    expect(lost).toBeGreaterThan(-1);
+    // Inside the losing branch, the just-minted link is deactivated…
+    expect(SEND.indexOf("minted.id, { active: false }", lost)).toBeGreaterThan(lost);
+    // …and if even that fails, it is named loudly enough to kill by hand.
+    expect(SEND).toContain("LOST-RACE ORPHAN");
+  });
+
+  it("fails closed when the table is not configured", () => {
+    // An unconditional fallback write here would quietly reintroduce the bug.
+    expect(SEND).toMatch(/INVOICE_TABLE unset; cannot store the link/);
+  });
+
+  it("records what the link bills, so the next send can compare", () => {
+    // Through the conditional store now, not the data client.
+    expect(SEND).toContain("amountCents: wantedCents");
+    expect(SEND).toContain("stripeLinkAmountCents = :cents");
+  });
+});
+
+/**
+ * Who an invoice reaches.
+ *
+ * Source-read, like the rest of this file: the behaviour lives in
+ * `send-invoice`'s control flow, which needs SES, Stripe and a data client to
+ * invoke. What is asserted is the part that silently loses mail if it regresses.
+ */
+describe("an invoice can go to several people", () => {
+  const SEND = read("../../amplify/functions/send-invoice/handler.ts");
+
+  it("splits the argument rather than treating it as one address", () => {
+    expect(SEND).toMatch(/\.split\(","\)/);
+  });
+
+  it("rejects the whole send if any address is malformed", () => {
+    // Dropping the bad one and sending to the rest is the failure that gets
+    // noticed a month later, by the person who never got the bill.
+    expect(SEND).toMatch(/!to\.every\(\(a\) => EMAIL_RE\.test\(a\)\)/);
+  });
+
+  it("puts every recipient on the envelope, not just the first", () => {
+    expect(SEND).toContain("ToAddresses: to,");
+    expect(SEND).not.toContain("ToAddresses: [to]");
+  });
+
+  it("still bccs the agency unless the mail is already going there", () => {
+    expect(SEND).toMatch(/to\.some\(\(a\) => a\.toLowerCase\(\) === MAILBOX\.toLowerCase\(\)\)/);
+    expect(SEND).toContain("BccAddresses: [MAILBOX]");
+  });
+
+  it("records all of them on the invoice", () => {
+    // `sentTo` is what the editor shows as "last sent to". One address out of
+    // three would be a quiet lie about who has the bill.
+    expect(SEND).toMatch(/sentTo: to\.join\(/);
+  });
+});

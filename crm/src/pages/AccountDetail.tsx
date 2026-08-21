@@ -19,6 +19,7 @@ import { useAsyncResource } from "../lib/useAsyncResource";
 import { OverviewTab } from "./account/OverviewTab";
 import { DeleteLeadZone } from "./account/DeleteLeadZone";
 import { PoliciesTab } from "./account/PoliciesTab";
+import { InvoicesTab } from "./account/InvoicesTab";
 import { PriorCarrierTab } from "./account/PriorCarrierTab";
 import { LossesTab } from "./account/LossesTab";
 import { ActivityTab } from "./account/ActivityTab";
@@ -30,6 +31,7 @@ type Tab =
   | "losses"
   | "quotes"
   | "policies"
+  | "invoices"
   | "documents"
   | "certificates"
   | "activity";
@@ -40,6 +42,7 @@ const VALID_TABS: Tab[] = [
   "losses",
   "quotes",
   "policies",
+  "invoices",
   "documents",
   "certificates",
   "activity",
@@ -56,6 +59,21 @@ const VALID_TABS: Tab[] = [
  */
 const LEAD_ONLY_TABS: ReadonlySet<Tab> = new Set<Tab>(["priorcarrier"]);
 
+/**
+ * Tabs that only mean something once the account is a client.
+ *
+ * A lead has no policy — a policy exists because a quote bound, and binding is
+ * what makes the account a client. The Policies tab on a lead could therefore
+ * only ever say "No policies", which reads as data missing rather than data
+ * that cannot exist yet. Invoices follow it for the same reason: there is
+ * nothing to bill an association that has not bought anything.
+ *
+ * Not enforced anywhere but the tab bar. The rows are still reachable and
+ * still load — this hides a panel that has nothing to show, it does not make
+ * the records conditional.
+ */
+const CLIENT_ONLY_TABS: ReadonlySet<Tab> = new Set<Tab>(["policies", "invoices"]);
+
 /** The tabs an account of this stage offers, in display order. */
 export function tabsFor(stage: string | null | undefined): [Tab, string][] {
   const isLead = stage !== "CLIENT";
@@ -66,7 +84,12 @@ export function tabsFor(stage: string | null | undefined): [Tab, string][] {
     // submission declares the same losses a new-business one did.
     ["losses", "Losses"],
     ["quotes", "Quotes"],
-    ["policies", "Policies"],
+    ...(isLead
+      ? []
+      : ([
+          ["policies", "Policies"],
+          ["invoices", "Invoices"],
+        ] as [Tab, string][])),
     ["documents", "Documents"],
     ["certificates", "Certificates"],
     ["activity", "Activity"],
@@ -87,7 +110,11 @@ export function tabsFor(stage: string | null | undefined): [Tab, string][] {
  * the rule.
  */
 export function resolveTab(requested: Tab, stage: string | null | undefined): Tab {
-  return stage === "CLIENT" && LEAD_ONLY_TABS.has(requested) ? "overview" : requested;
+  const isClient = stage === "CLIENT";
+  const unreachable = isClient
+    ? LEAD_ONLY_TABS.has(requested)
+    : CLIENT_ONLY_TABS.has(requested);
+  return unreachable ? "overview" : requested;
 }
 
 export default function AccountDetail({ profile }: { profile: UserProfile }) {
@@ -201,6 +228,7 @@ export default function AccountDetail({ profile }: { profile: UserProfile }) {
       {activeTab === "priorcarrier" && <PriorCarrierTab accountId={account.id} />}
       {activeTab === "losses" && <LossesTab accountId={account.id} />}
       {activeTab === "policies" && <PoliciesTab accountId={account.id} />}
+      {activeTab === "invoices" && <InvoicesTab accountId={account.id} />}
       {activeTab === "documents" && (
         <>
           <div className="card">

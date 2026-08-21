@@ -17,29 +17,45 @@ import { resolveTab, tabsFor } from "./AccountDetail";
  * converted must not leave the user on a panel with no button to leave it by.
  */
 describe("tabsFor", () => {
-  it("offers Prior coverage to a lead", () => {
+  it("offers Prior coverage to a lead, and no Policies or Invoices", () => {
     expect(tabsFor("LEAD").map(([t]) => t)).toEqual([
       "overview",
       "priorcarrier",
       "losses",
       "quotes",
-      "policies",
       "documents",
       "certificates",
       "activity",
     ]);
   });
 
-  it("hides it from a client, leaving the other five in order", () => {
+  it("gives a client Policies and Invoices, and not Prior coverage", () => {
     expect(tabsFor("CLIENT").map(([t]) => t)).toEqual([
       "overview",
       "losses",
       "quotes",
       "policies",
+      "invoices",
       "documents",
       "certificates",
       "activity",
     ]);
+  });
+
+  it("keeps Invoices next to Policies", () => {
+    // Adjacent on purpose: an invoice bills a policy, and the two questions
+    // ("what are they insured for", "what do they owe") are asked together.
+    const client = tabsFor("CLIENT").map(([t]) => t);
+    expect(client.indexOf("invoices")).toBe(client.indexOf("policies") + 1);
+  });
+
+  it("withholds Policies and Invoices from a lead", () => {
+    // A policy exists because a quote bound, and binding is what makes the
+    // account a client — so on a lead the panel could only ever say "none",
+    // which reads as missing data rather than impossible data.
+    const lead = tabsFor("LEAD").map(([t]) => t);
+    expect(lead).not.toContain("policies");
+    expect(lead).not.toContain("invoices");
   });
 
   it("treats an account with no stage as a lead", () => {
@@ -48,6 +64,9 @@ describe("tabsFor", () => {
     // than hiding it, because hiding it looks like the account has none.
     expect(tabsFor(null).map(([t]) => t)).toContain("priorcarrier");
     expect(tabsFor(undefined).map(([t]) => t)).toContain("priorcarrier");
+    // The same fallback hides billing, which is the safe direction: an
+    // unreadable stage must not offer to bill someone who has bought nothing.
+    expect(tabsFor(null).map(([t]) => t)).not.toContain("invoices");
   });
 });
 
@@ -58,6 +77,20 @@ describe("resolveTab", () => {
 
   it("leaves a lead on the tab it asked for", () => {
     expect(resolveTab("priorcarrier", "LEAD")).toBe("priorcarrier");
+  });
+
+  it("falls a lead back from Policies and Invoices", () => {
+    // The mirror of the Prior coverage case, and the reason the rule had to
+    // stop being one-directional: a bookmarked ?tab=policies on a lead used
+    // to render a panel the tab bar had no button for.
+    expect(resolveTab("policies", "LEAD")).toBe("overview");
+    expect(resolveTab("invoices", "LEAD")).toBe("overview");
+    expect(resolveTab("invoices", null)).toBe("overview");
+  });
+
+  it("leaves a client on them", () => {
+    expect(resolveTab("policies", "CLIENT")).toBe("policies");
+    expect(resolveTab("invoices", "CLIENT")).toBe("invoices");
   });
 
   it("keeps Losses for a client — loss history follows the account", () => {
@@ -74,7 +107,6 @@ describe("resolveTab", () => {
         "overview",
         "losses",
         "quotes",
-        "policies",
         "documents",
         "certificates",
         "activity",
