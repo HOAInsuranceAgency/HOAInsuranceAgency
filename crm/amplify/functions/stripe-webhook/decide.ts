@@ -21,8 +21,16 @@ export interface EventDecision {
   invoiceId: string;
   outcome: InvoiceOutcome;
   paymentIntentId: string;
-  /** Stripe's `created`, as an ISO instant. The ordering key. */
+  /** Stripe's event `created`, as an ISO instant. The ordering key. */
   occurredAt: string;
+  /**
+   * When the PaymentIntent itself was created, as an ISO instant, or null.
+   *
+   * The discriminator for events that tie: a replacement intent is created
+   * after the one it replaces, so this says which attempt is current when the
+   * event clock cannot.
+   */
+  intentCreatedAt: string | null;
 }
 
 /** The shape this reads off a Stripe event. Deliberately loose. */
@@ -72,11 +80,17 @@ export function decideEvent(event: StripeEventLike): EventDecision | null {
     return null;
   }
 
+  const intentCreated = object.created;
+
   return {
     invoiceId: invoiceId.trim(),
     outcome,
     paymentIntentId,
     occurredAt: new Date(event.created * 1000).toISOString(),
+    intentCreatedAt:
+      typeof intentCreated === "number" && Number.isFinite(intentCreated)
+        ? new Date(intentCreated * 1000).toISOString()
+        : null,
   };
 }
 
@@ -86,6 +100,8 @@ export interface InvoiceState {
   stripePaymentIntentId?: string | null;
   /** When the last applied event happened. See `stripeEventAt` on the model. */
   stripeEventAt?: string | null;
+  /** When the PaymentIntent the state reflects was created. */
+  stripeIntentCreatedAt?: string | null;
 }
 
 export type InvoiceUpdate =
@@ -96,6 +112,7 @@ export type InvoiceUpdate =
       paidAt: string | null;
       paymentIntentId: string;
       occurredAt: string;
+      intentCreatedAt: string | null;
     };
 
 /**
@@ -197,13 +214,39 @@ export function decideUpdate(
   if (
     invoice.stripeEventAt &&
     decision.occurredAt === invoice.stripeEventAt &&
-    !sameIntent &&
-    outcomeRank(decision.outcome) <= statusRank(invoice.status)
+    !sameIntent
   ) {
-    return {
-      action: "skip",
-      reason: "same instant as an event from another payment, and not an advance",
-    };
+    /**
+     * Which attempt is current, when the event clock cannot say.
+     *
+     * The rank rule alone could not tell a *superseded* attempt's stale failure
+     * from a *replacement* attempt's real one, and refusing to regress got the
+     * second case wrong: a replacement that failed in the same second stayed
+     * PROCESSING forever.
+     *
+     * A PaymentIntent carries its own `created`, and a replacement is always
+     * created after what it replaces — so this is the fact that answers the
+     * question rather than another heuristic about it. Newer attempt wins,
+     * whatever it says.
+     */
+    const mine = decision.intentCreatedAt;
+    const theirs = invoice.stripeIntentCreatedAt;
+    if (mine && theirs && mine !== theirs) {
+      if (mine < theirs) {
+        return { action: "skip", reason: "event belongs to a superseded payment" };
+      }
+      // A newer attempt: let it through, including a failure.
+    } else if (outcomeRank(decision.outcome) <= statusRank(invoice.status)) {
+      /**
+       * Both intents created in the same second, or one of the timestamps
+       * missing. Nothing left to order by, so fall back to refusing to regress:
+       * burying a live payment is the worse of the two mistakes.
+       */
+      return {
+        action: "skip",
+        reason: "same instant as another payment, and nothing to order them by",
+      };
+    }
   }
 
   if (
@@ -227,5 +270,6 @@ export function decideUpdate(
     paidAt: decision.outcome === "PAID" ? today : null,
     paymentIntentId: decision.paymentIntentId,
     occurredAt: decision.occurredAt,
+    intentCreatedAt: decision.intentCreatedAt,
   };
 }

@@ -31,6 +31,7 @@ const decision: EventDecision = {
   outcome: "PAID",
   paymentIntentId: "pi_123",
   occurredAt: "2026-08-21T12:00:00.000Z",
+  intentCreatedAt: "2026-08-21T11:00:00.000Z",
 };
 
 const TODAY = "2026-08-21";
@@ -42,6 +43,7 @@ describe("which Stripe events mean anything", () => {
       outcome: "PAID",
       paymentIntentId: "pi_123",
       occurredAt: "2026-08-21T12:00:00.000Z",
+      intentCreatedAt: null,
     });
   });
 
@@ -108,6 +110,7 @@ describe("what to write, given where the invoice already is", () => {
       paidAt: TODAY,
       paymentIntentId: "pi_123",
       occurredAt: decision.occurredAt,
+      intentCreatedAt: decision.intentCreatedAt,
     });
   });
 
@@ -346,6 +349,76 @@ describe("events sharing one second cannot regress the state", () => {
         TODAY
       );
       expect(update, at).toMatchObject({ action: "skip" });
+    }
+  });
+
+  /**
+   * The case the rank rule alone got wrong: it could not tell a superseded
+   * attempt's stale failure from a replacement attempt's real one, refused to
+   * regress, and left a failed replacement reading as PROCESSING forever.
+   */
+  it("lets a newer attempt's failure through, even tied", () => {
+    const update = decideUpdate(
+      {
+        status: "PROCESSING",
+        stripePaymentIntentId: "pi_OLD",
+        stripeEventAt: sameInstant,
+        stripeIntentCreatedAt: "2026-08-21T10:00:00.000Z",
+      },
+      {
+        ...decision,
+        outcome: "FAILED",
+        paymentIntentId: "pi_NEW",
+        occurredAt: sameInstant,
+        // Created later, so this is the attempt that replaced the other.
+        intentCreatedAt: "2026-08-21T11:30:00.000Z",
+      },
+      TODAY
+    );
+    expect(update).toMatchObject({ action: "set", status: "SENT" });
+  });
+
+  it("still refuses a superseded attempt's failure, tied", () => {
+    const update = decideUpdate(
+      {
+        status: "PROCESSING",
+        stripePaymentIntentId: "pi_NEW",
+        stripeEventAt: sameInstant,
+        stripeIntentCreatedAt: "2026-08-21T11:30:00.000Z",
+      },
+      {
+        ...decision,
+        outcome: "FAILED",
+        paymentIntentId: "pi_OLD",
+        occurredAt: sameInstant,
+        intentCreatedAt: "2026-08-21T10:00:00.000Z",
+      },
+      TODAY
+    );
+    expect(update).toMatchObject({ action: "skip" });
+  });
+
+  it("falls back to refusing to regress when the attempts cannot be ordered", () => {
+    // Both intents created in the same second, or a timestamp missing. Burying
+    // a live payment is the worse of the two mistakes.
+    for (const intentCreatedAt of [null, "2026-08-21T11:30:00.000Z"]) {
+      const update = decideUpdate(
+        {
+          status: "PROCESSING",
+          stripePaymentIntentId: "pi_NEW",
+          stripeEventAt: sameInstant,
+          stripeIntentCreatedAt: "2026-08-21T11:30:00.000Z",
+        },
+        {
+          ...decision,
+          outcome: "FAILED",
+          paymentIntentId: "pi_OLD",
+          occurredAt: sameInstant,
+          intentCreatedAt,
+        },
+        TODAY
+      );
+      expect(update, String(intentCreatedAt)).toMatchObject({ action: "skip" });
     }
   });
 

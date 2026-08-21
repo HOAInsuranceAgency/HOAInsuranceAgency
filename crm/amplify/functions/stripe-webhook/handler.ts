@@ -120,6 +120,7 @@ export const handler = async (event: {
         paidAt: update.paidAt,
         paymentIntentId: update.paymentIntentId,
         occurredAt: update.occurredAt,
+        intentCreatedAt: update.intentCreatedAt,
       });
 
       if (written) {

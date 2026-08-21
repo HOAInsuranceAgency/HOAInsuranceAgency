@@ -31,6 +31,7 @@ export interface PaymentWrite {
   paidAt: string | null;
   paymentIntentId: string;
   occurredAt: string;
+  intentCreatedAt: string | null;
 }
 
 /**
@@ -52,6 +53,10 @@ export async function writePaymentState(w: PaymentWrite): Promise<boolean> {
   };
 
   let set = "SET #status = :status, stripePaymentIntentId = :intent, #eventAt = :eventAt, lastWriteBy = :writer";
+  if (w.intentCreatedAt) {
+    set += ", stripeIntentCreatedAt = :intentCreatedAt";
+    values[":intentCreatedAt"] = w.intentCreatedAt;
+  }
   names["#status"] = "status";
   if (w.paidAt) {
     set += ", paidAt = :paidAt";

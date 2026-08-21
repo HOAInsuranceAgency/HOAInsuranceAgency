@@ -829,6 +829,14 @@ const schema = a
        */
       stripeEventAt: a.datetime(),
       /**
+       * When the PaymentIntent this state reflects was created.
+       *
+       * Stripe's event clock has one-second resolution, so two events from
+       * different attempts can tie. A replacement intent is always created after
+       * the one it replaces, which is what breaks that tie.
+       */
+      stripeIntentCreatedAt: a.datetime(),
+      /**
        * The amount, in cents, the Stripe link was minted for.
        *
        * A Payment Link's Price is fixed. Editing an invoice's lines and sending
