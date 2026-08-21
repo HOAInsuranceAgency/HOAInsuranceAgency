@@ -35,6 +35,7 @@ import { portalSweep } from "./functions/portal-sweep/resource";
 import { sendInvoice } from "./functions/send-invoice/resource";
 import { stripeWebhook } from "./functions/stripe-webhook/resource";
 import { voidInvoice } from "./functions/void-invoice/resource";
+import { pfAdmin } from "./functions/pf-admin/resource";
 import { resolveMailbox } from "./functions/mailbox";
 import { activityLog } from "./functions/activity-log/resource";
 import {
@@ -67,6 +68,7 @@ export const backend = defineBackend({
   sendInvoice,
   stripeWebhook,
   voidInvoice,
+  pfAdmin,
   activityLog,
   magicLinkDefine,
   magicLinkCreate,
@@ -418,6 +420,22 @@ invoiceTable.grantReadWriteData(backend.stripeWebhook.resources.lambda);
  */
 backend.voidInvoice.addEnvironment("INVOICE_TABLE", invoiceTable.tableName);
 invoiceTable.grantReadWriteData(backend.voidInvoice.resources.lambda);
+
+/**
+ * Premium finance admin: the module flag and its audit row are written by one
+ * Lambda over direct table access — see pf-admin/resource.ts for why the flip
+ * and its record must be inseparable.
+ */
+const pfLogTable = backend.data.resources.tables.PfComplianceLog;
+backend.pfAdmin.addEnvironment(
+  "AGENCY_SETTINGS_TABLE",
+  backend.data.resources.tables.AgencySettings.tableName
+);
+backend.pfAdmin.addEnvironment("PF_COMPLIANCE_LOG_TABLE", pfLogTable.tableName);
+backend.data.resources.tables.AgencySettings.grantReadWriteData(
+  backend.pfAdmin.resources.lambda
+);
+pfLogTable.grantReadWriteData(backend.pfAdmin.resources.lambda);
 
 /**
  * And the send, for one write: storing a freshly minted payment link

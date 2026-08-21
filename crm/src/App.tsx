@@ -15,6 +15,7 @@ import {
   fetchUserGroups,
   isAdminGroup,
   roleFromGroups,
+  useIsAdmin,
 } from "./lib/auth";
 import MagicLinkSignIn from "./components/MagicLinkSignIn";
 import Dashboard from "./pages/Dashboard";
@@ -25,6 +26,8 @@ import Carriers from "./pages/Carriers";
 import CarrierDetail from "./pages/CarrierDetail";
 import Onboarding from "./pages/Onboarding";
 import Settings from "./pages/Settings";
+import Financing from "./pages/Financing";
+import { PfProvider, usePremiumFinance } from "./lib/premiumFinance/PfContext";
 import DocumentSearch from "./pages/DocumentSearch";
 import QuotesList from "./pages/QuotesList";
 import PoliciesList from "./pages/PoliciesList";
@@ -138,7 +141,9 @@ function ProfileGate({ user, signOut }: { user: AuthUser; signOut: () => void })
 
   return (
     <AdminContext.Provider value={isAdminGroup(groups)}>
-      <Shell profile={profile} signOut={signOut} />
+      <PfProvider>
+        <Shell profile={profile} signOut={signOut} />
+      </PfProvider>
     </AdminContext.Provider>
   );
 }
@@ -242,6 +247,15 @@ function IconClose() {
   );
 }
 
+function IconCoin() {
+  return (
+    <svg {...iconProps}>
+      <circle cx="9" cy="9" r="7" />
+      <path d="M9 5.5v7M11.2 6.8c-.5-.6-1.3-1-2.2-1-1.3 0-2.3.8-2.3 1.8s.9 1.5 2.3 1.7c1.4.2 2.3.7 2.3 1.7s-1 1.8-2.3 1.8c-.9 0-1.7-.4-2.2-1" />
+    </svg>
+  );
+}
+
 const NAV_ITEMS = [
   { to: "/", end: true, label: "Dashboard", icon: <IconGrid /> },
   { to: "/leads", label: "Leads", icon: <IconFunnel /> },
@@ -299,6 +313,20 @@ function AgencyNpns() {
 
 function Shell({ profile, signOut }: { profile: UserProfile; signOut: () => void }) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const pf = usePremiumFinance();
+  const isAdmin = useIsAdmin();
+  /**
+   * Financing appears when the module is on — or to an admin while it is off,
+   * because the switch that turns it on lives on that page. Nobody else has a
+   * reason to see a page whose only content is "not enabled".
+   */
+  const navItems = [
+    ...NAV_ITEMS.slice(0, 6),
+    ...(pf.enabled || isAdmin
+      ? [{ to: "/financing", label: "Financing", icon: <IconCoin /> } as const]
+      : []),
+    ...NAV_ITEMS.slice(6),
+  ];
 
   return (
     <div className="shell">
@@ -317,8 +345,8 @@ function Shell({ profile, signOut }: { profile: UserProfile; signOut: () => void
           </button>
         </div>
         <nav onClick={() => setMenuOpen(false)}>
-          {NAV_ITEMS.map((item) => (
-            <NavLink key={item.to} to={item.to} end={item.end}>
+          {navItems.map((item) => (
+            <NavLink key={item.to} to={item.to} end={"end" in item ? item.end : undefined}>
               {item.icon}
               <span>{item.label}</span>
             </NavLink>
@@ -354,6 +382,7 @@ function Shell({ profile, signOut }: { profile: UserProfile; signOut: () => void
           <Route path="/quotes" element={<QuotesList />} />
           <Route path="/policies" element={<PoliciesList />} />
           <Route path="/documents" element={<DocumentSearch />} />
+          <Route path="/financing" element={<Financing />} />
           <Route path="/settings" element={<Settings profile={profile} />} />
           <Route path="*" element={<NotFound />} />
         </Routes>

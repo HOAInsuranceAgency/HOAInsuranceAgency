@@ -8,6 +8,7 @@ import { certNumber } from "../functions/cert-number/resource";
 import { invoiceNumber } from "../functions/invoice-number/resource";
 import { sendInvoice } from "../functions/send-invoice/resource";
 import { voidInvoice } from "../functions/void-invoice/resource";
+import { pfAdmin } from "../functions/pf-admin/resource";
 import { renewalTasks } from "../functions/renewal-tasks/resource";
 import { licenseAlerts } from "../functions/license-alerts/resource";
 import { taskDigest } from "../functions/task-digest/resource";
@@ -958,6 +959,39 @@ const schema = a
         allow.groups(["ADMIN"]),
       ]),
 
+    /**
+     * Premium finance compliance log — the record that shows an examiner the
+     * control was operating.
+     *
+     * Every gate decision, override, and module-flag flip writes a row: which
+     * rule fired, on what inputs, with what outcome, by whom, when. Immutable
+     * by construction, one step past even Activity: the client — ADMIN
+     * included — can only read. Writes come from the pf Lambdas over IAM,
+     * which model rules do not bind (see the allow.resource() note at the
+     * bottom of this schema). No lastWriteBy: this model is not streamed —
+     * an audit log of the audit log is noise — and activityLog.test.ts counts
+     * lastWriteBy declarations.
+     */
+    PfComplianceLog: a
+      .model({
+        /** Sparse — module-level events (the flag) have no account. */
+        accountId: a.string(),
+        /** Jurisdiction code, or "ALL" for module-level events. */
+        jurisdiction: a.string(),
+        /** Which control fired: module-flag, jurisdiction-gate, coverage, apr-cap… */
+        rule: a.string().required(),
+        inputs: a.json(),
+        /** PASS | BLOCK | ENABLED | DISABLED | OVERRIDE */
+        outcome: a.string().required(),
+        reason: a.string(),
+        /** Cognito sub of the person whose action was evaluated. */
+        actor: a.string(),
+        actorName: a.string(),
+        occurredAt: a.datetime().required(),
+      })
+      .secondaryIndexes((index) => [index("accountId").sortKeys(["occurredAt"])])
+      .authorization((allow) => [allow.authenticated().to(["read"])]),
+
     // ── Carriers & appointments ────────────────────────────────────────
     Carrier: a.model({
       name: a.string().required(),
@@ -1248,6 +1282,16 @@ const schema = a
         agencyNpn: a.string(),
         /** The Designated Responsible Licensed Producer's NPN. */
         drlpNpn: a.string(),
+        /**
+         * The premium-finance kill switch.
+         *
+         * Written ONLY by the setPremiumFinanceEnabled mutation (pf-admin),
+         * so every flip lands in PfComplianceLog with who and when — counsel
+         * says stop, an admin stops it in minutes, and the record exists.
+         * The ordinary Settings save path must never write this field.
+         * Absent means off: the module ships dark.
+         */
+        premiumFinanceEnabled: a.boolean(),
         /**
          * Who last changed these, for the obvious "who typed that?" question.
          *
@@ -1645,6 +1689,19 @@ const schema = a
       .returns(a.json())
       .authorization((allow) => [allow.authenticated()])
       .handler(a.handler.function(voidInvoice)),
+
+    /**
+     * Flip the premium-finance module, with the flip logged in the same
+     * breath. ADMIN only — this is the kill switch on a lending product, and
+     * the reason it is a mutation rather than a settings write is that the
+     * log row and the flag change come from one Lambda and cannot come apart.
+     */
+    setPremiumFinanceEnabled: a
+      .mutation()
+      .arguments({ enabled: a.boolean().required() })
+      .returns(a.json())
+      .authorization((allow) => [allow.groups(["ADMIN"])])
+      .handler(a.handler.function(pfAdmin)),
   })
   .authorization((allow) => [
     // Default for every model that doesn't declare its own rules. A model
