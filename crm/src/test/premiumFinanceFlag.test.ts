@@ -23,12 +23,21 @@ describe("the premium finance flag", () => {
     );
   });
 
-  it("logs every flip, and reverts a flip whose log write failed", () => {
+  it("logs every flip, with the ruleset hash on the row", () => {
     expect(HANDLER).toContain('rule: "module-flag"');
-    expect(HANDLER).toMatch(/ENABLED.*DISABLED|enabled \? "ENABLED" : "DISABLED"/);
-    // The revert: a flip must not outlive a failed record of it.
-    expect(HANDLER).toContain("reverting the flip");
-    expect(HANDLER).toContain("await write(!enabled");
+    expect(HANDLER).toMatch(/enabled \? "ENABLED" : "DISABLED"/);
+    expect(HANDLER).toContain("configSha256: PF_CONFIG_SHA256");
+  });
+
+  it("reverts only the enable direction — off always wins", () => {
+    // The behavior itself is proven in pfAdminHandler.test.ts against a
+    // mocked table; this pins the shape so a refactor that loses the
+    // asymmetry is visible in review.
+    expect(HANDLER).toContain("reverting the enable");
+    expect(HANDLER).toContain("LOG WRITE FAILED ON DISABLE");
+    expect(HANDLER).toMatch(/!logged && enabled[\s\S]{0,200}writeFlag\(false\)/);
+    // No path writes the flag back to true after a failed log.
+    expect(HANDLER).not.toMatch(/!logged[\s\S]{0,300}writeFlag\(true\)/);
   });
 
   it("keeps the settings screen away from the field", () => {

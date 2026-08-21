@@ -32,6 +32,7 @@ export default function Financing() {
   const pf = usePremiumFinance();
   const flipStatus = useSaveStatus();
   const [confirming, setConfirming] = useState(false);
+  const [flipWarning, setFlipWarning] = useState<string | null>(null);
 
   async function flip(enabled: boolean) {
     setConfirming(false);
@@ -45,6 +46,9 @@ export default function Financing() {
         const result =
           typeof data === "string" ? JSON.parse(data) : (data as Record<string, unknown>);
         if (!result?.ok) throw new Error(String(result?.error ?? "Flip failed."));
+        // The disable path can succeed with an unlogged flip — the module is
+        // off (that always wins) but someone must record it by hand. Loud.
+        setFlipWarning(typeof result.warning === "string" ? result.warning : null);
         await pf.refresh();
         return enabled ? "Module enabled. Logged." : "Module disabled. Logged.";
       },
@@ -110,6 +114,7 @@ export default function Financing() {
               )}
             </div>
           </div>
+          {flipWarning && <p className="warn-inline">{flipWarning}</p>}
           <p className="muted small">
             {pf.enabled
               ? "Originations are ON. Disabling stops new quotes and agreements immediately; existing loans keep servicing — the gate never touches servicing."
@@ -145,7 +150,9 @@ export default function Financing() {
             <tbody>
               {PF_JURISDICTIONS.map((j) => {
                 const gate = originationGate(j.code);
-                const unverified = !j.maxAprVerified;
+                // Explicitly false only: closed rows carry null ("not
+                // applicable"), which is not the alarm state.
+                const unverified = j.maxAprVerified === false;
                 return (
                   <tr key={j.code}>
                     <td>

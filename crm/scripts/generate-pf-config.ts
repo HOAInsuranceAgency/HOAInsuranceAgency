@@ -51,7 +51,8 @@ interface YamlRow {
   name: string;
   status: "open" | "conditional" | "closed";
   max_apr: number | null;
-  max_apr_verified: boolean;
+  /** Boolean on open/conditional rows; null on closed rows — enforced below. */
+  max_apr_verified: boolean | null;
   min_principal: number | null;
   note: string;
 }
@@ -72,8 +73,23 @@ if (!Array.isArray(doc?.jurisdictions) || doc.jurisdictions.length !== 51) {
 for (const j of doc.jurisdictions) {
   if (!j.name || !USPS[j.name]) throw new Error(`no USPS code for "${j.name}"`);
   if (!STATUSES.has(j.status)) throw new Error(`${j.name}: bad status "${j.status}"`);
-  if (typeof j.max_apr_verified !== "boolean") {
-    throw new Error(`${j.name}: max_apr_verified must be boolean`);
+  /**
+   * The verified flag is required on any row that could lend and forbidden on
+   * one that cannot. Both directions are the point: a closed row carrying
+   * `true` would let a future closed→open upgrade skip re-verifying the
+   * ceiling, and an open row without the flag has not answered the question
+   * the flag exists to ask. (Decision amendment, 2026-08-21.)
+   */
+  if (j.status === "closed") {
+    if (j.max_apr_verified !== null) {
+      throw new Error(
+        `${j.name}: closed rows must carry max_apr_verified: null — a verified value on a closed row asserts a check nobody made`
+      );
+    }
+  } else if (typeof j.max_apr_verified !== "boolean") {
+    throw new Error(
+      `${j.name}: ${j.status} rows must state max_apr_verified explicitly`
+    );
   }
   if (j.max_apr !== null && typeof j.max_apr !== "number") {
     throw new Error(`${j.name}: max_apr must be number|null`);
@@ -124,8 +140,13 @@ export interface PfJurisdiction {
   status: PfStatus;
   /** Percent, e.g. 18.0. Null = no statutory cap. */
   maxApr: number | null;
-  /** False = the ceiling is unresolved; the jurisdiction behaves as CLOSED. */
-  maxAprVerified: boolean;
+  /**
+   * False = the ceiling is unresolved; the jurisdiction behaves as CLOSED.
+   * Null = closed row, not applicable — and deliberately so: a closed→open
+   * upgrade starts with no verified value, forcing the ceiling to be
+   * re-checked before the row can lend.
+   */
+  maxAprVerified: boolean | null;
   /** Minimum amount financed. Ohio only. */
   minPrincipal: number | null;
   /** Shown to the user when blocked. */

@@ -987,6 +987,14 @@ const schema = a
         /** Cognito sub of the person whose action was evaluated. */
         actor: a.string(),
         actorName: a.string(),
+        /**
+         * SHA-256 of the signed jurisdiction YAML in force when this decision
+         * was made. The admin screen's hash says what production runs today;
+         * this one answers the regulator's actual question — which signed
+         * ruleset governed a specific decision, months and re-signings later.
+         * Every writer stamps it.
+         */
+        configSha256: a.string(),
         occurredAt: a.datetime().required(),
       })
       .secondaryIndexes((index) => [index("accountId").sortKeys(["occurredAt"])])

@@ -3,12 +3,14 @@ import { decide } from "../../amplify/functions/lead-reply/decide";
 import { operationOf } from "../../amplify/functions/lead-upload/dispatch";
 import {
   buildPrompt,
+  capitalizeName,
   findAiTells,
   renderReply,
   stripDashes,
   systemPrompt,
   type LeadContext,
 } from "../../amplify/functions/lead-reply/email";
+import { propertyNameProblem } from "../../../shared/propertyName";
 import {
   PRODUCTION_ACCOUNTING_MAILBOX,
   PRODUCTION_INTERNAL_MAILBOX,
@@ -251,6 +253,95 @@ describe("the prompt", () => {
     );
     expect(p).not.toContain("Current carrier:");
     expect(p).toContain("Units: 48");
+  });
+});
+
+/**
+ * A required field teaches people to type *something*, and everything
+ * downstream repeats that something as if it were the association. The
+ * loudest place is the reply's subject line: the system prompt says to name
+ * the association, so "test" obediently becomes "test insurance review".
+ */
+describe("an association name that is not one", () => {
+  it("passes real names, including the awkward ones", () => {
+    for (const name of [
+      "Robin Hollow Condominium",
+      "Maple Court Condominium Trust",
+      "The Preserve at Cedar Creek",
+      "100 Main Street Condominium",
+      "Côte Village",
+      "Shangri-La Condominiums",
+      "Aria",
+    ]) {
+      expect(propertyNameProblem(name), name).toBeNull();
+    }
+  });
+
+  it("flags placeholders", () => {
+    for (const name of ["test", "TEST", "Testing", "asdf", "qwerty", "n/a", "none", "tbd", "My test hoa"]) {
+      expect(propertyNameProblem(name), name).not.toBeNull();
+    }
+  });
+
+  it("flags keyboard mash", () => {
+    for (const name of ["asdfgh", "aaaa", "dfgh", "sdf sdf"]) {
+      expect(propertyNameProblem(name), name).not.toBeNull();
+    }
+  });
+
+  it("flags a category with no name in it", () => {
+    for (const name of ["my hoa", "condo association", "The HOA", "Homeowners Association", "our building"]) {
+      expect(propertyNameProblem(name), name).not.toBeNull();
+    }
+  });
+
+  it("flags a name that stops mid-phrase", () => {
+    expect(propertyNameProblem("Villas at")).not.toBeNull();
+    expect(propertyNameProblem("The Cottages on")).not.toBeNull();
+  });
+
+  it("flags what is not a name at all", () => {
+    for (const name of ["", "   ", "12345", "?", "x", "jake@getgim.com", "www.example.com"]) {
+      expect(propertyNameProblem(name), JSON.stringify(name)).not.toBeNull();
+    }
+  });
+
+  it("tells the model to write around a junk name, not repeat it", () => {
+    const p = buildPrompt(
+      lead({ name: "test", nameProblem: "it is a placeholder, not a name" })
+    );
+    expect(p).toContain('exactly as they typed it: "test"');
+    expect(p).toMatch(/do not repeat it in the subject or the body/i);
+    expect(p).toMatch(/your association/i);
+    expect(p).not.toContain("Association: test");
+  });
+
+  it("leaves a trusted name exactly as it was", () => {
+    const p = buildPrompt(lead());
+    expect(p).toContain("Association: Robin Hollow Condominium");
+    expect(p).not.toMatch(/CAUTION/);
+  });
+
+  it("warns when the model repeats a suspect name anyway", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    renderReply({
+      generated: { subject: "test insurance review", body: "b" },
+      lead: lead({ name: "test", nameProblem: "it is a placeholder, not a name" }),
+      producerName: "Brian Cole",
+    });
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("suspect association name"));
+    warn.mockRestore();
+  });
+
+  it("does not fire the warning on a word that merely contains the name", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    renderReply({
+      generated: { subject: "Your review", body: "I'll pull the latest figures." },
+      lead: lead({ name: "test", nameProblem: "it is a placeholder, not a name" }),
+      producerName: "Brian Cole",
+    });
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
   });
 });
 
@@ -719,5 +810,67 @@ describe("sounding like a person wrote it", () => {
     // Greeting, sign-off and signature are ours; none of them may introduce one.
     expect(text).not.toMatch(/[—–]/);
     expect(html).not.toMatch(/[—–]/);
+  });
+});
+
+/**
+ * People fill in forms from a phone without reaching for the shift key, and
+ * the greeting repeats whatever they typed. "Hi jake," announces that no
+ * person looked at the enquiry before it went out.
+ */
+describe("names typed without the shift key", () => {
+  it("raises the first letter of each name, last name included", () => {
+    expect(capitalizeName("jake greasley")).toBe("Jake Greasley");
+  });
+
+  it("folds caps-lock back down", () => {
+    expect(capitalizeName("JAKE GREASLEY")).toBe("Jake Greasley");
+  });
+
+  it("capitalizes after hyphens and apostrophes", () => {
+    expect(capitalizeName("mary-jane o'brien")).toBe("Mary-Jane O'Brien");
+  });
+
+  it("leaves deliberate casing alone", () => {
+    expect(capitalizeName("Sean McDonald")).toBe("Sean McDonald");
+    expect(capitalizeName("Lia DiAngelo")).toBe("Lia DiAngelo");
+  });
+
+  it("leaves initials and suffixes alone", () => {
+    expect(capitalizeName("AJ Smith")).toBe("AJ Smith");
+    expect(capitalizeName("ROBERT SMITH III")).toBe("Robert Smith III");
+  });
+
+  it("keeps accented letters", () => {
+    expect(capitalizeName("élodie moreau")).toBe("Élodie Moreau");
+  });
+
+  it("collapses stray whitespace", () => {
+    expect(capitalizeName("  pat   alvarez ")).toBe("Pat Alvarez");
+  });
+
+  it("returns null when there is no name", () => {
+    expect(capitalizeName(null)).toBeNull();
+    expect(capitalizeName(undefined)).toBeNull();
+    expect(capitalizeName("   ")).toBeNull();
+  });
+
+  it("greets a lowercase form entry by a capitalized name", () => {
+    const { text, html } = renderReply({
+      generated: { subject: "s", body: "b" },
+      lead: lead({ contactName: "jake greasley", contactFirstName: "jake" }),
+      producerName: "Brian Cole",
+    });
+    expect(text.startsWith("Hi Jake,")).toBe(true);
+    expect(html).toContain("Hi Jake,");
+  });
+
+  it("capitalizes the first name it derives from a full name", () => {
+    const { text } = renderReply({
+      generated: { subject: "s", body: "b" },
+      lead: lead({ contactName: "jacob greasley", contactFirstName: null }),
+      producerName: "Brian Cole",
+    });
+    expect(text.startsWith("Hi Jacob,")).toBe(true);
   });
 });

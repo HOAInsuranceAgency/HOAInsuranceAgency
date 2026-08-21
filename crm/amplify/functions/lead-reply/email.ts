@@ -50,6 +50,15 @@ export interface LeadContext {
    * here, because a model shown a confidence score starts hedging in prose.
    */
   extracted?: Record<string, string> | null;
+  /**
+   * Why the association name cannot be trusted, or null/absent when it can.
+   *
+   * `propertyNameProblem` over `Account.name`, computed where the context is
+   * built. When set, the prompt tells the model to write around the name
+   * rather than repeat it: the system prompt's "name their association in the
+   * first sentence" is exactly wrong when the association is "test".
+   */
+  nameProblem?: string | null;
 }
 
 /** A function, not a constant: the producer's real name goes in the prompt. */
@@ -144,7 +153,21 @@ export const REPLY_SCHEMA = {
 /** The user-turn content: everything known about this lead, as plain labels. */
 export function buildPrompt(lead: LeadContext): string {
   const lines: string[] = [
-    `Association: ${lead.name}`,
+    /**
+     * A junk association name must not reach the subject line. The system
+     * prompt and the schema both say to name the association, so when the
+     * name is "test" or "my hoa" the override has to be louder than either,
+     * and it has to sit right next to the name it is about.
+     */
+    lead.nameProblem
+      ? `Association name, exactly as they typed it: "${lead.name}"`
+      : `Association: ${lead.name}`,
+    lead.nameProblem
+      ? `CAUTION: that does not look like a real or complete association name (${lead.nameProblem}). ` +
+        `Do not repeat it in the subject or the body, and do not invent a name for them. ` +
+        `Write around it: "your association", "your community". ` +
+        `Keep the subject generic, like "Your association's insurance review".`
+      : null,
     lead.contactName ? `Contact: ${lead.contactName}` : null,
     lead.city || lead.state
       ? `Location: ${[lead.city, lead.state].filter(Boolean).join(", ")}`
@@ -191,6 +214,44 @@ export function buildPrompt(lead: LeadContext): string {
 function humanize(field: string): string {
   const spaced = field.replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/[_-]+/g, " ");
   return spaced.charAt(0).toUpperCase() + spaced.slice(1).toLowerCase();
+}
+
+/**
+ * "jake greasley" → "Jake Greasley", anywhere the lead's own name is put in
+ * front of them.
+ *
+ * People fill in forms from a phone without reaching for the shift key, and
+ * the greeting repeats whatever they typed. "Hi jake," announces that no
+ * person looked at the enquiry before it went out, which is the one
+ * impression this email exists to avoid. Both directions are handled: "JAKE"
+ * folds to "Jake", because caps-lock is the same habit with the other lock on.
+ *
+ * Deliberate casing survives. A mixed-case word passes through untouched
+ * ("McDonald", "DiAngelo"), and so do two-letter all-caps words ("AJ" is
+ * initials, not shouting) and roman-numeral suffixes ("III"). The one thing
+ * knowingly flattened is a lowercase particle — "van der berg" comes out
+ * "Van Der Berg" — which is the standard CRM trade: raising it is mildly
+ * wrong for some Dutch names, and not raising it leaves every no-shift entry
+ * broken. Hyphens and apostrophes start a new letter, so "mary-jane o'brien"
+ * becomes "Mary-Jane O'Brien".
+ */
+export function capitalizeName(raw: string | null | undefined): string | null {
+  const name = raw?.trim().replace(/\s+/g, " ");
+  if (!name) return null;
+  const fixPart = (part: string): string => {
+    const lower = part.toLowerCase();
+    const upper = part.toUpperCase();
+    if (lower === upper) return part; // no letters to case
+    if (part === lower) return part.charAt(0).toUpperCase() + part.slice(1);
+    if (part === upper && part.length > 2 && !/^[IVX]+$/.test(part)) {
+      return part.charAt(0) + part.slice(1).toLowerCase();
+    }
+    return part;
+  };
+  return name
+    .split(" ")
+    .map((word) => word.split(/([-'’])/).map(fixPart).join(""))
+    .join(" ");
 }
 
 const escapeHtml = (s: string) =>
@@ -392,10 +453,28 @@ export function renderReply(opts: {
       `[lead-reply] generated copy contains forbidden phrasing: ${tells.join(", ")}`
     );
   }
-  const first =
-    lead.contactFirstName?.trim() ||
-    lead.contactName?.trim().split(/\s+/)[0] ||
-    null;
+  /**
+   * A suspect association name that made it into the copy anyway is drift,
+   * handled the way the tells above are: logged, never spliced out. Matched
+   * on word boundaries so a name of "test" does not fire on "latest".
+   */
+  if (lead.nameProblem && lead.name.trim()) {
+    const escaped = lead.name.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    if (new RegExp(`\\b${escaped}\\b`, "i").test(`${generated.subject}\n${generated.body}`)) {
+      console.warn(
+        `[lead-reply] the reply repeats a suspect association name: "${lead.name}"`
+      );
+    }
+  }
+  /**
+   * Capitalized at the point of use rather than trusted from the context:
+   * `renderReply` is the single gate every send passes through, so this is
+   * the one place that can guarantee no lowercase form entry reaches the
+   * greeting.
+   */
+  const first = capitalizeName(
+    lead.contactFirstName?.trim() || lead.contactName?.trim().split(/\s+/)[0] || null
+  );
   const greeting = first ? `Hi ${first},` : "Hello,";
 
   const paragraphs = generated.body
