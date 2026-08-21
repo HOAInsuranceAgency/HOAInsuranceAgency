@@ -454,9 +454,28 @@ describe("the write is conditional on what was read", () => {
    */
   it("carries the read forward as a condition", () => {
     expect(PERSIST).toContain("ConditionExpression");
-    expect(PERSIST).toContain("#eventAt = :seenEventAt");
-    expect(PERSIST).toContain("attribute_not_exists(#eventAt)");
+    expect(PERSIST).toContain("attribute_not_exists");
     expect(PERSIST).toContain("ConditionalCheckFailedException");
+  });
+
+  /**
+   * The condition must cover everything the decision read, not one field of it.
+   *
+   * Guarding only `stripeEventAt` let a producer's Void — which writes `status`
+   * and never touches the event clock — slip between the read and the write and
+   * be silently overwritten by a payment state. A check over a subset of the
+   * read set is not a check.
+   */
+  it("guards every field the decision reads", () => {
+    const DECIDE = src("decide.ts");
+    const read = new Set(
+      [...DECIDE.matchAll(/invoice\.(stripe[A-Za-z]+|status)\b/g)].map((m) => m[1])
+    );
+    // Sanity: the decision really does read several fields.
+    expect(read.size).toBeGreaterThanOrEqual(4);
+    for (const field of read) {
+      expect(PERSIST, `not guarded: ${field}`).toContain(field);
+    }
   });
 
   it("re-reads and decides again when it loses the race", () => {

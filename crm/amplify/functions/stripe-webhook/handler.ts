@@ -115,7 +115,12 @@ export const handler = async (event: {
       const written = await writePaymentState({
         tableName: process.env.INVOICE_TABLE as string,
         invoiceId: invoice.id,
-        seenEventAt: invoice.stripeEventAt ?? null,
+        seen: {
+          status: invoice.status ?? null,
+          stripeEventAt: invoice.stripeEventAt ?? null,
+          stripePaymentIntentId: invoice.stripePaymentIntentId ?? null,
+          stripeIntentCreatedAt: invoice.stripeIntentCreatedAt ?? null,
+        },
         status: update.status,
         paidAt: update.paidAt,
         paymentIntentId: update.paymentIntentId,
