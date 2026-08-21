@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  EXTRACTION_PATIENCE_MINUTES,
   OCR_PATIENCE_MINUTES,
   QUIET_MINUTES,
   decideSweep,
@@ -164,6 +165,56 @@ describe("running extraction before telling anyone", () => {
   it("extracts when the account has never been extracted", () => {
     const d = decideSweep({ ...base, portal: portal(), documents: [doc()] });
     expect(d.action).toBe("extract");
+  });
+
+  /**
+   * The bound that was missing. `extract-lead` marks an account PENDING and
+   * self-invokes; a lost invoke or a worker killed mid-run leaves the status
+   * non-terminal forever, and an unbounded wait is a notification that never
+   * arrives — the exact failure this sweep exists to prevent.
+   */
+  it("gives up on a wedged extraction rather than never notifying", () => {
+    for (const status of ["PENDING", "PROCESSING"]) {
+      const d = decideSweep({
+        ...base,
+        portal: portal({ lastUploadAt: minsBefore(EXTRACTION_PATIENCE_MINUTES + 1) }),
+        documents: [doc({ createdAt: minsBefore(EXTRACTION_PATIENCE_MINUTES + 2) })],
+        account: { extractionStatus: status, extractedAt: null },
+      });
+      expect(d.action, status).toBe("notify");
+    }
+  });
+
+  it("still waits inside the bound", () => {
+    const d = decideSweep({
+      ...base,
+      portal: portal({ lastUploadAt: minsBefore(EXTRACTION_PATIENCE_MINUTES - 5) }),
+      documents: [doc({ createdAt: minsBefore(EXTRACTION_PATIENCE_MINUTES - 4) })],
+      account: { extractionStatus: "PROCESSING", extractedAt: null },
+    });
+    expect(d.action).toBe("wait");
+  });
+
+  it("does not re-trigger extraction forever once it has given up", () => {
+    /**
+     * The first version of this bound only skipped the *wait*, so it fell
+     * through to the coverage check, found the documents uncovered, and
+     * returned `extract` on every tick. A loop, not a bound.
+     */
+    const d = decideSweep({
+      ...base,
+      portal: portal({ lastUploadAt: minsBefore(EXTRACTION_PATIENCE_MINUTES + 30) }),
+      documents: [doc({ createdAt: minsBefore(EXTRACTION_PATIENCE_MINUTES + 31) })],
+      account: { extractionStatus: "COMPLETE", extractedAt: minsBefore(60 * 24) },
+    });
+    expect(d.action).not.toBe("extract");
+    expect(d.action).toBe("notify");
+  });
+
+  it("waits for extraction longer than it waits for OCR", () => {
+    // They are sequential: giving up on extraction first would mean never
+    // waiting for it at all on a document whose OCR was slow.
+    expect(EXTRACTION_PATIENCE_MINUTES).toBeGreaterThan(OCR_PATIENCE_MINUTES);
   });
 
   it("waits while extraction is running rather than starting a second one", () => {

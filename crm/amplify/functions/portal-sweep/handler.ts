@@ -1,4 +1,5 @@
 import { LambdaClient, InvokeCommand } from "@aws-sdk/client-lambda";
+import { HeadObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { SESv2Client, SendEmailCommand } from "@aws-sdk/client-sesv2";
 import { Amplify } from "aws-amplify";
 import { generateClient } from "aws-amplify/data";
@@ -34,6 +35,48 @@ async function getDataClient() {
 
 const ses = new SESv2Client();
 const lambda = new LambdaClient();
+const s3 = new S3Client();
+
+/**
+ * Which of these documents actually exist in the bucket.
+ *
+ * A Document row is created when a presigned URL is *requested*, not when the
+ * PUT succeeds — the browser asks for somewhere to put a file and the row is
+ * how we know where. If the upload then fails, the row stays and nothing else
+ * marks it. Counting those as arrivals means emailing the team that four
+ * documents came in when none did.
+ *
+ * That is not a rare path either: signing `ContentLength` into the presign means
+ * a mismatched body is now rejected by S3, so the failed-upload case became more
+ * likely at exactly the moment this notification was added.
+ *
+ * A HEAD per fresh document, which is a handful per sitting. A file that cannot
+ * be checked is treated as absent: a missed notification is recoverable by
+ * looking at the account, a false one erodes trust in every future notification.
+ */
+async function landed<T extends { s3Key?: string | null }>(
+  documents: readonly T[]
+): Promise<T[]> {
+  const bucket = process.env.DOCUMENTS_BUCKET;
+  if (!bucket) {
+    console.warn("[portal-sweep] DOCUMENTS_BUCKET unset; cannot confirm uploads");
+    return [];
+  }
+  const checked = await Promise.all(
+    documents.map(async (doc) => {
+      const key = doc.s3Key;
+      // "pending" is the placeholder written before the real key is known.
+      if (!key || key === "pending") return null;
+      try {
+        await s3.send(new HeadObjectCommand({ Bucket: bucket, Key: key }));
+        return doc;
+      } catch {
+        return null;
+      }
+    })
+  );
+  return checked.filter((d): d is T => d !== null);
+}
 
 /** Same per-branch mailbox as the auto-reply: sales on main, a test box else. */
 const MAILBOX = process.env.AGENCY_MAILBOX || AGENCY_FMT.leadEmailLower;
@@ -156,9 +199,13 @@ export const handler = async () => {
         continue;
       }
 
-      /** Only what arrived since the last time anyone was told. */
-      const fresh = documents.filter(
-        (d) => !decision.since || (d.createdAt ?? "") > decision.since
+      /**
+       * Only what arrived since the last time anyone was told — and only what
+       * genuinely arrived. A requested-but-abandoned upload leaves a row behind
+       * with no object under it.
+       */
+      const fresh = await landed(
+        documents.filter((d) => !decision.since || (d.createdAt ?? "") > decision.since)
       );
       const arrived = arrivedSections(fresh);
       if (arrived.length === 0) {

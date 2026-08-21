@@ -4,6 +4,7 @@ import { generateClient } from "aws-amplify/data";
 import { getAmplifyDataClientConfig } from "@aws-amplify/backend/function/runtime";
 import type { Schema } from "../../data/resource";
 import { decideEvent, decideUpdate } from "./decide";
+import { writePaymentState } from "./persist";
 
 /**
  * Stripe → invoice status. See resource.ts for why this is a Function URL.
@@ -77,39 +78,75 @@ export const handler = async (event: {
 
   try {
     const client = await getDataClient();
-    const { data: invoice } = await client.models.Invoice.get({
-      id: decision.invoiceId,
-    });
-    if (!invoice) {
-      console.warn(`stripe-webhook: no invoice ${decision.invoiceId}`);
-      return ok("unknown invoice");
-    }
-
     const today = new Date().toISOString().slice(0, 10);
-    const update = decideUpdate(invoice, decision, today);
-    if (update.action === "skip") {
+
+    /**
+     * Read, decide, write-if-unchanged — and if it changed, do it again.
+     *
+     * The ordering rules in `decideUpdate` run against a snapshot, so two events
+     * delivered at once would both decide from the same pre-state and the last
+     * writer would win regardless of which event is newer. The condition on the
+     * write is what makes the decision hold; this loop is what happens when it
+     * does not.
+     *
+     * Two passes here, and Stripe's own retry beyond that. The reasoning for
+     * stopping at two was wrong: it assumed a lost race means a *newer* event
+     * won, when with three in flight the winner of the second race can be an
+     * older one — so the newest event could be dropped while the invoice sat at
+     * an earlier state. Exhausting the passes now returns 500, not 200.
+     */
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      const { data: invoice } = await client.models.Invoice.get({
+        id: decision.invoiceId,
+      });
+      if (!invoice) {
+        console.warn(`stripe-webhook: no invoice ${decision.invoiceId}`);
+        return ok("unknown invoice");
+      }
+
+      const update = decideUpdate(invoice, decision, today);
+      if (update.action === "skip") {
+        console.log(
+          `stripe-webhook skipped ${invoice.number ?? invoice.id}: ${update.reason}`
+        );
+        return ok("skipped");
+      }
+
+      const written = await writePaymentState({
+        tableName: process.env.INVOICE_TABLE as string,
+        invoiceId: invoice.id,
+        seenEventAt: invoice.stripeEventAt ?? null,
+        status: update.status,
+        paidAt: update.paidAt,
+        paymentIntentId: update.paymentIntentId,
+        occurredAt: update.occurredAt,
+        intentCreatedAt: update.intentCreatedAt,
+      });
+
+      if (written) {
+        console.log(
+          `stripe-webhook ${parsed.type} → ${update.status} on ${invoice.number ?? invoice.id}`
+        );
+        return ok("ok");
+      }
       console.log(
-        `stripe-webhook skipped ${invoice.number ?? invoice.id}: ${update.reason}`
+        `stripe-webhook lost a race on ${invoice.number ?? invoice.id}, attempt ${attempt}`
       );
-      return ok("skipped");
     }
 
-    const { errors } = await client.models.Invoice.update({
-      id: invoice.id,
-      status: update.status as Schema["Invoice"]["type"]["status"],
-      ...(update.paidAt ? { paidAt: update.paidAt } : {}),
-      stripePaymentIntentId: update.paymentIntentId,
-      // Named, so the activity log says the payment did this rather than a
-      // person. Whoever reads the timeline should see where the change came
-      // from without going to Stripe to find out.
-      lastWriteBy: "stripe-payment",
-    });
-    if (errors?.length) throw new Error(errors[0].message);
-
-    console.log(
-      `stripe-webhook ${parsed.type} → ${update.status} on ${invoice.number ?? invoice.id}`
+    /**
+     * Twice beaten, and we cannot tell whether the winner was newer or older.
+     *
+     * A 200 here would tell Stripe this event is handled and stop the retries,
+     * which is how a `succeeded` gets dropped and an invoice stays PROCESSING
+     * with the money already in the account. A 500 costs a redelivery a few
+     * seconds later, by which time the burst has settled and the event either
+     * applies cleanly or is correctly recognised as stale.
+     */
+    console.warn(
+      `stripe-webhook could not place ${parsed.type} for ${decision.invoiceId}; asking Stripe to retry`
     );
-    return ok("ok");
+    return { statusCode: 500, body: "retry" };
   } catch (err) {
     /**
      * A 500 is correct here. The signature was good and the event is real, so

@@ -192,3 +192,39 @@ describe("bearer upload tokens are not readable by ordinary users", () => {
     expect(offenders).toEqual([]);
   });
 });
+
+/**
+ * The Stripe link and the invoice must agree about the amount.
+ *
+ * Source-read for the same reason as the rest of this file: the behaviour is a
+ * property of `ensurePaymentLink`'s control flow, which cannot be invoked
+ * without a Stripe client and a data client.
+ */
+describe("an edited invoice cannot charge its old total", () => {
+  const SEND = read("../../amplify/functions/send-invoice/handler.ts");
+
+  it("reuses a generated link only when it still bills the same amount", () => {
+    expect(SEND).toContain("stripeLinkAmountCents === wantedCents");
+  });
+
+  it("does not return early on the URL alone", () => {
+    // The bug: `if (invoice.paymentUrl?.trim()) return ...` handed back a link
+    // whose fixed Price was minted for the total before the lines were edited,
+    // so the email showed one number and the button charged another.
+    expect(SEND).not.toMatch(/if \(invoice\.paymentUrl\?\.trim\(\)\) return/);
+  });
+
+  it("still respects a URL a producer pasted by hand", () => {
+    // No link id of ours means we know nothing about what it charges, and an
+    // explicit human choice outranks anything generated.
+    expect(SEND).toContain("if (existingUrl && !existingLinkId) return existingUrl");
+  });
+
+  it("deactivates the superseded link before minting its replacement", () => {
+    expect(SEND).toContain("active: false");
+  });
+
+  it("records what the link bills, so the next send can compare", () => {
+    expect(SEND).toContain("stripeLinkAmountCents: wantedCents");
+  });
+});

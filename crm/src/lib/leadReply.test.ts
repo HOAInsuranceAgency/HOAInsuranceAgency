@@ -252,6 +252,62 @@ describe("the prompt", () => {
   });
 });
 
+/**
+ * The same unbounded wait the portal sweep had, in the older module, and worse:
+ * there a wedged extraction costs an internal notification, here it costs the
+ * lead their reply entirely.
+ */
+describe("a wedged extraction does not cost the lead their reply", () => {
+  const at = (mins: number) =>
+    new Date(Date.parse("2026-08-21T12:00:00.000Z") - mins * 60_000).toISOString();
+  const now = "2026-08-21T12:00:00.000Z";
+
+  const waiting = (dueMinsAgo: number) => ({
+    id: "r1",
+    accountId: "a1",
+    status: "WAITING",
+    dueAt: at(dueMinsAgo),
+    uploadCount: 1,
+  });
+  const docs = [{ name: "dec.pdf", ocrStatus: "COMPLETE" }];
+
+  it("sends without document context once extraction is an hour overdue", () => {
+    for (const extractionStatus of ["PENDING", "PROCESSING"]) {
+      const d = decide({
+        reply: waiting(61),
+        documents: docs,
+        account: { extractionStatus },
+        now,
+      });
+      expect(d, extractionStatus).toMatchObject({
+        action: "send",
+        withDocuments: false,
+      });
+    }
+  });
+
+  it("still waits while extraction is plausibly running", () => {
+    expect(
+      decide({
+        reply: waiting(5),
+        documents: docs,
+        account: { extractionStatus: "PROCESSING" },
+        now,
+      })
+    ).toMatchObject({ action: "wait" });
+  });
+
+  it("says in the note why the reply went without documents", () => {
+    const d = decide({
+      reply: waiting(120),
+      documents: docs,
+      account: { extractionStatus: "PROCESSING" },
+      now,
+    });
+    expect(d).toHaveProperty("note", expect.stringContaining("PROCESSING"));
+  });
+});
+
 describe("the rendered email", () => {
   const generated = {
     subject: "Robin Hollow Condominium — your insurance review",

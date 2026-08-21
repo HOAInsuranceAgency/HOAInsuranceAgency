@@ -386,6 +386,15 @@ backend.sendInvoice.resources.lambda.addToRolePolicy(
  * The URL is printed in the deploy output; it goes in Stripe's dashboard, and
  * the signing secret they show once comes back as STRIPE_WEBHOOK_SECRET.
  */
+/**
+ * The webhook writes payment state with a conditional UpdateItem rather than
+ * through the data client, which cannot express one — see stripe-webhook/
+ * persist.ts. That needs the table by name and direct write access to it.
+ */
+const invoiceTable = backend.data.resources.tables.Invoice;
+backend.stripeWebhook.addEnvironment("INVOICE_TABLE", invoiceTable.tableName);
+invoiceTable.grantReadWriteData(backend.stripeWebhook.resources.lambda);
+
 const stripeWebhookUrl = backend.stripeWebhook.resources.lambda.addFunctionUrl({
   authType: FunctionUrlAuthType.NONE,
 });
@@ -476,6 +485,19 @@ backend.leadReply.addEnvironment("SITE_BASE_URL", siteBaseUrl);
  * visitor can reach it.
  */
 backend.portalSweep.addEnvironment("AGENCY_MAILBOX", leadReplyMailbox);
+/**
+ * The sweep HEADs each new document before calling it received: a Document row
+ * is created when an upload URL is *requested*, so an abandoned upload would
+ * otherwise be reported as an arrival.
+ */
+backend.portalSweep.addEnvironment(
+  "DOCUMENTS_BUCKET",
+  backend.storage.resources.bucket.bucketName
+);
+backend.storage.resources.bucket.grantRead(
+  backend.portalSweep.resources.lambda,
+  "documents/*"
+);
 backend.portalSweep.addEnvironment("CRM_BASE_URL", magicLinkBaseUrl);
 backend.portalSweep.addEnvironment(
   "EXTRACT_LEAD_FUNCTION",

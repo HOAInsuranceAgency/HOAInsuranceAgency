@@ -21,11 +21,23 @@ export interface EventDecision {
   invoiceId: string;
   outcome: InvoiceOutcome;
   paymentIntentId: string;
+  /** Stripe's event `created`, as an ISO instant. The ordering key. */
+  occurredAt: string;
+  /**
+   * When the PaymentIntent itself was created, as an ISO instant, or null.
+   *
+   * The discriminator for events that tie: a replacement intent is created
+   * after the one it replaces, so this says which attempt is current when the
+   * event clock cannot.
+   */
+  intentCreatedAt: string | null;
 }
 
 /** The shape this reads off a Stripe event. Deliberately loose. */
 export interface StripeEventLike {
   type?: string;
+  /** Unix seconds. Stripe stamps every event with when it happened. */
+  created?: number;
   data?: { object?: Record<string, unknown> };
 }
 
@@ -59,18 +71,49 @@ export function decideEvent(event: StripeEventLike): EventDecision | null {
   const paymentIntentId = typeof object.id === "string" ? object.id : "";
   if (!paymentIntentId) return null;
 
-  return { invoiceId: invoiceId.trim(), outcome, paymentIntentId };
+  /**
+   * No timestamp means no way to order this against what we have already
+   * applied, and acting on an event that might be stale is how a failed
+   * payment comes back to life. Refused rather than guessed.
+   */
+  if (typeof event.created !== "number" || !Number.isFinite(event.created)) {
+    return null;
+  }
+
+  const intentCreated = object.created;
+
+  return {
+    invoiceId: invoiceId.trim(),
+    outcome,
+    paymentIntentId,
+    occurredAt: new Date(event.created * 1000).toISOString(),
+    intentCreatedAt:
+      typeof intentCreated === "number" && Number.isFinite(intentCreated)
+        ? new Date(intentCreated * 1000).toISOString()
+        : null,
+  };
 }
 
 /** The fields the update rule reads off the invoice it is about to change. */
 export interface InvoiceState {
   status?: string | null;
   stripePaymentIntentId?: string | null;
+  /** When the last applied event happened. See `stripeEventAt` on the model. */
+  stripeEventAt?: string | null;
+  /** When the PaymentIntent the state reflects was created. */
+  stripeIntentCreatedAt?: string | null;
 }
 
 export type InvoiceUpdate =
   | { action: "skip"; reason: string }
-  | { action: "set"; status: string; paidAt: string | null; paymentIntentId: string };
+  | {
+      action: "set";
+      status: string;
+      paidAt: string | null;
+      paymentIntentId: string;
+      occurredAt: string;
+      intentCreatedAt: string | null;
+    };
 
 /**
  * What to write, given where the invoice already is.
@@ -87,6 +130,18 @@ export type InvoiceUpdate =
  *   bill is outstanding again, which is what SENT already means, and the payer
  *   can use the same link.
  */
+/**
+ * How far along a payment is, for breaking ties between same-second events.
+ *
+ * `SENT` is the resting state both before any attempt and after a failed one,
+ * which is why a failure ranks alongside it: neither is money in transit.
+ */
+const statusRank = (status: string | null | undefined): number =>
+  status === "PAID" ? 2 : status === "PROCESSING" ? 1 : 0;
+
+const outcomeRank = (outcome: InvoiceOutcome): number =>
+  outcome === "PAID" ? 2 : outcome === "PROCESSING" ? 1 : 0;
+
 export function decideUpdate(
   invoice: InvoiceState,
   decision: EventDecision,
@@ -98,6 +153,102 @@ export function decideUpdate(
   if (invoice.status === "PAID") {
     return { action: "skip", reason: "already paid" };
   }
+  /**
+   * Anything older than what we have already applied is ignored.
+   *
+   * This is the whole ordering rule, and it replaces a narrower guard that only
+   * caught a repeated `processing` on the same intent. That guard read as though
+   * ordering were handled and it was not: a `payment_failed` landing before a
+   * delayed `processing` left a dead payment looking like it was clearing, and a
+   * redelivered `payment_failed` from a superseded attempt buried a debit that
+   * was still on its way. Both misstate whether money is coming, which is the
+   * one thing this function exists to get right.
+   *
+   * Comparing instants rather than reasoning per transition also covers the
+   * permutations nobody has enumerated — including retries under a second
+   * PaymentIntent, where matching on the id would have told us nothing.
+   */
+  if (invoice.stripeEventAt && decision.occurredAt < invoice.stripeEventAt) {
+    return { action: "skip", reason: "event is older than the last one applied" };
+  }
+
+  /**
+   * A PaymentIntent never goes backwards.
+   *
+   * `SENT` with an intent id recorded means that intent failed — it is the only
+   * way both are set at once. A `processing` for the same intent afterwards is
+   * therefore a delayed copy of an earlier moment, whatever its timestamp says,
+   * and applying it would show a dead attempt as still clearing.
+   *
+   * This is deliberately independent of the clock, because the case it covers
+   * is exactly the one where the clock cannot separate the two events.
+   */
+  if (
+    decision.outcome === "PROCESSING" &&
+    invoice.status === "SENT" &&
+    invoice.stripePaymentIntentId === decision.paymentIntentId
+  ) {
+    return { action: "skip", reason: "that payment already failed" };
+  }
+
+  /**
+   * Equal timestamps do not order themselves.
+   *
+   * Stripe's `created` is in whole seconds, so two genuinely distinct events can
+   * carry the same instant and the comparison above lets the second through. On
+   * a tie the tiebreak is direction: a state may advance but never regress.
+   *
+   * ── Only across PaymentIntents ──────────────────────────────────────────────
+   * Scoped deliberately, and the first version was not. Within one intent the
+   * lifecycle *is* processing then succeeded-or-failed, so a `payment_failed`
+   * tied with its own `processing` is forward motion, not a regression. Ranking
+   * it blindly skipped it and left a dead debit reading as clearing — the exact
+   * misstatement this whole function exists to prevent, arrived at from the
+   * other direction.
+   *
+   * Between intents there is no shared lifecycle, so a tie is genuinely
+   * ambiguous and refusing to regress is the safe reading: a superseded
+   * attempt's failure must not undo the one that replaced it.
+   */
+  const sameIntent = invoice.stripePaymentIntentId === decision.paymentIntentId;
+  if (
+    invoice.stripeEventAt &&
+    decision.occurredAt === invoice.stripeEventAt &&
+    !sameIntent
+  ) {
+    /**
+     * Which attempt is current, when the event clock cannot say.
+     *
+     * The rank rule alone could not tell a *superseded* attempt's stale failure
+     * from a *replacement* attempt's real one, and refusing to regress got the
+     * second case wrong: a replacement that failed in the same second stayed
+     * PROCESSING forever.
+     *
+     * A PaymentIntent carries its own `created`, and a replacement is always
+     * created after what it replaces — so this is the fact that answers the
+     * question rather than another heuristic about it. Newer attempt wins,
+     * whatever it says.
+     */
+    const mine = decision.intentCreatedAt;
+    const theirs = invoice.stripeIntentCreatedAt;
+    if (mine && theirs && mine !== theirs) {
+      if (mine < theirs) {
+        return { action: "skip", reason: "event belongs to a superseded payment" };
+      }
+      // A newer attempt: let it through, including a failure.
+    } else if (outcomeRank(decision.outcome) <= statusRank(invoice.status)) {
+      /**
+       * Both intents created in the same second, or one of the timestamps
+       * missing. Nothing left to order by, so fall back to refusing to regress:
+       * burying a live payment is the worse of the two mistakes.
+       */
+      return {
+        action: "skip",
+        reason: "same instant as another payment, and nothing to order them by",
+      };
+    }
+  }
+
   if (
     decision.outcome === "PROCESSING" &&
     invoice.status === "PROCESSING" &&
@@ -118,5 +269,7 @@ export function decideUpdate(
     status,
     paidAt: decision.outcome === "PAID" ? today : null,
     paymentIntentId: decision.paymentIntentId,
+    occurredAt: decision.occurredAt,
+    intentCreatedAt: decision.intentCreatedAt,
   };
 }
