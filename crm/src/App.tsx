@@ -28,7 +28,6 @@ import Settings from "./pages/Settings";
 import DocumentSearch from "./pages/DocumentSearch";
 import QuotesList from "./pages/QuotesList";
 import PoliciesList from "./pages/PoliciesList";
-import PolicyDetail from "./pages/PolicyDetail";
 import { AllMarketingTasks } from "./components/MarketingTasks";
 
 export default function App() {
@@ -354,7 +353,6 @@ function Shell({ profile, signOut }: { profile: UserProfile; signOut: () => void
           />
           <Route path="/quotes" element={<QuotesList />} />
           <Route path="/policies" element={<PoliciesList />} />
-          <Route path="/policies/:id" element={<PolicyDetail />} />
           <Route path="/documents" element={<DocumentSearch />} />
           <Route path="/settings" element={<Settings profile={profile} />} />
           <Route path="*" element={<NotFound />} />

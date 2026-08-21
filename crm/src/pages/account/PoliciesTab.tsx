@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
 import {
   client,
   fmtDate,
@@ -138,11 +137,11 @@ export function PoliciesTab({ accountId }: { accountId: string }) {
             <tbody>
               {sorted.map((p) => (
                 <tr key={p.id}>
-                  <td>
-                    {/* The policy page is where billing lives; this is the only
-                        way into it, so every row links even when unnumbered. */}
-                    <Link to={`/policies/${p.id}`}>{p.policyNumber || "Open"}</Link>
-                  </td>
+                  {/* Not a link any more. The policy page existed to host
+                      billing, and billing is now the account's Invoices tab —
+                      what remained was a read-only restatement of this row.
+                      Editing is the button at the end of it. */}
+                  <td>{p.policyNumber || "—"}</td>
                   <td className="small">{carrierName(p.carrierId)}</td>
                   <td className="small">{(p.lines ?? []).filter(Boolean).join(", ") || "—"}</td>
                   <td>{fmtMoney(p.premium)}</td>
