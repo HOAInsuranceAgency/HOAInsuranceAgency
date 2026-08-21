@@ -317,7 +317,10 @@ export function InvoiceEditor({
           <SaveStatus {...saveStatus.status} />
           {/* Voided, not deleted: the number must never be reused, and a gap in
               the sequence is explainable in a way a reissue is not. */}
-          {!locked && (
+          {/* Not offered while a debit is clearing: an in-flight ACH cannot be
+              un-collected, so the server refuses anyway — see void-invoice.
+              The PROCESSING hint below the table says what to wait for. */}
+          {!locked && invoice.status !== "PROCESSING" && (
             <ConfirmButton
               label="Void"
               busyLabel="Voiding…"

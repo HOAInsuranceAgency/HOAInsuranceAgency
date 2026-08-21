@@ -130,11 +130,24 @@ export const handler = async (event: {
        * bill was withdrawn, which is not what happened, and the trust account
        * would disagree. This is also where the race resolves when a payment
        * lands mid-void: the retry reads PAID and stops here.
+       *
+       * PROCESSING refuses too, and not only in the retry — the button is
+       * offered on a clearing invoice, so this is reachable on the first
+       * attempt with no race at all. An ACH debit in flight cannot be
+       * un-collected: voiding the bill does not stop the transfer, and once
+       * the invoice is VOID the webhook acknowledges the eventual `succeeded`
+       * as skipped, so the money lands with no record of what it paid.
+       * Deactivating the link is no answer either — the link is how *new*
+       * payments start, not how this one stops. Wait for the debit to settle
+       * or fail; a failure puts the bill back to SENT, where a void is safe.
        */
-      if (invoice.status === "PAID") {
+      if (invoice.status === "PAID" || invoice.status === "PROCESSING") {
         return {
           ok: false,
-          error: "That invoice has been paid and cannot be voided.",
+          error:
+            invoice.status === "PAID"
+              ? "That invoice has been paid and cannot be voided."
+              : "A payment on that invoice is still clearing. Wait for it to land or fail.",
         };
       }
 

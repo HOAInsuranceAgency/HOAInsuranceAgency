@@ -848,6 +848,21 @@ describe("voiding an invoice", () => {
     expect(VOID_FN).toContain("cannot be voided");
   });
 
+  it("will not void while a payment is clearing", () => {
+    // An in-flight ACH cannot be un-collected: the void would not stop the
+    // transfer, and the webhook skips events for a void invoice, so the debit
+    // would settle unrecorded. Reachable with no race at all — the button was
+    // offered on a PROCESSING invoice — so the guard is in the main path, not
+    // the retry.
+    expect(VOID_FN).toMatch(/status === "PROCESSING"/);
+    expect(VOID_FN).toContain("still clearing");
+    const editor = readFileSync(
+      resolve(process.cwd(), "src/components/InvoiceEditor.tsx"),
+      "utf8"
+    );
+    expect(editor).toMatch(/invoice\.status !== "PROCESSING" &&/);
+  });
+
   it("clears the dead url so nothing renders a Pay button for it", () => {
     expect(VOID_FN).toContain("REMOVE paymentUrl");
   });
