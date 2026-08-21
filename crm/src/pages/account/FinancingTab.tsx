@@ -28,6 +28,219 @@ import { Badge, type BadgeSpec } from "../../lib/badges";
 
 type PfLoan = Schema["PfLoan"]["type"];
 type PfOverride = Schema["PfOverride"]["type"];
+type PfNotice = Schema["PfNotice"]["type"];
+
+/**
+ * Post-issuance actions on one loan. Thin dispatch onto servicePfLoan — every
+ * rule (staleness, the 15-day clock, the certificate requirement, the lending
+ * account) is enforced server-side; these controls just ask, and show the
+ * refusal verbatim when the answer is no.
+ */
+function LoanActions({ loan, onChanged }: { loan: PfLoan; onChanged: () => void }) {
+  const status = useSaveStatus({ autoClearMs: 6000 });
+  const [resolutionDate, setResolutionDate] = useState("");
+  const [certNoticeId, setCertNoticeId] = useState("");
+  const [certDate, setCertDate] = useState("");
+  const [certNumber, setCertNumber] = useState("");
+  const [cancelDate, setCancelDate] = useState("");
+  const notices = useAsyncResource(
+    () =>
+      listAllPages((nextToken) =>
+        client.models.PfNotice.list({
+          filter: { loanId: { eq: loan.id } },
+          nextToken,
+        })
+      ),
+    [loan.id, loan.status],
+    { initialData: [] as PfNotice[], errorMessage: "Failed to load notices" }
+  );
+
+  async function act(action: string, extra: Record<string, string> = {}, done?: string) {
+    await status.run(
+      async () => {
+        const { data, errors } = await client.mutations.servicePfLoan({
+          loanId: loan.id,
+          action,
+          ...extra,
+        });
+        if (errors?.length) throw new Error(errors[0].message);
+        const result =
+          typeof data === "string" ? JSON.parse(data) : (data as Record<string, unknown>);
+        if (!result?.ok) throw new Error(String(result?.error ?? "Refused."));
+        await notices.refetch();
+        onChanged();
+        return done ?? "Done.";
+      },
+      { errorMessage: "The server refused that." }
+    );
+  }
+
+  const uncertifiedIntents = notices.data.filter(
+    (n) =>
+      n.type === "INTENT_TO_CANCEL" &&
+      !notices.data.some((c) => c.type === "CERT_OF_MAILING" && c.refNoticeId === n.id)
+  );
+
+  return (
+    <div className="card inset">
+      <div className="card-head">
+        <h3>Servicing</h3>
+        <SaveStatus {...status.status} />
+      </div>
+
+      {loan.status === "QUOTED" && (
+        <div className="inline-actions">
+          <div className="field">
+            <label htmlFor={`pf-res-${loan.id}`}>Board resolution executed</label>
+            <input
+              id={`pf-res-${loan.id}`}
+              type="date"
+              value={resolutionDate}
+              onChange={(e) => setResolutionDate(e.target.value)}
+            />
+          </div>
+          <button
+            type="button"
+            className="primary"
+            disabled={!resolutionDate || status.busy}
+            onClick={() =>
+              void act(
+                "ACTIVATE",
+                { boardResolutionExecutedAt: resolutionDate },
+                "Loan activated."
+              )
+            }
+          >
+            Activate loan
+          </button>
+        </div>
+      )}
+
+      {(loan.status === "ACTIVE" || loan.status === "DEFAULTED") && (
+        <div className="inline-actions">
+          <button
+            type="button"
+            className="secondary"
+            disabled={status.busy}
+            onClick={() =>
+              void act("POST_PAYMENT", {}, "Payment posted to the lending account.")
+            }
+          >
+            Post installment {(loan.paidThrough ?? 0) + 1}
+          </button>
+        </div>
+      )}
+
+      {loan.status === "DEFAULTED" && (
+        <>
+          <div className="inline-actions">
+            <button
+              type="button"
+              className="danger"
+              disabled={status.busy}
+              onClick={() =>
+                void act("NOTICE_INTENT", {}, "Intent notice recorded — the 15-day clock is running. Mail it and record the certificate.")
+              }
+            >
+              Record notice of intent to cancel
+            </button>
+          </div>
+          {uncertifiedIntents.length > 0 && (
+            <div className="form-grid">
+              <div className="field">
+                <label>Notice</label>
+                <select value={certNoticeId} onChange={(e) => setCertNoticeId(e.target.value)}>
+                  <option value="">Choose…</option>
+                  {uncertifiedIntents.map((n) => (
+                    <option key={n.id} value={n.id}>
+                      Intent of {n.occurredAt.slice(0, 10)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="field">
+                <label>USPS mailing date</label>
+                <input type="date" value={certDate} onChange={(e) => setCertDate(e.target.value)} />
+              </div>
+              <div className="field">
+                <label>Certificate number</label>
+                <input value={certNumber} onChange={(e) => setCertNumber(e.target.value)} />
+              </div>
+              <div className="field">
+                <label>&nbsp;</label>
+                <button
+                  type="button"
+                  className="secondary"
+                  disabled={!certNoticeId || !certDate || !certNumber.trim() || status.busy}
+                  onClick={() =>
+                    void act(
+                      "RECORD_CERT",
+                      { noticeId: certNoticeId, certMailedAt: certDate, certNumber },
+                      "Certificate recorded."
+                    )
+                  }
+                >
+                  Record certificate
+                </button>
+              </div>
+            </div>
+          )}
+          <div className="inline-actions">
+            <div className="field">
+              <label htmlFor={`pf-cx-${loan.id}`}>Cancellation effective</label>
+              <input
+                id={`pf-cx-${loan.id}`}
+                type="date"
+                value={cancelDate}
+                onChange={(e) => setCancelDate(e.target.value)}
+              />
+            </div>
+            <button
+              type="button"
+              className="danger"
+              disabled={!cancelDate || status.busy}
+              onClick={() =>
+                void act(
+                  "REQUEST_CANCELLATION",
+                  { cancellationEffectiveAt: cancelDate },
+                  "Cancellation requested; carrier refund expected within 30 days."
+                )
+              }
+            >
+              Request cancellation
+            </button>
+          </div>
+        </>
+      )}
+
+      {notices.data.length > 0 && (
+        <ul className="check-list">
+          {[...notices.data]
+            .sort((a, b) => a.occurredAt.localeCompare(b.occurredAt))
+            .map((n) => (
+              <li key={n.id}>
+                <label style={{ cursor: "default" }}>
+                  <span>
+                    {n.occurredAt.slice(0, 10)} — {n.type.replaceAll("_", " ").toLowerCase()}
+                    {n.certNumber && (
+                      <span className="muted small">
+                        USPS {n.certNumber}, mailed {n.certMailedAt}
+                      </span>
+                    )}
+                    {n.clockExpiresAt && (
+                      <span className="muted small">
+                        clock expires {n.clockExpiresAt.slice(0, 10)}
+                      </span>
+                    )}
+                  </span>
+                </label>
+              </li>
+            ))}
+        </ul>
+      )}
+    </div>
+  );
+}
 
 /**
  * Financing on one association: gate → policy → eligibility → quote → issue.
@@ -92,6 +305,7 @@ export function FinancingTab({ account }: { account: Account }) {
   const overrideStatus = useSaveStatus({ autoClearMs: 4000 });
   const agreementStatus = useSaveStatus({ autoClearMs: 6000 });
   const [issued, setIssued] = useState<string | null>(null);
+  const [openLoan, setOpenLoan] = useState<string | null>(null);
 
   /**
    * Renders the agreement + board resolution from the loan's frozen terms and
@@ -481,22 +695,38 @@ export function FinancingTab({ account }: { account: Account }) {
                       <td className="num">{fmtMoney(l.balance)}</td>
                       <td>{fmtDate(l.nextDueAt)}</td>
                       <td className="row-action">
-                        {(l.status === "QUOTED" || l.status === "ACTIVE") && (
+                        <div className="row-tools">
+                          {(l.status === "QUOTED" || l.status === "ACTIVE") && (
+                            <button
+                              type="button"
+                              className="link"
+                              disabled={agreementStatus.busy}
+                              onClick={() => void generateAgreement(l.id)}
+                            >
+                              Agreement PDF
+                            </button>
+                          )}
                           <button
                             type="button"
                             className="link"
-                            disabled={agreementStatus.busy}
-                            onClick={() => void generateAgreement(l.id)}
+                            aria-expanded={openLoan === l.id}
+                            onClick={() => setOpenLoan(openLoan === l.id ? null : l.id)}
                           >
-                            Agreement PDF
+                            {openLoan === l.id ? "Close" : "Service"}
                           </button>
-                        )}
+                        </div>
                       </td>
                     </tr>
                   ))}
               </tbody>
             </table>
           </div>
+          {openLoan && loans.some((l) => l.id === openLoan) && (
+            <LoanActions
+              loan={loans.find((l) => l.id === openLoan)!}
+              onChanged={() => void res.refetch()}
+            />
+          )}
         </div>
       )}
     </>

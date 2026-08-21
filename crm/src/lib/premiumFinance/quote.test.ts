@@ -147,6 +147,7 @@ describe("what the module must never contain", () => {
       "coverage.ts",
       "eligibility.ts",
       "gate.ts",
+      "noticeSequence.ts",
       "quote.ts",
     ]);
   });

@@ -11,6 +11,8 @@ import { voidInvoice } from "../functions/void-invoice/resource";
 import { pfAdmin } from "../functions/pf-admin/resource";
 import { pfOriginate } from "../functions/pf-originate/resource";
 import { pfAgreement } from "../functions/pf-agreement/resource";
+import { pfServicing } from "../functions/pf-servicing/resource";
+import { pfDefaultSweep } from "../functions/pf-default-sweep/resource";
 import { renewalTasks } from "../functions/renewal-tasks/resource";
 import { licenseAlerts } from "../functions/license-alerts/resource";
 import { taskDigest } from "../functions/task-digest/resource";
@@ -1074,9 +1076,77 @@ const schema = a
         quotedByName: a.string(),
         quotedAt: a.datetime().required(),
         activatedAt: a.datetime(),
+        /** Set when a due installment goes unposted; cured by a posting. */
+        defaultedAt: a.datetime(),
+        /**
+         * The executed board resolution's date, checked at activation against
+         * the financed term's effective date — the staleness rule. Boards
+         * turn over annually; a resolution from the prior term authorizes
+         * nothing.
+         */
+        boardResolutionExecutedAt: a.date(),
+        boardResolutionDocumentId: a.string(),
+        cancellationEffectiveAt: a.date(),
+        /** When the carrier's unearned-premium refund is expected: +30 days. */
+        expectedCarrierRefundAt: a.date(),
         closedAt: a.datetime(),
       })
       .secondaryIndexes((index) => [index("accountId").sortKeys(["quotedAt"])])
+      .authorization((allow) => [allow.authenticated().to(["read"])]),
+
+    /**
+     * One posted installment. Client read-only; the servicing Lambda is the
+     * only writer, so the interest/principal split always comes from the
+     * loan's frozen schedule and every posting names the lending bank
+     * account it settled to — never the premium trust. No compensation
+     * fields; see PfLoan's note.
+     */
+    PfLoanPayment: a
+      .model({
+        loanId: a.id().required(),
+        accountId: a.id().required(),
+        n: a.integer().required(),
+        amount: a.float().required(),
+        interest: a.float().required(),
+        principal: a.float().required(),
+        /** The designated lending account label, from AgencySettings. */
+        bankAccount: a.string().required(),
+        postedAt: a.datetime().required(),
+        postedBy: a.string(),
+        postedByName: a.string(),
+      })
+      .secondaryIndexes((index) => [index("loanId").sortKeys(["postedAt"])])
+      .authorization((allow) => [allow.authenticated().to(["read"])]),
+
+    /** INTENT_TO_CANCEL starts the 15-day clock; CERT_OF_MAILING proves it
+     * was mailed; CANCELLATION_REQUEST may exist only after both. */
+    PfNoticeType: a.enum(["INTENT_TO_CANCEL", "CERT_OF_MAILING", "CANCELLATION_REQUEST"]),
+
+    /**
+     * One step of the cancellation notice sequence — where lender liability
+     * lives, so: client read-only, rows created complete by the servicing
+     * Lambda with server-set timestamps, never updated, never deleted.
+     * Nothing in the sequence can be skipped or back-dated through any UI,
+     * because no UI can write here at all.
+     */
+    PfNotice: a
+      .model({
+        loanId: a.id().required(),
+        accountId: a.id().required(),
+        type: a.ref("PfNoticeType").required(),
+        occurredAt: a.datetime().required(),
+        /** Intent rows: when the 15-day clock expires. */
+        clockExpiresAt: a.datetime(),
+        /** Cert and cancellation rows: the intent they belong to. */
+        refNoticeId: a.string(),
+        /** Cert rows: the physical USPS form's own date and number. */
+        certMailedAt: a.date(),
+        certNumber: a.string(),
+        certDocumentId: a.string(),
+        createdBy: a.string(),
+        createdByName: a.string(),
+      })
+      .secondaryIndexes((index) => [index("loanId").sortKeys(["occurredAt"])])
       .authorization((allow) => [allow.authenticated().to(["read"])]),
 
     /**
@@ -1404,6 +1474,13 @@ const schema = a
          * Absent means off: the module ships dark.
          */
         premiumFinanceEnabled: a.boolean(),
+        /**
+         * The designated lending bank account's label. Loan receipts and
+         * disbursements reference it and it must never name the premium
+         * trust: fiduciary premium and lending capital cannot commingle.
+         * Payment posting refuses until this is set.
+         */
+        pfLendingAccountName: a.string(),
         /**
          * Who last changed these, for the obvious "who typed that?" question.
          *
@@ -1851,6 +1928,30 @@ const schema = a
       .returns(a.json())
       .authorization((allow) => [allow.authenticated()])
       .handler(a.handler.function(pfAgreement)),
+
+    /**
+     * Everything that happens to a loan after issuance, in one Lambda-backed
+     * mutation dispatched on `action`: ACTIVATE (with the board-resolution
+     * staleness rule), POST_PAYMENT (split from the frozen schedule, lending
+     * account required), NOTICE_INTENT, RECORD_CERT, REQUEST_CANCELLATION
+     * (refused until intent + certificate + 15 days). The origination gate is
+     * deliberately absent from all of it: we cannot un-lend.
+     */
+    servicePfLoan: a
+      .mutation()
+      .arguments({
+        loanId: a.string().required(),
+        action: a.string().required(),
+        boardResolutionExecutedAt: a.string(),
+        boardResolutionDocumentId: a.string(),
+        noticeId: a.string(),
+        certMailedAt: a.string(),
+        certNumber: a.string(),
+        cancellationEffectiveAt: a.string(),
+      })
+      .returns(a.json())
+      .authorization((allow) => [allow.authenticated()])
+      .handler(a.handler.function(pfServicing)),
   })
   .authorization((allow) => [
     // Default for every model that doesn't declare its own rules. A model
@@ -1905,6 +2006,18 @@ const schema = a
     allow.resource(portalSweep),
     // Reads invoices, lines, accounts and contacts to build the emailed bill.
     allow.resource(sendInvoice),
+    /**
+     * Premium finance. Origination reads Account/Policy/PfOverride/settings
+     * and creates PfLoan; the agreement renderer reads the loan tree and
+     * creates Document rows; servicing writes loans, payments and notice
+     * rows; the default sweep marks missed loans. All four write their
+     * decision rows to the compliance-log table directly, not through here —
+     * that model takes no data-client writes from anything.
+     */
+    allow.resource(pfOriginate),
+    allow.resource(pfAgreement),
+    allow.resource(pfServicing),
+    allow.resource(pfDefaultSweep),
     // The stream handler writes Activity and reads UserProfile to name an
     // actor. Note what the block above says: this is not a per-model grant,
     // so this function has full API access whatever any model declares. What

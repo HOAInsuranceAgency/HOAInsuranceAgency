@@ -38,6 +38,8 @@ import { voidInvoice } from "./functions/void-invoice/resource";
 import { pfAdmin } from "./functions/pf-admin/resource";
 import { pfOriginate } from "./functions/pf-originate/resource";
 import { pfAgreement } from "./functions/pf-agreement/resource";
+import { pfServicing } from "./functions/pf-servicing/resource";
+import { pfDefaultSweep } from "./functions/pf-default-sweep/resource";
 import { resolveMailbox } from "./functions/mailbox";
 import { activityLog } from "./functions/activity-log/resource";
 import {
@@ -73,6 +75,8 @@ export const backend = defineBackend({
   pfAdmin,
   pfOriginate,
   pfAgreement,
+  pfServicing,
+  pfDefaultSweep,
   activityLog,
   magicLinkDefine,
   magicLinkCreate,
@@ -445,6 +449,12 @@ pfLogTable.grantReadWriteData(backend.pfAdmin.resources.lambda);
 // reads and the PfLoan create go through the data client via allow.resource.
 backend.pfOriginate.addEnvironment("PF_COMPLIANCE_LOG_TABLE", pfLogTable.tableName);
 pfLogTable.grantReadWriteData(backend.pfOriginate.resources.lambda);
+
+// Servicing and the default sweep write their decision rows to the log too.
+for (const fn of [backend.pfServicing, backend.pfDefaultSweep]) {
+  fn.addEnvironment("PF_COMPLIANCE_LOG_TABLE", pfLogTable.tableName);
+  pfLogTable.grantReadWriteData(fn.resources.lambda);
+}
 
 // The agreement renderer writes its PDFs under generated/pf/ — outside
 // documents/, so the OCR upload trigger never re-reads the app's own output.

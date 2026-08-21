@@ -138,3 +138,47 @@ describe("the origination mutation", () => {
     expect(HANDLER).toContain("schedule: JSON.stringify(quote.schedule)");
   });
 });
+
+/**
+ * Every Lambda that builds an Amplify data client has the API grant it needs.
+ *
+ * The failure this guards is silent until runtime and has now happened twice:
+ * stripe-webhook shipped calling getAmplifyDataClientConfig with no
+ * allow.resource() and threw "data environment variables are malformed" on
+ * its first real event, and pf-originate nearly shipped the same way — a
+ * python replace missed its anchor and the grant quietly never landed. tsc
+ * and synth both pass on that state; only a deploy fails. This maps every
+ * handler that uses the data client to an allow.resource() on its imported
+ * name, so the gap is a test failure instead of a production incident.
+ */
+describe("data-client Lambdas carry their grants", () => {
+  it("every getAmplifyDataClientConfig caller is granted", () => {
+    const { readdirSync, statSync } = require("node:fs") as typeof import("node:fs");
+    const SCHEMA = read("amplify/data/resource.ts");
+    // dir name → imported symbol, from the schema's own import lines.
+    const imports = new Map<string, string>();
+    for (const m of SCHEMA.matchAll(
+      /import \{ (\w+) \} from "\.\.\/functions\/([\w-]+)\/resource"/g
+    )) {
+      imports.set(m[2], m[1]);
+    }
+    const root = resolve(process.cwd(), "amplify/functions");
+    const missing: string[] = [];
+    for (const dir of readdirSync(root)) {
+      const p = resolve(root, dir);
+      if (!statSync(p).isDirectory()) continue;
+      let handler = "";
+      try {
+        handler = readFileSync(resolve(p, "handler.ts"), "utf8");
+      } catch {
+        continue;
+      }
+      if (!handler.includes("getAmplifyDataClientConfig")) continue;
+      const symbol = imports.get(dir);
+      if (!symbol || !SCHEMA.includes(`allow.resource(${symbol})`)) {
+        missing.push(dir);
+      }
+    }
+    expect(missing, "handlers using the data client without allow.resource()").toEqual([]);
+  });
+});

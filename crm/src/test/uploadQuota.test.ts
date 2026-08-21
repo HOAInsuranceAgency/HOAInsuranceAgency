@@ -127,7 +127,11 @@ describe("a lead cannot be emailed the same reply twice", () => {
    */
   it("runs one sweep at a time", () => {
     expect(BACKEND).toContain("reservedConcurrentExecutions = 1");
-    const block = /for \(const fn of \[([^\]]*)\]\)/.exec(BACKEND)?.[1] ?? "";
+    // Anchored to the reserved-concurrency loop specifically — other config
+    // loops over functions exist now (the pf log-table wiring).
+    const at = BACKEND.indexOf("reservedConcurrentExecutions");
+    const before = BACKEND.slice(0, at);
+    const block = [...before.matchAll(/for \(const fn of \[([^\]]*)\]\)/g)].pop()?.[1] ?? "";
     expect(block).toContain("backend.leadReply");
     expect(block).toContain("backend.portalSweep");
   });
