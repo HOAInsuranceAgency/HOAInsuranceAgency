@@ -62,20 +62,29 @@ async function landed<T extends { s3Key?: string | null }>(
     console.warn("[portal-sweep] DOCUMENTS_BUCKET unset; cannot confirm uploads");
     return [];
   }
-  const checked = await Promise.all(
+  /**
+   * The awaited value is a plain flag, never the document itself.
+   *
+   * Returning `T | null` from an async callback makes `Promise.all` produce
+   * `Awaited<T> | null`, and the compiler will not accept that as `T` — a
+   * generic could be instantiated as something promise-like, so `Awaited<T>`
+   * and `T` are genuinely different types to it. Keeping `T` out of the await
+   * sidesteps the question rather than fighting it.
+   */
+  const checks = await Promise.all(
     documents.map(async (doc) => {
       const key = doc.s3Key;
       // "pending" is the placeholder written before the real key is known.
-      if (!key || key === "pending") return null;
+      if (!key || key === "pending") return false;
       try {
         await s3.send(new HeadObjectCommand({ Bucket: bucket, Key: key }));
-        return doc;
+        return true;
       } catch {
-        return null;
+        return false;
       }
     })
   );
-  return checked.filter((d): d is T => d !== null);
+  return documents.filter((_, i) => checks[i]);
 }
 
 /** Same per-branch mailbox as the auto-reply: sales on main, a test box else. */
