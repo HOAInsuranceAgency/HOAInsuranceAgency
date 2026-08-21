@@ -408,6 +408,19 @@ backend.leadReply.addEnvironment("SITE_BASE_URL", siteBaseUrl);
  * visitor can reach it.
  */
 backend.portalSweep.addEnvironment("AGENCY_MAILBOX", leadReplyMailbox);
+/**
+ * The sweep HEADs each new document before calling it received: a Document row
+ * is created when an upload URL is *requested*, so an abandoned upload would
+ * otherwise be reported as an arrival.
+ */
+backend.portalSweep.addEnvironment(
+  "DOCUMENTS_BUCKET",
+  backend.storage.resources.bucket.bucketName
+);
+backend.storage.resources.bucket.grantRead(
+  backend.portalSweep.resources.lambda,
+  "documents/*"
+);
 backend.portalSweep.addEnvironment("CRM_BASE_URL", magicLinkBaseUrl);
 backend.portalSweep.addEnvironment(
   "EXTRACT_LEAD_FUNCTION",

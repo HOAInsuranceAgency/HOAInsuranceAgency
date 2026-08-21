@@ -24,6 +24,20 @@
 export const QUIET_MINUTES = 10;
 
 /**
+ * How long extraction may be in flight before we stop waiting for it.
+ *
+ * `extract-lead` marks an account PENDING and self-invokes. If that invoke is
+ * lost, or the worker is killed by its own timeout mid-run, the status stays
+ * non-terminal forever — and a wait with no bound is a notification that never
+ * arrives, which is the exact failure this whole sweep exists to prevent.
+ *
+ * Longer than the OCR bound because extraction happens after it, and generous
+ * because a wrongly-early send loses the document context while a late one only
+ * costs time.
+ */
+export const EXTRACTION_PATIENCE_MINUTES = 90;
+
+/**
  * How long a document may sit in OCR before we stop waiting for it.
  *
  * Textract usually finishes in under a minute. This is not a timeout for the
@@ -136,7 +150,17 @@ export function decideSweep(opts: {
     (d) => isExtractable(d.category) && d.ocrStatus === "COMPLETE"
   );
 
-  if (readable.length > 0) {
+  /**
+   * Past this, extraction is neither waited for nor started again.
+   *
+   * Both matter. Only skipping the *wait* would fall through to the coverage
+   * check below, find the documents uncovered, and return `extract` on every
+   * tick forever — a loop rather than a bound. Past the bound the answer is
+   * always notify, with whatever was extracted before.
+   */
+  const gaveUpOnExtraction = quietFor >= EXTRACTION_PATIENCE_MINUTES;
+
+  if (readable.length > 0 && !gaveUpOnExtraction) {
     const status = account.extractionStatus ?? null;
     if (status && !EXTRACTION_TERMINAL.has(status)) {
       return { action: "wait", reason: `extraction is ${status}` };
