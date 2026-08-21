@@ -87,14 +87,29 @@ describe("the signed counts", () => {
   });
 
   it("exactly Arkansas and Rhode Island are unverified", () => {
-    const unverified = PF_JURISDICTIONS.filter((j) => !j.maxAprVerified);
+    // Explicitly false — closed rows carry null, which is "not applicable",
+    // not "unverified". The distinction is the amended decision 1.
+    const unverified = PF_JURISDICTIONS.filter((j) => j.maxAprVerified === false);
     expect(unverified.map((j) => j.name).sort()).toEqual(["Arkansas", "Rhode Island"]);
     // Both are status:open — which is what makes the verified flag load-bearing.
     for (const j of unverified) expect(j.status).toBe("open");
   });
 
+  it("verified is stated on every row that could lend, and on no closed row", () => {
+    // The safety property: a closed→open upgrade starts with no verified
+    // value, so the ceiling must be re-checked before the row can lend — a
+    // stale `true` cannot ride through the status change.
+    for (const j of PF_JURISDICTIONS) {
+      if (j.status === "closed") {
+        expect(j.maxAprVerified, j.name).toBeNull();
+      } else {
+        expect(typeof j.maxAprVerified, j.name).toBe("boolean");
+      }
+    }
+  });
+
   it("30 usable at launch", () => {
-    const usable = byStatus("open").filter((j) => j.maxAprVerified);
+    const usable = byStatus("open").filter((j) => j.maxAprVerified === true);
     expect(usable.length).toBe(30);
   });
 

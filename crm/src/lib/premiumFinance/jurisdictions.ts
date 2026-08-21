@@ -18,8 +18,13 @@ export interface PfJurisdiction {
   status: PfStatus;
   /** Percent, e.g. 18.0. Null = no statutory cap. */
   maxApr: number | null;
-  /** False = the ceiling is unresolved; the jurisdiction behaves as CLOSED. */
-  maxAprVerified: boolean;
+  /**
+   * False = the ceiling is unresolved; the jurisdiction behaves as CLOSED.
+   * Null = closed row, not applicable — and deliberately so: a closed→open
+   * upgrade starts with no verified value, forcing the ceiling to be
+   * re-checked before the row can lend.
+   */
+  maxAprVerified: boolean | null;
   /** Minimum amount financed. Ohio only. */
   minPrincipal: number | null;
   /** Shown to the user when blocked. */
@@ -27,7 +32,7 @@ export interface PfJurisdiction {
 }
 
 /** SHA-256 of the signed YAML this module was generated from. */
-export const PF_CONFIG_SHA256 = "08b713d8705f687040b15060080bf77bb4942fac703e03a85a7dd910d0af3605";
+export const PF_CONFIG_SHA256 = "34aeafea72dc89a06ca73f32026c442691f65f7c957cce3f1a74f6c248905187";
 
 export const PF_JURISDICTIONS: readonly PfJurisdiction[] = [
   {
@@ -35,7 +40,7 @@ export const PF_JURISDICTIONS: readonly PfJurisdiction[] = [
     "code": "AL",
     "status": "closed",
     "maxApr": null,
-    "maxAprVerified": true,
+    "maxAprVerified": null,
     "minPrincipal": null,
     "note": "License required; no agent or commercial exemption"
   },
@@ -53,7 +58,7 @@ export const PF_JURISDICTIONS: readonly PfJurisdiction[] = [
     "code": "AZ",
     "status": "closed",
     "maxApr": null,
-    "maxAprVerified": true,
+    "maxAprVerified": null,
     "minPrincipal": null,
     "note": "Exemption requires charging no interest"
   },
@@ -71,7 +76,7 @@ export const PF_JURISDICTIONS: readonly PfJurisdiction[] = [
     "code": "CA",
     "status": "closed",
     "maxApr": null,
-    "maxAprVerified": true,
+    "maxAprVerified": null,
     "minPrincipal": null,
     "note": "Requires a purpose-formed CA corporation"
   },
@@ -89,7 +94,7 @@ export const PF_JURISDICTIONS: readonly PfJurisdiction[] = [
     "code": "CT",
     "status": "closed",
     "maxApr": null,
-    "maxAprVerified": true,
+    "maxAprVerified": null,
     "minPrincipal": null,
     "note": "Unlicensed financing is a class A misdemeanor"
   },
@@ -125,7 +130,7 @@ export const PF_JURISDICTIONS: readonly PfJurisdiction[] = [
     "code": "GA",
     "status": "closed",
     "maxApr": null,
-    "maxAprVerified": true,
+    "maxAprVerified": null,
     "minPrincipal": null,
     "note": "Exemption void the moment you charge"
   },
@@ -152,7 +157,7 @@ export const PF_JURISDICTIONS: readonly PfJurisdiction[] = [
     "code": "IL",
     "status": "closed",
     "maxApr": null,
-    "maxAprVerified": true,
+    "maxAprVerified": null,
     "minPrincipal": null,
     "note": "No agent exemption; 5/513a2 deeming rule"
   },
@@ -188,7 +193,7 @@ export const PF_JURISDICTIONS: readonly PfJurisdiction[] = [
     "code": "KY",
     "status": "closed",
     "maxApr": null,
-    "maxAprVerified": true,
+    "maxAprVerified": null,
     "minPrincipal": null,
     "note": "No agent exemption; $150k net worth"
   },
@@ -215,7 +220,7 @@ export const PF_JURISDICTIONS: readonly PfJurisdiction[] = [
     "code": "MD",
     "status": "closed",
     "maxApr": null,
-    "maxAprVerified": true,
+    "maxAprVerified": null,
     "minPrincipal": null,
     "note": "§ 23-201(b) expressly names producers"
   },
@@ -269,7 +274,7 @@ export const PF_JURISDICTIONS: readonly PfJurisdiction[] = [
     "code": "MT",
     "status": "closed",
     "maxApr": null,
-    "maxAprVerified": true,
+    "maxAprVerified": null,
     "minPrincipal": null,
     "note": "Exemption runs to resident producers only"
   },
@@ -305,7 +310,7 @@ export const PF_JURISDICTIONS: readonly PfJurisdiction[] = [
     "code": "NJ",
     "status": "closed",
     "maxApr": null,
-    "maxAprVerified": true,
+    "maxAprVerified": null,
     "minPrincipal": null,
     "note": "No agent exemption"
   },
@@ -323,7 +328,7 @@ export const PF_JURISDICTIONS: readonly PfJurisdiction[] = [
     "code": "NY",
     "status": "closed",
     "maxApr": null,
-    "maxAprVerified": true,
+    "maxAprVerified": null,
     "minPrincipal": null,
     "note": "No agent exemption, no commercial carve-out"
   },
@@ -332,7 +337,7 @@ export const PF_JURISDICTIONS: readonly PfJurisdiction[] = [
     "code": "NC",
     "status": "closed",
     "maxApr": null,
-    "maxAprVerified": true,
+    "maxAprVerified": null,
     "minPrincipal": null,
     "note": "Agent exemption is a late-charge permission only"
   },
@@ -352,7 +357,7 @@ export const PF_JURISDICTIONS: readonly PfJurisdiction[] = [
     "maxApr": null,
     "maxAprVerified": true,
     "minPrincipal": 100000,
-    "note": "Only above $100,000 principal"
+    "note": "Available only above $100,000 amount financed"
   },
   {
     "name": "Oklahoma",
@@ -377,7 +382,7 @@ export const PF_JURISDICTIONS: readonly PfJurisdiction[] = [
     "code": "PA",
     "status": "closed",
     "maxApr": null,
-    "maxAprVerified": true,
+    "maxAprVerified": null,
     "minPrincipal": null,
     "note": "Institution-type exemptions only"
   },
@@ -404,7 +409,7 @@ export const PF_JURISDICTIONS: readonly PfJurisdiction[] = [
     "code": "SD",
     "status": "closed",
     "maxApr": null,
-    "maxAprVerified": true,
+    "maxAprVerified": null,
     "minPrincipal": null,
     "note": "Money lender licence required"
   },
@@ -422,7 +427,7 @@ export const PF_JURISDICTIONS: readonly PfJurisdiction[] = [
     "code": "TX",
     "status": "closed",
     "maxApr": null,
-    "maxAprVerified": true,
+    "maxAprVerified": null,
     "minPrincipal": null,
     "note": "§ 651.001(3)(C) defines the agent as a PFC"
   },
@@ -458,7 +463,7 @@ export const PF_JURISDICTIONS: readonly PfJurisdiction[] = [
     "code": "WA",
     "status": "closed",
     "maxApr": null,
-    "maxAprVerified": true,
+    "maxAprVerified": null,
     "minPrincipal": null,
     "note": "No agent and no commercial exemption"
   },

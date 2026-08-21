@@ -7,10 +7,12 @@
 #
 # Encoding notes, agreed 2026-08-21:
 # - The source table renders max_apr and max_apr_verified as "—" on closed
-#   rows (not applicable). Encoded here as max_apr: null and
-#   max_apr_verified: true, because the verified flag only has force on
-#   non-closed rows — closed is closed either way — and encoding false would
-#   miscount the "unverified" rows, which are exactly Arkansas and Rhode Island.
+#   rows (not applicable). Encoded as null for BOTH: a verified value on a
+#   closed row would assert a ceiling was checked when it was not, and — the
+#   safety property — a row already reading true would let a future
+#   closed→open upgrade skip re-verifying the ceiling. The generator refuses
+#   a closed row carrying a verified value, and refuses an open or
+#   conditional row missing one. (Amended 2026-08-21.)
 # - Ohio's note in the source table ended with an instruction to the
 #   implementer ("set min_principal: 100000"), executed as the field below and
 #   trimmed from the user-facing note text.
@@ -27,7 +29,7 @@ jurisdictions:
   - name: Alabama
     status: closed
     max_apr: null
-    max_apr_verified: true
+    max_apr_verified: null
     min_principal: null
     note: "License required; no agent or commercial exemption"
   - name: Alaska
@@ -39,7 +41,7 @@ jurisdictions:
   - name: Arizona
     status: closed
     max_apr: null
-    max_apr_verified: true
+    max_apr_verified: null
     min_principal: null
     note: "Exemption requires charging no interest"
   - name: Arkansas
@@ -51,7 +53,7 @@ jurisdictions:
   - name: California
     status: closed
     max_apr: null
-    max_apr_verified: true
+    max_apr_verified: null
     min_principal: null
     note: "Requires a purpose-formed CA corporation"
   - name: Colorado
@@ -63,7 +65,7 @@ jurisdictions:
   - name: Connecticut
     status: closed
     max_apr: null
-    max_apr_verified: true
+    max_apr_verified: null
     min_principal: null
     note: "Unlicensed financing is a class A misdemeanor"
   - name: Delaware
@@ -87,7 +89,7 @@ jurisdictions:
   - name: Georgia
     status: closed
     max_apr: null
-    max_apr_verified: true
+    max_apr_verified: null
     min_principal: null
     note: "Exemption void the moment you charge"
   - name: Hawaii
@@ -105,7 +107,7 @@ jurisdictions:
   - name: Illinois
     status: closed
     max_apr: null
-    max_apr_verified: true
+    max_apr_verified: null
     min_principal: null
     note: "No agent exemption; 5/513a2 deeming rule"
   - name: Indiana
@@ -129,7 +131,7 @@ jurisdictions:
   - name: Kentucky
     status: closed
     max_apr: null
-    max_apr_verified: true
+    max_apr_verified: null
     min_principal: null
     note: "No agent exemption; $150k net worth"
   - name: Louisiana
@@ -147,7 +149,7 @@ jurisdictions:
   - name: Maryland
     status: closed
     max_apr: null
-    max_apr_verified: true
+    max_apr_verified: null
     min_principal: null
     note: "§ 23-201(b) expressly names producers"
   - name: Massachusetts
@@ -183,7 +185,7 @@ jurisdictions:
   - name: Montana
     status: closed
     max_apr: null
-    max_apr_verified: true
+    max_apr_verified: null
     min_principal: null
     note: "Exemption runs to resident producers only"
   - name: Nebraska
@@ -207,7 +209,7 @@ jurisdictions:
   - name: New Jersey
     status: closed
     max_apr: null
-    max_apr_verified: true
+    max_apr_verified: null
     min_principal: null
     note: "No agent exemption"
   - name: New Mexico
@@ -219,13 +221,13 @@ jurisdictions:
   - name: New York
     status: closed
     max_apr: null
-    max_apr_verified: true
+    max_apr_verified: null
     min_principal: null
     note: "No agent exemption, no commercial carve-out"
   - name: North Carolina
     status: closed
     max_apr: null
-    max_apr_verified: true
+    max_apr_verified: null
     min_principal: null
     note: "Agent exemption is a late-charge permission only"
   - name: North Dakota
@@ -239,7 +241,7 @@ jurisdictions:
     max_apr: null
     max_apr_verified: true
     min_principal: 100000
-    note: "Only above $100,000 principal"
+    note: "Available only above $100,000 amount financed"
   - name: Oklahoma
     status: open
     max_apr: null
@@ -255,7 +257,7 @@ jurisdictions:
   - name: Pennsylvania
     status: closed
     max_apr: null
-    max_apr_verified: true
+    max_apr_verified: null
     min_principal: null
     note: "Institution-type exemptions only"
   - name: Rhode Island
@@ -273,7 +275,7 @@ jurisdictions:
   - name: South Dakota
     status: closed
     max_apr: null
-    max_apr_verified: true
+    max_apr_verified: null
     min_principal: null
     note: "Money lender licence required"
   - name: Tennessee
@@ -285,7 +287,7 @@ jurisdictions:
   - name: Texas
     status: closed
     max_apr: null
-    max_apr_verified: true
+    max_apr_verified: null
     min_principal: null
     note: "§ 651.001(3)(C) defines the agent as a PFC"
   - name: Utah
@@ -309,7 +311,7 @@ jurisdictions:
   - name: Washington
     status: closed
     max_apr: null
-    max_apr_verified: true
+    max_apr_verified: null
     min_principal: null
     note: "No agent and no commercial exemption"
   - name: West Virginia
