@@ -6,8 +6,15 @@ import {
 } from "../../amplify/functions/stripe-webhook/decide";
 import { toCents } from "../../amplify/functions/send-invoice/stripeLink";
 
-const intent = (type: string, over: Record<string, unknown> = {}) => ({
+const AT = (iso: string) => Math.floor(Date.parse(iso) / 1000);
+
+const intent = (
+  type: string,
+  over: Record<string, unknown> = {},
+  created = AT("2026-08-21T12:00:00.000Z")
+) => ({
   type,
+  created,
   data: {
     object: {
       id: "pi_123",
@@ -21,6 +28,7 @@ const decision: EventDecision = {
   invoiceId: "inv-1",
   outcome: "PAID",
   paymentIntentId: "pi_123",
+  occurredAt: "2026-08-21T12:00:00.000Z",
 };
 
 const TODAY = "2026-08-21";
@@ -31,6 +39,7 @@ describe("which Stripe events mean anything", () => {
       invoiceId: "inv-1",
       outcome: "PAID",
       paymentIntentId: "pi_123",
+      occurredAt: "2026-08-21T12:00:00.000Z",
     });
   });
 
@@ -96,6 +105,7 @@ describe("what to write, given where the invoice already is", () => {
       status: "PAID",
       paidAt: TODAY,
       paymentIntentId: "pi_123",
+      occurredAt: decision.occurredAt,
     });
   });
 
@@ -174,6 +184,81 @@ describe("what to write, given where the invoice already is", () => {
       action: "set",
       status: "PAID",
     });
+  });
+});
+
+describe("out-of-order events cannot misstate whether money is coming", () => {
+  const applied = "2026-08-21T12:00:00.000Z";
+  const earlier = "2026-08-21T11:00:00.000Z";
+  const later = "2026-08-21T13:00:00.000Z";
+
+  /**
+   * `payment_failed` lands first and returns the invoice to SENT. The delayed
+   * `processing` for the same intent then arrives. Before the ordering rule it
+   * fell through every guard and set PROCESSING, so a dead payment looked like
+   * it was clearing and nobody chased it.
+   */
+  it("does not revive a failed payment with a delayed processing event", () => {
+    const update = decideUpdate(
+      { status: "SENT", stripePaymentIntentId: "pi_123", stripeEventAt: applied },
+      { ...decision, outcome: "PROCESSING", occurredAt: earlier },
+      TODAY
+    );
+    expect(update).toMatchObject({ action: "skip" });
+  });
+
+  /**
+   * A first attempt fails, the payer retries under a new PaymentIntent, and
+   * Stripe redelivers the old failure. Before the rule this reset the invoice
+   * to SENT *and* overwrote the intent id with the failed one, so a debit still
+   * on its way looked outstanding.
+   */
+  it("does not bury a live retry under a redelivered old failure", () => {
+    const update = decideUpdate(
+      { status: "PROCESSING", stripePaymentIntentId: "pi_NEW", stripeEventAt: applied },
+      { ...decision, outcome: "FAILED", paymentIntentId: "pi_OLD", occurredAt: earlier },
+      TODAY
+    );
+    expect(update).toMatchObject({ action: "skip" });
+  });
+
+  /**
+   * The permutation nobody named. Matching on the PaymentIntent id would have
+   * missed it, because the ids differ; comparing instants does not.
+   */
+  it("does not let a stale success from a superseded attempt land late", () => {
+    const update = decideUpdate(
+      { status: "PROCESSING", stripePaymentIntentId: "pi_NEW", stripeEventAt: applied },
+      { ...decision, outcome: "PAID", paymentIntentId: "pi_OLD", occurredAt: earlier },
+      TODAY
+    );
+    expect(update).toMatchObject({ action: "skip" });
+  });
+
+  it("still applies anything newer than what it has", () => {
+    const update = decideUpdate(
+      { status: "PROCESSING", stripePaymentIntentId: "pi_123", stripeEventAt: applied },
+      { ...decision, outcome: "PAID", occurredAt: later },
+      TODAY
+    );
+    expect(update).toMatchObject({ action: "set", status: "PAID", occurredAt: later });
+  });
+
+  it("applies the first event, when there is nothing to compare against", () => {
+    expect(
+      decideUpdate({ status: "SENT" }, { ...decision, occurredAt: earlier }, TODAY)
+    ).toMatchObject({ action: "set", status: "PAID" });
+  });
+
+  it("refuses an event with no timestamp rather than guessing its place", () => {
+    // Acting on an event that might be stale is how a failed payment revives.
+    expect(decideEvent({ ...intent("payment_intent.succeeded"), created: undefined })).toBeNull();
+    expect(decideEvent({ ...intent("payment_intent.succeeded"), created: Number.NaN })).toBeNull();
+  });
+
+  it("carries the timestamp forward so the next comparison has a floor", () => {
+    const update = decideUpdate({ status: "SENT" }, decision, TODAY);
+    expect(update).toMatchObject({ occurredAt: decision.occurredAt });
   });
 });
 

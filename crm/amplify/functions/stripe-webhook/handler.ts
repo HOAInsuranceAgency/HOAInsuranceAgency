@@ -99,6 +99,8 @@ export const handler = async (event: {
       status: update.status as Schema["Invoice"]["type"]["status"],
       ...(update.paidAt ? { paidAt: update.paidAt } : {}),
       stripePaymentIntentId: update.paymentIntentId,
+      // The ordering key for every event after this one.
+      stripeEventAt: update.occurredAt,
       // Named, so the activity log says the payment did this rather than a
       // person. Whoever reads the timeline should see where the change came
       // from without going to Stripe to find out.

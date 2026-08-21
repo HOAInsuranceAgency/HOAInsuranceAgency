@@ -814,11 +814,28 @@ const schema = a
        */
       stripePaymentLinkId: a.string(),
       /**
-       * The PaymentIntent that settled it. Written by the webhook, and what
-       * makes marking-paid idempotent: Stripe retries deliveries, and without
-       * this a redelivery would be indistinguishable from a second payment.
+       * The PaymentIntent this invoice's state currently reflects. Written by
+       * the webhook.
        */
       stripePaymentIntentId: a.string(),
+      /**
+       * When the last event we acted on was created, per Stripe's clock.
+       *
+       * Stripe does not promise ordered delivery, and a redelivery of an old
+       * event is ordinary. Without this an out-of-order `processing` can revive
+       * a failed payment, and an out-of-order `payment_failed` can bury one
+       * that is still clearing — both of which misstate whether money is coming.
+       * Anything older than this is ignored.
+       */
+      stripeEventAt: a.datetime(),
+      /**
+       * The amount, in cents, the Stripe link was minted for.
+       *
+       * A Payment Link's Price is fixed. Editing an invoice's lines and sending
+       * again would otherwise show the new total while the Pay button charged
+       * the old one, so a change here is what forces the link to be replaced.
+       */
+      stripeLinkAmountCents: a.integer(),
       lines: a.hasMany("InvoiceLine", "invoiceId"),
       // Streamed. Money changing hands is the clearest case in the schema for
       // "who did this, and when" — see STREAMED_MODELS in backend.ts.

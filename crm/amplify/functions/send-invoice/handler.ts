@@ -8,7 +8,7 @@ import { AGENCY, AGENCY_FMT } from "../../../../shared/agency";
 import Stripe from "stripe";
 import { invoiceTotals } from "../../../src/lib/invoiceTotals";
 import { renderInvoice } from "./invoice";
-import { createPaymentLink } from "./stripeLink";
+import { createPaymentLink, toCents } from "./stripeLink";
 import { buildMimeMessage } from "./mime";
 import { pdfFilename, renderInvoicePdf } from "./pdf";
 
@@ -54,11 +54,46 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
  */
 async function ensurePaymentLink(
   client: DataClient,
-  invoice: { id: string; number?: string | null; paymentUrl?: string | null; stripePaymentLinkId?: string | null },
+  invoice: {
+    id: string;
+    number?: string | null;
+    paymentUrl?: string | null;
+    stripePaymentLinkId?: string | null;
+    stripeLinkAmountCents?: number | null;
+  },
   associationName: string,
   total: number
 ): Promise<string | null> {
-  if (invoice.paymentUrl?.trim()) return invoice.paymentUrl.trim();
+  const existingUrl = invoice.paymentUrl?.trim() || null;
+  const existingLinkId = invoice.stripePaymentLinkId?.trim() || null;
+
+  /**
+   * A URL with no link id of ours is one a producer pasted by hand. Their
+   * explicit choice outranks anything generated, and we know nothing about what
+   * it charges, so it is left exactly as it is.
+   */
+  if (existingUrl && !existingLinkId) return existingUrl;
+
+  const wantedCents = (() => {
+    try {
+      return toCents(total);
+    } catch {
+      return null;
+    }
+  })();
+
+  /**
+   * Reuse only when the link still bills what the invoice says.
+   *
+   * A Payment Link's Price is fixed at creation. Editing lines and sending
+   * again used to return the old link, so the email and the PDF showed the
+   * revised total while the button charged the original one — an overpayment or
+   * an underpayment, silently. Lines stay editable after sending on purpose,
+   * because a carrier revising a premium is ordinary, so this is not a corner.
+   */
+  if (existingUrl && existingLinkId && wantedCents !== null) {
+    if (invoice.stripeLinkAmountCents === wantedCents) return existingUrl;
+  }
 
   const key = process.env.STRIPE_SECRET_KEY;
   if (!key) {
@@ -69,6 +104,21 @@ async function ensurePaymentLink(
 
   try {
     const stripe = new Stripe(key);
+
+    /**
+     * Deactivate the superseded link before minting its replacement, so the
+     * amount the invoice no longer claims cannot still be paid. Best effort: a
+     * failure here must not stop the correct link being issued, and a stale
+     * link that stays payable is a smaller problem than no link at all.
+     */
+    if (existingLinkId) {
+      try {
+        await stripe.paymentLinks.update(existingLinkId, { active: false });
+      } catch (err) {
+        console.warn("[send-invoice] could not deactivate the old link", err);
+      }
+    }
+
     const { id, url } = await createPaymentLink(stripe, {
       invoiceId: invoice.id,
       invoiceNumber: invoice.number ?? null,
@@ -79,6 +129,8 @@ async function ensurePaymentLink(
       id: invoice.id,
       paymentUrl: url,
       stripePaymentLinkId: id,
+      // What it bills, so the next send can tell whether it is still right.
+      stripeLinkAmountCents: wantedCents,
       lastWriteBy: "send-invoice",
     });
     return url;

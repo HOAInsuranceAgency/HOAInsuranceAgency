@@ -21,11 +21,15 @@ export interface EventDecision {
   invoiceId: string;
   outcome: InvoiceOutcome;
   paymentIntentId: string;
+  /** Stripe's `created`, as an ISO instant. The ordering key. */
+  occurredAt: string;
 }
 
 /** The shape this reads off a Stripe event. Deliberately loose. */
 export interface StripeEventLike {
   type?: string;
+  /** Unix seconds. Stripe stamps every event with when it happened. */
+  created?: number;
   data?: { object?: Record<string, unknown> };
 }
 
@@ -59,18 +63,40 @@ export function decideEvent(event: StripeEventLike): EventDecision | null {
   const paymentIntentId = typeof object.id === "string" ? object.id : "";
   if (!paymentIntentId) return null;
 
-  return { invoiceId: invoiceId.trim(), outcome, paymentIntentId };
+  /**
+   * No timestamp means no way to order this against what we have already
+   * applied, and acting on an event that might be stale is how a failed
+   * payment comes back to life. Refused rather than guessed.
+   */
+  if (typeof event.created !== "number" || !Number.isFinite(event.created)) {
+    return null;
+  }
+
+  return {
+    invoiceId: invoiceId.trim(),
+    outcome,
+    paymentIntentId,
+    occurredAt: new Date(event.created * 1000).toISOString(),
+  };
 }
 
 /** The fields the update rule reads off the invoice it is about to change. */
 export interface InvoiceState {
   status?: string | null;
   stripePaymentIntentId?: string | null;
+  /** When the last applied event happened. See `stripeEventAt` on the model. */
+  stripeEventAt?: string | null;
 }
 
 export type InvoiceUpdate =
   | { action: "skip"; reason: string }
-  | { action: "set"; status: string; paidAt: string | null; paymentIntentId: string };
+  | {
+      action: "set";
+      status: string;
+      paidAt: string | null;
+      paymentIntentId: string;
+      occurredAt: string;
+    };
 
 /**
  * What to write, given where the invoice already is.
@@ -98,6 +124,24 @@ export function decideUpdate(
   if (invoice.status === "PAID") {
     return { action: "skip", reason: "already paid" };
   }
+  /**
+   * Anything older than what we have already applied is ignored.
+   *
+   * This is the whole ordering rule, and it replaces a narrower guard that only
+   * caught a repeated `processing` on the same intent. That guard read as though
+   * ordering were handled and it was not: a `payment_failed` landing before a
+   * delayed `processing` left a dead payment looking like it was clearing, and a
+   * redelivered `payment_failed` from a superseded attempt buried a debit that
+   * was still on its way. Both misstate whether money is coming, which is the
+   * one thing this function exists to get right.
+   *
+   * Comparing instants rather than reasoning per transition also covers the
+   * permutations nobody has enumerated — including retries under a second
+   * PaymentIntent, where matching on the id would have told us nothing.
+   */
+  if (invoice.stripeEventAt && decision.occurredAt < invoice.stripeEventAt) {
+    return { action: "skip", reason: "event is older than the last one applied" };
+  }
   if (
     decision.outcome === "PROCESSING" &&
     invoice.status === "PROCESSING" &&
@@ -118,5 +162,6 @@ export function decideUpdate(
     status,
     paidAt: decision.outcome === "PAID" ? today : null,
     paymentIntentId: decision.paymentIntentId,
+    occurredAt: decision.occurredAt,
   };
 }
