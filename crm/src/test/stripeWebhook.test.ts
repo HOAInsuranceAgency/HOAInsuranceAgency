@@ -778,8 +778,9 @@ describe("the remittance encoding", () => {
     "utf8"
   );
 
-  it("states UTF-8 on the subject and both bodies", () => {
-    expect(SRC.match(/Charset: "UTF-8"/g) ?? []).toHaveLength(3);
+  it("states UTF-8 on every part of both emails", () => {
+    // Three parts of the remittance mail, two of the void-payment alert.
+    expect(SRC.match(/Charset: "UTF-8"/g) ?? []).toHaveLength(5);
   });
 
   it("declares it in the HTML too, for whatever opens the message", async () => {
@@ -806,6 +807,35 @@ describe("the remittance encoding", () => {
  * Asserted against the source because the behaviour is an ordering property of
  * a handler that needs Stripe and a data client to invoke.
  */
+/**
+ * The backstop behind every link that might escape tracking: money landing on
+ * a VOID invoice is announced, not silently skipped. The invoice stays VOID —
+ * reviving it would hide that something went wrong — but the payment needs a
+ * refund, and this email is the only record pointed at a person.
+ */
+describe("a payment on a void invoice", () => {
+  const SRC = readFileSync(
+    resolve(process.cwd(), "amplify/functions/stripe-webhook/handler.ts"),
+    "utf8"
+  );
+
+  it("alerts accounting instead of skipping in silence", () => {
+    expect(SRC).toMatch(/update\.reason === "invoice is void" && decision\.outcome === "PAID"/);
+    expect(SRC).toContain("refund needed");
+  });
+
+  it("still leaves the invoice void and acknowledges the event", () => {
+    // Retrying would not help — the money cannot be un-received — and a 4xx/5xx
+    // would have Stripe redeliver an alarm forever.
+    const alertAt = SRC.indexOf('update.reason === "invoice is void"');
+    expect(SRC.indexOf('return ok("skipped")', alertAt)).toBeGreaterThan(alertAt);
+  });
+
+  it("never lets the alert failure block the acknowledgement", () => {
+    expect(SRC).toContain("could not send the void-payment alert");
+  });
+});
+
 describe("voiding an invoice", () => {
   const VOID_FN = readFileSync(
     resolve(process.cwd(), "amplify/functions/void-invoice/handler.ts"),

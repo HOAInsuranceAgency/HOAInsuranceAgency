@@ -1,4 +1,6 @@
 import { SESv2Client, SendEmailCommand } from "@aws-sdk/client-sesv2";
+import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
+import { DynamoDBDocumentClient, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { Amplify } from "aws-amplify";
 import { generateClient } from "aws-amplify/data";
 import { getAmplifyDataClientConfig } from "@aws-amplify/backend/function/runtime";
@@ -34,6 +36,16 @@ async function getDataClient() {
 }
 
 const ses = new SESv2Client();
+const ddb = DynamoDBDocumentClient.from(new DynamoDBClient());
+
+/**
+ * A send that must not proceed, with words fit for the screen.
+ *
+ * Thrown from the payment-link step when carrying on would leave a live link
+ * the invoice no longer tracks — the outer catch turns it into `{ok:false}`
+ * rather than the generic apology, because "try again" is the actual remedy.
+ */
+class SendBlocked extends Error {}
 
 /** Invoices come from the mailbox the agency actually reads, not from sales. */
 const MAILBOX = process.env.AGENCY_MAILBOX || AGENCY_FMT.emailLower;
@@ -53,7 +65,6 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
  * down is worse.
  */
 async function ensurePaymentLink(
-  client: DataClient,
   invoice: {
     id: string;
     number?: string | null;
@@ -114,41 +125,134 @@ async function ensurePaymentLink(
   }
   if (total <= 0) return null;
 
-  try {
-    const stripe = new Stripe(key);
+  const stripe = new Stripe(key);
 
-    /**
-     * Deactivate the superseded link before minting its replacement, so the
-     * amount the invoice no longer claims cannot still be paid. Best effort: a
-     * failure here must not stop the correct link being issued, and a stale
-     * link that stays payable is a smaller problem than no link at all.
-     */
-    if (existingLinkId) {
-      try {
-        await stripe.paymentLinks.update(existingLinkId, { active: false });
-      } catch (err) {
-        console.warn("[send-invoice] could not deactivate the old link", err);
+  /**
+   * Deactivate the superseded link before minting its replacement — and stop
+   * the send if that fails.
+   *
+   * This used to be best effort, on the reasoning that a stale payable link
+   * was a smaller problem than no link. It is not smaller: the row goes on to
+   * store the *new* link id, so the stale one becomes live and tracked by
+   * nothing. A later void deactivates only what is stored, the untracked link
+   * keeps collecting, and the webhook skips the payment because the invoice is
+   * VOID — money received and recorded nowhere. Refusing here leaves the old
+   * link live *and stored*, which is a state every other part of the system
+   * already handles, and the producer just presses Send again.
+   */
+  if (existingLinkId) {
+    try {
+      await stripe.paymentLinks.update(existingLinkId, { active: false });
+    } catch (err) {
+      const code = (err as { code?: string }).code;
+      if (code !== "resource_missing") {
+        console.error("[send-invoice] could not deactivate the old link", err);
+        throw new SendBlocked(
+          "Couldn't replace the previous payment link, so the invoice was not sent. Try again."
+        );
       }
+      console.warn(`[send-invoice] old link ${existingLinkId} already gone at Stripe`);
     }
+  }
 
-    const { id, url } = await createPaymentLink(stripe, {
+  let minted: { id: string; url: string };
+  try {
+    minted = await createPaymentLink(stripe, {
       invoiceId: invoice.id,
       invoiceNumber: invoice.number ?? null,
       associationName,
       total,
     });
-    await client.models.Invoice.update({
-      id: invoice.id,
-      paymentUrl: url,
-      stripePaymentLinkId: id,
-      // What it bills, so the next send can tell whether it is still right.
-      stripeLinkAmountCents: wantedCents,
-      lastWriteBy: "send-invoice",
-    });
-    return url;
   } catch (err) {
+    // No link minted, nothing untracked. A bill without a Pay button is still
+    // a working bill, so this failure alone does not stop the send.
     console.error("[send-invoice] could not create a payment link", err);
     return null;
+  }
+
+  /**
+   * Store the new link, only if nobody else has stored one meanwhile.
+   *
+   * Two producers pressing Send at once both mint a link, and through the data
+   * client the last write wins — leaving the loser's link live, collecting the
+   * full total, and recorded nowhere. So this write goes to the table with a
+   * condition on the link id this send read, the same optimistic shape as
+   * stripe-webhook/persist.ts. The loser deactivates its own orphan and tells
+   * its producer the other send won.
+   */
+  const stored = await storeLink(invoice.id, existingLinkId, {
+    url: minted.url,
+    linkId: minted.id,
+    amountCents: wantedCents,
+  });
+  if (!stored) {
+    try {
+      await stripe.paymentLinks.update(minted.id, { active: false });
+    } catch (err) {
+      // The orphan survives, but now loudly: someone can kill it by hand.
+      console.error(
+        `[send-invoice] LOST-RACE ORPHAN: link ${minted.id} on ${invoice.number ?? invoice.id} could not be deactivated`,
+        err
+      );
+    }
+    throw new SendBlocked(
+      "Another send updated this invoice at the same moment. Check it and try again."
+    );
+  }
+  return minted.url;
+}
+
+/**
+ * The conditional write behind `ensurePaymentLink`, direct to the table
+ * because the data client cannot express the condition. `updatedAt` by hand
+ * for the same reason — the client normally stamps it. See persist.ts in
+ * stripe-webhook for the pattern.
+ */
+async function storeLink(
+  invoiceId: string,
+  seenLinkId: string | null,
+  next: { url: string; linkId: string; amountCents: number | null }
+): Promise<boolean> {
+  const tableName = process.env.INVOICE_TABLE;
+  if (!tableName) {
+    // Fail closed: an unconditional fallback write is the exact bug this
+    // replaces, quietly reintroduced by a missing env var.
+    console.error("[send-invoice] INVOICE_TABLE unset; cannot store the link");
+    return false;
+  }
+  const names: Record<string, string> = { "#link": "stripePaymentLinkId" };
+  const values: Record<string, unknown> = {
+    ":url": next.url,
+    ":link": next.linkId,
+    ":cents": next.amountCents,
+    ":writer": "send-invoice",
+    ":now": new Date().toISOString(),
+  };
+  const clauses: string[] = [];
+  if (seenLinkId === null) {
+    clauses.push("attribute_not_exists(#link)");
+  } else {
+    clauses.push("#link = :seen");
+    values[":seen"] = seenLinkId;
+  }
+  try {
+    await ddb.send(
+      new UpdateCommand({
+        TableName: tableName,
+        Key: { id: invoiceId },
+        UpdateExpression:
+          "SET paymentUrl = :url, #link = :link, stripeLinkAmountCents = :cents, lastWriteBy = :writer, updatedAt = :now",
+        ConditionExpression: clauses.join(" AND "),
+        ExpressionAttributeNames: names,
+        ExpressionAttributeValues: values,
+      })
+    );
+    return true;
+  } catch (err) {
+    if ((err as { name?: string }).name === "ConditionalCheckFailedException") {
+      return false;
+    }
+    throw err;
   }
 }
 
@@ -245,7 +349,6 @@ export const handler = async (event: {
      * over anything the caller posted.
      */
     const paymentUrl = await ensurePaymentLink(
-      client,
       invoice,
       account.data.name,
       invoiceTotals(lines).retail
@@ -381,6 +484,9 @@ export const handler = async (event: {
     console.log(`send-invoice sent ${invoice.number ?? invoiceId} to ${to.join(", ")}`);
     return { ok: true, sentTo: to.join(", "), subject };
   } catch (err) {
+    if (err instanceof SendBlocked) {
+      return { ok: false, error: err.message };
+    }
     console.error("send-invoice failed", err);
     return { ok: false, error: "We couldn't send that invoice. Please try again." };
   }

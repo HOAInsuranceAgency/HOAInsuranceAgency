@@ -229,8 +229,46 @@ describe("an edited invoice cannot charge its old total", () => {
     expect(SEND).toContain("active: false");
   });
 
+  /**
+   * The untracked-link finding. Two ways a live link could end up recorded
+   * nowhere — a failed deactivation followed by storing the new id, and two
+   * overlapping sends where the loser's link survives the last write. Either
+   * one collects money the webhook then skips, because a later void only
+   * deactivates the link the row remembers.
+   */
+  it("aborts the send when the old link cannot be closed", () => {
+    // Best-effort was the bug: continuing stores the new id and orphans the
+    // old link, live. Refusing leaves the old link live AND stored — a state
+    // the rest of the system already handles.
+    expect(SEND).toMatch(/throw new SendBlocked\(\s*"Couldn't replace the previous payment link/);
+    // Except when Stripe has already forgotten it, which is not a live link.
+    expect(SEND).toContain("resource_missing");
+  });
+
+  it("stores the minted link conditionally on the one it replaced", () => {
+    expect(SEND).toMatch(/attribute_not_exists\(#link\)/);
+    expect(SEND).toMatch(/#link = :seen/);
+    expect(SEND).toContain("ConditionalCheckFailedException");
+  });
+
+  it("kills its own orphan when it loses the race", () => {
+    const lost = SEND.indexOf("if (!stored) {");
+    expect(lost).toBeGreaterThan(-1);
+    // Inside the losing branch, the just-minted link is deactivated…
+    expect(SEND.indexOf("minted.id, { active: false }", lost)).toBeGreaterThan(lost);
+    // …and if even that fails, it is named loudly enough to kill by hand.
+    expect(SEND).toContain("LOST-RACE ORPHAN");
+  });
+
+  it("fails closed when the table is not configured", () => {
+    // An unconditional fallback write here would quietly reintroduce the bug.
+    expect(SEND).toMatch(/INVOICE_TABLE unset; cannot store the link/);
+  });
+
   it("records what the link bills, so the next send can compare", () => {
-    expect(SEND).toContain("stripeLinkAmountCents: wantedCents");
+    // Through the conditional store now, not the data client.
+    expect(SEND).toContain("amountCents: wantedCents");
+    expect(SEND).toContain("stripeLinkAmountCents = :cents");
   });
 });
 

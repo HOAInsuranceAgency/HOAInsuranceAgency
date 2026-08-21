@@ -95,6 +95,47 @@ async function notifyAccounting(invoice: InvoiceRow, update: { paidAt: string | 
   );
 }
 
+/**
+ * Money arrived on a bill the agency withdrew. Someone has to give it back,
+ * and the CRM will never show it — the invoice stays VOID on purpose — so this
+ * email is the only record pointed at a person.
+ */
+async function alertPaymentOnVoid(invoice: InvoiceRow, paymentIntentId: string) {
+  const to = process.env.ACCOUNTING_MAILBOX;
+  if (!to) return;
+  await ses.send(
+    new SendEmailCommand({
+      FromEmailAddress: `${AGENCY.name} <${process.env.AGENCY_MAILBOX ?? to}>`,
+      Destination: { ToAddresses: [to] },
+      Content: {
+        Simple: {
+          Subject: {
+            Data: `Payment received on a VOID invoice — refund needed (${invoice.number ?? invoice.id})`,
+            Charset: "UTF-8",
+          },
+          Body: {
+            Text: {
+              Data: [
+                `A payment arrived for an invoice that was voided. The invoice stays VOID;`,
+                `the money is in the trust account and needs to be refunded to the payer.`,
+                ``,
+                `Invoice:         ${invoice.number ?? invoice.id}`,
+                `Stripe payment:  ${paymentIntentId}`,
+                ``,
+                `Refund it from the Stripe dashboard, where the payment id above will find it.`,
+              ].join("\n"),
+              Charset: "UTF-8",
+            },
+          },
+        },
+      },
+    })
+  );
+  console.log(
+    `stripe-webhook alerted ${to} about a payment on void invoice ${invoice.number ?? invoice.id}`
+  );
+}
+
 let stripe: Stripe | undefined;
 const getStripe = () => (stripe ??= new Stripe(process.env.STRIPE_SECRET_KEY as string));
 
@@ -198,6 +239,28 @@ export const handler = async (event: {
 
       const update = decideUpdate(invoice, decision, today);
       if (update.action === "skip") {
+        /**
+         * Money arriving on a voided bill is not a skip, it is an alarm.
+         *
+         * The decision is still right — VOID stays VOID, because reviving it
+         * would hide that something went wrong — but the money is real and in
+         * the trust account, and every path that leads here is one where no
+         * record of it exists: a link that escaped tracking, a payment racing
+         * a void. Silence was how those stayed invisible. The alert goes to
+         * the same mailbox as the splits, because the person reconciling the
+         * account is the person who will otherwise find an unexplained
+         * deposit — and this needs a refund, not a journal entry.
+         */
+        if (update.reason === "invoice is void" && decision.outcome === "PAID") {
+          console.error(
+            `stripe-webhook: payment ${decision.paymentIntentId} received on VOID invoice ${invoice.number ?? invoice.id}`
+          );
+          try {
+            await alertPaymentOnVoid(invoice, decision.paymentIntentId);
+          } catch (err) {
+            console.error("stripe-webhook could not send the void-payment alert", err);
+          }
+        }
         console.log(
           `stripe-webhook skipped ${invoice.number ?? invoice.id}: ${update.reason}`
         );

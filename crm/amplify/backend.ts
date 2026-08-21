@@ -420,6 +420,15 @@ backend.voidInvoice.addEnvironment("INVOICE_TABLE", invoiceTable.tableName);
 invoiceTable.grantReadWriteData(backend.voidInvoice.resources.lambda);
 
 /**
+ * And the send, for one write: storing a freshly minted payment link
+ * conditionally on the link it replaced, so two overlapping sends cannot leave
+ * the loser's link live and tracked by nothing. Everything else in the send
+ * still goes through the data client.
+ */
+backend.sendInvoice.addEnvironment("INVOICE_TABLE", invoiceTable.tableName);
+invoiceTable.grantReadWriteData(backend.sendInvoice.resources.lambda);
+
+/**
  * Reporting the split to corporate finance, when Stripe confirms a payment.
  *
  * The email names the association and the carrier, which the invoice row holds
