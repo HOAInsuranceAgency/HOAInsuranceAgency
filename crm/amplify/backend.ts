@@ -367,7 +367,20 @@ backend.taskDigest.addEnvironment("CRM_BASE_URL", magicLinkBaseUrl);
 backend.sendInvoice.addEnvironment("AGENCY_MAILBOX", internalMailbox);
 backend.sendInvoice.resources.lambda.addToRolePolicy(
   new PolicyStatement({
-    actions: ["ses:SendEmail"],
+    /**
+     * `SendRawEmail` as well, and this one is not optional.
+     *
+     * Every other sender here uses SES's `Simple` content and needs only
+     * `ses:SendEmail`. This one switched to `Raw` to carry the PDF attachment,
+     * which Simple content cannot do — and raw content is authorized by
+     * `ses:SendRawEmail` even when sent through the v2 SendEmail call. Without
+     * it every invoice send fails with AccessDenied at the SES call, after the
+     * link has been minted and the PDF rendered.
+     *
+     * Nothing local catches this: the tests, the typecheck and the CDK synth
+     * all pass. It took invoking the deployed function to see it.
+     */
+    actions: ["ses:SendEmail", "ses:SendRawEmail"],
     resources: ["*"],
   })
 );
