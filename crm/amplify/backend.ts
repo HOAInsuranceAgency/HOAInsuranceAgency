@@ -411,6 +411,15 @@ backend.stripeWebhook.addEnvironment("INVOICE_TABLE", invoiceTable.tableName);
 invoiceTable.grantReadWriteData(backend.stripeWebhook.resources.lambda);
 
 /**
+ * Voiding needs the same direct access, for the same reason: its write is
+ * conditional on what it read — a void must lose to a payment that lands in
+ * the window where the Stripe link is being deactivated — and the data client
+ * cannot express a condition. See void-invoice/handler.ts.
+ */
+backend.voidInvoice.addEnvironment("INVOICE_TABLE", invoiceTable.tableName);
+invoiceTable.grantReadWriteData(backend.voidInvoice.resources.lambda);
+
+/**
  * Reporting the split to corporate finance, when Stripe confirms a payment.
  *
  * The email names the association and the carrier, which the invoice row holds

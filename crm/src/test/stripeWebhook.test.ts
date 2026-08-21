@@ -825,9 +825,10 @@ describe("voiding an invoice", () => {
   it("deactivates the link before writing the status", () => {
     // This order is the point. Writing VOID first and then failing to close the
     // link produces exactly the state the function exists to prevent: a dead
-    // invoice with a live way to pay it.
-    const kill = VOID_FN.indexOf("active: false");
-    const write = VOID_FN.indexOf('status: "VOID"');
+    // invoice with a live way to pay it. Asserted on the two calls in the
+    // handler's loop, where source order is execution order.
+    const kill = VOID_FN.indexOf("paymentLinks.update");
+    const write = VOID_FN.indexOf("await writeVoid(");
     expect(kill).toBeGreaterThan(-1);
     expect(write).toBeGreaterThan(kill);
   });
@@ -848,6 +849,39 @@ describe("voiding an invoice", () => {
   });
 
   it("clears the dead url so nothing renders a Pay button for it", () => {
-    expect(VOID_FN).toContain("paymentUrl: null");
+    expect(VOID_FN).toContain("REMOVE paymentUrl");
+  });
+
+  /**
+   * The second-round finding: an unconditional void could bury a PAID written
+   * while this handler was off talking to Stripe. Stripe had its 200, so no
+   * redelivery; the webhook skips void invoices, so nothing ever corrected it.
+   * Money in trust, recorded nowhere.
+   */
+  it("writes VOID conditionally on the status it read", () => {
+    expect(VOID_FN).toContain("ConditionExpression");
+    expect(VOID_FN).toMatch(/#s = :seen/);
+    expect(VOID_FN).toContain("ConditionalCheckFailedException");
+  });
+
+  it("conditions on the link it deactivated, not just the status", () => {
+    // A concurrent re-send can mint a fresh link. A void conditioned on status
+    // alone would retire the invoice while the new link stayed payable — the
+    // same bug, one link over.
+    expect(VOID_FN).toMatch(/#link = :seenLink/);
+    expect(VOID_FN).toContain("attribute_not_exists(#link)");
+  });
+
+  it("re-reads consistently after losing, so the retry can see why", () => {
+    expect(VOID_FN).toContain("ConsistentRead: true");
+    // The losing path most worth having: the retry finds the payment landed.
+    expect(VOID_FN).toContain("cannot be voided");
+  });
+
+  it("uses no data client at all", () => {
+    // The data client cannot express the condition, and half-and-half is how
+    // the read and the write end up trusting different sources. Direct only.
+    expect(VOID_FN).not.toContain("generateClient");
+    expect(VOID_FN).not.toContain("getAmplifyDataClientConfig");
   });
 });

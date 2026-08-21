@@ -1699,9 +1699,6 @@ const schema = a
     allow.resource(portalSweep),
     // Reads invoices, lines, accounts and contacts to build the emailed bill.
     allow.resource(sendInvoice),
-    // Reads the invoice to find its Stripe link, and writes VOID once the link
-    // is closed.
-    allow.resource(voidInvoice),
     // The stream handler writes Activity and reads UserProfile to name an
     // actor. Note what the block above says: this is not a per-model grant,
     // so this function has full API access whatever any model declares. What
