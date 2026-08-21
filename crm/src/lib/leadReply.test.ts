@@ -449,6 +449,10 @@ describe("the rendered email", () => {
     expect(html).not.toMatch(/box-shadow/);
     expect(html).not.toMatch(/background:\s*#142a4c/);
     expect(html).not.toMatch(/not a quote/i);
+    // And no padding of our own: Gmail keeps body styles on its wrapper div,
+    // so 14px here stacked inside the client's chrome and indented the whole
+    // message relative to a reply someone actually typed.
+    expect(html).toContain('<body style="margin:0;padding:0;background:#ffffff">');
   });
 
   /** Every fact in the signature comes from `AGENCY`, in both parts. */

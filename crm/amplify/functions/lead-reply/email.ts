@@ -423,6 +423,13 @@ function signatureText(): string[] {
  * to look like a person typed it in their mail client. So the body is plain
  * paragraphs on white, set in the same Arial the signature uses, and the only
  * styled thing in the message is the signature itself.
+ *
+ * The body carries no padding of its own for the same reason. Mail clients do
+ * not render this as a page: Gmail rewrites the body into a div and keeps its
+ * inline style, so any padding here stacks inside the client's own message
+ * chrome — and the whole email sits subtly indented beside a reply someone
+ * actually typed. The client supplies all the whitespace, as it does for
+ * every real email.
  */
 export function renderReply(opts: {
   generated: { subject: string; body: string };
@@ -531,7 +538,7 @@ export function renderReply(opts: {
 
   const html = `<!doctype html>
 <html><head><meta charset="utf-8"><meta name="color-scheme" content="light only"></head>
-<body style="margin:0;padding:16px 14px;background:#ffffff">
+<body style="margin:0;padding:0;background:#ffffff">
 ${[
   para(escapeHtml(greeting), "0 0 14px"),
   ...paragraphs.map((p) => para(escapeHtml(p), "0 0 14px")),
