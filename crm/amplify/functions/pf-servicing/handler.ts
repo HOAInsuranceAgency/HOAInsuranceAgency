@@ -288,11 +288,25 @@ export const handler = async (event: {
             new UpdateCommand({
               TableName: loanTable,
               Key: { id: loan.id },
+              /**
+               * defaultedAt is ALWAYS removed on a non-final advance —
+               * decided by the write, not by the possibly-stale status this
+               * invocation read. Removing an absent attribute is a no-op, and
+               * dispatching on the read left ACTIVE loans carrying a
+               * defaultedAt stamp when the sweep raced the posting.
+               */
               UpdateExpression:
                 "SET paidThrough = :n, balance = :bal, nextDueAt = :next, #s = :status, updatedAt = :now" +
-                (finished ? ", closedAt = :now" : "") +
-                (loan.status === "DEFAULTED" && !finished ? " REMOVE defaultedAt" : ""),
-              ConditionExpression: "paidThrough = :seen OR paidThrough = :n",
+                (finished ? ", closedAt = :now" : " REMOVE defaultedAt"),
+              /**
+               * Status is in the condition because paidThrough alone let a
+               * posting racing a cancellation set status back to ACTIVE — a
+               * resurrected loan with a CANCELLATION_REQUEST on file, the
+               * carrier cancelling the policy, and no action able to reach it
+               * again. A CANCELLED or PAID loan's state is terminal here.
+               */
+              ConditionExpression:
+                "(paidThrough = :seen OR paidThrough = :n) AND (#s = :active OR #s = :defaulted)",
               ExpressionAttributeNames: { "#s": "status" },
               ExpressionAttributeValues: {
                 ":n": n,
@@ -301,12 +315,24 @@ export const handler = async (event: {
                 ":status": finished ? "PAID" : "ACTIVE",
                 ":now": now,
                 ":seen": loan.paidThrough ?? 0,
+                ":active": "ACTIVE",
+                ":defaulted": "DEFAULTED",
               },
             })
           );
         } catch (err) {
           if ((err as { name?: string }).name !== "ConditionalCheckFailedException") throw err;
-          console.error(`[pf-servicing] loan ${loan.id} moved during posting ${n}; ledger row stands`);
+          /**
+           * The loan closed or cancelled between the read and the advance.
+           * The ledger row is a fact — money posted — so it stands, loudly:
+           * the operator hears exactly what happened instead of the loan
+           * quietly coming back to life.
+           */
+          console.error(`[pf-servicing] loan ${loan.id} left ACTIVE/DEFAULTED during posting ${n}; ledger row stands`);
+          return {
+            ok: false,
+            error: `The loan changed state while posting installment ${n}. The payment is on the ledger; reconcile the loan by hand before anything else.`,
+          };
         }
         return {
           ok: true,

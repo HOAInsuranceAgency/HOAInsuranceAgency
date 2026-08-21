@@ -470,6 +470,15 @@ for (const [name, model] of [
   backend.pfServicing.addEnvironment(name, table.tableName);
   table.grantReadWriteData(backend.pfServicing.resources.lambda);
 }
+// The sweep's default-mark is conditional (still ACTIVE, same due date), so
+// it too writes the loan table directly.
+backend.pfDefaultSweep.addEnvironment(
+  "PF_LOAN_TABLE",
+  backend.data.resources.tables.PfLoan.tableName
+);
+backend.data.resources.tables.PfLoan.grantReadWriteData(
+  backend.pfDefaultSweep.resources.lambda
+);
 
 // The agreement renderer writes its PDFs under generated/pf/ — outside
 // documents/, so the OCR upload trigger never re-reads the app's own output.

@@ -141,6 +141,27 @@ describe("a concurrent disable beats an in-flight enable", () => {
   });
 });
 
+describe("a lost response is not a lost write", () => {
+  it("verifies the flag after a failed enable flip and stands by a landed one", async () => {
+    // The flip Update rejects (network), but the follow-up Get shows the
+    // write actually committed: the enable stands, and no DISABLED
+    // correction row is written over a flag that is ON.
+    let gets = 0;
+    sendMock.mockImplementation((cmd: { input: Record<string, unknown> }) => {
+      if (cmd.input.Item) return Promise.resolve({});
+      if (cmd.input.UpdateExpression) return Promise.reject(new Error("socket closed"));
+      gets++;
+      return Promise.resolve(
+        gets === 1 ? { Item: {} } : { Item: { premiumFinanceEnabled: true } }
+      );
+    });
+    const res = await run(true);
+    expect(res).toMatchObject({ ok: true, enabled: true });
+    // Exactly one log row (ENABLED) and no correction row.
+    expect(logPuts().length).toBe(1);
+  });
+});
+
 describe("refusals", () => {
   it("does nothing without a boolean", async () => {
     sendMock.mockResolvedValue({});

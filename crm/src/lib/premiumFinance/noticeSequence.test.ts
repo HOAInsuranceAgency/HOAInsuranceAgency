@@ -199,8 +199,31 @@ describe("servicing idempotency (the review findings)", () => {
     expect(HANDLER).toContain('ConditionExpression: "attribute_not_exists(id)"');
   });
 
-  it("advances the loan conditionally on the paidThrough it read", () => {
-    expect(HANDLER).toContain('ConditionExpression: "paidThrough = :seen OR paidThrough = :n"');
+  it("advances the loan conditionally on paidThrough AND a live status", () => {
+    // paidThrough alone let a posting racing a cancellation resurrect a
+    // CANCELLED loan to ACTIVE — with a CANCELLATION_REQUEST on file, the
+    // carrier cancelling, and no action able to reach the loan again.
+    expect(HANDLER).toContain(
+      '"(paidThrough = :seen OR paidThrough = :n) AND (#s = :active OR #s = :defaulted)"'
+    );
+    // A lost advance surfaces loudly; the ledger row stands as fact.
+    expect(HANDLER).toContain("reconcile the loan by hand");
+  });
+
+  it("clears defaultedAt by the write, not the read", () => {
+    // Dispatching REMOVE on the read status left ACTIVE loans carrying a
+    // stale defaultedAt when the sweep raced the posting.
+    expect(HANDLER).toContain('" REMOVE defaultedAt"');
+    expect(HANDLER).not.toMatch(/loan\.status === "DEFAULTED" && !finished/);
+  });
+
+  it("the default sweep marks conditionally — an operator's posting wins", () => {
+    const SWEEP = readFileSync(
+      resolve(process.cwd(), "amplify/functions/pf-default-sweep/handler.ts"),
+      "utf8"
+    );
+    expect(SWEEP).toContain('ConditionExpression: "#s = :active AND nextDueAt = :seen"');
+    expect(SWEEP).toContain("serviced mid-sweep");
   });
 
   it("a duplicate ledger row falls through to reconcile the loan", () => {

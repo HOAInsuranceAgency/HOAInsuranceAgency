@@ -158,6 +158,25 @@ export const handler = async (event: {
         await writeFlag(true, seenStamp);
       } catch (err) {
         const lost = (err as { name?: string }).name === "ConditionalCheckFailedException";
+        /**
+         * A thrown write is not necessarily an unapplied write — the commit
+         * can land and the response be lost. Before recording a DISABLED
+         * correction (which would then sit as the latest row over a flag
+         * that is ON), read what is actually there and report THAT.
+         */
+        if (!lost) {
+          try {
+            const check = await ddb.send(
+              new GetCommand({ TableName: settingsTable, Key: { id: AGENCY_SETTINGS_ID } })
+            );
+            if (check.Item?.premiumFinanceEnabled === true) {
+              console.warn("[pf-admin] flip response was lost but the write landed; enable stands");
+              return { ok: true, enabled: true };
+            }
+          } catch (checkErr) {
+            console.error("[pf-admin] could not verify flag state after failed flip", checkErr);
+          }
+        }
         console.error(
           lost
             ? "[pf-admin] enable lost to a concurrent flip; module state unchanged by this call"

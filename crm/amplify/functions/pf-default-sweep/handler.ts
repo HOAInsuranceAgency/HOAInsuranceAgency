@@ -3,7 +3,7 @@ import { Amplify } from "aws-amplify";
 import { generateClient } from "aws-amplify/data";
 import { getAmplifyDataClientConfig } from "@aws-amplify/backend/function/runtime";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, PutCommand } from "@aws-sdk/lib-dynamodb";
+import { DynamoDBDocumentClient, PutCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import type { Schema } from "../../data/resource";
 import { listAllPages } from "../../../src/lib/pagination";
 import { PF_CONFIG_SHA256 } from "../../../src/lib/premiumFinance/jurisdictions";
@@ -39,14 +39,42 @@ export const handler = async () => {
   );
   const missed = loans.filter((l) => l.nextDueAt && l.nextDueAt < today);
 
+  const loanTable = process.env.PF_LOAN_TABLE;
   for (const loan of missed) {
-    const { errors } = await client.models.PfLoan.update({
-      id: loan.id,
-      status: "DEFAULTED",
-      defaultedAt: now,
-    });
-    if (errors?.length) {
-      console.error(`pf-default-sweep: could not mark ${loan.id}`, errors[0].message);
+    /**
+     * Conditional on the state the sweep decided from: still ACTIVE, still
+     * the same overdue date. The unconditional form clobbered concurrent
+     * postings — worst case flipping a just-PAID loan to DEFAULTED, which
+     * then admitted the statutory cancellation sequence on a fully paid
+     * loan and wrote a false compliance row under it. Losing the condition
+     * means the operator got there first; that is the good outcome.
+     */
+    if (!loanTable) {
+      console.error("pf-default-sweep: PF_LOAN_TABLE unset");
+      break;
+    }
+    try {
+      await ddb.send(
+        new UpdateCommand({
+          TableName: loanTable,
+          Key: { id: loan.id },
+          UpdateExpression: "SET #s = :d, defaultedAt = :now, updatedAt = :now",
+          ConditionExpression: "#s = :active AND nextDueAt = :seen",
+          ExpressionAttributeNames: { "#s": "status" },
+          ExpressionAttributeValues: {
+            ":d": "DEFAULTED",
+            ":now": now,
+            ":active": "ACTIVE",
+            ":seen": loan.nextDueAt,
+          },
+        })
+      );
+    } catch (err) {
+      if ((err as { name?: string }).name === "ConditionalCheckFailedException") {
+        console.log(`pf-default-sweep: ${loan.id} was serviced mid-sweep; not marking`);
+        continue;
+      }
+      console.error(`pf-default-sweep: could not mark ${loan.id}`, err);
       continue;
     }
     const table = process.env.PF_COMPLIANCE_LOG_TABLE;
