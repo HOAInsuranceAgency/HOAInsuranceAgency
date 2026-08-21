@@ -9,7 +9,11 @@ import {
   Table,
   TableEncryption,
 } from "aws-cdk-lib/aws-dynamodb";
-import { FunctionUrlAuthType, StartingPosition } from "aws-cdk-lib/aws-lambda";
+import {
+  CfnFunction,
+  FunctionUrlAuthType,
+  StartingPosition,
+} from "aws-cdk-lib/aws-lambda";
 import { DynamoEventSource } from "aws-cdk-lib/aws-lambda-event-sources";
 import { auth } from "./auth/resource";
 import { data } from "./data/resource";
@@ -410,6 +414,39 @@ backend.storage.resources.bucket.grantPut(
   backend.leadUpload.resources.lambda,
   "documents/*"
 );
+
+/**
+ * The two public upload handlers take their file-count slot with a conditional
+ * DynamoDB UpdateItem rather than through the data client, which cannot express
+ * one — see functions/uploadQuota.ts. That needs the table by name and direct
+ * write access to it, which the API-wide `allow.resource()` grant does not give.
+ */
+const leadReplyTable = backend.data.resources.tables.LeadReply;
+const uploadPortalTable = backend.data.resources.tables.UploadPortal;
+backend.leadUpload.addEnvironment("LEAD_REPLY_TABLE", leadReplyTable.tableName);
+leadReplyTable.grantReadWriteData(backend.leadUpload.resources.lambda);
+backend.uploadPortal.addEnvironment(
+  "UPLOAD_PORTAL_TABLE",
+  uploadPortalTable.tableName
+);
+uploadPortalTable.grantReadWriteData(backend.uploadPortal.resources.lambda);
+
+/**
+ * One sweep at a time, each.
+ *
+ * Both run on a cron with a timeout far longer than their interval, so a slow
+ * pass overlaps the next tick. `lead-reply` claims a row by flipping it to
+ * SENDING before generating, but that write carries no condition on the current
+ * status — two overlapping passes both read WAITING, both claim, and the lead
+ * gets the same email twice. Amplify's data client cannot express a conditional
+ * update, so the overlap is removed instead of the race being lost.
+ *
+ * A throttled tick is harmless: the schedule fires again a minute later, and
+ * anything still due is still due.
+ */
+for (const fn of [backend.leadReply, backend.portalSweep]) {
+  (fn.resources.lambda.node.defaultChild as CfnFunction).reservedConcurrentExecutions = 1;
+}
 
 // The document portal presigns the same way, and into the same prefix, for the
 // same reason. Its own grant rather than a shared role: the two functions have
