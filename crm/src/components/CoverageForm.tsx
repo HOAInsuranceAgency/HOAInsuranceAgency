@@ -11,6 +11,7 @@ import { useFormState } from "../lib/useFormState";
 import { SELECTABLE_QUOTE_STATUSES } from "../lib/quoteStatus";
 import {
   AGGREGATE_APPLIES_TO_OPTIONS,
+  BILL_TYPE_OPTIONS,
   POLICY_STATUSES,
   REPLACEMENT_COST_OPTIONS,
 } from "../lib/enums";
@@ -53,6 +54,7 @@ export default function CoverageForm({
   const { form, setF, patch } = useFormState({
     carrierId: existing?.carrierId ?? "",
     policyNumber: asPolicy?.policyNumber ?? "",
+    billType: asPolicy?.billType ?? "",
     status: (existing?.status ?? (isPolicy ? "ACTIVE" : "DRAFT")) as string,
     lines: (existing?.lines ?? []).filter((l): l is string => !!l),
     premium: str(existing?.premium),
@@ -143,6 +145,10 @@ export default function CoverageForm({
           ...shared,
           policyNumber: form.policyNumber.trim() || null,
           status: form.status as Policy["status"],
+          // Nullable on the way back out: a policy bound before this field
+          // existed opens with the box empty, and saving other edits must not
+          // invent an answer for it.
+          billType: (form.billType || null) as Policy["billType"],
         });
         if (errors?.length) throw new Error(errors[0].message);
       } else if (existing) {
@@ -200,6 +206,25 @@ export default function CoverageForm({
               value={form.policyNumber}
               onChange={(e) => setF("policyNumber", e.target.value)}
             />
+          </div>
+        )}
+        {/* Set at bind and correctable here — a placement can move from direct
+            to agency bill mid-term, and the answer decides whether the agency
+            invoices the premium at all. */}
+        {isPolicy && (
+          <div className="field">
+            <label>Bill type</label>
+            <select
+              value={form.billType}
+              onChange={(e) => setF("billType", e.target.value)}
+            >
+              <option value="">Not recorded</option>
+              {BILL_TYPE_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
           </div>
         )}
         <div className="field">

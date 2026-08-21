@@ -39,6 +39,7 @@ import { ACCOUNT_TYPES, type AccountType } from "../../../shared/accountType";
 
 export type AccountStage = Schema["AccountStage"]["type"];
 export type PolicyStatus = Schema["PolicyStatus"]["type"];
+export type BillType = Schema["BillType"]["type"];
 export type DocumentCategory = NonNullable<Schema["DocumentCategory"]["type"]>;
 export type OcrStatus = Schema["OcrStatus"]["type"];
 export type UserRole = Schema["UserRole"]["type"];
@@ -170,6 +171,28 @@ export const POLICY_STATUSES: readonly PolicyStatus[] = Object.freeze(
     a.localeCompare(b)
   )
 );
+
+// ── BillType ─────────────────────────────────────────────────────────────────
+
+/**
+ * Labelled "… bill" rather than bare, because "Agency"/"Direct" alone reads as
+ * a question about who the agency is. The distinction decides whether the
+ * agency ever raises an invoice for the premium — see `BillType` in the schema.
+ */
+const BILL_TYPE = {
+  AGENCY: "Agency bill — we collect and remit",
+  DIRECT: "Direct bill — the carrier collects",
+} satisfies Record<BillType, string>;
+
+export const BILL_TYPE_LABELS: Record<string, string> = Object.freeze(BILL_TYPE);
+
+export const BILL_TYPE_OPTIONS = optionsByLabel(BILL_TYPE);
+
+/** The short form, for a table cell that has no room for the explanation. */
+export const BILL_TYPE_SHORT: Record<string, string> = Object.freeze({
+  AGENCY: "Agency",
+  DIRECT: "Direct",
+} satisfies Record<BillType, string>);
 
 // ── ReplacementCostType ──────────────────────────────────────────────────────
 

@@ -8,7 +8,7 @@ import {
   type Policy,
 } from "../../lib/client";
 import { useAsyncResource } from "../../lib/useAsyncResource";
-import { POLICY_STATUSES } from "../../lib/enums";
+import { BILL_TYPE_SHORT, POLICY_STATUSES } from "../../lib/enums";
 import { useSort, SortTh } from "../../lib/useSort";
 import { commissionCell, termsSummary } from "../../components/QuotesPanel";
 import CoverageForm from "../../components/CoverageForm";
@@ -73,6 +73,7 @@ export function PoliciesTab({ accountId }: { accountId: string }) {
       number: (p) => p.policyNumber,
       carrier: (p) => (p.carrierId ? carrierName(p.carrierId) : null),
       lines: (p) => (p.lines ?? []).filter(Boolean).join(", "),
+      billType: (p) => p.billType,
       premium: (p) => p.premium,
       commission: (p) => p.commissionPct,
       effective: (p) => p.effectiveDate,
@@ -125,6 +126,7 @@ export function PoliciesTab({ accountId }: { accountId: string }) {
                 <SortTh label="Policy #" colKey="number" sortKey={sortKey} dir={dir} onToggle={toggle} />
                 <SortTh label="Carrier" colKey="carrier" sortKey={sortKey} dir={dir} onToggle={toggle} />
                 <SortTh label="Lines" colKey="lines" sortKey={sortKey} dir={dir} onToggle={toggle} />
+                <SortTh label="Bill" colKey="billType" sortKey={sortKey} dir={dir} onToggle={toggle} />
                 <SortTh label="Premium" colKey="premium" sortKey={sortKey} dir={dir} onToggle={toggle} />
                 <SortTh label="Commission" colKey="commission" sortKey={sortKey} dir={dir} onToggle={toggle} />
                 <th>Terms</th>
@@ -144,6 +146,9 @@ export function PoliciesTab({ accountId }: { accountId: string }) {
                   <td>{p.policyNumber || "—"}</td>
                   <td className="small">{carrierName(p.carrierId)}</td>
                   <td className="small">{(p.lines ?? []).filter(Boolean).join(", ") || "—"}</td>
+                  {/* Blank for anything bound before the field existed, which
+                      is honest — "Direct" would be a guess about money. */}
+                  <td className="small">{BILL_TYPE_SHORT[p.billType ?? ""] ?? "—"}</td>
                   <td>{fmtMoney(p.premium)}</td>
                   <td className="small">{commissionCell(p)}</td>
                   <td className="small">{termsSummary(p)}</td>

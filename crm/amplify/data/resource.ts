@@ -42,6 +42,24 @@ const schema = a
       "LOST",
     ]),
     PolicyStatus: a.enum(["ACTIVE", "EXPIRED", "CANCELLED", "NON_RENEWED"]),
+    /**
+     * Who collects the premium from the association.
+     *
+     * AGENCY — the agency bills the insured, collects the gross premium and
+     * remits it to the carrier net of commission. These are the policies the
+     * Invoice model is about; see the note on it, which assumes exactly this
+     * arrangement.
+     *
+     * DIRECT — the carrier bills the insured itself and pays commission to the
+     * agency afterwards. Nothing passes through the agency's account, so a
+     * direct-bill policy is not something to raise a premium invoice for.
+     *
+     * Captured at bind because it is a term of the placement, not a property
+     * of the account: the same association can be agency bill with one carrier
+     * and direct bill with another, and which one it is decides whether anyone
+     * here is supposed to chase the money.
+     */
+    BillType: a.enum(["AGENCY", "DIRECT"]),
     DocumentEntityType: a.enum([
       "ACCOUNT",
       "QUOTE",
@@ -730,6 +748,15 @@ const schema = a
       carrier: a.belongsTo("Carrier", "carrierId"),
       policyNumber: a.string(),
       status: a.ref("PolicyStatus").required(),
+      /**
+       * Required by the bind form, optional here.
+       *
+       * Every policy created from now on has one — `BindForm` will not submit
+       * without it. Declaring it `.required()` in the schema would instead make
+       * AppSync fail the *read* of every policy bound before this field
+       * existed, turning a missing answer into an unopenable record.
+       */
+      billType: a.ref("BillType"),
       lines: a.string().array(),
       premium: a.float(),
       commissionPct: a.float(), // carried from the bound quote; baked into premium

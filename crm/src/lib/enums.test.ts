@@ -4,6 +4,9 @@ import { describe, expect, it } from "vitest";
 import {
   ACCOUNT_TYPES,
   ACCOUNT_TYPE_OPTIONS,
+  BILL_TYPE_LABELS,
+  BILL_TYPE_OPTIONS,
+  BILL_TYPE_SHORT,
   ACORD125_LEGAL_ENTITY_FIELDS,
   BUILDING_DEDUCTIBLE_TYPE_LABELS,
   BUILDING_DEDUCTIBLE_TYPE_OPTIONS,
@@ -567,5 +570,61 @@ describe("the shared AccountType copy cannot drift", () => {
     ).toBe(true);
     // And it must not have re-typed the union inline alongside the import.
     expect(text).not.toMatch(/"ASSOCIATION"\s*\|\s*"PERSONAL"/);
+  });
+});
+
+/**
+ * Bill type, and the one thing about it that must not rot.
+ *
+ * Every other enum here is a labelling concern — get it wrong and a select
+ * reads oddly. This one decides whether the agency is supposed to collect
+ * money, so the assertion that matters is not about labels: it is that the
+ * bind form cannot write a policy without an answer.
+ *
+ * Asserted against the source, the way `AccountDetail.test.tsx` asserts the
+ * tab in the URL. Rendering `BindForm` means a data client, an account, a
+ * quote and a carrier list — a great deal of scaffolding to observe one
+ * disabled attribute, and none of it would catch the failure this guards: a
+ * default creeping into `useState` later, which would make the field required
+ * in appearance and pre-answered in fact.
+ */
+describe("bill type at bind", () => {
+  const src = readFileSync(
+    resolve(process.cwd(), "src/components/QuotesPanel.tsx"),
+    "utf8"
+  );
+
+  it("starts unset, so the producer has to choose", () => {
+    expect(src).toMatch(/useState<BillType \| "">\(""\)/);
+  });
+
+  it("will not submit without one", () => {
+    // The button is disabled…
+    expect(src).toMatch(/disabled=\{saving \|\| !billType\}/);
+    // …and `bind` itself refuses, so a re-enabled button is not a way in.
+    expect(src).toMatch(/if \(!billType\) return;/);
+  });
+
+  it("writes it onto the policy it creates", () => {
+    expect(src).toMatch(/^\s*billType,$/m);
+  });
+
+  it("offers exactly the two the schema declares", () => {
+    expect(BILL_TYPE_OPTIONS.map((o) => o.value).sort()).toEqual([
+      "AGENCY",
+      "DIRECT",
+    ]);
+    // Both label sets cover both members — `satisfies` enforces this at
+    // compile time, but only for the file that declares them.
+    for (const value of ["AGENCY", "DIRECT"]) {
+      expect(BILL_TYPE_LABELS[value]).toBeTruthy();
+      expect(BILL_TYPE_SHORT[value]).toBeTruthy();
+    }
+  });
+
+  it("says who collects, in the label itself", () => {
+    // "Agency" and "Direct" alone read as a question about who the agency is.
+    expect(BILL_TYPE_LABELS.AGENCY.toLowerCase()).toContain("we collect");
+    expect(BILL_TYPE_LABELS.DIRECT.toLowerCase()).toContain("carrier collects");
   });
 });
