@@ -4,6 +4,7 @@ import { generateClient } from "aws-amplify/data";
 import { getAmplifyDataClientConfig } from "@aws-amplify/backend/function/runtime";
 import type { Schema } from "../../data/resource";
 import { decideEvent, decideUpdate } from "./decide";
+import { writePaymentState } from "./persist";
 
 /**
  * Stripe → invoice status. See resource.ts for why this is a Function URL.
@@ -77,41 +78,61 @@ export const handler = async (event: {
 
   try {
     const client = await getDataClient();
-    const { data: invoice } = await client.models.Invoice.get({
-      id: decision.invoiceId,
-    });
-    if (!invoice) {
-      console.warn(`stripe-webhook: no invoice ${decision.invoiceId}`);
-      return ok("unknown invoice");
-    }
-
     const today = new Date().toISOString().slice(0, 10);
-    const update = decideUpdate(invoice, decision, today);
-    if (update.action === "skip") {
+
+    /**
+     * Read, decide, write-if-unchanged — and if it changed, do it again.
+     *
+     * The ordering rules in `decideUpdate` run against a snapshot, so two events
+     * delivered at once would both decide from the same pre-state and the last
+     * writer would win regardless of which event is newer. The condition on the
+     * write is what makes the decision hold; this loop is what happens when it
+     * does not.
+     *
+     * Two passes, not a retry loop. A second conflict means yet another event
+     * landed while this one was deciding, and that newer event has already
+     * applied whatever ordering says — there is nothing left for this one to do.
+     */
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      const { data: invoice } = await client.models.Invoice.get({
+        id: decision.invoiceId,
+      });
+      if (!invoice) {
+        console.warn(`stripe-webhook: no invoice ${decision.invoiceId}`);
+        return ok("unknown invoice");
+      }
+
+      const update = decideUpdate(invoice, decision, today);
+      if (update.action === "skip") {
+        console.log(
+          `stripe-webhook skipped ${invoice.number ?? invoice.id}: ${update.reason}`
+        );
+        return ok("skipped");
+      }
+
+      const written = await writePaymentState({
+        tableName: process.env.INVOICE_TABLE as string,
+        invoiceId: invoice.id,
+        seenEventAt: invoice.stripeEventAt ?? null,
+        status: update.status,
+        paidAt: update.paidAt,
+        paymentIntentId: update.paymentIntentId,
+        occurredAt: update.occurredAt,
+      });
+
+      if (written) {
+        console.log(
+          `stripe-webhook ${parsed.type} → ${update.status} on ${invoice.number ?? invoice.id}`
+        );
+        return ok("ok");
+      }
       console.log(
-        `stripe-webhook skipped ${invoice.number ?? invoice.id}: ${update.reason}`
+        `stripe-webhook lost a race on ${invoice.number ?? invoice.id}, attempt ${attempt}`
       );
-      return ok("skipped");
     }
 
-    const { errors } = await client.models.Invoice.update({
-      id: invoice.id,
-      status: update.status as Schema["Invoice"]["type"]["status"],
-      ...(update.paidAt ? { paidAt: update.paidAt } : {}),
-      stripePaymentIntentId: update.paymentIntentId,
-      // The ordering key for every event after this one.
-      stripeEventAt: update.occurredAt,
-      // Named, so the activity log says the payment did this rather than a
-      // person. Whoever reads the timeline should see where the change came
-      // from without going to Stripe to find out.
-      lastWriteBy: "stripe-payment",
-    });
-    if (errors?.length) throw new Error(errors[0].message);
-
-    console.log(
-      `stripe-webhook ${parsed.type} → ${update.status} on ${invoice.number ?? invoice.id}`
-    );
-    return ok("ok");
+    // Twice beaten. A newer event owns the state; nothing here is lost.
+    return ok("superseded");
   } catch (err) {
     /**
      * A 500 is correct here. The signature was good and the event is real, so

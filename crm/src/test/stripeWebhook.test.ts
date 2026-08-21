@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   decideEvent,
@@ -259,6 +261,114 @@ describe("out-of-order events cannot misstate whether money is coming", () => {
   it("carries the timestamp forward so the next comparison has a floor", () => {
     const update = decideUpdate({ status: "SENT" }, decision, TODAY);
     expect(update).toMatchObject({ occurredAt: decision.occurredAt });
+  });
+});
+
+describe("events sharing one second cannot regress the state", () => {
+  /**
+   * Stripe's `created` is in whole seconds, so two genuinely distinct events can
+   * carry the same instant and a strict "older than" comparison lets the second
+   * one through. The tiebreak is direction: advance, never regress.
+   */
+  const sameInstant = "2026-08-21T12:00:00.000Z";
+
+  it("does not let a tied failure undo a clearing payment", () => {
+    const update = decideUpdate(
+      {
+        status: "PROCESSING",
+        stripePaymentIntentId: "pi_NEW",
+        stripeEventAt: sameInstant,
+      },
+      { ...decision, outcome: "FAILED", paymentIntentId: "pi_OLD", occurredAt: sameInstant },
+      TODAY
+    );
+    expect(update).toMatchObject({ action: "skip" });
+  });
+
+  it("does not let a tied failure undo a received payment", () => {
+    const update = decideUpdate(
+      { status: "PAID", stripePaymentIntentId: "pi_1", stripeEventAt: sameInstant },
+      { ...decision, outcome: "FAILED", occurredAt: sameInstant },
+      TODAY
+    );
+    expect(update).toMatchObject({ action: "skip" });
+  });
+
+  it("still lets a tied event advance the state", () => {
+    // processing and succeeded inside one second is ordinary, and dropping the
+    // success would be recording money that arrived as outstanding.
+    const update = decideUpdate(
+      {
+        status: "PROCESSING",
+        stripePaymentIntentId: "pi_1",
+        stripeEventAt: sameInstant,
+      },
+      { ...decision, outcome: "PAID", occurredAt: sameInstant },
+      TODAY
+    );
+    expect(update).toMatchObject({ action: "set", status: "PAID" });
+  });
+
+  /**
+   * Independent of the clock, because this is the case the clock cannot
+   * separate: `SENT` with an intent recorded means that intent failed, and a
+   * PaymentIntent never goes back to processing.
+   */
+  it("never revives an intent it has already recorded as failed", () => {
+    for (const at of [sameInstant, "2026-08-21T12:00:05.000Z"]) {
+      const update = decideUpdate(
+        { status: "SENT", stripePaymentIntentId: "pi_1", stripeEventAt: sameInstant },
+        { ...decision, outcome: "PROCESSING", paymentIntentId: "pi_1", occurredAt: at },
+        TODAY
+      );
+      expect(update, at).toMatchObject({ action: "skip" });
+    }
+  });
+
+  it("does let a different intent start clearing after one failed", () => {
+    // The payer retried. That is a real event and must not be swallowed.
+    const update = decideUpdate(
+      { status: "SENT", stripePaymentIntentId: "pi_1", stripeEventAt: sameInstant },
+      {
+        ...decision,
+        outcome: "PROCESSING",
+        paymentIntentId: "pi_2",
+        occurredAt: "2026-08-21T12:00:05.000Z",
+      },
+      TODAY
+    );
+    expect(update).toMatchObject({ action: "set", status: "PROCESSING" });
+  });
+});
+
+describe("the write is conditional on what was read", () => {
+  // `process.cwd()` is `crm/` under vitest. `import.meta.url` is not reliably a
+  // file: URL here — activityLog.test.ts resolves paths this way for the same
+  // reason, and this is the third time that trap has cost a run.
+  const src = (rel: string) =>
+    readFileSync(resolve(process.cwd(), "amplify/functions/stripe-webhook", rel), "utf8");
+  const PERSIST = src("persist.ts");
+  const HANDLER = src("handler.ts");
+
+  /**
+   * Ordering decided from a snapshot is only ordering if the write still holds
+   * when it lands. Two concurrent events would otherwise both decide from the
+   * same pre-state and the last writer would win regardless of which is newer.
+   */
+  it("carries the read forward as a condition", () => {
+    expect(PERSIST).toContain("ConditionExpression");
+    expect(PERSIST).toContain("#eventAt = :seenEventAt");
+    expect(PERSIST).toContain("attribute_not_exists(#eventAt)");
+    expect(PERSIST).toContain("ConditionalCheckFailedException");
+  });
+
+  it("re-reads and decides again when it loses the race", () => {
+    expect(HANDLER).toMatch(/attempt <= 2/);
+    expect(HANDLER).toContain("writePaymentState");
+  });
+
+  it("no longer writes payment state through the data client", () => {
+    expect(HANDLER).not.toMatch(/models\.Invoice\.update/);
   });
 });
 

@@ -113,6 +113,18 @@ export type InvoiceUpdate =
  *   bill is outstanding again, which is what SENT already means, and the payer
  *   can use the same link.
  */
+/**
+ * How far along a payment is, for breaking ties between same-second events.
+ *
+ * `SENT` is the resting state both before any attempt and after a failed one,
+ * which is why a failure ranks alongside it: neither is money in transit.
+ */
+const statusRank = (status: string | null | undefined): number =>
+  status === "PAID" ? 2 : status === "PROCESSING" ? 1 : 0;
+
+const outcomeRank = (outcome: InvoiceOutcome): number =>
+  outcome === "PAID" ? 2 : outcome === "PROCESSING" ? 1 : 0;
+
 export function decideUpdate(
   invoice: InvoiceState,
   decision: EventDecision,
@@ -142,6 +154,47 @@ export function decideUpdate(
   if (invoice.stripeEventAt && decision.occurredAt < invoice.stripeEventAt) {
     return { action: "skip", reason: "event is older than the last one applied" };
   }
+
+  /**
+   * A PaymentIntent never goes backwards.
+   *
+   * `SENT` with an intent id recorded means that intent failed — it is the only
+   * way both are set at once. A `processing` for the same intent afterwards is
+   * therefore a delayed copy of an earlier moment, whatever its timestamp says,
+   * and applying it would show a dead attempt as still clearing.
+   *
+   * This is deliberately independent of the clock, because the case it covers
+   * is exactly the one where the clock cannot separate the two events.
+   */
+  if (
+    decision.outcome === "PROCESSING" &&
+    invoice.status === "SENT" &&
+    invoice.stripePaymentIntentId === decision.paymentIntentId
+  ) {
+    return { action: "skip", reason: "that payment already failed" };
+  }
+
+  /**
+   * Equal timestamps do not order themselves.
+   *
+   * Stripe's `created` is in whole seconds, so two genuinely distinct events can
+   * carry the same instant and the comparison above lets the second through.
+   * On a tie the tiebreak is direction: a state may advance but never regress.
+   * `processing` arriving beside a `failed` cannot undo it, and a `failed`
+   * arriving beside a `succeeded` cannot undo that.
+   *
+   * Ranked rather than special-cased so the rule holds for combinations nobody
+   * has enumerated.
+   */
+  if (invoice.stripeEventAt && decision.occurredAt === invoice.stripeEventAt) {
+    if (outcomeRank(decision.outcome) <= statusRank(invoice.status)) {
+      return {
+        action: "skip",
+        reason: "same instant as the last event, and not an advance",
+      };
+    }
+  }
+
   if (
     decision.outcome === "PROCESSING" &&
     invoice.status === "PROCESSING" &&

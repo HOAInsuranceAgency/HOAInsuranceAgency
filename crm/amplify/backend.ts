@@ -386,6 +386,15 @@ backend.sendInvoice.resources.lambda.addToRolePolicy(
  * The URL is printed in the deploy output; it goes in Stripe's dashboard, and
  * the signing secret they show once comes back as STRIPE_WEBHOOK_SECRET.
  */
+/**
+ * The webhook writes payment state with a conditional UpdateItem rather than
+ * through the data client, which cannot express one — see stripe-webhook/
+ * persist.ts. That needs the table by name and direct write access to it.
+ */
+const invoiceTable = backend.data.resources.tables.Invoice;
+backend.stripeWebhook.addEnvironment("INVOICE_TABLE", invoiceTable.tableName);
+invoiceTable.grantReadWriteData(backend.stripeWebhook.resources.lambda);
+
 const stripeWebhookUrl = backend.stripeWebhook.resources.lambda.addFunctionUrl({
   authType: FunctionUrlAuthType.NONE,
 });
