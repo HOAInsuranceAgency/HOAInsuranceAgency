@@ -114,6 +114,47 @@ export function marginWarnings(lines: readonly LineLike[]): string[] {
 }
 
 /**
+ * Lines whose money belongs to the carrier on a direct-bill policy.
+ *
+ * Premium and endorsement premium, and nothing else. The pass-throughs are
+ * deliberately absent: on a surplus lines placement the agency is often the
+ * broker of record for the tax and the stamping fee and does collect and remit
+ * them, whoever bills the premium — flagging those would be wrong in exactly
+ * the case they most often appear. OTHER is absent for the same reason, since
+ * a broker fee is the agency's own charge and is billed direct or not.
+ */
+const CARRIER_COLLECTED = new Set(["PREMIUM", "ENDORSEMENT"]);
+
+/**
+ * The one thing bill type is for, asked at the moment it matters.
+ *
+ * A direct-bill policy is one the carrier collects the premium on; commission
+ * comes back to the agency afterwards. Billing that premium from here asks an
+ * association to pay money it is already paying someone else — the kind of
+ * error that is only discovered by the person who receives two bills.
+ *
+ * A warning, not a block, like everything else in this module. A direct-bill
+ * policy can legitimately carry an agency invoice — a broker fee, a
+ * cancellation adjustment — and those are lines this does not flag. What it
+ * flags is premium, which on this policy is not ours to collect.
+ *
+ * Returns null when there is nothing to say, which includes a policy whose
+ * bill type was never recorded: policies bound before that field existed have
+ * no answer, and inventing "direct" for them would cry wolf on every old one.
+ */
+export function directBillWarning(
+  billType: string | null | undefined,
+  lines: readonly LineLike[]
+): string | null {
+  if (billType !== "DIRECT") return null;
+  const n = lines.filter((l) => CARRIER_COLLECTED.has(l.kind ?? "")).length;
+  if (n === 0) return null;
+  return `This policy is direct bill — the carrier collects the premium. ${
+    n === 1 ? "One line bills" : `${n} lines bill`
+  } premium, which the association may already be paying the carrier.`;
+}
+
+/**
  * US dollars, for the screen and the emailed invoice.
  *
  * `en-US` explicitly rather than the runtime's locale: a Lambda runs in UTC with

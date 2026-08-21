@@ -748,3 +748,20 @@ th.internal { color: var(--muted); }
 .tucked > .field { margin-top: 8px; }
 
 .warn-list { margin: 0 0 14px; padding-left: 18px; color: var(--amber); font-size: 13px; }
+
+/* A warning attached to the control that caused it, rather than collected into
+   a list. Amber like .warn-list, but it has to carry its own weight without a
+   heading above it saying these are warnings. */
+.warn-inline {
+  margin: 6px 0 0;
+  padding: 8px 10px;
+  border-left: 3px solid var(--amber);
+  background: var(--amber-bg);
+  color: var(--amber);
+  font-size: 13px;
+  border-radius: 0 4px 4px 0;
+}
+
+/* Full-width row, but the control itself stays the size of its content — a
+   select stretched across a card reads as a text box. */
+.policy-field select { max-width: 420px; }

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  directBillWarning,
   formatMoney,
   invoiceTotals,
   isPassThrough,
@@ -204,5 +205,80 @@ describe("premiumLineFromPolicy", () => {
       retailAmount: 10000,
       costAmount: 10000,
     });
+  });
+});
+
+/**
+ * Billing premium the carrier is already collecting.
+ *
+ * The error this catches has no other detector: every line on such an invoice
+ * is individually well-formed, the margins are right, the total adds up — and
+ * the association receives a bill for money it is paying someone else. Only
+ * the policy's bill type makes it visible.
+ */
+describe("directBillWarning", () => {
+  const premium = { kind: "PREMIUM", retailAmount: 12480, costAmount: 10608 };
+  const fee = { kind: "OTHER", retailAmount: 250, costAmount: 0 };
+  const tax = { kind: "SURPLUS_LINES", retailAmount: 499, costAmount: 499 };
+
+  it("fires on premium billed against a direct-bill policy", () => {
+    const w = directBillWarning("DIRECT", [premium]);
+    expect(w).toContain("direct bill");
+    expect(w).toContain("One line bills");
+  });
+
+  it("counts the lines, in words that agree with the number", () => {
+    expect(directBillWarning("DIRECT", [premium, premium])).toContain(
+      "2 lines bill"
+    );
+    expect(directBillWarning("DIRECT", [premium])).toContain("One line bills");
+  });
+
+  it("treats endorsement premium the same way", () => {
+    // Also the carrier's money on a direct-bill placement.
+    expect(directBillWarning("DIRECT", [{ kind: "ENDORSEMENT" }])).toBeTruthy();
+  });
+
+  it("says nothing about an agency-bill policy", () => {
+    expect(directBillWarning("AGENCY", [premium])).toBeNull();
+  });
+
+  it("says nothing when the bill type was never recorded", () => {
+    // Policies bound before the field existed have no answer, and guessing
+    // "direct" would put a warning on every one of them.
+    expect(directBillWarning(null, [premium])).toBeNull();
+    expect(directBillWarning(undefined, [premium])).toBeNull();
+    expect(directBillWarning("", [premium])).toBeNull();
+  });
+
+  it("leaves an agency fee on a direct-bill policy alone", () => {
+    // The legitimate case, and the reason this warns rather than blocks: a
+    // broker fee is the agency's own charge whoever bills the premium.
+    expect(directBillWarning("DIRECT", [fee])).toBeNull();
+  });
+
+  it("leaves surplus lines tax alone", () => {
+    // On a surplus placement the agency is often broker of record for the tax
+    // and stamping fee and does collect them, whoever bills the premium —
+    // flagging those would be wrong exactly where they most often appear.
+    expect(directBillWarning("DIRECT", [tax])).toBeNull();
+    expect(directBillWarning("DIRECT", [{ kind: "TAX" }])).toBeNull();
+    expect(directBillWarning("DIRECT", [{ kind: "STAMPING_FEE" }])).toBeNull();
+  });
+
+  it("fires on the premium even when fees are mixed in", () => {
+    expect(directBillWarning("DIRECT", [fee, premium, tax])).toContain(
+      "One line bills"
+    );
+  });
+
+  it("says nothing about an empty invoice", () => {
+    expect(directBillWarning("DIRECT", [])).toBeNull();
+  });
+
+  it("does not depend on the amounts", () => {
+    // A premium line with nothing filled in yet is still a premium line, and
+    // the point is to say so before the number is typed.
+    expect(directBillWarning("DIRECT", [{ kind: "PREMIUM" }])).toBeTruthy();
   });
 });

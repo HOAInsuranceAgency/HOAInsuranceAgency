@@ -5,6 +5,7 @@ import { useAsyncResource } from "../lib/useAsyncResource";
 import { SaveStatus, useSaveStatus } from "./SaveStatus";
 import ConfirmButton from "./ConfirmButton";
 import {
+  directBillWarning,
   formatMoney,
   invoiceTotals,
   marginWarnings,
@@ -108,6 +109,12 @@ export function InvoiceEditor({
   const warnings = marginWarnings(lines);
   const locked = invoice.status === "VOID";
   const policy = policies.find((p) => p.id === invoice.policyId) ?? null;
+  /**
+   * Rendered at the policy picker rather than with the margin warnings above.
+   * Those are about how the invoice is priced; this is about whether it should
+   * exist, and the control that decides it is the picker.
+   */
+  const billWarning = directBillWarning(policy?.billType, lines);
 
   const patchInvoice = useCallback(
     async (patch: Partial<Invoice>, savedMessage = "Saved.") => {
@@ -393,7 +400,9 @@ export function InvoiceEditor({
 
       {/* ── Details ────────────────────────────────────────────────────── */}
       <div className="form-grid invoice-details">
-        <div className="field">
+        {/* Its own row. The warning below it is the loudest thing on this
+            card and reads as four cramped lines in a third-width column. */}
+        <div className="field full policy-field">
           <label htmlFor={inputId("policy")}>Bills which policy</label>
           <select
             id={inputId("policy")}
@@ -410,6 +419,20 @@ export function InvoiceEditor({
               </option>
             ))}
           </select>
+          {/* Three states, deliberately. The warning is the loud one and only
+              fires when premium is actually billed; the quiet notes state the
+              arrangement so it is known *before* a line is added rather than
+              after. A policy with no bill type recorded says nothing — it was
+              bound before the field existed and has no answer to give. */}
+          {billWarning ? (
+            <p className="warn-inline">{billWarning}</p>
+          ) : policy?.billType === "DIRECT" ? (
+            <p className="muted small">
+              Direct bill — the carrier collects the premium.
+            </p>
+          ) : policy?.billType === "AGENCY" ? (
+            <p className="muted small">Agency bill — we collect and remit.</p>
+          ) : null}
         </div>
         <div className="field">
           <label htmlFor={inputId("issued")}>Issued</label>
