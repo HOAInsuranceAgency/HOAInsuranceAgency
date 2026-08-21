@@ -7,6 +7,7 @@ import { formFiller } from "../functions/form-filler/resource";
 import { certNumber } from "../functions/cert-number/resource";
 import { invoiceNumber } from "../functions/invoice-number/resource";
 import { sendInvoice } from "../functions/send-invoice/resource";
+import { voidInvoice } from "../functions/void-invoice/resource";
 import { renewalTasks } from "../functions/renewal-tasks/resource";
 import { licenseAlerts } from "../functions/license-alerts/resource";
 import { taskDigest } from "../functions/task-digest/resource";
@@ -1630,6 +1631,20 @@ const schema = a
       .returns(a.json())
       .authorization((allow) => [allow.authenticated()])
       .handler(a.handler.function(sendInvoice)),
+
+    /**
+     * Retire an invoice, and the payment link with it.
+     *
+     * A mutation rather than a status write from the browser because
+     * deactivating the Stripe link needs the secret key. See the function's
+     * resource.ts for what leaving the link alive costs.
+     */
+    voidInvoice: a
+      .mutation()
+      .arguments({ invoiceId: a.string().required() })
+      .returns(a.json())
+      .authorization((allow) => [allow.authenticated()])
+      .handler(a.handler.function(voidInvoice)),
   })
   .authorization((allow) => [
     // Default for every model that doesn't declare its own rules. A model
@@ -1684,6 +1699,9 @@ const schema = a
     allow.resource(portalSweep),
     // Reads invoices, lines, accounts and contacts to build the emailed bill.
     allow.resource(sendInvoice),
+    // Reads the invoice to find its Stripe link, and writes VOID once the link
+    // is closed.
+    allow.resource(voidInvoice),
     // The stream handler writes Activity and reads UserProfile to name an
     // actor. Note what the block above says: this is not a per-model grant,
     // so this function has full API access whatever any model declares. What

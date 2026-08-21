@@ -228,16 +228,71 @@ describe("out-of-order events cannot misstate whether money is coming", () => {
   });
 
   /**
-   * The permutation nobody named. Matching on the PaymentIntent id would have
-   * missed it, because the ids differ; comparing instants does not.
+   * Records a success from a superseded attempt — and this assertion is the
+   * reverse of what it used to be.
+   *
+   * The old rule skipped it, treating a late `succeeded` from an older intent
+   * as stale the way a late `processing` or `payment_failed` is. That was a
+   * category error. Those two are claims about what an attempt is *doing*, and
+   * a newer claim supersedes an older one. A `succeeded` is a claim that funds
+   * settled, and nothing supersedes that: a replacement intent failing later is
+   * that intent failing, not this money leaving the account.
+   *
+   * What the old rule produced: the invoice stayed PROCESSING, the handler
+   * returned 200 so Stripe stopped retrying, and money sat in trust recorded as
+   * outstanding — the one error this whole module exists to prevent, reached
+   * from the direction nobody checked.
+   *
+   * The plausible sequence is ordinary. An ACH debit is slow, the payer retries
+   * under a new intent, and the first one then settles.
    */
-  it("does not let a stale success from a superseded attempt land late", () => {
+  it("records a success from a superseded attempt, however late", () => {
     const update = decideUpdate(
       { status: "PROCESSING", stripePaymentIntentId: "pi_NEW", stripeEventAt: applied },
       { ...decision, outcome: "PAID", paymentIntentId: "pi_OLD", occurredAt: earlier },
       TODAY
     );
-    expect(update).toMatchObject({ action: "skip" });
+    expect(update).toMatchObject({
+      action: "set",
+      status: "PAID",
+      paymentIntentId: "pi_OLD",
+    });
+  });
+
+  it("still refuses a stale success once the invoice is already paid", () => {
+    // Idempotency is unaffected: PAID is terminal and checked before any of it.
+    expect(
+      decideUpdate(
+        { status: "PAID", stripePaymentIntentId: "pi_NEW", stripeEventAt: applied },
+        { ...decision, outcome: "PAID", paymentIntentId: "pi_OLD", occurredAt: earlier },
+        TODAY
+      )
+    ).toMatchObject({ action: "skip", reason: "already paid" });
+  });
+
+  it("still refuses a success on a voided invoice", () => {
+    expect(
+      decideUpdate(
+        { status: "VOID", stripeEventAt: applied },
+        { ...decision, outcome: "PAID", occurredAt: earlier },
+        TODAY
+      )
+    ).toMatchObject({ action: "skip", reason: "invoice is void" });
+  });
+
+  it("keeps ordering everything that is not a success", () => {
+    // The exemption is only for money arriving. A stale `processing` or a
+    // stale `payment_failed` is still a claim a newer one supersedes.
+    for (const outcome of ["PROCESSING", "FAILED"] as const) {
+      expect(
+        decideUpdate(
+          { status: "PROCESSING", stripePaymentIntentId: "pi_NEW", stripeEventAt: applied },
+          { ...decision, outcome, paymentIntentId: "pi_OLD", occurredAt: earlier },
+          TODAY
+        ),
+        outcome
+      ).toMatchObject({ action: "skip" });
+    }
   });
 
   it("still applies anything newer than what it has", () => {
@@ -557,12 +612,59 @@ describe("the remittance email", () => {
       "../../amplify/functions/stripe-webhook/remittance"
     );
     const text = remittanceText(mail);
-    expect(text).toContain("Carrier remittance");
     expect(text).toContain("$21,250.00");
-    expect(text).toContain("Agency commission");
     expect(text).toContain("$3,750.00");
-    expect(text).toContain("Interest income");
     expect(text).toContain("$25,000.00");
+  });
+
+  /**
+   * The chart of accounts, in the reader's own vocabulary.
+   *
+   * Codes and names exactly as the corporate books have them, so the email is
+   * read into a journal entry rather than translated first. Translation is
+   * where the error lives: commission and interest are both agency income, and
+   * someone working from a description alone will eventually post one to the
+   * other. Asserted literally because a typo here is a misstatement that only
+   * surfaces when a reconciliation fails.
+   */
+  it("posts each share to its ledger account", async () => {
+    const { remittanceText, remittanceHtml } = await import(
+      "../../amplify/functions/stripe-webhook/remittance"
+    );
+    for (const body of [remittanceText(mail), remittanceHtml(mail)]) {
+      expect(body).toContain("224000");
+      expect(body).toContain("Premiums Payable to Carriers");
+      expect(body).toContain("470000");
+      expect(body).toContain("Insurance Commissions - Income");
+      expect(body).toContain("710000");
+      expect(body).toContain("Interest earned");
+    }
+  });
+
+  it("keeps each code with its own figure", async () => {
+    // The failure this catches is a row shifting: commission posted to the
+    // liability account reads as plausible and overstates what is owed onward.
+    const { remittanceText } = await import(
+      "../../amplify/functions/stripe-webhook/remittance"
+    );
+    const lines = remittanceText(mail).split("\n");
+    const row = (code: string) => lines.find((l) => l.startsWith(code)) ?? "";
+    expect(row("224000")).toContain("$21,250.00");
+    expect(row("470000")).toContain("$3,750.00");
+    expect(row("710000")).toContain("$0.00");
+  });
+
+  it("lines the figures up on the decimal", async () => {
+    // A ledger column that does not align is read wrong at a glance, and this
+    // one is read at a glance by someone matching it to a bank line.
+    const { remittanceText } = await import(
+      "../../amplify/functions/stripe-webhook/remittance"
+    );
+    const lines = remittanceText(mail).split("\n");
+    const ends = ["224000", "470000", "710000"].map(
+      (c) => (lines.find((l) => l.startsWith(c)) ?? "").length
+    );
+    expect(new Set(ends).size).toBe(1);
   });
 
   it("says the carrier's share is not income", async () => {
@@ -689,5 +791,63 @@ describe("the remittance encoding", () => {
       carrierName: null, paymentIntentId: "pi_1", paidAt: "2026-08-21",
       carrierCents: 1, commissionCents: 1, interestCents: 0, totalCents: 2,
     })).toContain('<meta charset="utf-8">');
+  });
+});
+
+/**
+ * Voiding closes the payment link.
+ *
+ * The finding: voiding set `status` in the browser and nothing else, so the
+ * Stripe link stayed active. An association working from the original email
+ * could still pay a bill the agency had withdrawn, and the webhook skips every
+ * event for a void invoice — correctly, so a void is not silently undone —
+ * which left funds in the trust account with no invoice they belonged to.
+ *
+ * Asserted against the source because the behaviour is an ordering property of
+ * a handler that needs Stripe and a data client to invoke.
+ */
+describe("voiding an invoice", () => {
+  const VOID_FN = readFileSync(
+    resolve(process.cwd(), "amplify/functions/void-invoice/handler.ts"),
+    "utf8"
+  );
+  const EDITOR = readFileSync(
+    resolve(process.cwd(), "src/components/InvoiceEditor.tsx"),
+    "utf8"
+  );
+
+  it("does not write the status from the browser any more", () => {
+    // The whole bug in one line. If this comes back, the link outlives the void.
+    expect(EDITOR).not.toMatch(/patchInvoice\(\{\s*status:\s*"VOID"/);
+    expect(EDITOR).toContain("client.mutations.voidInvoice");
+  });
+
+  it("deactivates the link before writing the status", () => {
+    // This order is the point. Writing VOID first and then failing to close the
+    // link produces exactly the state the function exists to prevent: a dead
+    // invoice with a live way to pay it.
+    const kill = VOID_FN.indexOf("active: false");
+    const write = VOID_FN.indexOf('status: "VOID"');
+    expect(kill).toBeGreaterThan(-1);
+    expect(write).toBeGreaterThan(kill);
+  });
+
+  it("refuses the void if the link cannot be closed", () => {
+    expect(VOID_FN).toContain("Couldn't close the payment link");
+  });
+
+  it("treats a link Stripe has forgotten as already closed", () => {
+    // Unpayable either way, so refusing would strand the invoice.
+    expect(VOID_FN).toContain("resource_missing");
+  });
+
+  it("will not void a paid invoice", () => {
+    // That is a record of money received, not a bill to withdraw.
+    expect(VOID_FN).toMatch(/status === "PAID"/);
+    expect(VOID_FN).toContain("cannot be voided");
+  });
+
+  it("clears the dead url so nothing renders a Pay button for it", () => {
+    expect(VOID_FN).toContain("paymentUrl: null");
   });
 });

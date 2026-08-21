@@ -154,6 +154,37 @@ export function decideUpdate(
     return { action: "skip", reason: "already paid" };
   }
   /**
+   * Money arriving is a fact, not a state transition to be ordered.
+   *
+   * Every rule below this weighs one event against another to decide which
+   * describes the invoice now. A `succeeded` is not that kind of claim: it says
+   * funds settled, and no later event un-settles them — a subsequent failure on
+   * a different attempt is that attempt failing, not this money leaving.
+   *
+   * So it is applied whatever the clock says. The case that forced this: an
+   * older PaymentIntent succeeding in the same second a replacement began
+   * processing was discarded as superseded, the handler returned 200 so Stripe
+   * stopped retrying, and the invoice sat at PROCESSING with the money already
+   * in the account. Every ordering heuristic below could produce that outcome
+   * from some permutation, and recording received money as outstanding is the
+   * one error this file exists to prevent.
+   *
+   * Safe to place above the ordering rules because PAID is terminal: the guard
+   * at the top of this function skips everything once it is set, so letting the
+   * event clock go backwards here cannot admit anything afterwards.
+   */
+  if (decision.outcome === "PAID") {
+    return {
+      action: "set",
+      status: "PAID",
+      paidAt: today,
+      paymentIntentId: decision.paymentIntentId,
+      occurredAt: decision.occurredAt,
+      intentCreatedAt: decision.intentCreatedAt,
+    };
+  }
+
+  /**
    * Anything older than what we have already applied is ignored.
    *
    * This is the whole ordering rule, and it replaces a narrower guard that only
@@ -257,17 +288,17 @@ export function decideUpdate(
     return { action: "skip", reason: "already processing" };
   }
 
-  const status =
-    decision.outcome === "PAID"
-      ? "PAID"
-      : decision.outcome === "PROCESSING"
-        ? "PROCESSING"
-        : "SENT";
-
+  /**
+   * Only PROCESSING or FAILED reach here — the compiler knows it, because the
+   * success branch returned near the top. A failed attempt puts the bill back
+   * to SENT, which is what "outstanding again" means.
+   */
   return {
     action: "set",
-    status,
-    paidAt: decision.outcome === "PAID" ? today : null,
+    status: decision.outcome === "PROCESSING" ? "PROCESSING" : "SENT",
+    // Never a paid date on either of these, and no longer a ternary that reads
+    // as though one of them might produce one.
+    paidAt: null,
     paymentIntentId: decision.paymentIntentId,
     occurredAt: decision.occurredAt,
     intentCreatedAt: decision.intentCreatedAt,

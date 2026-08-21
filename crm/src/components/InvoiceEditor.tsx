@@ -249,6 +249,34 @@ export function InvoiceEditor({
     });
   }
 
+  /**
+   * Void through the mutation, not by writing the status here.
+   *
+   * Setting `status` from the browser left the Stripe link live, so an
+   * association working from the original email could still pay a bill the
+   * agency had withdrawn — and the webhook ignores every event for a void
+   * invoice, correctly, so the money would land in trust with nothing recording
+   * it. Closing the link needs the secret key, so the whole operation moved
+   * server-side; see `void-invoice/resource.ts`.
+   */
+  async function voidThis() {
+    await saveStatus.run(
+      async () => {
+        const { data, errors } = await client.mutations.voidInvoice({
+          invoiceId: invoice.id,
+        });
+        if (errors?.length) throw new Error(errors[0].message);
+        // `a.json()` arrives as an AWSJSON string — see lib/aiExtraction.ts.
+        const result =
+          typeof data === "string" ? JSON.parse(data) : (data as Record<string, unknown>);
+        if (!result?.ok) throw new Error(String(result?.error ?? "Void failed."));
+        const fresh = await client.models.Invoice.get({ id: invoice.id });
+        if (fresh.data) onChange(fresh.data);
+      },
+      { savedMessage: "Voided.", errorMessage: "Couldn't void that invoice." }
+    );
+  }
+
   async function send() {
     await sendStatus.run(
       async () => {
@@ -294,8 +322,8 @@ export function InvoiceEditor({
               label="Void"
               busyLabel="Voiding…"
               className="danger"
-              message="The number is retired, not reused."
-              onConfirm={() => patchInvoice({ status: "VOID" }, "Voided.")}
+              message="The number is retired, and the payment link is closed."
+              onConfirm={() => voidThis()}
             />
           )}
           {locked && lines.length === 0 && (

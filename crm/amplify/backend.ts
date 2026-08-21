@@ -34,6 +34,7 @@ import { uploadPortal } from "./functions/upload-portal/resource";
 import { portalSweep } from "./functions/portal-sweep/resource";
 import { sendInvoice } from "./functions/send-invoice/resource";
 import { stripeWebhook } from "./functions/stripe-webhook/resource";
+import { voidInvoice } from "./functions/void-invoice/resource";
 import { resolveMailbox } from "./functions/mailbox";
 import { activityLog } from "./functions/activity-log/resource";
 import {
@@ -65,6 +66,7 @@ export const backend = defineBackend({
   portalSweep,
   sendInvoice,
   stripeWebhook,
+  voidInvoice,
   activityLog,
   magicLinkDefine,
   magicLinkCreate,

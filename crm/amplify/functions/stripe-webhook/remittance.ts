@@ -48,17 +48,40 @@ const money = (cents: number) => formatMoney(cents / 100);
 const label = (m: RemittanceMail) => m.invoiceNumber ?? m.paymentIntentId;
 
 /**
+ * The general ledger accounts each share posts to.
+ *
+ * Codes and names exactly as they appear in the corporate chart of accounts,
+ * so this email can be read straight into a journal entry rather than
+ * translated first. Translation is where the error would be: "commission" and
+ * "interest" are both agency income and someone working from a description
+ * alone will eventually post one to the other, which is a misstatement nobody
+ * catches until a reconciliation fails.
+ *
+ * 224000 is a liability — premium held in trust and owed onward — while 470000
+ * and 710000 are income. That is the distinction the email exists to make, and
+ * the codes make it in the reader's own vocabulary.
+ *
+ * If a code changes in the corporate books it changes here; there is no lookup,
+ * because a wrong-but-plausible account number is worse than an obvious gap.
+ */
+const ACCOUNTS = {
+  carrier: { code: "224000", name: "Premiums Payable to Carriers" },
+  commission: { code: "470000", name: "Insurance Commissions - Income" },
+  interest: { code: "710000", name: "Interest earned" },
+} as const;
+
+/**
  * The rows of the split, in the order they are read.
  *
  * Carrier first because it is the largest and the one with a deadline attached
  * — premium owed onward has a due date to the carrier that the agency's own
  * income does not.
  */
-function rows(m: RemittanceMail): [string, number][] {
+function rows(m: RemittanceMail): [string, string, number][] {
   return [
-    ["Carrier remittance", m.carrierCents],
-    ["Agency commission", m.commissionCents],
-    ["Interest income", m.interestCents],
+    [ACCOUNTS.carrier.code, ACCOUNTS.carrier.name, m.carrierCents],
+    [ACCOUNTS.commission.code, ACCOUNTS.commission.name, m.commissionCents],
+    [ACCOUNTS.interest.code, ACCOUNTS.interest.name, m.interestCents],
   ];
 }
 
@@ -90,8 +113,24 @@ export function remittanceText(m: RemittanceMail): string {
   const detail = facts(m)
     .map(([k, v]) => `${`${k}:`.padEnd(width)}${v}`)
     .join("\n");
+  /**
+   * Columns, so this reads as a ledger rather than as prose with numbers in it.
+   *
+   * The names pad to the widest of them and the figures pad from the left to
+   * the widest of those — right-aligned, which is the only way a column of
+   * money lines up on its decimal in a fixed-width client. `$25,000.00` and
+   * `$0.00` starting in the same place do not.
+   */
+  const nameWidth = Math.max(...rows(m).map(([, name]) => name.length)) + 2;
+  const moneyWidth = Math.max(
+    ...rows(m).map(([, , cents]) => money(cents).length),
+    money(m.totalCents).length
+  );
   const split = rows(m)
-    .map(([k, cents]) => `${`${k}:`.padEnd(width)}${money(cents)}`)
+    .map(
+      ([code, name, cents]) =>
+        `${code}  ${name.padEnd(nameWidth)}${money(cents).padStart(moneyWidth)}`
+    )
     .join("\n");
   return [
     `A payment cleared into the trust account and divides as follows.`,
@@ -99,7 +138,9 @@ export function remittanceText(m: RemittanceMail): string {
     detail,
     "",
     split,
-    `${"Total collected:".padEnd(width)}${money(m.totalCents)}`,
+    `${"".padEnd(6)}  ${"Total collected".padEnd(nameWidth)}${money(
+      m.totalCents
+    ).padStart(moneyWidth)}`,
     "",
     // Said plainly, because the whole point of the message is that the deposit
     // is not revenue and the larger part of it is spoken for.
@@ -122,12 +163,15 @@ export function remittanceHtml(m: RemittanceMail): string {
     )
     .join("");
 
+  const cell = "padding:7px 0;border-bottom:1px solid #e2e8f0;font-size:14px";
   const split = rows(m)
     .map(
-      ([k, cents]) =>
-        `<tr><td style="padding:7px 0;border-bottom:1px solid #e2e8f0;font-size:14px">${esc(
-          k
-        )}</td><td style="padding:7px 0;border-bottom:1px solid #e2e8f0;font-size:14px;text-align:right;white-space:nowrap">${money(
+      ([code, name, cents]) =>
+        `<tr><td style="${cell};color:#64748b;font-variant-numeric:tabular-nums;padding-right:14px;white-space:nowrap">${esc(
+          code
+        )}</td><td style="${cell}">${esc(
+          name
+        )}</td><td style="${cell};text-align:right;white-space:nowrap">${money(
           cents
         )}</td></tr>`
     )
@@ -139,9 +183,9 @@ export function remittanceHtml(m: RemittanceMail): string {
 <p style="margin:0 0 18px;font-size:26px;font-weight:700;color:#142a4c">${money(m.totalCents)}</p>
 <table style="border-collapse:collapse;margin-bottom:20px">${detail}</table>
 <table style="width:100%;border-collapse:collapse">
-<tr><th colspan="2" style="text-align:left;padding:0 0 6px;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:#64748b;border-bottom:2px solid #142a4c">Split</th></tr>
+<tr><th style="text-align:left;padding:0 0 6px;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:#64748b;border-bottom:2px solid #142a4c">Account</th><th colspan="2" style="text-align:left;padding:0 0 6px;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:#64748b;border-bottom:2px solid #142a4c">Split</th></tr>
 ${split}
-<tr><td style="padding:9px 0;font-size:15px;font-weight:700">Total collected</td><td style="padding:9px 0;font-size:15px;font-weight:700;text-align:right">${money(
+<tr><td style="padding:9px 0"></td><td style="padding:9px 0;font-size:15px;font-weight:700">Total collected</td><td style="padding:9px 0;font-size:15px;font-weight:700;text-align:right">${money(
     m.totalCents
   )}</td></tr>
 </table>
