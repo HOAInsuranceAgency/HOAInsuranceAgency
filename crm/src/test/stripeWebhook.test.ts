@@ -280,6 +280,60 @@ describe("out-of-order events cannot misstate whether money is coming", () => {
     ).toMatchObject({ action: "skip", reason: "invoice is void" });
   });
 
+  /**
+   * Round six: the unorderable tie freezes in both directions.
+   *
+   * The fallback used to refuse only regressions, which still let an
+   * ambiguous PROCESSING advance over SENT — and in one delivery permutation
+   * that stuck, because the dead attempt's terminal event was already
+   * acknowledged. When two attempts tie on every clock, nothing moves; a
+   * same-intent event, a later second, or money arriving all still apply.
+   */
+  it("freezes on a cross-intent tie nothing can order — both directions", () => {
+    const tie = {
+      ...decision,
+      occurredAt: applied,
+      intentCreatedAt: "2026-08-21T11:00:00.000Z",
+    };
+    const row = {
+      stripeEventAt: applied,
+      stripeIntentCreatedAt: "2026-08-21T11:00:00.000Z",
+      stripePaymentIntentId: "pi_OTHER",
+    };
+    // The advance that used to slip through…
+    expect(
+      decideUpdate({ ...row, status: "SENT" }, { ...tie, outcome: "PROCESSING" }, TODAY)
+    ).toMatchObject({ action: "skip" });
+    // …and the regression it always refused.
+    expect(
+      decideUpdate({ ...row, status: "PROCESSING" }, { ...tie, outcome: "FAILED" }, TODAY)
+    ).toMatchObject({ action: "skip" });
+    // Missing intent clocks are the same ambiguity.
+    expect(
+      decideUpdate(
+        { ...row, stripeIntentCreatedAt: null, status: "SENT" },
+        { ...tie, intentCreatedAt: null, outcome: "PROCESSING" },
+        TODAY
+      )
+    ).toMatchObject({ action: "skip" });
+  });
+
+  it("money still lands through a frozen tie", () => {
+    // PAID bypasses ordering entirely; the freeze must not catch it.
+    expect(
+      decideUpdate(
+        {
+          status: "PROCESSING",
+          stripePaymentIntentId: "pi_OTHER",
+          stripeEventAt: applied,
+          stripeIntentCreatedAt: "2026-08-21T11:00:00.000Z",
+        },
+        { ...decision, outcome: "PAID", occurredAt: applied },
+        TODAY
+      )
+    ).toMatchObject({ action: "set", status: "PAID" });
+  });
+
   it("keeps ordering everything that is not a success", () => {
     // The exemption is only for money arriving. A stale `processing` or a
     // stale `payment_failed` is still a claim a newer one supersedes.

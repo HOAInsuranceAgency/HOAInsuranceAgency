@@ -130,18 +130,6 @@ export type InvoiceUpdate =
  *   bill is outstanding again, which is what SENT already means, and the payer
  *   can use the same link.
  */
-/**
- * How far along a payment is, for breaking ties between same-second events.
- *
- * `SENT` is the resting state both before any attempt and after a failed one,
- * which is why a failure ranks alongside it: neither is money in transit.
- */
-const statusRank = (status: string | null | undefined): number =>
-  status === "PAID" ? 2 : status === "PROCESSING" ? 1 : 0;
-
-const outcomeRank = (outcome: InvoiceOutcome): number =>
-  outcome === "PAID" ? 2 : outcome === "PROCESSING" ? 1 : 0;
-
 export function decideUpdate(
   invoice: InvoiceState,
   decision: EventDecision,
@@ -267,11 +255,20 @@ export function decideUpdate(
         return { action: "skip", reason: "event belongs to a superseded payment" };
       }
       // A newer attempt: let it through, including a failure.
-    } else if (outcomeRank(decision.outcome) <= statusRank(invoice.status)) {
+    } else {
       /**
        * Both intents created in the same second, or one of the timestamps
-       * missing. Nothing left to order by, so fall back to refusing to regress:
-       * burying a live payment is the worse of the two mistakes.
+       * missing. Nothing orders them — so nothing moves.
+       *
+       * This used to refuse only regressions, which is half a rule: it still
+       * let an unorderable PROCESSING advance over SENT, and in one delivery
+       * permutation that stuck — the dead attempt's terminal event had already
+       * been acknowledged, so nothing ever corrected it. Freezing is safe
+       * where guessing is not, because the truth always outranks this branch:
+       * money arriving bypasses ordering entirely, a same-intent event walks
+       * its own lifecycle above, and any event a second later orders cleanly.
+       * The only cost is a status that stays put for the moment the clock
+       * cannot see into, which is also the only honest reading of it.
        */
       return {
         action: "skip",
