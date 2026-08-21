@@ -1,7 +1,7 @@
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from "pdf-lib";
 import { AGENCY, AGENCY_FMT } from "../../../../shared/agency";
 import { formatMoney, invoiceTotals } from "../../../src/lib/invoiceTotals";
-import { formatDay, type InvoiceView } from "./invoice";
+import { formatDay, invoiceTerms, type InvoiceView } from "./invoice";
 
 /**
  * The invoice as a PDF, for the attachment on the email.
@@ -32,6 +32,9 @@ const INK = rgb(0.1, 0.1, 0.1);
 const MUTED = rgb(0.42, 0.45, 0.5);
 const RULE = rgb(0.85, 0.87, 0.9);
 const GOLD = rgb(0.82, 0.66, 0.25);
+/** Panel fills. Light enough to survive a monochrome office printer. */
+const PANEL = rgb(0.973, 0.976, 0.984);
+const TINT = rgb(0.898, 0.929, 0.965);
 
 interface Fonts {
   regular: PDFFont;
@@ -107,7 +110,7 @@ export async function renderInvoicePdf(inv: InvoiceView): Promise<Uint8Array> {
   };
 
   let page = doc.addPage([PAGE.w, PAGE.h]);
-  let y = M.top;
+  let y: number = M.top;
 
   /* ── Letterhead ────────────────────────────────────────────────────── */
   const logo = await loadLogo();
@@ -130,151 +133,269 @@ export async function renderInvoicePdf(inv: InvoiceView): Promise<Uint8Array> {
     });
   }
 
-  drawRight(page, "INVOICE", M.right, y + 4, fonts.bold, 22, NAVY);
-  if (inv.number) {
-    drawRight(page, inv.number, M.right, y - 14, fonts.regular, 10.5, MUTED);
+  // The agency's own address, under the wordmark where a letterhead puts it.
+  // It was only in the footer, which is where a reader looks last and where a
+  // cheque-writer does not look at all.
+  let ly = y - 46;
+  for (const row of [
+    AGENCY.addressLine1,
+    AGENCY_FMT.addressLine2,
+    `${AGENCY.phone} | ${AGENCY.email} | ${AGENCY.siteLabel}`,
+  ]) {
+    page.drawText(row, { x: M.left, y: ly, size: 8, font: fonts.regular, color: MUTED });
+    ly -= 10;
   }
 
-  y -= 54;
-  page.drawLine({
-    start: { x: M.left, y }, end: { x: M.right, y },
-    thickness: 2, color: GOLD,
-  });
-
-  /* ── Who it is for, and what it is about ───────────────────────────── */
-  y -= 26;
-  const blockTop = y;
-  page.drawText("BILL TO", { x: M.left, y, size: 8, font: fonts.bold, color: MUTED });
-  y -= 15;
-  page.drawText(fit(inv.associationName, fonts.bold, 12, 250), {
-    x: M.left, y, size: 12, font: fonts.bold, color: INK,
-  });
-
-  const meta: [string, string][] = [
-    ["Issued", formatDay(inv.issuedAt)],
-    ["Due", formatDay(inv.dueAt)],
-    ["Policy", inv.policyNumber ?? ""],
-    ["Carrier", inv.carrierName ?? ""],
-    [
-      // Abbreviated months here and nowhere else: spelled out, a full term runs
-      // past the column and gets cut, and "September 30, 2026 to Septembe…" is
-      // worse than a short date that fits.
-      "Term",
-      inv.effectiveDate && inv.expirationDate
-        ? `${formatDayShort(inv.effectiveDate)} to ${formatDayShort(inv.expirationDate)}`
-        : "",
-    ],
-  ].filter(([, v]) => v !== "") as [string, string][];
+  drawRight(page, "INVOICE", M.right, y + 4, fonts.bold, 22, NAVY);
 
   /**
-   * Left-aligned and wrapped, not right-aligned and cut.
-   *
-   * Carrier names are long — "Tri-State Insurance Company of Minnesota
-   * (Acadia)" does not fit any single-line column at a readable size — and an
-   * invoice that truncates the carrier is not one you would send a board.
+   * The four facts a treasurer reads before anything else: which invoice, when
+   * it was raised, when it is due, and on what terms. Stacked as label/value
+   * pairs rather than one line of number, because that is the block an
+   * accounts-payable clerk copies into their system.
    */
-  const META_LABEL_X = 330;
-  const META_VALUE_X = 392;
-  const META_VALUE_W = M.right - META_VALUE_X;
-
-  let my = blockTop;
-  for (const [k, v] of meta) {
-    page.drawText(k, {
-      x: META_LABEL_X, y: my, size: 9, font: fonts.regular, color: MUTED,
+  let hy = y - 18;
+  for (const [k, v] of [
+    ["Invoice No.:", inv.number ?? ""],
+    ["Invoice Date:", formatDayShort(inv.issuedAt)],
+    ["Due Date:", formatDayShort(inv.dueAt)],
+    ["Terms:", invoiceTerms(inv.issuedAt, inv.dueAt)],
+  ] as [string, string][]) {
+    if (!v) continue;
+    const value = fit(v, fonts.bold, 9, 130);
+    const vw = fonts.bold.widthOfTextAtSize(value, 9);
+    page.drawText(value, {
+      x: M.right - vw, y: hy, size: 9, font: fonts.bold, color: INK,
     });
-    // Two lines is enough for every real value and keeps the block from
-    // pushing the line items down the page.
-    const rows = wrap(v, fonts.bold, 9, META_VALUE_W).slice(0, 2);
-    for (const row of rows) {
-      page.drawText(fit(row, fonts.bold, 9, META_VALUE_W), {
-        x: META_VALUE_X, y: my, size: 9, font: fonts.bold, color: INK,
-      });
-      my -= 12;
-    }
-    my -= 2;
+    drawRight(page, k, M.right - vw - 5, hy, fonts.regular, 9, MUTED);
+    hy -= 13;
   }
 
-  y = Math.min(y, my) - 30;
+  y = Math.min(ly, hy) - 12;
+  /**
+   * Navy running into gold, the way the website's rules do. Two rectangles
+   * rather than one line so the proportion is deliberate rather than whatever
+   * a dashed stroke happens to produce.
+   */
+  const SPLIT = M.left + (M.right - M.left) * 0.72;
+  page.drawRectangle({ x: M.left, y, width: SPLIT - M.left, height: 3, color: NAVY });
+  page.drawRectangle({ x: SPLIT, y, width: M.right - SPLIT, height: 3, color: GOLD });
+
+  /* ── Who it is for, and what it is about ───────────────────────────── */
+  /**
+   * Two panels side by side: the envelope on the left, the placement on the
+   * right. Boxed and filled, because these are reference details someone
+   * returns to rather than prose they read once — and a bordered block is what
+   * makes them findable on a page that has been photocopied twice.
+   *
+   * Both are measured before either is drawn. They share a height, so the pair
+   * reads as one band rather than two ragged columns, and the height is
+   * whichever side has more to say.
+   */
+  y -= 20;
+  const panelTop = y;
+  const GAP = 12;
+  const MID = M.left + (M.right - M.left) * 0.5 - GAP / 2;
+  const leftInner = { x: M.left + 12, w: MID - M.left - 24 };
+  const rightInner = { x: MID + GAP + 12, w: M.right - MID - GAP - 24 };
+
+  const billTo: string[] = [
+    ...wrap(inv.associationName, fonts.bold, 10, leftInner.w),
+    ...(inv.billToLines ?? []).flatMap((l) => wrap(l, fonts.regular, 9, leftInner.w)),
+  ];
+
+  /**
+   * Only what is known. A row reading "Policy Number: —" tells a reader the
+   * system has a gap; leaving it out tells them nothing, which is correct,
+   * because an invoice for a broker fee genuinely has no policy number.
+   */
+  const placement: [string, string][] = [
+    ["Coverage", inv.coverage ?? ""],
+    ["Policy Number", inv.policyNumber ?? ""],
+    ["Insurer", inv.carrierName ?? ""],
+    [
+      "Policy Term",
+      inv.effectiveDate && inv.expirationDate
+        ? `${formatDayShort(inv.effectiveDate)} - ${formatDayShort(inv.expirationDate)}`
+        : "",
+    ],
+    ["Risk Location", (inv.riskLocation ?? []).join(", ")],
+  ].filter(([, v]) => v.trim() !== "") as [string, string][];
+
+  const placementRows = placement.flatMap(([k, v]) =>
+    wrap(`${k}: ${v}`, fonts.regular, 9, rightInner.w)
+  );
+
+  const panelH = Math.max(
+    26 + billTo.length * 12,
+    16 + placementRows.length * 12,
+    64
+  );
+
+  page.drawRectangle({
+    x: M.left, y: panelTop - panelH, width: MID - M.left, height: panelH,
+    color: PANEL, borderColor: RULE, borderWidth: 0.75,
+  });
+  page.drawRectangle({
+    x: MID + GAP, y: panelTop - panelH, width: M.right - MID - GAP, height: panelH,
+    color: PANEL, borderColor: RULE, borderWidth: 0.75,
+  });
+
+  let by = panelTop - 16;
+  page.drawText("BILL TO", {
+    x: leftInner.x, y: by, size: 8, font: fonts.bold, color: MUTED,
+  });
+  by -= 14;
+  for (const [i, row] of billTo.entries()) {
+    // The first line is the insured's name and is the one a filing clerk reads.
+    const isName = i < wrap(inv.associationName, fonts.bold, 10, leftInner.w).length;
+    page.drawText(row, {
+      x: leftInner.x, y: by,
+      size: isName ? 10 : 9,
+      font: isName ? fonts.bold : fonts.regular,
+      color: isName ? INK : MUTED,
+    });
+    by -= 12;
+  }
+
+  let ry = panelTop - 16;
+  for (const row of placementRows) {
+    page.drawText(row, {
+      x: rightInner.x, y: ry, size: 9, font: fonts.regular, color: INK,
+    });
+    ry -= 12;
+  }
+
+  y = panelTop - panelH - 24;
 
   /* ── Lines ─────────────────────────────────────────────────────────── */
-  const AMOUNT_COL = M.right;
-  const DESC_MAX = 330;
+  const AMOUNT_COL = M.right - 12;
+  const DESC_MAX = 380;
+  const ROW_H = 26;
 
   const header = () => {
-    page.drawText("DESCRIPTION", {
-      x: M.left, y, size: 8, font: fonts.bold, color: MUTED,
+    page.drawRectangle({
+      x: M.left, y: y - 8, width: M.right - M.left, height: 22, color: TINT,
     });
-    drawRight(page, "AMOUNT", AMOUNT_COL, y, fonts.bold, 8, MUTED);
-    y -= 8;
-    page.drawLine({
-      start: { x: M.left, y }, end: { x: M.right, y },
-      thickness: 1, color: RULE,
+    page.drawText("Description", {
+      x: M.left + 12, y, size: 8.5, font: fonts.bold, color: NAVY,
     });
-    y -= 18;
+    drawRight(page, "Amount", AMOUNT_COL, y, fonts.bold, 8.5, NAVY);
+    y -= 8 + 20;
   };
+  y -= 6;
   header();
 
   const lines = inv.lines.filter(
     (l) => (l.description ?? "").trim() !== "" || (l.retailAmount ?? 0) !== 0
   );
 
-  for (const line of lines) {
+  for (const [i, line] of lines.entries()) {
     /**
      * A new page rather than a truncated one. An invoice that silently drops
      * lines does not add up to its own total, which is the single most
-     * damaging thing this document could do.
+     * damaging thing this document could do. The reserve is larger now, so a
+     * break cannot land between the last line and the total it belongs to.
      */
-    if (y < M.bottom + 90) {
+    if (y < M.bottom + 120) {
       page = doc.addPage([PAGE.w, PAGE.h]);
       y = M.top;
       header();
     }
-    page.drawText(fit((line.description ?? "").trim() || "Premium", fonts.regular, 10.5, DESC_MAX), {
-      x: M.left, y, size: 10.5, font: fonts.regular, color: INK,
-    });
-    drawRight(page, formatMoney(line.retailAmount), AMOUNT_COL, y, fonts.regular, 10.5);
-    y -= 10;
+    // Banded, so the eye carries across a wide row from a description on the
+    // left to a figure on the right without a leader dot.
+    if (i % 2 === 1) {
+      page.drawRectangle({
+        x: M.left, y: y - 9, width: M.right - M.left, height: ROW_H,
+        color: rgb(0.984, 0.988, 0.992),
+      });
+    }
+    page.drawText(
+      fit((line.description ?? "").trim() || "Premium", fonts.regular, 10, DESC_MAX),
+      { x: M.left + 12, y, size: 10, font: fonts.regular, color: INK }
+    );
+    drawRight(page, formatMoney(line.retailAmount), AMOUNT_COL, y, fonts.regular, 10);
     page.drawLine({
-      start: { x: M.left, y }, end: { x: M.right, y },
+      start: { x: M.left, y: y - 9 }, end: { x: M.right, y: y - 9 },
       thickness: 0.5, color: RULE,
     });
-    y -= 16;
+    y -= ROW_H;
   }
 
   /* ── Total, which is the point of the page ─────────────────────────── */
   const total = invoiceTotals(inv.lines).retail;
   y -= 6;
-  page.drawRectangle({
-    x: 330, y: y - 30, width: M.right - 330, height: 38,
-    color: rgb(0.965, 0.973, 0.98),
+  const TOTAL_LEFT = 360;
+  page.drawLine({
+    start: { x: TOTAL_LEFT, y: y + 12 }, end: { x: M.right, y: y + 12 },
+    thickness: 1.5, color: NAVY,
   });
-  page.drawText("AMOUNT DUE", {
-    x: 344, y: y - 8, size: 9, font: fonts.bold, color: MUTED,
+  page.drawText("TOTAL DUE", {
+    x: TOTAL_LEFT, y: y - 6, size: 10, font: fonts.bold, color: NAVY,
   });
-  drawRight(page, formatMoney(total), M.right - 14, y - 12, fonts.bold, 17, NAVY);
+  drawRight(page, formatMoney(total), AMOUNT_COL, y - 8, fonts.bold, 15, NAVY);
+  y -= 40;
 
-  /* ── Memo and how to pay ───────────────────────────────────────────── */
-  y -= 62;
-  if (inv.memo?.trim()) {
-    for (const chunk of wrap(inv.memo.trim(), fonts.regular, 10, M.right - M.left)) {
-      page.drawText(chunk, { x: M.left, y, size: 10, font: fonts.regular, color: MUTED });
-      y -= 14;
-    }
-    y -= 8;
+  /* ── How to pay, and what this document is not ─────────────────────── */
+  /**
+   * Both blocks are drawn on the last page and both need room. If what is left
+   * cannot hold them they move to a page of their own rather than being split
+   * across a break — payment instructions with the address on one page and the
+   * account details on the next is how money goes to the wrong place.
+   */
+  const needed = 190 + (inv.memo?.trim() ? 26 : 0);
+  if (y - needed < M.bottom + 30) {
+    page = doc.addPage([PAGE.w, PAGE.h]);
+    y = M.top;
   }
 
-  if (inv.paymentUrl?.trim()) {
-    page.drawText("Pay by bank transfer", {
-      x: M.left, y, size: 10.5, font: fonts.bold, color: NAVY,
-    });
-    y -= 14;
-    // The URL in full, not a masked link: this is a printed document and a
-    // hyperlink nobody can read is no use on paper.
-    for (const chunk of wrap(inv.paymentUrl.trim(), fonts.regular, 9, M.right - M.left)) {
-      page.drawText(chunk, { x: M.left, y, size: 9, font: fonts.regular, color: MUTED });
-      y -= 12;
-    }
-  }
+  y = drawStatementBox(page, fonts, {
+    title: "PAYMENT INSTRUCTIONS",
+    left: M.left,
+    right: M.right,
+    top: y,
+    emphasis: true,
+    body: [
+      `Make checks payable to ${AGENCY.name} and mail to:`,
+      `${AGENCY.addressLine1}, ${AGENCY_FMT.addressLine2}`,
+      ...(inv.paymentUrl?.trim()
+        ? [
+            // In full, not as a masked link: this is a printed document, and a
+            // hyperlink nobody can read is no use on paper.
+            `To pay by bank transfer, visit ${inv.paymentUrl.trim()}`,
+          ]
+        : [
+            `For secure ACH or electronic payment instructions, contact ${AGENCY.email} or ${AGENCY.phone}.`,
+          ]),
+      inv.number
+        ? `Please reference invoice ${inv.number} and the named insured with payment.`
+        : "Please reference the named insured with payment.",
+      // Business email compromise is the fraud this document is a vector for:
+      // an intercepted invoice with altered remittance details is the standard
+      // form of it, and the only defence a paper bill can carry is a printed
+      // instruction to phone before acting on a change.
+      "Fraud prevention: verify any change to payment instructions by calling the agency before sending funds.",
+    ],
+  });
+
+  y -= 14;
+  drawStatementBox(page, fonts, {
+    title: "IMPORTANT NOTES",
+    left: M.left,
+    right: M.right,
+    top: y,
+    bullets: true,
+    body: [
+      ...(inv.memo?.trim() ? [inv.memo.trim()] : []),
+      ...(inv.effectiveDate
+        ? [`Coverage was bound effective ${formatDay(inv.effectiveDate)}.`]
+        : []),
+      // The disclaimer this document must always carry: an invoice is evidence
+      // of a debt, and a treasurer who reads its policy block as the terms of
+      // their coverage has been misled by us rather than by their carrier.
+      "This invoice is not a binder or policy and does not amend the terms, conditions, limits, or exclusions of coverage.",
+    ],
+  });
 
   /* ── Footer, on every page ─────────────────────────────────────────── */
   for (const p of doc.getPages()) {
@@ -300,6 +421,82 @@ function formatDayShort(day: string | null | undefined): string {
   if (!long) return "";
   const m = /^([A-Z][a-z]+) (\d{1,2}, \d{4})$/.exec(long);
   return m ? `${m[1].slice(0, 3)} ${m[2]}` : long;
+}
+
+/**
+ * A labelled block of statements in a box — payment instructions, and the
+ * notes under them.
+ *
+ * Boxed rather than run on as paragraphs because both are read by someone
+ * looking for one specific thing: where to send a cheque, or what they are
+ * being told about cancellation. A wall of small print is where those go to be
+ * missed, and the fraud-prevention line in particular is only worth printing if
+ * it is seen.
+ *
+ * Returns the y it finished at, so the caller stacks without measuring.
+ */
+function drawStatementBox(
+  page: PDFPage,
+  fonts: Fonts,
+  opts: {
+    title: string;
+    body: string[];
+    top: number;
+    left: number;
+    right: number;
+    /** Tinted with a navy spine, for the block that must not be skimmed past. */
+    emphasis?: boolean;
+    /**
+     * Prefix each statement with a dash and hang its wrapped continuation.
+     *
+     * For the notes, which are a list of separate assertions — earned premium,
+     * what the bill covers, what the document is not. Run together as
+     * paragraphs they read as one long caveat and the individual terms stop
+     * being visible, which matters when one of them is "no flat cancellations".
+     */
+    bullets?: boolean;
+  }
+): number {
+  const { title, body, top, left, right, emphasis, bullets } = opts;
+  const innerLeft = left + 12;
+  const width = right - innerLeft - 12;
+  const HANG = 9;
+
+  // Measured before drawing: the fill has to be behind the text, and its
+  // height is only known once the body has been wrapped.
+  const rows: { text: string; indent: number }[] = body.flatMap((para) => {
+    if (!bullets) {
+      return wrap(para, fonts.regular, 8.5, width).map((text) => ({ text, indent: 0 }));
+    }
+    const wrapped = wrap(para, fonts.regular, 8.5, width - HANG);
+    return wrapped.map((text, i) => ({
+      text: i === 0 ? `- ${text}` : text,
+      indent: i === 0 ? 0 : HANG,
+    }));
+  });
+  const height = 18 + rows.length * 11 + 10;
+
+  page.drawRectangle({
+    x: left, y: top - height, width: right - left, height,
+    color: emphasis ? TINT : rgb(1, 1, 1),
+    borderColor: emphasis ? NAVY : RULE,
+    borderWidth: emphasis ? 0 : 0.75,
+  });
+  if (emphasis) {
+    // The spine, drawn over the fill's left edge.
+    page.drawRectangle({ x: left, y: top - height, width: 3, height, color: NAVY });
+  }
+
+  let y = top - 16;
+  page.drawText(title, { x: innerLeft, y, size: 8, font: fonts.bold, color: NAVY });
+  y -= 13;
+  for (const row of rows) {
+    page.drawText(row.text, {
+      x: innerLeft + row.indent, y, size: 8.5, font: fonts.regular, color: INK,
+    });
+    y -= 11;
+  }
+  return top - height;
 }
 
 /** Greedy word wrap to a pixel width, since pdf-lib draws single lines only. */

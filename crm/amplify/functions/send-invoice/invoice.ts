@@ -31,8 +31,18 @@ export interface InvoiceView {
   associationName: string;
   /** The person it is addressed to, if we know one. */
   contactFirstName?: string | null;
+  /**
+   * The mailing address, as it would be typed on an envelope — "Attn: …",
+   * street, city/state/zip. Already ordered and already free of blanks, so
+   * the renderer prints what it is given and decides nothing.
+   */
+  billToLines?: string[];
   policyNumber?: string | null;
   carrierName?: string | null;
+  /** Lines of business, as the policy records them: "Property, General Liability". */
+  coverage?: string | null;
+  /** Where the risk is, when it differs from nothing at all. */
+  riskLocation?: string[];
   effectiveDate?: string | null;
   expirationDate?: string | null;
   issuedAt?: string | null;
@@ -40,6 +50,30 @@ export interface InvoiceView {
   memo?: string | null;
   paymentUrl?: string | null;
   lines: InvoiceLineView[];
+}
+
+/**
+ * "Due upon receipt", or the number of days allowed.
+ *
+ * Printed in the header block beside the dates, because a due date on its own
+ * does not tell a treasurer whether they have been given terms or whether the
+ * bill is already payable — and the difference decides whether it goes in this
+ * week's cheque run or next month's.
+ *
+ * Same day or earlier reads as due on receipt rather than as a negative
+ * number of days, which is what an issued-today, due-today invoice is.
+ */
+export function invoiceTerms(
+  issuedAt: string | null | undefined,
+  dueAt: string | null | undefined
+): string {
+  if (!issuedAt || !dueAt) return "Due upon receipt";
+  const from = Date.parse(`${issuedAt}T00:00:00Z`);
+  const to = Date.parse(`${dueAt}T00:00:00Z`);
+  if (Number.isNaN(from) || Number.isNaN(to)) return "Due upon receipt";
+  const days = Math.round((to - from) / 86_400_000);
+  if (days <= 0) return "Due upon receipt";
+  return `Net ${days} days`;
 }
 
 /** `2026-09-30` → `September 30, 2026`. Anything unparseable passes through. */

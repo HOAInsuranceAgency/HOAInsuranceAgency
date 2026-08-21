@@ -217,8 +217,23 @@ export const handler = async (event: {
       };
     }
 
-    const policy = invoice.policyId
-      ? (await client.models.Policy.get({ id: invoice.policyId })).data
+    /**
+     * The policy the header block describes.
+     *
+     * `Invoice.policyId` when it is set. Otherwise the lines decide: a seeded
+     * invoice carries a `policyId` per line, and when every one of them names
+     * the same policy the invoice is about that policy whether or not anyone
+     * set the field. When they name several, there is no single answer and the
+     * block is left off — the line descriptions already carry a policy number
+     * each, and a header claiming one of three would be wrong about the others.
+     */
+    const linePolicyIds = [
+      ...new Set(lines.map((l) => l.policyId).filter((id): id is string => !!id)),
+    ];
+    const headerPolicyId =
+      invoice.policyId ?? (linePolicyIds.length === 1 ? linePolicyIds[0] : null);
+    const policy = headerPolicyId
+      ? (await client.models.Policy.get({ id: headerPolicyId })).data
       : null;
     const carrier = policy?.carrierId
       ? (await client.models.Carrier.get({ id: policy.carrierId })).data
@@ -236,12 +251,40 @@ export const handler = async (event: {
       invoiceTotals(lines).retail
     );
 
+    /**
+     * The envelope, in the order it would be typed.
+     *
+     * "Attn:" names whoever this went to rather than the primary contact,
+     * because on a bill addressed to the treasurer the manager's name at the
+     * top is a small lie about who owes an answer. Blanks are dropped here so
+     * the renderer never has to decide whether a line is worth printing.
+     */
+    const addressee = contacts.find((c) => to.includes((c.email ?? "").trim()));
+    const cityStateZip = [
+      account.data.city,
+      [account.data.state, account.data.zip].filter(Boolean).join(" "),
+    ]
+      .filter(Boolean)
+      .join(", ");
+    const billToLines = [
+      addressee?.name ? `Attn: ${addressee.name}` : "",
+      account.data.address ?? "",
+      cityStateZip,
+    ].filter((l) => l.trim());
+
     const view = {
       number: invoice.number,
       associationName: account.data.name,
       contactFirstName: primary?.name?.trim().split(/\s+/)[0] ?? null,
+      billToLines,
       policyNumber: policy?.policyNumber ?? null,
       carrierName: carrier?.name ?? null,
+      coverage: (policy?.lines ?? []).filter(Boolean).join(", ") || null,
+      // The insured location. Same address as the bill-to in most cases, and
+      // printed anyway: an association managed off-site is billed at the
+      // manager's office and insured at its own, and an invoice that shows
+      // only one of the two cannot be matched to a policy without opening it.
+      riskLocation: [account.data.address ?? "", cityStateZip].filter((l) => l.trim()),
       effectiveDate: policy?.effectiveDate ?? null,
       expirationDate: policy?.expirationDate ?? null,
       issuedAt: invoice.issuedAt,
