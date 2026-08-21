@@ -356,9 +356,13 @@ describe("option lists reproduce the hand-written ones they replaced", () => {
     // through to "—" for them, which is the behaviour this preserves.
     expect(valuesOf(DOCUMENT_CATEGORY_OPTIONS)).not.toContain("ACORD_FORM");
     expect(schemaEnum("DocumentCategory")).toContain("ACORD_FORM");
+    // Three generated-only categories carry no label: ACORD_FORM and the two
+    // premium-finance documents. None are offered for upload.
     expect(DOCUMENT_CATEGORY_OPTIONS).toHaveLength(
-      schemaEnum("DocumentCategory").length - 1
+      schemaEnum("DocumentCategory").length - 3
     );
+    expect(valuesOf(DOCUMENT_CATEGORY_OPTIONS)).not.toContain("PF_AGREEMENT");
+    expect(valuesOf(DOCUMENT_CATEGORY_OPTIONS)).not.toContain("PF_BOARD_RESOLUTION");
   });
 
   it("DOCUMENT_CATEGORY_EXTRACTION_PRIORITY — extract-lead CATEGORY_PRIORITY", () => {
@@ -374,6 +378,8 @@ describe("option lists reproduce the hand-written ones they replaced", () => {
       PROPERTY_UPDATES: 4,
       QUOTE_DOC: 5,
       POLICY_DOC: 6,
+      PF_AGREEMENT: 9,
+      PF_BOARD_RESOLUTION: 9,
       CONDO_DOCS: 7,
       ACORD_FORM: 8,
       LICENSE: 9,

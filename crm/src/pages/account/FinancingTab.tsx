@@ -90,7 +90,27 @@ export function FinancingTab({ account }: { account: Account }) {
   const [overrideCheck, setOverrideCheck] = useState<"MEP" | "AUDITABLE" | "">("");
   const issueStatus = useSaveStatus();
   const overrideStatus = useSaveStatus({ autoClearMs: 4000 });
+  const agreementStatus = useSaveStatus({ autoClearMs: 6000 });
   const [issued, setIssued] = useState<string | null>(null);
+
+  /**
+   * Renders the agreement + board resolution from the loan's frozen terms and
+   * files both in Documents. Regenerating overwrites nothing — each run makes
+   * fresh Document rows — so a re-quote leaves the old paper in the trail.
+   */
+  async function generateAgreement(loanId: string) {
+    await agreementStatus.run(
+      async () => {
+        const { data, errors } = await client.mutations.generatePfAgreement({ loanId });
+        if (errors?.length) throw new Error(errors[0].message);
+        const result =
+          typeof data === "string" ? JSON.parse(data) : (data as Record<string, unknown>);
+        if (!result?.ok) throw new Error(String(result?.error ?? "Generation failed."));
+        return "Agreement and board resolution filed in Documents.";
+      },
+      { errorMessage: "Couldn't generate the agreement." }
+    );
+  }
 
   if (!gate.open) {
     return (
@@ -428,7 +448,10 @@ export function FinancingTab({ account }: { account: Account }) {
 
       {loans.length > 0 && (
         <div className="card">
-          <h2>Loans</h2>
+          <div className="card-head">
+            <h2>Loans</h2>
+            <SaveStatus {...agreementStatus.status} />
+          </div>
           <div className="table-wrap">
             <table>
               <thead>
@@ -440,6 +463,7 @@ export function FinancingTab({ account }: { account: Account }) {
                   <th className="num">Payment</th>
                   <th className="num">Balance</th>
                   <th>Next due</th>
+                  <th />
                 </tr>
               </thead>
               <tbody>
@@ -456,6 +480,18 @@ export function FinancingTab({ account }: { account: Account }) {
                       <td className="num">{fmtMoney(l.payment)}</td>
                       <td className="num">{fmtMoney(l.balance)}</td>
                       <td>{fmtDate(l.nextDueAt)}</td>
+                      <td className="row-action">
+                        {(l.status === "QUOTED" || l.status === "ACTIVE") && (
+                          <button
+                            type="button"
+                            className="link"
+                            disabled={agreementStatus.busy}
+                            onClick={() => void generateAgreement(l.id)}
+                          >
+                            Agreement PDF
+                          </button>
+                        )}
+                      </td>
                     </tr>
                   ))}
               </tbody>

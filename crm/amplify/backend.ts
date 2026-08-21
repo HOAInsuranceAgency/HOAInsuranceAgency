@@ -37,6 +37,7 @@ import { stripeWebhook } from "./functions/stripe-webhook/resource";
 import { voidInvoice } from "./functions/void-invoice/resource";
 import { pfAdmin } from "./functions/pf-admin/resource";
 import { pfOriginate } from "./functions/pf-originate/resource";
+import { pfAgreement } from "./functions/pf-agreement/resource";
 import { resolveMailbox } from "./functions/mailbox";
 import { activityLog } from "./functions/activity-log/resource";
 import {
@@ -71,6 +72,7 @@ export const backend = defineBackend({
   voidInvoice,
   pfAdmin,
   pfOriginate,
+  pfAgreement,
   activityLog,
   magicLinkDefine,
   magicLinkCreate,
@@ -443,6 +445,17 @@ pfLogTable.grantReadWriteData(backend.pfAdmin.resources.lambda);
 // reads and the PfLoan create go through the data client via allow.resource.
 backend.pfOriginate.addEnvironment("PF_COMPLIANCE_LOG_TABLE", pfLogTable.tableName);
 pfLogTable.grantReadWriteData(backend.pfOriginate.resources.lambda);
+
+// The agreement renderer writes its PDFs under generated/pf/ — outside
+// documents/, so the OCR upload trigger never re-reads the app's own output.
+backend.pfAgreement.addEnvironment(
+  "DOCUMENTS_BUCKET",
+  backend.storage.resources.bucket.bucketName
+);
+backend.storage.resources.bucket.grantPut(
+  backend.pfAgreement.resources.lambda,
+  "generated/pf/*"
+);
 
 /**
  * And the send, for one write: storing a freshly minted payment link

@@ -10,6 +10,7 @@ import { sendInvoice } from "../functions/send-invoice/resource";
 import { voidInvoice } from "../functions/void-invoice/resource";
 import { pfAdmin } from "../functions/pf-admin/resource";
 import { pfOriginate } from "../functions/pf-originate/resource";
+import { pfAgreement } from "../functions/pf-agreement/resource";
 import { renewalTasks } from "../functions/renewal-tasks/resource";
 import { licenseAlerts } from "../functions/license-alerts/resource";
 import { taskDigest } from "../functions/task-digest/resource";
@@ -88,6 +89,9 @@ const schema = a
       // carrier prices on, so filing them as OTHER lost the distinction that
       // makes them worth having — see shared/leadDocuments.ts.
       "STATEMENT_OF_VALUES", // building schedule: sqft and insured value per building
+      // Generated premium-finance paperwork — never uploaded, never extracted.
+      "PF_AGREEMENT",
+      "PF_BOARD_RESOLUTION",
       "PROPERTY_UPDATES", // roof/electrical/plumbing/heating work
       "OTHER",
     ]),
@@ -1834,6 +1838,19 @@ const schema = a
       .returns(a.json())
       .authorization((allow) => [allow.authenticated()])
       .handler(a.handler.function(pfOriginate)),
+
+    /**
+     * Render the agreement + board resolution for a quoted loan, from the
+     * loan's FROZEN terms, filed through Documents. The staleness rule for
+     * the executed resolution is enforced at activation, not here — this
+     * generates the paper the board has not signed yet.
+     */
+    generatePfAgreement: a
+      .mutation()
+      .arguments({ loanId: a.string().required() })
+      .returns(a.json())
+      .authorization((allow) => [allow.authenticated()])
+      .handler(a.handler.function(pfAgreement)),
   })
   .authorization((allow) => [
     // Default for every model that doesn't declare its own rules. A model
