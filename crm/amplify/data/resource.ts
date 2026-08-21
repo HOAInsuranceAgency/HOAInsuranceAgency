@@ -1150,6 +1150,35 @@ const schema = a
       .authorization((allow) => [allow.authenticated().to(["read"])]),
 
     /**
+     * A counsel opinion that unlocks a `conditional` jurisdiction — until one
+     * exists and is within its review date, conditional means blocked.
+     *
+     * ADMIN-only create, nobody updates or deletes: superseding an opinion is
+     * a new row with a later effective date, and the old one stays in the
+     * record. `reviewBy` is the expiry of reliance (default 24 months out):
+     * statutes change, and a 2026 opinion must not silently authorize a 2031
+     * origination — past review, the jurisdiction reverts to blocked.
+     */
+    PfCounselOpinion: a
+      .model({
+        /** Two-letter jurisdiction code, e.g. "VA". */
+        jurisdiction: a.string().required(),
+        effectiveAt: a.date().required(),
+        reviewBy: a.date().required(),
+        /** The signed opinion PDF's Document id, when uploaded. */
+        documentId: a.string(),
+        notes: a.string(),
+        uploadedBy: a.string(),
+        uploadedByName: a.string(),
+        occurredAt: a.datetime().required(),
+      })
+      .secondaryIndexes((index) => [index("jurisdiction").sortKeys(["effectiveAt"])])
+      .authorization((allow) => [
+        allow.authenticated().to(["read"]),
+        allow.groups(["ADMIN"]).to(["read", "create"]),
+      ]),
+
+    /**
      * An admin's written reason for waiving one eligibility check on one
      * policy. MEP and auditable only — the personal-lines screen has no
      * override and never will.

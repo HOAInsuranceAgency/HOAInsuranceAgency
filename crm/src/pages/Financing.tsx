@@ -7,7 +7,12 @@ import {
   PF_CONFIG_SHA256,
   PF_JURISDICTIONS,
 } from "../lib/premiumFinance/jurisdictions";
-import { originationGate } from "../lib/premiumFinance/gate";
+import { defaultReviewBy, isOpinionCurrent, originationGate } from "../lib/premiumFinance/gate";
+import { AGENCY_SETTINGS_ID } from "../lib/agencySettings";
+import { useAsyncResource } from "../lib/useAsyncResource";
+import type { Schema } from "../../amplify/data/resource";
+
+type PfCounselOpinion = Schema["PfCounselOpinion"]["type"];
 import { Badge, type BadgeSpec } from "../lib/badges";
 
 /**
@@ -26,6 +31,208 @@ const STATUS_BADGE: Record<string, BadgeSpec> = {
   conditional: { cls: "amber", label: "CONDITIONAL" },
   closed: { cls: "gray", label: "CLOSED" },
 };
+
+/**
+ * The designated lending bank account's label — the segregation rule as a
+ * required setting. Payment posting refuses until it names an account, and
+ * it must never name the premium trust: fiduciary premium and lending
+ * capital cannot commingle.
+ */
+function LendingAccountCard() {
+  const status = useSaveStatus({ autoClearMs: 4000 });
+  const [name, setName] = useState<string | null>(null);
+  const loaded = useAsyncResource(
+    async () => {
+      const { data } = await client.models.AgencySettings.get({ id: AGENCY_SETTINGS_ID });
+      return data?.pfLendingAccountName ?? "";
+    },
+    [],
+    { initialData: null }
+  );
+  const value = name ?? loaded.data ?? "";
+
+  async function save() {
+    await status.run(
+      async () => {
+        const { data: existing } = await client.models.AgencySettings.get({
+          id: AGENCY_SETTINGS_ID,
+        });
+        const patch = { pfLendingAccountName: value.trim() || null };
+        const { errors } = existing
+          ? await client.models.AgencySettings.update({ id: AGENCY_SETTINGS_ID, ...patch })
+          : await client.models.AgencySettings.create({ id: AGENCY_SETTINGS_ID, ...patch });
+        if (errors?.length) throw new Error(errors[0].message);
+        return "Saved.";
+      },
+      { errorMessage: "Couldn't save the account name." }
+    );
+  }
+
+  return (
+    <div className="card">
+      <div className="card-head">
+        <h2>Lending account</h2>
+        <SaveStatus {...status.status} />
+      </div>
+      <p className="muted small">
+        Every loan receipt and disbursement references this account, and it
+        must not be the premium trust — fiduciary premium and lending capital
+        cannot commingle. Payment posting refuses until this is set.
+      </p>
+      <div className="inline-actions">
+        <div className="field" style={{ minWidth: 320 }}>
+          <label htmlFor="pf-lending-acct">Designated lending account (label)</label>
+          <input
+            id="pf-lending-acct"
+            placeholder='e.g. "Operating — Lending, Rockland Trust x4821"'
+            value={value}
+            onChange={(e) => setName(e.target.value)}
+          />
+        </div>
+        <button type="button" className="secondary" disabled={status.busy} onClick={() => void save()}>
+          Save
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Counsel opinions unlock conditional jurisdictions — and expire. Rows are
+ * permanent: superseding is a new row, and past `reviewBy` the jurisdiction
+ * reverts to blocked with "opinion past review" (decision D).
+ */
+function CounselOpinionsCard() {
+  const status = useSaveStatus({ autoClearMs: 4000 });
+  const conditional = PF_JURISDICTIONS.filter((j) => j.status === "conditional");
+  const [code, setCode] = useState("");
+  const [effectiveAt, setEffectiveAt] = useState("");
+  const [reviewBy, setReviewBy] = useState("");
+  const [notes, setNotes] = useState("");
+  const rows = useAsyncResource(
+    async () => {
+      const { data } = await client.models.PfCounselOpinion.list({ limit: 200 });
+      return data as PfCounselOpinion[];
+    },
+    [],
+    { initialData: [] as PfCounselOpinion[] }
+  );
+  const today = new Date().toISOString().slice(0, 10);
+
+  async function add() {
+    await status.run(
+      async () => {
+        const { errors } = await client.models.PfCounselOpinion.create({
+          jurisdiction: code,
+          effectiveAt,
+          reviewBy: reviewBy || defaultReviewBy(effectiveAt),
+          notes: notes.trim() || null,
+          occurredAt: new Date().toISOString(),
+        });
+        if (errors?.length) throw new Error(errors[0].message);
+        setCode("");
+        setEffectiveAt("");
+        setReviewBy("");
+        setNotes("");
+        await rows.refetch();
+        return "Opinion recorded.";
+      },
+      { errorMessage: "Couldn't record the opinion." }
+    );
+  }
+
+  return (
+    <div className="card">
+      <div className="card-head">
+        <h2>Counsel opinions</h2>
+        <SaveStatus {...status.status} />
+      </div>
+      <p className="muted small">
+        A conditional jurisdiction stays blocked until a signed opinion is on
+        file and within its review date. Upload the signed PDF to the
+        account-independent Documents area and record it here; the default
+        review horizon is 24 months.
+      </p>
+      {rows.data.length > 0 && (
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Jurisdiction</th>
+                <th>Effective</th>
+                <th>Review by</th>
+                <th>Status</th>
+                <th>Notes</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.data.map((o) => (
+                <tr key={o.id}>
+                  <td>{o.jurisdiction}</td>
+                  <td>{o.effectiveAt}</td>
+                  <td>{o.reviewBy}</td>
+                  <td>
+                    {isOpinionCurrent(
+                      { effectiveAt: o.effectiveAt, reviewBy: o.reviewBy },
+                      today
+                    ) ? (
+                      <span className="badge green">CURRENT</span>
+                    ) : (
+                      <span className="badge amber">PAST REVIEW</span>
+                    )}
+                  </td>
+                  <td className="small muted">{o.notes}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <div className="form-grid">
+        <div className="field">
+          <label>Jurisdiction</label>
+          <select value={code} onChange={(e) => setCode(e.target.value)}>
+            <option value="">Choose…</option>
+            {conditional.map((j) => (
+              <option key={j.code} value={j.code}>
+                {j.name}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="field">
+          <label>Effective</label>
+          <input
+            type="date"
+            value={effectiveAt}
+            onChange={(e) => {
+              setEffectiveAt(e.target.value);
+              if (e.target.value && !reviewBy) setReviewBy(defaultReviewBy(e.target.value));
+            }}
+          />
+        </div>
+        <div className="field">
+          <label>Review by</label>
+          <input type="date" value={reviewBy} onChange={(e) => setReviewBy(e.target.value)} />
+        </div>
+        <div className="field">
+          <label>Notes</label>
+          <input value={notes} onChange={(e) => setNotes(e.target.value)} />
+        </div>
+      </div>
+      <div className="inline-actions">
+        <button
+          type="button"
+          className="secondary"
+          disabled={!code || !effectiveAt || status.busy}
+          onClick={() => void add()}
+        >
+          Record opinion
+        </button>
+      </div>
+    </div>
+  );
+}
 
 export default function Financing() {
   const isAdmin = useIsAdmin();
@@ -122,6 +329,9 @@ export default function Financing() {
           </p>
         </div>
       )}
+
+      {isAdmin && <LendingAccountCard />}
+      {isAdmin && <CounselOpinionsCard />}
 
       <div className="card">
         <div className="card-head">

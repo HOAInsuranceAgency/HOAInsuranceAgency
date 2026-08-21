@@ -7,6 +7,7 @@ import { DynamoDBDocumentClient, PutCommand } from "@aws-sdk/lib-dynamodb";
 import type { Schema } from "../../data/resource";
 import {
   aprCapViolation,
+  hasCurrentOpinion,
   minPrincipalViolation,
   originationGate,
 } from "../../../src/lib/premiumFinance/gate";
@@ -148,7 +149,26 @@ export const handler = async (event: {
     });
     if (!account) return { ok: false, error: "That account no longer exists." };
 
-    const gate = originationGate(account.state);
+    /**
+     * Conditional jurisdictions open only on a counsel opinion that is
+     * within its review date, read here from the store (decision D). The
+     * gate itself stays pure; the store is context.
+     */
+    const preGate = originationGate(account.state);
+    let opinionCurrent = false;
+    if (preGate.jurisdiction?.status === "conditional") {
+      const { data: opinions } = await client.models.PfCounselOpinion.list({
+        filter: { jurisdiction: { eq: preGate.jurisdiction.code } },
+        limit: 100,
+      });
+      opinionCurrent = hasCurrentOpinion(
+        opinions.map((o) => ({ effectiveAt: o.effectiveAt, reviewBy: o.reviewBy })),
+        new Date().toISOString().slice(0, 10)
+      );
+    }
+    const gate = originationGate(account.state, {
+      hasCurrentCounselOpinion: opinionCurrent,
+    });
     const ctx: Ctx = {
       accountId: account.id,
       jurisdiction:

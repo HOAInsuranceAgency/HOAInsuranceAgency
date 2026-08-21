@@ -213,3 +213,76 @@ describe("flood", () => {
     ).toBe(true);
   });
 });
+
+/**
+ * Counsel opinions expire (decision D). Reliance runs from effective to
+ * reviewBy; outside the window a conditional jurisdiction is blocked again,
+ * whatever paper is on file.
+ */
+describe("opinion currency", () => {
+  const opinion = { effectiveAt: "2026-08-01", reviewBy: "2028-08-01" };
+
+  it("is current inside the window, inclusive at both ends", async () => {
+    const { isOpinionCurrent } = await import("./gate");
+    expect(isOpinionCurrent(opinion, "2026-08-01")).toBe(true);
+    expect(isOpinionCurrent(opinion, "2027-01-15")).toBe(true);
+    expect(isOpinionCurrent(opinion, "2028-08-01")).toBe(true);
+  });
+
+  it("is not current before effective or past review", async () => {
+    const { isOpinionCurrent } = await import("./gate");
+    expect(isOpinionCurrent(opinion, "2026-07-31")).toBe(false);
+    // A 2026 opinion must not silently authorize a later origination.
+    expect(isOpinionCurrent(opinion, "2028-08-02")).toBe(false);
+  });
+
+  it("any current opinion among several suffices", async () => {
+    const { hasCurrentOpinion } = await import("./gate");
+    const stale = { effectiveAt: "2022-01-01", reviewBy: "2024-01-01" };
+    expect(hasCurrentOpinion([stale, opinion], "2027-01-01")).toBe(true);
+    expect(hasCurrentOpinion([stale], "2027-01-01")).toBe(false);
+    expect(hasCurrentOpinion([], "2027-01-01")).toBe(false);
+  });
+
+  it("defaults the review horizon to 24 months, clamped at month ends", async () => {
+    const { defaultReviewBy } = await import("./gate");
+    expect(defaultReviewBy("2026-08-21")).toBe("2028-08-21");
+    expect(defaultReviewBy("2024-02-29")).toBe("2026-02-28"); // leap → not
+  });
+});
+
+/**
+ * The no-compensation schema guard (W6). Nine states prohibit any payment
+ * flowing from the lending operation to the producer side; in this structure
+ * it is one entity so the concept is meaningless — and the schema must not
+ * be able to express it anyway, because a field built "for later" is how it
+ * gets filled in.
+ */
+describe("the lending schema cannot express producer compensation", () => {
+  it("no pf model carries a compensation field", () => {
+    const { readFileSync } = require("node:fs") as typeof import("node:fs");
+    const { resolve } = require("node:path") as typeof import("node:path");
+    const SCHEMA = readFileSync(
+      resolve(process.cwd(), "amplify/data/resource.ts"),
+      "utf8"
+    );
+    for (const model of [
+      "PfLoan: a",
+      "PfLoanPayment: a",
+      "PfNotice: a",
+      "PfOverride: a",
+      "PfCounselOpinion: a",
+      "PfComplianceLog: a",
+    ]) {
+      const at = SCHEMA.indexOf(model);
+      expect(at, model).toBeGreaterThan(-1);
+      const block = SCHEMA.slice(at, SCHEMA.indexOf(".authorization", at));
+      expect(block, model).not.toMatch(
+        /commission|referral|bonus|kickback|producer(Fee|Pay|Split|Comp)|revenue.?share/i
+      );
+      // The only fee anywhere in lending is the flat origination fee.
+      const fees = [...block.matchAll(/\w*[Ff]ee\w*/g)].map((m) => m[0]);
+      expect(fees.every((f) => /originationFee/i.test(f)), `${model}: ${fees}`).toBe(true);
+    }
+  });
+});

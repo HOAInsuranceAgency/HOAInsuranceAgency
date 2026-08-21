@@ -11,7 +11,11 @@ import type { Schema } from "../../../amplify/data/resource";
 import { useAsyncResource } from "../../lib/useAsyncResource";
 import { useIsAdmin } from "../../lib/auth";
 import { SaveStatus, useSaveStatus } from "../../components/SaveStatus";
-import { originationGate } from "../../lib/premiumFinance/gate";
+import {
+  hasCurrentOpinion,
+  jurisdictionFor,
+  originationGate,
+} from "../../lib/premiumFinance/gate";
 import {
   evaluateEligibility,
   eligibilityBlocked,
@@ -262,7 +266,34 @@ const LOAN_BADGE: Record<string, BadgeSpec> = {
 
 export function FinancingTab({ account }: { account: Account }) {
   const isAdmin = useIsAdmin();
-  const gate = useMemo(() => originationGate(account.state), [account.state]);
+  /**
+   * Conditional jurisdictions ask the opinion store before the gate answers
+   * (decision D) — same context the origination Lambda assembles, so what
+   * this tab shows is what the server will decide.
+   */
+  const j = useMemo(() => jurisdictionFor(account.state), [account.state]);
+  const opinionsRes = useAsyncResource(
+    async () => {
+      if (j?.status !== "conditional") return true as boolean | null;
+      const { data } = await client.models.PfCounselOpinion.list({
+        filter: { jurisdiction: { eq: j.code } },
+        limit: 100,
+      });
+      return hasCurrentOpinion(
+        data.map((o) => ({ effectiveAt: o.effectiveAt, reviewBy: o.reviewBy })),
+        new Date().toISOString().slice(0, 10)
+      );
+    },
+    [j?.code, j?.status],
+    { initialData: null }
+  );
+  const gate = useMemo(
+    () =>
+      originationGate(account.state, {
+        hasCurrentCounselOpinion: opinionsRes.data === true,
+      }),
+    [account.state, opinionsRes.data]
+  );
 
   const res = useAsyncResource(
     async () => {

@@ -136,3 +136,40 @@ export function minPrincipalViolation(
   }
   return null;
 }
+
+/**
+ * Counsel-opinion currency (decision D). An opinion vouches for a
+ * conditional jurisdiction only between its effective date and its review
+ * date; past review it is history, not authority — statutes change, and a
+ * stale opinion silently authorizing an origination is the failure the
+ * review date exists to prevent.
+ */
+export interface OpinionLike {
+  effectiveAt: string;
+  reviewBy: string;
+}
+
+export function isOpinionCurrent(
+  opinion: OpinionLike,
+  today: string
+): boolean {
+  return opinion.effectiveAt <= today && today <= opinion.reviewBy;
+}
+
+export function hasCurrentOpinion(
+  opinions: readonly OpinionLike[],
+  today: string
+): boolean {
+  return opinions.some((o) => isOpinionCurrent(o, today));
+}
+
+/** The default review horizon: 24 months from effective. */
+export function defaultReviewBy(effectiveAt: string): string {
+  const [y, m, d] = effectiveAt.split("-").map(Number);
+  const target = new Date(Date.UTC(y + 2, m - 1, 1));
+  const daysInTarget = new Date(
+    Date.UTC(target.getUTCFullYear(), target.getUTCMonth() + 1, 0)
+  ).getUTCDate();
+  target.setUTCDate(Math.min(d, daysInTarget));
+  return target.toISOString().slice(0, 10);
+}
