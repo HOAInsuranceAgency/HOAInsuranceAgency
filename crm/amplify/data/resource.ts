@@ -1079,7 +1079,18 @@ const schema = a
         note: a.string(),
       })
       .secondaryIndexes((index) => [index("uploadToken")])
-      .authorization((allow) => [allow.authenticated().to(["read"])]),
+      /**
+       * ADMIN only, and nothing in the app reads this model at all.
+       *
+       * `uploadToken` is a bearer credential: possession of it is the entire
+       * authorization for `requestLeadUpload`. Readable by every authenticated
+       * user it was pure surface with no benefit — staff can already write
+       * Documents to any account directly, so the token granted them nothing,
+       * but it would become a real escalation the moment PRODUCER is scoped to
+       * its own accounts. The Lambdas reach this over IAM, which model rules do
+       * not apply to.
+       */
+      .authorization((allow) => [allow.groups(["ADMIN"]).to(["read"])]),
 
     /**
      * A lead's document upload link, and what it has collected.
@@ -1141,7 +1152,9 @@ const schema = a
         updatedBy: a.string(),
       })
       .secondaryIndexes((index) => [index("token")])
-      .authorization((allow) => [allow.authenticated().to(["read", "update"])]),
+      // Same reasoning as LeadReply, and this one was authenticated-*writable*:
+      // any signed-in user could revoke or extend another account's portal.
+      .authorization((allow) => [allow.groups(["ADMIN"]).to(["read", "update"])]),
 
     /**
      * One row per licence-expiry email the agency has already been sent.
@@ -1228,7 +1241,16 @@ const schema = a
         uploadToken: a.string().required(),
         filename: a.string().required(),
         contentType: a.string(),
-        sizeBytes: a.integer(),
+        /**
+         * Required, because it is signed into the presigned PUT.
+         *
+         * It used to be advisory: the handler checked it against the size limit
+         * and then signed a URL that constrained nothing, so a caller could
+         * declare a kilobyte and send five gigabytes. `Content-Length` is now
+         * part of the signature, which makes a lie fail at S3 — but only if
+         * there is a value to sign.
+         */
+        sizeBytes: a.integer().required(),
       })
       .returns(a.json())
       .authorization((allow) => [allow.publicApiKey()])
@@ -1288,7 +1310,8 @@ const schema = a
         documentKey: a.string().required(),
         filename: a.string().required(),
         contentType: a.string(),
-        sizeBytes: a.integer(),
+        /** Required and signed into the PUT — see requestLeadUpload. */
+        sizeBytes: a.integer().required(),
       })
       .returns(a.json())
       .authorization((allow) => [allow.publicApiKey()])

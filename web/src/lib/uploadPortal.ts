@@ -17,7 +17,7 @@ const STATUS_QUERY = `query UploadPortalStatus($token: String!) {
 
 const UPLOAD_MUTATION = `mutation RequestPortalUpload(
   $token: String!, $documentKey: String!, $filename: String!,
-  $contentType: String, $sizeBytes: Int
+  $contentType: String, $sizeBytes: Int!
 ) {
   requestPortalUpload(
     token: $token, documentKey: $documentKey, filename: $filename,

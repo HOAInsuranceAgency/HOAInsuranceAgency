@@ -136,7 +136,7 @@ export async function submitCrmLead(
    ────────────────────────────────────────────────────────── */
 
 const REQUEST_UPLOAD = `mutation RequestLeadUpload(
-  $uploadToken: String!, $filename: String!, $contentType: String, $sizeBytes: Int
+  $uploadToken: String!, $filename: String!, $contentType: String, $sizeBytes: Int!
 ) {
   requestLeadUpload(
     uploadToken: $uploadToken, filename: $filename,

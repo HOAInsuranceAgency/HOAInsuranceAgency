@@ -8,6 +8,7 @@ import { safeSegment } from "../../../src/lib/storageKeys";
 import { listAllPages } from "../../../src/lib/pagination";
 import { REJECTION_MESSAGE, rejectUpload } from "../../../../shared/leadUpload";
 import { PORTAL_MAX_FILES } from "../../../../shared/leadDocuments";
+import { reserveUploadSlot } from "../uploadQuota";
 import {
   PORTAL_REFUSAL_MESSAGE,
   buildChecklist,
@@ -139,20 +140,37 @@ async function handleRequestUpload(
   }
 
   const filename = String(args.filename ?? "");
-  const sizeBytes = typeof args.sizeBytes === "number" ? args.sizeBytes : undefined;
+  /** Signed into the PUT below, so it has to be a real number. */
+  const sizeBytes = typeof args.sizeBytes === "number" ? args.sizeBytes : NaN;
+  if (!Number.isInteger(sizeBytes) || sizeBytes <= 0) {
+    return { ok: false, error: "We couldn't tell how large that file is." };
+  }
   const contentType =
     typeof args.contentType === "string" ? args.contentType : undefined;
   /**
    * Re-checked here, not just in the page: this mutation is public, so the
    * browser's validation is a courtesy and this is the actual limit.
    *
-   * `alreadyUploaded: 0` because the count ceiling for a portal is
-   * PORTAL_MAX_FILES, checked in `refusalFor` above, not `leadUpload`'s
-   * MAX_FILES of 10. What is wanted from `rejectUpload` here is its type, size
-   * and filename rules.
+   * `alreadyUploaded: 0` because the count ceiling is taken atomically below
+   * rather than compared against a value read a moment ago. What is wanted from
+   * `rejectUpload` here is its type, size and filename rules.
    */
   const rejection = rejectUpload({ filename, sizeBytes, alreadyUploaded: 0 });
   if (rejection) return { ok: false, error: REJECTION_MESSAGE[rejection] };
+
+  /**
+   * One slot, atomically. `refusalFor` above also checks the ceiling, from a
+   * row read a moment ago — that check is what renders a helpful message on the
+   * page, and this is what actually holds under two requests at once.
+   */
+  const slot = await reserveUploadSlot({
+    tableName: process.env.UPLOAD_PORTAL_TABLE as string,
+    id: portal.id,
+    max: PORTAL_MAX_FILES,
+  });
+  if (slot === null) {
+    return { ok: false, error: PORTAL_REFUSAL_MESSAGE.full };
+  }
 
   const { data: doc, errors } = await client.models.Document.create({
     entityType: "ACCOUNT",
@@ -188,6 +206,9 @@ async function handleRequestUpload(
       Bucket: process.env.DOCUMENTS_BUCKET,
       Key: key,
       ContentType: contentType,
+      // Signed, so a body of any other length is rejected by S3 — see the note
+      // in lead-upload for what this closes.
+      ContentLength: sizeBytes,
     }),
     { expiresIn: PRESIGN_TTL_SECONDS }
   );
@@ -203,14 +224,20 @@ async function handleRequestUpload(
    * `lastUploadAt` is what the notification sweep compares against
    * `notifiedUpTo`, so this write is also what eventually tells the team.
    */
-  const uploadCount = (portal.uploadCount ?? 0) + 1;
+  // `uploadCount` is absent here on purpose: it was incremented atomically
+  // above, and writing back a value read before that would undo the point.
   await client.models.UploadPortal.update({
     id: portal.id,
-    uploadCount,
     lastUploadAt: new Date().toISOString(),
   });
 
-  return { ok: true, documentId: doc.id, uploadUrl: url, uploadCount, category };
+  return {
+    ok: true,
+    documentId: doc.id,
+    uploadUrl: url,
+    uploadCount: slot,
+    category,
+  };
 }
 
 export const handler = async (event: {

@@ -173,9 +173,15 @@ export const handler = async () => {
        * Claim it before generating.
        *
        * Sending takes a model call plus an SES round trip, which is long enough
-       * for the next tick to start. Flipping to SENDING first is what stops two
-       * sweeps emailing the same person twice — `decide` refuses anything that
-       * is not WAITING.
+       * for the next tick to start, so this marks the row before doing either
+       * and `decide` refuses anything that is not WAITING.
+       *
+       * This alone does NOT make a double send impossible, and an earlier
+       * version of this comment claimed it did. The update carries no condition
+       * on the current status, so two overlapping passes can both read WAITING
+       * and both claim. What actually prevents it is a reserved concurrency of
+       * one on this function (backend.ts) — the overlap is removed rather than
+       * the race being won.
        */
       const claimed = await client.models.LeadReply.update({
         id: reply.id,
