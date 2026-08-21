@@ -64,6 +64,28 @@ export const handler = async (event: {
   try {
     parsed = getStripe().webhooks.constructEvent(raw, signature, secret);
   } catch (err) {
+    /**
+     * Shape only, never contents.
+     *
+     * A signature mismatch has two causes that look identical from the error:
+     * the wrong secret, or a body that was altered between Stripe and here.
+     * Lengths and prefixes separate them and reveal nothing — an out-by-one on
+     * the body says mangling, a secret that is not `whsec_` says wrong value.
+     */
+    console.warn(
+      "stripe-webhook signature diagnostics",
+      JSON.stringify({
+        isBase64Encoded: event.isBase64Encoded === true,
+        rawBodyLength: raw.length,
+        bodyLength: (event.body ?? "").length,
+        rawStartsWith: raw.slice(0, 1),
+        rawEndsWith: raw.slice(-1),
+        secretLength: secret.length,
+        secretPrefix: secret.slice(0, 6),
+        secretHasWhitespace: secret !== secret.trim(),
+        signatureHeaderParts: signature.split(",").map((p) => p.split("=")[0]),
+      })
+    );
     // Nothing below this line runs on an unverified payload.
     console.warn("stripe-webhook rejected an unverified payload", err);
     return refused("bad signature");
