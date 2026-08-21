@@ -1,3 +1,5 @@
+import { parseStoredJson } from "../../../src/lib/aiExtraction";
+
 /**
  * Turning a stored extraction result into prompt context. Pure, so the one
  * thing that decides whether the reply knows what a lead's documents say is
@@ -17,29 +19,15 @@ const RUN_METADATA = new Set(["extractedAt", "documentCount", "usage"]);
 /**
  * Read `Account.aiExtraction` into `{ field: value }` for the reply prompt.
  *
- * ## Why this parses
- *
- * `aiExtraction` is `a.json()`, which is AWSJSON on the wire, and AWSJSON is a
- * JSON *string* — the Amplify data client does not parse it for you. On top of
- * that, `extract-lead` stores the result with `JSON.stringify`, so the value
- * arriving here can be a string wrapping a string. `ExtractionPanel` in the app
- * has always handled both depths; this did not, and a `typeof raw !== "object"`
- * guard turned every successful extraction into "no documents could be read".
+ * The double-parse this needs lives in `lib/aiExtraction.ts` — see the note
+ * there for why, and for what it cost when this function did not do it.
  *
  * Values only: a model shown a confidence score starts hedging in prose, and
  * evidence strings are long enough to crowd out the instructions.
  */
 export function flattenExtraction(raw: unknown): Record<string, string> | null {
-  let v: unknown = raw;
-  try {
-    // Twice, for the same reason `parseExtraction` does: AWSJSON encoding on
-    // top of the handler's own `JSON.stringify`.
-    if (typeof v === "string") v = JSON.parse(v);
-    if (typeof v === "string") v = JSON.parse(v);
-  } catch {
-    return null;
-  }
-  if (!v || typeof v !== "object") return null;
+  const v = parseStoredJson(raw);
+  if (!v) return null;
 
   const out: Record<string, string> = {};
   for (const [key, cell] of Object.entries(v as Record<string, unknown>)) {

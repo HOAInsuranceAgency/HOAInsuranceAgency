@@ -9,7 +9,7 @@ import {
   Table,
   TableEncryption,
 } from "aws-cdk-lib/aws-dynamodb";
-import { StartingPosition } from "aws-cdk-lib/aws-lambda";
+import { CfnFunction, StartingPosition } from "aws-cdk-lib/aws-lambda";
 import { DynamoEventSource } from "aws-cdk-lib/aws-lambda-event-sources";
 import { auth } from "./auth/resource";
 import { data } from "./data/resource";
@@ -26,6 +26,7 @@ import { taskDigest } from "./functions/task-digest/resource";
 import { leadUpload } from "./functions/lead-upload/resource";
 import { leadReply } from "./functions/lead-reply/resource";
 import { uploadPortal } from "./functions/upload-portal/resource";
+import { portalSweep } from "./functions/portal-sweep/resource";
 import { resolveMailbox } from "./functions/mailbox";
 import { activityLog } from "./functions/activity-log/resource";
 import {
@@ -53,6 +54,7 @@ export const backend = defineBackend({
   leadUpload,
   leadReply,
   uploadPortal,
+  portalSweep,
   activityLog,
   magicLinkDefine,
   magicLinkCreate,
@@ -345,6 +347,39 @@ backend.storage.resources.bucket.grantPut(
   "documents/*"
 );
 
+/**
+ * The two public upload handlers take their file-count slot with a conditional
+ * DynamoDB UpdateItem rather than through the data client, which cannot express
+ * one — see functions/uploadQuota.ts. That needs the table by name and direct
+ * write access to it, which the API-wide `allow.resource()` grant does not give.
+ */
+const leadReplyTable = backend.data.resources.tables.LeadReply;
+const uploadPortalTable = backend.data.resources.tables.UploadPortal;
+backend.leadUpload.addEnvironment("LEAD_REPLY_TABLE", leadReplyTable.tableName);
+leadReplyTable.grantReadWriteData(backend.leadUpload.resources.lambda);
+backend.uploadPortal.addEnvironment(
+  "UPLOAD_PORTAL_TABLE",
+  uploadPortalTable.tableName
+);
+uploadPortalTable.grantReadWriteData(backend.uploadPortal.resources.lambda);
+
+/**
+ * One sweep at a time, each.
+ *
+ * Both run on a cron with a timeout far longer than their interval, so a slow
+ * pass overlaps the next tick. `lead-reply` claims a row by flipping it to
+ * SENDING before generating, but that write carries no condition on the current
+ * status — two overlapping passes both read WAITING, both claim, and the lead
+ * gets the same email twice. Amplify's data client cannot express a conditional
+ * update, so the overlap is removed instead of the race being lost.
+ *
+ * A throttled tick is harmless: the schedule fires again a minute later, and
+ * anything still due is still due.
+ */
+for (const fn of [backend.leadReply, backend.portalSweep]) {
+  (fn.resources.lambda.node.defaultChild as CfnFunction).reservedConcurrentExecutions = 1;
+}
+
 // The document portal presigns the same way, and into the same prefix, for the
 // same reason. Its own grant rather than a shared role: the two functions have
 // different lifetimes and one should not inherit the other's reach.
@@ -362,6 +397,44 @@ backend.storage.resources.bucket.grantPut(
 backend.leadReply.addEnvironment("AGENCY_MAILBOX", leadReplyMailbox);
 // Where a lead's document-upload link points: the marketing site, not the CRM.
 backend.leadReply.addEnvironment("SITE_BASE_URL", siteBaseUrl);
+
+/**
+ * The document-upload notification sweep.
+ *
+ * Same three grants as `lead-reply`, because it does the same three things: it
+ * emails the agency mailbox, it links into the CRM, and it kicks off extraction
+ * for documents that arrived after the reply window closed — which is the only
+ * path that reads them, since `startLeadExtraction` is authenticated-only and no
+ * visitor can reach it.
+ */
+backend.portalSweep.addEnvironment("AGENCY_MAILBOX", leadReplyMailbox);
+/**
+ * The sweep HEADs each new document before calling it received: a Document row
+ * is created when an upload URL is *requested*, so an abandoned upload would
+ * otherwise be reported as an arrival.
+ */
+backend.portalSweep.addEnvironment(
+  "DOCUMENTS_BUCKET",
+  backend.storage.resources.bucket.bucketName
+);
+backend.storage.resources.bucket.grantRead(
+  backend.portalSweep.resources.lambda,
+  "documents/*"
+);
+backend.portalSweep.addEnvironment("CRM_BASE_URL", magicLinkBaseUrl);
+backend.portalSweep.addEnvironment(
+  "EXTRACT_LEAD_FUNCTION",
+  backend.extractLead.resources.lambda.functionName
+);
+backend.extractLead.resources.lambda.grantInvoke(
+  backend.portalSweep.resources.lambda
+);
+backend.portalSweep.resources.lambda.addToRolePolicy(
+  new PolicyStatement({
+    actions: ["ses:SendEmail"],
+    resources: ["*"],
+  })
+);
 backend.leadReply.addEnvironment(
   "EXTRACT_LEAD_FUNCTION",
   backend.extractLead.resources.lambda.functionName

@@ -38,6 +38,21 @@ const OCR_TERMINAL = new Set(["COMPLETE", "FAILED", "SKIPPED"]);
 /** Extraction states that will never change again. */
 const EXTRACTION_TERMINAL = new Set(["COMPLETE", "FAILED"]);
 
+/**
+ * How long past the deadline extraction may run before the reply goes anyway.
+ *
+ * The module below promises that every waiting branch "is bounded by something
+ * that must eventually resolve". This branch was not: `extract-lead` marks an
+ * account PENDING and self-invokes, and if that invoke is lost or the worker is
+ * killed mid-run, the status never reaches a terminal value and the lead is
+ * never replied to at all. Not a late email — no email.
+ *
+ * Found by a review of the portal sweep, which had the same gap in the same
+ * shape. This one is worse: there it costs an internal notification, here it
+ * costs the lead.
+ */
+const EXTRACTION_PATIENCE_MINUTES = 60;
+
 export type Decision =
   /** Send now. `withDocuments` picks which prompt the email is built from. */
   | { action: "send"; withDocuments: boolean; note?: string }
@@ -115,6 +130,14 @@ export function decide(opts: {
     return { action: "extract", reason: "OCR complete, extraction not started" };
   }
   if (!EXTRACTION_TERMINAL.has(extraction)) {
+    const overdueBy = (Date.parse(now) - Date.parse(reply.dueAt)) / 60_000;
+    if (!Number.isNaN(overdueBy) && overdueBy >= EXTRACTION_PATIENCE_MINUTES) {
+      return {
+        action: "send",
+        withDocuments: false,
+        note: `Extraction was still ${extraction} an hour past the deadline; sent without document context.`,
+      };
+    }
     return { action: "wait", reason: `extraction is ${extraction}` };
   }
 
