@@ -765,3 +765,41 @@ th.internal { color: var(--muted); }
 /* Full-width row, but the control itself stays the size of its content — a
    select stretched across a card reads as a text box. */
 .policy-field select { max-width: 420px; }
+
+/* A small square + that sits on a table row without competing with the text
+   in it. Sized to the row rather than to a form control. */
+.icon-btn {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  line-height: 1;
+  font-size: 16px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--card);
+  color: var(--muted);
+  cursor: pointer;
+}
+.icon-btn:hover { border-color: var(--accent); color: var(--accent-dark); }
+.row-tools { display: flex; align-items: center; gap: 6px; }
+
+/* Recipients. A checkbox each, so who is selected is readable without opening
+   anything — see the note in InvoiceEditor for why not a multiple <select>. */
+.check-list { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 2px; }
+.check-list label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--text);
+}
+.check-list label:hover { background: var(--blue-bg); }
+.check-list label > span { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.check-list input { margin: 0; }
+
+/* The invoice currently open, tied to the editor below the table. */
+.row-open td { background: var(--blue-bg); }

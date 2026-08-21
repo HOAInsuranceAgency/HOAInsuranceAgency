@@ -68,11 +68,23 @@ async function ensurePaymentLink(
   const existingLinkId = invoice.stripePaymentLinkId?.trim() || null;
 
   /**
-   * A URL with no link id of ours is one a producer pasted by hand. Their
-   * explicit choice outranks anything generated, and we know nothing about what
-   * it charges, so it is left exactly as it is.
+   * Stripe, or nothing.
+   *
+   * A pasted URL used to win outright, on the reasoning that an explicit human
+   * choice outranks a generated one. It does not, here: nothing knows what such
+   * a link charges, so an invoice could show one total and collect another with
+   * no way to notice, and the webhook that moves this row to PAID only ever
+   * hears about payments Stripe took. A link outside that loop is a bill nobody
+   * can tell has been paid.
+   *
+   * A URL without a link id is therefore treated as absent and replaced. Those
+   * are rows from when the field was editable; the override is gone from the UI.
    */
-  if (existingUrl && !existingLinkId) return existingUrl;
+  if (existingUrl && !existingLinkId) {
+    console.warn(
+      `[send-invoice] replacing a hand-set payment link on ${invoice.number ?? invoice.id}`
+    );
+  }
 
   const wantedCents = (() => {
     try {
@@ -183,11 +195,25 @@ export const handler = async (event: {
       })
     );
     const primary = contacts.find((c) => c.isPrimary) ?? contacts[0];
-    const to = (event.arguments?.toEmail || primary?.email || "").trim();
-    if (!EMAIL_RE.test(to)) {
+    /**
+     * One or several. The app sends a comma-separated list because an invoice
+     * routinely goes to a manager and a treasurer at once, and splitting here
+     * rather than changing the mutation's shape keeps every existing caller —
+     * including a resend with no argument at all — working unchanged.
+     *
+     * Every address is validated, and one bad one fails the send rather than
+     * being dropped: a bill that quietly reached three of four people is the
+     * failure that gets noticed a month later.
+     */
+    const requested = (event.arguments?.toEmail || primary?.email || "")
+      .split(",")
+      .map((a) => a.trim())
+      .filter(Boolean);
+    const to = [...new Set(requested)];
+    if (!to.length || !to.every((a) => EMAIL_RE.test(a))) {
       return {
         ok: false,
-        error: "No valid email address for this account. Add one, or type one in.",
+        error: "No valid email address for this account. Add one on the account.",
       };
     }
 
@@ -250,7 +276,7 @@ export const handler = async (event: {
      * the CRM. Skipped when the invoice is going to that mailbox anyway, since
      * SES would otherwise deliver it twice.
      */
-    const selfAddressed = to.toLowerCase() === MAILBOX.toLowerCase();
+    const selfAddressed = to.some((a) => a.toLowerCase() === MAILBOX.toLowerCase());
     /**
      * `Raw`, not `Simple`, because Simple cannot carry an attachment. The Bcc
      * stays on `Destination` rather than in a header — a `Bcc:` header travels
@@ -258,7 +284,10 @@ export const handler = async (event: {
      */
     const raw = buildMimeMessage({
       from: FROM,
-      to,
+      // Everyone in the To header, so each recipient can see the others were
+      // sent it too — an invoice is not correspondence to keep private from
+      // the board members copied on it.
+      to: to.join(", "),
       replyTo: MAILBOX,
       subject,
       text,
@@ -269,7 +298,7 @@ export const handler = async (event: {
       new SendEmailCommand({
         FromEmailAddress: FROM,
         Destination: {
-          ToAddresses: [to],
+          ToAddresses: to,
           ...(selfAddressed ? {} : { BccAddresses: [MAILBOX] }),
         },
         Content: { Raw: { Data: Buffer.from(raw, "utf8") } },
@@ -285,15 +314,15 @@ export const handler = async (event: {
       id: invoiceId,
       ...(invoice.status === "DRAFT" ? { status: "SENT" as const } : {}),
       sentAt: new Date().toISOString(),
-      sentTo: to,
+      sentTo: to.join(", "),
       // Named, because this write does not go through the browser's actor
       // proxy. Without it the activity log would say "System" sent the bill,
       // when a person pressed the button.
       lastWriteBy: "send-invoice",
     });
 
-    console.log(`send-invoice sent ${invoice.number ?? invoiceId} to ${to}`);
-    return { ok: true, sentTo: to, subject };
+    console.log(`send-invoice sent ${invoice.number ?? invoiceId} to ${to.join(", ")}`);
+    return { ok: true, sentTo: to.join(", "), subject };
   } catch (err) {
     console.error("send-invoice failed", err);
     return { ok: false, error: "We couldn't send that invoice. Please try again." };

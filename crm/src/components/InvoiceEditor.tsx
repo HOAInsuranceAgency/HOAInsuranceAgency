@@ -1,9 +1,16 @@
 import { useCallback, useState } from "react";
-import { client, type Invoice, type InvoiceLine, type Policy } from "../lib/client";
+import {
+  client,
+  type Contact,
+  type Invoice,
+  type InvoiceLine,
+  type Policy,
+} from "../lib/client";
 import { listAllPages } from "../lib/pagination";
 import { useAsyncResource } from "../lib/useAsyncResource";
 import { SaveStatus, useSaveStatus } from "./SaveStatus";
 import ConfirmButton from "./ConfirmButton";
+import { Badge, INVOICE_STATUS_BADGE, statusBadge } from "../lib/badges";
 import {
   directBillWarning,
   formatMoney,
@@ -45,15 +52,6 @@ const LINE_KINDS = [
   ["OTHER", "Other"],
 ] as const;
 
-/** Status → the badge palette in styles.css. */
-const STATUS_TONE: Record<string, string> = {
-  DRAFT: "gray",
-  SENT: "blue",
-  PROCESSING: "amber",
-  PAID: "green",
-  VOID: "red",
-};
-
 /** `12480.5` → `"12480.5"` for an input, `null` → `""`. */
 const toInput = (n: number | null | undefined): string =>
   typeof n === "number" && Number.isFinite(n) ? String(n) : "";
@@ -77,13 +75,19 @@ function policyLabel(p: Policy): string {
 export function InvoiceEditor({
   invoice,
   policies,
+  contacts,
   onChange,
+  onLinesChange,
   onDeleted,
 }: {
   invoice: Invoice;
   /** The account's policies, so the invoice can say which one it bills. */
   policies: Policy[];
+  /** The account's contacts — who the invoice can be addressed to. */
+  contacts: Contact[];
   onChange: (next: Invoice) => void;
+  /** Lifted so the summary table's totals move with the lines edited here. */
+  onLinesChange: (invoiceId: string, lines: InvoiceLine[]) => void;
   onDeleted: () => void;
 }) {
   const linesRes = useAsyncResource(
@@ -103,7 +107,21 @@ export function InvoiceEditor({
 
   const saveStatus = useSaveStatus({ autoClearMs: 4000 });
   const sendStatus = useSaveStatus();
-  const [toEmail, setToEmail] = useState("");
+  /**
+   * Who it goes to, defaulting to the primary contact.
+   *
+   * Chosen from the account's contacts rather than typed. A free-text box
+   * invites a typo into the one field where a mistake means the bill silently
+   * never arrives — and every address worth using is already a Contact row.
+   */
+  const withEmail = contacts.filter((c) => (c.email ?? "").trim());
+  const [toIds, setToIds] = useState<string[]>(() => {
+    const primary = withEmail.find((c) => c.isPrimary) ?? withEmail[0];
+    return primary ? [primary.id] : [];
+  });
+  const toEmails = toIds
+    .map((id) => withEmail.find((c) => c.id === id)?.email?.trim())
+    .filter((e): e is string => !!e);
 
   const totals = invoiceTotals(lines);
   const warnings = marginWarnings(lines);
@@ -115,6 +133,22 @@ export function InvoiceEditor({
    * exist, and the control that decides it is the picker.
    */
   const billWarning = directBillWarning(policy?.billType, lines);
+
+  /**
+   * One writer for the lines, so the summary table upstairs never disagrees
+   * with the editor. Every mutation below goes through this rather than
+   * `linesRes.setData`, which would update this component and nothing else.
+   */
+  const setLines = useCallback(
+    (next: (ls: InvoiceLine[]) => InvoiceLine[]) => {
+      linesRes.setData((ls) => {
+        const updated = next(ls);
+        onLinesChange(invoice.id, updated);
+        return updated;
+      });
+    },
+    [invoice.id, linesRes, onLinesChange]
+  );
 
   const patchInvoice = useCallback(
     async (patch: Partial<Invoice>, savedMessage = "Saved.") => {
@@ -133,18 +167,46 @@ export function InvoiceEditor({
     [invoice.id, onChange, saveStatus]
   );
 
-  async function addLine(seed?: Partial<InvoiceLine>) {
+  /**
+   * Add a line, optionally directly below an existing one.
+   *
+   * `after` is the row the + was pressed on. Everything below it is pushed down
+   * a place first, so the new row lands where the button is rather than at the
+   * bottom of the table — which is the whole point of putting the control on
+   * the row. The renumbering is fire-and-forget on the server and applied
+   * locally either way: a `sortOrder` collision sorts by an arbitrary but
+   * stable order, which is untidy, not wrong.
+   */
+  async function addLine(seed?: Partial<InvoiceLine>, after?: InvoiceLine) {
+    const at = after ? (after.sortOrder ?? 0) + 1 : lines.length;
+    if (after) {
+      const below = lines.filter((l) => (l.sortOrder ?? 0) >= at);
+      await Promise.all(
+        below.map((l) =>
+          client.models.InvoiceLine.update({
+            id: l.id,
+            sortOrder: (l.sortOrder ?? 0) + 1,
+          })
+        )
+      );
+      setLines((ls) =>
+        ls.map((l) =>
+          (l.sortOrder ?? 0) >= at ? { ...l, sortOrder: (l.sortOrder ?? 0) + 1 } : l
+        )
+      );
+    }
     await saveStatus.run(
       async () => {
         const { data, errors } = await client.models.InvoiceLine.create({
           invoiceId: invoice.id,
+          accountId: invoice.accountId,
           kind: "PREMIUM",
           description: "",
-          sortOrder: lines.length,
+          sortOrder: at,
           ...seed,
         });
         if (errors?.length || !data) throw new Error(errors?.[0]?.message);
-        linesRes.setData((ls) => [...ls, data]);
+        setLines((ls) => [...ls, data]);
       },
       { savedMessage: "Line added.", errorMessage: "Couldn't add that line." }
     );
@@ -155,7 +217,7 @@ export function InvoiceEditor({
       async () => {
         const { data, errors } = await client.models.InvoiceLine.update({ id, ...patch });
         if (errors?.length || !data) throw new Error(errors?.[0]?.message);
-        linesRes.setData((ls) => ls.map((l) => (l.id === id ? data : l)));
+        setLines((ls) => ls.map((l) => (l.id === id ? data : l)));
       },
       { errorMessage: "Couldn't save that line." }
     );
@@ -166,7 +228,7 @@ export function InvoiceEditor({
       async () => {
         const { errors } = await client.models.InvoiceLine.delete({ id });
         if (errors?.length) throw new Error(errors[0].message);
-        linesRes.setData((ls) => ls.filter((l) => l.id !== id));
+        setLines((ls) => ls.filter((l) => l.id !== id));
       },
       { savedMessage: "Line removed.", errorMessage: "Couldn't remove that line." }
     );
@@ -189,7 +251,10 @@ export function InvoiceEditor({
       async () => {
         const { data, errors } = await client.mutations.sendInvoice({
           invoiceId: invoice.id,
-          ...(toEmail.trim() ? { toEmail: toEmail.trim() } : {}),
+          // Always explicit now that the recipients are chosen rather than
+          // typed. The Lambda still falls back to the primary contact when
+          // this is absent, which is what a resend from anywhere else does.
+          toEmail: toEmails.join(","),
         });
         if (errors?.length) throw new Error(errors[0].message);
         // `a.json()` arrives as an AWSJSON string — see lib/aiExtraction.ts for
@@ -215,9 +280,7 @@ export function InvoiceEditor({
       <div className="card-head">
         <h2 className="invoice-title">
           {invoice.number ?? "Invoice"}
-          <span className={`badge ${STATUS_TONE[invoice.status ?? "DRAFT"] ?? "gray"}`}>
-            {invoice.status}
-          </span>
+          <Badge {...statusBadge(INVOICE_STATUS_BADGE, invoice.status)} />
         </h2>
         <div className="inline-actions">
           <SaveStatus {...saveStatus.status} />
@@ -273,7 +336,16 @@ export function InvoiceEditor({
           </thead>
           <tbody>
             {lines.map((l) => {
-              const margin = (l.retailAmount ?? 0) - (l.costAmount ?? 0);
+              const retail = l.retailAmount ?? 0;
+              const cost = l.costAmount ?? 0;
+              /**
+               * A cost with nothing billed against it has no margin yet — it
+               * is unpriced, not loss-making. Rendering the arithmetic would
+               * put a large red negative on every freshly seeded invoice,
+               * which is alarming about a row whose amount box is simply still
+               * empty. Same reasoning as `marginPct` being null on zero retail.
+               */
+              const margin = retail === 0 && cost > 0 ? null : retail - cost;
               return (
                 <tr key={l.id}>
                   <td>
@@ -333,15 +405,31 @@ export function InvoiceEditor({
                       }
                     />
                   </td>
-                  <td className="num internal muted">{formatMoney(margin)}</td>
+                  <td className="num internal muted">
+                    {margin === null ? "—" : formatMoney(margin)}
+                  </td>
                   <td className="row-action">
                     {!locked && (
-                      <ConfirmButton
-                        label="Remove"
-                        busyLabel="Removing…"
-                        className="danger"
-                        onConfirm={() => removeLine(l.id)}
-                      />
+                      <div className="row-tools">
+                        {/* On the row rather than under the table, so a line
+                            lands where it is wanted instead of at the bottom
+                            and needing to be dragged up. */}
+                        <button
+                          type="button"
+                          className="icon-btn"
+                          title="Add a line below this one"
+                          aria-label="Add a line below this one"
+                          onClick={() => void addLine(undefined, l)}
+                        >
+                          +
+                        </button>
+                        <ConfirmButton
+                          label="Remove"
+                          busyLabel="Removing…"
+                          className="danger"
+                          onConfirm={() => removeLine(l.id)}
+                        />
+                      </div>
                     )}
                   </td>
                 </tr>
@@ -350,8 +438,8 @@ export function InvoiceEditor({
             {lines.length === 0 && (
               <tr>
                 <td colSpan={6} className="muted small">
-                  No lines yet — add one, or pull the premium straight from the
-                  policy.
+                  No lines yet. A new invoice normally opens with one per
+                  unbilled policy; add one by hand with the button below.
                 </td>
               </tr>
             )}
@@ -362,9 +450,15 @@ export function InvoiceEditor({
               <th className="num total">{formatMoney(totals.retail)}</th>
               <th className="num internal band-start">{formatMoney(totals.cost)}</th>
               <th className="num internal">
-                {formatMoney(totals.margin)}
-                {totals.marginPct !== null && (
-                  <span className="muted"> ({totals.marginPct}%)</span>
+                {totals.retail === 0 && totals.cost > 0 ? (
+                  <span className="muted">—</span>
+                ) : (
+                  <>
+                    {formatMoney(totals.margin)}
+                    {totals.marginPct !== null && (
+                      <span className="muted"> ({totals.marginPct}%)</span>
+                    )}
+                  </>
                 )}
               </th>
               <th />
@@ -375,8 +469,10 @@ export function InvoiceEditor({
 
       {!locked && (
         <div className="inline-actions">
+          {/* Every other row is added with its own +. This is the way in when
+              there is no row to press one on, and the way to append. */}
           <button type="button" className="secondary" onClick={() => void addLine()}>
-            Add line
+            {lines.length === 0 ? "Add line" : "Add line at the end"}
           </button>
           {policy && (
             <button
@@ -471,55 +567,58 @@ export function InvoiceEditor({
       {!locked && (
         <div className="card inset">
           <h3>Send</h3>
-          <div className="form-grid">
-            <div className="field">
-              <label htmlFor={inputId("to")}>To</label>
-              <input
-                id={inputId("to")}
-                type="email"
-                placeholder="The account's primary contact"
-                value={toEmail}
-                onChange={(e) => setToEmail(e.target.value)}
-              />
-            </div>
+          <div className="field">
+            <label htmlFor={inputId("to")}>Send to</label>
+            {withEmail.length === 0 ? (
+              <p className="warn-inline">
+                No contact on this account has an email address. Add one on the
+                Overview tab before sending.
+              </p>
+            ) : (
+              <>
+                {/* A checkbox each rather than a multiple <select>: an invoice
+                    usually goes to two or three people — a manager and a
+                    treasurer — and a ctrl-click list hides who is selected
+                    behind a scrollbar, on the one field where being wrong
+                    means the bill silently never arrives. */}
+                <ul className="check-list" id={inputId("to")}>
+                  {withEmail.map((c) => (
+                    <li key={c.id}>
+                      <label>
+                        <input
+                          type="checkbox"
+                          checked={toIds.includes(c.id)}
+                          onChange={(e) =>
+                            setToIds((ids) =>
+                              e.target.checked
+                                ? [...ids, c.id]
+                                : ids.filter((id) => id !== c.id)
+                            )
+                          }
+                        />
+                        <span>
+                          {c.name}
+                          {c.isPrimary && <span className="badge gray">Primary</span>}
+                          <span className="muted small">{c.email}</span>
+                        </span>
+                      </label>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
           </div>
           <p className="muted small">
             The agency is copied on every invoice, so a sent copy is findable
-            without opening the CRM. A branded PDF is attached automatically.
+            without opening the CRM. A branded PDF is attached automatically,
+            and a Stripe bank-transfer link is generated when it sends.
           </p>
-
-          {/* Folded away because the default needs no attention: sending mints
-              a Stripe link on its own. Open only when overriding it. */}
-          <details className="tucked" open={Boolean(invoice.paymentUrl)}>
-            <summary>
-              Payment link
-              <span className="muted small">
-                {invoice.paymentUrl ? " — using your own link" : " — generated on send"}
-              </span>
-            </summary>
-            <div className="field">
-              <input
-                id={inputId("pay")}
-                type="url"
-                aria-label="Payment link"
-                placeholder="Paste a link to override the generated one"
-                defaultValue={invoice.paymentUrl ?? ""}
-                onBlur={(e) =>
-                  void patchInvoice({ paymentUrl: e.target.value.trim() || null })
-                }
-              />
-              <p className="muted small">
-                Left blank, sending generates a Stripe bank-transfer link, which
-                costs $5 whatever the premium.
-              </p>
-            </div>
-          </details>
 
           <div className="inline-actions">
             <button
               type="button"
               className="primary"
-              disabled={sendStatus.busy || lines.length === 0}
+              disabled={sendStatus.busy || lines.length === 0 || toEmails.length === 0}
               onClick={() => void send()}
             >
               {invoice.sentAt ? "Send again" : "Send invoice"}
@@ -528,6 +627,9 @@ export function InvoiceEditor({
           </div>
           {lines.length === 0 && (
             <p className="muted small">Add a line before sending.</p>
+          )}
+          {withEmail.length > 0 && toEmails.length === 0 && (
+            <p className="muted small">Choose at least one recipient.</p>
           )}
           {invoice.sentAt && (
             <p className="muted small">

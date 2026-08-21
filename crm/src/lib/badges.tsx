@@ -1,6 +1,7 @@
 import type { CSSProperties } from "react";
 import type { QuoteStatus } from "./quoteStatus";
 import type {
+  InvoiceStatus,
   AccountStage,
   MarketingTaskResolution,
   OcrStatus,
@@ -98,6 +99,19 @@ export const POLICY_STATUS_BADGE = {
   CANCELLED: { cls: "gray", label: "CANCELLED" },
   NON_RENEWED: { cls: "gray", label: "NON_RENEWED" },
 } satisfies Record<PolicyStatus, BadgeSpec>;
+
+/**
+ * `InvoiceStatus`. PROCESSING is amber rather than green because a bank
+ * transfer that is clearing has not arrived — treating it as paid is how an
+ * association gets thanked for money that later bounces.
+ */
+export const INVOICE_STATUS_BADGE = {
+  DRAFT: { cls: "gray", label: "DRAFT" },
+  SENT: { cls: "blue", label: "SENT" },
+  PROCESSING: { cls: "amber", label: "PROCESSING" },
+  PAID: { cls: "green", label: "PAID" },
+  VOID: { cls: "red", label: "VOID" },
+} satisfies Record<InvoiceStatus, BadgeSpec>;
 
 /** `OcrStatus`. Labels say "OCR" because the column header does not. */
 export const OCR_STATUS_BADGE = {

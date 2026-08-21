@@ -214,10 +214,15 @@ describe("an edited invoice cannot charge its old total", () => {
     expect(SEND).not.toMatch(/if \(invoice\.paymentUrl\?\.trim\(\)\) return/);
   });
 
-  it("still respects a URL a producer pasted by hand", () => {
-    // No link id of ours means we know nothing about what it charges, and an
-    // explicit human choice outranks anything generated.
-    expect(SEND).toContain("if (existingUrl && !existingLinkId) return existingUrl");
+  it("replaces a URL that is not one of ours", () => {
+    // It used to be honoured outright, on the reasoning that an explicit human
+    // choice outranks a generated one. It does not: nothing knows what such a
+    // link charges, and the webhook that moves this row to PAID only hears
+    // about payments Stripe took — so a link outside that loop is a bill
+    // nobody can tell has been paid. The override is gone from the UI, and
+    // this is what stops it being honoured for rows that still carry one.
+    expect(SEND).not.toContain("if (existingUrl && !existingLinkId) return existingUrl");
+    expect(SEND).toMatch(/replacing a hand-set payment link/);
   });
 
   it("deactivates the superseded link before minting its replacement", () => {
@@ -226,5 +231,42 @@ describe("an edited invoice cannot charge its old total", () => {
 
   it("records what the link bills, so the next send can compare", () => {
     expect(SEND).toContain("stripeLinkAmountCents: wantedCents");
+  });
+});
+
+/**
+ * Who an invoice reaches.
+ *
+ * Source-read, like the rest of this file: the behaviour lives in
+ * `send-invoice`'s control flow, which needs SES, Stripe and a data client to
+ * invoke. What is asserted is the part that silently loses mail if it regresses.
+ */
+describe("an invoice can go to several people", () => {
+  const SEND = read("../../amplify/functions/send-invoice/handler.ts");
+
+  it("splits the argument rather than treating it as one address", () => {
+    expect(SEND).toMatch(/\.split\(","\)/);
+  });
+
+  it("rejects the whole send if any address is malformed", () => {
+    // Dropping the bad one and sending to the rest is the failure that gets
+    // noticed a month later, by the person who never got the bill.
+    expect(SEND).toMatch(/!to\.every\(\(a\) => EMAIL_RE\.test\(a\)\)/);
+  });
+
+  it("puts every recipient on the envelope, not just the first", () => {
+    expect(SEND).toContain("ToAddresses: to,");
+    expect(SEND).not.toContain("ToAddresses: [to]");
+  });
+
+  it("still bccs the agency unless the mail is already going there", () => {
+    expect(SEND).toMatch(/to\.some\(\(a\) => a\.toLowerCase\(\) === MAILBOX\.toLowerCase\(\)\)/);
+    expect(SEND).toContain("BccAddresses: [MAILBOX]");
+  });
+
+  it("records all of them on the invoice", () => {
+    // `sentTo` is what the editor shows as "last sent to". One address out of
+    // three would be a quiet lie about who has the bill.
+    expect(SEND).toMatch(/sentTo: to\.join\(/);
   });
 });

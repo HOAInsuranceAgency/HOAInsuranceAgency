@@ -67,13 +67,15 @@ describe("invoiceTotals", () => {
    * from a 15% policy is reading the number they expect. Over cost it would say
    * 17.65% and mean nothing to anyone.
    */
-  it("reports the commission rate back, for an invoice built from a policy", () => {
-    for (const commissionPct of [10, 12.5, 15, 20]) {
-      const line = premiumLineFromPolicy({ premium: 10000, commissionPct });
-      expect(invoiceTotals([line]).marginPct, String(commissionPct)).toBe(
-        commissionPct
-      );
-    }
+  it("reports no margin on a line that is costed but not yet priced", () => {
+    // What a seeded line is: the premium in the cost box, the amount blank.
+    // Margin is negative and marginPct null, because there is no retail to be
+    // a share of — the invoice is unfinished, not loss-making.
+    const line = premiumLineFromPolicy({ premium: 10000 });
+    const t = invoiceTotals([line]);
+    expect(t.cost).toBe(10000);
+    expect(t.retail).toBe(0);
+    expect(t.marginPct).toBeNull();
   });
 
   it("handles a credit without inverting the arithmetic", () => {
@@ -167,44 +169,37 @@ describe("formatMoney", () => {
 });
 
 describe("premiumLineFromPolicy", () => {
-  it("splits gross premium by the commission baked into it", () => {
-    expect(premiumLineFromPolicy({ premium: 10000, commissionPct: 15 })).toEqual({
-      retailAmount: 10000,
-      costAmount: 8500,
+  it("puts the premium in the cost box and leaves the amount blank", () => {
+    expect(premiumLineFromPolicy({ premium: 10000 })).toEqual({
+      retailAmount: null,
+      costAmount: 10000,
     });
   });
 
-  it("rounds the carrier's share to the cent", () => {
-    const { costAmount } = premiumLineFromPolicy({
-      premium: 12480.37,
-      commissionPct: 12.5,
-    });
-    expect(costAmount).toBe(10920.32);
-  });
-
-  it("leaves cost empty rather than guessing, with no usable rate", () => {
-    // An empty box asks to be filled. A confident wrong number does not.
-    for (const commissionPct of [null, undefined, Number.NaN, -5, 100, 140]) {
-      const line = premiumLineFromPolicy({ premium: 10000, commissionPct });
-      expect(line.retailAmount, String(commissionPct)).toBe(10000);
-      expect(line.costAmount, String(commissionPct)).toBeNull();
+  it("does not derive anything from the commission rate", () => {
+    // It used to, and the derived figure was a guess presented as a fact: a
+    // carrier applies different rates per line, and the remittance is what the
+    // statement says. Passing a rate must change nothing.
+    for (const commissionPct of [0, 12.5, 15, null, undefined, Number.NaN, -5, 140]) {
+      expect(
+        premiumLineFromPolicy({ premium: 10000, commissionPct } as never),
+        String(commissionPct)
+      ).toEqual({ retailAmount: null, costAmount: 10000 });
     }
   });
 
+  it("rounds the premium to the cent", () => {
+    expect(premiumLineFromPolicy({ premium: 12480.005 }).costAmount).toBe(12480.01);
+  });
+
   it("returns nothing at all when the policy has no premium", () => {
-    expect(premiumLineFromPolicy({ commissionPct: 15 })).toEqual({
+    expect(premiumLineFromPolicy({})).toEqual({
       retailAmount: null,
       costAmount: null,
     });
-  });
-
-  it("treats a zero commission as real, not as missing", () => {
-    // Some carriers pay nothing on a line. Cost equals retail, and that is a
-    // fact worth recording rather than a blank to fill in.
-    expect(premiumLineFromPolicy({ premium: 10000, commissionPct: 0 })).toEqual({
-      retailAmount: 10000,
-      costAmount: 10000,
-    });
+    for (const premium of [null, undefined, Number.NaN, Infinity]) {
+      expect(premiumLineFromPolicy({ premium }).costAmount, String(premium)).toBeNull();
+    }
   });
 });
 

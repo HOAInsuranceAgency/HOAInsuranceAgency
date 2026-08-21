@@ -104,7 +104,16 @@ export function marginWarnings(lines: readonly LineLike[]): string[] {
       continue;
     }
     if (retail === 0 && cost === 0) continue;
-    if (cost > retail) {
+    /**
+     * A cost with nothing billed against it is not an underpriced line, it is
+     * an unpriced one — which is exactly how every seeded line starts, since
+     * `premiumLineFromPolicy` fills the cost and leaves the amount blank. Said
+     * plainly, this is the to-do list for finishing the invoice; folded into
+     * "costs more than it bills" it read as an alarm on a brand new draft.
+     */
+    if (retail === 0) {
+      out.push(`${where} has a cost but nothing to bill yet.`);
+    } else if (cost > retail) {
       out.push(`${where} costs more than it bills.`);
     } else if (retail > 0 && cost === 0) {
       out.push(`${where} has no cost recorded, so it reads as all margin.`);
@@ -171,29 +180,28 @@ export function formatMoney(n: number | null | undefined): string {
 }
 
 /**
- * Split a policy's gross premium into the retail and cost of one premium line.
+ * A premium line, seeded from the policy.
  *
- * `Policy.commissionPct` is the rate baked into the premium, so cost is the
- * gross net of it. This is a starting point a producer edits, not a fact: the
- * real remittance can differ from the arithmetic once a carrier applies
- * different rates per line, and the invoice records what is actually owed
- * rather than what the percentage implies.
+ * The premium goes in the **cost** box and the amount billed is left empty.
  *
- * A missing or nonsensical rate yields a null cost — better an empty box that
- * asks to be filled than a confident wrong number.
+ * That is the opposite of what this did, and the change is deliberate. It used
+ * to put the gross premium in the amount and derive the cost from
+ * `commissionPct`, which meant every seeded line arrived already claiming to
+ * know both halves — and a derived cost is a guess: a carrier applies different
+ * rates per line, and the remittance is whatever the statement says, not
+ * whatever the percentage implies. A producer who trusted the prefill sent
+ * invoices whose margin was arithmetic rather than fact.
+ *
+ * The premium is the one number the policy actually knows, and it is what the
+ * agency owes. So it is filled in, and what to bill for it is left blank —
+ * which is also the only field the producer has to think about.
  */
 export function premiumLineFromPolicy(policy: {
   premium?: number | null;
-  commissionPct?: number | null;
 }): { retailAmount: number | null; costAmount: number | null } {
   const premium = policy.premium;
   if (typeof premium !== "number" || !Number.isFinite(premium)) {
     return { retailAmount: null, costAmount: null };
   }
-  const pct = policy.commissionPct;
-  const usable = typeof pct === "number" && Number.isFinite(pct) && pct >= 0 && pct < 100;
-  return {
-    retailAmount: cents(premium),
-    costAmount: usable ? cents(premium * (1 - (pct as number) / 100)) : null,
-  };
+  return { retailAmount: null, costAmount: cents(premium) };
 }

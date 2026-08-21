@@ -779,6 +779,7 @@ const schema = a
       expirationDate: a.date(),
       notes: a.string(),
       invoices: a.hasMany("Invoice", "policyId"),
+      invoiceLines: a.hasMany("InvoiceLine", "policyId"),
     })
       .authorization((allow) => [
         allow.authenticated().to(["read", "create", "update"]),
@@ -885,6 +886,34 @@ const schema = a
     InvoiceLine: a.model({
       invoiceId: a.id().required(),
       invoice: a.belongsTo("Invoice", "invoiceId"),
+      /**
+       * The account, denormalised from the invoice.
+       *
+       * The Invoices tab reads every line the account has, once, to total each
+       * row and to work out which policies are already billed. Without this it
+       * would be one list call per invoice to render a summary table — six
+       * round trips to answer "what does this association owe us".
+       *
+       * Written by the only two things that create lines, and never edited: a
+       * line cannot move between accounts, because it cannot move between
+       * invoices.
+       */
+      accountId: a.id(),
+      /**
+       * Which policy this line bills, when it bills one.
+       *
+       * `Invoice.policyId` says what the invoice as a whole is about, which is
+       * enough when a bill covers one policy and not enough when it covers
+       * three — and covering several is the ordinary case at renewal, when an
+       * association's package, umbrella and D&O all fall due together.
+       *
+       * It is also what makes "which policies have not been billed yet"
+       * answerable. Without it the question can only be asked of the invoice,
+       * so a policy that appears as a line on a multi-policy invoice still
+       * reads as unbilled and gets seeded onto the next one.
+       */
+      policyId: a.id(),
+      policy: a.belongsTo("Policy", "policyId"),
       description: a.string(),
       kind: a.ref("InvoiceLineKind"),
       /** What the association pays for this line. */

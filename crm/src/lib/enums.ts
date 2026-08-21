@@ -39,6 +39,7 @@ import { ACCOUNT_TYPES, type AccountType } from "../../../shared/accountType";
 
 export type AccountStage = Schema["AccountStage"]["type"];
 export type PolicyStatus = Schema["PolicyStatus"]["type"];
+export type InvoiceStatus = Schema["InvoiceStatus"]["type"];
 export type BillType = Schema["BillType"]["type"];
 export type DocumentCategory = NonNullable<Schema["DocumentCategory"]["type"]>;
 export type OcrStatus = Schema["OcrStatus"]["type"];
