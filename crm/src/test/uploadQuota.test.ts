@@ -251,6 +251,33 @@ describe("an edited invoice cannot charge its old total", () => {
     expect(SEND).toContain("ConditionalCheckFailedException");
   });
 
+  /**
+   * Round five: the void/send interleaving from the send's side. Voiding
+   * leaves `stripePaymentLinkId` in place, so a link-only condition matched
+   * after a void and stored a fresh live link on the cancelled bill — and the
+   * final data-client update could flip a formerly-DRAFT invoice back to SENT,
+   * reviving the void outright.
+   */
+  it("also conditions the stored link on the status it read", () => {
+    const at = SEND.indexOf('const clauses: string[] = ["#s = :seenStatus"]');
+    expect(at).toBeGreaterThan(-1);
+  });
+
+  it("flips DRAFT to SENT only if the status has not moved", () => {
+    // The old form was one unconditional data-client update carrying the flip.
+    expect(SEND).not.toMatch(/models\.Invoice\.update\(\{\s*id: invoiceId,\s*\.\.\.\(invoice\.status === "DRAFT"/);
+    expect(SEND).toMatch(/flipToSent \? `\$\{factExpr\}, #s = :sent` : factExpr/);
+    expect(SEND).toContain('ConditionExpression: "#s = :seenStatus"');
+  });
+
+  it("records the send facts even when it lost the status race", () => {
+    // The email is already in the association's inbox by then. sentAt on a
+    // VOID invoice is true, and it is what whoever untangles the confusion
+    // will need — only the status belongs to whoever won.
+    expect(SEND).toContain("recorded the send without touching its status");
+    expect(SEND).toMatch(/ExpressionAttributeNames: factNames,/);
+  });
+
   it("kills its own orphan when it loses the race", () => {
     const lost = SEND.indexOf("if (!stored) {");
     expect(lost).toBeGreaterThan(-1);

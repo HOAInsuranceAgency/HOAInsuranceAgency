@@ -68,6 +68,7 @@ async function ensurePaymentLink(
   invoice: {
     id: string;
     number?: string | null;
+    status?: string | null;
     paymentUrl?: string | null;
     stripePaymentLinkId?: string | null;
     stripeLinkAmountCents?: number | null;
@@ -180,11 +181,11 @@ async function ensurePaymentLink(
    * stripe-webhook/persist.ts. The loser deactivates its own orphan and tells
    * its producer the other send won.
    */
-  const stored = await storeLink(invoice.id, existingLinkId, {
-    url: minted.url,
-    linkId: minted.id,
-    amountCents: wantedCents,
-  });
+  const stored = await storeLink(
+    invoice.id,
+    { linkId: existingLinkId, status: invoice.status ?? null },
+    { url: minted.url, linkId: minted.id, amountCents: wantedCents }
+  );
   if (!stored) {
     try {
       await stripe.paymentLinks.update(minted.id, { active: false });
@@ -195,8 +196,11 @@ async function ensurePaymentLink(
         err
       );
     }
+    // Another send, a void, or a payment — whichever it was, the row is not
+    // what this send read, and the honest move is to stop and let the person
+    // look at what it has become.
     throw new SendBlocked(
-      "Another send updated this invoice at the same moment. Check it and try again."
+      "The invoice changed while sending it. Check it and try again."
     );
   }
   return minted.url;
@@ -210,7 +214,7 @@ async function ensurePaymentLink(
  */
 async function storeLink(
   invoiceId: string,
-  seenLinkId: string | null,
+  seen: { linkId: string | null; status: string | null },
   next: { url: string; linkId: string; amountCents: number | null }
 ): Promise<boolean> {
   const tableName = process.env.INVOICE_TABLE;
@@ -220,20 +224,31 @@ async function storeLink(
     console.error("[send-invoice] INVOICE_TABLE unset; cannot store the link");
     return false;
   }
-  const names: Record<string, string> = { "#link": "stripePaymentLinkId" };
+  const names: Record<string, string> = {
+    "#link": "stripePaymentLinkId",
+    "#s": "status",
+  };
   const values: Record<string, unknown> = {
     ":url": next.url,
     ":link": next.linkId,
     ":cents": next.amountCents,
     ":writer": "send-invoice",
     ":now": new Date().toISOString(),
+    ":seenStatus": seen.status,
   };
-  const clauses: string[] = [];
-  if (seenLinkId === null) {
+  /**
+   * The link AND the status. The link-only condition had a hole a void could
+   * walk through: voiding deactivates the stored link and writes VOID, but
+   * leaves `stripePaymentLinkId` in place — so a send that had read the same
+   * link id still matched, and stored a fresh live link on the cancelled bill.
+   * The status clause makes that send lose instead: VOID is not what it read.
+   */
+  const clauses: string[] = ["#s = :seenStatus"];
+  if (seen.linkId === null) {
     clauses.push("attribute_not_exists(#link)");
   } else {
     clauses.push("#link = :seen");
-    values[":seen"] = seenLinkId;
+    values[":seen"] = seen.linkId;
   }
   try {
     await ddb.send(
@@ -254,6 +269,73 @@ async function storeLink(
     }
     throw err;
   }
+}
+
+/**
+ * Write the facts of a send — and the DRAFT→SENT flip only if nothing moved.
+ *
+ * Two passes. The first writes everything, conditional on the status still
+ * being what the send read. Losing that means a void, a payment, or another
+ * send got there first; the second pass then records the send facts alone,
+ * unconditionally, because they are true whatever the row has become — the
+ * email is already in the association's inbox — while the status belongs to
+ * whoever won.
+ */
+async function recordSend(
+  invoiceId: string,
+  seenStatus: string | null,
+  facts: Record<string, string | number | null>,
+  flipToSent: boolean
+): Promise<boolean> {
+  const tableName = process.env.INVOICE_TABLE;
+  if (!tableName) {
+    console.error("[send-invoice] INVOICE_TABLE unset; cannot record the send");
+    return false;
+  }
+  // Two name maps, because DynamoDB rejects an ExpressionAttributeNames entry
+  // the expression does not use, and the fallback write never mentions #s.
+  const factNames: Record<string, string> = {};
+  const factSets: string[] = [];
+  const values: Record<string, unknown> = { ":now2": new Date().toISOString() };
+  for (const [i, [k, v]] of Object.entries(facts).entries()) {
+    factNames[`#f${i}`] = k;
+    values[`:f${i}`] = v;
+    factSets.push(`#f${i} = :f${i}`);
+  }
+  const factExpr = `SET ${factSets.join(", ")}, updatedAt = :now2`;
+
+  try {
+    await ddb.send(
+      new UpdateCommand({
+        TableName: tableName,
+        Key: { id: invoiceId },
+        UpdateExpression: flipToSent ? `${factExpr}, #s = :sent` : factExpr,
+        ConditionExpression: "#s = :seenStatus",
+        ExpressionAttributeNames: { ...factNames, "#s": "status" },
+        ExpressionAttributeValues: {
+          ...values,
+          ":seenStatus": seenStatus,
+          ...(flipToSent ? { ":sent": "SENT" } : {}),
+        },
+      })
+    );
+    return true;
+  } catch (err) {
+    if ((err as { name?: string }).name !== "ConditionalCheckFailedException") {
+      throw err;
+    }
+  }
+  // The row moved. Record the facts, leave the status to whoever won.
+  await ddb.send(
+    new UpdateCommand({
+      TableName: tableName,
+      Key: { id: invoiceId },
+      UpdateExpression: factExpr,
+      ExpressionAttributeNames: factNames,
+      ExpressionAttributeValues: values,
+    })
+  );
+  return false;
 }
 
 export const handler = async (event: {
@@ -467,9 +549,17 @@ export const handler = async (event: {
      */
     const split = remittanceSplit(lines);
 
-    await client.models.Invoice.update({
-      id: invoiceId,
-      ...(invoice.status === "DRAFT" ? { status: "SENT" as const } : {}),
+    /**
+     * Conditional on the status the send read, because the unconditional form
+     * could revive a void: a DRAFT read at the top, a void landing mid-send,
+     * and this write flipping it to SENT at the bottom. The email is already
+     * gone by this line, so losing the condition must not fail the send —
+     * instead the facts of the send are recorded without the status flip.
+     * `sentAt` on a VOID invoice is true and useful: it says the association
+     * was emailed about a bill that was then withdrawn, which is exactly what
+     * whoever handles the confusion will need to know.
+     */
+    const sentFacts = {
       sentAt: new Date().toISOString(),
       sentTo: to.join(", "),
       remittanceCarrierCents: split.carrierCents,
@@ -479,7 +569,18 @@ export const handler = async (event: {
       // proxy. Without it the activity log would say "System" sent the bill,
       // when a person pressed the button.
       lastWriteBy: "send-invoice",
-    });
+    };
+    const recorded = await recordSend(
+      invoiceId,
+      invoice.status ?? null,
+      sentFacts,
+      invoice.status === "DRAFT"
+    );
+    if (!recorded) {
+      console.error(
+        `send-invoice: ${invoice.number ?? invoiceId} changed mid-send; recorded the send without touching its status`
+      );
+    }
 
     console.log(`send-invoice sent ${invoice.number ?? invoiceId} to ${to.join(", ")}`);
     return { ok: true, sentTo: to.join(", "), subject };
