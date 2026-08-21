@@ -178,21 +178,32 @@ export function decideUpdate(
    * Equal timestamps do not order themselves.
    *
    * Stripe's `created` is in whole seconds, so two genuinely distinct events can
-   * carry the same instant and the comparison above lets the second through.
-   * On a tie the tiebreak is direction: a state may advance but never regress.
-   * `processing` arriving beside a `failed` cannot undo it, and a `failed`
-   * arriving beside a `succeeded` cannot undo that.
+   * carry the same instant and the comparison above lets the second through. On
+   * a tie the tiebreak is direction: a state may advance but never regress.
    *
-   * Ranked rather than special-cased so the rule holds for combinations nobody
-   * has enumerated.
+   * ── Only across PaymentIntents ──────────────────────────────────────────────
+   * Scoped deliberately, and the first version was not. Within one intent the
+   * lifecycle *is* processing then succeeded-or-failed, so a `payment_failed`
+   * tied with its own `processing` is forward motion, not a regression. Ranking
+   * it blindly skipped it and left a dead debit reading as clearing — the exact
+   * misstatement this whole function exists to prevent, arrived at from the
+   * other direction.
+   *
+   * Between intents there is no shared lifecycle, so a tie is genuinely
+   * ambiguous and refusing to regress is the safe reading: a superseded
+   * attempt's failure must not undo the one that replaced it.
    */
-  if (invoice.stripeEventAt && decision.occurredAt === invoice.stripeEventAt) {
-    if (outcomeRank(decision.outcome) <= statusRank(invoice.status)) {
-      return {
-        action: "skip",
-        reason: "same instant as the last event, and not an advance",
-      };
-    }
+  const sameIntent = invoice.stripePaymentIntentId === decision.paymentIntentId;
+  if (
+    invoice.stripeEventAt &&
+    decision.occurredAt === invoice.stripeEventAt &&
+    !sameIntent &&
+    outcomeRank(decision.outcome) <= statusRank(invoice.status)
+  ) {
+    return {
+      action: "skip",
+      reason: "same instant as an event from another payment, and not an advance",
+    };
   }
 
   if (

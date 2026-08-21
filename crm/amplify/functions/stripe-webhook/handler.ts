@@ -89,9 +89,11 @@ export const handler = async (event: {
      * write is what makes the decision hold; this loop is what happens when it
      * does not.
      *
-     * Two passes, not a retry loop. A second conflict means yet another event
-     * landed while this one was deciding, and that newer event has already
-     * applied whatever ordering says — there is nothing left for this one to do.
+     * Two passes here, and Stripe's own retry beyond that. The reasoning for
+     * stopping at two was wrong: it assumed a lost race means a *newer* event
+     * won, when with three in flight the winner of the second race can be an
+     * older one — so the newest event could be dropped while the invoice sat at
+     * an earlier state. Exhausting the passes now returns 500, not 200.
      */
     for (let attempt = 1; attempt <= 2; attempt++) {
       const { data: invoice } = await client.models.Invoice.get({
@@ -131,8 +133,19 @@ export const handler = async (event: {
       );
     }
 
-    // Twice beaten. A newer event owns the state; nothing here is lost.
-    return ok("superseded");
+    /**
+     * Twice beaten, and we cannot tell whether the winner was newer or older.
+     *
+     * A 200 here would tell Stripe this event is handled and stop the retries,
+     * which is how a `succeeded` gets dropped and an invoice stays PROCESSING
+     * with the money already in the account. A 500 costs a redelivery a few
+     * seconds later, by which time the burst has settled and the event either
+     * applies cleanly or is correctly recognised as stale.
+     */
+    console.warn(
+      `stripe-webhook could not place ${parsed.type} for ${decision.invoiceId}; asking Stripe to retry`
+    );
+    return { statusCode: 500, body: "retry" };
   } catch (err) {
     /**
      * A 500 is correct here. The signature was good and the event is real, so

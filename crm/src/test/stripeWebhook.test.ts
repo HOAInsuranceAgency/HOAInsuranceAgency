@@ -294,6 +294,30 @@ describe("events sharing one second cannot regress the state", () => {
     expect(update).toMatchObject({ action: "skip" });
   });
 
+  it("lets a payment fail in the same second it started clearing", () => {
+    /**
+     * The first version of the tie rule ranked this as a regression and skipped
+     * it, leaving a dead debit reading as clearing — the same misstatement this
+     * function exists to prevent, reached from the other direction. Within one
+     * PaymentIntent the lifecycle *is* processing then failed.
+     */
+    const update = decideUpdate(
+      {
+        status: "PROCESSING",
+        stripePaymentIntentId: "pi_1",
+        stripeEventAt: sameInstant,
+      },
+      {
+        ...decision,
+        outcome: "FAILED",
+        paymentIntentId: "pi_1",
+        occurredAt: sameInstant,
+      },
+      TODAY
+    );
+    expect(update).toMatchObject({ action: "set", status: "SENT" });
+  });
+
   it("still lets a tied event advance the state", () => {
     // processing and succeeded inside one second is ordinary, and dropping the
     // success would be recording money that arrived as outstanding.
@@ -369,6 +393,29 @@ describe("the write is conditional on what was read", () => {
 
   it("no longer writes payment state through the data client", () => {
     expect(HANDLER).not.toMatch(/models\.Invoice\.update/);
+  });
+});
+
+describe("an event that cannot be placed is retried, not acknowledged", () => {
+  const HANDLER = readFileSync(
+    resolve(process.cwd(), "amplify/functions/stripe-webhook/handler.ts"),
+    "utf8"
+  );
+
+  /**
+   * With three events in flight, the winner of the second conditional write can
+   * be an *older* one — so exhausting the passes does not mean a newer event
+   * owns the state. Acknowledging with 200 there stops Stripe retrying and can
+   * leave an invoice PROCESSING with the money already received.
+   */
+  it("returns 500 after exhausting its attempts", () => {
+    const tail = HANDLER.slice(HANDLER.indexOf("Twice beaten"));
+    expect(tail).toContain("statusCode: 500");
+    expect(tail.slice(0, tail.indexOf("statusCode: 500"))).not.toContain('ok("');
+  });
+
+  it("no longer claims a lost race means a newer event won", () => {
+    expect(HANDLER).not.toContain("A newer event owns the state");
   });
 });
 
