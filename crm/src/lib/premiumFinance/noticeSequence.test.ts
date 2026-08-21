@@ -259,3 +259,43 @@ describe("origination rechecks the flag at the last moment", () => {
     expect(create).toBeGreaterThan(recheck);
   });
 });
+
+describe("a cured default retires its notices", () => {
+  it("an old episode's intent cannot authorize this cancellation", () => {
+    // Default → intent + cert → cured → re-default: the expired clock from
+    // the first episode must not skip the statute's 15 days for the second.
+    const redefaultedAt = addDaysIso(T0, 40);
+    const v = canRequestCancellation([intent, cert], addDaysIso(T0, 50), redefaultedAt);
+    expect(v.ok).toBe(false);
+    if (!v.ok) expect(v.reason).toContain("do not carry over");
+  });
+
+  it("a fresh intent within the episode still works", () => {
+    const redefaultedAt = addDaysIso(T0, 40);
+    const fresh: NoticeRow = {
+      id: "n9",
+      type: "INTENT_TO_CANCEL",
+      occurredAt: addDaysIso(T0, 41),
+      clockExpiresAt: addDaysIso(T0, 56),
+    };
+    const freshCert: NoticeRow = {
+      id: "n10",
+      type: "CERT_OF_MAILING",
+      occurredAt: addDaysIso(T0, 42),
+      refNoticeId: "n9",
+    };
+    expect(
+      canRequestCancellation([intent, cert, fresh, freshCert], addDaysIso(T0, 57), redefaultedAt).ok
+    ).toBe(true);
+  });
+
+  it("the handler passes the loan's current defaultedAt", () => {
+    const HANDLER = readFileSync(
+      resolve(process.cwd(), "amplify/functions/pf-servicing/handler.ts"),
+      "utf8"
+    );
+    expect(HANDLER).toContain("loan.defaultedAt");
+    // And activation requires the artifact, not just a typed date.
+    expect(HANDLER).toContain("must be on file first");
+  });
+});

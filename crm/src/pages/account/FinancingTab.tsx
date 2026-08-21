@@ -43,6 +43,7 @@ type PfNotice = Schema["PfNotice"]["type"];
 function LoanActions({ loan, onChanged }: { loan: PfLoan; onChanged: () => void }) {
   const status = useSaveStatus({ autoClearMs: 6000 });
   const [resolutionDate, setResolutionDate] = useState("");
+  const [resolutionDocId, setResolutionDocId] = useState("");
   const [certNoticeId, setCertNoticeId] = useState("");
   const [certDate, setCertDate] = useState("");
   const [certNumber, setCertNumber] = useState("");
@@ -103,14 +104,26 @@ function LoanActions({ loan, onChanged }: { loan: PfLoan; onChanged: () => void 
               onChange={(e) => setResolutionDate(e.target.value)}
             />
           </div>
+          <div className="field">
+            <label htmlFor={`pf-resdoc-${loan.id}`}>Executed resolution (Document id)</label>
+            <input
+              id={`pf-resdoc-${loan.id}`}
+              placeholder="Upload to Documents first, then paste its id"
+              value={resolutionDocId}
+              onChange={(e) => setResolutionDocId(e.target.value)}
+            />
+          </div>
           <button
             type="button"
             className="primary"
-            disabled={!resolutionDate || status.busy}
+            disabled={!resolutionDate || !resolutionDocId.trim() || status.busy}
             onClick={() =>
               void act(
                 "ACTIVATE",
-                { boardResolutionExecutedAt: resolutionDate },
+                {
+                  boardResolutionExecutedAt: resolutionDate,
+                  boardResolutionDocumentId: resolutionDocId.trim(),
+                },
                 "Loan activated."
               )
             }

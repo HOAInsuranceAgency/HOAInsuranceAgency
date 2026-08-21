@@ -60,13 +60,27 @@ export type SequenceVerdict = { ok: true } | { ok: false; reason: string };
  */
 export function canRequestCancellation(
   notices: readonly NoticeRow[],
-  nowIso: string
+  nowIso: string,
+  /**
+   * When the CURRENT default episode began (PfLoan.defaultedAt). A cure
+   * removes it and a re-default sets a fresh one — and notices mailed for a
+   * cured, earlier default must not authorize cancelling for this one: the
+   * statute's 15 days are notice of THIS cancellation. Absent means no
+   * episode filter (legacy callers), which fails open only for loans that
+   * never cured.
+   */
+  defaultedAt?: string | null
 ): SequenceVerdict {
-  const { intent, certified } = latestIntent(notices);
+  const inEpisode = defaultedAt
+    ? notices.filter(
+        (n) => n.type !== "INTENT_TO_CANCEL" || n.occurredAt >= defaultedAt
+      )
+    : notices;
+  const { intent, certified } = latestIntent(inEpisode);
   if (!intent) {
     return {
       ok: false,
-      reason: "No notice of intent to cancel has been sent. That is step one, and it starts the 15-day clock.",
+      reason: "No notice of intent to cancel has been sent for this default. That is step one, and it starts the 15-day clock — notices from an earlier, cured default do not carry over.",
     };
   }
   if (!certified) {

@@ -171,6 +171,15 @@ export const handler = async (event: {
         if (!isRealIsoDay(executed)) {
           return { ok: false, error: "The board resolution's execution date is required." };
         }
+        if (!a.boardResolutionDocumentId?.trim()) {
+          // The power of attorney must trace to an artifact on file, not to a
+          // date someone typed. Upload the executed resolution to Documents
+          // first; the id is the proof.
+          return {
+            ok: false,
+            error: "The executed board resolution must be on file first — upload it to Documents and reference it here.",
+          };
+        }
         const { data: policy } = await client.models.Policy.get({ id: loan.policyId });
         const termStart = policy?.effectiveDate ?? loan.effectiveDate;
         const stale = executed < termStart;
@@ -196,7 +205,7 @@ export const handler = async (event: {
           status: "ACTIVE",
           activatedAt: now,
           boardResolutionExecutedAt: executed,
-          boardResolutionDocumentId: a.boardResolutionDocumentId ?? null,
+          boardResolutionDocumentId: a.boardResolutionDocumentId.trim(),
         });
         if (!won) return { ok: false, error: "The loan changed underneath this activation. Look at it and try again." };
         return { ok: true };
@@ -404,7 +413,11 @@ export const handler = async (event: {
           filter: { loanId: { eq: loan.id } },
           limit: 200,
         });
-        const verdict = canRequestCancellation(noticeRows as NoticeRow[], now);
+        const verdict = canRequestCancellation(
+          noticeRows as NoticeRow[],
+          now,
+          loan.defaultedAt
+        );
         await logRow({
           accountId: loan.accountId,
           jurisdiction: loan.state,
