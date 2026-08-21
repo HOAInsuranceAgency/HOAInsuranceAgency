@@ -12,10 +12,12 @@ import { CLAUDE_MODEL } from "../model";
 import { decide } from "./decide";
 import { flattenExtraction } from "./extraction";
 import { PORTAL_TTL_DAYS } from "../../../../shared/leadDocuments";
+import { propertyNameProblem } from "../../../../shared/propertyName";
 import {
   REPLY_SCHEMA,
   WORD_BUDGET,
   buildPrompt,
+  capitalizeName,
   countWords,
   renderReply,
   systemPrompt,
@@ -206,6 +208,11 @@ export const handler = async () => {
         decision.withDocuments,
         uploadUrl !== null
       );
+      if (lead.nameProblem) {
+        console.warn(
+          `[lead-reply] association name looks off: "${account.data.name}" (${lead.nameProblem})`
+        );
+      }
       const generated = await generate(lead);
       const { subject, text, html } = renderReply({
         generated,
@@ -231,6 +238,15 @@ export const handler = async () => {
         })
       );
 
+      /**
+       * The producer-facing trail: a reply that never names the association
+       * looks like a bug unless the row says the name was unusable — and the
+       * note is also what prompts someone to ask the lead what the
+       * association is actually called.
+       */
+      const nameNote = lead.nameProblem
+        ? `The association name "${account.data.name}" looks incomplete or not real (${lead.nameProblem}); the reply avoided using it.`
+        : null;
       await client.models.LeadReply.update({
         id: reply.id,
         status: "SENT",
@@ -239,7 +255,7 @@ export const handler = async () => {
         // record matches the email rather than the model's raw output.
         sentSubject: subject,
         sentBody: text,
-        note: decision.note ?? null,
+        note: [decision.note, nameNote].filter(Boolean).join(" ") || null,
       });
       summary.sent++;
       console.log("lead-reply sent", reply.id, JSON.stringify({ subject }));
@@ -277,7 +293,22 @@ function toContext(
   // The primary if one is flagged, otherwise whichever came first — intake
   // creates exactly one, so the fallback is for accounts touched by hand.
   const contact = contacts.find((c) => c.isPrimary) ?? contacts[0];
-  const contactName = contact?.name?.trim() || null;
+  const rawContactName = contact?.name?.trim() || null;
+  /**
+   * Intake reuses the association name as the Contact's `name` when the form
+   * gave an email but no person (`name: contactName ?? name` there). Greeting
+   * that person "Hi Maple," out of "Maple Ridge Condominium" is worse than
+   * the plain "Hello,", so a contact whose name is the account's own is
+   * treated as having none.
+   */
+  const personName =
+    rawContactName &&
+    rawContactName.toLowerCase() !== account.name.trim().toLowerCase()
+      ? rawContactName
+      : null;
+  // Typed-without-shift names get their capitals back before the model or the
+  // greeting ever sees them: "jake greasley" reads as "Jake Greasley" in both.
+  const contactName = capitalizeName(personName);
   return {
     name: account.name,
     contactName,
@@ -292,6 +323,9 @@ function toContext(
     // extraction can never leak half-read values into the prose.
     extracted: withDocuments ? flattenExtraction(account.aiExtraction) : null,
     hasUploadLink,
+    // "test", "my hoa", keyboard mash: when set, the prompt tells the model to
+    // write around the name rather than put it in a subject line.
+    nameProblem: propertyNameProblem(account.name),
   };
 }
 
