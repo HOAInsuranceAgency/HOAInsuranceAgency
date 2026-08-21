@@ -36,6 +36,7 @@ import { sendInvoice } from "./functions/send-invoice/resource";
 import { stripeWebhook } from "./functions/stripe-webhook/resource";
 import { voidInvoice } from "./functions/void-invoice/resource";
 import { pfAdmin } from "./functions/pf-admin/resource";
+import { pfOriginate } from "./functions/pf-originate/resource";
 import { resolveMailbox } from "./functions/mailbox";
 import { activityLog } from "./functions/activity-log/resource";
 import {
@@ -69,6 +70,7 @@ export const backend = defineBackend({
   stripeWebhook,
   voidInvoice,
   pfAdmin,
+  pfOriginate,
   activityLog,
   magicLinkDefine,
   magicLinkCreate,
@@ -436,6 +438,11 @@ backend.data.resources.tables.AgencySettings.grantReadWriteData(
   backend.pfAdmin.resources.lambda
 );
 pfLogTable.grantReadWriteData(backend.pfAdmin.resources.lambda);
+
+// Origination writes its decision rows straight to the log table too; model
+// reads and the PfLoan create go through the data client via allow.resource.
+backend.pfOriginate.addEnvironment("PF_COMPLIANCE_LOG_TABLE", pfLogTable.tableName);
+pfLogTable.grantReadWriteData(backend.pfOriginate.resources.lambda);
 
 /**
  * And the send, for one write: storing a freshly minted payment link

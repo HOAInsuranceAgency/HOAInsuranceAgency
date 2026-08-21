@@ -41,7 +41,9 @@ export const ATTRIBUTED_MODELS: ReadonlySet<string> = new Set([
  * which is the honest answer rather than a blocked save.
  */
 let actorPromise: Promise<string | null> | undefined;
-function currentActor(): Promise<string | null> {
+/** Exported for write sites that stamp an explicit by/at pair (producer of
+ * record confirmation) in addition to the proxy's lastWriteBy. */
+export function currentActor(): Promise<string | null> {
   actorPromise ??= getCurrentUser()
     .then((u) => u.userId)
     .catch(() => null);

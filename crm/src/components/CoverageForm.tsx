@@ -8,6 +8,7 @@ import {
   type Quote,
 } from "../lib/client";
 import { useFormState } from "../lib/useFormState";
+import { currentActor } from "../lib/client";
 import { SELECTABLE_QUOTE_STATUSES } from "../lib/quoteStatus";
 import {
   AGGREGATE_APPLIES_TO_OPTIONS,
@@ -55,6 +56,9 @@ export default function CoverageForm({
     carrierId: existing?.carrierId ?? "",
     policyNumber: asPolicy?.policyNumber ?? "",
     billType: asPolicy?.billType ?? "",
+    producerOfRecord: asPolicy?.producerOfRecord ?? null,
+    mepPct: str(asPolicy?.minimumEarnedPremiumPct),
+    isAuditable: asPolicy?.isAuditable ?? null,
     status: (existing?.status ?? (isPolicy ? "ACTIVE" : "DRAFT")) as string,
     lines: (existing?.lines ?? []).filter((l): l is string => !!l),
     premium: str(existing?.premium),
@@ -149,6 +153,22 @@ export default function CoverageForm({
           // existed opens with the box empty, and saving other edits must not
           // invent an answer for it.
           billType: (form.billType || null) as Policy["billType"],
+          /**
+           * The financing-eligibility facts. Tri-state on purpose: null is
+           * "nobody has answered", and financing blocks on it — so an edit
+           * that never touched these must not turn null into false. The
+           * producer-of-record stamps are written only on the transition to
+           * true, by whoever ticked it.
+           */
+          minimumEarnedPremiumPct: form.mepPct.trim() === "" ? null : Number(form.mepPct),
+          isAuditable: form.isAuditable,
+          producerOfRecord: form.producerOfRecord,
+          ...(form.producerOfRecord === true && asPolicy?.producerOfRecord !== true
+            ? {
+                producerOfRecordBy: (await currentActor()) ?? "unknown",
+                producerOfRecordAt: new Date().toISOString(),
+              }
+            : {}),
         });
         if (errors?.length) throw new Error(errors[0].message);
       } else if (existing) {
@@ -207,6 +227,57 @@ export default function CoverageForm({
               onChange={(e) => setF("policyNumber", e.target.value)}
             />
           </div>
+        )}
+        {isPolicy && (
+          <>
+            <div className="field">
+              <label>Minimum earned premium % (from the policy)</label>
+              <PercentInput
+                value={form.mepPct}
+                onChange={(v) => setF("mepPct", v)}
+              />
+            </div>
+            <div className="field">
+              <label>Auditable policy</label>
+              {/* Three states, honestly: unanswered blocks financing, and an
+                  edit form must not answer it by existing. */}
+              <select
+                value={form.isAuditable === null ? "" : form.isAuditable ? "yes" : "no"}
+                onChange={(e) =>
+                  setF(
+                    "isAuditable",
+                    e.target.value === "" ? null : e.target.value === "yes"
+                  )
+                }
+              >
+                <option value="">Not recorded</option>
+                <option value="no">No</option>
+                <option value="yes">Yes</option>
+              </select>
+            </div>
+            <div className="field">
+              <label>Producer of record</label>
+              <select
+                value={
+                  form.producerOfRecord === null
+                    ? ""
+                    : form.producerOfRecord
+                      ? "yes"
+                      : "no"
+                }
+                onChange={(e) =>
+                  setF(
+                    "producerOfRecord",
+                    e.target.value === "" ? null : e.target.value === "yes"
+                  )
+                }
+              >
+                <option value="">Not confirmed</option>
+                <option value="yes">Yes — we are the producer of record</option>
+                <option value="no">No — another agency's paper</option>
+              </select>
+            </div>
+          </>
         )}
         {/* Set at bind and correctable here — a placement can move from direct
             to agency bill mid-term, and the answer decides whether the agency

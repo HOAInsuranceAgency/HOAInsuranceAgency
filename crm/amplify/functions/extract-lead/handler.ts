@@ -101,6 +101,23 @@ const EXTRACTION_SCHEMA = {
       description: "Incumbent agent/broker/agency servicing the account (not the carrier)",
     },
     currentAnnualPremium: field("number"),
+    /**
+     * Premium-finance eligibility facts, off the policy PDF (W3). Surfaced as
+     * SUGGESTIONS for a human to copy onto the policy record — the panel
+     * routes them to notes, never onto the blocking fields themselves,
+     * because those fields gate a lending decision and a model's read of a
+     * policy form is not an answer a lender may act on unconfirmed.
+     */
+    minimumEarnedPremiumPct: {
+      ...field("number"),
+      description:
+        "Minimum earned premium as a percent, from the policy's minimum-earned-premium or short-rate provision",
+    },
+    isAuditable: {
+      ...field("boolean"),
+      description:
+        "Whether the policy premium is subject to audit (an audit or premium-adjustment provision exists)",
+    },
     currentPolicyExpiration: {
       ...field("string"),
       description: "ISO date YYYY-MM-DD of current policy expiration",
@@ -216,6 +233,8 @@ const EXTRACTION_SCHEMA = {
     "currentAgent",
     "currentAnnualPremium",
     "currentPolicyExpiration",
+    "minimumEarnedPremiumPct",
+    "isAuditable",
     "contacts",
     "buildings",
     "losses",

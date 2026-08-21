@@ -143,7 +143,12 @@ describe("what the module must never contain", () => {
   );
 
   it("covers the modules this suite thinks it covers", () => {
-    expect(sources.sort()).toEqual(["coverage.ts", "gate.ts", "quote.ts"]);
+    expect(sources.sort()).toEqual([
+      "coverage.ts",
+      "eligibility.ts",
+      "gate.ts",
+      "quote.ts",
+    ]);
   });
 
   // The comments are allowed to NAME the forbidden method — that is how the

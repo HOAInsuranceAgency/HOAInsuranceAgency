@@ -65,11 +65,11 @@ describe("the premium finance flag", () => {
 });
 
 describe("servicing never consults the origination gate", () => {
-  it("no amplify function imports the gate module today", () => {
+  it("pf-originate is the only function that imports the gate", () => {
     // Addition A: a jurisdiction closing must stop NEW lending only. The
-    // issuance Lambda (W2+) will import the gate; payment posting, notices
-    // and payoff never may. Enumerated when those functions land — for now
-    // the invariant is that no function imports it at all.
+    // origination Lambda is the one legitimate importer; payment posting,
+    // notices and payoff never may — an active loan in a closed state must
+    // keep servicing, because we cannot un-lend.
     const { readdirSync, statSync } = require("node:fs") as typeof import("node:fs");
     const root = resolve(process.cwd(), "amplify/functions");
     const offenders: string[] = [];
@@ -83,6 +83,58 @@ describe("servicing never consults the origination gate", () => {
       }
     };
     walk(root);
-    expect(offenders).toEqual([]);
+    expect(offenders.map((p) => p.split("/functions/")[1])).toEqual([
+      "pf-originate/handler.ts",
+    ]);
+  });
+});
+
+describe("the origination mutation", () => {
+  const SCHEMA = readFileSync(resolve(process.cwd(), "amplify/data/resource.ts"), "utf8");
+  const HANDLER = readFileSync(
+    resolve(process.cwd(), "amplify/functions/pf-originate/handler.ts"),
+    "utf8"
+  );
+
+  it("is the only way a loan can exist — the model takes no client writes", () => {
+    const at = SCHEMA.indexOf("PfLoan: a");
+    const block = SCHEMA.slice(at, SCHEMA.indexOf(".authorization", at) + 200);
+    expect(block).toContain('allow.authenticated().to(["read"])');
+    expect(block).not.toMatch(/"create"|"update"|"delete"/);
+    expect(block).not.toContain("allow.groups");
+  });
+
+  it("re-checks the module flag server-side — a hidden button is not a gate", () => {
+    expect(HANDLER).toContain("premiumFinanceEnabled === true");
+    expect(HANDLER).toMatch(/rule: "module-flag"/);
+  });
+
+  it("rejects an APR above the cap at the API, not just in the UI", () => {
+    expect(HANDLER).toContain("aprCapViolation(a.apr, gate.jurisdiction)");
+    expect(HANDLER).toMatch(/rule: "apr-cap"/);
+  });
+
+  it("checks the minimum principal against amount financed", () => {
+    expect(HANDLER).toContain("minPrincipalViolation(");
+    expect(HANDLER).toContain("quote.amountFinanced");
+  });
+
+  it("stamps the ruleset SHA on the loan and on every decision row", () => {
+    expect(HANDLER).toContain("configSha256: PF_CONFIG_SHA256");
+    expect((HANDLER.match(/configSha256: PF_CONFIG_SHA256/g) ?? []).length).toBe(2);
+  });
+
+  it("creates no loan when the compliance log cannot be written", () => {
+    // The kill switch's failure direction, worn by origination: no record,
+    // no loan. A refusal, by contrast, is safe even unlogged.
+    expect(HANDLER).toContain("was NOT issued");
+    const guard = HANDLER.indexOf("was NOT issued");
+    const create = HANDLER.indexOf("client.models.PfLoan.create");
+    expect(guard).toBeGreaterThan(-1);
+    expect(create).toBeGreaterThan(guard);
+  });
+
+  it("freezes the schedule on the loan rather than recomputing later", () => {
+    expect(HANDLER).toContain("schedule: JSON.stringify(quote.schedule)");
   });
 });

@@ -9,6 +9,7 @@ import { invoiceNumber } from "../functions/invoice-number/resource";
 import { sendInvoice } from "../functions/send-invoice/resource";
 import { voidInvoice } from "../functions/void-invoice/resource";
 import { pfAdmin } from "../functions/pf-admin/resource";
+import { pfOriginate } from "../functions/pf-originate/resource";
 import { renewalTasks } from "../functions/renewal-tasks/resource";
 import { licenseAlerts } from "../functions/license-alerts/resource";
 import { taskDigest } from "../functions/task-digest/resource";
@@ -62,6 +63,8 @@ const schema = a
      * here is supposed to chase the money.
      */
     BillType: a.enum(["AGENCY", "DIRECT"]),
+    /** QUOTED until an agreement activates it; see the premium-finance spec. */
+    PfLoanStatus: a.enum(["QUOTED", "ACTIVE", "PAID", "DEFAULTED", "CANCELLED"]),
     DocumentEntityType: a.enum([
       "ACCOUNT",
       "QUOTE",
@@ -770,6 +773,28 @@ const schema = a
        * existed, turning a missing answer into an unopenable record.
        */
       billType: a.ref("BillType"),
+      /**
+       * ── Premium-finance eligibility facts (W3) ──
+       *
+       * All nullable, and null always BLOCKS financing rather than passing it:
+       * these fields answer questions the exemption depends on, and an
+       * unanswered question is not a yes. They gate nothing outside the
+       * premium_finance module.
+       *
+       * producerOfRecord: are we the producer of record on this policy?
+       * Confirmed true through the bind flow (pre-checked, stamped) or by
+       * hand on an imported policy; null on any policy nobody has confirmed —
+       * which is exactly where wholesale or another agency's paper would
+       * enter. The by/at stamps make the pre-ticked bind checkbox an
+       * affirmation rather than a default: who ticked it, and when.
+       */
+      producerOfRecord: a.boolean(),
+      producerOfRecordBy: a.string(),
+      producerOfRecordAt: a.datetime(),
+      /** Carrier's minimum earned premium %, off the policy PDF. */
+      minimumEarnedPremiumPct: a.float(),
+      /** Auditable policies block financing (collateral can shrink at audit). */
+      isAuditable: a.boolean(),
       lines: a.string().array(),
       premium: a.float(),
       commissionPct: a.float(), // carried from the bound quote; baked into premium
@@ -999,6 +1024,81 @@ const schema = a
       })
       .secondaryIndexes((index) => [index("accountId").sortKeys(["occurredAt"])])
       .authorization((allow) => [allow.authenticated().to(["read"])]),
+
+    /**
+     * A premium finance loan, from quote to close.
+     *
+     * The client can only READ. Every write — creation included — happens in
+     * the pf Lambdas over IAM, because creation IS the control point: the
+     * jurisdiction gate, the APR cap, the coverage screen and the eligibility
+     * checks all run server-side in issueFinanceQuote, and a client-writable
+     * model would be a path around all of them. The terms and schedule are
+     * FROZEN COPIES taken at issuance: the quote a borrower signs must not
+     * drift when a policy row is edited later.
+     *
+     * No compensation fields of any kind belong here — no commission, fee
+     * split, referral or producer payment from the lending side. Nine states
+     * prohibit it and the schema must not be able to express it; a grep test
+     * holds this section to that.
+     */
+    PfLoan: a
+      .model({
+        accountId: a.id().required(),
+        policyId: a.id().required(),
+        status: a.ref("PfLoanStatus").required(),
+        /** Jurisdiction code at origination — frozen; moves do not re-gate. */
+        state: a.string().required(),
+        /** SHA-256 of the signed ruleset that approved this origination. */
+        configSha256: a.string().required(),
+        premium: a.float().required(),
+        downPct: a.float().required(),
+        months: a.integer().required(),
+        apr: a.float().required(),
+        effectiveDate: a.date().required(),
+        downPayment: a.float().required(),
+        amountFinanced: a.float().required(),
+        payment: a.float().required(),
+        totalInterest: a.float().required(),
+        originationFee: a.float().required(),
+        /** The frozen amortization schedule, as issued. */
+        schedule: a.json().required(),
+        /** Servicing state (W5): current balance, next due, last posted n. */
+        balance: a.float(),
+        nextDueAt: a.date(),
+        paidThrough: a.integer(),
+        quotedBy: a.string(),
+        quotedByName: a.string(),
+        quotedAt: a.datetime().required(),
+        activatedAt: a.datetime(),
+        closedAt: a.datetime(),
+      })
+      .secondaryIndexes((index) => [index("accountId").sortKeys(["quotedAt"])])
+      .authorization((allow) => [allow.authenticated().to(["read"])]),
+
+    /**
+     * An admin's written reason for waiving one eligibility check on one
+     * policy. MEP and auditable only — the personal-lines screen has no
+     * override and never will.
+     *
+     * ADMIN-only create, nobody updates or deletes: an override is a record,
+     * not a setting. The evaluator honors it only when a reason is present,
+     * and the origination log carries the reason into the decision row.
+     */
+    PfOverride: a
+      .model({
+        policyId: a.id().required(),
+        /** MEP | AUDITABLE */
+        check: a.string().required(),
+        reason: a.string().required(),
+        actor: a.string(),
+        actorName: a.string(),
+        occurredAt: a.datetime().required(),
+      })
+      .secondaryIndexes((index) => [index("policyId")])
+      .authorization((allow) => [
+        allow.authenticated().to(["read"]),
+        allow.groups(["ADMIN"]).to(["read", "create"]),
+      ]),
 
     // ── Carriers & appointments ────────────────────────────────────────
     Carrier: a.model({
@@ -1710,6 +1810,30 @@ const schema = a
       .returns(a.json())
       .authorization((allow) => [allow.groups(["ADMIN"])])
       .handler(a.handler.function(pfAdmin)),
+
+    /**
+     * Originate a premium finance quote — the control point.
+     *
+     * Re-runs everything server-side whatever the UI showed: the module flag,
+     * the jurisdiction gate, the APR cap (a request above the cap is rejected
+     * by this API, not just disabled in a browser), the minimum principal,
+     * and all four eligibility screens. Writes one PfComplianceLog row per
+     * rule evaluated, pass or block, each carrying the ruleset SHA — and only
+     * on all-pass creates the PfLoan.
+     */
+    issueFinanceQuote: a
+      .mutation()
+      .arguments({
+        policyId: a.string().required(),
+        premium: a.float().required(),
+        downPct: a.float().required(),
+        months: a.integer().required(),
+        apr: a.float().required(),
+        effectiveDate: a.string().required(),
+      })
+      .returns(a.json())
+      .authorization((allow) => [allow.authenticated()])
+      .handler(a.handler.function(pfOriginate)),
   })
   .authorization((allow) => [
     // Default for every model that doesn't declare its own rules. A model
