@@ -240,6 +240,7 @@ export const handler = async (event: {
         if (!payTable || !loanTable) {
           return { ok: false, error: "Servicing tables are not configured." };
         }
+        let alreadyPosted = false;
         try {
           await ddb.send(
             new PutCommand({
@@ -264,10 +265,14 @@ export const handler = async (event: {
             })
           );
         } catch (err) {
-          if ((err as { name?: string }).name === "ConditionalCheckFailedException") {
-            return { ok: false, error: `Installment ${n} is already posted.` };
-          }
-          throw err;
+          if ((err as { name?: string }).name !== "ConditionalCheckFailedException") throw err;
+          /**
+           * The row exists but this loan still points at n-1 — the earlier
+           * posting's advance failed after its ledger write. Returning here
+           * would strand that state forever (the review's finding); falling
+           * through re-runs the conditional advance and reconciles it.
+           */
+          alreadyPosted = true;
         }
 
         const finished = n >= schedule.length;
@@ -303,7 +308,13 @@ export const handler = async (event: {
           if ((err as { name?: string }).name !== "ConditionalCheckFailedException") throw err;
           console.error(`[pf-servicing] loan ${loan.id} moved during posting ${n}; ledger row stands`);
         }
-        return { ok: true, posted: { n, amount: row.payment, balance: row.balance } };
+        return {
+          ok: true,
+          posted: { n, amount: row.payment, balance: row.balance },
+          ...(alreadyPosted
+            ? { note: `Installment ${n} was already on the ledger; loan state reconciled.` }
+            : {}),
+        };
       }
 
       /** Step one of cancellation: the 15-day clock starts here. */

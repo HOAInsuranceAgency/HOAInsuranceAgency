@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, PutCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import { DynamoDBDocumentClient, GetCommand, PutCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { PF_CONFIG_SHA256 } from "../../../src/lib/premiumFinance/jurisdictions";
 
 /**
@@ -60,14 +60,41 @@ export const handler = async (event: {
     actor;
   const now = new Date().toISOString();
 
-  const writeFlag = (value: boolean) =>
+  /**
+   * The disable write is unconditional — off always wins — but ENABLE is
+   * conditional on the flag not having moved since this invocation began:
+   * an enable that raced a disable and would land second must lose, or
+   * lending is on while the latest audit row says DISABLED.
+   */
+  const readStamp = async (): Promise<string | null> => {
+    const res = await ddb.send(
+      new GetCommand({ TableName: settingsTable, Key: { id: AGENCY_SETTINGS_ID } })
+    );
+    const v = res.Item?.premiumFinanceEnabledAt;
+    return typeof v === "string" ? v : null;
+  };
+
+  const writeFlag = (value: boolean, seenStamp?: string | null) =>
     ddb.send(
       new UpdateCommand({
         TableName: settingsTable,
         Key: { id: AGENCY_SETTINGS_ID },
         UpdateExpression:
-          "SET premiumFinanceEnabled = :v, updatedBy = :by, updatedAt = :now",
-        ExpressionAttributeValues: { ":v": value, ":by": actor, ":now": now },
+          "SET premiumFinanceEnabled = :v, premiumFinanceEnabledAt = :now, updatedBy = :by, updatedAt = :now",
+        ExpressionAttributeValues: {
+          ":v": value,
+          ":by": actor,
+          ":now": now,
+          ...(seenStamp !== undefined && seenStamp !== null ? { ":seen": seenStamp } : {}),
+        },
+        ...(seenStamp !== undefined
+          ? {
+              ConditionExpression:
+                seenStamp === null
+                  ? "attribute_not_exists(premiumFinanceEnabledAt)"
+                  : "premiumFinanceEnabledAt = :seen",
+            }
+          : {}),
       })
     );
 
@@ -119,6 +146,7 @@ export const handler = async (event: {
      * direction, and gets a best-effort correction row.
      */
     if (enabled) {
+      const seenStamp = await readStamp();
       const logged = await writeLog();
       if (!logged) {
         return {
@@ -127,9 +155,15 @@ export const handler = async (event: {
         };
       }
       try {
-        await writeFlag(true);
+        await writeFlag(true, seenStamp);
       } catch (err) {
-        console.error("[pf-admin] flip failed after logging; module remains off", err);
+        const lost = (err as { name?: string }).name === "ConditionalCheckFailedException";
+        console.error(
+          lost
+            ? "[pf-admin] enable lost to a concurrent flip; module state unchanged by this call"
+            : "[pf-admin] flip failed after logging; module remains off",
+          err
+        );
         try {
           await ddb.send(
             new PutCommand({

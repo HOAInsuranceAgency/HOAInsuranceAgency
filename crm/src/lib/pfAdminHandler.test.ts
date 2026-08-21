@@ -26,6 +26,9 @@ vi.mock("@aws-sdk/lib-dynamodb", () => ({
   PutCommand: class {
     constructor(public input: Record<string, unknown>) {}
   },
+  GetCommand: class {
+    constructor(public input: Record<string, unknown>) {}
+  },
 }));
 
 const flagWrites = () =>
@@ -61,9 +64,10 @@ describe("the happy path", () => {
     expect(res).toMatchObject({ ok: true, enabled: true });
     expect(flagWrites()).toEqual([true]);
     // Enable order: the row lands BEFORE the flag — flag on implies logged.
-    const kinds = sendMock.mock.calls.map(([cmd]) =>
-      (cmd.input as Record<string, unknown>).Item ? "log" : "flag"
-    );
+    const kinds = sendMock.mock.calls
+      .map(([cmd]) => cmd.input as Record<string, unknown>)
+      .filter((i) => i.Item || i.UpdateExpression)
+      .map((i) => (i.Item ? "log" : "flag"));
     expect(kinds).toEqual(["log", "flag"]);
     const [row] = logPuts();
     expect(row.rule).toBe("module-flag");
@@ -102,6 +106,38 @@ describe("a log write that will not succeed", () => {
     expect(res.warning).toContain("Record this flip manually");
     expect(flagWrites()).toEqual([false]);
     expect(logPuts().length).toBe(3);
+  });
+});
+
+describe("a concurrent disable beats an in-flight enable", () => {
+  it("enable's flag write is conditional and loses cleanly", async () => {
+    // Get returns a stamp; the conditional Update then rejects (the disable
+    // moved the stamp) — the enable reports failure and writes nothing more.
+    sendMock.mockImplementation((cmd: { input: Record<string, unknown> }) => {
+      if (!cmd.input.UpdateExpression && !cmd.input.Item) {
+        return Promise.resolve({ Item: { premiumFinanceEnabledAt: "2026-08-21T15:00:00.000Z" } });
+      }
+      if (cmd.input.ConditionExpression) {
+        const e = new Error("stamp moved");
+        (e as { name?: string }).name = "ConditionalCheckFailedException";
+        return Promise.reject(e);
+      }
+      return Promise.resolve({});
+    });
+    const res = await run(true);
+    expect(res.ok).toBe(false);
+    // The one flag write attempted was the conditional one that lost.
+    expect(flagWrites()).toEqual([true]);
+  });
+
+  it("disable's flag write carries no condition — off always wins", async () => {
+    sendMock.mockResolvedValue({});
+    await run(false);
+    const flagCmds = sendMock.mock.calls
+      .map(([cmd]) => cmd.input as Record<string, unknown>)
+      .filter((i) => i.UpdateExpression);
+    expect(flagCmds).toHaveLength(1);
+    expect(flagCmds[0].ConditionExpression).toBeUndefined();
   });
 });
 

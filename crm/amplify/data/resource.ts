@@ -1504,6 +1504,13 @@ const schema = a
          */
         premiumFinanceEnabled: a.boolean(),
         /**
+         * When the flag last changed — the serialization stamp. Enable writes
+         * conditionally on it being unchanged since the invocation began, so
+         * an in-flight enable cannot overwrite a disable that landed after it
+         * started; disable writes unconditionally, because off always wins.
+         */
+        premiumFinanceEnabledAt: a.datetime(),
+        /**
          * The designated lending bank account's label. Loan receipts and
          * disbursements reference it and it must never name the premium
          * trust: fiduciary premium and lending capital cannot commingle.

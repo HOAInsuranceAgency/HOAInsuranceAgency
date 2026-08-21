@@ -197,11 +197,19 @@ describe("servicing idempotency (the review findings)", () => {
   it("posts each installment under a deterministic ledger id", () => {
     expect(HANDLER).toContain("pf-pay-${loan.id}-${n}");
     expect(HANDLER).toContain('ConditionExpression: "attribute_not_exists(id)"');
-    expect(HANDLER).toContain("is already posted");
   });
 
   it("advances the loan conditionally on the paidThrough it read", () => {
     expect(HANDLER).toContain('ConditionExpression: "paidThrough = :seen OR paidThrough = :n"');
+  });
+
+  it("a duplicate ledger row falls through to reconcile the loan", () => {
+    // The second-round finding: returning on the duplicate stranded an
+    // orphaned row forever. Now the catch sets a flag instead of returning,
+    // the conditional advance re-runs, and the caller hears "reconciled".
+    expect(HANDLER).toContain("alreadyPosted = true");
+    expect(HANDLER).not.toContain("is already posted.");
+    expect(HANDLER).toContain("loan state reconciled");
   });
 
   it("runs status transitions conditionally on the status they leave", () => {
