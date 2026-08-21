@@ -1,5 +1,5 @@
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import { DynamoDBDocumentClient, GetCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 
 /**
  * Writing a payment state change, without losing a race.
@@ -127,4 +127,50 @@ export async function writePaymentState(w: PaymentWrite): Promise<boolean> {
     }
     throw err;
   }
+}
+
+/** The row, as much of it as the decision and the log lines need. */
+export interface InvoiceRow extends PaymentSnapshot {
+  id: string;
+  number: string | null;
+}
+
+/**
+ * Read the invoice the decision will be made against.
+ *
+ * Directly from DynamoDB rather than through the data client, for two reasons.
+ * The function is reached at a Function URL and has no AppSync configuration at
+ * all — `getAmplifyDataClientConfig` threw "data environment variables are
+ * malformed" on every real delivery, because nothing in `data/resource.ts`
+ * grants this function model access and nothing should have to.
+ *
+ * The second reason outlives the first: `ConsistentRead`. The write below is
+ * conditional on the values read here, and the handler retries when the
+ * condition fails. An eventually-consistent read can hand the retry the same
+ * pre-state it just lost with, so the second attempt fails identically and the
+ * event goes back to Stripe for no reason. Reading strongly is what lets the
+ * loop actually converge.
+ */
+export async function readInvoice(
+  tableName: string,
+  invoiceId: string
+): Promise<InvoiceRow | null> {
+  const res = await ddb.send(
+    new GetCommand({
+      TableName: tableName,
+      Key: { id: invoiceId },
+      ConsistentRead: true,
+    })
+  );
+  const item = res.Item;
+  if (!item) return null;
+  const str = (v: unknown) => (typeof v === "string" && v ? v : null);
+  return {
+    id: String(item.id),
+    number: str(item.number),
+    status: str(item.status),
+    stripeEventAt: str(item.stripeEventAt),
+    stripePaymentIntentId: str(item.stripePaymentIntentId),
+    stripeIntentCreatedAt: str(item.stripeIntentCreatedAt),
+  };
 }

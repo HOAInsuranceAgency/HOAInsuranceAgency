@@ -1,27 +1,16 @@
 import Stripe from "stripe";
-import { Amplify } from "aws-amplify";
-import { generateClient } from "aws-amplify/data";
-import { getAmplifyDataClientConfig } from "@aws-amplify/backend/function/runtime";
-import type { Schema } from "../../data/resource";
 import { decideEvent, decideUpdate } from "./decide";
-import { writePaymentState } from "./persist";
+import { readInvoice, writePaymentState } from "./persist";
 
 /**
  * Stripe → invoice status. See resource.ts for why this is a Function URL.
+ *
+ * Both the read and the write go straight to the Invoice table. This function
+ * has no AppSync configuration — it is not in any `allow.resource()` grant, so
+ * the data client cannot be built here at all — and it does not want one: see
+ * `readInvoice` for why a strongly-consistent read is what makes the retry loop
+ * below terminate.
  */
-
-type DataClient = ReturnType<typeof generateClient<Schema>>;
-let dataClient: DataClient | undefined;
-async function getDataClient() {
-  if (!dataClient) {
-    const { resourceConfig, libraryOptions } = await getAmplifyDataClientConfig(
-      process.env as never
-    );
-    Amplify.configure(resourceConfig, libraryOptions);
-    dataClient = generateClient<Schema>();
-  }
-  return dataClient;
-}
 
 let stripe: Stripe | undefined;
 const getStripe = () => (stripe ??= new Stripe(process.env.STRIPE_SECRET_KEY as string));
@@ -67,27 +56,25 @@ export const handler = async (event: {
     /**
      * Shape only, never contents.
      *
-     * A signature mismatch has two causes that look identical from the error:
-     * the wrong secret, or a body that was altered between Stripe and here.
-     * Lengths and prefixes separate them and reveal nothing — an out-by-one on
-     * the body says mangling, a secret that is not `whsec_` says wrong value.
+     * A mismatch has two causes that look identical from the error: the wrong
+     * secret, or a body altered between Stripe and here. Lengths and prefixes
+     * separate them and reveal nothing — an out-by-one on the body says
+     * mangling, a secret that is not `whsec_` says wrong value. That is not
+     * hypothetical: every delivery from the first real payment failed here
+     * because the secret had been set to the endpoint's own URL, and this is
+     * the line that said so.
      */
     console.warn(
-      "stripe-webhook signature diagnostics",
+      "stripe-webhook rejected an unverified payload",
       JSON.stringify({
-        isBase64Encoded: event.isBase64Encoded === true,
         rawBodyLength: raw.length,
-        bodyLength: (event.body ?? "").length,
-        rawStartsWith: raw.slice(0, 1),
-        rawEndsWith: raw.slice(-1),
         secretLength: secret.length,
         secretPrefix: secret.slice(0, 6),
         secretHasWhitespace: secret !== secret.trim(),
-        signatureHeaderParts: signature.split(",").map((p) => p.split("=")[0]),
-      })
+      }),
+      err
     );
     // Nothing below this line runs on an unverified payload.
-    console.warn("stripe-webhook rejected an unverified payload", err);
     return refused("bad signature");
   }
 
@@ -99,7 +86,6 @@ export const handler = async (event: {
   }
 
   try {
-    const client = await getDataClient();
     const today = new Date().toISOString().slice(0, 10);
 
     /**
@@ -118,9 +104,10 @@ export const handler = async (event: {
      * an earlier state. Exhausting the passes now returns 500, not 200.
      */
     for (let attempt = 1; attempt <= 2; attempt++) {
-      const { data: invoice } = await client.models.Invoice.get({
-        id: decision.invoiceId,
-      });
+      const invoice = await readInvoice(
+        process.env.INVOICE_TABLE as string,
+        decision.invoiceId
+      );
       if (!invoice) {
         console.warn(`stripe-webhook: no invoice ${decision.invoiceId}`);
         return ok("unknown invoice");
@@ -137,12 +124,7 @@ export const handler = async (event: {
       const written = await writePaymentState({
         tableName: process.env.INVOICE_TABLE as string,
         invoiceId: invoice.id,
-        seen: {
-          status: invoice.status ?? null,
-          stripeEventAt: invoice.stripeEventAt ?? null,
-          stripePaymentIntentId: invoice.stripePaymentIntentId ?? null,
-          stripeIntentCreatedAt: invoice.stripeIntentCreatedAt ?? null,
-        },
+        seen: invoice,
         status: update.status,
         paidAt: update.paidAt,
         paymentIntentId: update.paymentIntentId,
