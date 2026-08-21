@@ -49,6 +49,9 @@ const LINE_KINDS = [
   ["TAX", "Tax"],
   ["SURPLUS_LINES", "Surplus lines"],
   ["STAMPING_FEE", "Stamping fee"],
+  // All margin, and reported to accounting as its own kind of income rather
+  // than as commission. Nothing charges it until in-house financing is offered.
+  ["INTEREST", "Interest"],
   ["OTHER", "Other"],
 ] as const;
 

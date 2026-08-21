@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { LineLike } from "./invoiceTotals";
 import {
   directBillWarning,
   formatMoney,
@@ -6,6 +7,7 @@ import {
   isPassThrough,
   marginWarnings,
   premiumLineFromPolicy,
+  remittanceSplit,
 } from "./invoiceTotals";
 
 describe("invoiceTotals", () => {
@@ -275,5 +277,102 @@ describe("directBillWarning", () => {
     // A premium line with nothing filled in yet is still a premium line, and
     // the point is to say so before the number is typed.
     expect(directBillWarning("DIRECT", [{ kind: "PREMIUM" }])).toBeTruthy();
+  });
+});
+
+/**
+ * Dividing a payment between the carrier and the agency.
+ *
+ * This is the number corporate finance reconciles the trust account against,
+ * and the one property that must hold whatever the lines look like is that the
+ * three parts sum to what was collected. A split that does not add up is worse
+ * than no split: it sends someone looking for a missing deposit.
+ */
+describe("remittanceSplit", () => {
+  it("gives the carrier the cost and the agency the rest", () => {
+    const s = remittanceSplit([
+      { kind: "PREMIUM", retailAmount: 25000, costAmount: 21250 },
+    ]);
+    expect(s).toEqual({
+      carrierCents: 2_125_000,
+      commissionCents: 375_000,
+      interestCents: 0,
+      totalCents: 2_500_000,
+    });
+  });
+
+  it("passes a tax through with no agency share", () => {
+    // Cost equals retail on a pass-through, so it is all the carrier's and
+    // contributes nothing to either agency category.
+    const s = remittanceSplit([
+      { kind: "SURPLUS_LINES", retailAmount: 1000, costAmount: 1000 },
+    ]);
+    expect(s.carrierCents).toBe(100_000);
+    expect(s.commissionCents).toBe(0);
+  });
+
+  it("books an interest line as interest, not commission", () => {
+    const s = remittanceSplit([
+      { kind: "PREMIUM", retailAmount: 10000, costAmount: 8500 },
+      { kind: "INTEREST", retailAmount: 420, costAmount: 0 },
+    ]);
+    expect(s.interestCents).toBe(42_000);
+    expect(s.commissionCents).toBe(150_000);
+    expect(s.carrierCents).toBe(850_000);
+    expect(s.totalCents).toBe(1_042_000);
+  });
+
+  it("reads zero interest until something charges it", () => {
+    // The category exists now so the first financed invoice needs a line and
+    // not a release. Every ordinary invoice reports it as nothing.
+    const s = remittanceSplit([
+      { kind: "PREMIUM", retailAmount: 10000, costAmount: 8500 },
+    ]);
+    expect(s.interestCents).toBe(0);
+  });
+
+  it("always adds up, however the lines round", () => {
+    // The invariant. `commissionCents` is derived as the remainder precisely so
+    // this cannot drift — three independently summed categories could each be
+    // right to the cent and still miss the total.
+    const cases: LineLike[][] = [
+      [{ kind: "PREMIUM", retailAmount: 0.01, costAmount: 0.005 }],
+      [{ kind: "PREMIUM", retailAmount: 12480.37, costAmount: 10920.32 }],
+      [
+        { kind: "PREMIUM", retailAmount: 3333.33, costAmount: 2833.33 },
+        { kind: "TAX", retailAmount: 166.67, costAmount: 166.67 },
+        { kind: "INTEREST", retailAmount: 99.99, costAmount: 0 },
+      ],
+      [{ kind: "OTHER", retailAmount: 250 }],
+      [],
+    ];
+    for (const lines of cases) {
+      const s = remittanceSplit(lines);
+      expect(
+        s.carrierCents + s.commissionCents + s.interestCents,
+        JSON.stringify(lines)
+      ).toBe(s.totalCents);
+    }
+  });
+
+  it("handles a credit without inverting the split", () => {
+    // A return-premium endorsement is money going back out. The carrier's
+    // share is negative too, because that is where it comes from.
+    const s = remittanceSplit([
+      { kind: "ENDORSEMENT", retailAmount: -1000, costAmount: -850 },
+    ]);
+    expect(s.totalCents).toBe(-100_000);
+    expect(s.carrierCents).toBe(-85_000);
+    expect(s.commissionCents).toBe(-15_000);
+  });
+
+  it("treats an unpriced line as all carrier, not as a loss to the agency", () => {
+    // A seeded line: cost filled, amount blank. Nothing has been collected, so
+    // the total is zero and the carrier is owed what the policy costs — which
+    // is exactly the state that says this invoice is not finished.
+    const s = remittanceSplit([{ kind: "PREMIUM", costAmount: 8500 }]);
+    expect(s.totalCents).toBe(0);
+    expect(s.carrierCents).toBe(850_000);
+    expect(s.commissionCents).toBe(-850_000);
   });
 });

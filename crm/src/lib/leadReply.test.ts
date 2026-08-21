@@ -10,8 +10,10 @@ import {
   type LeadContext,
 } from "../../amplify/functions/lead-reply/email";
 import {
+  PRODUCTION_ACCOUNTING_MAILBOX,
   PRODUCTION_INTERNAL_MAILBOX,
   PRODUCTION_LEAD_MAILBOX,
+  TEST_ACCOUNTING_MAILBOX,
   TEST_MAILBOX,
   resolveMailbox,
 } from "../../amplify/functions/mailbox";
@@ -556,7 +558,27 @@ describe("the agency mailbox per branch", () => {
     for (const b of [undefined, "", "sandbox", "feature/foo", "Main", "MAIN", "master"]) {
       expect(resolveMailbox("lead", b)).toBe(TEST_MAILBOX);
       expect(resolveMailbox("internal", b)).toBe(TEST_MAILBOX);
+      // Accounting most of all: a staging payment reporting a made-up split
+      // to the people who reconcile the real trust account is a number that
+      // gets acted on before anyone asks where it came from.
+      expect(resolveMailbox("accounting", b)).toBe(TEST_ACCOUNTING_MAILBOX);
+      expect(resolveMailbox("accounting", b)).not.toBe(
+        PRODUCTION_ACCOUNTING_MAILBOX
+      );
     }
+  });
+
+  it("sends the remittance split to corporate finance in production", () => {
+    expect(resolveMailbox("accounting", "main")).toBe(PRODUCTION_ACCOUNTING_MAILBOX);
+    expect(PRODUCTION_ACCOUNTING_MAILBOX).toBe("corporateaccounting@getgim.com");
+  });
+
+  it("uses a real mailbox for accounting off production, not the plus-address", () => {
+    // The one report that has to be read to be checked — a wrong split is not
+    // visible from the CRM — and a plus-addressed box is where filters send
+    // things to be ignored.
+    expect(resolveMailbox("accounting", "staging")).toBe("jake@protectmyhoa.com");
+    expect(TEST_ACCOUNTING_MAILBOX).not.toBe(TEST_MAILBOX);
   });
 
   /**
@@ -570,10 +592,31 @@ describe("the agency mailbox per branch", () => {
     expect(PRODUCTION_INTERNAL_MAILBOX).toBe(AGENCY_FMT.emailLower);
   });
 
-  it("keeps every address on the SES-verified domain", () => {
+  /**
+   * Senders only.
+   *
+   * SES verifies the domain a message is *from*, not the one it is to, so this
+   * rule binds every mailbox used as a From — which is all of them except
+   * accounting. That one is another company's domain and is only ever a
+   * recipient; the remittance mail is sent from the internal box.
+   */
+  it("keeps every sending address on the SES-verified domain", () => {
     for (const box of [PRODUCTION_LEAD_MAILBOX, PRODUCTION_INTERNAL_MAILBOX, TEST_MAILBOX]) {
       expect(box).toMatch(/@protectmyhoa\.com$/);
     }
+  });
+
+  it("never uses the accounting box as a sender", () => {
+    // If this ever becomes a From, SES rejects the send and the split is lost
+    // silently — the webhook swallows the failure so a payment is not retried.
+    const { readFileSync } = require("node:fs") as typeof import("node:fs");
+    const { resolve } = require("node:path") as typeof import("node:path");
+    const src = readFileSync(
+      resolve(process.cwd(), "amplify/functions/stripe-webhook/handler.ts"),
+      "utf8"
+    );
+    expect(src).toContain("FromEmailAddress");
+    expect(src).toMatch(/FromEmailAddress:[^\n]*AGENCY_MAILBOX/);
   });
 });
 

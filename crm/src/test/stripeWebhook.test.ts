@@ -530,3 +530,164 @@ describe("toCents", () => {
     expect(toCents(999_999.99)).toBe(99999999);
   });
 });
+
+/**
+ * What corporate finance is told when a payment clears.
+ *
+ * The email is the only place the trust-account division is stated, and it is
+ * read by people who never open the CRM. Two things must hold: the figures add
+ * up, and it is never sent twice for one payment.
+ */
+describe("the remittance email", () => {
+  const mail = {
+    invoiceNumber: "INV-2026-00042",
+    associationName: "Maple Court Condominium Trust",
+    policyNumber: "GEP11696-26",
+    carrierName: "Atain Specialty Insurance Company",
+    paymentIntentId: "pi_3U6r4NB4GRSwcBL61jCJWByV",
+    paidAt: "2026-08-21",
+    carrierCents: 2_125_000,
+    commissionCents: 375_000,
+    interestCents: 0,
+    totalCents: 2_500_000,
+  };
+
+  it("states all three shares and the total", async () => {
+    const { remittanceText } = await import(
+      "../../amplify/functions/stripe-webhook/remittance"
+    );
+    const text = remittanceText(mail);
+    expect(text).toContain("Carrier remittance");
+    expect(text).toContain("$21,250.00");
+    expect(text).toContain("Agency commission");
+    expect(text).toContain("$3,750.00");
+    expect(text).toContain("Interest income");
+    expect(text).toContain("$25,000.00");
+  });
+
+  it("says the carrier's share is not income", async () => {
+    // The single sentence that stops the deposit being read as revenue.
+    const { remittanceText, remittanceHtml } = await import(
+      "../../amplify/functions/stripe-webhook/remittance"
+    );
+    for (const body of [remittanceText(mail), remittanceHtml(mail)]) {
+      expect(body).toContain("owed onward");
+    }
+  });
+
+  it("names the payment in the subject, so it files against a bank line", async () => {
+    const { remittanceSubject } = await import(
+      "../../amplify/functions/stripe-webhook/remittance"
+    );
+    const subject = remittanceSubject(mail);
+    expect(subject).toContain("$25,000.00");
+    expect(subject).toContain("INV-2026-00042");
+    expect(subject).toContain("Maple Court Condominium Trust");
+  });
+
+  it("still identifies an unnumbered invoice by its Stripe payment", async () => {
+    const { remittanceSubject } = await import(
+      "../../amplify/functions/stripe-webhook/remittance"
+    );
+    expect(remittanceSubject({ ...mail, invoiceNumber: null })).toContain(
+      "pi_3U6r4NB4GRSwcBL61jCJWByV"
+    );
+  });
+
+  it("omits a detail it does not have rather than printing a blank", async () => {
+    const { remittanceText } = await import(
+      "../../amplify/functions/stripe-webhook/remittance"
+    );
+    const text = remittanceText({ ...mail, policyNumber: null, carrierName: null });
+    expect(text).not.toContain("Policy:");
+    expect(text).not.toContain("Carrier:");
+    // What it does have is still there.
+    expect(text).toContain("Association:");
+  });
+
+  it("escapes a name that contains markup", async () => {
+    const { remittanceHtml } = await import(
+      "../../amplify/functions/stripe-webhook/remittance"
+    );
+    const html = remittanceHtml({
+      ...mail,
+      associationName: "A & B <script>alert(1)</script> Trust",
+    });
+    expect(html).not.toContain("<script>");
+    expect(html).toContain("&amp;");
+    expect(html).toContain("&lt;script&gt;");
+  });
+});
+
+/**
+ * Sending it exactly once, and never at the cost of the payment record.
+ *
+ * Asserted against the source: the guarantee is a property of where the call
+ * sits in the handler's control flow, and putting it anywhere else would need
+ * a way to know whether the mail had already gone.
+ */
+describe("when accounting is told", () => {
+  const { readFileSync } = require("node:fs") as typeof import("node:fs");
+  const { resolve } = require("node:path") as typeof import("node:path");
+  const SRC = readFileSync(
+    resolve(process.cwd(), "amplify/functions/stripe-webhook/handler.ts"),
+    "utf8"
+  );
+
+  it("only after the conditional write has been won", () => {
+    // `written` is true for exactly one invocation per transition. Sending
+    // before it, or outside it, would mail every racing invocation.
+    const at = SRC.indexOf("notifyAccounting(invoice, update)");
+    const won = SRC.indexOf("if (written) {");
+    expect(won).toBeGreaterThan(-1);
+    expect(at).toBeGreaterThan(won);
+  });
+
+  it("only on the transition into PAID", () => {
+    expect(SRC).toMatch(/if \(update\.status === "PAID"\)/);
+  });
+
+  it("never turns a failed send into a Stripe retry", () => {
+    // The email is sent after the state is written. A throw escaping here
+    // would return 500, Stripe would redeliver, and the redelivery would find
+    // the invoice already PAID and skip — so the mail would be lost anyway and
+    // a payment would sit in a retry loop for nothing.
+    const at = SRC.indexOf("await notifyAccounting");
+    const guard = SRC.lastIndexOf("try {", at);
+    const rescue = SRC.indexOf("could not tell accounting", at);
+    expect(guard).toBeGreaterThan(-1);
+    expect(rescue).toBeGreaterThan(at);
+  });
+});
+
+/**
+ * The characters survive the send.
+ *
+ * Both the subject and the body carry a middot and an em dash. SES's `Simple`
+ * content does not assume UTF-8, so without the charset stated they arrive as
+ * `Â·` and `â€"` — mojibake in a message about money, which reads as a broken
+ * system to the person reconciling an account.
+ */
+describe("the remittance encoding", () => {
+  const { readFileSync } = require("node:fs") as typeof import("node:fs");
+  const { resolve } = require("node:path") as typeof import("node:path");
+  const SRC = readFileSync(
+    resolve(process.cwd(), "amplify/functions/stripe-webhook/handler.ts"),
+    "utf8"
+  );
+
+  it("states UTF-8 on the subject and both bodies", () => {
+    expect(SRC.match(/Charset: "UTF-8"/g) ?? []).toHaveLength(3);
+  });
+
+  it("declares it in the HTML too, for whatever opens the message", async () => {
+    const { remittanceHtml } = await import(
+      "../../amplify/functions/stripe-webhook/remittance"
+    );
+    expect(remittanceHtml({
+      invoiceNumber: "INV-1", associationName: "A", policyNumber: null,
+      carrierName: null, paymentIntentId: "pi_1", paidAt: "2026-08-21",
+      carrierCents: 1, commissionCents: 1, interestCents: 0, totalCents: 2,
+    })).toContain('<meta charset="utf-8">');
+  });
+});

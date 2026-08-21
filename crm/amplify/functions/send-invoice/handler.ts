@@ -6,7 +6,7 @@ import type { Schema } from "../../data/resource";
 import { listAllPages } from "../../../src/lib/pagination";
 import { AGENCY, AGENCY_FMT } from "../../../../shared/agency";
 import Stripe from "stripe";
-import { invoiceTotals } from "../../../src/lib/invoiceTotals";
+import { invoiceTotals, remittanceSplit } from "../../../src/lib/invoiceTotals";
 import { renderInvoice } from "./invoice";
 import { createPaymentLink, toCents } from "./stripeLink";
 import { buildMimeMessage } from "./mime";
@@ -353,11 +353,25 @@ export const handler = async (event: {
      * the status alone. Marking a paid invoice back to SENT because someone
      * forwarded a copy would be a lie about money.
      */
+    /**
+     * The division of what this bill collects, stored with the send.
+     *
+     * The webhook is what tells corporate accounting a payment landed, and it
+     * reads the invoice row and nothing else. Written here because this is the
+     * moment the amount is fixed: the Payment Link above bills this total, so
+     * a split taken from the lines later could describe an amount nobody paid.
+     * Rewritten on every send, so a resend after re-costing a line corrects it.
+     */
+    const split = remittanceSplit(lines);
+
     await client.models.Invoice.update({
       id: invoiceId,
       ...(invoice.status === "DRAFT" ? { status: "SENT" as const } : {}),
       sentAt: new Date().toISOString(),
       sentTo: to.join(", "),
+      remittanceCarrierCents: split.carrierCents,
+      remittanceCommissionCents: split.commissionCents,
+      remittanceInterestCents: split.interestCents,
       // Named, because this write does not go through the browser's actor
       // proxy. Without it the activity log would say "System" sent the bill,
       // when a person pressed the button.

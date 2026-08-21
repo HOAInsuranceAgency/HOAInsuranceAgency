@@ -123,6 +123,71 @@ export function marginWarnings(lines: readonly LineLike[]): string[] {
 }
 
 /**
+ * Interest on an in-house payment plan. Agency income, but not commission.
+ *
+ * Its own category because the two are earned differently — one for placing
+ * business, the other for lending — and corporate accounting books and reports
+ * them separately. Nothing charges it yet; see `InvoiceLineKind` in the schema.
+ */
+const INTEREST_KINDS = new Set(["INTEREST"]);
+
+/** How a collected payment divides, in whole cents. */
+export interface RemittanceSplit {
+  /** Owed onward to the carrier. Not the agency's money at any point. */
+  carrierCents: number;
+  /** Earned for placing the business. */
+  commissionCents: number;
+  /** Earned for financing it. Zero until in-house financing is offered. */
+  interestCents: number;
+  /** What the association paid. Always the sum of the three above. */
+  totalCents: number;
+}
+
+/**
+ * Split a payment into what must go to the carrier and what the agency keeps.
+ *
+ * ── Why this exists ──
+ * Money paid on an invoice lands in the trust account as one figure, and almost
+ * none of it is revenue: most is premium owed onward. Corporate finance cannot
+ * reconcile the account from a bank line reading $27,500, and the CRM is the
+ * only system that knows the division. This is the number that gets emailed to
+ * them when a payment clears.
+ *
+ * ── How it divides ──
+ * The carrier's share is the cost recorded on every line, which is what the
+ * cost column has always meant — including on taxes and stamping fees, which
+ * pass through at cost and so contribute nothing to either agency category.
+ * Interest is the retail of interest lines. Commission is what is left, so the
+ * three sum to the total by construction rather than by three separate
+ * arithmetics that could disagree.
+ *
+ * ── Cents, not dollars ──
+ * Because these are compared against `stripeLinkAmountCents` and against each
+ * other, and a float that is a hundredth of a cent out reconciles to nothing.
+ * `toCents` in `stripeLink.ts` rounds the same way.
+ */
+export function remittanceSplit(lines: readonly LineLike[]): RemittanceSplit {
+  const totals = invoiceTotals(lines);
+  const cents = (n: number) => Math.round(n * 100);
+
+  const totalCents = cents(totals.retail);
+  const carrierCents = cents(totals.cost);
+  const interestCents = lines
+    .filter((l) => INTEREST_KINDS.has(l.kind ?? ""))
+    .reduce((sum, l) => sum + cents(amount(l.retailAmount) - amount(l.costAmount)), 0);
+
+  return {
+    carrierCents,
+    interestCents,
+    // The remainder, so the three always add up to what was charged. Deriving
+    // it instead of summing margins is what makes that guarantee hold when a
+    // line rounds against the total.
+    commissionCents: totalCents - carrierCents - interestCents,
+    totalCents,
+  };
+}
+
+/**
  * Lines whose money belongs to the carrier on a direct-bill policy.
  *
  * Premium and endorsement premium, and nothing else. The pass-throughs are

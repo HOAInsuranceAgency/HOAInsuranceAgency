@@ -125,6 +125,17 @@ const schema = a
       "TAX",
       "SURPLUS_LINES",
       "STAMPING_FEE",
+      /**
+       * Interest charged on an in-house payment plan.
+       *
+       * Not yet offered, and here now because the remittance split sent to
+       * corporate accounting has to name it: interest is agency income of a
+       * different kind from commission — earned for lending rather than for
+       * placing — and the two are taxed and reported differently. Present as a
+       * category that reads zero rather than one bolted on later, so the first
+       * financed invoice needs a line, not a release.
+       */
+      "INTEREST",
       "OTHER",
     ]),
     UserRole: a.enum(["ADMIN", "STAFF", "PRODUCER"]),
@@ -872,6 +883,23 @@ const schema = a
        * the old one, so a change here is what forces the link to be replaced.
        */
       stripeLinkAmountCents: a.integer(),
+      /**
+       * How the money collected divides, in cents, as of the last send.
+       *
+       * ── Why stored and not computed on payment ──
+       * The webhook is what tells corporate accounting a payment landed, and it
+       * has the invoice row and nothing else. Recomputing from the lines would
+       * mean reading them, and — worse — would split whatever the lines say
+       * *now*, which is not necessarily what was charged: a Payment Link's
+       * price is fixed when it is minted, so an invoice edited after sending
+       * would report a division of an amount nobody paid.
+       *
+       * Written beside `stripeLinkAmountCents`, from the same totals, on every
+       * send. The three always sum to it, and all four describe one charge.
+       */
+      remittanceCarrierCents: a.integer(),
+      remittanceCommissionCents: a.integer(),
+      remittanceInterestCents: a.integer(),
       lines: a.hasMany("InvoiceLine", "invoiceId"),
       // Streamed. Money changing hands is the clearest case in the schema for
       // "who did this, and when" — see STREAMED_MODELS in backend.ts.

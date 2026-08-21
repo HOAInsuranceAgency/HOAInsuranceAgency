@@ -408,6 +408,32 @@ const invoiceTable = backend.data.resources.tables.Invoice;
 backend.stripeWebhook.addEnvironment("INVOICE_TABLE", invoiceTable.tableName);
 invoiceTable.grantReadWriteData(backend.stripeWebhook.resources.lambda);
 
+/**
+ * Reporting the split to corporate finance, when Stripe confirms a payment.
+ *
+ * The email names the association and the carrier, which the invoice row holds
+ * only as ids — so three more tables, read-only, by primary key. The webhook
+ * has no data client to ask instead; see stripe-webhook/persist.ts.
+ *
+ * `internalMailbox` is the From rather than the accounting address: the mail
+ * has to come from a domain SES has verified, and getgim.com is not one.
+ */
+const accountingMailbox = resolveMailbox("accounting", branch);
+backend.stripeWebhook.addEnvironment("ACCOUNTING_MAILBOX", accountingMailbox);
+backend.stripeWebhook.addEnvironment("AGENCY_MAILBOX", internalMailbox);
+for (const [name, model] of [
+  ["ACCOUNT_TABLE", "Account"],
+  ["POLICY_TABLE", "Policy"],
+  ["CARRIER_TABLE", "Carrier"],
+] as const) {
+  const table = backend.data.resources.tables[model];
+  backend.stripeWebhook.addEnvironment(name, table.tableName);
+  table.grantReadData(backend.stripeWebhook.resources.lambda);
+}
+backend.stripeWebhook.resources.lambda.addToRolePolicy(
+  new PolicyStatement({ actions: ["ses:SendEmail"], resources: ["*"] })
+);
+
 const stripeWebhookUrl = backend.stripeWebhook.resources.lambda.addFunctionUrl({
   authType: FunctionUrlAuthType.NONE,
 });

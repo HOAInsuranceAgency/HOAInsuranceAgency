@@ -129,10 +129,20 @@ export async function writePaymentState(w: PaymentWrite): Promise<boolean> {
   }
 }
 
-/** The row, as much of it as the decision and the log lines need. */
+/** The row, as much of it as the decision, the log lines and the split need. */
 export interface InvoiceRow extends PaymentSnapshot {
   id: string;
   number: string | null;
+  accountId: string | null;
+  policyId: string | null;
+  /**
+   * The division written by the last send. Read rather than recomputed — see
+   * `remittance.ts` for why the lines are the wrong source once a Payment Link
+   * has fixed the price.
+   */
+  remittanceCarrierCents: number | null;
+  remittanceCommissionCents: number | null;
+  remittanceInterestCents: number | null;
 }
 
 /**
@@ -165,9 +175,16 @@ export async function readInvoice(
   const item = res.Item;
   if (!item) return null;
   const str = (v: unknown) => (typeof v === "string" && v ? v : null);
+  const int = (v: unknown) =>
+    typeof v === "number" && Number.isFinite(v) ? v : null;
   return {
     id: String(item.id),
     number: str(item.number),
+    accountId: str(item.accountId),
+    policyId: str(item.policyId),
+    remittanceCarrierCents: int(item.remittanceCarrierCents),
+    remittanceCommissionCents: int(item.remittanceCommissionCents),
+    remittanceInterestCents: int(item.remittanceInterestCents),
     status: str(item.status),
     stripeEventAt: str(item.stripeEventAt),
     stripePaymentIntentId: str(item.stripePaymentIntentId),

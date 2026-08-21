@@ -23,7 +23,7 @@
  * lead hears from sales, whereas a digest or a licence deadline is internal and
  * belongs in the general inbox.
  */
-export type MailboxKind = "lead" | "internal";
+export type MailboxKind = "lead" | "internal" | "accounting";
 
 /** Sales. Outbound to a prospect, and the reply-to they will use. */
 export const PRODUCTION_LEAD_MAILBOX = "sales@protectmyhoa.com";
@@ -32,15 +32,42 @@ export const PRODUCTION_LEAD_MAILBOX = "sales@protectmyhoa.com";
 export const PRODUCTION_INTERNAL_MAILBOX = "insurance@protectmyhoa.com";
 
 /**
+ * Corporate finance, who reconcile the trust account.
+ *
+ * A different company's domain, not the agency's: money collected on an
+ * invoice lands in trust and has to be divided between what is owed onward to
+ * the carrier and what the agency has actually earned. The people who do that
+ * are not the people who read insurance@.
+ */
+export const PRODUCTION_ACCOUNTING_MAILBOX = "corporateaccounting@getgim.com";
+
+/**
  * Everywhere that is not production. A plus-address on the same SES-verified
  * domain, so DKIM still applies and the suffix survives to the mailbox and can
  * be filtered.
  */
 export const TEST_MAILBOX = "jake+testing@protectmyhoa.com";
 
+/**
+ * Where remittance mail goes off production.
+ *
+ * A real mailbox rather than `TEST_MAILBOX`, because this is the one report
+ * that has to be *read* during testing to be checked — a split that is wrong
+ * is not visible from the CRM, only from the email — and a plus-addressed box
+ * is somewhere filters send things to be ignored.
+ */
+export const TEST_ACCOUNTING_MAILBOX = "jake@protectmyhoa.com";
+
 const PRODUCTION: Record<MailboxKind, string> = {
   lead: PRODUCTION_LEAD_MAILBOX,
   internal: PRODUCTION_INTERNAL_MAILBOX,
+  accounting: PRODUCTION_ACCOUNTING_MAILBOX,
+};
+
+const NON_PRODUCTION: Record<MailboxKind, string> = {
+  lead: TEST_MAILBOX,
+  internal: TEST_MAILBOX,
+  accounting: TEST_ACCOUNTING_MAILBOX,
 };
 
 /**
@@ -57,5 +84,5 @@ export function resolveMailbox(
   kind: MailboxKind,
   branch: string | undefined
 ): string {
-  return branch === "main" ? PRODUCTION[kind] : TEST_MAILBOX;
+  return branch === "main" ? PRODUCTION[kind] : NON_PRODUCTION[kind];
 }
