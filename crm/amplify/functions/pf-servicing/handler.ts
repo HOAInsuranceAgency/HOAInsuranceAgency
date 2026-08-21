@@ -3,13 +3,14 @@ import { Amplify } from "aws-amplify";
 import { generateClient } from "aws-amplify/data";
 import { getAmplifyDataClientConfig } from "@aws-amplify/backend/function/runtime";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, PutCommand } from "@aws-sdk/lib-dynamodb";
+import { DynamoDBDocumentClient, PutCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import type { Schema } from "../../data/resource";
 import {
   addDaysIso,
   canRecordCert,
   canRequestCancellation,
   CARRIER_REFUND_DAYS,
+  isRealIsoDay,
   NOTICE_DAYS,
   type NoticeRow,
 } from "../../../src/lib/premiumFinance/noticeSequence";
@@ -18,6 +19,15 @@ import { PF_CONFIG_SHA256 } from "../../../src/lib/premiumFinance/jurisdictions"
 
 /**
  * Custom mutation handler: servicePfLoan. Dispatched on `action`.
+ *
+ * ── Idempotency ─────────────────────────────────────────────────────────────
+ * Two overlapping requests must not double-post an installment or double-run
+ * a transition. Payments get a DETERMINISTIC id — pf-pay-{loanId}-{n} — so
+ * the ledger itself refuses a duplicate atomically, and the loan's advance
+ * is a conditional write on the paidThrough it was computed from. Status
+ * transitions (activate, cancel) are conditional on the status they leave,
+ * so the loser of a race fails cleanly instead of writing twice. The same
+ * persist.ts shape as everywhere else money moves in this codebase.
  *
  * Timestamps are server-set on every row this creates. The arguments carry
  * exactly two dates from the outside world — the physical USPS certificate's
@@ -76,7 +86,45 @@ async function logRow(row: {
   }
 }
 
-const DAY = /^\d{4}-\d{2}-\d{2}$/;
+/**
+ * A conditional status transition on the loan table: apply the patch only if
+ * the status is still what the decision read. Returns false on a lost race.
+ */
+async function transition(
+  loanId: string,
+  fromStatus: string,
+  patch: Record<string, unknown>
+): Promise<boolean> {
+  const loanTable = process.env.PF_LOAN_TABLE;
+  if (!loanTable) throw new Error("PF_LOAN_TABLE unset");
+  const names: Record<string, string> = { "#s": "status" };
+  const sets: string[] = ["updatedAt = :now"];
+  const values: Record<string, unknown> = {
+    ":from": fromStatus,
+    ":now": new Date().toISOString(),
+  };
+  for (const [i, [k, v]] of Object.entries(patch).entries()) {
+    names[`#f${i}`] = k;
+    values[`:f${i}`] = v;
+    sets.push(`#f${i} = :f${i}`);
+  }
+  try {
+    await ddb.send(
+      new UpdateCommand({
+        TableName: loanTable,
+        Key: { id: loanId },
+        UpdateExpression: `SET ${sets.join(", ")}`,
+        ConditionExpression: "#s = :from",
+        ExpressionAttributeNames: names,
+        ExpressionAttributeValues: values,
+      })
+    );
+    return true;
+  } catch (err) {
+    if ((err as { name?: string }).name === "ConditionalCheckFailedException") return false;
+    throw err;
+  }
+}
 
 export const handler = async (event: {
   arguments?: {
@@ -120,7 +168,7 @@ export const handler = async (event: {
           return { ok: false, error: `A ${loan.status.toLowerCase()} loan cannot be activated.` };
         }
         const executed = a.boardResolutionExecutedAt;
-        if (!executed || !DAY.test(executed)) {
+        if (!isRealIsoDay(executed)) {
           return { ok: false, error: "The board resolution's execution date is required." };
         }
         const { data: policy } = await client.models.Policy.get({ id: loan.policyId });
@@ -144,14 +192,13 @@ export const handler = async (event: {
             error: `That resolution was executed ${executed}, before the financed term began (${termStart}). Boards turn over — obtain a resolution executed for the current term.`,
           };
         }
-        const { errors } = await client.models.PfLoan.update({
-          id: loan.id,
+        const won = await transition(loan.id, "QUOTED", {
           status: "ACTIVE",
           activatedAt: now,
           boardResolutionExecutedAt: executed,
           boardResolutionDocumentId: a.boardResolutionDocumentId ?? null,
         });
-        if (errors?.length) throw new Error(errors[0].message);
+        if (!won) return { ok: false, error: "The loan changed underneath this activation. Look at it and try again." };
         return { ok: true };
       }
 
@@ -183,32 +230,79 @@ export const handler = async (event: {
         const row = schedule[n - 1];
         if (!row) return { ok: false, error: "The schedule is fully paid." };
 
-        const { errors: payErr } = await client.models.PfLoanPayment.create({
-          loanId: loan.id,
-          accountId: loan.accountId,
-          n,
-          amount: row.payment,
-          interest: row.interest,
-          principal: row.principal,
-          bankAccount,
-          postedAt: now,
-          postedBy: actor,
-          postedByName: actorName,
-        });
-        if (payErr?.length) throw new Error(payErr[0].message);
+        /**
+         * The ledger row's id IS the idempotency key: one row per loan per
+         * installment number can exist, and the condition makes the second
+         * writer fail at the ledger itself rather than after it.
+         */
+        const payTable = process.env.PF_LOAN_PAYMENT_TABLE;
+        const loanTable = process.env.PF_LOAN_TABLE;
+        if (!payTable || !loanTable) {
+          return { ok: false, error: "Servicing tables are not configured." };
+        }
+        try {
+          await ddb.send(
+            new PutCommand({
+              TableName: payTable,
+              Item: {
+                id: `pf-pay-${loan.id}-${n}`,
+                __typename: "PfLoanPayment",
+                createdAt: now,
+                updatedAt: now,
+                loanId: loan.id,
+                accountId: loan.accountId,
+                n,
+                amount: row.payment,
+                interest: row.interest,
+                principal: row.principal,
+                bankAccount,
+                postedAt: now,
+                postedBy: actor,
+                postedByName: actorName,
+              },
+              ConditionExpression: "attribute_not_exists(id)",
+            })
+          );
+        } catch (err) {
+          if ((err as { name?: string }).name === "ConditionalCheckFailedException") {
+            return { ok: false, error: `Installment ${n} is already posted.` };
+          }
+          throw err;
+        }
 
         const finished = n >= schedule.length;
-        const { errors } = await client.models.PfLoan.update({
-          id: loan.id,
-          paidThrough: n,
-          balance: row.balance,
-          nextDueAt: finished ? null : schedule[n].dueDate,
-          // A posting cures a default; a cleared schedule closes the loan.
-          status: finished ? "PAID" : "ACTIVE",
-          ...(finished ? { closedAt: now } : {}),
-          ...(loan.status === "DEFAULTED" && !finished ? { defaultedAt: null } : {}),
-        });
-        if (errors?.length) throw new Error(errors[0].message);
+        /**
+         * Advance the loan conditionally on the paidThrough this posting was
+         * computed from. If the update fails after the ledger row landed, the
+         * row stands (it is true — the money posted) and the next POST_PAYMENT
+         * attempt self-heals: the ledger refuses n again, and this branch is
+         * re-runnable because the condition below tolerates the healed state.
+         */
+        try {
+          await ddb.send(
+            new UpdateCommand({
+              TableName: loanTable,
+              Key: { id: loan.id },
+              UpdateExpression:
+                "SET paidThrough = :n, balance = :bal, nextDueAt = :next, #s = :status, updatedAt = :now" +
+                (finished ? ", closedAt = :now" : "") +
+                (loan.status === "DEFAULTED" && !finished ? " REMOVE defaultedAt" : ""),
+              ConditionExpression: "paidThrough = :seen OR paidThrough = :n",
+              ExpressionAttributeNames: { "#s": "status" },
+              ExpressionAttributeValues: {
+                ":n": n,
+                ":bal": row.balance,
+                ":next": finished ? null : schedule[n].dueDate,
+                ":status": finished ? "PAID" : "ACTIVE",
+                ":now": now,
+                ":seen": loan.paidThrough ?? 0,
+              },
+            })
+          );
+        } catch (err) {
+          if ((err as { name?: string }).name !== "ConditionalCheckFailedException") throw err;
+          console.error(`[pf-servicing] loan ${loan.id} moved during posting ${n}; ledger row stands`);
+        }
         return { ok: true, posted: { n, amount: row.payment, balance: row.balance } };
       }
 
@@ -232,7 +326,7 @@ export const handler = async (event: {
 
       /** The USPS certificate, without which nothing advances. */
       case "RECORD_CERT": {
-        if (!a.noticeId || !a.certMailedAt || !DAY.test(a.certMailedAt) || !a.certNumber?.trim()) {
+        if (!a.noticeId || !isRealIsoDay(a.certMailedAt) || !a.certNumber?.trim()) {
           return { ok: false, error: "The certificate needs its notice, mailing date, and USPS number." };
         }
         const { data: noticeRows } = await client.models.PfNotice.list({
@@ -266,7 +360,7 @@ export const handler = async (event: {
           return { ok: false, error: "Cancellation is requested on a defaulted loan only." };
         }
         const effective = a.cancellationEffectiveAt;
-        if (!effective || !DAY.test(effective)) {
+        if (!isRealIsoDay(effective)) {
           return { ok: false, error: "The cancellation effective date is required." };
         }
         const { data: noticeRows } = await client.models.PfNotice.list({
@@ -289,6 +383,24 @@ export const handler = async (event: {
         const intent = (noticeRows as NoticeRow[]).find(
           (r) => r.type === "INTENT_TO_CANCEL"
         );
+        /**
+         * The transition first, conditionally — the winner of a double-click
+         * proceeds to write the notice row; the loser stops here without a
+         * second CANCELLATION_REQUEST existing. A notice-row failure after
+         * the transition is logged loudly and left: the cancellation stands,
+         * and the missing row is visible in the sequence view.
+         */
+        const wonCancel = await transition(loan.id, "DEFAULTED", {
+          status: "CANCELLED",
+          cancellationEffectiveAt: effective,
+          // The unearned-premium receivable: the carrier owes the refund
+          // within 30 days of the cancellation effective date.
+          expectedCarrierRefundAt: addDaysIso(`${effective}T00:00:00.000Z`, CARRIER_REFUND_DAYS).slice(0, 10),
+          closedAt: now,
+        });
+        if (!wonCancel) {
+          return { ok: false, error: "The loan changed underneath this cancellation. Look at it and try again." };
+        }
         const { errors: nErr } = await client.models.PfNotice.create({
           loanId: loan.id,
           accountId: loan.accountId,
@@ -298,17 +410,9 @@ export const handler = async (event: {
           createdBy: actor,
           createdByName: actorName,
         });
-        if (nErr?.length) throw new Error(nErr[0].message);
-        const { errors } = await client.models.PfLoan.update({
-          id: loan.id,
-          status: "CANCELLED",
-          cancellationEffectiveAt: effective,
-          // The unearned-premium receivable: the carrier owes the refund
-          // within 30 days of the cancellation effective date.
-          expectedCarrierRefundAt: addDaysIso(`${effective}T00:00:00.000Z`, CARRIER_REFUND_DAYS).slice(0, 10),
-          closedAt: now,
-        });
-        if (errors?.length) throw new Error(errors[0].message);
+        if (nErr?.length) {
+          console.error(`[pf-servicing] CANCELLATION stands on ${loan.id} but its notice row failed`, nErr[0].message);
+        }
         return { ok: true };
       }
 

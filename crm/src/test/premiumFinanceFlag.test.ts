@@ -29,15 +29,15 @@ describe("the premium finance flag", () => {
     expect(HANDLER).toContain("configSha256: PF_CONFIG_SHA256");
   });
 
-  it("reverts only the enable direction — off always wins", () => {
-    // The behavior itself is proven in pfAdminHandler.test.ts against a
-    // mocked table; this pins the shape so a refactor that loses the
-    // asymmetry is visible in review.
-    expect(HANDLER).toContain("reverting the enable");
+  it("orders each direction for its own invariant", () => {
+    // Enable: log before flip — flag on implies a row exists, absolutely.
+    // Disable: flip before log — off always wins, whatever the log does.
+    // Proven behaviorally in pfAdminHandler.test.ts; pinned here in shape.
+    expect(HANDLER).toContain("log first, flip second");
     expect(HANDLER).toContain("LOG WRITE FAILED ON DISABLE");
-    expect(HANDLER).toMatch(/!logged && enabled[\s\S]{0,200}writeFlag\(false\)/);
-    // No path writes the flag back to true after a failed log.
-    expect(HANDLER).not.toMatch(/!logged[\s\S]{0,300}writeFlag\(true\)/);
+    // "The flag never turns on unlogged" is behavioral, and proven that way:
+    // pfAdminHandler.test.ts mocks a dead log table and asserts zero flag
+    // writes on enable. A source regex for it pinned the old shape instead.
   });
 
   it("keeps the settings screen away from the field", () => {

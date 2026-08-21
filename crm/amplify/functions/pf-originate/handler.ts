@@ -14,6 +14,7 @@ import {
 import { evaluateEligibility } from "../../../src/lib/premiumFinance/eligibility";
 import { buildQuote } from "../../../src/lib/premiumFinance/quote";
 import { PF_CONFIG_SHA256 } from "../../../src/lib/premiumFinance/jurisdictions";
+import { isRealIsoDay } from "../../../src/lib/premiumFinance/noticeSequence";
 
 /**
  * Custom mutation handler: issueFinanceQuote. See resource.ts.
@@ -130,8 +131,7 @@ export const handler = async (event: {
     typeof a.downPct !== "number" ||
     typeof a.months !== "number" ||
     typeof a.apr !== "number" ||
-    !a.effectiveDate ||
-    !/^\d{4}-\d{2}-\d{2}$/.test(a.effectiveDate)
+    !isRealIsoDay(a.effectiveDate)
   ) {
     return { ok: false, error: "Missing or malformed quote terms." };
   }
@@ -282,6 +282,35 @@ export const handler = async (event: {
               ok: false,
               error:
                 "The compliance log could not be written, so the quote was NOT issued.",
+            };
+          }
+          /**
+           * The flag, again, at the last possible moment. The first read was
+           * seconds ago — override lookups, opinion reads and log writes sit
+           * between it and this create — and counsel's disable landing in
+           * that window must win. A cross-table transaction doesn't exist
+           * here; this recheck shrinks the race to the create call itself,
+           * and the kill switch's own semantics (stop NEW originations)
+           * tolerate nothing wider.
+           */
+          const { data: recheck } = await client.models.AgencySettings.get({
+            id: AGENCY_SETTINGS_ID,
+          });
+          if (recheck?.premiumFinanceEnabled !== true) {
+            await writeDecisions(ctx, [
+              {
+                rule: "module-flag",
+                outcome: "BLOCK",
+                reason: "Premium finance was switched off during evaluation.",
+                inputs: terms,
+              },
+            ]);
+            return {
+              ok: true,
+              loanId: null,
+              blocks: [
+                { rule: "module-flag", reason: "Premium finance was switched off during evaluation." },
+              ],
             };
           }
           const { data: loan, errors } = await client.models.PfLoan.create({

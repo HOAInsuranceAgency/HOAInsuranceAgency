@@ -170,3 +170,61 @@ describe("immutability and server time", () => {
     expect(HANDLER).toContain("principal: row.principal");
   });
 });
+
+describe("isRealIsoDay — day-shaped is not a day", () => {
+  it("accepts real days only", async () => {
+    const { isRealIsoDay } = await import("./noticeSequence");
+    expect(isRealIsoDay("2026-08-21")).toBe(true);
+    expect(isRealIsoDay("2028-02-29")).toBe(true); // leap
+  });
+
+  it("rejects the strings that beat the old regex", async () => {
+    const { isRealIsoDay } = await import("./noticeSequence");
+    // 9999-99-99 sorted after every real date and activated a loan on a
+    // resolution executed on a day that does not exist.
+    for (const bad of ["9999-99-99", "2026-02-30", "2027-13-01", "2026-00-10", "", null, undefined, "21-08-2026"]) {
+      expect(isRealIsoDay(bad as never), String(bad)).toBe(false);
+    }
+  });
+});
+
+describe("servicing idempotency (the review findings)", () => {
+  const HANDLER = readFileSync(
+    resolve(process.cwd(), "amplify/functions/pf-servicing/handler.ts"),
+    "utf8"
+  );
+
+  it("posts each installment under a deterministic ledger id", () => {
+    expect(HANDLER).toContain("pf-pay-${loan.id}-${n}");
+    expect(HANDLER).toContain('ConditionExpression: "attribute_not_exists(id)"');
+    expect(HANDLER).toContain("is already posted");
+  });
+
+  it("advances the loan conditionally on the paidThrough it read", () => {
+    expect(HANDLER).toContain('ConditionExpression: "paidThrough = :seen OR paidThrough = :n"');
+  });
+
+  it("runs status transitions conditionally on the status they leave", () => {
+    expect(HANDLER).toContain('ConditionExpression: "#s = :from"');
+    expect(HANDLER).toContain('transition(loan.id, "QUOTED"');
+    expect(HANDLER).toContain('transition(loan.id, "DEFAULTED"');
+  });
+
+  it("validates real days on every outside date", () => {
+    expect(HANDLER).not.toMatch(/DAY\.test/);
+    expect((HANDLER.match(/isRealIsoDay\(/g) ?? []).length).toBe(3);
+  });
+});
+
+describe("origination rechecks the flag at the last moment", () => {
+  it("a disable landing mid-evaluation blocks the create", () => {
+    const SRC = readFileSync(
+      resolve(process.cwd(), "amplify/functions/pf-originate/handler.ts"),
+      "utf8"
+    );
+    const recheck = SRC.indexOf("switched off during evaluation");
+    const create = SRC.indexOf("client.models.PfLoan.create");
+    expect(recheck).toBeGreaterThan(-1);
+    expect(create).toBeGreaterThan(recheck);
+  });
+});

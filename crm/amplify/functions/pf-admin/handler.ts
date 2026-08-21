@@ -111,19 +111,59 @@ export const handler = async (event: {
   };
 
   try {
-    await writeFlag(enabled);
-    const logged = await writeLog();
-
-    if (!logged && enabled) {
-      // Enabling without a record must not stand. Revert; off is safe.
-      console.error("[pf-admin] log write failed; reverting the enable");
-      await writeFlag(false);
-      return {
-        ok: false,
-        error: "The change could not be logged, so lending was NOT enabled.",
-      };
+    /**
+     * ENABLE: log first, flip second. The invariant is "flag on ⇒ row
+     * exists", and ordering guarantees it absolutely — the earlier
+     * flip-then-revert left a hole where the revert itself failed and the
+     * flag stood unlogged. A row for a flip that then fails is the safe
+     * direction, and gets a best-effort correction row.
+     */
+    if (enabled) {
+      const logged = await writeLog();
+      if (!logged) {
+        return {
+          ok: false,
+          error: "The change could not be logged, so lending was NOT enabled.",
+        };
+      }
+      try {
+        await writeFlag(true);
+      } catch (err) {
+        console.error("[pf-admin] flip failed after logging; module remains off", err);
+        try {
+          await ddb.send(
+            new PutCommand({
+              TableName: logTable,
+              Item: {
+                id: randomUUID(),
+                __typename: "PfComplianceLog",
+                createdAt: now,
+                updatedAt: now,
+                jurisdiction: "ALL",
+                rule: "module-flag",
+                outcome: "DISABLED",
+                reason: "Enable was logged but the flag write failed; the module remains OFF.",
+                inputs: JSON.stringify({ enabled: false }),
+                configSha256: PF_CONFIG_SHA256,
+                actor,
+                actorName,
+                occurredAt: now,
+              },
+            })
+          );
+        } catch (corrErr) {
+          console.error("[pf-admin] correction row also failed", corrErr);
+        }
+        return { ok: false, error: "Couldn't enable the module. Try again." };
+      }
+      console.log(`pf-admin: premium finance ENABLED by ${actorName}`);
+      return { ok: true, enabled: true };
     }
-    if (!logged && !enabled) {
+
+    // DISABLE: flag first, unconditionally — off always wins.
+    await writeFlag(false);
+    const logged = await writeLog();
+    if (!logged) {
       // The module is OFF and stays off. Never restore the flag over a log.
       console.error(
         "[pf-admin] LOG WRITE FAILED ON DISABLE — module is OFF; record this flip manually"
@@ -136,8 +176,8 @@ export const handler = async (event: {
       };
     }
 
-    console.log(`pf-admin: premium finance ${enabled ? "ENABLED" : "DISABLED"} by ${actorName}`);
-    return { ok: true, enabled };
+    console.log(`pf-admin: premium finance DISABLED by ${actorName}`);
+    return { ok: true, enabled: false };
   } catch (err) {
     console.error("pf-admin failed", err);
     return { ok: false, error: "Couldn't change the setting. Try again." };

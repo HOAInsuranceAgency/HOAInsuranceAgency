@@ -60,6 +60,11 @@ describe("the happy path", () => {
     const res = await run(true);
     expect(res).toMatchObject({ ok: true, enabled: true });
     expect(flagWrites()).toEqual([true]);
+    // Enable order: the row lands BEFORE the flag — flag on implies logged.
+    const kinds = sendMock.mock.calls.map(([cmd]) =>
+      (cmd.input as Record<string, unknown>).Item ? "log" : "flag"
+    );
+    expect(kinds).toEqual(["log", "flag"]);
     const [row] = logPuts();
     expect(row.rule).toBe("module-flag");
     expect(row.outcome).toBe("ENABLED");
@@ -77,12 +82,14 @@ describe("a log write that will not succeed", () => {
     );
   });
 
-  it("REVERTS an enable — lending never turns on unrecorded", async () => {
+  it("never flips the flag when the enable log cannot land", async () => {
+    // Log-first: with the row unwritable, the flag is NEVER touched — the
+    // stronger form of the old revert, with no window where a failed revert
+    // could leave lending on unrecorded.
     const res = await run(true);
     expect(res.ok).toBe(false);
     expect(res.error).toContain("NOT enabled");
-    // Flag on, three log attempts, flag back off. Off is where it ends.
-    expect(flagWrites()).toEqual([true, false]);
+    expect(flagWrites()).toEqual([]);
     expect(logPuts().length).toBe(3);
   });
 

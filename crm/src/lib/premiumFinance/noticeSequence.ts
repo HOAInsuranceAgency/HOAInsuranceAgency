@@ -104,3 +104,23 @@ export function canRecordCert(
   }
   return { ok: true };
 }
+
+/**
+ * A real calendar day, not just a day-shaped string.
+ *
+ * `9999-99-99` passes /^\d{4}-\d{2}-\d{2}$/ and sorts after every real date,
+ * which was enough to activate a loan on a resolution "executed" on a day
+ * that does not exist. Round-tripped through UTC construction so month 99
+ * and day 99 fail instead of rolling over — the formatDay lesson, applied
+ * where it gates money.
+ */
+export function isRealIsoDay(s: string | null | undefined): s is string {
+  if (!s || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  const [y, m, d] = s.split("-").map(Number);
+  const date = new Date(Date.UTC(y, m - 1, d));
+  return (
+    date.getUTCFullYear() === y &&
+    date.getUTCMonth() === m - 1 &&
+    date.getUTCDate() === d
+  );
+}

@@ -456,6 +456,21 @@ for (const fn of [backend.pfServicing, backend.pfDefaultSweep]) {
   pfLogTable.grantReadWriteData(fn.resources.lambda);
 }
 
+/**
+ * Servicing's idempotency writes go straight to the tables: a deterministic
+ * ledger id refuses a duplicate posting atomically, and status transitions
+ * are conditional on the status they leave — the data client can express
+ * neither. Same reasoning as stripe-webhook's persist.ts.
+ */
+for (const [name, model] of [
+  ["PF_LOAN_TABLE", "PfLoan"],
+  ["PF_LOAN_PAYMENT_TABLE", "PfLoanPayment"],
+] as const) {
+  const table = backend.data.resources.tables[model];
+  backend.pfServicing.addEnvironment(name, table.tableName);
+  table.grantReadWriteData(backend.pfServicing.resources.lambda);
+}
+
 // The agreement renderer writes its PDFs under generated/pf/ — outside
 // documents/, so the OCR upload trigger never re-reads the app's own output.
 backend.pfAgreement.addEnvironment(
