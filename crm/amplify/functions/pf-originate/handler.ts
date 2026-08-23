@@ -12,7 +12,7 @@ import {
   originationGate,
 } from "../../../src/lib/premiumFinance/gate";
 import { evaluateEligibility } from "../../../src/lib/premiumFinance/eligibility";
-import { buildQuote } from "../../../src/lib/premiumFinance/quote";
+import { buildQuote, downPctViolation } from "../../../src/lib/premiumFinance/quote";
 import { PF_CONFIG_SHA256 } from "../../../src/lib/premiumFinance/jurisdictions";
 import { isRealIsoDay } from "../../../src/lib/premiumFinance/noticeSequence";
 
@@ -213,6 +213,15 @@ export const handler = async (event: {
       });
 
       if (gate.open) {
+        // The 25% floor: payment 1 of the schedule, collected at inception.
+        const downProblem = downPctViolation(a.downPct);
+        decisions.push({
+          rule: "min-down",
+          outcome: downProblem ? "BLOCK" : "PASS",
+          reason: downProblem ?? undefined,
+          inputs: terms,
+        });
+
         const aprProblem = aprCapViolation(a.apr, gate.jurisdiction);
         decisions.push({
           rule: "apr-cap",

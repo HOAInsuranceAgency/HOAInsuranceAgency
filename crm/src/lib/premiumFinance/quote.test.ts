@@ -80,10 +80,24 @@ describe("the schedule adds up to itself", () => {
 });
 
 describe("defaults and the fee", () => {
-  it("25% down, 9 months, 14.0% APR — never a jurisdiction cap", () => {
+  it("25% down as payment 1 of 12, 11 financed months, 14.0% APR", () => {
+    // The signed terms of 2026-08-23: the down payment is payment 1,
+    // collected at inception; the remainder finances over the other 11
+    // months of the policy year. Never a jurisdiction cap as a default.
     expect(PF_DEFAULT_DOWN_PCT).toBe(25);
-    expect(PF_DEFAULT_MONTHS).toBe(9);
+    expect(PF_DEFAULT_MONTHS).toBe(11);
     expect(PF_DEFAULT_APR).toBe(14.0);
+  });
+
+  it("refuses a down payment under the 25% floor", async () => {
+    const { downPctViolation, PF_MIN_DOWN_PCT } = await import("./quote");
+    expect(PF_MIN_DOWN_PCT).toBe(25);
+    expect(downPctViolation(25)).toBeNull();
+    expect(downPctViolation(30)).toBeNull();
+    for (const bad of [24.9, 10, 0, -5, NaN]) {
+      expect(downPctViolation(bad), String(bad)).toContain("at least 25%");
+    }
+    expect(downPctViolation(100)).not.toBeNull();
   });
 
   it("charges a flat $10 origination fee, refundable on prepayment", () => {

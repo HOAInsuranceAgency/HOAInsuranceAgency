@@ -92,6 +92,37 @@ Additional rules from review:
   the cap and the UI never displays the cap as a suggestion. Default is 14.0%
   everywhere; the cap appears only in a rejection message.
 
+## Payment terms (2026-08-23)
+
+25% of the premium is required up front, presented everywhere as **payment 1
+of 12**: due at inception, no finance charge, and it takes the amount owed
+from the premium down to the amount financed. The remainder finances over the
+**11 remaining months** of the policy year as payments 2 through 12. In code:
+`PF_MIN_DOWN_PCT = 25` (a floor — `downPctViolation` blocks below it, in the
+panel and again at origination as logged rule `min-down`), `PF_DEFAULT_DOWN_PCT
+= 25`, `PF_DEFAULT_MONTHS = 11`. A larger down payment or shorter schedule is
+allowed; a smaller down payment is not.
+
+**One payment path at a time.** Pay-in-full (a Stripe invoice link) and
+financing are mutually exclusive per policy, enforced in both directions:
+
+- Invoices keep working exactly as before while a loan is merely QUOTED — a
+  quote is an offer, not a choice.
+- **Full payment wins retroactively**: the Stripe webhook, on marking an
+  invoice PAID, cancels any QUOTED loan on that invoice's policy
+  (conditional QUOTED→CANCELLED, logged as `superseded-by-payment` with the
+  ruleset SHA). ACTIVE loans are never auto-cancelled — money already moved;
+  that is a human's problem, surfaced loudly.
+- **Activation refuses proactively**: `ACTIVATE` blocks while any invoice on
+  the policy is PROCESSING (a payment already clearing — they chose
+  pay-in-full; cancel the quote) or SENT with a live Stripe link (void the
+  invoice first, which kills its link through the path that already knows
+  how). Logged as `exclusive-payment-path`.
+
+So payment links are still minted at invoice send, financing quotes are
+issued freely alongside them, and the exclusion bites at the two moments
+money actually commits: a link getting paid, or a loan activating.
+
 ## Quote-math conventions (pinned)
 
 Simple interest, declining balance, monthly compounding. Level payment

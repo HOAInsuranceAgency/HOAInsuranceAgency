@@ -17,9 +17,26 @@
  * own design pass; building the columns first is how they get filled in.
  */
 
-/** Defaults per the signed brief: 25% down, 9 monthly installments, 14.0% APR. */
+/**
+ * Terms per the signed decision (2026-08-23): 25% down REQUIRED, collected up
+ * front as payment 1 of 12, with the remainder financed over the other 11
+ * months — one payment per month of the policy year. The down payment is a
+ * floor, not a default someone can type under: `downPctViolation` enforces it
+ * in the UI and the origination Lambda rejects beneath it.
+ */
+export const PF_MIN_DOWN_PCT = 25;
 export const PF_DEFAULT_DOWN_PCT = 25;
-export const PF_DEFAULT_MONTHS = 9;
+export const PF_DEFAULT_MONTHS = 11;
+
+/** Null = acceptable. The floor exists because MEP screens assume a real
+ * collateral cushion at inception; below 25% the whole model thins. */
+export function downPctViolation(downPct: number): string | null {
+  if (!Number.isFinite(downPct) || downPct < PF_MIN_DOWN_PCT) {
+    return `The down payment must be at least ${PF_MIN_DOWN_PCT}% — it is payment 1 of the schedule, collected at inception.`;
+  }
+  if (downPct >= 100) return "A 100% down payment is not a loan.";
+  return null;
+}
 /**
  * 14.0 everywhere, whatever the jurisdiction's cap (decision E). The cap is a
  * ceiling, not a target: nothing may ever default an APR to it, and the UI

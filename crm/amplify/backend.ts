@@ -541,6 +541,22 @@ for (const [name, model] of [
 backend.stripeWebhook.resources.lambda.addToRolePolicy(
   new PolicyStatement({ actions: ["ses:SendEmail"], resources: ["*"] })
 );
+// Paying in full supersedes any QUOTED finance loan on the policy — the
+// webhook cancels those conditionally and logs the supersession.
+backend.stripeWebhook.addEnvironment(
+  "PF_LOAN_TABLE",
+  backend.data.resources.tables.PfLoan.tableName
+);
+backend.data.resources.tables.PfLoan.grantReadWriteData(
+  backend.stripeWebhook.resources.lambda
+);
+backend.stripeWebhook.addEnvironment(
+  "PF_COMPLIANCE_LOG_TABLE",
+  backend.data.resources.tables.PfComplianceLog.tableName
+);
+backend.data.resources.tables.PfComplianceLog.grantWriteData(
+  backend.stripeWebhook.resources.lambda
+);
 
 const stripeWebhookUrl = backend.stripeWebhook.resources.lambda.addFunctionUrl({
   authType: FunctionUrlAuthType.NONE,

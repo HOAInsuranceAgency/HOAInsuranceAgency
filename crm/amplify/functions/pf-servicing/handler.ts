@@ -14,6 +14,7 @@ import {
   NOTICE_DAYS,
   type NoticeRow,
 } from "../../../src/lib/premiumFinance/noticeSequence";
+import { listAllPages } from "../../../src/lib/pagination";
 import { parseScheduleJson } from "../../../src/lib/premiumFinance/quote";
 import { PF_CONFIG_SHA256 } from "../../../src/lib/premiumFinance/jurisdictions";
 
@@ -180,6 +181,47 @@ export const handler = async (event: {
             error: "The executed board resolution must be on file first — upload it to Documents and reference it here.",
           };
         }
+        /**
+         * One payment path at a time. If an invoice billing this policy still
+         * has a live Stripe link (SENT), or a payment already clearing on it
+         * (PROCESSING), the association has an open pay-in-full route — and
+         * activating the loan would open the financed route beside it. The
+         * fix is one click away: voiding the invoice kills its link through
+         * the path that already knows how. PROCESSING refuses outright,
+         * because money in flight means they already chose.
+         */
+        const policyInvoices = await listAllPages((nextToken) =>
+          client.models.Invoice.list({
+            filter: { policyId: { eq: loan.policyId } },
+            limit: 200,
+            nextToken,
+          })
+        );
+        const openInvoice = policyInvoices.find(
+          (inv) =>
+            inv.status === "PROCESSING" ||
+            (inv.status === "SENT" && inv.stripePaymentLinkId?.trim())
+        );
+        if (openInvoice) {
+          await logRow({
+            accountId: loan.accountId,
+            jurisdiction: loan.state,
+            rule: "exclusive-payment-path",
+            outcome: "BLOCK",
+            reason: `Invoice ${openInvoice.number ?? openInvoice.id} (${openInvoice.status}) still offers pay-in-full on this policy.`,
+            inputs: { loanId: loan.id, invoiceId: openInvoice.id },
+            actor,
+            actorName,
+          });
+          return {
+            ok: false,
+            error:
+              openInvoice.status === "PROCESSING"
+                ? `A pay-in-full payment on invoice ${openInvoice.number ?? openInvoice.id} is already clearing. The association chose to pay in full — this quote should be cancelled, not activated.`
+                : `Invoice ${openInvoice.number ?? openInvoice.id} still has a live payment link for the full premium. Void it first — the association cannot have both a pay-in-full link and a signed finance agreement open at once.`,
+          };
+        }
+
         const { data: policy } = await client.models.Policy.get({ id: loan.policyId });
         const termStart = policy?.effectiveDate ?? loan.effectiveDate;
         const stale = executed < termStart;

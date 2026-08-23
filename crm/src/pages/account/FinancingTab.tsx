@@ -22,6 +22,7 @@ import {
 } from "../../lib/premiumFinance/eligibility";
 import {
   buildQuote,
+  downPctViolation,
   PF_DEFAULT_APR,
   PF_DEFAULT_DOWN_PCT,
   PF_DEFAULT_MONTHS,
@@ -416,6 +417,9 @@ export function FinancingTab({ account }: { account: Account }) {
     parsed.months <= 12 &&
     Number.isFinite(parsed.apr) &&
     parsed.apr > 0;
+  // The 25% floor is a product term, not jurisdiction data — safe to state
+  // client-side, unlike an APR cap. The server re-checks and logs it anyway.
+  const downError = inputsOk ? downPctViolation(parsed.downPct) : null;
 
   const checks = policy
     ? evaluateEligibility({
@@ -437,7 +441,7 @@ export function FinancingTab({ account }: { account: Account }) {
 
   const today = new Date().toISOString().slice(0, 10);
   const quote =
-    policy && inputsOk && !blockedNow
+    policy && inputsOk && !downError && !blockedNow
       ? buildQuote({ ...parsed, effectiveDate: policy.effectiveDate ?? today })
       : null;
 
@@ -654,13 +658,14 @@ export function FinancingTab({ account }: { account: Account }) {
                 />
               </div>
             </div>
+            {downError && <p className="error-text">{downError}</p>}
 
             {quote && (
               <>
                 <div className="form-grid" style={{ marginTop: 14 }}>
                   <div className="stat">
                     <div className="n">{fmtMoney(quote.downPayment)}</div>
-                    <div className="l">Down payment</div>
+                    <div className="l">Down payment (1 of {parsed.months + 1})</div>
                   </div>
                   <div className="stat">
                     <div className="n">{fmtMoney(quote.amountFinanced)}</div>
@@ -676,6 +681,9 @@ export function FinancingTab({ account }: { account: Account }) {
                   </div>
                 </div>
                 <p className="muted small">
+                  The down payment is payment 1 of {parsed.months + 1}, collected
+                  at inception; the {parsed.months} financed installments follow
+                  monthly as payments 2 through {parsed.months + 1}.
                   Plus a flat {formatMoney(PF_ORIGINATION_FEE)} origination fee,
                   refunded in full on prepayment. Early payoff is the outstanding
                   principal only — the actuarial method; no other charge exists.

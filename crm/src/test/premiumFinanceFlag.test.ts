@@ -109,6 +109,11 @@ describe("the origination mutation", () => {
     expect(HANDLER).toMatch(/rule: "module-flag"/);
   });
 
+  it("holds the 25% down floor at the API, not just in the UI", () => {
+    expect(HANDLER).toContain("downPctViolation(a.downPct)");
+    expect(HANDLER).toMatch(/rule: "min-down"/);
+  });
+
   it("rejects an APR above the cap at the API, not just in the UI", () => {
     expect(HANDLER).toContain("aprCapViolation(a.apr, gate.jurisdiction)");
     expect(HANDLER).toMatch(/rule: "apr-cap"/);

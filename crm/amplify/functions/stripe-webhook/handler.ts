@@ -1,5 +1,8 @@
 import Stripe from "stripe";
+import { randomUUID } from "node:crypto";
 import { SESv2Client, SendEmailCommand } from "@aws-sdk/client-sesv2";
+import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
+import { DynamoDBDocumentClient, PutCommand, ScanCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { AGENCY } from "../../../../shared/agency";
 import { decideEvent, decideUpdate } from "./decide";
 import { readInvoice, writePaymentState, type InvoiceRow } from "./persist";
@@ -9,6 +12,7 @@ import {
   remittanceSubject,
   remittanceText,
 } from "./remittance";
+import { PF_CONFIG_SHA256 } from "../../../src/lib/premiumFinance/jurisdictions";
 
 /**
  * Stripe → invoice status. See resource.ts for why this is a Function URL.
@@ -21,6 +25,7 @@ import {
  */
 
 const ses = new SESv2Client();
+const ddb = DynamoDBDocumentClient.from(new DynamoDBClient());
 
 /**
  * Email the split to whoever reconciles the trust account.
@@ -134,6 +139,72 @@ async function alertPaymentOnVoid(invoice: InvoiceRow, paymentIntentId: string) 
   console.log(
     `stripe-webhook alerted ${to} about a payment on void invoice ${invoice.number ?? invoice.id}`
   );
+}
+
+/**
+ * QUOTED loans on the paid invoice's policy become CANCELLED, conditionally —
+ * the transition() discipline — with a compliance row naming the payment
+ * that superseded them. A Scan, not a query: the loan table holds dozens of
+ * rows a year and the webhook has no GSI name to hold onto.
+ */
+async function cancelQuotedLoans(invoice: InvoiceRow) {
+  const loanTable = process.env.PF_LOAN_TABLE;
+  const logTable = process.env.PF_COMPLIANCE_LOG_TABLE;
+  if (!loanTable || !invoice.policyId) return;
+  const now = new Date().toISOString();
+  const { Items } = await ddb.send(
+    new ScanCommand({
+      TableName: loanTable,
+      FilterExpression: "policyId = :p AND #s = :q",
+      ExpressionAttributeNames: { "#s": "status" },
+      ExpressionAttributeValues: { ":p": invoice.policyId, ":q": "QUOTED" },
+    })
+  );
+  for (const loan of Items ?? []) {
+    try {
+      await ddb.send(
+        new UpdateCommand({
+          TableName: loanTable,
+          Key: { id: loan.id },
+          UpdateExpression: "SET #s = :c, closedAt = :now, updatedAt = :now",
+          ConditionExpression: "#s = :q",
+          ExpressionAttributeNames: { "#s": "status" },
+          ExpressionAttributeValues: { ":c": "CANCELLED", ":q": "QUOTED", ":now": now },
+        })
+      );
+    } catch (err) {
+      if ((err as { name?: string }).name === "ConditionalCheckFailedException") continue;
+      throw err;
+    }
+    if (logTable) {
+      try {
+        await ddb.send(
+          new PutCommand({
+            TableName: logTable,
+            Item: {
+              id: randomUUID(),
+              __typename: "PfComplianceLog",
+              createdAt: now,
+              updatedAt: now,
+              accountId: invoice.accountId,
+              jurisdiction: (loan.state as string) ?? "UNKNOWN",
+              rule: "superseded-by-payment",
+              outcome: "BLOCK",
+              reason: `Quote cancelled: invoice ${invoice.number ?? invoice.id} was paid in full.`,
+              inputs: JSON.stringify({ loanId: loan.id, invoiceId: invoice.id }),
+              configSha256: PF_CONFIG_SHA256,
+              actor: "stripe-webhook",
+              actorName: "stripe-webhook",
+              occurredAt: now,
+            },
+          })
+        );
+      } catch (err) {
+        console.error("stripe-webhook: supersede log write failed", err);
+      }
+    }
+    console.log(`stripe-webhook: cancelled QUOTED loan ${loan.id} — invoice paid in full`);
+  }
 }
 
 let stripe: Stripe | undefined;
@@ -303,6 +374,22 @@ export const handler = async (event: {
           } catch (err) {
             console.error(
               `stripe-webhook could not tell accounting about ${invoice.number ?? invoice.id}`,
+              err
+            );
+          }
+          /**
+           * Paying in full is choosing. Any QUOTED finance loan on the same
+           * policy is now a road not taken and is cancelled — QUOTED only:
+           * an ACTIVE loan means money already went out the door, and a full
+           * payment on top of it is a human's problem to untangle, loudly,
+           * not something to auto-cancel. Best effort after the payment
+           * record: a failure here never un-PAYs the invoice.
+           */
+          try {
+            await cancelQuotedLoans(invoice);
+          } catch (err) {
+            console.error(
+              `stripe-webhook could not supersede quotes for ${invoice.number ?? invoice.id}`,
               err
             );
           }

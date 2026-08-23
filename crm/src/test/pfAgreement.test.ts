@@ -122,13 +122,20 @@ describe("the premium finance agreement", () => {
     }
   });
 
-  it("prints the full schedule", async () => {
+  it("prints the full schedule, with the down payment as payment 1", async () => {
     const text = decode(await renderAgreementPdf(view));
     expect(text).toContain("PAYMENT SCHEDULE");
+    // Payment 1 is the down payment: due at inception, zero finance charge,
+    // and the balance column opens at the amount financed.
+    expect(text).toContain("2026-09-01 (down payment)");
+    expect(text).toContain("$250,000.00 $0.00 $250,000.00 $750,000.00");
     for (const row of view.schedule) {
       expect(text, row.dueDate).toContain(row.dueDate);
     }
     expect(text).toContain("$88,269.61");
+    // The financed installments are payments 2..months+1 — the terms of
+    // 2026-08-23 (25% up front as payment 1, remainder monthly behind it).
+    expect(text).toContain(`Payments 2 through ${view.months + 1}`);
   });
 
   it("states the actuarial method and the fee refund, and no late anything", async () => {
