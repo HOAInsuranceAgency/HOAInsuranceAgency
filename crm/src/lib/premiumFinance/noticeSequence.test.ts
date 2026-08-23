@@ -253,10 +253,12 @@ describe("origination rechecks the flag at the last moment", () => {
       resolve(process.cwd(), "amplify/functions/pf-originate/handler.ts"),
       "utf8"
     );
-    const recheck = SRC.indexOf("switched off during evaluation");
-    const create = SRC.indexOf("client.models.PfLoan.create");
-    expect(recheck).toBeGreaterThan(-1);
-    expect(create).toBeGreaterThan(recheck);
+    // Stronger than ordering now: the flag check and the loan Put are one
+    // TransactWriteItems — no window exists between them at all.
+    expect(SRC).toContain("TransactWriteCommand");
+    expect(SRC).toContain('ConditionExpression: "premiumFinanceEnabled = :on"');
+    expect(SRC).toContain("TransactionCanceledException");
+    expect(SRC).not.toContain("client.models.PfLoan.create");
   });
 });
 

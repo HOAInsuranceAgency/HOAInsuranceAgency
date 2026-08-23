@@ -3,7 +3,7 @@ import { Amplify } from "aws-amplify";
 import { generateClient } from "aws-amplify/data";
 import { getAmplifyDataClientConfig } from "@aws-amplify/backend/function/runtime";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, PutCommand } from "@aws-sdk/lib-dynamodb";
+import { DynamoDBDocumentClient, PutCommand, TransactWriteCommand } from "@aws-sdk/lib-dynamodb";
 import type { Schema } from "../../data/resource";
 import {
   aprCapViolation,
@@ -293,51 +293,90 @@ export const handler = async (event: {
            * and the kill switch's own semantics (stop NEW originations)
            * tolerate nothing wider.
            */
-          const { data: recheck } = await client.models.AgencySettings.get({
-            id: AGENCY_SETTINGS_ID,
-          });
-          if (recheck?.premiumFinanceEnabled !== true) {
-            await writeDecisions(ctx, [
-              {
-                rule: "module-flag",
-                outcome: "BLOCK",
-                reason: "Premium finance was switched off during evaluation.",
-                inputs: terms,
-              },
-            ]);
-            return {
-              ok: true,
-              loanId: null,
-              blocks: [
-                { rule: "module-flag", reason: "Premium finance was switched off during evaluation." },
-              ],
-            };
+          /**
+           * The create and the flag check are ONE transaction: a
+           * ConditionCheck on the settings row rides with the loan Put, so a
+           * disable that is durable when this commits makes the whole thing
+           * fail — there is no window between "flag read true" and "loan
+           * exists" at all. The earlier separate recheck shrank the race;
+           * TransactWriteItems removes it.
+           */
+          const settingsTable = process.env.AGENCY_SETTINGS_TABLE;
+          const loanTable = process.env.PF_LOAN_TABLE;
+          if (!settingsTable || !loanTable) {
+            return { ok: false, error: "Origination tables are not configured." };
           }
-          const { data: loan, errors } = await client.models.PfLoan.create({
-            accountId: account.id,
-            policyId: a.policyId,
-            status: "QUOTED",
-            state: gate.jurisdiction.code,
-            configSha256: PF_CONFIG_SHA256,
-            premium: a.premium,
-            downPct: a.downPct,
-            months: a.months,
-            apr: a.apr,
-            effectiveDate: a.effectiveDate,
-            downPayment: quote.downPayment,
-            amountFinanced: quote.amountFinanced,
-            payment: quote.payment,
-            totalInterest: quote.totalInterest,
-            originationFee: quote.originationFee,
-            schedule: JSON.stringify(quote.schedule),
-            balance: quote.amountFinanced,
-            nextDueAt: quote.schedule[0]?.dueDate ?? null,
-            paidThrough: 0,
-            quotedBy: actor,
-            quotedByName: actorName,
-            quotedAt: new Date().toISOString(),
-          });
-          if (errors?.length || !loan) throw new Error(errors?.[0]?.message);
+          const loanId = randomUUID();
+          const nowIso = new Date().toISOString();
+          try {
+            await ddb.send(
+              new TransactWriteCommand({
+                TransactItems: [
+                  {
+                    ConditionCheck: {
+                      TableName: settingsTable,
+                      Key: { id: AGENCY_SETTINGS_ID },
+                      ConditionExpression: "premiumFinanceEnabled = :on",
+                      ExpressionAttributeValues: { ":on": true },
+                    },
+                  },
+                  {
+                    Put: {
+                      TableName: loanTable,
+                      Item: {
+                        id: loanId,
+                        __typename: "PfLoan",
+                        createdAt: nowIso,
+                        updatedAt: nowIso,
+                        accountId: account.id,
+                        policyId: a.policyId,
+                        status: "QUOTED",
+                        state: gate.jurisdiction.code,
+                        configSha256: PF_CONFIG_SHA256,
+                        premium: a.premium,
+                        downPct: a.downPct,
+                        months: a.months,
+                        apr: a.apr,
+                        effectiveDate: a.effectiveDate,
+                        downPayment: quote.downPayment,
+                        amountFinanced: quote.amountFinanced,
+                        payment: quote.payment,
+                        totalInterest: quote.totalInterest,
+                        originationFee: quote.originationFee,
+                        schedule: JSON.stringify(quote.schedule),
+                        balance: quote.amountFinanced,
+                        nextDueAt: quote.schedule[0]?.dueDate ?? null,
+                        paidThrough: 0,
+                        quotedBy: actor,
+                        quotedByName: actorName,
+                        quotedAt: nowIso,
+                      },
+                    },
+                  },
+                ],
+              })
+            );
+          } catch (err) {
+            if ((err as { name?: string }).name === "TransactionCanceledException") {
+              await writeDecisions(ctx, [
+                {
+                  rule: "module-flag",
+                  outcome: "BLOCK",
+                  reason: "Premium finance was switched off during evaluation.",
+                  inputs: terms,
+                },
+              ]);
+              return {
+                ok: true,
+                loanId: null,
+                blocks: [
+                  { rule: "module-flag", reason: "Premium finance was switched off during evaluation." },
+                ],
+              };
+            }
+            throw err;
+          }
+          const loan = { id: loanId };
           console.log(
             `pf-originate: quoted ${loan.id} (${gate.jurisdiction.code}, $${quote.amountFinanced} @ ${a.apr}%) by ${actorName}`
           );

@@ -449,6 +449,22 @@ pfLogTable.grantReadWriteData(backend.pfAdmin.resources.lambda);
 // reads and the PfLoan create go through the data client via allow.resource.
 backend.pfOriginate.addEnvironment("PF_COMPLIANCE_LOG_TABLE", pfLogTable.tableName);
 pfLogTable.grantReadWriteData(backend.pfOriginate.resources.lambda);
+// The loan create is a cross-table transaction with a ConditionCheck on the
+// module flag, so origination needs both tables directly.
+backend.pfOriginate.addEnvironment(
+  "AGENCY_SETTINGS_TABLE",
+  backend.data.resources.tables.AgencySettings.tableName
+);
+backend.pfOriginate.addEnvironment(
+  "PF_LOAN_TABLE",
+  backend.data.resources.tables.PfLoan.tableName
+);
+backend.data.resources.tables.AgencySettings.grantReadData(
+  backend.pfOriginate.resources.lambda
+);
+backend.data.resources.tables.PfLoan.grantReadWriteData(
+  backend.pfOriginate.resources.lambda
+);
 
 // Servicing and the default sweep write their decision rows to the log too.
 for (const fn of [backend.pfServicing, backend.pfDefaultSweep]) {

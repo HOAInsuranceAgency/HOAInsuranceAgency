@@ -129,7 +129,7 @@ describe("the origination mutation", () => {
     // no loan. A refusal, by contrast, is safe even unlogged.
     expect(HANDLER).toContain("was NOT issued");
     const guard = HANDLER.indexOf("was NOT issued");
-    const create = HANDLER.indexOf("client.models.PfLoan.create");
+    const create = HANDLER.indexOf("TransactWriteCommand({");
     expect(guard).toBeGreaterThan(-1);
     expect(create).toBeGreaterThan(guard);
   });
