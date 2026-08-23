@@ -182,15 +182,15 @@ export const handler = async (event: {
           };
         }
         /**
-         * And "on file" is checked, not attested: the id is pasted by hand
-         * (FinancingTab), and a typo'd or cross-account id would activate a
-         * lending agreement whose power-of-attorney evidence points at
-         * nothing — silently, forever. The generated categories are
-         * rejected outright: PF_BOARD_RESOLUTION and PF_AGREEMENT exist
-         * only as pf-agreement's own output (no upload picker offers them),
-         * so a document carrying either is provably the UNSIGNED draft —
-         * and the draft for this very loan, filed on this very account, is
-         * the likeliest wrong paste there is.
+         * And "on file" is checked POSITIVELY, not attested: the id is
+         * pasted by hand (FinancingTab), and a typo'd or wrong-document id
+         * would activate a lending agreement whose power-of-attorney
+         * evidence points at the wrong paper — silently, forever. Nothing
+         * short of a Document filed under this account AS an executed
+         * board resolution passes: "some document on the account" proves
+         * nothing, and the generated PF_BOARD_RESOLUTION draft — filed on
+         * this very account, named for this very loan — is the likeliest
+         * wrong paste there is.
          */
         const documentId = a.boardResolutionDocumentId.trim();
         const { data: resolutionDoc, errors: docErrs } =
@@ -201,33 +201,44 @@ export const handler = async (event: {
           console.error(`[pf-servicing] document lookup failed for ${documentId}`, docErrs[0].message);
           return { ok: false, error: "Couldn't look up that document. Try again." };
         }
-        const isGeneratedDraft =
-          resolutionDoc?.category === "PF_BOARD_RESOLUTION" ||
-          resolutionDoc?.category === "PF_AGREEMENT";
-        if (!resolutionDoc || resolutionDoc.entityId !== loan.accountId || isGeneratedDraft) {
-          const reason = !resolutionDoc
-            ? `Document ${documentId} is not on file.`
-            : resolutionDoc.entityId !== loan.accountId
-              ? `Document ${documentId} belongs to a different account.`
-              : `Document ${documentId} is the generated draft, not an executed resolution.`;
+        const docProblem = !resolutionDoc
+          ? {
+              reason: `Document ${documentId} is not on file.`,
+              error:
+                "That document id is not on file. Upload the executed resolution to Documents and paste its id.",
+            }
+          : resolutionDoc.entityId !== loan.accountId
+            ? {
+                reason: `Document ${documentId} belongs to a different account.`,
+                error:
+                  "That document belongs to a different account. Reference the executed resolution filed under this association.",
+              }
+            : resolutionDoc.category === "PF_BOARD_RESOLUTION" ||
+                resolutionDoc.category === "PF_AGREEMENT"
+              ? {
+                  reason: `Document ${documentId} is the generated draft, not an executed resolution.`,
+                  error:
+                    "That is the generated draft, not an executed resolution. Print it, have the board sign it, and upload the signed copy under “Executed board resolution”.",
+                }
+              : resolutionDoc.category !== "PF_RESOLUTION_EXECUTED"
+                ? {
+                    reason: `Document ${documentId} is not filed as an executed board resolution (category ${resolutionDoc.category ?? "none"}).`,
+                    error:
+                      "That document isn't filed as an executed board resolution. Upload the signed copy under “Executed board resolution” — or re-categorize it there if this is it.",
+                  }
+                : null;
+        if (docProblem) {
           await logRow({
             accountId: loan.accountId,
             jurisdiction: loan.state,
             rule: "board-resolution",
             outcome: "BLOCK",
-            reason,
+            reason: docProblem.reason,
             inputs: { loanId: loan.id, documentId },
             actor,
             actorName,
           });
-          return {
-            ok: false,
-            error: !resolutionDoc
-              ? "That document id is not on file. Upload the executed resolution to Documents and paste its id."
-              : resolutionDoc.entityId !== loan.accountId
-                ? "That document belongs to a different account. Reference the executed resolution filed under this association."
-                : "That is the generated draft, not an executed resolution. Print it, have the board sign it, and upload the signed copy.",
-          };
+          return { ok: false, error: docProblem.error };
         }
         /**
          * One payment path at a time. If an invoice billing this policy still

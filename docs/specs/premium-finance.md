@@ -84,7 +84,11 @@ Additional rules from review:
 
 - **(C) Board resolutions go stale** — issuance is blocked if the resolution
   on file has an execution date earlier than the effective date of the policy
-  term being financed.
+  term being financed. And "on file" is positive (2026-08-23): activation
+  accepts only a Document on the loan's account filed under the uploadable
+  category `PF_RESOLUTION_EXECUTED` ("Executed board resolution") — not the
+  generated unsigned draft, not any other same-account paper — and every
+  board-resolution compliance row records the attested document id.
 - **(D) Counsel opinions expire** — `PfCounselOpinion` carries a review date
   (default 24 months after effective). Past it, the jurisdiction reverts to
   blocked: "opinion past review."

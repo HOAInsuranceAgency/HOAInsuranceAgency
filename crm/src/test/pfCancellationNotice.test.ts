@@ -73,14 +73,17 @@ describe("activation checks the resolution document is on file", () => {
     expect(SERVICING).toContain("resolutionDoc.entityId !== loan.accountId");
   });
 
-  it("rejects the generated unsigned draft — the likeliest wrong paste", () => {
-    // pf-agreement files the draft on the SAME account, named for this very
-    // loan; existence + ownership alone would wave it through. The generated
-    // categories exist only as pf-agreement output, so either one is
-    // provably not an executed scan.
-    expect(SERVICING).toContain('resolutionDoc?.category === "PF_BOARD_RESOLUTION"');
-    expect(SERVICING).toContain('resolutionDoc?.category === "PF_AGREEMENT"');
+  it("requires the executed-resolution category positively", () => {
+    // "Some document on this account" proves nothing — a dec page or an
+    // invoice PDF would pass a denylist. Activation accepts exactly one
+    // category, the one the upload picker labels "Executed board
+    // resolution"; the generated draft — filed on the SAME account, named
+    // for this very loan, the likeliest wrong paste — gets its own
+    // pointed refusal.
+    expect(SERVICING).toContain('resolutionDoc.category !== "PF_RESOLUTION_EXECUTED"');
+    expect(SERVICING).toContain('resolutionDoc.category === "PF_BOARD_RESOLUTION"');
     expect(SERVICING).toContain("the generated draft, not an executed resolution");
+    expect(SERVICING).toContain("isn't filed as an executed board resolution");
   });
 
   it("a failed lookup is not a missing document", () => {

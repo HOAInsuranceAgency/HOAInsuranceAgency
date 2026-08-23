@@ -94,6 +94,11 @@ const schema = a
       // Generated premium-finance paperwork — never uploaded, never extracted.
       "PF_AGREEMENT",
       "PF_BOARD_RESOLUTION",
+      // The SIGNED scan of the board resolution, uploaded by hand. Its own
+      // category because activation requires it positively: "some document
+      // on the account" proves nothing, and the generated draft above is
+      // the likeliest wrong paste.
+      "PF_RESOLUTION_EXECUTED",
       "PROPERTY_UPDATES", // roof/electrical/plumbing/heating work
       "OTHER",
     ]),

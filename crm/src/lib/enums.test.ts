@@ -330,8 +330,10 @@ describe("option lists reproduce the hand-written ones they replaced", () => {
   });
 
   it("DOCUMENT_CATEGORY_OPTIONS — the panel's pickable categories", () => {
-    // Eleven since the upload portal added STATEMENT_OF_VALUES and
-    // PROPERTY_UPDATES. Both are pickable: a producer sorting a document by hand
+    // Twelve: the upload portal added STATEMENT_OF_VALUES and
+    // PROPERTY_UPDATES, and premium finance added PF_RESOLUTION_EXECUTED —
+    // uploadable, unlike the generated pair, because activation requires a
+    // document filed under exactly that category. Both are pickable: a producer sorting a document by hand
     // needs the same vocabulary the portal files them under, or a file that
     // arrived correctly categorised cannot be re-categorised back to itself.
     expect(DOCUMENT_CATEGORY_OPTIONS.map((o) => [o.value, o.label])).toEqual([
@@ -341,6 +343,7 @@ describe("option lists reproduce the hand-written ones they replaced", () => {
       ["PROPERTY_UPDATES", "Building updates"],
       ["CONDO_DOCS", "Condo documents"],
       ["DUES_SCHEDULE", "Dues per unit"],
+      ["PF_RESOLUTION_EXECUTED", "Executed board resolution"],
       ["LICENSE", "License"],
       ["LOSS_RUNS", "Loss runs"],
       ["OTHER", "Other"],
@@ -380,6 +383,7 @@ describe("option lists reproduce the hand-written ones they replaced", () => {
       POLICY_DOC: 6,
       PF_AGREEMENT: 9,
       PF_BOARD_RESOLUTION: 9,
+      PF_RESOLUTION_EXECUTED: 9,
       CONDO_DOCS: 7,
       ACORD_FORM: 8,
       LICENSE: 9,

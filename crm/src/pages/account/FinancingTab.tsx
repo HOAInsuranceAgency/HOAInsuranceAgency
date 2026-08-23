@@ -109,7 +109,7 @@ function LoanActions({ loan, onChanged }: { loan: PfLoan; onChanged: () => void 
             <label htmlFor={`pf-resdoc-${loan.id}`}>Executed resolution (Document id)</label>
             <input
               id={`pf-resdoc-${loan.id}`}
-              placeholder="Upload to Documents first, then paste its id"
+              placeholder="Upload under “Executed board resolution”, then paste its id"
               value={resolutionDocId}
               onChange={(e) => setResolutionDocId(e.target.value)}
             />
