@@ -14,7 +14,7 @@ import {
   NOTICE_DAYS,
   type NoticeRow,
 } from "../../../src/lib/premiumFinance/noticeSequence";
-import type { ScheduleRow } from "../../../src/lib/premiumFinance/quote";
+import { parseScheduleJson } from "../../../src/lib/premiumFinance/quote";
 import { PF_CONFIG_SHA256 } from "../../../src/lib/premiumFinance/jurisdictions";
 
 /**
@@ -233,8 +233,10 @@ export const handler = async (event: {
             error: "No designated lending account is configured. Set it under Financing before posting — loan money must not touch the premium trust.",
           };
         }
-        const schedule: ScheduleRow[] =
-          typeof loan.schedule === "string" ? JSON.parse(loan.schedule) : (loan.schedule as never);
+        const schedule = parseScheduleJson(loan.schedule);
+        if (schedule.length === 0) {
+          return { ok: false, error: "The loan's schedule is unreadable." };
+        }
         const n = (loan.paidThrough ?? 0) + 1;
         const row = schedule[n - 1];
         if (!row) return { ok: false, error: "The schedule is fully paid." };

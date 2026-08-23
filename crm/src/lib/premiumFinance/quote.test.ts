@@ -176,3 +176,24 @@ describe("what the module must never contain", () => {
     }
   });
 });
+
+describe("parseScheduleJson — the AWSJSON trap, again", () => {
+  it("reads the array, the string, and the string wrapping the string", async () => {
+    const { parseScheduleJson, buildQuote } = await import("./quote");
+    const rows = buildQuote({
+      premium: 1000, downPct: 25, months: 3, apr: 12, effectiveDate: "2026-09-01",
+    }).schedule;
+    expect(parseScheduleJson(rows)).toEqual(rows);
+    expect(parseScheduleJson(JSON.stringify(rows))).toEqual(rows);
+    // The staging failure: double-encoded, one parse yields the inner string,
+    // iteration yields characters, and pdf-lib got undefined text.
+    expect(parseScheduleJson(JSON.stringify(JSON.stringify(rows)))).toEqual(rows);
+  });
+
+  it("returns empty for garbage rather than characters", async () => {
+    const { parseScheduleJson } = await import("./quote");
+    for (const bad of [null, undefined, "", "not json", "42", {}]) {
+      expect(parseScheduleJson(bad), String(bad)).toEqual([]);
+    }
+  });
+});

@@ -8,7 +8,7 @@ import {
   renderBoardResolutionPdf,
   type AgreementView,
 } from "./agreementPdf";
-import type { ScheduleRow } from "../../../src/lib/premiumFinance/quote";
+import { parseScheduleJson } from "../../../src/lib/premiumFinance/quote";
 
 /**
  * Custom mutation handler: generatePfAgreement. See resource.ts.
@@ -73,9 +73,10 @@ export const handler = async (event: {
       : null;
 
     // AWSJSON arrives as a string; the loan's schedule was stringified at issue.
-    const rawSchedule = loan.schedule;
-    const schedule: ScheduleRow[] =
-      typeof rawSchedule === "string" ? JSON.parse(rawSchedule) : (rawSchedule as never);
+    const schedule = parseScheduleJson(loan.schedule);
+    if (schedule.length === 0) {
+      return { ok: false, error: "The loan's schedule is unreadable — regenerate the quote." };
+    }
 
     const view: AgreementView = {
       loanId: loan.id,

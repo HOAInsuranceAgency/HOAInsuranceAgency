@@ -207,3 +207,25 @@ export function payoffAfterPayment(quote: PfQuote, k: number): PayoffQuote {
     originationFeeRefund: PF_ORIGINATION_FEE,
   };
 }
+
+/**
+ * A stored schedule, however many times AWSJSON wrapped it.
+ *
+ * The loan's schedule is written as JSON.stringify(rows) into an a.json()
+ * column, and AWSJSON is itself a JSON string on the wire — so a reader can
+ * receive the array, the string, or a string wrapping the string. One parse
+ * of the double-wrapped form returns the INNER STRING, and iterating a
+ * string yields characters whose .dueDate is undefined — which is how the
+ * agreement renderer met pdf-lib's "text must be a string" on staging. The
+ * aiExtraction.ts trap, met again where it prices money.
+ */
+export function parseScheduleJson(raw: unknown): ScheduleRow[] {
+  let v: unknown = raw;
+  try {
+    if (typeof v === "string") v = JSON.parse(v);
+    if (typeof v === "string") v = JSON.parse(v);
+  } catch {
+    return [];
+  }
+  return Array.isArray(v) ? (v as ScheduleRow[]) : [];
+}
