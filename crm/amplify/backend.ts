@@ -481,6 +481,8 @@ for (const fn of [backend.pfServicing, backend.pfDefaultSweep]) {
 for (const [name, model] of [
   ["PF_LOAN_TABLE", "PfLoan"],
   ["PF_LOAN_PAYMENT_TABLE", "PfLoanPayment"],
+  // Cancellation and its CANCELLATION_REQUEST notice are one transaction.
+  ["PF_NOTICE_TABLE", "PfNotice"],
 ] as const) {
   const table = backend.data.resources.tables[model];
   backend.pfServicing.addEnvironment(name, table.tableName);

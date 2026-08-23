@@ -3,7 +3,7 @@ import { Amplify } from "aws-amplify";
 import { generateClient } from "aws-amplify/data";
 import { getAmplifyDataClientConfig } from "@aws-amplify/backend/function/runtime";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, PutCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import { DynamoDBDocumentClient, PutCommand, TransactWriteCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import type { Schema } from "../../data/resource";
 import {
   addDaysIso,
@@ -182,6 +182,54 @@ export const handler = async (event: {
           };
         }
         /**
+         * And "on file" is checked, not attested: the id is pasted by hand
+         * (FinancingTab), and a typo'd or cross-account id would activate a
+         * lending agreement whose power-of-attorney evidence points at
+         * nothing — silently, forever. The generated categories are
+         * rejected outright: PF_BOARD_RESOLUTION and PF_AGREEMENT exist
+         * only as pf-agreement's own output (no upload picker offers them),
+         * so a document carrying either is provably the UNSIGNED draft —
+         * and the draft for this very loan, filed on this very account, is
+         * the likeliest wrong paste there is.
+         */
+        const documentId = a.boardResolutionDocumentId.trim();
+        const { data: resolutionDoc, errors: docErrs } =
+          await client.models.Document.get({ id: documentId });
+        if (docErrs?.length) {
+          // A failed read is not a missing document — no BLOCK row claiming
+          // "not on file" over a registry that merely didn't answer.
+          console.error(`[pf-servicing] document lookup failed for ${documentId}`, docErrs[0].message);
+          return { ok: false, error: "Couldn't look up that document. Try again." };
+        }
+        const isGeneratedDraft =
+          resolutionDoc?.category === "PF_BOARD_RESOLUTION" ||
+          resolutionDoc?.category === "PF_AGREEMENT";
+        if (!resolutionDoc || resolutionDoc.entityId !== loan.accountId || isGeneratedDraft) {
+          const reason = !resolutionDoc
+            ? `Document ${documentId} is not on file.`
+            : resolutionDoc.entityId !== loan.accountId
+              ? `Document ${documentId} belongs to a different account.`
+              : `Document ${documentId} is the generated draft, not an executed resolution.`;
+          await logRow({
+            accountId: loan.accountId,
+            jurisdiction: loan.state,
+            rule: "board-resolution",
+            outcome: "BLOCK",
+            reason,
+            inputs: { loanId: loan.id, documentId },
+            actor,
+            actorName,
+          });
+          return {
+            ok: false,
+            error: !resolutionDoc
+              ? "That document id is not on file. Upload the executed resolution to Documents and paste its id."
+              : resolutionDoc.entityId !== loan.accountId
+                ? "That document belongs to a different account. Reference the executed resolution filed under this association."
+                : "That is the generated draft, not an executed resolution. Print it, have the board sign it, and upload the signed copy.",
+          };
+        }
+        /**
          * One payment path at a time. If an invoice billing this policy still
          * has a live Stripe link (SENT), or a payment already clearing on it
          * (PROCESSING), the association has an open pay-in-full route — and
@@ -233,7 +281,7 @@ export const handler = async (event: {
           reason: stale
             ? `Resolution executed ${executed} predates the financed term effective ${termStart}. A current-term resolution is required.`
             : undefined,
-          inputs: { loanId: loan.id, executed, termStart },
+          inputs: { loanId: loan.id, executed, termStart, documentId },
           actor,
           actorName,
         });
@@ -247,7 +295,7 @@ export const handler = async (event: {
           status: "ACTIVE",
           activatedAt: now,
           boardResolutionExecutedAt: executed,
-          boardResolutionDocumentId: a.boardResolutionDocumentId.trim(),
+          boardResolutionDocumentId: documentId,
         });
         if (!won) return { ok: false, error: "The loan changed underneath this activation. Look at it and try again." };
         return { ok: true };
@@ -478,34 +526,91 @@ export const handler = async (event: {
           (r) => r.type === "INTENT_TO_CANCEL"
         );
         /**
-         * The transition first, conditionally — the winner of a double-click
-         * proceeds to write the notice row; the loser stops here without a
-         * second CANCELLATION_REQUEST existing. A notice-row failure after
-         * the transition is logged loudly and left: the cancellation stands,
-         * and the missing row is visible in the sequence view.
+         * The transition and its notice row are ONE write. Cancellation is
+         * the moment lender liability attaches, and the CANCELLATION_REQUEST
+         * row is the record proving the carrier request followed the 15-day
+         * clock — a loan terminally CANCELLED without that row has no
+         * supported repair path (PfNotice takes no client writes, and no
+         * other action creates this type). A transaction forecloses the
+         * half-state instead of logging it: both land or neither does, and
+         * the loser of a double-click fails the status condition cleanly.
          */
-        const wonCancel = await transition(loan.id, "DEFAULTED", {
-          status: "CANCELLED",
-          cancellationEffectiveAt: effective,
-          // The unearned-premium receivable: the carrier owes the refund
-          // within 30 days of the cancellation effective date.
-          expectedCarrierRefundAt: addDaysIso(`${effective}T00:00:00.000Z`, CARRIER_REFUND_DAYS).slice(0, 10),
-          closedAt: now,
-        });
-        if (!wonCancel) {
-          return { ok: false, error: "The loan changed underneath this cancellation. Look at it and try again." };
+        const noticeTable = process.env.PF_NOTICE_TABLE;
+        const cancelLoanTable = process.env.PF_LOAN_TABLE;
+        if (!noticeTable || !cancelLoanTable) {
+          console.error("[pf-servicing] PF_NOTICE_TABLE or PF_LOAN_TABLE unset");
+          return { ok: false, error: "Servicing is not fully configured." };
         }
-        const { errors: nErr } = await client.models.PfNotice.create({
-          loanId: loan.id,
-          accountId: loan.accountId,
-          type: "CANCELLATION_REQUEST",
-          occurredAt: now,
-          refNoticeId: intent?.id ?? null,
-          createdBy: actor,
-          createdByName: actorName,
-        });
-        if (nErr?.length) {
-          console.error(`[pf-servicing] CANCELLATION stands on ${loan.id} but its notice row failed`, nErr[0].message);
+        const expectedCarrierRefundAt = addDaysIso(
+          `${effective}T00:00:00.000Z`,
+          CARRIER_REFUND_DAYS
+        ).slice(0, 10);
+        try {
+          await ddb.send(
+            new TransactWriteCommand({
+              /**
+               * Stable across the SDK's own transport retries, fresh for a
+               * human's: a retried delivery of a landed commit returns
+               * success instead of failing its own status condition.
+               */
+              ClientRequestToken: randomUUID(),
+              TransactItems: [
+                {
+                  Update: {
+                    TableName: cancelLoanTable,
+                    Key: { id: loan.id },
+                    UpdateExpression:
+                      "SET #s = :to, cancellationEffectiveAt = :eff, expectedCarrierRefundAt = :ref, closedAt = :now, updatedAt = :now",
+                    ConditionExpression: "#s = :from",
+                    ExpressionAttributeNames: { "#s": "status" },
+                    ExpressionAttributeValues: {
+                      ":to": "CANCELLED",
+                      ":from": "DEFAULTED",
+                      ":eff": effective,
+                      // The unearned-premium receivable: the carrier owes
+                      // the refund within 30 days of the effective date.
+                      ":ref": expectedCarrierRefundAt,
+                      ":now": now,
+                    },
+                  },
+                },
+                {
+                  Put: {
+                    TableName: noticeTable,
+                    Item: {
+                      id: randomUUID(),
+                      __typename: "PfNotice",
+                      createdAt: now,
+                      updatedAt: now,
+                      loanId: loan.id,
+                      accountId: loan.accountId,
+                      type: "CANCELLATION_REQUEST",
+                      occurredAt: now,
+                      refNoticeId: intent?.id ?? null,
+                      createdBy: actor,
+                      createdByName: actorName,
+                    },
+                  },
+                },
+              ],
+            })
+          );
+        } catch (err) {
+          const canceled = err as { name?: string; CancellationReasons?: { Code?: string }[] };
+          if (canceled.name === "TransactionCanceledException") {
+            // "Changed underneath" only when the status condition actually
+            // lost — a throttled or conflicted transaction changed nothing,
+            // and saying otherwise fabricates a state change.
+            const statusLost =
+              canceled.CancellationReasons?.[0]?.Code === "ConditionalCheckFailed";
+            return {
+              ok: false,
+              error: statusLost
+                ? "The loan changed underneath this cancellation. Look at it and try again."
+                : "The cancellation didn't commit — nothing changed. Try again.",
+            };
+          }
+          throw err;
         }
         return { ok: true };
       }

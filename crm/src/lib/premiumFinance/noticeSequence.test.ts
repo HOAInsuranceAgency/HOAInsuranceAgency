@@ -238,7 +238,10 @@ describe("servicing idempotency (the review findings)", () => {
   it("runs status transitions conditionally on the status they leave", () => {
     expect(HANDLER).toContain('ConditionExpression: "#s = :from"');
     expect(HANDLER).toContain('transition(loan.id, "QUOTED"');
-    expect(HANDLER).toContain('transition(loan.id, "DEFAULTED"');
+    // DEFAULTED→CANCELLED no longer goes through transition(): it rides a
+    // TransactWriteItems with its notice row (pfCancellationNotice.test.ts),
+    // carrying the same status condition.
+    expect(HANDLER).toContain('":from": "DEFAULTED"');
   });
 
   it("validates real days on every outside date", () => {

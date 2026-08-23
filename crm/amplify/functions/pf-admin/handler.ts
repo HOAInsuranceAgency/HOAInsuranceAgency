@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, GetCommand, PutCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import { DynamoDBDocumentClient, GetCommand, PutCommand, TransactWriteCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { PF_CONFIG_SHA256 } from "../../../src/lib/premiumFinance/jurisdictions";
 
 /**
@@ -58,7 +58,19 @@ export const handler = async (event: {
       : null) ??
     event.identity?.username ??
     actor;
-  const now = new Date().toISOString();
+  let now = new Date().toISOString();
+
+  /**
+   * ISO now, clamped strictly past `floor`. occurredAt is the log's only
+   * ordering, so a row recording a later event must carry a later stamp
+   * even when the wall clocks that produced the two disagree by a second.
+   */
+  const isoAfter = (floor: string | null): string => {
+    const t = new Date().toISOString();
+    if (!floor || t > floor) return t;
+    const ms = Date.parse(floor);
+    return Number.isFinite(ms) ? new Date(ms + 1).toISOString() : t;
+  };
 
   /**
    * The disable write is unconditional — off always wins — but ENABLE is
@@ -68,14 +80,20 @@ export const handler = async (event: {
    */
   const readStamp = async (): Promise<string | null> => {
     const res = await ddb.send(
-      new GetCommand({ TableName: settingsTable, Key: { id: AGENCY_SETTINGS_ID } })
+      new GetCommand({
+        TableName: settingsTable,
+        Key: { id: AGENCY_SETTINGS_ID },
+        // Strong: a replica's stale stamp would widen the race this
+        // condition exists to close.
+        ConsistentRead: true,
+      })
     );
     const v = res.Item?.premiumFinanceEnabledAt;
     return typeof v === "string" ? v : null;
   };
 
-  const writeFlag = (value: boolean, seenStamp?: string | null) =>
-    ddb.send(
+  const writeFlag = async (value: boolean, seenStamp?: string | null): Promise<string | null> => {
+    const res = await ddb.send(
       new UpdateCommand({
         TableName: settingsTable,
         Key: { id: AGENCY_SETTINGS_ID },
@@ -95,8 +113,14 @@ export const handler = async (event: {
                   : "premiumFinanceEnabledAt = :seen",
             }
           : {}),
+        // The stamp this write overwrote — the ordering floor at the exact
+        // serialization point, for free.
+        ReturnValues: "UPDATED_OLD",
       })
     );
+    const v = (res.Attributes as Record<string, unknown> | undefined)?.premiumFinanceEnabledAt;
+    return typeof v === "string" ? v : null;
+  };
 
   const writeLog = async (): Promise<boolean> => {
     const item = {
@@ -147,6 +171,15 @@ export const handler = async (event: {
      */
     if (enabled) {
       const seenStamp = await readStamp();
+      /**
+       * The stamp this enable builds on can carry a LATER wall clock than
+       * this invocation's start — a racing disable on a machine a second
+       * ahead. An ENABLED row sorting BEFORE the DISABLED state it
+       * supersedes reads, months later, as lending on under a latest row
+       * that says off. The timestamp is therefore taken after the read and
+       * clamped strictly past the stamp.
+       */
+      now = isoAfter(seenStamp);
       const logged = await writeLog();
       if (!logged) {
         return {
@@ -160,22 +193,38 @@ export const handler = async (event: {
         const lost = (err as { name?: string }).name === "ConditionalCheckFailedException";
         /**
          * A thrown write is not necessarily an unapplied write — the commit
-         * can land and the response be lost. Before recording a DISABLED
-         * correction (which would then sit as the latest row over a flag
-         * that is ON), read what is actually there and report THAT.
+         * can land and the response be lost. And a lost CONDITION is not
+         * necessarily a module that is off: the flip that beat this one may
+         * itself have been an enable — another admin, or the SDK retrying
+         * this call's own landed write against the stamp it had already
+         * moved. So EVERY failed flip verifies before it corrects, and the
+         * read is strong: an eventually-consistent read here can echo the
+         * pre-write value and manufacture exactly the false DISABLED row
+         * this check exists to prevent.
          */
-        if (!lost) {
-          try {
-            const check = await ddb.send(
-              new GetCommand({ TableName: settingsTable, Key: { id: AGENCY_SETTINGS_ID } })
+        let verifiedOff = false;
+        let verifiedStamp: string | null = null;
+        try {
+          const check = await ddb.send(
+            new GetCommand({
+              TableName: settingsTable,
+              Key: { id: AGENCY_SETTINGS_ID },
+              ConsistentRead: true,
+            })
+          );
+          if (check.Item?.premiumFinanceEnabled === true) {
+            console.warn(
+              lost
+                ? "[pf-admin] enable lost its condition, but the module is ON; the ENABLED row stands"
+                : "[pf-admin] flip response was lost but the write landed; enable stands"
             );
-            if (check.Item?.premiumFinanceEnabled === true) {
-              console.warn("[pf-admin] flip response was lost but the write landed; enable stands");
-              return { ok: true, enabled: true };
-            }
-          } catch (checkErr) {
-            console.error("[pf-admin] could not verify flag state after failed flip", checkErr);
+            return { ok: true, enabled: true };
           }
+          verifiedOff = true;
+          const vs = check.Item?.premiumFinanceEnabledAt;
+          verifiedStamp = typeof vs === "string" ? vs : null;
+        } catch (checkErr) {
+          console.error("[pf-admin] could not verify flag state after failed flip", checkErr);
         }
         console.error(
           lost
@@ -183,29 +232,99 @@ export const handler = async (event: {
             : "[pf-admin] flip failed after logging; module remains off",
           err
         );
+        if (!verifiedOff) {
+          /**
+           * State unknown — the flip failed AND the verify failed. A
+           * DISABLED row here could be the false record over an ON flag;
+           * writing nothing leaves the ENABLED row over a flag that may be
+           * off, which a retry re-syncs. Of the two, only one fabricates.
+           */
+          return {
+            ok: false,
+            error:
+              "Couldn't enable the module, and its state couldn't be verified. Check the admin screen and try again.",
+          };
+        }
+        /**
+         * The correction rides a transaction with a stamp bump on the
+         * settings row, conditioned on the exact (off, stamp) state the
+         * verify saw. Three windows close at once: a concurrent enable
+         * committing between verify and correction cancels the whole
+         * transaction (no DISABLED row over an ON flag); this call's own
+         * still-in-flight flip can never land afterwards (its stamp
+         * condition is now stale); and a retried enable clamps past the
+         * bumped floor, so its ENABLED row sorts after this correction
+         * instead of vanishing behind it.
+         */
+        const correctedAt = isoAfter(
+          verifiedStamp !== null && verifiedStamp > now ? verifiedStamp : now
+        );
         try {
           await ddb.send(
-            new PutCommand({
-              TableName: logTable,
-              Item: {
-                id: randomUUID(),
-                __typename: "PfComplianceLog",
-                createdAt: now,
-                updatedAt: now,
-                jurisdiction: "ALL",
-                rule: "module-flag",
-                outcome: "DISABLED",
-                reason: "Enable was logged but the flag write failed; the module remains OFF.",
-                inputs: JSON.stringify({ enabled: false }),
-                configSha256: PF_CONFIG_SHA256,
-                actor,
-                actorName,
-                occurredAt: now,
-              },
+            new TransactWriteCommand({
+              TransactItems: [
+                {
+                  Update: {
+                    TableName: settingsTable,
+                    Key: { id: AGENCY_SETTINGS_ID },
+                    UpdateExpression: "SET premiumFinanceEnabledAt = :at",
+                    ConditionExpression:
+                      verifiedStamp === null
+                        ? "(attribute_not_exists(premiumFinanceEnabled) OR premiumFinanceEnabled = :off) AND attribute_not_exists(premiumFinanceEnabledAt)"
+                        : "(attribute_not_exists(premiumFinanceEnabled) OR premiumFinanceEnabled = :off) AND premiumFinanceEnabledAt = :seenOff",
+                    ExpressionAttributeValues: {
+                      ":at": correctedAt,
+                      ":off": false,
+                      ...(verifiedStamp !== null ? { ":seenOff": verifiedStamp } : {}),
+                    },
+                  },
+                },
+                {
+                  Put: {
+                    TableName: logTable,
+                    Item: {
+                      id: randomUUID(),
+                      __typename: "PfComplianceLog",
+                      createdAt: correctedAt,
+                      updatedAt: correctedAt,
+                      jurisdiction: "ALL",
+                      rule: "module-flag",
+                      outcome: "DISABLED",
+                      reason: lost
+                        ? "Enable was logged but lost to a concurrent flip; the module is OFF."
+                        : "Enable was logged but the flag write failed; the module remains OFF.",
+                      inputs: JSON.stringify({ enabled: false }),
+                      configSha256: PF_CONFIG_SHA256,
+                      actor,
+                      actorName,
+                      occurredAt: correctedAt,
+                    },
+                  },
+                },
+              ],
             })
           );
         } catch (corrErr) {
-          console.error("[pf-admin] correction row also failed", corrErr);
+          if ((corrErr as { name?: string }).name === "TransactionCanceledException") {
+            // The state moved in the window. If it moved to ON, the admin's
+            // ask is in effect — converge instead of reporting a failure.
+            try {
+              const again = await ddb.send(
+                new GetCommand({
+                  TableName: settingsTable,
+                  Key: { id: AGENCY_SETTINGS_ID },
+                  ConsistentRead: true,
+                })
+              );
+              if (again.Item?.premiumFinanceEnabled === true) {
+                console.warn("[pf-admin] flag turned ON while correcting; the ENABLED row stands");
+                return { ok: true, enabled: true };
+              }
+            } catch (reErr) {
+              console.error("[pf-admin] re-verify after cancelled correction failed", reErr);
+            }
+          }
+          console.error("[pf-admin] correction did not commit", corrErr);
         }
         return { ok: false, error: "Couldn't enable the module. Try again." };
       }
@@ -214,7 +333,40 @@ export const handler = async (event: {
     }
 
     // DISABLE: flag first, unconditionally — off always wins.
-    await writeFlag(false);
+    const oldStamp = await writeFlag(false);
+    /**
+     * The DISABLED row must sort after the state it ends. The flag write
+     * just returned the stamp it overwrote — a fresher clock's enable
+     * would otherwise leave its ENABLED row out-sorting this one forever,
+     * over a module that is off. The floor bump is conditional on our own
+     * write still standing: if an enable already flipped the flag back,
+     * the ordering is theirs, and this row keeps the invocation clock so
+     * it sorts BEFORE their ENABLED row — the truthful order, since their
+     * enable serialized after this disable.
+     */
+    if (oldStamp !== null && now <= oldStamp) {
+      const bumped = isoAfter(oldStamp);
+      try {
+        await ddb.send(
+          new UpdateCommand({
+            TableName: settingsTable,
+            Key: { id: AGENCY_SETTINGS_ID },
+            UpdateExpression: "SET premiumFinanceEnabledAt = :bumped",
+            ConditionExpression:
+              "premiumFinanceEnabled = :off AND premiumFinanceEnabledAt = :ours",
+            ExpressionAttributeValues: { ":bumped": bumped, ":off": false, ":ours": now },
+          })
+        );
+        now = bumped;
+      } catch (bumpErr) {
+        if ((bumpErr as { name?: string }).name !== "ConditionalCheckFailedException") {
+          console.error(
+            "[pf-admin] stamp bump failed; the DISABLED row keeps the invocation clock",
+            bumpErr
+          );
+        }
+      }
+    }
     const logged = await writeLog();
     if (!logged) {
       // The module is OFF and stays off. Never restore the flag over a log.
