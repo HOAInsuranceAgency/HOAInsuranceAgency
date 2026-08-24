@@ -205,6 +205,17 @@ describe("the webhook's loan side", () => {
     expect(PF).toContain("refund needed");
   });
 
+  it("a funded election supersedes sibling quotes on the policy", () => {
+    // The accept-time sibling check is read-time; two QUOTED loans can hold
+    // payable sessions until one down payment LANDS — so the landing is
+    // where the race serializes: siblings cancel (QUOTED only, conditional,
+    // logged), their election links go cold, and a sibling's own clearing
+    // down payment resolves through the not-QUOTED refund alarm.
+    expect(PF).toContain('"superseded-by-election"');
+    expect(PF).toContain('FilterExpression: "policyId = :p AND #s = :q AND id <> :self"');
+    expect(PF).toContain("a sibling financing election on the same policy was funded");
+  });
+
   it("a paid invoice still cancels QUOTED loans only — money-touched ones alarm instead", () => {
     // ACCEPTED means the association's money moved; auto-cancelling it would
     // orphan a down payment. The cancel's condition keeps naming QUOTED

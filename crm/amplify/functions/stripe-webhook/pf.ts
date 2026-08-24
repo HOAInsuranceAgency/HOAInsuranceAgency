@@ -4,6 +4,7 @@ import {
   DynamoDBDocumentClient,
   GetCommand,
   PutCommand,
+  ScanCommand,
   UpdateCommand,
 } from "@aws-sdk/lib-dynamodb";
 import { SESv2Client, SendEmailCommand } from "@aws-sdk/client-sesv2";
@@ -29,6 +30,7 @@ const ses = new SESv2Client();
 interface LoanRow extends PostableLoan {
   status: string | null;
   state: string;
+  policyId: string | null;
   months: number;
   downPayment: number;
   autopayPendingIntentId: string | null;
@@ -54,6 +56,7 @@ async function readLoan(loanId: string): Promise<LoanRow | null> {
     paidThrough: typeof item.paidThrough === "number" ? item.paidThrough : null,
     status: typeof item.status === "string" ? item.status : null,
     state: typeof item.state === "string" ? item.state : "",
+    policyId: typeof item.policyId === "string" ? item.policyId : null,
     months: typeof item.months === "number" ? item.months : 11,
     downPayment: typeof item.downPayment === "number" ? item.downPayment : 0,
     autopayPendingIntentId:
@@ -210,6 +213,67 @@ async function applyDownPayment(d: PfEventDecision, loan: LoanRow): Promise<stri
       paymentMethodId: d.paymentMethodId,
     },
   });
+
+  /**
+   * A committed election supersedes sibling quotes, exactly as a paid
+   * invoice does: the accept-time sibling check runs at read time, so two
+   * QUOTED loans on one policy can both hold payable sessions until one
+   * down payment lands — this is where the race serializes. Cancelling the
+   * siblings kills their election links (a CANCELLED loan's terms and
+   * accept both read closed), and a sibling whose OWN down payment was
+   * already clearing resolves through the not-QUOTED branch above when it
+   * settles: the refund alarm, which is the right answer to the second of
+   * two down payments for one premium.
+   */
+  try {
+    if (loan.policyId) {
+      const { Items } = await ddb.send(
+        new ScanCommand({
+          TableName: table,
+          FilterExpression: "policyId = :p AND #s = :q AND id <> :self",
+          ExpressionAttributeNames: { "#s": "status" },
+          ExpressionAttributeValues: {
+            ":p": loan.policyId,
+            ":q": "QUOTED",
+            ":self": loan.id,
+          },
+        })
+      );
+      for (const sib of Items ?? []) {
+        try {
+          await ddb.send(
+            new UpdateCommand({
+              TableName: table,
+              Key: { id: sib.id },
+              UpdateExpression: "SET #s = :c, closedAt = :now, updatedAt = :now",
+              ConditionExpression: "#s = :q",
+              ExpressionAttributeNames: { "#s": "status" },
+              ExpressionAttributeValues: {
+                ":c": "CANCELLED",
+                ":q": "QUOTED",
+                ":now": new Date().toISOString(),
+              },
+            })
+          );
+        } catch (err) {
+          if ((err as { name?: string }).name === "ConditionalCheckFailedException") continue;
+          throw err;
+        }
+        await logRow({
+          accountId: loan.accountId,
+          jurisdiction: (sib.state as string) ?? loan.state,
+          rule: "superseded-by-election",
+          outcome: "BLOCK",
+          reason: `Quote cancelled: a sibling financing election on the same policy was funded (loan ${loan.id}).`,
+          inputs: { loanId: sib.id, fundedLoanId: loan.id },
+        });
+        console.log(`stripe-webhook: cancelled sibling QUOTED loan ${sib.id} — election funded`);
+      }
+    }
+  } catch (err) {
+    // Best effort after the money record; a failure never un-accepts.
+    console.error(`stripe-webhook: could not supersede sibling quotes for ${loan.id}`, err);
+  }
   try {
     await mailAccounting(
       `Financing down payment received — ${money(loan.downPayment)} (payment 1 of ${loan.months + 1})`,
