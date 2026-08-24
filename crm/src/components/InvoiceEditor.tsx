@@ -1,4 +1,5 @@
 import { useCallback, useState } from "react";
+import { usePremiumFinance } from "../lib/premiumFinance/PfContext";
 import {
   client,
   type Contact,
@@ -130,6 +131,27 @@ export function InvoiceEditor({
   const warnings = marginWarnings(lines);
   const locked = invoice.status === "VOID";
   const policy = policies.find((p) => p.id === invoice.policyId) ?? null;
+  /**
+   * Whether the email will carry the financing fork. The send only offers
+   * financing when the billed policy carries a QUOTED loan — staff
+   * originate, the customer accepts — and that rule is invisible from this
+   * screen without a hint: the first question anyone asks of a plain bill
+   * is "why is it not offering financing".
+   */
+  const pf = usePremiumFinance();
+  const quotedLoans = useAsyncResource(
+    () =>
+      pf.enabled && invoice.policyId
+        ? listAllPages((nextToken) =>
+            client.models.PfLoan.list({
+              filter: { policyId: { eq: invoice.policyId! }, status: { eq: "QUOTED" } },
+              nextToken,
+            })
+          )
+        : Promise.resolve([]),
+    [invoice.policyId, pf.enabled],
+    { initialData: [], errorMessage: "Couldn't check for financing quotes" }
+  );
   /**
    * Rendered at the policy picker rather than with the margin warnings above.
    * Those are about how the invoice is priced; this is about whether it should
@@ -647,6 +669,13 @@ export function InvoiceEditor({
             without opening the CRM. A branded PDF is attached automatically,
             and a Stripe bank-transfer link is generated when it sends.
           </p>
+          {pf.enabled && invoice.policyId && quotedLoans.loaded && (
+            <p className="muted small">
+              {quotedLoans.data.length > 0
+                ? "This policy carries a financing quote — the email offers pay-in-full and financing side by side."
+                : "No financing quote exists for this policy, so the email offers pay-in-full only. Issue a quote on the Financing tab first to include the option."}
+            </p>
+          )}
 
           <div className="inline-actions">
             <button
