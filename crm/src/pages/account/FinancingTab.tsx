@@ -417,20 +417,6 @@ export function FinancingTab({ account }: { account: Account }) {
     );
   }
 
-  if (!gate.open) {
-    return (
-      <div className="card">
-        <h2>Financing</h2>
-        <p className="warn-inline">{gate.reason}</p>
-        {/* Disabled and not clickable, with the reason as the tooltip —
-            the signed rule for closed jurisdictions. */}
-        <button type="button" disabled title={gate.reason}>
-          Offer financing
-        </button>
-      </div>
-    );
-  }
-
   if (!res.loaded) return <p className="muted small">Loading…</p>;
   if (res.error) return <p className="error-text">{res.error}</p>;
   if (!res.data) return null;
@@ -555,6 +541,21 @@ export function FinancingTab({ account }: { account: Account }) {
 
   return (
     <>
+      {/* The gate stops new originations only. A jurisdiction closing — or an
+          account moving into one — must leave existing loans serviceable, so
+          the blocked card replaces the origination form alone; the Loans
+          section below renders either way. */}
+      {!gate.open ? (
+        <div className="card">
+          <h2>Financing</h2>
+          <p className="warn-inline">{gate.reason}</p>
+          {/* Disabled and not clickable, with the reason as the tooltip —
+              the signed rule for closed jurisdictions. */}
+          <button type="button" disabled title={gate.reason}>
+            Offer financing
+          </button>
+        </div>
+      ) : (
       <div className="card">
         <div className="card-head">
           <h2>Financing</h2>
@@ -758,6 +759,7 @@ export function FinancingTab({ account }: { account: Account }) {
           </>
         )}
       </div>
+      )}
 
       {loans.length > 0 && (
         <div className="card">

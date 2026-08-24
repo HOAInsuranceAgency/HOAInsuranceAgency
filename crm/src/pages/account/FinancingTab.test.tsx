@@ -150,6 +150,37 @@ describe("activation resolution picker", () => {
   });
 });
 
+describe("closed jurisdictions and existing loans", () => {
+  it("blocks origination but keeps the ACTIVE loan and its servicing reachable", async () => {
+    const closed = { ...account, state: "NY" } as unknown as Account;
+    models.PfLoan.list.mockImplementation(() => page([activeLoan]));
+    mutations.servicePfLoan.mockResolvedValue({ data: JSON.stringify({ ok: true }) });
+
+    render(<FinancingTab account={closed} />);
+
+    // Origination is refused with the signed note, verbatim…
+    expect(
+      await screen.findByText("No agent exemption, no commercial carve-out")
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Offer financing" })).toBeDisabled();
+    expect(screen.queryByLabelText("Policy to finance")).not.toBeInTheDocument();
+
+    // …while the loan stays visible and serviceable: the gate applies at
+    // origination only and must never touch servicing of existing loans.
+    expect(screen.getByText("$68,570.32")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Service" }));
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Post payment 3 of 12" })
+    );
+    await waitFor(() =>
+      expect(mutations.servicePfLoan).toHaveBeenCalledWith({
+        loanId: "loan-a",
+        action: "POST_PAYMENT",
+      })
+    );
+  });
+});
+
 describe("loan money and payment numbering", () => {
   it("renders loan money to the cent and leaves absent balances as an em dash", async () => {
     render(<FinancingTab account={account} />);
