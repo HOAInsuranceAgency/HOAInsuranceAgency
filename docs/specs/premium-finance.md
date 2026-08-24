@@ -244,6 +244,33 @@ activation** (decision, 2026-08-23).
   disabling the module stops elections and new originations but never stops
   debits on ACTIVE loans — the gate still never touches servicing.
 
+### W7 hardening from external review (2026-08-24)
+
+Nine Greptile rounds on PR #14 drove these invariants, now enforced and
+source-asserted by tests:
+
+- **Every money-adjacent write transacts with what it depends on.** The
+  election stamp and the session claim each carry a ConditionCheck on the
+  kill switch; the ledger row and the loan advance are one transaction;
+  cancellation pins the exact `defaultedAt` episode its 15-day verdict
+  validated, and names that episode's intent on the request row.
+- **One payable session per premium.** The claim transaction also
+  ConditionChecks every quoted sibling's slot (commit-time serialization),
+  a funded election cancels sibling quotes (`superseded-by-election`),
+  and a disable landing between claim and mint finds the session expired
+  before its URL is handed out.
+- **A refused election costs the customer nothing.** Pay-in-full links
+  are voided only after the guarded stamp commits; every refusal before
+  that leaves the invoice payable.
+- **The audit trail can neither miss nor invent a flip.** A disable whose
+  response is lost verifies strongly and logs only when its own stamp
+  made the state; an off it did not cause is reported as such, with no
+  row; a failed enable's correction retries against the moved stamp and,
+  failing everything, annotates its own ENABLED row void.
+- **Autopay converges.** Stale claims self-heal by asking Stripe what
+  exists; one failed debit stands the installment down for the sweep;
+  the sweep's stand-down holds at write time via the mark's condition.
+
 ### W7 decisions recorded after adversarial review (2026-08-23)
 
 - **One failed debit stands autopay down for that installment** — no daily
