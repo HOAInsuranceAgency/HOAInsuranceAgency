@@ -253,13 +253,20 @@ describe("servicing idempotency (the review findings)", () => {
     expect(POSTING).not.toMatch(/loan\.status === "DEFAULTED" && !finished/);
   });
 
-  it("the default sweep marks conditionally — an operator's posting wins", () => {
+  it("the default sweep marks conditionally — a posting or a claim wins", () => {
     const SWEEP = readFileSync(
       resolve(process.cwd(), "amplify/functions/pf-default-sweep/handler.ts"),
       "utf8"
     );
-    expect(SWEEP).toContain('ConditionExpression: "#s = :active AND nextDueAt = :seen"');
-    expect(SWEEP).toContain("serviced mid-sweep");
+    // Status and due date pin the state the sweep decided from, and the
+    // pending-marker clause re-runs the stand-down at WRITE time: a debit
+    // claimed between the scan and the mark must beat the mark, or
+    // DEFAULTED coexists with money in flight and the notice sequence can
+    // open over it.
+    expect(SWEEP).toContain(
+      '"#s = :active AND nextDueAt = :seen AND attribute_not_exists(autopayPendingIntentId)"'
+    );
+    expect(SWEEP).toContain("serviced or claimed mid-sweep");
   });
 
   it("a duplicate ledger row falls through to reconcile the loan", () => {

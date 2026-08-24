@@ -162,7 +162,16 @@ export const handler = async () => {
           TableName: loanTable,
           Key: { id: loan.id },
           UpdateExpression: "SET #s = :d, defaultedAt = :now, updatedAt = :now",
-          ConditionExpression: "#s = :active AND nextDueAt = :seen",
+          /**
+           * The pending-marker check above ran at read time; this clause
+           * re-runs it at write time. Without it, an autopay claim landing
+           * between the scan and this mark leaves DEFAULTED coexisting with
+           * a debit in flight — and the notice sequence could open on money
+           * already moving. The mark loses to the claim; tomorrow's sweep
+           * sees whatever the debit's outcome left behind.
+           */
+          ConditionExpression:
+            "#s = :active AND nextDueAt = :seen AND attribute_not_exists(autopayPendingIntentId)",
           ExpressionAttributeNames: { "#s": "status" },
           ExpressionAttributeValues: {
             ":d": "DEFAULTED",
@@ -174,7 +183,7 @@ export const handler = async () => {
       );
     } catch (err) {
       if ((err as { name?: string }).name === "ConditionalCheckFailedException") {
-        console.log(`pf-default-sweep: ${loan.id} was serviced mid-sweep; not marking`);
+        console.log(`pf-default-sweep: ${loan.id} was serviced or claimed mid-sweep; not marking`);
         continue;
       }
       console.error(`pf-default-sweep: could not mark ${loan.id}`, err);
