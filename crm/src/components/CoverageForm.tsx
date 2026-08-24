@@ -428,7 +428,11 @@ export default function CoverageForm({
         <div className="field full">
           <label>Lines</label>
           <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 14px" }}>
-            {LINES_OF_BUSINESS.map((l) => (
+            {/* Vocabulary first, then any legacy value this record carries
+                that the vocabulary no longer names (bare "Property",
+                pre-rename spellings) — a value with no checkbox would be
+                stuck checked forever, invisible and unremovable. */}
+            {[...new Set([...LINES_OF_BUSINESS, ...form.lines])].map((l) => (
               <label
                 key={l}
                 className="small"
