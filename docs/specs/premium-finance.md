@@ -243,3 +243,38 @@ activation** (decision, 2026-08-23).
 - PAID, CANCELLED, and prepayment (actuarial payoff) end debit creation;
   disabling the module stops elections and new originations but never stops
   debits on ACTIVE loans — the gate still never touches servicing.
+
+### W7 decisions recorded after adversarial review (2026-08-23)
+
+- **One failed debit stands autopay down for that installment** — no daily
+  retry loop (re-presentment limits, and the sweep must actually get to
+  flip DEFAULTED). A posting of any kind is the cure that resumes the
+  schedule. A stale claim (a debit attempt whose outcome was lost) heals
+  itself: the next run asks Stripe what exists and adopts, stands down, or
+  retries; ten days unresolved alarms accounting and the compliance log.
+- **The election link is a stored random token** (the upload-portal
+  pattern), not the HMAC scheme the first draft named — the row is the
+  validity and there is nothing to forge. TTL is a fixed 60 days; the real
+  expiry is the loan leaving QUOTED.
+- **The mandate rides Checkout** (payment mode, `setup_future_usage:
+  off_session`), not a separate SetupIntent — one hosted page collects
+  payment 1 and the authorization together.
+- **One live offer per policy, enforced at accept**: financing money has
+  touched refuses outright; an older QUOTED sibling loses to a newer one.
+  Accept also refuses while its own down payment is clearing — the
+  loan-side mirror of the invoice PROCESSING rule.
+- **The election voids only links billing the financed premium** (matched
+  by the link's minted cents); any other open-linked invoice on the policy
+  refuses the election for a human to resolve. Each void is logged under
+  `exclusive-payment-path`.
+- **Activation checks the kill switch** — it is the last origination act,
+  not servicing — and refuses when any invoice on the policy is PAID.
+- **A paid invoice beside an ACCEPTED/ACTIVE/DEFAULTED loan alarms**
+  (accounting email + `exclusive-payment-path` BLOCK row); nothing is
+  auto-cancelled once money moved.
+- **W8, deliberately deferred**: a staff CANCEL/refund action for ACCEPTED
+  loans whose paper never comes (today they unwind only forward, by
+  activation — the operational unwind is a Stripe-dashboard refund plus a
+  hand reconciliation); and a decision on late activation, where the frozen
+  schedule makes past-due installments catch up at one debit per day rather
+  than re-anchoring the dates.

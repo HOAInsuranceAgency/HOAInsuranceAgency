@@ -49,6 +49,19 @@ export interface InvoiceView {
   dueAt?: string | null;
   memo?: string | null;
   paymentUrl?: string | null;
+  /**
+   * W7: the financing fork. Present only when the policy carried a QUOTED
+   * finance offer at send time — the email then presents both paths and the
+   * association chooses. The figures are the loan's own frozen terms; the
+   * url is the signed election page.
+   */
+  finance?: {
+    url: string;
+    downPayment: number;
+    monthly: number;
+    months: number;
+    apr: number;
+  } | null;
   lines: InvoiceLineView[];
 }
 
@@ -152,6 +165,13 @@ export function renderInvoice(inv: InvoiceView): RenderedInvoice {
     `  ${"Total".padEnd(0)}  ${due}`,
     ...(inv.memo?.trim() ? ["", inv.memo.trim()] : []),
     ...(inv.paymentUrl?.trim() ? ["", "Pay online:", inv.paymentUrl.trim()] : []),
+    ...(inv.finance
+      ? [
+          "",
+          `Prefer monthly payments? Finance with ${formatMoney(inv.finance.downPayment)} down (payment 1 of ${inv.finance.months + 1}), then ${inv.finance.months} monthly payments of ${formatMoney(inv.finance.monthly)} at ${inv.finance.apr}% APR:`,
+          inv.finance.url,
+        ]
+      : []),
     "",
     `${AGENCY.name}`,
     `${AGENCY.phone} · ${AGENCY.email}`,
@@ -181,6 +201,14 @@ export function renderInvoice(inv: InvoiceView): RenderedInvoice {
           ${
             pay
               ? `<a href="${escapeHtml(pay)}" style="display:inline-block;padding:13px 26px;border-radius:6px;background:#e5c16a;color:#1a365d;font:700 15px/1 ${font};text-decoration:none;margin:0 0 6px">Pay this invoice</a>`
+              : ""
+          }
+          ${
+            inv.finance
+              ? `<div style="font:400 13px/1.6 ${font};color:#475569;margin:14px 0 0;padding:12px 14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px">
+            Prefer monthly payments? Finance with <b>${escapeHtml(formatMoney(inv.finance.downPayment))} down</b> — payment 1 of ${inv.finance.months + 1} — then ${inv.finance.months} monthly payments of <b>${escapeHtml(formatMoney(inv.finance.monthly))}</b> at ${escapeHtml(String(inv.finance.apr))}% APR.<br>
+            <a href="${escapeHtml(inv.finance.url)}" style="display:inline-block;margin:8px 0 0;font:700 14px/1 ${font};color:#1a365d;text-decoration:underline">Set up financing</a>
+          </div>`
               : ""
           }
         </td></tr>

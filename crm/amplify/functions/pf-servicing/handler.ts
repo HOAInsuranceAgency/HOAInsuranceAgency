@@ -15,8 +15,8 @@ import {
   type NoticeRow,
 } from "../../../src/lib/premiumFinance/noticeSequence";
 import { listAllPages } from "../../../src/lib/pagination";
-import { parseScheduleJson } from "../../../src/lib/premiumFinance/quote";
 import { PF_CONFIG_SHA256 } from "../../../src/lib/premiumFinance/jurisdictions";
+import { postInstallment } from "../pfPosting";
 
 /**
  * Custom mutation handler: servicePfLoan. Dispatched on `action`.
@@ -158,15 +158,49 @@ export const handler = async (event: {
 
     switch (a.action) {
       /**
-       * QUOTED → ACTIVE, behind the staleness rule: the executed board
-       * resolution must be from the financed term. A resolution executed
-       * before the term's effective date is the prior board's paper — boards
-       * turn over annually and a receiver can replace one mid-term — and the
-       * power of attorney must trace to a body that currently exists.
+       * QUOTED/ACCEPTED → ACTIVE, behind the staleness rule: the executed
+       * board resolution must be from the financed term. A resolution
+       * executed before the term's effective date is the prior board's paper
+       * — boards turn over annually and a receiver can replace one mid-term —
+       * and the power of attorney must trace to a body that currently exists.
+       *
+       * ACCEPTED (W7) activates through the same gate as QUOTED: the
+       * association's election moved money and saved a mandate, but the
+       * paper rule is the paper rule. Activation from ACCEPTED is what turns
+       * the mandate on — the autopay cron only debits ACTIVE loans.
        */
       case "ACTIVATE": {
-        if (loan.status !== "QUOTED") {
+        if (loan.status !== "QUOTED" && loan.status !== "ACCEPTED") {
           return { ok: false, error: `A ${loan.status.toLowerCase()} loan cannot be activated.` };
+        }
+        /**
+         * The kill switch reaches activation. Activation is the last
+         * origination act — the moment the lending relationship commences
+         * and (W7) the mandate turns on — not servicing, which the gate
+         * never touches. Before W7 this hole was cosmetic; a standing
+         * inventory of money-committed ACCEPTED loans makes it real.
+         */
+        const { data: activateSettings } = await client.models.AgencySettings.get({
+          id: "AGENCY",
+        });
+        if (activateSettings?.premiumFinanceEnabled !== true) {
+          await logRow({
+            accountId: loan.accountId,
+            jurisdiction: loan.state,
+            rule: "module-flag",
+            outcome: "BLOCK",
+            reason: "Premium finance is switched off; activation refused.",
+            inputs: { loanId: loan.id, status: loan.status },
+            actor,
+            actorName,
+          });
+          return {
+            ok: false,
+            error:
+              loan.status === "ACCEPTED"
+                ? "Premium finance is switched off. This loan's down payment is already in — resolve the module state or refund the association; activation stays refused."
+                : "Premium finance is switched off.",
+          };
         }
         const executed = a.boardResolutionExecutedAt;
         if (!isRealIsoDay(executed)) {
@@ -256,6 +290,30 @@ export const handler = async (event: {
             nextToken,
           })
         );
+        /**
+         * PAID is in the scan since W7: before ACCEPTED existed, a paid
+         * invoice had already cancelled every QUOTED loan, so this case was
+         * unreachable. An ACCEPTED loan survives payment by design — which
+         * makes "premium already collected in full" a state activation can
+         * now meet, and must refuse.
+         */
+        const paidInvoice = policyInvoices.find((inv) => inv.status === "PAID");
+        if (paidInvoice) {
+          await logRow({
+            accountId: loan.accountId,
+            jurisdiction: loan.state,
+            rule: "exclusive-payment-path",
+            outcome: "BLOCK",
+            reason: `Invoice ${paidInvoice.number ?? paidInvoice.id} is PAID — the premium is already collected in full.`,
+            inputs: { loanId: loan.id, invoiceId: paidInvoice.id },
+            actor,
+            actorName,
+          });
+          return {
+            ok: false,
+            error: `Invoice ${paidInvoice.number ?? paidInvoice.id} on this policy is PAID — the premium is already collected in full. This loan should be cancelled and any down payment refunded, not activated.`,
+          };
+        }
         const openInvoice = policyInvoices.find(
           (inv) =>
             inv.status === "PROCESSING" ||
@@ -302,7 +360,7 @@ export const handler = async (event: {
             error: `That resolution was executed ${executed}, before the financed term began (${termStart}). Boards turn over — obtain a resolution executed for the current term.`,
           };
         }
-        const won = await transition(loan.id, "QUOTED", {
+        const won = await transition(loan.id, loan.status, {
           status: "ACTIVE",
           activatedAt: now,
           boardResolutionExecutedAt: executed,
@@ -322,135 +380,35 @@ export const handler = async (event: {
         if (loan.status !== "ACTIVE" && loan.status !== "DEFAULTED") {
           return { ok: false, error: `A ${loan.status.toLowerCase()} loan cannot take a payment.` };
         }
-        const { data: settings } = await client.models.AgencySettings.get({
-          id: "AGENCY",
+        /**
+         * A hand posting while an autopay debit is clearing would collect the
+         * installment twice: the ledger's deterministic id refuses the
+         * debit's posting when it lands, but Stripe still settles the money.
+         * The debit's webhook outcome — succeeded or failed — clears this
+         * marker; until then, the answer is to wait, exactly as it is for a
+         * PROCESSING invoice.
+         */
+        if (loan.autopayPendingIntentId) {
+          return {
+            ok: false,
+            error: `An autopay debit for installment ${
+              loan.autopayPendingInstallment ?? (loan.paidThrough ?? 0) + 1
+            } is already clearing. Wait for it to land or fail — a hand posting now would collect the money twice.`,
+          };
+        }
+        const result = await postInstallment({
+          ddb,
+          loan,
+          actor,
+          actorName,
+          logContext: "pf-servicing",
         });
-        const bankAccount = settings?.pfLendingAccountName?.trim();
-        if (!bankAccount) {
-          // The segregation rule with teeth: no designated lending account,
-          // no postings. Receipts must never default into the trust.
-          return {
-            ok: false,
-            error: "No designated lending account is configured. Set it under Financing before posting — loan money must not touch the premium trust.",
-          };
-        }
-        const schedule = parseScheduleJson(loan.schedule);
-        if (schedule.length === 0) {
-          return { ok: false, error: "The loan's schedule is unreadable." };
-        }
-        const n = (loan.paidThrough ?? 0) + 1;
-        const row = schedule[n - 1];
-        if (!row) return { ok: false, error: "The schedule is fully paid." };
-
-        /**
-         * The ledger row's id IS the idempotency key: one row per loan per
-         * installment number can exist, and the condition makes the second
-         * writer fail at the ledger itself rather than after it.
-         */
-        const payTable = process.env.PF_LOAN_PAYMENT_TABLE;
-        const loanTable = process.env.PF_LOAN_TABLE;
-        if (!payTable || !loanTable) {
-          return { ok: false, error: "Servicing tables are not configured." };
-        }
-        let alreadyPosted = false;
-        try {
-          await ddb.send(
-            new PutCommand({
-              TableName: payTable,
-              Item: {
-                id: `pf-pay-${loan.id}-${n}`,
-                __typename: "PfLoanPayment",
-                createdAt: now,
-                updatedAt: now,
-                loanId: loan.id,
-                accountId: loan.accountId,
-                n,
-                amount: row.payment,
-                interest: row.interest,
-                principal: row.principal,
-                bankAccount,
-                postedAt: now,
-                postedBy: actor,
-                postedByName: actorName,
-              },
-              ConditionExpression: "attribute_not_exists(id)",
-            })
-          );
-        } catch (err) {
-          if ((err as { name?: string }).name !== "ConditionalCheckFailedException") throw err;
-          /**
-           * The row exists but this loan still points at n-1 — the earlier
-           * posting's advance failed after its ledger write. Returning here
-           * would strand that state forever (the review's finding); falling
-           * through re-runs the conditional advance and reconciles it.
-           */
-          alreadyPosted = true;
-        }
-
-        const finished = n >= schedule.length;
-        /**
-         * Advance the loan conditionally on the paidThrough this posting was
-         * computed from. If the update fails after the ledger row landed, the
-         * row stands (it is true — the money posted) and the next POST_PAYMENT
-         * attempt self-heals: the ledger refuses n again, and this branch is
-         * re-runnable because the condition below tolerates the healed state.
-         */
-        try {
-          await ddb.send(
-            new UpdateCommand({
-              TableName: loanTable,
-              Key: { id: loan.id },
-              /**
-               * defaultedAt is ALWAYS removed on a non-final advance —
-               * decided by the write, not by the possibly-stale status this
-               * invocation read. Removing an absent attribute is a no-op, and
-               * dispatching on the read left ACTIVE loans carrying a
-               * defaultedAt stamp when the sweep raced the posting.
-               */
-              UpdateExpression:
-                "SET paidThrough = :n, balance = :bal, nextDueAt = :next, #s = :status, updatedAt = :now" +
-                (finished ? ", closedAt = :now" : " REMOVE defaultedAt"),
-              /**
-               * Status is in the condition because paidThrough alone let a
-               * posting racing a cancellation set status back to ACTIVE — a
-               * resurrected loan with a CANCELLATION_REQUEST on file, the
-               * carrier cancelling the policy, and no action able to reach it
-               * again. A CANCELLED or PAID loan's state is terminal here.
-               */
-              ConditionExpression:
-                "(paidThrough = :seen OR paidThrough = :n) AND (#s = :active OR #s = :defaulted)",
-              ExpressionAttributeNames: { "#s": "status" },
-              ExpressionAttributeValues: {
-                ":n": n,
-                ":bal": row.balance,
-                ":next": finished ? null : schedule[n].dueDate,
-                ":status": finished ? "PAID" : "ACTIVE",
-                ":now": now,
-                ":seen": loan.paidThrough ?? 0,
-                ":active": "ACTIVE",
-                ":defaulted": "DEFAULTED",
-              },
-            })
-          );
-        } catch (err) {
-          if ((err as { name?: string }).name !== "ConditionalCheckFailedException") throw err;
-          /**
-           * The loan closed or cancelled between the read and the advance.
-           * The ledger row is a fact — money posted — so it stands, loudly:
-           * the operator hears exactly what happened instead of the loan
-           * quietly coming back to life.
-           */
-          console.error(`[pf-servicing] loan ${loan.id} left ACTIVE/DEFAULTED during posting ${n}; ledger row stands`);
-          return {
-            ok: false,
-            error: `The loan changed state while posting installment ${n}. The payment is on the ledger; reconcile the loan by hand before anything else.`,
-          };
-        }
+        if (!result.ok) return { ok: false, error: result.error };
         return {
           ok: true,
-          posted: { n, amount: row.payment, balance: row.balance },
-          ...(alreadyPosted
-            ? { note: `Installment ${n} was already on the ledger; loan state reconciled.` }
+          posted: { n: result.n, amount: result.amount, balance: result.balance },
+          ...(result.alreadyPosted
+            ? { note: `Installment ${result.n} was already on the ledger; loan state reconciled.` }
             : {}),
         };
       }

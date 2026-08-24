@@ -69,7 +69,7 @@ function LoanActions({ loan, onChanged }: { loan: PfLoan; onChanged: () => void 
    */
   const resolutions = useAsyncResource(
     () =>
-      loan.status === "QUOTED"
+      loan.status === "QUOTED" || loan.status === "ACCEPTED"
         ? listAllPages((nextToken) =>
             client.models.Document.list({
               filter: {
@@ -117,7 +117,16 @@ function LoanActions({ loan, onChanged }: { loan: PfLoan; onChanged: () => void 
         <SaveStatus {...status.status} />
       </div>
 
-      {loan.status === "QUOTED" && (
+      {loan.status === "ACCEPTED" && (
+        <p className="muted small">
+          The association elected financing{loan.electedAt ? ` on ${fmtDate(loan.electedAt.slice(0, 10))}` : ""}:
+          down payment received{loan.downPaidAt ? ` ${fmtDate(loan.downPaidAt.slice(0, 10))}` : ""}, autopay
+          mandate on file. Monthly debits begin at activation — file the
+          executed resolution below.
+        </p>
+      )}
+
+      {(loan.status === "QUOTED" || loan.status === "ACCEPTED") && (
         <div className="inline-actions">
           <div className="field">
             <label htmlFor={`pf-res-${loan.id}`}>Board resolution executed</label>
@@ -171,13 +180,18 @@ function LoanActions({ loan, onChanged }: { loan: PfLoan; onChanged: () => void 
 
       {(loan.status === "ACTIVE" || loan.status === "DEFAULTED") && (
         <div className="inline-actions">
+          {loan.stripePaymentMethodId && (
+            <p className="muted small">
+              {loan.autopayPendingIntentId
+                ? `Autopay: a debit for installment ${loan.autopayPendingInstallment ?? "?"} is clearing.`
+                : "Autopay is on — due installments debit themselves; posting by hand is for money that arrived another way."}
+            </p>
+          )}
           <button
             type="button"
             className="secondary"
-            disabled={status.busy}
-            onClick={() =>
-              void act("POST_PAYMENT", {}, "Payment posted to the lending account.")
-            }
+            disabled={status.busy || Boolean(loan.autopayPendingIntentId)}
+            onClick={() => void act("POST_PAYMENT", {}, "Payment posted.")}
           >
             {/* The down payment is payment 1 everywhere the schedule is shown,
                 so financed installment n posts as payment n+1 of months+1. */}
@@ -309,6 +323,8 @@ function LoanActions({ loan, onChanged }: { loan: PfLoan; onChanged: () => void 
 
 const LOAN_BADGE: Record<string, BadgeSpec> = {
   QUOTED: { cls: "blue", label: "QUOTED" },
+  /** Elected from the invoice email: down paid, mandate saved, paper pending. */
+  ACCEPTED: { cls: "amber", label: "ACCEPTED" },
   ACTIVE: { cls: "green", label: "ACTIVE" },
   PAID: { cls: "gray", label: "PAID" },
   DEFAULTED: { cls: "red", label: "DEFAULTED" },
@@ -797,7 +813,9 @@ export function FinancingTab({ account }: { account: Account }) {
                       <td>{fmtDate(l.nextDueAt)}</td>
                       <td className="row-action">
                         <div className="row-tools">
-                          {(l.status === "QUOTED" || l.status === "ACTIVE") && (
+                          {(l.status === "QUOTED" ||
+                            l.status === "ACCEPTED" ||
+                            l.status === "ACTIVE") && (
                             <button
                               type="button"
                               className="link"

@@ -13,6 +13,8 @@ import { pfOriginate } from "../functions/pf-originate/resource";
 import { pfAgreement } from "../functions/pf-agreement/resource";
 import { pfServicing } from "../functions/pf-servicing/resource";
 import { pfDefaultSweep } from "../functions/pf-default-sweep/resource";
+import { pfElection } from "../functions/pf-election/resource";
+import { pfAutopay } from "../functions/pf-autopay/resource";
 import { renewalTasks } from "../functions/renewal-tasks/resource";
 import { licenseAlerts } from "../functions/license-alerts/resource";
 import { taskDigest } from "../functions/task-digest/resource";
@@ -66,8 +68,15 @@ const schema = a
      * here is supposed to chase the money.
      */
     BillType: a.enum(["AGENCY", "DIRECT"]),
-    /** QUOTED until an agreement activates it; see the premium-finance spec. */
-    PfLoanStatus: a.enum(["QUOTED", "ACTIVE", "PAID", "DEFAULTED", "CANCELLED"]),
+    /**
+     * QUOTED until someone commits to it; see the premium-finance spec.
+     * ACCEPTED (W7) sits between QUOTED and ACTIVE: the association elected
+     * financing from the invoice email — down payment received, autopay
+     * mandate on file — but the executed board resolution is not yet. Money
+     * has moved on an ACCEPTED loan, so nothing may auto-cancel it; the
+     * webhook's superseded-by-payment rule reaches QUOTED only.
+     */
+    PfLoanStatus: a.enum(["QUOTED", "ACCEPTED", "ACTIVE", "PAID", "DEFAULTED", "CANCELLED"]),
     DocumentEntityType: a.enum([
       "ACCOUNT",
       "QUOTE",
@@ -1095,16 +1104,64 @@ const schema = a
         /** When the carrier's unearned-premium refund is expected: +30 days. */
         expectedCarrierRefundAt: a.date(),
         closedAt: a.datetime(),
+        /**
+         * W7 election + autopay. All additive-nullable, per the module's
+         * schema rule. The token is minted by send-invoice when the email
+         * offers financing; it names this loan on the public election page,
+         * and the page's Lambda re-validates everything server-side — the
+         * token is possession, never authority.
+         */
+        electionToken: a.string(),
+        electionTokenExpiresAt: a.datetime(),
+        electedAt: a.datetime(),
+        /** The invoice recipient the election link was mailed to. */
+        electionEmail: a.string(),
+        stripeCustomerId: a.string(),
+        /** The ACH mandate's saved payment method; presence = autopay on. */
+        stripePaymentMethodId: a.string(),
+        downPaymentIntentId: a.string(),
+        /** Payment 1 of the schedule, received. Set by the webhook only. */
+        downPaidAt: a.datetime(),
+        /**
+         * The in-flight autopay debit, if any: intent id, which installment,
+         * and when it was created. Set by pf-autopay, cleared by the webhook
+         * on succeeded/failed. The default sweep must not flip a loan whose
+         * due installment has a fresh pending debit — ACH clears in days,
+         * and a default during clearing would start the notice sequence
+         * against money already in flight.
+         */
+        autopayPendingIntentId: a.string(),
+        autopayPendingInstallment: a.integer(),
+        autopayAttemptedAt: a.datetime(),
+        /**
+         * Set when a debit for this installment FAILED: autopay stands down
+         * for that installment (one attempt each, not a daily retry loop),
+         * which is what lets the default sweep flip the loan and the notice
+         * sequence take over. Cleared by any successful posting — a cure
+         * resumes the schedule.
+         */
+        autopayFailedInstallment: a.integer(),
+        /**
+         * The live election Checkout session, reused until it expires so a
+         * public accept cannot mint unbounded Stripe objects.
+         */
+        electionCheckoutUrl: a.string(),
+        electionCheckoutExpiresAt: a.datetime(),
       })
-      .secondaryIndexes((index) => [index("accountId").sortKeys(["quotedAt"])])
+      .secondaryIndexes((index) => [
+        index("accountId").sortKeys(["quotedAt"]),
+        index("electionToken"),
+      ])
       .authorization((allow) => [allow.authenticated().to(["read"])]),
 
     /**
-     * One posted installment. Client read-only; the servicing Lambda is the
-     * only writer, so the interest/principal split always comes from the
-     * loan's frozen schedule and every posting names the lending bank
-     * account it settled to — never the premium trust. No compensation
-     * fields; see PfLoan's note.
+     * One posted installment. Client read-only; the Lambdas are the only
+     * writers, so the interest/principal split always comes from the loan's
+     * frozen schedule. Decision 5 as revised 2026-08-23: receipts settle to
+     * the premium trust on the one Stripe rail, and the loan-vs-premium
+     * distinction lives HERE, on the ledger row and in the remittance email
+     * corporate accounting divides the trust by — not in a separate bank
+     * account. No compensation fields; see PfLoan's note.
      */
     PfLoanPayment: a
       .model({
@@ -1114,11 +1171,17 @@ const schema = a
         amount: a.float().required(),
         interest: a.float().required(),
         principal: a.float().required(),
-        /** The designated lending account label, from AgencySettings. */
+        /**
+         * Where the receipt settled. Historic rows carry the designated
+         * lending-account label from before decision 5 was revised; rows
+         * written since carry the trust-rail constant.
+         */
         bankAccount: a.string().required(),
         postedAt: a.datetime().required(),
         postedBy: a.string(),
         postedByName: a.string(),
+        /** Set when the posting came off an autopay debit. */
+        stripePaymentIntentId: a.string(),
       })
       .secondaryIndexes((index) => [index("loanId").sortKeys(["postedAt"])])
       .authorization((allow) => [allow.authenticated().to(["read"])]),
@@ -1826,6 +1889,33 @@ const schema = a
       .authorization((allow) => [allow.publicApiKey()])
       .handler(a.handler.function(uploadPortal)),
 
+    /**
+     * W7: the finance election, from the invoice email's signed link. Public
+     * for the association's board treasurer, thin for everyone else — the
+     * token names a loan; every decision is re-made server-side from what
+     * the tables say now. Terms renders the offer; accept closes the
+     * pay-in-full paths, stamps the election, and returns a Stripe Checkout
+     * URL for the down payment + ACH mandate. Advancing the loan itself is
+     * the webhook's job, when the money actually moves.
+     */
+    financeElectionTerms: a
+      .query()
+      .arguments({ token: a.string().required() })
+      .returns(a.json())
+      .authorization((allow) => [allow.publicApiKey()])
+      .handler(a.handler.function(pfElection)),
+
+    acceptFinanceElection: a
+      .mutation()
+      .arguments({
+        token: a.string().required(),
+        /** The dispatch discriminator — see lead-upload/dispatch.ts. */
+        accept: a.boolean().required(),
+      })
+      .returns(a.json())
+      .authorization((allow) => [allow.publicApiKey()])
+      .handler(a.handler.function(pfElection)),
+
     // ── Team administration (ADMIN group only) ─────────────────────────
     inviteUser: a
       .mutation()
@@ -2059,6 +2149,13 @@ const schema = a
     allow.resource(pfAgreement),
     allow.resource(pfServicing),
     allow.resource(pfDefaultSweep),
+    // The public election endpoint resolves loan tokens, reads the account
+    // name, the kill switch, and the policy's invoices; its writes (the
+    // election stamp, the compliance row, the void) go direct to tables.
+    allow.resource(pfElection),
+    // The autopay cron reads ACTIVE loans; its claim/marker writes are
+    // conditional and go direct to the loan table.
+    allow.resource(pfAutopay),
     // The stream handler writes Activity and reads UserProfile to name an
     // actor. Note what the block above says: this is not a per-model grant,
     // so this function has full API access whatever any model declares. What

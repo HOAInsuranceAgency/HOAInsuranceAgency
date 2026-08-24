@@ -40,6 +40,8 @@ import { pfOriginate } from "./functions/pf-originate/resource";
 import { pfAgreement } from "./functions/pf-agreement/resource";
 import { pfServicing } from "./functions/pf-servicing/resource";
 import { pfDefaultSweep } from "./functions/pf-default-sweep/resource";
+import { pfElection } from "./functions/pf-election/resource";
+import { pfAutopay } from "./functions/pf-autopay/resource";
 import { resolveMailbox } from "./functions/mailbox";
 import { activityLog } from "./functions/activity-log/resource";
 import {
@@ -77,6 +79,8 @@ export const backend = defineBackend({
   pfAgreement,
   pfServicing,
   pfDefaultSweep,
+  pfElection,
+  pfAutopay,
   activityLog,
   magicLinkDefine,
   magicLinkCreate,
@@ -517,6 +521,19 @@ backend.storage.resources.bucket.grantPut(
  */
 backend.sendInvoice.addEnvironment("INVOICE_TABLE", invoiceTable.tableName);
 invoiceTable.grantReadWriteData(backend.sendInvoice.resources.lambda);
+/**
+ * W7: the email's financing fork. The send mints the election token onto the
+ * QUOTED loan — conditionally, direct to the table — and links to the public
+ * site's finance page.
+ */
+backend.sendInvoice.addEnvironment(
+  "PF_LOAN_TABLE",
+  backend.data.resources.tables.PfLoan.tableName
+);
+backend.data.resources.tables.PfLoan.grantReadWriteData(
+  backend.sendInvoice.resources.lambda
+);
+backend.sendInvoice.addEnvironment("SITE_URL", siteBaseUrl);
 
 /**
  * Reporting the split to corporate finance, when Stripe confirms a payment.
@@ -558,6 +575,72 @@ backend.stripeWebhook.addEnvironment(
 );
 backend.data.resources.tables.PfComplianceLog.grantWriteData(
   backend.stripeWebhook.resources.lambda
+);
+
+/**
+ * W7: autopay debits post to the ledger through the webhook, so the webhook
+ * gets the payment table too — the same shared posting core pf-servicing
+ * uses, the same direct-write reasoning.
+ */
+backend.stripeWebhook.addEnvironment(
+  "PF_LOAN_PAYMENT_TABLE",
+  backend.data.resources.tables.PfLoanPayment.tableName
+);
+backend.data.resources.tables.PfLoanPayment.grantReadWriteData(
+  backend.stripeWebhook.resources.lambda
+);
+
+/**
+ * W7: the election endpoint. Its writes are all direct: the pay-in-full void
+ * (void-invoice's own code, imported — INVOICE_TABLE), the electedAt stamp
+ * (PF_LOAN_TABLE, conditional), and the compliance row. SITE_URL is where
+ * Checkout returns the customer — the public website's finance page.
+ */
+backend.pfElection.addEnvironment("INVOICE_TABLE", invoiceTable.tableName);
+invoiceTable.grantReadWriteData(backend.pfElection.resources.lambda);
+backend.pfElection.addEnvironment(
+  "PF_LOAN_TABLE",
+  backend.data.resources.tables.PfLoan.tableName
+);
+backend.data.resources.tables.PfLoan.grantReadWriteData(
+  backend.pfElection.resources.lambda
+);
+backend.pfElection.addEnvironment("PF_COMPLIANCE_LOG_TABLE", pfLogTable.tableName);
+pfLogTable.grantWriteData(backend.pfElection.resources.lambda);
+backend.pfElection.addEnvironment("SITE_URL", siteBaseUrl);
+
+/**
+ * W7: the autopay cron scans the loan table itself (no data client — its
+ * pending-marker write is conditional) and logs every attempt.
+ */
+backend.pfAutopay.addEnvironment(
+  "PF_LOAN_TABLE",
+  backend.data.resources.tables.PfLoan.tableName
+);
+backend.data.resources.tables.PfLoan.grantReadWriteData(
+  backend.pfAutopay.resources.lambda
+);
+backend.pfAutopay.addEnvironment("PF_COMPLIANCE_LOG_TABLE", pfLogTable.tableName);
+pfLogTable.grantWriteData(backend.pfAutopay.resources.lambda);
+// The autopay heal path posts an adopted succeeded debit itself, so it
+// needs the ledger table the shared core writes.
+backend.pfAutopay.addEnvironment(
+  "PF_LOAN_PAYMENT_TABLE",
+  backend.data.resources.tables.PfLoanPayment.tableName
+);
+backend.data.resources.tables.PfLoanPayment.grantReadWriteData(
+  backend.pfAutopay.resources.lambda
+);
+
+/**
+ * W7: the sweep's stale-marker alarm goes to the mailbox a person reads —
+ * a debit nothing has cleared in ten days freezes its loan, and a console
+ * line is not an alarm.
+ */
+backend.pfDefaultSweep.addEnvironment("ACCOUNTING_MAILBOX", accountingMailbox);
+backend.pfDefaultSweep.addEnvironment("AGENCY_MAILBOX", internalMailbox);
+backend.pfDefaultSweep.resources.lambda.addToRolePolicy(
+  new PolicyStatement({ actions: ["ses:SendEmail"], resources: ["*"] })
 );
 
 const stripeWebhookUrl = backend.stripeWebhook.resources.lambda.addFunctionUrl({

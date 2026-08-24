@@ -832,9 +832,10 @@ describe("the remittance encoding", () => {
     "utf8"
   );
 
-  it("states UTF-8 on every part of both emails", () => {
-    // Three parts of the remittance mail, two of the void-payment alert.
-    expect(SRC.match(/Charset: "UTF-8"/g) ?? []).toHaveLength(5);
+  it("states UTF-8 on every part of all three emails", () => {
+    // Three parts of the remittance mail, two of the void-payment alert,
+    // two of W7's double-path alert.
+    expect(SRC.match(/Charset: "UTF-8"/g) ?? []).toHaveLength(7);
   });
 
   it("declares it in the HTML too, for whatever opens the message", async () => {

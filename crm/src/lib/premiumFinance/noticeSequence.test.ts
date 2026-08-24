@@ -160,14 +160,26 @@ describe("immutability and server time", () => {
     expect(SWEEP).not.toContain("premiumFinance/gate");
   });
 
-  it("posting refuses without a designated lending account", () => {
-    expect(HANDLER).toContain("pfLendingAccountName");
-    expect(HANDLER).toContain("must not touch the premium trust");
+  it("posting refuses while an autopay debit is clearing", () => {
+    // W7 replaced the lending-account guard (decision 5, revised 2026-08-23:
+    // one rail, trust settlement, split on the ledger) with the guard that
+    // actually protects money now: a hand posting during a clearing debit
+    // would collect the installment twice.
+    expect(HANDLER).toContain("loan.autopayPendingIntentId");
+    expect(HANDLER).toContain("would collect the money twice");
+    expect(HANDLER).not.toContain("pfLendingAccountName");
   });
 
   it("the split comes from the frozen schedule, not from arithmetic here", () => {
-    expect(HANDLER).toContain("interest: row.interest");
-    expect(HANDLER).toContain("principal: row.principal");
+    const POSTING = readFileSync(
+      resolve(process.cwd(), "amplify/functions/pfPosting.ts"),
+      "utf8"
+    );
+    expect(POSTING).toContain("interest: row.interest");
+    expect(POSTING).toContain("principal: row.principal");
+    // Decision 5, revised: the settlement rail is named on every row — the
+    // ledger is where loan money stays distinct from premium now.
+    expect(POSTING).toContain("PF_SETTLEMENT_RAIL");
   });
 });
 
@@ -193,28 +205,52 @@ describe("servicing idempotency (the review findings)", () => {
     resolve(process.cwd(), "amplify/functions/pf-servicing/handler.ts"),
     "utf8"
   );
+  /**
+   * W7 moved the posting machinery into the shared core so the webhook's
+   * autopay postings and hand postings cannot drift apart — the invariants
+   * below now live there, and BOTH writers must go through it.
+   */
+  const POSTING = readFileSync(
+    resolve(process.cwd(), "amplify/functions/pfPosting.ts"),
+    "utf8"
+  );
+
+  it("both writers post through the one shared core", () => {
+    expect(HANDLER).toContain('from "../pfPosting"');
+    const PF_WEBHOOK = readFileSync(
+      resolve(process.cwd(), "amplify/functions/stripe-webhook/pf.ts"),
+      "utf8"
+    );
+    expect(PF_WEBHOOK).toContain('from "../pfPosting"');
+    // And neither carries its own ledger WRITE beside the core's — the
+    // deterministic-id put with its idempotency condition exists once.
+    // (Reading a ledger row by that id, as the duplicate-debit check does,
+    // is fine; minting one is not.)
+    expect(HANDLER).not.toContain('"attribute_not_exists(id)"');
+    expect(PF_WEBHOOK).not.toContain('"attribute_not_exists(id)"');
+  });
 
   it("posts each installment under a deterministic ledger id", () => {
-    expect(HANDLER).toContain("pf-pay-${loan.id}-${n}");
-    expect(HANDLER).toContain('ConditionExpression: "attribute_not_exists(id)"');
+    expect(POSTING).toContain("pf-pay-${loan.id}-${n}");
+    expect(POSTING).toContain('ConditionExpression: "attribute_not_exists(id)"');
   });
 
   it("advances the loan conditionally on paidThrough AND a live status", () => {
     // paidThrough alone let a posting racing a cancellation resurrect a
     // CANCELLED loan to ACTIVE — with a CANCELLATION_REQUEST on file, the
     // carrier cancelling, and no action able to reach the loan again.
-    expect(HANDLER).toContain(
+    expect(POSTING).toContain(
       '"(paidThrough = :seen OR paidThrough = :n) AND (#s = :active OR #s = :defaulted)"'
     );
     // A lost advance surfaces loudly; the ledger row stands as fact.
-    expect(HANDLER).toContain("reconcile the loan by hand");
+    expect(POSTING).toContain("reconcile the loan by hand");
   });
 
   it("clears defaultedAt by the write, not the read", () => {
     // Dispatching REMOVE on the read status left ACTIVE loans carrying a
     // stale defaultedAt when the sweep raced the posting.
-    expect(HANDLER).toContain('" REMOVE defaultedAt"');
-    expect(HANDLER).not.toMatch(/loan\.status === "DEFAULTED" && !finished/);
+    expect(POSTING).toContain('removes.push("defaultedAt")');
+    expect(POSTING).not.toMatch(/loan\.status === "DEFAULTED" && !finished/);
   });
 
   it("the default sweep marks conditionally — an operator's posting wins", () => {
@@ -230,14 +266,16 @@ describe("servicing idempotency (the review findings)", () => {
     // The second-round finding: returning on the duplicate stranded an
     // orphaned row forever. Now the catch sets a flag instead of returning,
     // the conditional advance re-runs, and the caller hears "reconciled".
-    expect(HANDLER).toContain("alreadyPosted = true");
-    expect(HANDLER).not.toContain("is already posted.");
+    expect(POSTING).toContain("alreadyPosted = true");
+    expect(POSTING).not.toContain("is already posted.");
     expect(HANDLER).toContain("loan state reconciled");
   });
 
   it("runs status transitions conditionally on the status they leave", () => {
     expect(HANDLER).toContain('ConditionExpression: "#s = :from"');
-    expect(HANDLER).toContain('transition(loan.id, "QUOTED"');
+    // W7: ACTIVATE leaves QUOTED or ACCEPTED — whichever the decision read.
+    expect(HANDLER).toContain("transition(loan.id, loan.status");
+    expect(HANDLER).toContain('loan.status !== "QUOTED" && loan.status !== "ACCEPTED"');
     // DEFAULTED→CANCELLED no longer goes through transition(): it rides a
     // TransactWriteItems with its notice row (pfCancellationNotice.test.ts),
     // carrying the same status condition.

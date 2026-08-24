@@ -51,7 +51,7 @@ export const handler = async (event: {
 
     const { data: loan } = await client.models.PfLoan.get({ id: loanId });
     if (!loan) return { ok: false, error: "That loan no longer exists." };
-    if (loan.status !== "QUOTED" && loan.status !== "ACTIVE") {
+    if (loan.status !== "QUOTED" && loan.status !== "ACCEPTED" && loan.status !== "ACTIVE") {
       return { ok: false, error: `A ${loan.status.toLowerCase()} loan has no agreement to generate.` };
     }
 

@@ -9,6 +9,7 @@ import { listAllPages } from "../../../src/lib/pagination";
 import { AGENCY, AGENCY_FMT } from "../../../../shared/agency";
 import Stripe from "stripe";
 import { invoiceTotals, remittanceSplit } from "../../../src/lib/invoiceTotals";
+import { electionExpiry, mintElectionToken } from "../pfElectionToken";
 import { renderInvoice } from "./invoice";
 import { createPaymentLink, toCents } from "./stripeLink";
 import { buildMimeMessage } from "./mime";
@@ -46,6 +47,84 @@ const ddb = DynamoDBDocumentClient.from(new DynamoDBClient());
  * rather than the generic apology, because "try again" is the actual remedy.
  */
 class SendBlocked extends Error {}
+
+/**
+ * W7: the financing side of the fork, or null.
+ *
+ * The email offers financing only when the policy carries a QUOTED loan at
+ * send time — staff issued the offer through every origination gate; the
+ * email merely relays it, and the association accepts or ignores it. No loan,
+ * module off, or anything unreadable → the email is a plain bill, exactly as
+ * before W7. Null on any failure for the same reason ensurePaymentLink is:
+ * a bill that arrives beats an offer that stopped it.
+ *
+ * Minting the token writes it onto the loan conditionally on QUOTED, so an
+ * offer that was superseded mid-send never gets a live link. A still-fresh
+ * token is reused — re-sends should not invalidate the link already sitting
+ * in the association's inbox.
+ */
+async function financeOffer(
+  client: DataClient,
+  policyId: string | null,
+  recipientEmail: string | null
+): Promise<{ url: string; downPayment: number; monthly: number; months: number; apr: number } | null> {
+  if (!policyId) return null;
+  const loanTable = process.env.PF_LOAN_TABLE;
+  const siteUrl = process.env.SITE_URL;
+  if (!loanTable || !siteUrl) return null;
+  try {
+    const { data: settings } = await client.models.AgencySettings.get({ id: "AGENCY" });
+    if (settings?.premiumFinanceEnabled !== true) return null;
+
+    const loans = await listAllPages((nextToken) =>
+      client.models.PfLoan.list({
+        filter: { policyId: { eq: policyId }, status: { eq: "QUOTED" } },
+        nextToken,
+      })
+    );
+    if (loans.length === 0) return null;
+    // The newest quote is the offer staff most recently stood behind.
+    const loan = [...loans].sort((a, b) =>
+      (b.quotedAt ?? "").localeCompare(a.quotedAt ?? "")
+    )[0];
+
+    let token = loan.electionToken ?? null;
+    const fresh =
+      token &&
+      loan.electionTokenExpiresAt &&
+      new Date(loan.electionTokenExpiresAt).getTime() > Date.now() + 7 * 24 * 60 * 60 * 1000;
+    if (!fresh) {
+      token = mintElectionToken();
+      await ddb.send(
+        new UpdateCommand({
+          TableName: loanTable,
+          Key: { id: loan.id },
+          UpdateExpression:
+            "SET electionToken = :tok, electionTokenExpiresAt = :exp, electionEmail = :email, updatedAt = :now",
+          ConditionExpression: "#s = :quoted",
+          ExpressionAttributeNames: { "#s": "status" },
+          ExpressionAttributeValues: {
+            ":tok": token,
+            ":exp": electionExpiry(new Date()),
+            ":email": recipientEmail ?? null,
+            ":quoted": "QUOTED",
+            ":now": new Date().toISOString(),
+          },
+        })
+      );
+    }
+    return {
+      url: `${siteUrl}/finance/?t=${token}`,
+      downPayment: loan.downPayment,
+      monthly: loan.payment,
+      months: loan.months,
+      apr: loan.apr,
+    };
+  } catch (err) {
+    console.warn("[send-invoice] financing offer omitted", err);
+    return null;
+  }
+}
 
 /** Invoices come from the mailbox the agency actually reads, not from sales. */
 const MAILBOX = process.env.AGENCY_MAILBOX || AGENCY_FMT.emailLower;
@@ -463,6 +542,10 @@ export const handler = async (event: {
       invoiceTotals(lines).retail
     );
 
+    // W7: the other side of the fork — a QUOTED finance offer on this
+    // policy rides along, with a signed election link.
+    const finance = await financeOffer(client, headerPolicyId, to[0] ?? null);
+
     /**
      * The envelope, in the order it would be typed.
      *
@@ -503,6 +586,7 @@ export const handler = async (event: {
       dueAt: invoice.dueAt,
       memo: invoice.memo,
       paymentUrl,
+      finance,
       lines: [...lines].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0)),
     };
     const { subject, text, html } = renderInvoice(view);

@@ -4,7 +4,8 @@ import { SESv2Client, SendEmailCommand } from "@aws-sdk/client-sesv2";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, PutCommand, ScanCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { AGENCY } from "../../../../shared/agency";
-import { decideEvent, decideUpdate } from "./decide";
+import { decideEvent, decidePfEvent, decideUpdate } from "./decide";
+import { applyPfEvent } from "./pf";
 import { readInvoice, writePaymentState, type InvoiceRow } from "./persist";
 import { readPaidContext } from "./lookups";
 import {
@@ -105,6 +106,43 @@ async function notifyAccounting(invoice: InvoiceRow, update: { paidAt: string | 
  * and the CRM will never show it — the invoice stays VOID on purpose — so this
  * email is the only record pointed at a person.
  */
+/**
+ * W7: both payment paths collected — a paid-in-full invoice beside a loan
+ * that money has already touched. Same channel and reader as the VOID alert:
+ * the person reconciling the trust is the person who must untangle this.
+ */
+async function alertDoublePath(invoice: InvoiceRow, loanId: string, loanStatus: string) {
+  const to = process.env.ACCOUNTING_MAILBOX;
+  if (!to) return;
+  await ses.send(
+    new SendEmailCommand({
+      FromEmailAddress: `${AGENCY.name} <${process.env.AGENCY_MAILBOX ?? to}>`,
+      Destination: { ToAddresses: [to] },
+      Content: {
+        Simple: {
+          Subject: {
+            Data: `Paid in full AND financing — untangle needed (${invoice.number ?? invoice.id})`,
+            Charset: "UTF-8",
+          },
+          Body: {
+            Text: {
+              Data: [
+                `Invoice ${invoice.number ?? invoice.id} was just paid in full, but the same`,
+                `policy carries financing loan ${loanId} (${loanStatus}) that money has`,
+                `already touched. Both payment paths have collected; neither record was`,
+                `changed automatically.`,
+                ``,
+                `One of the two needs refunding, and the loan needs a human decision.`,
+              ].join("\n"),
+              Charset: "UTF-8",
+            },
+          },
+        },
+      },
+    })
+  );
+}
+
 async function alertPaymentOnVoid(invoice: InvoiceRow, paymentIntentId: string) {
   const to = process.env.ACCOUNTING_MAILBOX;
   if (!to) return;
@@ -155,12 +193,64 @@ async function cancelQuotedLoans(invoice: InvoiceRow) {
   const { Items } = await ddb.send(
     new ScanCommand({
       TableName: loanTable,
-      FilterExpression: "policyId = :p AND #s = :q",
+      // Every loan on the policy: QUOTED to cancel, and anything money has
+      // touched to alarm about — see below.
+      FilterExpression: "policyId = :p AND #s IN (:q, :acc, :act, :def)",
       ExpressionAttributeNames: { "#s": "status" },
-      ExpressionAttributeValues: { ":p": invoice.policyId, ":q": "QUOTED" },
+      ExpressionAttributeValues: {
+        ":p": invoice.policyId,
+        ":q": "QUOTED",
+        ":acc": "ACCEPTED",
+        ":act": "ACTIVE",
+        ":def": "DEFAULTED",
+      },
     })
   );
   for (const loan of Items ?? []) {
+    /**
+     * W7: a paid-in-full invoice beside a loan money has already touched is
+     * both payment paths collecting at once. The spec's rule: never
+     * auto-cancel it — money moved — but never be quiet about it either.
+     * Same alarm channel as a payment on a VOID invoice, same reader.
+     */
+    if (loan.status !== "QUOTED") {
+      console.error(
+        `stripe-webhook: invoice ${invoice.number ?? invoice.id} PAID beside ${loan.status} loan ${loan.id} — both payment paths collected`
+      );
+      try {
+        await alertDoublePath(invoice, loan.id as string, loan.status as string);
+      } catch (err) {
+        console.error("stripe-webhook: could not send the double-path alert", err);
+      }
+      if (logTable) {
+        try {
+          await ddb.send(
+            new PutCommand({
+              TableName: logTable,
+              Item: {
+                id: randomUUID(),
+                __typename: "PfComplianceLog",
+                createdAt: now,
+                updatedAt: now,
+                accountId: invoice.accountId,
+                jurisdiction: (loan.state as string) ?? "UNKNOWN",
+                rule: "exclusive-payment-path",
+                outcome: "BLOCK",
+                reason: `Invoice ${invoice.number ?? invoice.id} paid in full beside ${loan.status} loan ${loan.id} — refund/untangle needed.`,
+                inputs: JSON.stringify({ loanId: loan.id, invoiceId: invoice.id }),
+                configSha256: PF_CONFIG_SHA256,
+                actor: "stripe-webhook",
+                actorName: "stripe-webhook",
+                occurredAt: now,
+              },
+            })
+          );
+        } catch (err) {
+          console.error("stripe-webhook: double-path log write failed", err);
+        }
+      }
+      continue;
+    }
     try {
       await ddb.send(
         new UpdateCommand({
@@ -173,7 +263,23 @@ async function cancelQuotedLoans(invoice: InvoiceRow) {
         })
       );
     } catch (err) {
-      if ((err as { name?: string }).name === "ConditionalCheckFailedException") continue;
+      if ((err as { name?: string }).name === "ConditionalCheckFailedException") {
+        /**
+         * The loan left QUOTED between the scan and the cancel — under a
+         * payment, that almost always means it just became ACCEPTED: the
+         * association elected while their pay-in-full cleared. That is the
+         * double-path case, not a quiet skip.
+         */
+        console.error(
+          `stripe-webhook: loan ${loan.id} left QUOTED under paid invoice ${invoice.number ?? invoice.id} — both payment paths may have collected`
+        );
+        try {
+          await alertDoublePath(invoice, loan.id as string, "no longer QUOTED");
+        } catch (alertErr) {
+          console.error("stripe-webhook: could not send the double-path alert", alertErr);
+        }
+        continue;
+      }
       throw err;
     }
     if (logTable) {
@@ -271,6 +377,23 @@ export const handler = async (event: {
     );
     // Nothing below this line runs on an unverified payload.
     return refused("bad signature");
+  }
+
+  /**
+   * W7: loan money first. The election checkout and the autopay cron stamp
+   * `pfLoanId` (never `invoiceId`) on their PaymentIntents, so an event is
+   * loan traffic or invoice traffic by metadata alone.
+   */
+  const pfDecision = decidePfEvent(parsed as never);
+  if (pfDecision) {
+    try {
+      return ok(await applyPfEvent(pfDecision));
+    } catch (err) {
+      console.error(`stripe-webhook: pf event ${parsed.type} failed`, err);
+      // Real event, failed application: ask Stripe to redeliver, exactly as
+      // the invoice path does below.
+      return { statusCode: 500, body: "retry" };
+    }
   }
 
   const decision = decideEvent(parsed as never);

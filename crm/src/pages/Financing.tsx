@@ -8,7 +8,6 @@ import {
   PF_JURISDICTIONS,
 } from "../lib/premiumFinance/jurisdictions";
 import { defaultReviewBy, isOpinionCurrent, originationGate } from "../lib/premiumFinance/gate";
-import { AGENCY_SETTINGS_ID } from "../lib/agencySettings";
 import { useAsyncResource } from "../lib/useAsyncResource";
 import type { Schema } from "../../amplify/data/resource";
 
@@ -31,71 +30,6 @@ const STATUS_BADGE: Record<string, BadgeSpec> = {
   conditional: { cls: "amber", label: "CONDITIONAL" },
   closed: { cls: "gray", label: "CLOSED" },
 };
-
-/**
- * The designated lending bank account's label — the segregation rule as a
- * required setting. Payment posting refuses until it names an account, and
- * it must never name the premium trust: fiduciary premium and lending
- * capital cannot commingle.
- */
-function LendingAccountCard() {
-  const status = useSaveStatus({ autoClearMs: 4000 });
-  const [name, setName] = useState<string | null>(null);
-  const loaded = useAsyncResource(
-    async () => {
-      const { data } = await client.models.AgencySettings.get({ id: AGENCY_SETTINGS_ID });
-      return data?.pfLendingAccountName ?? "";
-    },
-    [],
-    { initialData: null }
-  );
-  const value = name ?? loaded.data ?? "";
-
-  async function save() {
-    await status.run(
-      async () => {
-        const { data: existing } = await client.models.AgencySettings.get({
-          id: AGENCY_SETTINGS_ID,
-        });
-        const patch = { pfLendingAccountName: value.trim() || null };
-        const { errors } = existing
-          ? await client.models.AgencySettings.update({ id: AGENCY_SETTINGS_ID, ...patch })
-          : await client.models.AgencySettings.create({ id: AGENCY_SETTINGS_ID, ...patch });
-        if (errors?.length) throw new Error(errors[0].message);
-        return "Saved.";
-      },
-      { errorMessage: "Couldn't save the account name." }
-    );
-  }
-
-  return (
-    <div className="card">
-      <div className="card-head">
-        <h2>Lending account</h2>
-        <SaveStatus {...status.status} />
-      </div>
-      <p className="muted small">
-        Every loan receipt and disbursement references this account, and it
-        must not be the premium trust — fiduciary premium and lending capital
-        cannot commingle. Payment posting refuses until this is set.
-      </p>
-      <div className="inline-actions">
-        <div className="field" style={{ minWidth: 320 }}>
-          <label htmlFor="pf-lending-acct">Designated lending account (label)</label>
-          <input
-            id="pf-lending-acct"
-            placeholder='e.g. "Operating — Lending, Rockland Trust x4821"'
-            value={value}
-            onChange={(e) => setName(e.target.value)}
-          />
-        </div>
-        <button type="button" className="secondary" disabled={status.busy} onClick={() => void save()}>
-          Save
-        </button>
-      </div>
-    </div>
-  );
-}
 
 /**
  * Counsel opinions unlock conditional jurisdictions — and expire. Rows are
@@ -330,7 +264,12 @@ export default function Financing() {
         </div>
       )}
 
-      {isAdmin && <LendingAccountCard />}
+      {/* The lending-account card lived here until decision 5 was revised
+          (2026-08-23): receipts settle to the premium trust on the one
+          Stripe rail, and the split is a ledger fact — the remittance email
+          and PfLoanPayment's interest/principal fields — not a bank account.
+          AgencySettings.pfLendingAccountName remains in the schema, unused,
+          per the additive-only rule. */}
       {isAdmin && <CounselOpinionsCard />}
 
       <div className="card">
