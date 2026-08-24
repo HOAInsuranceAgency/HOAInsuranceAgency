@@ -136,6 +136,27 @@ const money = (n: number) =>
 async function applyDownPayment(d: PfEventDecision, loan: LoanRow): Promise<string> {
   const table = process.env.PF_LOAN_TABLE as string;
   /**
+   * The kill switch is consulted at settle time — not to refuse the money,
+   * but to say so loudly. An electedAt stamp can only exist because it
+   * transacted with the flag ON (pf-election), so a down payment settling
+   * after a disable is a pre-disable election completing: servicing, not
+   * origination, the same rule that keeps debits running on ACTIVE loans.
+   * What must not happen silently is exactly this case — the row and the
+   * accounting note below are how a human reviews whether to unwind it.
+   */
+  let moduleOffAtSettle = false;
+  const settingsTable = process.env.AGENCY_SETTINGS_TABLE;
+  if (settingsTable) {
+    try {
+      const s = await ddb.send(
+        new GetCommand({ TableName: settingsTable, Key: { id: "AGENCY" }, ConsistentRead: true })
+      );
+      moduleOffAtSettle = s.Item?.premiumFinanceEnabled !== true;
+    } catch (err) {
+      console.error("stripe-webhook: could not read the module flag at settle", err);
+    }
+  }
+  /**
    * A redelivered success is not stray money. The first delivery stored the
    * intent id; seeing it again means the 200 got lost, nothing more — the
    * quiet mirror of the installment path's "already posted".
@@ -205,14 +226,36 @@ async function applyDownPayment(d: PfEventDecision, loan: LoanRow): Promise<stri
     jurisdiction: loan.state,
     rule: "election",
     outcome: "PASS",
-    reason: `Down payment received (payment 1 of ${loan.months + 1}); loan accepted, mandate on file. Debits begin at activation.`,
+    reason:
+      `Down payment received (payment 1 of ${loan.months + 1}); loan accepted, mandate on file. Debits begin at activation.` +
+      (moduleOffAtSettle
+        ? " NOTE: the module was OFF at settle — the election predated the disable (its stamp transacted with the flag); review whether to unwind."
+        : ""),
     inputs: {
       loanId: loan.id,
       paymentIntentId: d.paymentIntentId,
       customerId: d.customerId,
       paymentMethodId: d.paymentMethodId,
+      moduleOffAtSettle,
     },
   });
+  if (moduleOffAtSettle) {
+    console.warn(`stripe-webhook: loan ${loan.id} accepted while the module is OFF; alerting`);
+    try {
+      await mailAccounting(
+        `Down payment settled under a disabled module — review loan ${loan.id}`,
+        [
+          `The financing module is OFF, but a down payment just settled and`,
+          `loan ${loan.id} is now ACCEPTED. The election itself predates the`,
+          `disable — its stamp can only exist from a transaction with the flag on —`,
+          `so nothing was refused. Review whether this one should be unwound`,
+          `(refund ${d.paymentIntentId}) or carried to activation.`,
+        ]
+      );
+    } catch (err) {
+      console.error("stripe-webhook: could not send the off-at-settle note", err);
+    }
+  }
 
   /**
    * A committed election supersedes sibling quotes, exactly as a paid

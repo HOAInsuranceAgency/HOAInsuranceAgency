@@ -577,6 +577,17 @@ backend.data.resources.tables.PfComplianceLog.grantWriteData(
   backend.stripeWebhook.resources.lambda
 );
 
+// W7: the webhook consults the kill switch at settle time — not to refuse
+// money, but to record and alarm when a pre-disable election completes
+// under a disabled module.
+backend.stripeWebhook.addEnvironment(
+  "AGENCY_SETTINGS_TABLE",
+  backend.data.resources.tables.AgencySettings.tableName
+);
+backend.data.resources.tables.AgencySettings.grantReadData(
+  backend.stripeWebhook.resources.lambda
+);
+
 /**
  * W7: autopay debits post to the ledger through the webhook, so the webhook
  * gets the payment table too — the same shared posting core pf-servicing
