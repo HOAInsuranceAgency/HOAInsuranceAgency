@@ -300,6 +300,14 @@ const schema = a
         state: a.string(),
         zip: a.string(),
         county: a.string(), // carriers rate by county; ACORD premises block
+        /**
+         * Whether the association is an incorporated entity — a recorded
+         * fact from its articles, not an inference from its type. Rhode
+         * Island's premium-finance eligibility (§ 19-14.1-10(b)(1)) reads
+         * this and blocks until someone answers. Additive nullable, per the
+         * module's schema rule.
+         */
+        incorporated: a.boolean(),
         unitCount: a.integer(),
         yearBuilt: a.integer(),
         totalInsuredValue: a.float(),

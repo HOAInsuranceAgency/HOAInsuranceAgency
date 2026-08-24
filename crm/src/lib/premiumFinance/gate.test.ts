@@ -8,6 +8,7 @@ import {
   originationGate,
 } from "./gate";
 import { coverageVerdict, normalizeLine, PERSONAL_LINES_WARNING } from "./coverage";
+import { buildQuote } from "./quote";
 import { PF_COVERAGE_ALLOW, PF_COVERAGE_DENY, PF_JURISDICTIONS } from "./jurisdictions";
 
 describe("jurisdictionFor", () => {
@@ -41,12 +42,21 @@ describe("originationGate", () => {
   });
 
   it("treats an unverified ceiling as closed, whatever the status says", () => {
-    // Arkansas and Rhode Island ship status:open with verified:false —
-    // deliberately. Their ceilings are unresolved, so they behave closed.
-    for (const code of ["AR", "RI"]) {
-      const d = originationGate(code);
-      expect(d.open, code).toBe(false);
-      if (!d.open) expect(d.reason).toContain("unverified");
+    // Arkansas ships status:open with verified:false — deliberately. Its
+    // ceiling is unresolved, so it behaves closed. (Rhode Island left this
+    // company 2026-08-24 when its § 6-26-2 ceiling was verified.)
+    const d = originationGate("AR");
+    expect(d.open).toBe(false);
+    if (!d.open) expect(d.reason).toContain("unverified");
+  });
+
+  it("Rhode Island is open, capped at 21 with the fee in the cap", () => {
+    const d = originationGate("RI");
+    expect(d.open).toBe(true);
+    if (d.open) {
+      expect(d.jurisdiction.maxApr).toBe(21.0);
+      expect(d.jurisdiction.feeCountsTowardCap).toBe(true);
+      expect(d.jurisdiction.requiresIncorporatedBorrower).toBe(true);
     }
   });
 
@@ -284,5 +294,39 @@ describe("the lending schema cannot express producer compensation", () => {
       const fees = [...block.matchAll(/\w*[Ff]ee\w*/g)].map((m) => m[0]);
       expect(fees.every((f) => /originationFee/i.test(f)), `${model}: ${fees}`).toBe(true);
     }
+  });
+});
+
+describe("the fee counts toward Rhode Island's ceiling", () => {
+  it("blocks on the effective rate where the nominal rate would slip under", () => {
+    const ri = jurisdictionFor("RI")!;
+    // $1,500 financed at 20.5% nominal is under 21 — until the $10 fee is
+    // counted, which is exactly what § 6-26-2's service-charge rule says.
+    const q = buildQuote({
+      premium: 2000,
+      downPct: 25,
+      months: 11,
+      apr: 20.5,
+      effectiveDate: "2026-08-24",
+    });
+    const v = aprCapViolation(20.5, ri, q);
+    expect(v).toContain("effective");
+    expect(v).toContain("counts the origination fee");
+    // Without the quote there is nothing to test the fee against — the
+    // nominal check applies, and 20.5 passes. Callers that can build the
+    // quote must pass it; pf-originate does.
+    expect(aprCapViolation(20.5, ri)).toBeNull();
+  });
+
+  it("the default terms clear the ceiling comfortably", () => {
+    const ri = jurisdictionFor("RI")!;
+    const q = buildQuote({
+      premium: 60000,
+      downPct: 25,
+      months: 11,
+      apr: 14,
+      effectiveDate: "2026-08-24",
+    });
+    expect(aprCapViolation(14, ri, q)).toBeNull();
   });
 });

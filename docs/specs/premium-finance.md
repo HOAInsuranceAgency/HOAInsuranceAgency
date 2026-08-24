@@ -244,6 +244,30 @@ activation** (decision, 2026-08-23).
   disabling the module stops elections and new originations but never stops
   debits on ACTIVE loans — the gate still never touches servicing.
 
+### Rhode Island opened (signed by Jake, 2026-08-24)
+
+RI's row left the unverified-ceiling state on Jake's verification, and it
+brought two new signed-data fields with statute-specific enforcement:
+
+- `max_apr: 21.0, max_apr_verified: true` — § 6-26-2's ceiling is the
+  greater of 21% or prime+9; 21% governs.
+- **`fee_counts_toward_cap`** — the service charge counts toward the
+  ceiling, so the APR-cap check tests the EFFECTIVE rate: the actuarial
+  rate that discounts the frozen schedule back to the amount financed net
+  of the $10 fee (`effectiveAprWithFee`, solved on the schedule itself,
+  held-to-term, prepayment refund not assumed). On small principals this
+  bites where the nominal rate slips under — the case the flag exists for.
+- **`requires_incorporated_borrower`** — § 19-14.1-10(b)(1) lends to
+  incorporated associations only. Enforced as a fifth eligibility screen,
+  producer-of-record style: `Account.incorporated` (new additive nullable
+  field, recorded on the Property card from the association's articles)
+  must be explicitly true; unrecorded blocks; no override exists. The
+  screen renders only where a row demands it.
+- Both fields are refused on closed rows by the generator — borrower-form
+  and fee rules on a row that cannot lend assert checks nobody made.
+- ch. 19-14.6's form and cancellation rules are the notice sequence the
+  module already runs; the note records the citation.
+
 ### W7 hardening from external review (2026-08-24)
 
 Nine Greptile rounds on PR #14 drove these invariants, now enforced and

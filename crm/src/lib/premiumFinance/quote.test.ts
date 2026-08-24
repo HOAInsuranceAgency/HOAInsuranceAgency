@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   addMonthsClamped,
   buildQuote,
+  effectiveAprWithFee,
   payoffAfterPayment,
   PF_DEFAULT_APR,
   PF_DEFAULT_DOWN_PCT,
@@ -209,5 +210,52 @@ describe("parseScheduleJson — the AWSJSON trap, again", () => {
     for (const bad of [null, undefined, "", "not json", "42", {}]) {
       expect(parseScheduleJson(bad), String(bad)).toEqual([]);
     }
+  });
+});
+
+describe("effective APR with the fee in the cap — Rhode Island's rule", () => {
+  it("sits just above the nominal rate, by the fee's weight", () => {
+    // $45,000 financed over 11 months at 14%: a $10 fee moves the effective
+    // rate by basis points, not points — but the cap must test the true
+    // number, not the advertised one.
+    const q = buildQuote({
+      premium: 60000,
+      downPct: 25,
+      months: 11,
+      apr: 14,
+      effectiveDate: "2026-08-24",
+    });
+    const eff = effectiveAprWithFee(q);
+    expect(eff).toBeGreaterThan(14);
+    expect(eff).toBeLessThan(14.2);
+  });
+
+  it("recovers the nominal rate exactly when the fee is zero", () => {
+    const q = buildQuote({
+      premium: 60000,
+      downPct: 25,
+      months: 11,
+      apr: 14,
+      effectiveDate: "2026-08-24",
+    });
+    // Same schedule, fee removed from the discounting: the actuarial rate
+    // of the schedule against its own principal IS the nominal rate (to
+    // rounding of the cent-adjusted final row).
+    const zeroFee = { ...q, originationFee: 0 };
+    expect(Math.abs(effectiveAprWithFee(zeroFee) - 14)).toBeLessThan(0.02);
+  });
+
+  it("a small loan feels the fee more — the direction that matters", () => {
+    const small = buildQuote({
+      premium: 2000,
+      downPct: 25,
+      months: 11,
+      apr: 20.5,
+      effectiveDate: "2026-08-24",
+    });
+    // $1,500 financed at 20.5% nominal: $10 is ~0.67% of principal, and the
+    // effective rate crosses Rhode Island's 21% ceiling even though the
+    // nominal rate does not. This is the case the flag exists for.
+    expect(effectiveAprWithFee(small)).toBeGreaterThan(21);
   });
 });

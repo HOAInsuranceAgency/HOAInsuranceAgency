@@ -27,6 +27,10 @@ export default function DetailsCard({
     county: inputValue(account.county),
     state: inputValue(account.state),
     zip: inputValue(account.zip),
+    // Tri-state on purpose: unanswered is not "no". Rhode Island's financing
+    // eligibility blocks until this is answered from the articles.
+    incorporated:
+      account.incorporated === true ? "yes" : account.incorporated === false ? "no" : "",
     unitCount: inputValue(account.unitCount),
     firewallsVerified: account.firewallsVerified ?? false,
     coastal: account.coastal ?? false,
@@ -58,6 +62,8 @@ export default function DetailsCard({
               county: str(form.county),
               state: str(form.state),
               zip: str(form.zip),
+              incorporated:
+                form.incorporated === "yes" ? true : form.incorporated === "no" ? false : null,
               unitCount: num(form.unitCount),
               firewallsVerified: form.firewallsVerified,
               coastal: form.coastal,
@@ -115,6 +121,17 @@ export default function DetailsCard({
         <div className="field">
           <label>ZIP</label>
           <input value={form.zip} onChange={(e) => setF("zip", e.target.value)} />
+        </div>
+        <div className="field">
+          <label>Incorporated association</label>
+          <select
+            value={form.incorporated}
+            onChange={(e) => setF("incorporated", e.target.value)}
+          >
+            <option value="">—</option>
+            <option value="yes">Yes — incorporated</option>
+            <option value="no">No — unincorporated</option>
+          </select>
         </div>
         <div className="field">
           <label>Unit count</label>

@@ -23,6 +23,16 @@ export interface EligibilityInputs {
   isAuditable: boolean | null | undefined;
   /** The quote's down payment percent — MEP is measured against it. */
   downPct: number;
+  /**
+   * The jurisdiction demands an incorporated borrower (Rhode Island,
+   * § 19-14.1-10(b)(1)). When true, `incorporated` — Account.incorporated,
+   * a recorded fact — must be explicitly true. Like producer-of-record:
+   * no override, because the fix is to confirm the fact, not waive it.
+   */
+  requiresIncorporatedBorrower?: boolean;
+  incorporated?: boolean | null | undefined;
+  /** For the block message; the statute names the state, so we do too. */
+  jurisdictionName?: string;
   /** ADMIN overrides on file for this policy, keyed by check. */
   overrides?: {
     mep?: { reason: string };
@@ -31,7 +41,7 @@ export interface EligibilityInputs {
 }
 
 export interface EligibilityCheck {
-  check: "coverage" | "producer-of-record" | "mep" | "auditable";
+  check: "coverage" | "producer-of-record" | "mep" | "auditable" | "incorporated";
   ok: boolean;
   /**
    * True only for the personal-lines screen: no override exists, none may be
@@ -113,6 +123,28 @@ export function evaluateEligibility(inputs: EligibilityInputs): EligibilityCheck
     );
   } else {
     checks.push({ check: "auditable", ok: true, hard: false });
+  }
+
+  // 5. Incorporated borrower — only where the signed row demands it (Rhode
+  // Island). The screen exists only there, so the four screens stay four
+  // everywhere else, and an unrecorded answer blocks exactly like an
+  // unconfirmed producer of record: associations can be unincorporated,
+  // and the statute does not take our word for it.
+  if (inputs.requiresIncorporatedBorrower) {
+    const name = inputs.jurisdictionName ?? "This jurisdiction";
+    checks.push(
+      inputs.incorporated === true
+        ? { check: "incorporated", ok: true, hard: false }
+        : {
+            check: "incorporated",
+            ok: false,
+            hard: false,
+            reason:
+              inputs.incorporated === false
+                ? `This association is recorded as unincorporated. ${name} lends to incorporated associations only — that is the statute's condition, not ours.`
+                : `${name} lends to incorporated associations only, and whether this one is incorporated has not been recorded. Answer it from the association's articles — financing stays blocked until someone does.`,
+          }
+    );
   }
 
   return checks;

@@ -246,3 +246,32 @@ export function parseScheduleJson(raw: unknown): ScheduleRow[] {
   }
   return Array.isArray(v) ? (v as ScheduleRow[]) : [];
 }
+
+/**
+ * The effective APR when the origination fee counts toward a rate ceiling
+ * (Rhode Island's service-charge rule, § 6-26-2): the actuarial rate that
+ * discounts the actual payment stream back to the amount financed NET of
+ * the fee. Solved on the frozen schedule itself — the level payment plus
+ * its adjusted final row — not re-derived from the nominal rate, so the
+ * number tested against the cap is the number the loan actually charges.
+ *
+ * The fee's prepayment refund does not enter: the ceiling is tested on the
+ * loan as written, held to term, which is the conservative reading and the
+ * only one that needs no assumption about when a borrower prepays.
+ */
+export function effectiveAprWithFee(q: PfQuote): number {
+  const advance = q.amountFinanced - q.originationFee;
+  if (advance <= 0 || q.schedule.length === 0) return Infinity;
+  const pv = (rm: number) =>
+    q.schedule.reduce((s, row) => s + row.payment / Math.pow(1 + rm, row.n), 0);
+  // PV is monotone-decreasing in the rate; bisect until the interval is far
+  // below display and comparison precision.
+  let lo = 0;
+  let hi = 1;
+  for (let i = 0; i < 100; i++) {
+    const mid = (lo + hi) / 2;
+    if (pv(mid) > advance) lo = mid;
+    else hi = mid;
+  }
+  return ((lo + hi) / 2) * 1200;
+}
