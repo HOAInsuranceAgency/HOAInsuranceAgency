@@ -262,10 +262,16 @@ jurisdictions:
     note: "Institution-type exemptions only"
   - name: Rhode Island
     status: open
-    max_apr: null
-    max_apr_verified: false
+    max_apr: 21.0
+    max_apr_verified: true
     min_principal: null
-    note: "§ 6-26-2 ceiling unread; ch. 19-14.6 may bind"
+    requires_incorporated_borrower: true
+    fee_counts_toward_cap: true
+    note: >-
+      § 6-26-2 ceiling is the greater of 21% or prime+9 — 21% governs.
+      Service charge counts toward the ceiling. ch. 19-14.6 form and
+      cancellation rules apply. Incorporated associations only
+      (§ 19-14.1-10(b)(1)).
   - name: South Carolina
     status: open
     max_apr: 18.0

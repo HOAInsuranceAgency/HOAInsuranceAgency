@@ -115,7 +115,13 @@ describe("the origination mutation", () => {
   });
 
   it("rejects an APR above the cap at the API, not just in the UI", () => {
-    expect(HANDLER).toContain("aprCapViolation(a.apr, gate.jurisdiction)");
+    // The quote rides along since RI joined: a fee-in-cap jurisdiction
+    // tests the effective rate, which only the schedule can answer — so the
+    // quote must be built before the cap decision, and passed into it.
+    expect(HANDLER).toContain("aprCapViolation(a.apr, gate.jurisdiction, quote)");
+    expect(HANDLER.indexOf("const quote = buildQuote(terms)")).toBeLessThan(
+      HANDLER.indexOf("aprCapViolation(a.apr, gate.jurisdiction, quote)")
+    );
     expect(HANDLER).toMatch(/rule: "apr-cap"/);
   });
 

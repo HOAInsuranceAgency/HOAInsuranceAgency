@@ -27,12 +27,24 @@ export interface PfJurisdiction {
   maxAprVerified: boolean | null;
   /** Minimum amount financed. Ohio only. */
   minPrincipal: number | null;
+  /**
+   * The borrower must be an incorporated association (Rhode Island,
+   * § 19-14.1-10(b)(1)). Null where the condition does not apply. Enforced
+   * as an eligibility screen: an unrecorded answer blocks.
+   */
+  requiresIncorporatedBorrower: boolean | null;
+  /**
+   * The origination fee counts toward the rate ceiling (Rhode Island's
+   * service-charge rule): the APR-cap check runs on the effective rate
+   * including the fee. Null where the nominal rate is the tested rate.
+   */
+  feeCountsTowardCap: boolean | null;
   /** Shown to the user when blocked. */
   note: string;
 }
 
 /** SHA-256 of the signed YAML this module was generated from. */
-export const PF_CONFIG_SHA256 = "34aeafea72dc89a06ca73f32026c442691f65f7c957cce3f1a74f6c248905187";
+export const PF_CONFIG_SHA256 = "e8aff5ad14d2c9bc92d08ff80afb0e1f4c05799ccdfe7b07fdaef42d2b0f9f80";
 
 export const PF_JURISDICTIONS: readonly PfJurisdiction[] = [
   {
@@ -42,6 +54,8 @@ export const PF_JURISDICTIONS: readonly PfJurisdiction[] = [
     "maxApr": null,
     "maxAprVerified": null,
     "minPrincipal": null,
+    "requiresIncorporatedBorrower": null,
+    "feeCountsTowardCap": null,
     "note": "License required; no agent or commercial exemption"
   },
   {
@@ -51,6 +65,8 @@ export const PF_JURISDICTIONS: readonly PfJurisdiction[] = [
     "maxApr": 15,
     "maxAprVerified": true,
     "minPrincipal": null,
+    "requiresIncorporatedBorrower": null,
+    "feeCountsTowardCap": null,
     "note": "AS 06.40.120 — lowest cap in the country; consider excluding"
   },
   {
@@ -60,6 +76,8 @@ export const PF_JURISDICTIONS: readonly PfJurisdiction[] = [
     "maxApr": null,
     "maxAprVerified": null,
     "minPrincipal": null,
+    "requiresIncorporatedBorrower": null,
+    "feeCountsTowardCap": null,
     "note": "Exemption requires charging no interest"
   },
   {
@@ -69,6 +87,8 @@ export const PF_JURISDICTIONS: readonly PfJurisdiction[] = [
     "maxApr": null,
     "maxAprVerified": false,
     "minPrincipal": null,
+    "requiresIncorporatedBorrower": null,
+    "feeCountsTowardCap": null,
     "note": "No PF act, but Amendment 89 ceiling for non-consumer loans unresolved"
   },
   {
@@ -78,6 +98,8 @@ export const PF_JURISDICTIONS: readonly PfJurisdiction[] = [
     "maxApr": null,
     "maxAprVerified": null,
     "minPrincipal": null,
+    "requiresIncorporatedBorrower": null,
+    "feeCountsTowardCap": null,
     "note": "Requires a purpose-formed CA corporation"
   },
   {
@@ -87,6 +109,8 @@ export const PF_JURISDICTIONS: readonly PfJurisdiction[] = [
     "maxApr": null,
     "maxAprVerified": true,
     "minPrincipal": null,
+    "requiresIncorporatedBorrower": null,
+    "feeCountsTowardCap": null,
     "note": "UCCC reaches consumer credit only"
   },
   {
@@ -96,6 +120,8 @@ export const PF_JURISDICTIONS: readonly PfJurisdiction[] = [
     "maxApr": null,
     "maxAprVerified": null,
     "minPrincipal": null,
+    "requiresIncorporatedBorrower": null,
+    "feeCountsTowardCap": null,
     "note": "Unlicensed financing is a class A misdemeanor"
   },
   {
@@ -105,6 +131,8 @@ export const PF_JURISDICTIONS: readonly PfJurisdiction[] = [
     "maxApr": 15.9,
     "maxAprVerified": true,
     "minPrincipal": null,
+    "requiresIncorporatedBorrower": null,
+    "feeCountsTowardCap": null,
     "note": "$9/$100 add-on; rate binds even when exempt from licensing"
   },
   {
@@ -114,6 +142,8 @@ export const PF_JURISDICTIONS: readonly PfJurisdiction[] = [
     "maxApr": 24,
     "maxAprVerified": true,
     "minPrincipal": null,
+    "requiresIncorporatedBorrower": null,
+    "feeCountsTowardCap": null,
     "note": "§ 31-1101(4) rate safe harbor; nonprofit borrower ceiling"
   },
   {
@@ -123,6 +153,8 @@ export const PF_JURISDICTIONS: readonly PfJurisdiction[] = [
     "maxApr": 18,
     "maxAprVerified": true,
     "minPrincipal": null,
+    "requiresIncorporatedBorrower": null,
+    "feeCountsTowardCap": null,
     "note": "§ 627.901 agent safe harbor — 18% simple or $36/yr"
   },
   {
@@ -132,6 +164,8 @@ export const PF_JURISDICTIONS: readonly PfJurisdiction[] = [
     "maxApr": null,
     "maxAprVerified": null,
     "minPrincipal": null,
+    "requiresIncorporatedBorrower": null,
+    "feeCountsTowardCap": null,
     "note": "Exemption void the moment you charge"
   },
   {
@@ -141,6 +175,8 @@ export const PF_JURISDICTIONS: readonly PfJurisdiction[] = [
     "maxApr": null,
     "maxAprVerified": true,
     "minPrincipal": null,
+    "requiresIncorporatedBorrower": null,
+    "feeCountsTowardCap": null,
     "note": "No premium finance regime"
   },
   {
@@ -150,6 +186,8 @@ export const PF_JURISDICTIONS: readonly PfJurisdiction[] = [
     "maxApr": null,
     "maxAprVerified": true,
     "minPrincipal": null,
+    "requiresIncorporatedBorrower": null,
+    "feeCountsTowardCap": null,
     "note": "Credit Code excludes organization debtors"
   },
   {
@@ -159,6 +197,8 @@ export const PF_JURISDICTIONS: readonly PfJurisdiction[] = [
     "maxApr": null,
     "maxAprVerified": null,
     "minPrincipal": null,
+    "requiresIncorporatedBorrower": null,
+    "feeCountsTowardCap": null,
     "note": "No agent exemption; 5/513a2 deeming rule"
   },
   {
@@ -168,6 +208,8 @@ export const PF_JURISDICTIONS: readonly PfJurisdiction[] = [
     "maxApr": null,
     "maxAprVerified": true,
     "minPrincipal": null,
+    "requiresIncorporatedBorrower": null,
+    "feeCountsTowardCap": null,
     "note": "No PF license type at IDOI or DFI"
   },
   {
@@ -177,6 +219,8 @@ export const PF_JURISDICTIONS: readonly PfJurisdiction[] = [
     "maxApr": null,
     "maxAprVerified": true,
     "minPrincipal": null,
+    "requiresIncorporatedBorrower": null,
+    "feeCountsTowardCap": null,
     "note": "No premium finance chapter"
   },
   {
@@ -186,6 +230,8 @@ export const PF_JURISDICTIONS: readonly PfJurisdiction[] = [
     "maxApr": 21.1,
     "maxAprVerified": true,
     "minPrincipal": null,
+    "requiresIncorporatedBorrower": null,
+    "feeCountsTowardCap": null,
     "note": "$12/$100/yr add-on ≈ 21.1% APR on 9 pays"
   },
   {
@@ -195,6 +241,8 @@ export const PF_JURISDICTIONS: readonly PfJurisdiction[] = [
     "maxApr": null,
     "maxAprVerified": null,
     "minPrincipal": null,
+    "requiresIncorporatedBorrower": null,
+    "feeCountsTowardCap": null,
     "note": "No agent exemption; $150k net worth"
   },
   {
@@ -204,6 +252,8 @@ export const PF_JURISDICTIONS: readonly PfJurisdiction[] = [
     "maxApr": null,
     "maxAprVerified": true,
     "minPrincipal": null,
+    "requiresIncorporatedBorrower": null,
+    "feeCountsTowardCap": null,
     "note": "OFI: no licensing for commercial lines exclusively"
   },
   {
@@ -213,6 +263,8 @@ export const PF_JURISDICTIONS: readonly PfJurisdiction[] = [
     "maxApr": null,
     "maxAprVerified": true,
     "minPrincipal": null,
+    "requiresIncorporatedBorrower": null,
+    "feeCountsTowardCap": null,
     "note": "Supervised lender licence is consumer-only"
   },
   {
@@ -222,6 +274,8 @@ export const PF_JURISDICTIONS: readonly PfJurisdiction[] = [
     "maxApr": null,
     "maxAprVerified": null,
     "minPrincipal": null,
+    "requiresIncorporatedBorrower": null,
+    "feeCountsTowardCap": null,
     "note": "§ 23-201(b) expressly names producers"
   },
   {
@@ -231,6 +285,8 @@ export const PF_JURISDICTIONS: readonly PfJurisdiction[] = [
     "maxApr": null,
     "maxAprVerified": true,
     "minPrincipal": null,
+    "requiresIncorporatedBorrower": null,
+    "feeCountsTowardCap": null,
     "note": "c. 255C § 2 — commercial only, own customers only"
   },
   {
@@ -240,6 +296,8 @@ export const PF_JURISDICTIONS: readonly PfJurisdiction[] = [
     "maxApr": 21.1,
     "maxAprVerified": true,
     "minPrincipal": null,
+    "requiresIncorporatedBorrower": null,
+    "feeCountsTowardCap": null,
     "note": "$12/$100/yr + $18"
   },
   {
@@ -249,6 +307,8 @@ export const PF_JURISDICTIONS: readonly PfJurisdiction[] = [
     "maxApr": null,
     "maxAprVerified": true,
     "minPrincipal": null,
+    "requiresIncorporatedBorrower": null,
+    "feeCountsTowardCap": null,
     "note": "Commercial-purpose exclusion"
   },
   {
@@ -258,6 +318,8 @@ export const PF_JURISDICTIONS: readonly PfJurisdiction[] = [
     "maxApr": 24,
     "maxAprVerified": true,
     "minPrincipal": null,
+    "requiresIncorporatedBorrower": null,
+    "feeCountsTowardCap": null,
     "note": "24% at or below $10k balance; uncapped above"
   },
   {
@@ -267,6 +329,8 @@ export const PF_JURISDICTIONS: readonly PfJurisdiction[] = [
     "maxApr": 26.2,
     "maxAprVerified": true,
     "minPrincipal": null,
+    "requiresIncorporatedBorrower": null,
+    "feeCountsTowardCap": null,
     "note": "$15/$100 add-on + $10"
   },
   {
@@ -276,6 +340,8 @@ export const PF_JURISDICTIONS: readonly PfJurisdiction[] = [
     "maxApr": null,
     "maxAprVerified": null,
     "minPrincipal": null,
+    "requiresIncorporatedBorrower": null,
+    "feeCountsTowardCap": null,
     "note": "Exemption runs to resident producers only"
   },
   {
@@ -285,6 +351,8 @@ export const PF_JURISDICTIONS: readonly PfJurisdiction[] = [
     "maxApr": null,
     "maxAprVerified": true,
     "minPrincipal": null,
+    "requiresIncorporatedBorrower": null,
+    "feeCountsTowardCap": null,
     "note": "No premium finance statute"
   },
   {
@@ -294,6 +362,8 @@ export const PF_JURISDICTIONS: readonly PfJurisdiction[] = [
     "maxApr": null,
     "maxAprVerified": true,
     "minPrincipal": null,
+    "requiresIncorporatedBorrower": null,
+    "feeCountsTowardCap": null,
     "note": "Rate schedule must be filed; set in config before use"
   },
   {
@@ -303,6 +373,8 @@ export const PF_JURISDICTIONS: readonly PfJurisdiction[] = [
     "maxApr": null,
     "maxAprVerified": true,
     "minPrincipal": null,
+    "requiresIncorporatedBorrower": null,
+    "feeCountsTowardCap": null,
     "note": "RSA 415-B:2 IV; rate as agreed"
   },
   {
@@ -312,6 +384,8 @@ export const PF_JURISDICTIONS: readonly PfJurisdiction[] = [
     "maxApr": null,
     "maxAprVerified": null,
     "minPrincipal": null,
+    "requiresIncorporatedBorrower": null,
+    "feeCountsTowardCap": null,
     "note": "No agent exemption"
   },
   {
@@ -321,6 +395,8 @@ export const PF_JURISDICTIONS: readonly PfJurisdiction[] = [
     "maxApr": null,
     "maxAprVerified": true,
     "minPrincipal": null,
+    "requiresIncorporatedBorrower": null,
+    "feeCountsTowardCap": null,
     "note": "§ 59A-45-5(B)(2); no maximum charge section"
   },
   {
@@ -330,6 +406,8 @@ export const PF_JURISDICTIONS: readonly PfJurisdiction[] = [
     "maxApr": null,
     "maxAprVerified": null,
     "minPrincipal": null,
+    "requiresIncorporatedBorrower": null,
+    "feeCountsTowardCap": null,
     "note": "No agent exemption, no commercial carve-out"
   },
   {
@@ -339,6 +417,8 @@ export const PF_JURISDICTIONS: readonly PfJurisdiction[] = [
     "maxApr": null,
     "maxAprVerified": null,
     "minPrincipal": null,
+    "requiresIncorporatedBorrower": null,
+    "feeCountsTowardCap": null,
     "note": "Agent exemption is a late-charge permission only"
   },
   {
@@ -348,6 +428,8 @@ export const PF_JURISDICTIONS: readonly PfJurisdiction[] = [
     "maxApr": null,
     "maxAprVerified": true,
     "minPrincipal": null,
+    "requiresIncorporatedBorrower": null,
+    "feeCountsTowardCap": null,
     "note": "Chapter does not apply to insurance producers"
   },
   {
@@ -357,6 +439,8 @@ export const PF_JURISDICTIONS: readonly PfJurisdiction[] = [
     "maxApr": null,
     "maxAprVerified": true,
     "minPrincipal": 100000,
+    "requiresIncorporatedBorrower": null,
+    "feeCountsTowardCap": null,
     "note": "Available only above $100,000 amount financed"
   },
   {
@@ -366,6 +450,8 @@ export const PF_JURISDICTIONS: readonly PfJurisdiction[] = [
     "maxApr": null,
     "maxAprVerified": true,
     "minPrincipal": null,
+    "requiresIncorporatedBorrower": null,
+    "feeCountsTowardCap": null,
     "note": "No PF regime; UCCC is consumer-only"
   },
   {
@@ -375,6 +461,8 @@ export const PF_JURISDICTIONS: readonly PfJurisdiction[] = [
     "maxApr": 18,
     "maxAprVerified": true,
     "minPrincipal": null,
+    "requiresIncorporatedBorrower": null,
+    "feeCountsTowardCap": null,
     "note": "ORS 746.425(4) producer exemption — 1.5%/month"
   },
   {
@@ -384,16 +472,20 @@ export const PF_JURISDICTIONS: readonly PfJurisdiction[] = [
     "maxApr": null,
     "maxAprVerified": null,
     "minPrincipal": null,
+    "requiresIncorporatedBorrower": null,
+    "feeCountsTowardCap": null,
     "note": "Institution-type exemptions only"
   },
   {
     "name": "Rhode Island",
     "code": "RI",
     "status": "open",
-    "maxApr": null,
-    "maxAprVerified": false,
+    "maxApr": 21,
+    "maxAprVerified": true,
     "minPrincipal": null,
-    "note": "§ 6-26-2 ceiling unread; ch. 19-14.6 may bind"
+    "requiresIncorporatedBorrower": true,
+    "feeCountsTowardCap": true,
+    "note": "§ 6-26-2 ceiling is the greater of 21% or prime+9 — 21% governs. Service charge counts toward the ceiling. ch. 19-14.6 form and cancellation rules apply. Incorporated associations only (§ 19-14.1-10(b)(1))."
   },
   {
     "name": "South Carolina",
@@ -402,6 +494,8 @@ export const PF_JURISDICTIONS: readonly PfJurisdiction[] = [
     "maxApr": 18,
     "maxAprVerified": true,
     "minPrincipal": null,
+    "requiresIncorporatedBorrower": null,
+    "feeCountsTowardCap": null,
     "note": "§ 38-39-10(d) producer of record — 1.5%/month"
   },
   {
@@ -411,6 +505,8 @@ export const PF_JURISDICTIONS: readonly PfJurisdiction[] = [
     "maxApr": null,
     "maxAprVerified": null,
     "minPrincipal": null,
+    "requiresIncorporatedBorrower": null,
+    "feeCountsTowardCap": null,
     "note": "Money lender licence required"
   },
   {
@@ -420,6 +516,8 @@ export const PF_JURISDICTIONS: readonly PfJurisdiction[] = [
     "maxApr": 24,
     "maxAprVerified": true,
     "minPrincipal": null,
+    "requiresIncorporatedBorrower": null,
+    "feeCountsTowardCap": null,
     "note": "24% maximum effective rate"
   },
   {
@@ -429,6 +527,8 @@ export const PF_JURISDICTIONS: readonly PfJurisdiction[] = [
     "maxApr": null,
     "maxAprVerified": null,
     "minPrincipal": null,
+    "requiresIncorporatedBorrower": null,
+    "feeCountsTowardCap": null,
     "note": "§ 651.001(3)(C) defines the agent as a PFC"
   },
   {
@@ -438,6 +538,8 @@ export const PF_JURISDICTIONS: readonly PfJurisdiction[] = [
     "maxApr": null,
     "maxAprVerified": true,
     "minPrincipal": null,
+    "requiresIncorporatedBorrower": null,
+    "feeCountsTowardCap": null,
     "note": "Commercial-financing registration with DFI required first"
   },
   {
@@ -447,6 +549,8 @@ export const PF_JURISDICTIONS: readonly PfJurisdiction[] = [
     "maxApr": null,
     "maxAprVerified": true,
     "minPrincipal": null,
+    "requiresIncorporatedBorrower": null,
+    "feeCountsTowardCap": null,
     "note": "§ 7002(d); commercial uncapped"
   },
   {
@@ -456,6 +560,8 @@ export const PF_JURISDICTIONS: readonly PfJurisdiction[] = [
     "maxApr": null,
     "maxAprVerified": true,
     "minPrincipal": null,
+    "requiresIncorporatedBorrower": null,
+    "feeCountsTowardCap": null,
     "note": "§ 38.2-1806 credit; permitted charge needs counsel"
   },
   {
@@ -465,6 +571,8 @@ export const PF_JURISDICTIONS: readonly PfJurisdiction[] = [
     "maxApr": null,
     "maxAprVerified": null,
     "minPrincipal": null,
+    "requiresIncorporatedBorrower": null,
+    "feeCountsTowardCap": null,
     "note": "No agent and no commercial exemption"
   },
   {
@@ -474,6 +582,8 @@ export const PF_JURISDICTIONS: readonly PfJurisdiction[] = [
     "maxApr": null,
     "maxAprVerified": true,
     "minPrincipal": null,
+    "requiresIncorporatedBorrower": null,
+    "feeCountsTowardCap": null,
     "note": "No PF act; lending licensure is consumer-only"
   },
   {
@@ -483,6 +593,8 @@ export const PF_JURISDICTIONS: readonly PfJurisdiction[] = [
     "maxApr": null,
     "maxAprVerified": true,
     "minPrincipal": null,
+    "requiresIncorporatedBorrower": null,
+    "feeCountsTowardCap": null,
     "note": "§ 138.12(2)(a); commercial uncapped"
   },
   {
@@ -492,6 +604,8 @@ export const PF_JURISDICTIONS: readonly PfJurisdiction[] = [
     "maxApr": null,
     "maxAprVerified": true,
     "minPrincipal": null,
+    "requiresIncorporatedBorrower": null,
+    "feeCountsTowardCap": null,
     "note": "No PF act; UCCC consumer-only"
   }
 ];

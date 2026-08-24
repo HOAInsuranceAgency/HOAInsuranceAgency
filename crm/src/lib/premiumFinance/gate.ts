@@ -2,6 +2,7 @@ import {
   PF_JURISDICTIONS,
   type PfJurisdiction,
 } from "./jurisdictions";
+import { effectiveAprWithFee, type PfQuote } from "./quote";
 
 /**
  * The jurisdiction gate: may this agency originate a premium finance loan in
@@ -117,10 +118,25 @@ export function originationGate(
  */
 export function aprCapViolation(
   apr: number,
-  j: PfJurisdiction
+  j: PfJurisdiction,
+  /**
+   * Required to test a fee-in-cap jurisdiction (Rhode Island): the ceiling
+   * there binds the EFFECTIVE rate, fee included, which only the built
+   * quote's schedule can answer. Callers without a quote get the nominal
+   * test — correct everywhere the flag is null.
+   */
+  quote?: PfQuote
 ): string | null {
   if (!Number.isFinite(apr) || apr <= 0) return "APR must be a positive number.";
-  if (j.maxApr !== null && j.maxAprVerified && apr > j.maxApr) {
+  if (j.maxApr === null || !j.maxAprVerified) return null;
+  if (j.feeCountsTowardCap && quote) {
+    const eff = Math.round(effectiveAprWithFee(quote) * 100) / 100;
+    if (eff > j.maxApr) {
+      return `${eff}% effective — the ${j.name} ceiling counts the origination fee — exceeds the maximum of ${j.maxApr}%.`;
+    }
+    return null;
+  }
+  if (apr > j.maxApr) {
     return `${apr}% exceeds the ${j.name} maximum of ${j.maxApr}%.`;
   }
   return null;

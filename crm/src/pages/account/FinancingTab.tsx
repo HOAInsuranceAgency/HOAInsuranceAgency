@@ -476,6 +476,11 @@ export function FinancingTab({ account }: { account: Account }) {
         producerOfRecord: policy.producerOfRecord,
         minimumEarnedPremiumPct: policy.minimumEarnedPremiumPct,
         isAuditable: policy.isAuditable,
+        requiresIncorporatedBorrower: gate.open
+          ? (gate.jurisdiction.requiresIncorporatedBorrower ?? false)
+          : false,
+        incorporated: account.incorporated,
+        jurisdictionName: gate.open ? gate.jurisdiction.name : undefined,
         downPct: Number.isFinite(parsed.downPct) ? parsed.downPct : PF_DEFAULT_DOWN_PCT,
         overrides: {
           mep: policyOverrides.mep ? { reason: policyOverrides.mep.reason } : undefined,
@@ -553,6 +558,8 @@ export function FinancingTab({ account }: { account: Account }) {
     "producer-of-record": "Producer of record",
     mep: "Minimum earned premium",
     auditable: "Auditable policy",
+    /** Rendered only where the signed row demands it (Rhode Island). */
+    incorporated: "Incorporated association",
   };
 
   return (

@@ -130,3 +130,48 @@ describe("auditable policies", () => {
     expect(c.overridden).toContain("flat-rated");
   });
 });
+
+describe("incorporated borrower — Rhode Island's condition, nobody else's", () => {
+  it("the screen does not exist where no row demands it", () => {
+    // The four screens stay four everywhere but RI.
+    expect(evaluateEligibility(clean)).toHaveLength(4);
+  });
+
+  it("unrecorded blocks — the statute does not take our word for it", () => {
+    const c = check(
+      { ...clean, requiresIncorporatedBorrower: true, jurisdictionName: "Rhode Island" },
+      "incorporated"
+    );
+    expect(c.ok).toBe(false);
+    expect(c.reason).toContain("has not been recorded");
+    expect(c.reason).toContain("Rhode Island");
+  });
+
+  it("recorded unincorporated blocks, with the statute's own condition", () => {
+    const c = check(
+      {
+        ...clean,
+        requiresIncorporatedBorrower: true,
+        incorporated: false,
+        jurisdictionName: "Rhode Island",
+      },
+      "incorporated"
+    );
+    expect(c.ok).toBe(false);
+    expect(c.reason).toContain("recorded as unincorporated");
+  });
+
+  it("recorded incorporated passes, and there is no override path", () => {
+    const checks = evaluateEligibility({
+      ...clean,
+      requiresIncorporatedBorrower: true,
+      incorporated: true,
+      jurisdictionName: "Rhode Island",
+    });
+    expect(checks).toHaveLength(5);
+    expect(eligibilityBlocked(checks)).toBe(false);
+    // Like producer-of-record: the fix is to confirm the fact, not waive it.
+    const c = checks.find((x) => x.check === "incorporated")!;
+    expect(c.overridden).toBeUndefined();
+  });
+});

@@ -222,15 +222,17 @@ export const handler = async (event: {
           inputs: terms,
         });
 
-        const aprProblem = aprCapViolation(a.apr, gate.jurisdiction);
+        // The quote is built BEFORE the cap decision since RI joined: a
+        // fee-in-cap jurisdiction tests the effective rate, which only the
+        // schedule can answer. buildQuote is pure; the order costs nothing.
+        const quote = buildQuote(terms);
+        const aprProblem = aprCapViolation(a.apr, gate.jurisdiction, quote);
         decisions.push({
           rule: "apr-cap",
           outcome: aprProblem ? "BLOCK" : "PASS",
           reason: aprProblem ?? undefined,
           inputs: terms,
         });
-
-        const quote = buildQuote(terms);
         const principalProblem = minPrincipalViolation(
           quote.amountFinanced,
           gate.jurisdiction
@@ -259,6 +261,10 @@ export const handler = async (event: {
           producerOfRecord: policy.producerOfRecord,
           minimumEarnedPremiumPct: policy.minimumEarnedPremiumPct,
           isAuditable: policy.isAuditable,
+          requiresIncorporatedBorrower:
+            gate.jurisdiction.requiresIncorporatedBorrower ?? false,
+          incorporated: account.incorporated,
+          jurisdictionName: gate.jurisdiction.name,
           downPct: a.downPct,
           overrides: {
             mep: overrides.mep ? { reason: overrides.mep.reason } : undefined,

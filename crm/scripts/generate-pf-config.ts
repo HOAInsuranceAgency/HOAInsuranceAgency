@@ -54,6 +54,19 @@ interface YamlRow {
   /** Boolean on open/conditional rows; null on closed rows — enforced below. */
   max_apr_verified: boolean | null;
   min_principal: number | null;
+  /**
+   * The borrower must be an incorporated association (Rhode Island,
+   * § 19-14.1-10(b)(1)). Absent everywhere the condition does not apply;
+   * only lendable rows may carry it — a closed row asserting borrower-form
+   * rules is the verified-on-closed error in another coat.
+   */
+  requires_incorporated_borrower?: boolean;
+  /**
+   * The origination fee counts toward the rate ceiling (Rhode Island,
+   * § 6-26-2 service-charge rule): the APR-cap check runs on the effective
+   * rate including the fee, not the nominal rate.
+   */
+  fee_counts_toward_cap?: boolean;
   note: string;
 }
 interface YamlDoc {
@@ -98,6 +111,16 @@ for (const j of doc.jurisdictions) {
     throw new Error(`${j.name}: min_principal must be number|null`);
   }
   if (typeof j.note !== "string" || !j.note) throw new Error(`${j.name}: missing note`);
+  for (const flag of ["requires_incorporated_borrower", "fee_counts_toward_cap"] as const) {
+    const v = j[flag];
+    if (v === undefined) continue;
+    if (typeof v !== "boolean") throw new Error(`${j.name}: ${flag} must be boolean when present`);
+    if (j.status === "closed") {
+      throw new Error(
+        `${j.name}: closed rows must not carry ${flag} — borrower-form and fee rules on a row that cannot lend assert checks nobody made`
+      );
+    }
+  }
 }
 if (!doc.coverage_lines?.allow?.length || !doc.coverage_lines?.deny?.length) {
   throw new Error("coverage_lines.allow/deny missing or empty");
@@ -117,6 +140,8 @@ const rows = doc.jurisdictions.map((j) => ({
   maxApr: j.max_apr,
   maxAprVerified: j.max_apr_verified,
   minPrincipal: j.min_principal,
+  requiresIncorporatedBorrower: j.requires_incorporated_borrower ?? null,
+  feeCountsTowardCap: j.fee_counts_toward_cap ?? null,
   note: j.note,
 }));
 
@@ -149,6 +174,18 @@ export interface PfJurisdiction {
   maxAprVerified: boolean | null;
   /** Minimum amount financed. Ohio only. */
   minPrincipal: number | null;
+  /**
+   * The borrower must be an incorporated association (Rhode Island,
+   * § 19-14.1-10(b)(1)). Null where the condition does not apply. Enforced
+   * as an eligibility screen: an unrecorded answer blocks.
+   */
+  requiresIncorporatedBorrower: boolean | null;
+  /**
+   * The origination fee counts toward the rate ceiling (Rhode Island's
+   * service-charge rule): the APR-cap check runs on the effective rate
+   * including the fee. Null where the nominal rate is the tested rate.
+   */
+  feeCountsTowardCap: boolean | null;
   /** Shown to the user when blocked. */
   note: string;
 }

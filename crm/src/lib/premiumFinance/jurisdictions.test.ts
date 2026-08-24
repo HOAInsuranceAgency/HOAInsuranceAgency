@@ -86,13 +86,30 @@ describe("the signed counts", () => {
     expect(PF_JURISDICTIONS.length).toBe(51);
   });
 
-  it("exactly Arkansas and Rhode Island are unverified", () => {
+  it("exactly Arkansas is unverified", () => {
     // Explicitly false — closed rows carry null, which is "not applicable",
     // not "unverified". The distinction is the amended decision 1.
+    // Rhode Island left this list 2026-08-24: Jake verified § 6-26-2 (21%
+    // governs, fee counts toward the ceiling, incorporated borrowers only).
     const unverified = PF_JURISDICTIONS.filter((j) => j.maxAprVerified === false);
-    expect(unverified.map((j) => j.name).sort()).toEqual(["Arkansas", "Rhode Island"]);
-    // Both are status:open — which is what makes the verified flag load-bearing.
+    expect(unverified.map((j) => j.name).sort()).toEqual(["Arkansas"]);
+    // Still status:open — which is what makes the verified flag load-bearing.
     for (const j of unverified) expect(j.status).toBe("open");
+  });
+
+  it("Rhode Island carries the two conditions its verification came with", () => {
+    const ri = PF_JURISDICTIONS.find((j) => j.code === "RI")!;
+    expect(ri.status).toBe("open");
+    expect(ri.maxApr).toBe(21.0);
+    expect(ri.maxAprVerified).toBe(true);
+    expect(ri.requiresIncorporatedBorrower).toBe(true);
+    expect(ri.feeCountsTowardCap).toBe(true);
+    // And nobody else does — the fields exist for RI's statute, and a row
+    // acquiring them is a signing event, not a default.
+    const withEither = PF_JURISDICTIONS.filter(
+      (j) => j.requiresIncorporatedBorrower !== null || j.feeCountsTowardCap !== null
+    );
+    expect(withEither.map((j) => j.name)).toEqual(["Rhode Island"]);
   });
 
   it("verified is stated on every row that could lend, and on no closed row", () => {
@@ -108,9 +125,9 @@ describe("the signed counts", () => {
     }
   });
 
-  it("30 usable at launch", () => {
+  it("31 usable — RI joined 2026-08-24", () => {
     const usable = byStatus("open").filter((j) => j.maxAprVerified === true);
-    expect(usable.length).toBe(30);
+    expect(usable.length).toBe(31);
   });
 
   it("Ohio is the only jurisdiction with a minimum principal", () => {
