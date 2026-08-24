@@ -20,6 +20,8 @@ import { OverviewTab } from "./account/OverviewTab";
 import { DeleteLeadZone } from "./account/DeleteLeadZone";
 import { PoliciesTab } from "./account/PoliciesTab";
 import { InvoicesTab } from "./account/InvoicesTab";
+import { FinancingTab } from "./account/FinancingTab";
+import { usePremiumFinance } from "../lib/premiumFinance/PfContext";
 import { PriorCarrierTab } from "./account/PriorCarrierTab";
 import { LossesTab } from "./account/LossesTab";
 import { ActivityTab } from "./account/ActivityTab";
@@ -32,6 +34,7 @@ type Tab =
   | "quotes"
   | "policies"
   | "invoices"
+  | "financing"
   | "documents"
   | "certificates"
   | "activity";
@@ -43,6 +46,7 @@ const VALID_TABS: Tab[] = [
   "quotes",
   "policies",
   "invoices",
+  "financing",
   "documents",
   "certificates",
   "activity",
@@ -74,8 +78,23 @@ const LEAD_ONLY_TABS: ReadonlySet<Tab> = new Set<Tab>(["priorcarrier"]);
  */
 const CLIENT_ONLY_TABS: ReadonlySet<Tab> = new Set<Tab>(["policies", "invoices"]);
 
+/**
+ * Financing is doubly gated: client-only AND behind the premium-finance
+ * module flag. The flag is a compliance kill switch — counsel says stop, an
+ * admin flips it, and this tab disappears everywhere in minutes. Both
+ * tabsFor and resolveTab take the flag so a bookmarked ?tab=financing on a
+ * disabled module falls back to Overview instead of rendering a panel the
+ * tab bar has no button for.
+ */
+export interface TabOptions {
+  premiumFinance?: boolean;
+}
+
 /** The tabs an account of this stage offers, in display order. */
-export function tabsFor(stage: string | null | undefined): [Tab, string][] {
+export function tabsFor(
+  stage: string | null | undefined,
+  opts: TabOptions = {}
+): [Tab, string][] {
   const isLead = stage !== "CLIENT";
   return [
     ["overview", "Overview"],
@@ -89,6 +108,7 @@ export function tabsFor(stage: string | null | undefined): [Tab, string][] {
       : ([
           ["policies", "Policies"],
           ["invoices", "Invoices"],
+          ...(opts.premiumFinance ? [["financing", "Financing"]] : []),
         ] as [Tab, string][])),
     ["documents", "Documents"],
     ["certificates", "Certificates"],
@@ -109,16 +129,22 @@ export function tabsFor(stage: string | null | undefined): [Tab, string][] {
  * renders the wrong tab for a frame first, and leaves two places that know
  * the rule.
  */
-export function resolveTab(requested: Tab, stage: string | null | undefined): Tab {
+export function resolveTab(
+  requested: Tab,
+  stage: string | null | undefined,
+  opts: TabOptions = {}
+): Tab {
   const isClient = stage === "CLIENT";
   const unreachable = isClient
-    ? LEAD_ONLY_TABS.has(requested)
-    : CLIENT_ONLY_TABS.has(requested);
+    ? LEAD_ONLY_TABS.has(requested) ||
+      (requested === "financing" && !opts.premiumFinance)
+    : CLIENT_ONLY_TABS.has(requested) || requested === "financing";
   return unreachable ? "overview" : requested;
 }
 
 export default function AccountDetail({ profile }: { profile: UserProfile }) {
   const { id } = useParams<{ id: string }>();
+  const pf = usePremiumFinance();
   const [searchParams, setSearchParams] = useSearchParams();
   const initialTab = searchParams.get("tab") as Tab | null;
   const [tab, setTab] = useState<Tab>(
@@ -175,8 +201,8 @@ export default function AccountDetail({ profile }: { profile: UserProfile }) {
   if (notFound) return <p>Account not found.</p>;
   if (!account) return <p className="muted">Loading…</p>;
 
-  const tabs = tabsFor(account.stage);
-  const activeTab = resolveTab(tab, account.stage);
+  const tabs = tabsFor(account.stage, { premiumFinance: pf.enabled });
+  const activeTab = resolveTab(tab, account.stage, { premiumFinance: pf.enabled });
 
   return (
     <>
@@ -229,6 +255,7 @@ export default function AccountDetail({ profile }: { profile: UserProfile }) {
       {activeTab === "losses" && <LossesTab accountId={account.id} />}
       {activeTab === "policies" && <PoliciesTab accountId={account.id} />}
       {activeTab === "invoices" && <InvoicesTab accountId={account.id} />}
+      {activeTab === "financing" && <FinancingTab account={account} />}
       {activeTab === "documents" && (
         <>
           <div className="card">

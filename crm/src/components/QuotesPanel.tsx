@@ -19,6 +19,7 @@ import {
   SELECTABLE_QUOTE_STATUSES,
 } from "../lib/quoteStatus";
 import { BILL_TYPE_OPTIONS, type BillType } from "../lib/enums";
+import { currentActor } from "../lib/client";
 
 /** Commission is baked into the premium — the $ figure is the agency's cut,
  * never an addition on top. */
@@ -285,6 +286,15 @@ function BindForm({
    * association directly is an invoice sent for money already paid.
    */
   const [billType, setBillType] = useState<BillType | "">("");
+  /**
+   * Pre-checked, and that is acceptable ONLY because it is true for every
+   * policy bound from our own quote — and because the value is stamped with
+   * who submitted it and when, which turns a default into an affirmation.
+   * Import and bulk paths get no pre-check and no checkbox at all: their
+   * policies start null and financing blocks until a person confirms on the
+   * policy record. (Signed decision 4, 2026-08-21.)
+   */
+  const [producerOfRecord, setProducerOfRecord] = useState(true);
   const [saving, setSaving] = useState(false);
 
   // A quote must carry real terms before it can become a policy.
@@ -310,6 +320,13 @@ function BindForm({
         policyNumber: policyNumber.trim() || undefined,
         status: "ACTIVE",
         billType,
+        producerOfRecord,
+        ...(producerOfRecord
+          ? {
+              producerOfRecordBy: (await currentActor()) ?? "unknown",
+              producerOfRecordAt: new Date().toISOString(),
+            }
+          : {}),
         lines: (quote.lines ?? []).filter((l): l is string => !!l),
         premium: quote.premium ?? undefined,
         commissionPct: quote.commissionPct ?? undefined,
@@ -400,6 +417,25 @@ function BindForm({
                 onChange={(e) => setPolicyNumber(e.target.value)}
               />
             </div>
+          </div>
+          <div className="field">
+            <label className="check-list" style={{ display: "block" }}>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={producerOfRecord}
+                  onChange={(e) => setProducerOfRecord(e.target.checked)}
+                />
+                <span>
+                  We are the producer of record on this policy.
+                  <span className="muted small">
+                    This is what makes it financeable in-house — uncheck it for
+                    wholesale paper or another agency's client, and financing
+                    stays blocked.
+                  </span>
+                </span>
+              </label>
+            </label>
           </div>
           {billType === "DIRECT" && (
             <p className="small muted">

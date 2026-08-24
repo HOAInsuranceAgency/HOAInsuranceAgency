@@ -127,7 +127,11 @@ describe("a lead cannot be emailed the same reply twice", () => {
    */
   it("runs one sweep at a time", () => {
     expect(BACKEND).toContain("reservedConcurrentExecutions = 1");
-    const block = /for \(const fn of \[([^\]]*)\]\)/.exec(BACKEND)?.[1] ?? "";
+    // Anchored to the reserved-concurrency loop specifically — other config
+    // loops over functions exist now (the pf log-table wiring).
+    const at = BACKEND.indexOf("reservedConcurrentExecutions");
+    const before = BACKEND.slice(0, at);
+    const block = [...before.matchAll(/for \(const fn of \[([^\]]*)\]\)/g)].pop()?.[1] ?? "";
     expect(block).toContain("backend.leadReply");
     expect(block).toContain("backend.portalSweep");
   });
@@ -212,6 +216,20 @@ describe("an edited invoice cannot charge its old total", () => {
     // whose fixed Price was minted for the total before the lines were edited,
     // so the email showed one number and the button charged another.
     expect(SEND).not.toMatch(/if \(invoice\.paymentUrl\?\.trim\(\)\) return/);
+  });
+
+  it("confirms the stored link is still live before reusing it", () => {
+    // A link is single-use: Stripe kills it when a checkout SESSION completes,
+    // which for ACH is form submission — days before the debit clears or
+    // fails. A failed debit returns the invoice to SENT, and a resend on an
+    // amount match alone would mail the dead link forever. Live in test:
+    // INV-2026-00007's link read "no longer active" while its payment was
+    // still Incomplete awaiting microdeposit verification.
+    expect(SEND).toMatch(/paymentLinks\.retrieve\(existingLinkId\)/);
+    expect(SEND).toMatch(/if \(link\.active\) return existingUrl/);
+    expect(SEND).not.toMatch(
+      /if \(invoice\.stripeLinkAmountCents === wantedCents\) return existingUrl/
+    );
   });
 
   it("replaces a URL that is not one of ours", () => {

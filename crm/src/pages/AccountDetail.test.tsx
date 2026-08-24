@@ -70,6 +70,40 @@ describe("tabsFor", () => {
   });
 });
 
+/**
+ * The Financing tab is doubly gated: client-only AND behind the module flag —
+ * the flag is a compliance kill switch, and flipping it off must make the tab
+ * disappear everywhere, bookmarks included.
+ */
+describe("the financing tab", () => {
+  it("appears only for a client with the module on", () => {
+    expect(tabsFor("CLIENT", { premiumFinance: true }).map(([t]) => t)).toContain(
+      "financing"
+    );
+    expect(tabsFor("CLIENT").map(([t]) => t)).not.toContain("financing");
+    expect(tabsFor("CLIENT", { premiumFinance: false }).map(([t]) => t)).not.toContain(
+      "financing"
+    );
+    expect(tabsFor("LEAD", { premiumFinance: true }).map(([t]) => t)).not.toContain(
+      "financing"
+    );
+  });
+
+  it("falls a bookmarked ?tab=financing back to Overview when unreachable", () => {
+    // A lead, a disabled module, or both — never a panel without a button.
+    expect(resolveTab("financing", "CLIENT")).toBe("overview");
+    expect(resolveTab("financing", "CLIENT", { premiumFinance: false })).toBe("overview");
+    expect(resolveTab("financing", "LEAD", { premiumFinance: true })).toBe("overview");
+    expect(resolveTab("financing", "CLIENT", { premiumFinance: true })).toBe("financing");
+  });
+
+  it("changes nothing else about the tab set", () => {
+    const withOff = tabsFor("CLIENT").map(([t]) => t);
+    const withOn = tabsFor("CLIENT", { premiumFinance: true }).map(([t]) => t);
+    expect(withOn.filter((t) => t !== "financing")).toEqual(withOff);
+  });
+});
+
 describe("resolveTab", () => {
   it("falls a client back to Overview rather than an unreachable tab", () => {
     expect(resolveTab("priorcarrier", "CLIENT")).toBe("overview");

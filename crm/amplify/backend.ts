@@ -35,6 +35,13 @@ import { portalSweep } from "./functions/portal-sweep/resource";
 import { sendInvoice } from "./functions/send-invoice/resource";
 import { stripeWebhook } from "./functions/stripe-webhook/resource";
 import { voidInvoice } from "./functions/void-invoice/resource";
+import { pfAdmin } from "./functions/pf-admin/resource";
+import { pfOriginate } from "./functions/pf-originate/resource";
+import { pfAgreement } from "./functions/pf-agreement/resource";
+import { pfServicing } from "./functions/pf-servicing/resource";
+import { pfDefaultSweep } from "./functions/pf-default-sweep/resource";
+import { pfElection } from "./functions/pf-election/resource";
+import { pfAutopay } from "./functions/pf-autopay/resource";
 import { resolveMailbox } from "./functions/mailbox";
 import { activityLog } from "./functions/activity-log/resource";
 import {
@@ -67,6 +74,13 @@ export const backend = defineBackend({
   sendInvoice,
   stripeWebhook,
   voidInvoice,
+  pfAdmin,
+  pfOriginate,
+  pfAgreement,
+  pfServicing,
+  pfDefaultSweep,
+  pfElection,
+  pfAutopay,
   activityLog,
   magicLinkDefine,
   magicLinkCreate,
@@ -420,6 +434,86 @@ backend.voidInvoice.addEnvironment("INVOICE_TABLE", invoiceTable.tableName);
 invoiceTable.grantReadWriteData(backend.voidInvoice.resources.lambda);
 
 /**
+ * Premium finance admin: the module flag and its audit row are written by one
+ * Lambda over direct table access — see pf-admin/resource.ts for why the flip
+ * and its record must be inseparable.
+ */
+const pfLogTable = backend.data.resources.tables.PfComplianceLog;
+backend.pfAdmin.addEnvironment(
+  "AGENCY_SETTINGS_TABLE",
+  backend.data.resources.tables.AgencySettings.tableName
+);
+backend.pfAdmin.addEnvironment("PF_COMPLIANCE_LOG_TABLE", pfLogTable.tableName);
+backend.data.resources.tables.AgencySettings.grantReadWriteData(
+  backend.pfAdmin.resources.lambda
+);
+pfLogTable.grantReadWriteData(backend.pfAdmin.resources.lambda);
+
+// Origination writes its decision rows straight to the log table too; model
+// reads and the PfLoan create go through the data client via allow.resource.
+backend.pfOriginate.addEnvironment("PF_COMPLIANCE_LOG_TABLE", pfLogTable.tableName);
+pfLogTable.grantReadWriteData(backend.pfOriginate.resources.lambda);
+// The loan create is a cross-table transaction with a ConditionCheck on the
+// module flag, so origination needs both tables directly.
+backend.pfOriginate.addEnvironment(
+  "AGENCY_SETTINGS_TABLE",
+  backend.data.resources.tables.AgencySettings.tableName
+);
+backend.pfOriginate.addEnvironment(
+  "PF_LOAN_TABLE",
+  backend.data.resources.tables.PfLoan.tableName
+);
+backend.data.resources.tables.AgencySettings.grantReadData(
+  backend.pfOriginate.resources.lambda
+);
+backend.data.resources.tables.PfLoan.grantReadWriteData(
+  backend.pfOriginate.resources.lambda
+);
+
+// Servicing and the default sweep write their decision rows to the log too.
+for (const fn of [backend.pfServicing, backend.pfDefaultSweep]) {
+  fn.addEnvironment("PF_COMPLIANCE_LOG_TABLE", pfLogTable.tableName);
+  pfLogTable.grantReadWriteData(fn.resources.lambda);
+}
+
+/**
+ * Servicing's idempotency writes go straight to the tables: a deterministic
+ * ledger id refuses a duplicate posting atomically, and status transitions
+ * are conditional on the status they leave — the data client can express
+ * neither. Same reasoning as stripe-webhook's persist.ts.
+ */
+for (const [name, model] of [
+  ["PF_LOAN_TABLE", "PfLoan"],
+  ["PF_LOAN_PAYMENT_TABLE", "PfLoanPayment"],
+  // Cancellation and its CANCELLATION_REQUEST notice are one transaction.
+  ["PF_NOTICE_TABLE", "PfNotice"],
+] as const) {
+  const table = backend.data.resources.tables[model];
+  backend.pfServicing.addEnvironment(name, table.tableName);
+  table.grantReadWriteData(backend.pfServicing.resources.lambda);
+}
+// The sweep's default-mark is conditional (still ACTIVE, same due date), so
+// it too writes the loan table directly.
+backend.pfDefaultSweep.addEnvironment(
+  "PF_LOAN_TABLE",
+  backend.data.resources.tables.PfLoan.tableName
+);
+backend.data.resources.tables.PfLoan.grantReadWriteData(
+  backend.pfDefaultSweep.resources.lambda
+);
+
+// The agreement renderer writes its PDFs under generated/pf/ — outside
+// documents/, so the OCR upload trigger never re-reads the app's own output.
+backend.pfAgreement.addEnvironment(
+  "DOCUMENTS_BUCKET",
+  backend.storage.resources.bucket.bucketName
+);
+backend.storage.resources.bucket.grantPut(
+  backend.pfAgreement.resources.lambda,
+  "generated/pf/*"
+);
+
+/**
  * And the send, for one write: storing a freshly minted payment link
  * conditionally on the link it replaced, so two overlapping sends cannot leave
  * the loser's link live and tracked by nothing. Everything else in the send
@@ -427,6 +521,19 @@ invoiceTable.grantReadWriteData(backend.voidInvoice.resources.lambda);
  */
 backend.sendInvoice.addEnvironment("INVOICE_TABLE", invoiceTable.tableName);
 invoiceTable.grantReadWriteData(backend.sendInvoice.resources.lambda);
+/**
+ * W7: the email's financing fork. The send mints the election token onto the
+ * QUOTED loan — conditionally, direct to the table — and links to the public
+ * site's finance page.
+ */
+backend.sendInvoice.addEnvironment(
+  "PF_LOAN_TABLE",
+  backend.data.resources.tables.PfLoan.tableName
+);
+backend.data.resources.tables.PfLoan.grantReadWriteData(
+  backend.sendInvoice.resources.lambda
+);
+backend.sendInvoice.addEnvironment("SITE_URL", siteBaseUrl);
 
 /**
  * Reporting the split to corporate finance, when Stripe confirms a payment.
@@ -451,6 +558,108 @@ for (const [name, model] of [
   table.grantReadData(backend.stripeWebhook.resources.lambda);
 }
 backend.stripeWebhook.resources.lambda.addToRolePolicy(
+  new PolicyStatement({ actions: ["ses:SendEmail"], resources: ["*"] })
+);
+// Paying in full supersedes any QUOTED finance loan on the policy — the
+// webhook cancels those conditionally and logs the supersession.
+backend.stripeWebhook.addEnvironment(
+  "PF_LOAN_TABLE",
+  backend.data.resources.tables.PfLoan.tableName
+);
+backend.data.resources.tables.PfLoan.grantReadWriteData(
+  backend.stripeWebhook.resources.lambda
+);
+backend.stripeWebhook.addEnvironment(
+  "PF_COMPLIANCE_LOG_TABLE",
+  backend.data.resources.tables.PfComplianceLog.tableName
+);
+backend.data.resources.tables.PfComplianceLog.grantWriteData(
+  backend.stripeWebhook.resources.lambda
+);
+
+// W7: the webhook consults the kill switch at settle time — not to refuse
+// money, but to record and alarm when a pre-disable election completes
+// under a disabled module.
+backend.stripeWebhook.addEnvironment(
+  "AGENCY_SETTINGS_TABLE",
+  backend.data.resources.tables.AgencySettings.tableName
+);
+backend.data.resources.tables.AgencySettings.grantReadData(
+  backend.stripeWebhook.resources.lambda
+);
+
+/**
+ * W7: autopay debits post to the ledger through the webhook, so the webhook
+ * gets the payment table too — the same shared posting core pf-servicing
+ * uses, the same direct-write reasoning.
+ */
+backend.stripeWebhook.addEnvironment(
+  "PF_LOAN_PAYMENT_TABLE",
+  backend.data.resources.tables.PfLoanPayment.tableName
+);
+backend.data.resources.tables.PfLoanPayment.grantReadWriteData(
+  backend.stripeWebhook.resources.lambda
+);
+
+/**
+ * W7: the election endpoint. Its writes are all direct: the pay-in-full void
+ * (void-invoice's own code, imported — INVOICE_TABLE), the electedAt stamp
+ * (PF_LOAN_TABLE, conditional), and the compliance row. SITE_URL is where
+ * Checkout returns the customer — the public website's finance page.
+ */
+backend.pfElection.addEnvironment("INVOICE_TABLE", invoiceTable.tableName);
+invoiceTable.grantReadWriteData(backend.pfElection.resources.lambda);
+backend.pfElection.addEnvironment(
+  "PF_LOAN_TABLE",
+  backend.data.resources.tables.PfLoan.tableName
+);
+backend.data.resources.tables.PfLoan.grantReadWriteData(
+  backend.pfElection.resources.lambda
+);
+backend.pfElection.addEnvironment("PF_COMPLIANCE_LOG_TABLE", pfLogTable.tableName);
+pfLogTable.grantWriteData(backend.pfElection.resources.lambda);
+backend.pfElection.addEnvironment("SITE_URL", siteBaseUrl);
+// The election stamp transacts with a ConditionCheck on the kill switch —
+// pf-originate's pattern; grantReadData carries ConditionCheckItem.
+backend.pfElection.addEnvironment(
+  "AGENCY_SETTINGS_TABLE",
+  backend.data.resources.tables.AgencySettings.tableName
+);
+backend.data.resources.tables.AgencySettings.grantReadData(
+  backend.pfElection.resources.lambda
+);
+
+/**
+ * W7: the autopay cron scans the loan table itself (no data client — its
+ * pending-marker write is conditional) and logs every attempt.
+ */
+backend.pfAutopay.addEnvironment(
+  "PF_LOAN_TABLE",
+  backend.data.resources.tables.PfLoan.tableName
+);
+backend.data.resources.tables.PfLoan.grantReadWriteData(
+  backend.pfAutopay.resources.lambda
+);
+backend.pfAutopay.addEnvironment("PF_COMPLIANCE_LOG_TABLE", pfLogTable.tableName);
+pfLogTable.grantWriteData(backend.pfAutopay.resources.lambda);
+// The autopay heal path posts an adopted succeeded debit itself, so it
+// needs the ledger table the shared core writes.
+backend.pfAutopay.addEnvironment(
+  "PF_LOAN_PAYMENT_TABLE",
+  backend.data.resources.tables.PfLoanPayment.tableName
+);
+backend.data.resources.tables.PfLoanPayment.grantReadWriteData(
+  backend.pfAutopay.resources.lambda
+);
+
+/**
+ * W7: the sweep's stale-marker alarm goes to the mailbox a person reads —
+ * a debit nothing has cleared in ten days freezes its loan, and a console
+ * line is not an alarm.
+ */
+backend.pfDefaultSweep.addEnvironment("ACCOUNTING_MAILBOX", accountingMailbox);
+backend.pfDefaultSweep.addEnvironment("AGENCY_MAILBOX", internalMailbox);
+backend.pfDefaultSweep.resources.lambda.addToRolePolicy(
   new PolicyStatement({ actions: ["ses:SendEmail"], resources: ["*"] })
 );
 

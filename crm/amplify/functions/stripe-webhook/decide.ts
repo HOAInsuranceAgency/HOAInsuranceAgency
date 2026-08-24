@@ -94,6 +94,96 @@ export function decideEvent(event: StripeEventLike): EventDecision | null {
   };
 }
 
+/**
+ * W7: what a Stripe event means for a premium-finance loan. Same three event
+ * types, told apart from invoice traffic by metadata: the election checkout
+ * and the autopay cron stamp `pfLoanId`/`pfKind` on their PaymentIntents and
+ * never `invoiceId`, so an event is one or the other, never both.
+ */
+export interface PfEventDecision {
+  loanId: string;
+  kind: "down" | "installment";
+  /** Which schedule row an installment debit was FOR. Null on a down payment. */
+  installment: number | null;
+  outcome: InvoiceOutcome | "COMMITTED";
+  paymentIntentId: string;
+  occurredAt: string;
+  /** The saved mandate, present on the down payment's succeeded event. */
+  customerId: string | null;
+  paymentMethodId: string | null;
+  /** Dollars, from the intent's amount — for the accounting email. */
+  amount: number | null;
+}
+
+/**
+ * The loan side hears two events the invoice side does not:
+ *
+ * `checkout.session.completed` — COMMITTED. For an invoice, form completion
+ * is not money and stays ignored. For an election it is the CHOICE being
+ * made: the treasurer finished checkout, and the offer page must stop
+ * presenting an accept button — manual-entry ACH sits in microdeposit
+ * verification for days before `processing` ever fires, and that window
+ * held the door open for a second $15,000 session. No money moves on it.
+ *
+ * `payment_intent.canceled` — FAILED. A microdeposit verification nobody
+ * completes expires into a cancellation, and the clearing marker it leaves
+ * behind must revive the link the way a failed debit does.
+ */
+const PF_OUTCOMES: Record<string, InvoiceOutcome | "COMMITTED"> = {
+  ...OUTCOMES,
+  "checkout.session.completed": "COMMITTED",
+  "payment_intent.canceled": "FAILED",
+};
+
+export function decidePfEvent(event: StripeEventLike): PfEventDecision | null {
+  const outcome = PF_OUTCOMES[event.type ?? ""];
+  if (!outcome) return null;
+  const object = event.data?.object;
+  if (!object) return null;
+  const metadata = object.metadata as Record<string, unknown> | undefined;
+  const loanId = metadata?.pfLoanId;
+  const kind = metadata?.pfKind;
+  if (typeof loanId !== "string" || !loanId.trim()) return null;
+  if (kind !== "down" && kind !== "installment") return null;
+
+  // A completed session names its PaymentIntent; that id is what the
+  // clearing marker stores and what later events reconcile against.
+  const paymentIntentId =
+    outcome === "COMMITTED"
+      ? typeof object.payment_intent === "string"
+        ? object.payment_intent
+        : ""
+      : typeof object.id === "string"
+        ? object.id
+        : "";
+  if (!paymentIntentId) return null;
+  if (typeof event.created !== "number" || !Number.isFinite(event.created)) {
+    return null;
+  }
+
+  const rawN = metadata?.installment;
+  const installment =
+    typeof rawN === "string" && /^\d+$/.test(rawN) ? Number(rawN) : null;
+  // An installment debit that cannot say which installment it was for is not
+  // actionable — posting "the next one" on faith is how ledgers drift.
+  if (kind === "installment" && installment === null) return null;
+
+  const str = (v: unknown) => (typeof v === "string" && v ? v : null);
+  const cents = object.amount;
+  return {
+    loanId: loanId.trim(),
+    kind,
+    installment,
+    outcome,
+    paymentIntentId,
+    occurredAt: new Date(event.created * 1000).toISOString(),
+    customerId: str(object.customer),
+    paymentMethodId: str(object.payment_method),
+    amount:
+      typeof cents === "number" && Number.isFinite(cents) ? cents / 100 : null,
+  };
+}
+
 /** The fields the update rule reads off the invoice it is about to change. */
 export interface InvoiceState {
   status?: string | null;

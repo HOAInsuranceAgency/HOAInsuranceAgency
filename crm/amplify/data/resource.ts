@@ -8,6 +8,13 @@ import { certNumber } from "../functions/cert-number/resource";
 import { invoiceNumber } from "../functions/invoice-number/resource";
 import { sendInvoice } from "../functions/send-invoice/resource";
 import { voidInvoice } from "../functions/void-invoice/resource";
+import { pfAdmin } from "../functions/pf-admin/resource";
+import { pfOriginate } from "../functions/pf-originate/resource";
+import { pfAgreement } from "../functions/pf-agreement/resource";
+import { pfServicing } from "../functions/pf-servicing/resource";
+import { pfDefaultSweep } from "../functions/pf-default-sweep/resource";
+import { pfElection } from "../functions/pf-election/resource";
+import { pfAutopay } from "../functions/pf-autopay/resource";
 import { renewalTasks } from "../functions/renewal-tasks/resource";
 import { licenseAlerts } from "../functions/license-alerts/resource";
 import { taskDigest } from "../functions/task-digest/resource";
@@ -61,6 +68,15 @@ const schema = a
      * here is supposed to chase the money.
      */
     BillType: a.enum(["AGENCY", "DIRECT"]),
+    /**
+     * QUOTED until someone commits to it; see the premium-finance spec.
+     * ACCEPTED (W7) sits between QUOTED and ACTIVE: the association elected
+     * financing from the invoice email — down payment received, autopay
+     * mandate on file — but the executed board resolution is not yet. Money
+     * has moved on an ACCEPTED loan, so nothing may auto-cancel it; the
+     * webhook's superseded-by-payment rule reaches QUOTED only.
+     */
+    PfLoanStatus: a.enum(["QUOTED", "ACCEPTED", "ACTIVE", "PAID", "DEFAULTED", "CANCELLED"]),
     DocumentEntityType: a.enum([
       "ACCOUNT",
       "QUOTE",
@@ -84,6 +100,14 @@ const schema = a
       // carrier prices on, so filing them as OTHER lost the distinction that
       // makes them worth having — see shared/leadDocuments.ts.
       "STATEMENT_OF_VALUES", // building schedule: sqft and insured value per building
+      // Generated premium-finance paperwork — never uploaded, never extracted.
+      "PF_AGREEMENT",
+      "PF_BOARD_RESOLUTION",
+      // The SIGNED scan of the board resolution, uploaded by hand. Its own
+      // category because activation requires it positively: "some document
+      // on the account" proves nothing, and the generated draft above is
+      // the likeliest wrong paste.
+      "PF_RESOLUTION_EXECUTED",
       "PROPERTY_UPDATES", // roof/electrical/plumbing/heating work
       "OTHER",
     ]),
@@ -769,6 +793,28 @@ const schema = a
        * existed, turning a missing answer into an unopenable record.
        */
       billType: a.ref("BillType"),
+      /**
+       * ── Premium-finance eligibility facts (W3) ──
+       *
+       * All nullable, and null always BLOCKS financing rather than passing it:
+       * these fields answer questions the exemption depends on, and an
+       * unanswered question is not a yes. They gate nothing outside the
+       * premium_finance module.
+       *
+       * producerOfRecord: are we the producer of record on this policy?
+       * Confirmed true through the bind flow (pre-checked, stamped) or by
+       * hand on an imported policy; null on any policy nobody has confirmed —
+       * which is exactly where wholesale or another agency's paper would
+       * enter. The by/at stamps make the pre-ticked bind checkbox an
+       * affirmation rather than a default: who ticked it, and when.
+       */
+      producerOfRecord: a.boolean(),
+      producerOfRecordBy: a.string(),
+      producerOfRecordAt: a.datetime(),
+      /** Carrier's minimum earned premium %, off the policy PDF. */
+      minimumEarnedPremiumPct: a.float(),
+      /** Auditable policies block financing (collateral can shrink at audit). */
+      isAuditable: a.boolean(),
       lines: a.string().array(),
       premium: a.float(),
       commissionPct: a.float(), // carried from the bound quote; baked into premium
@@ -956,6 +1002,273 @@ const schema = a
       .authorization((allow) => [
         allow.authenticated().to(["read", "create", "update", "delete"]),
         allow.groups(["ADMIN"]),
+      ]),
+
+    /**
+     * Premium finance compliance log — the record that shows an examiner the
+     * control was operating.
+     *
+     * Every gate decision, override, and module-flag flip writes a row: which
+     * rule fired, on what inputs, with what outcome, by whom, when. Immutable
+     * by construction, one step past even Activity: the client — ADMIN
+     * included — can only read. Writes come from the pf Lambdas over IAM,
+     * which model rules do not bind (see the allow.resource() note at the
+     * bottom of this schema). No lastWriteBy: this model is not streamed —
+     * an audit log of the audit log is noise — and activityLog.test.ts counts
+     * lastWriteBy declarations.
+     */
+    PfComplianceLog: a
+      .model({
+        /** Sparse — module-level events (the flag) have no account. */
+        accountId: a.string(),
+        /** Jurisdiction code, or "ALL" for module-level events. */
+        jurisdiction: a.string(),
+        /** Which control fired: module-flag, jurisdiction-gate, coverage, apr-cap… */
+        rule: a.string().required(),
+        inputs: a.json(),
+        /** PASS | BLOCK | ENABLED | DISABLED | OVERRIDE */
+        outcome: a.string().required(),
+        reason: a.string(),
+        /** Cognito sub of the person whose action was evaluated. */
+        actor: a.string(),
+        actorName: a.string(),
+        /**
+         * SHA-256 of the signed jurisdiction YAML in force when this decision
+         * was made. The admin screen's hash says what production runs today;
+         * this one answers the regulator's actual question — which signed
+         * ruleset governed a specific decision, months and re-signings later.
+         * Every writer stamps it.
+         */
+        configSha256: a.string(),
+        occurredAt: a.datetime().required(),
+      })
+      .secondaryIndexes((index) => [index("accountId").sortKeys(["occurredAt"])])
+      .authorization((allow) => [allow.authenticated().to(["read"])]),
+
+    /**
+     * A premium finance loan, from quote to close.
+     *
+     * The client can only READ. Every write — creation included — happens in
+     * the pf Lambdas over IAM, because creation IS the control point: the
+     * jurisdiction gate, the APR cap, the coverage screen and the eligibility
+     * checks all run server-side in issueFinanceQuote, and a client-writable
+     * model would be a path around all of them. The terms and schedule are
+     * FROZEN COPIES taken at issuance: the quote a borrower signs must not
+     * drift when a policy row is edited later.
+     *
+     * No compensation fields of any kind belong here — no commission, fee
+     * split, referral or producer payment from the lending side. Nine states
+     * prohibit it and the schema must not be able to express it; a grep test
+     * holds this section to that.
+     */
+    PfLoan: a
+      .model({
+        accountId: a.id().required(),
+        policyId: a.id().required(),
+        status: a.ref("PfLoanStatus").required(),
+        /** Jurisdiction code at origination — frozen; moves do not re-gate. */
+        state: a.string().required(),
+        /** SHA-256 of the signed ruleset that approved this origination. */
+        configSha256: a.string().required(),
+        premium: a.float().required(),
+        downPct: a.float().required(),
+        months: a.integer().required(),
+        apr: a.float().required(),
+        effectiveDate: a.date().required(),
+        downPayment: a.float().required(),
+        amountFinanced: a.float().required(),
+        payment: a.float().required(),
+        totalInterest: a.float().required(),
+        originationFee: a.float().required(),
+        /** The frozen amortization schedule, as issued. */
+        schedule: a.json().required(),
+        /** Servicing state (W5): current balance, next due, last posted n. */
+        balance: a.float(),
+        nextDueAt: a.date(),
+        paidThrough: a.integer(),
+        quotedBy: a.string(),
+        quotedByName: a.string(),
+        quotedAt: a.datetime().required(),
+        activatedAt: a.datetime(),
+        /** Set when a due installment goes unposted; cured by a posting. */
+        defaultedAt: a.datetime(),
+        /**
+         * The executed board resolution's date, checked at activation against
+         * the financed term's effective date — the staleness rule. Boards
+         * turn over annually; a resolution from the prior term authorizes
+         * nothing.
+         */
+        boardResolutionExecutedAt: a.date(),
+        boardResolutionDocumentId: a.string(),
+        cancellationEffectiveAt: a.date(),
+        /** When the carrier's unearned-premium refund is expected: +30 days. */
+        expectedCarrierRefundAt: a.date(),
+        closedAt: a.datetime(),
+        /**
+         * W7 election + autopay. All additive-nullable, per the module's
+         * schema rule. The token is minted by send-invoice when the email
+         * offers financing; it names this loan on the public election page,
+         * and the page's Lambda re-validates everything server-side — the
+         * token is possession, never authority.
+         */
+        electionToken: a.string(),
+        electionTokenExpiresAt: a.datetime(),
+        electedAt: a.datetime(),
+        /** The invoice recipient the election link was mailed to. */
+        electionEmail: a.string(),
+        stripeCustomerId: a.string(),
+        /** The ACH mandate's saved payment method; presence = autopay on. */
+        stripePaymentMethodId: a.string(),
+        downPaymentIntentId: a.string(),
+        /** Payment 1 of the schedule, received. Set by the webhook only. */
+        downPaidAt: a.datetime(),
+        /**
+         * The in-flight autopay debit, if any: intent id, which installment,
+         * and when it was created. Set by pf-autopay, cleared by the webhook
+         * on succeeded/failed. The default sweep must not flip a loan whose
+         * due installment has a fresh pending debit — ACH clears in days,
+         * and a default during clearing would start the notice sequence
+         * against money already in flight.
+         */
+        autopayPendingIntentId: a.string(),
+        autopayPendingInstallment: a.integer(),
+        autopayAttemptedAt: a.datetime(),
+        /**
+         * Set when a debit for this installment FAILED: autopay stands down
+         * for that installment (one attempt each, not a daily retry loop),
+         * which is what lets the default sweep flip the loan and the notice
+         * sequence take over. Cleared by any successful posting — a cure
+         * resumes the schedule.
+         */
+        autopayFailedInstallment: a.integer(),
+        /**
+         * The live election Checkout session, reused until it expires so a
+         * public accept cannot mint unbounded Stripe objects.
+         */
+        electionCheckoutUrl: a.string(),
+        electionCheckoutExpiresAt: a.datetime(),
+      })
+      .secondaryIndexes((index) => [
+        index("accountId").sortKeys(["quotedAt"]),
+        index("electionToken"),
+      ])
+      .authorization((allow) => [allow.authenticated().to(["read"])]),
+
+    /**
+     * One posted installment. Client read-only; the Lambdas are the only
+     * writers, so the interest/principal split always comes from the loan's
+     * frozen schedule. Decision 5 as revised 2026-08-23: receipts settle to
+     * the premium trust on the one Stripe rail, and the loan-vs-premium
+     * distinction lives HERE, on the ledger row and in the remittance email
+     * corporate accounting divides the trust by — not in a separate bank
+     * account. No compensation fields; see PfLoan's note.
+     */
+    PfLoanPayment: a
+      .model({
+        loanId: a.id().required(),
+        accountId: a.id().required(),
+        n: a.integer().required(),
+        amount: a.float().required(),
+        interest: a.float().required(),
+        principal: a.float().required(),
+        /**
+         * Where the receipt settled. Historic rows carry the designated
+         * lending-account label from before decision 5 was revised; rows
+         * written since carry the trust-rail constant.
+         */
+        bankAccount: a.string().required(),
+        postedAt: a.datetime().required(),
+        postedBy: a.string(),
+        postedByName: a.string(),
+        /** Set when the posting came off an autopay debit. */
+        stripePaymentIntentId: a.string(),
+      })
+      .secondaryIndexes((index) => [index("loanId").sortKeys(["postedAt"])])
+      .authorization((allow) => [allow.authenticated().to(["read"])]),
+
+    /** INTENT_TO_CANCEL starts the 15-day clock; CERT_OF_MAILING proves it
+     * was mailed; CANCELLATION_REQUEST may exist only after both. */
+    PfNoticeType: a.enum(["INTENT_TO_CANCEL", "CERT_OF_MAILING", "CANCELLATION_REQUEST"]),
+
+    /**
+     * One step of the cancellation notice sequence — where lender liability
+     * lives, so: client read-only, rows created complete by the servicing
+     * Lambda with server-set timestamps, never updated, never deleted.
+     * Nothing in the sequence can be skipped or back-dated through any UI,
+     * because no UI can write here at all.
+     */
+    PfNotice: a
+      .model({
+        loanId: a.id().required(),
+        accountId: a.id().required(),
+        type: a.ref("PfNoticeType").required(),
+        occurredAt: a.datetime().required(),
+        /** Intent rows: when the 15-day clock expires. */
+        clockExpiresAt: a.datetime(),
+        /** Cert and cancellation rows: the intent they belong to. */
+        refNoticeId: a.string(),
+        /** Cert rows: the physical USPS form's own date and number. */
+        certMailedAt: a.date(),
+        certNumber: a.string(),
+        certDocumentId: a.string(),
+        createdBy: a.string(),
+        createdByName: a.string(),
+      })
+      .secondaryIndexes((index) => [index("loanId").sortKeys(["occurredAt"])])
+      .authorization((allow) => [allow.authenticated().to(["read"])]),
+
+    /**
+     * A counsel opinion that unlocks a `conditional` jurisdiction — until one
+     * exists and is within its review date, conditional means blocked.
+     *
+     * ADMIN-only create, nobody updates or deletes: superseding an opinion is
+     * a new row with a later effective date, and the old one stays in the
+     * record. `reviewBy` is the expiry of reliance (default 24 months out):
+     * statutes change, and a 2026 opinion must not silently authorize a 2031
+     * origination — past review, the jurisdiction reverts to blocked.
+     */
+    PfCounselOpinion: a
+      .model({
+        /** Two-letter jurisdiction code, e.g. "VA". */
+        jurisdiction: a.string().required(),
+        effectiveAt: a.date().required(),
+        reviewBy: a.date().required(),
+        /** The signed opinion PDF's Document id, when uploaded. */
+        documentId: a.string(),
+        notes: a.string(),
+        uploadedBy: a.string(),
+        uploadedByName: a.string(),
+        occurredAt: a.datetime().required(),
+      })
+      .secondaryIndexes((index) => [index("jurisdiction").sortKeys(["effectiveAt"])])
+      .authorization((allow) => [
+        allow.authenticated().to(["read"]),
+        allow.groups(["ADMIN"]).to(["read", "create"]),
+      ]),
+
+    /**
+     * An admin's written reason for waiving one eligibility check on one
+     * policy. MEP and auditable only — the personal-lines screen has no
+     * override and never will.
+     *
+     * ADMIN-only create, nobody updates or deletes: an override is a record,
+     * not a setting. The evaluator honors it only when a reason is present,
+     * and the origination log carries the reason into the decision row.
+     */
+    PfOverride: a
+      .model({
+        policyId: a.id().required(),
+        /** MEP | AUDITABLE */
+        check: a.string().required(),
+        reason: a.string().required(),
+        actor: a.string(),
+        actorName: a.string(),
+        occurredAt: a.datetime().required(),
+      })
+      .secondaryIndexes((index) => [index("policyId")])
+      .authorization((allow) => [
+        allow.authenticated().to(["read"]),
+        allow.groups(["ADMIN"]).to(["read", "create"]),
       ]),
 
     // ── Carriers & appointments ────────────────────────────────────────
@@ -1248,6 +1561,30 @@ const schema = a
         agencyNpn: a.string(),
         /** The Designated Responsible Licensed Producer's NPN. */
         drlpNpn: a.string(),
+        /**
+         * The premium-finance kill switch.
+         *
+         * Written ONLY by the setPremiumFinanceEnabled mutation (pf-admin),
+         * so every flip lands in PfComplianceLog with who and when — counsel
+         * says stop, an admin stops it in minutes, and the record exists.
+         * The ordinary Settings save path must never write this field.
+         * Absent means off: the module ships dark.
+         */
+        premiumFinanceEnabled: a.boolean(),
+        /**
+         * When the flag last changed — the serialization stamp. Enable writes
+         * conditionally on it being unchanged since the invocation began, so
+         * an in-flight enable cannot overwrite a disable that landed after it
+         * started; disable writes unconditionally, because off always wins.
+         */
+        premiumFinanceEnabledAt: a.datetime(),
+        /**
+         * The designated lending bank account's label. Loan receipts and
+         * disbursements reference it and it must never name the premium
+         * trust: fiduciary premium and lending capital cannot commingle.
+         * Payment posting refuses until this is set.
+         */
+        pfLendingAccountName: a.string(),
         /**
          * Who last changed these, for the obvious "who typed that?" question.
          *
@@ -1552,6 +1889,33 @@ const schema = a
       .authorization((allow) => [allow.publicApiKey()])
       .handler(a.handler.function(uploadPortal)),
 
+    /**
+     * W7: the finance election, from the invoice email's signed link. Public
+     * for the association's board treasurer, thin for everyone else — the
+     * token names a loan; every decision is re-made server-side from what
+     * the tables say now. Terms renders the offer; accept closes the
+     * pay-in-full paths, stamps the election, and returns a Stripe Checkout
+     * URL for the down payment + ACH mandate. Advancing the loan itself is
+     * the webhook's job, when the money actually moves.
+     */
+    financeElectionTerms: a
+      .query()
+      .arguments({ token: a.string().required() })
+      .returns(a.json())
+      .authorization((allow) => [allow.publicApiKey()])
+      .handler(a.handler.function(pfElection)),
+
+    acceptFinanceElection: a
+      .mutation()
+      .arguments({
+        token: a.string().required(),
+        /** The dispatch discriminator — see lead-upload/dispatch.ts. */
+        accept: a.boolean().required(),
+      })
+      .returns(a.json())
+      .authorization((allow) => [allow.publicApiKey()])
+      .handler(a.handler.function(pfElection)),
+
     // ── Team administration (ADMIN group only) ─────────────────────────
     inviteUser: a
       .mutation()
@@ -1645,6 +2009,80 @@ const schema = a
       .returns(a.json())
       .authorization((allow) => [allow.authenticated()])
       .handler(a.handler.function(voidInvoice)),
+
+    /**
+     * Flip the premium-finance module, with the flip logged in the same
+     * breath. ADMIN only — this is the kill switch on a lending product, and
+     * the reason it is a mutation rather than a settings write is that the
+     * log row and the flag change come from one Lambda and cannot come apart.
+     */
+    setPremiumFinanceEnabled: a
+      .mutation()
+      .arguments({ enabled: a.boolean().required() })
+      .returns(a.json())
+      .authorization((allow) => [allow.groups(["ADMIN"])])
+      .handler(a.handler.function(pfAdmin)),
+
+    /**
+     * Originate a premium finance quote — the control point.
+     *
+     * Re-runs everything server-side whatever the UI showed: the module flag,
+     * the jurisdiction gate, the APR cap (a request above the cap is rejected
+     * by this API, not just disabled in a browser), the minimum principal,
+     * and all four eligibility screens. Writes one PfComplianceLog row per
+     * rule evaluated, pass or block, each carrying the ruleset SHA — and only
+     * on all-pass creates the PfLoan.
+     */
+    issueFinanceQuote: a
+      .mutation()
+      .arguments({
+        policyId: a.string().required(),
+        premium: a.float().required(),
+        downPct: a.float().required(),
+        months: a.integer().required(),
+        apr: a.float().required(),
+        effectiveDate: a.string().required(),
+      })
+      .returns(a.json())
+      .authorization((allow) => [allow.authenticated()])
+      .handler(a.handler.function(pfOriginate)),
+
+    /**
+     * Render the agreement + board resolution for a quoted loan, from the
+     * loan's FROZEN terms, filed through Documents. The staleness rule for
+     * the executed resolution is enforced at activation, not here — this
+     * generates the paper the board has not signed yet.
+     */
+    generatePfAgreement: a
+      .mutation()
+      .arguments({ loanId: a.string().required() })
+      .returns(a.json())
+      .authorization((allow) => [allow.authenticated()])
+      .handler(a.handler.function(pfAgreement)),
+
+    /**
+     * Everything that happens to a loan after issuance, in one Lambda-backed
+     * mutation dispatched on `action`: ACTIVATE (with the board-resolution
+     * staleness rule), POST_PAYMENT (split from the frozen schedule, lending
+     * account required), NOTICE_INTENT, RECORD_CERT, REQUEST_CANCELLATION
+     * (refused until intent + certificate + 15 days). The origination gate is
+     * deliberately absent from all of it: we cannot un-lend.
+     */
+    servicePfLoan: a
+      .mutation()
+      .arguments({
+        loanId: a.string().required(),
+        action: a.string().required(),
+        boardResolutionExecutedAt: a.string(),
+        boardResolutionDocumentId: a.string(),
+        noticeId: a.string(),
+        certMailedAt: a.string(),
+        certNumber: a.string(),
+        cancellationEffectiveAt: a.string(),
+      })
+      .returns(a.json())
+      .authorization((allow) => [allow.authenticated()])
+      .handler(a.handler.function(pfServicing)),
   })
   .authorization((allow) => [
     // Default for every model that doesn't declare its own rules. A model
@@ -1699,6 +2137,25 @@ const schema = a
     allow.resource(portalSweep),
     // Reads invoices, lines, accounts and contacts to build the emailed bill.
     allow.resource(sendInvoice),
+    /**
+     * Premium finance. Origination reads Account/Policy/PfOverride/settings
+     * and creates PfLoan; the agreement renderer reads the loan tree and
+     * creates Document rows; servicing writes loans, payments and notice
+     * rows; the default sweep marks missed loans. All four write their
+     * decision rows to the compliance-log table directly, not through here —
+     * that model takes no data-client writes from anything.
+     */
+    allow.resource(pfOriginate),
+    allow.resource(pfAgreement),
+    allow.resource(pfServicing),
+    allow.resource(pfDefaultSweep),
+    // The public election endpoint resolves loan tokens, reads the account
+    // name, the kill switch, and the policy's invoices; its writes (the
+    // election stamp, the compliance row, the void) go direct to tables.
+    allow.resource(pfElection),
+    // The autopay cron reads ACTIVE loans; its claim/marker writes are
+    // conditional and go direct to the loan table.
+    allow.resource(pfAutopay),
     // The stream handler writes Activity and reads UserProfile to name an
     // actor. Note what the block above says: this is not a per-model grant,
     // so this function has full API access whatever any model declares. What

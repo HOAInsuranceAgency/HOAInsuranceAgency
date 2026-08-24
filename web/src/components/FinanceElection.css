@@ -1,0 +1,91 @@
+/**
+ * The finance election page, in the site's gold on white.
+ *
+ * Plainer still than the document portal: this page carries one number-heavy
+ * decision and one button, read by a treasurer who was just looking at the
+ * invoice email. Nothing here persuades; the figures are the page.
+ *
+ * Ships with the React island, so class names are global and `fe`-prefixed —
+ * same reasoning as DocumentPortal.css.
+ */
+
+.fe-section {
+  padding-top: calc(var(--nav-height) + 40px);
+}
+
+.fe {
+  --fe-edge: #e8d5a8;
+  --fe-gold: #e5c16a;
+  --fe-navy: #1a365d;
+  --fe-ink: #1a1a1a;
+  --fe-muted: #5b6472;
+  --fe-bad: #c0392b;
+  --fe-bad-tint: rgba(192, 57, 43, 0.08);
+
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 0;
+  color: var(--fe-ink);
+  font-size: 1.05rem;
+  line-height: 1.6;
+}
+
+.fe h1 {
+  color: var(--fe-navy);
+  font-size: 1.7rem;
+  line-height: 1.25;
+  margin: 0 0 14px;
+}
+
+.fe-terms {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 18px 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.fe-terms td {
+  padding: 9px 0;
+  border-bottom: 1px solid var(--fe-edge);
+}
+
+.fe-terms td:last-child {
+  text-align: right;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.fe-fine {
+  color: var(--fe-muted);
+  font-size: 0.92rem;
+}
+
+.fe--error {
+  color: var(--fe-bad);
+  background: var(--fe-bad-tint);
+  border-radius: 6px;
+  padding: 10px 14px;
+}
+
+.fe-accept {
+  display: inline-block;
+  margin: 10px 0 6px;
+  padding: 14px 28px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--fe-gold);
+  color: var(--fe-navy);
+  font-weight: 700;
+  font-size: 1rem;
+  cursor: pointer;
+}
+
+.fe-accept:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.fe-accept:focus-visible {
+  outline: 3px solid var(--fe-navy);
+  outline-offset: 2px;
+}

@@ -1,0 +1,29 @@
+---
+import Layout from "../layouts/Layout.astro";
+import { FinanceElection } from "../components/FinanceElection";
+
+/**
+ * The premium-finance election page, reached from the "Set up financing"
+ * link in an invoice email.
+ *
+ * `private` and `noindex` are both load-bearing, for exactly the reasons
+ * documents.astro spells out: the URL carries a live token as `?t=…`, and
+ * analytics or an index would archive it. The island reads and scrubs the
+ * token itself — see FinanceElection.tsx.
+ */
+---
+
+<Layout
+  title="Finance your premium · HOA Insurance Agency"
+  description="Set up monthly payments for your association's insurance premium."
+  canonicalPath="/finance/"
+  noindex
+  private
+  solidNav
+>
+  <section class="section fe-section">
+    <div class="container">
+      <FinanceElection client:only="react" />
+    </div>
+  </section>
+</Layout>

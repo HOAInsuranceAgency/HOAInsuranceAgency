@@ -598,6 +598,21 @@ const DOCUMENT_CATEGORY = {
     extractionPriority: 4,
     extractable: true,
   },
+  // Generated premium-finance paperwork. `label: null` like ACORD_FORM — the
+  // app writes these, nobody uploads them — and never extractable: an
+  // agreement quoting the policy's own terms back would feed extraction its
+  // own echo.
+  PF_AGREEMENT: { label: null, extractionPriority: 9, extractable: false },
+  PF_BOARD_RESOLUTION: { label: null, extractionPriority: 9, extractable: false },
+  // The signed scan, uploaded by a person — labelled, unlike the generated
+  // pair, because pf-servicing's ACTIVATE accepts nothing else as the
+  // power-of-attorney evidence. Never extractable: it is legal paper, and
+  // every datapoint on it is already on the loan.
+  PF_RESOLUTION_EXECUTED: {
+    label: "Executed board resolution",
+    extractionPriority: 9,
+    extractable: false,
+  },
   /**
    * Extractable, unlike the other three that are not.
    *

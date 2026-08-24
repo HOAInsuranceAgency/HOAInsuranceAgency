@@ -286,6 +286,26 @@ const ALL_FIELD_DEFS: FieldDef[] = [
     leadOnly: true,
     current: (a) => a.currentPolicyExpiration ?? "",
   },
+  /**
+   * Premium-finance eligibility facts → NOTES, deliberately, though the real
+   * fields live on the Policy record. Two reasons: extraction is
+   * account-scoped and cannot know which policy row a value belongs to, and
+   * those fields BLOCK a lending decision — a low-confidence model read must
+   * never be one click from becoming the answer. A person copies the value
+   * onto the policy, which is the confirmation step the signed spec requires.
+   */
+  {
+    key: "minimumEarnedPremiumPct",
+    label: "Minimum earned premium % → notes",
+    kind: "note",
+    current: () => "",
+  },
+  {
+    key: "isAuditable",
+    label: "Auditable policy → notes",
+    kind: "note",
+    current: () => "",
+  },
 ];
 
 /** Clients renew off bound policies, so lead-only fields drop out entirely. */
