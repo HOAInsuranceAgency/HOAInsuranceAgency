@@ -295,8 +295,10 @@ export async function renderAgreementPdf(v: AgreementView): Promise<Uint8Array> 
 /**
  * The board resolution the association executes — re-required at every
  * renewal, because boards turn over annually and a receiver can replace one
- * mid-term. Activation refuses a resolution executed before the financed
- * term began (the staleness rule).
+ * mid-term. Activation refuses a resolution executed before this loan was
+ * quoted (the staleness rule, re-drawn 2026-08-24: the boundary is the
+ * loan's own quote date, because boards legitimately authorize the
+ * agreement in front of them before coverage begins).
  */
 export async function renderBoardResolutionPdf(v: AgreementView): Promise<Uint8Array> {
   const doc = await PDFDocument.create();

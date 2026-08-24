@@ -364,31 +364,42 @@ export const handler = async (event: {
           };
         }
 
-        const policyRes = await client.models.Policy.get({ id: loan.policyId });
-        if (policyRes.errors?.length) {
-          // A failed read is not a missing policy: falling back to the
-          // loan's frozen date here would quietly weaken the staleness gate.
-          console.error(`[pf-servicing] policy read failed for ${loan.policyId}`, policyRes.errors[0].message);
-          return { ok: false, error: "Couldn't read the policy. Try again." };
-        }
-        const termStart = policyRes.data?.effectiveDate ?? loan.effectiveDate;
-        const stale = executed < termStart;
+        /**
+         * The staleness rule, re-drawn after the W8 E2E caught its original
+         * form refusing the NORMAL case. "Executed before the term starts"
+         * blocked every advance-bound deal — boards authorize the agreement
+         * in front of them, before coverage begins; that is how binding
+         * works. What the rule actually protects against is last term's
+         * paper: a resolution that predates THIS loan cannot be authorizing
+         * it, whatever term it names. So the boundary is the loan's own
+         * quote date — and an execution date in the future is a typo, not a
+         * meeting that happened.
+         */
+        const quotedDay = (loan.quotedAt ?? "").slice(0, 10);
+        const todayDay = now.slice(0, 10);
+        const staleReason =
+          executed > todayDay
+            ? `Resolution execution date ${executed} is in the future.`
+            : quotedDay && executed < quotedDay
+              ? `Resolution executed ${executed} predates this financing (quoted ${quotedDay}). Boards turn over — the resolution must authorize the agreement in front of them, not a prior term's.`
+              : null;
         await logRow({
           accountId: loan.accountId,
           jurisdiction: loan.state,
           rule: "board-resolution",
-          outcome: stale ? "BLOCK" : "PASS",
-          reason: stale
-            ? `Resolution executed ${executed} predates the financed term effective ${termStart}. A current-term resolution is required.`
-            : undefined,
-          inputs: { loanId: loan.id, executed, termStart, documentId },
+          outcome: staleReason ? "BLOCK" : "PASS",
+          reason: staleReason ?? undefined,
+          inputs: { loanId: loan.id, executed, quotedDay, documentId },
           actor,
           actorName,
         });
-        if (stale) {
+        if (staleReason) {
           return {
             ok: false,
-            error: `That resolution was executed ${executed}, before the financed term began (${termStart}). Boards turn over — obtain a resolution executed for the current term.`,
+            error:
+              executed > todayDay
+                ? `That resolution is dated ${executed} — a day that hasn't happened. Check the execution date.`
+                : `That resolution was executed ${executed}, before this financing was quoted (${quotedDay}). Boards turn over — obtain a resolution executed for this agreement.`,
           };
         }
         const won = await transition(loan.id, loan.status, {

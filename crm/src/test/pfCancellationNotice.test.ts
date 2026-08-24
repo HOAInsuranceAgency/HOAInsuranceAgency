@@ -108,6 +108,16 @@ describe("activation checks the resolution document is on file", () => {
     // The BLOCK for a missing/foreign document names the id…
     expect(SERVICING).toMatch(/rule: "board-resolution"[\s\S]{0,400}inputs: \{ loanId: loan\.id, documentId \}/);
     // …and the staleness PASS/BLOCK row carries it too.
-    expect(SERVICING).toContain("inputs: { loanId: loan.id, executed, termStart, documentId }");
+    expect(SERVICING).toContain("inputs: { loanId: loan.id, executed, quotedDay, documentId }");
+  });
+
+  it("the staleness boundary is the loan's quote date, not the term start", () => {
+    // The E2E caught the original rule refusing every advance-bound deal:
+    // boards authorize the agreement in front of them BEFORE coverage
+    // begins. What must be refused is paper that predates this loan —
+    // last term's resolution — and a date from the future.
+    expect(SERVICING).toContain("executed < quotedDay");
+    expect(SERVICING).toContain("is in the future");
+    expect(SERVICING).not.toContain("before the financed term began");
   });
 });

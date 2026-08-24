@@ -341,6 +341,19 @@ Decisions the review forced, now part of the design:
 - **The signature IP is evidence, not proof**: first X-Forwarded-For hop,
   shape-checked and bounded before it can reach the loan, the log, or the
   printed agreement. The signature's substance is the typed name and role.
+- **The staleness rule's boundary is the loan's quote date** (re-drawn
+  2026-08-24 after the staging E2E). The original form — refuse a
+  resolution executed before the financed term began — blocked every
+  advance-bound deal: boards authorize the agreement in front of them
+  before coverage begins, which is how binding works. What the rule
+  protects against is last term's paper, and paper that predates this
+  loan cannot be authorizing it — so activation refuses a resolution
+  executed before the loan was quoted, or dated in the future, and
+  accepts anything from quote day onward.
+- **The Invoices and Financing tabs show for leads** (same E2E). Billing
+  a quote before bind is the new-business flow, and new business is a
+  lead; hiding the money tabs behind CLIENT stage hid the feature from
+  its audience. Only the Policies tab still waits for a bind.
 
 ### Rhode Island opened (signed by Jake, 2026-08-24)
 
