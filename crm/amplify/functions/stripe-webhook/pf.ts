@@ -398,10 +398,35 @@ async function applyInstallment(d: PfEventDecision, loan: LoanRow): Promise<stri
     logContext: "stripe-webhook",
   });
   if (!result.ok) {
-    // state-changed stands the ledger row and screams; everything else here
-    // is configuration. Either way the marker must not wedge the loan.
+    // Whatever refused it, the marker must not wedge the loan.
     await clearPending(loan.id, d.paymentIntentId);
     console.error(`stripe-webhook: autopay posting on ${loan.id} refused: ${result.error}`);
+    if (result.code === "state-changed") {
+      /**
+       * Real money cleared and the loan could not take it — a cancellation
+       * or payoff won the race. Whether a ledger row stands or nothing was
+       * written, a person must reconcile and likely refund; this is the
+       * same alarm class as a payment on a VOID invoice.
+       */
+      try {
+        await mailAccounting(`Autopay debit cleared on a moved loan — reconcile ${loan.id}`, [
+          `Debit ${d.paymentIntentId} for installment ${d.installment ?? "?"} cleared,`,
+          `but the loan changed state before it could post. ${result.error}`,
+          ``,
+          `Check the loan and the Stripe payment; this likely needs a refund.`,
+        ]);
+      } catch (err) {
+        console.error("stripe-webhook: could not send the moved-loan alert", err);
+      }
+      await logRow({
+        accountId: loan.accountId,
+        jurisdiction: loan.state,
+        rule: "autopay-posted",
+        outcome: "BLOCK",
+        reason: `Debit ${d.paymentIntentId} cleared for installment ${d.installment ?? "?"} but the loan moved; reconcile by hand.`,
+        inputs: { loanId: loan.id, paymentIntentId: d.paymentIntentId },
+      });
+    }
     return `posting refused: ${result.code}`;
   }
 

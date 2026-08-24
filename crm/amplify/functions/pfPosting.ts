@@ -1,5 +1,5 @@
 import type { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
-import { PutCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import { TransactWriteCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { parseScheduleJson } from "../../src/lib/premiumFinance/quote";
 
 /**
@@ -83,44 +83,6 @@ export async function postInstallment(opts: {
   const row = schedule[n - 1];
   if (!row) return { ok: false, code: "fully-paid", error: "The schedule is fully paid." };
 
-  let alreadyPosted = false;
-  try {
-    await ddb.send(
-      new PutCommand({
-        TableName: payTable,
-        Item: {
-          id: `pf-pay-${loan.id}-${n}`,
-          __typename: "PfLoanPayment",
-          createdAt: now,
-          updatedAt: now,
-          loanId: loan.id,
-          accountId: loan.accountId,
-          n,
-          amount: row.payment,
-          interest: row.interest,
-          principal: row.principal,
-          bankAccount: PF_SETTLEMENT_RAIL,
-          postedAt: now,
-          postedBy: actor,
-          postedByName: actorName,
-          ...(opts.stripePaymentIntentId
-            ? { stripePaymentIntentId: opts.stripePaymentIntentId }
-            : {}),
-        },
-        ConditionExpression: "attribute_not_exists(id)",
-      })
-    );
-  } catch (err) {
-    if ((err as { name?: string }).name !== "ConditionalCheckFailedException") throw err;
-    /**
-     * The row exists but this loan still points at n-1 — an earlier posting's
-     * advance failed after its ledger write. Returning here would strand that
-     * state forever; falling through re-runs the conditional advance and
-     * reconciles it.
-     */
-    alreadyPosted = true;
-  }
-
   const finished = n >= schedule.length;
   const removes: string[] = [];
   if (!finished) removes.push("defaultedAt");
@@ -140,51 +102,118 @@ export async function postInstallment(opts: {
   const manualGuard = opts.clearAutopayPending
     ? ""
     : " AND attribute_not_exists(autopayPendingIntentId)";
+
+  /**
+   * The advance, shared by both commit shapes below. defaultedAt is ALWAYS
+   * removed on a non-final advance — decided by the write, not by the
+   * possibly-stale status this invocation read. Status is in the condition
+   * because paidThrough alone let a posting racing a cancellation set
+   * status back to ACTIVE.
+   */
+  const advance = {
+    TableName: loanTable,
+    Key: { id: loan.id },
+    UpdateExpression:
+      "SET paidThrough = :n, balance = :bal, nextDueAt = :next, #s = :status, updatedAt = :now" +
+      (finished ? ", closedAt = :now" : "") +
+      (removes.length ? " REMOVE " + removes.join(", ") : ""),
+    ConditionExpression:
+      "(paidThrough = :seen OR paidThrough = :n) AND (#s = :active OR #s = :defaulted)" +
+      manualGuard,
+    ExpressionAttributeNames: { "#s": "status" },
+    ExpressionAttributeValues: {
+      ":n": n,
+      ":bal": row.balance,
+      ":next": finished ? null : schedule[n].dueDate,
+      ":status": finished ? "PAID" : "ACTIVE",
+      ":now": now,
+      ":seen": loan.paidThrough ?? 0,
+      ":active": "ACTIVE",
+      ":defaulted": "DEFAULTED",
+    },
+  };
+
+  /**
+   * Ledger row and advance are ONE transaction. The old two-phase shape
+   * wrote the row first and advanced second, so a cancellation landing in
+   * between stranded an immutable row against a terminal loan with no
+   * retry path. Atomic, the race has two clean outcomes: the posting wins
+   * whole, or nothing lands and the caller decides how loudly to say that
+   * money arrived with nowhere to go.
+   */
+  let alreadyPosted = false;
   try {
     await ddb.send(
-      new UpdateCommand({
-        TableName: loanTable,
-        Key: { id: loan.id },
-        /**
-         * defaultedAt is ALWAYS removed on a non-final advance — decided by
-         * the write, not by the possibly-stale status this invocation read.
-         * Status is in the condition because paidThrough alone let a posting
-         * racing a cancellation set status back to ACTIVE.
-         */
-        UpdateExpression:
-          "SET paidThrough = :n, balance = :bal, nextDueAt = :next, #s = :status, updatedAt = :now" +
-          (finished ? ", closedAt = :now" : "") +
-          (removes.length ? " REMOVE " + removes.join(", ") : ""),
-        ConditionExpression:
-          "(paidThrough = :seen OR paidThrough = :n) AND (#s = :active OR #s = :defaulted)" +
-          manualGuard,
-        ExpressionAttributeNames: { "#s": "status" },
-        ExpressionAttributeValues: {
-          ":n": n,
-          ":bal": row.balance,
-          ":next": finished ? null : schedule[n].dueDate,
-          ":status": finished ? "PAID" : "ACTIVE",
-          ":now": now,
-          ":seen": loan.paidThrough ?? 0,
-          ":active": "ACTIVE",
-          ":defaulted": "DEFAULTED",
-        },
+      new TransactWriteCommand({
+        TransactItems: [
+          {
+            Put: {
+              TableName: payTable,
+              Item: {
+                id: `pf-pay-${loan.id}-${n}`,
+                __typename: "PfLoanPayment",
+                createdAt: now,
+                updatedAt: now,
+                loanId: loan.id,
+                accountId: loan.accountId,
+                n,
+                amount: row.payment,
+                interest: row.interest,
+                principal: row.principal,
+                bankAccount: PF_SETTLEMENT_RAIL,
+                postedAt: now,
+                postedBy: actor,
+                postedByName: actorName,
+                ...(opts.stripePaymentIntentId
+                  ? { stripePaymentIntentId: opts.stripePaymentIntentId }
+                  : {}),
+              },
+              ConditionExpression: "attribute_not_exists(id)",
+            },
+          },
+          { Update: advance },
+        ],
       })
     );
   } catch (err) {
-    if ((err as { name?: string }).name !== "ConditionalCheckFailedException") throw err;
+    const canceled = err as { name?: string; CancellationReasons?: { Code?: string }[] };
+    if (canceled.name !== "TransactionCanceledException") throw err;
+    const reasons = canceled.CancellationReasons ?? [];
+    const rowExists = reasons[0]?.Code === "ConditionalCheckFailed";
+    if (!rowExists) {
+      /**
+       * The loan moved (or an autopay claim landed) and NOTHING was
+       * written. If real money drove this posting, the caller must say so
+       * loudly — there is now no ledger row admitting it.
+       */
+      console.error(
+        `[${logContext}] loan ${loan.id} left ACTIVE/DEFAULTED (or took an autopay claim) during posting ${n}; nothing was posted`
+      );
+      return {
+        ok: false,
+        code: "state-changed",
+        error: `The loan changed underneath posting installment ${n} — a state change, or an autopay debit claiming it. Nothing was posted; look at the loan before anything else.`,
+      };
+    }
     /**
-     * The loan closed or cancelled between the read and the advance. The
-     * ledger row is a fact — money posted — so it stands, loudly.
+     * The row exists from an earlier half-state (the pre-transaction shape
+     * could strand one) or a redelivery. Re-run the advance alone — its
+     * condition tolerates the healed state — and reconcile.
      */
-    console.error(
-      `[${logContext}] loan ${loan.id} left ACTIVE/DEFAULTED (or took an autopay claim) during posting ${n}; ledger row stands`
-    );
-    return {
-      ok: false,
-      code: "state-changed",
-      error: `The loan changed underneath posting installment ${n} — a state change, or an autopay debit claiming it. The payment is on the ledger; reconcile the loan by hand before anything else.`,
-    };
+    alreadyPosted = true;
+    try {
+      await ddb.send(new UpdateCommand(advance));
+    } catch (advErr) {
+      if ((advErr as { name?: string }).name !== "ConditionalCheckFailedException") throw advErr;
+      console.error(
+        `[${logContext}] loan ${loan.id} is terminal with ledger row ${n} standing; reconcile by hand`
+      );
+      return {
+        ok: false,
+        code: "state-changed",
+        error: `The loan changed underneath posting installment ${n}. The payment is on the ledger; reconcile the loan by hand before anything else.`,
+      };
+    }
   }
 
   return {

@@ -314,7 +314,15 @@ async function handleAccept(client: DataClient, args: Record<string, unknown>) {
               Key: { id: loan.id },
               UpdateExpression:
                 "SET electedAt = if_not_exists(electedAt, :now), updatedAt = :now",
-              ConditionExpression: "#s = :quoted AND electionToken = :tok",
+              /**
+               * Expiry is enforced HERE, not only at the read: the checks
+               * above sit before the invoice scans and voids, and a token
+               * submitted seconds before its expiry must not finish
+               * electing after it. The clock that matters is the one this
+               * write serializes at.
+               */
+              ConditionExpression:
+                "#s = :quoted AND electionToken = :tok AND electionTokenExpiresAt > :now",
               ExpressionAttributeNames: { "#s": "status" },
               ExpressionAttributeValues: {
                 ":now": now,
@@ -399,9 +407,11 @@ async function handleAccept(client: DataClient, args: Record<string, unknown>) {
         UpdateExpression:
           "SET electionCheckoutUrl = :claim, electionCheckoutExpiresAt = :exp, updatedAt = :now",
         // Free, or expired, or a stale claim past its own expiry — never a
-        // live session and never a fresh claim someone else is filling.
+        // live session, never a fresh claim someone else is filling, and
+        // never for a token past its clock (same write-time rule as the
+        // election stamp).
         ConditionExpression:
-          "#s = :quoted AND (attribute_not_exists(electionCheckoutUrl) OR electionCheckoutExpiresAt < :now)",
+          "#s = :quoted AND electionTokenExpiresAt > :now AND (attribute_not_exists(electionCheckoutUrl) OR electionCheckoutExpiresAt < :now)",
         ExpressionAttributeNames: { "#s": "status" },
         ExpressionAttributeValues: {
           ":claim": sessionClaim,

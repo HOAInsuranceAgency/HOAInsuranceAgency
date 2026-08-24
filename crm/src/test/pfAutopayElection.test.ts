@@ -300,8 +300,14 @@ describe("the election endpoint's ordering", () => {
     expect(ELECTION).toContain("already clearing");
   });
 
-  it("stamps the election conditionally on QUOTED under this token", () => {
-    expect(ELECTION).toContain('ConditionExpression: "#s = :quoted AND electionToken = :tok"');
+  it("stamps the election conditionally on QUOTED under this token, before the clock runs out", () => {
+    // Expiry rides the write's own condition — the read-time check sits
+    // before the invoice scans, and a token submitted seconds before its
+    // expiry must not finish electing after it.
+    expect(ELECTION).toContain(
+      '"#s = :quoted AND electionToken = :tok AND electionTokenExpiresAt > :now"'
+    );
+    expect(ELECTION).toContain("electionTokenExpiresAt > :now AND (attribute_not_exists(electionCheckoutUrl)");
   });
 
   it("binds the stamp to the kill switch in one transaction", () => {
