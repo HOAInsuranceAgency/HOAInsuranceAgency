@@ -368,16 +368,68 @@ async function handleAccept(client: DataClient, args: Record<string, unknown>) {
   }
 
   /**
-   * One live Checkout session at a time. A public retry button must not be
-   * able to mint unbounded Stripe objects; the stored session is handed back
-   * until it expires (with a margin, so nobody lands on a dying page).
+   * One live Checkout session at a time, enforced at WRITE time. The stored
+   * session is handed back until it expires (with a margin, so nobody lands
+   * on a dying page) — and the slot itself is CLAIMED with a conditional
+   * write before Stripe hears anything, because two overlapping accepts
+   * would otherwise both read an empty slot and mint two payable sessions
+   * for one down payment. Same claim discipline as the autopay cron: the
+   * loser of the condition reads the winner's session instead of minting.
    */
-  if (
-    loan.electionCheckoutUrl &&
-    loan.electionCheckoutExpiresAt &&
-    new Date(loan.electionCheckoutExpiresAt).getTime() > Date.now() + 5 * 60 * 1000
-  ) {
-    return { ok: true, state: "checkout", url: loan.electionCheckoutUrl };
+  const liveStoredSession = (
+    url: string | null | undefined,
+    exp: string | null | undefined
+  ): string | null =>
+    url &&
+    !url.startsWith("claim-") &&
+    exp &&
+    new Date(exp).getTime() > Date.now() + 5 * 60 * 1000
+      ? url
+      : null;
+  const stored = liveStoredSession(loan.electionCheckoutUrl, loan.electionCheckoutExpiresAt);
+  if (stored) return { ok: true, state: "checkout", url: stored };
+
+  const sessionClaim = `claim-${randomUUID()}`;
+  const claimExpiry = new Date(Date.now() + 36 * 60 * 1000).toISOString();
+  try {
+    await ddb.send(
+      new UpdateCommand({
+        TableName: loanTable,
+        Key: { id: loan.id },
+        UpdateExpression:
+          "SET electionCheckoutUrl = :claim, electionCheckoutExpiresAt = :exp, updatedAt = :now",
+        // Free, or expired, or a stale claim past its own expiry — never a
+        // live session and never a fresh claim someone else is filling.
+        ConditionExpression:
+          "#s = :quoted AND (attribute_not_exists(electionCheckoutUrl) OR electionCheckoutExpiresAt < :now)",
+        ExpressionAttributeNames: { "#s": "status" },
+        ExpressionAttributeValues: {
+          ":claim": sessionClaim,
+          ":exp": claimExpiry,
+          ":quoted": "QUOTED",
+          ":now": now,
+        },
+      })
+    );
+  } catch (err) {
+    if ((err as { name?: string }).name !== "ConditionalCheckFailedException") throw err;
+    /**
+     * Someone holds the slot. If it is a live session, hand it back; if it
+     * is a concurrent claim still being filled, wait briefly for the winner
+     * to swap the real URL in.
+     */
+    for (let i = 0; i < 4; i++) {
+      await new Promise((r) => setTimeout(r, 750));
+      const fresh = await loanForToken(client, args.token);
+      const url = liveStoredSession(fresh?.electionCheckoutUrl, fresh?.electionCheckoutExpiresAt);
+      if (url) return { ok: true, state: "checkout", url };
+      if (fresh?.status === "ACCEPTED") return { ok: true, state: "done" };
+    }
+    return {
+      ok: true,
+      state: "closed",
+      reason: "Your payment is being set up in another window. Try again in a moment.",
+    };
   }
 
   const siteUrl = process.env.SITE_URL || "";
@@ -394,7 +446,9 @@ async function handleAccept(client: DataClient, args: Record<string, unknown>) {
    * the money should decide which counts.
    */
   const stripe = new Stripe(key);
-  const session = await stripe.checkout.sessions.create({
+  let session: Stripe.Checkout.Session;
+  try {
+    session = await stripe.checkout.sessions.create({
     mode: "payment",
     payment_method_types: ["us_bank_account"],
     customer_creation: "always",
@@ -421,18 +475,30 @@ async function handleAccept(client: DataClient, args: Record<string, unknown>) {
     metadata: { pfLoanId: loan.id, pfKind: "down" },
     success_url: `${siteUrl}/finance/?t=${loan.electionToken}&done=1`,
     cancel_url: `${siteUrl}/finance/?t=${loan.electionToken}`,
-  });
+    });
+  } catch (err) {
+    // Nothing was minted; free the slot so a retry doesn't wait out the
+    // claim's own expiry.
+    await releaseSessionClaim(loanTable, loan.id, sessionClaim);
+    throw err;
+  }
 
   if (!session.url) {
     console.error("[pf-election] checkout session has no url", session.id);
+    await releaseSessionClaim(loanTable, loan.id, sessionClaim);
     return {
       ok: true,
       state: "closed",
       reason: "We couldn't start the payment. Try again in a moment.",
     };
   }
-  // Remember the session for the retry path above. Best effort — a lost
-  // write costs one extra session, which is the state we started from.
+  /**
+   * The claim becomes the real session, conditionally on still holding it.
+   * A lost condition means the slot moved under us (a webhook landing, a
+   * stale-claim takeover) — this session is then an orphan Stripe expires
+   * in 35 minutes; the money still can't double-collect, because only one
+   * URL is ever handed out per slot.
+   */
   try {
     await ddb.send(
       new UpdateCommand({
@@ -440,12 +506,11 @@ async function handleAccept(client: DataClient, args: Record<string, unknown>) {
         Key: { id: loan.id },
         UpdateExpression:
           "SET electionCheckoutUrl = :url, electionCheckoutExpiresAt = :exp, updatedAt = :now",
-        ConditionExpression: "#s = :quoted",
-        ExpressionAttributeNames: { "#s": "status" },
+        ConditionExpression: "electionCheckoutUrl = :claim",
         ExpressionAttributeValues: {
           ":url": session.url,
           ":exp": new Date((session.expires_at ?? 0) * 1000).toISOString(),
-          ":quoted": "QUOTED",
+          ":claim": sessionClaim,
           ":now": new Date().toISOString(),
         },
       })
@@ -453,9 +518,36 @@ async function handleAccept(client: DataClient, args: Record<string, unknown>) {
   } catch (err) {
     if ((err as { name?: string }).name !== "ConditionalCheckFailedException") {
       console.error("[pf-election] could not store the checkout session", err);
+    } else {
+      console.warn(`[pf-election] session slot moved under ${loan.id}; not handing out ${session.id}`);
+      return {
+        ok: true,
+        state: "closed",
+        reason: "Your payment is being set up in another window. Try again in a moment.",
+      };
     }
   }
   return { ok: true, state: "checkout", url: session.url };
+}
+
+/** Free a claimed session slot, if we still hold it. Best effort. */
+async function releaseSessionClaim(loanTable: string, loanId: string, claim: string) {
+  try {
+    await ddb.send(
+      new UpdateCommand({
+        TableName: loanTable,
+        Key: { id: loanId },
+        UpdateExpression:
+          "REMOVE electionCheckoutUrl, electionCheckoutExpiresAt SET updatedAt = :now",
+        ConditionExpression: "electionCheckoutUrl = :claim",
+        ExpressionAttributeValues: { ":claim": claim, ":now": new Date().toISOString() },
+      })
+    );
+  } catch (err) {
+    if ((err as { name?: string }).name !== "ConditionalCheckFailedException") {
+      console.error(`[pf-election] could not release the session claim on ${loanId}`, err);
+    }
+  }
 }
 
 export const handler = async (event: {

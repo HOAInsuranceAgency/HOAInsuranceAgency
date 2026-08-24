@@ -341,7 +341,40 @@ export const handler = async (event: {
             }
           }
         }
-        console.error("[pf-admin] correction never committed; the ENABLED row stands uncorrected");
+        /**
+         * Both corrections failed. The conditional DISABLED row cannot be
+         * written truthfully — the state kept moving — but the ENABLED row
+         * above must not stand unannotated either. This row asserts NO flag
+         * state; it voids the row that preceded it, which is a fact about
+         * the log itself and true whatever the flag is doing. Unconditional
+         * and best-effort: the log table takes appends from here always.
+         */
+        try {
+          await ddb.send(
+            new PutCommand({
+              TableName: logTable,
+              Item: {
+                id: randomUUID(),
+                __typename: "PfComplianceLog",
+                createdAt: isoAfter(now),
+                updatedAt: isoAfter(now),
+                jurisdiction: "ALL",
+                rule: "module-flag",
+                outcome: "CORRECTION_FAILED",
+                reason:
+                  "The ENABLED row this actor logged did not take effect (the flip failed and its correction could not commit). That row is void; the admin screen shows the flag's actual state.",
+                inputs: JSON.stringify({ enabled: false, voidedEnable: true }),
+                configSha256: PF_CONFIG_SHA256,
+                actor,
+                actorName,
+                occurredAt: isoAfter(now),
+              },
+            })
+          );
+        } catch (annErr) {
+          console.error("[pf-admin] could not annotate the failed enable", annErr);
+        }
+        console.error("[pf-admin] correction never committed; the ENABLED row is annotated void");
         return { ok: false, error: "Couldn't enable the module. Try again." };
       }
       console.log(`pf-admin: premium finance ENABLED by ${actorName}`);

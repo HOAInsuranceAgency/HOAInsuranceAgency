@@ -121,6 +121,11 @@ describe("a concurrent disable beats an in-flight enable", () => {
     // moved the stamp). The loser VERIFIES the flag — strongly consistent —
     // sees it off, and only then writes the DISABLED correction row.
     sendMock.mockImplementation((cmd: { input: Record<string, unknown> }) => {
+      // The correction transaction commits — its condition (off, at the
+      // stamp the verify saw) holds in this scenario. Matched FIRST: a
+      // TransactWrite has no top-level UpdateExpression/Item either, and
+      // falling into the Get branch would hand the transaction an Item.
+      if (cmd.input.TransactItems) return Promise.resolve({});
       if (!cmd.input.UpdateExpression && !cmd.input.Item) {
         expect(cmd.input.ConsistentRead).toBe(true);
         return Promise.resolve({ Item: { premiumFinanceEnabledAt: "2026-08-21T15:00:00.000Z" } });
