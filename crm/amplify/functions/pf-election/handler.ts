@@ -263,31 +263,6 @@ async function handleAccept(client: DataClient, args: Record<string, unknown>) {
         "This policy has other open billing beside the premium. Your agent needs to resolve it before financing can start.",
     };
   }
-  const voided: string[] = [];
-  for (const inv of openLinked) {
-    const res = await voidInvoice({ arguments: { invoiceId: inv.id } });
-    if (!res.ok) {
-      // A link that cannot be closed leaves two open payment paths — the
-      // exact state the exclusion rule exists to prevent. Refuse.
-      console.error(`[pf-election] could not void ${inv.number ?? inv.id}: ${res.error}`);
-      return {
-        ok: true,
-        state: "closed",
-        reason: "We couldn't close the pay-in-full link. Try again in a moment.",
-      };
-    }
-    voided.push(inv.number ?? inv.id);
-    // The spec's name for this moment, in the log where an examiner reads it.
-    await logElection({
-      accountId: loan.accountId,
-      jurisdiction: loan.state,
-      rule: "exclusive-payment-path",
-      outcome: "BLOCK",
-      reason: `Pay-in-full invoice ${inv.number ?? inv.id} voided by the association's election.`,
-      inputs: { loanId: loan.id, invoiceId: inv.id },
-    });
-  }
-
   const loanTable = process.env.PF_LOAN_TABLE;
   const settingsTable = process.env.AGENCY_SETTINGS_TABLE;
   if (!loanTable || !settingsTable) throw new Error("PF_LOAN_TABLE or AGENCY_SETTINGS_TABLE unset");
@@ -352,6 +327,42 @@ async function handleAccept(client: DataClient, args: Record<string, unknown>) {
     return CLOSED;
   }
 
+  /**
+   * The voids run AFTER the guarded stamp, not before it. Voiding first
+   * left a refused election — expired clock, closed module, moved loan —
+   * with the pay-in-full links already dead: a customer with no way to pay
+   * at all. This order means a refusal costs nothing; a void failure after
+   * the stamp leaves a committed election the retry finishes (void-invoice
+   * is idempotent, the stamp is if_not_exists). A pay-in-full payment
+   * racing this window resolves through the webhook's supersession and the
+   * claim's own status condition below.
+   */
+  const voided: string[] = [];
+  for (const inv of openLinked) {
+    const res = await voidInvoice({ arguments: { invoiceId: inv.id } });
+    if (!res.ok) {
+      // A link that cannot be closed leaves two open payment paths — the
+      // exact state the exclusion rule exists to prevent. Refuse; the
+      // committed stamp waits for the retry.
+      console.error(`[pf-election] could not void ${inv.number ?? inv.id}: ${res.error}`);
+      return {
+        ok: true,
+        state: "closed",
+        reason: "We couldn't close the pay-in-full link. Try again in a moment.",
+      };
+    }
+    voided.push(inv.number ?? inv.id);
+    // The spec's name for this moment, in the log where an examiner reads it.
+    await logElection({
+      accountId: loan.accountId,
+      jurisdiction: loan.state,
+      rule: "exclusive-payment-path",
+      outcome: "BLOCK",
+      reason: `Pay-in-full invoice ${inv.number ?? inv.id} voided by the association's election.`,
+      inputs: { loanId: loan.id, invoiceId: inv.id },
+    });
+  }
+
   // One election event, one audit row — a public button must not be able to
   // write the log by holding the retry key down.
   if (firstElection) {
@@ -399,12 +410,17 @@ async function handleAccept(client: DataClient, args: Record<string, unknown>) {
 
   const sessionClaim = `claim-${randomUUID()}`;
   const claimExpiry = new Date(Date.now() + 36 * 60 * 1000).toISOString();
+  const quotedSiblings = siblings.filter((s) => s.id !== loan.id && s.status === "QUOTED");
   try {
     /**
-     * The claim carries the kill switch too, not just the stamp: the mint
-     * that follows can only follow a claim, so a disable durable at THIS
-     * write forecloses the payable session the stamp alone left mintable
-     * in the window between the two.
+     * The claim carries the kill switch AND the siblings' slots. The mint
+     * that follows can only follow a claim, so a disable durable at this
+     * write forecloses the payable session — and the sibling checks
+     * serialize sessions PER POLICY at commit time, where the read-time
+     * sibling scan above cannot: two quoted loans on one policy racing
+     * their accepts both pass their own reads, but the second claim's
+     * transaction sees the first's slot and cancels. One premium, one
+     * payable session, whichever token it rides.
      */
     await ddb.send(
       new TransactWriteCommand({
@@ -438,6 +454,15 @@ async function handleAccept(client: DataClient, args: Record<string, unknown>) {
               ExpressionAttributeValues: { ":on": true },
             },
           },
+          ...quotedSiblings.map((s) => ({
+            ConditionCheck: {
+              TableName: loanTable,
+              Key: { id: s.id },
+              ConditionExpression:
+                "attribute_not_exists(electionCheckoutUrl) OR electionCheckoutExpiresAt < :now",
+              ExpressionAttributeValues: { ":now": now },
+            },
+          })),
         ],
       })
     );
@@ -451,6 +476,18 @@ async function handleAccept(client: DataClient, args: Record<string, unknown>) {
       // The kill switch alone refused: fail closed, no polling for winners.
       console.warn(`[pf-election] kill switch closed under session claim for ${loan.id}`);
       return CLOSED;
+    }
+    if (
+      reasons?.slice(2).some((r) => r?.Code === "ConditionalCheckFailed") &&
+      reasons?.[0]?.Code !== "ConditionalCheckFailed"
+    ) {
+      // A sibling offer holds a live session for this premium.
+      return {
+        ok: true,
+        state: "closed",
+        reason:
+          "Financing for this premium is already being set up from another offer. Use the link from your latest invoice email.",
+      };
     }
     /**
      * Someone holds the slot. If it is a live session, hand it back; if it
@@ -530,6 +567,22 @@ async function handleAccept(client: DataClient, args: Record<string, unknown>) {
       state: "closed",
       reason: "We couldn't start the payment. Try again in a moment.",
     };
+  }
+  /**
+   * The mint itself cannot transact with DynamoDB, so the flag is read once
+   * more AFTER it: a disable that landed in the claim→mint window finds the
+   * session expired before its URL was ever handed out or stored. The one
+   * Stripe action that can honor the kill switch retroactively, taken.
+   */
+  if (!(await moduleEnabled(client))) {
+    console.warn(`[pf-election] kill switch closed under mint for ${loan.id}; expiring ${session.id}`);
+    try {
+      await stripe.checkout.sessions.expire(session.id);
+    } catch (err) {
+      console.error(`[pf-election] could not expire ${session.id}`, err);
+    }
+    await releaseSessionClaim(loanTable, loan.id, sessionClaim);
+    return CLOSED;
   }
   /**
    * The claim becomes the real session, conditionally on still holding it.

@@ -416,10 +416,23 @@ export const handler = async (event: {
         // Genuinely still on; the flip really did not land.
         return { ok: false, error: "Couldn't change the setting. Try again." };
       }
-      // OFF (or dark). Clamp the row past whatever stamp made it so, and
-      // fall through to the log path; the ordering bump is moot — the
-      // stored stamp is not this call's write to bump.
+      /**
+       * OFF — but whose off? The stored stamp answers: our write stamps
+       * this invocation's clock, so a matching stamp means our commit
+       * landed and its response was lost — log the transition truthfully.
+       * Any other stamp (or none) means the module was off by other means
+       * before this call could act, and a DISABLED row here would attribute
+       * a transition to an administrator who made none. Say so instead.
+       */
       const vs = check.Item?.premiumFinanceEnabledAt;
+      if (vs !== now) {
+        console.warn("[pf-admin] disable flip failed but the module was already off; no row");
+        return {
+          ok: true,
+          enabled: false,
+          warning: "The module was already off; this call changed nothing.",
+        };
+      }
       now = isoAfter(typeof vs === "string" ? vs : null);
       oldStamp = null;
     }
