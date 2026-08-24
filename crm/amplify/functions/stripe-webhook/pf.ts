@@ -11,6 +11,7 @@ import { SESv2Client, SendEmailCommand } from "@aws-sdk/client-sesv2";
 import { PF_CONFIG_SHA256 } from "../../../src/lib/premiumFinance/jurisdictions";
 import { postInstallment, type PostableLoan } from "../pfPosting";
 import type { PfEventDecision } from "./decide";
+import { readPaidContext } from "./lookups";
 
 /**
  * W7: the loan side of the webhook — the down payment that turns a QUOTED
@@ -131,6 +132,27 @@ async function mailAccounting(subject: string, lines: string[]) {
 
 const money = (n: number) =>
   n.toLocaleString("en-US", { style: "currency", currency: "USD" });
+
+/**
+ * The names accounting reconciles by. A loan UUID identifies nothing to the
+ * person dividing the trust; the association and the policy do. Fail-soft
+ * like every read that follows a money write — a missing name costs a line
+ * of detail, never a retry storm.
+ */
+async function dealNames(loan: LoanRow): Promise<{ name: string; policy: string }> {
+  try {
+    const ctx = await readPaidContext({
+      accountId: loan.accountId,
+      policyId: (loan as { policyId?: string | null }).policyId ?? null,
+    });
+    return {
+      name: ctx.associationName ?? "(unknown association)",
+      policy: ctx.policyNumber ?? "(no policy number)",
+    };
+  } catch {
+    return { name: "(unknown association)", policy: "(no policy number)" };
+  }
+}
 
 /** The down payment cleared: QUOTED → ACCEPTED, mandate stored. */
 async function applyDownPayment(d: PfEventDecision, loan: LoanRow): Promise<string> {
@@ -318,9 +340,13 @@ async function applyDownPayment(d: PfEventDecision, loan: LoanRow): Promise<stri
     console.error(`stripe-webhook: could not supersede sibling quotes for ${loan.id}`, err);
   }
   try {
+    const deal = await dealNames(loan);
     await mailAccounting(
-      `Financing down payment received — ${money(loan.downPayment)} (payment 1 of ${loan.months + 1})`,
+      `Financing down payment received — ${deal.name} — ${money(loan.downPayment)} (payment 1 of ${loan.months + 1})`,
       [
+        `Association: ${deal.name}`,
+        `Policy: ${deal.policy}`,
+        ``,
         `Character: premium (the down payment takes the amount owed to the amount financed).`,
         `Settles to the trust on the Stripe rail.`,
         ``,
@@ -546,9 +572,13 @@ async function applyInstallment(d: PfEventDecision, loan: LoanRow): Promise<stri
     inputs: { loanId: loan.id, n: result.n, paymentIntentId: d.paymentIntentId },
   });
   try {
+    const deal = await dealNames(loan);
     await mailAccounting(
-      `Financing installment received — ${money(result.amount)} (payment ${result.n + 1} of ${loan.months + 1})`,
+      `Financing installment received — ${deal.name} — ${money(result.amount)} (payment ${result.n + 1} of ${loan.months + 1})`,
       [
+        `Association: ${deal.name}`,
+        `Policy: ${deal.policy}`,
+        ``,
         `Character: loan repayment, NOT premium. Settles to the trust on the Stripe rail;`,
         `the split below is what keeps it distinct there.`,
         ``,
