@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { seededLineDescription, unbilledAgencyPolicies } from "./invoiceSeed";
+import {
+  invoiceableQuotes,
+  seededLineDescription,
+  seededQuoteLineDescription,
+  unbilledAgencyPolicies,
+} from "./invoiceSeed";
 
 /**
  * Which policies a new invoice opens with.
@@ -104,6 +109,58 @@ describe("seededLineDescription", () => {
     expect(seededLineDescription({ id: "a", policyNumber: "  ", lines: [null] })).toBe(
       "Premium"
     );
+  });
+});
+
+/**
+ * Which quotes an invoice can anchor to (W8). Same asymmetry as the policy
+ * rule above: a quote left off the picker is a click away on a refresh; a
+ * closed or unpriced quote offered for billing is a bill for coverage that
+ * may never exist.
+ */
+describe("invoiceableQuotes", () => {
+  const none = new Set<string>();
+  const isOpen = (s: string | null | undefined) => s === "PRESENTED" || s === "DRAFT";
+  const q = (id: string, over: Record<string, unknown> = {}) => ({
+    id,
+    status: "PRESENTED",
+    premium: 40000,
+    ...over,
+  });
+
+  it("takes an open, priced, unbilled quote", () => {
+    expect(invoiceableQuotes([q("a")], none, isOpen).map((x) => x.id)).toEqual(["a"]);
+  });
+
+  it("leaves out closed quotes — a bound quote's billing belongs to its policy", () => {
+    for (const status of ["BOUND", "LOST", null, undefined]) {
+      expect(invoiceableQuotes([q("a", { status })], none, isOpen), String(status)).toEqual([]);
+    }
+  });
+
+  it("leaves out an unpriced quote — there is no figure to bill", () => {
+    for (const premium of [null, undefined, 0, -1]) {
+      expect(invoiceableQuotes([q("a", { premium })], none, isOpen), String(premium)).toEqual([]);
+    }
+  });
+
+  it("leaves out one already carrying a live invoice", () => {
+    expect(
+      invoiceableQuotes([q("a"), q("b")], new Set(["a"]), isOpen).map((x) => x.id)
+    ).toEqual(["b"]);
+  });
+});
+
+describe("seededQuoteLineDescription", () => {
+  it("identifies by lines of business and says the coverage is quoted", () => {
+    expect(
+      seededQuoteLineDescription({ id: "a", lines: ["Property", "GL"] })
+    ).toBe("Property, GL — quoted coverage");
+  });
+
+  it("never returns an empty string", () => {
+    expect(seededQuoteLineDescription({ id: "a" })).toBe("Quoted coverage");
+    expect(seededQuoteLineDescription({ id: "a", lines: [null] })).toBe("Quoted coverage");
   });
 });
 

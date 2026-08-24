@@ -742,7 +742,7 @@ const schema = a
       carrierId: a.id(),
       carrier: a.belongsTo("Carrier", "carrierId"),
       status: a.ref("QuoteStatus").required(),
-      lines: a.string().array(), // e.g. ["Property", "GL", "D&O", "Umbrella"]
+      lines: a.string().array(), // e.g. ["Commercial Property", "General Liability", "D&O", "Umbrella"]
       premium: a.float(),
       // Agency commission, % of premium. NOTE: already baked into the
       // quoted premium — commission $ is informational, never additive.
@@ -766,7 +766,21 @@ const schema = a
       effectiveDate: a.date(),
       expirationDate: a.date(),
       notes: a.string(),
+      /**
+       * W8: quotes are invoiceable and financeable before bind, so the
+       * producer-of-record screen reads here too, additive nullable. Bind
+       * carries the facts onto the policy; unrecorded blocks, exactly as
+       * on a policy. MEP is recorded for underwriting parity only (screen
+       * retired 2026-08-24); isAuditable is a dead field kept for existing
+       * rows — its screen retired the same day ("everything we do is final
+       * once entered") and nothing reads or writes it.
+       */
+      producerOfRecord: a.boolean(),
+      isAuditable: a.boolean(),
+      minimumEarnedPremiumPct: a.float(),
       policy: a.hasOne("Policy", "quoteId"),
+      /** W8: pre-bind billing anchors here; see Invoice.quoteId. */
+      invoices: a.hasMany("Invoice", "quoteId"),
     })
       .authorization((allow) => [
         allow.authenticated().to(["read", "create", "update"]),
@@ -821,7 +835,11 @@ const schema = a
       producerOfRecordAt: a.datetime(),
       /** Carrier's minimum earned premium %, off the policy PDF. */
       minimumEarnedPremiumPct: a.float(),
-      /** Auditable policies block financing (collateral can shrink at audit). */
+      /**
+       * DEAD FIELD — the auditable screen retired 2026-08-24 ("everything
+       * we do is final once entered"); kept for rows that carry an answer,
+       * read and written by nothing.
+       */
       isAuditable: a.boolean(),
       lines: a.string().array(),
       premium: a.float(),
@@ -843,6 +861,14 @@ const schema = a
       replacementCostType: a.ref("ReplacementCostType"),
       effectiveDate: a.date(),
       expirationDate: a.date(),
+      /**
+       * When the bind actually happened — stamped automatically by the bind
+       * flow, never typed. Distinct from effectiveDate (when coverage
+       * starts) and from the implicit createdAt (which any backfill or
+       * migration would overwrite the meaning of). Nullable for policies
+       * bound before the field existed — same back-compat rule as billType.
+       */
+      datePolicyBound: a.datetime(),
       notes: a.string(),
       invoices: a.hasMany("Invoice", "policyId"),
       invoiceLines: a.hasMany("InvoiceLine", "policyId"),
@@ -881,6 +907,14 @@ const schema = a
       /** Optional: a policy can have several, and some bill no policy at all. */
       policyId: a.id(),
       policy: a.belongsTo("Policy", "policyId"),
+      /**
+       * W8: the pre-bind anchor — an invoice may bill a quote before any
+       * policy exists. Exactly one of policyId/quoteId is set at creation;
+       * bind adds policyId (the rollover) and quoteId stays for history.
+       * Every exclusion scan matches either anchor.
+       */
+      quoteId: a.id(),
+      quote: a.belongsTo("Quote", "quoteId"),
       /** INV-2026-00001. Reserved atomically — see reserveInvoiceNumber. */
       number: a.string(),
       status: a.ref("InvoiceStatus").required(),
@@ -1072,7 +1106,14 @@ const schema = a
     PfLoan: a
       .model({
         accountId: a.id().required(),
-        policyId: a.id().required(),
+        /**
+         * W8: optional, because a loan can originate against a QUOTE-billed
+         * invoice before any policy exists. Exactly one of policyId/quoteId
+         * anchors a live loan; BIND_ROLLOVER sets policyId when the quote
+         * binds. Every exclusion scan matches the invoice's anchor.
+         */
+        policyId: a.id(),
+        quoteId: a.id(),
         status: a.ref("PfLoanStatus").required(),
         /** Jurisdiction code at origination — frozen; moves do not re-gate. */
         state: a.string().required(),
@@ -1155,6 +1196,17 @@ const schema = a
          */
         electionCheckoutUrl: a.string(),
         electionCheckoutExpiresAt: a.datetime(),
+        /**
+         * W8: the agreement's click-wrap signature, captured on the election
+         * page BEFORE any Checkout session can exist. Name and role are what
+         * the signer typed (PM, PM's finance team, board member); the
+         * instant and IP are server-stamped in the election transaction.
+         * Distinct from the board resolution the activation gate demands.
+         */
+        agreementSignedAt: a.datetime(),
+        agreementSignedName: a.string(),
+        agreementSignedRole: a.string(),
+        agreementSignedIp: a.string(),
       })
       .secondaryIndexes((index) => [
         index("accountId").sortKeys(["quotedAt"]),
@@ -1255,18 +1307,21 @@ const schema = a
       ]),
 
     /**
-     * An admin's written reason for waiving one eligibility check on one
-     * policy. MEP and auditable only — the personal-lines screen has no
-     * override and never will.
-     *
-     * ADMIN-only create, nobody updates or deletes: an override is a record,
-     * not a setting. The evaluator honors it only when a reason is present,
-     * and the origination log carries the reason into the decision row.
+     * HISTORICAL — an admin's written reason for waiving one eligibility
+     * check on one anchor. Both overridable screens (MEP, then auditable)
+     * retired 2026-08-24, so nothing consults or creates these rows any
+     * more; the model stays because an override once relied on is an audit
+     * record, and audit records do not get deleted.
      */
     PfOverride: a
       .model({
+        /**
+         * The ANCHOR the override attaches to — a policy id, or since W8 a
+         * quote id for pre-bind billing. The name predates quote anchoring
+         * and stays for the existing rows' sake.
+         */
         policyId: a.id().required(),
-        /** MEP | AUDITABLE */
+        /** MEP | AUDITABLE — both historical. */
         check: a.string().required(),
         reason: a.string().required(),
         actor: a.string(),
@@ -1275,8 +1330,11 @@ const schema = a
       })
       .secondaryIndexes((index) => [index("policyId")])
       .authorization((allow) => [
+        // Read-only for everyone since the screens retired: a new override
+        // row would waive nothing, and a write path to nowhere invites
+        // someone to believe it did.
         allow.authenticated().to(["read"]),
-        allow.groups(["ADMIN"]).to(["read", "create"]),
+        allow.groups(["ADMIN"]).to(["read"]),
       ]),
 
     // ── Carriers & appointments ────────────────────────────────────────
@@ -1919,6 +1977,13 @@ const schema = a
         token: a.string().required(),
         /** The dispatch discriminator — see lead-upload/dispatch.ts. */
         accept: a.boolean().required(),
+        /**
+         * W8: the agreement's execution — a typed name and role, required
+         * by the handler before any Checkout Session exists. Optional here
+         * only because a revived link (failed debit) is already signed.
+         */
+        signerName: a.string(),
+        signerRole: a.string(),
       })
       .returns(a.json())
       .authorization((allow) => [allow.publicApiKey()])
@@ -2087,6 +2152,8 @@ const schema = a
         certMailedAt: a.string(),
         certNumber: a.string(),
         cancellationEffectiveAt: a.string(),
+        /** W8 BIND_ROLLOVER: the policy the quote just became. */
+        policyId: a.string(),
       })
       .returns(a.json())
       .authorization((allow) => [allow.authenticated()])

@@ -188,22 +188,33 @@ async function alertPaymentOnVoid(invoice: InvoiceRow, paymentIntentId: string) 
 async function cancelQuotedLoans(invoice: InvoiceRow) {
   const loanTable = process.env.PF_LOAN_TABLE;
   const logTable = process.env.PF_COMPLIANCE_LOG_TABLE;
-  if (!loanTable || !invoice.policyId) return;
+  if (!loanTable || (!invoice.policyId && !invoice.quoteId)) return;
   const now = new Date().toISOString();
+  // W8: the invoice's anchor may be a policy, a quote, or (after a bind
+  // rollover) both — loans on either id are this premium's financing.
+  const legs: string[] = [];
+  const values: Record<string, unknown> = {
+    ":q": "QUOTED",
+    ":acc": "ACCEPTED",
+    ":act": "ACTIVE",
+    ":def": "DEFAULTED",
+  };
+  if (invoice.policyId) {
+    legs.push("policyId = :p");
+    values[":p"] = invoice.policyId;
+  }
+  if (invoice.quoteId) {
+    legs.push("quoteId = :qa");
+    values[":qa"] = invoice.quoteId;
+  }
   const { Items } = await ddb.send(
     new ScanCommand({
       TableName: loanTable,
-      // Every loan on the policy: QUOTED to cancel, and anything money has
+      // Every loan on the anchor: QUOTED to cancel, and anything money has
       // touched to alarm about — see below.
-      FilterExpression: "policyId = :p AND #s IN (:q, :acc, :act, :def)",
+      FilterExpression: `(${legs.join(" OR ")}) AND #s IN (:q, :acc, :act, :def)`,
       ExpressionAttributeNames: { "#s": "status" },
-      ExpressionAttributeValues: {
-        ":p": invoice.policyId,
-        ":q": "QUOTED",
-        ":acc": "ACCEPTED",
-        ":act": "ACTIVE",
-        ":def": "DEFAULTED",
-      },
+      ExpressionAttributeValues: values,
     })
   );
   for (const loan of Items ?? []) {
@@ -212,8 +223,11 @@ async function cancelQuotedLoans(invoice: InvoiceRow) {
      * both payment paths collecting at once. The spec's rule: never
      * auto-cancel it — money moved — but never be quiet about it either.
      * Same alarm channel as a payment on a VOID invoice, same reader.
+     * "Money touched" includes a QUOTED loan whose down payment is still
+     * clearing: the status flips only at settlement, and cancelling under
+     * the clearing debit lands the customer's money on a CANCELLED loan.
      */
-    if (loan.status !== "QUOTED") {
+    if (loan.status !== "QUOTED" || loan.downPaymentIntentId) {
       console.error(
         `stripe-webhook: invoice ${invoice.number ?? invoice.id} PAID beside ${loan.status} loan ${loan.id} — both payment paths collected`
       );
@@ -257,7 +271,9 @@ async function cancelQuotedLoans(invoice: InvoiceRow) {
           TableName: loanTable,
           Key: { id: loan.id },
           UpdateExpression: "SET #s = :c, closedAt = :now, updatedAt = :now",
-          ConditionExpression: "#s = :q",
+          // The read-time money-touched check above races this webhook's own
+          // down-payment stamp on another delivery; the condition is the law.
+          ConditionExpression: "#s = :q AND attribute_not_exists(downPaymentIntentId)",
           ExpressionAttributeNames: { "#s": "status" },
           ExpressionAttributeValues: { ":c": "CANCELLED", ":q": "QUOTED", ":now": now },
         })

@@ -70,3 +70,42 @@ export function seededLineDescription(policy: PolicyLike): string {
   if (number && lines) return `${number} — ${lines}`;
   return number || lines || "Premium";
 }
+
+/** The fields the W8 anchor rules read off a Quote. */
+export interface QuoteLike {
+  id: string;
+  status?: string | null;
+  premium?: number | null;
+  lines?: (string | null)[] | null;
+  effectiveDate?: string | null;
+}
+
+/**
+ * The quotes an invoice can anchor to (W8): open — a bound quote's billing
+ * belongs to its policy, a lost one bills nobody — priced, and not already
+ * carrying a live invoice. `isOpen` is injected rather than imported so this
+ * module stays dependency-free like the policy rule above it.
+ */
+export function invoiceableQuotes<T extends QuoteLike>(
+  quotes: readonly T[],
+  billedAnchorIds: ReadonlySet<string>,
+  isOpen: (status: string | null | undefined) => boolean
+): T[] {
+  return quotes.filter(
+    (q) =>
+      isOpen(q.status) &&
+      typeof q.premium === "number" &&
+      q.premium > 0 &&
+      !billedAnchorIds.has(q.id)
+  );
+}
+
+/**
+ * A quote's seeded line: no policy number exists yet, so the lines of
+ * business carry the identification, marked as quoted so the treasurer
+ * reading the bill knows the paper is still being placed.
+ */
+export function seededQuoteLineDescription(quote: QuoteLike): string {
+  const lines = (quote.lines ?? []).filter(Boolean).join(", ");
+  return lines ? `${lines} — quoted coverage` : "Quoted coverage";
+}

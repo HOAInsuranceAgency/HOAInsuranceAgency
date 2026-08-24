@@ -13,8 +13,8 @@ const TERMS_QUERY = `query FinanceElectionTerms($token: String!) {
   financeElectionTerms(token: $token)
 }`;
 
-const ACCEPT_MUTATION = `mutation AcceptFinanceElection($token: String!, $accept: Boolean!) {
-  acceptFinanceElection(token: $token, accept: $accept)
+const ACCEPT_MUTATION = `mutation AcceptFinanceElection($token: String!, $accept: Boolean!, $signerName: String, $signerRole: String) {
+  acceptFinanceElection(token: $token, accept: $accept, signerName: $signerName, signerRole: $signerRole)
 }`;
 
 /**
@@ -72,6 +72,11 @@ export interface ElectionTerms {
   totalInterest: number;
   originationFee: number;
   effectiveDate: string | null;
+  /** The agreement paragraphs the customer signs — served, never copied. */
+  agreementTerms: string[];
+  /** Set when a revived link is already signed; the page then skips the ask. */
+  agreementSignedName: string | null;
+  agreementSignedRole: string | null;
 }
 
 export async function fetchElectionTerms(token: string): Promise<ElectionTerms> {
@@ -89,6 +94,13 @@ export async function fetchElectionTerms(token: string): Promise<ElectionTerms> 
     totalInterest: Number(r.totalInterest ?? 0),
     originationFee: Number(r.originationFee ?? 0),
     effectiveDate: typeof r.effectiveDate === "string" ? r.effectiveDate : null,
+    agreementTerms: Array.isArray(r.agreementTerms)
+      ? r.agreementTerms.filter((p): p is string => typeof p === "string")
+      : [],
+    agreementSignedName:
+      typeof r.agreementSignedName === "string" ? r.agreementSignedName : null,
+    agreementSignedRole:
+      typeof r.agreementSignedRole === "string" ? r.agreementSignedRole : null,
   };
 }
 
@@ -98,9 +110,19 @@ export async function fetchElectionTerms(token: string): Promise<ElectionTerms> 
  * loan whose money already moved; `closed` explains itself in `reason`.
  */
 export async function acceptElection(
-  token: string
+  token: string,
+  signer?: { name: string; role: string }
 ): Promise<{ state: string; url: string | null; reason: string | null }> {
-  const r = await call(ACCEPT_MUTATION, { token, accept: true }, "acceptFinanceElection");
+  const r = await call(
+    ACCEPT_MUTATION,
+    {
+      token,
+      accept: true,
+      signerName: signer?.name ?? null,
+      signerRole: signer?.role ?? null,
+    },
+    "acceptFinanceElection"
+  );
   return {
     state: String(r.state ?? "closed"),
     url: typeof r.url === "string" ? r.url : null,

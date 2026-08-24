@@ -138,6 +138,7 @@ export const handler = async (event: {
     certMailedAt?: string;
     certNumber?: string;
     cancellationEffectiveAt?: string;
+    policyId?: string;
   };
   identity?: { sub?: string; username?: string; claims?: Record<string, unknown> };
 }): Promise<unknown> => {
@@ -173,6 +174,20 @@ export const handler = async (event: {
       case "ACTIVATE": {
         if (loan.status !== "QUOTED" && loan.status !== "ACCEPTED") {
           return { ok: false, error: `A ${loan.status.toLowerCase()} loan cannot be activated.` };
+        }
+        /**
+         * W8: no activation without a policy. A quote-anchored loan can be
+         * elected and its down payment collected, but turning the mandate
+         * on lends against unearned premium — collateral that exists only
+         * once coverage is placed. Bind rolls the loan onto the policy;
+         * activation follows.
+         */
+        if (!loan.policyId) {
+          return {
+            ok: false,
+            error:
+              "This loan is anchored to a quote. Bind the quote first — the loan rolls to the policy at bind, and activation follows with the executed resolution.",
+          };
         }
         /**
          * The kill switch reaches activation. Activation is the last
@@ -284,9 +299,18 @@ export const handler = async (event: {
          * the path that already knows how. PROCESSING refuses outright,
          * because money in flight means they already chose.
          */
+        // W8: the loan's anchor may be a quote (pre-bind), a policy, or —
+        // after a bind rollover — both ids; invoices on either are this
+        // premium's billing.
+        const anchorLegs: Record<string, unknown>[] = [];
+        if (loan.policyId) anchorLegs.push({ policyId: { eq: loan.policyId } });
+        if (loan.quoteId) anchorLegs.push({ quoteId: { eq: loan.quoteId } });
+        if (!anchorLegs.length) {
+          return { ok: false, error: "This loan has no policy or quote anchor — it cannot be activated." };
+        }
         const policyInvoices = await listAllPages((nextToken) =>
           client.models.Invoice.list({
-            filter: { policyId: { eq: loan.policyId } },
+            filter: anchorLegs.length === 1 ? anchorLegs[0] : { or: anchorLegs },
             limit: 200,
             nextToken,
           })
@@ -340,8 +364,14 @@ export const handler = async (event: {
           };
         }
 
-        const { data: policy } = await client.models.Policy.get({ id: loan.policyId });
-        const termStart = policy?.effectiveDate ?? loan.effectiveDate;
+        const policyRes = await client.models.Policy.get({ id: loan.policyId });
+        if (policyRes.errors?.length) {
+          // A failed read is not a missing policy: falling back to the
+          // loan's frozen date here would quietly weaken the staleness gate.
+          console.error(`[pf-servicing] policy read failed for ${loan.policyId}`, policyRes.errors[0].message);
+          return { ok: false, error: "Couldn't read the policy. Try again." };
+        }
+        const termStart = policyRes.data?.effectiveDate ?? loan.effectiveDate;
         const stale = executed < termStart;
         await logRow({
           accountId: loan.accountId,
@@ -368,6 +398,79 @@ export const handler = async (event: {
           boardResolutionDocumentId: documentId,
         });
         if (!won) return { ok: false, error: "The loan changed underneath this activation. Look at it and try again." };
+        return { ok: true };
+      }
+
+      /**
+       * W8: a quote became a policy — the loan follows it. Clients cannot
+       * write loans, so the bind flow calls this; the write is conditional
+       * on the loan still anchoring the quote the policy descends from, and
+       * the policy's own quoteId is checked so a wrong policy id cannot
+       * re-anchor someone else's loan. quoteId stays on the loan (history,
+       * and every anchor scan matches either id). Terminal loans do not
+       * roll: a cancelled or paid loan's record keeps the anchor it closed
+       * under.
+       */
+      case "BIND_ROLLOVER": {
+        const newPolicyId = a.policyId?.trim();
+        if (!newPolicyId) return { ok: false, error: "The bound policy's id is required." };
+        if (!loan.quoteId) {
+          return { ok: false, error: "This loan is not anchored to a quote — nothing to roll." };
+        }
+        if (loan.policyId === newPolicyId) return { ok: true, note: "Already rolled." };
+        if (loan.status === "PAID" || loan.status === "CANCELLED") {
+          return { ok: false, error: `A ${loan.status.toLowerCase()} loan does not roll — its record keeps the anchor it closed under.` };
+        }
+        const { data: boundPolicy } = await client.models.Policy.get({ id: newPolicyId });
+        if (!boundPolicy) return { ok: false, error: "That policy no longer exists." };
+        if (boundPolicy.quoteId !== loan.quoteId) {
+          return {
+            ok: false,
+            error: "That policy was not bound from this loan's quote. The loan stays where it is.",
+          };
+        }
+        const rollLoanTable = process.env.PF_LOAN_TABLE;
+        if (!rollLoanTable) throw new Error("PF_LOAN_TABLE unset");
+        try {
+          await ddb.send(
+            new UpdateCommand({
+              TableName: rollLoanTable,
+              Key: { id: loan.id },
+              UpdateExpression: "SET policyId = :p, updatedAt = :now",
+              ConditionExpression:
+                "quoteId = :q AND attribute_not_exists(policyId) AND #s IN (:live1, :live2, :live3, :live4)",
+              ExpressionAttributeNames: { "#s": "status" },
+              ExpressionAttributeValues: {
+                ":p": newPolicyId,
+                ":q": loan.quoteId,
+                ":now": now,
+                ":live1": "QUOTED",
+                ":live2": "ACCEPTED",
+                ":live3": "ACTIVE",
+                ":live4": "DEFAULTED",
+              },
+            })
+          );
+        } catch (err) {
+          if ((err as { name?: string }).name === "ConditionalCheckFailedException") {
+            // A concurrent roll may have landed the same answer; re-read
+            // before calling it a conflict.
+            const { data: fresh } = await client.models.PfLoan.get({ id: loan.id });
+            if (fresh?.policyId === newPolicyId) return { ok: true, note: "Already rolled." };
+            return { ok: false, error: "The loan changed underneath this rollover. Look at it and try again." };
+          }
+          throw err;
+        }
+        await logRow({
+          accountId: loan.accountId,
+          jurisdiction: loan.state,
+          rule: "bind-rollover",
+          outcome: "PASS",
+          reason: `Loan rolled from quote ${loan.quoteId} to policy ${newPolicyId} at bind.`,
+          inputs: { loanId: loan.id, quoteId: loan.quoteId, policyId: newPolicyId },
+          actor,
+          actorName,
+        });
         return { ok: true };
       }
 

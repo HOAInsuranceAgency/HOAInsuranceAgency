@@ -60,6 +60,8 @@ export function FinanceElection() {
   const [terms, setTerms] = useState<ElectionTerms | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [signerName, setSignerName] = useState("");
+  const [signerRole, setSignerRole] = useState("");
 
   useEffect(() => {
     if (!token) {
@@ -76,7 +78,10 @@ export function FinanceElection() {
     setBusy(true);
     setError(null);
     try {
-      const r = await acceptElection(token);
+      const signed = terms?.agreementSignedName
+        ? undefined // A revived link keeps its first signature.
+        : { name: signerName.trim(), role: signerRole.trim() };
+      const r = await acceptElection(token, signed);
       if (r.state === "checkout" && r.url) {
         window.location.assign(r.url);
         return; // Leaving the page; keep the button held down.
@@ -110,6 +115,9 @@ export function FinanceElection() {
   }
 
   const totalPayments = terms.months + 1;
+  const alreadySigned = !!terms.agreementSignedName;
+  const signatureReady =
+    alreadySigned || (signerName.trim().length >= 2 && signerRole.trim().length >= 2);
 
   if (done || terms.state === "done") {
     return (
@@ -179,9 +187,60 @@ export function FinanceElection() {
         other charge exists. Accepting closes the pay-in-full link on your
         invoice.
       </p>
+
+      <h2 className="fe-h2">The financing agreement</h2>
+      {terms.agreementTerms.length > 0 && (
+        <div className="fe-agreement">
+          {terms.agreementTerms.map((p, i) => (
+            <p key={i}>{p}</p>
+          ))}
+        </div>
+      )}
+      {alreadySigned ? (
+        <p className="fe-fine">
+          Signed by <strong>{terms.agreementSignedName}</strong>
+          {terms.agreementSignedRole ? ` (${terms.agreementSignedRole})` : ""}.
+        </p>
+      ) : (
+        <div className="fe-sign">
+          <label>
+            Your full name
+            <input
+              type="text"
+              value={signerName}
+              autoComplete="name"
+              maxLength={120}
+              onChange={(e) => setSignerName(e.target.value)}
+            />
+          </label>
+          <label>
+            Your role
+            <input
+              type="text"
+              value={signerRole}
+              placeholder="Board President, Property Manager, …"
+              maxLength={80}
+              onChange={(e) => setSignerRole(e.target.value)}
+            />
+          </label>
+          <p className="fe-fine">
+            Typing your name and role and continuing signs the agreement above
+            electronically — same effect as ink. We record the signature with
+            the date, time, and network address it came from.
+          </p>
+        </div>
+      )}
+
       {error && <p className="fe--error">{error}</p>}
-      <button type="button" className="fe-accept" disabled={busy} onClick={() => void accept()}>
-        {busy ? "Starting your payment…" : `Accept and pay ${money(terms.downPayment)} down`}
+      <button
+        type="button"
+        className="fe-accept"
+        disabled={busy || !signatureReady}
+        onClick={() => void accept()}
+      >
+        {busy
+          ? "Starting your payment…"
+          : `Sign, accept, and pay ${money(terms.downPayment)} down`}
       </button>
       <p className="fe-fine">
         You'll finish the down payment on Stripe, our payment processor, and

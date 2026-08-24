@@ -534,6 +534,19 @@ backend.data.resources.tables.PfLoan.grantReadWriteData(
   backend.sendInvoice.resources.lambda
 );
 backend.sendInvoice.addEnvironment("SITE_URL", siteBaseUrl);
+/**
+ * W8: origination happens at send, through the shared core — so the send
+ * writes decision rows and its loan create transacts with the kill switch.
+ */
+backend.sendInvoice.addEnvironment("PF_COMPLIANCE_LOG_TABLE", pfLogTable.tableName);
+pfLogTable.grantWriteData(backend.sendInvoice.resources.lambda);
+backend.sendInvoice.addEnvironment(
+  "AGENCY_SETTINGS_TABLE",
+  backend.data.resources.tables.AgencySettings.tableName
+);
+backend.data.resources.tables.AgencySettings.grantReadData(
+  backend.sendInvoice.resources.lambda
+);
 
 /**
  * Reporting the split to corporate finance, when Stripe confirms a payment.

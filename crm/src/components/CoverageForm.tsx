@@ -56,9 +56,12 @@ export default function CoverageForm({
     carrierId: existing?.carrierId ?? "",
     policyNumber: asPolicy?.policyNumber ?? "",
     billType: asPolicy?.billType ?? "",
-    producerOfRecord: asPolicy?.producerOfRecord ?? null,
-    mepPct: str(asPolicy?.minimumEarnedPremiumPct),
-    isAuditable: asPolicy?.isAuditable ?? null,
+    // W8: quotes carry the financing-eligibility facts too — pre-bind
+    // billing reads them there, and bind carries them onto the policy.
+    // (Auditable retired 2026-08-24 — "everything we do is final once
+    // entered" — so the form no longer asks or writes it.)
+    producerOfRecord: existing?.producerOfRecord ?? null,
+    mepPct: str(existing?.minimumEarnedPremiumPct),
     status: (existing?.status ?? (isPolicy ? "ACTIVE" : "DRAFT")) as string,
     lines: (existing?.lines ?? []).filter((l): l is string => !!l),
     premium: str(existing?.premium),
@@ -161,7 +164,6 @@ export default function CoverageForm({
            * true, by whoever ticked it.
            */
           minimumEarnedPremiumPct: form.mepPct.trim() === "" ? null : Number(form.mepPct),
-          isAuditable: form.isAuditable,
           producerOfRecord: form.producerOfRecord,
           ...(form.producerOfRecord === true && asPolicy?.producerOfRecord !== true
             ? {
@@ -176,6 +178,10 @@ export default function CoverageForm({
           id: existing.id,
           ...shared,
           status: form.status as Quote["status"],
+          // Same tri-state discipline as the policy branch: null means
+          // "nobody has answered", and financing blocks on it.
+          minimumEarnedPremiumPct: form.mepPct.trim() === "" ? null : Number(form.mepPct),
+          producerOfRecord: form.producerOfRecord,
         });
         if (errors?.length) throw new Error(errors[0].message);
       } else {
@@ -183,6 +189,8 @@ export default function CoverageForm({
           accountId,
           ...shared,
           status: form.status as Quote["status"],
+          minimumEarnedPremiumPct: form.mepPct.trim() === "" ? null : Number(form.mepPct),
+          producerOfRecord: form.producerOfRecord,
         });
         if (errors?.length) throw new Error(errors[0].message);
       }
@@ -228,32 +236,17 @@ export default function CoverageForm({
             />
           </div>
         )}
-        {isPolicy && (
+        {/* The financing-eligibility facts, on quotes and policies alike:
+            W8 bills — and offers financing on — a quote before bind, so the
+            screens must be answerable where the offer is made. */}
+        {(
           <>
             <div className="field">
-              <label>Minimum earned premium % (from the policy)</label>
+              <label>Minimum earned premium % (from the {isPolicy ? "policy" : "quote"})</label>
               <PercentInput
                 value={form.mepPct}
                 onChange={(v) => setF("mepPct", v)}
               />
-            </div>
-            <div className="field">
-              <label>Auditable policy</label>
-              {/* Three states, honestly: unanswered blocks financing, and an
-                  edit form must not answer it by existing. */}
-              <select
-                value={form.isAuditable === null ? "" : form.isAuditable ? "yes" : "no"}
-                onChange={(e) =>
-                  setF(
-                    "isAuditable",
-                    e.target.value === "" ? null : e.target.value === "yes"
-                  )
-                }
-              >
-                <option value="">Not recorded</option>
-                <option value="no">No</option>
-                <option value="yes">Yes</option>
-              </select>
             </div>
             <div className="field">
               <label>Producer of record</label>

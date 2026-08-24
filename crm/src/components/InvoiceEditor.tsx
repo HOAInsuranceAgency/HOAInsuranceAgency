@@ -1,11 +1,15 @@
 import { useCallback, useState } from "react";
+import { usePremiumFinance } from "../lib/premiumFinance/PfContext";
 import {
   client,
+  type Account,
   type Contact,
   type Invoice,
   type InvoiceLine,
   type Policy,
+  type Quote,
 } from "../lib/client";
+import { FinanceOfferHint } from "./FinanceOfferHint";
 import { listAllPages } from "../lib/pagination";
 import { useAsyncResource } from "../lib/useAsyncResource";
 import { SaveStatus, useSaveStatus } from "./SaveStatus";
@@ -78,6 +82,8 @@ function policyLabel(p: Policy): string {
 export function InvoiceEditor({
   invoice,
   policies,
+  quotes,
+  account,
   contacts,
   onChange,
   onLinesChange,
@@ -86,6 +92,10 @@ export function InvoiceEditor({
   invoice: Invoice;
   /** The account's policies, so the invoice can say which one it bills. */
   policies: Policy[];
+  /** The account's quotes — a W8 invoice may bill one before bind. */
+  quotes: Quote[];
+  /** The account row: the financing hint reads its state and incorporation. */
+  account: Account | null;
   /** The account's contacts — who the invoice can be addressed to. */
   contacts: Contact[];
   onChange: (next: Invoice) => void;
@@ -129,11 +139,26 @@ export function InvoiceEditor({
   const totals = invoiceTotals(lines);
   const warnings = marginWarnings(lines);
   const locked = invoice.status === "VOID";
-  const policy = policies.find((p) => p.id === invoice.policyId) ?? null;
   /**
-   * Rendered at the policy picker rather than with the margin warnings above.
-   * Those are about how the invoice is priced; this is about whether it should
-   * exist, and the control that decides it is the picker.
+   * W8: the anchor was chosen at creation and does not change here — the
+   * one-live-per-anchor rule is enforced against it, and re-pointing a bill
+   * mid-flight is how two invoices end up on one premium. Legacy invoices
+   * with only line-level policy ids resolve through their single line.
+   */
+  const linePolicyIds = [
+    ...new Set(lines.map((l) => l.policyId).filter((id): id is string => !!id)),
+  ];
+  const anchorPolicyId =
+    invoice.policyId ?? (linePolicyIds.length === 1 ? linePolicyIds[0] : null);
+  const policy = policies.find((p) => p.id === anchorPolicyId) ?? null;
+  const quote = !policy
+    ? (quotes.find((q) => q.id === invoice.quoteId) ?? null)
+    : null;
+  const pf = usePremiumFinance();
+  /**
+   * Rendered at the anchor statement rather than with the margin warnings
+   * above. Those are about how the invoice is priced; this is about whether
+   * it should exist.
    */
   const billWarning = directBillWarning(policy?.billType, lines);
 
@@ -472,8 +497,8 @@ export function InvoiceEditor({
             {lines.length === 0 && (
               <tr>
                 <td colSpan={6} className="muted small">
-                  No lines yet. A new invoice normally opens with one per
-                  unbilled policy; add one by hand with the button below.
+                  No lines yet. A new invoice opens with its anchor's premium
+                  line; add one by hand with the button below.
                 </td>
               </tr>
             )}
@@ -533,22 +558,17 @@ export function InvoiceEditor({
         {/* Its own row. The warning below it is the loudest thing on this
             card and reads as four cramped lines in a third-width column. */}
         <div className="field full policy-field">
-          <label htmlFor={inputId("policy")}>Bills which policy</label>
-          <select
-            id={inputId("policy")}
-            value={invoice.policyId ?? ""}
-            disabled={locked}
-            onChange={(e) => void patchInvoice({ policyId: e.target.value || null })}
-          >
-            {/* An invoice does not have to bill a policy — a broker fee or a
-                cancellation adjustment bills none. */}
-            <option value="">None — bills the account</option>
-            {policies.map((p) => (
-              <option key={p.id} value={p.id}>
-                {policyLabel(p)}
-              </option>
-            ))}
-          </select>
+          <label>Bills</label>
+          {/* W8: fixed at creation. Wrong anchor? Delete the draft and make
+              a new one — re-pointing a bill is how two invoices land on one
+              premium. */}
+          <p style={{ margin: "4px 0 0" }}>
+            {policy
+              ? policyLabel(policy)
+              : quote
+                ? `Quote — ${(quote.lines ?? []).filter(Boolean).join(", ") || "coverage"}${quote.effectiveDate ? ` (${quote.effectiveDate})` : ""}`
+                : "Nothing — this invoice predates anchored billing, and its lines bill more than one policy. Remove lines until one policy's remain (the invoice then bills that policy), or void this and bill each policy on its own invoice."}
+          </p>
           {/* Three states, deliberately. The warning is the loud one and only
               fires when premium is actually billed; the quiet notes state the
               arrangement so it is known *before* a line is added rather than
@@ -562,6 +582,11 @@ export function InvoiceEditor({
             </p>
           ) : policy?.billType === "AGENCY" ? (
             <p className="muted small">Agency bill — we collect and remit.</p>
+          ) : quote ? (
+            <p className="muted small">
+              Bills a quote — binding rolls this invoice (and any financing)
+              onto the new policy.
+            </p>
           ) : null}
         </div>
         <div className="field">
@@ -647,6 +672,27 @@ export function InvoiceEditor({
             without opening the CRM. A branded PDF is attached automatically,
             and a Stripe bank-transfer link is generated when it sends.
           </p>
+          {pf.enabled && account && (policy || quote) && (
+            <FinanceOfferHint
+              account={account}
+              anchor={
+                policy
+                  ? {
+                      kind: "policy",
+                      id: policy.id,
+                      lines: policy.lines ?? [],
+                      producerOfRecord: policy.producerOfRecord,
+                    }
+                  : {
+                      kind: "quote",
+                      id: quote!.id,
+                      lines: quote!.lines ?? [],
+                      producerOfRecord: quote!.producerOfRecord,
+                    }
+              }
+              retailTotal={totals.retail}
+            />
+          )}
 
           <div className="inline-actions">
             <button

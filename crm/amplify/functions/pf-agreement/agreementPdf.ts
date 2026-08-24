@@ -20,18 +20,15 @@ const INK = rgb(0.1, 0.1, 0.1);
 const MUTED = rgb(0.42, 0.45, 0.5);
 const RULE = rgb(0.85, 0.87, 0.9);
 
-/** Verbatim and prominent — the sentence the whole conflict disclosure is. */
-export const OWNERSHIP_DISCLOSURE =
-  "The lender under this agreement is HOA Insurance Agency LLC, the same company that placed your insurance. We earn interest on this loan in addition to commission on the policy. You are free to finance elsewhere or pay the premium in full.";
-
-export const POWER_OF_ATTORNEY =
-  "POWER OF ATTORNEY. The Borrower irrevocably appoints the Lender its attorney-in-fact, effective only upon default under this agreement, to cancel the insurance policy identified above, to request and receive from the insurer all unearned premium and unearned dividends, and to apply the amounts received against the Borrower's outstanding balance. Any surplus after payoff will be returned to the Borrower.";
-
-export const PREPAYMENT_TERMS =
-  "PREPAYMENT. The Borrower may prepay the outstanding balance in full at any time. On prepayment the Borrower owes only the outstanding principal balance; the refund of unearned finance charge is computed by the actuarial method, and the origination fee is refunded in full. No penalty, minimum charge, or additional fee applies to prepayment.";
-
-export const CANCELLATION_PROCEDURE =
-  "CANCELLATION ON DEFAULT. If an installment is not paid when due, the Lender will mail the Borrower written notice of intent to cancel, with a United States Postal Service certificate of mailing, at least 15 days before any cancellation request is made. If the default is not cured within that period, the Lender may request cancellation of the policy from the insurer and will send the Borrower notice of the cancellation request at the same time. Unearned premium returned by the insurer, expected within 30 days of the cancellation effective date, is applied to the Borrower's balance under the power of attorney above.";
+// The legal text itself lives in agreementTerms.ts (dependency-free), because
+// the election page serves the same paragraphs without wanting pdf-lib.
+import {
+  OWNERSHIP_DISCLOSURE,
+  POWER_OF_ATTORNEY,
+  PREPAYMENT_TERMS,
+  CANCELLATION_PROCEDURE,
+} from "./agreementTerms";
+export { OWNERSHIP_DISCLOSURE, POWER_OF_ATTORNEY, PREPAYMENT_TERMS, CANCELLATION_PROCEDURE };
 
 export interface AgreementView {
   loanId: string;
@@ -51,6 +48,15 @@ export interface AgreementView {
   originationFee: number;
   effectiveDate: string;
   schedule: ScheduleRow[];
+  /**
+   * W8: the click-wrap signature captured on the election page, printed in
+   * the borrower's signature block when present. Absent on a PDF generated
+   * before the customer signs (the copy attached to the offer email).
+   */
+  signedName?: string | null;
+  signedRole?: string | null;
+  signedAt?: string | null;
+  signedIp?: string | null;
 }
 
 interface Fonts {
@@ -243,13 +249,37 @@ export async function renderAgreementPdf(v: AgreementView): Promise<Uint8Array> 
     y = M.top;
   }
   y -= 12;
-  for (const [who, title] of [
-    [v.associationName, "Authorized signatory, per board resolution"],
-    [AGENCY.name, "Authorized Representative"],
-  ] as const) {
+  // The borrower's line: the recorded electronic signature when the customer
+  // has signed on the election page, a wet-ink line only before that.
+  if (v.signedName) {
+    const signedDay = (v.signedAt ?? "").slice(0, 10) || "(date on file)";
+    page.drawText(`/s/ ${v.signedName}`, { x: M.left, y, size: 11, font: fonts.bold, color: INK });
+    page.drawText(signedDay, { x: M.left + 260, y, size: 10, font: fonts.regular, color: INK });
+    page.drawText(
+      `${v.associationName} — ${v.signedRole ?? "Authorized signatory"}, per board resolution`,
+      { x: M.left, y: y - 12, size: 8, font: fonts.regular, color: MUTED }
+    );
+    page.drawText(
+      // The IP is shape-validated at capture; the slice is the belt for any
+      // row written before that, so nothing can run off the page edge.
+      `Signed electronically ${v.signedAt ?? ""}${v.signedIp ? ` from ${v.signedIp.slice(0, 45)}` : ""}`.trim(),
+      { x: M.left, y: y - 22, size: 7.5, font: fonts.regular, color: MUTED }
+    );
+    y -= 54;
+  } else {
     page.drawLine({ start: { x: M.left, y }, end: { x: M.left + 220, y }, thickness: 0.75, color: INK });
     page.drawLine({ start: { x: M.left + 260, y }, end: { x: M.left + 360, y }, thickness: 0.75, color: INK });
-    page.drawText(`${who} — ${title}`, { x: M.left, y: y - 12, size: 8, font: fonts.regular, color: MUTED });
+    page.drawText(`${v.associationName} — Authorized signatory, per board resolution`, {
+      x: M.left, y: y - 12, size: 8, font: fonts.regular, color: MUTED,
+    });
+    page.drawText("Date", { x: M.left + 260, y: y - 12, size: 8, font: fonts.regular, color: MUTED });
+    y -= 44;
+  }
+  {
+    const who = AGENCY.name;
+    page.drawLine({ start: { x: M.left, y }, end: { x: M.left + 220, y }, thickness: 0.75, color: INK });
+    page.drawLine({ start: { x: M.left + 260, y }, end: { x: M.left + 360, y }, thickness: 0.75, color: INK });
+    page.drawText(`${who} — Authorized Representative`, { x: M.left, y: y - 12, size: 8, font: fonts.regular, color: MUTED });
     page.drawText("Date", { x: M.left + 260, y: y - 12, size: 8, font: fonts.regular, color: MUTED });
     y -= 44;
   }

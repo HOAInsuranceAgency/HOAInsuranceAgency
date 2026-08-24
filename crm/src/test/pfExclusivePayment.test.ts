@@ -21,9 +21,15 @@ const read = (rel: string) => readFileSync(resolve(process.cwd(), rel), "utf8");
 describe("full payment supersedes quoted loans", () => {
   const WEBHOOK = read("amplify/functions/stripe-webhook/handler.ts");
 
-  it("cancels QUOTED loans only, and only conditionally", () => {
+  it("cancels QUOTED loans only, and only conditionally — never under a clearing down payment", () => {
     expect(WEBHOOK).toContain('":q": "QUOTED"');
-    expect(WEBHOOK).toContain('ConditionExpression: "#s = :q"');
+    // The condition carries the money guard since the W8 review: a QUOTED
+    // loan whose down payment is clearing is money-touched, and cancelling
+    // it would land the customer's debit on a CANCELLED loan.
+    expect(WEBHOOK).toContain(
+      'ConditionExpression: "#s = :q AND attribute_not_exists(downPaymentIntentId)"'
+    );
+    expect(WEBHOOK).toContain('loan.status !== "QUOTED" || loan.downPaymentIntentId');
     expect(WEBHOOK).toContain('":c": "CANCELLED"');
     // An ACTIVE loan is never auto-cancelled by a payment.
     expect(WEBHOOK).not.toMatch(/":q": "ACTIVE"/);

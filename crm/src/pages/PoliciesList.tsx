@@ -59,6 +59,7 @@ export default function PoliciesList() {
       premium: (p) => p.premium,
       effective: (p) => p.effectiveDate,
       expires: (p) => p.expirationDate,
+      bound: (p) => p.datePolicyBound,
       status: (p) => p.status,
     },
     "expires"
@@ -90,6 +91,7 @@ export default function PoliciesList() {
                   <SortTh label="Premium" colKey="premium" sortKey={sortKey} dir={dir} onToggle={toggle} />
                   <SortTh label="Effective" colKey="effective" sortKey={sortKey} dir={dir} onToggle={toggle} />
                   <SortTh label="Expires" colKey="expires" sortKey={sortKey} dir={dir} onToggle={toggle} />
+                  <SortTh label="Bound" colKey="bound" sortKey={sortKey} dir={dir} onToggle={toggle} />
                   <SortTh label="Status" colKey="status" sortKey={sortKey} dir={dir} onToggle={toggle} />
                 </tr>
               </thead>
@@ -108,6 +110,7 @@ export default function PoliciesList() {
                     <td>{fmtMoney(p.premium)}</td>
                     <td>{fmtDate(p.effectiveDate)}</td>
                     <td>{fmtDate(p.expirationDate)}</td>
+                    <td>{fmtDate(p.datePolicyBound?.slice(0, 10))}</td>
                     <td>
                       <Badge {...statusBadge(POLICY_STATUS_BADGE, p.status)} />
                     </td>

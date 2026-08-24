@@ -152,6 +152,19 @@ describe("priorCoverageBlocks", () => {
     expect(block.other?.policyNumber).toBe("do");
   });
 
+  it('lands both property spellings on the Property row, and "Residential Property" on OtherLine', () => {
+    // "Property" retired from the picker 2026-08-24 in favour of
+    // "Commercial Property"; legacy rows keep the old spelling and both
+    // must reach the form's one property row. Residential is not a line
+    // these commercial applications have a box for.
+    const [block] = priorCoverageBlocks([
+      row("Commercial Property", "2026-01-01", "cp"),
+      row("Residential Property", "2026-01-01", "rp"),
+    ]);
+    expect(block.property?.policyNumber).toBe("cp");
+    expect(block.other?.policyNumber).toBe("rp");
+  });
+
   it("drops a second catch-all line rather than overwriting the first", () => {
     // The form has one OtherLine row per year and nowhere else to put a
     // second. Silently replacing the first would be worse than omitting.

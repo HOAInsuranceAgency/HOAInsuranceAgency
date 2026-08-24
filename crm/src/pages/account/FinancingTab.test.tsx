@@ -150,24 +150,23 @@ describe("activation resolution picker", () => {
   });
 });
 
-describe("closed jurisdictions and existing loans", () => {
-  it("blocks origination but keeps the ACTIVE loan and its servicing reachable", async () => {
+describe("origination has no UI — servicing reaches every loan", () => {
+  it("keeps a closed-jurisdiction ACTIVE loan visible and serviceable", async () => {
     const closed = { ...account, state: "NY" } as unknown as Account;
     models.PfLoan.list.mockImplementation(() => page([activeLoan]));
     mutations.servicePfLoan.mockResolvedValue({ data: JSON.stringify({ ok: true }) });
 
     render(<FinancingTab account={closed} />);
 
-    // Origination is refused with the signed note, verbatim…
-    expect(
-      await screen.findByText("No agent exemption, no commercial carve-out")
-    ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Offer financing" })).toBeDisabled();
+    // W8: origination happens at invoice send, never here — no policy
+    // picker, no offer button, on any account in any state.
+    expect(await screen.findByText("$68,570.32")).toBeInTheDocument();
     expect(screen.queryByLabelText("Policy to finance")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Offer financing" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Issue quote" })).not.toBeInTheDocument();
 
-    // …while the loan stays visible and serviceable: the gate applies at
-    // origination only and must never touch servicing of existing loans.
-    expect(screen.getByText("$68,570.32")).toBeInTheDocument();
+    // The loan stays serviceable whatever the jurisdiction says about NEW
+    // lending: the gate applies at origination only, and we cannot un-lend.
     await userEvent.click(screen.getByRole("button", { name: "Service" }));
     await userEvent.click(
       await screen.findByRole("button", { name: "Post payment 3 of 12" })
@@ -178,6 +177,14 @@ describe("closed jurisdictions and existing loans", () => {
         action: "POST_PAYMENT",
       })
     );
+  });
+
+  it("points an empty account at the invoice flow instead of a form", async () => {
+    models.PfLoan.list.mockImplementation(() => page([]));
+    render(<FinancingTab account={account} />);
+    expect(
+      await screen.findByText(/Offers originate automatically\s+when an invoice is sent/)
+    ).toBeInTheDocument();
   });
 });
 

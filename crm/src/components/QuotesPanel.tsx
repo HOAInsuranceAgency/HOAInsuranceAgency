@@ -287,14 +287,17 @@ function BindForm({
    */
   const [billType, setBillType] = useState<BillType | "">("");
   /**
-   * Pre-checked, and that is acceptable ONLY because it is true for every
-   * policy bound from our own quote — and because the value is stamped with
-   * who submitted it and when, which turns a default into an affirmation.
-   * Import and bulk paths get no pre-check and no checkbox at all: their
-   * policies start null and financing blocks until a person confirms on the
-   * policy record. (Signed decision 4, 2026-08-21.)
+   * Seeded from the quote's own recorded answer when one exists (W8 put
+   * the question on the quote), defaulting checked otherwise — acceptable
+   * ONLY because true holds for every policy bound from our own quote, and
+   * because the value is stamped with who submitted it and when, which
+   * turns a default into an affirmation. A quote explicitly recorded as
+   * NOT ours must not become POR-attested by an unexamined click. Import
+   * and bulk paths get no pre-check and no checkbox at all: their policies
+   * start null and financing blocks until a person confirms on the policy
+   * record. (Signed decision 4, 2026-08-21.)
    */
-  const [producerOfRecord, setProducerOfRecord] = useState(true);
+  const [producerOfRecord, setProducerOfRecord] = useState(quote.producerOfRecord ?? true);
   const [saving, setSaving] = useState(false);
 
   // A quote must carry real terms before it can become a policy.
@@ -312,6 +315,32 @@ function BindForm({
     setSaving(true);
     onError("");
     try {
+      /**
+       * 0. One policy per quote, checked before anything is written. The
+       * schema's hasOne is a query convenience, not a constraint — and a
+       * stale panel (another producer bound seconds ago, or a prior bind
+       * whose status write silently failed) is exactly when this button
+       * gets clicked again.
+       */
+      const { data: freshQuote, errors: fqErr } = await client.models.Quote.get({
+        id: quote.id,
+      });
+      if (fqErr?.length) throw new Error(fqErr[0].message);
+      if (!freshQuote || !isOpenQuoteStatus(freshQuote.status)) {
+        throw new Error(
+          "This quote is no longer open — it may already be bound. Refresh and check the policies list."
+        );
+      }
+      const { data: priorPolicies, errors: ppErr } = await client.models.Policy.list({
+        filter: { quoteId: { eq: quote.id } },
+      });
+      if (ppErr?.length) throw new Error(ppErr[0].message);
+      if (priorPolicies?.length) {
+        throw new Error(
+          `This quote is already bound to policy ${priorPolicies[0].policyNumber ?? priorPolicies[0].id}. Binding it twice would bill one premium twice.`
+        );
+      }
+
       // 1. Policy from the accepted quote (terms + commission carry over)
       const { data: policy, errors: pErr } = await client.models.Policy.create({
         accountId: account.id,
@@ -319,6 +348,9 @@ function BindForm({
         carrierId: quote.carrierId ?? undefined,
         policyNumber: policyNumber.trim() || undefined,
         status: "ACTIVE",
+        // When the bind happened, as a fact of its own — never typed, and
+        // "client since" maths read it rather than guessing from createdAt.
+        datePolicyBound: new Date().toISOString(),
         billType,
         producerOfRecord,
         ...(producerOfRecord
@@ -346,11 +378,83 @@ function BindForm({
         replacementCostType: quote.replacementCostType ?? undefined,
         effectiveDate: quote.effectiveDate ?? undefined,
         expirationDate: quote.expirationDate ?? undefined,
+        // W8: facts answered on the quote survive the bind — re-answering
+        // invites a different answer. MEP rides along as underwriting data.
+        // (Auditable retired 2026-08-24; nothing carries or reads it now.)
+        minimumEarnedPremiumPct: quote.minimumEarnedPremiumPct ?? undefined,
       });
       if (pErr?.length || !policy) throw new Error(pErr?.[0]?.message);
 
-      // 2. Mark the quote bound
-      await client.models.Quote.update({ id: quote.id, status: "BOUND" });
+      // 2. Mark the quote bound. The Amplify client reports GraphQL errors
+      // without throwing — a silent failure here leaves an ACTIVE policy on
+      // a still-open quote, with Bind clickable for a second policy.
+      {
+        const { errors: bErr } = await client.models.Quote.update({
+          id: quote.id,
+          status: "BOUND",
+        });
+        if (bErr?.length) throw new Error(bErr[0].message);
+      }
+
+      /**
+       * 2.5 (W8) The quote's billing follows it onto the policy: invoices
+       * re-anchor by gaining the policy id (they keep quoteId — the anchor
+       * scans match either), and live loans roll through the servicing
+       * action, since clients cannot write loans. This runs AFTER the
+       * policy exists and never aborts the bind — a rollover failure must
+       * not tempt anyone to click Bind twice and mint a second policy.
+       * Each item rolls independently, so one refusal doesn't strand the
+       * rest; the Financing tab carries the retry for a stuck loan.
+       */
+      const rollFailures: string[] = [];
+      try {
+        const quoteInvoices = await listAllPages((nextToken) =>
+          client.models.Invoice.list({
+            filter: { quoteId: { eq: quote.id } },
+            nextToken,
+          })
+        );
+        for (const inv of quoteInvoices) {
+          if (inv.policyId) continue;
+          const { errors } = await client.models.Invoice.update({
+            id: inv.id,
+            policyId: policy.id,
+          });
+          if (errors?.length) {
+            rollFailures.push(`invoice ${inv.number ?? inv.id}: ${errors[0].message}`);
+          }
+        }
+        const quoteLoans = await listAllPages((nextToken) =>
+          client.models.PfLoan.list({
+            filter: { quoteId: { eq: quote.id } },
+            nextToken,
+          })
+        );
+        for (const loan of quoteLoans) {
+          const live = ["QUOTED", "ACCEPTED", "ACTIVE", "DEFAULTED"].includes(loan.status);
+          if (!live || loan.policyId) continue;
+          try {
+            const { data, errors } = await client.mutations.servicePfLoan({
+              loanId: loan.id,
+              action: "BIND_ROLLOVER",
+              policyId: policy.id,
+            });
+            if (errors?.length) throw new Error(errors[0].message);
+            const result =
+              typeof data === "string" ? JSON.parse(data) : (data as Record<string, unknown>);
+            if (!result?.ok) throw new Error(String(result?.error ?? "Rollover refused."));
+          } catch (err) {
+            rollFailures.push(`loan ${loan.id.slice(0, 8)}: ${(err as Error).message}`);
+          }
+        }
+      } catch (err) {
+        rollFailures.push((err as Error).message);
+      }
+      if (rollFailures.length) {
+        onError(
+          `Policy bound, but some billing didn't roll onto it: ${rollFailures.join("; ")}. The Financing tab can re-run a stuck loan's rollover.`
+        );
+      }
 
       // 3. Convert the lead in place — the only path to CLIENT
       let updated: Account | null = null;

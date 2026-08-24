@@ -78,6 +78,7 @@ export function PoliciesTab({ accountId }: { accountId: string }) {
       commission: (p) => p.commissionPct,
       effective: (p) => p.effectiveDate,
       expires: (p) => p.expirationDate,
+      bound: (p) => p.datePolicyBound,
       status: (p) => p.status,
     },
     "effective",
@@ -132,6 +133,7 @@ export function PoliciesTab({ accountId }: { accountId: string }) {
                 <th>Terms</th>
                 <SortTh label="Effective" colKey="effective" sortKey={sortKey} dir={dir} onToggle={toggle} />
                 <SortTh label="Expires" colKey="expires" sortKey={sortKey} dir={dir} onToggle={toggle} />
+                <SortTh label="Bound" colKey="bound" sortKey={sortKey} dir={dir} onToggle={toggle} />
                 <SortTh label="Status" colKey="status" sortKey={sortKey} dir={dir} onToggle={toggle} />
                 <th></th>
               </tr>
@@ -154,6 +156,9 @@ export function PoliciesTab({ accountId }: { accountId: string }) {
                   <td className="small">{termsSummary(p)}</td>
                   <td>{fmtDate(p.effectiveDate)}</td>
                   <td>{fmtDate(p.expirationDate)}</td>
+                  {/* Stamped by the bind flow; blank for policies bound
+                      before the field existed. */}
+                  <td>{fmtDate(p.datePolicyBound?.slice(0, 10))}</td>
                   <td>
                     <select
                       value={p.status}

@@ -113,11 +113,6 @@ const EXTRACTION_SCHEMA = {
       description:
         "Minimum earned premium as a percent, from the policy's minimum-earned-premium or short-rate provision",
     },
-    isAuditable: {
-      ...field("boolean"),
-      description:
-        "Whether the policy premium is subject to audit (an audit or premium-adjustment provision exists)",
-    },
     currentPolicyExpiration: {
       ...field("string"),
       description: "ISO date YYYY-MM-DD of current policy expiration",
@@ -234,7 +229,6 @@ const EXTRACTION_SCHEMA = {
     "currentAnnualPremium",
     "currentPolicyExpiration",
     "minimumEarnedPremiumPct",
-    "isAuditable",
     "contacts",
     "buildings",
     "losses",

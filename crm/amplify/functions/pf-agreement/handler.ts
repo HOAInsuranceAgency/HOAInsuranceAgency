@@ -63,13 +63,21 @@ export const handler = async (event: {
       return { ok: false, error: "Premium finance is switched off." };
     }
 
-    const [{ data: policy }, { data: account }] = await Promise.all([
-      client.models.Policy.get({ id: loan.policyId }),
+    // W8: a loan may anchor to a quote before bind; the paper then carries
+    // the quote's identifying facts and "(to be assigned)" for the number.
+    const [{ data: policy }, { data: quote }, { data: account }] = await Promise.all([
+      loan.policyId
+        ? client.models.Policy.get({ id: loan.policyId })
+        : Promise.resolve({ data: null }),
+      loan.quoteId
+        ? client.models.Quote.get({ id: loan.quoteId })
+        : Promise.resolve({ data: null }),
       client.models.Account.get({ id: loan.accountId }),
     ]);
     if (!account) return { ok: false, error: "That account no longer exists." };
-    const carrier = policy?.carrierId
-      ? (await client.models.Carrier.get({ id: policy.carrierId })).data
+    const carrierId = policy?.carrierId ?? quote?.carrierId ?? null;
+    const carrier = carrierId
+      ? (await client.models.Carrier.get({ id: carrierId })).data
       : null;
 
     // AWSJSON arrives as a string; the loan's schedule was stringified at issue.
@@ -89,10 +97,11 @@ export const handler = async (event: {
       ].filter((l) => l.trim()),
       policyNumber: policy?.policyNumber ?? null,
       carrierName: carrier?.name ?? null,
-      policyTerm:
-        policy?.effectiveDate && policy?.expirationDate
-          ? `${policy.effectiveDate} to ${policy.expirationDate}`
-          : null,
+      policyTerm: (() => {
+        const eff = policy?.effectiveDate ?? quote?.effectiveDate;
+        const exp = policy?.expirationDate ?? quote?.expirationDate;
+        return eff && exp ? `${eff} to ${exp}` : null;
+      })(),
       premium: loan.premium,
       downPayment: loan.downPayment,
       amountFinanced: loan.amountFinanced,
@@ -104,6 +113,10 @@ export const handler = async (event: {
       originationFee: loan.originationFee,
       effectiveDate: loan.effectiveDate,
       schedule,
+      signedName: loan.agreementSignedName,
+      signedRole: loan.agreementSignedRole,
+      signedAt: loan.agreementSignedAt,
+      signedIp: loan.agreementSignedIp,
     };
 
     const [agreement, resolution] = await Promise.all([

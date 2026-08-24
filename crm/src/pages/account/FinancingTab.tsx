@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import {
   client,
   fmtDate,
@@ -9,30 +9,11 @@ import {
 } from "../../lib/client";
 import type { Schema } from "../../../amplify/data/resource";
 import { useAsyncResource } from "../../lib/useAsyncResource";
-import { useIsAdmin } from "../../lib/auth";
 import { SaveStatus, useSaveStatus } from "../../components/SaveStatus";
-import {
-  hasCurrentOpinion,
-  jurisdictionFor,
-  originationGate,
-} from "../../lib/premiumFinance/gate";
-import {
-  evaluateEligibility,
-  eligibilityBlocked,
-} from "../../lib/premiumFinance/eligibility";
-import {
-  buildQuote,
-  downPctViolation,
-  PF_DEFAULT_APR,
-  PF_DEFAULT_DOWN_PCT,
-  PF_DEFAULT_MONTHS,
-  PF_ORIGINATION_FEE,
-} from "../../lib/premiumFinance/quote";
 import { formatMoney } from "../../lib/invoiceTotals";
 import { Badge, type BadgeSpec } from "../../lib/badges";
 
 type PfLoan = Schema["PfLoan"]["type"];
-type PfOverride = Schema["PfOverride"]["type"];
 type PfNotice = Schema["PfNotice"]["type"];
 
 /**
@@ -84,6 +65,28 @@ function LoanActions({ loan, onChanged }: { loan: PfLoan; onChanged: () => void 
     { initialData: [] as CrmDocument[], errorMessage: "Failed to load documents" }
   );
 
+  /**
+   * W8 rollover repair. The bind flow rolls quote-anchored loans onto the
+   * new policy best-effort; when that step failed (a closed tab, a
+   * transient error), the loan is stuck on a bound quote with no anchor
+   * symmetry — and the bind button that would retry it is gone. This is
+   * the retry: if the loan still anchors only a quote and that quote has a
+   * policy, offer the roll here.
+   */
+  const rollTarget = useAsyncResource(
+    () =>
+      loan.quoteId && !loan.policyId
+        ? listAllPages((nextToken) =>
+            client.models.Policy.list({
+              filter: { quoteId: { eq: loan.quoteId! } },
+              nextToken,
+            })
+          ).then((ps) => (ps as Policy[])[0] ?? null)
+        : Promise.resolve(null),
+    [loan.id, loan.quoteId, loan.policyId],
+    { initialData: null as Policy | null }
+  );
+
   async function act(action: string, extra: Record<string, string> = {}, done?: string) {
     await status.run(
       async () => {
@@ -124,6 +127,31 @@ function LoanActions({ loan, onChanged }: { loan: PfLoan; onChanged: () => void 
           mandate on file. Monthly debits begin at activation — file the
           executed resolution below.
         </p>
+      )}
+
+      {loan.quoteId && !loan.policyId && rollTarget.data && (
+        <div className="inline-actions">
+          <p className="muted small">
+            This loan still anchors its quote, but the quote is bound —
+            policy {rollTarget.data.policyNumber ?? rollTarget.data.id.slice(0, 8)} exists.
+            Roll the loan onto it; activation and the exclusion checks read
+            the policy from then on.
+          </p>
+          <button
+            type="button"
+            className="secondary"
+            disabled={status.busy}
+            onClick={() =>
+              void act(
+                "BIND_ROLLOVER",
+                { policyId: rollTarget.data!.id },
+                "Loan rolled to the policy."
+              )
+            }
+          >
+            Roll to policy
+          </button>
+        </div>
       )}
 
       {(loan.status === "QUOTED" || loan.status === "ACCEPTED") && (
@@ -312,13 +340,13 @@ function LoanActions({ loan, onChanged }: { loan: PfLoan; onChanged: () => void 
 }
 
 /**
- * Financing on one association: gate → policy → eligibility → quote → issue.
+ * Financing on one association — servicing only, since W8.
  *
- * Everything this panel shows is advisory rendering of the same pure modules
- * the origination Lambda runs — the checks it displays are the checks the
- * server re-runs, and the server's answer is the one that counts. The gate
- * keys off the association's PHYSICAL address state (Account.state, the ACORD
- * premises field) and must never be swapped for a mailing address.
+ * Origination has no UI anywhere: an offer originates automatically when an
+ * invoice is sent, at the product's fixed terms, through the server's gates.
+ * What this tab holds is everything AFTER a loan exists — the loans table,
+ * agreement paper, activation behind the resolution rule, posting, and the
+ * notice-clocked cancellation sequence.
  */
 
 const LOAN_BADGE: Record<string, BadgeSpec> = {
@@ -341,77 +369,21 @@ function fmtLoanMoney(n: number | null | undefined): string {
 }
 
 export function FinancingTab({ account }: { account: Account }) {
-  const isAdmin = useIsAdmin();
-  /**
-   * Conditional jurisdictions ask the opinion store before the gate answers
-   * (decision D) — same context the origination Lambda assembles, so what
-   * this tab shows is what the server will decide.
-   */
-  const j = useMemo(() => jurisdictionFor(account.state), [account.state]);
-  const opinionsRes = useAsyncResource(
-    async () => {
-      if (j?.status !== "conditional") return true as boolean | null;
-      const { data } = await client.models.PfCounselOpinion.list({
-        filter: { jurisdiction: { eq: j.code } },
-        limit: 100,
-      });
-      return hasCurrentOpinion(
-        data.map((o) => ({ effectiveAt: o.effectiveAt, reviewBy: o.reviewBy })),
-        new Date().toISOString().slice(0, 10)
-      );
-    },
-    [j?.code, j?.status],
-    { initialData: null }
-  );
-  const gate = useMemo(
-    () =>
-      originationGate(account.state, {
-        hasCurrentCounselOpinion: opinionsRes.data === true,
-      }),
-    [account.state, opinionsRes.data]
-  );
-
   const res = useAsyncResource(
     async () => {
-      const [policies, loans, overrides] = await Promise.all([
-        listAllPages((nextToken) =>
-          client.models.Policy.list({
-            filter: { accountId: { eq: account.id } },
-            nextToken,
-          })
-        ),
-        listAllPages((nextToken) =>
-          client.models.PfLoan.list({
-            filter: { accountId: { eq: account.id } },
-            nextToken,
-          })
-        ),
-        listAllPages((nextToken) =>
-          client.models.PfOverride.list({ nextToken })
-        ),
-      ]);
-      return {
-        policies: (policies as Policy[]).filter((p) => p.status === "ACTIVE"),
-        loans: loans as PfLoan[],
-        overrides: overrides as PfOverride[],
-      };
+      const loans = await listAllPages((nextToken) =>
+        client.models.PfLoan.list({
+          filter: { accountId: { eq: account.id } },
+          nextToken,
+        })
+      );
+      return { loans: loans as PfLoan[] };
     },
     [account.id],
     { initialData: null, errorMessage: "Failed to load financing" }
   );
 
-  const [policyId, setPolicyId] = useState("");
-  const [premium, setPremium] = useState("");
-  const [downPct, setDownPct] = useState(String(PF_DEFAULT_DOWN_PCT));
-  const [months, setMonths] = useState(String(PF_DEFAULT_MONTHS));
-  // 14.0 always — never a jurisdiction's cap (decision E).
-  const [apr, setApr] = useState(String(PF_DEFAULT_APR));
-  const [overrideReason, setOverrideReason] = useState("");
-  const [overrideCheck, setOverrideCheck] = useState<"MEP" | "AUDITABLE" | "">("");
-  const issueStatus = useSaveStatus();
-  const overrideStatus = useSaveStatus({ autoClearMs: 4000 });
   const agreementStatus = useSaveStatus({ autoClearMs: 6000 });
-  const [issued, setIssued] = useState<string | null>(null);
   const [openLoan, setOpenLoan] = useState<string | null>(null);
 
   /**
@@ -437,351 +409,20 @@ export function FinancingTab({ account }: { account: Account }) {
   if (res.error) return <p className="error-text">{res.error}</p>;
   if (!res.data) return null;
 
-  const { policies, loans, overrides } = res.data;
-  const policy = policies.find((p) => p.id === policyId) ?? null;
-
-  const policyOverrides = {
-    mep: overrides.find(
-      (o) => o.policyId === policyId && o.check === "MEP" && o.reason?.trim()
-    ),
-    auditable: overrides.find(
-      (o) => o.policyId === policyId && o.check === "AUDITABLE" && o.reason?.trim()
-    ),
-  };
-
-  const parsed = {
-    premium: Number(premium),
-    downPct: Number(downPct),
-    months: Number(months),
-    apr: Number(apr),
-  };
-  const inputsOk =
-    Number.isFinite(parsed.premium) &&
-    parsed.premium > 0 &&
-    parsed.downPct >= 0 &&
-    parsed.downPct < 100 &&
-    Number.isInteger(parsed.months) &&
-    parsed.months >= 1 &&
-    parsed.months <= 12 &&
-    Number.isFinite(parsed.apr) &&
-    parsed.apr > 0;
-  // The 25% floor is a product term, not jurisdiction data — safe to state
-  // client-side, unlike an APR cap. The server re-checks and logs it anyway.
-  const downError = inputsOk ? downPctViolation(parsed.downPct) : null;
-
-  const checks = policy
-    ? evaluateEligibility({
-        lines: policy.lines ?? [],
-        accountType: account.type,
-        producerOfRecord: policy.producerOfRecord,
-        minimumEarnedPremiumPct: policy.minimumEarnedPremiumPct,
-        isAuditable: policy.isAuditable,
-        requiresIncorporatedBorrower: gate.open
-          ? (gate.jurisdiction.requiresIncorporatedBorrower ?? false)
-          : false,
-        incorporated: account.incorporated,
-        jurisdictionName: gate.open ? gate.jurisdiction.name : undefined,
-        downPct: Number.isFinite(parsed.downPct) ? parsed.downPct : PF_DEFAULT_DOWN_PCT,
-        overrides: {
-          mep: policyOverrides.mep ? { reason: policyOverrides.mep.reason } : undefined,
-          auditable: policyOverrides.auditable
-            ? { reason: policyOverrides.auditable.reason }
-            : undefined,
-        },
-      })
-    : [];
-  const blockedNow = checks.length === 0 || eligibilityBlocked(checks);
-
-  const today = new Date().toISOString().slice(0, 10);
-  const quote =
-    policy && inputsOk && !downError && !blockedNow
-      ? buildQuote({ ...parsed, effectiveDate: policy.effectiveDate ?? today })
-      : null;
-
-  async function issue() {
-    if (!policy) return;
-    await issueStatus.run(
-      async () => {
-        const { data, errors } = await client.mutations.issueFinanceQuote({
-          policyId: policy.id,
-          premium: parsed.premium,
-          downPct: parsed.downPct,
-          months: parsed.months,
-          apr: parsed.apr,
-          effectiveDate: policy.effectiveDate ?? today,
-        });
-        if (errors?.length) throw new Error(errors[0].message);
-        // AWSJSON arrives as a string — the lib/aiExtraction.ts trap.
-        const result =
-          typeof data === "string" ? JSON.parse(data) : (data as Record<string, unknown>);
-        if (!result?.ok) throw new Error(String(result?.error ?? "Issue failed."));
-        const blocks = (result.blocks ?? []) as { rule: string; reason: string }[];
-        if (blocks.length > 0) {
-          // The server saw something this panel did not. Its answer wins.
-          throw new Error(blocks.map((b) => b.reason).join(" "));
-        }
-        setIssued(String(result.loanId));
-        await res.refetch();
-        return "Quote issued and logged.";
-      },
-      { errorMessage: "The server refused the quote." }
-    );
-  }
-
-  /**
-   * ADMIN creates the override row directly — the model rule enforces the
-   * group, and the required reason IS the record. The origination log carries
-   * it into the decision row when it is used.
-   */
-  async function addOverride() {
-    if (!policy || !overrideCheck || !overrideReason.trim()) return;
-    await overrideStatus.run(
-      async () => {
-        const { errors } = await client.models.PfOverride.create({
-          policyId: policy.id,
-          check: overrideCheck,
-          reason: overrideReason.trim(),
-          occurredAt: new Date().toISOString(),
-        });
-        if (errors?.length) throw new Error(errors[0].message);
-        setOverrideReason("");
-        setOverrideCheck("");
-        await res.refetch();
-        return "Override recorded.";
-      },
-      { errorMessage: "Couldn't record the override." }
-    );
-  }
-
-  const CHECK_LABEL: Record<string, string> = {
-    coverage: "Commercial lines only",
-    "producer-of-record": "Producer of record",
-    mep: "Minimum earned premium",
-    auditable: "Auditable policy",
-    /** Rendered only where the signed row demands it (Rhode Island). */
-    incorporated: "Incorporated association",
-  };
+  const { loans } = res.data;
 
   return (
     <>
-      {/* The gate stops new originations only. A jurisdiction closing — or an
-          account moving into one — must leave existing loans serviceable, so
-          the blocked card replaces the origination form alone; the Loans
-          section below renders either way. */}
-      {!gate.open ? (
+      {loans.length === 0 && (
         <div className="card">
           <h2>Financing</h2>
-          <p className="warn-inline">{gate.reason}</p>
-          {/* Disabled and not clickable, with the reason as the tooltip —
-              the signed rule for closed jurisdictions. */}
-          <button type="button" disabled title={gate.reason}>
-            Offer financing
-          </button>
+          <p className="muted small">
+            No financing on this association. Offers originate automatically
+            when an invoice is sent — at 25% down, 14% APR, 11 monthly
+            installments — and appear here once one exists. See the Invoices
+            tab.
+          </p>
         </div>
-      ) : (
-      <div className="card">
-        <div className="card-head">
-          <h2>Financing</h2>
-          <p className="muted small">{gate.jurisdiction.name} — open for origination</p>
-        </div>
-
-        <div className="field full policy-field">
-          <label htmlFor="pf-policy">Policy to finance</label>
-          <select
-            id="pf-policy"
-            value={policyId}
-            onChange={(e) => {
-              setPolicyId(e.target.value);
-              const p = policies.find((x) => x.id === e.target.value);
-              if (p?.premium) setPremium(String(p.premium));
-            }}
-          >
-            <option value="">Choose…</option>
-            {policies.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.policyNumber || (p.lines ?? []).filter(Boolean).join(", ") || "Policy"}
-                {p.effectiveDate ? ` (${p.effectiveDate})` : ""}
-              </option>
-            ))}
-          </select>
-          {policies.length === 0 && (
-            <p className="muted small">No active policies to finance.</p>
-          )}
-        </div>
-
-        {policy && (
-          <>
-            {/* The four screens, as the server will run them. */}
-            <ul className="check-list" style={{ marginBottom: 14 }}>
-              {checks.map((c) => (
-                <li key={c.check}>
-                  <label style={{ cursor: "default" }}>
-                    <span>
-                      {c.ok ? "✓" : "✗"} {CHECK_LABEL[c.check]}
-                      {c.overridden && <span className="badge amber">OVERRIDDEN</span>}
-                      {!c.ok && c.reason && (
-                        <span className="muted small">{c.reason}</span>
-                      )}
-                      {c.overridden && (
-                        <span className="muted small">Reason: {c.overridden}</span>
-                      )}
-                    </span>
-                  </label>
-                </li>
-              ))}
-            </ul>
-
-            {/* Overrides: MEP and auditable only, ADMIN only, reason required.
-                The coverage screen has no override and never will. */}
-            {isAdmin &&
-              checks.some(
-                (c) => !c.ok && (c.check === "mep" || c.check === "auditable")
-              ) && (
-                <div className="card inset">
-                  <h3>Admin override</h3>
-                  <div className="form-grid">
-                    <div className="field">
-                      <label htmlFor="pf-ov-check">Check</label>
-                      <select
-                        id="pf-ov-check"
-                        value={overrideCheck}
-                        onChange={(e) =>
-                          setOverrideCheck(e.target.value as "MEP" | "AUDITABLE" | "")
-                        }
-                      >
-                        <option value="">Choose…</option>
-                        {checks.some((c) => c.check === "mep" && !c.ok) && (
-                          <option value="MEP">Minimum earned premium</option>
-                        )}
-                        {checks.some((c) => c.check === "auditable" && !c.ok) && (
-                          <option value="AUDITABLE">Auditable policy</option>
-                        )}
-                      </select>
-                    </div>
-                    <div className="field full">
-                      <label htmlFor="pf-ov-reason">Written reason (required, permanent)</label>
-                      <textarea
-                        id="pf-ov-reason"
-                        rows={2}
-                        value={overrideReason}
-                        onChange={(e) => setOverrideReason(e.target.value)}
-                      />
-                    </div>
-                  </div>
-                  <div className="inline-actions">
-                    <button
-                      type="button"
-                      className="secondary"
-                      disabled={!overrideCheck || !overrideReason.trim() || overrideStatus.busy}
-                      onClick={() => void addOverride()}
-                    >
-                      Record override
-                    </button>
-                    <SaveStatus {...overrideStatus.status} />
-                  </div>
-                </div>
-              )}
-
-            <div className="form-grid" style={{ marginTop: 14 }}>
-              <div className="field">
-                <label htmlFor="pf-premium">Total premium ($)</label>
-                <input
-                  id="pf-premium"
-                  type="number"
-                  step="0.01"
-                  value={premium}
-                  onChange={(e) => setPremium(e.target.value)}
-                />
-              </div>
-              <div className="field">
-                <label htmlFor="pf-down">Down payment (%)</label>
-                <input
-                  id="pf-down"
-                  type="number"
-                  step="1"
-                  value={downPct}
-                  onChange={(e) => setDownPct(e.target.value)}
-                />
-              </div>
-              <div className="field">
-                <label htmlFor="pf-months">Installments (months)</label>
-                <input
-                  id="pf-months"
-                  type="number"
-                  step="1"
-                  min="1"
-                  max="12"
-                  value={months}
-                  onChange={(e) => setMonths(e.target.value)}
-                />
-              </div>
-              <div className="field">
-                {/* No cap shown beside the field: the cap is a ceiling, not a
-                    suggestion. It appears only in a rejection message. */}
-                <label htmlFor="pf-apr">APR (%)</label>
-                <input
-                  id="pf-apr"
-                  type="number"
-                  step="0.1"
-                  value={apr}
-                  onChange={(e) => setApr(e.target.value)}
-                />
-              </div>
-            </div>
-            {downError && <p className="error-text">{downError}</p>}
-
-            {quote && (
-              <>
-                <div className="form-grid" style={{ marginTop: 14 }}>
-                  <div className="stat">
-                    <div className="n">{formatMoney(quote.downPayment)}</div>
-                    <div className="l">Down payment (1 of {parsed.months + 1})</div>
-                  </div>
-                  <div className="stat">
-                    <div className="n">{formatMoney(quote.amountFinanced)}</div>
-                    <div className="l">Amount financed</div>
-                  </div>
-                  <div className="stat">
-                    <div className="n">{formatMoney(quote.payment)}</div>
-                    <div className="l">Monthly payment</div>
-                  </div>
-                  <div className="stat">
-                    <div className="n">{formatMoney(quote.totalInterest)}</div>
-                    <div className="l">Finance charge</div>
-                  </div>
-                </div>
-                <p className="muted small">
-                  The down payment is payment 1 of {parsed.months + 1}, collected
-                  at inception; the {parsed.months} financed installments follow
-                  monthly as payments 2 through {parsed.months + 1}.
-                  Plus a flat {formatMoney(PF_ORIGINATION_FEE)} origination fee,
-                  refunded in full on prepayment. Early payoff is the outstanding
-                  principal only — the actuarial method; no other charge exists.
-                </p>
-              </>
-            )}
-
-            <div className="inline-actions">
-              <button
-                type="button"
-                className="primary"
-                disabled={issueStatus.busy || !quote || blockedNow}
-                onClick={() => void issue()}
-              >
-                Issue quote
-              </button>
-              <SaveStatus {...issueStatus.status} />
-            </div>
-            {issued && (
-              <p className="muted small">
-                Quote {issued} issued. Every check above was re-run and logged
-                server-side. Generate the agreement and service the loan from
-                the Loans table below.
-              </p>
-            )}
-          </>
-        )}
-      </div>
       )}
 
       {loans.length > 0 && (

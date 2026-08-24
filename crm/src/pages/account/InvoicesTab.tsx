@@ -4,16 +4,24 @@ import {
   fmtDate,
   fmtMoney,
   listAllPages,
+  type Account,
   type Contact,
   type Invoice,
   type InvoiceLine,
   type Policy,
+  type Quote,
 } from "../../lib/client";
 import { useAsyncResource } from "../../lib/useAsyncResource";
 import { SaveStatus, useSaveStatus } from "../../components/SaveStatus";
 import { InvoiceEditor } from "../../components/InvoiceEditor";
 import { invoiceTotals, premiumLineFromPolicy } from "../../lib/invoiceTotals";
-import { seededLineDescription, unbilledAgencyPolicies } from "../../lib/invoiceSeed";
+import {
+  invoiceableQuotes,
+  seededLineDescription,
+  seededQuoteLineDescription,
+  unbilledAgencyPolicies,
+} from "../../lib/invoiceSeed";
+import { isOpenQuoteStatus } from "../../lib/quoteStatus";
 import { Badge, INVOICE_STATUS_BADGE, statusBadge } from "../../lib/badges";
 
 /**
@@ -59,7 +67,7 @@ export function InvoicesTab({ accountId }: { accountId: string }) {
        * know which policies are already billed. Fetching them per-invoice would
        * be one round trip per row to render a summary.
        */
-      const [invoices, lines, policies, contacts] = await Promise.all([
+      const [invoices, lines, policies, quotes, contacts, account] = await Promise.all([
         listAllPages((nextToken) =>
           client.models.Invoice.list({
             filter: { accountId: { eq: accountId } },
@@ -78,18 +86,31 @@ export function InvoicesTab({ accountId }: { accountId: string }) {
             nextToken,
           })
         ),
+        // W8: quotes are invoiceable before bind — premium billed, financing
+        // offered, everything rolling onto the policy at bind.
+        listAllPages((nextToken) =>
+          client.models.Quote.list({
+            filter: { accountId: { eq: accountId } },
+            nextToken,
+          })
+        ),
         listAllPages((nextToken) =>
           client.models.Contact.list({
             filter: { accountId: { eq: accountId } },
             nextToken,
           })
         ),
+        // The financing hint predicts the send's origination, which reads
+        // the account's state, type and incorporation.
+        client.models.Account.get({ id: accountId }).then((r) => r.data),
       ]);
       return {
         invoices: invoices as Invoice[],
         lines: lines as InvoiceLine[],
         policies: policies as Policy[],
+        quotes: quotes as Quote[],
         contacts: contacts as Contact[],
+        account: account as Account | null,
       };
     },
     [accountId],
@@ -98,10 +119,19 @@ export function InvoicesTab({ accountId }: { accountId: string }) {
 
   const createStatus = useSaveStatus();
   const [openId, setOpenId] = useState<string | null>(null);
+  /** "policy:<id>" | "quote:<id>" — the anchor the next invoice bills. */
+  const [anchorKey, setAnchorKey] = useState("");
 
+  /**
+   * W8: every invoice bills exactly one policy or quote, chosen HERE, and an
+   * anchor carries one live invoice at a time — PAID and VOID free the slot
+   * for endorsement and audit billing. The picker below simply doesn't offer
+   * a busy anchor; the send Lambda enforces the same rule again.
+   */
   async function newInvoice() {
     const loaded = res.data;
-    if (!loaded) return;
+    if (!loaded || !anchorKey) return;
+    const [kind, anchorId] = anchorKey.split(":", 2);
     await createStatus.run(
       async () => {
         /**
@@ -124,35 +154,27 @@ export function InvoicesTab({ accountId }: { accountId: string }) {
           status: "DRAFT",
           issuedAt: today,
           dueAt: addDays(today, DEFAULT_TERM_DAYS),
+          ...(kind === "policy" ? { policyId: anchorId } : { quoteId: anchorId }),
         });
         if (errors?.length || !data) throw new Error(errors?.[0]?.message);
 
-        /**
-         * Seeded from the policies that are due to be billed and are not on a
-         * live invoice already. A voided invoice does not count as billed —
-         * otherwise voiding a bill would leave its policies unbillable.
-         */
-        const billed = new Set(
-          loaded.lines
-            .filter((l) => {
-              const inv = loaded.invoices.find((i) => i.id === l.invoiceId);
-              return inv ? inv.status !== "VOID" : false;
-            })
-            .map((l) => l.policyId)
-            .filter((id): id is string => !!id)
-        );
-        const seed = unbilledAgencyPolicies(loaded.policies, billed);
-
+        // One anchor, one seeded premium line: the number the record actually
+        // knows is the cost; what to bill for it stays the producer's call.
+        const policy = kind === "policy" ? loaded.policies.find((p) => p.id === anchorId) : null;
+        const quote = kind === "quote" ? loaded.quotes.find((q) => q.id === anchorId) : null;
+        const source = policy ?? quote;
         const created: InvoiceLine[] = [];
-        for (const [i, p] of seed.entries()) {
-          const { retailAmount, costAmount } = premiumLineFromPolicy(p);
+        if (source) {
+          const { retailAmount, costAmount } = premiumLineFromPolicy(source);
           const line = await client.models.InvoiceLine.create({
             invoiceId: data.id,
             accountId,
-            policyId: p.id,
+            ...(policy ? { policyId: policy.id } : {}),
             kind: "PREMIUM",
-            description: seededLineDescription(p),
-            sortOrder: i,
+            description: policy
+              ? seededLineDescription(policy)
+              : seededQuoteLineDescription(quote!),
+            sortOrder: 0,
             retailAmount,
             costAmount,
           });
@@ -168,13 +190,10 @@ export function InvoicesTab({ accountId }: { accountId: string }) {
               }
             : cur
         );
+        setAnchorKey("");
         // Straight into the one just made — it is the only reason to press it.
         setOpenId(data.id);
-        return seed.length
-          ? `Invoice created with ${seed.length} ${
-              seed.length === 1 ? "policy" : "policies"
-            } to price.`
-          : "Invoice created.";
+        return "Invoice created — price the premium line.";
       },
       { errorMessage: "Couldn't create an invoice." }
     );
@@ -184,12 +203,34 @@ export function InvoicesTab({ accountId }: { accountId: string }) {
   if (res.error) return <p className="error-text">{res.error}</p>;
   if (!res.data) return null;
 
-  const { invoices, lines, policies, contacts } = res.data;
+  const { invoices, lines, policies, quotes, contacts, account } = res.data;
   // Newest first: the one someone came here for is almost always the last made.
   const ordered = [...invoices].sort((a, b) =>
     (b.createdAt ?? "").localeCompare(a.createdAt ?? "")
   );
   const open = ordered.find((i) => i.id === openId) ?? null;
+
+  /**
+   * Anchors already carrying a live invoice (DRAFT/SENT/PROCESSING). Header
+   * ids are the W8 anchor; line-level policy ids still count so invoices
+   * from before the header existed keep holding their slot.
+   */
+  const liveInvoiceIds = new Set(
+    invoices
+      .filter((i) => ["DRAFT", "SENT", "PROCESSING"].includes(i.status))
+      .map((i) => i.id)
+  );
+  const busyAnchors = new Set<string>();
+  for (const i of invoices) {
+    if (!liveInvoiceIds.has(i.id)) continue;
+    if (i.policyId) busyAnchors.add(i.policyId);
+    if (i.quoteId) busyAnchors.add(i.quoteId);
+  }
+  for (const l of lines) {
+    if (liveInvoiceIds.has(l.invoiceId) && l.policyId) busyAnchors.add(l.policyId);
+  }
+  const openPolicies = unbilledAgencyPolicies(policies, busyAnchors);
+  const openQuotes = invoiceableQuotes(quotes, busyAnchors, isOpenQuoteStatus);
 
   return (
     <>
@@ -198,21 +239,49 @@ export function InvoicesTab({ accountId }: { accountId: string }) {
           <h2>Invoices</h2>
           <div className="inline-actions">
             <SaveStatus {...createStatus.status} />
+            <select
+              aria-label="Bill which policy or quote"
+              value={anchorKey}
+              onChange={(e) => setAnchorKey(e.target.value)}
+            >
+              <option value="">Bill which policy or quote…</option>
+              {openPolicies.map((p) => (
+                <option key={p.id} value={`policy:${p.id}`}>
+                  {p.policyNumber?.trim() ||
+                    (p.lines ?? []).filter(Boolean).join(", ") ||
+                    "Policy"}
+                  {p.effectiveDate ? ` (${p.effectiveDate})` : ""}
+                </option>
+              ))}
+              {openQuotes.map((q) => (
+                <option key={q.id} value={`quote:${q.id}`}>
+                  Quote — {(q.lines ?? []).filter(Boolean).join(", ") || "coverage"}
+                  {q.effectiveDate ? ` (${q.effectiveDate})` : ""}
+                </option>
+              ))}
+            </select>
             <button
               type="button"
               className="primary"
-              disabled={createStatus.busy}
+              disabled={createStatus.busy || !anchorKey}
               onClick={() => void newInvoice()}
             >
               New invoice
             </button>
           </div>
         </div>
+        {openPolicies.length === 0 && openQuotes.length === 0 && (
+          <p className="muted small">
+            Every policy and open quote either has a live invoice already or
+            isn't agency-billed. One live invoice per policy or quote — void
+            or collect the existing one to bill again.
+          </p>
+        )}
 
         {ordered.length === 0 ? (
           <p className="muted small">
-            Nothing billed yet. A new invoice opens with a line for every active
-            agency-billed policy that has not been billed.
+            Nothing billed yet. Choose the policy or quote to bill — the
+            invoice opens with its premium line ready to price.
           </p>
         ) : (
           <div className="table-wrap">
@@ -268,6 +337,8 @@ export function InvoicesTab({ accountId }: { accountId: string }) {
           key={open.id}
           invoice={open}
           policies={policies}
+          quotes={quotes}
+          account={account}
           contacts={contacts}
           onChange={(next) =>
             res.setData((cur) =>

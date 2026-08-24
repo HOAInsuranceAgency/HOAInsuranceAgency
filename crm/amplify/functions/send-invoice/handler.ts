@@ -1,15 +1,24 @@
+import { randomUUID } from "node:crypto";
 import { SESv2Client, SendEmailCommand } from "@aws-sdk/client-sesv2";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import { DynamoDBDocumentClient, GetCommand, PutCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { Amplify } from "aws-amplify";
 import { generateClient } from "aws-amplify/data";
 import { getAmplifyDataClientConfig } from "@aws-amplify/backend/function/runtime";
 import type { Schema } from "../../data/resource";
 import { listAllPages } from "../../../src/lib/pagination";
+import { isOpenQuoteStatus } from "../../../src/lib/quoteStatus";
 import { AGENCY, AGENCY_FMT } from "../../../../shared/agency";
 import Stripe from "stripe";
 import { invoiceTotals, remittanceSplit } from "../../../src/lib/invoiceTotals";
 import { electionExpiry, mintElectionToken } from "../pfElectionToken";
+import { originateLoan } from "../pfOrigination";
+import {
+  PF_DEFAULT_APR,
+  PF_DEFAULT_DOWN_PCT,
+  PF_DEFAULT_MONTHS,
+} from "../../../src/lib/premiumFinance/quote";
+import { PF_CONFIG_SHA256 } from "../../../src/lib/premiumFinance/jurisdictions";
 import { renderInvoice } from "./invoice";
 import { createPaymentLink, toCents } from "./stripeLink";
 import { buildMimeMessage } from "./mime";
@@ -48,27 +57,42 @@ const ddb = DynamoDBDocumentClient.from(new DynamoDBClient());
  */
 class SendBlocked extends Error {}
 
+/** The anchor a W8 invoice bills: a policy, or a quote before bind. */
+interface FinanceAnchor {
+  kind: "policy" | "quote";
+  id: string;
+  lines: readonly (string | null | undefined)[];
+  producerOfRecord: boolean | null | undefined;
+}
+
 /**
- * W7: the financing side of the fork, or null.
+ * W8: the financing side of the fork, or null — and since origination moved
+ * into the send, this is where loans are BORN. Fixed terms (25% down as
+ * payment 1 of 12, 14% APR, 11 installments), financed amount = the
+ * invoiced total, schedule anchored at the send date. The core runs every
+ * gate and logs every rule; a block means a plain bill, never a stopped
+ * send. Null on any failure for the same reason ensurePaymentLink is: a
+ * bill that arrives beats an offer that stopped it.
  *
- * The email offers financing only when the policy carries a QUOTED loan at
- * send time — staff issued the offer through every origination gate; the
- * email merely relays it, and the association accepts or ignores it. No loan,
- * module off, or anything unreadable → the email is a plain bill, exactly as
- * before W7. Null on any failure for the same reason ensurePaymentLink is:
- * a bill that arrives beats an offer that stopped it.
- *
- * Minting the token writes it onto the loan conditionally on QUOTED, so an
- * offer that was superseded mid-send never gets a live link. A still-fresh
- * token is reused — re-sends should not invalidate the link already sitting
- * in the association's inbox.
+ * Re-pricing supersedes: a QUOTED loan whose premium no longer matches the
+ * billed total is conditionally cancelled (`superseded-by-repricing`,
+ * logged) and a fresh one originates at the new figure. A loan the
+ * association has already committed to — ACCEPTED onward — suppresses any
+ * new origination and any offer: the choice was made.
  */
 async function financeOffer(
   client: DataClient,
-  policyId: string | null,
+  account: {
+    id: string;
+    state: string | null | undefined;
+    type: string | null | undefined;
+    incorporated: boolean | null | undefined;
+  },
+  anchor: FinanceAnchor | null,
+  retailTotal: number,
   recipientEmail: string | null
 ): Promise<{ url: string; downPayment: number; monthly: number; months: number; apr: number } | null> {
-  if (!policyId) return null;
+  if (!anchor || retailTotal <= 0) return null;
   const loanTable = process.env.PF_LOAN_TABLE;
   const siteUrl = process.env.SITE_URL;
   if (!loanTable || !siteUrl) return null;
@@ -76,17 +100,147 @@ async function financeOffer(
     const { data: settings } = await client.models.AgencySettings.get({ id: "AGENCY" });
     if (settings?.premiumFinanceEnabled !== true) return null;
 
+    const anchorFilter =
+      anchor.kind === "policy"
+        ? { policyId: { eq: anchor.id } }
+        : { quoteId: { eq: anchor.id } };
     const loans = await listAllPages((nextToken) =>
-      client.models.PfLoan.list({
-        filter: { policyId: { eq: policyId }, status: { eq: "QUOTED" } },
-        nextToken,
-      })
+      client.models.PfLoan.list({ filter: anchorFilter, nextToken })
     );
-    if (loans.length === 0) return null;
-    // The newest quote is the offer staff most recently stood behind.
-    const loan = [...loans].sort((a, b) =>
-      (b.quotedAt ?? "").localeCompare(a.quotedAt ?? "")
-    )[0];
+    if (
+      loans.some((l) =>
+        ["ACCEPTED", "ACTIVE", "DEFAULTED", "PAID"].includes(l.status ?? "")
+      )
+    ) {
+      return null;
+    }
+    // Annotated: the backend tsconfig lacks noUncheckedIndexedAccess, so
+    // `[0] ?? null` would otherwise infer the element type WITHOUT null.
+    let loan: (typeof loans)[number] | null =
+      [...loans]
+        .filter((l) => l.status === "QUOTED")
+        .sort((a, b) => (b.quotedAt ?? "").localeCompare(a.quotedAt ?? ""))[0] ?? null;
+
+    /**
+     * An election is COMMITTED before the loan leaves QUOTED: the customer
+     * signs and accepts, their down payment can be clearing for days
+     * (ACH), and only settlement flips the status. A committed loan is
+     * never superseded and never quietly replaced — cancelling it would
+     * land the customer's money on a CANCELLED loan. Committed means money
+     * is in flight or could be within minutes: a stamped down-payment
+     * intent, or a live Checkout session/claim the customer may be sitting
+     * on right now. A bill re-priced over a committed election is a human's
+     * knot to untie; the email goes out with pay-in-full only.
+     */
+    const nowIso = new Date().toISOString();
+    const committed =
+      loan &&
+      (loan.downPaymentIntentId ||
+        (loan.electionCheckoutUrl &&
+          loan.electionCheckoutExpiresAt &&
+          loan.electionCheckoutExpiresAt > nowIso));
+    if (loan && committed && loan.premium !== retailTotal) {
+      console.error(
+        `[send-invoice] invoice re-priced to ${retailTotal} over committed election on loan ${loan.id} (quoted ${loan.premium}) — offering nothing; resolve by hand`
+      );
+      return null;
+    }
+
+    const today = new Date().toISOString().slice(0, 10);
+    const stale = loan && (loan.effectiveDate ?? today) < today;
+    if (loan && !committed && (loan.premium !== retailTotal || stale)) {
+      /**
+       * The bill changed under the offer, or the offer aged past its send
+       * day (the spec anchors the schedule at the send date — a resend
+       * weeks later must not offer a schedule already in arrears). The old
+       * quote's terms are dead, so it cancels — conditionally on still
+       * being QUOTED at the premium the decision read AND still
+       * uncommitted at write time, because the customer can be electing in
+       * this very second — and a fresh quote takes its place.
+       */
+      try {
+        await ddb.send(
+          new UpdateCommand({
+            TableName: loanTable,
+            Key: { id: loan.id },
+            UpdateExpression: "SET #s = :c, closedAt = :now, updatedAt = :now",
+            ConditionExpression:
+              "#s = :q AND premium = :seen AND attribute_not_exists(downPaymentIntentId) AND (attribute_not_exists(electionCheckoutUrl) OR electionCheckoutExpiresAt < :now)",
+            ExpressionAttributeNames: { "#s": "status" },
+            ExpressionAttributeValues: {
+              ":c": "CANCELLED",
+              ":q": "QUOTED",
+              ":seen": loan.premium,
+              ":now": nowIso,
+            },
+          })
+        );
+        await logSupersession(loan, retailTotal, account.id);
+      } catch (err) {
+        if ((err as { name?: string }).name !== "ConditionalCheckFailedException") throw err;
+        // The loan moved mid-send — a payment landed, or an election
+        // committed under this write. Offer nothing; the next send
+        // re-reads the world.
+        return null;
+      }
+      loan = null;
+    }
+
+    if (!loan) {
+      const result = await originateLoan(
+        ddb,
+        {
+          // Paginated to exhaustion: a list filter is applied AFTER the
+          // page is read, so a capped single page can silently miss the
+          // one opinion or override that matters once the table grows.
+          listOpinions: async (code) => {
+            const rows = await listAllPages((nextToken) =>
+              client.models.PfCounselOpinion.list({
+                filter: { jurisdiction: { eq: code } },
+                nextToken,
+              })
+            );
+            return rows.map((o) => ({ effectiveAt: o.effectiveAt, reviewBy: o.reviewBy }));
+          },
+        },
+        settings?.premiumFinanceEnabled === true,
+        {
+          account,
+          anchor,
+          premium: retailTotal,
+          downPct: PF_DEFAULT_DOWN_PCT,
+          months: PF_DEFAULT_MONTHS,
+          apr: PF_DEFAULT_APR,
+          effectiveDate: today,
+          actor: "send-invoice",
+          actorName: "send-invoice (auto-origination)",
+        }
+      );
+      if (!result.ok || !result.loanId) {
+        if (result.ok) {
+          console.log(
+            `[send-invoice] financing not offered on ${anchor.kind} ${anchor.id}: ${result.blocks
+              .map((b) => b.rule)
+              .join(", ")}`
+          );
+        } else {
+          console.warn(`[send-invoice] origination failed: ${result.error}`);
+        }
+        return null;
+      }
+      /**
+       * Straight off the table, strongly: the AppSync read is eventually
+       * consistent and a miss here would drop the offer from the very email
+       * that originated the loan.
+       */
+      const created = await ddb
+        .send(
+          new GetCommand({ TableName: loanTable, Key: { id: result.loanId }, ConsistentRead: true })
+        )
+        .then((r) => r.Item as typeof loan | undefined);
+      loan = created ?? null;
+      if (!loan) return null;
+    }
 
     let token = loan.electionToken ?? null;
     const fresh =
@@ -94,14 +248,21 @@ async function financeOffer(
       loan.electionTokenExpiresAt &&
       new Date(loan.electionTokenExpiresAt).getTime() > Date.now() + 7 * 24 * 60 * 60 * 1000;
     if (!fresh) {
+      const seenToken = token;
       token = mintElectionToken();
+      // Conditional on the token this decision read: two concurrent sends
+      // must not last-write-win each other's mint, or the first email
+      // carries a link that is already dead. The loser's email goes out
+      // without the offer — honest, and the next send self-heals.
       await ddb.send(
         new UpdateCommand({
           TableName: loanTable,
           Key: { id: loan.id },
           UpdateExpression:
             "SET electionToken = :tok, electionTokenExpiresAt = :exp, electionEmail = :email, updatedAt = :now",
-          ConditionExpression: "#s = :quoted",
+          ConditionExpression: seenToken
+            ? "#s = :quoted AND electionToken = :seenTok"
+            : "#s = :quoted AND attribute_not_exists(electionToken)",
           ExpressionAttributeNames: { "#s": "status" },
           ExpressionAttributeValues: {
             ":tok": token,
@@ -109,6 +270,7 @@ async function financeOffer(
             ":email": recipientEmail ?? null,
             ":quoted": "QUOTED",
             ":now": new Date().toISOString(),
+            ...(seenToken ? { ":seenTok": seenToken } : {}),
           },
         })
       );
@@ -123,6 +285,42 @@ async function financeOffer(
   } catch (err) {
     console.warn("[send-invoice] financing offer omitted", err);
     return null;
+  }
+}
+
+/** The supersession's audit row — same shape every pf writer uses. */
+async function logSupersession(
+  loan: { id: string; premium: number; state?: string | null },
+  retailTotal: number,
+  accountId: string
+) {
+  const table = process.env.PF_COMPLIANCE_LOG_TABLE;
+  if (!table) return;
+  const now = new Date().toISOString();
+  try {
+    await ddb.send(
+      new PutCommand({
+        TableName: table,
+        Item: {
+          id: randomUUID(),
+          __typename: "PfComplianceLog",
+          createdAt: now,
+          updatedAt: now,
+          accountId,
+          jurisdiction: loan.state ?? "UNKNOWN",
+          rule: "superseded-by-repricing",
+          outcome: "BLOCK",
+          reason: `Quote for $${loan.premium.toLocaleString("en-US")} superseded: the invoice now bills $${retailTotal.toLocaleString("en-US")}.`,
+          inputs: JSON.stringify({ loanId: loan.id, was: loan.premium, now: retailTotal }),
+          configSha256: PF_CONFIG_SHA256,
+          actor: "send-invoice",
+          actorName: "send-invoice (auto-origination)",
+          occurredAt: now,
+        },
+      })
+    );
+  } catch (err) {
+    console.error("[send-invoice] supersession log write failed", err);
   }
 }
 
@@ -527,8 +725,112 @@ export const handler = async (event: {
     const policy = headerPolicyId
       ? (await client.models.Policy.get({ id: headerPolicyId })).data
       : null;
-    const carrier = policy?.carrierId
-      ? (await client.models.Carrier.get({ id: policy.carrierId })).data
+
+    /**
+     * W8: every invoice bills exactly one anchor — a policy, or a quote
+     * before bind. Both ids may stand after a bind rollover; the policy
+     * then speaks for the anchor. Neither is a bill nothing can reconcile,
+     * and the send refuses it.
+     */
+    const quoteAnchor =
+      !headerPolicyId && invoice.quoteId
+        ? (await client.models.Quote.get({ id: invoice.quoteId })).data
+        : null;
+    if (!headerPolicyId && !quoteAnchor) {
+      return {
+        ok: false,
+        error: invoice.quoteId
+          ? "That quote no longer exists."
+          : linePolicyIds.length > 1
+            ? `This invoice's lines bill ${linePolicyIds.length} policies. One invoice bills one policy now — remove the other policies' lines, or void this and bill each policy on its own invoice.`
+            : "Every invoice bills a policy or a quote. Set one before sending.",
+      };
+    }
+    /**
+     * A quote anchor must still be OPEN. A bound quote's billing belongs to
+     * its policy — a stranded pre-bind invoice re-anchors through the bind
+     * rollover, not through a send against paper that already became a
+     * policy — and a lost or declined quote bills coverage that will never
+     * exist.
+     */
+    if (quoteAnchor && !isOpenQuoteStatus(quoteAnchor.status)) {
+      return {
+        ok: false,
+        error:
+          quoteAnchor.status === "BOUND"
+            ? "This quote has been bound. The invoice should have rolled to the policy at bind — re-run the rollover from the quote's panel, or void this and bill the policy."
+            : `This quote is ${(quoteAnchor.status ?? "closed").toLowerCase()} — there is no coverage to bill. Void the invoice.`,
+      };
+    }
+    const anchor: FinanceAnchor = headerPolicyId
+      ? {
+          kind: "policy",
+          id: headerPolicyId,
+          lines: policy?.lines ?? [],
+          producerOfRecord: policy?.producerOfRecord,
+        }
+      : {
+          kind: "quote",
+          id: invoice.quoteId!,
+          lines: quoteAnchor!.lines ?? [],
+          producerOfRecord: quoteAnchor!.producerOfRecord,
+        };
+
+    /**
+     * One live invoice per anchor (W8): a DRAFT/SENT/PROCESSING sibling on
+     * the same policy or quote refuses the send — PAID and VOID free the
+     * slot for endorsement and audit billing later. Three scans make the
+     * rule airtight where one would leak:
+     * - header ids, the W8 anchor;
+     * - the policy's own quoteId, so a pre-bind invoice whose rollover
+     *   failed still holds the slot against the policy it billed;
+     * - line-level policy ids, because invoices from before the header
+     *   existed anchor only through their lines.
+     */
+    const siblingFilters: Record<string, unknown>[] =
+      anchor.kind === "policy"
+        ? [
+            { policyId: { eq: anchor.id } },
+            ...(policy?.quoteId ? [{ quoteId: { eq: policy.quoteId } }] : []),
+          ]
+        : [{ quoteId: { eq: anchor.id } }];
+    const siblingInvoices = await listAllPages((nextToken) =>
+      client.models.Invoice.list({
+        filter: siblingFilters.length === 1 ? siblingFilters[0] : { or: siblingFilters },
+        nextToken,
+      })
+    );
+    if (anchor.kind === "policy") {
+      const anchorLines = await listAllPages((nextToken) =>
+        client.models.InvoiceLine.list({
+          filter: { policyId: { eq: anchor.id } },
+          nextToken,
+        })
+      );
+      const known = new Set(siblingInvoices.map((i) => i.id));
+      const extraIds = [...new Set(anchorLines.map((l) => l.invoiceId))].filter(
+        (id) => id !== invoice.id && !known.has(id)
+      );
+      for (const id of extraIds) {
+        const { data: extra } = await client.models.Invoice.get({ id });
+        if (extra) siblingInvoices.push(extra);
+      }
+    }
+    const liveSibling = siblingInvoices.find(
+      (i) =>
+        i.id !== invoice.id &&
+        ["DRAFT", "SENT", "PROCESSING"].includes(i.status ?? "")
+    );
+    if (liveSibling) {
+      return {
+        ok: false,
+        error: `Invoice ${liveSibling.number ?? liveSibling.id} already bills this ${anchor.kind} and is still ${(liveSibling.status ?? "open").toLowerCase()}. One live invoice per ${anchor.kind} — void it or collect it first.`,
+      };
+    }
+
+    const carrierId = policy?.carrierId ?? quoteAnchor?.carrierId ?? null;
+    const carrier = carrierId
+      ? (await client.models.Carrier.get({ id: carrierId })).data
       : null;
 
     /**
@@ -542,9 +844,21 @@ export const handler = async (event: {
       invoiceTotals(lines).retail
     );
 
-    // W7: the other side of the fork — a QUOTED finance offer on this
-    // policy rides along, with a signed election link.
-    const finance = await financeOffer(client, headerPolicyId, to[0] ?? null);
+    // W8: the other side of the fork originates HERE, at fixed terms on
+    // the billed total, through every gate — or rides an existing QUOTED
+    // offer whose premium still matches.
+    const finance = await financeOffer(
+      client,
+      {
+        id: account.data.id,
+        state: account.data.state,
+        type: account.data.type,
+        incorporated: account.data.incorporated,
+      },
+      anchor,
+      invoiceTotals(lines).retail,
+      to[0] ?? null
+    );
 
     /**
      * The envelope, in the order it would be typed.
@@ -574,14 +888,17 @@ export const handler = async (event: {
       billToLines,
       policyNumber: policy?.policyNumber ?? null,
       carrierName: carrier?.name ?? null,
-      coverage: (policy?.lines ?? []).filter(Boolean).join(", ") || null,
+      coverage:
+        ((policy?.lines ?? quoteAnchor?.lines ?? []) as (string | null)[])
+          .filter(Boolean)
+          .join(", ") || null,
       // The insured location. Same address as the bill-to in most cases, and
       // printed anyway: an association managed off-site is billed at the
       // manager's office and insured at its own, and an invoice that shows
       // only one of the two cannot be matched to a policy without opening it.
       riskLocation: [account.data.address ?? "", cityStateZip].filter((l) => l.trim()),
-      effectiveDate: policy?.effectiveDate ?? null,
-      expirationDate: policy?.expirationDate ?? null,
+      effectiveDate: policy?.effectiveDate ?? quoteAnchor?.effectiveDate ?? null,
+      expirationDate: policy?.expirationDate ?? quoteAnchor?.expirationDate ?? null,
       issuedAt: invoice.issuedAt,
       dueAt: invoice.dueAt,
       memo: invoice.memo,

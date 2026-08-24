@@ -65,11 +65,12 @@ describe("the premium finance flag", () => {
 });
 
 describe("servicing never consults the origination gate", () => {
-  it("pf-originate is the only function that imports the gate", () => {
-    // Addition A: a jurisdiction closing must stop NEW lending only. The
-    // origination Lambda is the one legitimate importer; payment posting,
-    // notices and payoff never may — an active loan in a closed state must
-    // keep servicing, because we cannot un-lend.
+  it("the shared origination core is the only function-side gate importer", () => {
+    // Addition A: a jurisdiction closing must stop NEW lending only.
+    // Since W8 both loan writers — the pf-originate mutation and the
+    // invoice send — drive one core, and THAT is the one legitimate
+    // importer; payment posting, notices and payoff never may — an active
+    // loan in a closed state must keep servicing, because we cannot un-lend.
     const { readdirSync, statSync } = require("node:fs") as typeof import("node:fs");
     const root = resolve(process.cwd(), "amplify/functions");
     const offenders: string[] = [];
@@ -84,15 +85,22 @@ describe("servicing never consults the origination gate", () => {
     };
     walk(root);
     expect(offenders.map((p) => p.split("/functions/")[1])).toEqual([
-      "pf-originate/handler.ts",
+      "pfOrigination.ts",
     ]);
+  });
+
+  it("both loan writers delegate to the shared core — gates cannot drift apart", () => {
+    const originate = read("amplify/functions/pf-originate/handler.ts");
+    const send = read("amplify/functions/send-invoice/handler.ts");
+    expect(originate).toContain('import { originateLoan } from "../pfOrigination"');
+    expect(send).toContain('import { originateLoan } from "../pfOrigination"');
   });
 });
 
-describe("the origination mutation", () => {
+describe("the origination core", () => {
   const SCHEMA = readFileSync(resolve(process.cwd(), "amplify/data/resource.ts"), "utf8");
   const HANDLER = readFileSync(
-    resolve(process.cwd(), "amplify/functions/pf-originate/handler.ts"),
+    resolve(process.cwd(), "amplify/functions/pfOrigination.ts"),
     "utf8"
   );
 
@@ -105,12 +113,19 @@ describe("the origination mutation", () => {
   });
 
   it("re-checks the module flag server-side — a hidden button is not a gate", () => {
-    expect(HANDLER).toContain("premiumFinanceEnabled === true");
+    // Every caller reads the flag before asking, and the core refuses and
+    // logs when it arrives off — belt at the door, braces in the core.
+    expect(read("amplify/functions/pf-originate/handler.ts")).toContain(
+      "premiumFinanceEnabled === true"
+    );
+    expect(read("amplify/functions/send-invoice/handler.ts")).toContain(
+      "premiumFinanceEnabled !== true) return null"
+    );
     expect(HANDLER).toMatch(/rule: "module-flag"/);
   });
 
   it("holds the 25% down floor at the API, not just in the UI", () => {
-    expect(HANDLER).toContain("downPctViolation(a.downPct)");
+    expect(HANDLER).toContain("downPctViolation(req.downPct)");
     expect(HANDLER).toMatch(/rule: "min-down"/);
   });
 
@@ -118,9 +133,9 @@ describe("the origination mutation", () => {
     // The quote rides along since RI joined: a fee-in-cap jurisdiction
     // tests the effective rate, which only the schedule can answer — so the
     // quote must be built before the cap decision, and passed into it.
-    expect(HANDLER).toContain("aprCapViolation(a.apr, gate.jurisdiction, quote)");
-    expect(HANDLER.indexOf("const quote = buildQuote(terms)")).toBeLessThan(
-      HANDLER.indexOf("aprCapViolation(a.apr, gate.jurisdiction, quote)")
+    expect(HANDLER).toContain("aprCapViolation(req.apr, gate.jurisdiction, quote)");
+    expect(HANDLER.indexOf("const quote = buildQuote(")).toBeLessThan(
+      HANDLER.indexOf("aprCapViolation(req.apr, gate.jurisdiction, quote)")
     );
     expect(HANDLER).toMatch(/rule: "apr-cap"/);
   });

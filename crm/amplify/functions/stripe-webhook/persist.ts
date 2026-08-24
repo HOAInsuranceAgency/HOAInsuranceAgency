@@ -135,6 +135,8 @@ export interface InvoiceRow extends PaymentSnapshot {
   number: string | null;
   accountId: string | null;
   policyId: string | null;
+  /** W8: the pre-bind anchor; a bind rollover leaves both ids set. */
+  quoteId: string | null;
   /**
    * The division written by the last send. Read rather than recomputed — see
    * `remittance.ts` for why the lines are the wrong source once a Payment Link
@@ -182,6 +184,7 @@ export async function readInvoice(
     number: str(item.number),
     accountId: str(item.accountId),
     policyId: str(item.policyId),
+    quoteId: str(item.quoteId),
     remittanceCarrierCents: int(item.remittanceCarrierCents),
     remittanceCommissionCents: int(item.remittanceCommissionCents),
     remittanceInterestCents: int(item.remittanceInterestCents),
