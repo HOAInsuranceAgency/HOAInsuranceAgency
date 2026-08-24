@@ -348,6 +348,9 @@ function BindForm({
         carrierId: quote.carrierId ?? undefined,
         policyNumber: policyNumber.trim() || undefined,
         status: "ACTIVE",
+        // When the bind happened, as a fact of its own — never typed, and
+        // "client since" maths read it rather than guessing from createdAt.
+        datePolicyBound: new Date().toISOString(),
         billType,
         producerOfRecord,
         ...(producerOfRecord

@@ -217,6 +217,11 @@ export default function AccountDetail({ profile }: { profile: UserProfile }) {
       </h1>
       <p className="sub">
         {account.type} · {[account.city, account.state].filter(Boolean).join(", ") || "no location"}
+        {/* Lifecycle dates, one each way: when the lead entered, and — once a
+            bind converts them — when they became a client. */}
+        {account.stage === "LEAD" &&
+          account.createdAt &&
+          ` · entered ${fmtDate(account.createdAt.slice(0, 10))}`}
         {account.convertedAt && ` · client since ${fmtDate(account.convertedAt.slice(0, 10))}`}
       </p>
 

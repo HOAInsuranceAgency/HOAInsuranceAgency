@@ -471,6 +471,13 @@ describe("quotes can answer the screens the offer runs on (W8 review)", () => {
     expect(PANEL).toContain('action: "BIND_ROLLOVER"');
   });
 
+  it("bind stamps datePolicyBound automatically — never typed", () => {
+    // "Client since" and production reporting read a real bound date; the
+    // single Policy.create site is where it can only come from.
+    const PANEL = read("src/components/QuotesPanel.tsx");
+    expect(PANEL).toContain("datePolicyBound: new Date().toISOString()");
+  });
+
   it("activation requires a policy — no mandate turns on against unplaced coverage", () => {
     const SERVICING = read("amplify/functions/pf-servicing/handler.ts");
     expect(SERVICING).toContain("This loan is anchored to a quote. Bind the quote first");

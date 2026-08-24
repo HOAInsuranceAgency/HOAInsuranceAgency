@@ -21,6 +21,16 @@ import {
 import { useSort, SortTh } from "../lib/useSort";
 import { openQuoteStatusFilter } from "../lib/quoteStatus";
 import { useAsyncResource } from "../lib/useAsyncResource";
+import {
+  commissionBySource,
+  policyCommission,
+  receivables,
+  type Receivables,
+} from "../lib/dashboardStats";
+import type { Schema } from "../../amplify/data/resource";
+
+type PfLoanRow = Schema["PfLoan"]["type"];
+type InvoiceRow = Schema["Invoice"]["type"];
 
 /** Every slice the dashboard renders, read in one pass. */
 interface DashboardData {
@@ -30,6 +40,9 @@ interface DashboardData {
   policies: Policy[];
   carriers: Carrier[];
   openTasks: number;
+  /** SENT + PROCESSING only — the A/R slice, org-wide. */
+  openInvoices: InvoiceRow[];
+  pfLoans: PfLoanRow[];
 }
 
 const EMPTY: DashboardData = {
@@ -39,6 +52,8 @@ const EMPTY: DashboardData = {
   policies: [],
   carriers: [],
   openTasks: 0,
+  openInvoices: [],
+  pfLoans: [],
 };
 
 export default function Dashboard() {
@@ -59,7 +74,7 @@ export default function Dashboard() {
    */
   const res = useAsyncResource<DashboardData>(
     async () => {
-      const [leads, clients, openQuotes, policyRes, carrierRes, tasks] =
+      const [leads, clients, openQuotes, policies, carriers, tasks, openInvoices, pfLoans] =
         await Promise.all([
           listAllPages((nextToken) =>
             client.models.Account.list({
@@ -79,8 +94,10 @@ export default function Dashboard() {
               nextToken,
             })
           ),
-          client.models.Policy.list(),
-          client.models.Carrier.list(),
+          // Paginated like everything else: a single page silently caps the
+          // "policies bound" count and every chart at ~100 rows.
+          listAllPages((nextToken) => client.models.Policy.list({ nextToken })),
+          listAllPages((nextToken) => client.models.Carrier.list({ nextToken })),
           listAllPages((nextToken) =>
             client.models.MarketingTask.list({
               filter: { status: { eq: "OPEN" } },
@@ -88,21 +105,32 @@ export default function Dashboard() {
               nextToken,
             })
           ),
+          // The A/R slice: money billed and not yet collected.
+          listAllPages((nextToken) =>
+            client.models.Invoice.list({
+              filter: { or: [{ status: { eq: "SENT" } }, { status: { eq: "PROCESSING" } }] },
+              nextToken,
+            })
+          ),
+          listAllPages((nextToken) => client.models.PfLoan.list({ nextToken })),
         ]);
       return {
         leads,
         clients,
         openQuotes,
-        policies: policyRes.data,
-        carriers: carrierRes.data,
+        policies,
+        carriers,
         // Only the count is rendered; the rows are not worth holding.
         openTasks: tasks.length,
+        openInvoices: openInvoices as InvoiceRow[],
+        pfLoans: pfLoans as PfLoanRow[],
       };
     },
     [],
     { initialData: EMPTY, errorMessage: "Failed to load the dashboard" }
   );
-  const { leads, clients, openQuotes, policies, carriers, openTasks } = res.data;
+  const { leads, clients, openQuotes, policies, carriers, openTasks, openInvoices, pfLoans } =
+    res.data;
 
   // Heading first, then one gate over everything derived from the read — the
   // tiles and both cards are all statements about the data, and none of them
@@ -146,9 +174,56 @@ export default function Dashboard() {
         />
       </div>
 
+      <ReceivablesCard r={receivables(openInvoices, pfLoans)} />
       <RenewalsCard leads={leads} clients={clients} policies={policies} />
-      <CarrierCharts policies={policies} carriers={carriers} />
+      <CarrierCharts
+        policies={policies}
+        carriers={carriers}
+        accounts={[...leads, ...clients]}
+      />
     </>
+  );
+}
+
+/**
+ * What the world owes the agency right now — two honest buckets, no netting:
+ * invoices the association was asked to pay and hasn't, and financed
+ * principal outstanding on loans money has touched.
+ */
+function ReceivablesCard({ r }: { r: Receivables }) {
+  return (
+    <div className="card">
+      <h2>Accounts receivable</h2>
+      <div className="stat-row">
+        <div className="stat">
+          <div className="n">{fmtMoney(r.invoiceTotal)}</div>
+          <div className="l">
+            Billed &amp; uncollected · {r.invoiceCount}{" "}
+            {r.invoiceCount === 1 ? "invoice" : "invoices"}
+          </div>
+        </div>
+        <div className="stat">
+          <div className="n">{fmtMoney(r.loanTotal)}</div>
+          <div className="l">
+            Financed principal outstanding · {r.loanCount}{" "}
+            {r.loanCount === 1 ? "loan" : "loans"}
+          </div>
+        </div>
+        <div className="stat">
+          <div className="n">{fmtMoney(r.invoiceTotal + r.loanTotal)}</div>
+          <div className="l">Total receivable</div>
+        </div>
+      </div>
+      {r.invoiceUnpriced > 0 && (
+        <p className="muted small">
+          {r.invoiceUnpriced} open{" "}
+          {r.invoiceUnpriced === 1 ? "invoice carries" : "invoices carry"} no
+          stored amount and {r.invoiceUnpriced === 1 ? "is" : "are"} not in the
+          total — open {r.invoiceUnpriced === 1 ? "it" : "them"} from the
+          account to see the figure.
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -313,9 +388,12 @@ type Preset = "all" | "ytd" | "12mo";
 function CarrierCharts({
   policies,
   carriers,
+  accounts,
 }: {
   policies: Policy[];
   carriers: Carrier[];
+  /** Every account, both stages — the lead-source chart joins through them. */
+  accounts: Account[];
 }) {
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
@@ -361,12 +439,12 @@ function CarrierCharts({
       byCarrier.set(key, cur);
     }
     return [...byCarrier.entries()]
-      .map(([carrierId, agg]) => ({
-        carrierId,
+      .map(([key, agg]) => ({
+        key,
         name:
-          carrierId === "unassigned"
+          key === "unassigned"
             ? "Unassigned"
-            : carriers.find((c) => c.id === carrierId)?.name ?? "Unknown carrier",
+            : carriers.find((c) => c.id === key)?.name ?? "Unknown carrier",
         ...agg,
       }))
       .filter((r) => r.total > 0)
@@ -375,14 +453,15 @@ function CarrierCharts({
 
   const premiumRows = useMemo(() => rowsFor((p) => p.premium ?? 0), [filtered, carriers]);
   const commissionRows = useMemo(
-    () =>
-      rowsFor((p) =>
-        p.premium != null && p.commissionPct != null
-          ? (p.premium * p.commissionPct) / 100
-          : 0
-      ),
+    () => rowsFor(policyCommission),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [filtered, carriers]
+  );
+  // Same commission dollars, cut by where the account came from instead of
+  // who wrote the paper — the answer to "which lead source pays for itself".
+  const sourceRows = useMemo(
+    () => commissionBySource(filtered, accounts),
+    [filtered, accounts]
   );
 
   return (
@@ -444,6 +523,12 @@ function CarrierCharts({
         rows={commissionRows}
         setTip={setTip}
       />
+      <BarCard
+        title="Commission by lead source"
+        heroLabel="commission, by where the account came from"
+        rows={sourceRows}
+        setTip={setTip}
+      />
 
       {tip && (
         <div className="chart-tip" style={{ left: tip.x, top: tip.y }}>
@@ -462,7 +547,7 @@ function BarCard({
 }: {
   title: string;
   heroLabel: string;
-  rows: { carrierId: string; name: string; total: number; count: number }[];
+  rows: { key: string; name: string; total: number; count: number }[];
   setTip: (t: { x: number; y: number; text: string } | null) => void;
 }) {
   const total = rows.reduce((s, r) => s + r.total, 0);
@@ -485,7 +570,7 @@ function BarCard({
           {rows.map((r) => (
             <div
               className="pbar-row"
-              key={r.carrierId}
+              key={r.key}
               onMouseMove={(e) =>
                 setTip({
                   x: e.clientX,

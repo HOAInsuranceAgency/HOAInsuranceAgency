@@ -855,6 +855,14 @@ const schema = a
       replacementCostType: a.ref("ReplacementCostType"),
       effectiveDate: a.date(),
       expirationDate: a.date(),
+      /**
+       * When the bind actually happened — stamped automatically by the bind
+       * flow, never typed. Distinct from effectiveDate (when coverage
+       * starts) and from the implicit createdAt (which any backfill or
+       * migration would overwrite the meaning of). Nullable for policies
+       * bound before the field existed — same back-compat rule as billType.
+       */
+      datePolicyBound: a.datetime(),
       notes: a.string(),
       invoices: a.hasMany("Invoice", "policyId"),
       invoiceLines: a.hasMany("InvoiceLine", "policyId"),

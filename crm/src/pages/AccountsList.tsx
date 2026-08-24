@@ -109,6 +109,9 @@ export default function AccountsList({ stage }: { stage: "LEAD" | "CLIENT" }) {
       location: (a) => [a.city, a.state].filter(Boolean).join(", ") || null,
       units: (a) => a.unitCount,
       tiv: (a) => a.totalInsuredValue,
+      // When the lead entered the pipeline — the row's own creation stamp,
+      // which every intake path (form, web lead) shares.
+      entered: (a) => a.createdAt,
       renewal: (a) => renewalOf(a),
     },
     "renewal"
@@ -158,6 +161,9 @@ export default function AccountsList({ stage }: { stage: "LEAD" | "CLIENT" }) {
                   <SortTh label="Location" colKey="location" sortKey={sortKey} dir={dir} onToggle={toggle} />
                   <SortTh label="Units" colKey="units" sortKey={sortKey} dir={dir} onToggle={toggle} />
                   <SortTh label="TIV" colKey="tiv" sortKey={sortKey} dir={dir} onToggle={toggle} />
+                  {stage === "LEAD" && (
+                    <SortTh label="Entered" colKey="entered" sortKey={sortKey} dir={dir} onToggle={toggle} />
+                  )}
                   <SortTh
                     label={stage === "LEAD" ? "Incumbent expires" : "Renewal"}
                     colKey="renewal"
@@ -192,6 +198,9 @@ export default function AccountsList({ stage }: { stage: "LEAD" | "CLIENT" }) {
                       <td>{[a.city, a.state].filter(Boolean).join(", ") || "—"}</td>
                       <td>{fmtNum(a.unitCount)}</td>
                       <td>{fmtMoney(a.totalInsuredValue)}</td>
+                      {stage === "LEAD" && (
+                        <td>{a.createdAt ? fmtDate(a.createdAt.slice(0, 10)) : "—"}</td>
+                      )}
                       <td>{renewal ? fmtDate(renewal) : "—"}</td>
                     </tr>
                   );
