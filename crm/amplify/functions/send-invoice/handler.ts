@@ -106,20 +106,47 @@ async function ensurePaymentLink(
     }
   })();
 
+  const key = process.env.STRIPE_SECRET_KEY;
+
   /**
-   * Reuse only when the link still bills what the invoice says.
+   * Reuse only when the link still bills what the invoice says — AND Stripe
+   * will still honor it.
    *
    * A Payment Link's Price is fixed at creation. Editing lines and sending
    * again used to return the old link, so the email and the PDF showed the
    * revised total while the button charged the original one — an overpayment or
    * an underpayment, silently. Lines stay editable after sending on purpose,
    * because a carrier revising a premium is ordinary, so this is not a corner.
+   *
+   * The activity check exists because the link is single-use
+   * (`completed_sessions.limit: 1`) and Stripe kills it the moment a checkout
+   * SESSION completes — which for ACH is form submission, days before the
+   * debit clears or fails. A failed debit puts the invoice back to SENT, and
+   * a resend on an amount match alone would mail the dead link forever; the
+   * association clicks Pay and gets "no longer active" with no way through.
+   * Any doubt about the old link falls through to minting a fresh one.
    */
-  if (existingUrl && existingLinkId && wantedCents !== null) {
-    if (invoice.stripeLinkAmountCents === wantedCents) return existingUrl;
+  if (
+    existingUrl &&
+    existingLinkId &&
+    wantedCents !== null &&
+    invoice.stripeLinkAmountCents === wantedCents &&
+    key
+  ) {
+    try {
+      const link = await new Stripe(key).paymentLinks.retrieve(existingLinkId);
+      if (link.active) return existingUrl;
+      console.warn(
+        `[send-invoice] link ${existingLinkId} on ${invoice.number ?? invoice.id} is no longer active; minting a fresh one`
+      );
+    } catch (err) {
+      console.warn(
+        "[send-invoice] could not confirm the old link is live; minting a fresh one",
+        err
+      );
+    }
   }
 
-  const key = process.env.STRIPE_SECRET_KEY;
   if (!key) {
     console.warn("[send-invoice] STRIPE_SECRET_KEY unset; sending without a link");
     return null;

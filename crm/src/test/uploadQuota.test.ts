@@ -218,6 +218,20 @@ describe("an edited invoice cannot charge its old total", () => {
     expect(SEND).not.toMatch(/if \(invoice\.paymentUrl\?\.trim\(\)\) return/);
   });
 
+  it("confirms the stored link is still live before reusing it", () => {
+    // A link is single-use: Stripe kills it when a checkout SESSION completes,
+    // which for ACH is form submission — days before the debit clears or
+    // fails. A failed debit returns the invoice to SENT, and a resend on an
+    // amount match alone would mail the dead link forever. Live in test:
+    // INV-2026-00007's link read "no longer active" while its payment was
+    // still Incomplete awaiting microdeposit verification.
+    expect(SEND).toMatch(/paymentLinks\.retrieve\(existingLinkId\)/);
+    expect(SEND).toMatch(/if \(link\.active\) return existingUrl/);
+    expect(SEND).not.toMatch(
+      /if \(invoice\.stripeLinkAmountCents === wantedCents\) return existingUrl/
+    );
+  });
+
   it("replaces a URL that is not one of ours", () => {
     // It used to be honoured outright, on the reasoning that an explicit human
     // choice outranks a generated one. It does not: nothing knows what such a
