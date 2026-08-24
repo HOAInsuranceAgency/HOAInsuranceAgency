@@ -382,7 +382,47 @@ export const handler = async (event: {
     }
 
     // DISABLE: flag first, unconditionally — off always wins.
-    const oldStamp = await writeFlag(false);
+    let oldStamp: string | null = null;
+    try {
+      oldStamp = await writeFlag(false);
+    } catch (flipErr) {
+      /**
+       * A thrown write is not an unapplied write — the commit can land and
+       * the response be lost. Verify strongly: if the module is OFF, the
+       * disable is in effect and the audit row MUST follow; bailing to the
+       * outer catch here left the flag off with no DISABLED row and told
+       * the admin nothing changed — the exact flag-without-record hole
+       * this Lambda exists to close, in the direction that matters most.
+       */
+      console.error("[pf-admin] disable flip threw; verifying before deciding", flipErr);
+      let check;
+      try {
+        check = await ddb.send(
+          new GetCommand({
+            TableName: settingsTable,
+            Key: { id: AGENCY_SETTINGS_ID },
+            ConsistentRead: true,
+          })
+        );
+      } catch (checkErr) {
+        console.error("[pf-admin] could not verify flag state after failed disable", checkErr);
+        return {
+          ok: false,
+          error:
+            "Couldn't disable the module, and its state couldn't be verified. Check the admin screen and try again.",
+        };
+      }
+      if (check.Item?.premiumFinanceEnabled === true) {
+        // Genuinely still on; the flip really did not land.
+        return { ok: false, error: "Couldn't change the setting. Try again." };
+      }
+      // OFF (or dark). Clamp the row past whatever stamp made it so, and
+      // fall through to the log path; the ordering bump is moot — the
+      // stored stamp is not this call's write to bump.
+      const vs = check.Item?.premiumFinanceEnabledAt;
+      now = isoAfter(typeof vs === "string" ? vs : null);
+      oldStamp = null;
+    }
     /**
      * The DISABLED row must sort after the state it ends. The flag write
      * just returned the stamp it overwrote — a fresher clock's enable
