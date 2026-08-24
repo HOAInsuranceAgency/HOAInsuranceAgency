@@ -115,7 +115,9 @@ async function financeOffer(
     ) {
       return null;
     }
-    let loan =
+    // Annotated: the backend tsconfig lacks noUncheckedIndexedAccess, so
+    // `[0] ?? null` would otherwise infer the element type WITHOUT null.
+    let loan: (typeof loans)[number] | null =
       [...loans]
         .filter((l) => l.status === "QUOTED")
         .sort((a, b) => (b.quotedAt ?? "").localeCompare(a.quotedAt ?? ""))[0] ?? null;
