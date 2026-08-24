@@ -62,7 +62,6 @@ interface FinanceAnchor {
   kind: "policy" | "quote";
   id: string;
   lines: readonly (string | null | undefined)[];
-  producerOfRecord: boolean | null | undefined;
 }
 
 /**
@@ -767,13 +766,11 @@ export const handler = async (event: {
           kind: "policy",
           id: headerPolicyId,
           lines: policy?.lines ?? [],
-          producerOfRecord: policy?.producerOfRecord,
         }
       : {
           kind: "quote",
           id: invoice.quoteId!,
           lines: quoteAnchor!.lines ?? [],
-          producerOfRecord: quoteAnchor!.producerOfRecord,
         };
 
     /**

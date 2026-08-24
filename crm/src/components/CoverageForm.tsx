@@ -8,7 +8,6 @@ import {
   type Quote,
 } from "../lib/client";
 import { useFormState } from "../lib/useFormState";
-import { currentActor } from "../lib/client";
 import { SELECTABLE_QUOTE_STATUSES } from "../lib/quoteStatus";
 import {
   AGGREGATE_APPLIES_TO_OPTIONS,
@@ -56,11 +55,9 @@ export default function CoverageForm({
     carrierId: existing?.carrierId ?? "",
     policyNumber: asPolicy?.policyNumber ?? "",
     billType: asPolicy?.billType ?? "",
-    // W8: quotes carry the financing-eligibility facts too — pre-bind
-    // billing reads them there, and bind carries them onto the policy.
-    // (Auditable retired 2026-08-24 — "everything we do is final once
-    // entered" — so the form no longer asks or writes it.)
-    producerOfRecord: existing?.producerOfRecord ?? null,
+    // MEP rides along as underwriting data. Its screen — and auditable's,
+    // and producer-of-record's — all retired 2026-08-24 by signed decision;
+    // the form no longer asks any of them.
     mepPct: str(existing?.minimumEarnedPremiumPct),
     status: (existing?.status ?? (isPolicy ? "ACTIVE" : "DRAFT")) as string,
     lines: (existing?.lines ?? []).filter((l): l is string => !!l),
@@ -156,21 +153,8 @@ export default function CoverageForm({
           // existed opens with the box empty, and saving other edits must not
           // invent an answer for it.
           billType: (form.billType || null) as Policy["billType"],
-          /**
-           * The financing-eligibility facts. Tri-state on purpose: null is
-           * "nobody has answered", and financing blocks on it — so an edit
-           * that never touched these must not turn null into false. The
-           * producer-of-record stamps are written only on the transition to
-           * true, by whoever ticked it.
-           */
+          // MEP is underwriting data; blank stays null, never a confident 0.
           minimumEarnedPremiumPct: form.mepPct.trim() === "" ? null : Number(form.mepPct),
-          producerOfRecord: form.producerOfRecord,
-          ...(form.producerOfRecord === true && asPolicy?.producerOfRecord !== true
-            ? {
-                producerOfRecordBy: (await currentActor()) ?? "unknown",
-                producerOfRecordAt: new Date().toISOString(),
-              }
-            : {}),
         });
         if (errors?.length) throw new Error(errors[0].message);
       } else if (existing) {
@@ -178,10 +162,7 @@ export default function CoverageForm({
           id: existing.id,
           ...shared,
           status: form.status as Quote["status"],
-          // Same tri-state discipline as the policy branch: null means
-          // "nobody has answered", and financing blocks on it.
           minimumEarnedPremiumPct: form.mepPct.trim() === "" ? null : Number(form.mepPct),
-          producerOfRecord: form.producerOfRecord,
         });
         if (errors?.length) throw new Error(errors[0].message);
       } else {
@@ -190,7 +171,6 @@ export default function CoverageForm({
           ...shared,
           status: form.status as Quote["status"],
           minimumEarnedPremiumPct: form.mepPct.trim() === "" ? null : Number(form.mepPct),
-          producerOfRecord: form.producerOfRecord,
         });
         if (errors?.length) throw new Error(errors[0].message);
       }
@@ -247,28 +227,6 @@ export default function CoverageForm({
                 value={form.mepPct}
                 onChange={(v) => setF("mepPct", v)}
               />
-            </div>
-            <div className="field">
-              <label>Producer of record</label>
-              <select
-                value={
-                  form.producerOfRecord === null
-                    ? ""
-                    : form.producerOfRecord
-                      ? "yes"
-                      : "no"
-                }
-                onChange={(e) =>
-                  setF(
-                    "producerOfRecord",
-                    e.target.value === "" ? null : e.target.value === "yes"
-                  )
-                }
-              >
-                <option value="">Not confirmed</option>
-                <option value="yes">Yes — we are the producer of record</option>
-                <option value="no">No — another agency's paper</option>
-              </select>
             </div>
           </>
         )}
@@ -428,7 +386,11 @@ export default function CoverageForm({
         <div className="field full">
           <label>Lines</label>
           <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 14px" }}>
-            {LINES_OF_BUSINESS.map((l) => (
+            {/* Vocabulary first, then any legacy value this record carries
+                that the vocabulary no longer names (bare "Property",
+                pre-rename spellings) — a value with no checkbox would be
+                stuck checked forever, invisible and unremovable. */}
+            {[...new Set([...LINES_OF_BUSINESS, ...form.lines])].map((l) => (
               <label
                 key={l}
                 className="small"

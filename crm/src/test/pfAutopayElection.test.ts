@@ -453,14 +453,14 @@ describe("the origination mutation holds the product's fixed terms", () => {
 });
 
 describe("quotes can answer the screens the offer runs on (W8 review)", () => {
-  it("the coverage form records producer-of-record on quotes", () => {
-    // Without this, every quote anchor blocks on "not confirmed" and the
-    // pre-bind half of W8 can never fire. (Auditable retired 2026-08-24 —
-    // the form must NOT write the dead field back.)
+  it("the coverage form writes none of the retired screens' fields", () => {
+    // MEP's screen, auditable, and producer-of-record all retired
+    // 2026-08-24 by signed decision — the form must not write the dead
+    // fields back (MEP itself stays: underwriting data, not a screen).
     const FORM = read("src/components/CoverageForm.tsx");
-    const quoteBranch = FORM.slice(FORM.indexOf("client.models.Quote.update"));
-    expect(quoteBranch).toContain("producerOfRecord: form.producerOfRecord");
-    expect(quoteBranch).not.toContain("isAuditable");
+    expect(FORM).not.toContain("isAuditable");
+    expect(FORM).not.toContain("producerOfRecord");
+    expect(FORM).toContain("minimumEarnedPremiumPct");
   });
 
   it("bind checks its errors and refuses a second policy from one quote", () => {
@@ -477,6 +477,14 @@ describe("quotes can answer the screens the offer runs on (W8 review)", () => {
     // single Policy.create site is where it can only come from.
     const PANEL = read("src/components/QuotesPanel.tsx");
     expect(PANEL).toContain("datePolicyBound: new Date().toISOString()");
+  });
+
+  it("bind rolls document links alongside invoices and loans", () => {
+    // A quote's paper follows it onto the policy — the link gains the
+    // policy id and keeps the quote's, same as every other anchor.
+    const PANEL = read("src/components/QuotesPanel.tsx");
+    expect(PANEL).toContain("client.models.Document.list");
+    expect(PANEL).toContain("client.models.Document.update");
   });
 
   it("activation requires a policy — no mandate turns on against unplaced coverage", () => {

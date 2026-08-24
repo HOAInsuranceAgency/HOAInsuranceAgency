@@ -17,12 +17,16 @@ import { resolveTab, tabsFor } from "./AccountDetail";
  * converted must not leave the user on a panel with no button to leave it by.
  */
 describe("tabsFor", () => {
-  it("offers Prior coverage to a lead, and no Policies or Invoices", () => {
+  it("offers Prior coverage and Invoices to a lead, and no Policies", () => {
+    // Invoices joined the lead set with W8's quote anchoring: billing a
+    // quote before bind is the new-business flow, and new business is a
+    // lead. Policies still wait for the bind that makes them true.
     expect(tabsFor("LEAD").map(([t]) => t)).toEqual([
       "overview",
       "priorcarrier",
       "losses",
       "quotes",
+      "invoices",
       "documents",
       "certificates",
       "activity",
@@ -49,13 +53,13 @@ describe("tabsFor", () => {
     expect(client.indexOf("invoices")).toBe(client.indexOf("policies") + 1);
   });
 
-  it("withholds Policies and Invoices from a lead", () => {
+  it("withholds Policies from a lead — and only Policies", () => {
     // A policy exists because a quote bound, and binding is what makes the
-    // account a client — so on a lead the panel could only ever say "none",
-    // which reads as missing data rather than impossible data.
+    // account a client — so on a lead that panel could only ever say
+    // "none". Invoices are different since W8: a lead's quote is billable.
     const lead = tabsFor("LEAD").map(([t]) => t);
     expect(lead).not.toContain("policies");
-    expect(lead).not.toContain("invoices");
+    expect(lead).toContain("invoices");
   });
 
   it("treats an account with no stage as a lead", () => {
@@ -64,9 +68,10 @@ describe("tabsFor", () => {
     // than hiding it, because hiding it looks like the account has none.
     expect(tabsFor(null).map(([t]) => t)).toContain("priorcarrier");
     expect(tabsFor(undefined).map(([t]) => t)).toContain("priorcarrier");
-    // The same fallback hides billing, which is the safe direction: an
-    // unreadable stage must not offer to bill someone who has bought nothing.
-    expect(tabsFor(null).map(([t]) => t)).not.toContain("invoices");
+    // Billing shows for every stage since W8 — a quote is billable before
+    // bind — so the fallback only hides what cannot exist: policies.
+    expect(tabsFor(null).map(([t]) => t)).toContain("invoices");
+    expect(tabsFor(null).map(([t]) => t)).not.toContain("policies");
   });
 });
 
@@ -76,24 +81,30 @@ describe("tabsFor", () => {
  * disappear everywhere, bookmarks included.
  */
 describe("the financing tab", () => {
-  it("appears only for a client with the module on", () => {
+  it("appears for any stage with the module on, and never with it off", () => {
+    // Client-only ended with W8: a lead's quote-anchored loan needs its
+    // servicing surface. The kill switch remains absolute.
     expect(tabsFor("CLIENT", { premiumFinance: true }).map(([t]) => t)).toContain(
+      "financing"
+    );
+    expect(tabsFor("LEAD", { premiumFinance: true }).map(([t]) => t)).toContain(
       "financing"
     );
     expect(tabsFor("CLIENT").map(([t]) => t)).not.toContain("financing");
     expect(tabsFor("CLIENT", { premiumFinance: false }).map(([t]) => t)).not.toContain(
       "financing"
     );
-    expect(tabsFor("LEAD", { premiumFinance: true }).map(([t]) => t)).not.toContain(
+    expect(tabsFor("LEAD", { premiumFinance: false }).map(([t]) => t)).not.toContain(
       "financing"
     );
   });
 
   it("falls a bookmarked ?tab=financing back to Overview when unreachable", () => {
-    // A lead, a disabled module, or both — never a panel without a button.
+    // A disabled module, at either stage — never a panel without a button.
     expect(resolveTab("financing", "CLIENT")).toBe("overview");
     expect(resolveTab("financing", "CLIENT", { premiumFinance: false })).toBe("overview");
-    expect(resolveTab("financing", "LEAD", { premiumFinance: true })).toBe("overview");
+    expect(resolveTab("financing", "LEAD", { premiumFinance: false })).toBe("overview");
+    expect(resolveTab("financing", "LEAD", { premiumFinance: true })).toBe("financing");
     expect(resolveTab("financing", "CLIENT", { premiumFinance: true })).toBe("financing");
   });
 
@@ -113,13 +124,14 @@ describe("resolveTab", () => {
     expect(resolveTab("priorcarrier", "LEAD")).toBe("priorcarrier");
   });
 
-  it("falls a lead back from Policies and Invoices", () => {
+  it("falls a lead back from Policies, and leaves them on Invoices", () => {
     // The mirror of the Prior coverage case, and the reason the rule had to
     // stop being one-directional: a bookmarked ?tab=policies on a lead used
     // to render a panel the tab bar had no button for.
     expect(resolveTab("policies", "LEAD")).toBe("overview");
-    expect(resolveTab("invoices", "LEAD")).toBe("overview");
-    expect(resolveTab("invoices", null)).toBe("overview");
+    expect(resolveTab("policies", null)).toBe("overview");
+    expect(resolveTab("invoices", "LEAD")).toBe("invoices");
+    expect(resolveTab("invoices", null)).toBe("invoices");
   });
 
   it("leaves a client on them", () => {

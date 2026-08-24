@@ -129,7 +129,6 @@ export const handler = async (event: {
           kind: "policy",
           id: a.policyId,
           lines: policy.lines ?? [],
-          producerOfRecord: policy.producerOfRecord,
         },
         premium: a.premium,
         downPct: a.downPct,

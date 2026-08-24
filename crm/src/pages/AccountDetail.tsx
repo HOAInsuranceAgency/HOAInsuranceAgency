@@ -69,14 +69,18 @@ const LEAD_ONLY_TABS: ReadonlySet<Tab> = new Set<Tab>(["priorcarrier"]);
  * A lead has no policy — a policy exists because a quote bound, and binding is
  * what makes the account a client. The Policies tab on a lead could therefore
  * only ever say "No policies", which reads as data missing rather than data
- * that cannot exist yet. Invoices follow it for the same reason: there is
- * nothing to bill an association that has not bought anything.
+ * that cannot exist yet. Invoices USED to follow it, until the W8 E2E caught
+ * the contradiction: billing a quote before bind is the new-business flow,
+ * and new business is a lead — hiding the money tabs from leads hid the
+ * feature from its audience. So Invoices and Financing show at every stage
+ * now (financing still behind the module flag), and only Policies waits for
+ * the bind that makes it true.
  *
  * Not enforced anywhere but the tab bar. The rows are still reachable and
  * still load — this hides a panel that has nothing to show, it does not make
  * the records conditional.
  */
-const CLIENT_ONLY_TABS: ReadonlySet<Tab> = new Set<Tab>(["policies", "invoices"]);
+const CLIENT_ONLY_TABS: ReadonlySet<Tab> = new Set<Tab>(["policies"]);
 
 /**
  * Financing is doubly gated: client-only AND behind the premium-finance
@@ -103,13 +107,14 @@ export function tabsFor(
     // submission declares the same losses a new-business one did.
     ["losses", "Losses"],
     ["quotes", "Quotes"],
-    ...(isLead
-      ? []
-      : ([
-          ["policies", "Policies"],
-          ["invoices", "Invoices"],
-          ...(opts.premiumFinance ? [["financing", "Financing"]] : []),
-        ] as [Tab, string][])),
+    // Policies stay client-only — a lead by definition has none. Invoices
+    // and Financing do NOT (since the W8 E2E caught them hidden): billing
+    // a QUOTE before bind is new business, and new business is a lead —
+    // the invoice and its loan roll onto the policy when the bind
+    // converts them.
+    ...(isLead ? [] : ([["policies", "Policies"]] as [Tab, string][])),
+    ["invoices", "Invoices"],
+    ...(opts.premiumFinance ? ([["financing", "Financing"]] as [Tab, string][]) : []),
     ["documents", "Documents"],
     ["certificates", "Certificates"],
     ["activity", "Activity"],
@@ -138,7 +143,8 @@ export function resolveTab(
   const unreachable = isClient
     ? LEAD_ONLY_TABS.has(requested) ||
       (requested === "financing" && !opts.premiumFinance)
-    : CLIENT_ONLY_TABS.has(requested) || requested === "financing";
+    : CLIENT_ONLY_TABS.has(requested) ||
+      (requested === "financing" && !opts.premiumFinance);
   return unreachable ? "overview" : requested;
 }
 
@@ -264,7 +270,12 @@ export default function AccountDetail({ profile }: { profile: UserProfile }) {
       {activeTab === "documents" && (
         <>
           <div className="card">
-            <DocumentsPanel entityType="ACCOUNT" entityId={account.id} />
+            <DocumentsPanel
+              entityType="ACCOUNT"
+              entityId={account.id}
+              linkAccountId={account.id}
+              initialLink={searchParams.get("link") ?? undefined}
+            />
           </div>
           <ExtractionPanel account={account} onChange={setAccount} />
           <FormsTab account={account} profile={profile} />

@@ -762,6 +762,32 @@ th.internal { color: var(--muted); }
   border-radius: 0 4px 4px 0;
 }
 
+/* The financing banner above an invoice's Send button: one glance says
+   whether the email will carry the offer. Green when it will, amber when it
+   won't — with the reasons, because "no" without a why sends someone hunting
+   through three records. */
+.offer-banner {
+  margin: 10px 0;
+  padding: 10px 12px;
+  border-left: 3px solid var(--green);
+  background: var(--green-bg);
+  color: var(--green);
+  font-size: 13px;
+  border-radius: 0 4px 4px 0;
+}
+.offer-banner.blocked {
+  border-left-color: var(--amber);
+  background: var(--amber-bg);
+  color: var(--amber);
+}
+.offer-banner ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
+.offer-banner strong {
+  font-weight: 600;
+}
+
 /* Full-width row, but the control itself stays the size of its content — a
    select stretched across a card reads as a text box. */
 .policy-field select { max-width: 420px; }

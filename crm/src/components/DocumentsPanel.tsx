@@ -1,7 +1,22 @@
 import { useEffect, useRef, useState } from "react";
 import { uploadData, remove } from "aws-amplify/storage";
-import { client, friendlyError, type CrmDocument } from "../lib/client";
+import {
+  client,
+  friendlyError,
+  listAllPages,
+  type CrmDocument,
+  type Policy,
+  type Quote,
+} from "../lib/client";
 import { downloadFile } from "../lib/storage";
+import { useAsyncResource } from "../lib/useAsyncResource";
+import {
+  linkFields,
+  linkKeyOf,
+  matchesLink,
+  policyLinkLabel,
+  quoteLinkLabel,
+} from "../lib/documentLinks";
 import type { Schema } from "../../amplify/data/resource";
 import FilePreviewModal, { canPreview } from "./FilePreview";
 import FileButton from "./FileButton";
@@ -43,12 +58,69 @@ const CATEGORIES = DOCUMENT_CATEGORY_OPTIONS;
 export default function DocumentsPanel({
   entityType,
   entityId,
+  linkAccountId,
+  initialLink,
 }: {
   entityType: EntityType;
   entityId: string;
+  /**
+   * When set (the ACCOUNT mount), documents can be linked to that account's
+   * policies and quotes: the toolbar gains a "Linked to" view that both
+   * filters the table and targets uploads, and each row gets a link select.
+   * Carrier and license mounts leave it unset and change nothing.
+   */
+  linkAccountId?: string;
+  /** A "policy:<id>" / "quote:<id>" key to open pre-filtered on. */
+  initialLink?: string;
 }) {
   const [docs, setDocs] = useState<CrmDocument[]>([]);
   const [category, setCategory] = useState<Category>(DEFAULT_DOCUMENT_CATEGORY);
+  const [view, setView] = useState(
+    initialLink && /^(policy|quote):.+$/.test(initialLink) ? initialLink : ""
+  );
+
+  /**
+   * The link targets — every policy, every quote. Closed quotes and expired
+   * policies stay listed: paper about a lost quote or a lapsed term is still
+   * paper someone filed, and a target vanishing from the list must not make
+   * its documents unreachable.
+   */
+  const linkTargets = useAsyncResource(
+    async () => {
+      if (!linkAccountId) return { options: [] as { key: string; label: string }[] };
+      const [policies, quotes] = await Promise.all([
+        listAllPages((nextToken) =>
+          client.models.Policy.list({
+            filter: { accountId: { eq: linkAccountId } },
+            nextToken,
+          })
+        ),
+        listAllPages((nextToken) =>
+          client.models.Quote.list({
+            filter: { accountId: { eq: linkAccountId } },
+            nextToken,
+          })
+        ),
+      ]);
+      return {
+        options: [
+          ...(policies as Policy[]).map((p) => ({
+            key: `policy:${p.id}`,
+            label: policyLinkLabel(p),
+          })),
+          ...(quotes as Quote[]).map((q) => ({
+            key: `quote:${q.id}`,
+            label: quoteLinkLabel(q),
+          })),
+        ],
+      };
+    },
+    [linkAccountId],
+    { initialData: { options: [] } }
+  );
+  const linkOptions = linkTargets.data.options;
+  const linkLabel = (key: string) =>
+    linkOptions.find((o) => o.key === key)?.label ?? "(deleted record)";
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
   const [openDocId, setOpenDocId] = useState<string | null>(null);
@@ -90,6 +162,9 @@ export default function DocumentsPanel({
           contentType: file.type,
           sizeBytes: file.size,
           ocrStatus: "PENDING",
+          // Uploads land where the viewer is looking: the selected policy
+          // or quote, or unlinked when viewing everything.
+          ...(view ? linkFields(view) : {}),
         });
         if (errors?.length || !doc) throw new Error(errors?.[0]?.message);
         docId = doc.id;
@@ -184,6 +259,24 @@ export default function DocumentsPanel({
     // is reported by the panel's one SaveStatus line, not by the button.
   }
 
+  async function relink(doc: CrmDocument, key: string) {
+    await rowStatus.run(
+      async () => {
+        const { errors } = await client.models.Document.update({
+          id: doc.id,
+          ...linkFields(key),
+        });
+        if (errors?.length) throw new Error(errors[0].message);
+      },
+      {
+        savedMessage: key
+          ? `"${doc.name}" linked to ${linkLabel(key)}.`
+          : `"${doc.name}" unlinked.`,
+        errorMessage: "Couldn't change that link.",
+      }
+    );
+  }
+
   function highlight(text: string, term: string) {
     if (!term.trim()) return text;
     const parts = text.split(new RegExp(`(${term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})`, "gi"));
@@ -192,12 +285,17 @@ export default function DocumentsPanel({
     );
   }
 
+  // The chosen link filters the table — "you are looking at this policy's
+  // documents" — and everything when nothing is chosen.
+  const visible = linkAccountId ? docs.filter((d) => matchesLink(d, view)) : docs;
+
   // Most recently uploaded first, as the subscription used to order them.
   const { sorted, sortKey, dir, toggle } = useSort(
-    docs,
+    visible,
     {
       name: (d) => d.name,
       category: (d) => CATEGORIES.find((c) => c.value === d.category)?.label,
+      linked: (d) => (linkKeyOf(d) ? linkLabel(linkKeyOf(d)) : null),
       // Sorts on the words in the badge, so the column orders the way it reads.
       ocr: (d) =>
         statusBadge(OCR_STATUS_BADGE, d.ocrStatus, OCR_STATUS_BADGE.PENDING).label,
@@ -238,6 +336,22 @@ export default function DocumentsPanel({
   return (
     <div>
       <div className="toolbar">
+        {linkAccountId && (
+          <div className="field">
+            <label>Linked to</label>
+            {/* One control, two jobs on purpose: it filters the table AND
+                targets uploads — "you are looking at this policy's
+                documents; files you attach here belong to it". */}
+            <select value={view} onChange={(e) => setView(e.target.value)}>
+              <option value="">Everything</option>
+              {linkOptions.map((o) => (
+                <option key={o.key} value={o.key}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
         <div className="field">
           <label>Category</label>
           <select
@@ -266,8 +380,12 @@ export default function DocumentsPanel({
         <SaveStatus {...rowStatus.status} />
       </div>
 
-      {docs.length === 0 ? (
-        <p className="muted small">No documents attached.</p>
+      {visible.length === 0 ? (
+        <p className="muted small">
+          {view
+            ? `Nothing linked to ${linkLabel(view)} yet — files attached while it's selected will be.`
+            : "No documents attached."}
+        </p>
       ) : (
         <div className="table-wrap">
           <table>
@@ -275,6 +393,9 @@ export default function DocumentsPanel({
               <tr>
                 <SortTh label="Name" colKey="name" sortKey={sortKey} dir={dir} onToggle={toggle} />
                 <SortTh label="Category" colKey="category" sortKey={sortKey} dir={dir} onToggle={toggle} />
+                {linkAccountId && (
+                  <SortTh label="Linked to" colKey="linked" sortKey={sortKey} dir={dir} onToggle={toggle} />
+                )}
                 <SortTh label="OCR" colKey="ocr" sortKey={sortKey} dir={dir} onToggle={toggle} />
                 <SortTh label="Size" colKey="size" sortKey={sortKey} dir={dir} onToggle={toggle} />
                 <th></th>
@@ -316,6 +437,30 @@ export default function DocumentsPanel({
                         {CATEGORIES.find((c) => c.value === d.category)?.label ?? "—"}
                       </span>
                     </td>
+                    {linkAccountId && (
+                      <td>
+                        {/* Editable in place, like the status selects on the
+                            policy rows: linking existing paper is the whole
+                            point — a scan often arrives before the policy
+                            it belongs to exists. */}
+                        <select
+                          aria-label={`Link ${d.name}`}
+                          value={linkKeyOf(d)}
+                          onChange={(e) => void relink(d, e.target.value)}
+                        >
+                          <option value="">—</option>
+                          {linkOptions.map((o) => (
+                            <option key={o.key} value={o.key}>
+                              {o.label}
+                            </option>
+                          ))}
+                          {linkKeyOf(d) &&
+                            !linkOptions.some((o) => o.key === linkKeyOf(d)) && (
+                              <option value={linkKeyOf(d)}>(deleted record)</option>
+                            )}
+                        </select>
+                      </td>
+                    )}
                     <td>
                       <Badge {...badge} />
                       {d.ocrStatus === "FAILED" && d.ocrError && (

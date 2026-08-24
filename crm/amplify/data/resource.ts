@@ -767,13 +767,11 @@ const schema = a
       expirationDate: a.date(),
       notes: a.string(),
       /**
-       * W8: quotes are invoiceable and financeable before bind, so the
-       * producer-of-record screen reads here too, additive nullable. Bind
-       * carries the facts onto the policy; unrecorded blocks, exactly as
-       * on a policy. MEP is recorded for underwriting parity only (screen
-       * retired 2026-08-24); isAuditable is a dead field kept for existing
-       * rows — its screen retired the same day ("everything we do is final
-       * once entered") and nothing reads or writes it.
+       * MEP is recorded for underwriting parity only (screen retired
+       * 2026-08-24). producerOfRecord and isAuditable are DEAD FIELDS —
+       * their screens retired the same day ("we are always the producer of
+       * record"; "everything we do is final once entered") — kept for rows
+       * that carry answers, read and written by nothing.
        */
       producerOfRecord: a.boolean(),
       isAuditable: a.boolean(),
@@ -816,19 +814,13 @@ const schema = a
        */
       billType: a.ref("BillType"),
       /**
-       * ── Premium-finance eligibility facts (W3) ──
+       * ── Premium-finance eligibility facts (W3), mostly retired ──
        *
-       * All nullable, and null always BLOCKS financing rather than passing it:
-       * these fields answer questions the exemption depends on, and an
-       * unanswered question is not a yes. They gate nothing outside the
-       * premium_finance module.
-       *
-       * producerOfRecord: are we the producer of record on this policy?
-       * Confirmed true through the bind flow (pre-checked, stamped) or by
-       * hand on an imported policy; null on any policy nobody has confirmed —
-       * which is exactly where wholesale or another agency's paper would
-       * enter. The by/at stamps make the pre-ticked bind checkbox an
-       * affirmation rather than a default: who ticked it, and when.
+       * DEAD FIELDS — the producer-of-record screen retired 2026-08-24
+       * ("we are always the producer of record": the agency writes no
+       * wholesale paper, so the screen only ever blocked its own deals on
+       * an unticked box). Kept for rows that carry answers and stamps;
+       * read and written by nothing. MEP below stays as underwriting data.
        */
       producerOfRecord: a.boolean(),
       producerOfRecordBy: a.string(),
@@ -1380,6 +1372,20 @@ const schema = a
       .model({
         entityType: a.ref("DocumentEntityType").required(),
         entityId: a.string().required(),
+        /**
+         * Anchor links (2026-08-24): the policy or quote this paper is
+         * about, as plain nullable ids. The document still BELONGS to its
+         * account — entityType/entityId stay the storage and query root, so
+         * every account-scoped consumer (the tab's live query, the delete
+         * cascade, the activation picker, search) keeps seeing everything;
+         * these are metadata on top. Bind's rollover adds policyId to
+         * quote-linked rows, exactly as invoices and loans roll. (The
+         * entityType enum's QUOTE/POLICY values stay deliberately unused:
+         * re-rooting documents under them would orphan them from every
+         * account-scoped scan.)
+         */
+        policyId: a.id(),
+        quoteId: a.id(),
         category: a.ref("DocumentCategory"),
         name: a.string().required(),
         s3Key: a.string().required(),

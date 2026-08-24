@@ -681,13 +681,11 @@ export function InvoiceEditor({
                       kind: "policy",
                       id: policy.id,
                       lines: policy.lines ?? [],
-                      producerOfRecord: policy.producerOfRecord,
                     }
                   : {
                       kind: "quote",
                       id: quote!.id,
                       lines: quote!.lines ?? [],
-                      producerOfRecord: quote!.producerOfRecord,
                     }
               }
               retailTotal={totals.retail}
