@@ -424,6 +424,24 @@ function BindForm({
             rollFailures.push(`invoice ${inv.number ?? inv.id}: ${errors[0].message}`);
           }
         }
+        // Documents linked to the quote follow it too — same rule as the
+        // invoice: the link gains the policy id and keeps the quote's.
+        const quoteDocs = await listAllPages((nextToken) =>
+          client.models.Document.list({
+            filter: { quoteId: { eq: quote.id } },
+            nextToken,
+          })
+        );
+        for (const doc of quoteDocs) {
+          if (doc.policyId) continue;
+          const { errors } = await client.models.Document.update({
+            id: doc.id,
+            policyId: policy.id,
+          });
+          if (errors?.length) {
+            rollFailures.push(`document ${doc.name}: ${errors[0].message}`);
+          }
+        }
         const quoteLoans = await listAllPages((nextToken) =>
           client.models.PfLoan.list({
             filter: { quoteId: { eq: quote.id } },

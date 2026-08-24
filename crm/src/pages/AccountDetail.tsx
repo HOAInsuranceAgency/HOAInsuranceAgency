@@ -270,7 +270,12 @@ export default function AccountDetail({ profile }: { profile: UserProfile }) {
       {activeTab === "documents" && (
         <>
           <div className="card">
-            <DocumentsPanel entityType="ACCOUNT" entityId={account.id} />
+            <DocumentsPanel
+              entityType="ACCOUNT"
+              entityId={account.id}
+              linkAccountId={account.id}
+              initialLink={searchParams.get("link") ?? undefined}
+            />
           </div>
           <ExtractionPanel account={account} onChange={setAccount} />
           <FormsTab account={account} profile={profile} />

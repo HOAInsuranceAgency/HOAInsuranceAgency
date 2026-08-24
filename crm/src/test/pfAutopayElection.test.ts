@@ -479,6 +479,14 @@ describe("quotes can answer the screens the offer runs on (W8 review)", () => {
     expect(PANEL).toContain("datePolicyBound: new Date().toISOString()");
   });
 
+  it("bind rolls document links alongside invoices and loans", () => {
+    // A quote's paper follows it onto the policy — the link gains the
+    // policy id and keeps the quote's, same as every other anchor.
+    const PANEL = read("src/components/QuotesPanel.tsx");
+    expect(PANEL).toContain("client.models.Document.list");
+    expect(PANEL).toContain("client.models.Document.update");
+  });
+
   it("activation requires a policy — no mandate turns on against unplaced coverage", () => {
     const SERVICING = read("amplify/functions/pf-servicing/handler.ts");
     expect(SERVICING).toContain("This loan is anchored to a quote. Bind the quote first");

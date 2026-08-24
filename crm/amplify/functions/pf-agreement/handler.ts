@@ -163,6 +163,10 @@ export const handler = async (event: {
         sizeBytes: d.bytes.length,
         ocrStatus: "SKIPPED",
         lastWriteBy: "pf-agreement",
+        // The paper is about the loan's anchor — linked the way a hand
+        // upload would be, so the policy's document view carries it.
+        ...(loan.policyId ? { policyId: loan.policyId } : {}),
+        ...(loan.quoteId ? { quoteId: loan.quoteId } : {}),
       });
       if (errors?.length || !row) throw new Error(errors?.[0]?.message);
       created.push(row.id);

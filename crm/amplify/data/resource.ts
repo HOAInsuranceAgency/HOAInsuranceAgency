@@ -1380,6 +1380,20 @@ const schema = a
       .model({
         entityType: a.ref("DocumentEntityType").required(),
         entityId: a.string().required(),
+        /**
+         * Anchor links (2026-08-24): the policy or quote this paper is
+         * about, as plain nullable ids. The document still BELONGS to its
+         * account — entityType/entityId stay the storage and query root, so
+         * every account-scoped consumer (the tab's live query, the delete
+         * cascade, the activation picker, search) keeps seeing everything;
+         * these are metadata on top. Bind's rollover adds policyId to
+         * quote-linked rows, exactly as invoices and loans roll. (The
+         * entityType enum's QUOTE/POLICY values stay deliberately unused:
+         * re-rooting documents under them would orphan them from every
+         * account-scoped scan.)
+         */
+        policyId: a.id(),
+        quoteId: a.id(),
         category: a.ref("DocumentCategory"),
         name: a.string().required(),
         s3Key: a.string().required(),
