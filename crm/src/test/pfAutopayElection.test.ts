@@ -81,9 +81,43 @@ describe("decidePfEvent — which events are loan money", () => {
     ).toBeNull();
   });
 
-  it("ignores event types that are not money moving", () => {
+  it("treats a completed election checkout as the choice, carrying its intent", () => {
+    // Manual-entry ACH sits in microdeposit verification for days before
+    // `processing` fires; the session completing is what must close the
+    // accept button. The invoice path keeps ignoring this event — form
+    // completion is still not money.
+    const d = decidePfEvent(
+      pfIntent(
+        "checkout.session.completed",
+        { pfLoanId: "loan-1", pfKind: "down" },
+        { id: "cs_test_1", payment_intent: "pi_from_session" }
+      )
+    );
+    expect(d).toMatchObject({
+      kind: "down",
+      outcome: "COMMITTED",
+      paymentIntentId: "pi_from_session",
+    });
+    // A session that cannot name its intent marks nothing.
     expect(
-      decidePfEvent(pfIntent("checkout.session.completed", { pfLoanId: "loan-1", pfKind: "down" }))
+      decidePfEvent(
+        pfIntent(
+          "checkout.session.completed",
+          { pfLoanId: "loan-1", pfKind: "down" },
+          { id: "cs_test_1", payment_intent: undefined }
+        )
+      )
+    ).toBeNull();
+  });
+
+  it("treats a canceled intent as failed — an expired verification revives the link", () => {
+    const d = decidePfEvent(pfIntent("payment_intent.canceled", { pfLoanId: "loan-1", pfKind: "down" }));
+    expect(d).toMatchObject({ kind: "down", outcome: "FAILED" });
+  });
+
+  it("ignores event types that mean nothing to a loan", () => {
+    expect(
+      decidePfEvent(pfIntent("charge.refunded", { pfLoanId: "loan-1", pfKind: "down" }))
     ).toBeNull();
   });
 

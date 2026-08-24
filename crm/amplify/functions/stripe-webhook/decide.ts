@@ -105,7 +105,7 @@ export interface PfEventDecision {
   kind: "down" | "installment";
   /** Which schedule row an installment debit was FOR. Null on a down payment. */
   installment: number | null;
-  outcome: InvoiceOutcome;
+  outcome: InvoiceOutcome | "COMMITTED";
   paymentIntentId: string;
   occurredAt: string;
   /** The saved mandate, present on the down payment's succeeded event. */
@@ -115,8 +115,28 @@ export interface PfEventDecision {
   amount: number | null;
 }
 
+/**
+ * The loan side hears two events the invoice side does not:
+ *
+ * `checkout.session.completed` — COMMITTED. For an invoice, form completion
+ * is not money and stays ignored. For an election it is the CHOICE being
+ * made: the treasurer finished checkout, and the offer page must stop
+ * presenting an accept button — manual-entry ACH sits in microdeposit
+ * verification for days before `processing` ever fires, and that window
+ * held the door open for a second $15,000 session. No money moves on it.
+ *
+ * `payment_intent.canceled` — FAILED. A microdeposit verification nobody
+ * completes expires into a cancellation, and the clearing marker it leaves
+ * behind must revive the link the way a failed debit does.
+ */
+const PF_OUTCOMES: Record<string, InvoiceOutcome | "COMMITTED"> = {
+  ...OUTCOMES,
+  "checkout.session.completed": "COMMITTED",
+  "payment_intent.canceled": "FAILED",
+};
+
 export function decidePfEvent(event: StripeEventLike): PfEventDecision | null {
-  const outcome = OUTCOMES[event.type ?? ""];
+  const outcome = PF_OUTCOMES[event.type ?? ""];
   if (!outcome) return null;
   const object = event.data?.object;
   if (!object) return null;
@@ -126,7 +146,16 @@ export function decidePfEvent(event: StripeEventLike): PfEventDecision | null {
   if (typeof loanId !== "string" || !loanId.trim()) return null;
   if (kind !== "down" && kind !== "installment") return null;
 
-  const paymentIntentId = typeof object.id === "string" ? object.id : "";
+  // A completed session names its PaymentIntent; that id is what the
+  // clearing marker stores and what later events reconcile against.
+  const paymentIntentId =
+    outcome === "COMMITTED"
+      ? typeof object.payment_intent === "string"
+        ? object.payment_intent
+        : ""
+      : typeof object.id === "string"
+        ? object.id
+        : "";
   if (!paymentIntentId) return null;
   if (typeof event.created !== "number" || !Number.isFinite(event.created)) {
     return null;

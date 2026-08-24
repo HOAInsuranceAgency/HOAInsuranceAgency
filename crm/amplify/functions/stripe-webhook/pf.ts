@@ -446,6 +446,37 @@ export async function applyPfEvent(d: PfEventDecision): Promise<string> {
     return "unknown loan";
   }
 
+  if (d.outcome === "COMMITTED") {
+    /**
+     * The treasurer finished checkout. No money has moved — for manual-entry
+     * ACH it will sit in microdeposit verification for days — but the choice
+     * is made, and the election page must stop offering the accept button.
+     * Same stamp the PROCESSING branch writes, days earlier.
+     */
+    if (d.kind === "down" && loan.status === "QUOTED" && !loan.downPaymentIntentId) {
+      try {
+        await ddb.send(
+          new UpdateCommand({
+            TableName: process.env.PF_LOAN_TABLE as string,
+            Key: { id: loan.id },
+            UpdateExpression: "SET downPaymentIntentId = :pi, updatedAt = :now",
+            ConditionExpression: "#s = :quoted AND attribute_not_exists(downPaymentIntentId)",
+            ExpressionAttributeNames: { "#s": "status" },
+            ExpressionAttributeValues: {
+              ":pi": d.paymentIntentId,
+              ":quoted": "QUOTED",
+              ":now": new Date().toISOString(),
+            },
+          })
+        );
+      } catch (err) {
+        if ((err as { name?: string }).name !== "ConditionalCheckFailedException") throw err;
+      }
+      return "election committed; marked";
+    }
+    return "session completed; nothing to mark";
+  }
+
   if (d.outcome === "PROCESSING") {
     if (d.kind === "down" && loan.status === "QUOTED") {
       /**
