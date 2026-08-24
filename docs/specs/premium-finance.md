@@ -162,3 +162,84 @@ Rule of 78s appears nowhere in the module, and tests assert both.
   test.
 - **W6** — counsel opinion store with review dates; lending-account tagging;
   the no-producer-compensation schema guard (tested by grep); admin surface.
+- **W7** — customer election + autopay (below; approved for spec 2026-08-23,
+  implementation awaiting sign-off of this section).
+
+## W7 — Customer election and autopay (decisions 2026-08-23)
+
+Jake's direction, recorded after the end-to-end staging run: the association
+should choose its payment path from the invoice email itself, and a financed
+deal should collect itself monthly — the only manual act left in the money
+path is the customer's own click.
+
+### Decision 5, revised: one rail, split on the ledger
+
+**Supersedes the 2026-08-21 money-movement decision.** All money moves on the
+existing Stripe account and settles to the premium trust — down payments,
+installments, everything. There is no second Stripe account and no separate
+lending bank account. The four movements remain distinct as *ledger* facts,
+never as bank accounts: every receipt emails its breakdown (premium vs. loan
+repayment; principal vs. interest per the frozen schedule) to
+`ACCOUNTING_MAILBOX` (production: `corporateaccounting@getgim.com`), and
+corporate accounting divides the trust. `PfLoanPayment` keeps its
+principal/interest split — the no-netting principle survives at the record
+level, which is the level an examiner reads.
+
+The commingling concern that motivated segregation was surfaced again and
+this is recorded as Jake's decision (2026-08-23); counsel can revisit.
+Consequences in code: the `POST_PAYMENT` designated-lending-account guard and
+its message ("loan money must not touch the premium trust") are removed; the
+admin "Lending account" card becomes an accounting label only, or goes.
+
+### The election
+
+- Staff flow is unchanged up to the email: issue a finance quote (all W2/W3
+  gates run then, as today), then send the invoice. **The customer never
+  originates** — the email offers financing only when the policy carries a
+  QUOTED loan at send time; otherwise the email is pay-in-full only, exactly
+  as today.
+- The email presents two actions: **Pay in full** (the existing single-use
+  Stripe link) and **Finance — 25% down, then 11 monthly payments** (a
+  signed URL to a public election page, HMAC pattern shared with
+  magic-link/upload-portal, expiring with the quote).
+- The election page shows the frozen schedule (payment 1 of 12 = the down
+  payment, payments 2–12 monthly, APR, finance charge, the $10 fee, the
+  actuarial prepayment terms — the same TILA-style block the agreement
+  carries), collects the 25% down payment immediately, and completes a Stripe
+  ACH debit mandate (SetupIntent, `us_bank_account`) for the remainder. The
+  page checks the kill switch and fails closed.
+- Election is a choice, so it excludes in both directions at once: it voids
+  the pay-in-full invoice through the existing void path (link dies, number
+  retired, logged `exclusive-payment-path`), and a paid invoice already
+  cancels QUOTED loans — a link that got paid first wins, an election that
+  happened first kills the link.
+
+### ACCEPTED, between QUOTED and ACTIVE
+
+A new loan status. QUOTED means an offer; ACCEPTED means the association
+chose it: down payment received (recorded on the loan as payment 1 of 12,
+with its PaymentIntent id), mandate on file. Money has moved, so the webhook
+must never auto-cancel an ACCEPTED loan (same rule as ACTIVE: a human's
+problem, surfaced loudly). Activation keeps every existing gate — executed
+board resolution by name, staleness, exclusive-payment-path — and remains a
+staff act. ACCEPTED → ACTIVE is when debits begin: **mandate now, debits on
+activation** (decision, 2026-08-23).
+
+### Autopay servicing
+
+- A daily cron (beside `pf-default-sweep`) creates an off-session
+  PaymentIntent for each ACTIVE loan with a mandate whose `nextDueAt` has
+  arrived, for the exact cents of the frozen schedule row. One attempt per
+  due installment per day; every attempt logged.
+- The Stripe webhook, on `succeeded`, posts the `PfLoanPayment` exactly as
+  the manual path does today (split, balance, `paidThrough`, `nextDueAt`,
+  cure-on-posting), actor `stripe-autopay`, and emails the split to
+  accounting. Manual `POST_PAYMENT` survives for out-of-band money — a check
+  still arrives sometimes.
+- A failed debit posts nothing; the default sweep flips DEFAULTED exactly as
+  today, and DEFAULTED **pauses further attempts** — the 15-day notice
+  sequence governs from there. A cure (manual posting or a retried debit
+  after reinstatement) resumes the schedule.
+- PAID, CANCELLED, and prepayment (actuarial payoff) end debit creation;
+  disabling the module stops elections and new originations but never stops
+  debits on ACTIVE loans — the gate still never touches servicing.
