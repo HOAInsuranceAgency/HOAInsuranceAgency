@@ -17,6 +17,7 @@ import { InvoiceEditor } from "../../components/InvoiceEditor";
 import { invoiceTotals, premiumLineFromPolicy } from "../../lib/invoiceTotals";
 import {
   invoiceableQuotes,
+  liveAnchorIds,
   seededLineDescription,
   seededQuoteLineDescription,
   unbilledAgencyPolicies,
@@ -210,25 +211,9 @@ export function InvoicesTab({ accountId }: { accountId: string }) {
   );
   const open = ordered.find((i) => i.id === openId) ?? null;
 
-  /**
-   * Anchors already carrying a live invoice (DRAFT/SENT/PROCESSING). Header
-   * ids are the W8 anchor; line-level policy ids still count so invoices
-   * from before the header existed keep holding their slot.
-   */
-  const liveInvoiceIds = new Set(
-    invoices
-      .filter((i) => ["DRAFT", "SENT", "PROCESSING"].includes(i.status))
-      .map((i) => i.id)
-  );
-  const busyAnchors = new Set<string>();
-  for (const i of invoices) {
-    if (!liveInvoiceIds.has(i.id)) continue;
-    if (i.policyId) busyAnchors.add(i.policyId);
-    if (i.quoteId) busyAnchors.add(i.quoteId);
-  }
-  for (const l of lines) {
-    if (liveInvoiceIds.has(l.invoiceId) && l.policyId) busyAnchors.add(l.policyId);
-  }
+  // PAID and VOID free the slot — voiding a bill is how a policy gets
+  // billed again. The rule itself is the pure module's, with its tests.
+  const busyAnchors = liveAnchorIds(invoices, lines);
   const openPolicies = unbilledAgencyPolicies(policies, busyAnchors);
   const openQuotes = invoiceableQuotes(quotes, busyAnchors, isOpenQuoteStatus);
 
@@ -251,6 +236,7 @@ export function InvoicesTab({ accountId }: { accountId: string }) {
                     (p.lines ?? []).filter(Boolean).join(", ") ||
                     "Policy"}
                   {p.effectiveDate ? ` (${p.effectiveDate})` : ""}
+                  {p.billType ? "" : " — bill type not recorded"}
                 </option>
               ))}
               {openQuotes.map((q) => (

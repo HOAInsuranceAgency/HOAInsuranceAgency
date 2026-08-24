@@ -30,6 +30,9 @@ import { PF_CONFIG_SHA256 } from "../../src/lib/premiumFinance/jurisdictions";
  *    "everything we do is final once entered" — this book's premiums do
  *    not move at audit). With it went the last override; nothing consults
  *    PfOverride any more.
+ *  - The producer-of-record screen followed the same day ("we are always
+ *    the producer of record" — no wholesale paper exists in this book, so
+ *    the screen only ever blocked our own deals on an unticked box).
  *  - Everything else is verbatim: every rule logged pass or block, log
  *    rows land before the loan exists, and the create transacts with the
  *    kill switch.
@@ -48,7 +51,6 @@ export interface OriginationAnchor {
   kind: "policy" | "quote";
   id: string;
   lines: readonly (string | null | undefined)[];
-  producerOfRecord: boolean | null | undefined;
 }
 
 export interface OriginationAccount {
@@ -245,7 +247,6 @@ export async function originateLoan(
       const checks = evaluateEligibility({
         lines: anchor.lines,
         accountType: account.type,
-        producerOfRecord: anchor.producerOfRecord,
         requiresIncorporatedBorrower:
           gate.jurisdiction.requiresIncorporatedBorrower ?? false,
         incorporated: account.incorporated,

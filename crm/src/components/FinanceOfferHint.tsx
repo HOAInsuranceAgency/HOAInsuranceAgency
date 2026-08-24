@@ -39,7 +39,6 @@ export interface HintAnchor {
   kind: "policy" | "quote";
   id: string;
   lines: readonly (string | null | undefined)[];
-  producerOfRecord: boolean | null | undefined;
 }
 
 export function FinanceOfferHint({
@@ -90,26 +89,29 @@ export function FinanceOfferHint({
   // Money already touched a loan on this anchor: the choice was made.
   if (loans.some((l) => ["ACCEPTED", "ACTIVE", "DEFAULTED", "PAID"].includes(l.status))) {
     return (
-      <p className="muted small">
-        Financing is already set up for this premium — the email offers
-        pay-in-full only.
-      </p>
+      <div className="offer-banner">
+        <strong>Financing is already set up for this premium</strong> — the
+        email offers pay-in-full only.
+      </div>
     );
   }
 
   const gate = originationGate(account.state, { hasCurrentCounselOpinion: hasOpinion === true });
   if (!gate.open) {
     return (
-      <p className="muted small">
-        Financing won't be offered: {gate.reason}
-      </p>
+      <div className="offer-banner blocked">
+        <strong>Financing won't be offered with this email</strong> — the bill
+        still sends:
+        <ul>
+          <li>{gate.reason}</li>
+        </ul>
+      </div>
     );
   }
 
   const checks = evaluateEligibility({
     lines: anchor.lines,
     accountType: account.type,
-    producerOfRecord: anchor.producerOfRecord,
     requiresIncorporatedBorrower: gate.jurisdiction.requiresIncorporatedBorrower ?? false,
     incorporated: account.incorporated,
     jurisdictionName: gate.jurisdiction.name,
@@ -118,25 +120,25 @@ export function FinanceOfferHint({
 
   if (failed.length > 0) {
     return (
-      <>
-        <p className="muted small">
-          Financing won't be offered with this email — the bill still sends:
-        </p>
-        <ul className="warn-list">
+      <div className="offer-banner blocked">
+        <strong>Financing won't be offered with this email</strong> — the bill
+        still sends:
+        <ul>
           {failed.map((c) => (
             <li key={c.check}>{c.reason}</li>
           ))}
         </ul>
-      </>
+      </div>
     );
   }
 
   if (retailTotal <= 0) {
     return (
-      <p className="muted small">
-        Financing will be offered once the invoice has a total — the offer
-        finances exactly what is billed.
-      </p>
+      <div className="offer-banner blocked">
+        <strong>Financing won't be offered yet</strong> — the invoice has no
+        total, and the offer finances exactly what is billed. Price the lines
+        first.
+      </div>
     );
   }
 
@@ -160,19 +162,25 @@ export function FinanceOfferHint({
     minPrincipalViolation(preview.amountFinanced, gate.jurisdiction);
   if (termProblem) {
     return (
-      <p className="muted small">Financing won't be offered: {termProblem}</p>
+      <div className="offer-banner blocked">
+        <strong>Financing won't be offered with this email</strong> — the bill
+        still sends:
+        <ul>
+          <li>{termProblem}</li>
+        </ul>
+      </div>
     );
   }
   return (
-    <p className="muted small">
-      The email offers pay-in-full and financing side by side:{" "}
+    <div className="offer-banner">
+      <strong>Financing will be offered</strong> beside pay-in-full:{" "}
       {formatMoney(preview.downPayment)} down (payment 1 of {PF_DEFAULT_MONTHS + 1}),
       then {PF_DEFAULT_MONTHS} monthly payments of {formatMoney(preview.payment)} at{" "}
       {PF_DEFAULT_APR}% APR.
       {standing && standing.premium !== retailTotal
         ? " The standing offer was quoted at a different total and will be re-issued at this one when sent."
         : ""}
-    </p>
+    </div>
   );
 }
 

@@ -21,26 +21,28 @@ export interface PolicyLike {
 }
 
 /**
- * The policies a new invoice should open with a line for.
+ * The policies a new invoice can bill.
  *
  * Three conditions, each excluding a different mistake:
  *
- * - **Agency bill.** A direct-bill policy's premium is collected by the
- *   carrier. Seeding it would put a bill in front of a producer for money that
- *   is not ours to take — the same error `directBillWarning` catches after the
- *   fact, avoided before it. A policy with no bill type recorded is not seeded
- *   either: it was bound before that field existed and has no answer, and
- *   guessing "agency" here guesses in the direction that costs someone money.
+ * - **Not direct bill.** A direct-bill policy's premium is collected by the
+ *   carrier. Offering it would put a bill in front of a producer for money
+ *   that is not ours to take — the same error `directBillWarning` catches
+ *   after the fact, avoided before it. A policy with no bill type recorded
+ *   IS offered (revised 2026-08-24): since W8 this picker is the ONLY way
+ *   an invoice gets created, so excluding the unrecorded made those
+ *   policies permanently unbillable — a prohibition where the old seeding
+ *   rule was merely a safe omission. The picker labels the gap and the
+ *   editor's direct-bill warning still guards the send.
  *
  * - **Active.** Expired, cancelled and non-renewed policies are history. They
- *   can still be billed by hand — an audit or a mid-term adjustment is real —
- *   but they are not what "what is due now" means, and seeding them would put
- *   every policy the association has ever held on its next invoice.
+ *   are not what "what is due now" means; audit or adjustment billing on a
+ *   closed term is its own question for its own day.
  *
- * - **Not already billed.** `billedPolicyIds` is every policy that appears on
- *   a line of a live invoice. Void invoices are excluded by the caller, which
- *   is what lets a voided bill be raised again rather than leaving its policies
- *   permanently unbillable.
+ * - **Not already billed.** `billedPolicyIds` is every anchor of a LIVE
+ *   invoice (DRAFT/SENT/PROCESSING — see `liveAnchorIds`). PAID and VOID
+ *   free the slot, which is what lets a voided bill be raised again rather
+ *   than leaving its policy permanently unbillable.
  *
  * Order follows the policies given, so the caller's sort is the line order.
  */
@@ -50,10 +52,47 @@ export function unbilledAgencyPolicies<T extends PolicyLike>(
 ): T[] {
   return policies.filter(
     (p) =>
-      p.billType === "AGENCY" &&
+      p.billType !== "DIRECT" &&
       p.status === "ACTIVE" &&
       !billedPolicyIds.has(p.id)
   );
+}
+
+/** The invoice fields the busy-anchor rule reads. */
+export interface InvoiceAnchorLike {
+  id: string;
+  status?: string | null;
+  policyId?: string | null;
+  quoteId?: string | null;
+}
+
+/**
+ * Every anchor a LIVE invoice currently holds — the ids the one-live-per-
+ * anchor rule refuses to double-bill. Live is DRAFT, SENT or PROCESSING:
+ * a PAID invoice is settled history and a VOID one is a cancelled claim,
+ * and both free their policy or quote to be billed again. Header ids are
+ * the W8 anchor; line-level policy ids still count so invoices from before
+ * the header existed keep holding their slot.
+ */
+export function liveAnchorIds(
+  invoices: readonly InvoiceAnchorLike[],
+  lines: readonly { invoiceId: string; policyId?: string | null }[]
+): Set<string> {
+  const live = new Set(
+    invoices
+      .filter((i) => ["DRAFT", "SENT", "PROCESSING"].includes(i.status ?? ""))
+      .map((i) => i.id)
+  );
+  const busy = new Set<string>();
+  for (const i of invoices) {
+    if (!live.has(i.id)) continue;
+    if (i.policyId) busy.add(i.policyId);
+    if (i.quoteId) busy.add(i.quoteId);
+  }
+  for (const l of lines) {
+    if (live.has(l.invoiceId) && l.policyId) busy.add(l.policyId);
+  }
+  return busy;
 }
 
 /**

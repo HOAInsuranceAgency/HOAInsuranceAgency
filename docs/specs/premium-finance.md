@@ -276,9 +276,25 @@ gates allow:
   move at audit). The isAuditable fields become dead columns kept for
   existing rows; nothing asks the question, carries it at bind, extracts
   it, or gates on it. With it went the last override: PfOverride is a
-  read-only historical record now, and no surviving screen (coverage,
-  producer-of-record, RI's incorporated) has or may grow a waiver — each
-  blocks on a fact only confirming can fix.
+  read-only historical record now.
+- **The PRODUCER-OF-RECORD screen is REMOVED as well** (signed by Jake,
+  2026-08-24: "we are always the producer of record — eliminate that from
+  the codebase and always assume we are"). This supersedes signed
+  decision 4 (2026-08-21). The agency writes no wholesale paper, so the
+  screen only ever blocked its own deals on an unticked box; the
+  producerOfRecord fields and their attribution stamps become dead
+  columns kept for existing rows. What remains is what the exemptions
+  actually stand on: **commercial lines only**, and **Rhode Island's
+  incorporated borrower** — neither has nor may grow a waiver.
+- **The send section carries a banner** (2026-08-24): green when the
+  email will offer financing (with the exact figures), amber with the
+  reasons when it will not — a blocked offer never stops the bill, and a
+  "no" without a why sends someone hunting through three records.
+- **VOID frees the anchor, everywhere** (2026-08-24): a voided invoice's
+  policy or quote is immediately billable again, and a policy whose bill
+  type was never recorded is offered in the creation picker (labeled)
+  rather than being silently unbillable — only an explicit DIRECT is
+  excluded, and the editor's direct-bill warning still guards the send.
 - **Every invoice bills exactly one quote or policy**, chosen at creation,
   and an anchor carries **one live invoice at a time**
   (DRAFT/SENT/PROCESSING); PAID and VOID free the slot for endorsement and

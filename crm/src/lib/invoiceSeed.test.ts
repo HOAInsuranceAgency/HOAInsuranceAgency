@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   invoiceableQuotes,
+  liveAnchorIds,
   seededLineDescription,
   seededQuoteLineDescription,
   unbilledAgencyPolicies,
@@ -39,14 +40,17 @@ describe("unbilledAgencyPolicies", () => {
     expect(out).toEqual([]);
   });
 
-  it("leaves out a policy with no bill type recorded", () => {
-    // Bound before the field existed, so it has no answer. Guessing "agency"
-    // guesses in the direction that costs someone money.
+  it("offers a policy with no bill type recorded, labeled — not hidden", () => {
+    // Revised 2026-08-24: since W8 this picker is the ONLY creation path,
+    // so excluding the unrecorded made those policies permanently
+    // unbillable — a prohibition where the old seeding rule was a safe
+    // omission. Only an explicit DIRECT is excluded; the picker labels the
+    // gap and the editor's direct-bill warning still guards the send.
     for (const billType of [null, undefined, ""]) {
       expect(
-        unbilledAgencyPolicies([agency("a", { billType })], none),
+        unbilledAgencyPolicies([agency("a", { billType })], none).map((p) => p.id),
         String(billType)
-      ).toEqual([]);
+      ).toEqual(["a"]);
     }
   });
 
@@ -84,6 +88,42 @@ describe("unbilledAgencyPolicies", () => {
 
   it("returns nothing for an account with no policies", () => {
     expect(unbilledAgencyPolicies([], none)).toEqual([]);
+  });
+});
+
+describe("liveAnchorIds — void frees the slot", () => {
+  const inv = (id: string, status: string, over: Record<string, unknown> = {}) => ({
+    id,
+    status,
+    ...over,
+  });
+
+  it("holds anchors for DRAFT, SENT and PROCESSING invoices", () => {
+    const busy = liveAnchorIds(
+      [
+        inv("i1", "DRAFT", { policyId: "p1" }),
+        inv("i2", "SENT", { quoteId: "q1" }),
+        inv("i3", "PROCESSING", { policyId: "p2" }),
+      ],
+      []
+    );
+    expect([...busy].sort()).toEqual(["p1", "p2", "q1"]);
+  });
+
+  it("VOID and PAID free their anchors — a voided bill can be raised again", () => {
+    const busy = liveAnchorIds(
+      [inv("i1", "VOID", { policyId: "p1" }), inv("i2", "PAID", { quoteId: "q1" })],
+      [{ invoiceId: "i1", policyId: "p1" }]
+    );
+    expect(busy.size).toBe(0);
+  });
+
+  it("line-level policy ids of live legacy invoices still hold their slot", () => {
+    const busy = liveAnchorIds(
+      [inv("i1", "SENT")],
+      [{ invoiceId: "i1", policyId: "p9" }]
+    );
+    expect([...busy]).toEqual(["p9"]);
   });
 });
 
