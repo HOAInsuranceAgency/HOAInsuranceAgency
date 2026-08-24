@@ -400,29 +400,58 @@ async function handleAccept(client: DataClient, args: Record<string, unknown>) {
   const sessionClaim = `claim-${randomUUID()}`;
   const claimExpiry = new Date(Date.now() + 36 * 60 * 1000).toISOString();
   try {
+    /**
+     * The claim carries the kill switch too, not just the stamp: the mint
+     * that follows can only follow a claim, so a disable durable at THIS
+     * write forecloses the payable session the stamp alone left mintable
+     * in the window between the two.
+     */
     await ddb.send(
-      new UpdateCommand({
-        TableName: loanTable,
-        Key: { id: loan.id },
-        UpdateExpression:
-          "SET electionCheckoutUrl = :claim, electionCheckoutExpiresAt = :exp, updatedAt = :now",
-        // Free, or expired, or a stale claim past its own expiry — never a
-        // live session, never a fresh claim someone else is filling, and
-        // never for a token past its clock (same write-time rule as the
-        // election stamp).
-        ConditionExpression:
-          "#s = :quoted AND electionTokenExpiresAt > :now AND (attribute_not_exists(electionCheckoutUrl) OR electionCheckoutExpiresAt < :now)",
-        ExpressionAttributeNames: { "#s": "status" },
-        ExpressionAttributeValues: {
-          ":claim": sessionClaim,
-          ":exp": claimExpiry,
-          ":quoted": "QUOTED",
-          ":now": now,
-        },
+      new TransactWriteCommand({
+        TransactItems: [
+          {
+            Update: {
+              TableName: loanTable,
+              Key: { id: loan.id },
+              UpdateExpression:
+                "SET electionCheckoutUrl = :claim, electionCheckoutExpiresAt = :exp, updatedAt = :now",
+              // Free, or expired, or a stale claim past its own expiry —
+              // never a live session, never a fresh claim someone else is
+              // filling, and never for a token past its clock (same
+              // write-time rule as the election stamp).
+              ConditionExpression:
+                "#s = :quoted AND electionTokenExpiresAt > :now AND (attribute_not_exists(electionCheckoutUrl) OR electionCheckoutExpiresAt < :now)",
+              ExpressionAttributeNames: { "#s": "status" },
+              ExpressionAttributeValues: {
+                ":claim": sessionClaim,
+                ":exp": claimExpiry,
+                ":quoted": "QUOTED",
+                ":now": now,
+              },
+            },
+          },
+          {
+            ConditionCheck: {
+              TableName: settingsTable,
+              Key: { id: "AGENCY" },
+              ConditionExpression: "premiumFinanceEnabled = :on",
+              ExpressionAttributeValues: { ":on": true },
+            },
+          },
+        ],
       })
     );
   } catch (err) {
-    if ((err as { name?: string }).name !== "ConditionalCheckFailedException") throw err;
+    if ((err as { name?: string }).name !== "TransactionCanceledException") throw err;
+    const reasons = (err as { CancellationReasons?: { Code?: string }[] }).CancellationReasons;
+    if (
+      reasons?.[1]?.Code === "ConditionalCheckFailed" &&
+      reasons?.[0]?.Code !== "ConditionalCheckFailed"
+    ) {
+      // The kill switch alone refused: fail closed, no polling for winners.
+      console.warn(`[pf-election] kill switch closed under session claim for ${loan.id}`);
+      return CLOSED;
+    }
     /**
      * Someone holds the slot. If it is a live session, hand it back; if it
      * is a concurrent claim still being filled, wait briefly for the winner
