@@ -5,6 +5,7 @@ import { getAmplifyDataClientConfig } from "@aws-amplify/backend/function/runtim
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import {
   DynamoDBDocumentClient,
+  GetCommand,
   PutCommand,
   TransactWriteCommand,
   UpdateCommand,
@@ -570,11 +571,23 @@ async function handleAccept(client: DataClient, args: Record<string, unknown>) {
   }
   /**
    * The mint itself cannot transact with DynamoDB, so the flag is read once
-   * more AFTER it: a disable that landed in the claim→mint window finds the
-   * session expired before its URL was ever handed out or stored. The one
-   * Stripe action that can honor the kill switch retroactively, taken.
+   * more AFTER it — strongly, straight off the table: an eventually
+   * consistent read here could echo the pre-disable value and hand out the
+   * session anyway. A disable that landed in the claim→mint window finds
+   * the session expired before its URL was ever handed out or stored; a
+   * disable that lands after this read resolves through the webhook's
+   * settle-time record-and-alarm, because no read can outrun a commit.
    */
-  if (!(await moduleEnabled(client))) {
+  const flagNow = await ddb
+    .send(
+      new GetCommand({ TableName: settingsTable, Key: { id: "AGENCY" }, ConsistentRead: true })
+    )
+    .then((r) => r.Item?.premiumFinanceEnabled === true)
+    .catch((err) => {
+      console.error("[pf-election] post-mint flag read failed; failing closed", err);
+      return false;
+    });
+  if (!flagNow) {
     console.warn(`[pf-election] kill switch closed under mint for ${loan.id}; expiring ${session.id}`);
     try {
       await stripe.checkout.sessions.expire(session.id);
