@@ -9,6 +9,7 @@ import {
   addDaysIso,
   canRecordCert,
   canRequestCancellation,
+  latestIntent,
   CARRIER_REFUND_DAYS,
   isRealIsoDay,
   NOTICE_DAYS,
@@ -491,9 +492,18 @@ export const handler = async (event: {
         });
         if (!verdict.ok) return { ok: false, error: verdict.reason };
 
-        const intent = (noticeRows as NoticeRow[]).find(
-          (r) => r.type === "INTENT_TO_CANCEL"
-        );
+        /**
+         * The SAME intent the verdict validated: episode-filtered, latest.
+         * An unfiltered first-match could name a cured, earlier default's
+         * intent on the immutable CANCELLATION_REQUEST row — paper proving
+         * the wrong notice was given.
+         */
+        const episodeNotices = loan.defaultedAt
+          ? (noticeRows as NoticeRow[]).filter(
+              (n) => n.type !== "INTENT_TO_CANCEL" || n.occurredAt >= loan.defaultedAt!
+            )
+          : (noticeRows as NoticeRow[]);
+        const { intent } = latestIntent(episodeNotices);
         /**
          * The transition and its notice row are ONE write. Cancellation is
          * the moment lender liability attaches, and the CANCELLATION_REQUEST
@@ -530,7 +540,17 @@ export const handler = async (event: {
                     Key: { id: loan.id },
                     UpdateExpression:
                       "SET #s = :to, cancellationEffectiveAt = :eff, expectedCarrierRefundAt = :ref, closedAt = :now, updatedAt = :now",
-                    ConditionExpression: "#s = :from",
+                    /**
+                     * Status alone is not enough: a loan can cure and
+                     * re-default between the read and this commit, and
+                     * DEFAULTED would still be true — of a DIFFERENT
+                     * episode, whose 15-day clock this request never ran.
+                     * Pinning defaultedAt makes the condition name the
+                     * exact default the verdict validated.
+                     */
+                    ConditionExpression: loan.defaultedAt
+                      ? "#s = :from AND defaultedAt = :epoch"
+                      : "#s = :from AND attribute_not_exists(defaultedAt)",
                     ExpressionAttributeNames: { "#s": "status" },
                     ExpressionAttributeValues: {
                       ":to": "CANCELLED",
@@ -540,6 +560,7 @@ export const handler = async (event: {
                       // the refund within 30 days of the effective date.
                       ":ref": expectedCarrierRefundAt,
                       ":now": now,
+                      ...(loan.defaultedAt ? { ":epoch": loan.defaultedAt } : {}),
                     },
                   },
                 },

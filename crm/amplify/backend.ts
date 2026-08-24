@@ -608,6 +608,15 @@ backend.data.resources.tables.PfLoan.grantReadWriteData(
 backend.pfElection.addEnvironment("PF_COMPLIANCE_LOG_TABLE", pfLogTable.tableName);
 pfLogTable.grantWriteData(backend.pfElection.resources.lambda);
 backend.pfElection.addEnvironment("SITE_URL", siteBaseUrl);
+// The election stamp transacts with a ConditionCheck on the kill switch —
+// pf-originate's pattern; grantReadData carries ConditionCheckItem.
+backend.pfElection.addEnvironment(
+  "AGENCY_SETTINGS_TABLE",
+  backend.data.resources.tables.AgencySettings.tableName
+);
+backend.data.resources.tables.AgencySettings.grantReadData(
+  backend.pfElection.resources.lambda
+);
 
 /**
  * W7: the autopay cron scans the loan table itself (no data client — its

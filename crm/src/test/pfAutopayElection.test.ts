@@ -304,6 +304,19 @@ describe("the election endpoint's ordering", () => {
     expect(ELECTION).toContain('ConditionExpression: "#s = :quoted AND electionToken = :tok"');
   });
 
+  it("binds the stamp to the kill switch in one transaction", () => {
+    // The moduleEnabled read is advice; the ConditionCheck is the law —
+    // pf-originate's pattern. A disable that is durable when the stamp
+    // commits fails the whole election, and the Checkout mint only follows
+    // a stamp that transacted with the flag.
+    const at = ELECTION.indexOf("SET electedAt = if_not_exists(electedAt, :now)");
+    expect(at).toBeGreaterThan(-1);
+    const branch = ELECTION.slice(at - 1500, at + 2000);
+    expect(branch).toContain("TransactWriteCommand");
+    expect(branch).toContain("ConditionCheck");
+    expect(branch).toContain('ConditionExpression: "premiumFinanceEnabled = :on"');
+  });
+
   it("advances nothing itself — the webhook flips the loan when money moves", () => {
     // The accept's one loan write is the electedAt stamp; no status value
     // appears in it. (Reading ACCEPTED for the idempotent done view is fine.)

@@ -3,7 +3,12 @@ import { Amplify } from "aws-amplify";
 import { generateClient } from "aws-amplify/data";
 import { getAmplifyDataClientConfig } from "@aws-amplify/backend/function/runtime";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, PutCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import {
+  DynamoDBDocumentClient,
+  PutCommand,
+  TransactWriteCommand,
+  UpdateCommand,
+} from "@aws-sdk/lib-dynamodb";
 import Stripe from "stripe";
 import type { Schema } from "../../data/resource";
 import { listAllPages } from "../../../src/lib/pagination";
@@ -284,30 +289,58 @@ async function handleAccept(client: DataClient, args: Record<string, unknown>) {
   }
 
   const loanTable = process.env.PF_LOAN_TABLE;
-  if (!loanTable) throw new Error("PF_LOAN_TABLE unset");
+  const settingsTable = process.env.AGENCY_SETTINGS_TABLE;
+  if (!loanTable || !settingsTable) throw new Error("PF_LOAN_TABLE or AGENCY_SETTINGS_TABLE unset");
   const now = new Date().toISOString();
-  let firstElection = false;
+  // From the read the token resolved — a concurrent first accept can double
+  // the audit row in a hair's-width race, which is bounded and harmless;
+  // the stamp itself stays if_not_exists.
+  const firstElection = !loan.electedAt;
   try {
-    const prior = await ddb.send(
-      new UpdateCommand({
-        TableName: loanTable,
-        Key: { id: loan.id },
-        UpdateExpression:
-          "SET electedAt = if_not_exists(electedAt, :now), updatedAt = :now",
-        ConditionExpression: "#s = :quoted AND electionToken = :tok",
-        ExpressionAttributeNames: { "#s": "status" },
-        ExpressionAttributeValues: {
-          ":now": now,
-          ":quoted": "QUOTED",
-          ":tok": loan.electionToken,
-        },
-        ReturnValues: "UPDATED_OLD",
+    /**
+     * The stamp rides a ConditionCheck on the kill switch — pf-originate's
+     * pattern, for the same reason: the moduleEnabled read above is advice,
+     * and a disable that is durable when this transaction commits must fail
+     * the whole election, not race it. No election stamp can exist that
+     * post-dates a committed disable, and the Checkout mint below only
+     * follows a stamp that transacted with the flag.
+     */
+    await ddb.send(
+      new TransactWriteCommand({
+        TransactItems: [
+          {
+            Update: {
+              TableName: loanTable,
+              Key: { id: loan.id },
+              UpdateExpression:
+                "SET electedAt = if_not_exists(electedAt, :now), updatedAt = :now",
+              ConditionExpression: "#s = :quoted AND electionToken = :tok",
+              ExpressionAttributeNames: { "#s": "status" },
+              ExpressionAttributeValues: {
+                ":now": now,
+                ":quoted": "QUOTED",
+                ":tok": loan.electionToken,
+              },
+            },
+          },
+          {
+            ConditionCheck: {
+              TableName: settingsTable,
+              Key: { id: "AGENCY" },
+              ConditionExpression: "premiumFinanceEnabled = :on",
+              ExpressionAttributeValues: { ":on": true },
+            },
+          },
+        ],
       })
     );
-    firstElection = !prior.Attributes?.electedAt;
   } catch (err) {
-    if ((err as { name?: string }).name !== "ConditionalCheckFailedException") throw err;
-    // The loan moved under the click — superseded, cancelled, or re-keyed.
+    if ((err as { name?: string }).name !== "TransactionCanceledException") throw err;
+    const reasons = (err as { CancellationReasons?: { Code?: string }[] }).CancellationReasons;
+    if (reasons?.[1]?.Code === "ConditionalCheckFailed") {
+      console.warn(`[pf-election] kill switch closed under accept for ${loan.id}`);
+    }
+    // The loan moved under the click, or the module closed. Either way:
     return CLOSED;
   }
 

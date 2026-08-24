@@ -25,13 +25,24 @@ describe("cancellation and its notice are one write", () => {
   it("uses a transaction: conditional status flip + notice Put", () => {
     const at = SERVICING.indexOf('"CANCELLATION_REQUEST"');
     expect(at).toBeGreaterThan(-1);
-    const branch = SERVICING.slice(at - 3000, at + 500);
+    const branch = SERVICING.slice(at - 4500, at + 500);
     expect(branch).toContain("TransactWriteCommand");
-    expect(branch).toContain('ConditionExpression: "#s = :from"');
+    expect(branch).toContain('"#s = :from AND defaultedAt = :epoch"');
     expect(branch).toContain('":from": "DEFAULTED"');
     expect(branch).toContain('":to": "CANCELLED"');
     // Stable across the SDK's transport retries, fresh per human attempt.
     expect(branch).toContain("ClientRequestToken: randomUUID()");
+  });
+
+  it("pins the default episode the verdict validated, and its intent", () => {
+    // DEFAULTED alone would accept a cure-and-re-default that happened
+    // between the read and the commit — cancelling the NEW default on the
+    // OLD default's 15-day clock. The condition names the exact episode,
+    // and the request's refNoticeId comes from the same episode-filtered
+    // latest-intent selection the verdict ran, never an unfiltered find.
+    expect(SERVICING).toContain('"#s = :from AND defaultedAt = :epoch"');
+    expect(SERVICING).toContain("latestIntent(episodeNotices)");
+    expect(SERVICING).not.toMatch(/noticeRows as NoticeRow\[\]\)\.find\(\s*\(r\) => r\.type === "INTENT_TO_CANCEL"/);
   });
 
   it("claims a lost race only when the status condition actually lost", () => {

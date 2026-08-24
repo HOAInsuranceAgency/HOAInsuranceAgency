@@ -256,58 +256,71 @@ export const handler = async (event: {
          * bumped floor, so its ENABLED row sorts after this correction
          * instead of vanishing behind it.
          */
-        const correctedAt = isoAfter(
-          verifiedStamp !== null && verifiedStamp > now ? verifiedStamp : now
-        );
-        try {
-          await ddb.send(
-            new TransactWriteCommand({
-              TransactItems: [
-                {
-                  Update: {
-                    TableName: settingsTable,
-                    Key: { id: AGENCY_SETTINGS_ID },
-                    UpdateExpression: "SET premiumFinanceEnabledAt = :at",
-                    ConditionExpression:
-                      verifiedStamp === null
-                        ? "(attribute_not_exists(premiumFinanceEnabled) OR premiumFinanceEnabled = :off) AND attribute_not_exists(premiumFinanceEnabledAt)"
-                        : "(attribute_not_exists(premiumFinanceEnabled) OR premiumFinanceEnabled = :off) AND premiumFinanceEnabledAt = :seenOff",
-                    ExpressionAttributeValues: {
-                      ":at": correctedAt,
-                      ":off": false,
-                      ...(verifiedStamp !== null ? { ":seenOff": verifiedStamp } : {}),
-                    },
-                  },
-                },
-                {
-                  Put: {
-                    TableName: logTable,
-                    Item: {
-                      id: randomUUID(),
-                      __typename: "PfComplianceLog",
-                      createdAt: correctedAt,
-                      updatedAt: correctedAt,
-                      jurisdiction: "ALL",
-                      rule: "module-flag",
-                      outcome: "DISABLED",
-                      reason: lost
-                        ? "Enable was logged but lost to a concurrent flip; the module is OFF."
-                        : "Enable was logged but the flag write failed; the module remains OFF.",
-                      inputs: JSON.stringify({ enabled: false }),
-                      configSha256: PF_CONFIG_SHA256,
-                      actor,
-                      actorName,
-                      occurredAt: correctedAt,
-                    },
-                  },
-                },
-              ],
-            })
+        /**
+         * The correction retries once with a re-read stamp: a cancellation
+         * caused by a concurrent DISABLE moving the stamp — flag still off —
+         * used to abandon the correction, leaving this call's ENABLED row as
+         * the loose end a skewed clock could sort last. Two attempts, then
+         * the loud failure.
+         */
+        for (let attempt = 1; attempt <= 2; attempt++) {
+          const correctedAt = isoAfter(
+            verifiedStamp !== null && verifiedStamp > now ? verifiedStamp : now
           );
-        } catch (corrErr) {
-          if ((corrErr as { name?: string }).name === "TransactionCanceledException") {
+          try {
+            await ddb.send(
+              new TransactWriteCommand({
+                TransactItems: [
+                  {
+                    Update: {
+                      TableName: settingsTable,
+                      Key: { id: AGENCY_SETTINGS_ID },
+                      UpdateExpression: "SET premiumFinanceEnabledAt = :at",
+                      ConditionExpression:
+                        verifiedStamp === null
+                          ? "(attribute_not_exists(premiumFinanceEnabled) OR premiumFinanceEnabled = :off) AND attribute_not_exists(premiumFinanceEnabledAt)"
+                          : "(attribute_not_exists(premiumFinanceEnabled) OR premiumFinanceEnabled = :off) AND premiumFinanceEnabledAt = :seenOff",
+                      ExpressionAttributeValues: {
+                        ":at": correctedAt,
+                        ":off": false,
+                        ...(verifiedStamp !== null ? { ":seenOff": verifiedStamp } : {}),
+                      },
+                    },
+                  },
+                  {
+                    Put: {
+                      TableName: logTable,
+                      Item: {
+                        id: randomUUID(),
+                        __typename: "PfComplianceLog",
+                        createdAt: correctedAt,
+                        updatedAt: correctedAt,
+                        jurisdiction: "ALL",
+                        rule: "module-flag",
+                        outcome: "DISABLED",
+                        reason: lost
+                          ? "Enable was logged but lost to a concurrent flip; the module is OFF."
+                          : "Enable was logged but the flag write failed; the module remains OFF.",
+                        inputs: JSON.stringify({ enabled: false }),
+                        configSha256: PF_CONFIG_SHA256,
+                        actor,
+                        actorName,
+                        occurredAt: correctedAt,
+                      },
+                    },
+                  },
+                ],
+              })
+            );
+            return { ok: false, error: "Couldn't enable the module. Try again." };
+          } catch (corrErr) {
+            if ((corrErr as { name?: string }).name !== "TransactionCanceledException") {
+              console.error("[pf-admin] correction did not commit", corrErr);
+              break;
+            }
             // The state moved in the window. If it moved to ON, the admin's
-            // ask is in effect — converge instead of reporting a failure.
+            // ask is in effect — converge instead of reporting a failure. If
+            // it is still OFF under a new stamp, retry against that stamp.
             try {
               const again = await ddb.send(
                 new GetCommand({
@@ -320,12 +333,15 @@ export const handler = async (event: {
                 console.warn("[pf-admin] flag turned ON while correcting; the ENABLED row stands");
                 return { ok: true, enabled: true };
               }
+              const vs = again.Item?.premiumFinanceEnabledAt;
+              verifiedStamp = typeof vs === "string" ? vs : null;
             } catch (reErr) {
               console.error("[pf-admin] re-verify after cancelled correction failed", reErr);
+              break;
             }
           }
-          console.error("[pf-admin] correction did not commit", corrErr);
         }
+        console.error("[pf-admin] correction never committed; the ENABLED row stands uncorrected");
         return { ok: false, error: "Couldn't enable the module. Try again." };
       }
       console.log(`pf-admin: premium finance ENABLED by ${actorName}`);
@@ -382,6 +398,33 @@ export const handler = async (event: {
     }
 
     console.log(`pf-admin: premium finance DISABLED by ${actorName}`);
+    /**
+     * The response reports what is durably true NOW, not what was true at
+     * this call's serialization point. An enable that legally serialized
+     * after this disable leaves the module ON — the audit trail is already
+     * consistent (their ENABLED row clamps past our stamp), but an admin
+     * told "disabled" while the switch sits enabled would act on a lie.
+     * Best effort: an unreadable flag reports the disable this call made.
+     */
+    try {
+      const finalRead = await ddb.send(
+        new GetCommand({
+          TableName: settingsTable,
+          Key: { id: AGENCY_SETTINGS_ID },
+          ConsistentRead: true,
+        })
+      );
+      if (finalRead.Item?.premiumFinanceEnabled === true) {
+        return {
+          ok: true,
+          enabled: true,
+          warning:
+            "This disable landed and was logged — but another admin has re-enabled the module since. It is ON now.",
+        };
+      }
+    } catch (err) {
+      console.error("[pf-admin] final state read failed; reporting the disable as made", err);
+    }
     return { ok: true, enabled: false };
   } catch (err) {
     console.error("pf-admin failed", err);
