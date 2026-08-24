@@ -203,13 +203,15 @@ export const US_STATES = [
 // Alphabetical.
 export const LINES_OF_BUSINESS = [
   /**
-   * The premium-finance allow-list matches canonical names, and bare
-   * "Property" is not one — an association master policy's property line
-   * must be entered as "Commercial Property" to be financeable. Both
-   * spellings stay selectable: existing policies carry "Property", and the
-   * ACORD pickers key off it. ("D&O", "Workers Comp" and "Crime/Fidelity"
-   * have the same canonicalization gap; renaming them touches ACORD
-   * mappings and is tracked separately.)
+   * Bare "Property" retired 2026-08-24 (Jake's call): two overlapping
+   * names for one line is how paper gets mislabeled. Property is either
+   * "Commercial Property" — the canonical, financeable form on the signed
+   * allow-list — or "Residential Property", which is on neither signed
+   * list and so never finances. Existing rows were data-migrated to
+   * "Commercial Property"; the ACORD prior-coverage mapping accepts both
+   * spellings for its Property row. ("D&O", "Workers Comp" and
+   * "Crime/Fidelity" still have a canonicalization gap vs the allow-list;
+   * renaming them touches ACORD mappings and is tracked separately.)
    */
   "Commercial Property",
   "Crime/Fidelity",
@@ -218,7 +220,7 @@ export const LINES_OF_BUSINESS = [
   "Flood",
   "General Liability",
   "HO-6",
-  "Property",
+  "Residential Property",
   "Umbrella",
   "Workers Comp",
 ];

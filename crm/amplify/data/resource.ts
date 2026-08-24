@@ -742,7 +742,7 @@ const schema = a
       carrierId: a.id(),
       carrier: a.belongsTo("Carrier", "carrierId"),
       status: a.ref("QuoteStatus").required(),
-      lines: a.string().array(), // e.g. ["Property", "GL", "D&O", "Umbrella"]
+      lines: a.string().array(), // e.g. ["Commercial Property", "General Liability", "D&O", "Umbrella"]
       premium: a.float(),
       // Agency commission, % of premium. NOTE: already baked into the
       // quoted premium — commission $ is informational, never additive.

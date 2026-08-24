@@ -224,7 +224,10 @@ interface PriorCarrierInfo {
  * table claimed to handle it), so an HOA's D&O simply vanished from the form.
  */
 export const LOB_FIELDS: Record<string, readonly string[]> = {
-  Property: ["Policy_LineOfBusiness_CommercialProperty_A"],
+  // The box is literally named CommercialProperty — the 2026-08-24 rename
+  // made the CRM's vocabulary match the form's. ("Residential Property"
+  // has no box here; it falls through to the Other rows like D&O does.)
+  "Commercial Property": ["Policy_LineOfBusiness_CommercialProperty_A"],
   "General Liability": ["Policy_LineOfBusiness_CommercialGeneralLiability_A"],
   "Crime/Fidelity": ["Policy_LineOfBusiness_CrimeIndicator_A"],
   Umbrella: ["Policy_LineOfBusiness_UmbrellaIndicator_A"],
@@ -247,10 +250,15 @@ export const LOB_OTHER_ROWS = ["A", "B", "C", "D", "E", "F"] as const;
  */
 export const PRIOR_COVERAGE_BLOCKS = ["A", "B", "C"] as const;
 
-/** Lines with a row of their own inside a block. Everything else shares one. */
+/** Lines with a row of their own inside a block. Everything else shares one.
+ * Both property spellings land on the form's Property row: rows written
+ * before the 2026-08-24 rename carry bare "Property", new ones carry
+ * "Commercial Property". ("Residential Property" deliberately falls to the
+ * other-line row — the ACORD applications here are commercial forms.) */
 export const PRIOR_COVERAGE_LINE_ROWS: Record<string, string> = {
   "General Liability": "GeneralLiability",
   Property: "Property",
+  "Commercial Property": "Property",
 };
 
 /** One policy year of the prior-coverage grid. */
