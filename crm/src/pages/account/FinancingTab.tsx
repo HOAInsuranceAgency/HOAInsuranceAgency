@@ -2,9 +2,9 @@ import { useMemo, useState } from "react";
 import {
   client,
   fmtDate,
-  fmtMoney,
   listAllPages,
   type Account,
+  type CrmDocument,
   type Policy,
 } from "../../lib/client";
 import type { Schema } from "../../../amplify/data/resource";
@@ -60,6 +60,29 @@ function LoanActions({ loan, onChanged }: { loan: PfLoan; onChanged: () => void 
     [loan.id, loan.status],
     { initialData: [] as PfNotice[], errorMessage: "Failed to load notices" }
   );
+  /**
+   * The executed resolutions this account has on file. Documents carry no
+   * visible id anywhere in the UI, so activation offers the valid candidates
+   * by name instead of asking for an id to be pasted. The server still
+   * re-checks account and category at ACTIVATE — a selection that went stale
+   * (deleted, re-categorized) is refused there, not trusted from here.
+   */
+  const resolutions = useAsyncResource(
+    () =>
+      loan.status === "QUOTED"
+        ? listAllPages((nextToken) =>
+            client.models.Document.list({
+              filter: {
+                entityId: { eq: loan.accountId },
+                category: { eq: "PF_RESOLUTION_EXECUTED" },
+              },
+              nextToken,
+            })
+          )
+        : Promise.resolve([] as CrmDocument[]),
+    [loan.id, loan.status],
+    { initialData: [] as CrmDocument[], errorMessage: "Failed to load documents" }
+  );
 
   async function act(action: string, extra: Record<string, string> = {}, done?: string) {
     await status.run(
@@ -106,13 +129,25 @@ function LoanActions({ loan, onChanged }: { loan: PfLoan; onChanged: () => void 
             />
           </div>
           <div className="field">
-            <label htmlFor={`pf-resdoc-${loan.id}`}>Executed resolution (Document id)</label>
-            <input
+            <label htmlFor={`pf-resdoc-${loan.id}`}>Executed resolution</label>
+            <select
               id={`pf-resdoc-${loan.id}`}
-              placeholder="Upload under “Executed board resolution”, then paste its id"
               value={resolutionDocId}
               onChange={(e) => setResolutionDocId(e.target.value)}
-            />
+            >
+              <option value="">Choose…</option>
+              {resolutions.data.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.name}
+                </option>
+              ))}
+            </select>
+            {resolutions.loaded && resolutions.data.length === 0 && (
+              <p className="muted small">
+                None on file — upload the signed copy under “Executed board
+                resolution” on the Documents tab.
+              </p>
+            )}
           </div>
           <button
             type="button"
@@ -144,7 +179,9 @@ function LoanActions({ loan, onChanged }: { loan: PfLoan; onChanged: () => void 
               void act("POST_PAYMENT", {}, "Payment posted to the lending account.")
             }
           >
-            Post installment {(loan.paidThrough ?? 0) + 1}
+            {/* The down payment is payment 1 everywhere the schedule is shown,
+                so financed installment n posts as payment n+1 of months+1. */}
+            Post payment {(loan.paidThrough ?? 0) + 2} of {loan.months + 1}
           </button>
         </div>
       )}
@@ -277,6 +314,15 @@ const LOAN_BADGE: Record<string, BadgeSpec> = {
   DEFAULTED: { cls: "red", label: "DEFAULTED" },
   CANCELLED: { cls: "gray", label: "CANCELLED" },
 };
+
+/**
+ * Loan money keeps its cents — the schedule rounds to cents by spec, and a
+ * balance is a ledger figure, not a headline. Absent stays "—" (a QUOTED loan
+ * has no balance yet), which is why this is not `formatMoney` directly.
+ */
+function fmtLoanMoney(n: number | null | undefined): string {
+  return n == null ? "—" : formatMoney(n);
+}
 
 export function FinancingTab({ account }: { account: Account }) {
   const isAdmin = useIsAdmin();
@@ -664,11 +710,11 @@ export function FinancingTab({ account }: { account: Account }) {
               <>
                 <div className="form-grid" style={{ marginTop: 14 }}>
                   <div className="stat">
-                    <div className="n">{fmtMoney(quote.downPayment)}</div>
+                    <div className="n">{formatMoney(quote.downPayment)}</div>
                     <div className="l">Down payment (1 of {parsed.months + 1})</div>
                   </div>
                   <div className="stat">
-                    <div className="n">{fmtMoney(quote.amountFinanced)}</div>
+                    <div className="n">{formatMoney(quote.amountFinanced)}</div>
                     <div className="l">Amount financed</div>
                   </div>
                   <div className="stat">
@@ -704,8 +750,9 @@ export function FinancingTab({ account }: { account: Account }) {
             </div>
             {issued && (
               <p className="muted small">
-                Quote {issued} issued. The agreement and servicing arrive in the
-                next release; every check above was re-run and logged server-side.
+                Quote {issued} issued. Every check above was re-run and logged
+                server-side. Generate the agreement and service the loan from
+                the Loans table below.
               </p>
             )}
           </>
@@ -741,10 +788,10 @@ export function FinancingTab({ account }: { account: Account }) {
                       <td>
                         <Badge {...(LOAN_BADGE[l.status] ?? LOAN_BADGE.QUOTED)} />
                       </td>
-                      <td className="num">{fmtMoney(l.amountFinanced)}</td>
+                      <td className="num">{fmtLoanMoney(l.amountFinanced)}</td>
                       <td className="num">{l.apr}%</td>
-                      <td className="num">{fmtMoney(l.payment)}</td>
-                      <td className="num">{fmtMoney(l.balance)}</td>
+                      <td className="num">{fmtLoanMoney(l.payment)}</td>
+                      <td className="num">{fmtLoanMoney(l.balance)}</td>
                       <td>{fmtDate(l.nextDueAt)}</td>
                       <td className="row-action">
                         <div className="row-tools">
