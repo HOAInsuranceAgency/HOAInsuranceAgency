@@ -202,6 +202,16 @@ export const US_STATES = [
 
 // Alphabetical.
 export const LINES_OF_BUSINESS = [
+  /**
+   * The premium-finance allow-list matches canonical names, and bare
+   * "Property" is not one — an association master policy's property line
+   * must be entered as "Commercial Property" to be financeable. Both
+   * spellings stay selectable: existing policies carry "Property", and the
+   * ACORD pickers key off it. ("D&O", "Workers Comp" and "Crime/Fidelity"
+   * have the same canonicalization gap; renaming them touches ACORD
+   * mappings and is tracked separately.)
+   */
+  "Commercial Property",
   "Crime/Fidelity",
   "D&O",
   "Earthquake",
