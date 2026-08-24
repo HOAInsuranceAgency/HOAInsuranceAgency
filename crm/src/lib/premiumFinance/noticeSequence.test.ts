@@ -298,7 +298,9 @@ describe("servicing idempotency (the review findings)", () => {
 describe("origination rechecks the flag at the last moment", () => {
   it("a disable landing mid-evaluation blocks the create", () => {
     const SRC = readFileSync(
-      resolve(process.cwd(), "amplify/functions/pf-originate/handler.ts"),
+      // W8: the origination invariants live in the shared core both loan
+      // writers (pf-originate, the invoice send) delegate to.
+      resolve(process.cwd(), "amplify/functions/pfOrigination.ts"),
       "utf8"
     );
     // Stronger than ordering now: the flag check and the loan Put are one

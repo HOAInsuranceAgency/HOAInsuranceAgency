@@ -766,7 +766,19 @@ const schema = a
       effectiveDate: a.date(),
       expirationDate: a.date(),
       notes: a.string(),
+      /**
+       * W8: quotes are invoiceable and financeable before bind, so the two
+       * screens origination reads live here too, additive nullable. Bind
+       * carries them onto the policy; unrecorded blocks, exactly as on a
+       * policy. MEP is recorded for underwriting parity only — the screen
+       * was retired 2026-08-24.
+       */
+      producerOfRecord: a.boolean(),
+      isAuditable: a.boolean(),
+      minimumEarnedPremiumPct: a.float(),
       policy: a.hasOne("Policy", "quoteId"),
+      /** W8: pre-bind billing anchors here; see Invoice.quoteId. */
+      invoices: a.hasMany("Invoice", "quoteId"),
     })
       .authorization((allow) => [
         allow.authenticated().to(["read", "create", "update"]),
@@ -881,6 +893,14 @@ const schema = a
       /** Optional: a policy can have several, and some bill no policy at all. */
       policyId: a.id(),
       policy: a.belongsTo("Policy", "policyId"),
+      /**
+       * W8: the pre-bind anchor — an invoice may bill a quote before any
+       * policy exists. Exactly one of policyId/quoteId is set at creation;
+       * bind adds policyId (the rollover) and quoteId stays for history.
+       * Every exclusion scan matches either anchor.
+       */
+      quoteId: a.id(),
+      quote: a.belongsTo("Quote", "quoteId"),
       /** INV-2026-00001. Reserved atomically — see reserveInvoiceNumber. */
       number: a.string(),
       status: a.ref("InvoiceStatus").required(),
@@ -1072,7 +1092,14 @@ const schema = a
     PfLoan: a
       .model({
         accountId: a.id().required(),
-        policyId: a.id().required(),
+        /**
+         * W8: optional, because a loan can originate against a QUOTE-billed
+         * invoice before any policy exists. Exactly one of policyId/quoteId
+         * anchors a live loan; BIND_ROLLOVER sets policyId when the quote
+         * binds. Every exclusion scan matches the invoice's anchor.
+         */
+        policyId: a.id(),
+        quoteId: a.id(),
         status: a.ref("PfLoanStatus").required(),
         /** Jurisdiction code at origination — frozen; moves do not re-gate. */
         state: a.string().required(),
@@ -1155,6 +1182,17 @@ const schema = a
          */
         electionCheckoutUrl: a.string(),
         electionCheckoutExpiresAt: a.datetime(),
+        /**
+         * W8: the agreement's click-wrap signature, captured on the election
+         * page BEFORE any Checkout session can exist. Name and role are what
+         * the signer typed (PM, PM's finance team, board member); the
+         * instant and IP are server-stamped in the election transaction.
+         * Distinct from the board resolution the activation gate demands.
+         */
+        agreementSignedAt: a.datetime(),
+        agreementSignedName: a.string(),
+        agreementSignedRole: a.string(),
+        agreementSignedIp: a.string(),
       })
       .secondaryIndexes((index) => [
         index("accountId").sortKeys(["quotedAt"]),
@@ -1265,8 +1303,13 @@ const schema = a
      */
     PfOverride: a
       .model({
+        /**
+         * The ANCHOR the override attaches to — a policy id, or since W8 a
+         * quote id for pre-bind billing. The name predates quote anchoring
+         * and stays for the existing rows' sake.
+         */
         policyId: a.id().required(),
-        /** MEP | AUDITABLE */
+        /** AUDITABLE. (MEP rows exist historically; the screen retired 2026-08-24.) */
         check: a.string().required(),
         reason: a.string().required(),
         actor: a.string(),
@@ -1919,6 +1962,13 @@ const schema = a
         token: a.string().required(),
         /** The dispatch discriminator — see lead-upload/dispatch.ts. */
         accept: a.boolean().required(),
+        /**
+         * W8: the agreement's execution — a typed name and role, required
+         * by the handler before any Checkout Session exists. Optional here
+         * only because a revived link (failed debit) is already signed.
+         */
+        signerName: a.string(),
+        signerRole: a.string(),
       })
       .returns(a.json())
       .authorization((allow) => [allow.publicApiKey()])
@@ -2087,6 +2137,8 @@ const schema = a
         certMailedAt: a.string(),
         certNumber: a.string(),
         cancellationEffectiveAt: a.string(),
+        /** W8 BIND_ROLLOVER: the policy the quote just became. */
+        policyId: a.string(),
       })
       .returns(a.json())
       .authorization((allow) => [allow.authenticated()])

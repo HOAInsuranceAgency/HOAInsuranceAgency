@@ -244,6 +244,97 @@ activation** (decision, 2026-08-23).
   disabling the module stops elections and new originations but never stops
   debits on ACTIVE loans — the gate still never touches servicing.
 
+## W8 — Origination disappears into invoicing (signed by Jake, 2026-08-24)
+
+The quote form is gone. Financing is not a thing staff configure per deal;
+it is a standing product with fixed terms that offers itself wherever the
+gates allow:
+
+- **Fixed terms, nowhere editable**: 25% down (payment 1 of 12), 14% APR,
+  11 monthly installments. The financed amount is **the invoiced total** —
+  what the association actually owes, retail lines included — not the
+  carrier premium. The auto-quote's schedule anchors at the invoice send
+  date: the deal starts when the customer can accept it, so a policy
+  invoiced late in its term does not begin life in arrears.
+- **Origination happens at invoice send**, through the same shared core
+  the mutation used, with every gate intact: kill switch (transactional),
+  jurisdiction, APR cap (effective-rate where the row says so),
+  min-principal, coverage, producer-of-record, auditable, incorporated.
+  A block means a pay-in-full-only email — and the invoice screen says
+  which screen blocked and why. Re-pricing a re-sent invoice supersedes
+  the stale quote (`superseded-by-repricing`, logged) and issues fresh at
+  the new total. An ACCEPTED or ACTIVE loan on the policy suppresses any
+  new origination — the choice was made.
+- **The MEP screen is REMOVED** (signed 2026-08-24). The agency lends its
+  own capital and knowingly accepts early-default undersecurity on
+  high-MEP policies — the worst case being roughly the accrued interest on
+  a deal whose carrier refund exactly covers principal. MEP stays recorded
+  on policies as underwriting data; it no longer gates the offer, and the
+  MEP override with it. The auditable screen and its ADMIN override
+  remain, surfaced on the invoice screen where the offer is made.
+- **Every invoice bills exactly one quote or policy**, chosen at creation,
+  and an anchor carries **one live invoice at a time**
+  (DRAFT/SENT/PROCESSING); PAID and VOID free the slot for endorsement and
+  audit billing. Enforced at creation in the UI and again at send in the
+  Lambda.
+- **Invoicing a quote is first-class** (signed 2026-08-24): premium is
+  billed — and financing offered — before bind, and **binding rolls the
+  invoice and any live loan to the new policy** as part of the bind flow.
+  The loan gains a nullable `quoteId`; `policyId` loosens to optional and
+  is set at rollover (a `BIND_ROLLOVER` servicing action, since clients
+  cannot write loans); every exclusion scan matches the invoice's anchor,
+  quote or policy. Terminal loans do not roll.
+- **The agreement is signed before money moves** (signed 2026-08-24).
+  The election page renders the agreement's terms — POA, ownership
+  disclosure, the TILA-style APR block, actuarial prepayment terms — and
+  the accepting person (PM, PM's finance team, or a board member: whoever
+  is electing) signs by typed name with their role. The signature — name,
+  role, instant, IP — rides the election transaction itself, so no
+  Checkout session can exist for an unsigned agreement; the generated
+  agreement PDF renders the signature block from the loan's record. This
+  is the E-SIGN/UETA click-wrap form, distinct from — and in addition to —
+  the board resolution the activation gate still demands.
+- **The Financing tab is servicing only**: the loans table, activation,
+  notices, cancellation. Origination has no UI anywhere.
+
+### W8 hardening (adversarial review, 2026-08-24)
+
+Decisions the review forced, now part of the design:
+
+- **A committed election is untouchable.** Committed means money is in
+  flight or could be within minutes: a stamped down-payment intent, or a
+  live Checkout session/claim. Supersession — re-pricing at send, a paid
+  invoice's cancel sweep — carries `attribute_not_exists(downPaymentIntentId)`
+  (and, at send, the live-session check) in its write condition, and the
+  read-time paths refuse first. A bill re-priced over a committed election
+  offers nothing and says so in the logs: that knot is a human's.
+- **The election transaction refuses under a clearing down payment** —
+  both the stamp and the session claim carry the intent guard, because
+  Stripe can sit on a settlement event for hours and the read-time
+  "already clearing" check races it.
+- **The one-live-per-anchor send check sees everything**: header ids,
+  line-level policy ids (pre-W8 invoices anchor only through lines), and
+  the policy's own `quoteId` (a pre-bind invoice whose rollover failed
+  still holds the policy's slot). A quote-anchored invoice refuses to send
+  once its quote closes.
+- **Bind refuses a second policy from one quote** (the hasOne is a query
+  convenience, not a constraint), checks its writes' GraphQL errors, and
+  rolls each invoice and loan independently; the Financing tab carries a
+  rollover retry for a loan stranded on a bound quote.
+- **Activation requires a policy.** An elected quote-anchored loan holds
+  its down payment and mandate, but debits begin only after bind rolls it
+  — collateral is unearned premium, and that exists only once coverage is
+  placed.
+- **The origination mutation enforces the fixed terms too** — the API is
+  not a back door around "not able to be edited".
+- **The compliance log never fabricates**: a loan-create transaction
+  cancelled by conflict or throttle (not by the flag condition) writes no
+  kill-switch story, and the election's PASS row names the signer read
+  back off the loan after commit, not the caller's own inputs.
+- **The signature IP is evidence, not proof**: first X-Forwarded-For hop,
+  shape-checked and bounded before it can reach the loan, the log, or the
+  printed agreement. The signature's substance is the typed name and role.
+
 ### Rhode Island opened (signed by Jake, 2026-08-24)
 
 RI's row left the unverified-ceiling state on Jake's verification, and it

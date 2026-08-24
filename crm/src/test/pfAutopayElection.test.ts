@@ -205,14 +205,18 @@ describe("the webhook's loan side", () => {
     expect(PF).toContain("refund needed");
   });
 
-  it("a funded election supersedes sibling quotes on the policy", () => {
+  it("a funded election supersedes sibling quotes on the anchor", () => {
     // The accept-time sibling check is read-time; two QUOTED loans can hold
     // payable sessions until one down payment LANDS — so the landing is
     // where the race serializes: siblings cancel (QUOTED only, conditional,
     // logged), their election links go cold, and a sibling's own clearing
-    // down payment resolves through the not-QUOTED refund alarm.
+    // down payment resolves through the not-QUOTED refund alarm. Since W8
+    // the scan matches every anchor id the loan carries — policy, quote,
+    // or both after a bind rollover — so no twin escapes on a technicality.
     expect(PF).toContain('"superseded-by-election"');
-    expect(PF).toContain('FilterExpression: "policyId = :p AND #s = :q AND id <> :self"');
+    expect(PF).toContain('legs.push("policyId = :p")');
+    expect(PF).toContain('legs.push("quoteId = :qa")');
+    expect(PF).toContain('AND #s = :q AND id <> :self');
     expect(PF).toContain("a sibling financing election on the same policy was funded");
   });
 
@@ -314,21 +318,27 @@ describe("the election endpoint's ordering", () => {
   it("stamps the election conditionally on QUOTED under this token, before the clock runs out", () => {
     // Expiry rides the write's own condition — the read-time check sits
     // before the invoice scans, and a token submitted seconds before its
-    // expiry must not finish electing after it.
+    // expiry must not finish electing after it. Since the review of W8,
+    // the same write also refuses while a down payment is clearing: the
+    // read-time "already clearing" check races the webhook's stamp, and a
+    // late-delivered settlement must fail the election, not run beside it.
     expect(ELECTION).toContain(
-      '"#s = :quoted AND electionToken = :tok AND electionTokenExpiresAt > :now"'
+      '"#s = :quoted AND electionToken = :tok AND electionTokenExpiresAt > :now AND attribute_not_exists(downPaymentIntentId)"'
     );
-    expect(ELECTION).toContain("electionTokenExpiresAt > :now AND (attribute_not_exists(electionCheckoutUrl)");
+    expect(ELECTION).toContain(
+      "electionTokenExpiresAt > :now AND attribute_not_exists(downPaymentIntentId) AND (attribute_not_exists(electionCheckoutUrl)"
+    );
   });
 
   it("binds the stamp to the kill switch in one transaction", () => {
     // The moduleEnabled read is advice; the ConditionCheck is the law —
     // pf-originate's pattern. A disable that is durable when the stamp
     // commits fails the whole election, and the Checkout mint only follows
-    // a stamp that transacted with the flag.
+    // a stamp that transacted with the flag. (The window is generous: the
+    // signature stamps grew this block.)
     const at = ELECTION.indexOf("SET electedAt = if_not_exists(electedAt, :now)");
     expect(at).toBeGreaterThan(-1);
-    const branch = ELECTION.slice(at - 1500, at + 2000);
+    const branch = ELECTION.slice(at - 1500, at + 3500);
     expect(branch).toContain("TransactWriteCommand");
     expect(branch).toContain("ConditionCheck");
     expect(branch).toContain('ConditionExpression: "premiumFinanceEnabled = :on"');
@@ -361,12 +371,173 @@ describe("the send offers financing honestly", () => {
   const SEND = read("amplify/functions/send-invoice/handler.ts");
 
   it("offers only a QUOTED loan with the module on, and never blocks the bill", () => {
-    expect(SEND).toContain('status: { eq: "QUOTED" }');
+    // W8: the send lists every loan on the anchor, suppresses when money
+    // already touched one, and rides only the newest QUOTED offer.
+    expect(SEND).toContain('l.status === "QUOTED"');
+    expect(SEND).toContain('["ACCEPTED", "ACTIVE", "DEFAULTED", "PAID"].includes');
     expect(SEND).toContain("premiumFinanceEnabled !== true) return null");
     expect(SEND).toContain("financing offer omitted");
   });
 
-  it("mints the token conditionally on the loan still being QUOTED", () => {
-    expect(SEND).toContain('ConditionExpression: "#s = :quoted"');
+  it("re-pricing supersedes the stale quote conditionally — and never a committed election", () => {
+    // The bill changed under the offer: the cancel names the QUOTED
+    // status, the premium the decision saw, AND the absence of commitment
+    // — a clearing down payment or a live Checkout session the customer
+    // may be sitting on. A committed election racing the send loses
+    // nothing: the condition fails, the send offers nothing, and the
+    // customer's money never lands on a CANCELLED loan.
+    expect(SEND).toContain(
+      '"#s = :q AND premium = :seen AND attribute_not_exists(downPaymentIntentId) AND (attribute_not_exists(electionCheckoutUrl) OR electionCheckoutExpiresAt < :now)"'
+    );
+    expect(SEND).toContain('"superseded-by-repricing"');
+    // And the read-time half: a committed loan at a mismatched premium is
+    // a human's knot — nothing is cancelled, nothing new originates.
+    expect(SEND).toContain("offering nothing; resolve by hand");
+  });
+
+  it("mints the token conditionally on the loan still being QUOTED and holding the token it read", () => {
+    // Two concurrent sends must not last-write-win each other's mint, or
+    // the first email carries a link that is already dead.
+    expect(SEND).toContain('"#s = :quoted AND electionToken = :seenTok"');
+    expect(SEND).toContain('"#s = :quoted AND attribute_not_exists(electionToken)"');
+  });
+
+  it("originates at the product's fixed terms and nothing else (W8)", () => {
+    // Down 25 / APR 14 / months 11 come from quote.ts constants — the send
+    // passes them by name, so nobody can quietly hand-tune a term here.
+    expect(SEND).toContain("downPct: PF_DEFAULT_DOWN_PCT");
+    expect(SEND).toContain("apr: PF_DEFAULT_APR");
+    expect(SEND).toContain("months: PF_DEFAULT_MONTHS");
+    expect(SEND).toContain("premium: retailTotal");
+    expect(SEND).not.toMatch(/downPct: \d/);
+  });
+
+  it("refuses an anchorless invoice and a second live invoice per anchor (W8)", () => {
+    expect(SEND).toContain("Every invoice bills a policy or a quote. Set one before sending.");
+    expect(SEND).toContain('["DRAFT", "SENT", "PROCESSING"].includes');
+    expect(SEND).toMatch(/One live invoice per \$\{anchor\.kind\}/);
+  });
+
+  it("sees line-anchored legacy siblings and the policy's own quote (W8 review)", () => {
+    // Pre-W8 invoices anchor only through their lines, and a pre-bind
+    // invoice whose rollover failed anchors only through its quote — the
+    // header scan alone cannot see either, and each is a second live bill
+    // for one premium.
+    expect(SEND).toContain('client.models.InvoiceLine.list({');
+    expect(SEND).toContain("policy?.quoteId ? [{ quoteId: { eq: policy.quoteId } }] : []");
+  });
+
+  it("refuses to send against a closed quote", () => {
+    // A bound quote's billing belongs to its policy; a lost one bills
+    // coverage that will never exist.
+    expect(SEND).toContain("isOpenQuoteStatus(quoteAnchor.status)");
+    expect(SEND).toContain("This quote has been bound.");
+  });
+});
+
+describe("the origination mutation holds the product's fixed terms", () => {
+  it("refuses caller-chosen terms — the API is not a back door", () => {
+    const ORIGINATE = read("amplify/functions/pf-originate/handler.ts");
+    expect(ORIGINATE).toContain("a.downPct !== PF_DEFAULT_DOWN_PCT");
+    expect(ORIGINATE).toContain("a.apr !== PF_DEFAULT_APR");
+    expect(ORIGINATE).toContain("a.months !== PF_DEFAULT_MONTHS");
+  });
+
+  it("never writes the kill-switch story for a transaction that merely conflicted", () => {
+    // A TransactionConflict or throttle cancels with the flag untouched;
+    // blaming the switch would fabricate an audit record for examiners.
+    const CORE = read("amplify/functions/pfOrigination.ts");
+    expect(CORE).toContain('CancellationReasons?.[0]?.Code === "ConditionalCheckFailed"');
+    expect(CORE).toContain("without a flag refusal");
+  });
+});
+
+describe("quotes can answer the screens the offer runs on (W8 review)", () => {
+  it("the coverage form records producer-of-record and auditable on quotes", () => {
+    // Without this, every quote anchor blocks on "not confirmed" and the
+    // pre-bind half of W8 can never fire.
+    const FORM = read("src/components/CoverageForm.tsx");
+    const quoteBranch = FORM.slice(FORM.indexOf("client.models.Quote.update"));
+    expect(quoteBranch).toContain("producerOfRecord: form.producerOfRecord");
+    expect(quoteBranch).toContain("isAuditable: form.isAuditable");
+  });
+
+  it("bind checks its errors and refuses a second policy from one quote", () => {
+    const PANEL = read("src/components/QuotesPanel.tsx");
+    // The two writes whose silently-swallowed errors left an open quote
+    // with an ACTIVE policy, or a live quote-invoice beside a policy bill.
+    expect(PANEL).toContain("if (bErr?.length) throw new Error(bErr[0].message)");
+    expect(PANEL).toContain("Binding it twice would bill one premium twice.");
+    expect(PANEL).toContain('action: "BIND_ROLLOVER"');
+  });
+
+  it("activation requires a policy — no mandate turns on against unplaced coverage", () => {
+    const SERVICING = read("amplify/functions/pf-servicing/handler.ts");
+    expect(SERVICING).toContain("This loan is anchored to a quote. Bind the quote first");
+  });
+});
+
+describe("the agreement is signed before money moves (W8)", () => {
+  const ELECTION = read("amplify/functions/pf-election/handler.ts");
+
+  it("an unsigned accept is refused before anything is scanned or voided", () => {
+    expect(ELECTION).toContain("Type your full name and your role to sign the agreement first.");
+    expect(ELECTION.indexOf("sign the agreement first")).toBeLessThan(
+      ELECTION.indexOf("exclusive-payment-path")
+    );
+  });
+
+  it("the signature rides the election transaction itself", () => {
+    // Same UpdateExpression as electedAt, inside the TransactWriteCommand
+    // that carries the kill-switch ConditionCheck: no Checkout session can
+    // exist for an unsigned agreement, and no signature can post-date a
+    // committed disable.
+    expect(ELECTION).toContain(
+      'agreementSignedAt = if_not_exists(agreementSignedAt, :now)'
+    );
+    expect(ELECTION).toContain(
+      'agreementSignedName = if_not_exists(agreementSignedName, :signerName)'
+    );
+    expect(ELECTION.indexOf("agreementSignedAt = if_not_exists")).toBeLessThan(
+      ELECTION.indexOf("stripe.checkout.sessions.create")
+    );
+  });
+
+  it("first writer wins — a revived link keeps its original signer", () => {
+    expect(ELECTION).toContain("agreementSignedRole = if_not_exists(agreementSignedRole, :signerRole)");
+    expect(ELECTION).toContain("agreementSignedIp = if_not_exists(agreementSignedIp, :signerIp)");
+  });
+
+  it("serves the agreement's own paragraphs — the page can never drift from the PDF", () => {
+    expect(ELECTION).toContain('from "../pf-agreement/agreementTerms"');
+    for (const c of ["OWNERSHIP_DISCLOSURE", "POWER_OF_ATTORNEY", "PREPAYMENT_TERMS", "CANCELLATION_PROCEDURE"]) {
+      expect(ELECTION).toContain(c);
+    }
+  });
+
+  it("the PDF prints the recorded signature in the borrower's block", () => {
+    const PDF = read("amplify/functions/pf-agreement/agreementPdf.ts");
+    expect(PDF).toContain("/s/ ");
+    expect(PDF).toContain("Signed electronically");
+  });
+});
+
+describe("bind rolls the anchor, never re-lends (W8)", () => {
+  const SERVICING = read("amplify/functions/pf-servicing/handler.ts");
+
+  it("rolls only a live loan whose quote the policy actually descends from", () => {
+    expect(SERVICING).toContain("boundPolicy.quoteId !== loan.quoteId");
+    expect(SERVICING).toContain(
+      '"quoteId = :q AND attribute_not_exists(policyId) AND #s IN (:live1, :live2, :live3, :live4)"'
+    );
+  });
+
+  it("terminal loans keep the anchor they closed under", () => {
+    expect(SERVICING).toContain("does not roll");
+  });
+
+  it("every anchor scan matches policy or quote — the activation exclusion too", () => {
+    expect(SERVICING).toContain("anchorLegs");
+    expect(SERVICING).toContain('{ quoteId: { eq: loan.quoteId } }');
   });
 });

@@ -32,6 +32,7 @@ interface LoanRow extends PostableLoan {
   status: string | null;
   state: string;
   policyId: string | null;
+  quoteId: string | null;
   months: number;
   downPayment: number;
   autopayPendingIntentId: string | null;
@@ -58,6 +59,7 @@ async function readLoan(loanId: string): Promise<LoanRow | null> {
     status: typeof item.status === "string" ? item.status : null,
     state: typeof item.state === "string" ? item.state : "",
     policyId: typeof item.policyId === "string" ? item.policyId : null,
+    quoteId: typeof item.quoteId === "string" ? item.quoteId : null,
     months: typeof item.months === "number" ? item.months : 11,
     downPayment: typeof item.downPayment === "number" ? item.downPayment : 0,
     autopayPendingIntentId:
@@ -291,17 +293,25 @@ async function applyDownPayment(d: PfEventDecision, loan: LoanRow): Promise<stri
    * two down payments for one premium.
    */
   try {
-    if (loan.policyId) {
+    if (loan.policyId || loan.quoteId) {
+      // W8: siblings share EITHER anchor — a bind rollover mid-race must
+      // not let a quote-anchored twin escape the supersession.
+      const legs: string[] = [];
+      const values: Record<string, unknown> = { ":q": "QUOTED", ":self": loan.id };
+      if (loan.policyId) {
+        legs.push("policyId = :p");
+        values[":p"] = loan.policyId;
+      }
+      if (loan.quoteId) {
+        legs.push("quoteId = :qa");
+        values[":qa"] = loan.quoteId;
+      }
       const { Items } = await ddb.send(
         new ScanCommand({
           TableName: table,
-          FilterExpression: "policyId = :p AND #s = :q AND id <> :self",
+          FilterExpression: `(${legs.join(" OR ")}) AND #s = :q AND id <> :self`,
           ExpressionAttributeNames: { "#s": "status" },
-          ExpressionAttributeValues: {
-            ":p": loan.policyId,
-            ":q": "QUOTED",
-            ":self": loan.id,
-          },
+          ExpressionAttributeValues: values,
         })
       );
       for (const sib of Items ?? []) {

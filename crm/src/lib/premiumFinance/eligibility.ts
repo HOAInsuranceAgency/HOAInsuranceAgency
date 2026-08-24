@@ -1,28 +1,24 @@
 import { coverageVerdict } from "./coverage";
 
 /**
- * The four eligibility screens on a policy, in one place.
+ * The eligibility screens, in one place.
  *
  * Pure and dependency-free beyond the coverage module, so the browser panel
  * and the origination Lambda evaluate the identical rules — the panel shows
  * what the server will decide, and the server decides it again anyway.
  *
  * Every unanswered question blocks. `producerOfRecord: null` is where
- * wholesale paper enters; an unrecorded MEP might be 25%; an unknown
- * auditable flag might be true. The exemption does not have a benefit of the
- * doubt.
+ * wholesale paper enters; an unknown auditable flag might be true. The
+ * exemption does not have a benefit of the doubt.
  */
 
 export interface EligibilityInputs {
-  /** Policy.lines — free text, screened against the signed lists. */
+  /** The anchor's lines — free text, screened against the signed lists. */
   lines: readonly (string | null | undefined)[];
   /** Account.type. */
   accountType: string | null | undefined;
   producerOfRecord: boolean | null | undefined;
-  minimumEarnedPremiumPct: number | null | undefined;
   isAuditable: boolean | null | undefined;
-  /** The quote's down payment percent — MEP is measured against it. */
-  downPct: number;
   /**
    * The jurisdiction demands an incorporated borrower (Rhode Island,
    * § 19-14.1-10(b)(1)). When true, `incorporated` — Account.incorporated,
@@ -33,15 +29,19 @@ export interface EligibilityInputs {
   incorporated?: boolean | null | undefined;
   /** For the block message; the statute names the state, so we do too. */
   jurisdictionName?: string;
-  /** ADMIN overrides on file for this policy, keyed by check. */
+  /**
+   * ADMIN overrides on file for this anchor. Auditable only: the MEP
+   * screen — and its override — retired 2026-08-24, a signed decision
+   * that the agency knowingly accepts early-default undersecurity on
+   * high-MEP policies. MEP stays recorded as underwriting data.
+   */
   overrides?: {
-    mep?: { reason: string };
     auditable?: { reason: string };
   };
 }
 
 export interface EligibilityCheck {
-  check: "coverage" | "producer-of-record" | "mep" | "auditable" | "incorporated";
+  check: "coverage" | "producer-of-record" | "auditable" | "incorporated";
   ok: boolean;
   /**
    * True only for the personal-lines screen: no override exists, none may be
@@ -75,34 +75,12 @@ export function evaluateEligibility(inputs: EligibilityInputs): EligibilityCheck
           hard: false,
           reason:
             inputs.producerOfRecord === false
-              ? "We are not the producer of record on this policy. No wholesale paper, no accommodation for another agency's client."
-              : "Producer of record has not been confirmed on this policy. Confirm it on the policy record — financing stays blocked until someone answers.",
+              ? "We are not the producer of record on this placement. No wholesale paper, no accommodation for another agency's client."
+              : "Producer of record has not been confirmed. Confirm it on the policy or quote record — financing stays blocked until someone answers.",
         }
   );
 
-  // 3. Minimum earned premium vs the down payment.
-  const mep = inputs.minimumEarnedPremiumPct;
-  if (mep === null || mep === undefined) {
-    checks.push({
-      check: "mep",
-      ok: false,
-      hard: false,
-      reason:
-        "Minimum earned premium is not recorded on this policy. Enter it from the policy PDF — zero is an answer; blank is not.",
-    });
-  } else if (mep >= inputs.downPct) {
-    const reason = `${mep}% MEP against a ${inputs.downPct}% down payment leaves no collateral cushion at inception.`;
-    const override = inputs.overrides?.mep;
-    checks.push(
-      override?.reason
-        ? { check: "mep", ok: true, hard: false, overridden: override.reason, reason }
-        : { check: "mep", ok: false, hard: false, reason }
-    );
-  } else {
-    checks.push({ check: "mep", ok: true, hard: false });
-  }
-
-  // 4. Auditable policies: the collateral can shrink at audit.
+  // 3. Auditable policies: the collateral can shrink at audit.
   const auditable = inputs.isAuditable;
   if (auditable === null || auditable === undefined) {
     checks.push({
@@ -110,11 +88,11 @@ export function evaluateEligibility(inputs: EligibilityInputs): EligibilityCheck
       ok: false,
       hard: false,
       reason:
-        "Whether this policy is auditable is not recorded. Answer it from the policy PDF — financing stays blocked until someone does.",
+        "Whether this coverage is auditable is not recorded. Answer it from the carrier's paper on the policy or quote record — financing stays blocked until someone does.",
     });
   } else if (auditable) {
     const reason =
-      "This policy is auditable: the earned premium can grow at audit, shrinking the unearned-premium collateral behind the loan.";
+      "This coverage is auditable: the earned premium can grow at audit, shrinking the unearned-premium collateral behind the loan.";
     const override = inputs.overrides?.auditable;
     checks.push(
       override?.reason
@@ -125,7 +103,7 @@ export function evaluateEligibility(inputs: EligibilityInputs): EligibilityCheck
     checks.push({ check: "auditable", ok: true, hard: false });
   }
 
-  // 5. Incorporated borrower — only where the signed row demands it (Rhode
+  // 4. Incorporated borrower — only where the signed row demands it (Rhode
   // Island). The screen exists only there, so the four screens stay four
   // everywhere else, and an unrecorded answer blocks exactly like an
   // unconfirmed producer of record: associations can be unincorporated,
