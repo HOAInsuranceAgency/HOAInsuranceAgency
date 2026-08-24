@@ -767,11 +767,13 @@ const schema = a
       expirationDate: a.date(),
       notes: a.string(),
       /**
-       * W8: quotes are invoiceable and financeable before bind, so the two
-       * screens origination reads live here too, additive nullable. Bind
-       * carries them onto the policy; unrecorded blocks, exactly as on a
-       * policy. MEP is recorded for underwriting parity only — the screen
-       * was retired 2026-08-24.
+       * W8: quotes are invoiceable and financeable before bind, so the
+       * producer-of-record screen reads here too, additive nullable. Bind
+       * carries the facts onto the policy; unrecorded blocks, exactly as
+       * on a policy. MEP is recorded for underwriting parity only (screen
+       * retired 2026-08-24); isAuditable is a dead field kept for existing
+       * rows — its screen retired the same day ("everything we do is final
+       * once entered") and nothing reads or writes it.
        */
       producerOfRecord: a.boolean(),
       isAuditable: a.boolean(),
@@ -833,7 +835,11 @@ const schema = a
       producerOfRecordAt: a.datetime(),
       /** Carrier's minimum earned premium %, off the policy PDF. */
       minimumEarnedPremiumPct: a.float(),
-      /** Auditable policies block financing (collateral can shrink at audit). */
+      /**
+       * DEAD FIELD — the auditable screen retired 2026-08-24 ("everything
+       * we do is final once entered"); kept for rows that carry an answer,
+       * read and written by nothing.
+       */
       isAuditable: a.boolean(),
       lines: a.string().array(),
       premium: a.float(),
@@ -1301,13 +1307,11 @@ const schema = a
       ]),
 
     /**
-     * An admin's written reason for waiving one eligibility check on one
-     * policy. MEP and auditable only — the personal-lines screen has no
-     * override and never will.
-     *
-     * ADMIN-only create, nobody updates or deletes: an override is a record,
-     * not a setting. The evaluator honors it only when a reason is present,
-     * and the origination log carries the reason into the decision row.
+     * HISTORICAL — an admin's written reason for waiving one eligibility
+     * check on one anchor. Both overridable screens (MEP, then auditable)
+     * retired 2026-08-24, so nothing consults or creates these rows any
+     * more; the model stays because an override once relied on is an audit
+     * record, and audit records do not get deleted.
      */
     PfOverride: a
       .model({
@@ -1317,7 +1321,7 @@ const schema = a
          * and stays for the existing rows' sake.
          */
         policyId: a.id().required(),
-        /** AUDITABLE. (MEP rows exist historically; the screen retired 2026-08-24.) */
+        /** MEP | AUDITABLE — both historical. */
         check: a.string().required(),
         reason: a.string().required(),
         actor: a.string(),
@@ -1326,8 +1330,11 @@ const schema = a
       })
       .secondaryIndexes((index) => [index("policyId")])
       .authorization((allow) => [
+        // Read-only for everyone since the screens retired: a new override
+        // row would waive nothing, and a write path to nowhere invites
+        // someone to believe it did.
         allow.authenticated().to(["read"]),
-        allow.groups(["ADMIN"]).to(["read", "create"]),
+        allow.groups(["ADMIN"]).to(["read"]),
       ]),
 
     // ── Carriers & appointments ────────────────────────────────────────

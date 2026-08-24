@@ -116,13 +116,6 @@ export const handler = async (event: {
           );
           return rows.map((o) => ({ effectiveAt: o.effectiveAt, reviewBy: o.reviewBy }));
         },
-        listOverrides: (anchorId) =>
-          listAllPages((nextToken) =>
-            client.models.PfOverride.list({
-              filter: { policyId: { eq: anchorId } },
-              nextToken,
-            })
-          ),
       },
       settings?.premiumFinanceEnabled === true,
       {
@@ -137,7 +130,6 @@ export const handler = async (event: {
           id: a.policyId,
           lines: policy.lines ?? [],
           producerOfRecord: policy.producerOfRecord,
-          isAuditable: policy.isAuditable,
         },
         premium: a.premium,
         downPct: a.downPct,

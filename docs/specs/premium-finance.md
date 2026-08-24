@@ -270,8 +270,15 @@ gates allow:
   high-MEP policies — the worst case being roughly the accrued interest on
   a deal whose carrier refund exactly covers principal. MEP stays recorded
   on policies as underwriting data; it no longer gates the offer, and the
-  MEP override with it. The auditable screen and its ADMIN override
-  remain, surfaced on the invoice screen where the offer is made.
+  MEP override with it.
+- **The AUDITABLE screen is REMOVED too** (signed by Jake, 2026-08-24:
+  "everything we do is final once entered" — this book's premiums do not
+  move at audit). The isAuditable fields become dead columns kept for
+  existing rows; nothing asks the question, carries it at bind, extracts
+  it, or gates on it. With it went the last override: PfOverride is a
+  read-only historical record now, and no surviving screen (coverage,
+  producer-of-record, RI's incorporated) has or may grow a waiver — each
+  blocks on a fact only confirming can fix.
 - **Every invoice bills exactly one quote or policy**, chosen at creation,
   and an anchor carries **one live invoice at a time**
   (DRAFT/SENT/PROCESSING); PAID and VOID free the slot for endorsement and

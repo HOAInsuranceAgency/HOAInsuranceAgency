@@ -1,9 +1,7 @@
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { client, listAllPages, type Account } from "../lib/client";
 import type { Schema } from "../../amplify/data/resource";
 import { useAsyncResource } from "../lib/useAsyncResource";
-import { useIsAdmin } from "../lib/auth";
-import { SaveStatus, useSaveStatus } from "./SaveStatus";
 import {
   aprCapViolation,
   hasCurrentOpinion,
@@ -21,7 +19,6 @@ import {
 import { formatMoney } from "../lib/invoiceTotals";
 
 type PfLoan = Schema["PfLoan"]["type"];
-type PfOverride = Schema["PfOverride"]["type"];
 
 /**
  * What the send will do about financing, said before the send does it.
@@ -33,8 +30,9 @@ type PfOverride = Schema["PfOverride"]["type"];
  * gate keys off the association's PHYSICAL address state (Account.state,
  * the ACORD premises field), never a mailing address.
  *
- * The auditable screen's ADMIN override lives here too, inline, because the
- * screen it unblocks is displayed here and nowhere else now.
+ * No override machinery lives here (or anywhere): the two screens that had
+ * one — MEP and auditable — both retired 2026-08-24, and every screen that
+ * remains blocks on a fact only confirming can fix.
  */
 
 export interface HintAnchor {
@@ -42,7 +40,6 @@ export interface HintAnchor {
   id: string;
   lines: readonly (string | null | undefined)[];
   producerOfRecord: boolean | null | undefined;
-  isAuditable: boolean | null | undefined;
 }
 
 export function FinanceOfferHint({
@@ -54,14 +51,10 @@ export function FinanceOfferHint({
   anchor: HintAnchor;
   retailTotal: number;
 }) {
-  const isAdmin = useIsAdmin();
-  const overrideStatus = useSaveStatus({ autoClearMs: 4000 });
-  const [overrideReason, setOverrideReason] = useState("");
-
   const j = useMemo(() => jurisdictionFor(account.state), [account.state]);
   const res = useAsyncResource(
     async () => {
-      const [opinions, loans, overrides] = await Promise.all([
+      const [opinions, loans] = await Promise.all([
         j?.status === "conditional"
           ? client.models.PfCounselOpinion.list({
               filter: { jurisdiction: { eq: j.code } },
@@ -82,47 +75,17 @@ export function FinanceOfferHint({
             nextToken,
           })
         ),
-        // PfOverride.policyId carries the ANCHOR id — policy or quote.
-        listAllPages((nextToken) =>
-          client.models.PfOverride.list({
-            filter: { policyId: { eq: anchor.id } },
-            nextToken,
-          })
-        ),
       ]);
-      return {
-        hasOpinion: opinions,
-        loans: loans as PfLoan[],
-        overrides: overrides as PfOverride[],
-      };
+      return { hasOpinion: opinions, loans: loans as PfLoan[] };
     },
     [anchor.id, anchor.kind, j?.code, j?.status],
     { initialData: null, errorMessage: "Couldn't check financing." }
   );
 
-  async function recordAuditableOverride() {
-    if (!overrideReason.trim()) return;
-    await overrideStatus.run(
-      async () => {
-        const { errors } = await client.models.PfOverride.create({
-          policyId: anchor.id,
-          check: "AUDITABLE",
-          reason: overrideReason.trim(),
-          occurredAt: new Date().toISOString(),
-        });
-        if (errors?.length) throw new Error(errors[0].message);
-        setOverrideReason("");
-        await res.refetch();
-        return "Override recorded.";
-      },
-      { errorMessage: "Couldn't record the override." }
-    );
-  }
-
   if (!res.loaded || !res.data) {
     return res.error ? <p className="muted small">{res.error}</p> : null;
   }
-  const { hasOpinion, loans, overrides } = res.data;
+  const { hasOpinion, loans } = res.data;
 
   // Money already touched a loan on this anchor: the choice was made.
   if (loans.some((l) => ["ACCEPTED", "ACTIVE", "DEFAULTED", "PAID"].includes(l.status))) {
@@ -143,26 +106,15 @@ export function FinanceOfferHint({
     );
   }
 
-  const auditableOverride = overrides.find(
-    (o) => o.check === "AUDITABLE" && o.reason?.trim()
-  );
   const checks = evaluateEligibility({
     lines: anchor.lines,
     accountType: account.type,
     producerOfRecord: anchor.producerOfRecord,
-    isAuditable: anchor.isAuditable,
     requiresIncorporatedBorrower: gate.jurisdiction.requiresIncorporatedBorrower ?? false,
     incorporated: account.incorporated,
     jurisdictionName: gate.jurisdiction.name,
-    overrides: auditableOverride ? { auditable: { reason: auditableOverride.reason } } : undefined,
   });
   const failed = checks.filter((c) => !c.ok);
-  // The override waives a KNOWN auditable exposure — it has no effect on an
-  // unrecorded flag (the evaluator honors it only when isAuditable is
-  // true), so offering it there would record a permanent row that unblocks
-  // nothing. Unrecorded means go answer the question.
-  const auditableBlocking =
-    anchor.isAuditable === true && failed.some((c) => c.check === "auditable");
 
   if (failed.length > 0) {
     return (
@@ -175,30 +127,6 @@ export function FinanceOfferHint({
             <li key={c.check}>{c.reason}</li>
           ))}
         </ul>
-        {isAdmin && auditableBlocking && (
-          <div className="inline-actions">
-            <div className="field full">
-              <label htmlFor="pf-hint-ov">
-                Admin override — auditable screen (written reason, permanent)
-              </label>
-              <textarea
-                id="pf-hint-ov"
-                rows={2}
-                value={overrideReason}
-                onChange={(e) => setOverrideReason(e.target.value)}
-              />
-            </div>
-            <button
-              type="button"
-              className="secondary"
-              disabled={!overrideReason.trim() || overrideStatus.busy}
-              onClick={() => void recordAuditableOverride()}
-            >
-              Record override
-            </button>
-            <SaveStatus {...overrideStatus.status} />
-          </div>
-        )}
       </>
     );
   }

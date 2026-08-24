@@ -682,14 +682,12 @@ export function InvoiceEditor({
                       id: policy.id,
                       lines: policy.lines ?? [],
                       producerOfRecord: policy.producerOfRecord,
-                      isAuditable: policy.isAuditable,
                     }
                   : {
                       kind: "quote",
                       id: quote!.id,
                       lines: quote!.lines ?? [],
                       producerOfRecord: quote!.producerOfRecord,
-                      isAuditable: quote!.isAuditable,
                     }
               }
               retailTotal={totals.retail}

@@ -378,10 +378,9 @@ function BindForm({
         replacementCostType: quote.replacementCostType ?? undefined,
         effectiveDate: quote.effectiveDate ?? undefined,
         expirationDate: quote.expirationDate ?? undefined,
-        // W8: the origination screens answered on the quote survive the
-        // bind — re-answering facts already recorded invites a different
-        // answer. MEP rides along as underwriting data.
-        isAuditable: quote.isAuditable ?? undefined,
+        // W8: facts answered on the quote survive the bind — re-answering
+        // invites a different answer. MEP rides along as underwriting data.
+        // (Auditable retired 2026-08-24; nothing carries or reads it now.)
         minimumEarnedPremiumPct: quote.minimumEarnedPremiumPct ?? undefined,
       });
       if (pErr?.length || !policy) throw new Error(pErr?.[0]?.message);

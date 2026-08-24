@@ -300,12 +300,8 @@ const ALL_FIELD_DEFS: FieldDef[] = [
     kind: "note",
     current: () => "",
   },
-  {
-    key: "isAuditable",
-    label: "Auditable policy → notes",
-    kind: "note",
-    current: () => "",
-  },
+  // (isAuditable retired from extraction 2026-08-24 with the auditable
+  // screen — "everything we do is final once entered".)
 ];
 
 /** Clients renew off bound policies, so lead-only fields drop out entirely. */

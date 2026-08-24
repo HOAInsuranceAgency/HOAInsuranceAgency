@@ -63,7 +63,6 @@ interface FinanceAnchor {
   id: string;
   lines: readonly (string | null | undefined)[];
   producerOfRecord: boolean | null | undefined;
-  isAuditable: boolean | null | undefined;
 }
 
 /**
@@ -203,13 +202,6 @@ async function financeOffer(
             );
             return rows.map((o) => ({ effectiveAt: o.effectiveAt, reviewBy: o.reviewBy }));
           },
-          listOverrides: (anchorId) =>
-            listAllPages((nextToken) =>
-              client.models.PfOverride.list({
-                filter: { policyId: { eq: anchorId } },
-                nextToken,
-              })
-            ),
         },
         settings?.premiumFinanceEnabled === true,
         {
@@ -776,14 +768,12 @@ export const handler = async (event: {
           id: headerPolicyId,
           lines: policy?.lines ?? [],
           producerOfRecord: policy?.producerOfRecord,
-          isAuditable: policy?.isAuditable,
         }
       : {
           kind: "quote",
           id: invoice.quoteId!,
           lines: quoteAnchor!.lines ?? [],
           producerOfRecord: quoteAnchor!.producerOfRecord,
-          isAuditable: quoteAnchor!.isAuditable,
         };
 
     /**

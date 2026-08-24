@@ -453,13 +453,14 @@ describe("the origination mutation holds the product's fixed terms", () => {
 });
 
 describe("quotes can answer the screens the offer runs on (W8 review)", () => {
-  it("the coverage form records producer-of-record and auditable on quotes", () => {
+  it("the coverage form records producer-of-record on quotes", () => {
     // Without this, every quote anchor blocks on "not confirmed" and the
-    // pre-bind half of W8 can never fire.
+    // pre-bind half of W8 can never fire. (Auditable retired 2026-08-24 —
+    // the form must NOT write the dead field back.)
     const FORM = read("src/components/CoverageForm.tsx");
     const quoteBranch = FORM.slice(FORM.indexOf("client.models.Quote.update"));
     expect(quoteBranch).toContain("producerOfRecord: form.producerOfRecord");
-    expect(quoteBranch).toContain("isAuditable: form.isAuditable");
+    expect(quoteBranch).not.toContain("isAuditable");
   });
 
   it("bind checks its errors and refuses a second policy from one quote", () => {

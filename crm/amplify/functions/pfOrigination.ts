@@ -26,6 +26,10 @@ import { PF_CONFIG_SHA256 } from "../../src/lib/premiumFinance/jurisdictions";
  *  - The MEP screen is gone (signed 2026-08-24): the agency lends its own
  *    capital and knowingly accepts early-default undersecurity on high-MEP
  *    policies. MEP stays recorded as underwriting data.
+ *  - The auditable screen is gone too (signed 2026-08-24, Jake:
+ *    "everything we do is final once entered" — this book's premiums do
+ *    not move at audit). With it went the last override; nothing consults
+ *    PfOverride any more.
  *  - Everything else is verbatim: every rule logged pass or block, log
  *    rows land before the loan exists, and the create transacts with the
  *    kill switch.
@@ -45,7 +49,6 @@ export interface OriginationAnchor {
   id: string;
   lines: readonly (string | null | undefined)[];
   producerOfRecord: boolean | null | undefined;
-  isAuditable: boolean | null | undefined;
 }
 
 export interface OriginationAccount {
@@ -62,8 +65,6 @@ export interface OriginationAccount {
  */
 export interface OriginationReads {
   listOpinions(code: string): Promise<{ effectiveAt: string; reviewBy: string }[]>;
-  /** ADMIN overrides on file for this anchor. Only AUDITABLE remains. */
-  listOverrides(anchorId: string): Promise<{ check?: string | null; reason?: string | null }[]>;
 }
 
 export interface OriginationRequest {
@@ -238,34 +239,23 @@ export async function originateLoan(
         inputs: { ...terms, amountFinanced: quote.amountFinanced },
       });
 
-      // The screens, with any ADMIN override on file (auditable only,
-      // since the MEP screen retired).
-      const overrideRows = await reads.listOverrides(anchor.id);
-      const auditableOverride = overrideRows.find(
-        (o) => o.check === "AUDITABLE" && o.reason?.trim()
-      );
+      // The screens. No override machinery remains: MEP and auditable —
+      // the two screens that had one — both retired 2026-08-24, and every
+      // surviving screen blocks on a fact only confirming can fix.
       const checks = evaluateEligibility({
         lines: anchor.lines,
         accountType: account.type,
         producerOfRecord: anchor.producerOfRecord,
-        isAuditable: anchor.isAuditable,
         requiresIncorporatedBorrower:
           gate.jurisdiction.requiresIncorporatedBorrower ?? false,
         incorporated: account.incorporated,
         jurisdictionName: gate.jurisdiction.name,
-        overrides: {
-          auditable: auditableOverride
-            ? { reason: auditableOverride.reason! }
-            : undefined,
-        },
       });
       for (const c of checks) {
         decisions.push({
           rule: c.check,
-          outcome: c.overridden ? "OVERRIDE" : c.ok ? "PASS" : "BLOCK",
-          reason: c.overridden
-            ? `${c.reason} Overridden by admin: ${c.overridden}`
-            : c.reason,
+          outcome: c.ok ? "PASS" : "BLOCK",
+          reason: c.reason,
           inputs: terms,
         });
       }
