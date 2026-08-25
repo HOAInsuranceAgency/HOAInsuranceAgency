@@ -118,4 +118,13 @@ describe("UniversalSearch", () => {
     expect(screen.getByText(/two characters minimum/)).toBeTruthy();
     expect(models.Document.list).not.toHaveBeenCalled();
   });
+
+  it("a sent /search link seeds the box — including Amplify's trailing-slash form", () => {
+    render(
+      <MemoryRouter initialEntries={["/search/?q=deductible"]}>
+        <UniversalSearch />
+      </MemoryRouter>
+    );
+    expect(screen.getByRole<HTMLInputElement>("combobox").value).toBe("deductible");
+  });
 });

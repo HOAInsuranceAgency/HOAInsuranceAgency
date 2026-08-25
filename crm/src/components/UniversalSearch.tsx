@@ -64,9 +64,11 @@ export default function UniversalSearch() {
 
   // Landing on /search (a sent link, a bookmark) puts the page's query in
   // the box, so refining it is an edit rather than a retype. Keyed on the
-  // navigation, not on q — typing afterwards must not be overwritten.
+  // navigation, not on q — typing afterwards must not be overwritten. The
+  // trailing slash matters: Amplify's CDN serves a direct load as
+  // "/search/?q=…", which is exactly the sent-link case this exists for.
   useEffect(() => {
-    if (location.pathname === "/search") {
+    if (location.pathname.replace(/\/+$/, "") === "/search") {
       const urlQ = new URLSearchParams(location.search).get("q") ?? "";
       if (urlQ) setQ(urlQ);
     }
