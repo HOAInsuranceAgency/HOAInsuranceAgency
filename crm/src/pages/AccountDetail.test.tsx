@@ -201,12 +201,15 @@ describe("the tab in the URL", () => {
     // One writer, and it does write.
     expect(src).toMatch(/function selectTab\(/);
     expect(src).toMatch(/setSearchParams\(/);
-    // `setTab` is the raw state setter behind it; a call site that reaches for
-    // it directly is a tab change the URL never hears about.
-    const rawSetterCalls = src.match(/(?<!function )\bsetTab\(/g) ?? [];
+    // The tab is DERIVED from searchParams now — there is no state setter at
+    // all, which is the strongest form of the invariant: a tab change that
+    // skips the URL has nothing left to call. (Stored state seeded from the
+    // URL desyncs when the universal search bar navigates to ?tab= targets
+    // while this page is already mounted.)
     expect(
-      rawSetterCalls.length,
-      "setTab is called outside selectTab — that path leaves the URL stale"
-    ).toBe(1);
+      src.includes("setTab("),
+      "a raw tab setter reappeared — tab state must stay derived from the URL"
+    ).toBe(false);
+    expect(src).toMatch(/searchParams\.get\("tab"\)/);
   });
 });

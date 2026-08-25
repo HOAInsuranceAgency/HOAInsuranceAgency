@@ -99,11 +99,23 @@ export interface SearchIndexInput {
   }[];
 }
 
-const lower = (s: string | null | undefined) => s?.trim().toLowerCase() ?? "";
+/**
+ * Match normalization: lowercase, and punctuation that separates words —
+ * hyphens, slashes, parentheses — becomes a space, applied to haystack and
+ * query alike. Without it "Harbor-Pointe HOA" scores only a bare substring
+ * for "pointe" and can be capped out of its group behind weaker matches.
+ */
+const lower = (s: string | null | undefined) =>
+  s
+    ?.trim()
+    .toLowerCase()
+    .replace(/[-/()]/g, " ")
+    .replace(/\s+/g, " ") ?? "";
 
-/** Sentence-case a stage/status enum token for display. */
-const sentence = (s: string | null | undefined) =>
-  s ? s.charAt(0) + s.slice(1).toLowerCase() : "";
+/** Sentence-case an enum token for display: NON_RENEWED → "Non renewed".
+ * Exported because document hits case their entityType the same way. */
+export const sentence = (s: string | null | undefined) =>
+  s ? (s.charAt(0) + s.slice(1).toLowerCase()).replaceAll("_", " ") : "";
 
 export function buildSearchRows(input: SearchIndexInput): SearchRow[] {
   const accountName = new Map(input.accounts.map((a) => [a.id, a.name]));

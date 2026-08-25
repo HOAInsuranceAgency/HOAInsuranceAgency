@@ -128,6 +128,36 @@ describe("searchRows", () => {
     expect(searchRows(rows, "inv-2026")[0].hits[0].label).toBe("INV-2026-00012");
     expect(searchRows(rows, "12345")[0].hits[0].label).toBe("Greyhawk Specialty");
   });
+
+  it("a hyphen starts a word too — 'Harbor-Pointe' ranks with the space-boundary names", () => {
+    const world: SearchIndexInput = {
+      ...EMPTY,
+      accounts: [
+        { id: "h1", name: "Harbor-Pointe HOA" },
+        { id: "h2", name: "Bay Pointe HOA" },
+        { id: "h3", name: "Southpointe Realty" },
+      ],
+    };
+    const [group] = searchRows(buildSearchRows(world), "pointe");
+    // Both word-boundary names outrank the bare-substring match.
+    expect(group.hits.map((h) => h.label)).toEqual([
+      "Bay Pointe HOA",
+      "Harbor-Pointe HOA",
+      "Southpointe Realty",
+    ]);
+  });
+
+  it("underscored enum tokens read as words, not identifiers", () => {
+    const world: SearchIndexInput = {
+      ...EMPTY,
+      accounts: [{ id: "a1", name: "Harbor Pointe COA" }],
+      policies: [
+        { id: "p1", accountId: "a1", policyNumber: "OLD-001", status: "NON_RENEWED" },
+      ],
+    };
+    const [group] = searchRows(buildSearchRows(world), "old-001");
+    expect(group.hits[0].sub).toBe("Harbor Pointe COA · Non renewed");
+  });
 });
 
 describe("ocrSnippet", () => {

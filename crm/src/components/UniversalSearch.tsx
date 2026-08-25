@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { useAsyncResource } from "../lib/useAsyncResource";
 import {
   HIT_TYPE_LABEL,
   MIN_QUERY_LENGTH,
   searchRows,
+  sentence,
   type SearchHitType,
 } from "../lib/universalSearch";
 import {
@@ -43,6 +44,7 @@ interface Item {
  */
 export default function UniversalSearch() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [q, setQ] = useState("");
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
@@ -59,6 +61,17 @@ export default function UniversalSearch() {
     initialData: [],
     errorMessage: "Couldn't build the search index",
   });
+
+  // Landing on /search (a sent link, a bookmark) puts the page's query in
+  // the box, so refining it is an edit rather than a retype. Keyed on the
+  // navigation, not on q — typing afterwards must not be overwritten.
+  useEffect(() => {
+    if (location.pathname === "/search") {
+      const urlQ = new URLSearchParams(location.search).get("q") ?? "";
+      if (urlQ) setQ(urlQ);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.key]);
 
   const qt = q.trim();
   const groups = useMemo(() => searchRows(index.data, qt), [index.data, qt]);
@@ -119,7 +132,7 @@ export default function UniversalSearch() {
         sub:
           d.entityType === "ACCOUNT"
             ? accountNames.get(d.entityId) ?? "Account"
-            : d.entityType.charAt(0) + d.entityType.slice(1).toLowerCase(),
+            : sentence(d.entityType),
         target: docTarget(d),
       });
     }
@@ -134,9 +147,22 @@ export default function UniversalSearch() {
     return out;
   }, [groups, docHits, qt, accountNames]);
 
-  // A new answer set restarts selection at the top hit, so Enter always
-  // means "the best match on screen".
-  useEffect(() => setActive(0), [qt, items.length]);
+  // A new QUERY restarts selection at the top hit. Deliberately not keyed
+  // on the answer set: the debounced document lane appends its hits below
+  // the a-tier rows the user may already be arrowing through, and snapping
+  // back to the top mid-navigation would make Enter open a row they never
+  // chose. A-tier indexes are stable under the append; `activeIdx` clamps
+  // the edge where a shrink strands the old value.
+  useEffect(() => setActive(0), [qt]);
+  const activeIdx = Math.min(active, Math.max(0, items.length - 1));
+
+  // The dropdown scrolls; the highlight must not walk off the visible part
+  // of it. Keyed on the clamped index so arrows always chase a real row.
+  useEffect(() => {
+    document
+      .getElementById(`usearch-opt-${activeIdx}`)
+      ?.scrollIntoView({ block: "nearest" });
+  }, [activeIdx]);
 
   function go(target: string) {
     setOpen(false);
@@ -163,7 +189,7 @@ export default function UniversalSearch() {
       e.preventDefault();
       setActive((i) => Math.max(i - 1, 0));
     } else if (e.key === "Enter") {
-      const item = items[Math.min(active, items.length - 1)];
+      const item = items[activeIdx];
       if (item) go(item.target);
     }
   }
@@ -207,14 +233,24 @@ export default function UniversalSearch() {
 
   return (
     <div className="topbar">
-      <div className="usearch" ref={boxRef}>
+      <div
+        className="usearch"
+        ref={boxRef}
+        // Tabbing away must take the dropdown with it: the options are
+        // non-focusable divs, so focus leaving the box always means the
+        // reader has moved on. Hit clicks preventDefault their mousedown,
+        // so selection never routes through this path.
+        onBlur={(e) => {
+          if (!boxRef.current?.contains(e.relatedTarget as Node)) setOpen(false);
+        }}
+      >
         <input
           ref={inputRef}
           role="combobox"
           aria-expanded={showPop}
           aria-controls="usearch-listbox"
           aria-activedescendant={
-            showPop && items[active] ? `usearch-opt-${active}` : undefined
+            showPop && items[activeIdx] ? `usearch-opt-${activeIdx}` : undefined
           }
           aria-label="Search"
           placeholder="Search accounts, contacts, policies, invoices, documents…"
@@ -225,7 +261,12 @@ export default function UniversalSearch() {
           }}
           onFocus={() => {
             setOpen(true);
-            if (!index.loaded && !index.loading) void index.refetch();
+            // The retry half of "a failed build retries on the next focus":
+            // `loaded` settles true on failure too, so the error is what
+            // re-arms the gate.
+            if (!index.loading && (!index.loaded || index.error)) {
+              void index.refetch();
+            }
           }}
           onKeyDown={onKeyDown}
         />
@@ -262,11 +303,14 @@ export default function UniversalSearch() {
                       <div
                         id={`usearch-opt-${i}`}
                         role="option"
-                        aria-selected={i === active}
-                        className={`usearch-hit${i === active ? " on" : ""}${item.isFooter ? " usearch-all" : ""}`}
+                        aria-selected={i === activeIdx}
+                        className={`usearch-hit${i === activeIdx ? " on" : ""}${item.isFooter ? " usearch-all" : ""}`}
                         // mousedown, not click: click fires after the input's
-                        // blur has already closed the dropdown.
+                        // blur has already closed the dropdown. Left button
+                        // only — a right-click wants the context menu, not a
+                        // navigation.
                         onMouseDown={(e) => {
+                          if (e.button !== 0) return;
                           e.preventDefault();
                           go(item.target);
                         }}

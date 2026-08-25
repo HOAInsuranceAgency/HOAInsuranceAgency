@@ -152,23 +152,25 @@ export default function AccountDetail({ profile }: { profile: UserProfile }) {
   const { id } = useParams<{ id: string }>();
   const pf = usePremiumFinance();
   const [searchParams, setSearchParams] = useSearchParams();
-  const initialTab = searchParams.get("tab") as Tab | null;
-  const [tab, setTab] = useState<Tab>(
-    initialTab && VALID_TABS.includes(initialTab) ? initialTab : "overview"
-  );
 
   /**
-   * Clicking a tab puts it in the URL, the way Settings already does.
-   *
-   * `?tab=` was read on mount and never written, so the address bar kept
-   * whatever it was opened with however far the user then navigated — which
-   * makes every link copied out of it point at the wrong panel, and a refresh
-   * land somewhere other than where the reader was. `replace` rather than
-   * `push`: switching tabs is not a navigation Back should have to walk out of
-   * one step at a time.
+   * Derived from the URL, not stored — the Dashboard's lesson applied here.
+   * State seeded once from `?tab=` desyncs the moment the URL changes
+   * without a remount, and the universal search bar made that reachable:
+   * it navigates to `/accounts/:id?tab=…` from ON this page, and React
+   * Router reuses the mounted instance for account→account hops — so a
+   * stored tab would render account A's panel under account B's URL.
+   */
+  const requested = searchParams.get("tab") as Tab | null;
+  const tab: Tab =
+    requested && VALID_TABS.includes(requested) ? requested : "overview";
+
+  /**
+   * Clicking a tab puts it in the URL — which, with `tab` derived above, is
+   * the whole action. `replace` rather than `push`: switching tabs is not a
+   * navigation Back should have to walk out of one step at a time.
    */
   function selectTab(t: Tab) {
-    setTab(t);
     const next = new URLSearchParams(searchParams);
     next.set("tab", t);
     setSearchParams(next, { replace: true });
