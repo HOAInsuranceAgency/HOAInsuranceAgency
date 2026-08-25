@@ -138,6 +138,18 @@ describe("UniversalSearch", () => {
     expect(models.Document.list).not.toHaveBeenCalled();
   });
 
+  it("the / shortcut selects what the box holds, so typing starts a new search", async () => {
+    const input = renderBar() as HTMLInputElement;
+    fireEvent.focus(input);
+    fireEvent.change(input, { target: { value: "harbor" } });
+    input.blur();
+
+    fireEvent.keyDown(window, { key: "/" });
+    expect(document.activeElement).toBe(input);
+    expect(input.selectionStart).toBe(0);
+    expect(input.selectionEnd).toBe("harbor".length);
+  });
+
   it("a sent /search link seeds the box — including Amplify's trailing-slash form", () => {
     render(
       <MemoryRouter initialEntries={["/search/?q=deductible"]}>

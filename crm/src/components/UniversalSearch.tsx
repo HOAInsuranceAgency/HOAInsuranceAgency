@@ -221,7 +221,11 @@ export default function UniversalSearch() {
         return;
       if (document.querySelector('[role="dialog"]')) return;
       e.preventDefault();
+      // Select, don't just focus: reaching for the shortcut means starting
+      // a NEW search, so whatever the box still holds is over-written by
+      // the first keystroke instead of prepended to.
       inputRef.current?.focus();
+      inputRef.current?.select();
     }
     window.addEventListener("keydown", onGlobalKey);
     return () => window.removeEventListener("keydown", onGlobalKey);
