@@ -68,7 +68,7 @@ export default function Dashboard() {
           </button>
         ))}
       </div>
-      <div className="field dash-tab-select">
+      <div className="dash-tab-select">
         <select
           aria-label="Dashboard view"
           value={tab}

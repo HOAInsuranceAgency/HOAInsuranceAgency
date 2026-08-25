@@ -233,7 +233,13 @@ a:hover { text-decoration: underline; }
 
 /* The dashboard's tab strip becomes a native select on phones: five
    buttons wrap into a ragged two-row strip under 800px, and the OS picker
-   is the better dropdown there. Same selectTab behind both. */
+   is the better dropdown there. Same selectTab behind both.
+
+   The wrapper deliberately does NOT wear `.field`: that class sets
+   `display: flex` further down this file, which — being equally specific
+   and later — beat this `display: none` and rendered BOTH controls at
+   desktop width. The select borrows the field styling by joining that
+   rule's selector list instead. */
 .dash-tab-select { display: none; }
 @media (max-width: 800px) {
   .dash-tabs { display: none; }
@@ -447,7 +453,7 @@ tr.clickable:hover td { background: var(--blue-bg); }
 .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px 16px; }
 .field { display: flex; flex-direction: column; gap: 4px; }
 .field label { font-size: 12px; font-weight: 600; color: var(--muted); }
-.field input, .field select, .field textarea {
+.field input, .field select, .field textarea, .dash-tab-select select {
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 8px 10px;
@@ -455,7 +461,10 @@ tr.clickable:hover td { background: var(--blue-bg); }
   font-family: inherit;
   background: #fff;
 }
-.field input:focus, .field select:focus, .field textarea:focus {
+.field input:focus,
+.field select:focus,
+.field textarea:focus,
+.dash-tab-select select:focus {
   outline: 2px solid var(--accent);
   outline-offset: -1px;
 }
