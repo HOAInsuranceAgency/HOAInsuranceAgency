@@ -231,6 +231,17 @@ a:hover { text-decoration: underline; }
    carries an 18px margin of its own. */
 .tab-updated { display: flex; justify-content: flex-end; align-items: center; margin: -12px 0 10px; }
 
+/* The dashboard's tab strip becomes a native select on phones: five
+   buttons wrap into a ragged two-row strip under 800px, and the OS picker
+   is the better dropdown there. Same selectTab behind both. */
+.dash-tab-select { display: none; }
+@media (max-width: 800px) {
+  .dash-tabs { display: none; }
+  .dash-tab-select { display: block; margin-bottom: 14px; }
+  .dash-tab-select select { width: 100%; font-size: 15px; padding: 9px 10px; }
+  .tab-updated { margin-top: -6px; }
+}
+
 /* ── Universal search (top bar) ─────────────────────────────────────── */
 /* Sticky against the document scroll; negative margins span .main's
    padding so the bar reads as the page's chrome, not a card. z-index 60:
