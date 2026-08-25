@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { NavLink, Route, Routes } from "react-router-dom";
+import { Navigate, NavLink, Route, Routes } from "react-router-dom";
 import { Authenticator, useAuthenticator } from "@aws-amplify/ui-react";
 import type { AuthUser } from "aws-amplify/auth";
 import { client, listAllPages, type UserProfile } from "./lib/client";
@@ -28,7 +28,8 @@ import Onboarding from "./pages/Onboarding";
 import Settings from "./pages/Settings";
 import Financing from "./pages/Financing";
 import { PfProvider, usePremiumFinance } from "./lib/premiumFinance/PfContext";
-import DocumentSearch from "./pages/DocumentSearch";
+import SearchResults from "./pages/SearchResults";
+import UniversalSearch from "./components/UniversalSearch";
 import QuotesList from "./pages/QuotesList";
 import PoliciesList from "./pages/PoliciesList";
 import { AllMarketingTasks } from "./components/MarketingTasks";
@@ -216,14 +217,6 @@ function IconBuilding() {
     </svg>
   );
 }
-function IconFile() {
-  return (
-    <svg {...iconProps}>
-      <path d="M14 2H6a1 1 0 00-1 1v18a1 1 0 001 1h12a1 1 0 001-1V7l-5-5z" />
-      <path d="M14 2v5h5M9 13h6M9 17h6" />
-    </svg>
-  );
-}
 function IconGear() {
   return (
     <svg {...iconProps}>
@@ -256,13 +249,15 @@ function IconCoin() {
   );
 }
 
+// Documents is no longer a destination: its only content was the search,
+// which now lives in the top bar on every page (the /documents URL still
+// redirects to /search for old bookmarks).
 const NAV_ITEMS = [
   { to: "/", end: true, label: "Dashboard", icon: <IconGrid /> },
   { to: "/leads", label: "Leads", icon: <IconFunnel /> },
   { to: "/clients", label: "Clients", icon: <IconUsers /> },
   { to: "/tasks", label: "Tasks", icon: <IconCheck /> },
   { to: "/carriers", label: "Carriers", icon: <IconBuilding /> },
-  { to: "/documents", label: "Documents", icon: <IconFile /> },
   { to: "/settings", label: "Settings", icon: <IconGear /> },
 ];
 
@@ -321,11 +316,11 @@ function Shell({ profile, signOut }: { profile: UserProfile; signOut: () => void
    * reason to see a page whose only content is "not enabled".
    */
   const navItems = [
-    ...NAV_ITEMS.slice(0, 6),
+    ...NAV_ITEMS.slice(0, 5),
     ...(pf.enabled || isAdmin
       ? [{ to: "/financing", label: "Financing", icon: <IconCoin /> } as const]
       : []),
-    ...NAV_ITEMS.slice(6),
+    ...NAV_ITEMS.slice(5),
   ];
 
   return (
@@ -363,6 +358,7 @@ function Shell({ profile, signOut }: { profile: UserProfile; signOut: () => void
         </div>
       </aside>
       <main className="main">
+        <UniversalSearch />
         <Routes>
           <Route path="/" element={<Dashboard />} />
           <Route path="/leads" element={<AccountsList stage="LEAD" />} />
@@ -381,7 +377,10 @@ function Shell({ profile, signOut }: { profile: UserProfile; signOut: () => void
           />
           <Route path="/quotes" element={<QuotesList />} />
           <Route path="/policies" element={<PoliciesList />} />
-          <Route path="/documents" element={<DocumentSearch />} />
+          <Route path="/search" element={<SearchResults />} />
+          {/* The old document-search page — redirect, don't 404, the
+              bookmarks people made of it. */}
+          <Route path="/documents" element={<Navigate to="/search" replace />} />
           <Route path="/financing" element={<Financing />} />
           <Route path="/settings" element={<Settings profile={profile} />} />
           <Route path="*" element={<NotFound />} />

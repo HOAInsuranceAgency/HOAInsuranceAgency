@@ -231,6 +231,87 @@ a:hover { text-decoration: underline; }
    carries an 18px margin of its own. */
 .tab-updated { display: flex; justify-content: flex-end; align-items: center; margin: -12px 0 10px; }
 
+/* ── Universal search (top bar) ─────────────────────────────────────── */
+/* Sticky against the document scroll; negative margins span .main's
+   padding so the bar reads as the page's chrome, not a card. z-index 60:
+   above the chart tooltips (50), below every modal (100). */
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 60;
+  background: var(--bg);
+  margin: -24px -32px 18px;
+  padding: 10px 32px;
+  border-bottom: 1px solid var(--border);
+}
+.usearch { position: relative; max-width: 640px; }
+.usearch input {
+  width: 100%;
+  padding: 8px 34px 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 14px;
+  background: var(--card);
+  color: var(--text);
+}
+.usearch input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+.usearch .kbd {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 6px;
+  color: var(--muted);
+  font-size: 11px;
+  background: var(--bg);
+  pointer-events: none;
+}
+.usearch-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 24px rgba(16, 26, 44, 0.14);
+  max-height: 60vh;
+  overflow-y: auto;
+  z-index: 60;
+  padding-bottom: 4px;
+}
+.usearch-group {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  padding: 10px 12px 2px;
+}
+.usearch-hit {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 7px 12px;
+  cursor: pointer;
+}
+.usearch-hit .hit-label { font-weight: 600; white-space: nowrap; }
+.usearch-hit .sub {
+  color: var(--muted);
+  font-size: 12.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.usearch-hit.on { background: var(--blue-bg); }
+.usearch-all { border-top: 1px solid var(--border); margin-top: 4px; }
+.usearch-all .hit-label { color: var(--accent-dark); font-weight: 600; }
+.usearch-note { padding: 8px 12px; color: var(--muted); font-size: 12.5px; }
+@media (max-width: 800px) {
+  .topbar { margin: -16px -16px 14px; padding: 8px 16px; }
+}
+
 /* ── Dashboard command center ──────────────────────────────────────── */
 /* A tile whose number is itself the alarm (overdue money, attention count). */
 .stat.hot .n { color: var(--red); }
