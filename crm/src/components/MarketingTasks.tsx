@@ -519,13 +519,19 @@ export function AllMarketingTasks({
 
       <div className="card">
         <div className="toolbar" style={{ marginTop: 0 }}>
-          <input
-            className="lic-search"
-            type="search"
-            placeholder="Filter by account, carrier, or line…"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-          />
+          {/* Same shape as the Clients and Leads search: a `.field` wrapper
+              is what carries the app's border, radius and focus ring, and
+              the 360px cap keeps a search box from growing into a banner.
+              This was a bare `.lic-search` input, which borrowed the
+              licensing screen's sizing and nothing else — a browser-default
+              box on a page of styled ones. */}
+          <div className="field grow" style={{ maxWidth: 360 }}>
+            <input
+              placeholder="Search tasks by account, carrier, or line…"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+          </div>
           {q && (
             <>
               <span className="muted small">

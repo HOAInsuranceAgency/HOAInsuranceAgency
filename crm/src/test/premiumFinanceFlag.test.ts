@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -12,6 +12,21 @@ import { describe, expect, it } from "vitest";
  * the stripeWebhook.test.ts way: the properties are structural.
  */
 const read = (rel: string) => readFileSync(resolve(process.cwd(), rel), "utf8");
+
+/** Every shipped source file under src/, tests excluded. */
+function srcFiles(dir = "src"): string[] {
+  const out: string[] = [];
+  for (const entry of readdirSync(resolve(process.cwd(), dir), {
+    withFileTypes: true,
+  })) {
+    const rel = `${dir}/${entry.name}`;
+    if (entry.isDirectory()) out.push(...srcFiles(rel));
+    else if (/\.tsx?$/.test(entry.name) && !/\.test\./.test(entry.name)) {
+      out.push(rel);
+    }
+  }
+  return out;
+}
 
 describe("the premium finance flag", () => {
   const SCHEMA = read("amplify/data/resource.ts");
@@ -58,9 +73,43 @@ describe("the premium finance flag", () => {
     expect(block).not.toMatch(/"create"|"update"|"delete"/);
   });
 
-  it("the UI fails closed when the settings read fails", () => {
-    const ctx = read("src/lib/premiumFinance/PfContext.tsx");
-    expect(ctx).toMatch(/catch\s*\{\s*setEnabled\(false\)/);
+  /**
+   * 2026-08-25: the module is always on. The UI's fail-closed context is
+   * gone — with no switch, there is no "off" for the screens to discover —
+   * and what these three assertions now hold is the shape that replaced it:
+   * the app cannot flip the flag, the app does not gate on it, and the
+   * interlock that actually stops lending still sits on the writes.
+   */
+  it("no client code can flip the module", () => {
+    // The mutation still exists for an operator with API access; nothing
+    // the browser ships may call it, or the switch is back by another name.
+    const uiCallers = srcFiles().filter((f) =>
+      read(f).includes("setPremiumFinanceEnabled")
+    );
+    expect(uiCallers).toEqual([]);
+  });
+
+  it("no client code gates on the flag any more", () => {
+    // A screen reading the flag would be a second answer to "is the module
+    // on" — one that can disagree with the stored one the Lambdas enforce.
+    const readers = srcFiles().filter((f) =>
+      read(f).includes("premiumFinanceEnabled")
+    );
+    expect(readers).toEqual([]);
+  });
+
+  it("the write-time interlock survives the button", () => {
+    // The UI switch is gone; these are what actually stop a loan being
+    // written under a disabled module, and they are conditions DynamoDB
+    // evaluates, not code a deploy can skip.
+    for (const f of [
+      "amplify/functions/pfOrigination.ts",
+      "amplify/functions/pf-election/handler.ts",
+    ]) {
+      expect(read(f), f).toContain(
+        'ConditionExpression: "premiumFinanceEnabled = :on"'
+      );
+    }
   });
 });
 

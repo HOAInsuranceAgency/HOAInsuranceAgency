@@ -53,7 +53,11 @@ export default function Dashboard() {
       <h1>Dashboard</h1>
       <p className="sub">Agency command center</p>
 
-      <div className="tabs">
+      {/* One control, two renderings: the strip on desktop, a native select
+          on phones — five buttons wrap into a ragged two-row strip under
+          800px, and the OS picker beats any custom dropdown there. CSS does
+          the swap, so both stay wired to the same selectTab. */}
+      <div className="tabs dash-tabs">
         {DASHBOARD_TABS.map(([t, label]) => (
           <button
             key={t}
@@ -63,6 +67,19 @@ export default function Dashboard() {
             {label}
           </button>
         ))}
+      </div>
+      <div className="dash-tab-select">
+        <select
+          aria-label="Dashboard view"
+          value={tab}
+          onChange={(e) => selectTab(e.target.value as DashboardTab)}
+        >
+          {DASHBOARD_TABS.map(([t, label]) => (
+            <option key={t} value={t}>
+              {label}
+            </option>
+          ))}
+        </select>
       </div>
 
       {tab === "overview" && <OverviewTab />}

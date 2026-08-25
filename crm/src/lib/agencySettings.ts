@@ -1,7 +1,8 @@
 import { client, type AgencySettings } from "./client";
 
 /**
- * The agency's NPNs — read by the sidebar, written by Settings → Agency.
+ * The agency's own identifiers — read by the sidebar, written by
+ * Settings → Agency.
  *
  * One record, one id. Everything here exists so the two call sites cannot
  * disagree about which row that is or how it comes into being.
@@ -17,23 +18,35 @@ import { client, type AgencySettings } from "./client";
  */
 export const AGENCY_SETTINGS_ID = "AGENCY";
 
-/** Just the editable fields, which is all either call site cares about. */
-export interface AgencyNpns {
+/**
+ * Just the editable fields, which is all either call site cares about.
+ *
+ * Named for what it holds rather than for the two numbers it started with:
+ * the EIN sits beside the NPNs on the same form, in the same sidebar block,
+ * and a type called `AgencyNpns` carrying a tax id is the kind of drift that
+ * outlives whoever allowed it.
+ */
+export interface AgencyIdentifiers {
   agencyNpn: string;
   drlpNpn: string;
+  agencyEin: string;
 }
 
-export const EMPTY_NPNS: AgencyNpns = { agencyNpn: "", drlpNpn: "" };
+export const EMPTY_IDENTIFIERS: AgencyIdentifiers = {
+  agencyNpn: "",
+  drlpNpn: "",
+  agencyEin: "",
+};
 
 /**
- * The stored NPNs, or empty strings.
+ * The stored identifiers, or empty strings.
  *
  * A missing row is the normal state of a fresh backend, not an error, so it
- * reads the same as a row with both fields blank — the sidebar shows nothing
+ * reads the same as a row with every field blank — the sidebar shows nothing
  * either way and the form opens empty. Returns `null` only when the read
  * itself failed, which is a different thing and the caller may want to say so.
  */
-export async function loadAgencyNpns(): Promise<AgencyNpns | null> {
+export async function loadAgencyIdentifiers(): Promise<AgencyIdentifiers | null> {
   const { data, errors } = await client.models.AgencySettings.get({
     id: AGENCY_SETTINGS_ID,
   });
@@ -41,11 +54,12 @@ export async function loadAgencyNpns(): Promise<AgencyNpns | null> {
   return {
     agencyNpn: data?.agencyNpn ?? "",
     drlpNpn: data?.drlpNpn ?? "",
+    agencyEin: data?.agencyEin ?? "",
   };
 }
 
 /**
- * Write both NPNs, creating the row if this is the first time.
+ * Write the identifiers, creating the row if this is the first time.
  *
  * `update` on a row that does not exist does not create it, and the first
  * admin to open this form is editing a backend that has never had one — so the
@@ -53,15 +67,16 @@ export async function loadAgencyNpns(): Promise<AgencyNpns | null> {
  * after. Throws on failure: Amplify's `{ data, errors }` does not, and a
  * silently dropped error here would leave the form saying "Saved."
  */
-export async function saveAgencyNpns(
-  npns: AgencyNpns,
+export async function saveAgencyIdentifiers(
+  identifiers: AgencyIdentifiers,
   updatedBy: string
 ): Promise<AgencySettings> {
   const fields = {
     // Trimmed, and empty means empty rather than " " — these get copied
     // straight into carrier portals.
-    agencyNpn: npns.agencyNpn.trim() || null,
-    drlpNpn: npns.drlpNpn.trim() || null,
+    agencyNpn: identifiers.agencyNpn.trim() || null,
+    drlpNpn: identifiers.drlpNpn.trim() || null,
+    agencyEin: identifiers.agencyEin.trim() || null,
     updatedBy,
   };
 
@@ -80,7 +95,9 @@ export async function saveAgencyNpns(
       });
 
   if (errors?.length || !data) {
-    throw new Error(errors?.[0]?.message ?? "Couldn't save the agency NPNs.");
+    throw new Error(
+      errors?.[0]?.message ?? "Couldn't save the agency identifiers."
+    );
   }
   return data;
 }

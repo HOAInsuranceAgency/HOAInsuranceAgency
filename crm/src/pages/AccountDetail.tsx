@@ -21,7 +21,6 @@ import { DeleteLeadZone } from "./account/DeleteLeadZone";
 import { PoliciesTab } from "./account/PoliciesTab";
 import { InvoicesTab } from "./account/InvoicesTab";
 import { FinancingTab } from "./account/FinancingTab";
-import { usePremiumFinance } from "../lib/premiumFinance/PfContext";
 import { PriorCarrierTab } from "./account/PriorCarrierTab";
 import { LossesTab } from "./account/LossesTab";
 import { ActivityTab } from "./account/ActivityTab";
@@ -73,8 +72,7 @@ const LEAD_ONLY_TABS: ReadonlySet<Tab> = new Set<Tab>(["priorcarrier"]);
  * the contradiction: billing a quote before bind is the new-business flow,
  * and new business is a lead — hiding the money tabs from leads hid the
  * feature from its audience. So Invoices and Financing show at every stage
- * now (financing still behind the module flag), and only Policies waits for
- * the bind that makes it true.
+ * now, and only Policies waits for the bind that makes it true.
  *
  * Not enforced anywhere but the tab bar. The rows are still reachable and
  * still load — this hides a panel that has nothing to show, it does not make
@@ -83,22 +81,15 @@ const LEAD_ONLY_TABS: ReadonlySet<Tab> = new Set<Tab>(["priorcarrier"]);
 const CLIENT_ONLY_TABS: ReadonlySet<Tab> = new Set<Tab>(["policies"]);
 
 /**
- * Financing is doubly gated: client-only AND behind the premium-finance
- * module flag. The flag is a compliance kill switch — counsel says stop, an
- * admin flips it, and this tab disappears everywhere in minutes. Both
- * tabsFor and resolveTab take the flag so a bookmarked ?tab=financing on a
- * disabled module falls back to Overview instead of rendering a panel the
- * tab bar has no button for.
+ * The tabs an account of this stage offers, in display order.
+ *
+ * Financing used to be conditional on the premium-finance module flag, and
+ * both functions took it as an option so a bookmarked `?tab=financing` on a
+ * disabled module fell back to Overview. The module is always on as of
+ * 2026-08-25, so the tab is simply a tab; stage is the only thing that
+ * still decides what an account offers.
  */
-export interface TabOptions {
-  premiumFinance?: boolean;
-}
-
-/** The tabs an account of this stage offers, in display order. */
-export function tabsFor(
-  stage: string | null | undefined,
-  opts: TabOptions = {}
-): [Tab, string][] {
+export function tabsFor(stage: string | null | undefined): [Tab, string][] {
   const isLead = stage !== "CLIENT";
   return [
     ["overview", "Overview"],
@@ -114,7 +105,7 @@ export function tabsFor(
     // converts them.
     ...(isLead ? [] : ([["policies", "Policies"]] as [Tab, string][])),
     ["invoices", "Invoices"],
-    ...(opts.premiumFinance ? ([["financing", "Financing"]] as [Tab, string][]) : []),
+    ["financing", "Financing"],
     ["documents", "Documents"],
     ["certificates", "Certificates"],
     ["activity", "Activity"],
@@ -136,39 +127,37 @@ export function tabsFor(
  */
 export function resolveTab(
   requested: Tab,
-  stage: string | null | undefined,
-  opts: TabOptions = {}
+  stage: string | null | undefined
 ): Tab {
   const isClient = stage === "CLIENT";
   const unreachable = isClient
-    ? LEAD_ONLY_TABS.has(requested) ||
-      (requested === "financing" && !opts.premiumFinance)
-    : CLIENT_ONLY_TABS.has(requested) ||
-      (requested === "financing" && !opts.premiumFinance);
+    ? LEAD_ONLY_TABS.has(requested)
+    : CLIENT_ONLY_TABS.has(requested);
   return unreachable ? "overview" : requested;
 }
 
 export default function AccountDetail({ profile }: { profile: UserProfile }) {
   const { id } = useParams<{ id: string }>();
-  const pf = usePremiumFinance();
   const [searchParams, setSearchParams] = useSearchParams();
-  const initialTab = searchParams.get("tab") as Tab | null;
-  const [tab, setTab] = useState<Tab>(
-    initialTab && VALID_TABS.includes(initialTab) ? initialTab : "overview"
-  );
 
   /**
-   * Clicking a tab puts it in the URL, the way Settings already does.
-   *
-   * `?tab=` was read on mount and never written, so the address bar kept
-   * whatever it was opened with however far the user then navigated — which
-   * makes every link copied out of it point at the wrong panel, and a refresh
-   * land somewhere other than where the reader was. `replace` rather than
-   * `push`: switching tabs is not a navigation Back should have to walk out of
-   * one step at a time.
+   * Derived from the URL, not stored — the Dashboard's lesson applied here.
+   * State seeded once from `?tab=` desyncs the moment the URL changes
+   * without a remount, and the universal search bar made that reachable:
+   * it navigates to `/accounts/:id?tab=…` from ON this page, and React
+   * Router reuses the mounted instance for account→account hops — so a
+   * stored tab would render account A's panel under account B's URL.
+   */
+  const requested = searchParams.get("tab") as Tab | null;
+  const tab: Tab =
+    requested && VALID_TABS.includes(requested) ? requested : "overview";
+
+  /**
+   * Clicking a tab puts it in the URL — which, with `tab` derived above, is
+   * the whole action. `replace` rather than `push`: switching tabs is not a
+   * navigation Back should have to walk out of one step at a time.
    */
   function selectTab(t: Tab) {
-    setTab(t);
     const next = new URLSearchParams(searchParams);
     next.set("tab", t);
     setSearchParams(next, { replace: true });
@@ -207,8 +196,8 @@ export default function AccountDetail({ profile }: { profile: UserProfile }) {
   if (notFound) return <p>Account not found.</p>;
   if (!account) return <p className="muted">Loading…</p>;
 
-  const tabs = tabsFor(account.stage, { premiumFinance: pf.enabled });
-  const activeTab = resolveTab(tab, account.stage, { premiumFinance: pf.enabled });
+  const tabs = tabsFor(account.stage);
+  const activeTab = resolveTab(tab, account.stage);
 
   return (
     <>

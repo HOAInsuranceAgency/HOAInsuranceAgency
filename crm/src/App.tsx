@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { NavLink, Route, Routes } from "react-router-dom";
+import { Navigate, NavLink, Route, Routes } from "react-router-dom";
 import { Authenticator, useAuthenticator } from "@aws-amplify/ui-react";
 import type { AuthUser } from "aws-amplify/auth";
 import { client, listAllPages, type UserProfile } from "./lib/client";
@@ -7,15 +7,14 @@ import { useAsyncResource } from "./lib/useAsyncResource";
 import CopyValue from "./components/CopyValue";
 import {
   AGENCY_SETTINGS_ID,
-  EMPTY_NPNS,
-  type AgencyNpns as AgencyNpnValues,
+  EMPTY_IDENTIFIERS,
+  type AgencyIdentifiers as AgencyIdentifierValues,
 } from "./lib/agencySettings";
 import {
   AdminContext,
   fetchUserGroups,
   isAdminGroup,
   roleFromGroups,
-  useIsAdmin,
 } from "./lib/auth";
 import MagicLinkSignIn from "./components/MagicLinkSignIn";
 import Dashboard from "./pages/Dashboard";
@@ -27,8 +26,8 @@ import CarrierDetail from "./pages/CarrierDetail";
 import Onboarding from "./pages/Onboarding";
 import Settings from "./pages/Settings";
 import Financing from "./pages/Financing";
-import { PfProvider, usePremiumFinance } from "./lib/premiumFinance/PfContext";
-import DocumentSearch from "./pages/DocumentSearch";
+import SearchResults from "./pages/SearchResults";
+import UniversalSearch from "./components/UniversalSearch";
 import QuotesList from "./pages/QuotesList";
 import PoliciesList from "./pages/PoliciesList";
 import { AllMarketingTasks } from "./components/MarketingTasks";
@@ -141,9 +140,7 @@ function ProfileGate({ user, signOut }: { user: AuthUser; signOut: () => void })
 
   return (
     <AdminContext.Provider value={isAdminGroup(groups)}>
-      <PfProvider>
-        <Shell profile={profile} signOut={signOut} />
-      </PfProvider>
+      <Shell profile={profile} signOut={signOut} />
     </AdminContext.Provider>
   );
 }
@@ -216,14 +213,6 @@ function IconBuilding() {
     </svg>
   );
 }
-function IconFile() {
-  return (
-    <svg {...iconProps}>
-      <path d="M14 2H6a1 1 0 00-1 1v18a1 1 0 001 1h12a1 1 0 001-1V7l-5-5z" />
-      <path d="M14 2v5h5M9 13h6M9 17h6" />
-    </svg>
-  );
-}
 function IconGear() {
   return (
     <svg {...iconProps}>
@@ -256,18 +245,20 @@ function IconCoin() {
   );
 }
 
+// Documents is no longer a destination: its only content was the search,
+// which now lives in the top bar on every page (the /documents URL still
+// redirects to /search for old bookmarks).
 const NAV_ITEMS = [
   { to: "/", end: true, label: "Dashboard", icon: <IconGrid /> },
   { to: "/leads", label: "Leads", icon: <IconFunnel /> },
   { to: "/clients", label: "Clients", icon: <IconUsers /> },
   { to: "/tasks", label: "Tasks", icon: <IconCheck /> },
   { to: "/carriers", label: "Carriers", icon: <IconBuilding /> },
-  { to: "/documents", label: "Documents", icon: <IconFile /> },
   { to: "/settings", label: "Settings", icon: <IconGear /> },
 ];
 
 /**
- * The agency's NPNs, above the signed-in user in the rail.
+ * The agency's identifiers, above the signed-in user in the rail.
  *
  * Subscribed rather than fetched once, so an admin correcting a digit in
  * Settings → Agency is reflected in everyone's sidebar without a reload. It is
@@ -275,13 +266,14 @@ const NAV_ITEMS = [
  *
  * Deliberately NOT part of `ProfileGate`'s loading gate. That gate exists to
  * settle admin status before first paint, because admin-only controls flashing
- * in or out is jarring; these are two reference numbers, and blocking the whole
+ * in or out is jarring; these are reference numbers, and blocking the whole
  * app's front door on them would trade a real cost for a cosmetic one. If the
  * read fails or the row has never been written, the block renders nothing at
- * all rather than an empty label.
+ * all rather than an empty label — and each number appears only once it
+ * exists, so an agency that has set two of the three shows two.
  */
-function AgencyNpns() {
-  const [npns, setNpns] = useState<AgencyNpnValues>(EMPTY_NPNS);
+function AgencyIdentifiers() {
+  const [ids, setIds] = useState<AgencyIdentifierValues>(EMPTY_IDENTIFIERS);
 
   useEffect(() => {
     const sub = client.models.AgencySettings.observeQuery({
@@ -289,43 +281,41 @@ function AgencyNpns() {
     }).subscribe({
       next: ({ items }) => {
         const row = items[0];
-        setNpns({
+        setIds({
           agencyNpn: row?.agencyNpn ?? "",
           drlpNpn: row?.drlpNpn ?? "",
+          agencyEin: row?.agencyEin ?? "",
         });
       },
       // A failed subscription leaves the block hidden, which is what it looks
       // like before anyone has set them — no error belongs in the sidebar.
-      error: () => setNpns(EMPTY_NPNS),
+      error: () => setIds(EMPTY_IDENTIFIERS),
     });
     return () => sub.unsubscribe();
   }, []);
 
-  if (!npns.agencyNpn && !npns.drlpNpn) return null;
+  if (!ids.agencyNpn && !ids.drlpNpn && !ids.agencyEin) return null;
 
   return (
     <div className="user-npns">
-      {npns.agencyNpn && <CopyValue label="Agency NPN" value={npns.agencyNpn} />}
-      {npns.drlpNpn && <CopyValue label="DRLP NPN" value={npns.drlpNpn} />}
+      {ids.agencyNpn && <CopyValue label="Agency NPN" value={ids.agencyNpn} />}
+      {ids.drlpNpn && <CopyValue label="DRLP NPN" value={ids.drlpNpn} />}
+      {ids.agencyEin && <CopyValue label="Agency EIN" value={ids.agencyEin} />}
     </div>
   );
 }
 
 function Shell({ profile, signOut }: { profile: UserProfile; signOut: () => void }) {
   const [menuOpen, setMenuOpen] = useState(false);
-  const pf = usePremiumFinance();
-  const isAdmin = useIsAdmin();
   /**
-   * Financing appears when the module is on — or to an admin while it is off,
-   * because the switch that turns it on lives on that page. Nobody else has a
-   * reason to see a page whose only content is "not enabled".
+   * Financing sits between Documents' old slot and Settings for everyone:
+   * the module is always on, so there is no longer a state in which the page
+   * has nothing to say.
    */
   const navItems = [
-    ...NAV_ITEMS.slice(0, 6),
-    ...(pf.enabled || isAdmin
-      ? [{ to: "/financing", label: "Financing", icon: <IconCoin /> } as const]
-      : []),
-    ...NAV_ITEMS.slice(6),
+    ...NAV_ITEMS.slice(0, 5),
+    { to: "/financing", label: "Financing", icon: <IconCoin /> } as const,
+    ...NAV_ITEMS.slice(5),
   ];
 
   return (
@@ -354,7 +344,7 @@ function Shell({ profile, signOut }: { profile: UserProfile; signOut: () => void
         </nav>
         <div className="spacer" />
         <div className="user">
-          <AgencyNpns />
+          <AgencyIdentifiers />
           <div>
             {profile.firstName} {profile.lastName}
           </div>
@@ -363,6 +353,7 @@ function Shell({ profile, signOut }: { profile: UserProfile; signOut: () => void
         </div>
       </aside>
       <main className="main">
+        <UniversalSearch />
         <Routes>
           <Route path="/" element={<Dashboard />} />
           <Route path="/leads" element={<AccountsList stage="LEAD" />} />
@@ -381,7 +372,10 @@ function Shell({ profile, signOut }: { profile: UserProfile; signOut: () => void
           />
           <Route path="/quotes" element={<QuotesList />} />
           <Route path="/policies" element={<PoliciesList />} />
-          <Route path="/documents" element={<DocumentSearch />} />
+          <Route path="/search" element={<SearchResults />} />
+          {/* The old document-search page — redirect, don't 404, the
+              bookmarks people made of it. */}
+          <Route path="/documents" element={<Navigate to="/search" replace />} />
           <Route path="/financing" element={<Financing />} />
           <Route path="/settings" element={<Settings profile={profile} />} />
           <Route path="*" element={<NotFound />} />

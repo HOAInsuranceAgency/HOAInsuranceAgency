@@ -172,6 +172,29 @@ should choose its payment path from the invoice email itself, and a financed
 deal should collect itself monthly — the only manual act left in the money
 path is the customer's own click.
 
+### Decision 2, revised: the module is always on
+
+**Supersedes the UI half of the 2026-08-21 feature-flag decision**
+(2026-08-25, Jake's direction). Premium finance is a shipped part of the
+product, not something an operator turns on: the enable/disable tile is off
+the Financing page, `PfContext` is deleted, and no screen gates on the flag
+any more — the nav item, the account's Financing tab, the dashboard's
+portfolio cards and the invoice offer hint are unconditional.
+
+What did **not** change, deliberately: the stored `premiumFinanceEnabled`
+flag, the ADMIN-gated `setPremiumFinanceEnabled` mutation, the pf-admin
+handler's log-first/flip-second ordering, and — the part that actually stops
+lending — the three `ConditionExpression: "premiumFinanceEnabled = :on"`
+guards DynamoDB evaluates on the loan create and the two election writes. The
+interlock survives the button. Counsel can still stop originations without a
+deploy; it now takes an API call rather than a click, and the flip still
+lands in `PfComplianceLog`.
+
+The consequence to hold: with no UI reading the flag, a stored `false` in any
+environment means the app offers financing that every Lambda refuses. The
+flag must be ON wherever the app is deployed — staging was verified `true` on
+2026-08-25.
+
 ### Decision 5, revised: one rail, split on the ledger
 
 **Supersedes the 2026-08-21 money-movement decision.** All money moves on the

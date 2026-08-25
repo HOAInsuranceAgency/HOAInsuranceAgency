@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -47,10 +47,14 @@ const DOC = {
 const renameCall = () =>
   models.Document.update.mock.calls.find(([arg]) => "name" in arg)?.[0];
 
+type Snapshot = { items: unknown[]; isSynced: boolean };
+
 function renderPanel(doc: Record<string, unknown> = DOC) {
   models.Document.observeQuery.mockReturnValue({
-    subscribe: ({ next }: { next: (v: { items: unknown[] }) => void }) => {
-      next({ items: [doc] });
+    subscribe: ({ next }: { next: (v: Snapshot) => void }) => {
+      // The real subscription's shape: the panel holds partial pre-sync
+      // snapshots, so the mock must say it is synced or nothing renders.
+      next({ items: [doc], isSynced: true });
       return { unsubscribe: vi.fn() };
     },
   });
@@ -183,5 +187,48 @@ describe("DocumentsPanel rename", () => {
 
     // A Download click mid-edit would discard the typing without saying so.
     expect(screen.queryByRole("button", { name: "Download" })).toBeNull();
+  });
+});
+
+describe("DocumentsPanel initial sync", () => {
+  it("holds the table until the first complete snapshot — no trickle, no false empty state", () => {
+    let emit!: (v: Snapshot) => void;
+    models.Document.observeQuery.mockReturnValue({
+      subscribe: ({ next }: { next: (v: Snapshot) => void }) => {
+        emit = next;
+        return { unsubscribe: vi.fn() };
+      },
+    });
+    render(<DocumentsPanel entityType="ACCOUNT" entityId="acct-1" />);
+
+    // Nothing has arrived: the panel must say it is loading, not that no
+    // documents are attached.
+    expect(screen.getByText("Loading…")).toBeTruthy();
+    expect(screen.queryByText("No documents attached.")).toBeNull();
+
+    // A partial pre-sync page changes nothing on screen.
+    act(() => emit({ items: [DOC], isSynced: false }));
+    expect(screen.getByText("Loading…")).toBeTruthy();
+    expect(screen.queryByText("scan_0043.pdf")).toBeNull();
+
+    // The complete snapshot lands once, whole.
+    act(() =>
+      emit({ items: [DOC, { ...DOC, id: "doc-2", name: "bylaws.pdf" }], isSynced: true })
+    );
+    expect(screen.getByText("scan_0043.pdf")).toBeTruthy();
+    expect(screen.getByText("bylaws.pdf")).toBeTruthy();
+  });
+
+  it("a genuinely empty synced result says so — the empty state waits for proof", () => {
+    let emit!: (v: Snapshot) => void;
+    models.Document.observeQuery.mockReturnValue({
+      subscribe: ({ next }: { next: (v: Snapshot) => void }) => {
+        emit = next;
+        return { unsubscribe: vi.fn() };
+      },
+    });
+    render(<DocumentsPanel entityType="ACCOUNT" entityId="acct-1" />);
+    act(() => emit({ items: [], isSynced: true }));
+    expect(screen.getByText("No documents attached.")).toBeTruthy();
   });
 });

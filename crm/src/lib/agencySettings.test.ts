@@ -13,12 +13,12 @@ vi.mock("aws-amplify/data", () => ({
 
 import {
   AGENCY_SETTINGS_ID,
-  loadAgencyNpns,
-  saveAgencyNpns,
+  loadAgencyIdentifiers,
+  saveAgencyIdentifiers,
 } from "./agencySettings";
 
 /**
- * The agency NPN singleton.
+ * The agency identifiers singleton.
  *
  * Two things matter here and neither is obvious from the call sites. A backend
  * that has never had these set must read as blank rather than as a failure, or
@@ -32,6 +32,7 @@ const row = (over: Record<string, unknown> = {}) => ({
   id: AGENCY_SETTINGS_ID,
   agencyNpn: "1234567",
   drlpNpn: "7654321",
+  agencyEin: "04-1234567",
   ...over,
 });
 
@@ -47,13 +48,14 @@ beforeEach(() => {
   }));
 });
 
-describe("loadAgencyNpns", () => {
+describe("loadAgencyIdentifiers", () => {
   it("reads the singleton by its fixed id, not the first of a list", async () => {
     AgencySettings.get.mockResolvedValue({ data: row(), errors: undefined });
 
-    await expect(loadAgencyNpns()).resolves.toEqual({
+    await expect(loadAgencyIdentifiers()).resolves.toEqual({
       agencyNpn: "1234567",
       drlpNpn: "7654321",
+      agencyEin: "04-1234567",
     });
     expect(AgencySettings.get).toHaveBeenCalledWith({ id: AGENCY_SETTINGS_ID });
   });
@@ -61,21 +63,23 @@ describe("loadAgencyNpns", () => {
   it("reads a never-written backend as blank, not as an error", async () => {
     AgencySettings.get.mockResolvedValue({ data: null, errors: undefined });
 
-    await expect(loadAgencyNpns()).resolves.toEqual({
+    await expect(loadAgencyIdentifiers()).resolves.toEqual({
       agencyNpn: "",
       drlpNpn: "",
+      agencyEin: "",
     });
   });
 
   it("blanks a row whose fields are null", async () => {
     AgencySettings.get.mockResolvedValue({
-      data: row({ agencyNpn: null, drlpNpn: null }),
+      data: row({ agencyNpn: null, drlpNpn: null, agencyEin: null }),
       errors: undefined,
     });
 
-    await expect(loadAgencyNpns()).resolves.toEqual({
+    await expect(loadAgencyIdentifiers()).resolves.toEqual({
       agencyNpn: "",
       drlpNpn: "",
+      agencyEin: "",
     });
   });
 
@@ -87,20 +91,24 @@ describe("loadAgencyNpns", () => {
 
     // Amplify's `errors` do not throw. Dropping them would make a permission
     // failure look exactly like "nobody has set these yet".
-    await expect(loadAgencyNpns()).resolves.toBeNull();
+    await expect(loadAgencyIdentifiers()).resolves.toBeNull();
   });
 });
 
-describe("saveAgencyNpns", () => {
+describe("saveAgencyIdentifiers", () => {
   it("creates the row the first time", async () => {
     AgencySettings.get.mockResolvedValue({ data: null, errors: undefined });
 
-    await saveAgencyNpns({ agencyNpn: "111", drlpNpn: "222" }, "Dana Reyes");
+    await saveAgencyIdentifiers(
+      { agencyNpn: "111", drlpNpn: "222", agencyEin: "04-1234567" },
+      "Dana Reyes"
+    );
 
     expect(AgencySettings.create).toHaveBeenCalledWith({
       id: AGENCY_SETTINGS_ID,
       agencyNpn: "111",
       drlpNpn: "222",
+      agencyEin: "04-1234567",
       updatedBy: "Dana Reyes",
     });
     expect(AgencySettings.update).not.toHaveBeenCalled();
@@ -109,12 +117,16 @@ describe("saveAgencyNpns", () => {
   it("updates it afterwards", async () => {
     AgencySettings.get.mockResolvedValue({ data: row(), errors: undefined });
 
-    await saveAgencyNpns({ agencyNpn: "999", drlpNpn: "888" }, "Dana Reyes");
+    await saveAgencyIdentifiers(
+      { agencyNpn: "999", drlpNpn: "888", agencyEin: "99-9999999" },
+      "Dana Reyes"
+    );
 
     expect(AgencySettings.update).toHaveBeenCalledWith({
       id: AGENCY_SETTINGS_ID,
       agencyNpn: "999",
       drlpNpn: "888",
+      agencyEin: "99-9999999",
       updatedBy: "Dana Reyes",
     });
     expect(AgencySettings.create).not.toHaveBeenCalled();
@@ -124,10 +136,17 @@ describe("saveAgencyNpns", () => {
   it("trims, and stores an all-space value as empty rather than blank text", async () => {
     AgencySettings.get.mockResolvedValue({ data: row(), errors: undefined });
 
-    await saveAgencyNpns({ agencyNpn: "  1234567 ", drlpNpn: "   " }, "Dana");
+    await saveAgencyIdentifiers(
+      { agencyNpn: "  1234567 ", drlpNpn: "   ", agencyEin: " 04-1234567 " },
+      "Dana"
+    );
 
     expect(AgencySettings.update).toHaveBeenCalledWith(
-      expect.objectContaining({ agencyNpn: "1234567", drlpNpn: null })
+      expect.objectContaining({
+        agencyNpn: "1234567",
+        drlpNpn: null,
+        agencyEin: "04-1234567",
+      })
     );
   });
 
@@ -139,7 +158,7 @@ describe("saveAgencyNpns", () => {
     });
 
     await expect(
-      saveAgencyNpns({ agencyNpn: "1", drlpNpn: "2" }, "Dana")
+      saveAgencyIdentifiers({ agencyNpn: "1", drlpNpn: "2", agencyEin: "3" }, "Dana")
     ).rejects.toThrow("Not authorized");
   });
 });
