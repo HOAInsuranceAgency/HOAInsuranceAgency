@@ -4,6 +4,7 @@ import {
   client,
   fmtDate,
   fmtMoney,
+  listAllPages,
   type Account,
   type Carrier,
   type Quote,
@@ -17,8 +18,11 @@ export default function QuotesList() {
   const [openOnly, setOpenOnly] = useState(true);
   const navigate = useNavigate();
 
+  // Paginated: a bare .list() returns one ~100-row page and stops — this
+  // list must not show fewer quotes than the dashboard tile that links here.
   const quoteRes = useAsyncResource(
-    async () => (await client.models.Quote.list()).data,
+    async () =>
+      listAllPages((nextToken) => client.models.Quote.list({ nextToken })),
     [],
     { initialData: [] as Quote[], errorMessage: "Failed to load quotes" }
   );
@@ -27,14 +31,16 @@ export default function QuotesList() {
   // Name lookups. Surfaced rather than ignored for the same reason as
   // PoliciesList: a missing name renders "—", which reads as data, not failure.
   const accountRes = useAsyncResource(
-    async () => (await client.models.Account.list()).data,
+    async () =>
+      listAllPages((nextToken) => client.models.Account.list({ nextToken })),
     [],
     { initialData: [] as Account[], errorMessage: "Failed to load account names" }
   );
   const accounts = accountRes.data;
 
   const carrierRes = useAsyncResource(
-    async () => (await client.models.Carrier.list()).data,
+    async () =>
+      listAllPages((nextToken) => client.models.Carrier.list({ nextToken })),
     [],
     { initialData: [] as Carrier[], errorMessage: "Failed to load carrier names" }
   );

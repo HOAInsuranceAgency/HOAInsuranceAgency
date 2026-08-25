@@ -227,6 +227,10 @@ a:hover { text-decoration: underline; }
 }
 .tabs button.active { color: var(--accent-dark); border-bottom-color: var(--accent); font-weight: 600; }
 
+/* The dashboard tabs' freshness line — tucked up under the strip, which
+   carries an 18px margin of its own. */
+.tab-updated { display: flex; justify-content: flex-end; align-items: center; margin: -12px 0 10px; }
+
 /* ── Tables ────────────────────────────────────────────────────────── */
 .table-wrap { overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; font-size: 14px; }

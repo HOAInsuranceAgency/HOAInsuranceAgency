@@ -4,6 +4,7 @@ import {
   client,
   fmtDate,
   fmtMoney,
+  listAllPages,
   type Account,
   type Carrier,
   type Policy,
@@ -15,8 +16,12 @@ import { useAsyncResource } from "../lib/useAsyncResource";
 export default function PoliciesList() {
   const navigate = useNavigate();
 
+  // Paginated: a bare .list() returns one ~100-row page and stops, so this
+  // page could show fewer policies than the dashboard tile that links to it
+  // counts — a silent cap that reads as data, not truncation.
   const policyRes = useAsyncResource(
-    async () => (await client.models.Policy.list()).data,
+    async () =>
+      listAllPages((nextToken) => client.models.Policy.list({ nextToken })),
     [],
     { initialData: [] as Policy[], errorMessage: "Failed to load policies" }
   );
@@ -27,14 +32,16 @@ export default function PoliciesList() {
   // and carrier cell falls back to "—", which reads as a policy with none set
   // rather than as a failed read.
   const accountRes = useAsyncResource(
-    async () => (await client.models.Account.list()).data,
+    async () =>
+      listAllPages((nextToken) => client.models.Account.list({ nextToken })),
     [],
     { initialData: [] as Account[], errorMessage: "Failed to load account names" }
   );
   const accounts = accountRes.data;
 
   const carrierRes = useAsyncResource(
-    async () => (await client.models.Carrier.list()).data,
+    async () =>
+      listAllPages((nextToken) => client.models.Carrier.list({ nextToken })),
     [],
     { initialData: [] as Carrier[], errorMessage: "Failed to load carrier names" }
   );
