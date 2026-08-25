@@ -74,6 +74,15 @@ export default function DocumentsPanel({
   initialLink?: string;
 }) {
   const [docs, setDocs] = useState<CrmDocument[]>([]);
+  /**
+   * False until observeQuery's first COMPLETE snapshot. The initial sync
+   * arrives in pages, and painting each page as it lands makes the table
+   * assemble itself in front of the reader — worse, before any page lands
+   * the panel claims "No documents attached." about an account it hasn't
+   * finished reading. One flag holds the panel to: say nothing until you
+   * know, then stay live.
+   */
+  const [docsSynced, setDocsSynced] = useState(false);
   const [category, setCategory] = useState<Category>(DEFAULT_DOCUMENT_CATEGORY);
   const [view, setView] = useState(
     initialLink && /^(policy|quote):.+$/.test(initialLink) ? initialLink : ""
@@ -138,10 +147,24 @@ export default function DocumentsPanel({
   const viewerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    // A different entity is a different resource: back to pristine, so the
+    // gate re-arms instead of leaving the previous mount's rows (or its
+    // empty state) under the new one's heading.
+    setDocs([]);
+    setDocsSynced(false);
     const sub = client.models.Document.observeQuery({
       filter: { entityId: { eq: entityId } },
     }).subscribe({
-      next: ({ items }) => setDocs([...items]),
+      next: ({ items, isSynced }) => {
+        // Snapshots before isSynced are partial pages of the initial read —
+        // held back, the table appears once, complete. After sync, every
+        // snapshot is a real change (an upload landing, an OCR status
+        // flipping) and applies immediately; that liveness is the whole
+        // reason this is a subscription and not a fetch.
+        if (!isSynced) return;
+        setDocs([...items]);
+        setDocsSynced(true);
+      },
     });
     return () => sub.unsubscribe();
   }, [entityId]);
@@ -380,7 +403,9 @@ export default function DocumentsPanel({
         <SaveStatus {...rowStatus.status} />
       </div>
 
-      {visible.length === 0 ? (
+      {!docsSynced ? (
+        <p className="muted small">Loading…</p>
+      ) : visible.length === 0 ? (
         <p className="muted small">
           {view
             ? `Nothing linked to ${linkLabel(view)} yet — files attached while it's selected will be.`
