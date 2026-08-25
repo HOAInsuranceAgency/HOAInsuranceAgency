@@ -27,6 +27,7 @@ describe("tabsFor", () => {
       "losses",
       "quotes",
       "invoices",
+      "financing",
       "documents",
       "certificates",
       "activity",
@@ -40,6 +41,7 @@ describe("tabsFor", () => {
       "quotes",
       "policies",
       "invoices",
+      "financing",
       "documents",
       "certificates",
       "activity",
@@ -76,42 +78,34 @@ describe("tabsFor", () => {
 });
 
 /**
- * The Financing tab is doubly gated: client-only AND behind the module flag —
- * the flag is a compliance kill switch, and flipping it off must make the tab
- * disappear everywhere, bookmarks included.
+ * The Financing tab.
+ *
+ * It used to be doubly gated — client-only, then behind the premium-finance
+ * module flag, which made it vanish everywhere when counsel flipped the
+ * switch. Client-only ended with W8 (a lead's quote-anchored loan needs its
+ * servicing surface) and the flag gate ended on 2026-08-25 when the module
+ * became always-on. What is left to pin is that it is offered at every
+ * stage, and that a bookmarked `?tab=financing` now always resolves to
+ * itself rather than bouncing to Overview.
  */
 describe("the financing tab", () => {
-  it("appears for any stage with the module on, and never with it off", () => {
-    // Client-only ended with W8: a lead's quote-anchored loan needs its
-    // servicing surface. The kill switch remains absolute.
-    expect(tabsFor("CLIENT", { premiumFinance: true }).map(([t]) => t)).toContain(
-      "financing"
-    );
-    expect(tabsFor("LEAD", { premiumFinance: true }).map(([t]) => t)).toContain(
-      "financing"
-    );
-    expect(tabsFor("CLIENT").map(([t]) => t)).not.toContain("financing");
-    expect(tabsFor("CLIENT", { premiumFinance: false }).map(([t]) => t)).not.toContain(
-      "financing"
-    );
-    expect(tabsFor("LEAD", { premiumFinance: false }).map(([t]) => t)).not.toContain(
-      "financing"
-    );
+  it("is offered at every stage", () => {
+    expect(tabsFor("CLIENT").map(([t]) => t)).toContain("financing");
+    expect(tabsFor("LEAD").map(([t]) => t)).toContain("financing");
+    expect(tabsFor(null).map(([t]) => t)).toContain("financing");
   });
 
-  it("falls a bookmarked ?tab=financing back to Overview when unreachable", () => {
-    // A disabled module, at either stage — never a panel without a button.
-    expect(resolveTab("financing", "CLIENT")).toBe("overview");
-    expect(resolveTab("financing", "CLIENT", { premiumFinance: false })).toBe("overview");
-    expect(resolveTab("financing", "LEAD", { premiumFinance: false })).toBe("overview");
-    expect(resolveTab("financing", "LEAD", { premiumFinance: true })).toBe("financing");
-    expect(resolveTab("financing", "CLIENT", { premiumFinance: true })).toBe("financing");
+  it("keeps a bookmarked ?tab=financing at financing, both stages", () => {
+    expect(resolveTab("financing", "CLIENT")).toBe("financing");
+    expect(resolveTab("financing", "LEAD")).toBe("financing");
   });
 
-  it("changes nothing else about the tab set", () => {
-    const withOff = tabsFor("CLIENT").map(([t]) => t);
-    const withOn = tabsFor("CLIENT", { premiumFinance: true }).map(([t]) => t);
-    expect(withOn.filter((t) => t !== "financing")).toEqual(withOff);
+  it("sits between Invoices and Documents, where the money tabs are", () => {
+    // Position is the claim: the tab set is read left to right, and
+    // Financing belongs with Invoices rather than off among the paperwork.
+    const tabs = tabsFor("CLIENT").map(([t]) => t);
+    expect(tabs.indexOf("financing")).toBe(tabs.indexOf("invoices") + 1);
+    expect(tabs.indexOf("documents")).toBe(tabs.indexOf("financing") + 1);
   });
 });
 

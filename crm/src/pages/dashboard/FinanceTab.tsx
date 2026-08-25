@@ -11,7 +11,6 @@ import {
 import { Badge, statusBadge, INVOICE_STATUS_BADGE } from "../../lib/badges";
 import { useSort, SortTh } from "../../lib/useSort";
 import { useAsyncResource } from "../../lib/useAsyncResource";
-import { usePremiumFinance } from "../../lib/premiumFinance/PfContext";
 import {
   invoiceAging,
   pfInstallmentsDue,
@@ -29,8 +28,7 @@ type PfNoticeRow = Schema["PfNotice"]["type"];
 /**
  * Where the money is right now. Top half is invoicing — aging by due date,
  * then the open bills themselves. Bottom half is the premium-finance
- * portfolio and everything in motion around it, shown when the PF module is
- * on (the same gate as the Financing nav item). Invoices are read once,
+ * portfolio and everything in motion around it. Invoices are read once,
  * unfiltered, and split client-side: open for A/R, PAID for collected,
  * DRAFT for the unsent pile — three filtered reads of one table would cost
  * more than the table.
@@ -46,7 +44,6 @@ const EMPTY: FinanceData = { invoices: [], pfLoans: [], accounts: [], notices: [
 
 export default function FinanceTab() {
   const navigate = useNavigate();
-  const pf = usePremiumFinance();
 
   const res = useAsyncResource<FinanceData>(
     async () => {
@@ -210,17 +207,15 @@ export default function FinanceTab() {
         )}
       </div>
 
-      {pf.enabled && (
-        <div className="cols">
-          <PortfolioCard loans={pfLoans} accountName={accountName} />
-          <InMotionCard
-            loans={pfLoans}
-            notices={notices}
-            invoices={invoices}
-            accountName={accountName}
-          />
-        </div>
-      )}
+      <div className="cols">
+        <PortfolioCard loans={pfLoans} accountName={accountName} />
+        <InMotionCard
+          loans={pfLoans}
+          notices={notices}
+          invoices={invoices}
+          accountName={accountName}
+        />
+      </div>
     </TabFrame>
   );
 }

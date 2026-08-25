@@ -1634,6 +1634,14 @@ const schema = a
         /** The Designated Responsible Licensed Producer's NPN. */
         drlpNpn: a.string(),
         /**
+         * The agency's federal EIN, stored exactly as typed — the hyphen is
+         * part of the value, the way `Account.fein` holds an association's.
+         * Here for the same reason as the NPNs: carriers, W-9s and state
+         * filings ask for it constantly, and it belongs beside them rather
+         * than in someone's notes app.
+         */
+        agencyEin: a.string(),
+        /**
          * The premium-finance kill switch.
          *
          * Written ONLY by the setPremiumFinanceEnabled mutation (pf-admin),

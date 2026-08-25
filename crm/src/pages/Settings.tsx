@@ -11,11 +11,12 @@ import { Badge, flagBadge } from "../lib/badges";
 import { useIsAdmin } from "../lib/auth";
 import { useAsyncResource } from "../lib/useAsyncResource";
 import { SaveStatus, useSaveStatus } from "../components/SaveStatus";
+import { FeinInput } from "../components/inputs";
 import {
-  EMPTY_NPNS,
-  loadAgencyNpns,
-  saveAgencyNpns,
-  type AgencyNpns,
+  EMPTY_IDENTIFIERS,
+  loadAgencyIdentifiers,
+  saveAgencyIdentifiers,
+  type AgencyIdentifiers,
 } from "../lib/agencySettings";
 
 type TemplateDef = AcordFormDef;
@@ -288,47 +289,51 @@ function TemplateRow({
 }
 
 /**
- * The agency's NPNs, which the sidebar shows everyone for copying.
+ * The agency's own identifiers, which the sidebar shows everyone for copying.
  *
- * Two fields and one save, so `useSaveStatus` carries the whole lifecycle
+ * A few fields and one save, so `useSaveStatus` carries the whole lifecycle
  * rather than a hand-rolled saving/saved/error trio. `markDirty` on each
  * keystroke is what stops "Saved." sitting over an edited field.
  */
 function AgencyPanel({ profile }: { profile: UserProfile }) {
   const saveStatus = useSaveStatus();
-  const [npns, setNpns] = useState<AgencyNpns>(EMPTY_NPNS);
+  const [ids, setIds] = useState<AgencyIdentifiers>(EMPTY_IDENTIFIERS);
 
-  const res = useAsyncResource(loadAgencyNpns, [], {
-    initialData: null as AgencyNpns | null,
-    errorMessage: "Couldn't load the agency NPNs",
+  const res = useAsyncResource(loadAgencyIdentifiers, [], {
+    initialData: null as AgencyIdentifiers | null,
+    errorMessage: "Couldn't load the agency identifiers",
   });
 
   // Seeded from the read rather than initialised from it: the fetch resolves
   // after first paint, so the inputs have to be told about it.
   useEffect(() => {
-    if (res.data) setNpns(res.data);
+    if (res.data) setIds(res.data);
   }, [res.data]);
 
-  function edit(field: keyof AgencyNpns, value: string) {
-    setNpns((n) => ({ ...n, [field]: value }));
+  function edit(field: keyof AgencyIdentifiers, value: string) {
+    setIds((n) => ({ ...n, [field]: value }));
     saveStatus.markDirty();
   }
 
   async function save() {
     await saveStatus.run(
       async () => {
-        const saved = await saveAgencyNpns(
-          npns,
+        const saved = await saveAgencyIdentifiers(
+          ids,
           `${profile.firstName} ${profile.lastName}`
         );
         // Reflect what was actually stored: the save trims, so a value typed
         // with a stray space would otherwise still show it in the field.
-        setNpns({
+        setIds({
           agencyNpn: saved.agencyNpn ?? "",
           drlpNpn: saved.drlpNpn ?? "",
+          agencyEin: saved.agencyEin ?? "",
         });
       },
-      { savedMessage: "NPNs saved.", errorMessage: "Couldn't save the NPNs." }
+      {
+        savedMessage: "Identifiers saved.",
+        errorMessage: "Couldn't save the identifiers.",
+      }
     );
   }
 
@@ -337,7 +342,7 @@ function AgencyPanel({ profile }: { profile: UserProfile }) {
       <h2>Agency identifiers</h2>
       <p className="muted small" style={{ marginTop: 0 }}>
         Shown to everyone in the sidebar, with a copy button, because carriers
-        and state portals ask for both constantly. Only admins can change them.
+        and state portals ask for them constantly. Only admins can change them.
       </p>
 
       {res.error && <p className="error-text">{res.error}</p>}
@@ -351,7 +356,7 @@ function AgencyPanel({ profile }: { profile: UserProfile }) {
               <input
                 id="agency-npn"
                 inputMode="numeric"
-                value={npns.agencyNpn}
+                value={ids.agencyNpn}
                 onChange={(e) => edit("agencyNpn", e.target.value)}
               />
             </div>
@@ -360,11 +365,24 @@ function AgencyPanel({ profile }: { profile: UserProfile }) {
               <input
                 id="drlp-npn"
                 inputMode="numeric"
-                value={npns.drlpNpn}
+                value={ids.drlpNpn}
                 onChange={(e) => edit("drlpNpn", e.target.value)}
               />
               <p className="muted small" style={{ margin: "4px 0 0" }}>
                 The Designated Responsible Licensed Producer's own number.
+              </p>
+            </div>
+            <div className="field">
+              <label htmlFor="agency-ein">Agency EIN</label>
+              {/* The same formatter the association FEIN uses, so both tax
+                  ids are written and read the same way. */}
+              <FeinInput
+                id="agency-ein"
+                value={ids.agencyEin}
+                onChange={(v) => edit("agencyEin", v)}
+              />
+              <p className="muted small" style={{ margin: "4px 0 0" }}>
+                The agency's federal employer identification number.
               </p>
             </div>
           </div>

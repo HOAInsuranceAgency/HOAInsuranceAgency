@@ -2,7 +2,6 @@ import { useState } from "react";
 import { useIsAdmin } from "../lib/auth";
 import { client } from "../lib/client";
 import { SaveStatus, useSaveStatus } from "../components/SaveStatus";
-import { usePremiumFinance } from "../lib/premiumFinance/PfContext";
 import {
   PF_CONFIG_SHA256,
   PF_JURISDICTIONS,
@@ -168,45 +167,18 @@ function CounselOpinionsCard() {
   );
 }
 
+/**
+ * The premium-finance module's own page: what the signed jurisdiction file
+ * says, and the counsel opinions that unlock conditional states.
+ *
+ * The enable/disable tile is gone (2026-08-25): the module is always on, so
+ * nothing in this app can turn it off. The stored module flag still exists
+ * and the Lambdas still check it — three of them as DynamoDB condition
+ * expressions on the loan write itself — so the interlock survives the
+ * button; it simply has no switch on this screen any more.
+ */
 export default function Financing() {
   const isAdmin = useIsAdmin();
-  const pf = usePremiumFinance();
-  const flipStatus = useSaveStatus();
-  const [confirming, setConfirming] = useState(false);
-  const [flipWarning, setFlipWarning] = useState<string | null>(null);
-
-  async function flip(enabled: boolean) {
-    setConfirming(false);
-    await flipStatus.run(
-      async () => {
-        const { data, errors } = await client.mutations.setPremiumFinanceEnabled({
-          enabled,
-        });
-        if (errors?.length) throw new Error(errors[0].message);
-        // AWSJSON arrives as a string — the lib/aiExtraction.ts trap.
-        const result =
-          typeof data === "string" ? JSON.parse(data) : (data as Record<string, unknown>);
-        if (!result?.ok) throw new Error(String(result?.error ?? "Flip failed."));
-        // The disable path can succeed with an unlogged flip — the module is
-        // off (that always wins) but someone must record it by hand. Loud.
-        setFlipWarning(typeof result.warning === "string" ? result.warning : null);
-        await pf.refresh();
-        return enabled ? "Module enabled. Logged." : "Module disabled. Logged.";
-      },
-      { errorMessage: "Couldn't change the setting." }
-    );
-  }
-
-  if (!pf.loaded) return <p className="muted">Loading…</p>;
-
-  if (!pf.enabled && !isAdmin) {
-    return (
-      <>
-        <h1>Financing</h1>
-        <p className="muted">Premium financing is not enabled.</p>
-      </>
-    );
-  }
 
   return (
     <>
@@ -215,54 +187,6 @@ export default function Financing() {
         In-house premium finance. Eligibility is decided by the signed
         jurisdiction file — the table below is that file, as loaded.
       </p>
-
-      {isAdmin && (
-        <div className="card">
-          <div className="card-head">
-            <h2>Module</h2>
-            <div className="inline-actions">
-              <SaveStatus {...flipStatus.status} />
-              {!confirming ? (
-                <button
-                  type="button"
-                  className={pf.enabled ? "danger" : "primary"}
-                  disabled={flipStatus.busy}
-                  onClick={() => setConfirming(true)}
-                >
-                  {pf.enabled ? "Disable module" : "Enable module"}
-                </button>
-              ) : (
-                <>
-                  <span className="muted small">
-                    The flip is logged with your name.
-                  </span>
-                  <button
-                    type="button"
-                    className={pf.enabled ? "danger" : "primary"}
-                    disabled={flipStatus.busy}
-                    onClick={() => void flip(!pf.enabled)}
-                  >
-                    Confirm {pf.enabled ? "disable" : "enable"}
-                  </button>
-                  <button
-                    type="button"
-                    className="secondary"
-                    onClick={() => setConfirming(false)}
-                  >
-                    Cancel
-                  </button>
-                </>
-              )}
-            </div>
-          </div>
-          {flipWarning && <p className="warn-inline">{flipWarning}</p>}
-          <p className="muted small">
-            {pf.enabled
-              ? "Originations are ON. Disabling stops new quotes and agreements immediately; existing loans keep servicing — the gate never touches servicing."
-              : "Originations are OFF. Nothing in the module is offered to any account while disabled."}
-          </p>
-        </div>
-      )}
 
       {/* The lending-account card lived here until decision 5 was revised
           (2026-08-23): receipts settle to the premium trust on the one
@@ -314,10 +238,14 @@ export default function Financing() {
                       {unverified ? (
                         // The row that must not be glanced past: status says
                         // open, behavior is closed, and the difference is an
-                        // unread statute.
-                        <span className="warn-inline">
-                          ceiling unverified — behaves as CLOSED
-                        </span>
+                        // unread statute. A badge, not the `.warn-inline`
+                        // callout it used to be — that class is a block
+                        // element, and inside a table cell it wrapped into
+                        // two half-painted boxes with the border stripe on
+                        // only the first line. Amber against the row's green
+                        // OPEN is the contradiction, stated in the table's
+                        // own vocabulary.
+                        <Badge cls="amber" label="blocked — ceiling unverified" />
                       ) : gate.open ? (
                         <span className="small">open</span>
                       ) : (

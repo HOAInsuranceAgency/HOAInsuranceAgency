@@ -70,6 +70,13 @@ export interface FormattedInputProps {
    * word property.
    */
   onKeyDown?: (e: ReactKeyboardEvent<HTMLInputElement>) => void;
+  /**
+   * Passed straight through so a `<label htmlFor>` can point at the field.
+   * Without it these six are the only inputs in the app a label cannot be
+   * tied to — the wrapper renders the &lt;input&gt;, so the caller has no
+   * element of its own to name.
+   */
+  id?: string;
 }
 
 /**
@@ -144,6 +151,7 @@ function FormattedInput({
   disabled,
   placeholder,
   onKeyDown,
+  id,
   format,
   parse,
   commitOnBlur = false,
@@ -164,6 +172,7 @@ function FormattedInput({
   return (
     <input
       ref={ref}
+      id={id}
       type={type}
       inputMode={inputMode}
       disabled={disabled}

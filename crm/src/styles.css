@@ -946,6 +946,11 @@ th.internal { color: var(--muted); }
    a list. Amber like .warn-list, but it has to carry its own weight without a
    heading above it saying these are warnings. */
 .warn-inline {
+  /* Block, stated rather than inherited from the <p> its callers happen to
+     use: with padding and a left border, an inline box that wraps paints
+     itself in fragments — background split across lines, stripe on the
+     first one only. */
+  display: block;
   margin: 6px 0 0;
   padding: 8px 10px;
   border-left: 3px solid var(--amber);

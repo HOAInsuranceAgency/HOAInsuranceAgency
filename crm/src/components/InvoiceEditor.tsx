@@ -1,5 +1,4 @@
 import { useCallback, useState } from "react";
-import { usePremiumFinance } from "../lib/premiumFinance/PfContext";
 import {
   client,
   type Account,
@@ -154,7 +153,6 @@ export function InvoiceEditor({
   const quote = !policy
     ? (quotes.find((q) => q.id === invoice.quoteId) ?? null)
     : null;
-  const pf = usePremiumFinance();
   /**
    * Rendered at the anchor statement rather than with the margin warnings
    * above. Those are about how the invoice is priced; this is about whether
@@ -672,7 +670,7 @@ export function InvoiceEditor({
             without opening the CRM. A branded PDF is attached automatically,
             and a Stripe bank-transfer link is generated when it sends.
           </p>
-          {pf.enabled && account && (policy || quote) && (
+          {account && (policy || quote) && (
             <FinanceOfferHint
               account={account}
               anchor={
