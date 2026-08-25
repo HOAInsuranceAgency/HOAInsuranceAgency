@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAsyncResource } from "../lib/useAsyncResource";
 import {
@@ -6,6 +6,7 @@ import {
   MIN_QUERY_LENGTH,
   searchRows,
   sentence,
+  splitMatch,
   type SearchHitType,
 } from "../lib/universalSearch";
 import {
@@ -19,14 +20,19 @@ import {
  * search needs holding back. */
 const DOC_DEBOUNCE_MS = 350;
 
-interface Item {
+interface HitItem {
   key: string;
-  group: string;
+  type: SearchHitType | "document";
   label: string;
   sub: string;
   target: string;
-  /** The "See all results" footer row, styled apart. */
-  isFooter?: boolean;
+}
+
+interface RenderGroup {
+  name: string;
+  /** Right-aligned header note: "top 5 of 12", or "searching…". */
+  note: string | null;
+  items: HitItem[];
 }
 
 /**
@@ -112,58 +118,62 @@ export default function UniversalSearch() {
     return m;
   }, [index.data]);
 
-  const items = useMemo<Item[]>(() => {
+  // The render model and the keyboard model, built together so the flat
+  // index the arrows walk is the same one the section markup renders.
+  const renderGroups = useMemo<RenderGroup[]>(() => {
     if (qt.length < MIN_QUERY_LENGTH) return [];
-    const out: Item[] = [];
-    for (const g of groups) {
-      for (const h of g.hits) {
-        out.push({
-          key: `${h.type}-${h.id}`,
-          group: groupLabel(g.type, g.more),
-          label: h.label,
-          sub: h.sub,
-          target: h.target,
-        });
-      }
-    }
-    for (const d of docHits) {
+    const out: RenderGroup[] = groups.map((g) => ({
+      name: HIT_TYPE_LABEL[g.type],
+      note: g.more > 0 ? `top ${g.hits.length} of ${g.hits.length + g.more}` : null,
+      items: g.hits.map((h) => ({
+        key: `${h.type}-${h.id}`,
+        type: h.type,
+        label: h.label,
+        sub: h.sub,
+        target: h.target,
+      })),
+    }));
+    if (docHits.length > 0 || docSearching) {
       out.push({
-        key: `doc-${d.id}`,
-        group: "Documents",
-        label: d.name,
-        sub:
-          d.entityType === "ACCOUNT"
-            ? accountNames.get(d.entityId) ?? "Account"
-            : sentence(d.entityType),
-        target: docTarget(d),
+        name: "Documents",
+        note: docSearching ? "searching…" : null,
+        items: docHits.map((d) => ({
+          key: `doc-${d.id}`,
+          type: "document",
+          label: d.name,
+          sub:
+            d.entityType === "ACCOUNT"
+              ? accountNames.get(d.entityId) ?? "Account"
+              : sentence(d.entityType),
+          target: docTarget(d),
+        })),
       });
     }
-    out.push({
-      key: "footer",
-      group: "",
-      label: `See all results for “${qt}”`,
-      sub: "",
-      target: `/search?q=${encodeURIComponent(qt)}`,
-      isFooter: true,
-    });
     return out;
-  }, [groups, docHits, qt, accountNames]);
+  }, [groups, docHits, docSearching, qt, accountNames]);
+
+  const flat = useMemo(() => renderGroups.flatMap((g) => g.items), [renderGroups]);
+  const footerTarget = `/search?q=${encodeURIComponent(qt)}`;
+  // The arrows walk every hit plus the footer, which is always the last
+  // stop — so Enter never has nowhere to go once the query is long enough.
+  const selectable = qt.length >= MIN_QUERY_LENGTH ? flat.length + 1 : 0;
 
   // A new QUERY restarts selection at the top hit. Deliberately not keyed
   // on the answer set: the debounced document lane appends its hits below
   // the a-tier rows the user may already be arrowing through, and snapping
   // back to the top mid-navigation would make Enter open a row they never
-  // chose. A-tier indexes are stable under the append; `activeIdx` clamps
-  // the edge where a shrink strands the old value.
+  // chose. `activeIdx` clamps the edge where a shrink strands the old value.
   useEffect(() => setActive(0), [qt]);
-  const activeIdx = Math.min(active, Math.max(0, items.length - 1));
+  const activeIdx = Math.min(active, Math.max(0, selectable - 1));
 
   // The dropdown scrolls; the highlight must not walk off the visible part
   // of it. Keyed on the clamped index so arrows always chase a real row.
   useEffect(() => {
+    // Method-level optional chain: jsdom renders these rows without a
+    // scrollIntoView at all.
     document
       .getElementById(`usearch-opt-${activeIdx}`)
-      ?.scrollIntoView({ block: "nearest" });
+      ?.scrollIntoView?.({ block: "nearest" });
   }, [activeIdx]);
 
   function go(target: string) {
@@ -178,21 +188,18 @@ export default function UniversalSearch() {
       inputRef.current?.blur();
       return;
     }
-    if (!open || items.length === 0) {
-      if (e.key === "Enter" && qt.length >= MIN_QUERY_LENGTH) {
-        go(`/search?q=${encodeURIComponent(qt)}`);
-      }
+    if (!open || selectable === 0) {
+      if (e.key === "Enter" && qt.length >= MIN_QUERY_LENGTH) go(footerTarget);
       return;
     }
     if (e.key === "ArrowDown") {
       e.preventDefault();
-      setActive((i) => Math.min(i + 1, items.length - 1));
+      setActive((i) => Math.min(i + 1, selectable - 1));
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
       setActive((i) => Math.max(i - 1, 0));
     } else if (e.key === "Enter") {
-      const item = items[activeIdx];
-      if (item) go(item.target);
+      go(activeIdx < flat.length ? flat[activeIdx].target : footerTarget);
     }
   }
 
@@ -231,7 +238,7 @@ export default function UniversalSearch() {
   }, [open]);
 
   const showPop = open && qt.length > 0;
-  let lastGroup: string | null = null;
+  let flatIndex = -1;
 
   return (
     <div className="topbar">
@@ -246,13 +253,16 @@ export default function UniversalSearch() {
           if (!boxRef.current?.contains(e.relatedTarget as Node)) setOpen(false);
         }}
       >
+        <span className="usearch-glass" aria-hidden>
+          <IconGlass />
+        </span>
         <input
           ref={inputRef}
           role="combobox"
           aria-expanded={showPop}
           aria-controls="usearch-listbox"
           aria-activedescendant={
-            showPop && items[activeIdx] ? `usearch-opt-${activeIdx}` : undefined
+            showPop && selectable > 0 ? `usearch-opt-${activeIdx}` : undefined
           }
           aria-label="Search"
           placeholder="Search accounts, contacts, policies, invoices, documents…"
@@ -295,38 +305,67 @@ export default function UniversalSearch() {
                       No quick matches — Enter searches document text in full.
                     </div>
                   )}
-                {items.map((item, i) => {
-                  const header =
-                    item.group && item.group !== lastGroup ? item.group : null;
-                  lastGroup = item.group;
-                  return (
-                    <div key={item.key}>
-                      {header && <div className="usearch-group">{header}</div>}
-                      <div
-                        id={`usearch-opt-${i}`}
-                        role="option"
-                        aria-selected={i === activeIdx}
-                        className={`usearch-hit${i === activeIdx ? " on" : ""}${item.isFooter ? " usearch-all" : ""}`}
-                        // mousedown, not click: click fires after the input's
-                        // blur has already closed the dropdown. Left button
-                        // only — a right-click wants the context menu, not a
-                        // navigation.
-                        onMouseDown={(e) => {
-                          if (e.button !== 0) return;
-                          e.preventDefault();
-                          go(item.target);
-                        }}
-                        onMouseEnter={() => setActive(i)}
-                      >
-                        <span className="hit-label">{item.label}</span>
-                        {item.sub && <span className="sub">{item.sub}</span>}
-                      </div>
+                {renderGroups.map((g) => (
+                  <div className="usearch-section" key={g.name}>
+                    <div className="usearch-group">
+                      <span>{g.name}</span>
+                      {g.note && <span className="note">{g.note}</span>}
                     </div>
-                  );
-                })}
-                {docSearching && (
-                  <div className="usearch-note">Searching documents…</div>
-                )}
+                    {g.items.map((item) => {
+                      flatIndex += 1;
+                      const i = flatIndex;
+                      return (
+                        <div
+                          key={item.key}
+                          id={`usearch-opt-${i}`}
+                          role="option"
+                          aria-selected={i === activeIdx}
+                          className={`usearch-hit${i === activeIdx ? " on" : ""}`}
+                          // mousedown, not click: click fires after the
+                          // input's blur has already closed the dropdown.
+                          // Left button only — a right-click wants the
+                          // context menu, not a navigation.
+                          onMouseDown={(e) => {
+                            if (e.button !== 0) return;
+                            e.preventDefault();
+                            go(item.target);
+                          }}
+                          onMouseEnter={() => setActive(i)}
+                        >
+                          <span className="ico">{TYPE_ICONS[item.type]}</span>
+                          <span className="hit-body">
+                            <span className="hit-label">
+                              <Marked text={item.label} query={qt} />
+                            </span>
+                            {item.sub && (
+                              <span className="sub">
+                                <Marked text={item.sub} query={qt} />
+                              </span>
+                            )}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ))}
+                <div
+                  id={`usearch-opt-${flat.length}`}
+                  role="option"
+                  aria-selected={activeIdx === flat.length}
+                  className={`usearch-foot${activeIdx === flat.length ? " on" : ""}`}
+                  onMouseDown={(e) => {
+                    if (e.button !== 0) return;
+                    e.preventDefault();
+                    go(footerTarget);
+                  }}
+                  onMouseEnter={() => setActive(flat.length)}
+                >
+                  <span className="foot-label">See all results for “{qt}”</span>
+                  <span className="keys">
+                    <kbd>↑</kbd>
+                    <kbd>↓</kbd> move · <kbd>↵</kbd> open · <kbd>esc</kbd> close
+                  </span>
+                </div>
               </>
             )}
           </div>
@@ -336,8 +375,19 @@ export default function UniversalSearch() {
   );
 }
 
-function groupLabel(type: SearchHitType, more: number): string {
-  return more > 0 ? `${HIT_TYPE_LABEL[type]} · +${more} more` : HIT_TYPE_LABEL[type];
+/** The query's occurrence in a display string, emphasized. Falls back to
+ * the plain text when the visible string doesn't contain the query (the
+ * match was on a hidden field, e.g. a legal name). */
+function Marked({ text, query }: { text: string; query: string }) {
+  const split = splitMatch(text, query);
+  if (!split) return <>{text}</>;
+  return (
+    <>
+      {split.before}
+      <mark>{split.match}</mark>
+      {split.after}
+    </>
+  );
 }
 
 /** Where a document hit lands: the entity's documents, when the entity has
@@ -348,3 +398,75 @@ function docTarget(d: DocumentHit): string {
   if (d.entityType === "CARRIER") return `/carriers/${d.entityId}`;
   return `/search?q=${encodeURIComponent(d.name)}`;
 }
+
+// ── Hit icons: the sidebar's stroke style at 16px, one per type, so a
+// mixed result list scans by shape before it is read. ───────────────────
+
+const iconProps = {
+  width: 16,
+  height: 16,
+  viewBox: "0 0 24 24",
+  fill: "none",
+  stroke: "currentColor",
+  strokeWidth: 1.8,
+  strokeLinecap: "round" as const,
+  strokeLinejoin: "round" as const,
+  "aria-hidden": true,
+};
+
+function IconGlass() {
+  return (
+    <svg {...iconProps}>
+      <circle cx="11" cy="11" r="7" />
+      <path d="M21 21l-4.5-4.5" />
+    </svg>
+  );
+}
+
+const TYPE_ICONS: Record<HitItem["type"], ReactNode> = {
+  account: (
+    <svg {...iconProps}>
+      <path d="M4 21V5a1 1 0 011-1h9a1 1 0 011 1v16" />
+      <path d="M15 9h4a1 1 0 011 1v11" />
+      <path d="M2 21h20" />
+      <path d="M7.5 8h2M7.5 12h2M7.5 16h2" />
+    </svg>
+  ),
+  contact: (
+    <svg {...iconProps}>
+      <circle cx="12" cy="8" r="3.5" />
+      <path d="M5 20c0-3.5 3-5.5 7-5.5s7 2 7 5.5" />
+    </svg>
+  ),
+  policy: (
+    <svg {...iconProps}>
+      <path d="M12 3l7 3v5c0 4.5-3 8.5-7 10-4-1.5-7-5.5-7-10V6l7-3z" />
+      <path d="M9 12l2 2 4-4" />
+    </svg>
+  ),
+  invoice: (
+    <svg {...iconProps}>
+      <circle cx="12" cy="12" r="8" />
+      <path d="M12 7.5v9M14.2 9c-.5-.7-1.3-1.1-2.2-1.1-1.3 0-2.3.8-2.3 1.8s.9 1.5 2.3 1.7c1.4.2 2.3.7 2.3 1.7s-1 1.8-2.3 1.8c-.9 0-1.7-.4-2.2-1" />
+    </svg>
+  ),
+  certificate: (
+    <svg {...iconProps}>
+      <circle cx="12" cy="9" r="5" />
+      <path d="M9 13.5L8 21l4-2 4 2-1-7.5" />
+    </svg>
+  ),
+  carrier: (
+    <svg {...iconProps}>
+      <path d="M3 21V10l9-6 9 6v11" />
+      <path d="M2 21h20" />
+      <path d="M9 21v-6h6v6" />
+    </svg>
+  ),
+  document: (
+    <svg {...iconProps}>
+      <path d="M14 2H6a1 1 0 00-1 1v18a1 1 0 001 1h12a1 1 0 001-1V7l-5-5z" />
+      <path d="M14 2v5h5M9 13h6M9 17h6" />
+    </svg>
+  ),
+};

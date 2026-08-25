@@ -247,7 +247,7 @@ a:hover { text-decoration: underline; }
 .usearch { position: relative; max-width: 640px; }
 .usearch input {
   width: 100%;
-  padding: 8px 34px 8px 12px;
+  padding: 8px 34px 8px 34px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   font-size: 14px;
@@ -255,17 +255,31 @@ a:hover { text-decoration: underline; }
   color: var(--text);
 }
 .usearch input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+.usearch-glass {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--muted);
+  display: flex;
+  pointer-events: none;
+}
+.usearch .kbd,
+.usearch kbd {
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  padding: 0 5px;
+  color: var(--muted);
+  font-size: 10.5px;
+  background: var(--bg);
+  font-family: inherit;
+}
 .usearch .kbd {
   position: absolute;
   right: 10px;
   top: 50%;
   transform: translateY(-50%);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 0 6px;
-  color: var(--muted);
-  font-size: 11px;
-  background: var(--bg);
   pointer-events: none;
 }
 .usearch-pop {
@@ -276,28 +290,38 @@ a:hover { text-decoration: underline; }
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  box-shadow: 0 8px 24px rgba(16, 26, 44, 0.14);
+  box-shadow: 0 10px 28px rgba(16, 26, 44, 0.16);
   max-height: 60vh;
   overflow-y: auto;
   z-index: 60;
-  padding-bottom: 4px;
+  padding: 4px 0;
 }
+.usearch-section + .usearch-section { border-top: 1px solid var(--border); margin-top: 4px; }
 .usearch-group {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--muted);
-  padding: 10px 12px 2px;
+  padding: 9px 16px 3px;
 }
+.usearch-group .note { text-transform: none; letter-spacing: 0; font-style: italic; }
 .usearch-hit {
   display: flex;
-  align-items: baseline;
+  align-items: flex-start;
   gap: 10px;
-  padding: 7px 12px;
+  padding: 6px 10px;
+  margin: 0 6px;
+  border-radius: 6px;
   cursor: pointer;
 }
-.usearch-hit .hit-label { font-weight: 600; white-space: nowrap; }
+.usearch-hit .ico { color: var(--muted); flex: none; display: flex; margin-top: 3px; }
+.usearch-hit .hit-body { min-width: 0; }
+.usearch-hit .hit-label { display: block; font-weight: 600; line-height: 1.3; }
 .usearch-hit .sub {
+  display: block;
   color: var(--muted);
   font-size: 12.5px;
   overflow: hidden;
@@ -305,9 +329,28 @@ a:hover { text-decoration: underline; }
   white-space: nowrap;
 }
 .usearch-hit.on { background: var(--blue-bg); }
-.usearch-all { border-top: 1px solid var(--border); margin-top: 4px; }
-.usearch-all .hit-label { color: var(--accent-dark); font-weight: 600; }
-.usearch-note { padding: 8px 12px; color: var(--muted); font-size: 12.5px; }
+/* The query's occurrence in a hit — colored, not boxed: rows highlight on
+   selection, and two competing backgrounds per row is one too many. */
+.usearch-pop mark {
+  background: transparent;
+  color: var(--accent-dark);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.usearch-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+  padding: 8px 16px 5px;
+  cursor: pointer;
+}
+.usearch-foot .foot-label { color: var(--accent-dark); font-weight: 600; font-size: 13.5px; }
+.usearch-foot.on { background: var(--blue-bg); }
+.usearch-foot .keys { color: var(--muted); font-size: 11.5px; white-space: nowrap; }
+.usearch-note { padding: 8px 16px; color: var(--muted); font-size: 12.5px; }
 @media (max-width: 800px) {
   .topbar { margin: -16px -16px 14px; padding: 8px 16px; }
 }

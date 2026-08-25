@@ -259,6 +259,29 @@ export function searchRows(
 }
 
 /**
+ * Where the query sits inside a display string, for highlighting the match
+ * in a hit. Plain case-insensitive first occurrence — the ranker's
+ * punctuation normalization deliberately doesn't apply here, because the
+ * highlight must map onto the exact characters being rendered. Null when
+ * the visible text doesn't contain the query (the match was on another
+ * field, e.g. a legal name), in which case the row renders unmarked.
+ */
+export function splitMatch(
+  text: string,
+  query: string
+): { before: string; match: string; after: string } | null {
+  const q = query.trim().toLowerCase();
+  if (!q || !text) return null;
+  const idx = text.toLowerCase().indexOf(q);
+  if (idx < 0) return null;
+  return {
+    before: text.slice(0, idx),
+    match: text.slice(idx, idx + q.length),
+    after: text.slice(idx + q.length),
+  };
+}
+
+/**
  * The ±60-character context window around the first match in a document's
  * OCR text — moved verbatim from the old DocumentSearch page so the /search
  * results keep reading the same. Null when the text has no match (the file
