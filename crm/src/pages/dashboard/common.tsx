@@ -1,22 +1,33 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
+/** Today as YYYY-MM-DD in the local calendar — the same civil-day frame
+ * `daysUntil` counts in, so string comparisons against `a.date()` fields
+ * agree with the badges beside them. */
+export function localToday(): string {
+  return new Date().toLocaleDateString("en-CA");
+}
+
 /**
  * A KPI tile. With `onClick` it is the dashboard's clickable stat (keyboard
  * included); without, a plain figure — the leads tab has tiles with no list
  * page to land on, and a non-interactive div must not pretend otherwise.
+ * `hot` paints the number red: the figure itself is the alarm (overdue
+ * money, an attention count above zero).
  */
 export function Tile({
   n,
   label,
   onClick,
+  hot,
 }: {
   n: ReactNode;
   label: string;
   onClick?: () => void;
+  hot?: boolean;
 }) {
   if (!onClick) {
     return (
-      <div className="stat">
+      <div className={hot ? "stat hot" : "stat"}>
         <div className="n">{n}</div>
         <div className="l">{label}</div>
       </div>
@@ -24,7 +35,7 @@ export function Tile({
   }
   return (
     <div
-      className="stat clickable"
+      className={hot ? "stat clickable hot" : "stat clickable"}
       role="button"
       tabIndex={0}
       onClick={onClick}

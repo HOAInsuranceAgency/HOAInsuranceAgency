@@ -20,6 +20,7 @@ import { isOpenQuoteStatus } from "../../lib/quoteStatus";
 import { useSort, SortTh } from "../../lib/useSort";
 import { useAsyncResource } from "../../lib/useAsyncResource";
 import {
+  leadFunnel,
   leadQuoteStanding,
   leadStats,
   quoteStandingRank,
@@ -56,6 +57,10 @@ export default function LeadsTab() {
       // Quotes are read unfiltered, not just the open set: the standing
       // column must tell a declined-everywhere lead apart from an untouched
       // one, and DECLINED/LOST are exactly the rows an open-only filter drops.
+      // No web-funnel reads here: LeadReply and UploadPortal rows carry the
+      // bearer tokens behind the public upload mutations, and
+      // uploadQuota.test.ts pins that no UI depends on reading them —
+      // surfacing that activity needs a tokenless aggregate query first.
       const [leads, clients, quotes] = await Promise.all([
         listAllPages((nextToken) =>
           client.models.Account.list({
@@ -87,24 +92,35 @@ export default function LeadsTab() {
     [quotes]
   );
 
-  const rows = useMemo<LeadRow[]>(() => {
-    const quotesByLead = new Map<string, Quote[]>();
+  const quotesByLead = useMemo(() => {
+    const m = new Map<string, Quote[]>();
     for (const q of quotes) {
-      const list = quotesByLead.get(q.accountId);
+      const list = m.get(q.accountId);
       if (list) list.push(q);
-      else quotesByLead.set(q.accountId, [q]);
+      else m.set(q.accountId, [q]);
     }
-    return leads.map((l) => ({
-      id: l.id,
-      name: l.name,
-      source: l.source ?? null,
-      entered: l.createdAt ?? null,
-      expires: l.currentPolicyExpiration ?? null,
-      days: l.currentPolicyExpiration ? daysUntil(l.currentPolicyExpiration) : null,
-      standing: leadQuoteStanding(quotesByLead.get(l.id) ?? []),
-      tiv: l.totalInsuredValue ?? null,
-    }));
-  }, [leads, quotes]);
+    return m;
+  }, [quotes]);
+
+  const funnel = useMemo(
+    () => leadFunnel(leads, quotesByLead, clients, new Date()),
+    [leads, quotesByLead, clients]
+  );
+
+  const rows = useMemo<LeadRow[]>(
+    () =>
+      leads.map((l) => ({
+        id: l.id,
+        name: l.name,
+        source: l.source ?? null,
+        entered: l.createdAt ?? null,
+        expires: l.currentPolicyExpiration ?? null,
+        days: l.currentPolicyExpiration ? daysUntil(l.currentPolicyExpiration) : null,
+        standing: leadQuoteStanding(quotesByLead.get(l.id) ?? []),
+        tiv: l.totalInsuredValue ?? null,
+      })),
+    [leads, quotesByLead]
+  );
 
   // Soonest incumbent expiration first: the lead about to renew with someone
   // else is the one to call today.
@@ -124,6 +140,20 @@ export default function LeadsTab() {
     "expires"
   );
 
+  const stageMax = Math.max(
+    1,
+    funnel.unworked,
+    funnel.marketing,
+    funnel.presented,
+    funnel.bound30d
+  );
+  const stages: [string, number][] = [
+    ["Unworked · no quotes", funnel.unworked],
+    ["Marketing · draft/submitted", funnel.marketing],
+    ["Presented", funnel.presented],
+    ["Bound · last 30d", funnel.bound30d],
+  ];
+
   return (
     <TabFrame res={res}>
       <div className="stat-row">
@@ -142,7 +172,29 @@ export default function LeadsTab() {
       </div>
 
       <div className="card">
-        <h2>Lead work list</h2>
+        <div className="card-head">
+          <h2>Pipeline</h2>
+          <span className="muted small">stage inferred from each lead's quotes</span>
+        </div>
+        <div className="funnel">
+          {stages.map(([label, n]) => (
+            <div className="stage" key={label}>
+              <div className="n">{n}</div>
+              <div className="l">{label}</div>
+              <span
+                className="fill"
+                style={{ width: `${Math.max(4, (n / stageMax) * 100)}%` }}
+              />
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="card-head">
+          <h2>Lead work list</h2>
+          <span className="muted small">sorted by incumbent expiration</span>
+        </div>
         {rows.length === 0 ? (
           <p className="muted small">
             No open leads. New leads land here from the website form or New
@@ -191,6 +243,7 @@ export default function LeadsTab() {
           </div>
         )}
       </div>
+
     </TabFrame>
   );
 }
@@ -207,3 +260,4 @@ function StandingBadge({ standing }: { standing: QuoteStanding | null }) {
     />
   );
 }
+

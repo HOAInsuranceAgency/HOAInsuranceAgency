@@ -231,6 +231,60 @@ a:hover { text-decoration: underline; }
    carries an 18px margin of its own. */
 .tab-updated { display: flex; justify-content: flex-end; align-items: center; margin: -12px 0 10px; }
 
+/* ── Dashboard command center ──────────────────────────────────────── */
+/* A tile whose number is itself the alarm (overdue money, attention count). */
+.stat.hot .n { color: var(--red); }
+
+/* The Overview attention queue: severity stripe, what, where the work is. */
+.attn { list-style: none; margin: 0; padding: 0; }
+.attn li { display: flex; gap: 12px; align-items: center; padding: 9px 6px; border-bottom: 1px solid var(--border); cursor: pointer; }
+.attn li:last-child { border-bottom: 0; }
+.attn li:hover { background: var(--blue-bg); }
+.attn li:focus-visible { background: var(--blue-bg); outline: 2px solid var(--accent); outline-offset: -2px; }
+.attn .stripe { width: 4px; height: 30px; border-radius: 2px; flex: none; }
+.attn .stripe.red { background: var(--red); }
+.attn .stripe.amber { background: #dd9a33; }
+.attn .stripe.blue { background: var(--accent); }
+.attn .what { flex: 1; min-width: 0; }
+.attn .what .d { color: var(--muted); font-size: 12.5px; }
+.attn .go { color: var(--accent-dark); font-size: 12.5px; white-space: nowrap; }
+
+/* Lead pipeline funnel: stage boxes with a proportional underline. */
+.funnel { display: flex; gap: 8px; }
+.funnel .stage { flex: 1; background: var(--bg); border: 1px solid var(--border); border-radius: 7px; padding: 8px 10px; position: relative; overflow: hidden; }
+.funnel .stage .n { font-size: 19px; font-weight: 700; }
+.funnel .stage .l { font-size: 11.5px; color: var(--muted); }
+.funnel .stage .fill { position: absolute; left: 0; bottom: 0; height: 3px; background: var(--accent); }
+
+/* Invoice aging: one stacked bar, oldest money reddest. */
+.aging { display: flex; border-radius: 6px; overflow: hidden; height: 34px; font-size: 11.5px; font-weight: 600; color: #fff; margin-bottom: 10px; }
+.aging div { display: flex; align-items: center; justify-content: center; white-space: nowrap; padding: 0 8px; overflow: hidden; }
+.aging .a0 { background: var(--accent); }
+.aging .a1 { background: #c08a24; }
+.aging .a2 { background: #bd6626; }
+.aging .a3 { background: var(--red); }
+
+/* Two cards side by side (PF portfolio · in motion), stacking on mobile. */
+.cols { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; align-items: start; margin-bottom: 18px; }
+.cols .card { margin-bottom: 0; }
+@media (max-width: 900px) { .cols { grid-template-columns: 1fr; } }
+
+/* A card's headline figure with its sentence beside it. */
+.hero-line { display: flex; align-items: baseline; gap: 10px; margin: 2px 0 12px; flex-wrap: wrap; }
+.hero-line .n { font-size: 24px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.hero-line .l { color: var(--muted); font-size: 13px; }
+
+/* Written premium by month: CSS columns, future months as placeholders. */
+.months { display: flex; align-items: flex-end; gap: 5px; height: 90px; padding-top: 4px; }
+.months .mbar { flex: 1; background: #b7d0ec; border-radius: 3px 3px 0 0; min-height: 2px; }
+.months .mbar.hi { background: var(--accent); }
+.months .mbar.future { background: transparent; border: 1px dashed var(--border); border-radius: 3px; min-height: 10px; }
+/* A future month that already holds written premium: a real bar, visibly
+   not-yet-arrived. */
+.months .mbar.future-filled { background: #d7e5f5; border: 1px dashed var(--accent); }
+.month-labels { display: flex; gap: 5px; font-size: 10px; color: var(--muted); margin-top: 4px; font-variant-numeric: tabular-nums; }
+.month-labels span { flex: 1; text-align: center; overflow: hidden; }
+
 /* ── Tables ────────────────────────────────────────────────────────── */
 .table-wrap { overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; font-size: 14px; }
