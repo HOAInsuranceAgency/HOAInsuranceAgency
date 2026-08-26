@@ -61,11 +61,13 @@ export const GA4_ID = "G-VWMS4RWTRX";
  *
  * Two accounts, deliberately:
  *
- *   AW-18085022517  the original. Owns the conversion label in
- *                   ADS_CONVERSION_ID below and all historical conversion data.
- *   AW-18384211768  added 2026-08-17. Receives page views and auto-tagging only.
- *                   It has NO conversion label wired up, so it CANNOT record a
- *                   conversion yet — see the note on ADS_CONVERSION_ID.
+ *   AW-18085022517  the original. Holds all conversion history before
+ *                   2026-08-26.
+ *   AW-18384211768  added 2026-08-17. Where the campaigns actually run.
+ *
+ * Being listed HERE only buys page views and auto-tagging. Recording a
+ * conversion additionally needs a label in ADS_CONVERSION_IDS below — both
+ * accounts now have one.
  *
  * An array rather than two constants so Analytics.astro configures each in a
  * loop: adding or retiring an account is a one-line data edit here, with no
@@ -82,29 +84,37 @@ export const ADS_IDS = ["AW-18085022517", "AW-18384211768"] as const;
 export const CLARITY_ID = "wamnker55b";
 
 /**
- * Google Ads conversion `send_to` — account id and label, slash-separated.
+ * Google Ads conversion `send_to` values — account id and label, slash-separated,
+ * one entry per Ads account that should record the lead.
  *
- * ⚠ THIS POINTS AT THE OLDER OF THE TWO ACCOUNTS IN ADS_IDS.
+ * Both accounts record every lead as of 2026-08-26. `trackLead()` sends one
+ * `conversion` event per entry, because `send_to` names exactly one
+ * account-and-label pair — a single call cannot credit two accounts.
  *
- * A conversion label belongs to the account that minted it, so this value can
- * only ever record against AW-18085022517. AW-18384211768 is configured for page
- * views and auto-tagging (it is in ADS_IDS) but has no label here, which means:
+ * -- Why the new account read "Inactive" for so long --
+ * A conversion label is minted by, and belongs to, the account that created it.
+ * AW-18384211768 sat at zero conversions with an Inactive action for days while
+ * being correctly tagged, because it was listed in ADS_IDS (which buys page views
+ * and auto-tagging) but had no label here. Being tagged is not being measured.
  *
- *   · its conversion actions will sit at zero and show "Unverified"
- *   · no amount of deploying changes that — the label is the missing piece
+ * -- Two traps when adding an account --
+ * 1. An action created through *Event type: Form submission -> URL starts with*
+ *    is RULE-BASED: Google evaluates it tag-side and never mints a label, so no
+ *    event snippet exists to copy. It also cannot see this site's forms — they
+ *    preventDefault() and never change the URL, and QuoteApp has no <form>
+ *    element at all. Only "+ Add a conversion action manually", the link below
+ *    the site-scan results, produces a label.
+ * 2. The snippet Google shows FIRST is the account-level Google tag —
+ *    gtag('config', 'AW-...'), with no send_to. That belongs in ADS_IDS, not
+ *    here. The label lives in the SECOND block, the event snippet.
  *
- * To point conversions at the new account, replace this whole string with the
- * `send_to` value from that account's own event snippet:
- *   Google Ads → Goals → Conversions → the action → Tag setup →
- *   "Install the tag yourself" → event snippet → copy `send_to`.
- * Take ONLY that string. The gtag/js tag shown alongside it is already loaded by
- * components/Analytics.astro and must not be added a second time.
- *
- * One label, one account. If both accounts ever need to record the same lead,
- * this becomes an array and trackLead() loops it — do not paste a second gtag
- * call into a form to achieve it.
+ * Take only the `send_to` string. The gtag/js tag shown beside it is already
+ * loaded once by components/Analytics.astro and must never be added again.
  */
-const ADS_CONVERSION_ID = "AW-18085022517/Csp3COKBgpscELWWzq9D";
+const ADS_CONVERSION_IDS = [
+  "AW-18384211768/S7dLCNSnnugcELieo75E",
+  "AW-18085022517/Csp3COKBgpscELWWzq9D",
+] as const;
 
 type Gtag = (
   command: "event",
@@ -140,14 +150,15 @@ export type LeadForm =
  * it, and Ads holding conversions with no visibility of organic. Each platform
  * had half the answer and neither could join them.
  *
- * -- Two events, one call --
+ * -- One call, one event per destination --
  * 1. GA4 `generate_lead` — GA4's recommended event name for a captured lead, so
  *    it lands in the standard reports with no custom setup.
- * 2. Google Ads `conversion` — unchanged: same account, same label as before.
+ * 2. Google Ads `conversion` — once per entry in ADS_CONVERSION_IDS. Currently
+ *    two, so one lead credits both Ads accounts.
  *
- * Both go through the single gtag instance configured in
- * components/Analytics.astro. `send_to` on the second call is what routes it to
- * Ads; the first has no `send_to`, so it reaches the GA4 property.
+ * All of them go through the single gtag instance configured in
+ * components/Analytics.astro. `send_to` is what determines which Ads account
+ * receives an event; the GA4 call carries none, so it reaches the property.
  *
  * -- Attribution is NOT sent from here --
  * Do not add source / medium / campaign parameters. GA4 derives the channel from
@@ -173,12 +184,15 @@ export function trackLead(form: LeadForm): void {
     form_name: form,
   });
 
-  // Google Ads. send_to carries the account and the conversion label.
-  gtag("event", "conversion", {
-    send_to: ADS_CONVERSION_ID,
-    value: 1.0,
-    currency: "USD",
-  });
+  // Google Ads. send_to carries the account and the conversion label, so one
+  // event per label — a single call cannot credit two accounts.
+  for (const sendTo of ADS_CONVERSION_IDS) {
+    gtag("event", "conversion", {
+      send_to: sendTo,
+      value: 1.0,
+      currency: "USD",
+    });
+  }
 }
 
 export const SOCIAL = {

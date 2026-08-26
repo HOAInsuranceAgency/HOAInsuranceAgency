@@ -35,7 +35,7 @@ Three tags, all declared once in [`web/src/constants.ts`](../web/src/constants.t
 | Tag | ID | What it does |
 | --- | --- | --- |
 | GA4 | `G-VWMS4RWTRX` | Organic + all-channel traffic. **Added 2026-08-11** |
-| Google **Ads** (gtag.js) | `AW-18085022517` | Ad conversion tracking |
+| Google **Ads** (gtag.js) | `AW-18384211768` + `AW-18085022517` | Ad conversion tracking. Both accounts record every lead — **added 2026-08-26** |
 | Microsoft Clarity | `wamnker55b` | Session recordings + heatmaps |
 
 GA4 and Google Ads share one library, so `gtag/js` is requested **once** and followed by a `config` call per measurement ID. Two script tags would download the same library twice and race to initialize the same `dataLayer`.
