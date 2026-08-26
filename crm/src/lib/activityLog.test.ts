@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
@@ -329,29 +329,100 @@ describe("the attributed and streamed model lists agree", () => {
     expect([...streamed].sort()).toEqual([...ATTRIBUTED_MODELS].sort());
   });
 
-  it("names the non-human writers the handler knows about", async () => {
-    // A Lambda or the backfill script stamps its own name so the timeline can
-    // say "Lead intake" rather than "System" — which is what an *unstamped*
-    // write gets and should stay reserved for. A writer the handler has no
-    // name for would render as a raw slug in the Who column.
-    const handler = readFileSync(
-      resolve(process.cwd(), "amplify/functions/activity-log/handler.ts"),
-      "utf8"
-    );
+  const read = (rel: string) =>
+    readFileSync(resolve(process.cwd(), rel), "utf8");
+
+  /**
+   * Every non-human writer, discovered from the source rather than listed.
+   *
+   * A hand-maintained list is what let seven Lambdas ship with no display
+   * name: each one fell through to the UserProfile lookup, found nothing,
+   * and was written into the Who column as "Unknown user" — denormalised at
+   * write time, so wrong for good. Deriving the list instead means a new
+   * Lambda that stamps itself starts failing this test until it is named.
+   *
+   * Three stamp shapes are in use, and all three are read here:
+   *   `lastWriteBy: "lead-upload"`   — straight into the object
+   *   `lastWriteBy: WRITER`          — via a module const
+   *   `lastWriteBy = :writer`        — a DynamoDB update expression, with
+   *                                    the slug over in the values map
+   *
+   * A shape none of these match resolves to nothing and is skipped rather
+   * than failing, so ROBOT_WRITER_COUNT below is what stops the discovery
+   * quietly finding nobody.
+   */
+  function stampedWriters(file: string): string[] {
+    const src = read(file);
+    const found = new Set<string>();
+
+    for (const m of src.matchAll(/lastWriteBy:\s*"([\w-]+)"/g)) found.add(m[1]);
+
+    for (const m of src.matchAll(/lastWriteBy:\s*([A-Za-z_$][\w$]*)\s*[,}]/g)) {
+      const c = new RegExp(
+        `const ${m[1]}\\s*(?::[^=]+)?=\\s*"([\\w-]+)"`
+      ).exec(src);
+      if (c) found.add(c[1]);
+    }
+
+    for (const m of src.matchAll(/lastWriteBy\s*=\s*:(\w+)/g)) {
+      const c = new RegExp(`"?:${m[1]}"?:\\s*"([\\w-]+)"`).exec(src);
+      if (c) found.add(c[1]);
+    }
+
+    return [...found];
+  }
+
+  /** Every backend source file that could carry a stamp. */
+  function backendFiles(dir: string): string[] {
+    const out: string[] = [];
+    for (const entry of readdirSync(resolve(process.cwd(), dir), {
+      withFileTypes: true,
+    })) {
+      const rel = `${dir}/${entry.name}`;
+      if (entry.isDirectory()) out.push(...backendFiles(rel));
+      else if (/\.ts$/.test(entry.name) && !/\.test\./.test(entry.name)) {
+        out.push(rel);
+      }
+    }
+    return out;
+  }
+
+  /**
+   * Kept beside the assertion it explains, the STREAMED_MODEL_COUNT way.
+   *
+   * 10 since the seven unnamed Lambdas were named. This going *down* means a
+   * writer stopped stamping itself, or a stamp took a shape the discovery
+   * above cannot read — either way the Who column is about to regress, and
+   * either way it should be a deliberate act to change this number.
+   */
+  const ROBOT_WRITER_COUNT = 10;
+
+  it("names every non-human writer that stamps itself", () => {
+    const handler = read("amplify/functions/activity-log/handler.ts");
     const known = [
       ...(/const ROBOT_NAMES: Record<string, string> = \{([\s\S]*?)\};/
         .exec(handler)?.[1] ?? "")
         .matchAll(/"?([\w-]+)"?:/g),
     ].map((m) => m[1]);
 
-    for (const [file, writer] of [
-      ["amplify/functions/lead-intake/handler.ts", "lead-intake"],
-      ["amplify/functions/extract-lead/handler.ts", "extract-lead"],
-      ["scripts/backfill-lead-expansion.ts", "backfill"],
-    ]) {
-      const src = readFileSync(resolve(process.cwd(), file), "utf8");
-      expect(src, `${file} does not stamp an actor`).toContain(`"${writer}"`);
-      expect(known, `${writer} has no display name`).toContain(writer);
+    const stamped = new Map<string, string>();
+    const files = [...backendFiles("amplify"), ...backendFiles("scripts")];
+    for (const file of files) {
+      for (const writer of stampedWriters(file)) stamped.set(writer, file);
+    }
+
+    // The discovery reading nothing would make every assertion below vacuous.
+    expect(
+      stamped.size,
+      "the lastWriteBy stamps moved or changed shape"
+    ).toBeGreaterThanOrEqual(ROBOT_WRITER_COUNT);
+
+    for (const [writer, file] of stamped) {
+      expect(
+        known,
+        `${file} stamps "${writer}", which has no display name in ROBOT_NAMES ` +
+          `— it would land in the Who column as "Unknown user"`
+      ).toContain(writer);
     }
   });
 

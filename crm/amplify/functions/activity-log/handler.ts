@@ -50,6 +50,13 @@ const nameCache = new Map<string, string>();
 const ROBOT_NAMES: Record<string, string> = {
   "lead-intake": "Lead intake",
   "extract-lead": "AI extraction",
+  "lead-upload": "Lead upload",
+  "process-document": "Document processing",
+  "upload-portal": "Client upload portal",
+  "pf-agreement": "Financing agreement",
+  "send-invoice": "Invoice send",
+  "void-invoice": "Invoice void",
+  "stripe-payment": "Stripe payment",
   backfill: "Backfill script",
 };
 
