@@ -46,6 +46,7 @@ import { pfAutopay } from "./functions/pf-autopay/resource";
 import { resolveMailbox } from "./functions/mailbox";
 import { activityLog } from "./functions/activity-log/resource";
 import { dialpadPhoneIndex } from "./functions/dialpad-phone-index/resource";
+import { dialpadWebhook } from "./functions/dialpad-webhook/resource";
 import {
   magicLinkDefine,
   magicLinkCreate,
@@ -86,6 +87,7 @@ export const backend = defineBackend({
   pfAutopay,
   activityLog,
   dialpadPhoneIndex,
+  dialpadWebhook,
   magicLinkDefine,
   magicLinkCreate,
   magicLinkVerify,
@@ -724,8 +726,24 @@ backend.pfDefaultSweep.resources.lambda.addToRolePolicy(
 const stripeWebhookUrl = backend.stripeWebhook.resources.lambda.addFunctionUrl({
   authType: FunctionUrlAuthType.NONE,
 });
+
+/**
+ * Dialpad's callback. Unauthenticated at the AWS layer for the same reason
+ * Stripe's is — they cannot sign SigV4 — and authenticated instead by the
+ * HS256 signature over the body, which the handler checks before it parses
+ * anything. See functions/dialpad-webhook/jwt.ts.
+ */
+const dialpadWebhookUrl = backend.dialpadWebhook.resources.lambda.addFunctionUrl({
+  authType: FunctionUrlAuthType.NONE,
+});
 backend.addOutput({
-  custom: { stripeWebhookUrl: stripeWebhookUrl.url },
+  custom: {
+    stripeWebhookUrl: stripeWebhookUrl.url,
+    // Read out of amplify_outputs.json to create the Dialpad subscription —
+    // the endpoint has to exist before anything is pointed at it, which is
+    // why the subscription is the LAST step of a deploy and not part of one.
+    dialpadWebhookUrl: dialpadWebhookUrl.url,
+  },
 });
 backend.taskDigest.resources.lambda.addToRolePolicy(
   new PolicyStatement({

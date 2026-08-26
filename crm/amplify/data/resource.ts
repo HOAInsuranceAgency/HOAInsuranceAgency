@@ -25,6 +25,7 @@ import { portalSweep } from "../functions/portal-sweep/resource";
 import { leadReply } from "../functions/lead-reply/resource";
 import { activityLog } from "../functions/activity-log/resource";
 import { dialpadPhoneIndex } from "../functions/dialpad-phone-index/resource";
+import { dialpadWebhook } from "../functions/dialpad-webhook/resource";
 
 /**
  * HOA CRM data model.
@@ -261,6 +262,33 @@ const schema = a
      * nothing derives and nothing may silently reclaim.
      */
     PhoneLinkSource: a.enum(["CONTACT", "ACCOUNT", "MANUAL"]),
+    CommChannel: a.enum(["CALL", "SMS", "VOICEMAIL"]),
+    CommDirection: a.enum(["INBOUND", "OUTBOUND"]),
+    /**
+     * What became of a conversation.
+     *
+     * Terminal states only. Dialpad emits roughly twenty-five call states,
+     * including monitoring (`eavesdrop`, `barge`), handling (`parked`,
+     * `queued`) and AI processing (`recap_summary`, `call_transcription`).
+     * The handler consumes all of those; this records what happened to the
+     * conversation, which is the only part an account's history is asking
+     * about. ABANDONED is a caller who hung up before anything picked up —
+     * distinct from MISSED, which rang somebody.
+     */
+    CommState: a.enum(["CONNECTED", "MISSED", "VOICEMAIL", "ABANDONED"]),
+    /**
+     * How confidently a call was attributed to a person.
+     *
+     * EXACT is one candidate. SHARED is several — a property manager's number
+     * belongs to every association they hold — and the call is filed under
+     * the person and shown on all of them rather than guessed at. UNMATCHED
+     * is nobody, and goes to triage. MANUAL is a person's answer from that
+     * queue, which nothing derived may overwrite.
+     *
+     * SHARED is not a degraded EXACT. It is a different, honest claim: we
+     * know who called and not which association it concerned.
+     */
+    MatchConfidence: a.enum(["EXACT", "SHARED", "UNMATCHED", "MANUAL"]),
 
     // ── Account: Lead → Client, converted in place ─────────────────────
     //
@@ -507,6 +535,160 @@ const schema = a
         linkedAt: a.datetime().required(),
       })
       .secondaryIndexes((index) => [index("e164"), index("accountId")])
+      .authorization((allow) => [
+        allow.authenticated().to(["read"]),
+        allow.groups(["ADMIN"]),
+      ]),
+
+    /**
+     * One conversation: a call, a text, or a voicemail.
+     *
+     * ── Filed under the person, not under an association ────────────────
+     * There is no `accountId` here, and that is the design rather than an
+     * omission. In HOA lines one property manager holds thirty associations,
+     * so one phone number belongs to thirty accounts and a call from it
+     * cannot honestly be attributed to any one of them.
+     *
+     * The tempting answer is to guess the likeliest and mark the row
+     * uncertain. It fails quietly: when the guess misses, an association that
+     * was never serviced shows a phone conversation on its record and the one
+     * that was serviced shows nothing — and the ops digest then reads the
+     * wrong half and stops flagging a lead nobody called. A silent wrong
+     * answer is worse than a visible unknown.
+     *
+     * So this row records what is known — who called, when, from what number,
+     * what became of it — and `CommunicationAccount` records where it shows
+     * up. A call with a manager appears on all thirty timelines, labelled as
+     * a call with that person rather than as a call about that association.
+     *
+     * ── Why not Activity ────────────────────────────────────────────────
+     * `Activity` is a field-diff log: `entityId` is required and singular,
+     * `changes` holds a diff, and a stream handler writes it. A call has no
+     * subject row, no diff, and belongs to a variable number of accounts.
+     *
+     * ── Written by Lambdas, read by the app ─────────────────────────────
+     * Client authorization is read-only and every write is a Lambda over IAM,
+     * like `Activity` and `LeadReply`. Filing a call from triage and sending
+     * a text are custom mutations, not model writes, so there is no client
+     * gate here without a model rule behind it.
+     */
+    Communication: a
+      .model({
+        /** The person, when they are known. Null on an UNMATCHED row. */
+        contactId: a.id(),
+        /** Denormalised: the timeline names the caller without a join. */
+        contactName: a.string(),
+        channel: a.ref("CommChannel").required(),
+        direction: a.ref("CommDirection").required(),
+        /**
+         * Dialpad's ids, and the idempotency key.
+         *
+         * Every write is an upsert on these, never an insert. One call
+         * arrives as five to seven separate events — ringing, connected,
+         * hangup, then later recording, transcription and the AI recap — each
+         * carrying the same `call_id`. The row is created by whichever lands
+         * first and enriched by the rest.
+         */
+        dialpadCallId: a.string(),
+        dialpadMessageId: a.string(),
+        /** E.164, the customer side. What the index is queried by. */
+        externalNumber: a.string().required(),
+        /** E.164, the agency side — which of our numbers they reached. */
+        internalNumber: a.string(),
+        /** Who at the agency. Null for a main-line call nobody claimed. */
+        userId: a.string(), // Cognito sub, resolved via UserProfile
+        userName: a.string(), // denormalised, per Activity.actorName
+        dialpadUserId: a.string(),
+        occurredAt: a.datetime().required(),
+        /**
+         * The newest event applied to this row. Writes are conditional on it,
+         * because webhook deliveries arrive out of order and a delayed
+         * `ringing` must not resurrect a finished call as in-progress.
+         */
+        lastEventAt: a.datetime(),
+        // ── Call ──
+        state: a.ref("CommState"),
+        durationSeconds: a.integer(), // talk time
+        totalDurationSeconds: a.integer(), // including ring
+        wasRecorded: a.boolean(),
+        /**
+         * Dialpad's `secureblob` URL. NOT a link a browser can follow — it
+         * requires an API key and renders as a 401 — so it is never put in an
+         * href. W6 serves audio through an authenticated proxy.
+         */
+        recordingUrl: a.string(),
+        recordingId: a.string(),
+        /** S3 key. The transcript is copied out of Dialpad; the audio is not. */
+        transcriptKey: a.string(),
+        /** Dialpad Ai. Short, so the timeline reads without a fetch. */
+        recapSummary: a.string(),
+        recapActionItems: a.string().array(),
+        // ── SMS ──
+        body: a.string(),
+        mms: a.boolean(),
+        mediaUrl: a.string(),
+        messageStatus: a.string(), // sent | delivered | failed | undelivered
+        // ── Matching ──
+        matchConfidence: a.ref("MatchConfidence").required(),
+        /**
+         * How many accounts this call appears on. Denormalised so a card can
+         * say "Marcia Webb — 30 associations" without counting join rows.
+         * That label is what stops a SHARED call being read as a call about
+         * whichever association's timeline it is being read on.
+         */
+        appearanceCount: a.integer(),
+        /** Set when a person files an UNMATCHED call. Never inferred. */
+        matchedBy: a.string(),
+        matchedAt: a.datetime(),
+        /** Inbound only; drives the unread badge. */
+        readAt: a.datetime(),
+      })
+      .secondaryIndexes((index) => [
+        index("dialpadCallId"),
+        index("matchConfidence").sortKeys(["occurredAt"]),
+        // The SMS thread, keyed on the number rather than a person, so a
+        // conversation reads correctly while still unmatched and survives the
+        // caller being identified later.
+        index("externalNumber").sortKeys(["occurredAt"]),
+      ])
+      .authorization((allow) => [
+        allow.authenticated().to(["read"]),
+        allow.groups(["ADMIN"]),
+      ]),
+
+    /**
+     * Where a conversation shows up. One row per account it appears on.
+     *
+     * A call with a manager holding thirty associations writes thirty rows.
+     * That is a rounding error in DynamoDB and buys two things.
+     *
+     * **The timeline stays one query.** The alternative is deriving
+     * appearances at read time by walking `PhoneLink`, which costs a query
+     * per number on the account and — the real objection — makes history
+     * retroactive: the day that manager changes their number, every call they
+     * ever made disappears from all thirty timelines. A service record that
+     * rewrites itself is not a record. These rows are written once, at the
+     * time of the call, and never recomputed.
+     *
+     * **Re-filing is total and cheap.** A call filed from triage writes its
+     * appearances then; a call re-filed deletes the old rows and writes new
+     * ones, which the `communicationId` index makes a query rather than a
+     * scan.
+     */
+    CommunicationAccount: a
+      .model({
+        communicationId: a.id().required(),
+        accountId: a.id().required(),
+        /**
+         * Copied from the parent so one query draws a timeline. Reading the
+         * parent per row would be N reads for one screen.
+         */
+        occurredAt: a.datetime().required(),
+      })
+      .secondaryIndexes((index) => [
+        index("accountId").sortKeys(["occurredAt"]),
+        index("communicationId"),
+      ])
       .authorization((allow) => [
         allow.authenticated().to(["read"]),
         allow.groups(["ADMIN"]),
@@ -1596,6 +1778,16 @@ const schema = a
          */
         mobilePhone: a.string(),
         /**
+         * This person's Dialpad user id, so a call can be attributed to them.
+         *
+         * Optional and admin-set. The webhook resolves a producer by matching
+         * the event's `target.email` against `email` above, which needs no
+         * setup and stays correct as people join; this is the fallback for a
+         * Dialpad account whose email does not match the one they sign in
+         * with, which is the case a pure email match cannot cover.
+         */
+        dialpadUserId: a.string(),
+        /**
          * Text me when a web lead arrives. Off unless someone turns it on:
          * an alert nobody asked for is how a phone number ends up blocked.
          *
@@ -2345,6 +2537,13 @@ const schema = a
     // free of client writes is the model's own rule, which an IAM principal
     // is not subject to and a Cognito one is.
     allow.resource(dialpadPhoneIndex),
+    // The Dialpad callback reads PhoneLink to work out who rang and
+    // UserProfile to attribute it, then writes Communication and its
+    // appearances. Same note as the block above: the grant is API-wide, so
+    // the narrowness is a property of the handler. Communication is kept free
+    // of client writes by its own model rule, which binds a Cognito principal
+    // and not this one.
+    allow.resource(dialpadWebhook),
   ]);
 
 export type Schema = ClientSchema<typeof schema>;

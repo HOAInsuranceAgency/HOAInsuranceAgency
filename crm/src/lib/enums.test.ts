@@ -54,6 +54,10 @@ import {
   type CauseOfLoss,
   type ConstructionType,
   type ContactType,
+  type CommChannel,
+  type CommDirection,
+  type CommState,
+  type MatchConfidence,
   type PhoneLinkSource,
   type DefenseLimitPosition,
   type DoCoverageType,
@@ -107,9 +111,14 @@ const stillLiteralUnions: [
   NotWidened<BuildingDeductibleType>,
   NotWidened<CauseOfLoss>,
   NotWidened<PhoneLinkSource>,
+  NotWidened<CommChannel>,
+  NotWidened<CommDirection>,
+  NotWidened<CommState>,
+  NotWidened<MatchConfidence>,
 ] = [
   true, true, true, true, true, true, true, true, true, true, true, true, true,
-  true, true, true, true, true, true, true, true, true, true, true, true,
+  true, true, true, true, true, true, true, true, true, true, true, true, true,
+  true, true, true,
 ];
 
 /**

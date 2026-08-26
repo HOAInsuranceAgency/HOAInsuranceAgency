@@ -163,17 +163,40 @@ resolution returns a *list*:
 
 | Candidates | `matchConfidence` | Behaviour |
 |---|---|---|
-| 0 | `UNMATCHED` | Row created with no `accountId`. Lands in triage. |
-| 1 | `EXACT` | Attached. |
-| 2+ | `AMBIGUOUS` | Attached to the best candidate, candidates retained. |
+| 0 | `UNMATCHED` | Filed under nobody. Lands in triage. |
+| 1 | `EXACT` | Filed under the person; appears on their one account. |
+| 2+ | `SHARED` | Filed under the person; appears on all of them. |
 
-For the ambiguous case the best candidate is **the account among the
-candidates that this producer touched most recently**. That is a guess, and it
-is labelled as one: the row keeps `matchCandidates`, the timeline card renders
-a "not this one?" control, and reassigning is one click and writes an
-`Activity` row. Auto-attaching silently to the wrong association is the
-failure worth avoiding; refusing to attach at all would put a property
-manager's every call in a triage queue, which is how a queue stops being read.
+**A call is filed under the person, not under an association** (decided
+2026-08-26). This is the decision the rest of the design hangs off, so it is
+worth being explicit about what it rejects.
+
+The tempting answer is to guess — pick the association that producer touched
+most recently, mark the row uncertain, offer a one-click correction. It reads
+well and it is wrong in a way that is hard to see: when the guess misses, an
+association that was never serviced now shows a phone conversation on its
+record, and the one that *was* serviced shows nothing. Both halves are wrong,
+and W7 then feeds the wrong half into the digest, where a genuinely untouched
+lead stops being flagged because a call about a different association was
+filed against it. A silent wrong answer is worse than a visible unknown.
+
+The opposite answer — never guess, queue every call from a shared number —
+is honest but unworkable at the volume that actually occurs. A property
+manager rings often, each call becomes a to-do, and a queue full of routine
+calls stops being read. That costs the queue its actual job, which is
+surfacing the callers nobody recognises.
+
+So the CRM records what it knows and declines to invent what it does not. It
+knows *who* called: Marcia Webb, property manager. It does not know which of
+her thirty associations the call concerned, and neither would a person reading
+a phone number. The call therefore appears on all thirty, labelled as a call
+with Marcia Webb rather than as a call about any one of them.
+
+The cost is real and stated here rather than discovered later: thirty
+timelines show a call that may not concern them. That is acceptable because
+the label does not claim otherwise — and it is exactly why **W7 must not count
+a `SHARED` call as a touch** for the untouched-lead finding. Thirty accounts
+would go quiet at once. See the open questions.
 
 **Outbound calls started in the CRM skip all of this.** `initiate_call`
 accepts `custom_data`, "passed through to any subscribed call events" — so the
@@ -242,7 +265,7 @@ CommDirection:   a.enum(["INBOUND", "OUTBOUND"]),
 // not every transition it passed through. `eavesdrop`, `barge`, `parked` and
 // the recap_* states are consumed by the handler and never stored as state.
 CommState:       a.enum(["CONNECTED", "MISSED", "VOICEMAIL", "ABANDONED"]),
-MatchConfidence: a.enum(["EXACT", "AMBIGUOUS", "UNMATCHED", "MANUAL"]),
+MatchConfidence: a.enum(["EXACT", "SHARED", "UNMATCHED", "MANUAL"]),
 ```
 
 ### `PhoneLink` — the reverse index
@@ -283,11 +306,12 @@ editing the contact.
 ```ts
 Communication: a
   .model({
-    // Nullable: an unmatched call belongs to no account yet. This is the one
-    // field that makes the triage queue possible, and the reason this model
-    // cannot be folded into Activity, whose entityId is required.
-    accountId: a.id(),
+    // NO accountId. A call is filed under the person, and which accounts it
+    // appears on is CommunicationAccount's business — see the decision under
+    // Problem 01. This is also why it cannot fold into Activity, whose
+    // entityId is required and singular.
     contactId: a.id(),
+    contactName: a.string(),
     channel: a.ref("CommChannel").required(),
     direction: a.ref("CommDirection").required(),
     // Dialpad's ids. The idempotency key — the handler upserts on these, never
@@ -324,21 +348,22 @@ Communication: a
     messageStatus: a.string(), // sent | delivered | failed | undelivered
     // ── Matching ──
     matchConfidence: a.ref("MatchConfidence").required(),
-    // [{ accountId, accountName, contactName }] — retained on AMBIGUOUS so
-    // reassigning is one click and needs no re-resolution.
-    matchCandidates: a.json(),
-    // Set when a human attaches or reassigns from triage. Never inferred.
+    // How many accounts this call appears on. Denormalized so a card can say
+    // "Marcia Webb — 30 associations" without counting the join rows, which
+    // is the label that stops a SHARED call reading as a call about the one
+    // association whose timeline it is being read on.
+    appearanceCount: a.integer(),
+    // Set when a human files an UNMATCHED call from triage. Never inferred.
     matchedBy: a.string(),
     matchedAt: a.datetime(),
     // ── Reading ──
     readAt: a.datetime(), // inbound only; drives the unread badge
   })
   .secondaryIndexes((index) => [
-    index("accountId").sortKeys(["occurredAt"]),        // the timeline
     index("dialpadCallId"),                             // idempotency
     index("matchConfidence").sortKeys(["occurredAt"]),  // the triage queue
-    // The SMS thread. Keyed on the number, not the account, so a conversation
-    // survives being re-matched and reads correctly while still unmatched.
+    // The SMS thread. Keyed on the number, so a conversation reads correctly
+    // while still unmatched and survives the person being identified later.
     index("externalNumber").sortKeys(["occurredAt"]),
   ])
   .authorization((allow) => [
@@ -347,9 +372,43 @@ Communication: a
   ]),
 ```
 
-Client-read, Lambda-written over IAM. Attaching from triage and sending a text
+Client-read, Lambda-written over IAM. Filing from triage and sending a text
 are **custom mutations**, not model writes, so the model rule stays closed and
 there is no gate-without-a-rule. Precedent: `LeadReply`, `UploadPortal`.
+
+### `CommunicationAccount` — where a call shows up
+
+```ts
+CommunicationAccount: a
+  .model({
+    communicationId: a.id().required(),
+    accountId: a.id().required(),
+    // Copied from the parent so the timeline sorts and renders from one
+    // query. A timeline that had to read the parent per row would be N reads
+    // to draw one screen.
+    occurredAt: a.datetime().required(),
+  })
+  .secondaryIndexes((index) => [
+    index("accountId").sortKeys(["occurredAt"]),   // the timeline
+    index("communicationId"),                      // rewrite on re-filing
+  ])
+```
+
+One row per account a call appears on. A call with a property manager who
+holds thirty associations writes thirty rows, which is a rounding error in
+DynamoDB and buys two things worth having.
+
+**The timeline stays one query.** The alternative — deriving appearances at
+read time by walking `PhoneLink` — needs one query per number on the account
+and, worse, makes history retroactive: the day Marcia changes her number,
+every call she ever made vanishes from all thirty timelines. A service record
+that rewrites itself is not a record. These rows are written once, at the time
+of the call, and are never recomputed.
+
+**Re-filing is cheap and total.** When a human files an `UNMATCHED` call from
+triage, the appearances are written then. When a call is re-filed, the old
+rows are deleted and new ones written — the `communicationId` index is what
+makes that a single query rather than a scan.
 
 ### Additive fields on existing models
 
@@ -488,7 +547,7 @@ DynamoDB:
 **Verification.** Fixture payloads for each subscribed state. Tests for:
 out-of-order arrival leaving the newer state intact; the same event delivered
 twice producing one row; an unknown number producing `UNMATCHED` with no
-`accountId`; a two-account number producing `AMBIGUOUS` with both candidates;
+appearance; a two-account number producing `SHARED` and two appearances;
 `custom_data` overriding a would-be ambiguous match; a tampered JWT rejected;
 an `alg: none` JWT rejected.
 
@@ -510,7 +569,8 @@ each.
   `listCommunicationByAccountIdAndOccurredAt`, per PATTERNS.md § *One async
   read, one `useAsyncResource`*.
 - Cards render channel, direction, who, when, duration, and the recap summary
-  when there is one. An `AMBIGUOUS` card carries the "not this one?" control.
+  when there is one. A `SHARED` card names the person and says how many
+  associations they manage, so nobody reads it as a call about this one.
 - Unread inbound texts drive a count badge on the tab.
 
 ---
@@ -711,7 +771,11 @@ Beyond the per-workstream tests above:
    the moment to say so if it should be ADMIN-only.
 4. **Retention.** How long do transcripts live? Nothing in the CRM expires
    today; this is the first data with a reason to.
-5. **Does a call count as a touch for the untouched-lead finding?** W7 assumes
-   yes. It is worth confirming that a two-minute unanswered outbound counts
-   the same as a conversation — arguably `state = CONNECTED` should be the
-   bar, not the attempt.
+5. **Which calls count as a touch for the untouched-lead finding?** Two
+   separate questions now, and the first has a clear answer.
+   - A `SHARED` call must **not** count. Filing under the person means one
+     call with a manager appears on thirty timelines; counting it would mark
+     thirty associations serviced on the strength of one conversation and
+     silence the finding across all of them. Only `EXACT` calls are touches.
+   - Whether an unanswered outbound counts is still open. Arguably
+     `state = CONNECTED` is the bar and an attempt is not a touch.
