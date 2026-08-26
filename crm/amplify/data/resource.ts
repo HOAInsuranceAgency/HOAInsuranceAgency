@@ -26,6 +26,7 @@ import { leadReply } from "../functions/lead-reply/resource";
 import { activityLog } from "../functions/activity-log/resource";
 import { dialpadPhoneIndex } from "../functions/dialpad-phone-index/resource";
 import { dialpadWebhook } from "../functions/dialpad-webhook/resource";
+import { dialpadTriage } from "../functions/dialpad-triage/resource";
 
 /**
  * HOA CRM data model.
@@ -289,6 +290,16 @@ const schema = a
      * know who called and not which association it concerned.
      */
     MatchConfidence: a.enum(["EXACT", "SHARED", "UNMATCHED", "MANUAL"]),
+    /**
+     * What a person decided about an unidentified call.
+     *
+     * FILE and NEW_LEAD put it on a timeline. NOT_CUSTOMER and IGNORE do not,
+     * and differ in what they leave behind: NOT_CUSTOMER writes a suppressed
+     * PhoneLink so the number never queues again, IGNORE only clears this one
+     * call. Both leave the row at MANUAL with no appearances, which is the
+     * honest reading — a person looked and filed it nowhere.
+     */
+    TriageAction: a.enum(["FILE", "NEW_LEAD", "NOT_CUSTOMER", "IGNORE"]),
 
     // ── Account: Lead → Client, converted in place ─────────────────────
     //
@@ -642,6 +653,7 @@ const schema = a
         matchedAt: a.datetime(),
         /** Inbound only; drives the unread badge. */
         readAt: a.datetime(),
+        appearances: a.hasMany("CommunicationAccount", "communicationId"),
       })
       .secondaryIndexes((index) => [
         index("dialpadCallId"),
@@ -678,6 +690,12 @@ const schema = a
     CommunicationAccount: a
       .model({
         communicationId: a.id().required(),
+        /**
+         * The conversation itself, so an account's timeline is ONE query.
+         * Without this the tab reads the join rows and then fetches each
+         * parent — N round trips to draw one screen.
+         */
+        communication: a.belongsTo("Communication", "communicationId"),
         accountId: a.id().required(),
         /**
          * Copied from the parent so one query draws a timeline. Reading the
@@ -2378,6 +2396,42 @@ const schema = a
      * the reason it is a mutation rather than a settings write is that the
      * log row and the flag change come from one Lambda and cannot come apart.
      */
+    /**
+     * File an unidentified call, from the triage queue.
+     *
+     * A mutation rather than a model write for the reason `Communication` is
+     * read-only to the client at all: filing a call writes the row AND its
+     * appearance rows AND, optionally, a PhoneLink so the next call from that
+     * number resolves itself. Those have to land together or the queue and
+     * the timelines disagree about where a call went.
+     *
+     * NEW_LEAD is the one that deserves a second look. It creates an Account
+     * — which is exactly the deduplication decision `lead-intake` declined to
+     * automate — and it is a mutation a person invokes with the account list
+     * in front of them, which is the whole point. Nothing here creates a lead
+     * without somebody asking for it.
+     */
+    fileCommunication: a
+      .mutation()
+      .arguments({
+        communicationId: a.string().required(),
+        action: a.ref("TriageAction").required(),
+        /** FILE: the account to put it on. */
+        accountId: a.string(),
+        /** NEW_LEAD: what to call the association and the person. */
+        leadName: a.string(),
+        contactName: a.string(),
+        /**
+         * Write a PhoneLink too, so the next call resolves without triage.
+         * Offered rather than assumed: a number reached once from a shared
+         * office line is not necessarily that association's number.
+         */
+        rememberNumber: a.boolean(),
+      })
+      .returns(a.json())
+      .authorization((allow) => [allow.authenticated()])
+      .handler(a.handler.function(dialpadTriage)),
+
     setPremiumFinanceEnabled: a
       .mutation()
       .arguments({ enabled: a.boolean().required() })
@@ -2544,6 +2598,11 @@ const schema = a
     // of client writes by its own model rule, which binds a Cognito principal
     // and not this one.
     allow.resource(dialpadWebhook),
+    // Filing a call from the triage queue: reads the Communication, writes
+    // its appearances, and may create an Account, a Contact and a PhoneLink.
+    // The widest of the three Dialpad grants, and the only one a person
+    // invokes directly.
+    allow.resource(dialpadTriage),
   ]);
 
 export type Schema = ClientSchema<typeof schema>;

@@ -58,6 +58,7 @@ import {
   type CommDirection,
   type CommState,
   type MatchConfidence,
+  type TriageAction,
   type PhoneLinkSource,
   type DefenseLimitPosition,
   type DoCoverageType,
@@ -115,10 +116,11 @@ const stillLiteralUnions: [
   NotWidened<CommDirection>,
   NotWidened<CommState>,
   NotWidened<MatchConfidence>,
+  NotWidened<TriageAction>,
 ] = [
   true, true, true, true, true, true, true, true, true, true, true, true, true,
   true, true, true, true, true, true, true, true, true, true, true, true, true,
-  true, true, true,
+  true, true, true, true,
 ];
 
 /**

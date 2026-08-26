@@ -24,6 +24,7 @@ import { FinancingTab } from "./account/FinancingTab";
 import { PriorCarrierTab } from "./account/PriorCarrierTab";
 import { LossesTab } from "./account/LossesTab";
 import { ActivityTab } from "./account/ActivityTab";
+import { CommunicationsTab } from "./account/CommunicationsTab";
 import { CertificatesTab } from "./account/CertificatesTab";
 
 type Tab =
@@ -36,6 +37,7 @@ type Tab =
   | "financing"
   | "documents"
   | "certificates"
+  | "communications"
   | "activity";
 
 const VALID_TABS: Tab[] = [
@@ -48,6 +50,7 @@ const VALID_TABS: Tab[] = [
   "financing",
   "documents",
   "certificates",
+  "communications",
   "activity",
 ];
 
@@ -108,6 +111,10 @@ export function tabsFor(stage: string | null | undefined): [Tab, string][] {
     ["financing", "Financing"],
     ["documents", "Documents"],
     ["certificates", "Certificates"],
+    // Neither lead-only nor client-only, and deliberately so: the first
+    // conversation with a board president happens long before anything binds,
+    // and it is the conversation a lead most needs a record of.
+    ["communications", "Communications"],
     ["activity", "Activity"],
   ];
 }
@@ -272,6 +279,9 @@ export default function AccountDetail({ profile }: { profile: UserProfile }) {
       )}
       {activeTab === "certificates" && (
         <CertificatesTab account={account} profile={profile} />
+      )}
+      {activeTab === "communications" && (
+        <CommunicationsTab accountId={account.id} />
       )}
       {activeTab === "activity" && <ActivityTab accountId={account.id} />}
     </>

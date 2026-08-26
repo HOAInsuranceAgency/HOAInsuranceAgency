@@ -42,6 +42,8 @@ interface OverviewData {
   pfLoans: PfLoanRow[];
   failedDocs: DocumentRow[];
   licenses: LicenseRow[];
+  /** Calls from numbers no contact matches, waiting for somebody to say who. */
+  unmatchedCalls: number;
 }
 
 const EMPTY: OverviewData = {
@@ -54,6 +56,7 @@ const EMPTY: OverviewData = {
   pfLoans: [],
   failedDocs: [],
   licenses: [],
+  unmatchedCalls: 0,
 };
 
 export default function OverviewTab() {
@@ -71,6 +74,7 @@ export default function OverviewTab() {
         pfLoans,
         failedDocs,
         licenses,
+        unmatched,
       ] = await Promise.all([
         listAllPages((nextToken) =>
           client.models.Account.list({
@@ -103,6 +107,15 @@ export default function OverviewTab() {
           })
         ),
         listAllPages((nextToken) => client.models.License.list({ nextToken })),
+        // Only the count is wanted, but the rows are what the index returns
+        // and an unworked queue is small by design — if this is ever large,
+        // that is the thing the tile exists to say.
+        listAllPages((nextToken) =>
+          client.models.Communication.listCommunicationByMatchConfidenceAndOccurredAt(
+            { matchConfidence: "UNMATCHED" },
+            { nextToken }
+          )
+        ),
       ]);
       return {
         leads,
@@ -114,6 +127,7 @@ export default function OverviewTab() {
         pfLoans: pfLoans as PfLoanRow[],
         failedDocs: failedDocs as DocumentRow[],
         licenses: licenses as LicenseRow[],
+        unmatchedCalls: unmatched.length,
       };
     },
     [],
@@ -181,6 +195,17 @@ export default function OverviewTab() {
           label="Need attention"
           hot={attention.length > 0}
         />
+        {/* Only when there are any. A tile permanently reading zero teaches
+            people to stop looking at it, and this one has to be noticed on
+            the day it is not zero: somebody rang and nobody knows who. */}
+        {d.unmatchedCalls > 0 && (
+          <Tile
+            n={d.unmatchedCalls}
+            label="Unidentified calls"
+            hot
+            onClick={() => navigate("/communications")}
+          />
+        )}
       </div>
 
       <div className="card">

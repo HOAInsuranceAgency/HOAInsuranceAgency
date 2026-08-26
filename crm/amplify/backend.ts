@@ -47,6 +47,7 @@ import { resolveMailbox } from "./functions/mailbox";
 import { activityLog } from "./functions/activity-log/resource";
 import { dialpadPhoneIndex } from "./functions/dialpad-phone-index/resource";
 import { dialpadWebhook } from "./functions/dialpad-webhook/resource";
+import { dialpadTriage } from "./functions/dialpad-triage/resource";
 import {
   magicLinkDefine,
   magicLinkCreate,
@@ -88,6 +89,7 @@ export const backend = defineBackend({
   activityLog,
   dialpadPhoneIndex,
   dialpadWebhook,
+  dialpadTriage,
   magicLinkDefine,
   magicLinkCreate,
   magicLinkVerify,

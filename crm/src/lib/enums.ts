@@ -63,6 +63,7 @@ export type CommChannel = Schema["CommChannel"]["type"];
 export type CommDirection = Schema["CommDirection"]["type"];
 export type CommState = NonNullable<Schema["CommState"]["type"]>;
 export type MatchConfidence = Schema["MatchConfidence"]["type"];
+export type TriageAction = Schema["TriageAction"]["type"];
 export type LegalEntityType = NonNullable<Schema["LegalEntityType"]["type"]>;
 export type GlDeductibleType = NonNullable<Schema["GlDeductibleType"]["type"]>;
 export type GlPremiumBasis = NonNullable<Schema["GlPremiumBasis"]["type"]>;

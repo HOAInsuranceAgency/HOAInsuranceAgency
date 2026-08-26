@@ -26,6 +26,7 @@ import CarrierDetail from "./pages/CarrierDetail";
 import Onboarding from "./pages/Onboarding";
 import Settings from "./pages/Settings";
 import Financing from "./pages/Financing";
+import Communications from "./pages/Communications";
 import SearchResults from "./pages/SearchResults";
 import UniversalSearch from "./components/UniversalSearch";
 import QuotesList from "./pages/QuotesList";
@@ -236,6 +237,14 @@ function IconClose() {
   );
 }
 
+function IconPhone() {
+  return (
+    <svg {...iconProps}>
+      <path d="M6.2 2.8 7.6 6 6.2 7.4c.8 1.7 2.1 3 3.8 3.8L11.4 9.8l3.2 1.4v3c0 .6-.5 1-1.1 1C7.9 14.9 3.1 10.1 2.8 4.4c0-.6.4-1.1 1-1.1h2.4Z" />
+    </svg>
+  );
+}
+
 function IconCoin() {
   return (
     <svg {...iconProps}>
@@ -253,6 +262,10 @@ const NAV_ITEMS = [
   { to: "/leads", label: "Leads", icon: <IconFunnel /> },
   { to: "/clients", label: "Clients", icon: <IconUsers /> },
   { to: "/tasks", label: "Tasks", icon: <IconCheck /> },
+  // Unidentified calls. High in the list on purpose: a queue nobody passes
+  // is a queue nobody works, and the callers in it are the ones the CRM
+  // could not recognise.
+  { to: "/communications", label: "Calls", icon: <IconPhone /> },
   { to: "/carriers", label: "Carriers", icon: <IconBuilding /> },
   { to: "/settings", label: "Settings", icon: <IconGear /> },
 ];
@@ -312,10 +325,15 @@ function Shell({ profile, signOut }: { profile: UserProfile; signOut: () => void
    * the module is always on, so there is no longer a state in which the page
    * has nothing to say.
    */
+  // Financing sits immediately before Settings. Anchored on Settings rather
+  // than a literal index, which the Calls entry above would otherwise have
+  // silently shifted — the two lines had to be edited in lockstep and
+  // nothing said so.
+  const settingsAt = NAV_ITEMS.findIndex((i) => i.to === "/settings");
   const navItems = [
-    ...NAV_ITEMS.slice(0, 5),
+    ...NAV_ITEMS.slice(0, settingsAt),
     { to: "/financing", label: "Financing", icon: <IconCoin /> } as const,
-    ...NAV_ITEMS.slice(5),
+    ...NAV_ITEMS.slice(settingsAt),
   ];
 
   return (
@@ -377,6 +395,7 @@ function Shell({ profile, signOut }: { profile: UserProfile; signOut: () => void
               bookmarks people made of it. */}
           <Route path="/documents" element={<Navigate to="/search" replace />} />
           <Route path="/financing" element={<Financing />} />
+          <Route path="/communications" element={<Communications />} />
           <Route path="/settings" element={<Settings profile={profile} />} />
           <Route path="*" element={<NotFound />} />
         </Routes>

@@ -566,8 +566,9 @@ each.
 - `tabsFor()` gains `["communications", "Communications"]` for both stages —
   leads and clients alike, no `LEAD_ONLY_TABS` / `CLIENT_ONLY_TABS` entry.
 - One `useAsyncResource` over
-  `listCommunicationByAccountIdAndOccurredAt`, per PATTERNS.md § *One async
-  read, one `useAsyncResource`*.
+  `listCommunicationAccountByAccountIdAndOccurredAt`, pulling the conversation
+  in through the `belongsTo` in the same `selectionSet` — one round trip, not
+  one per row. Per PATTERNS.md § *One async read, one `useAsyncResource`*.
 - Cards render channel, direction, who, when, duration, and the recap summary
   when there is one. A `SHARED` card names the person and says how many
   associations they manage, so nobody reads it as a call about this one.
@@ -577,23 +578,36 @@ each.
 
 ## W3 — Triage queue
 
-A page at `/communications/unmatched`, and a dashboard tile.
+A page at `/communications`, a "Calls" entry in the sidebar, and a dashboard
+tile that appears only when the queue is not empty — a tile permanently
+reading zero teaches people to stop looking at it, and this one has to be
+noticed on the day somebody rang and nobody knows who.
 
 Queries `matchConfidence = UNMATCHED`, newest first. Per row: the number, when,
 how long, which agency line, and any name Dialpad's own caller ID supplied.
 
 Four actions, all custom mutations:
 
-- **Attach to account** — search, pick, done. Writes `matchedBy`/`matchedAt`
-  and, optionally, a `PhoneLink` row so the next call from that number
-  resolves itself.
-- **Create lead** — spins a `LEAD` account with the number on a primary
-  contact, then attaches. This is the human-in-the-loop dedup decision that
-  `lead-intake` declined to automate; it stays a person's call, made with the
-  account list in front of them.
-- **Not a customer** — writes a suppressed `PhoneLink`. Same number never
-  queues again.
-- **Ignore** — leaves the row, clears it from the queue.
+- **File it** (`FILE`) — pick the account. Writes `matchedBy`/`matchedAt` and,
+  optionally, a `PhoneLink` so the next call from that number resolves itself.
+  Offered rather than assumed: a number reached once from a shared
+  management-office line is not necessarily that association's.
+- **Create lead** (`NEW_LEAD`) — spins a `LEAD` account with the number on a
+  primary contact, then files on it. This is the human-in-the-loop dedup
+  decision `lead-intake` declined to automate; it stays a person's call, made
+  with the account list in front of them. Always remembers the number, because
+  a number that just created a lead *is* that lead's number.
+- **Not a customer** (`NOT_CUSTOMER`) — writes a suppressed `PhoneLink`. The
+  same number never queues again.
+- **Ignore** (`IGNORE`) — clears this one call and leaves nothing behind, so
+  the number can queue again. That difference from `NOT_CUSTOMER` is the
+  reason both exist.
+
+All four go through one `fileCommunication` mutation rather than client model
+writes, because filing is several writes that must land together: the row
+leaves the queue, its appearances appear, and a `PhoneLink` may be created.
+Split across the client, a half-applied filing leaves the queue and the
+timelines disagreeing about where a call went.
 
 ---
 

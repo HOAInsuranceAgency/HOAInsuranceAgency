@@ -30,6 +30,7 @@ describe("tabsFor", () => {
       "financing",
       "documents",
       "certificates",
+      "communications",
       "activity",
     ]);
   });
@@ -44,8 +45,24 @@ describe("tabsFor", () => {
       "financing",
       "documents",
       "certificates",
+      "communications",
       "activity",
     ]);
+  });
+
+  it("gives Communications to a lead and a client alike", () => {
+    // The first conversation with a board president happens long before
+    // anything binds, and it is the conversation a lead most needs a record
+    // of. Neither stage set may claim this tab.
+    expect(tabsFor("LEAD").map(([t]) => t)).toContain("communications");
+    expect(tabsFor("CLIENT").map(([t]) => t)).toContain("communications");
+  });
+
+  it("keeps Communications beside Activity", () => {
+    // Two timelines answering different questions — what was said, and what
+    // changed. Read together, so they sit together.
+    const tabs = tabsFor("CLIENT").map(([t]) => t);
+    expect(tabs.indexOf("activity")).toBe(tabs.indexOf("communications") + 1);
   });
 
   it("keeps Invoices next to Policies", () => {
