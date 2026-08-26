@@ -18,6 +18,7 @@ import { pfAutopay } from "../functions/pf-autopay/resource";
 import { renewalTasks } from "../functions/renewal-tasks/resource";
 import { licenseAlerts } from "../functions/license-alerts/resource";
 import { taskDigest } from "../functions/task-digest/resource";
+import { opsRollup } from "../functions/ops-rollup/resource";
 import { leadUpload } from "../functions/lead-upload/resource";
 import { uploadPortal } from "../functions/upload-portal/resource";
 import { portalSweep } from "../functions/portal-sweep/resource";
@@ -2213,6 +2214,10 @@ const schema = a
     // As with the two above, the grant is API-wide, so read-only is a property
     // of the handler rather than something the schema holds it to.
     allow.resource(taskDigest),
+    // The daily operations rollup reads across most models and writes nothing
+    // at all. Like the digests above the grant is API-wide, so read-only is a
+    // property of the handler rather than something the schema holds it to.
+    allow.resource(opsRollup),
     // Public lead uploads: reads the LeadReply the token names, creates a
     // Document and moves the window's deadline. Writes nothing else.
     allow.resource(leadUpload),

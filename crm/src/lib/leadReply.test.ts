@@ -14,6 +14,7 @@ import { propertyNameProblem } from "../../../shared/propertyName";
 import {
   PRODUCTION_ACCOUNTING_MAILBOX,
   PRODUCTION_INTERNAL_MAILBOX,
+  PRODUCTION_OWNER_MAILBOX,
   PRODUCTION_LEAD_MAILBOX,
   TEST_ACCOUNTING_MAILBOX,
   TEST_MAILBOX,
@@ -660,6 +661,26 @@ describe("the agency mailbox per branch", () => {
       expect(resolveMailbox("accounting", b)).not.toBe(
         PRODUCTION_ACCOUNTING_MAILBOX
       );
+    }
+  });
+
+  /**
+   * The owner's operations rollup names who moved what and reports the whole
+   * agency's misses. `internal` is the inbox the team works out of, so reusing
+   * it would change what the report is — this is the assertion that stops a
+   * later tidy-up collapsing the two kinds back together.
+   */
+  it("sends the operations rollup to one person, never the shared inbox", () => {
+    expect(resolveMailbox("owner", "main")).toBe(PRODUCTION_OWNER_MAILBOX);
+    expect(resolveMailbox("owner", "main")).not.toBe(PRODUCTION_INTERNAL_MAILBOX);
+    expect(PRODUCTION_OWNER_MAILBOX).not.toBe(AGENCY_FMT.emailLower);
+    expect(PRODUCTION_OWNER_MAILBOX).not.toBe(AGENCY_FMT.leadEmailLower);
+  });
+
+  it("keeps the rollup off the live mailbox on every other branch", () => {
+    for (const b of [undefined, "", "staging", "sandbox", "feature/foo", "Main"]) {
+      expect(resolveMailbox("owner", b)).toBe(TEST_MAILBOX);
+      expect(resolveMailbox("owner", b)).not.toBe(PRODUCTION_OWNER_MAILBOX);
     }
   });
 
