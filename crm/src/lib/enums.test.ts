@@ -54,6 +54,7 @@ import {
   type CauseOfLoss,
   type ConstructionType,
   type ContactType,
+  type PhoneLinkSource,
   type DefenseLimitPosition,
   type DoCoverageType,
   type DoPart,
@@ -105,9 +106,10 @@ const stillLiteralUnions: [
   NotWidened<DefenseLimitPosition>,
   NotWidened<BuildingDeductibleType>,
   NotWidened<CauseOfLoss>,
+  NotWidened<PhoneLinkSource>,
 ] = [
   true, true, true, true, true, true, true, true, true, true, true, true, true,
-  true, true, true, true, true, true, true, true, true, true, true,
+  true, true, true, true, true, true, true, true, true, true, true, true,
 ];
 
 /**

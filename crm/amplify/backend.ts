@@ -45,6 +45,7 @@ import { pfElection } from "./functions/pf-election/resource";
 import { pfAutopay } from "./functions/pf-autopay/resource";
 import { resolveMailbox } from "./functions/mailbox";
 import { activityLog } from "./functions/activity-log/resource";
+import { dialpadPhoneIndex } from "./functions/dialpad-phone-index/resource";
 import {
   magicLinkDefine,
   magicLinkCreate,
@@ -84,6 +85,7 @@ export const backend = defineBackend({
   pfElection,
   pfAutopay,
   activityLog,
+  dialpadPhoneIndex,
   magicLinkDefine,
   magicLinkCreate,
   magicLinkVerify,
@@ -220,6 +222,31 @@ for (const model of STREAMED_MODELS) {
       reportBatchItemFailures: false,
     })
   );
+
+  // The phone index takes the same two streams `activity-log` does, and only
+  // those two: a PhoneLink projects a Contact's number or an Account's, and
+  // no other model carries one.
+  //
+  // This is the SECOND consumer on Contact and Account. DynamoDB Streams
+  // allows two per shard before reads start being throttled, so those two
+  // tables are now full. A third consumer is a design change — fan out from
+  // one of these, or move the table to Kinesis — not a line to add here.
+  if (model === "Contact" || model === "Account") {
+    backend.dialpadPhoneIndex.resources.lambda.addEventSource(
+      new DynamoEventSource(table, {
+        startingPosition: StartingPosition.LATEST,
+        batchSize: 25,
+        maxBatchingWindow: Duration.seconds(5),
+        // Same reasoning as above: a poison record must not replay until the
+        // stream's 24-hour retention drops it. A missing link costs one call
+        // going to triage, which is not worth stalling a table's stream for
+        // a day to avoid.
+        retryAttempts: 2,
+        bisectBatchOnError: false,
+        reportBatchItemFailures: false,
+      })
+    );
+  }
 }
 
 // ── Auth behavior ────────────────────────────────────────────────────

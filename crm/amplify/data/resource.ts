@@ -24,6 +24,7 @@ import { uploadPortal } from "../functions/upload-portal/resource";
 import { portalSweep } from "../functions/portal-sweep/resource";
 import { leadReply } from "../functions/lead-reply/resource";
 import { activityLog } from "../functions/activity-log/resource";
+import { dialpadPhoneIndex } from "../functions/dialpad-phone-index/resource";
 
 /**
  * HOA CRM data model.
@@ -251,6 +252,15 @@ const schema = a
       "PRESIDENT",
       "OTHER",
     ]),
+    /**
+     * Where a `PhoneLink` row came from, and therefore what maintains it.
+     *
+     * CONTACT and ACCOUNT rows are derived — the stream handler owns them and
+     * will overwrite or delete them on the next write to their source. MANUAL
+     * is the exception: a row a person created from the triage queue, which
+     * nothing derives and nothing may silently reclaim.
+     */
+    PhoneLinkSource: a.enum(["CONTACT", "ACCOUNT", "MANUAL"]),
 
     // ── Account: Lead → Client, converted in place ─────────────────────
     //
@@ -429,6 +439,78 @@ const schema = a
       // idempotent. See W9.
       extractionSourceKey: a.string(),
     }),
+
+    /**
+     * Phone number → account. The reverse index nothing else provides.
+     *
+     * There are thirteen secondary indexes in this file and, before this one,
+     * not one of them was on a phone number. That is fine while a number is
+     * only ever *displayed*: a person reads it off a contact card. It stops
+     * being fine the moment something arrives holding a number and has to ask
+     * whose it is — which is what an inbound call is. Without this the only
+     * answer is a scan of `Contact`, five to seven times per call, because
+     * Dialpad describes one call in that many events.
+     *
+     * ── Derived, not authoritative ──────────────────────────────────────
+     * `Contact.phone` remains the source of truth and stays free-form,
+     * exactly as typed. These rows are a normalised projection of it,
+     * maintained by `dialpad-phone-index` off the same DynamoDB streams that
+     * feed `activity-log`. Three consequences, all deliberate:
+     *
+     *   - Nobody has to type a number differently than they do now.
+     *   - Nothing is silently rewritten under the person who typed it — the
+     *     same rationale already written on `UserProfile.mobilePhone`.
+     *   - A wrong index is repaired by replaying the source, not by data
+     *     entry. `scripts/backfill-phone-links.ts` rebuilds the whole thing.
+     *
+     * ── One number, many accounts ───────────────────────────────────────
+     * One row per (number, account) pair, and that is not an edge case. A
+     * property manager handles thirty associations, and `Contact` belongs to
+     * exactly one `Account`, so that person is thirty rows sharing a number.
+     * A lookup returning a single account would be wrong constantly and
+     * confidently; it returns a list, and the caller decides.
+     *
+     * ── Authorization ───────────────────────────────────────────────────
+     * Read to a signed-in user, everything to ADMIN, no client writes. Not
+     * caution — correctness. A staff edit here would be reverted by the next
+     * stream event on the underlying `Contact`, silently and without
+     * explanation, which is worse than not offering the edit. Numbers are
+     * corrected by editing the contact. `dialpadPhoneIndex` reaches this over
+     * IAM, which model rules do not apply to.
+     */
+    PhoneLink: a
+      .model({
+        /**
+         * E.164, normalised by `callerIdE164` — which drops a trailing
+         * extension first, so `508-233-2261 x14` indexes under the main line
+         * the caller ID will actually show.
+         */
+        e164: a.string().required(),
+        accountId: a.id().required(),
+        /** Null when the number came off the Account rather than a Contact. */
+        contactId: a.id(),
+        /**
+         * Denormalised so the triage queue can name a candidate without a
+         * read per row. Unlike `Activity.actorName` these ARE refreshed: this
+         * is a live index, not history, and a stale association name in a
+         * queue of unidentified calls is a puzzle rather than a record.
+         */
+        accountName: a.string(),
+        contactName: a.string(),
+        source: a.ref("PhoneLinkSource").required(),
+        /**
+         * Robocallers and wrong numbers, marked from the triage queue. A
+         * suppressed number still resolves — so the log says what it was —
+         * but never queues again.
+         */
+        suppressed: a.boolean(),
+        linkedAt: a.datetime().required(),
+      })
+      .secondaryIndexes((index) => [index("e164"), index("accountId")])
+      .authorization((allow) => [
+        allow.authenticated().to(["read"]),
+        allow.groups(["ADMIN"]),
+      ]),
 
     // ── Prior coverage: one row per line, per term ─────────────────────
     //
@@ -2257,6 +2339,12 @@ const schema = a
     // create/update/delete to a signed-in user — an IAM principal is not
     // subject to it, and a Cognito one is.
     allow.resource(activityLog),
+    // The phone index consumes the Contact and Account streams and writes
+    // PhoneLink rows. Same note as the block above: the grant is API-wide, so
+    // "only PhoneLink" is a property of the handler. What keeps PhoneLink
+    // free of client writes is the model's own rule, which an IAM principal
+    // is not subject to and a Cognito one is.
+    allow.resource(dialpadPhoneIndex),
   ]);
 
 export type Schema = ClientSchema<typeof schema>;

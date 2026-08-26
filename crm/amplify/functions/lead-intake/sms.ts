@@ -6,6 +6,8 @@
  * reading and the sending.
  */
 
+import { toE164 } from "../../../src/lib/phone";
+
 /** The `UserProfile` fields this reads. Structural, so a Schema row fits. */
 export interface NotifiableProfile {
   firstName?: string | null;
@@ -23,34 +25,6 @@ export interface LeadSummary {
   contactName?: string | null;
   contactPhone?: string | null;
   source?: string | null;
-}
-
-/**
- * A US mobile number in E.164, or `null` if it isn't one.
- *
- * Numbers are stored as typed, so this is where the shapes people actually
- * use — `(508) 233-2261`, `508.233.2261`, `1-508-233-2261` — become the one
- * shape SNS accepts. Anything already in `+…` form is trusted as-is, which is
- * the only way a non-US number can work at all.
- *
- * `null` rather than a guess: publishing to a malformed number is a silent
- * per-message failure in the SNS console, and the person who typed it would
- * never learn their alerts were going nowhere.
- */
-export function toE164(raw: string | null | undefined): string | null {
-  const trimmed = (raw ?? "").trim();
-  if (!trimmed) return null;
-
-  if (trimmed.startsWith("+")) {
-    const digits = trimmed.slice(1).replace(/\D/g, "");
-    // E.164 allows up to 15 digits; fewer than 8 is not a phone number.
-    return digits.length >= 8 && digits.length <= 15 ? `+${digits}` : null;
-  }
-
-  const digits = trimmed.replace(/\D/g, "");
-  if (digits.length === 10) return `+1${digits}`;
-  if (digits.length === 11 && digits.startsWith("1")) return `+${digits}`;
-  return null;
 }
 
 /** Display name for a profile, for logs — never for the message body. */

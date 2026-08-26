@@ -3,7 +3,6 @@ import {
   SMS_SEGMENT,
   leadText,
   textRecipients,
-  toE164,
   unreachableOptIns,
   type NotifiableProfile,
 } from "../../amplify/functions/lead-intake/sms";
@@ -23,37 +22,6 @@ const p = (o: Partial<NotifiableProfile> = {}): NotifiableProfile => ({
   mobilePhone: "508-233-2261",
   leadTextAlerts: true,
   ...o,
-});
-
-describe("toE164", () => {
-  it("accepts the shapes people actually type", () => {
-    for (const raw of [
-      "5082332261",
-      "508-233-2261",
-      "(508) 233-2261",
-      "508.233.2261",
-      "  508 233 2261  ",
-      "1-508-233-2261",
-      "+1 (508) 233-2261",
-    ]) {
-      expect(toE164(raw), raw).toBe("+15082332261");
-    }
-  });
-
-  it("trusts an international number already in + form", () => {
-    expect(toE164("+442071838750")).toBe("+442071838750");
-  });
-
-  it("returns null rather than guessing", () => {
-    // A malformed number is a per-message failure buried in the SNS console;
-    // the person who typed it would never learn nothing was arriving.
-    for (const raw of ["", "   ", null, undefined, "call me", "12345", "555-1234"]) {
-      expect(toE164(raw as string), String(raw)).toBeNull();
-    }
-    // Too long for E.164, and a lone "+" with nothing after it.
-    expect(toE164("+1234567890123456")).toBeNull();
-    expect(toE164("+")).toBeNull();
-  });
 });
 
 describe("textRecipients", () => {

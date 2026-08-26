@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { client, fmtDate, type UserProfile } from "../lib/client";
-import { toE164 } from "../../amplify/functions/lead-intake/sms";
+import { toE164 } from "../lib/phone";
 import { Badge, flagBadge } from "../lib/badges";
 import SignatureManager from "../components/SignatureManager";
 import { SaveStatus, useSaveStatus } from "../components/SaveStatus";

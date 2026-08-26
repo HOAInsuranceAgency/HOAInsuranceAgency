@@ -58,6 +58,7 @@ export type BuildingDeductibleType = NonNullable<
 export type CauseOfLoss = NonNullable<Schema["CauseOfLoss"]["type"]>;
 export type AggregateAppliesTo = Schema["AggregateAppliesTo"]["type"];
 export type ContactType = NonNullable<Schema["ContactType"]["type"]>;
+export type PhoneLinkSource = Schema["PhoneLinkSource"]["type"];
 export type LegalEntityType = NonNullable<Schema["LegalEntityType"]["type"]>;
 export type GlDeductibleType = NonNullable<Schema["GlDeductibleType"]["type"]>;
 export type GlPremiumBasis = NonNullable<Schema["GlPremiumBasis"]["type"]>;
