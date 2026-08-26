@@ -223,13 +223,6 @@ export const handler = async () => {
     return { sent: false, edition: edition.kind, error: "no-recipient" };
   }
 
-  const reads = {
-    "activity rows": activity.length,
-    invoices: invoices.length,
-    quotes: quotes.length,
-    "open tasks": tasks.filter((t) => t.status === "OPEN").length,
-  };
-
   /**
    * The opening paragraph, written from the figures above.
    *
@@ -265,7 +258,6 @@ export const handler = async () => {
     done,
     progress,
     read: read.text,
-    reads,
     truncated: activityTruncated,
     baseUrl: process.env.CRM_BASE_URL,
   });
@@ -294,6 +286,9 @@ export const handler = async () => {
   const summary = {
     edition: edition.kind,
     activityRows: activity.length,
+    invoices: invoices.length,
+    quotes: quotes.length,
+    openTasks: tasks.filter((t) => t.status === "OPEN").length,
     truncated: activityTruncated,
     exposed,
     closing: visible.filter((f) => f.band === "closing").length,

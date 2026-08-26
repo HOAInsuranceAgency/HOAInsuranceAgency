@@ -9,20 +9,34 @@
  * stripping, and a charset declared on every part because the copy carries "·"
  * and "—" and a client left to guess windows-1252 renders them as mojibake.
  *
- * ── The shape, and why this order ──
+ * ── Four blocks, and why not nine ──
  *
- * Worst-first, and "worst" is ranked by what cannot be undone later: coverage
- * that has lapsed, then deadlines still catchable, then money, then what was
- * done, then who did it. A reader who stops after four lines has read the
- * things that were still fixable this morning.
+ * The first version of this email had a heading for every kind of thing it
+ * knew about: exposures, closing windows, money at risk, outcomes, activity,
+ * people, standing, all-clear. On a typical morning most of those carried one
+ * or two rows, so the reader spent more attention on scaffolding than on
+ * content — and "Won: Maple Ridge $41,200" printed directly above "Bound:
+ * Maple Ridge $41,200" was the same fact twice, because two modules computed
+ * it and both got a line.
  *
- * ── Why it sends on a quiet weekday ──
+ * What survives is the smallest set of questions an owner actually asks:
  *
- * The last block always renders, and states positively what was checked and
- * found clear. Without it a short email is ambiguous — nothing wrong, or the
- * query broke? — and no scheduled function in this codebase has a delivery
- * alarm, so a silent failure would look exactly like a good day. Once the mail
- * always arrives, a *missing* one is itself the alert.
+ *   1. **Where does the business stand** — three figures, no prose.
+ *   2. **What needs me** — one ranked list, worst first.
+ *   3. **What happened** — outcomes and counts, three lines at most.
+ *   4. **Who moved things** — names and effort.
+ *
+ * The row counts the footer used to carry ("Read 1,240 activity rows, 318
+ * invoices…") went with them. They answered "did this actually run?", which
+ * the checked-and-clear line answers better by naming what it checked, and
+ * they are still in the handler's log where that question gets asked.
+ *
+ * The three risk lists became one because their headings were carrying
+ * information the rows already carry: "34 days past due" and "2 carriers past
+ * submit-by" say what kind of problem each is far better than a section title
+ * does. What the merge must NOT lose is the ranking, so severity survives as
+ * the sort and as a coloured edge, and `actionList` is written so a red row
+ * can never be pushed under the cap by a pile of ambers.
  */
 
 import { AGENCY } from "../../../../shared/agency";
@@ -31,14 +45,23 @@ import type { DoneResult } from "./done";
 import type { Progress } from "./progress";
 import type { Edition } from "./window";
 
-/** Rows per block before the rest becomes a count. */
-const CAP = { exposed: 8, closing: 8, money: 5 } as const;
+/**
+ * Rows in the action list before the rest becomes a count.
+ *
+ * Eight, where the three separate lists allowed twenty-one between them. The
+ * list is sorted worst-first, so the cap can only ever hide the least
+ * important rows — and what it hides is counted on the line beneath rather
+ * than dropped in silence.
+ */
+const MAX_ROWS = 8;
 
 const NAVY = "#142a4c";
 const RED = "#b3392e";
 const AMBER = "#92600a";
+const GREEN = "#187a4b";
 const SLATE = "#64748b";
 const MUTED = "#94a3b8";
+const HAIRLINE = "#e2e8f0";
 
 const escapeHtml = (s: string) =>
   s.replace(/[&<>"]/g, (c) => `&${{ "&": "amp", "<": "lt", ">": "gt", '"': "quot" }[c]};`);
@@ -60,7 +83,7 @@ const money = (n: number | null | undefined): string =>
         maximumFractionDigits: 0,
       });
 
-/** "Tuesday, 25 August 2026" — noon UTC so the day cannot slip a boundary. */
+/** "Tuesday, August 25, 2026" — noon UTC so the day cannot slip a boundary. */
 const longDate = (day: string): string =>
   new Date(`${day}T12:00:00Z`).toLocaleDateString("en-US", {
     weekday: "long",
@@ -70,7 +93,7 @@ const longDate = (day: string): string =>
     timeZone: "UTC",
   });
 
-/** "Tue 25 Aug" — the subject line's compact form. */
+/** "Tue, Aug 25" — the subject line's compact form. */
 const shortDate = (day: string): string =>
   new Date(`${day}T12:00:00Z`).toLocaleDateString("en-US", {
     weekday: "short",
@@ -89,8 +112,6 @@ export interface RollupInput {
   progress: Progress;
   /** The model's opening paragraph, or null when there isn't one. */
   read: string | null;
-  /** Row counts per model, for the closing line. */
-  reads: Readonly<Record<string, number>>;
   /** True when a read hit its page cap — stated, never swallowed. */
   truncated: boolean;
   baseUrl?: string;
@@ -102,87 +123,66 @@ export interface Rollup {
   html: string;
 }
 
-interface Block {
-  key: "exposed" | "closing" | "money";
-  heading: string;
-  note: string;
-  color: string;
-  tint: string;
+/**
+ * Which risk band a row belongs to, as a rank.
+ *
+ * Coverage and client loss first, then money already earned or billed, then
+ * the pipeline. This is the only place the old section order survives, and it
+ * has to: an overdue invoice and an uninsured association are not equally
+ * urgent just because they now arrive in the same list.
+ */
+const BAND_RANK: Record<Finding["band"], number> = { exposed: 0, money: 1, closing: 2 };
+
+interface ActionList {
   rows: Finding[];
-  /** Rows past the cap, and their names, for the overflow line. */
+  /** Rows past the cap. Counted, never silently dropped. */
   overflow: number;
   /** Small overdue invoices folded into one line. */
   folded: { count: number; total: number } | null;
+  /** Everything the reader could act on, before the cap. */
+  total: number;
+  urgent: number;
 }
 
 /**
- * Rows for one block, ordered, capped and folded.
+ * The one list, ordered and capped.
  *
- * Age descending inside each severity band. In a service-failure list the
- * length of the silence is the aggravating fact, so the oldest exposure reads
- * first — the opposite of a deadline list, where the nearest date wins. Money
- * is the exception and sorts by dollars, because that is what decides which
- * phone call to make.
+ * Severity outranks everything, so a red row cannot be pushed off the bottom
+ * by a pile of ambers. Inside a severity, band decides; inside a band, money
+ * sorts by dollars — that is what picks which call to make — and everything
+ * else by age, because in a service failure the length of the silence is the
+ * aggravating fact.
  */
-function blockRows(findings: readonly Finding[], key: Block["key"]): Block {
-  const all = findings.filter((f) => f.band === key && f.visibility === "row");
+export function actionList(findings: readonly Finding[]): ActionList {
+  const all = findings.filter((f) => f.visibility === "row");
 
-  let folded: Block["folded"] = null;
-  let rows = all;
-  if (key === "money") {
-    // A pile of small overdue bills is one errand, not five rows.
-    const small = all.filter(
-      (f) =>
-        f.kind === "invoice-past-due" &&
-        f.amount != null &&
-        f.amount < THRESHOLDS.INVOICE_NAME_THRESHOLD
-    );
-    if (small.length > 1) {
-      rows = all.filter((f) => !small.includes(f));
-      folded = {
-        count: small.length,
-        total: small.reduce((n, f) => n + (f.amount ?? 0), 0),
-      };
-    }
-    rows = [...rows].sort(
-      (a, b) =>
-        (a.severity === b.severity ? 0 : a.severity === "red" ? -1 : 1) ||
-        (b.amount ?? 0) - (a.amount ?? 0) ||
-        b.ageDays - a.ageDays
-    );
-  } else {
-    rows = [...all].sort(
-      (a, b) =>
-        (a.severity === b.severity ? 0 : a.severity === "red" ? -1 : 1) ||
-        b.ageDays - a.ageDays
-    );
-  }
+  // A pile of small overdue bills is one errand, not five rows.
+  const small = all.filter(
+    (f) =>
+      f.kind === "invoice-past-due" &&
+      f.amount != null &&
+      f.amount < THRESHOLDS.INVOICE_NAME_THRESHOLD
+  );
+  const folded =
+    small.length > 1
+      ? { count: small.length, total: small.reduce((n, f) => n + (f.amount ?? 0), 0) }
+      : null;
+  const kept = folded ? all.filter((f) => !small.includes(f)) : all;
 
-  const cap = CAP[key];
-  const overflow = Math.max(0, rows.length - cap);
+  const sorted = [...kept].sort((a, b) => {
+    if (a.severity !== b.severity) return a.severity === "red" ? -1 : 1;
+    if (a.band !== b.band) return BAND_RANK[a.band] - BAND_RANK[b.band];
+    if (a.band === "money") return (b.amount ?? 0) - (a.amount ?? 0);
+    return b.ageDays - a.ageDays;
+  });
 
-  const meta = {
-    exposed: {
-      heading: "Exposed",
-      note: "Coverage, money or a client is at risk right now.",
-      color: RED,
-      tint: "#fde8e6",
-    },
-    closing: {
-      heading: "Closing windows",
-      note: "Still catchable. Nothing has moved on these.",
-      color: AMBER,
-      tint: "#fdf1da",
-    },
-    money: {
-      heading: "Money at risk",
-      note: "Billed and unpaid, or earned and unbilled.",
-      color: AMBER,
-      tint: "#fdf1da",
-    },
-  }[key];
-
-  return { key, ...meta, rows: rows.slice(0, cap), overflow, folded };
+  return {
+    rows: sorted.slice(0, MAX_ROWS),
+    overflow: Math.max(0, sorted.length - MAX_ROWS),
+    folded,
+    total: all.length,
+    urgent: all.filter((f) => f.severity === "red").length,
+  };
 }
 
 /** "3 renewals not started · 2 overdue invoices" — the one-line memory. */
@@ -215,29 +215,86 @@ function clearLine(findings: readonly Finding[]): string {
     ["no bound-and-unbilled policies", "bound-not-billed"],
   ];
   const clear = checks.filter(([, kind]) => !present.has(kind)).map(([label]) => label);
-  return clear.length ? `Clear: ${clear.join(" · ")}.` : "";
+  return clear.length ? `Checked and clear: ${clear.join(" · ")}.` : "";
 }
 
-/** The DONE block's two or three sentences, already composed. */
-function doneLines(done: DoneResult): string[] {
+interface Stat {
+  figure: string;
+  label: string;
+  note: string | null;
+  color: string;
+}
+
+/**
+ * The three figures, as a strip rather than a sentence.
+ *
+ * These were two dense lines of prose separated by interpuncts, which is a
+ * shape the eye has to read rather than scan. A figure over a label is taken
+ * in at a glance, and this is the part of the email that should cost no
+ * attention at all on a normal morning.
+ */
+export function stats(p: Progress, list: ActionList): Stat[] {
+  const pace =
+    p.pacePct == null
+      ? p.priorPremium === 0 && p.mtdPremium > 0
+        ? "none at this point last month"
+        : null
+      : `${p.pacePct >= 0 ? "▲" : "▼"} ${Math.abs(Math.round(p.pacePct * 100))}% vs last month`;
+
+  return [
+    {
+      figure: money(p.mtdPremium),
+      label: `${p.monthLabel} bound`,
+      note: pace,
+      color: NAVY,
+    },
+    {
+      figure: money(p.pipelineTotal),
+      label: "in flight",
+      note: p.decisionsDue.count
+        ? `${plural(p.decisionsDue.count, "decision")} due in ${p.decisionsDue.days}d`
+        : p.pipelineCount
+          ? plural(p.pipelineCount, "open quote")
+          : null,
+      color: NAVY,
+    },
+    {
+      figure: String(list.total),
+      label: list.total === 1 ? "needs you" : "need you",
+      note: list.urgent ? `${list.urgent} urgent` : list.total ? "none urgent" : null,
+      color: list.urgent ? RED : list.total ? AMBER : GREEN,
+    },
+  ];
+}
+
+/**
+ * What happened, in at most three lines.
+ *
+ * Binds are named once. `progress.won` and `done.summary.bound` are the same
+ * policies counted by two modules — the old layout printed both, one directly
+ * under the other — so the outcome lines own the names and the counts line
+ * owns everything with no name worth printing.
+ */
+export function happenedLines(done: DoneResult, p: Progress): string[] {
   const s = done.summary;
-  if (s.empty) return ["Nothing was recorded in the CRM."];
+  if (s.empty && p.won.length === 0 && p.lost.length === 0) {
+    return ["Nothing was recorded in the CRM."];
+  }
   const lines: string[] = [];
 
-  const headline: string[] = [];
-  for (const b of s.bound) {
-    headline.push(
-      `Bound: ${b.account} ${money(b.premium)}${b.carrier ? ` (${b.carrier})` : ""}`
-    );
+  for (const w of p.won) {
+    lines.push(`Won   ${w.account} ${money(w.premium)}${w.detail ? ` · ${w.detail}` : ""}`);
   }
-  if (s.newClients.length) {
-    headline.push(`New ${s.newClients.length === 1 ? "client" : "clients"}: ${s.newClients.join(", ")}`);
+  for (const l of p.lost) {
+    lines.push(`Lost   ${l.account} ${money(l.premium)}${l.detail ? ` · ${l.detail}` : ""}`);
   }
-  if (s.certificates) headline.push(`COIs: ${s.certificates}`);
-  if (headline.length) lines.push(headline.join(" · "));
 
   const counts: string[] = [];
-  if (s.quotesAdvanced) counts.push(plural(s.quotesAdvanced, "quote") + " advanced");
+  if (s.newClients.length) {
+    counts.push(`${plural(s.newClients.length, "new client")}: ${s.newClients.join(", ")}`);
+  }
+  if (s.quotesAdvanced) counts.push(`${plural(s.quotesAdvanced, "quote")} advanced`);
+  if (s.certificates) counts.push(`${plural(s.certificates, "COI")} issued`);
   if (s.invoicesSent) {
     counts.push(
       `${plural(s.invoicesSent, "bill")} sent ${money(s.invoicesSentTotal)}` +
@@ -248,70 +305,14 @@ function doneLines(done: DoneResult): string[] {
   if (s.tasksClosed) {
     counts.push(`${plural(s.tasksClosed, "task")} closed (${s.tasksQuoted} quoted)`);
   }
-  if (counts.length) lines.push(counts.join(" · "));
-
-  const pf: string[] = [];
   if (s.downPayments) {
-    pf.push(`${plural(s.downPayments, "down payment")} ${money(s.downPaymentTotal)}`);
+    counts.push(`${plural(s.downPayments, "down payment")} ${money(s.downPaymentTotal)}`);
   }
   if (s.installments) {
-    pf.push(
-      `${plural(s.installments, "installment")} posted ${money(s.installmentTotal)} (${money(s.installmentInterest)} interest)`
-    );
+    counts.push(`${plural(s.installments, "installment")} ${money(s.installmentTotal)}`);
   }
-  if (pf.length) lines.push(`Financing: ${pf.join(" · ")}`);
+  if (counts.length) lines.push(counts.join(" · "));
 
-  return lines;
-}
-
-/**
- * The scoreboard: where the business stands, in two lines.
- *
- * This is the half a list cannot give an owner. A count of quotes advanced is
- * activity; premium bound against the same point last month is progress, and
- * the pipeline behind it is whether that continues.
- */
-function scoreboardLines(p: Progress): string[] {
-  const lines: string[] = [];
-
-  const pace =
-    p.pacePct == null
-      ? p.priorPremium === 0 && p.mtdPremium > 0
-        ? "no production at this point last month"
-        : null
-      : `${Math.abs(Math.round(p.pacePct * 100))}% ${p.pacePct >= 0 ? "ahead of" : "behind"} the same point last month`;
-
-  lines.push(
-    `${p.monthLabel} to date: ${money(p.mtdPremium)} bound across ${plural(p.mtdPolicies, "policy", "policies")}` +
-      (pace ? ` — ${pace}` : "") +
-      (p.mtdCommission > 0 ? ` · est. commission ${money(p.mtdCommission)}` : "") +
-      (p.mtdWithoutCommission
-        ? ` (${p.mtdWithoutCommission} with no commission % on file)`
-        : "")
-  );
-
-  if (p.pipelineCount > 0) {
-    lines.push(
-      `In flight: ${money(p.pipelineTotal)} across ${plural(p.pipelineCount, "open quote")} — ` +
-        p.pipeline.map((s) => `${s.count} ${s.stage.toLowerCase()} ${money(s.premium)}`).join(" · ") +
-        (p.decisionsDue.count
-          ? ` · ${plural(p.decisionsDue.count, "decision")} due within ${p.decisionsDue.days}d (${money(p.decisionsDue.premium)})`
-          : "")
-    );
-  }
-
-  return lines;
-}
-
-/** What was actually won and lost — the outcome the activity counts imply. */
-function outcomeLines(p: Progress): string[] {
-  const lines: string[] = [];
-  for (const w of p.won) {
-    lines.push(`Won: ${w.account} ${money(w.premium)}${w.detail ? ` (${w.detail})` : ""}`);
-  }
-  for (const l of p.lost) {
-    lines.push(`Lost: ${l.account} ${money(l.premium)}${l.detail ? ` — ${l.detail}` : ""}`);
-  }
   return lines;
 }
 
@@ -319,98 +320,96 @@ function outcomeLines(p: Progress): string[] {
 const PRODUCER_CAVEAT =
   "CRM writes only — calls, carrier emails, inspections and board meetings leave no record in this system.";
 
+/** One producer's line: what they moved, without the name. */
+const personDetail = (p: DoneResult["people"][number]): string =>
+  [
+    plural(p.accountsTouched, "account"),
+    p.quotesAdvanced ? `${plural(p.quotesAdvanced, "quote")} advanced` : "",
+    p.policiesBound ? plural(p.policiesBound, "bind") : "",
+    p.tasksClosed ? `${plural(p.tasksClosed, "task")} closed` : "",
+  ]
+    .filter(Boolean)
+    .join(", ");
+
 export function renderRollup(input: RollupInput): Rollup {
-  const { edition, findings, done, progress, read, reads, truncated, baseUrl } = input;
+  const { edition, findings, done, progress, read, truncated, baseUrl } = input;
   const weekend = edition.kind === "weekend";
 
-  const blocks = (weekend
-    ? (["exposed"] as const)
-    : (["exposed", "closing", "money"] as const)
-  )
-    .map((k) => blockRows(findings, k))
-    .filter((b) => b.rows.length > 0 || b.folded);
+  const list = actionList(findings);
+  const strip = weekend ? [] : stats(progress, list);
+  const happened = weekend ? [] : happenedLines(done, progress);
+  const people = weekend ? [] : done.people;
+  const standing = weekend ? null : standingLine(findings);
+  const clear = clearLine(findings);
+  const quiet = weekend || !edition.isMonday ? [] : done.quiet.slice(0, 3);
 
-  const exposedCount = findings.filter(
-    (f) => f.band === "exposed" && f.visibility === "row"
-  ).length;
-  const closingCount = weekend
-    ? 0
-    : findings.filter((f) => f.band === "closing" && f.visibility === "row").length;
-  const moneyCount = weekend
-    ? 0
-    : findings.filter((f) => f.band === "money" && f.visibility === "row").length;
-
-  // Non-zero parts only, worst first. A subject that always reads "0 exposed"
+  // Non-zero parts only, worst first. A subject that always reads "0 urgent"
   // stops being read, and this is what shows in a phone's notification
   // preview — so it names no audience and no purpose.
   const parts = [
-    exposedCount ? `${exposedCount} exposed` : null,
-    closingCount ? `${closingCount} closing` : null,
-    moneyCount ? `${moneyCount} at risk` : null,
+    list.urgent ? `${list.urgent} urgent` : null,
+    list.total - list.urgent > 0 ? `${list.total - list.urgent} open` : null,
   ].filter(Boolean) as string[];
-  const subject = `Ops — ${shortDate(edition.todayDay)} · ${parts.length ? parts.join(" · ") : "all clear"}`;
-
-  const scoreboard = weekend ? [] : scoreboardLines(progress);
-  const outcomes = weekend ? [] : outcomeLines(progress);
-  const standing = weekend ? null : standingLine(findings);
-  const clear = clearLine(findings);
-  const done3 = weekend ? [] : doneLines(done);
+  const subject = `Ops — ${shortDate(edition.todayDay)} · ${parts.length ? parts.join(", ") : "all clear"}`;
 
   const link = (path: string | null): string | null =>
     baseUrl && path ? `${baseUrl}${path}` : null;
 
   // ── Plain text ───────────────────────────────────────────────────
 
-  const textRow = (f: Finding): string =>
-    `  • ${f.subject} — ${f.clause}${f.amount != null ? ` · ${money(f.amount)}` : ""}`;
-
   const text = [
     `Ops rollup — ${longDate(edition.todayDay)}`,
     weekend ? "Weekend check — open exposures only." : `Covering ${edition.covering}.`,
     "",
     ...(read ? [read, ""] : []),
-    ...(scoreboard.length ? ["THE BUSINESS", ...scoreboard.map((l) => `  ${l}`), ""] : []),
-    ...blocks.flatMap((b) => [
-      `${b.heading.toUpperCase()} (${b.rows.length + (b.overflow || 0)})`,
-      ...b.rows.map(textRow),
-      b.folded
-        ? `  • and ${plural(b.folded.count, "smaller overdue invoice")}, ${money(b.folded.total)}`
-        : "",
-      b.overflow ? `  • +${b.overflow} more` : "",
-      "",
-    ]),
-    ...(outcomes.length ? ["WON & LOST", ...outcomes.map((l) => `  ${l}`), ""] : []),
-    ...(done3.length ? ["DONE", ...done3.map((l) => `  ${l}`), ""] : []),
-    ...(!weekend && done.people.length
+    ...(strip.length
+      ? [
+          strip
+            .map((s) => `${s.figure} ${s.label}${s.note ? ` (${s.note})` : ""}`)
+            .join("   ·   "),
+          "",
+        ]
+      : []),
+    ...(list.rows.length || list.folded
+      ? [
+          `NEEDS YOU (${list.total})`,
+          ...list.rows.map(
+            (f) =>
+              `  ${f.severity === "red" ? "!" : "·"} ${f.subject}${f.amount != null ? ` — ${money(f.amount)}` : ""}\n      ${f.clause}`
+          ),
+          ...(list.folded
+            ? [
+                `  · and ${plural(list.folded.count, "smaller overdue invoice")}, ${money(list.folded.total)}`,
+              ]
+            : []),
+          ...(list.overflow ? [`  · +${list.overflow} more`] : []),
+          "",
+        ]
+      : []),
+    ...(happened.length ? ["YESTERDAY", ...happened.map((l) => `  ${l}`), ""] : []),
+    ...(people.length
       ? [
           "WHO MOVED THINGS",
-          ...done.people.map(
-            (p) =>
-              `  • ${p.name} — ${plural(p.accountsTouched, "account")}` +
-              (p.quotesAdvanced ? `, ${plural(p.quotesAdvanced, "quote")} advanced` : "") +
-              (p.policiesBound ? `, ${plural(p.policiesBound, "bind")}` : "") +
-              (p.tasksClosed ? `, ${plural(p.tasksClosed, "task")} closed` : "") +
-              ` · 10-day: ${p.trailingAccounts}`
+          ...people.map(
+            (p) => `  ${p.name} — ${personDetail(p)} · 10-day: ${p.trailingAccounts}`
           ),
-          done.automatedChanges
-            ? `  • Automated — ${plural(done.automatedChanges, "change")}`
-            : "",
-          done.unmatchedClosers
-            ? `  (${done.unmatchedClosers} closed tasks matched no profile)`
-            : "",
+          ...(done.automatedChanges
+            ? [`  Automated — ${plural(done.automatedChanges, "change")}`]
+            : []),
+          ...(done.unmatchedClosers
+            ? [`  (${done.unmatchedClosers} closed tasks matched no profile)`]
+            : []),
           `  ${PRODUCER_CAVEAT}`,
           "",
         ]
       : []),
-    ...(edition.isMonday && done.quiet.length
+    ...(quiet.length
       ? [
           "SINCE LAST WEEK",
-          ...done.quiet
-            .slice(0, 3)
-            .map(
-              (q) =>
-                `  • ${q.name} — no CRM writes in ${plural(q.businessDays, "business day")}${q.beyondScan ? "+" : ""} — worth a check-in?`
-            ),
+          ...quiet.map(
+            (q) =>
+              `  ${q.name} — no CRM writes in ${plural(q.businessDays, "business day")}${q.beyondScan ? "+" : ""} — worth a check-in?`
+          ),
           "",
         ]
       : []),
@@ -427,75 +426,49 @@ export function renderRollup(input: RollupInput): Rollup {
 
   const font = "-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif";
 
-  const htmlRow = (f: Finding): string => {
+  /** A block heading. Small, muted, and the only chrome a section gets. */
+  const heading = (label: string, count?: number) =>
+    `          <div style="font:600 11px/1.4 ${font};color:${MUTED};text-transform:uppercase;letter-spacing:.06em;padding:0 0 10px">${escapeHtml(label)}${count != null ? ` · ${count}` : ""}</div>`;
+
+  /** A hairline-separated section. One rule per block, not a box each. */
+  const block = (body: string) => `
+        <tr><td style="padding:18px 28px 0">
+          <div style="border-top:1px solid ${HAIRLINE};padding-top:16px">
+${body}
+          </div>
+        </td></tr>`;
+
+  const statCell = (s: Stat) => `
+                <td width="33%" style="padding:0 10px 0 0;vertical-align:top">
+                  <div style="font:700 23px/1.15 ${font};color:${s.color};white-space:nowrap">${escapeHtml(s.figure)}</div>
+                  <div style="font:400 12px/1.4 ${font};color:${SLATE};padding-top:4px">${escapeHtml(s.label)}</div>
+                  ${s.note ? `<div style="font:600 11px/1.4 ${font};color:${MUTED};padding-top:2px">${escapeHtml(s.note)}</div>` : ""}
+                </td>`;
+
+  const actionRow = (f: Finding) => {
     const href = link(f.href);
     const name = escapeHtml(f.subject);
     const label = href
-      ? `<a href="${href}" style="color:${NAVY};text-decoration:none;border-bottom:1px solid #cbd5e1">${name}</a>`
+      ? `<a href="${href}" style="color:${NAVY};text-decoration:none">${name}</a>`
       : name;
+    const color = f.severity === "red" ? RED : AMBER;
     return `            <tr>
-              <td style="font:600 13px/1.45 ${font};color:${NAVY};padding:9px 10px 9px 14px;border-bottom:1px solid #f1f5f9">${label}
-                <div style="font:400 12px/1.45 ${font};color:${SLATE};padding-top:2px">${escapeHtml(f.clause)}</div>
+              <td width="3" style="background:${color};padding:0;font-size:0;line-height:0">&nbsp;</td>
+              <td style="padding:8px 10px 8px 12px;border-bottom:1px solid #f1f5f9">
+                <div style="font:600 14px/1.4 ${font};color:${NAVY}">${label}</div>
+                <div style="font:400 13px/1.45 ${font};color:${SLATE};padding-top:2px">${escapeHtml(f.clause)}</div>
               </td>
-              <td align="right" style="font:600 13px/1.45 ${font};color:${f.severity === "red" ? RED : AMBER};padding:9px 14px 9px 10px;border-bottom:1px solid #f1f5f9;white-space:nowrap">${f.amount != null ? escapeHtml(money(f.amount)) : ""}</td>
+              <td align="right" style="font:600 14px/1.4 ${font};color:${color};padding:8px 0 8px 8px;border-bottom:1px solid #f1f5f9;white-space:nowrap;vertical-align:top">${f.amount != null ? escapeHtml(money(f.amount)) : ""}</td>
             </tr>`;
   };
 
-  const htmlBlock = (b: Block): string => `
-      <tr>
-        <td style="padding:24px 0 0">
-          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse">
-            <tr>
-              <td style="background:${b.tint};border-left:3px solid ${b.color};padding:10px 14px">
-                <div style="font:600 14px/1.3 ${font};color:${b.color}">${escapeHtml(b.heading)} · ${b.rows.length + b.overflow}</div>
-                <div style="font:400 12px/1.5 ${font};color:${SLATE};padding-top:2px">${escapeHtml(b.note)}</div>
-              </td>
-            </tr>
-          </table>
-          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin-top:2px">
-${b.rows.map(htmlRow).join("\n")}
-${
-  b.folded
-    ? `            <tr><td colspan="2" style="font:400 12px/1.45 ${font};color:${SLATE};padding:9px 14px;border-bottom:1px solid #f1f5f9">and ${plural(b.folded.count, "smaller overdue invoice")}, ${escapeHtml(money(b.folded.total))}</td></tr>`
-    : ""
-}
-${
-  b.overflow
-    ? `            <tr><td colspan="2" style="font:600 12px/1.45 ${font};color:${MUTED};padding:9px 14px">+${b.overflow} more</td></tr>`
-    : ""
-}
-          </table>
-        </td>
-      </tr>`;
-
-  const paragraph = (heading: string, lines: string[]): string => `
-      <tr>
-        <td style="padding:24px 0 0">
-          <div style="font:600 11px/1.4 ${font};color:${MUTED};text-transform:uppercase;letter-spacing:.05em;padding-bottom:6px">${escapeHtml(heading)}</div>
-${lines
-  .map(
-    (l) =>
-      `          <div style="font:400 13px/1.6 ${font};color:#334155;padding:2px 0">${escapeHtml(l)}</div>`
-  )
-  .join("\n")}
-        </td>
-      </tr>`;
-
-  const peopleRows = done.people.map((p) => {
-    const detail = [
-      plural(p.accountsTouched, "account"),
-      p.quotesAdvanced ? `${plural(p.quotesAdvanced, "quote")} advanced` : "",
-      p.policiesBound ? `${plural(p.policiesBound, "bind")}` : "",
-      p.tasksClosed ? `${plural(p.tasksClosed, "task")} closed` : "",
-    ]
-      .filter(Boolean)
-      .join(", ");
-    return `            <tr>
-              <td style="font:600 13px/1.5 ${font};color:${NAVY};padding:6px 10px 6px 0;white-space:nowrap">${escapeHtml(p.name)}</td>
-              <td style="font:400 13px/1.5 ${font};color:#334155;padding:6px 10px 6px 0">${escapeHtml(detail)}</td>
-              <td align="right" style="font:400 12px/1.5 ${font};color:${MUTED};padding:6px 0;white-space:nowrap">10-day: ${p.trailingAccounts}</td>
-            </tr>`;
-  });
+  const proseRows = (lines: string[]) =>
+    lines
+      .map(
+        (l) =>
+          `          <div style="font:400 13px/1.7 ${font};color:#334155">${escapeHtml(l)}</div>`
+      )
+      .join("\n");
 
   const html = `<!doctype html>
 <html><head><meta charset="utf-8"><meta name="color-scheme" content="light only"></head>
@@ -504,82 +477,102 @@ ${lines
     <tr><td align="center">
       <table role="presentation" width="640" cellpadding="0" cellspacing="0" style="width:640px;max-width:100%;background:#ffffff;border-radius:10px;overflow:hidden;box-shadow:0 1px 3px rgba(15,23,42,.08)">
         <tr>
-          <td style="background:${NAVY};padding:22px 28px">
+          <td style="background:${NAVY};padding:20px 28px">
             <div style="font:700 17px/1.3 ${font};color:#ffffff">Ops rollup</div>
             <div style="font:400 13px/1.5 ${font};color:#a9bcd8;padding-top:3px">${escapeHtml(longDate(edition.todayDay))} · ${escapeHtml(weekend ? "weekend check — open exposures only" : `covering ${edition.covering}`)}</div>
           </td>
         </tr>
 ${
   read
-    ? `        <tr><td style="padding:22px 28px 0">
-          <div style="font:400 14px/1.65 ${font};color:#1e293b;border-left:3px solid ${NAVY};padding:2px 0 2px 14px">${escapeHtml(read)}</div>
+    ? `        <tr><td style="padding:20px 28px 0">
+          <div style="font:400 14px/1.65 ${font};color:#1e293b">${escapeHtml(read)}</div>
         </td></tr>`
     : ""
 }
-        <tr><td style="padding:0 28px 4px">
-          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse">
-${scoreboard.length ? paragraph("The business", scoreboard) : ""}
-${blocks.map(htmlBlock).join("\n")}
-${outcomes.length ? paragraph(`Won & lost · ${edition.covering}`, outcomes) : ""}
-${done3.length ? paragraph(`Done · ${edition.covering}`, done3) : ""}
 ${
-  !weekend && peopleRows.length
-    ? `      <tr>
-        <td style="padding:24px 0 0">
-          <div style="font:600 11px/1.4 ${font};color:${MUTED};text-transform:uppercase;letter-spacing:.05em;padding-bottom:6px">Who moved things</div>
+  strip.length
+    ? `        <tr><td style="padding:18px 28px 0">
+          <div style="border-top:1px solid ${HAIRLINE};padding-top:16px">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse">
+              <tr>
+${strip.map(statCell).join("\n")}
+              </tr>
+            </table>
+          </div>
+        </td></tr>`
+    : ""
+}
+${
+  list.rows.length || list.folded
+    ? block(`${heading("Needs you", list.total)}
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse">
-${peopleRows.join("\n")}
+${list.rows.map(actionRow).join("\n")}
+${
+  list.folded
+    ? `            <tr><td width="3" style="background:${AMBER};font-size:0;line-height:0">&nbsp;</td><td colspan="2" style="font:400 13px/1.45 ${font};color:${SLATE};padding:8px 0 8px 12px;border-bottom:1px solid #f1f5f9">and ${plural(list.folded.count, "smaller overdue invoice")}, ${escapeHtml(money(list.folded.total))}</td></tr>`
+    : ""
+}
+          </table>
+${
+  list.overflow
+    ? `          <div style="font:600 12px/1.5 ${font};color:${MUTED};padding-top:8px">+${list.overflow} more</div>`
+    : ""
+}`)
+    : ""
+}
+${happened.length ? block(`${heading("Yesterday")}\n${proseRows(happened)}`) : ""}
+${
+  people.length
+    ? block(`${heading("Who moved things")}
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse">
+${people
+  .map(
+    (p) => `            <tr>
+              <td style="font:600 13px/1.6 ${font};color:${NAVY};padding:2px 12px 2px 0;white-space:nowrap;vertical-align:top">${escapeHtml(p.name)}</td>
+              <td style="font:400 13px/1.6 ${font};color:#334155;padding:2px 12px 2px 0">${escapeHtml(personDetail(p))}</td>
+              <td align="right" style="font:400 12px/1.6 ${font};color:${MUTED};padding:2px 0;white-space:nowrap;vertical-align:top">10-day: ${p.trailingAccounts}</td>
+            </tr>`
+  )
+  .join("\n")}
 ${
   done.automatedChanges
-    ? `            <tr><td colspan="3" style="font:400 13px/1.5 ${font};color:${MUTED};padding:6px 0">Automated — ${plural(done.automatedChanges, "change")}</td></tr>`
+    ? `            <tr><td colspan="3" style="font:400 13px/1.6 ${font};color:${MUTED};padding:2px 0">Automated — ${plural(done.automatedChanges, "change")}</td></tr>`
     : ""
 }
           </table>
 ${
   done.unmatchedClosers
-    ? `          <div style="font:400 12px/1.5 ${font};color:${MUTED};padding-top:4px">${done.unmatchedClosers} closed ${done.unmatchedClosers === 1 ? "task" : "tasks"} matched no profile and are counted for nobody.</div>`
+    ? `          <div style="font:400 12px/1.5 ${font};color:${MUTED};padding-top:6px">${done.unmatchedClosers} closed ${done.unmatchedClosers === 1 ? "task" : "tasks"} matched no profile and are counted for nobody.</div>`
     : ""
 }
-          <div style="font:400 12px/1.55 ${font};color:${SLATE};padding-top:8px">${escapeHtml(PRODUCER_CAVEAT)}</div>
-        </td>
-      </tr>`
+          <div style="font:400 12px/1.55 ${font};color:${SLATE};padding-top:8px">${escapeHtml(PRODUCER_CAVEAT)}</div>`)
     : ""
 }
 ${
-  edition.isMonday && done.quiet.length
-    ? paragraph(
-        "Since last week",
-        done.quiet
-          .slice(0, 3)
-          .map(
+  quiet.length
+    ? block(
+        `${heading("Since last week")}\n${proseRows(
+          quiet.map(
             (q) =>
               `${q.name} — no CRM writes in ${plural(q.businessDays, "business day")}${q.beyondScan ? "+" : ""} — worth a check-in?`
           )
+        )}`
       )
-    : ""
-}
-          </table>
-        </td></tr>
-${
-  standing
-    ? `        <tr><td style="padding:22px 28px 0">
-          <div style="font:400 12px/1.6 ${font};color:${SLATE};background:#f8fafc;border-radius:6px;padding:10px 12px">Standing: ${escapeHtml(standing)}</div>
-        </td></tr>`
     : ""
 }
 ${
   baseUrl
-    ? `        <tr><td style="padding:22px 28px 0">
-          <a href="${baseUrl}/" style="display:inline-block;background:${NAVY};color:#ffffff;font:600 14px/1 ${font};text-decoration:none;padding:13px 22px;border-radius:6px">Open the CRM</a>
+    ? `        <tr><td style="padding:20px 28px 0">
+          <a href="${baseUrl}/" style="display:inline-block;background:${NAVY};color:#ffffff;font:600 14px/1 ${font};text-decoration:none;padding:12px 20px;border-radius:6px">Open the CRM</a>
         </td></tr>`
     : ""
 }
         <tr>
-          <td style="padding:22px 28px 26px">
-            <div style="border-top:1px solid #e2e8f0;padding-top:14px;font:400 12px/1.6 ${font};color:${MUTED}">
-              ${escapeHtml(clear)}<br>
-              Read ${Object.entries(reads).map(([k, v]) => `${v.toLocaleString("en-US")} ${k}`).join(", ")}.${truncated ? " A read hit its page cap — counts above may under-report." : ""}<br>
-              Silence here means no record was written, not that nobody acted: ${escapeHtml(AGENCY.name)}'s CRM has no call or email log. The dashboard's Needs-attention queue is the unfiltered version of the lists above.
+          <td style="padding:18px 28px 24px">
+            <div style="border-top:1px solid ${HAIRLINE};padding-top:14px;font:400 12px/1.6 ${font};color:${MUTED}">
+              ${standing ? `<span style="color:${SLATE}">Standing: ${escapeHtml(standing)}</span><br>` : ""}
+              ${escapeHtml(clear)}${truncated ? " A read hit its page cap — counts above may under-report." : ""}<br>
+              Silence here means no record was written, not that nobody acted: ${escapeHtml(AGENCY.name)}'s CRM has no call or email log. The dashboard's Needs-attention queue is the unfiltered version of the list above.
             </div>
           </td>
         </tr>

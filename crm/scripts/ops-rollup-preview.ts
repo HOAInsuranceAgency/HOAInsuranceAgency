@@ -221,12 +221,6 @@ async function main() {
     done,
     progress,
     read: read.text,
-    reads: {
-      "activity rows": doneInputs.activity.length,
-      invoices: invoices.length,
-      quotes: quotes.length,
-      "open tasks": tasks.filter((t) => t.status === "OPEN").length,
-    },
     truncated: false,
     baseUrl: "https://crm.protectmyhoa.com",
   });
