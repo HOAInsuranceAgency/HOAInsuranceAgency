@@ -11,8 +11,17 @@
  * set, the opening paragraph's prompt — which carries only these fixtures.
  *
  *   npx tsx scripts/ops-rollup-preview.ts [outDir]
+ *   npx tsx scripts/ops-rollup-preview.ts [outDir] --send you@example.com
+ *
+ * `--send` mails the render through SES so it can be judged in a real client
+ * rather than a browser — Outlook and Gmail are what this markup is written
+ * for, and neither renders like Chrome. It goes out from the same no-reply
+ * identity the job uses, stamped with a banner and a subject prefix marking it
+ * as fabricated: an email that looks exactly like a real operations report but
+ * names associations that do not exist is a trap for whoever reads it later.
  */
 import { writeFileSync } from "node:fs";
+import { SESv2Client, SendEmailCommand } from "@aws-sdk/client-sesv2";
 import { buildFindings, type DetectInputs } from "../amplify/functions/ops-rollup/detect";
 import { buildDone, type DoneInputs } from "../amplify/functions/ops-rollup/done";
 import { buildProgress } from "../amplify/functions/ops-rollup/progress";
@@ -229,6 +238,39 @@ async function main() {
   console.log(`read: ${read.skipped ?? "written by the model"}`);
   console.log(`findings: ${findings.length} (${visible.length} shown)`);
   console.log(`\n${out.text}\n`);
+
+  const sendIndex = process.argv.indexOf("--send");
+  if (sendIndex === -1) return;
+  const to = process.argv[sendIndex + 1];
+  if (!to) throw new Error("--send needs an address");
+
+  // Stamped, not silently identical to the real thing. Every association below
+  // is invented, and a fabricated operations report sitting in an inbox
+  // unlabelled is something somebody acts on six weeks later.
+  const banner = `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#fdf1da;border-bottom:2px solid #92600a"><tr><td align="center" style="padding:12px 16px;font:600 13px/1.5 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#92600a">SAMPLE — every association, person and figure below is invented. This is a render of the layout, not a report on the agency.</td></tr></table>`;
+
+  await new SESv2Client({ region: "us-east-1" }).send(
+    new SendEmailCommand({
+      FromEmailAddress: "HOA Insurance Agency <noreply@protectmyhoa.com>",
+      Destination: { ToAddresses: [to] },
+      Content: {
+        Simple: {
+          Subject: { Data: `[SAMPLE] ${out.subject}`, Charset: "UTF-8" },
+          Body: {
+            Text: {
+              Data: `SAMPLE — every association, person and figure below is invented.\n\n${out.text}`,
+              Charset: "UTF-8",
+            },
+            Html: {
+              Data: out.html.replace(/(<body[^>]*>)/, `$1${banner}`),
+              Charset: "UTF-8",
+            },
+          },
+        },
+      },
+    })
+  );
+  console.log(`sent to ${to}`);
 }
 
 void main();
