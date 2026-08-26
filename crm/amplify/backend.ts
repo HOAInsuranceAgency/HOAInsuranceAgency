@@ -28,6 +28,7 @@ import { invoiceNumber } from "./functions/invoice-number/resource";
 import { renewalTasks } from "./functions/renewal-tasks/resource";
 import { licenseAlerts } from "./functions/license-alerts/resource";
 import { taskDigest } from "./functions/task-digest/resource";
+import { opsRollup } from "./functions/ops-rollup/resource";
 import { leadUpload } from "./functions/lead-upload/resource";
 import { leadReply } from "./functions/lead-reply/resource";
 import { uploadPortal } from "./functions/upload-portal/resource";
@@ -67,6 +68,7 @@ export const backend = defineBackend({
   renewalTasks,
   licenseAlerts,
   taskDigest,
+  opsRollup,
   leadUpload,
   leadReply,
   uploadPortal,
@@ -377,6 +379,22 @@ backend.taskDigest.addEnvironment("TASK_DIGEST_FROM", magicLinkFrom);
 backend.taskDigest.addEnvironment("AGENCY_MAILBOX", internalMailbox);
 backend.taskDigest.addEnvironment("CRM_BASE_URL", magicLinkBaseUrl);
 
+/**
+ * The owner's daily operations rollup.
+ *
+ * Same verified no-reply sender as everything else — a dedicated identity
+ * would mean a new SES verified domain or address, visible in the console with
+ * publicly resolvable DKIM records, which is more discoverable than sharing
+ * the sender everything already uses.
+ *
+ * `owner` rather than `internal`: the recipient is one person, and `internal`
+ * is the inbox the whole team works out of. There is deliberately NO fallback
+ * inside the handler if this variable goes missing — see the note there.
+ */
+backend.opsRollup.addEnvironment("OPS_ROLLUP_FROM", magicLinkFrom);
+backend.opsRollup.addEnvironment("OPS_ROLLUP_TO", resolveMailbox("owner", branch));
+backend.opsRollup.addEnvironment("CRM_BASE_URL", magicLinkBaseUrl);
+
 // Invoices come from the general mailbox rather than sales: a bill is not a
 // sales conversation, and a reply to one should land where the people who
 // reconcile payments are looking.
@@ -683,6 +701,12 @@ backend.addOutput({
   custom: { stripeWebhookUrl: stripeWebhookUrl.url },
 });
 backend.taskDigest.resources.lambda.addToRolePolicy(
+  new PolicyStatement({
+    actions: ["ses:SendEmail"],
+    resources: ["*"],
+  })
+);
+backend.opsRollup.resources.lambda.addToRolePolicy(
   new PolicyStatement({
     actions: ["ses:SendEmail"],
     resources: ["*"],
