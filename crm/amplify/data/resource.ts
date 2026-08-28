@@ -252,6 +252,23 @@ const schema = a
       "OTHER",
     ]),
 
+    // Who the agency actually trades with. A property of the trading partner,
+    // not of a programme: the same MGA is an MGA on every one of its
+    // binders. Sits on Carrier.
+    MarketType: a.enum([
+      "DIRECT_CARRIER",
+      "MGA",
+      "WHOLESALER",
+      "PROGRAM_ADMINISTRATOR",
+    ]),
+    // Whose paper the risk goes on. Per AppetiteGuide rather than per
+    // Carrier, because "admitted or E&S?" is answered by the programme: a
+    // carrier that does both does it through two programmes with different
+    // TIV bands and different restrictions, which is exactly what two guides
+    // are. A carrier-level column would have to answer "both" and then be
+    // unable to say which band belonged to which.
+    PaperType: a.enum(["ADMITTED", "SURPLUS_LINES"]),
+
     // ── Account: Lead → Client, converted in place ─────────────────────
     //
     // Authenticated read/write, ADMIN-only delete. Deleting an account is the
@@ -318,6 +335,14 @@ const schema = a
         stories: a.integer(),
         coastal: a.boolean(),
         milesToCoast: a.float(), // only meaningful when coastal
+        /**
+         * Percentage of units rented rather than owner-occupied. Added for
+         * AppetiteGuide.maxRentalPct — a rental cap is the restriction
+         * carriers state most often after TIV, and without a column on this
+         * side it could only ever be recorded, never matched. Nullable: an
+         * unanswered rental percentage never excludes a carrier.
+         */
+        rentalPct: a.float(),
         roofUpdatedYear: a.integer(),
         hvacUpdatedYear: a.integer(),
         electricalUpdatedYear: a.integer(),
@@ -1349,6 +1374,11 @@ const schema = a
       profitSharingLossRatioThreshold: a.float(), // max loss ratio % to qualify for profit sharing
       commercialLines: a.boolean(), // writes commercial lines
       personalLines: a.boolean(), // writes personal lines
+      // Direct carrier / MGA / wholesaler / programme administrator — who the
+      // submission actually goes to. Nullable: every carrier predating this
+      // column has an unstated market type, and guessing one would be worse
+      // than showing "—".
+      marketType: a.ref("MarketType"),
       notes: a.string(),
       appetiteGuides: a.hasMany("AppetiteGuide", "carrierId"),
       quotes: a.hasMany("Quote", "carrierId"),
@@ -1359,12 +1389,53 @@ const schema = a
       carrierId: a.id().required(),
       carrier: a.belongsTo("Carrier", "carrierId"),
       linesWritten: a.string().array(),
+      // Admitted or surplus lines. Null means nobody has said, which is not
+      // the same as admitted — the finder never filters a guide out on an
+      // unstated value.
+      paperType: a.ref("PaperType"),
       quoteSubmissionLeadTimeDays: a.integer(),
       minValue: a.float(), // TIV range
       maxValue: a.float(),
       minConstructionYear: a.integer(),
       maxConstructionYear: a.integer(),
       states: a.string().array(), // override carrier states if narrower
+      /**
+       * What this programme is *good at*, from BEST_FIT_BUSINESS in
+       * `src/lib/client.ts` — a hand-written vocabulary with no schema
+       * counterpart, same as `linesWritten`, and for the same reason PATTERNS
+       * gives: an enum here would be the second copy the rule exists to
+       * prevent.
+       *
+       * Deliberately NOT part of appetite matching. "Clean condo" and
+       * "difficult condo" are underwriting judgement, and no account carries
+       * a column that answers them — filtering on it would silently drop
+       * carriers rather than rank them. It is shown, sorted on and eyeballed;
+       * the columns below are what actually decide a match.
+       */
+      bestFitBusiness: a.string().array(),
+      // ── Key restrictions ───────────────────────────────────────────
+      //
+      // Each one matches against a column an Account already carries (or, for
+      // `maxRentalPct`, one added alongside it), which is the bar for being a
+      // column here at all: a restriction nothing can match on stays in
+      // `notes`. All nullable, and an unstated restriction never excludes —
+      // a blank guide behaves exactly as it did before this shipped.
+      //
+      // `writesCoastal: false` excludes an account flagged coastal outright;
+      // `minMilesToCoast` is the softer form — write coastal, but not within
+      // N miles of the water. Both read Account.coastal / .milesToCoast.
+      writesCoastal: a.boolean(),
+      minMilesToCoast: a.float(),
+      // Percentage of units rented rather than owner-occupied. Reads
+      // Account.rentalPct.
+      maxRentalPct: a.float(),
+      // Loss history, counted over the fixed five-year window every
+      // submission asks about — LOSS_LOOKBACK_YEARS in `src/lib/appetite.ts`.
+      // A per-guide lookback was considered and dropped: the Appetite Finder
+      // asks the user for one loss count, and it cannot mean a different
+      // number of years for each row it is comparing against.
+      maxLosses: a.integer(),
+      maxLossIncurred: a.float(), // paid + reserved, over the same window
       notes: a.string(),
     }),
 

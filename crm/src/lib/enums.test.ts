@@ -41,6 +41,10 @@ import {
   LICENSE_RESIDENCY_OPTIONS,
   LICENSE_STATUS_LABELS,
   MANUAL_TASK_RESOLUTIONS,
+  MARKET_TYPE_LABELS,
+  MARKET_TYPE_OPTIONS,
+  PAPER_TYPE_LABELS,
+  PAPER_TYPE_OPTIONS,
   POLICY_STATUSES,
   REPLACEMENT_COST_OPTIONS,
   USER_ROLES,
@@ -67,7 +71,9 @@ import {
   type LicenseStatus,
   type MarketingTaskResolution,
   type MarketingTaskSource,
+  type MarketType,
   type OcrStatus,
+  type PaperType,
   type PolicyStatus,
   type ReplacementCostType,
   type UserRole,
@@ -105,9 +111,11 @@ const stillLiteralUnions: [
   NotWidened<DefenseLimitPosition>,
   NotWidened<BuildingDeductibleType>,
   NotWidened<CauseOfLoss>,
+  NotWidened<MarketType>,
+  NotWidened<PaperType>,
 ] = [
   true, true, true, true, true, true, true, true, true, true, true, true, true,
-  true, true, true, true, true, true, true, true, true, true, true,
+  true, true, true, true, true, true, true, true, true, true, true, true, true,
 ];
 
 /**
@@ -185,6 +193,23 @@ describe("every table covers its schema enum exactly", () => {
     expect(valuesOf(LICENSE_RESIDENCY_OPTIONS).sort()).toEqual(
       schemaEnum("LicenseResidency").sort()
     );
+  });
+
+  it("MarketType / PaperType", () => {
+    expect(valuesOf(MARKET_TYPE_OPTIONS).sort()).toEqual(
+      schemaEnum("MarketType").sort()
+    );
+    expect(Object.keys(MARKET_TYPE_LABELS).sort()).toEqual(
+      schemaEnum("MarketType").sort()
+    );
+    expect(valuesOf(PAPER_TYPE_OPTIONS).sort()).toEqual(schemaEnum("PaperType").sort());
+    expect(Object.keys(PAPER_TYPE_LABELS).sort()).toEqual(
+      schemaEnum("PaperType").sort()
+    );
+    // The label deliberately isn't the member name: the office says "E&S",
+    // and a rename of the member must not quietly change what the dropdown
+    // reads.
+    expect(PAPER_TYPE_LABELS.SURPLUS_LINES).toBe("E&S");
   });
 
   it("ReplacementCostType — options and the 140's short codes agree", () => {

@@ -9,7 +9,7 @@ import { AddressAutocomplete } from "../../lib/googlePlaces";
 import { useFormState } from "../../lib/useFormState";
 import { SaveStatus, useSaveStatus } from "../SaveStatus";
 import { inputValue, num, str } from "../../lib/formCodec";
-import { IntegerInput } from "../inputs";
+import { IntegerInput, PercentInput } from "../inputs";
 
 export default function DetailsCard({
   account,
@@ -32,6 +32,7 @@ export default function DetailsCard({
     incorporated:
       account.incorporated === true ? "yes" : account.incorporated === false ? "no" : "",
     unitCount: inputValue(account.unitCount),
+    rentalPct: inputValue(account.rentalPct),
     firewallsVerified: account.firewallsVerified ?? false,
     coastal: account.coastal ?? false,
     milesToCoast: inputValue(account.milesToCoast),
@@ -51,6 +52,10 @@ export default function DetailsCard({
       saveStatus.markError("Miles to coast can't be negative.");
       return;
     }
+    if (form.rentalPct && (Number(form.rentalPct) < 0 || Number(form.rentalPct) > 100)) {
+      saveStatus.markError("Rented units must be between 0 and 100 percent.");
+      return;
+    }
     await saveStatus.run(
       async () => {
         onChange(
@@ -65,6 +70,7 @@ export default function DetailsCard({
               incorporated:
                 form.incorporated === "yes" ? true : form.incorporated === "no" ? false : null,
               unitCount: num(form.unitCount),
+              rentalPct: num(form.rentalPct),
               firewallsVerified: form.firewallsVerified,
               coastal: form.coastal,
               milesToCoast: form.coastal ? num(form.milesToCoast) : null,
@@ -138,6 +144,17 @@ export default function DetailsCard({
           <IntegerInput
             value={form.unitCount}
             onChange={(v) => setF("unitCount", v)}
+          />
+        </div>
+        <div className="field">
+          <label>Rented units (%)</label>
+          {/* Read by every appetite guide carrying a rental cap. Blank is
+              "nobody has asked", which never excludes a carrier — so a guide
+              capping rentals at 25% still surfaces for an account whose
+              owner-occupancy nobody has recorded. */}
+          <PercentInput
+            value={form.rentalPct}
+            onChange={(v) => setF("rentalPct", v)}
           />
         </div>
         <div className="field">

@@ -66,6 +66,8 @@ export type DoCoverageType = NonNullable<Schema["DoCoverageType"]["type"]>;
 export type DefenseLimitPosition = NonNullable<
   Schema["DefenseLimitPosition"]["type"]
 >;
+export type MarketType = NonNullable<Schema["MarketType"]["type"]>;
+export type PaperType = NonNullable<Schema["PaperType"]["type"]>;
 
 /**
  * `AccountType` is re-exported from `shared/` rather than derived here: `web`
@@ -772,3 +774,40 @@ export const DEFAULT_ACCOUNT_TYPE = "ASSOCIATION" satisfies AccountType;
 export function isAccountType(v: string | null | undefined): v is AccountType {
   return v != null && (ACCOUNT_TYPES as readonly string[]).includes(v);
 }
+
+// ── Carrier market ───────────────────────────────────────────────────────────
+
+/**
+ * How the agency reaches this market. The distinction is operational, not
+ * cosmetic: a submission to a wholesaler or an MGA is a submission to
+ * somebody who then goes to a carrier, which changes who to chase and how
+ * long it takes — so it belongs on the row you look at before you submit.
+ */
+const MARKET_TYPE = {
+  DIRECT_CARRIER: "Direct carrier",
+  MGA: "MGA",
+  WHOLESALER: "Wholesaler",
+  PROGRAM_ADMINISTRATOR: "Program administrator",
+} satisfies Record<MarketType, string>;
+
+export const MARKET_TYPE_OPTIONS = optionsByLabel(MARKET_TYPE);
+
+export const MARKET_TYPE_LABELS: Record<string, string> = Object.freeze({
+  ...MARKET_TYPE,
+});
+
+/**
+ * Whose paper. `SURPLUS_LINES` is labelled "E&S" because that is what
+ * everyone in the office says and types; the schema member keeps the formal
+ * name because that is what a filing calls it.
+ */
+const PAPER_TYPE = {
+  ADMITTED: "Admitted",
+  SURPLUS_LINES: "E&S",
+} satisfies Record<PaperType, string>;
+
+export const PAPER_TYPE_OPTIONS = optionsByLabel(PAPER_TYPE);
+
+export const PAPER_TYPE_LABELS: Record<string, string> = Object.freeze({
+  ...PAPER_TYPE,
+});

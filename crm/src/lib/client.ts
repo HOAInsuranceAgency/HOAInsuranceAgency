@@ -225,6 +225,32 @@ export const LINES_OF_BUSINESS = [
   "Workers Comp",
 ];
 
+/**
+ * What a carrier programme is *good at*, as the office describes it.
+ *
+ * A hand-written vocabulary rather than a schema enum, same as
+ * `LINES_OF_BUSINESS` and for the reason PATTERNS gives under "where the rule
+ * does not apply": these are judgement labels the agency expects to reword as
+ * its book changes, and an `a.enum` would freeze them into a migration.
+ *
+ * They are read, sorted and eyeballed — never matched. `AppetiteGuide.
+ * bestFitBusiness` explains why: nothing on an account says whether it is a
+ * clean condo or a difficult one, so filtering on these would drop carriers
+ * silently instead of ranking them. The typed restriction columns beside them
+ * are what decide a match.
+ *
+ * Alphabetical.
+ */
+export const BEST_FIT_BUSINESS = [
+  "Clean condo",
+  "Coastal",
+  "Contractor",
+  "Difficult condo",
+  "High-loss",
+  "Property manager",
+  "Small commercial",
+];
+
 /** Whole numbers with thousands separators: 11000 -> "11,000". */
 export function fmtNum(n: number | null | undefined): string {
   if (n == null) return "—";

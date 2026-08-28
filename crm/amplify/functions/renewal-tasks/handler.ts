@@ -4,6 +4,7 @@ import { getAmplifyDataClientConfig } from "@aws-amplify/backend/function/runtim
 import type { Schema } from "../../data/resource";
 import { listAllPages } from "../../../src/lib/pagination";
 import type { MarketingTaskSource } from "../../../src/lib/enums";
+import { guideFits, summarizeLosses } from "../../../src/lib/appetite";
 
 /**
  * Daily renewal-marketing sweep. See resource.ts for the why.
@@ -36,10 +37,6 @@ const addDays = (day: string, n: number) => {
   return isoDay(d);
 };
 
-/** Ranges entered backwards would silently match nothing. */
-const order = (a: number | null | undefined, b: number | null | undefined) =>
-  a != null && b != null && a > b ? [b, a] : [a, b];
-
 interface Risk {
   sourceType: MarketingTaskSource;
   sourceId: string;
@@ -54,21 +51,44 @@ export const handler = async () => {
   const client = await getDataClient();
   const today = isoDay(new Date());
 
-  const [accounts, policies, carriers, guides, quotes, tasks] = await Promise.all([
-    // `.list()` caps at 100 — every read here must cover the whole table.
-    listAllPages((nextToken) => client.models.Account.list({ nextToken, limit: 200 })),
-    listAllPages((nextToken) => client.models.Policy.list({ nextToken, limit: 200 })),
-    listAllPages((nextToken) => client.models.Carrier.list({ nextToken, limit: 200 })),
-    listAllPages((nextToken) =>
-      client.models.AppetiteGuide.list({ nextToken, limit: 200 })
-    ),
-    listAllPages((nextToken) => client.models.Quote.list({ nextToken, limit: 200 })),
-    listAllPages((nextToken) =>
-      client.models.MarketingTask.list({ nextToken, limit: 200 })
-    ),
-  ]);
+  const [accounts, policies, carriers, guides, quotes, tasks, losses] =
+    await Promise.all([
+      // `.list()` caps at 100 — every read here must cover the whole table.
+      listAllPages((nextToken) => client.models.Account.list({ nextToken, limit: 200 })),
+      listAllPages((nextToken) => client.models.Policy.list({ nextToken, limit: 200 })),
+      listAllPages((nextToken) => client.models.Carrier.list({ nextToken, limit: 200 })),
+      listAllPages((nextToken) =>
+        client.models.AppetiteGuide.list({ nextToken, limit: 200 })
+      ),
+      listAllPages((nextToken) => client.models.Quote.list({ nextToken, limit: 200 })),
+      listAllPages((nextToken) =>
+        client.models.MarketingTask.list({ nextToken, limit: 200 })
+      ),
+      // Read for the guides' loss restrictions. A carrier that caps losses
+      // gets no task for an account over the cap.
+      listAllPages((nextToken) => client.models.Loss.list({ nextToken, limit: 200 })),
+    ]);
 
   const accountById = new Map(accounts.map((a) => [a.id, a]));
+
+  // Summarised once per account rather than per (risk × carrier × guide):
+  // the sweep's inner loop runs over every appointed carrier for every
+  // expiring risk, and the five-year window does not move inside a run.
+  // Bucketed in one pass rather than filtering the loss table per account,
+  // which is the same quadratic this whole handler pages its reads to avoid.
+  const lossRowsByAccount = new Map<string, (typeof losses)[number][]>();
+  for (const l of losses) {
+    const bucket = lossRowsByAccount.get(l.accountId);
+    if (bucket) bucket.push(l);
+    else lossRowsByAccount.set(l.accountId, [l]);
+  }
+  const lossesByAccount = new Map(
+    accounts.map((a) => [
+      a.id,
+      summarizeLosses(lossRowsByAccount.get(a.id) ?? [], today),
+    ])
+  );
+
   const appointed = carriers.filter((c) => c.appointed);
 
   // ── Build the list of expiring risks ────────────────────────────────
@@ -114,37 +134,31 @@ export const handler = async () => {
     return days.length ? Math.max(...days) : DEFAULT_LEAD_TIME_DAYS;
   }
 
-  /** Mirrors the Appetite Finder: state, TIV, construction year, lines. */
-  function guideFits(
-    guide: (typeof guides)[number],
-    carrier: (typeof carriers)[number],
-    risk: Risk
-  ): boolean {
+  /**
+   * The account's underwriting facts, in the shape `guideFits` reads. The
+   * rules themselves live in `src/lib/appetite.ts` — shared with the Appetite
+   * Finder, which is the whole point: this used to be a second copy of them
+   * annotated "Mirrors the Appetite Finder", and mirrors drift.
+   *
+   * `paperType` is left unset on purpose. Admitted and E&S are both places a
+   * renewal can legitimately go, and a nightly job has no business preferring
+   * one; the filter exists for a human at the Finder.
+   */
+  function riskFacts(risk: Risk) {
     const acct = accountById.get(risk.accountId);
-    if (!acct) return false;
-
-    const states = (guide.states?.filter(Boolean).length ? guide.states : carrier.states) ?? [];
-    if (acct.state && states.filter(Boolean).length > 0 && !states.includes(acct.state))
-      return false;
-
-    const [loV, hiV] = order(guide.minValue, guide.maxValue);
-    if (acct.totalInsuredValue != null) {
-      if (loV != null && acct.totalInsuredValue < loV) return false;
-      if (hiV != null && acct.totalInsuredValue > hiV) return false;
-    }
-
-    const [loY, hiY] = order(guide.minConstructionYear, guide.maxConstructionYear);
-    if (acct.yearBuilt != null) {
-      if (loY != null && acct.yearBuilt < loY) return false;
-      if (hiY != null && acct.yearBuilt > hiY) return false;
-    }
-
-    // Lead-sourced risks have no lines yet — don't exclude on them.
-    const written = (guide.linesWritten ?? []).filter(Boolean);
-    if (risk.lines.length && written.length) {
-      if (!risk.lines.some((l) => written.includes(l))) return false;
-    }
-    return true;
+    if (!acct) return null;
+    const lossSummary = lossesByAccount.get(acct.id);
+    return {
+      state: acct.state,
+      totalInsuredValue: acct.totalInsuredValue,
+      yearBuilt: acct.yearBuilt,
+      coastal: acct.coastal,
+      milesToCoast: acct.milesToCoast,
+      rentalPct: acct.rentalPct,
+      lossCount: lossSummary?.count ?? null,
+      lossIncurred: lossSummary?.incurred ?? null,
+      lines: risk.lines,
+    };
   }
 
   const existingKeys = new Set(tasks.map((t) => t.dedupeKey));
@@ -165,9 +179,12 @@ export const handler = async () => {
     // Once the term has lapsed there is nothing left to market.
     if (risk.expirationDate < today) continue;
 
+    const facts = riskFacts(risk);
+    if (!facts) continue;
+
     for (const carrier of appointed) {
       const carrierGuides = guides.filter((g) => g.carrierId === carrier.id);
-      const matching = carrierGuides.filter((g) => guideFits(g, carrier, risk));
+      const matching = carrierGuides.filter((g) => guideFits(g, carrier, facts));
       // Appetite-matched only: a carrier with no matching guide is skipped.
       if (matching.length === 0) continue;
 

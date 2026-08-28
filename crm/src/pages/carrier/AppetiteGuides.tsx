@@ -1,5 +1,6 @@
 import { useState } from "react";
 import {
+  BEST_FIT_BUSINESS,
   client,
   fmtMoney,
   friendlyError,
@@ -11,6 +12,9 @@ import {
 import ConfirmButton from "../../components/ConfirmButton";
 import { useAsyncResource } from "../../lib/useAsyncResource";
 import { useFormState } from "../../lib/useFormState";
+import { bool, boolValue } from "../../lib/formCodec";
+import { PAPER_TYPE_LABELS, PAPER_TYPE_OPTIONS, type PaperType } from "../../lib/enums";
+import { LOSS_LOOKBACK_YEARS, restrictionSummary } from "../../lib/appetite";
 
 export function AppetiteGuides({ carrierId }: { carrierId: string }) {
   const res = useAsyncResource(
@@ -95,9 +99,12 @@ export function AppetiteGuides({ carrierId }: { carrierId: string }) {
             <thead>
               <tr>
                 <th>Lines</th>
+                <th>Paper</th>
+                <th>Best fit</th>
                 <th>Lead time</th>
                 <th>TIV range</th>
                 <th>Construction years</th>
+                <th>Restrictions</th>
                 <th>States</th>
                 <th>Notes</th>
                 <th></th>
@@ -108,6 +115,12 @@ export function AppetiteGuides({ carrierId }: { carrierId: string }) {
                 <tr key={g.id}>
                   <td className="small">
                     {(g.linesWritten ?? []).filter(Boolean).join(", ") || "—"}
+                  </td>
+                  <td className="small">
+                    {g.paperType ? PAPER_TYPE_LABELS[g.paperType] : "—"}
+                  </td>
+                  <td className="small">
+                    {(g.bestFitBusiness ?? []).filter(Boolean).join(", ") || "—"}
                   </td>
                   <td>
                     {g.quoteSubmissionLeadTimeDays != null
@@ -120,6 +133,7 @@ export function AppetiteGuides({ carrierId }: { carrierId: string }) {
                   <td className="small">
                     {g.minConstructionYear ?? "any"} – {g.maxConstructionYear ?? "any"}
                   </td>
+                  <td className="small">{restrictionSummary(g) || "—"}</td>
                   <td className="small">
                     {(g.states ?? []).filter(Boolean).join(", ") || "carrier default"}
                   </td>
@@ -166,12 +180,22 @@ function GuideForm({
   const str = (n: number | null | undefined) => (n == null ? "" : String(n));
   const { form, setF } = useFormState({
     lines: (existing?.linesWritten ?? []).filter((l): l is string => !!l),
+    bestFit: (existing?.bestFitBusiness ?? []).filter((b): b is string => !!b),
     states: (existing?.states ?? []).filter((s): s is string => !!s),
+    paperType: existing?.paperType ?? "",
     leadTime: str(existing?.quoteSubmissionLeadTimeDays),
     minValue: str(existing?.minValue),
     maxValue: str(existing?.maxValue),
     minYear: str(existing?.minConstructionYear),
     maxYear: str(existing?.maxConstructionYear),
+    // Tri-state, not a checkbox: "we don't write coastal" and "nobody has
+    // said" are different answers, and only the first one should exclude a
+    // coastal risk. Same reasoning as the GL/D&O application questions.
+    writesCoastal: boolValue(existing?.writesCoastal),
+    minMilesToCoast: str(existing?.minMilesToCoast),
+    maxRentalPct: str(existing?.maxRentalPct),
+    maxLosses: str(existing?.maxLosses),
+    maxLossIncurred: str(existing?.maxLossIncurred),
     notes: existing?.notes ?? "",
   });
   const [saving, setSaving] = useState(false);
@@ -189,6 +213,15 @@ function GuideForm({
       (form.maxValue && Number(form.maxValue) < 0)
     )
       problems.push("TIV values can't be negative.");
+    // A negative cap matches nothing at all, which reads in the Finder as
+    // "no carrier wants this" rather than as the typo it is.
+    if (
+      [form.minMilesToCoast, form.maxRentalPct, form.maxLosses, form.maxLossIncurred]
+        .some((v) => v && Number(v) < 0)
+    )
+      problems.push("Restriction limits can't be negative.");
+    if (form.maxRentalPct && Number(form.maxRentalPct) > 100)
+      problems.push("Rental percentage can't be over 100.");
     if (problems.length) {
       setError(problems.join(" "));
       return;
@@ -198,12 +231,21 @@ function GuideForm({
     const num = (v: string) => (v.trim() === "" ? null : Number(v));
     const payload = {
       linesWritten: form.lines,
+      bestFitBusiness: form.bestFit,
       states: form.states,
+      // "" is unstated, and the schema spells that null — an empty string
+      // would fail enum validation.
+      paperType: (form.paperType as PaperType) || null,
       quoteSubmissionLeadTimeDays: num(form.leadTime),
       minValue: num(form.minValue),
       maxValue: num(form.maxValue),
       minConstructionYear: num(form.minYear),
       maxConstructionYear: num(form.maxYear),
+      writesCoastal: bool(form.writesCoastal),
+      minMilesToCoast: num(form.minMilesToCoast),
+      maxRentalPct: num(form.maxRentalPct),
+      maxLosses: num(form.maxLosses),
+      maxLossIncurred: num(form.maxLossIncurred),
       notes: form.notes.trim() || null,
     };
     const { data, errors } = existing
@@ -246,6 +288,48 @@ function GuideForm({
             ))}
           </div>
         </div>
+        <div className="field full">
+          <label>Best-fit business</label>
+          <p className="muted small" style={{ margin: "0 0 6px" }}>
+            What this programme is good at. Shown beside the results — it is
+            not matched on, because nothing on an account records whether a
+            condo is a clean one.
+          </p>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 14px" }}>
+            {BEST_FIT_BUSINESS.map((b) => (
+              <label
+                key={b}
+                className="small"
+                style={{ display: "flex", gap: 4, alignItems: "center" }}
+              >
+                <input
+                  type="checkbox"
+                  checked={form.bestFit.includes(b)}
+                  onChange={() =>
+                    setF("bestFit", (bs) =>
+                      bs.includes(b) ? bs.filter((x) => x !== b) : [...bs, b].sort()
+                    )
+                  }
+                />
+                {b}
+              </label>
+            ))}
+          </div>
+        </div>
+        <div className="field">
+          <label>Paper</label>
+          <select
+            value={form.paperType}
+            onChange={(e) => setF("paperType", e.target.value)}
+          >
+            <option value="">—</option>
+            {PAPER_TYPE_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </div>
         <div className="field">
           <label>Submission lead time (days)</label>
           <input
@@ -270,6 +354,66 @@ function GuideForm({
         <div className="field">
           <label>Latest construction year</label>
           <input type="number" value={form.maxYear} onChange={(e) => setF("maxYear", e.target.value)} />
+        </div>
+        <div className="field full">
+          <h4 style={{ margin: "6px 0 0" }}>Key restrictions</h4>
+          <p className="muted small" style={{ margin: "4px 0 0" }}>
+            Each one is matched against what the account already records. Leave
+            a limit blank and it never excludes anyone — restrictions that
+            don't fit these boxes belong in the notes below.
+          </p>
+        </div>
+        <div className="field">
+          <label>Writes coastal?</label>
+          <select
+            value={form.writesCoastal}
+            onChange={(e) => setF("writesCoastal", e.target.value)}
+          >
+            <option value="">— not stated</option>
+            <option value="yes">Yes — writes coastal</option>
+            <option value="no">No — declines coastal</option>
+          </select>
+        </div>
+        <div className="field">
+          <label>Minimum miles to coast</label>
+          <input
+            type="number"
+            min={0}
+            step="0.1"
+            value={form.minMilesToCoast}
+            onChange={(e) => setF("minMilesToCoast", e.target.value)}
+          />
+        </div>
+        <div className="field">
+          <label>Max rentals (% of units)</label>
+          <input
+            type="number"
+            min={0}
+            max={100}
+            step="1"
+            value={form.maxRentalPct}
+            onChange={(e) => setF("maxRentalPct", e.target.value)}
+          />
+        </div>
+        <div className="field">
+          <label>Max losses (last {LOSS_LOOKBACK_YEARS} yrs)</label>
+          <input
+            type="number"
+            min={0}
+            step="1"
+            value={form.maxLosses}
+            onChange={(e) => setF("maxLosses", e.target.value)}
+          />
+        </div>
+        <div className="field">
+          <label>Max incurred, paid + reserved ($)</label>
+          <input
+            type="number"
+            min={0}
+            step="1"
+            value={form.maxLossIncurred}
+            onChange={(e) => setF("maxLossIncurred", e.target.value)}
+          />
         </div>
         <div className="field full">
           <label>

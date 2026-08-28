@@ -8,6 +8,18 @@ import {
   type Carrier,
 } from "../lib/client";
 import { Badge, flagBadge, CARRIER_APPOINTMENT_BADGE } from "../lib/badges";
+import {
+  MARKET_TYPE_LABELS,
+  PAPER_TYPE_LABELS,
+  PAPER_TYPE_OPTIONS,
+  type PaperType,
+} from "../lib/enums";
+import {
+  guideFits,
+  LOSS_LOOKBACK_YEARS,
+  restrictionSummary,
+  type AppetiteRisk,
+} from "../lib/appetite";
 import { useSort, SortTh } from "../lib/useSort";
 import { useFormState } from "../lib/useFormState";
 import { SaveStatus, useSaveStatus } from "../components/SaveStatus";
@@ -47,6 +59,7 @@ export default function Carriers() {
       name: (c) => c.name,
       status: (c) => (c.appointed ? "Appointed" : "Prospective"),
       underwriter: (c) => c.primaryUnderwriterName,
+      market: (c) => (c.marketType ? MARKET_TYPE_LABELS[c.marketType] : null),
       commission: (c) => c.standardCommissionPct,
       states: (c) => (c.states ?? []).filter(Boolean).length || null,
     },
@@ -135,6 +148,8 @@ export default function Carriers() {
                 <tr>
                   <SortTh label="Carrier" colKey="name" sortKey={sortKey} dir={dir} onToggle={toggle} />
                   <SortTh label="Status" colKey="status" sortKey={sortKey} dir={dir} onToggle={toggle} />
+                  <SortTh label="Market" colKey="market" sortKey={sortKey} dir={dir} onToggle={toggle} />
+                  <th>Paper</th>
                   <SortTh label="Underwriter" colKey="underwriter" sortKey={sortKey} dir={dir} onToggle={toggle} />
                   <SortTh label="Commission" colKey="commission" sortKey={sortKey} dir={dir} onToggle={toggle} />
                   <SortTh label="States" colKey="states" sortKey={sortKey} dir={dir} onToggle={toggle} />
@@ -147,6 +162,13 @@ export default function Carriers() {
                   const lines = [
                     ...new Set(cGuides.flatMap((g) => g.linesWritten ?? []).filter(Boolean)),
                   ];
+                  // Derived from the guides, exactly as `lines` is, because
+                  // paper is a property of the programme: a carrier doing
+                  // both shows "Admitted, E&S" without a column that has to
+                  // say "both" and then can't say which band is which.
+                  const paper = [
+                    ...new Set(cGuides.map((g) => g.paperType).filter(Boolean)),
+                  ].map((pt) => PAPER_TYPE_LABELS[pt as string]);
                   return (
                     <tr
                       key={c.id}
@@ -159,6 +181,10 @@ export default function Carriers() {
                       <td>
                         <Badge {...flagBadge(c.appointed, CARRIER_APPOINTMENT_BADGE)} />
                       </td>
+                      <td className="small">
+                        {c.marketType ? MARKET_TYPE_LABELS[c.marketType] : "—"}
+                      </td>
+                      <td className="small">{paper.join(", ") || "—"}</td>
                       <td>{c.primaryUnderwriterName ?? "—"}</td>
                       <td>{c.standardCommissionPct != null ? `${c.standardCommissionPct}%` : "—"}</td>
                       <td className="small">
@@ -178,8 +204,12 @@ export default function Carriers() {
 }
 
 /**
- * "Where do I submit this risk?" — filters appointed carriers by state, TIV,
- * and construction year against their appetite guides.
+ * "Where do I submit this risk?" — filters appointed carriers against their
+ * appetite guides.
+ *
+ * The rules live in `lib/appetite.ts`, shared with the nightly renewal sweep.
+ * They used to be written out here and again in the Lambda, under a comment
+ * promising the two agreed.
  */
 function AppetiteFinder({
   carriers,
@@ -191,41 +221,51 @@ function AppetiteFinder({
   const [state, setState] = useState("");
   const [tiv, setTiv] = useState("");
   const [year, setYear] = useState("");
+  const [paperType, setPaperType] = useState("");
+  // "" / "yes" / "no" — an unanswered coastal question must not read as "no",
+  // or every carrier declining the coast would surface for a beach-front risk.
+  const [coastal, setCoastal] = useState("");
+  const [milesToCoast, setMilesToCoast] = useState("");
+  const [rentalPct, setRentalPct] = useState("");
+  const [lossCount, setLossCount] = useState("");
+  const [lossIncurred, setLossIncurred] = useState("");
 
-  const active = state || tiv || year;
+  const criteria = [
+    state,
+    tiv,
+    year,
+    paperType,
+    coastal,
+    milesToCoast,
+    rentalPct,
+    lossCount,
+    lossIncurred,
+  ];
+  const active = criteria.some(Boolean);
+
+  const num = (v: string) => (v.trim() === "" ? null : Number(v));
+  const risk: AppetiteRisk = {
+    state: state || null,
+    totalInsuredValue: num(tiv),
+    yearBuilt: num(year),
+    paperType: (paperType as PaperType) || null,
+    coastal: coastal === "yes" ? true : coastal === "no" ? false : null,
+    milesToCoast: num(milesToCoast),
+    rentalPct: num(rentalPct),
+    lossCount: num(lossCount),
+    lossIncurred: num(lossIncurred),
+  };
 
   const matches = !active
     ? []
     : carriers
         .filter((c) => c.appointed)
-        .map((c) => {
-          const cGuides = guides.filter((g) => g.carrierId === c.id);
-          const matching = cGuides.filter((g) => {
-            const states = (g.states?.filter(Boolean).length ? g.states : c.states) ?? [];
-            if (state && states.filter(Boolean).length > 0 && !states.includes(state))
-              return false;
-            // Normalize possibly-inverted ranges (guarded at entry now, but
-            // legacy rows may still be reversed — never silently zero-match).
-            const [loV, hiV] =
-              g.minValue != null && g.maxValue != null && g.minValue > g.maxValue
-                ? [g.maxValue, g.minValue]
-                : [g.minValue, g.maxValue];
-            const [loY, hiY] =
-              g.minConstructionYear != null &&
-              g.maxConstructionYear != null &&
-              g.minConstructionYear > g.maxConstructionYear
-                ? [g.maxConstructionYear, g.minConstructionYear]
-                : [g.minConstructionYear, g.maxConstructionYear];
-            const tivN = tiv ? Number(tiv) : null;
-            if (tivN != null && loV != null && tivN < loV) return false;
-            if (tivN != null && hiV != null && tivN > hiV) return false;
-            const yearN = year ? Number(year) : null;
-            if (yearN != null && loY != null && yearN < loY) return false;
-            if (yearN != null && hiY != null && yearN > hiY) return false;
-            return true;
-          });
-          return { carrier: c, guides: matching };
-        })
+        .map((c) => ({
+          carrier: c,
+          guides: guides.filter(
+            (g) => g.carrierId === c.id && guideFits(g, c, risk)
+          ),
+        }))
         .filter((m) => m.guides.length > 0);
 
   return (
@@ -249,6 +289,63 @@ function AppetiteFinder({
           <label>Year built</label>
           <input type="number" value={year} onChange={(e) => setYear(e.target.value)} />
         </div>
+        <div className="field">
+          <label>Paper</label>
+          <select value={paperType} onChange={(e) => setPaperType(e.target.value)}>
+            <option value="">Any</option>
+            {PAPER_TYPE_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="field">
+          <label>Coastal?</label>
+          <select value={coastal} onChange={(e) => setCoastal(e.target.value)}>
+            <option value="">Any</option>
+            <option value="yes">Coastal</option>
+            <option value="no">Not coastal</option>
+          </select>
+        </div>
+        <div className="field">
+          <label>Miles to coast</label>
+          <input
+            type="number"
+            min={0}
+            step="0.1"
+            value={milesToCoast}
+            onChange={(e) => setMilesToCoast(e.target.value)}
+          />
+        </div>
+        <div className="field">
+          <label>Rented units (%)</label>
+          <input
+            type="number"
+            min={0}
+            max={100}
+            value={rentalPct}
+            onChange={(e) => setRentalPct(e.target.value)}
+          />
+        </div>
+        <div className="field">
+          <label>Losses (last {LOSS_LOOKBACK_YEARS} yrs)</label>
+          <input
+            type="number"
+            min={0}
+            value={lossCount}
+            onChange={(e) => setLossCount(e.target.value)}
+          />
+        </div>
+        <div className="field">
+          <label>Incurred, paid + reserved ($)</label>
+          <input
+            type="number"
+            min={0}
+            value={lossIncurred}
+            onChange={(e) => setLossIncurred(e.target.value)}
+          />
+        </div>
       </div>
       {active && (
         <div style={{ marginTop: 14 }}>
@@ -260,8 +357,12 @@ function AppetiteFinder({
                 <thead>
                   <tr>
                     <th>Carrier</th>
+                    <th>Market</th>
+                    <th>Paper</th>
                     <th>Lines</th>
+                    <th>Best fit</th>
                     <th>TIV range</th>
+                    <th>Restrictions</th>
                     <th>Lead time</th>
                   </tr>
                 </thead>
@@ -273,11 +374,25 @@ function AppetiteFinder({
                           <strong>{carrier.name}</strong>
                         </td>
                         <td className="small">
+                          {carrier.marketType
+                            ? MARKET_TYPE_LABELS[carrier.marketType]
+                            : "—"}
+                        </td>
+                        <td className="small">
+                          {g.paperType ? PAPER_TYPE_LABELS[g.paperType] : "—"}
+                        </td>
+                        <td className="small">
                           {(g.linesWritten ?? []).filter(Boolean).join(", ") || "—"}
+                        </td>
+                        {/* Not a match criterion — see `bestFitBusiness`. It
+                            is here to rank by eye what the columns cannot. */}
+                        <td className="small">
+                          {(g.bestFitBusiness ?? []).filter(Boolean).join(", ") || "—"}
                         </td>
                         <td className="small">
                           {fmtMoney(g.minValue)} – {fmtMoney(g.maxValue)}
                         </td>
+                        <td className="small">{restrictionSummary(g) || "—"}</td>
                         <td className="small">
                           {g.quoteSubmissionLeadTimeDays != null
                             ? `${g.quoteSubmissionLeadTimeDays} days`

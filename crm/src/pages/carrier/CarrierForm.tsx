@@ -1,6 +1,7 @@
 import { client, US_STATES, type Carrier } from "../../lib/client";
 import { SaveStatus, useSaveStatus } from "../../components/SaveStatus";
 import { useFormState } from "../../lib/useFormState";
+import { MARKET_TYPE_OPTIONS, type MarketType } from "../../lib/enums";
 
 export function CarrierForm({
   carrier,
@@ -15,6 +16,7 @@ export function CarrierForm({
   const { form, setF } = useFormState({
     name: carrier.name,
     appointed: carrier.appointed,
+    marketType: carrier.marketType ?? "",
     dateAppointed: carrier.dateAppointed ?? "",
     primaryContactName: carrier.primaryContactName ?? "",
     primaryContactEmail: carrier.primaryContactEmail ?? "",
@@ -48,6 +50,9 @@ export function CarrierForm({
           id: carrier.id,
           name: form.name.trim() || carrier.name,
           appointed: form.appointed,
+          // "" is the unstated market type, and null is how the schema
+          // spells it — an empty string would fail enum validation.
+          marketType: (form.marketType as MarketType) || null,
           dateAppointed: form.dateAppointed || null,
           primaryContactName: form.primaryContactName.trim() || null,
           primaryContactEmail: form.primaryContactEmail.trim() || null,
@@ -96,6 +101,20 @@ export function CarrierForm({
           >
             <option value="1">Appointed</option>
             <option value="0">Prospective</option>
+          </select>
+        </div>
+        <div className="field">
+          <label>Market type</label>
+          <select
+            value={form.marketType}
+            onChange={(e) => setF("marketType", e.target.value)}
+          >
+            <option value="">—</option>
+            {MARKET_TYPE_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
           </select>
         </div>
         <div className="field">
