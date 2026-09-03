@@ -203,7 +203,19 @@ export const SOCIAL = {
 
 export const NAV_LINKS = [
   { label: "Home", path: "/" },
-  { label: "HOA Insurance", path: "/what-we-do" },
+  // The two product pages, grouped. An item with `children` and no `path` is a
+  // dropdown: Navbar.astro renders it as a labelled group rather than a link, and
+  // treats the group as active when any child route is current.
+  //
+  // Grouping rather than listing them flat keeps the bar at five items. Six was
+  // already crowding the desktop layout before the mobile breakpoint.
+  {
+    label: "Coverage",
+    children: [
+      { label: "Homeowners Association (HOA) Insurance", path: "/what-we-do" },
+      { label: "Condo Association Insurance", path: "/condo-insurance" },
+    ],
+  },
   { label: "Why Choose Us", path: "/why-choose-us" },
   // Moved after Why Choose Us: the order now runs product → proof → who we are,
   // rather than putting the company before what it sells.

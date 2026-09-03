@@ -11,9 +11,11 @@
  */
 import Layout from "../layouts/Layout.astro";
 import Hero from "../components/Hero.astro";
+import HeroLookup from "../components/HeroLookup.astro";
 import CoverageMap from "../components/CoverageMap.astro";
 import { ContactForm } from "../components/ContactForm";
 import { QUOTE_URL, PHONE, PHONE_HREF } from "../constants";
+import { MARKETS } from "../data/markets";
 
 /* Named producer, shown above the enquiry form so a visitor who wants a person
    rather than a form gets one without scrolling past it.
@@ -38,6 +40,38 @@ const SPECIALIST = {
   email: "brian@protectmyhoa.com",
   photo: "/images/brian-cole.jpg",
 };
+
+/* The association types we write, each linking to /what-we-do.
+   `icon` holds raw SVG so the map below stays one loop instead of a chain of
+   `{t.icon === "..." && <svg .../>}` ternaries; it is injected with `set:html`,
+   which is safe because every string is authored here, never user input.
+   Marks are reused from the homepage and /what-we-do icon set. */
+/* Three blocks, not six.
+   The two the ads are bought on come first — HOA and condo association master
+   policy — and HO-6 sits third, tagged as the add-on it is: the owner's own
+   policy, sold alongside the master rather than instead of it.
+   Townhome, co-op and property-manager rows were cut deliberately. On a paid
+   landing surface every extra choice is a chance to hesitate, and all three were
+   already covered by the two association rows.
+   `icon` holds raw SVG so the map stays one loop; injected with `set:html`,
+   safe because every string is authored here and never user input. */
+const COVER_TYPES = [
+  {
+    title: "Homeowners associations (HOA)",
+    href: "/what-we-do",
+    icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.6L12 3l9 7.6"/><path d="M5.4 9.6V20h13.2V9.6"/><path d="M10 20v-5.2h4V20"/></svg>',
+  },
+  {
+    title: "Condo — condominium associations & trusts",
+    href: "/condo-insurance",
+    icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="18" rx="1"/><path d="M8 7h.01M12 7h.01M16 7h.01M8 11h.01M12 11h.01M16 11h.01"/><path d="M10 21v-3h4v3"/></svg>',
+  },
+  {
+    title: "Unit owners — HO-6",
+    href: "/what-we-do",
+    icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 018 0v4"/></svg>',
+  },
+];
 ---
 
 <Layout
@@ -45,28 +79,99 @@ const SPECIALIST = {
   description="Contact HOA Insurance Agency about HOA master insurance or HO-6 condo coverage. Call 508-233-2261, report a claim, or send your association's details for a free review. No broker fee."
   canonicalPath="/contact"
 >
-  {/* ═══ 01 · Hero ═══════════════════════════════════════════════════ */}
+  {/* ═══ 01 · Hero — same treatment as the homepage ══════════════════ */}
+  {/* `compact` is deliberately NOT passed alongside the action slot. Hero.astro
+       adds `hero--action` whenever an action slot is present, which sets its own
+       fixed 560px height and the padding that clears the fixed navbar. Passing
+       `compact` as well puts both classes on the section, and because
+       `.hero--compact .hero-title` is declared later in Hero.css than
+       `.hero--action .hero-title`, the compact type size wins — giving an
+       action-height hero with compact-sized type. Every other page carrying the
+       lookup omits `compact` for this reason. */}
   <Hero
     eyebrow="Contact"
     title="Talk to an HOA insurance specialist"
     subtitle="Whether you are renewing, reviewing, or starting from scratch, tell us about your association and we will put our recommendation in writing. No broker fee, now or at renewal."
     backgroundImage="/images/hero-people.jpg"
     backgroundVideo="/images/hero-video.mp4"
-    compact
-  />
+  >
+    <HeroLookup slot="action" />
+  </Hero>
 
-  {/* ═══ 02 · Contact form ══════════════════════════════════════════ */}
-  {/* ContactForm brings its own <section>, the "Contact Us Today" heading and
-       the id="contact" anchor. showClaims renders the claims + urgent block
-       beneath the address, inside the contact-info column, replacing the
-       standalone navy band this page used to carry. */}
-  <ContactForm showClaims client:visible />
+  {/* ═══ 02 · Contact + who we cover ════════════════════════════════ */}
+  {/* ONE heading for the section, then a form beside a compact sidebar.
+       The earlier version stacked three headings of near-equal weight inside the
+       panel — "Request an insurance review", "HOA & condo association insurance
+       specialists" and "Contact Us Today" — which is what made it read as
+       assembled rather than designed. A real brokerage page has one thing to say
+       here and one action to take.
+
+       The sidebar labels are small caps, not headings, so nothing competes with
+       the form. Coverage links are understated rows: they are navigation, and
+       navigation should not out-shout the conversion surface next to it. */}
+  <section class="section contact-cover" id="review" aria-labelledby="contact-h">
+    <div class="container">
+
+      <div class="contact-cover__panel">
+          {/* Heading lives INSIDE the panel. Outside it the heading sat at the
+               container edge while the form sat 44px in behind the panel padding,
+               so the two never shared a left axis. In here both inherit the same
+               padding and line up. */}
+        <div class="sec-head contact-cover__head">
+          <p class="eyebrow">Get in touch</p>
+          <h2 class="section-title" id="contact-h">Request an insurance review</h2>
+        </div>
+
+        <div class="contact-cover__grid">
+          {/* LEFT — the form. Nothing above it but the fieldset, so the first
+               thing in the panel is the thing we want done. */}
+          <div class="contact-cover__form">
+            <ContactForm part="form" client:visible />
+            {/* Fills what used to be dead space under Submit, and answers the
+                 three questions a board asks before typing: how long, what does
+                 it cost, am I committing to anything. All three are claims the
+                 site already makes elsewhere. */}
+            <ul class="form-assurance">
+              <li>A reply within one business day</li>
+              <li>No broker fee, now or at renewal</li>
+              <li>No obligation — review first, decide later</li>
+            </ul>
+          </div>
+
+          {/* RIGHT — compact sidebar. Small labels, not headings. */}
+          <div class="contact-cover__types">
+            <p class="side-label">Talk to us</p>
+            <ContactForm part="info" showClaims />
+
+          </div>
+        </div>
+
+        {/* Full width across the foot of the panel, centred, three across.
+             Moved out of the sidebar: as a narrow stacked list it competed with
+             the contact details beside it, and at three-up it reads as what it
+             is — the three things we write, not a menu. */}
+        <div class="cover-foot">
+          <p class="side-label cover-foot__label">What we cover</p>
+          <ul class="cover-blocks">
+            {COVER_TYPES.map((t) => (
+              <li>
+                <a class="cover-block" href={t.href}>
+                  <span class="cover-block__mark" aria-hidden="true" set:html={t.icon} />
+                  <span class="cover-block__title">{t.title}</span>
+                </a>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
 
   {/* ═══ 03 · Speak to a specialist ═════════════════════════════════ */}
   {/* Sits directly beneath the "Contact Us Today" block by request: the form and
        the agency's own details come first, then the named producer as the direct
        route for anyone who does not want to wait on a form. */}
-  <section class="section specialist" aria-labelledby="specialist-h">
+  <section class="section specialist" id="specialist" aria-labelledby="specialist-h">
     <div class="container">
       <div class="sec-head sec-head--center">
         <p class="eyebrow">Speak to a specialist</p>
@@ -117,7 +222,71 @@ const SPECIALIST = {
     </div>
   </section>
 
-  {/* ═══ 04 · Where we cover ════════════════════════════════════════ */}
+  {/* ═══ 04 · Our markets ═══════════════════════════════════════════ */}
+  {/* Same wall as the homepage, /why-choose-us and every state page — it reads
+       data/markets.ts, so a carrier added or retired there changes all of them at
+       once. Placed under the producer block on purpose: having met the person, the
+       next question a board asks is who he can actually place with.
+
+       The .carrier-* classes live in global.css, not Home.css, which is why this
+       needs no CSS of its own here. */}
+  <section class="section section--alt" id="markets" aria-labelledby="markets-h">
+    <div class="container">
+      <div class="sec-head sec-head--center">
+        <p class="eyebrow">Our markets</p>
+        <h2 class="section-title" id="markets-h">Markets a board will recognize</h2>
+        <p class="section-subtitle">National insurers alongside the specialists.</p>
+      </div>
+
+      {/* The set renders TWICE and the track animates to -50%, so the second copy
+           lands exactly where the first began when the loop resets — that is what
+           makes it seamless rather than snapping. The duplicate is aria-hidden so
+           assistive tech reads twelve carriers, not twenty-four. Pauses on hover
+           and focus-within, and collapses to a static wrapped grid under
+           prefers-reduced-motion. */}
+      <div class="carrier-marquee">
+        <ul class="carrier-track">
+          {MARKETS.map((m) => (
+            <li class="carrier">
+              <img
+                class="carrier__logo"
+                src={`/images/carriers/${m.slug}.png`}
+                alt={m.name}
+                width="240"
+                height="120"
+                loading="lazy"
+                decoding="async"
+              />
+            </li>
+          ))}
+          {MARKETS.map((m) => (
+            <li class="carrier" aria-hidden="true">
+              <img
+                class="carrier__logo"
+                src={`/images/carriers/${m.slug}.png`}
+                alt=""
+                width="240"
+                height="120"
+                loading="lazy"
+                decoding="async"
+              />
+            </li>
+          ))}
+        </ul>
+      </div>
+
+      <p class="carrier-note">
+        Carrier availability varies by state, association type and risk profile. Not every
+        market is approached on every placement.
+      </p>
+
+      <div class="section-cta-wrap">
+        <a href={QUOTE_URL} class="btn btn-primary">Request your market comparison</a>
+      </div>
+    </div>
+  </section>
+
+  {/* ═══ 05 · Where we cover ════════════════════════════════════════ */}
   <section class="section section--alt" id="states" aria-labelledby="states-h">
     <div class="container" style="text-align: center">
       <div class="sec-head sec-head--center">
@@ -138,6 +307,320 @@ const SPECIALIST = {
   /* Scoped to this page — Astro adds a per-component attribute, so nothing here
      can reach the other 152 pages. The section furniture (.section, .sec-head,
      .eyebrow, .section-title, .btn) comes from global.css via Layout. */
+
+
+  /* Clears the fixed navbar so a deep link (e.g. /contact#states) lands with the
+     heading visible rather than tucked under it. */
+  #review,
+  #specialist,
+  #markets,
+  #states {
+    scroll-margin-top: calc(var(--nav-height) + 20px);
+  }
+
+  /* ── 02 · Contact + who we cover ──
+     Tinted band so the panel lifts off the ground. Two gradient layers, no image:
+     a vertical wash into --color-sky (already the buttons' hover colour, so it is
+     existing brand palette) plus a faint gold radial warming the top right. */
+  .contact-cover {
+    background:
+      radial-gradient(1100px 460px at 88% 6%, rgba(229, 193, 106, 0.08), transparent 62%),
+      linear-gradient(180deg, var(--color-white) 0%, var(--color-sky) 100%);
+  }
+
+  /* Inside the panel now, so it shares the panel padding and sits on the same
+     left axis as the form. Hairline below it separates heading from content. */
+  .contact-cover__head {
+    margin-bottom: 30px;
+    padding-bottom: 26px;
+    border-bottom: 1px solid var(--color-gray-200);
+    max-width: 660px;
+  }
+
+  .contact-cover__panel {
+    background: var(--color-white);
+    border: 1px solid var(--color-gray-200);
+    border-radius: 20px;
+    box-shadow: 0 24px 60px -30px rgba(15, 23, 42, 0.2);
+    padding: 40px 44px 44px;
+  }
+
+  /* Form gets the wider column — it is the only thing here anyone has to do. */
+  .contact-cover__grid {
+    display: grid;
+    grid-template-columns: 1.25fr 1fr;
+    gap: 44px;
+    align-items: start;
+  }
+
+  .contact-cover__types {
+    border-left: 1px solid var(--color-gray-200);
+    padding-left: 44px;
+  }
+
+  /* ── Sidebar labels ──
+     Small caps, gray, letterspaced. Deliberately NOT headings: three headings of
+     similar weight in one panel is what made this look generated. These sit under
+     the form in the visual hierarchy, which is where they belong. */
+  .side-label {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--color-gray-500);
+    margin: 0 0 16px;
+  }
+
+  .side-label--spaced {
+    margin-top: 30px;
+    padding-top: 26px;
+    border-top: 1px solid var(--color-gray-200);
+  }
+
+  /* "Contact Us Today" comes from inside ContactForm and is an <h3> there, which
+     is right on the 77 pages that render the component whole. Here it is a
+     sidebar item, so it is demoted to match .side-label rather than forked into a
+     component variant. */
+  .contact-cover__types :global(.contact-heading) {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--color-gray-500);
+    margin: 0 0 14px;
+  }
+
+  .contact-cover__types :global(.contact-details) {
+    gap: 12px;
+  }
+
+  /* Claims: compact and quiet. It is a route for existing insureds, not a CTA
+     competing with Submit, so the gold button is scaled down here. */
+  .contact-cover__types :global(.contact-claims) {
+    margin-top: 24px;
+    padding-top: 22px;
+  }
+
+  .contact-cover__types :global(.contact-claims__btn) {
+    padding: 10px 16px;
+    font-size: 13.5px;
+  }
+
+  /* ── Assurance list under Submit ──
+     Ticked, small, factual. Fills the space the form used to leave empty. */
+  .form-assurance {
+    list-style: none;
+    padding: 0;
+    margin: 22px 0 0;
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+  }
+
+  .form-assurance li {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    font-size: 14px;
+    line-height: 1.5;
+    color: var(--color-gray-600);
+  }
+
+  .form-assurance li::before {
+    content: "";
+    flex: 0 0 auto;
+    width: 17px;
+    height: 17px;
+    margin-top: 1px;
+    border-radius: 50%;
+    background: var(--color-gold-dim) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%23e5c16a' stroke-width='3.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12l5 5 9-11'/%3E%3C/svg%3E") no-repeat center;
+  }
+
+
+  /* ── What we cover ──
+     Full width across the foot of the panel, above the grid's hairline so it
+     reads as the panel's closing statement rather than a fourth column. */
+  .cover-foot {
+    margin-top: 36px;
+    padding-top: 30px;
+    border-top: 1px solid var(--color-gray-200);
+  }
+
+  .cover-foot__label {
+    text-align: center;
+    margin-bottom: 18px;
+  }
+
+  /* Three across. auto-fit with a floor rather than a hard `repeat(3, …)` so the
+     row collapses to two then one on narrow screens without a media query
+     fighting it. */
+  .cover-blocks {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+    gap: 12px;
+  }
+
+  /* Stacked and centred, because at a third of the panel's width there is no room
+     for icon-title-chevron on one line. The whole tile is the link. */
+  .cover-block {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    height: 100%;
+    padding: 22px 16px 20px;
+    border-radius: 14px;
+    background: linear-gradient(
+      135deg,
+      rgba(43, 108, 176, 0.09) 0%,
+      rgba(229, 193, 106, 0.20) 100%
+    );
+    border: 1px solid rgba(229, 193, 106, 0.45);
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+    text-align: center;
+    text-decoration: none;
+    overflow: hidden;
+    transition: transform 0.25s ease, box-shadow 0.25s ease, border-color 0.25s ease,
+      background 0.25s ease;
+  }
+
+  .cover-block:hover,
+  .cover-block:focus-visible {
+    transform: translateY(-3px);
+    border-color: var(--color-gold);
+    box-shadow: 0 14px 34px -14px rgba(15, 23, 42, 0.2);
+  }
+
+  /* The richer blend, faded in on hover. Gradients are not animatable, so this
+     is an overlay whose OPACITY transitions rather than a background swap, which
+     would jump. Sits at z-index 0 with the content lifted above it. */
+  .cover-block::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+      135deg,
+      rgba(43, 108, 176, 0.16) 0%,
+      rgba(229, 193, 106, 0.34) 100%
+    );
+    opacity: 0;
+    transition: opacity 0.25s ease;
+    z-index: 0;
+  }
+
+  .cover-block:hover::after,
+  .cover-block:focus-visible::after {
+    opacity: 1;
+  }
+
+  /* Positioned children paint above a positioned pseudo-element only when they
+     are positioned themselves. Without this the overlay would cover the icon and
+     the label. */
+  .cover-block__mark,
+  .cover-block__title {
+    position: relative;
+    z-index: 1;
+  }
+
+  /* Gold edge across the top on hover. Horizontal here rather than down the left,
+     since the tile is centred and a left edge would look off-axis. */
+  .cover-block::before {
+    content: "";
+    position: absolute;
+    inset: 0 0 auto 0;
+    height: 3px;
+    background: var(--color-gold);
+    transform: scaleX(0);
+    transition: transform 0.25s ease;
+    z-index: 2;
+  }
+
+  .cover-block:hover::before,
+  .cover-block:focus-visible::before {
+    transform: scaleX(1);
+  }
+
+  /* Gold mark in a soft chip, sized up now that it leads the tile. */
+  .cover-block__mark {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    width: 44px;
+    height: 44px;
+    border-radius: 12px;
+    background: var(--color-white);
+    color: var(--color-gold);
+    transition: background 0.25s ease, color 0.25s ease;
+  }
+
+  .cover-block:hover .cover-block__mark {
+    background: var(--color-gold);
+    color: var(--color-navy-dark);
+  }
+
+  /* Link blue rather than body navy, and the tile sits on a blue ground: between
+     them nobody has to hover to work out these are clickable. */
+  .cover-block__title {
+    font-size: 14.5px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    color: var(--color-navy);
+    line-height: 1.35;
+    text-wrap: balance;
+    transition: color 0.25s ease;
+  }
+
+  .cover-block:hover .cover-block__title {
+    color: var(--color-navy-dark);
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+
+
+  @media (max-width: 900px) {
+    .contact-cover__grid {
+      grid-template-columns: 1fr;
+      gap: 36px;
+    }
+
+    .contact-cover__types {
+      border-left: 0;
+      border-top: 1px solid var(--color-gray-200);
+      padding-left: 0;
+      padding-top: 32px;
+    }
+
+    .contact-cover__panel {
+      padding: 28px 22px 32px;
+      border-radius: 16px;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .cover-block,
+    .cover-block__mark,
+    .cover-block__title,
+    .cover-block::before,
+    .cover-block::after {
+      transition: none;
+    }
+
+    /* No lift, but the gold top edge stays visible — the hover affordance
+       survives without any motion. */
+    .cover-block:hover {
+      transform: none;
+    }
+
+    .cover-block:hover::before {
+      transform: scaleX(1);
+    }
+  }
 
   .spec-card {
     display: grid;
