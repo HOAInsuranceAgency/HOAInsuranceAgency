@@ -32,8 +32,44 @@ export function ContactForm({
    * them. Pass it anywhere else that should offer the same route.
    */
   showClaims = false,
+  /**
+   * Render form-then-info stacked, WITHOUT this component's own <section>,
+   * container and grid. The caller owns the layout.
+   *
+   * Opt-in and defaults to false, so the 77 pages that render this component
+   * plainly — about-us, what-we-do, why-choose-us and every state and city page —
+   * keep the original info-left / form-right grid and the id="contact" anchor
+   * byte for byte. Only /contact passes it, to sit the form beside the coverage
+   * blocks with the agency details underneath.
+   *
+   * Nothing links to #contact any more (the navbar points at /contact as a real
+   * route), which is why dropping the anchor in this mode is safe. If an in-page
+   * link is ever added back, put the id on the caller's wrapper.
+   */
+  /**
+   * Which half to render. Lets a caller place the two halves independently.
+   *
+   *   "all"   the original <section> + info-left / form-right grid, including the
+   *           id="contact" anchor. The DEFAULT, so the 77 pages that render this
+   *           component plainly — about-us, what-we-do, why-choose-us and every
+   *           state and city page — are byte-for-byte unchanged.
+   *   "form"  the <form> alone, no wrapper.
+   *   "info"  the phone / email / address block alone (plus claims if
+   *           `showClaims`), no wrapper.
+   *
+   * /contact splits them: the form sits in the left column, the details under the
+   * coverage blocks on the right.
+   *
+   * IMPORTANT — "info" carries no interactivity, so /contact renders it with NO
+   * client directive. Astro then server-renders it to plain HTML and ships zero
+   * JavaScript for it; only the "form" half is hydrated. Adding a client
+   * directive to the info half would ship a second React root for markup that
+   * never changes.
+   */
+  part = "all",
 }: {
   showClaims?: boolean;
+  part?: "all" | "form" | "info";
 } = {}) {
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
@@ -81,9 +117,9 @@ export function ContactForm({
     }
   }
 
-  return (
-    <section className="section contact-section" id="contact">
-      <div className="container contact-grid">
+  /* Both halves are built once and placed by whichever branch runs below, so the
+     two layouts cannot drift apart. */
+  const info = (
         <div className="contact-info">
           <h3 className="contact-heading">Contact Us Today</h3>
           <div className="contact-details">
@@ -124,7 +160,9 @@ export function ContactForm({
             </div>
           )}
         </div>
+  );
 
+  const formEl = (
         <form className="contact-form" onSubmit={handleSubmit}>
           {status === "sent" ? (
             <div className="contact-success">
@@ -186,6 +224,18 @@ export function ContactForm({
             </>
           )}
         </form>
+  );
+
+  /* Embedded: the caller supplies the section, container and grid. Form first,
+     agency details beneath it. */
+  if (part === "form") return formEl;
+  if (part === "info") return info;
+
+  return (
+    <section className="section contact-section" id="contact">
+      <div className="container contact-grid">
+        {info}
+        {formEl}
       </div>
     </section>
   );

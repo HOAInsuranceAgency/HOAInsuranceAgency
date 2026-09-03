@@ -24,8 +24,14 @@ const current = norm(currentPath);
 /* Only the first matching link is highlighted. About Us points at the homepage,
    so comparing each link independently would mark both Home and About Us active
    on "/" — two highlighted items reads as a bug. Hash links never match. */
+/* A dropdown entry has no path of its own, so it counts as active when any of
+   its children is the current route. That is what lights "Coverage" on both
+   /what-we-do and /condo-insurance. */
+const isCurrent = (path?: string) =>
+  Boolean(path) && !path!.includes("#") && norm(path!) === current;
+
 const activeIndex = NAV_LINKS.findIndex(
-  (l) => !l.path.includes("#") && norm(l.path) === current
+  (l) => isCurrent(l.path) || (l.children ?? []).some((c) => isCurrent(c.path))
 );
 ---
 
@@ -46,6 +52,38 @@ const activeIndex = NAV_LINKS.findIndex(
     <div class="navbar-links" id="navbar-links">
       {NAV_LINKS.map((l, i) => {
         const isActive = i === activeIndex;
+
+        /* A group renders as a label plus a submenu, opened by CSS :hover and
+           :focus-within. No JavaScript, so it works before hydration and a
+           keyboard user can tab straight into it. Deliberately no aria-expanded:
+           nothing would ever update it, and a value frozen at "false" is worse
+           for a screen reader than none at all. On mobile the submenu is simply
+           always visible: see the media query below. */
+        if (l.children) {
+          return (
+            <div class={"navbar-group" + (isActive ? " navbar-group--active" : "")}>
+              <button type="button" class="navbar-link navbar-group__toggle" aria-haspopup="true">
+                {l.label}
+                <svg class="navbar-group__chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+              </button>
+              <div class="navbar-group__menu">
+                {l.children.map((c) => {
+                  const childActive = isCurrent(c.path);
+                  return (
+                    <a
+                      href={c.path}
+                      class={"navbar-group__item" + (childActive ? " navbar-group__item--active" : "")}
+                      aria-current={childActive ? "page" : undefined}
+                    >
+                      {c.label}
+                    </a>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        }
+
         return (
           <a
             href={l.path}
@@ -265,8 +303,139 @@ const activeIndex = NAV_LINKS.findIndex(
     transform: rotate(-45deg) translate(5px, -5px);
   }
 
+
+  /* ── Dropdown group ──
+     Opened by :hover and :focus-within only. No JavaScript, so it works before
+     hydration; :focus-within is what lets a keyboard user tab to the toggle and
+     have the menu appear. */
+  .navbar-group {
+    position: relative;
+  }
+
+  .navbar-group__toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    background: none;
+    border: 0;
+    cursor: pointer;
+    font-family: inherit;
+  }
+
+  .navbar-group__chev {
+    transition: transform 0.2s ease;
+  }
+
+  .navbar-group:hover .navbar-group__chev,
+  .navbar-group:focus-within .navbar-group__chev {
+    transform: rotate(180deg);
+  }
+
+  /* Padding-top on the wrapper, not margin, so the pointer never crosses a gap
+     between the toggle and the menu — a gap closes the menu mid-travel. */
+  .navbar-group__menu {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    padding-top: 10px;
+    min-width: 232px;
+    visibility: hidden;
+    opacity: 0;
+    transform: translateY(-6px);
+    transition: opacity 0.18s ease, transform 0.18s ease, visibility 0s 0.18s;
+  }
+
+  .navbar-group:hover .navbar-group__menu,
+  .navbar-group:focus-within .navbar-group__menu {
+    visibility: visible;
+    opacity: 1;
+    transform: translateY(0);
+    transition: opacity 0.18s ease, transform 0.18s ease, visibility 0s;
+  }
+
+  .navbar-group__item {
+    display: block;
+    padding: 11px 16px;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--color-gray-700);
+    background: var(--color-white);
+    text-decoration: none;
+    border: 1px solid var(--color-gray-200);
+    border-bottom: 0;
+  }
+
+  .navbar-group__item:first-of-type {
+    border-radius: 10px 10px 0 0;
+  }
+
+  .navbar-group__item:last-of-type {
+    border-bottom: 1px solid var(--color-gray-200);
+    border-radius: 0 0 10px 10px;
+  }
+
+  .navbar-group__item:hover,
+  .navbar-group__item:focus-visible {
+    background: var(--color-gray-50);
+    color: var(--color-navy);
+  }
+
+  .navbar-group__item--active {
+    color: var(--color-accent);
+    font-weight: 600;
+  }
+
+  /* The group label follows the same light/dark treatment as a plain nav link. */
+  .navbar-group--active .navbar-group__toggle {
+    color: #ffffff;
+    font-weight: 600;
+  }
+
+  .navbar--scrolled .navbar-group--active .navbar-group__toggle {
+    color: var(--color-accent);
+  }
+
   /* ── Mobile ── */
   @media (max-width: 768px) {
+
+    /* No dropdown on the full-screen menu: both children are simply listed,
+       indented under the group label. A tap-to-open submenu inside a menu that
+       is already open is a needless second interaction. */
+    .navbar-group {
+      width: 100%;
+    }
+
+    .navbar-group__toggle {
+      width: 100%;
+      justify-content: flex-start;
+      font-size: 18px;
+      padding: 14px 16px;
+      color: var(--color-gray-700) !important;
+    }
+
+    .navbar-group__chev {
+      display: none;
+    }
+
+    .navbar-group__menu {
+      position: static;
+      visibility: visible;
+      opacity: 1;
+      transform: none;
+      padding-top: 0;
+      padding-left: 12px;
+      min-width: 0;
+      transition: none;
+    }
+
+    .navbar-group__item {
+      font-size: 16px;
+      padding: 12px 16px;
+      background: none;
+      border: 0 !important;
+      border-radius: 0 !important;
+    }
+
     .navbar-hamburger {
       display: flex;
     }

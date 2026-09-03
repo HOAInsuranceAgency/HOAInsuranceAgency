@@ -1,0 +1,433 @@
+---
+/**
+ * Condominium insurance — the condo-specific product page.
+ *
+ * Six sections, sharing /what-we-do's stylesheet and offer. Only the wording
+ * differs, because the two pages target different queries and near-identical copy
+ * would put them in competition with each other.
+ *
+ * NO HO-6 SECTION HERE. Removed by request, September 2026. The brand guide is
+ * explicit that HO-6 supports rather than leads and belongs on one page under
+ * Coverages — today that is /what-we-do section 05. Incidental HO-6 references
+ * remain in the issues list and the FAQ, because loss assessment and the unit
+ * boundary cannot be explained without naming the policy on the other side of
+ * them; those are not a section about HO-6.
+ *
+ * ── WRITTEN AGAINST THE BRAND GUIDE (ProtectMyHOA, Brand Guide v1) ──
+ * Rules applied here, so the next editor does not undo them by accident:
+ *
+ *  · Approved lines only. "Insurance Built for Associations" is the main line and
+ *    must never be reworded. "Request Insurance Review" is the CTA and must never
+ *    be reworded. Other approved lines used on this page: "Defensible by design",
+ *    "Insurance your board can defend", "Review. Compare. Place. Record.",
+ *    "The Board Record", "Warrantability is now a coverage question",
+ *    "Every gap has a name. We find it before the adjuster does",
+ *    "Bound is not the same as covered", "Don't renew — review",
+ *    "The premium is what you budget. The deductible is what you risk".
+ *
+ *  · ™ appears on TWO things only: "Insurance Built for Associations™" and
+ *    "ProtectMyHOA™". Do not add it to any other line, even the ones the guide
+ *    marks with one.
+ *
+ *  · Both halves of the fee, always: "no broker fee" AND "we are paid by the
+ *    insurer through the premium". The first half alone reads as "free", which is
+ *    not true and which a regulator will read that way.
+ *
+ *  · Say boards, trustees, associations, unit owners. Never homeowners or
+ *    policyholders.
+ *
+ *  · Begin with the board's risk, not with our services.
+ *
+ *  · Calm. No disaster language, no countdown pressure, no exclamation marks.
+ *    Warrantability is a question worth asking, not a threat.
+ *
+ *  · HO-6 supports, it does not lead. It sits in one section here and never opens
+ *    the page.
+ *
+ * ── NO FIGURES, RATES OR DOLLAR AMOUNTS ON THIS PAGE ──
+ * Client instruction, September 2026: no example rates, premiums, deductible
+ * amounts, percentages or dollar values anywhere in this copy. Warrantability
+ * conditions are described qualitatively — "a cap on the per-unit deductible",
+ * "reserves funded to a set share of the annual budget" — and never quantified.
+ *
+ * This overrides the brand guide's "give the actual figure" writing rule, for
+ * this page. Two reasons it is the right call regardless: the Fannie Mae and
+ * Freddie Mac thresholds are revised periodically, so a number published here
+ * goes stale without anyone noticing; and quoting one implies it has been checked
+ * against the Selling Guide, which marketing copy is a poor place to do.
+ *
+ * If a figure is ever wanted here, take it from Fannie Mae LL-2026-03 or Selling
+ * Guide B7-3-03 / B7-3-04 directly — not from commentary — and date it.
+ *
+ * ⚠ FAQS feeds this page's FAQPage rich-result markup. Its questions are
+ * deliberately different from the three on /what-we-do: duplicate FAQPage
+ * payloads across two URLs is how you lose the rich result on both.
+ */
+import Layout from "../layouts/Layout.astro";
+import Hero from "../components/Hero.astro";
+import HeroLookup from "../components/HeroLookup.astro";
+import { ContactForm } from "../components/ContactForm";
+import { QUOTE_URL } from "../constants";
+import "./WhatWeDo.css";
+/* Visual overrides, all scoped under .condo — see the header of that file.
+   Imported after WhatWeDo.css so the cascade order matches the intent. */
+import "./CondoInsurance.css";
+
+
+/* 02 — Six coverages, read from data/coverages.ts so this page and the 51 state
+   pages cannot describe the same coverage two different ways. The seventh entry
+   is HO-6, which has its own section below, so it is sliced off. */
+const MASTER_COVERAGES = [
+  { title: "Commercial Property", icon: "building", desc: "Rebuilds the shared buildings and common elements after a covered loss, at replacement cost rather than depreciated value. Equipment breakdown for shared boilers, elevators and HVAC is normally added here." },
+  { title: "General Liability", icon: "shield", desc: "Responds when someone is hurt on common property, and pays the cost of defending the association." },
+  { title: "Umbrella / Excess Liability", icon: "umbrella", desc: "Sits above the primary liability limits, for the claim that exceeds them." },
+  { title: "Directors & Officers Liability", icon: "briefcase", desc: "Defends board members personally when a decision is challenged. Most often a rule enforcement dispute, an election, or a denied architectural request." },
+  { title: "Crime and Fidelity", icon: "lock", desc: "Covers theft of association funds, whether by an employee, a volunteer or a third party. Lenders set a minimum based on the funds and reserves the association holds." },
+  { title: "Ordinance or Law", icon: "scale", desc: "Pays the extra cost of rebuilding to today's code when the original construction no longer complies, which matters most in older buildings." },
+  { title: "Workers Compensation", icon: "worker", desc: "Required in most states once an association has employees. Boards are often surprised to learn an uninsured contractor's crew can become the association's exposure." },
+];
+
+/* 03 — What a first review turns up. Every one of these turns on the unit
+   boundary, the deductible, or warrantability — the three things that make a
+   condominium different from a detached-home association. */
+const COMMON_ISSUES = [
+  { title: "The board does not know which master policy type applies", desc: "Bare walls, single entity and all-in put the boundary in three different places. The governing documents decide, not the policy. Boards regularly tell us the wrong one." },
+  { title: "The per-unit deductible now affects financing", desc: "Lender guidelines cap how large a per-unit deductible a condominium can carry and still be warrantable. Many associations raised their deductible to hold the premium down and have not looked at it since." },
+  { title: "Owners carry no loss assessment cover", desc: "Or carry a token limit. When a claim costs more than the association's insurance pays, owners are billed their share of the difference. That share is routinely larger than the limit on their HO-6." },
+  { title: "Improvements are uninsured on both sides", desc: "The owner upgraded the kitchen. The master policy stops at the original finishes, and nobody raised the HO-6 to match. Neither policy answers for the difference." },
+  { title: "The building limit predates today's costs", desc: "Replacement cost pays what it costs to rebuild today, with nothing deducted for age, but only up to the limit on the policy. A limit set years ago is where that stops being true." },
+  { title: "Reserves fall short of the threshold", desc: "Lenders expect an association to fund reserves to a set share of its annual budget. It is a budget question before it is an insurance question, and it belongs in the same conversation." },
+];
+
+/* 04 — The three master policy types. The centre of this page: on a condominium
+   this single fact decides who pays. */
+const POLICY_TYPES = [
+  { name: "Bare walls", covers: "Structure and common areas only", stops: "Everything inside the unit is the owner's, including the original fixtures and finishes", owner: "Most" },
+  { name: "Single entity", covers: "Structure, common areas, and the original fixtures and finishes", stops: "Improvements an owner has made since are the owner's", owner: "Some" },
+  { name: "All-in", covers: "Structure, common areas, original finishes and owner improvements", stops: "Personal property and personal liability remain the owner's", owner: "Least" },
+];
+
+
+/* 05 — Same four audiences and the same marks as the homepage and /what-we-do,
+   so all three pages say this once and say it identically. */
+const AUDIENCES = [
+  { icon: "board",     title: "Boards & trustees",     cta: "Request a board review",       href: QUOTE_URL },
+  { icon: "manager",   title: "Property managers",     cta: "Talk to us about a portfolio", href: "/contact" },
+  { icon: "developer", title: "Developers & sponsors", cta: "Discuss a new project",        href: "/contact" },
+  { icon: "owner",     title: "Unit owners",           cta: "Get HO-6 coverage",            href: QUOTE_URL },
+];
+
+/* ⚠ Source for BOTH the visible accordion and this page's FAQPage markup.
+   Different questions from /what-we-do — see the header note. */
+const FAQS = [
+  { q: "How do we find out whether our condominium is bare walls, single entity or all-in?", a: "The governing documents decide it, not the insurance policy. The policy is written to match them. The certificate will usually name the form, but the declaration and master deed are the authority. We read both on every review and tell the board which one applies, in writing. Boards frequently believe it is one and find out at a claim that it is another." },
+  { q: "A pipe failed and damaged three units. Who pays the deductible?", a: "It depends on the master policy type and how the deductible is written. The deductible is the amount the association pays itself before the insurer pays anything. Where it applies per unit, each affected owner can be responsible for the deductible on their own unit, and their HO-6 loss assessment cover is what responds. Where the whole loss falls below the deductible, the association's policy pays nothing and the cost is billed to owners." },
+  { q: "Can our insurance stop owners getting a mortgage?", a: "Yes, and the rules changed recently. Warrantability is whether a building meets lenders' rules; if it does not, buyers cannot get a normal mortgage there. Several of those rules are insurance rules: the master policy must be written at replacement cost, the per-unit deductible is capped, a fidelity bond has to be sized to the funds the association holds, and reserves have to be funded to a set share of the annual budget. The thresholds are revised from time to time, so we check the programme against whatever applies at the date of the review and tell the board where it stands." },
+];
+
+const faqJsonLd = {
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  mainEntity: FAQS.map((f) => ({
+    "@type": "Question",
+    name: f.q,
+    acceptedAnswer: { "@type": "Answer", text: f.a },
+  })),
+};
+---
+
+<Layout
+  title="Condominium Association Insurance — ProtectMyHOA"
+  description="Condo master policy and HO-6 placed as one programme, with a written record the board can file. Bare walls, single entity and all-in explained, and warrantability checked."
+  canonicalPath="/condo-insurance"
+  jsonLd={[faqJsonLd]}
+>
+  {/* ═══ Hero — same treatment as /what-we-do ═══════════════════════ */}
+  {/* Main line carries the ™; nothing else on this page does. */}
+  <Hero
+    eyebrow="ProtectMyHOA&trade;"
+    title="Condo Association Insurance"
+    subtitle="Insurance Built for Associations&trade;. We place the condominium's master policy, set the owners' HO-6 against it, and write down why, so the board can explain the decision later."
+    backgroundImage="/images/modern-building.jpg"
+    backgroundVideo="/images/hero-video.mp4"
+  >
+    <HeroLookup slot="action" />
+  </Hero>
+
+  {/* The condo class is the scope hook for CondoInsurance.css. Every override
+       in that file is written as ".condo .thing", so it cannot reach
+       /what-we-do, which carries wwd alone. Delete this one class and the page
+       reverts to the HOA page appearance exactly. */}
+  <div class="wwd condo">
+  {/* ═══ 01 · What a condo master policy is ══════════════════════ */}
+  {/* No image here by request, so this is a single measured column rather than
+       the two-column split the section used to be. Capped at 68ch: full container
+       width would run these paragraphs to about 150 characters a line, which is
+       roughly twice a comfortable measure. */}
+  <section class="section" id="master-policy" aria-labelledby="define-h">
+    <div class="container">
+      <div class="condo-lead reveal">
+        <p class="eyebrow">The master policy</p>
+        <h2 class="section-title" id="define-h">What is a condo master policy?</h2>
+        <p class="wwd-lead">
+          A condo master policy is the association's own insurance, paid for from member
+          dues. It covers the shared buildings and common areas, the association's legal
+          liability, and its funds against theft. The board buys it on behalf of every owner
+          in the building, and approves the deductible that comes with it.
+        </p>
+        <p class="wwd-lead">
+          Where it stops is the part that causes trouble. The association's governing
+          documents decide how far into each unit the master policy reaches. Everything past
+          that line falls to the owner's HO-6. When the two are out of step, someone
+          pays for a loss neither policy was written to cover.
+        </p>
+        <p class="wwd-lead">
+          We place the master policy, coordinate the HO-6 against it, and write down why we
+          chose what we chose, so the board can explain the decision a year later.
+        </p>
+        {/* Navy fill by request. .btn-navy is defined for dark grounds and carries a
+             translucent white border that reads as a pale halo on this white section,
+             so CondoInsurance.css drops the border here. */}
+        {/* Centred, not left-aligned. The three paragraphs above are a left-aligned
+             measure, so a button on the same left edge reads as another line of the
+             paragraph. Centring it under the text breaks that rhythm and makes it the
+             one thing on the screen that is obviously an action. Section 02 closes the
+             same way, so both sections end on an identical, recognisable step. */}
+        <div class="condo-lead__cta condo-lead__cta--center">
+          <a href={QUOTE_URL} class="btn btn-navy">Request Insurance Review</a>
+          <span class="condo-lead__note">No broker fee</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  {/* ═══ 02 · Coverages ════════════════════════════════════════════ */}
+  <section class="section" id="coverage" aria-labelledby="cov-h">
+    <div class="container">
+      <div class="sec-head sec-head--center reveal">
+        <p class="eyebrow">Coverage</p>
+        <h2 class="section-title" id="cov-h">What does a condo association master policy cover?</h2>
+        <p class="section-subtitle">
+          Bound is not the same as covered. Property, liability, umbrella, D&amp;O, crime and
+          ordinance-or-law are one program. Bought separately, the limits and deductibles stop
+          agreeing with each other.
+        </p>
+      </div>
+      {/* Sets the scene before the six coverages: a board and a producer reading a
+           policy together, which is what this section describes. Sized 1600x900
+           and cropped to 16:9 so it lands as a clean band the full width of the
+           container rather than a floating rectangle.
+
+           width/height are the real intrinsic pixels so the browser reserves the
+           space and the grid below does not jump when it loads. lazy because it
+           sits below the fold on every viewport. */}
+      <img
+        class="condo-band reveal"
+        src="/images/condo-boardroom.jpg"
+        alt="Insurance broker reviewing a condominium master policy with two association board members"
+        width="1600"
+        height="900"
+        loading="lazy"
+        decoding="async"
+      />
+
+      <div class="cov-grid reveal">
+        {MASTER_COVERAGES.map((c) => (
+          <article class="cov-card">
+            <span class="cov-card__mark" aria-hidden="true">
+              {c.icon === "building" && <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="18" rx="1"/><path d="M8 7h.01M12 7h.01M16 7h.01M8 11h.01M12 11h.01M16 11h.01"/><path d="M10 21v-3h4v3"/></svg>}
+              {c.icon === "shield" && <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l8 4v6c0 5-3.5 9.5-8 10-4.5-.5-8-5-8-10V6l8-4z"/></svg>}
+              {c.icon === "umbrella" && <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v2"/><path d="M2 12a10 10 0 0120 0H2z"/><path d="M12 12v7a3 3 0 01-6 0"/></svg>}
+              {c.icon === "briefcase" && <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M9 7V5a2 2 0 012-2h2a2 2 0 012 2v2"/><path d="M3 13h18"/></svg>}
+              {c.icon === "lock" && <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 018 0v4"/></svg>}
+              {c.icon === "scale" && <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18"/><path d="M5 7h14"/><path d="M5 7l-2 6a4 4 0 008 0L9 7"/><path d="M17 7l-2 6a4 4 0 008 0l-2-6"/></svg>}
+              {c.icon === "worker" && <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0118 0"/><path d="M2 12h20"/><path d="M9 12V6.5a3 3 0 016 0V12"/><path d="M5 16.5A7.5 7.5 0 0112 21a7.5 7.5 0 017-4.5"/></svg>}
+            </span>
+            <div class="cov-card__body">
+              <h3>{c.title}</h3>
+              <p>{c.desc}</p>
+            </div>
+          </article>
+        ))}
+      </div>
+      <p class="cov-note">
+        Earthquake and flood are quoted alongside the program where a condominium needs them.
+      </p>
+      {/* Navy fill, and the note sits under the button rather than beside it. Same
+           treatment as section 01, so the two calls to action match. */}
+      <div class="condo-lead__cta condo-lead__cta--center">
+        <a href={QUOTE_URL} class="btn btn-navy">Request Insurance Review</a>
+        <span class="condo-lead__note">No broker fee. We're paid by the insurer through the premium.</span>
+      </div>
+    </div>
+  </section>
+
+  {/* ═══ 03 · What we find ═════════════════════════════════════════ */}
+  <section class="section section--navy" id="what-we-find" aria-labelledby="issues-h">
+    <div class="container">
+      <div class="sec-head sec-head--center reveal">
+        <p class="eyebrow eyebrow--gold">What we find</p>
+        <h2 class="section-title wwd-invert" id="issues-h">
+          Every gap has a name. We find it before the adjuster does.
+        </h2>
+        <p class="section-subtitle wwd-invert-sub">
+          Six conditions we identify most often on a first review. Each one can be checked
+          now rather than after a claim.
+        </p>
+      </div>
+      <div class="issues-acc reveal">
+        {COMMON_ISSUES.map((iss, i) => (
+          <details class="issue-acc">
+            <summary>
+              <span class="issue-acc__num">{String(i + 1).padStart(2, "0")}</span>
+              <span class="issue-acc__title">{iss.title}</span>
+              <span class="issue-acc__chev" aria-hidden="true">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+              </span>
+            </summary>
+            <p>{iss.desc}</p>
+          </details>
+        ))}
+      </div>
+      <div class="issues-foot">
+        <p class="issues-foot__text">
+          We name which of the six apply to your condominium, and put the findings in
+          writing. Don't renew — review.
+        </p>
+        <a href={QUOTE_URL} class="btn btn-gold issues-foot__cta">Request Insurance Review</a>
+      </div>
+    </div>
+  </section>
+
+  {/* ═══ 04 · Where the master policy stops ════════════════════════ */}
+  {/* Carries this year's campaign line. Stated calmly and with the real figures —
+       no countdown, no alarm. See the brand-guide note at the top of this file. */}
+  <section class="section" id="who-pays" aria-labelledby="stops-h">
+    <div class="container">
+      <div class="sec-head sec-head--center reveal">
+        <p class="eyebrow">Who pays</p>
+        <h2 class="section-title" id="stops-h">Bare walls, single entity, or all-in</h2>
+        <p class="section-subtitle">
+          Three structures, and the governing documents decide which one applies. On a
+          condominium this is the most consequential line in the policy, because it decides
+          who pays for what after a loss.
+        </p>
+      </div>
+
+      <div class="types-table-wrap reveal">
+        <table class="types-table">
+          <thead>
+            <tr>
+              <th scope="col">Master policy type</th>
+              <th scope="col">The association covers</th>
+              <th scope="col">It stops at</th>
+              <th scope="col" class="types-table__owner-col">Owner carries</th>
+            </tr>
+          </thead>
+          <tbody>
+            {POLICY_TYPES.map((t) => (
+              <tr>
+                <th scope="row">{t.name}</th>
+                <td>{t.covers}</td>
+                <td>{t.stops}</td>
+                <td class="types-table__owner-col"><span class="owner-pill">{t.owner}</span></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="stops-pair reveal">
+        <div class="stops-item">
+          <h3>Warrantability is now a coverage question</h3>
+          <p>
+            Warrantability is whether a building meets lenders' rules. Where it does not,
+            buyers cannot get a normal mortgage there. Several of those rules are insurance
+            rules: the master policy written at replacement cost, a cap on the per-unit
+            deductible, a fidelity bond sized to the funds held, and reserves funded to a set
+            share of the annual budget. It is a question worth asking, and a board deserves a
+            clear answer about where it stands.
+          </p>
+        </div>
+        <div class="stops-item">
+          <h3>The deductible and the assessment</h3>
+          <p>
+            The deductible is what the association pays itself before the insurer pays
+            anything. Where a claim costs more than the insurance pays, owners are billed
+            their share of the difference. The premium is what you budget. The deductible is
+            what you risk.
+          </p>
+        </div>
+      </div>
+
+      <div class="stops-foot">
+        <p class="stops-foot__text">
+          Most boards do not know which of the three their condominium carries. It is in the
+          governing documents, and we identify it on every review.
+        </p>
+        <a href={QUOTE_URL} class="btn btn-primary stops-foot__cta">Request Insurance Review</a>
+      </div>
+    </div>
+  </section>
+
+  {/* ═══ 05 · Who we work with ══════════════════════════════════════ */}
+  <section class="section" id="who-we-serve" aria-labelledby="types-h">
+    <div class="container">
+      <div class="sec-head sec-head--center reveal">
+        <p class="eyebrow">Who we serve</p>
+        <h2 class="section-title" id="types-h">Who we work with</h2>
+        <p class="section-subtitle">
+          Four groups, each needing something different from the same placement. Licensed in
+          all 50 states and the District of Columbia.
+        </p>
+      </div>
+      <div class="aud-grid reveal">
+        {AUDIENCES.map((a) => (
+          <div class="aud-card">
+            <span class="aud-card__mark" aria-hidden="true">
+              {a.icon === "board" && <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M15.5 19v-1.4a3.4 3.4 0 00-3.4-3.4H7.4A3.4 3.4 0 004 17.6V19"/><circle cx="9.75" cy="7.6" r="3.4"/><path d="M16.6 11.1a3.2 3.2 0 000-6.3"/><path d="M20 19v-1.4a3.3 3.3 0 00-2.3-3.1"/></svg>}
+              {a.icon === "manager" && <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="18" rx="1"/><path d="M8 7h.01M12 7h.01M16 7h.01M8 11h.01M12 11h.01M16 11h.01"/><path d="M10 21v-3h4v3"/></svg>}
+              {a.icon === "developer" && <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16M3 10h6M15 9h6M15 14h6"/></svg>}
+              {a.icon === "owner" && <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.6L12 3l9 7.6"/><path d="M5.4 9.6V20h13.2V9.6"/><path d="M10 20v-5.2h4V20"/></svg>}
+            </span>
+            <h3>{a.title}</h3>
+            <a href={a.href} class="text-link aud-card__cta">{a.cta} &gt;</a>
+          </div>
+        ))}
+      </div>
+      <div class="wwd-cta wwd-cta--center">
+        <a href={QUOTE_URL} class="btn btn-primary">Request Insurance Review</a>
+        <span class="wwd-cta__note">
+          A quote is a number. A review is an answer.
+        </span>
+      </div>
+    </div>
+  </section>
+
+  {/* ═══ 06 · FAQ ══════════════════════════════════════════════════ */}
+  {/* FAQS is the source for both this accordion and the FAQPage schema above.
+       Editing an answer here edits the rich-result payload. */}
+  <section class="section section--alt" id="faq" aria-labelledby="faq-h">
+    <div class="container">
+      <div class="sec-head sec-head--center reveal">
+        <p class="eyebrow">Questions</p>
+        <h2 class="section-title" id="faq-h">Condo insurance questions</h2>
+      </div>
+      <div class="faq-list reveal">
+        {FAQS.map((f) => (
+          <details class="faq-item">
+            <summary>{f.q}</summary>
+            <p>{f.a}</p>
+          </details>
+        ))}
+      </div>
+      <div class="wwd-cta wwd-cta--center">
+        <a href={QUOTE_URL} class="btn btn-primary">Request Insurance Review</a>
+        <a href="/contact" class="text-link">Or ask us a question &gt;</a>
+      </div>
+    </div>
+  </section>
+
+  <ContactForm showClaims client:visible />
+  </div>
+</Layout>
