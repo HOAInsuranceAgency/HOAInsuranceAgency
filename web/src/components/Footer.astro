@@ -1,5 +1,7 @@
 ---
-import { PHONE, PHONE_HREF, EMAIL, EMAIL_HREF, ADDRESS_LINE1, ADDRESS_LINE2, SOCIAL } from "../constants";
+/** Site-wide legal identity, contact details, footprint and social links. */
+import { SOCIAL } from "../constants";
+import { AGENCY, AGENCY_FMT } from "../../../shared/agency";
 ---
 
 <footer class="site-footer">
@@ -7,12 +9,22 @@ import { PHONE, PHONE_HREF, EMAIL, EMAIL_HREF, ADDRESS_LINE1, ADDRESS_LINE2, SOC
     <a href="/" class="site-footer__logo-link">
       <img src="/logo-on-dark.png" alt="HOA Insurance Agency" class="site-footer__logo" />
     </a>
-    <p class="site-footer__addr">{ADDRESS_LINE1}<br />{ADDRESS_LINE2}</p>
-    <p class="site-footer__contact">
-      <a href={EMAIL_HREF}>{EMAIL}</a>
-      <span class="site-footer__dot">&middot;</span>
-      <a href={PHONE_HREF}>{PHONE}</a>
+    <p class="site-footer__addr">
+      <span class="site-footer__entity">{AGENCY.name}</span><br />
+      {AGENCY.addressLine1}<br />{AGENCY_FMT.addressLine2}
     </p>
+    <p class="site-footer__contact">
+      <span class="site-footer__contact-item">
+        <span class="site-footer__contact-label">General, service &amp; claims</span>
+        <a href={AGENCY_FMT.emailHref}>{AGENCY.email}</a>
+      </span>
+      <span class="site-footer__dot">&middot;</span>
+      <span class="site-footer__contact-item">
+        <span class="site-footer__contact-label">Phone</span>
+        <a href={AGENCY_FMT.phoneHref}>{AGENCY.phone}</a>
+      </span>
+    </p>
+    <p class="site-footer__footprint">Licensed in {AGENCY.areaServed}.</p>
     <div class="site-footer__social">
       <a href={SOCIAL.instagram} target="_blank" rel="noopener noreferrer" aria-label="Instagram">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="20" rx="5"/><circle cx="12" cy="12" r="5"/><circle cx="17.5" cy="6.5" r="1.2" fill="currentColor" stroke="none"/></svg>
@@ -26,12 +38,16 @@ import { PHONE, PHONE_HREF, EMAIL, EMAIL_HREF, ADDRESS_LINE1, ADDRESS_LINE2, SOC
     </div>
   </div>
   <div class="site-footer__bottom">
-    <a href="/privacy-policy">Privacy Policy</a>
+    <a href="/privacy-policy/">Privacy Policy</a>
     <span class="site-footer__dot">&middot;</span>
-    <a href="/terms-of-service">Terms of Service</a>
+    <a href="/terms-of-service/">Terms of Service</a>
     <span class="site-footer__dot">&middot;</span>
-    <span>&copy; {new Date().getFullYear()} HOA Insurance Agency</span>
-    <span class="site-footer__mark">PROTECTMYHOA&trade; insurance agency and brokerage services are provided by HOA Insurance Agency LLC.</span>
+    <span>&copy; {new Date().getFullYear()} {AGENCY.name}</span>
+    {/* ™ claims the visible mark; trade-name approval is a separate question. */}
+    <span class="site-footer__mark">
+      <strong>{AGENCY_FMT.brandMarkedName}</strong> is the consumer-facing brand of
+      {" "}{AGENCY.name}. All insurance is placed by that licensed agency.
+    </span>
   </div>
 </footer>
 
@@ -70,6 +86,11 @@ import { PHONE, PHONE_HREF, EMAIL, EMAIL_HREF, ADDRESS_LINE1, ADDRESS_LINE2, SOC
     margin: 0;
   }
 
+  .site-footer__entity {
+    color: rgba(255, 255, 255, 0.7);
+    font-weight: 500;
+  }
+
   .site-footer__contact {
     font-size: 14px;
     margin: 0;
@@ -78,6 +99,26 @@ import { PHONE, PHONE_HREF, EMAIL, EMAIL_HREF, ADDRESS_LINE1, ADDRESS_LINE2, SOC
     gap: 12px;
     flex-wrap: wrap;
     justify-content: center;
+  }
+
+  .site-footer__contact-item {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+  }
+
+  .site-footer__contact-label {
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: rgba(255, 255, 255, 0.35);
+  }
+
+  .site-footer__footprint {
+    font-size: 13px;
+    margin: 0;
+    color: rgba(255, 255, 255, 0.45);
   }
 
   .site-footer__contact a {
@@ -135,7 +176,10 @@ import { PHONE, PHONE_HREF, EMAIL, EMAIL_HREF, ADDRESS_LINE1, ADDRESS_LINE2, SOC
 
   .site-footer__mark {
     flex-basis: 100%;
+    max-width: 720px;
+    margin: 0 auto;
     text-align: center;
+    line-height: 1.6;
     color: rgba(255, 255, 255, 0.3);
   }
 

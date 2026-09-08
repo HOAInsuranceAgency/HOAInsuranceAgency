@@ -3,23 +3,31 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
   "scripts": {
     "dev": "astro dev",
     "build": "astro build",
     "preview": "astro preview",
+    "typecheck": "astro check && tsc --noEmit",
+    "seo:check": "node scripts/seo-fingerprint.mjs",
+    "seo:save": "node scripts/seo-fingerprint.mjs --save",
     "sync": "tsx scripts/sync-buildium.ts"
   },
   "dependencies": {
-    "@astrojs/react": "^4.2.0",
-    "@astrojs/sitemap": "^3.3.0",
-    "astro": "^5.7.0",
+    "@astrojs/react": "^6.0.5",
+    "@astrojs/sitemap": "^3.7.4",
+    "astro": "^7.3.1",
     "react": "~18.3.1",
     "react-dom": "~18.3.1"
   },
   "devDependencies": {
+    "@astrojs/check": "^0.9.10",
     "@types/google.maps": "^3.58.1",
     "@types/react": "~18.3.27",
     "@types/react-dom": "~18.3.7",
+    "@types/topojson-client": "^3.1.5",
     "topojson-client": "^3.1.0",
     "tsx": "~4.19.2",
     "typescript": "~5.9.3",

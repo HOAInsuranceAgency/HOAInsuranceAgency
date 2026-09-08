@@ -13,12 +13,24 @@ export function getStaticPaths() {
 }
 
 const { city } = Astro.props;
+
+/**
+ * Canonical URL for this city, in the trailing-slash form the whole site uses.
+ *
+ * Layout normalises either shape, so this is not load-bearing — it is here so
+ * that the next template copied from this one starts from the right pattern
+ * rather than from the slashless `/hoa-insurance-${slug}-${abbr}` that was here
+ * before, which is not what `astro.config.mjs` (trailingSlash: "always") emits.
+ * Built by concatenation because the Astro compiler mis-parses a template
+ * literal nested inside a `${}` in frontmatter.
+ */
+const canonicalPath = "/hoa-insurance-" + city.slug + "-" + city.stateAbbr + "/";
 ---
 
 <Layout
   title={city.title}
   description={city.description}
-  canonicalPath={`/hoa-insurance-${city.slug}-${city.stateAbbr}`}
+  canonicalPath={canonicalPath}
 >
   <Hero
     title={city.heroTitle}
@@ -49,12 +61,18 @@ const { city } = Astro.props;
   <section class="section">
     <div class="container" style="max-width: 800px">
       <h2 class="section-title">What We Cover</h2>
+      {/* Was "We place all core HOA coverages for {city.name} associations".
+          This template renders 22 cities, and "all core" asserted a complete
+          menu in each of them regardless of what any carrier will actually write
+          there. The list is unchanged — naming the lines we place is fine — but
+          the completeness claim is gone and the sentence now carries the site's
+          own availability qualifier instead. */}
       <p style="font-size: 16px; color: var(--color-gray-600); line-height: 1.7; margin-bottom: 24px">
-        We place all core HOA coverages for {city.name} associations — master property, general liability, umbrella, D&O, crime/fidelity, and ordinance or law. We also help unit owners with HO-6 policies aligned to the master policy.
+        We place the core HOA lines for {city.name} associations — master property, general liability, umbrella, D&O, crime/fidelity, and ordinance or law. We also help unit owners with HO-6 policies aligned to the master policy. Carrier availability varies by state, association type and risk profile, and coverage is subject to underwriting, policy terms, and eligibility.
       </p>
       <div style="display: flex; gap: 12px; flex-wrap: wrap">
-        <a href="/what-we-do" class="btn btn-primary">Our Coverages</a>
-        <a href={`/hoa-insurance-${city.stateSlug}`} class="btn btn-outline-dark">HOA Insurance in {city.stateName}</a>
+        <a href="/what-we-do/" class="btn btn-primary">Our Coverages</a>
+        <a href={`/hoa-insurance-${city.stateSlug}/`} class="btn btn-outline-dark">HOA Insurance in {city.stateName}</a>
       </div>
     </div>
   </section>
@@ -62,7 +80,10 @@ const { city } = Astro.props;
   <section class="section section--navy" style="text-align: center">
     <div class="container">
       <h2 class="section-title">Need HOA insurance in {city.name}?</h2>
-      <p class="section-subtitle" style="margin: 0 auto 32px">Start with a free insurance review — takes about 2 minutes.</p>
+      {/* Was "takes about 2 minutes", a duration nothing in the funnel measures
+          and that the review itself does not take. Replaced with the wording the
+          state template's own closing section uses, so the two say it alike. */}
+      <p class="section-subtitle" style="margin: 0 auto 32px">Start with a free insurance review — no commitment, no pressure.</p>
       <a href={QUOTE_URL} class="btn btn-gold">Request Insurance Review</a>
     </div>
   </section>

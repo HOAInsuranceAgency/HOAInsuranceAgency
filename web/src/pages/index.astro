@@ -4,52 +4,20 @@ import Hero from "../components/Hero.astro";
 import HeroLookup from "../components/HeroLookup.astro";
 import CoverageMap from "../components/CoverageMap.astro";
 import { CoverageCalculator } from "../components/CoverageCalculator";
-import { states } from "../data/states";
+import { reviewedStateSlugs } from "../data/states";
 import { STAGES } from "../data/process";
 import { MARKETS } from "../data/markets";
-import { QUOTE_URL } from "../constants";
+import { PHONE, QUOTE_URL } from "../constants";
+import { canonicalUrl, faqPageSchema } from "../lib/seo";
 import "../pages/Home.css";
 
-/* ───────────────────────────────────────────────────────────────────────────
-   PLACEHOLDER CONTENT — 2026-08-06
-   Every figure below is written as a bracketed token ("[00]", "[metric]") on
-   purpose. They are meant to be obviously unfinished so that no unverified
-   number can reach production: an insurance brokerage publishing an invented
-   statistic is a compliance problem, not a copy problem. Search "[" in this
-   file to find everything still awaiting real data.
-
-   Copy is original throughout: no competitor wording or structure reproduced.
-   Carriers ARE now named in section 06 from a supplied list — see MARKETS.
-   ─────────────────────────────────────────────────────────────────────────── */
-
-/* 02 — What a master policy covers.
-   LICENSURE CLAIM — now consistent across the page. This figure and section 11
-   both state all 50 states plus DC. Note this supersedes the earlier 48-item
-   footprint, which deliberately excluded CA, FL and IA; those three are now
-   included by implication. Misstating licensure is a state-DOI matter, so the
-   50-state claim should be confirmed against the agency's actual licenses. */
-/* Brand marks from crm/CREATIVE/HOME, resized 1536×192 → 288×192 (3.5 MB → 60 KB
-   for the set) and copied into public/images/figures. They are transparent PNGs
-   with white artwork, so they sit directly on the navy band with no blend mode.
-   Decorative: each repeats its own label, so alt is empty. */
+/** Decorative section marks; the adjacent text supplies their labels. */
 const ASSOC_FIGURES: { img: string; value: string; label?: string }[] = [
   { img: "states", value: "Licensed in all 50 states", label: "and the District of Columbia" },
   { img: "coverage", value: "12 markets", label: "one program" },
   { img: "written", value: "Written rationale", label: "on every placement" },
 ];
 
-/* 03 — The practice.
-   Bodies rewritten to earn trust through what we DO rather than through claims
-   about ourselves. Constraints applied:
-     · no compensation mechanics (how the insurer pays us is not mentioned)
-     · no carrier-ownership statement
-     · no "volunteer trustees"
-     · no superlatives, no best-of / most-complete claim, nothing promissory
-   What is left is verifiable process: what the board receives, and when. Every
-   sentence describes something a client could hold us to.
-
-   Card 2 also drops the "three markets each across four lines" breakdown, which
-   read as twelve relationships rather than six and contradicted section 06. */
 const PRACTICE_CARDS = [
   {
     icon: "compass",
@@ -58,8 +26,8 @@ const PRACTICE_CARDS = [
   },
   {
     icon: "layers",
-    title: "Twelve appointed markets",
-    desc: "Your risk is presented to each market appointed for it. The responses come back to you set side by side on coverage, deductibles and limits.",
+    title: "Twelve markets, one submission",
+    desc: "Your risk is presented to the markets that write it. The responses come back to you set side by side on coverage, deductibles and limits.",
   },
   {
     icon: "clipboard",
@@ -85,15 +53,8 @@ const BOARD_RECORD = [
   { num: "06", title: "What to look at again next year", desc: "The items that will need attention before the next renewal." },
 ];
 
-/* 11 — Footprint now lives in components/CoverageMap.astro, which owns the tile
-   grid for all 50 states plus DC. Only the guide count is needed here, and it is
-   read from states.ts so the copy cannot drift from the routes that exist.
-
-   VERB TO CONFIRM WITH COMPLIANCE: "licensed in" is the standard reading of an
-   agency state list, but "licensed", "appointed" and "actively writing" are
-   three different claims, and the wrong one on an insurance site is a
-   regulatory exposure rather than a copy nit. */
-const withGuides = states;
+/** Only reviewed state routes count as published guides. */
+const withGuides = reviewedStateSlugs;
 
 /* 09 — Who we work with.
    Descriptions removed by request: each card is now a mark, a title and its CTA.
@@ -102,47 +63,34 @@ const withGuides = states;
    identical on every platform, which emoji would not be. */
 const AUDIENCES = [
   { icon: "board",     title: "Boards & trustees",     cta: "Request a board review",      href: QUOTE_URL },
-  { icon: "manager",   title: "Property managers",     cta: "Talk to us about a portfolio", href: "/contact" },
-  { icon: "developer", title: "Developers & sponsors", cta: "Discuss a new project",        href: "/contact" },
-  { icon: "owner",     title: "Unit owners",           cta: "Get HO-6 coverage",            href: "/what-we-do" },
+  { icon: "manager",   title: "Property managers",     cta: "Talk to us about a portfolio", href: "/contact/" },
+  { icon: "developer", title: "Developers & sponsors", cta: "Discuss a new project",        href: "/contact/" },
+  { icon: "owner",     title: "Unit owners",           cta: "Get HO-6 coverage",            href: "/what-we-do/" },
 ];
 
-/* ⚠ This array is the source for BOTH the visible FAQ and the FAQPage JSON-LD.
-   Editing it edits the rich-result payload Google may already be showing.
-   Replaced wholesale on request, 2026-08-11: six questions out, four in.
-   Em-dashes removed per the standing no-dash rule.
-   The retired "What states does HOA Insurance Agency serve?" answer named only
-   six states, which had been contradicting the 50-state map — that conflict goes
-   away with it. See docs/WEBSITE-STRUCTURE.md §6. */
+/* Shared by the visible accordion and FAQ structured data. */
 const FAQS = [
-  { q: "What does an HOA master policy cover?", a: "The master policy is the association's own insurance, funded through member assessments. It responds to the shared buildings and common elements, the association's liability, the funds it holds, and the decisions its board makes. It does not cover the inside of an individual unit. That is what an owner's HO-6 is for." },
-  { q: "What type of master policy does our association have?", a: "There are three. Bare walls covers the structure and common elements only. Single entity adds the original fixtures and finishes inside each unit. All-in adds improvements an owner has made since. Your governing documents determine which one applies, and it is the single most consequential detail in the policy: it decides who pays for what after a loss." },
-  { q: "A pipe leaked into my unit. Does the association pay, or do I?", a: "It depends on your master policy type and where the water came from. Bare walls generally leaves the interior to the owner. Single entity and all-in cover more. The association's deductible also matters. If the loss falls below it, the association pays nothing and the cost lands on the owner through loss assessment." },
-  { q: "If the association has a master policy, does an owner still need an HO-6?", a: "Yes. The master policy stops at the unit. An HO-6 covers interior finishes, belongings, personal liability and an owner's share of an association deductible. Since 2026, lenders require one where the master policy carries a per-unit deductible. Without it, the unit may not qualify for a mortgage." },
+  { q: "What does an HOA master policy cover?", a: "The association's master policy generally covers shared buildings, common elements, association liability and other association exposures. How far property coverage extends into each unit depends on whether the form is bare walls, single entity or all-in, together with the governing documents and endorsements." },
+  { q: "What type of master policy does our association have?", a: "The common structures are bare walls, single entity and all-in, and each allocates unit property differently. The policy, endorsements and governing documents determine which structure applies and who is responsible for particular property after a loss." },
+  { q: "A pipe leaked into my unit. Does the association pay, or do I?", a: "It depends on the master-policy form, governing documents, applicable law, deductible-allocation provisions, endorsements and the facts of the loss. The association deductible alone does not determine whether a cost may be allocated to a unit owner." },
+  { q: "If the association has a master policy, does an owner still need an HO-6?", a: "An HO-6 can cover belongings, personal liability, loss assessment and portions of the unit that the association's master policy does not cover. The appropriate coverage depends on the master-policy form and governing documents, and lender requirements vary by lender and loan type." },
 ];
 
-const faqJsonLd = {
-  "@context": "https://schema.org",
-  "@type": "FAQPage",
-  mainEntity: FAQS.map((f) => ({
-    "@type": "Question",
-    name: f.q,
-    acceptedAnswer: { "@type": "Answer", text: f.a },
-  })),
-};
+const HOME_CANONICAL = canonicalUrl("/");
+const faqJsonLd = faqPageSchema(HOME_CANONICAL, FAQS);
 ---
 
 <Layout
   title="HOA Insurance for Condominium Associations & Unit Owners — ProtectMyHOA"
-  description="Independent HOA insurance brokerage specializing in master policies, D&O, HO-6 condo coverage, and more. Free coverage assessments for associations in MA, RI, NH, CT, NY, OK. Call 508-233-2261."
-  canonicalPath=""
+  description={"Independent HOA insurance agency: master policies, D&O and HO-6 condo coverage. Free reviews for boards, licensed in all 50 states and DC. Call " + PHONE + "."}
+  canonicalPath="/"
   jsonLd={[faqJsonLd]}
 >
   {/* ═══ 01 · Hero ═══════════════════════════════════════════════════ */}
   <Hero
-    eyebrow="ProtectMyHOA&trade;"
+    eyebrow="ProtectMyHOA™"
     title="HOA Insurance, Built for Associations"
-    subtitle="The HOA-specialist independent brokerage for community associations: twelve markets compared side by side on coverage, deductibles and limits."
+    subtitle="The independent insurance agency focused on community associations: twelve markets compared side by side on coverage, deductibles and limits."
     backgroundImage="/images/hero-people.jpg"
     backgroundVideo="/images/hero-video.mp4"
   >
@@ -164,12 +112,11 @@ const faqJsonLd = {
             association's liability, the funds it holds, and the decisions its board makes.
           </p>
           <p>
-            Where the master policy ends and a unit owner's HO-6 begins is determined by the
-            governing documents. It is the question boards, managers and owners raise with us
-            most often.
+            Where the master policy ends and a unit owner's HO-6 begins depends on the
+            master-policy form, governing documents, applicable law and endorsements.
           </p>
         </div>
-        <a href="/what-we-do" class="btn btn-gold">See what a master policy covers</a>
+        <a href="/what-we-do/" class="btn btn-gold">See what a master policy covers</a>
       </div>
       <ul class="assoc-figs">
         {ASSOC_FIGURES.map((f) => (
@@ -199,23 +146,22 @@ const faqJsonLd = {
       <div class="what-grid">
         <div class="what-lead">
           <p class="eyebrow">The practice</p>
-          <h2 class="section-title" id="what-h">A brokerage built around community associations.</h2>
+          <h2 class="section-title" id="what-h">An insurance agency built around community associations.</h2>
           <p class="section-subtitle">
-            Community association insurance is not a line item in a general agency here. It is
-            the entire book, which is why the coverage questions a board asks are the ones we
-            answer every day.
+            Community association insurance is our focus, so the coverage questions a board
+            asks shape how we review, compare and document each placement.
           </p>
           {/* CTA sits with the lead copy, not only after the four cards. A visitor
                reaching this section can act on it without scrolling past the grid. */}
           <div class="what-actions">
             <a href={QUOTE_URL} class="btn btn-gold">Request Insurance Review</a>
-            <a href="/about-us" class="text-link">About our brokerage &gt;</a>
+            <a href="/about-us/" class="text-link">About our insurance agency &gt;</a>
           </div>
         </div>
         <div class="what-media">
           <img
             src="/images/practice-team.jpg"
-            alt="Insurance brokers and an association board reviewing master policy documents across a boardroom table"
+            alt="Insurance professionals and an association board reviewing master policy documents across a boardroom table"
             width="1200"
             height="800"
             loading="lazy"
@@ -256,13 +202,12 @@ const faqJsonLd = {
           </h2>
           <div class="record-body">
             <p>
-              Most brokers hand a board a quote and go quiet until renewal. Every policy we
-              arrange comes with a short written summary, meant to be filed with your meeting
-              minutes.
+              A quote alone does not explain the decision. Every policy we arrange comes with a
+              short written summary, meant to be filed with your meeting minutes.
             </p>
             <p>
-              Board members are unpaid volunteers who can be held personally responsible for
-              their decisions. This is the written proof that the decision was made properly.
+              Board members may face questions or claims about their decisions. The written
+              summary records the information and reasoning used at renewal.
             </p>
           </div>
           {/* Lead-capture CTA sits with the copy as well as at the close, so a
@@ -272,7 +217,7 @@ const faqJsonLd = {
         <div class="record-media">
           <img
             src="/images/board-record-desk.jpg"
-            alt="Broker annotating an association's insurance documents at a desk while preparing the written record"
+            alt="Insurance professional annotating an association's policy documents while preparing the written record"
             width="1200"
             height="800"
             loading="lazy"
@@ -295,7 +240,7 @@ const faqJsonLd = {
         <p class="record-close__line">Insurance your board can defend.</p>
         <div class="record-close__actions">
           <a href={QUOTE_URL} class="btn btn-gold">Request your insurance review</a>
-          <a href="/contact" class="btn btn-outline">Speak to a broker</a>
+          <a href="/contact/" class="btn btn-outline">Speak to an insurance professional</a>
         </div>
       </div>
     </div>
@@ -308,8 +253,7 @@ const faqJsonLd = {
         <p class="eyebrow">The process</p>
         <h2 class="section-title" id="stages-h">Review. Compare. Place. Record.</h2>
         <p class="section-subtitle">
-          Four stages, in order, on a schedule the board can hold us to. Most reviews run
-          [00] weeks from first document to bound placement.
+          Four stages, in order, on a schedule the board can hold us to.
         </p>
       </div>
       <ol class="stage-grid">
@@ -333,7 +277,7 @@ const faqJsonLd = {
       <div class="sec-head sec-head--center">
         <p class="eyebrow">Our markets</p>
         <h2 class="section-title" id="markets-h">Markets a board will recognize</h2>
-        <p class="section-subtitle">National insurers alongside the specialists.</p>
+        <p class="section-subtitle">Direct appointments with twelve markets — national insurers alongside the specialists.</p>
       </div>
 
       {/* Single-line logo marquee, scrolling right to left.
@@ -409,7 +353,7 @@ const faqJsonLd = {
         <ul class="fee-points">
           <li>No broker fee, no consulting fee, no fee to review what you already have</li>
           <li>Compensation disclosed in The Board Record on every placement</li>
-          <li>Identical to us whichever of the twelve markets the board chooses</li>
+          <li>What we are paid is disclosed for every option, so you can weigh the recommendation against it</li>
         </ul>
         <div class="band-fee__actions">
           <a href={QUOTE_URL} class="btn btn-gold">Request your insurance review</a>
@@ -456,7 +400,7 @@ const faqJsonLd = {
         ))}
       </div>
       <div class="section-cta-wrap">
-        <a href="/contact" class="btn btn-primary">Contact HOA Insurance Agency</a>
+        <a href="/contact/" class="btn btn-primary">Contact HOA Insurance Agency</a>
       </div>
     </div>
   </section>
@@ -473,17 +417,15 @@ const faqJsonLd = {
           <h2 class="ho6-card__title" id="ho6-h">Own a unit in an association?</h2>
           <p class="ho6-card__sub">For unit owners, not just boards</p>
           <p class="ho6-card__lead">
-            Where the master policy carries a per-unit deductible, your lender now requires
-            an HO-6.
+            A lender may require HO-6 coverage based on the loan type and project requirements.
           </p>
           <p>
-            HO-6 covers what the master policy does not: your interior finishes, your
-            belongings, your personal liability and your share of an association deductible.
-            It should be written against your association's actual master policy, not a
-            generic template.
+            An HO-6 can cover belongings, personal liability, loss assessment and portions of
+            the unit not covered by the master policy. It should be reviewed against the
+            association's actual policy and governing documents, not a generic template.
           </p>
         </div>
-        <a href="/what-we-do" class="btn btn-primary ho6-card__cta">HO-6 condo coverage</a>
+        <a href="/what-we-do/" class="btn btn-primary ho6-card__cta">HO-6 condo coverage</a>
       </aside>
     </div>
   </section>
@@ -501,7 +443,8 @@ const faqJsonLd = {
         <h2 class="section-title" id="states-h">HOA Insurance by State</h2>
         <p class="section-subtitle">
           Licensed in all 50 states and the District of Columbia, with dedicated guides
-          for the {withGuides.length} where we place the most association business.
+          for {withGuides.length} of them so far. Carrier availability varies by state,
+          association type and risk profile.
         </p>
       </div>
 

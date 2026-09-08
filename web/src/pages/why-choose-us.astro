@@ -18,15 +18,46 @@ import { ContactForm } from "../components/ContactForm";
 import { STAGES } from "../data/process";
 import { MARKETS } from "../data/markets";
 import { QUOTE_URL } from "../constants";
+import { AGENCY } from "../../../shared/agency";
 import "./WhyChooseUs.css";
+
+/**
+ * Meta description.
+ *
+ * The phone number and the brand name were typed into this string by hand, and
+ * this was the last hand-typed phone number left in the pages directory —
+ * QuoteApp.tsx already carries the comment describing the same drift being
+ * corrected there. A meta description is the worst place for a stale number: it
+ * is not visible while editing the page, so nobody notices it still says the old
+ * one, but it is exactly what a searcher reads and dials before ever reaching
+ * the site. Both values now come from shared/agency.ts, which is the single
+ * source of truth for them.
+ *
+ * Concatenated rather than templated: the Astro compiler mis-parses a template
+ * literal nested inside a `${}` in frontmatter and fails the build with a
+ * misleading "Expected > but found lang".
+ */
+const metaDescription =
+  "HOA-only focus, coordinated coverage systems, defensible renewal strategies, and HO-6 " +
+  "programs that reduce board headaches. See why associations choose " +
+  AGENCY.brandName +
+  ". Free review — " +
+  AGENCY.phone +
+  ".";
 
 /* 02 — Four reasons. Each carries a claim, a short argument, and the specifics
    that make the claim checkable rather than assertive. */
 const DIFFERENTIATORS = [
   {
     num: "01",
-    title: "Community associations only",
-    desc: "Not homes, not cars, not one line among twenty. Depth in a single class means better submissions to underwriters, sharper renewal conversations and fewer gaps left open.",
+    title: "Community association focus",
+    /* "better submissions ... sharper renewal conversations and fewer gaps left
+       open" was three comparative claims with nothing to compare against, and
+       the last of them read as an outcome we control. What working one class
+       actually produces is a submission an underwriter can read and a renewal
+       conversation that starts from the policy — both describable, neither a
+       promise about what the coverage will do. */
+    desc: "Our association-focused process produces a submission an underwriter can read quickly, a renewal conversation that starts from the policy itself, and gaps that get named rather than left unmentioned.",
     bullets: [
       "Condominium associations and condominium trusts",
       "Homeowners associations",
@@ -59,7 +90,12 @@ const DIFFERENTIATORS = [
   {
     num: "04",
     title: "HO-6 coordinated to the master policy",
-    desc: "Uncoordinated owner policies are where post-loss disputes begin. We place both sides, so the gap between them does not land on a resident.",
+    /* Previously "so the gap between them does not land on a resident", which
+       promised a post-loss result no agency can guarantee — whether a resident
+       ends up paying is decided by the two policies' terms and the adjusters,
+       not by who placed them. Placing both sides and writing the boundary down
+       is the part we actually do, so that is what the sentence now claims. */
+    desc: "Uncoordinated owner policies are where post-loss disputes begin. We place both sides and set out in writing where one ends and the other starts, so the gap is found before a loss rather than argued over after one.",
     bullets: [
       "The master policy structure identified and explained",
       "Owners told what they are responsible for",
@@ -71,12 +107,12 @@ const DIFFERENTIATORS = [
 
 <Layout
   title="Why Choose HOA Insurance Agency — Specialists in HOA & Condo Insurance"
-  description="HOA-only focus, coordinated coverage systems, defensible renewal strategies, and HO-6 programs that reduce board headaches. See why associations choose ProtectMyHOA. Free review — 508-233-2261."
-  canonicalPath="/why-choose-us"
+  description={metaDescription}
+  canonicalPath="/why-choose-us/"
 >
   {/* ═══ 01 · Hero — same treatment as the homepage ═════════════════ */}
   <Hero
-    eyebrow="ProtectMyHOA&trade;"
+    eyebrow="ProtectMyHOA™"
     title="Why Choose HOA Insurance Agency"
     subtitle="HOA boards need more than a generic insurance quote. Associations face shared ownership, shared liability and shared governance, alongside increasingly complex underwriting requirements."
     backgroundImage="/images/hero-people.jpg"
@@ -92,7 +128,7 @@ const DIFFERENTIATORS = [
         <div class="sec-head sec-head--center">
           <p class="eyebrow">The practice</p>
           <h2 class="section-title" id="practice-h">
-            Community associations are the whole of the practice
+            A practice focused on community associations
           </h2>
           <p class="section-subtitle">
             Master policies and HO-6, placed together, so a board can see how the decisions fit
@@ -139,8 +175,14 @@ const DIFFERENTIATORS = [
           </div>
           <div class="wcu-offer__actions">
             <a href={QUOTE_URL} class="btn btn-gold">Request Insurance Review</a>
-            <a href="/what-we-do" class="btn btn-outline">See our HOA coverages</a>
-            <p class="wcu-offer__note">No broker fee. No obligation.</p>
+            <a href="/what-we-do/" class="btn btn-outline">See our HOA coverages</a>
+            {/* The one qualifier this page carries, placed where the offer is
+                made rather than repeated under every paragraph. Same sentence
+                the rest of the site uses, so it reads as house voice. */}
+            <p class="wcu-offer__note">
+              No broker fee. No obligation. Coverage is subject to underwriting, policy terms,
+              and eligibility.
+            </p>
           </div>
         </div>
       </div>
@@ -167,7 +209,12 @@ const DIFFERENTIATORS = [
         </ol>
         <div class="wwd-cta wwd-cta--center">
           <a href={QUOTE_URL} class="btn btn-primary">Request Insurance Review</a>
-          <span class="wwd-cta__note">Most reviews start the same week.</span>
+          {/* Was "Most reviews start the same week." Nothing in the business
+              measures that, and an agency formed in December 2025 has no volume
+              of completed reviews to draw a "most" from. The replacement says
+              what stage one needs instead, which is the same invitation without
+              the statistic. */}
+          <span class="wwd-cta__note">Stage one starts with your current policy.</span>
         </div>
       </div>
     </section>
@@ -178,7 +225,9 @@ const DIFFERENTIATORS = [
         <div class="sec-head sec-head--center">
           <p class="eyebrow">Our markets</p>
           <h2 class="section-title" id="markets-h">Markets a board will recognize</h2>
-          <p class="section-subtitle">National insurers alongside the specialists.</p>
+          <p class="section-subtitle">
+            Direct appointments with twelve markets — national insurers alongside the specialists.
+          </p>
         </div>
 
         {/* The list renders twice and the track animates to -50%, so the second
@@ -216,8 +265,9 @@ const DIFFERENTIATORS = [
         </div>
 
         <p class="carrier-note">
-          Carrier availability varies by state, association type and risk profile. Not every
-          market is approached on every placement.
+          One submission goes out to the markets that write it. Carrier availability varies by
+          state, association type and risk profile, and not every market is approached on every
+          placement.
         </p>
 
         <div class="wwd-cta wwd-cta--center">

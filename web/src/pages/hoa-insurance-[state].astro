@@ -49,25 +49,37 @@ const stateCities = cities.filter(
   (c) => c.stateSlug === state.slug
 );
 
+/**
+ * Canonical URL for this state, in the trailing-slash form the whole site uses.
+ *
+ * Layout normalises either shape, so this is not load-bearing — it is here so
+ * that the next template copied from this one starts from the right pattern
+ * rather than from `/hoa-insurance-${slug}` with no slash, which is what was
+ * here before and what `astro.config.mjs` (trailingSlash: "always") does not
+ * emit. Built by concatenation because the Astro compiler mis-parses a template
+ * literal nested inside a `${}` in frontmatter.
+ */
+const canonicalPath = "/hoa-insurance-" + state.slug + "/";
+
 /* Same four audiences and the same marks as the homepage and /what-we-do, so the
    three pages say this once and say it identically. */
 const AUDIENCES = [
   { icon: "board",     title: "Boards & trustees",     cta: "Request a board review",       href: QUOTE_URL },
-  { icon: "manager",   title: "Property managers",     cta: "Talk to us about a portfolio", href: "/contact" },
-  { icon: "developer", title: "Developers & sponsors", cta: "Discuss a new project",        href: "/contact" },
-  { icon: "owner",     title: "Unit owners",           cta: "Get HO-6 coverage",            href: "/what-we-do" },
+  { icon: "manager",   title: "Property managers",     cta: "Talk to us about a portfolio", href: "/contact/" },
+  { icon: "developer", title: "Developers & sponsors", cta: "Discuss a new project",        href: "/contact/" },
+  { icon: "owner",     title: "Unit owners",           cta: "Get HO-6 coverage",            href: "/what-we-do/" },
 ];
 ---
 
 <Layout
   title={state.title}
   description={state.description}
-  canonicalPath={`/hoa-insurance-${state.slug}`}
+  canonicalPath={canonicalPath}
   noindex={!state.reviewed}
 >
   {/* ═══ 01 · Hero — same treatment as the homepage ═══════════════════ */}
   <Hero
-    eyebrow="ProtectMyHOA&trade;"
+    eyebrow="ProtectMyHOA™"
     title={state.heroTitle}
     subtitle={`Master insurance for the association, HO-6 for the unit owner, and a written record of why each was placed the way it was — for ${state.name} community associations.`}
     backgroundImage="/images/hero-people.jpg"
@@ -85,8 +97,8 @@ const AUDIENCES = [
           <h2 class="section-title" id="intro-h">HOA Insurance for {state.name} Associations</h2>
           <p class="st-lead">{state.intro}</p>
           <p class="st-closer">
-            Where the master policy ends and a unit owner's HO-6 begins is set by your
-            governing documents. It is the question {state.name} boards raise with us most often.
+            Where the master policy ends and a unit owner's HO-6 begins depends on the
+            master-policy form, governing documents, applicable law and endorsements.
           </p>
           <div class="st-cta">
             <a href={`${QUOTE_URL}?state=${state.abbr}`} class="btn btn-primary">Request Insurance Review</a>
@@ -137,12 +149,20 @@ const AUDIENCES = [
           </article>
         ))}
       </div>
+      {/* This note is the only qualifier the coverage grid gets, and the grid
+          renders seven cards from data/coverages.ts on all 51 state pages. The
+          card bodies describe what each coverage is FOR in general terms; they
+          are not a summary of any association's policy, and reading them as one
+          is the misunderstanding worth heading off here rather than by hanging
+          a disclaimer under every card. One sentence, in this note's voice. */}
       <p class="st-cov-note">
         Workers compensation and earthquake are available separately, and are quoted
-        alongside the program where an association needs them.
+        alongside the program where an association needs them. Coverage descriptions here are
+        general: availability varies by jurisdiction, association type and carrier, and the
+        policy issued governs.
       </p>
       <div class="st-cta st-cta--center">
-        <a href="/what-we-do" class="btn btn-primary">Learn More About Our Coverages</a>
+        <a href="/what-we-do/" class="btn btn-primary">Learn More About Our Coverages</a>
       </div>
     </div>
   </section>
@@ -212,8 +232,11 @@ const AUDIENCES = [
       <div class="sec-head sec-head--center">
         <p class="eyebrow">Our markets</p>
         <h2 class="section-title" id="markets-h">Markets a board will recognize</h2>
-        <p class="section-subtitle">National insurers alongside the specialists.</p>
+        <p class="section-subtitle">
+          Direct appointments with twelve markets — national insurers alongside the specialists.
+        </p>
       </div>
+
       <div class="carrier-marquee">
         <ul class="carrier-track">
           {MARKETS.map((m) => (
@@ -229,8 +252,9 @@ const AUDIENCES = [
         </ul>
       </div>
       <p class="carrier-note">
-        Carrier availability varies by state, association type and risk profile. Not every
-        market is approached on every placement.
+        One submission goes out to the markets that write it. Carrier availability varies by
+        state, association type and risk profile, and not every market is approached on every
+        placement.
       </p>
     </div>
   </section>
@@ -261,7 +285,7 @@ const AUDIENCES = [
         </div>
         <div class="st-cities">
           {stateCities.map((c) => (
-            <a href={`/hoa-insurance-${c.slug}-${c.stateAbbr}`} class="st-city">{c.name}</a>
+            <a href={`/hoa-insurance-${c.slug}-${c.stateAbbr}/`} class="st-city">{c.name}</a>
           ))}
         </div>
       </div>

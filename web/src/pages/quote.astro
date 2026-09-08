@@ -1,7 +1,23 @@
 ---
 import QuoteApp from "../components/QuoteApp";
+import LegalStrip from "../components/LegalStrip.astro";
 import "../styles/quote.css";
 import Analytics from "../components/Analytics.astro";
+import { AGENCY } from "../../../shared/agency";
+import { canonicalUrl, absoluteUrl, siteGraph } from "../lib/seo";
+
+/**
+ * The quote wizard hand-rolls its own <html> so the island can run full-bleed
+ * with no navbar or site footer. That is a layout decision, but it used to mean
+ * this page also hand-rolled its SEO: a literal origin, an unslashed canonical
+ * and no structured data at all. All three now come from lib/seo.ts, so this
+ * page cannot drift from the rest of the site.
+ */
+const canonical = canonicalUrl("/quote/");
+const title = `HOA Insurance Quote · ${AGENCY.brandName}`;
+const description =
+  "Request an HOA insurance review from ProtectMyHOA, the consumer brand of HOA Insurance Agency LLC — master policies, D&O, HO-6 and more.";
+const graph = siteGraph({ canonical, title, description });
 ---
 
 <html lang="en">
@@ -11,14 +27,32 @@ import Analytics from "../components/Analytics.astro";
     <link rel="apple-touch-icon" href="/favicon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#0b1220" />
-    <meta name="description" content="Get a fast HOA insurance review from ProtectMyHOA — master policies, D&O, HO-6 and more." />
-    <title>HOA Insurance Quote · ProtectMyHOA</title>
+    <meta name="description" content={description} />
+    <title>{title}</title>
+
+    {/*
+      noindex, follow.
+
+      QuoteApp mounts with `client:only="react"`, so the HTML this route serves
+      has an empty <body> — a crawler sees a title and a description over
+      nothing, which earns a Soft 404 or an indexed blank page on a brand query,
+      not a ranking. `follow` keeps the link equity arriving from the site's many
+      quote CTAs moving through. The route is also listed in data/routes.ts, which
+      is what keeps it out of the sitemap; the two must be changed together.
+    */}
+    <meta name="robots" content="noindex, follow" />
+    <meta name="googlebot" content="noindex, follow" />
+
+    <link rel="canonical" href={canonical} />
 
     <meta property="og:type" content="website" />
-    <meta property="og:title" content="HOA Insurance Quote · ProtectMyHOA" />
-    <meta property="og:description" content="Get a fast HOA insurance review from ProtectMyHOA — master policies, D&O, HO-6 and more." />
-    <meta property="og:url" content="https://www.protectmyhoa.com/quote" />
-    <link rel="canonical" href="https://www.protectmyhoa.com/quote" />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:image" content={absoluteUrl("/logo.png")} />
+    <meta property="og:url" content={canonical} />
+    <meta property="og:site_name" content={AGENCY.brandName} />
+
+    <script type="application/ld+json" set:html={JSON.stringify(graph)} />
 
     <Analytics />
   </head>
@@ -26,5 +60,6 @@ import Analytics from "../components/Analytics.astro";
     <div id="quote-root">
       <QuoteApp client:only="react" />
     </div>
+    <LegalStrip />
   </body>
 </html>

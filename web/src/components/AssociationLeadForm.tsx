@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { FORMSUBMIT_URL, LEAD_EMAIL, LEAD_EMAIL_HREF, trackLead } from "../constants";
+import { FORMSUBMIT_URL, LEAD_EMAIL, LEAD_EMAIL_HREF, PHONE, PHONE_HREF, trackLead } from "../constants";
+import { AGENCY, AGENCY_FMT } from "../../../shared/agency";
 import { submitCrmLead } from "../lib/crmLead";
 import LeadUploadPanel from "./LeadUploadPanel";
 import "./AssociationLeadForm.css";
@@ -89,7 +90,7 @@ export function AssociationLeadForm({ property }: Props) {
       trackLead("association_ho6");
       setSent(true);
     } catch {
-      setError("Something went wrong. Please try again or call 508-233-2261.");
+      setError(`Something went wrong. Please try again or call ${PHONE}.`);
     } finally {
       setSending(false);
     }
@@ -107,13 +108,13 @@ export function AssociationLeadForm({ property }: Props) {
         </div>
         <h2 className="alf-success-title">Thanks, {firstName || "we got it"}!</h2>
         <p className="alf-success-text">
-          We've received your HO-6 quote request for your unit at <strong>{property.name}</strong>. We'll coordinate with your association's master policy and reach out within one business day with a personalized quote.
+          We've received your HO-6 quote request for your unit at <strong>{property.name}</strong>. We'll review your association's master policy and reach out within one business day with a quote. Coverage is subject to underwriting, policy terms, and eligibility.
         </p>
         {/* Offered only after the lead is captured — an upload that
             never happens costs nothing at this point. */}
         {uploadToken && <LeadUploadPanel uploadToken={uploadToken} />}
-        <a href="tel:+15082332261" className="alf-phone-link">
-          Have questions? Call us — 508-233-2261
+        <a href={PHONE_HREF} className="alf-phone-link">
+          Have questions? Call us — {PHONE}
         </a>
         <a href="/" className="alf-back-link">Visit ProtectMyHOA.com</a>
       </div>
@@ -126,7 +127,10 @@ export function AssociationLeadForm({ property }: Props) {
         <p className="alf-eyebrow">HO-6 Condo Insurance for Unit Owners</p>
         <h1 className="alf-headline">Protect your unit at {property.name}</h1>
         <p className="alf-sub">
-          Your association's master policy doesn't cover everything. Personal property, interior improvements, your share of deductibles, special assessments — that's on you. We'll set you up with HO-6 coverage that's <strong>coordinated with your building's master policy</strong>, so there are no surprises after a loss.
+          Depending on the master policy and governing documents, an HO-6 can cover belongings,
+          personal liability, loss assessment, and portions of the unit the association does not
+          insure. We'll quote it <strong>against your building's own master policy</strong>, so you
+          can see where the two line up before you buy.
         </p>
 
         <div className="alf-property-card">
@@ -199,7 +203,10 @@ export function AssociationLeadForm({ property }: Props) {
             )}
           </button>
 
-          <p className="alf-disclaimer">Free. No obligation. We'll respond within 1 business day.</p>
+          <p className="alf-disclaimer">
+            Free and no obligation. We'll respond within one business day. Submitting
+            this form does not bind coverage.
+          </p>
         </form>
       </div>
 
@@ -233,21 +240,22 @@ export function AssociationLeadForm({ property }: Props) {
         <div className="alf-signals">
           <div className="alf-signal">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2l8 4v6c0 5-3.5 9.5-8 10-4.5-.5-8-5-8-10V6l8-4z"/></svg>
-            <span>We know your building — quotes coordinated with the master policy</span>
+            <span>We quote against your building's own master policy, not a generic template</span>
           </div>
           <div className="alf-signal">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2l8 4v6c0 5-3.5 9.5-8 10-4.5-.5-8-5-8-10V6l8-4z"/></svg>
-            <span>Independent brokerage — we shop the market for you</span>
+            <span>{AGENCY_FMT.displayName} is an independent insurance agency — we shop the market for you</span>
           </div>
           <div className="alf-signal">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2l8 4v6c0 5-3.5 9.5-8 10-4.5-.5-8-5-8-10V6l8-4z"/></svg>
-            <span>Based in Marlborough, MA — real people, fast response</span>
+            <span>Based in {AGENCY.city}, {AGENCY.state} — you'll talk to a real person</span>
           </div>
         </div>
 
         <div className="alf-contact-alt">
-          <p>Prefer to talk?</p>
-          <a href="tel:+15082332261">508-233-2261</a>
+          <p>Prefer to talk? Call {AGENCY_FMT.displayName}</p>
+          <a href={PHONE_HREF}>{PHONE}</a>
+          <p>New business and quote requests</p>
           <a href={LEAD_EMAIL_HREF}>{LEAD_EMAIL}</a>
         </div>
       </div>

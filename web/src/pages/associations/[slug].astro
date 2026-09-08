@@ -1,6 +1,8 @@
 ---
 import { AssociationLeadForm } from "../../components/AssociationLeadForm";
+import LegalStrip from "../../components/LegalStrip.astro";
 import propertiesData from "../../data/properties.json";
+import { AGENCY } from "../../../../shared/agency";
 
 interface Property {
   id: number;
@@ -46,13 +48,14 @@ import Analytics from "../../components/Analytics.astro";
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
 
-    <title>HO-6 Condo Insurance for {property.name} — ProtectMyHOA</title>
+    <title>HO-6 Condo Insurance for {property.name} — {AGENCY.brandName}</title>
     <meta name="description" content={`Get an HO-6 condo insurance quote for your unit at ${property.name}${fullAddress ? ` (${fullAddress})` : ""}. Coordinated with your association's master policy. Free quote — no obligation.`} />
 
     <Analytics />
   </head>
   <body style="margin:0; font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; -webkit-font-smoothing: antialiased;">
     <AssociationLeadForm client:load property={property} />
+    <LegalStrip />
   </body>
 </html>
 <!-- Generated from Buildium sync. {properties.length} associations indexed. -->

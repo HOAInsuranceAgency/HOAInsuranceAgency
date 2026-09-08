@@ -2,6 +2,7 @@
 import Layout from "../layouts/Layout.astro";
 import Hero from "../components/Hero.astro";
 import { ContactForm } from "../components/ContactForm";
+import { AGENCY, AGENCY_FMT, FOUNDER_PROFILES } from "../../../shared/agency";
 import "./AboutUs.css";
 
 const BELIEFS = [
@@ -21,13 +22,13 @@ const APPROACH = [
 ---
 
 <Layout
-  title="About HOA Insurance Agency — Independent HOA & Condo Insurance Brokerage"
-  description="HOA Insurance Agency is an independent brokerage specializing in master policies and HO-6 condo coverage for shared-ownership communities. Based in Marlborough, MA. Call 508-233-2261."
-  canonicalPath="/about-us"
+  title="About HOA Insurance Agency — the Agency Behind ProtectMyHOA"
+  description="ProtectMyHOA is the consumer brand of HOA Insurance Agency LLC, an independent agency in Marlborough, MA specializing in HOA master policies and HO-6 condo coverage, licensed in all 50 states and DC."
+  canonicalPath="/about-us/"
 >
   <Hero
     title="About HOA Insurance Agency"
-    subtitle="Independent insurance brokerage specializing in HOA master insurance and HO-6 condo unit owner policies. We serve one type of customer: shared-ownership communities and the people responsible for protecting them."
+    subtitle="Independent insurance agency specializing in HOA master insurance and HO-6 condo unit owner policies for shared-ownership communities."
     backgroundImage="/images/board-meeting.jpg"
     backgroundVideo="/images/hero-video.mp4"
     compact
@@ -36,7 +37,8 @@ const APPROACH = [
   <section class="section">
     <div class="container about-intro-grid reveal">
       <div class="about-intro-content">
-        <p>HOAs have unique requirements — shared buildings, shared liability, board governance, and long-term maintenance realities. We build <a href="/what-we-do">HOA insurance programs</a> around those realities and explain them in plain English.</p>
+        <p class="about-brandline"><strong>{AGENCY_FMT.brandLine}</strong> If you arrived from a ProtectMyHOA ad, an emailed quote or ProtectMyHOA.com, this is the licensed agency behind it — one company, two names.</p>
+        <p>HOAs have unique requirements — shared buildings, shared liability, board governance, and long-term maintenance realities. We build <a href="/what-we-do/">HOA insurance programs</a> around those realities and explain them in plain English.</p>
         <p>We're not a generalist agency that happens to sell condo policies. HOA insurance is our focus — the complexities, the underwriting, the board-level conversations.</p>
       </div>
       <div class="about-intro-image">
@@ -58,7 +60,7 @@ const APPROACH = [
     <div class="container">
       <h2 class="section-title">Independent Market Access</h2>
       <p style="font-size: 16px; color: var(--color-gray-600); line-height: 1.7; max-width: 720px">
-        We're not tied to a single insurer. We can access multiple carriers and specialty markets to place the best fit for your association. Coverage is subject to underwriting, policy terms, and eligibility — but our responsibility is consistent: advise the association and place the best program available.
+        We're not tied to a single insurer. We can access multiple carriers and specialty markets to find the right fit for your association. Coverage is subject to underwriting, policy terms, and eligibility — our responsibility is consistent: advise the association and place the strongest option the market returns.
       </p>
     </div>
   </section>
@@ -76,11 +78,43 @@ const APPROACH = [
     <div class="container">
       <h2 class="section-title">Compliance &amp; Professional Standards</h2>
       <p style="font-size: 16px; color: var(--color-gray-600); line-height: 1.7; max-width: 720px">
-        HOA Insurance Agency is a licensed insurance agency. We provide insurance guidance and placement — not legal advice. Final coverage depends on actual policy language and endorsements issued by the insurer.
+        {AGENCY.name} is a licensed insurance agency, licensed in {AGENCY.areaServed} and writing from {AGENCY.addressLine1}, {AGENCY_FMT.addressLine2}. We market to community associations under our consumer brand, {AGENCY.brandName}. Agency licensure is not the same as product availability: which carriers, programs and coverage forms can be obtained varies by jurisdiction, association type and risk.
+      </p>
+      <p style="font-size: 16px; color: var(--color-gray-600); line-height: 1.7; max-width: 720px; margin-top: 16px">
+        We provide insurance guidance and placement — not legal advice. A quote is not a binder and submitting a form does not bind coverage. Final coverage depends on actual policy language and endorsements issued by the insurer.
       </p>
       <div style="margin-top: 32px">
-        <a href="/why-choose-us" class="btn btn-primary">Why Choose HOA Insurance Agency</a>
+        <a href="/why-choose-us/" class="btn btn-primary">Why Choose HOA Insurance Agency</a>
       </div>
+    </div>
+  </section>
+
+
+  {/* The anchor is the founder Person's current stable @id. */}
+  <section class="section" id="jake-greasley">
+    <div class="container">
+      <h2 class="section-title">Founder and President</h2>
+      <p style="font-size: 16px; color: var(--color-gray-600); line-height: 1.7; max-width: 720px">
+        {AGENCY.name} was founded by {AGENCY.founderDisplayName}, legally
+        {" "}{AGENCY.founderLegalName}, who serves as its {AGENCY.founderJobTitle}.
+      </p>
+      <p style="font-size: 16px; color: var(--color-gray-600); line-height: 1.7; max-width: 720px; margin-top: 16px">
+        HOA Insurance Agency focuses on homeowner and condominium associations,
+        including association master policies and related unit-owner HO-6 coverage. Both the
+        agency and Jake individually are licensed and writing in {AGENCY.areaServed}.
+      </p>
+      <nav class="founder-profiles" aria-label={`${AGENCY.founderDisplayName} profiles`}>
+        <span class="founder-profiles__label">Public profiles</span>
+        <ul>
+          {FOUNDER_PROFILES.map((profile) => (
+            <li>
+              <a href={profile.url} target="_blank" rel="me noopener noreferrer">
+                {profile.label}<span aria-hidden="true"> ↗</span>
+              </a>
+            </li>
+          ))}
+        </ul>
+      </nav>
     </div>
   </section>
 

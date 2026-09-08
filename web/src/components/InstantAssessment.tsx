@@ -1,5 +1,15 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { FORMSUBMIT_URL, LEAD_EMAIL, LEAD_EMAIL_HREF, trackLead } from "../constants";
+/* PHONE / PHONE_HREF come from here rather than being typed inline. This file
+   used to carry four hand-written copies of the number — an error message, the
+   success screen's tel: href and its visible label, and the "Prefer to talk?"
+   block — which is four places to miss on the day the number changes. */
+import { FORMSUBMIT_URL, LEAD_EMAIL, LEAD_EMAIL_HREF, PHONE, PHONE_HREF, trackLead } from "../constants";
+/* The licensed entity's name, interpolated rather than typed. `../constants`
+   re-exports the contact details but not the name, and this lander names the
+   operator twice in copy — under the submit button and above the phone number.
+   `displayName` is the entity name without the LLC suffix, which is the form
+   marketing copy uses; the full legal name lives on the LegalStrip below. */
+import { AGENCY_FMT } from "../../../shared/agency";
 import { submitCrmLead } from "../lib/crmLead";
 // One loader for the whole site — see lib/googlePlaces.ts.
 import { loadGooglePlaces } from "../lib/googlePlaces";
@@ -118,7 +128,7 @@ export function InstantAssessment({
       trackLead("instant_assessment");
       setSent(true);
     } catch {
-      setError("Something went wrong. Please try again or call 508-233-2261.");
+      setError(`Something went wrong. Please try again or call ${PHONE}.`);
     } finally {
       setSending(false);
     }
@@ -135,14 +145,19 @@ export function InstantAssessment({
           </svg>
         </div>
         <h2 className="ia-success-title">We're on it.</h2>
+        {/* "Personalized coverage assessment" stays — it is what the team
+            actually sends back. What follows it is the qualifier the rest of the
+            site uses, because a submitted form is a request for an assessment
+            and not the start of a policy. */}
         <p className="ia-success-text">
-          We'll review your information and reach out within one business day with a personalized coverage assessment.
+          We'll review your information and reach out within one business day with a
+          personalized coverage assessment. Submitting this form does not bind coverage.
         </p>
         {/* Offered only after the lead is captured — an upload that
             never happens costs nothing at this point. */}
         {uploadToken && <LeadUploadPanel uploadToken={uploadToken} />}
-        <a href="tel:+15082332261" className="ia-phone-link">
-          Or call us now — 508-233-2261
+        <a href={PHONE_HREF} className="ia-phone-link">
+          Or call us now — {PHONE}
         </a>
         <a href="/" className="ia-back-link">← Back to ProtectMyHOA.com</a>
       </div>
@@ -206,7 +221,15 @@ export function InstantAssessment({
             )}
           </button>
 
-          <p className="ia-disclaimer">Free. No obligation. We'll respond within 1 business day.</p>
+          {/* Names the licensed entity and says what the button does NOT do.
+              The lander is heavily ProtectMyHOA-branded, and this line is the
+              form's own answer to "who is receiving this, and am I now
+              covered?" — the LegalStrip below repeats it in legal language, but
+              a reader deciding whether to press the button is looking here. */}
+          <p className="ia-disclaimer">
+            Free and no obligation. {AGENCY_FMT.displayName} replies within one business day.
+            Submitting this form does not bind coverage.
+          </p>
         </form>
       </div>
 
@@ -226,9 +249,14 @@ export function InstantAssessment({
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="12" cy="12" r="10"/><path d="M8 12l3 3 5-6"/></svg>
               Gap analysis vs. your current policy
             </li>
+            {/* Was "Competitive market comparison", which reads as a promise
+                that the result will beat what the association has now. What is
+                actually delivered is a comparison of the markets this agency can
+                reach for that building, and those vary by state, association
+                type and risk profile — so the item now says that instead. */}
             <li>
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="12" cy="12" r="10"/><path d="M8 12l3 3 5-6"/></svg>
-              Competitive market comparison
+              Comparison of the markets available to your association
             </li>
             <li>
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="12" cy="12" r="10"/><path d="M8 12l3 3 5-6"/></svg>
@@ -248,9 +276,14 @@ export function InstantAssessment({
           </div>
         )}
 
+        {/* Each route is labelled with what it is for. The block used to stack a
+            bare number on a bare address, and the LegalStrip beneath this island
+            prints the agency's general mailbox in the same flat style — two
+            addresses, one screen, nothing saying which one gets a quote moving. */}
         <div className="ia-contact-alt">
-          <p>Prefer to talk?</p>
-          <a href="tel:+15082332261">508-233-2261</a>
+          <p>Prefer to talk? Call {AGENCY_FMT.displayName}</p>
+          <a href={PHONE_HREF}>{PHONE}</a>
+          <p>New business and quote requests</p>
           <a href={LEAD_EMAIL_HREF}>{LEAD_EMAIL}</a>
         </div>
       </div>

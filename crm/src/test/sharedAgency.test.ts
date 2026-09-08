@@ -96,7 +96,11 @@ describe("shared/agency — stored fields", () => {
   it("holds the ACORD producer block in split form", () => {
     expect(AGENCY).toEqual({
       name: "HOA Insurance Agency LLC",
-      contactName: "Jake Greasley",
+      contactName: "HOA Insurance Agency LLC",
+      founderDisplayName: "Jake Greasley",
+      founderLegalName: "Jacob Charles Greasley",
+      founderJobTitle: "Founder and President",
+      brandName: "ProtectMyHOA",
       addressLine1: "420 Lakeside Ave, Suite 202",
       city: "Marlborough",
       state: "MA",
@@ -107,7 +111,32 @@ describe("shared/agency — stored fields", () => {
       site: "https://www.protectmyhoa.com",
       siteLabel: "ProtectMyHOA.com",
       tagline: "Insurance Built for Associations.",
+      foundingDate: "2025-12-30",
+      areaServed: "all 50 states and the District of Columbia",
+      description:
+        "ProtectMyHOA is the consumer-facing brand of HOA Insurance Agency LLC, an independent insurance agency based in Marlborough, Massachusetts, licensed and writing in all 50 states and the District of Columbia and specializing in coverage for homeowner and condominium associations.",
     });
+  });
+
+  it("keeps public founder identity separate from ACORD contact data", () => {
+    expect(AGENCY).toHaveProperty("contactName");
+    expect(AGENCY).toHaveProperty("founderDisplayName");
+    expect(AGENCY).toHaveProperty("founderLegalName");
+    expect(AGENCY).toHaveProperty("founderJobTitle");
+    expect(AGENCY.founderDisplayName).toBe("Jake Greasley");
+    expect(AGENCY.founderJobTitle).toBe("Founder and President");
+    expect(AGENCY.contactName).toBe(AGENCY.name);
+    expect(AGENCY.contactName).not.toBe(AGENCY.founderDisplayName);
+    expect(AGENCY.contactName).not.toBe(AGENCY.founderLegalName);
+
+    const seo = read("../../../web/src/lib/seo.ts");
+    const about = read("../../../web/src/pages/about-us.astro");
+    const acord25 = read("../lib/acord25.ts");
+    const acordApp = read("../lib/acordApp.ts");
+    expect(seo).not.toContain("contactName");
+    expect(about).not.toContain("AGENCY.contactName");
+    expect(acord25).toContain("AGENCY.contactName");
+    expect(acordApp).toContain("AGENCY.contactName");
   });
 
   it("stores no joined or reformatted duplicate of a split field", () => {
@@ -222,9 +251,14 @@ describe("shared/agency — drift check against the consumer files", () => {
     // Value half: the module's real export, whatever route it took to get
     // there. Post-migration this is what carries the weight — the literal map
     // above is empty, so on its own it would prove nothing.
-    expect(Object.keys(CRM_AGENCY).sort()).toEqual(
-      Object.keys(CRM_CANONICAL).sort()
-    );
+    // CRM_CANONICAL covers the ACORD producer block. `AGENCY` also carries the
+    // website's identity facts (brand name, founder legal name, founding date,
+    // footprint, description), which no ACORD field consumes — so the re-export
+    // must be a SUPERSET of the producer block rather than exactly equal to it.
+    // Anything less would mean a field went missing from the shared module.
+    for (const key of Object.keys(CRM_CANONICAL)) {
+      expect(Object.keys(CRM_AGENCY)).toContain(key);
+    }
     for (const [name, expected] of Object.entries(CRM_CANONICAL)) {
       expect(CRM_AGENCY[name as keyof typeof CRM_AGENCY]).toBe(expected);
     }

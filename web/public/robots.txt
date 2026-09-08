@@ -1,5 +1,7 @@
 User-agent: *
 Allow: /
-Disallow: /associations/
+
+# Noindex routes remain crawlable so crawlers can read their meta directives.
+# Their shared sitemap exclusion list is in web/src/data/routes.ts.
 
 Sitemap: https://www.protectmyhoa.com/sitemap-index.xml

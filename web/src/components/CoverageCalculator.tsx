@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useMemo, useCallback } from "react";
-import { QUOTE_URL, FORMSUBMIT_URL, trackLead } from "../constants";
+import { QUOTE_URL, FORMSUBMIT_URL, PHONE, trackLead } from "../constants";
+import { states as ALL_STATES } from "../data/states";
 import { submitCrmLead } from "../lib/crmLead";
 import "./CoverageCalculator.css";
 
@@ -43,20 +44,20 @@ function loadGooglePlaces(): Promise<void> {
   });
 }
 
-/* ── State mapping ── */
-const STATE_ABBR_TO_NAME: Record<string, string> = {
-  MA: "Massachusetts", RI: "Rhode Island", NH: "New Hampshire",
-  CT: "Connecticut", NY: "New York", OK: "Oklahoma",
-};
+/** State lookup derived from the nationwide route data. */
+const STATE_ABBR_TO_NAME: Record<string, string> = Object.fromEntries(
+  ALL_STATES.map((s) => [s.abbr, s.name])
+);
 
-const SUPPORTED_STATES = new Set(Object.keys(STATE_ABBR_TO_NAME));
+const KNOWN_STATES = new Set(Object.keys(STATE_ABBR_TO_NAME));
 
+/** Return a known state/DC abbreviation from a Places result. */
 function extractStateFromPlace(place: google.maps.places.PlaceResult): string | null {
   if (!place.address_components) return null;
   for (const comp of place.address_components) {
     if (comp.types.includes("administrative_area_level_1")) {
       const abbr = comp.short_name?.toUpperCase();
-      if (abbr && SUPPORTED_STATES.has(abbr)) return abbr;
+      if (abbr && KNOWN_STATES.has(abbr)) return abbr;
     }
   }
   return null;
@@ -68,10 +69,10 @@ function getCoverages(state: string, units: number): CoverageResult[] {
 
   results.push({ name: "Master Property", icon: "building", priority: "essential", reason: "Protects buildings and common areas at replacement cost." });
   results.push({ name: "General Liability", icon: "shield", priority: "essential", reason: "Covers slip & fall, premises liability, and defense costs." });
-  results.push({ name: "Directors & Officers", icon: "briefcase", priority: "essential", reason: "Protects board members from governance and decision disputes." });
+  results.push({ name: "Directors & Officers", icon: "briefcase", priority: "essential", reason: "Responds to governance and decision-making claims against the board, subject to policy terms." });
 
   if (units >= 20) {
-    results.push({ name: "Umbrella / Excess", icon: "umbrella", priority: "essential", reason: `With ${units} units, higher liability limits are critical.` });
+    results.push({ name: "Umbrella / Excess", icon: "umbrella", priority: "essential", reason: `With ${units} units, the liability tower is worth reviewing against the association's exposures.` });
     results.push({ name: "Crime / Fidelity", icon: "lock", priority: "essential", reason: "Larger budgets mean higher theft and fraud exposure." });
   } else if (units >= 10) {
     results.push({ name: "Umbrella / Excess", icon: "umbrella", priority: "recommended", reason: "Extended liability limits provide an important safety net." });
@@ -82,9 +83,9 @@ function getCoverages(state: string, units: number): CoverageResult[] {
   }
 
   if (["MA", "CT", "NH", "NY"].includes(state)) {
-    results.push({ name: "Ordinance or Law", icon: "scale", priority: "essential", reason: state === "NY" ? "NYC Local Law 11 and strict codes require this." : "Strict building codes increase rebuild costs significantly." });
+    results.push({ name: "Ordinance or Law", icon: "scale", priority: "essential", reason: state === "NY" ? "New York codes, and FISP facade work in New York City, can push a rebuild well past the original construction spec." : "Strict building codes increase rebuild costs significantly." });
   } else {
-    results.push({ name: "Ordinance or Law", icon: "scale", priority: "recommended", reason: state === "OK" ? "Storm rebuilds must meet current codes — costs can spike." : "Coastal codes can increase reconstruction costs." });
+    results.push({ name: "Ordinance or Law", icon: "scale", priority: "recommended", reason: state === "OK" ? "Storm rebuilds must meet current codes — costs can spike." : "Rebuilding to current code after a loss can cost more than the original construction." });
   }
 
   results.push({ name: "HO-6 Program", icon: "home", priority: units >= 10 ? "recommended" : "consider", reason: "Coordinated unit owner coverage reduces claims conflicts." });
@@ -94,14 +95,14 @@ function getCoverages(state: string, units: number): CoverageResult[] {
 
 function getRiskCallouts(state: string, units: number): string[] {
   const c: string[] = [];
-  if (state === "MA") c.push("Water damage and freeze claims are the #1 cause of loss for MA associations. Per-unit water deductibles are increasingly common.");
-  if (state === "CT") c.push("Water damage is the leading claim type for Connecticut condominiums. Aging buildings need accurate valuation.");
+  if (state === "MA") c.push("Water damage, freeze losses and per-unit water deductibles can create significant exposure for MA associations.");
+  if (state === "CT") c.push("Water damage and aging-building valuations are important review points for Connecticut condominiums.");
   if (state === "NH") c.push("Ice dams and freeze damage drive significant claims in NH. Building valuation must account for current construction costs.");
-  if (state === "OK") c.push("Hail and wind are the leading claim drivers in Oklahoma. Adequate replacement cost coverage is critical.");
-  if (state === "NY" && units >= 50) c.push("NYC high-rise associations face significantly higher replacement cost valuations and FISP facade inspection requirements.");
+  if (state === "OK") c.push("Hail, wind and replacement-cost valuation are important review points for Oklahoma associations.");
+  if (state === "NY" && units >= 50) c.push("Larger New York associations carry higher replacement cost valuations, and buildings in New York City are subject to FISP facade inspection requirements.");
   if (state === "NY" && units < 50) c.push("New York's regulatory environment demands comprehensive D&O and proper building valuation.");
   if (state === "RI") c.push("Coastal properties may require separate wind/flood coverage. Loss assessment exposure is growing for RI unit owners.");
-  if (units >= 30) c.push(`With ${units} units, your association should strongly consider umbrella coverage of $5M or more.`);
+  if (units >= 30) c.push(`With ${units} units, umbrella limits are worth reviewing against your current liability tower.`);
   return c.slice(0, 3);
 }
 
@@ -117,8 +118,8 @@ const ICONS: Record<string, JSX.Element> = {
 };
 
 const PRIORITY_LABELS: Record<Priority, string> = {
-  essential: "Essential",
-  recommended: "Recommended",
+  essential: "Core review",
+  recommended: "Review",
   consider: "Consider",
 };
 
@@ -174,7 +175,9 @@ export function CoverageCalculator() {
           setUnsupported(false);
           setStep("units");
         } else {
+          // Fall back to a state picker when Places cannot resolve the address.
           setUnsupported(true);
+          setNeedsManualState(true);
           setStateAbbr("");
           setStateName("");
         }
@@ -262,7 +265,7 @@ export function CoverageCalculator() {
       trackLead("coverage_calculator");
       setEmailSent(true);
     } catch {
-      setEmailError("Something went wrong. Please try again or call 508-233-2261.");
+      setEmailError(`Something went wrong. Please try again or call ${PHONE}.`);
     } finally {
       setSending(false);
     }
@@ -293,7 +296,7 @@ export function CoverageCalculator() {
           <span className="calc-badge">Interactive Tool</span>
           <h2 className="section-title">What Coverage Does Your Association Need?</h2>
           <p className="section-subtitle">
-            Enter your property address to get a personalized coverage recommendation.
+            Enter your property address for a starting coverage checklist built on your state and unit count.
           </p>
         </div>
 
@@ -344,9 +347,16 @@ export function CoverageCalculator() {
                 </button>
               )}
 
+              {/* Reachable now only when Places handed us an address we could not
+                  read a US state out of - a territory, or a result with no state
+                  component at all. It used to fire for any of the 44 states plus
+                  DC that were missing from the old six-state map, telling a
+                  perfectly serviceable lead we do not operate in their state. We
+                  are licensed in all 50 states and the District of Columbia, so
+                  the gate is about a parse failure, never about the state. */}
               {unsupported && (
                 <p className="calc-unsupported">
-                  We currently serve associations in MA, RI, NH, CT, NY, and OK. Select a property in one of these states.
+                  We could not read a US state from that address. Please pick a suggestion from the dropdown, or select your state in the field above.
                 </p>
               )}
             </form>
@@ -395,8 +405,8 @@ export function CoverageCalculator() {
             {!emailSent ? (
               <div className="calc-email-gate">
                 <div className="calc-email-preview">
-                  <h3>Your {stateName} coverage recommendation is ready</h3>
-                  <p>We found <strong>{coverages.filter((c) => c.priority === "essential").length} essential</strong> and <strong>{coverages.filter((c) => c.priority === "recommended").length} recommended</strong> coverages for your {units}-unit association. Enter your email to see the full breakdown.</p>
+                  <h3>Your {stateName} coverage checklist is ready</h3>
+                  <p>Based on a {units}-unit {stateName} association, this checklist flags <strong>{coverages.filter((c) => c.priority === "essential").length} core</strong> and <strong>{coverages.filter((c) => c.priority === "recommended").length} additional</strong> coverage areas to review. Enter your email to see the full breakdown.</p>
                   <div className="calc-preview-pills">
                     {coverages.slice(0, 4).map((cov) => (
                       <span key={cov.name} className={`calc-pill calc-pill--${cov.priority}`}>
@@ -426,7 +436,12 @@ export function CoverageCalculator() {
             ) : (
               <>
                 <div className="calc-results-header">
-                  <h3>Recommended for your <strong>{units}-unit</strong> {stateName} association</h3>
+                  <h3>Coverage areas to discuss for your <strong>{units}-unit</strong> {stateName} association</h3>
+                  <p className="calc-email-note">
+                    A general checklist based only on size and state — not a coverage
+                    determination, quote or binder. The policy, governing documents,
+                    applicable law, endorsements and facts of a loss control.
+                  </p>
                 </div>
 
                 <div className="calc-grid">

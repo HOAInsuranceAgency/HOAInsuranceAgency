@@ -22,7 +22,7 @@ export const STAGES: Stage[] = [
   {
     num: "02",
     title: "Compare",
-    desc: "We approach our appointed markets and set the responses beside one another on coverage, deductibles and limits.",
+    desc: "We approach our directly appointed markets that write your risk and set the responses beside one another on coverage, deductibles and limits.",
   },
   {
     num: "03",

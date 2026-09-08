@@ -19,6 +19,101 @@ has received none of the consolidation `crm/` has had.
 
 ---
 
+## REVISION — 2026-09-07 · the identity & indexing pass
+
+> **Read this before acting on anything below.** The body of this document is a snapshot taken at
+> `f0e07b6`. A subsequent pass changed `web/` substantially, and several findings below are now
+> either closed or describe code that no longer exists. Every affected finding is annotated in
+> place — this block is the index, not the detail. Nothing has been deleted: a closed finding
+> still names the file and the reasoning a future change would have to re-argue, and deleting it
+> is how a fixed defect gets reintroduced.
+
+**What changed in `web/`:**
+
+| Change | Where | Effect on this document |
+| --- | --- | --- |
+| `shared/agency.ts` gained `brandName`, separate founder identity fields, `foundingDate`, `areaServed`, `description`, `FOUNDER_PROFILES`, and derived marked/unmarked brand labels | `shared/agency.ts` | §1.9 and MASTER RANKING #9 largely **closed** — see the annotation at §1.9 |
+| **New** `web/src/lib/seo.ts` — canonical URLs and the single structured-data `@graph` | `web/src/lib/seo.ts` | New module, not in the counts below. Framework-free by design so `crm/src/test/webSeo.test.ts` can assert on the real graph |
+| **New** `web/src/data/routes.ts` — one noindex list, read by the page *and* the sitemap filter | `web/src/data/routes.ts` | §3.3's characterisation of `/get-started` is **stale** — annotated there |
+| `trailingSlash: "always"`; canonicals normalised in `Layout.astro` | `web/astro.config.mjs`, `web/src/layouts/Layout.astro` | New URL contract; see `docs/WEBSITE-STRUCTURE.md` §5 |
+| **New** `web/src/components/LegalStrip.astro` — brand→entity line + NAP on the three unfootered templates | `web/src/components/LegalStrip.astro` | Partly addresses §1.14's third bullet by giving the three templates a shared footer |
+| The six-state footprint (MA/RI/NH/CT/NY/OK) removed everywhere | JSON-LD `areaServed`, homepage meta description, `/get-started` lander, `CoverageCalculator`'s state gate | §4.4's "live defect at this boundary" is **closed** — annotated there |
+
+The user-supplied canonical fact sheet is authoritative even where the repository did not
+previously document a fact. Absence from source code is not evidence that a confirmed fact is false.
+
+**Identity facts this document did not previously record, and which constrain how its
+findings may be fixed:**
+
+- **ProtectMyHOA is a BRAND of HOA Insurance Agency LLC, not a second agency**, and its
+  trade-name registration is **NOT VERIFIED** — no filing, licence record or DBA field anywhere
+  in this repository establishes it in any insurance jurisdiction. Any consolidation that touches
+  a rendered agency name has to preserve that distinction. `docs/WEBSITE-STRUCTURE.md` §9 holds
+  the full row and what would change it.
+- **The agency was formed 2025-12-30 and is licensed in all 50 states and the District of
+  Columbia.** The formation date constrains claims about the agency's age, not independently
+  verified metrics or the team's prior experience. The footprint supersedes the six-state list
+  this document's §4.4 was written against.
+- **Jake Greasley's confirmed title is Founder and President.** Jake is individually licensed in
+  all 50 states and the District of Columbia. His founder display/legal/title fields are separate
+  from the operational ACORD contact field; do not replace the title with Producer, CEO,
+  Principal or CFA.
+- **User confirmations, 2026-09-07:** Brian Cole is a **Licensed Insurance Producer**, for
+  visible copy and `Person.jobTitle`; all twelve listed markets are **direct appointments**;
+  the **one-business-day response, no-broker-fee commitment now and at renewal, and listed
+  assessment deliverables** are confirmed. These claims no longer await business confirmation.
+  Logo permissions and state trade-name approvals remain unconfirmed.
+- **ACORD producer-contact name is the company, HOA Insurance Agency LLC, not a person.**
+  `AGENCY.contactName` stays separate from founder and staff identity fields.
+
+**Line and file counts below are pre-pass.** `web/src` was 8,618 lines / 44 files at `f0e07b6`;
+it has grown by at least the three new modules above. Re-measure before quoting §2.
+
+### Focused release-readiness corrections — 2026-09-07
+
+Resolved repository work:
+
+- The homepage guide count is **closed**: `withGuides = reviewedStateSlugs`; it no longer
+  counts all 51 jurisdictions as reviewed guides.
+- Terms identifies HOA Insurance Agency LLC as an independent insurance agency, not an
+  insurance company or carrier. Terms and Privacy retain the January 1, 2026 effective date
+  and show September 7, 2026 as Last Updated; both use a still hero, with no video prop.
+- FormSubmit documentation now matches production code: website leads go to
+  `sales@protectmyhoa.com`, while `insurance@protectmyhoa.com` remains general/service/ACORD.
+  Brian's title, twelve direct appointments, service commitments, and company-only ACORD
+  producer/contact identity are confirmed facts protected by regression tests.
+- Web dependency remediation upgrades Astro to **7.3.1**, the official React integration to
+  **6.0.5**, and sitemap to **3.7.4**, with SVGO **4.1.0**. Both web dependency audits are clean.
+  Amplify selects Node 22 for both jobs; the web package requires Node 22.12.0 or newer.
+- Web `typecheck` now runs **`astro check && tsc --noEmit`**, covering Astro templates as well
+  as TS/TSX source. The shared hero video is **2,150,912 bytes**, a 92.4% reduction; it is
+  deferred until desktop interaction, with poster-only legal, mobile, reduced-motion, and
+  data-saver behavior.
+- The stale SEO baseline is **closed**: regenerated from the final reviewed production build
+  on 2026-09-07 and compared successfully across **156 HTML files** (155 content pages and
+  the `/home/` static redirect).
+
+Final validation: web build and Astro/TypeScript checks passed; CRM frontend/backend checks
+passed; **88 CRM test files / 1,758 tests** passed; Amplify synthesized one stack with existing
+warnings. Generated checks passed for 91 graph-bearing and 64 private pages, 120 noindex pages,
+and 35 sitemap URLs with no noindex overlap. Both production audits report zero findings;
+the full web audit is clean, while 25 CRM development-tool findings, including one critical,
+are recorded in
+[`DEPENDENCY-REVIEW.md`](DEPENDENCY-REVIEW.md). The value-safe scan covered 1,176 files (220
+built), with no old credentials in the active deployment worktree and no additional
+credential-pattern matches. The separate local `.claude` worktree credential copy remains
+unchanged. Live read-only checks still show the
+apex as 302; the local `/home/` HTML meta refresh does not establish an HTTP redirect rule.
+Browser checks at 1280px desktop and 390px mobile confirm no video request on initial desktop,
+mobile, or legal views; playback after desktop interaction requests the compressed asset.
+
+Remaining external actions are listed in §6 below. In particular, correcting the FormSubmit
+recipient in code and documentation does **not** activate it; production must wait for the
+user to activate and test the sales recipient. The historical audit body is not a current
+release checklist.
+
+---
+
 ## MASTER RANKING
 
 Ranked by blast radius × how often it produces an inconsistency.
@@ -29,14 +124,14 @@ Ranked by blast radius × how often it produces an inconsistency.
 | 2 | No `unwrap({data,errors})`; 36 sites in 3 spellings, 10 non-throwing | 24 files | Every failed write | 1.2 |
 | 3 | 18 bare `.list()` bypass `listAllPages` | 12 files | Silently, at 100+ rows | 1.3 |
 | 4 | `web` lead pipeline hand-rolled 5×; 4 of 5 misread FormSubmit's `200 {"success":"false"}` | 5 forms | Every rejected web lead reports success | 1.4 |
-| 5 | Quote wizard's state select omits NY and OK while the site markets and prefills both | 1 select, 2 states | Every NY/OK visitor | 4.4 |
+| 5 | ~~Quote wizard's state select omits NY and OK while the site markets and prefills both~~ **CLOSED** (`1e00981`, 2026-08-11) — derived from `states.ts`; all 51 offered | 1 select, 2 states | — | 4.4 |
 | 6 | Loading/error/empty ladder written out 12×; `Team.tsx:176` has **no error branch** | 12 list views | Failed read renders "No users found." | 5.1 |
 | 7 | Extraction field catalogue hand-copied 3× across the Lambda boundary | 25 keys | Every schema/field change | 4.2 |
-| 8 | `web/` has no typecheck at all — `astro build` does not check types | All of `web/src` | Silent on every `web` edit | 4.7 |
-| 9 | `shared/agency.ts` unadopted in `web`: 13 literals, **3 spellings of one phone number** | 4 files | Every agency-detail edit | 1.9 |
+| 8 | ~~`web/` has no typecheck at all~~ **CLOSED 2026-09-07** — `astro check && tsc --noEmit` covers templates and TS/TSX; see §4.7 | All of `web/src` | — | 4.7 |
+| 9 | ~~`shared/agency.ts` unadopted in `web`: 13 literals, **3 spellings of one phone number**~~ **LARGELY CLOSED 2026-09-07** — 20 `web/src` files import it; re-measure before quoting | 4 files | Every agency-detail edit | 1.9 |
 | 10 | `Quote` and `Policy` duplicate 20 columns; `CoverageForm` casts across the union unguarded | 2 models, 1 shared form | Every coverage save | 4.3 |
 | 11 | Carrier/entity name lookup duplicated 9× in 2 shapes (Map vs O(n) `.find`) | 7 files | Every carrier-name render | 1.6 |
-| 12 | gtag conversion block duplicated 4×; `ContactForm` fires **none** | 4 tsx + 4 astro | 1 of 5 forms never converts | 1.5 |
+| 12 | ~~gtag conversion block duplicated 4×; `ContactForm` fires **none**~~ **CLOSED** — one `trackLead()` in `constants.ts`, called by all five surfaces | 4 tsx + 4 astro | — | 1.5 |
 | 13 | `TeamUser` consumer drops `status`/`enabled` the producer sends | 1 screen | Unconfirmed users render as active | 4.1 |
 | 14 | Google Places loader 3×; `InstantAssessment` lacks the no-key guard | 3 files, 2 apps | Whenever the key is unset | 1.7 |
 | 15 | Quote-wizard labels declared twice; **5 of 21 members already disagree** | 2 files, 12 uses | Every quote submission | 1.8 |
@@ -49,7 +144,7 @@ Ranked by blast radius × how often it produces an inconsistency.
 | 22 | 2 deletes discard `errors` and drop the row anyway; 5 storage deletes swallow silently | 7 sites | Every refused delete | 1.13 |
 | 23 | `auth.ts:13` `Role` re-types `UserRole` — documented as deliberate, enforced by nothing | 1 type | On a role change | 4.5 |
 | 24 | ACORD producer/insured header written twice; success panel written twice | 4 files | Every agency-identity change | 1.14 |
-| 25 | Committed live Buildium credentials (**carried over, still present**) | Credential | Static until rotated | 6.1 |
+| 25 | ~~Hardcoded Buildium credential fallbacks~~ **SOURCE FIXED 2026-09-07; rotation/history remediation remains** | Credential history | Until rotated | 6.1 |
 
 ---
 
@@ -193,6 +288,15 @@ pattern `crm`'s `useFormState` was built to replace.
 
 ### 1.5 Google Ads conversion
 
+> **CLOSED, re-verified 2026-09-07.** `constants.ts` now exports one `trackLead(surface)` that
+> reports to GA4 *and* to every entry in `ADS_CONVERSION_IDS`, and all five lead surfaces call it
+> — `ContactForm.tsx:77`, `AssociationLeadForm.tsx:102`, `InstantAssessment.tsx:128`,
+> `CoverageCalculator.tsx:326`, `QuoteApp.tsx:423`. The four Astro `<head>` blocks no longer
+> hardcode a tag id either; they import `Analytics.astro`, which reads the ids from the same
+> file. **Every line number in the paragraph below is pre-fix and locates nothing.** The finding
+> is kept because the shape of it — an analytics identifier copied to the call site instead of
+> imported — is the thing to keep out, not because any of it is still there.
+
 Byte-identical, including `send_to: "AW-18085022517/Csp3COKBgpscELWWzq9D"`, at
 `AssociationLeadForm.tsx:87-93`, `InstantAssessment.tsx:131-137`,
 `CoverageCalculator.tsx:262-268`, `QuoteApp.tsx:229-235`. The tag id is separately hardcoded in
@@ -263,6 +367,16 @@ CRM note say another:
   Blast radius: 2 files, 12 sites. This is a correctness fix, not tidying.
 
 ### 1.9 Agency contact facts
+
+> **LARGELY CLOSED, 2026-09-07.** `shared/agency.ts` is now imported by 20 files under `web/src`
+> — including all four named below, plus `Layout.astro`, `lib/seo.ts`, `LegalStrip.astro`,
+> `constants.ts`, `landing-pages.ts` and the four page templates. The `(508) 233-2261` spelling at
+> `QuoteApp.tsx` is gone and the value is interpolated. The finding is left in place because the
+> *class* of defect is what matters: a hand-typed agency fact survives any edit to
+> `shared/agency.ts`, and `crm/src/test/sharedAgency.test.ts` still guards only `shared/`.
+> **Re-measure the literal count before quoting it.** `AGENCY` also grew identity fields in that
+> pass (`brandName`, three founder fields, `foundingDate`, `areaServed`, `description`), so the
+> `:27-49` line range below no longer locates the object.
 
 `shared/agency.ts:27-49` is the documented single source (`:24`: "edit `AGENCY` only"), surfaced
 to `web` via `constants.ts:3-8`. `ContactForm.tsx` uses it correctly (`:60,64,68,121`). These do
@@ -445,8 +559,9 @@ assertions and zero call sites, while §5.2 lists 7 live hand-rolled re-implemen
 `EMAIL_RE`'s own doc comment says "Exported so `web` can drop its private copy" — the copy at
 `web/src/components/quote/schema.ts:25` is still there.
 
-**Fully dead — zero references anywhere:** `shared/agency.ts:72` `Agency` · `:73`
-`AgencyFormatted`. The only mention is prose in this document.
+**Fully dead — zero references anywhere:** `shared/agency.ts` `Agency` and `AgencyFormatted`.
+Re-verified 2026-09-07: still the only mention is prose in this document, though the line numbers
+have moved (the file roughly doubled when the identity fields were added).
 
 **Test-only exports of otherwise-live modules** (over-exported, logic live):
 `quoteStatus.ts:97` `ALL_QUOTE_STATUSES` · `:105` `CLOSED_QUOTE_STATUSES` · `enums.ts:284`
@@ -468,10 +583,19 @@ assertions and zero call sites, while §5.2 lists 7 live hand-rolled re-implemen
 **Web — two unlinked families, both apparently intentional:**
 - `/get-started` + 7 slugs (`web/src/pages/get-started/[...slug].astro`) — zero inbound links
   site-wide; the only `get-started` strings are its own `canonical` (`:55`) and `og:url`
-  (`:60`). It **is** in the sitemap, so it reads as paid-landing. Note it is the sole importer
+  (`:60`). ~~It **is** in the sitemap, so it reads as paid-landing.~~ Note it is the sole importer
   of `web/src/components/InstantAssessment.tsx` (~275 lines).
 - `/associations/{slug}` — zero inbound links, explicitly excluded from the sitemap
   (`astro.config.mjs:10-12`, "PM-distributed links, not organic SEO targets") and `noindex`.
+
+> **STALE, corrected 2026-09-07.** `/get-started` is **no longer in the sitemap**, and neither is
+> `/quote`. Both, plus `/documents/`, `/finance/` and `/associations/`, are now listed once in
+> `web/src/data/routes.ts`, which the page reads for its `noindex` and `astro.config.mjs` reads
+> for the sitemap filter — previously two decisions in two files that disagreed, so the sitemap
+> submitted two URLs carrying `<meta name="robots" content="noindex">`. The sitemap went from
+> **46 URLs to 35**. Orphaned-and-unindexed is the correct state for a paid lander that duplicates
+> the query its own state page ranks for; ads reach it by direct URL and `noindex, follow` does
+> not affect that. Full reasoning in `docs/WEBSITE-STRUCTURE.md` §3.
 
 ### 3.4 Orphaned components — none
 
@@ -598,6 +722,19 @@ from `shared/accountType.ts`. Three problems remain:
    `typeof data[k] === "string" ? … : ""`. `session.ts:42-54` rehydrates it from `localStorage`
    through three unchecked casts.
 
+> **CLOSED, and the framing was too narrow.** `quote/schema.ts`'s `STATE_OPTIONS` is now derived
+> from `ALL_STATES` in `states.ts` rather than hand-listed, so the select offers all 51 and the
+> two lists cannot drift apart again. That half was closed in `1e00981` on **2026-08-11**, before
+> the pass described at the top of this document — verified by `git log` rather than assumed, so
+> nobody re-dates it. The wider version of this defect — the site describing a six-state
+> footprint while `states.ts` held 51 — was fixed on 2026-09-07, across the
+> JSON-LD `areaServed`, the homepage meta description, the `/get-started` lander and
+> `CoverageCalculator`'s state gate. The agency is licensed in **all 50 states and DC**, stored
+> once as `AGENCY.areaServed`. **The six-state list is obsolete; do not reintroduce it as a
+> "supported states" constant anywhere.** Note also that licensure is not product availability —
+> see `docs/WEBSITE-STRUCTURE.md` §7. The paragraph below is kept as the record of what the
+> defect was.
+
 **Live defect at this boundary — the state select.** `web/src/data/states.ts` serves six states
 (`MA:17`, `RI:34`, `NH:51`, `CT:68`, **`NY:85`, `OK:102`**) and `quote/session.ts:80-87`
 prefills all six from the URL slug — but the wizard's own select
@@ -647,6 +784,12 @@ membership check on the next line (order backwards, harmless); `Licensing.tsx:23
 `editing.holderType as HolderType` + `adding!`.
 
 ### 4.7 Typecheck coverage
+
+> **CLOSED 2026-09-07:** `web/package.json` now provides `npm run typecheck` using
+> `astro check && tsc --noEmit`, with `@astrojs/check` and TypeScript installed locally.
+> It checks Astro templates and TS/TSX source. The command is part of release verification;
+> adding it as an automatic Amplify web gate is a separate CI improvement. The table below
+> records the original gap, not the current package scripts.
 
 No `strict:false` anywhere, and `crm/amplify/**` is now gated (`c464605`,
 `npm run typecheck:backend` in the `backend` phase of `amplify.yml`, ahead of
@@ -750,12 +893,11 @@ and `validatePositiveInt` from **the same file**.
 
 Outside the five requested categories; surfaced during the scan.
 
-1. **Committed live credentials — carried over from the previous audit, still present.**
-   `web/scripts/sync-buildium.ts:56-60` hardcodes `BUILDIUM_CLIENT_ID` and
-   `BUILDIUM_CLIENT_SECRET` as `||` fallback defaults. The file's own header (`:10-12`) documents
-   both as required env vars, so the fallbacks appear unintended. Present in the working tree and
-   in git history on `staging` — rotation is the only remediation that works; removing the lines
-   does not clear history.
+1. **Hardcoded Buildium fallbacks removed; rotation still required.**
+   `web/scripts/sync-buildium.ts` now requires `BUILDIUM_CLIENT_ID` and
+   `BUILDIUM_CLIENT_SECRET` from the environment and fails closed when either is absent.
+   `web/.env.example` contains variable names only. The old values remain in git history, so
+   credential rotation and any desired history remediation are still external actions.
 2. **Unsanitized S3 keys** — `NewLead.tsx:102` interpolates `file.name` into the S3 key; a `/` in
    the filename breaks the OCR key parse at `process-document/handler.ts:143`. `safeSegment`
    (`storage.ts:81`) exists and is unimported (§1.1a).
@@ -770,3 +912,54 @@ Outside the five requested categories; surfaced during the scan.
    hand-rendered at 51 sites.
 5. **`PhotosCard`'s thumbnail read still has no `.catch()`** — a genuine unhandled rejection,
    recorded as open at `PATTERNS.md:201-202`.
+
+### Known issues / external dependencies — 2026-09-07
+
+*(Unnumbered deliberately: the MASTER RANKING already points at "§6.1" for the Buildium
+credentials, and numbering this block would move that anchor.)*
+
+The following actions remain external; local code/test completion does not close them. No
+real forms, credential rotations, Amplify console changes, or outside contacts were performed
+in this repository pass.
+
+- **Rotate Buildium credentials** and install replacements in the appropriate Amplify
+  environment before deployment. Source fallbacks are removed; exposed Git history and
+  copies in other local worktrees still require separate review.
+- **Activate and test `sales@protectmyhoa.com` with FormSubmit** before production deployment.
+  FormSubmit must be activated separately for every recipient; activating the service or
+  staging address is not sufficient. The production endpoint is
+  `https://formsubmit.co/ajax/sales@protectmyhoa.com`.
+- **Change the apex redirect from 302 to permanent 301/308** at the hosting/CDN layer, preserving
+  path/query and pointing the apex to `https://www.protectmyhoa.com/`.
+
+Other external records and permissions:
+
+1. **Massachusetts licensing address is stale** — the MA record still shows *11 Apex Drive, Suite
+   300A, Box 1067* while `shared/agency.ts`, the JSON-LD `PostalAddress` and the Google Business
+   Profile all show 420 Lakeside Ave, Suite 202. Closing it is a filing with the MA Division of
+   Insurance, not a code change.
+
+2. **New York registered-agent listing shows Albany** — a legal service address rather than
+   the place of business. This is not necessarily a defect or a required filing change; keep
+   the address's purpose separate from the agency office in site identity data.
+
+3. **An obsolete Squarespace origin is still live** — `hoa-insurance-agency.squarespace.com`
+   still serves older copy. No canonical emitted by `web/` can suppress it, because those pages
+   carry their own. Retire or redirect it at Squarespace.
+
+4. **ProtectMyHOA trade name UNVERIFIED** — no supplied filing or licence record establishes it
+   as a registered trade name in an insurance jurisdiction. Until a filing number exists,
+   published copy must present it as a brand of the licensed agency. This is separate from
+   trademark notation: visible copy may use `™`, but `®` requires federal registration.
+
+5. **`jakegreasley.com` does not resolve** (NXDOMAIN, checked 2026-09-07) — which is why
+   `web/src/lib/seo.ts` anchors the founder `Person` to `/about-us/#jake-greasley`. The six
+   approved third-party profiles remain in `sameAs` and are visible on `/about-us/`. When the
+   domain serves, move the entity home to the apex `https://jakegreasley.com/#person`, never the
+   `www` variant.
+
+6. **Third-party logo permissions remain unconfirmed** — direct appointments with all twelve
+   listed markets were confirmed by the user on 2026-09-07, but permission to reproduce their
+   marks is a separate question. Review the applicable brand guidelines or obtain approval.
+   Brian Cole's Licensed Insurance Producer title and the service commitments are confirmed
+   in the fact notes above, not open items.

@@ -2,14 +2,9 @@ import { defineConfig } from "astro/config";
 import react from "@astrojs/react";
 import sitemap from "@astrojs/sitemap";
 import { reviewedStateSlugs } from "./src/data/states.ts";
+import { isNoindexRoute } from "./src/data/routes.ts";
 
-/**
- * State pages whose content is still generic are served `noindex` (see
- * data/states.ts `reviewed`). They must also be kept out of the sitemap —
- * submitting a noindex URL for indexing is a contradictory signal and wastes
- * crawl budget. Imported from the data file rather than hardcoded so flipping a
- * state to `reviewed: true` adds it to the sitemap in the same edit.
- */
+/** Keep generic, unreviewed state pages out of the sitemap. */
 const isUnreviewedStatePage = (page) => {
   const m = page.match(/\/hoa-insurance-([a-z-]+)\/?$/);
   if (!m) return false;
@@ -21,13 +16,21 @@ const isUnreviewedStatePage = (page) => {
 };
 
 export default defineConfig({
+  /** Paired with `AGENCY.site`; the test suite enforces equality. */
   site: "https://www.protectmyhoa.com",
+  /** Match the canonical and CDN trailing-slash contract. */
+  trailingSlash: "always",
+  /** Preserve HTML-aware inline spacing across the Astro 7 migration. */
+  compressHTML: true,
+  /** Compatibility route for the retired Squarespace `/home` URL. */
+  redirects: {
+    "/home": "/",
+  },
   integrations: [
     react(),
     sitemap({
-      filter: (page) =>
-        // Private association pages: PM-distributed links, not organic targets.
-        !page.includes("/associations/") && !isUnreviewedStatePage(page),
+      /** Include only canonical, indexable routes. */
+      filter: (page) => !isNoindexRoute(page) && !isUnreviewedStatePage(page),
     }),
   ],
   output: "static",

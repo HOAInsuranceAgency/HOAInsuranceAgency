@@ -14,36 +14,41 @@ import Hero from "../components/Hero.astro";
 import CoverageMap from "../components/CoverageMap.astro";
 import { ContactForm } from "../components/ContactForm";
 import { QUOTE_URL, PHONE, PHONE_HREF } from "../constants";
+import { personSpecialist } from "../lib/seo";
+import { AGENCY } from "../../../shared/agency";
 
-/* Named producer, shown above the enquiry form so a visitor who wants a person
-   rather than a form gets one without scrolling past it.
-
-   ── Phone comes from constants, never typed here ──
-   `PHONE` / `PHONE_HREF` resolve through shared/agency.ts, so this block shows
-   the same number as the navbar, the footer, the ACORD producer header and every
-   other surface. A literal here would be the fourth spelling of that number in
-   `web/` (INVENTORY §1.9 documents the three that already exist) and would
-   survive any edit to shared/agency.ts. Do not hardcode it.
-
-   ── Why the email is local and not in shared/agency.ts ──
-   `AGENCY.email` and `AGENCY.leadEmail` are the agency's addresses; they are
-   printed on ACORD forms already sent to carriers and on issued certificates.
-   This is one producer's personal address on one marketing page, so it is scoped
-   to the page that renders it. If a second specialist is ever added, lift this
-   const into `data/specialists.ts` — the same move markets.ts and process.ts
-   record for content a second page needs. */
+/** Brian's confirmed public identity; agency phone and mailboxes stay separate. */
 const SPECIALIST = {
   name: "Brian Cole",
-  role: "Insurance Producer",
+  role: "Licensed Insurance Producer",
   email: "brian@protectmyhoa.com",
   photo: "/images/brian-cole.jpg",
 };
+
+/** This page's Person node resolves to the visible #brian-cole section. */
+const specialistJsonLd = personSpecialist({
+  name: SPECIALIST.name,
+  jobTitle: SPECIALIST.role,
+  image: SPECIALIST.photo,
+});
+
+/* Meta description.
+   The phone number used to be typed out here as a literal, which made this the
+   one spot on the page that would keep printing the old number after an edit to
+   shared/agency.ts. Plain concatenation rather than a template literal: the
+   Astro compiler mis-parses a nested `${}` template in frontmatter and fails the
+   build with a misleading "Expected > but found lang". */
+const META_DESCRIPTION =
+  "Contact HOA Insurance Agency about HOA master insurance or HO-6 condo coverage. Call " +
+  PHONE +
+  ", report a claim, or send your association's details for a free review. No broker fee.";
 ---
 
 <Layout
   title="Contact HOA Insurance Agency — ProtectMyHOA"
-  description="Contact HOA Insurance Agency about HOA master insurance or HO-6 condo coverage. Call 508-233-2261, report a claim, or send your association's details for a free review. No broker fee."
-  canonicalPath="/contact"
+  description={META_DESCRIPTION}
+  canonicalPath="/contact/"
+  jsonLd={[specialistJsonLd]}
 >
   {/* ═══ 01 · Hero ═══════════════════════════════════════════════════ */}
   <Hero
@@ -62,11 +67,37 @@ const SPECIALIST = {
        standalone navy band this page used to carry. */}
   <ContactForm showClaims client:visible />
 
+  {/* ── Why there is no mailbox directory section here ──
+       Three agency addresses render within one scroll of this page: sales@ in
+       the contact card above, insurance@ in the claims block and again in the
+       site footer, and the specialist's own address in the card below. That was
+       once three bare addresses with nothing saying what any of them was for,
+       and this page briefly carried a 'Which address reaches whom' section to
+       explain them.
+
+       It was removed once each address gained a purpose label where it actually
+       renders: components/ContactForm.tsx labels sales@ as new business and
+       spells out that claims go to insurance@, and components/Footer.astro
+       labels insurance@ as general, service and claims. Those labels ship on
+       every page that mounts them, not just this one, so a page-level directory
+       repeating them made a visitor read insurance@ three times and the
+       carrier-notice qualifier twice before reaching the specialist.
+
+       Before re-adding anything of the kind, check those two files first: if
+       the labels are still there, the page already answers the question. The
+       brand-and-entity sentence that closed the removed section is likewise
+       already on the page — Footer.astro prints AGENCY_FMT.brandLine in its
+       mark, and the contact card heads the postal address with AGENCY.name. */}
+
   {/* ═══ 03 · Speak to a specialist ═════════════════════════════════ */}
   {/* Sits directly beneath the "Contact Us Today" block by request: the form and
        the agency's own details come first, then the named producer as the direct
        route for anyone who does not want to wait on a form. */}
-  <section class="section specialist" aria-labelledby="specialist-h">
+  {/* id="brian-cole" is load-bearing, not decoration: it is the fragment of the
+       Person node's `@id` (SPECIALIST_ID in lib/seo.ts), so the identifier
+       resolves to the block that actually shows his photo, name and biography.
+       Renaming or removing it orphans the structured data. */}
+  <section class="section specialist" id="brian-cole" aria-labelledby="specialist-h">
     <div class="container">
       <div class="sec-head sec-head--center">
         <p class="eyebrow">Speak to a specialist</p>
@@ -94,23 +125,37 @@ const SPECIALIST = {
             Brian works directly with association boards and property managers on master
             policy placements and HO-6 coordination.
           </p>
+          {/* Each row says what the thing IS before it prints it. The phone is
+               labelled 'Main line', not 'direct line': it is the agency's one
+               published number, the same one the navbar and footer show, and
+               calling it a direct line would promise a private extension that
+               does not exist. The email genuinely is his own, so it says so —
+               and that label is what distinguishes it from the two agency
+               mailboxes the same page shows, sales@ in the contact card above
+               and insurance@ in the claims block and the footer. */}
           <ul class="spec-card__contacts">
             <li>
               <span class="spec-card__ico" aria-hidden="true">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.13.96.37 1.9.72 2.81a2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.91.35 1.85.59 2.81.72A2 2 0 0122 16.92z"/></svg>
               </span>
-              <a href={PHONE_HREF}>{PHONE}</a>
+              <span class="spec-card__contact">
+                <span class="spec-card__label">Main line</span>
+                <a href={PHONE_HREF}>{PHONE}</a>
+              </span>
             </li>
             <li>
               <span class="spec-card__ico" aria-hidden="true">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><path d="M22 6l-10 7L2 6"/></svg>
               </span>
-              <a href={`mailto:${SPECIALIST.email}`}>{SPECIALIST.email}</a>
+              <span class="spec-card__contact">
+                <span class="spec-card__label">{SPECIALIST.name.split(" ")[0]}&rsquo;s direct address</span>
+                <a href={"mailto:" + SPECIALIST.email}>{SPECIALIST.email}</a>
+              </span>
             </li>
           </ul>
           <div class="spec-card__actions">
             <a href={PHONE_HREF} class="btn btn-primary">Call {PHONE}</a>
-            <a href={`mailto:${SPECIALIST.email}`} class="btn btn-outline-dark">Email {SPECIALIST.name.split(" ")[0]}</a>
+            <a href={"mailto:" + SPECIALIST.email} class="btn btn-outline-dark">Email {SPECIALIST.name.split(" ")[0]}</a>
           </div>
         </div>
       </div>
@@ -123,9 +168,13 @@ const SPECIALIST = {
       <div class="sec-head sec-head--center">
         <p class="eyebrow">Coverage area</p>
         <h2 class="section-title" id="states-h">The states we serve</h2>
+        {/* The footprint is interpolated, never typed. It was a literal here,
+             which is exactly how the obsolete six-state list survived on other
+             pages long after the licences were in place: a fact spelled out by
+             hand has to be found by hand to be corrected. One edit to
+             shared/agency.ts now moves this line with it. */}
         <p class="section-subtitle">
-          Licensed in all 50 states and the District of Columbia. Select a state to open its
-          coverage page.
+          Licensed in {AGENCY.areaServed}. Select a state to open its coverage page.
         </p>
       </div>
 
@@ -212,6 +261,24 @@ const SPECIALIST = {
     flex: 0 0 auto;
   }
 
+  /* The label sits above its value rather than beside it, so a long address
+     wraps under the label instead of shoving the row off the card. */
+  .spec-card__contact {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  .spec-card__label {
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.13em;
+    text-transform: uppercase;
+    color: var(--color-gray-600);
+  }
+
   .spec-card__contacts a {
     color: var(--color-navy);
     font-weight: 600;
@@ -273,6 +340,13 @@ const SPECIALIST = {
     .spec-card__contacts li,
     .spec-card__actions {
       justify-content: center;
+    }
+
+    /* The card centres its text at this width, so the stacked label/value pair
+       has to centre with it or the rows read as if they were left-aligned. */
+    .spec-card__contact {
+      align-items: center;
+      text-align: center;
     }
   }
 

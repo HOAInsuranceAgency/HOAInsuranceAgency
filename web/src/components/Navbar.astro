@@ -16,7 +16,7 @@ interface Props {
 
 const { currentPath, solid = false } = Astro.props;
 
-/* Trailing slashes are not significant, so "/contact/" and "/contact" are the
+/* Trailing slashes are not significant, so "/contact/" and "/contact/" are the
    same page. "/" normalises to itself rather than to "". */
 const norm = (p: string) => p.replace(/\/+$/, "") || "/";
 const current = norm(currentPath);

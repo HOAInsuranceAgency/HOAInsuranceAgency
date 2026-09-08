@@ -1,0 +1,86 @@
+---
+/** Legal identity footer for full-bleed templates that bypass `Layout`. */
+import { AGENCY, AGENCY_FMT } from "../../../shared/agency";
+---
+
+<footer class="legal-strip">
+  <p class="legal-strip__brand">{AGENCY_FMT.brandLine}</p>
+  <p class="legal-strip__nap">
+    <span>{AGENCY.name}</span>
+    <span class="legal-strip__dot">&middot;</span>
+    <span>{AGENCY.addressLine1}, {AGENCY_FMT.addressLine2}</span>
+    <span class="legal-strip__dot">&middot;</span>
+    <a href={AGENCY_FMT.phoneHref}>{AGENCY.phone}</a>
+    <span class="legal-strip__dot">&middot;</span>
+    <a href={AGENCY_FMT.emailHref}>{AGENCY.email}</a>
+  </p>
+  <p class="legal-strip__links">
+    <a href="/privacy-policy/">Privacy Policy</a>
+    <span class="legal-strip__dot">&middot;</span>
+    <a href="/terms-of-service/">Terms of Service</a>
+    <span class="legal-strip__dot">&middot;</span>
+    <span>&copy; {new Date().getFullYear()} {AGENCY.name}</span>
+  </p>
+  <p class="legal-strip__note">
+    Licensed in {AGENCY.areaServed}. Submitting this form does not bind coverage.
+    Coverage is subject to underwriting, carrier eligibility and the terms of the
+    policy issued.
+  </p>
+</footer>
+
+<style>
+  .legal-strip {
+    box-sizing: border-box;
+    width: 100%;
+    padding: 28px 24px 32px;
+    background: #0b1220;
+    color: rgba(255, 255, 255, 0.45);
+    font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    font-size: 12.5px;
+    line-height: 1.65;
+    text-align: center;
+  }
+
+  .legal-strip p {
+    margin: 0 auto;
+    max-width: 760px;
+  }
+
+  .legal-strip__brand {
+    color: rgba(255, 255, 255, 0.7);
+    font-weight: 500;
+    margin-bottom: 8px;
+  }
+
+  .legal-strip__nap,
+  .legal-strip__links {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+  }
+
+  .legal-strip__links {
+    margin-top: 4px;
+  }
+
+  .legal-strip a {
+    color: rgba(255, 255, 255, 0.6);
+    text-decoration: none;
+  }
+
+  .legal-strip a:hover {
+    color: #fff;
+  }
+
+  .legal-strip__dot {
+    color: rgba(255, 255, 255, 0.2);
+  }
+
+  .legal-strip__note {
+    margin-top: 12px;
+    color: rgba(255, 255, 255, 0.32);
+    font-size: 11.5px;
+  }
+</style>

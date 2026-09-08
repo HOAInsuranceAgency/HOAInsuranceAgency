@@ -1,27 +1,9 @@
 import { FLOW_SIGNATURE, type FormData } from "./schema";
 import { states } from "../../data/states";
 
-/* ──────────────────────────────────────────────────────────
-   THE PRODUCER
-   ────────────────────────────────────────────────────────── */
 export type Agent = { name: string; photo: string };
 
-/**
- * The one real person who greets a visitor and is named on their submission.
- *
- * This used to be a roster of eight names and stock headshots, drawn at random
- * per session and re-rolled whenever someone started over — and that invented
- * name was written into the submission email as "Assigned Agent" and into the
- * CRM lead as an assigned-agent note. None of the eight worked here. On a
- * licensed agency's quote form that is not a friendly persona, it is a
- * fabricated licensed representative, and the AI reply this feeds would have
- * been correspondence about insurance signed by someone who does not exist.
- *
- * So: one producer, who is real, using the same photo the contact page shows.
- * If a second ever greets visitors, this becomes a list and the choice is made
- * by something meaningful — the state on the form, a round-robin over actual
- * staff — never by `Math.random()`.
- */
+/** Quote-form greeter; Brian's licensed-producer title appears on /contact. */
 export const PRODUCER: Agent = {
   name: "Brian Cole",
   photo: "/images/brian-cole.jpg",
@@ -33,16 +15,7 @@ export const PRODUCER: Agent = {
 const STORAGE_KEY = "qf:state:v1";
 export const THEME_KEY = "qf:theme:v1";
 
-/**
- * No `agent` field, deliberately.
- *
- * It used to be stored, which means live localStorage out there still holds one
- * of the eight invented names. Reading it back would resurrect a fabricated
- * producer on a returning visitor's screen long after the roster was removed,
- * and the flow signature would not catch it — the flow has not changed. The
- * producer is a constant now, so there is nothing session-specific to keep.
- * A stray `agent` key in an old blob is simply ignored.
- */
+/** Producer is constant and old persisted `agent` keys are ignored. */
 type PersistedState = {
   stepIndex: number;
   data: FormData;
@@ -66,17 +39,7 @@ export function loadState(): PersistedState | null {
     if (typeof parsed.stepIndex !== "number" || !parsed.data) {
       return null;
     }
-    /**
-     * Written by a different version of the flow, so none of it transfers:
-     * the index points at a question that has moved or gone, and the answers
-     * are keyed by fields the new steps never read. Discarding beats guessing
-     * — a returning visitor starts over, which is the honest outcome. Note
-     * this also rejects the untagged shape saved before this check existed.
-     *
-     * No need to remove the key: the next `saveState` overwrites it, so there
-     * is nothing orphaned to clean up (which is why this is a tag rather than
-     * a bumped `qf:state:v2`, that would have stranded every v1 blob).
-     */
+    /** Reject stale or untagged flow state. */
     if (parsed.flowSignature !== FLOW_SIGNATURE) return null;
     return {
       stepIndex: parsed.stepIndex,

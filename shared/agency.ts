@@ -1,42 +1,16 @@
-/**
- * Agency identity — the single source of truth for both apps.
- *
- * This file lives at the repo root, outside `crm/` and `web/`, because both
- * apps render the same four facts (phone, email, street, city/state/zip) and
- * they must not be able to drift apart. It is deliberately dependency-free and
- * value-only: no imports, no framework types, no runtime. That is what lets a
- * plain relative import work from an Astro page, a React island, a Vite SPA
- * module, and a Vitest test without any build-system plumbing.
- *
- *   from crm:  import { AGENCY } from "../../../shared/agency";     // crm/src/lib/*
- *   from web:  import { AGENCY } from "../../shared/agency";        // web/src/*
- *
- * ─ Stored vs. derived ────────────────────────────────────────────────────────
- * `AGENCY` holds the facts, split into the finest-grained fields anyone needs —
- * that is the ACORD producer-block shape, where city/state/zip go in separate
- * PDF fields. Every joined or reformatted variant the website needs (footer
- * address line, `tel:` href, `mailto:` href, schema.org phone, the FormSubmit
- * endpoint) is COMPUTED from those fields in `AGENCY_FMT` below. Nothing is
- * stored twice, so one edit here updates the ACORD forms and the website
- * footer together.
- *
- * To change the agency's phone/email/address: edit `AGENCY` only. Never edit a
- * value in `AGENCY_FMT` — add a new derivation instead.
- *
- * ─ Two addresses, not one ────────────────────────────────────────────────────
- * `email` is the agency's general address and `leadEmail` is sales. They are
- * separate stored fields rather than one value because they are read by things
- * that must not move together: `email` is printed on ACORD forms already sent
- * to carriers and on certificates already issued, while `leadEmail` is only
- * ever where a website enquiry is delivered. A single field would mean routing
- * leads somewhere new also rewrites the producer block on a regulatory form.
- */
+/** Shared agency facts. Store facts in `AGENCY`; derive display formats below. */
 
 export const AGENCY = {
   /** Legal entity name. Used on the ACORD producer block and legal pages. */
   name: "HOA Insurance Agency LLC",
-  /** Producer contact person named on ACORD forms. */
-  contactName: "Jake Greasley",
+  /** ACORD producer contact is the company, not an individual. */
+  contactName: "HOA Insurance Agency LLC",
+  /** Public founder identity. Kept separate from regulated-form contact data. */
+  founderDisplayName: "Jake Greasley",
+  founderLegalName: "Jacob Charles Greasley",
+  founderJobTitle: "Founder and President",
+  /** Consumer-facing brand of the legal entity, not a second licensed agency. */
+  brandName: "ProtectMyHOA",
   /** Street + suite. ACORD keeps this on its own line, as does the footer. */
   addressLine1: "420 Lakeside Ave, Suite 202",
   /** ACORD has a discrete city field; the footer joins city/state/zip. */
@@ -46,46 +20,43 @@ export const AGENCY = {
   zip: "01752",
   /** Display format. Every machine format (tel:, E.164) is derived from it. */
   phone: "508-233-2261",
-  /**
-   * The agency's general address: the one on the ACORD producer block, the
-   * certificate, the footer, the legal pages and the JSON-LD.
-   *
-   * NOT where enquiries from the website go — that is `leadEmail` below. The
-   * two were one address until sales was split out, and the reason they are
-   * now two fields rather than one edited value is that this one is on forms
-   * already sent to carriers.
-   *
-   * CANONICAL SPELLING — mixed case. This is the branded spelling every
-   * rendered surface already shows, and mailbox local-parts are case-sensitive
-   * per RFC 5321 only in theory; the domain is case-insensitive. Anywhere a
-   * lowercase form is genuinely required (URL paths, form endpoints), derive it
-   * with `AGENCY_FMT.emailLower` rather than storing a second spelling.
-   */
+  /** General/service/claims address; also used on ACORD forms. */
   email: "insurance@ProtectMyHOA.com",
-  /**
-   * Where a prospective customer reaches sales, and where every website lead
-   * form delivers.
-   *
-   * Same canonical-mixed-case rule as `email`; `AGENCY_FMT.leadEmailLower` is
-   * the transport form, and `formsubmitUrl` is built from it.
-   */
+  /** Sales and website lead-delivery address. */
   leadEmail: "sales@ProtectMyHOA.com",
-  /**
-   * Public marketing site. Must match `site` in `web/astro.config.mjs`, which
-   * cannot be imported from here (Astro config is not value-only).
-   */
+  /** Public marketing origin; paired with Astro's `site` setting. */
   site: "https://www.protectmyhoa.com",
-  /**
-   * The domain as it is *printed* — branded mixed case, no scheme, no `www`.
-   *
-   * Stored rather than derived from `site` because the casing is a brand
-   * decision the lowercase URL cannot carry. Same spelling as the domain in
-   * `email` and `leadEmail`; if one changes, all three do.
-   */
+  /** Branded display domain, without scheme or `www`. */
   siteLabel: "ProtectMyHOA.com",
   /** Strapline under the wordmark in the email signature. */
   tagline: "Insurance Built for Associations.",
+  /** LLC formation date in ISO-8601 form. */
+  foundingDate: "2025-12-30",
+  /** Licensed footprint; carrier and product availability still varies. */
+  areaServed: "all 50 states and the District of Columbia",
+  /** Canonical organization description for metadata and structured data. */
+  description:
+    "ProtectMyHOA is the consumer-facing brand of HOA Insurance Agency LLC, an independent insurance agency based in Marlborough, Massachusetts, licensed and writing in all 50 states and the District of Columbia and specializing in coverage for homeowner and condominium associations.",
 } as const;
+
+/** Approved public profiles for the founder Person entity and About page. */
+export const FOUNDER_PROFILES = [
+  { label: "LinkedIn", url: "https://www.linkedin.com/in/jake-greasley" },
+  { label: "Instagram", url: "https://www.instagram.com/jake.greasley/" },
+  { label: "GitHub", url: "https://github.com/JakeGreasleyGIM" },
+  {
+    label: "eXp Realty profile",
+    url: "https://ma.exprealty.com/agents/1903443/Jacob+Greasley",
+  },
+  {
+    label: "Realtor member directory",
+    url: "https://directories.apps.realtor/memberDetail/?personId=4940266&officeStreetCountry=US&memberLastName=Greasley",
+  },
+  {
+    label: "Realtor.com profile",
+    url: "https://www.realtor.com/realestateagents/656d3c88398ad2f645a8b94b",
+  },
+] as const;
 
 const phoneDigits = AGENCY.phone.replace(/\D/g, "");
 
@@ -108,16 +79,14 @@ export const AGENCY_FMT = {
   leadEmailHref: `mailto:${AGENCY.leadEmail}`,
   /** Lowercase transport form of the sales address. */
   leadEmailLower: AGENCY.leadEmail.toLowerCase(),
-  /**
-   * FormSubmit AJAX endpoint; the address is part of the URL path.
-   *
-   * Built from `leadEmail`, not `email` — this endpoint has exactly one class
-   * of caller, the five website lead forms, so a website enquiry lands in
-   * sales rather than in the inbox the ACORD forms point carriers at.
-   */
+  /** FormSubmit endpoint derived from the sales address. */
   formsubmitUrl: `https://formsubmit.co/ajax/${AGENCY.leadEmail.toLowerCase()}`,
   /** Trading name without the entity suffix, for signatures and letterheads. */
   displayName: AGENCY.name.replace(/\s+LLC$/, ""),
+  /** Brand presentation for visible identity marks only, never structured data. */
+  brandMarkedName: `${AGENCY.brandName}™`,
+  /** Unmarked identity line for body copy and machine-adjacent contexts. */
+  brandLine: `${AGENCY.brandName} is the consumer-facing brand of ${AGENCY.name}.`,
   /** Site href with the trailing slash links are written with. */
   siteHref: `${AGENCY.site}/`,
   /** Absolute logo URL. Email signatures cannot use a relative path. */

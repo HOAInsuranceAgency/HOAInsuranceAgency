@@ -2,11 +2,15 @@
 import { InstantAssessment } from "../../components/InstantAssessment";
 import { landingPages } from "../../data/landing-pages";
 import "../../styles/quote.css";
-import { AGENCY, AGENCY_FMT } from "../../../../shared/agency";
+import { AGENCY } from "../../../../shared/agency";
+import { canonicalUrl, absoluteUrl, siteGraph } from "../../lib/seo";
 
 export function getStaticPaths() {
   // Generic page (no slug)
-  const paths = [
+  const paths: {
+    params: { slug: string | undefined };
+    props: { page: (typeof landingPages)[number] };
+  }[] = [
     {
       params: { slug: undefined },
       props: {
@@ -14,12 +18,12 @@ export function getStaticPaths() {
           headline: "Free HOA Insurance Assessment",
           subheadline: "Tell us about your association and we'll deliver a personalized, board-ready coverage recommendation within one business day. No obligation.",
           trustSignals: [
-            "Independent brokerage — not tied to any single carrier",
-            "Serving MA, RI, NH, CT, NY, and OK",
+            "Independent insurance agency with access to multiple carriers",
+            "Licensed in " + AGENCY.areaServed,
             "Specialists in HOA master policies and HO-6 coordination",
           ],
           metaTitle: "Free HOA Insurance Assessment — ProtectMyHOA",
-          metaDescription: "Get a free, personalized HOA insurance coverage assessment. Master policies, D&O, HO-6 coordination. Independent brokerage serving New England, NY, and OK.",
+          metaDescription: "Get a free, personalized HOA insurance coverage assessment. Master policies, D&O, HO-6 coordination. ProtectMyHOA is the consumer brand of HOA Insurance Agency LLC, licensed in all 50 states and DC.",
         } as typeof landingPages[0],
       },
     },
@@ -38,6 +42,23 @@ export function getStaticPaths() {
 
 const { page } = Astro.props;
 import Analytics from "../../components/Analytics.astro";
+import LegalStrip from "../../components/LegalStrip.astro";
+
+/*
+ * Plain concatenation, not a nested template literal.
+ *
+ * `canonicalUrl(`/get-started${page.slug ? `/${page.slug}` : ""}/`)` is valid
+ * TypeScript but the Astro compiler mis-scans a template nested inside a `${}`
+ * in frontmatter and fails the build with a misleading "Expected > but found
+ * lang" pointing at <html>. Keep this flat.
+ */
+const slugPath = page.slug ? "/" + page.slug : "";
+const canonical = canonicalUrl("/get-started" + slugPath + "/");
+const graph = siteGraph({
+  canonical,
+  title: page.metaTitle,
+  description: page.metaDescription,
+});
 ---
 
 <html lang="en">
@@ -53,31 +74,43 @@ import Analytics from "../../components/Analytics.astro";
 
     <title>{page.metaTitle}</title>
     <meta name="description" content={page.metaDescription} />
-    <link rel="canonical" href={`https://www.protectmyhoa.com/get-started${page.slug ? `/${page.slug}` : ""}`} />
+
+        {/*
+      noindex, follow.
+
+      These are paid-traffic destinations reached by an ad click, not by a query.
+      Nothing on the site links to them (a repo-wide search for a /get-started
+      href returns nothing), they carry no navbar and ~150 words of body text,
+      and six of the eight target exactly the query the six reviewed state pages
+      already rank for — so indexing them means running two competing pages per
+      state against each other. Ads reach them by direct URL and are unaffected.
+      The route is also listed in data/routes.ts, which is what keeps it out of
+      the sitemap; the two must be changed together.
+    */}
+    <meta name="robots" content="noindex, follow" />
+    <meta name="googlebot" content="noindex, follow" />
+
+    <link rel="canonical" href={canonical} />
 
     <meta property="og:type" content="website" />
     <meta property="og:title" content={page.metaTitle} />
     <meta property="og:description" content={page.metaDescription} />
-    <meta property="og:url" content={`https://www.protectmyhoa.com/get-started${page.slug ? `/${page.slug}` : ""}`} />
+    <meta property="og:image" content={absoluteUrl("/logo.png")} />
+    <meta property="og:url" content={canonical} />
+    <meta property="og:site_name" content={AGENCY.brandName} />
 
     <Analytics />
 
-    <script type="application/ld+json" set:html={JSON.stringify({
-      "@context": "https://schema.org",
-      "@type": "InsuranceAgency",
-      name: "HOA Insurance Agency",
-      url: "https://www.protectmyhoa.com",
-      telephone: AGENCY_FMT.phoneIntl,
-      email: AGENCY.email,
-      address: {
-        "@type": "PostalAddress",
-        streetAddress: AGENCY.addressLine1,
-        addressLocality: AGENCY.city,
-        addressRegion: AGENCY.state,
-        postalCode: AGENCY.zip,
-        addressCountry: "US",
-      },
-    })} />
+        {/*
+      The SAME graph every other page emits, built in lib/seo.ts.
+
+      This template used to hand-roll a second, standalone InsuranceAgency object
+      with no @id, so the site published two unconnected agencies — one of them on
+      the eight pages the ad budget points at. There is now one organization,
+      addressed by @id, and ProtectMyHOA is its alternate name and its brand
+      rather than a company of its own.
+    */}
+    <script type="application/ld+json" set:html={JSON.stringify(graph)} />
   </head>
   <body style="margin:0; font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; -webkit-font-smoothing: antialiased;">
     <InstantAssessment
@@ -90,5 +123,6 @@ import Analytics from "../../components/Analytics.astro";
       trustSignals={page.trustSignals}
       urgencyText={page.urgencyText}
     />
+    <LegalStrip />
   </body>
 </html>

@@ -1,5 +1,14 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { trackLead, PHONE, PHONE_HREF } from "../constants";
+/**
+ * The licensed entity's own name, for the island's footer line.
+ *
+ * Imported straight from the shared file rather than through `../constants`
+ * because what this needs is the legal name — `HOA Insurance Agency LLC`,
+ * suffix included — and `constants.ts` exposes the address parts but not that.
+ * See the footer at the bottom of this file for why the suffix matters.
+ */
+import { AGENCY } from "../../../shared/agency";
 import { submitCrmLead } from "../lib/crmLead";
 import LeadUploadPanel from "./LeadUploadPanel";
 import { attachAddressAutocomplete, loadGooglePlaces } from "../lib/googlePlaces";
@@ -146,8 +155,10 @@ function QuoteFlow({ isDay, onToggleTheme }: { isDay: boolean; onToggleTheme: ()
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [direction, setDirection] = useState<1 | -1>(1);
-  // A constant, not state: one real producer, never re-rolled, never restored
-  // from a saved session (see the note on PersistedState).
+  // A constant, not state: one producer, never re-rolled per session and never
+  // restored from a saved one (see the note on PersistedState). This used to
+  // read "one real producer" — see the licensure note above PRODUCER in
+  // session.ts for what the repo does and does not establish about that name.
   const agent: Agent = PRODUCER;
   const [showConfetti, setShowConfetti] = useState(false);
   /**
@@ -169,8 +180,10 @@ function QuoteFlow({ isDay, onToggleTheme }: { isDay: boolean; onToggleTheme: ()
     setMultiVal([]);
     setError("");
     setSubmitting(false);
-    // No re-roll: the producer is a real person, so starting over does not
-    // hand the visitor a different one.
+    // No re-roll. PRODUCER is a constant, so starting over does not hand the
+    // visitor a different name — which was the whole point of removing the
+    // random roster, and is a property of the constant rather than a claim
+    // about the person.
     clearState();
   }
 
@@ -414,8 +427,15 @@ function QuoteFlow({ isDay, onToggleTheme }: { isDay: boolean; onToggleTheme: ()
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error("Quote submission failed:", err);
+      /**
+       * The number was typed here by hand as "(508) 233-2261" — parens and a
+       * space, a fourth spelling of a fact `shared/agency.ts` already owns, and
+       * one no grep for the canonical form would ever have surfaced. It is also
+       * the number a visitor is most likely to actually dial, since their
+       * submission has just failed, so a stale one here costs a lead outright.
+       */
       setError(
-        "We couldn't send your request. Please try again, or call us at (508) 233-2261."
+        `We couldn't send your request. Please try again, or call us at ${PHONE}.`
       );
     } finally {
       setSubmitting(false);
@@ -703,15 +723,38 @@ function QuoteFlow({ isDay, onToggleTheme }: { isDay: boolean; onToggleTheme: ()
                 A member of our team will be in touch within one business day. We may ask for
                 your current declarations page — that is usually all we need to start.
               </p>
+              {/* The one place this wizard has to be unambiguous.
+                  A visitor has just answered five questions about their
+                  insurance and been shown a green check and confetti, which is
+                  the visual grammar of a completed transaction; on the highest
+                  intent surface on the site, "we have it" on its own can be
+                  read as coverage arranged. Nothing here was ever an
+                  application and nothing submitted binds anything, so the
+                  screen now says so. The wording is the site's existing
+                  qualifier voice rather than new boilerplate, and it sits once,
+                  here, rather than being appended to every paragraph above. */}
+              <p className="qf-sub-small">
+                This starts a review — it does not bind coverage or change a policy you already
+                have. Anything we put forward is subject to underwriting, policy terms, and
+                eligibility, and carrier availability varies by state, association type and
+                risk profile.
+              </p>
               {/* The offer to take documents, only once the lead is safely in
                   the CRM. The copy above already asks for a declarations page,
                   so this is the place a visitor is most likely to have one to
                   hand — and nothing here can cost the submission, which has
                   already happened. */}
               {uploadToken && <LeadUploadPanel uploadToken={uploadToken} />}
-              <a href="tel:+15082332261" className="qf-phone-cta">
+              {/* Both halves of this link were literals. The href carried its
+                  own hand-typed E.164 string, and the visible number was
+                  written with U+2011 non-breaking hyphens, which is why it
+                  survived every sweep for the number: a plain search for
+                  508-233-2261 does not match it. Interpolated now, so the
+                  number a visitor dials from the confirmation screen is the
+                  one number the repo actually stores. */}
+              <a href={PHONE_HREF} className="qf-phone-cta">
                 <Icon.Phone size={16} />
-                <span>Or call us — 508‑233‑2261</span>
+                <span>Or call us — {PHONE}</span>
               </a>
               <a href="/" className="qf-back-link">
                 ← Back to ProtectMyHOA.com
@@ -721,9 +764,23 @@ function QuoteFlow({ isDay, onToggleTheme }: { isDay: boolean; onToggleTheme: ()
         </SlideIn>
       </div>
 
-      {step?.type !== "submitted" && (
-        <p className="qf-footer">HOA Insurance Agency · Marlborough, MA</p>
-      )}
+      {/* The licensed entity, on every screen — the confirmation included.
+          Two things were wrong here. The string was typed by hand as "HOA
+          Insurance Agency · Marlborough, MA": the trading name without "LLC",
+          so the only entity named anywhere in the wizard was not the one
+          holding the licences. And it was wrapped in a
+          `step?.type !== "submitted"` guard, so it vanished at exactly the
+          moment it mattered most — the instant someone submitted an insurance
+          enquiry, the last chrome on their screen was a link back to the brand
+          with no licensed entity on it at all. Interpolated from
+          shared/agency.ts and rendered unconditionally.
+
+          This is the island's own identification, not a page footer: /quote
+          mounts the shared LegalStrip below this component, and a second full
+          footer here would be a duplicate rather than a fix. */}
+      <p className="qf-footer">
+        {AGENCY.name} · {AGENCY.city}, {AGENCY.state}
+      </p>
     </div>
   );
 }

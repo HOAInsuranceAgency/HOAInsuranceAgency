@@ -1,34 +1,16 @@
 ---
-/**
- * HOA insurance — the product page.
- *
- * Seven sections, in a deliberate order: define, itemize, agitate, resolve,
- * extend, qualify, answer.
- *   01 what a master policy is        02 the six coverages
- *   03 what commonly goes wrong       04 where the policy stops (who pays)
- *   05 HO-6 for unit owners           06 who we work with
- *   07 FAQ — feeds the FAQPage schema
- *
- * Hero matches the homepage: full treatment with the address lookup rather than
- * the compact variant, so the two pages open the same way.
- *
- * ⚠ The FAQS array and faqJsonLd below are the source for both the visible
- * accordion and this page's FAQPage rich-result markup. Editing either changes
- * the rich result. See docs/WEBSITE-STRUCTURE.md §6.
- */
+/** HOA insurance product page. FAQ copy also feeds the FAQPage node. */
 import Layout from "../layouts/Layout.astro";
 import Hero from "../components/Hero.astro";
 import HeroLookup from "../components/HeroLookup.astro";
 import { ContactForm } from "../components/ContactForm";
 import { QUOTE_URL } from "../constants";
+import { canonicalUrl, faqPageSchema } from "../lib/seo";
+import { AGENCY } from "../../../shared/agency";
 import "./WhatWeDo.css";
 
-/* ───────────────────────────────────────────────────────────────────────────
-   PLACEHOLDER CONTENT — 2026-08-11
-   Structure first, copy to follow. Anything still awaiting real wording is
-   written as a bracketed token so it cannot reach production unnoticed —
-   search "[" in this file. No figure or statute is invented.
-   ─────────────────────────────────────────────────────────────────────────── */
+/** Canonical shared by the page and its FAQ node. */
+const PAGE_URL = canonicalUrl("/what-we-do/");
 
 /* 01 — What the master policy responds to. Definition first, four objects. */
 const RESPONDS_TO = [
@@ -38,14 +20,14 @@ const RESPONDS_TO = [
   { title: "The decisions its board makes", desc: "Allegations about governance, enforcement and the choices trustees make." },
 ];
 
-/* 02 — Six coverages. Board language, policy name as the H3. Titles unchanged. */
+/** Coverage summaries; issued terms, exclusions and endorsements control. */
 const MASTER_COVERAGES = [
-  { title: "Commercial Property", icon: "building", desc: "Rebuilds the shared buildings and common elements after a covered loss, at replacement cost rather than depreciated value. Includes equipment breakdown for shared boilers, elevators and HVAC." },
-  { title: "General Liability", icon: "shield", desc: "Responds when someone is hurt on common property, and pays the cost of defending the association." },
-  { title: "Umbrella / Excess Liability", icon: "umbrella", desc: "Sits above the primary liability limits, for the claim that exceeds them." },
-  { title: "Directors & Officers Liability", icon: "briefcase", desc: "Defends board members personally when a decision they made is challenged." },
-  { title: "Crime and Fidelity", icon: "lock", desc: "Covers theft of association funds, whether by an employee, a volunteer or a third party. Lenders set a minimum limit based on the funds you hold." },
-  { title: "Ordinance or Law", icon: "scale", desc: "Pays the extra cost of rebuilding to today's code when the original construction no longer complies, which matters most in older buildings." },
+  { title: "Commercial Property", icon: "building", desc: "Rebuilds the shared buildings and common elements after a covered loss, typically at replacement cost rather than depreciated value. Equipment breakdown for shared boilers, elevators and HVAC can be written alongside it." },
+  { title: "General Liability", icon: "shield", desc: "Responds when someone is hurt on common property, and under a standard form the carrier defends the association as well." },
+  { title: "Umbrella / Excess Liability", icon: "umbrella", desc: "Sits above the primary liability limits, for the claim that exceeds them. An umbrella generally follows the underlying forms, so what the primary excludes it usually excludes too." },
+  { title: "Directors & Officers Liability", icon: "briefcase", desc: "Responds when a board member is personally named over a governance decision — defence costs are usually the largest part of it." },
+  { title: "Crime and Fidelity", icon: "lock", desc: "Covers theft of association funds by an employee or volunteer, and — where the form is extended for it — by a third party. Lender guidelines commonly set a minimum limit against the funds you hold." },
+  { title: "Ordinance or Law", icon: "scale", desc: "Meets the extra cost of rebuilding to today's code after a covered loss, when the original construction no longer complies. It is bought in parts, each with its own limit, and matters most in older buildings." },
 ];
 
 /* 03 — The agitate step. Stated plainly, no alarm: each line is a condition a
@@ -59,62 +41,50 @@ const COMMON_ISSUES = [
   { title: "Gaps between master and HO-6", desc: "Both policies are in force, and neither responds to the loss the association is looking at." },
 ];
 
-/* 04 — Where the policy stops. The three master policy types, in ascending
-   order of what they include. This is the section that answers "who pays". */
+/* Common master-policy structures; the issued policy and documents control. */
 const POLICY_TYPES = [
-  { name: "Bare walls", covers: "Structure and common elements only", stops: "Everything inside the unit is the owner's, including original fixtures and finishes", owner: "Most" },
-  { name: "Single entity", covers: "Structure, common elements, and the original fixtures and finishes", stops: "Improvements an owner has made since are the owner's", owner: "Some" },
-  { name: "All-in", covers: "Structure, common elements, original finishes and owner improvements", stops: "Personal property and personal liability remain the owner's", owner: "Least" },
+  { name: "Bare walls", covers: "Structure and common elements", stops: "Typically excludes unit interiors; the policy and governing documents control", owner: "Most" },
+  { name: "Single entity", covers: "Structure, common elements, and usually original fixtures and finishes", stops: "Typically excludes improvements added by an owner", owner: "Some" },
+  { name: "All-in", covers: "Structure, common elements, original finishes and usually owner improvements", stops: "Typically excludes belongings and personal liability", owner: "Least" },
 ];
 
-/* 05 — HO-6. */
+/** Common HO-6 coverages; actual scope depends on the issued form. */
 const HO6_COVERAGES = [
-  { title: "Loss assessment", desc: "Your share when the association passes a deductible or a shortfall on to owners." },
+  { title: "Loss assessment", desc: "May respond when an association validly assesses a covered deductible or shortfall to owners, subject to the HO-6 terms and limit." },
   { title: "Coverage A for improvements", desc: "The finishes and fixtures inside your unit, at a limit that reflects what is actually there." },
-  { title: "Water backup and seepage", desc: "The most common interior loss in a multi-unit building, and not automatically included." },
-  { title: "Personal property", desc: "Belongings, at replacement cost rather than what they would resell for." },
-  { title: "Personal liability and umbrella", desc: "Coordinated with the association's own liability limits so the layers do not conflict." },
+  { title: "Water backup and seepage", desc: "Coverage for these causes of loss is not automatically included and depends on the form and endorsements." },
+  { title: "Personal property", desc: "Belongings — written at replacement cost rather than depreciated value where the form is endorsed for it." },
+  { title: "Personal liability and umbrella", desc: "Reviewed alongside the association's liability limits and the owner's broader exposures." },
 ];
 
 /* 06 — Who we work with. Same four audiences and the same marks as the homepage
    section, so the two pages say this once and say it identically. */
 const AUDIENCES = [
   { icon: "board",     title: "Boards & trustees",     cta: "Request a board review",       href: QUOTE_URL },
-  { icon: "manager",   title: "Property managers",     cta: "Talk to us about a portfolio", href: "/contact" },
-  { icon: "developer", title: "Developers & sponsors", cta: "Discuss a new project",        href: "/contact" },
+  { icon: "manager",   title: "Property managers",     cta: "Talk to us about a portfolio", href: "/contact/" },
+  { icon: "developer", title: "Developers & sponsors", cta: "Discuss a new project",        href: "/contact/" },
   { icon: "owner",     title: "Unit owners",           cta: "Get HO-6 coverage",            href: QUOTE_URL },
 ];
 
-/* ⚠ This array is the source for BOTH the visible accordion and this page's
-   FAQPage rich-result markup. Replaced on request, 2026-08-11: the three
-   questions changed, so the schema payload changed with them. Watch Search
-   Console for any FAQ rich result that was showing against the old wording. */
+/** Shared by the visible FAQ and structured data. */
 const FAQS = [
-  { q: "What is the difference between an HOA master policy and an HO-6?", a: "The master policy is the association's insurance. It covers the shared buildings, common elements, the association's liability and the funds it holds. An HO-6 is the unit owner's own policy, covering interior finishes, belongings, personal liability and loss assessment. Where one ends and the other begins is set by the governing documents." },
-  { q: "Who pays for the HOA master policy?", a: "The association does, funded through member assessments. Every owner contributes to it indirectly, but no individual owner holds the policy or files on it. An owner's own HO-6 is separate and paid for directly." },
+  { q: "What is the difference between an HOA master policy and an HO-6?", a: "The master policy is the association's insurance and generally addresses shared buildings, common elements, association liability and other association exposures. An HO-6 can cover belongings, personal liability, loss assessment and portions of a unit outside the master policy. The boundary depends on the master-policy form, governing documents, applicable law and endorsements." },
+  { q: "Who pays for the HOA master policy?", a: "The association purchases the master policy and generally funds its premium through member assessments. The association is the named insured; claim procedures depend on the policy and the loss. An owner's HO-6 is a separate policy paid for by that owner." },
   { q: "What should a board review at renewal?", a: "Building valuation and limit adequacy, the deductible structure including any per-unit deductible, ordinance or law limits, general liability, umbrella, D&O, and the fidelity bond limit against the funds held. We review each of these and set out the findings in writing." },
 ];
 
-const faqJsonLd = {
-  "@context": "https://schema.org",
-  "@type": "FAQPage",
-  mainEntity: FAQS.map((f) => ({
-    "@type": "Question",
-    name: f.q,
-    acceptedAnswer: { "@type": "Answer", text: f.a },
-  })),
-};
+const faqJsonLd = faqPageSchema(PAGE_URL, FAQS);
 ---
 
 <Layout
   title="HOA Insurance & HO-6 Coverage — ProtectMyHOA"
   description="Specialists in HOA master insurance policies and HO-6 condo unit owner coverage. Property, liability, D&O, crime, umbrella — built to work together."
-  canonicalPath="/what-we-do"
+  canonicalPath="/what-we-do/"
   jsonLd={[faqJsonLd]}
 >
   {/* ═══ Hero — same treatment as the homepage ══════════════════════ */}
   <Hero
-    eyebrow="ProtectMyHOA&trade;"
+    eyebrow="ProtectMyHOA™"
     title="HOA Insurance"
     subtitle="Master insurance for the association, HO-6 for the unit owner, and a written record of why each was placed the way it was."
     backgroundImage="/images/modern-building.jpg"
@@ -203,9 +173,15 @@ const faqJsonLd = {
           </article>
         ))}
       </div>
+      {/* One qualifier for the whole grid rather than a hedge bolted onto each of
+          the six descriptions. The cards say what these coverages are FOR; this
+          line says that what any given association can actually buy depends on
+          the market and the risk. */}
       <p class="cov-note">
         Workers compensation and earthquake are available separately, and are quoted alongside
-        the program where an association needs them.
+        the program where an association needs them. Carrier availability varies by state,
+        association type and risk profile, and coverage is subject to underwriting, policy
+        terms, and eligibility.
       </p>
       {/* Section-specific label rather than the page's generic primary: this
            section is about the six coverages, so the button names that job. */}
@@ -256,30 +232,25 @@ const faqJsonLd = {
     </div>
   </section>
 
-  {/* ═══ 04 · Where the master policy stops ════════════════════════ */}
+  {/* ═══ 04 · Where the master policy and HO-6 meet ════════════════ */}
   <section class="section" aria-labelledby="stops-h">
     <div class="container">
       <div class="sec-head sec-head--center">
         <p class="eyebrow">Who pays</p>
-        <h2 class="section-title" id="stops-h">Where the master policy stops</h2>
+        <h2 class="section-title" id="stops-h">Where the master policy and HO-6 meet</h2>
         <p class="section-subtitle">
-          Three structures, and your governing documents determine which one applies. It is
-          the single most consequential detail in the policy, because it decides who pays for
-          what after a loss.
+          Bare-walls, single-entity and all-in forms allocate unit property differently. The
+          issued policy, endorsements and governing documents determine which arrangement applies.
         </p>
       </div>
 
-      {/* A comparison table, not three cards. Three options measured on the same
-           two attributes is exactly what a table is for, it reads at a glance,
-           and it is roughly a third of the height the cards took. Scrolls inside
-           its own container on narrow screens rather than shrinking the type. */}
       <div class="types-table-wrap">
         <table class="types-table">
           <thead>
             <tr>
               <th scope="col">Master policy type</th>
               <th scope="col">The association covers</th>
-              <th scope="col">It stops at</th>
+              <th scope="col">Common unit-owner gap</th>
               <th scope="col" class="types-table__owner-col">Owner carries</th>
             </tr>
           </thead>
@@ -300,24 +271,25 @@ const faqJsonLd = {
         <div class="stops-item">
           <h3>The deductible</h3>
           <p>
-            Written per occurrence or per unit. Where it applies per unit, a single water loss
-            can leave one owner responsible for the full deductible on their own unit.
+            A deductible may apply per occurrence or per unit. Whether any amount can be
+            allocated to an owner depends on the policy, governing documents, applicable law,
+            allocation provisions and the facts of the loss.
           </p>
         </div>
         <div class="stops-item">
           <h3>Loss assessment</h3>
           <p>
-            Where a loss falls below the deductible or above the limit, the shortfall can be
-            assessed to owners. Loss assessment cover on an HO-6 responds to it, and the limit
-            carried is usually well below what an assessment would be.
+            An association may be able to assess certain deductibles or shortfalls to owners.
+            HO-6 loss-assessment coverage may respond when the cause and assessment are covered,
+            subject to its own terms and limit.
           </p>
         </div>
       </div>
 
       <div class="stops-foot">
         <p class="stops-foot__text">
-          Most boards do not know which of the three their association carries. It is stated in
-          the governing documents, and we identify it on every review.
+          Plenty of boards could not say which of the three their association carries. It is
+          stated in the governing documents, and we identify it on every review.
         </p>
         <a href={QUOTE_URL} class="btn btn-primary stops-foot__cta">Request Insurance Review</a>
       </div>
@@ -342,15 +314,12 @@ const faqJsonLd = {
           <p class="eyebrow">Unit owners</p>
           <h2 class="section-title" id="ho6-h">HO-6 add-on coverage</h2>
           <p class="wwd-lead">
-            HO-6 is the owner's side of the same arrangement. It covers what the master policy
-            leaves at the unit door, and it should be written against your association's
-            actual master policy rather than a generic template.
+            HO-6 is the owner's side of the arrangement. It can cover belongings, personal
+            liability, loss assessment and portions of the unit outside the master policy.
+            The issued master policy and governing documents determine how the two fit together.
           </p>
-          {/* Pull quote, not a closing line: it is the section's strongest claim and
-              the reason an owner acts, so it is set larger and given a gold rule. */}
           <blockquote class="ho6-pull">
-            Where the master policy carries a per-unit deductible, a lender will now require an
-            HO-6.
+            A lender may require HO-6 coverage based on the loan type and project requirements.
           </blockquote>
           <ul class="ho6-list">
             {HO6_COVERAGES.map((h) => (
@@ -361,7 +330,8 @@ const faqJsonLd = {
             ))}
           </ul>
           <p class="ho6-closer">
-            We place both policies, so the gap between them does not fall on an owner.
+            We place both policies and set out in writing how the available documents and forms
+            allocate responsibility before a loss occurs.
           </p>
           <div class="wwd-cta">
             <a href={QUOTE_URL} class="btn btn-primary">Request Insurance Review</a>
@@ -378,9 +348,15 @@ const faqJsonLd = {
       <div class="sec-head sec-head--center">
         <p class="eyebrow">Who we serve</p>
         <h2 class="section-title" id="types-h">Who we work with</h2>
+        {/* The footprint is read from shared/agency.ts rather than typed here.
+            It was correct as hand-written text, but this page was the last one
+            still asserting it in prose: every other surface — the footer, the
+            coverage map, /contact, the get-started template — interpolates
+            AGENCY.areaServed, which is how the obsolete six-state list survived
+            in so many places for so long. One source, no drift. */}
         <p class="section-subtitle">
           Four groups, each needing something different from the same placement. Licensed in
-          all 50 states and the District of Columbia.
+          {" "}{AGENCY.areaServed}.
         </p>
       </div>
       <div class="aud-grid">
@@ -405,8 +381,7 @@ const faqJsonLd = {
   </section>
 
   {/* ═══ 07 · FAQ ══════════════════════════════════════════════════ */}
-  {/* FAQS is the source for both this accordion and the FAQPage schema above.
-       Editing an answer here edits the rich-result payload. */}
+  {/* FAQS supplies both the visible accordion and the FAQPage node. */}
   <section class="section section--alt" id="faq" aria-labelledby="faq-h">
     <div class="container">
       <div class="sec-head sec-head--center">
@@ -423,7 +398,7 @@ const faqJsonLd = {
       </div>
       <div class="wwd-cta wwd-cta--center">
         <a href={QUOTE_URL} class="btn btn-primary">Request Insurance Review</a>
-        <a href="/contact" class="text-link">Or ask us a question &gt;</a>
+        <a href="/contact/" class="text-link">Or ask us a question &gt;</a>
       </div>
     </div>
   </section>

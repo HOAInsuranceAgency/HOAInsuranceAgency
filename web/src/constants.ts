@@ -15,7 +15,14 @@ export const LEAD_EMAIL = AGENCY.leadEmail;
 export const LEAD_EMAIL_HREF = AGENCY_FMT.leadEmailHref;
 export const ADDRESS_LINE1 = AGENCY.addressLine1;
 export const ADDRESS_LINE2 = AGENCY_FMT.addressLine2;
-export const QUOTE_URL = "/quote";
+/**
+ * The quote route, with the trailing slash production serves.
+ *
+ * `astro.config.mjs` sets `trailingSlash: "always"` and the CDN 301s the
+ * slashless form, so this constant feeds ~330 internal links across the site —
+ * every one of which was a redirect hop before the slash was added here.
+ */
+export const QUOTE_URL = "/quote/";
 /** Delivers to `LEAD_EMAIL` — see `AGENCY_FMT.formsubmitUrl`. */
 /**
  * Where the FormSubmit notification lands.
@@ -203,8 +210,8 @@ export const SOCIAL = {
 
 export const NAV_LINKS = [
   { label: "Home", path: "/" },
-  { label: "HOA Insurance", path: "/what-we-do" },
-  { label: "Why Choose Us", path: "/why-choose-us" },
+  { label: "HOA Insurance", path: "/what-we-do/" },
+  { label: "Why Choose Us", path: "/why-choose-us/" },
   // Moved after Why Choose Us: the order now runs product → proof → who we are,
   // rather than putting the company before what it sells.
   //
@@ -213,11 +220,11 @@ export const NAV_LINKS = [
   //   1. Navbar.astro highlights only the FIRST matching link, otherwise Home
   //      and About Us would both light up on "/".
   //   2. /about-us still exists, is still indexed and is still linked from the
-  //      homepage ("About our brokerage" in the practice section). It has lost
+  //      homepage ("About our insurance agency" in the practice section). It has lost
   //      its site-wide nav link, so that homepage link is now its only internal
   //      one — do not remove it without replacing the path here.
   { label: "About Us", path: "/" },
   // A real route now, not an in-page anchor. Navbar.astro treats non-hash paths
   // as highlightable, so Contact gains an active state on /contact.
-  { label: "Contact", path: "/contact" },
+  { label: "Contact", path: "/contact/" },
 ];

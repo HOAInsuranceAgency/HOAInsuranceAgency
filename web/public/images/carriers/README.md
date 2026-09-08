@@ -59,13 +59,18 @@ CSS causes this and recoloring a carrier's mark would be a worse trademark
 problem than the visual inconsistency. If it should match the others, request a
 version on a transparent or white ground from RPS.
 
-## Before these go live
+## What the site claims about these carriers
 
-Displaying a carrier's mark asserts an active appointment *and* reproduces a
-third-party trademark. Two things to confirm with Compliance:
+**Confirmed by the user on 2026-09-07:** the agency has direct appointments with
+all twelve listed markets. This supersedes the earlier restriction to
+market-access wording; copy may describe the confirmed direct appointments.
+Availability still varies by state, association type and risk profile, and the
+confirmation does not establish a particular market's binding authority.
 
-1. Every appointment is current.
-2. Each carrier's brand guidelines permit an appointed agency to display the mark
-   in this context. Some require prior written approval, and some prohibit
-   display alongside competitors' marks. Travelers and Amwins both publish
-   guidelines worth reading.
+## Still needs written confirmation
+
+**Permission to reproduce each third-party mark remains unconfirmed.** Direct
+appointments do not themselves establish logo permission. Check the applicable
+brand guidelines and obtain any approval required for this display.
+
+Re-check appointment status and logo permissions whenever the list changes.

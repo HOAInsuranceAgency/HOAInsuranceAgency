@@ -1,30 +1,9 @@
 ---
-/**
- * US coverage map — homepage section 11. True state geometry, not a grid.
- *
- * Geometry: `us-atlas` (ISC), pre-built TopoJSON from the U.S. Census Bureau,
- * already projected to Albers USA in a 975 × 610 space — which is why no
- * projection library is needed and why Alaska and Hawaii are correctly inset.
- * Both packages are devDependencies: the topology is read at BUILD time and only
- * the resulting SVG path strings ship. Nothing is added to the client bundle.
- *
- * Paths are simplified with Douglas–Peucker at 0.8 units, which is sub-pixel at
- * the rendered width and takes the geometry from 108 KB to ~26 KB while keeping
- * all 51 features.
- *
- * viewBox starts at x = -64 because the Albers Alaska inset reaches x = -58; at
- * x = 0 Alaska was clipped down its western edge.
- *
- * Every state is a link now, labeled with its postal abbreviation. Leader lines
- * and the right-hand name gutter are gone by request. The small northeastern
- * states cannot hold a label inside their own outline at this scale — RI's
- * mainland is 11 units wide — so those carry a hand-tuned offset in NUDGE that
- * places the abbreviation just clear of the coast. Without leader lines that
- * relies on proximity to read correctly, which is the trade the brief asked for.
- */
+/** Build-time US map; simplified SVG paths keep all 50 states plus DC. */
 import { feature } from "topojson-client";
 import topo from "us-atlas/states-albers-10m.json";
 import { states as guideStates } from "../data/states";
+import { AGENCY } from "../../../shared/agency";
 
 interface Props {
   ctaHref: string;
@@ -238,23 +217,28 @@ for (const f of collection.features) {
 
 /* Abbreviation per state, keyed off the same data file that owns the routes. */
 const abbrByName = new Map(guideStates.map((s) => [s.name, s.abbr]));
+
+/** Shared licensure wording; this does not promise product availability. */
+const footprintLine = "Licensed in " + AGENCY.areaServed + ".";
+const mapAriaLabel =
+  "Map of the United States. " + footprintLine + " Select a state to open its coverage page.";
 ---
 
 <div class="cmap">
   <div class="cmap__head">
     <h3 class="cmap__title">Where we place coverage</h3>
-    <p class="cmap__hint">Licensed in all 50 states and DC. Select a state to open its page.</p>
+    <p class="cmap__hint">{footprintLine} Select a state to open its page.</p>
   </div>
 
   <svg
     class="cmap__svg"
     viewBox="-64 0 1184 620"
     role="group"
-    aria-label={`Map of the United States. Licensed in all 50 states and the District of Columbia. Select a state to open its coverage page.`}
+    aria-label={mapAriaLabel}
   >
     <g class="cmap__states">
       {tiles.map((s) => (
-        <a href={`/hoa-insurance-${s.slug}`} aria-label={`HOA insurance in ${s.name}`}>
+        <a href={`/hoa-insurance-${s.slug}/`} aria-label={`HOA insurance in ${s.name}`}>
           <path class="cmap__state" d={s.d} />
           <text
             class={"cmap__abbr" + (s.outside ? " cmap__abbr--out" : "")}

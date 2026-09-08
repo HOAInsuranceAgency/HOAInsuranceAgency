@@ -1,15 +1,10 @@
 import { useState, type FormEvent } from "react";
 import { FORMSUBMIT_URL, PHONE, PHONE_HREF, EMAIL, LEAD_EMAIL, LEAD_EMAIL_HREF, ADDRESS_LINE1, ADDRESS_LINE2, trackLead } from "../constants";
 import { submitCrmLead } from "../lib/crmLead";
+import { AGENCY } from "../../../shared/agency";
 import "./ContactForm.css";
 
-/* Pre-filled claim notice. The body prompts for the four things always asked
-   first, so the reply is not a request for basics. Encoded so newlines survive.
-
-   Addressed to EMAIL (service), not LEAD_EMAIL (sales) — a claim from an
-   existing insured is not a new inquiry, which is what "only website leads go
-   to sales" meant. The inquiry card below is the lead surface and does use
-   LEAD_EMAIL; the two are deliberately different and both are needed here. */
+/** Pre-filled claim notice to the service/claims address, not sales. */
 const CLAIM_HREF =
   `mailto:${EMAIL}` +
   `?subject=${encodeURIComponent("Claim notification")}` +
@@ -93,11 +88,15 @@ export function ContactForm({
             </div>
             <div className="contact-item">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><path d="M22 6l-10 7L2 6"/></svg>
-              <a href={LEAD_EMAIL_HREF}>{LEAD_EMAIL}</a>
+              <span>
+                <a href={LEAD_EMAIL_HREF}>{LEAD_EMAIL}</a>
+                <br />
+                New business and quote requests
+              </span>
             </div>
             <div className="contact-item">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/></svg>
-              <span>{ADDRESS_LINE1}<br />{ADDRESS_LINE2}</span>
+              <span>{AGENCY.name}<br />{ADDRESS_LINE1}<br />{ADDRESS_LINE2}</span>
             </div>
           </div>
 
@@ -118,8 +117,9 @@ export function ContactForm({
                 </a>
               </div>
               <p className="contact-claims__note">
-                Notifying us does not replace any notice your policy requires you to give the
-                carrier. If a deadline is close, call rather than email.
+                Claims go to {EMAIL}, the mailbox for general enquiries, service and
+                claims. Notifying us does not replace any notice your policy requires
+                you to give the carrier. If a deadline is close, call rather than email.
               </p>
             </div>
           )}
