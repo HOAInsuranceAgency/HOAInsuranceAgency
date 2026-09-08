@@ -1,11 +1,46 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { AGENCY, AGENCY_FMT } from "../../../shared/agency";
+import { ContactForm } from "../../../web/src/components/ContactForm";
 
 const read = (path: string) =>
   readFileSync(new URL(path, import.meta.url), "utf8");
 const STRUCTURE = read("../../../docs/WEBSITE-STRUCTURE.md");
 const CONSTANTS = read("../../../web/src/constants.ts");
+type ContactFormProps = NonNullable<Parameters<typeof ContactForm>[0]>;
+const renderContact = (props: ContactFormProps = {}) =>
+  renderToStaticMarkup(createElement<ContactFormProps>(ContactForm, props));
+
+describe("contact-page split integration", () => {
+  it("preserves the full form and contact anchor for existing callers", () => {
+    const html = renderContact();
+    expect(html).toContain('id="contact"');
+    expect(html.match(/<form\b/g)).toHaveLength(1);
+    expect(html).toContain(AGENCY.name);
+    expect(html).toContain("New business and quote requests");
+  });
+
+  it("renders a single form without duplicating the agency sidebar", () => {
+    const html = renderContact({ part: "form" });
+    expect(html.match(/<form\b/g)).toHaveLength(1);
+    expect(html).not.toContain('id="contact"');
+    expect(html).not.toContain('class="contact-info"');
+  });
+
+  it("keeps company identity and separate sales and claims mail in the static sidebar", () => {
+    const html = renderContact({
+      part: "info", showClaims: true,
+    });
+    expect(html).not.toContain("<form");
+    expect(html).toContain(AGENCY.name);
+    expect(html.toLowerCase()).toContain(`mailto:${AGENCY_FMT.leadEmailLower}`);
+    expect(html.toLowerCase()).toContain(`mailto:${AGENCY_FMT.emailLower}?subject=`);
+    expect(html).toContain("New business and quote requests");
+    expect(html).toContain("Notifying us does not replace any notice your policy requires");
+  });
+});
 
 describe("release legal wording and revision dates", () => {
   it("identifies the legal entity as an independent agency, not a carrier", () => {

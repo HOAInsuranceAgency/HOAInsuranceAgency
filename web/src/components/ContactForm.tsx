@@ -27,8 +27,14 @@ export function ContactForm({
    * them. Pass it anywhere else that should offer the same route.
    */
   showClaims = false,
+  /**
+   * Default "all" preserves the section, #contact anchor and two-column layout.
+   * /contact places "form" and "info" separately; only "form" needs hydration.
+   */
+  part = "all",
 }: {
   showClaims?: boolean;
+  part?: "all" | "form" | "info";
 } = {}) {
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
@@ -76,9 +82,9 @@ export function ContactForm({
     }
   }
 
-  return (
-    <section className="section contact-section" id="contact">
-      <div className="container contact-grid">
+  /* Both halves are built once and placed by whichever branch runs below, so the
+     two layouts cannot drift apart. */
+  const info = (
         <div className="contact-info">
           <h3 className="contact-heading">Contact Us Today</h3>
           <div className="contact-details">
@@ -124,7 +130,9 @@ export function ContactForm({
             </div>
           )}
         </div>
+  );
 
+  const formEl = (
         <form className="contact-form" onSubmit={handleSubmit}>
           {status === "sent" ? (
             <div className="contact-success">
@@ -186,6 +194,17 @@ export function ContactForm({
             </>
           )}
         </form>
+  );
+
+  // Split variants leave layout and anchors to the caller.
+  if (part === "form") return formEl;
+  if (part === "info") return info;
+
+  return (
+    <section className="section contact-section" id="contact">
+      <div className="container contact-grid">
+        {info}
+        {formEl}
       </div>
     </section>
   );

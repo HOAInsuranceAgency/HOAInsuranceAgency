@@ -210,7 +210,14 @@ export const SOCIAL = {
 
 export const NAV_LINKS = [
   { label: "Home", path: "/" },
-  { label: "HOA Insurance", path: "/what-we-do/" },
+  // Group both product pages under the Coverage disclosure.
+  {
+    label: "Coverage",
+    children: [
+      { label: "Homeowners Association (HOA) Insurance", path: "/what-we-do/" },
+      { label: "Condo Association Insurance", path: "/condo-insurance/" },
+    ],
+  },
   { label: "Why Choose Us", path: "/why-choose-us/" },
   // Moved after Why Choose Us: the order now runs product → proof → who we are,
   // rather than putting the company before what it sells.

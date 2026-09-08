@@ -433,6 +433,10 @@ describe("the /contact specialist", () => {
     expect(contact).toContain('role: "Licensed Insurance Producer"');
     expect(contact).toContain("jobTitle: SPECIALIST.role");
     expect(contact).toContain("{SPECIALIST.role}</p>");
+    expect(contact).toContain(`id="${SPECIALIST_ID.split("#")[1]}"`);
+    expect(contact).toContain("#brian-cole,");
+    expect(contact).not.toContain('id="specialist"');
+    expect(contact).toContain("jsonLd={[specialistJsonLd]}");
     expect(contact).not.toContain("UNVERIFIED");
   });
 

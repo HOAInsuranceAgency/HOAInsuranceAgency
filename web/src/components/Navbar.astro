@@ -16,7 +16,7 @@ interface Props {
 
 const { currentPath, solid = false } = Astro.props;
 
-/* Trailing slashes are not significant, so "/contact/" and "/contact/" are the
+/* Trailing slashes are not significant, so "/contact" and "/contact/" are the
    same page. "/" normalises to itself rather than to "". */
 const norm = (p: string) => p.replace(/\/+$/, "") || "/";
 const current = norm(currentPath);
@@ -24,8 +24,14 @@ const current = norm(currentPath);
 /* Only the first matching link is highlighted. About Us points at the homepage,
    so comparing each link independently would mark both Home and About Us active
    on "/" — two highlighted items reads as a bug. Hash links never match. */
+/* A dropdown entry has no path of its own, so it counts as active when any of
+   its children is the current route. That is what lights "Coverage" on both
+   /what-we-do and /condo-insurance. */
+const isCurrent = (path?: string) =>
+  Boolean(path) && !path!.includes("#") && norm(path!) === current;
+
 const activeIndex = NAV_LINKS.findIndex(
-  (l) => !l.path.includes("#") && norm(l.path) === current
+  (l) => isCurrent(l.path) || (l.children ?? []).some((c) => isCurrent(c.path))
 );
 ---
 
@@ -46,6 +52,37 @@ const activeIndex = NAV_LINKS.findIndex(
     <div class="navbar-links" id="navbar-links">
       {NAV_LINKS.map((l, i) => {
         const isActive = i === activeIndex;
+
+        if (l.children) {
+          return (
+            <div class={"navbar-group" + (isActive ? " navbar-group--active" : "")}>
+              <button
+                type="button"
+                class="navbar-link navbar-group__toggle"
+                aria-expanded="false"
+                aria-controls={`navbar-submenu-${i}`}
+              >
+                {l.label}
+                <svg class="navbar-group__chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+              </button>
+              <div class="navbar-group__menu" id={`navbar-submenu-${i}`} hidden>
+                {l.children.map((c) => {
+                  const childActive = isCurrent(c.path);
+                  return (
+                    <a
+                      href={c.path}
+                      class={"navbar-group__item" + (childActive ? " navbar-group__item--active" : "")}
+                      aria-current={childActive ? "page" : undefined}
+                    >
+                      {c.label}
+                    </a>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        }
+
         return (
           <a
             href={l.path}
@@ -62,9 +99,12 @@ const activeIndex = NAV_LINKS.findIndex(
     </div>
 
     <button
+      type="button"
       class="navbar-hamburger"
       id="navbar-hamburger"
       aria-label="Open menu"
+      aria-expanded="false"
+      aria-controls="navbar-links"
     >
       <span class="hamburger-bar"></span>
       <span class="hamburger-bar"></span>
@@ -74,45 +114,10 @@ const activeIndex = NAV_LINKS.findIndex(
 </nav>
 
 <script>
-  const navbar = document.getElementById("navbar")!;
-  const links = document.getElementById("navbar-links")!;
-  const hamburger = document.getElementById("navbar-hamburger")!;
-  const bars = hamburger.querySelectorAll(".hamburger-bar");
+  import { initializeNavbar } from "../lib/navbar";
 
-  let open = false;
-
-  function toggle() {
-    open = !open;
-    links.classList.toggle("navbar-links--open", open);
-    navbar.classList.toggle("navbar--open", open);
-    bars.forEach((b) => b.classList.toggle("hamburger-bar--open", open));
-    hamburger.setAttribute("aria-label", open ? "Close menu" : "Open menu");
-  }
-
-  hamburger.addEventListener("click", toggle);
-
-  links.querySelectorAll("a").forEach((a) => {
-    a.addEventListener("click", () => {
-      if (open) toggle();
-    });
-  });
-
-  /**
-   * Server-rendered, because this script cannot see Astro props. Read once: it
-   * never changes for the life of the page.
-   */
-  const alwaysSolid = navbar.dataset.solid === "true";
-
-  function onScroll() {
-    // `|| alwaysSolid`, so a page rendered solid does not go transparent the
-    // moment someone scrolls back to the top.
-    navbar.classList.toggle(
-      "navbar--scrolled",
-      window.scrollY > 60 || alwaysSolid
-    );
-  }
-  onScroll();
-  window.addEventListener("scroll", onScroll, { passive: true });
+  const navbar = document.getElementById("navbar");
+  if (navbar) initializeNavbar(navbar);
 </script>
 
 <style is:global>
@@ -265,8 +270,120 @@ const activeIndex = NAV_LINKS.findIndex(
     transform: rotate(-45deg) translate(5px, -5px);
   }
 
+
+  /* The disclosure button controls visibility and keyboard access together. */
+  .navbar-group {
+    position: relative;
+  }
+
+  .navbar-group__toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    background: none;
+    border: 0;
+    cursor: pointer;
+    font-family: inherit;
+  }
+
+  .navbar-group__chev {
+    transition: transform 0.2s ease;
+  }
+
+  .navbar-group__toggle[aria-expanded="true"] .navbar-group__chev {
+    transform: rotate(180deg);
+  }
+
+  .navbar-group__menu {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    padding-top: 10px;
+    min-width: 232px;
+  }
+
+  .navbar-group__menu[hidden] {
+    display: none;
+  }
+
+  .navbar-group__toggle:focus-visible,
+  .navbar-hamburger:focus-visible {
+    outline: 2px solid currentColor;
+    outline-offset: 3px;
+  }
+
+  .navbar-group__item {
+    display: block;
+    padding: 11px 16px;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--color-gray-700);
+    background: var(--color-white);
+    text-decoration: none;
+    border: 1px solid var(--color-gray-200);
+    border-bottom: 0;
+  }
+
+  .navbar-group__item:first-of-type {
+    border-radius: 10px 10px 0 0;
+  }
+
+  .navbar-group__item:last-of-type {
+    border-bottom: 1px solid var(--color-gray-200);
+    border-radius: 0 0 10px 10px;
+  }
+
+  .navbar-group__item:hover,
+  .navbar-group__item:focus-visible {
+    background: var(--color-gray-50);
+    color: var(--color-navy);
+  }
+
+  .navbar-group__item--active {
+    color: var(--color-accent);
+    font-weight: 600;
+  }
+
+  /* The group label follows the same light/dark treatment as a plain nav link. */
+  .navbar-group--active .navbar-group__toggle {
+    color: #ffffff;
+    font-weight: 600;
+  }
+
+  .navbar--scrolled .navbar-group--active .navbar-group__toggle {
+    color: var(--color-accent);
+  }
+
   /* ── Mobile ── */
   @media (max-width: 768px) {
+
+    .navbar-group {
+      width: 100%;
+    }
+
+    .navbar-group__toggle {
+      width: 100%;
+      justify-content: flex-start;
+      font-size: 18px;
+      padding: 14px 16px;
+      color: var(--color-gray-700) !important;
+    }
+
+    .navbar-group__menu {
+      position: static;
+      padding-top: 0;
+      padding-left: 12px;
+      min-width: 0;
+    }
+
+    .navbar-group__item {
+      font-size: 16px;
+      padding: 12px 16px;
+      background: none;
+      border: 0 !important;
+      border-radius: 0 !important;
+    }
+
     .navbar-hamburger {
       display: flex;
     }
@@ -290,7 +407,7 @@ const activeIndex = NAV_LINKS.findIndex(
       visibility: hidden;
       transform: translateY(-20px);
       opacity: 0;
-      transition: visibility 0s 0.3s, transform 0.3s ease, opacity 0.3s ease;
+      transition: transform 0.3s ease, opacity 0.3s ease;
     }
 
     .navbar-links--open {

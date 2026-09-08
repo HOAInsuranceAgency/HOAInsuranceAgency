@@ -32,6 +32,16 @@ All page counts, titles, and URLs in this document were extracted from the built
 > Page counts re-measured against a fresh build on 2026-09-07: **155 pages from 14 templates,
 > 35 in the sitemap.**
 
+> **Revised 2026-09-08 — condo and contact integration.** Added `/condo-insurance/` with
+> conditional master-policy/HO-6 guidance and a connected FAQ node; grouped the HOA and condo
+> links under **Coverage**; split the contact form and agency details into independently placed
+> sections while preserving Brian Cole's confirmed title and contact anchor. The quote wizard
+> now requires a phone number for board members, property managers, and unit owners. The dated
+> 2026-09-07 release verification below remains a historical record, not a claim about this build.
+> The 2026-09-08 build contains **156 content pages from 15 templates, 36 sitemap URLs, and
+> 120 noindex content pages**; the legacy `/home/` redirect brings the HTML-file total to **157**.
+> There are **92 graph-bearing pages** and no overlap between sitemap URLs and noindex pages.
+
 ---
 
 ## Contents
@@ -127,7 +137,9 @@ web/
     │   └── crmLead.ts          # web → CRM AppSync write
     ├── layouts/
     │   └── Layout.astro        # THE SEO HEAD — canonical, OG, robots, the @graph
-    ├── pages/                  # 14 templates → 155 pages
+    ├── pages/                  # 15 templates → 156 content pages
+    │   ├── condo-insurance.astro # public condominium master-policy / HO-6 guide
+    │   └── CondoInsurance.css    # condo-page styles
     ├── components/
     │   ├── Navbar.astro, Footer.astro, Hero.astro, HeroLookup.astro
     │   ├── Analytics.astro     # the ONLY analytics block; all 4 heads import it
@@ -153,25 +165,25 @@ web/
 
 ## 3. Page inventory
 
-**155 HTML pages** from **14 templates**. 35 indexable, 120 deliberately hidden.
-Re-measured against a fresh build on 2026-09-07.
+**156 content pages** from **15 templates**. 36 indexable, 120 deliberately hidden.
+Re-measured against a fresh build on 2026-09-08; 157 HTML files including the legacy redirect.
 
 | Group | Count | Template | Data source | In sitemap |
 | --- | --- | --- | --- | --- |
-| Static pages — public | 7 | one `.astro` each | hand-written | Yes |
+| Static pages — public | 8 | one `.astro` each | hand-written | Yes |
 | Static pages — functional | 3 | `quote.astro`, `documents.astro`, `finance.astro` | hand-written | **No — noindex** |
 | State pages — reviewed | 6 | `hoa-insurance-[state].astro` | `states.ts` (`reviewed: true`) | Yes |
 | State pages — pending | 45 | same template | `states.ts` (`reviewed: false`) | **No — noindex** |
 | City pages | 22 | `hoa-insurance-[city]-[stateAbbr].astro` | `cities.ts` | Yes |
 | Get-started landers | 8 | `get-started/[...slug].astro` | `landing-pages.ts` | **No — noindex** |
 | Association pages | 64 | `associations/[slug].astro` | `properties.json` | **No — noindex** |
-| **Total** | **155** | | | **35 indexed** |
+| **Total** | **156** | | | **36 indexable** |
 
-The seven public static pages are `/`, `/about-us/`, `/what-we-do/`, `/why-choose-us/`,
-`/contact/`, `/privacy-policy/` and `/terms-of-service/`.
+The eight public static pages are `/`, `/about-us/`, `/what-we-do/`, `/condo-insurance/`,
+`/why-choose-us/`, `/contact/`, `/privacy-policy/` and `/terms-of-service/`.
 
 **One built file is not in this table: `/home/`.** `astro.config.mjs` declares
-`redirects: { "/home": "/" }`, so `dist/` holds 156 HTML files while Astro reports 155 pages. It
+`redirects: { "/home": "/" }`, so `dist/` holds 157 HTML files while Astro reports 156 pages. It
 exists because the retired Squarespace origin still serves a sitemap listing
 `https://www.protectmyhoa.com/home`, a URL this site has never had, and Google follows it to a
 404 on our canonical host. On `output: "static"` Astro emits a meta-refresh page carrying a
@@ -183,7 +195,8 @@ that stale sitemap is still being served (§13).
 **The previous figures in this section — 153 pages, 12 templates, 44 indexed — are superseded.**
 Two templates were added (`documents.astro`, `finance.astro`), and nine URLs that used to be
 submitted are now correctly excluded: `/quote/` and the eight `/get-started/*` landers. See
-below.
+below. The 2026-09-08 integration adds one more public template, `condo-insurance.astro`, taking
+the September 7 inventory from 155 to 156 content pages and the sitemap from 35 to 36 URLs.
 
 ### The single noindex list — `data/routes.ts`
 
@@ -222,9 +235,10 @@ do its job. The tokenised routes are handled the same way — `noindex` plus sit
 `Disallow` — with the added reason that a `Disallow` line would have to name the paths whose query
 strings carry live upload tokens. Keep this rationale in mind before adding a `Disallow` back.
 
-**Sitemap count: 46 → 35.** The nine removed are `/quote/` and the eight `/get-started/*` landers;
+**Sitemap count: 46 → 35 → 36.** The nine removed are `/quote/` and the eight `/get-started/*` landers;
 `/documents/` and `/finance/` were in the old 46 as well, so the arithmetic is 46 − 9 − 2 = 35,
-against 35 measured in `dist/sitemap-0.xml`. If you change this list, re-count (§14).
+as measured on 2026-09-07. The indexable `/condo-insurance/` route adds one on 2026-09-08,
+bringing `dist/sitemap-0.xml` to **36**, with no noindex overlap. If you change this list, re-count (§14).
 
 ### The 45 pending state pages are hidden on purpose
 
@@ -282,7 +296,7 @@ the file.
 
 ## 4. Complete title list
 
-### Static pages (8 of the 10)
+### Static pages (9 of the 11)
 
 Lengths are decoded character counts (`&amp;` counted as one character).
 `/documents/` and `/finance/` are omitted: they are tokenised private routes with no organic
@@ -299,6 +313,7 @@ strings are recorded here so the next pass does not "restore" them from this tab
 | `/` | HOA Insurance for Condominium Associations & Unit Owners — ProtectMyHOA | 71 |
 | `/about-us` | About HOA Insurance Agency — the Agency Behind ProtectMyHOA | 59 |
 | `/what-we-do` | HOA Insurance & HO-6 Coverage — ProtectMyHOA | 44 |
+| `/condo-insurance/` | Condominium Association Insurance — ProtectMyHOA | 48 |
 | `/why-choose-us` | Why Choose HOA Insurance Agency — Specialists in HOA & Condo Insurance | 70 |
 | `/contact` | Contact HOA Insurance Agency — ProtectMyHOA | 43 |
 | `/quote` | HOA Insurance Quote · ProtectMyHOA | 34 |
@@ -392,8 +407,8 @@ HO-6 Condo Insurance for {property.name} — ProtectMyHOA
 ### One shared head for most of the site
 
 [`web/src/layouts/Layout.astro`](../web/src/layouts/Layout.astro) is the single `<head>` for
-**every indexable page** (82 of the 155 built — the eleven templates that are not `/quote`,
-`/get-started/*` or `/associations/*`). It owns:
+**every indexable page** and selected noindex pages (83 of the 156 content pages — the twelve
+templates that are not `/quote`, `/get-started/*` or `/associations/*`). It owns:
 
 - `<title>`, `<meta name="description">`
 - `<link rel="canonical">` — from `canonicalUrl()` in `lib/seo.ts`, **not** string concatenation
@@ -501,7 +516,8 @@ brand has to resolve to the licensed agency.
 > ld+json">` blocks — two on `/` and `/what-we-do` (the agency plus the FAQ), one elsewhere.
 > Every page that uses `Layout.astro` now emits **exactly one** block containing one `@graph`,
 > and the FAQ is a node inside it rather than a block of its own. Re-measure before quoting it.
-> See §7.
+> The `/contact` heading counts also predate the 2026-09-08 redesign, and the new condo page
+> is not included in these historical heading figures. See §7.
 
 | Page | H1 | H2 | H3 | JSON-LD blocks |
 | --- | --- | --- | --- | --- |
@@ -580,14 +596,14 @@ asserted something that could not be supported.
   [`shared/agency.ts`](../shared/agency.ts) and feed the JSON-LD. This is your NAP consistency for
   local SEO — it must keep matching your Google Business Profile and your licensing records.
   **Edit `AGENCY` only; never hand-edit `AGENCY_FMT`.** See §9.
-- **FAQ answer text** on `/` and `/what-we-do` is *both* visible copy and `FAQPage` schema — the
-  same array feeds both. Rewording changes the schema payload, so keep the two in step; it does
+- **FAQ answer text** on `/`, `/what-we-do/`, and `/condo-insurance/` is *both* visible copy and
+  `FAQPage` schema — the same array feeds both. Rewording changes the schema payload, so keep the two in step; it does
   **not** change a rich result, because there isn't one to change (§7). Treat as 🟡, not 🔴 —
   the previous 🔴 was justified by a rich-result eligibility the site does not have.
 
 ### 🟢 SAFE — pure content
 
-- All body copy in the 8 static pages (everything below the `<Layout ...>` props)
+- All body copy in the 9 static pages listed in §4 (everything below the `<Layout ...>` props)
 - `intro`, `regulations`, `hoaTypes` in `states.ts`
 - `subheadline`, `trustSignals`, `urgencyText` in `landing-pages.ts`
 - `Hero` `subtitle` and `eyebrow` props
@@ -623,7 +639,7 @@ The emitted graph contains these connected nodes:
 The 64 private association pages do not emit this graph, a canonical link, or an Open Graph
 URL; their minimal noindex/nofollow template deliberately stays outside the public entity graph.
 
-Page-specific nodes currently in use: the two `FAQPage` blocks (below) and the `/contact`
+Page-specific nodes currently in use: the three `FAQPage` nodes (below) and the `/contact`
 specialist `Person` (`…/contact/#brian-cole`). `breadcrumbSchema()` exists in `lib/seo.ts` and is
 not yet called by any page.
 
@@ -696,14 +712,16 @@ not serve Texas.
 **This section previously described a different FAQ configuration and called it "rich-result
 eligible". Both were wrong. Corrected below.**
 
-Two pages carry an `FAQPage` node, each passed into `Layout`'s `jsonLd` prop and merged into that
-page's `@graph`. On both, one `FAQS` array is the source for **both** the visible accordion and
-the schema, so the two cannot disagree.
+Three pages carry an `FAQPage` node, each passed into `Layout`'s `jsonLd` prop and merged into
+that page's `@graph`. On each, one `FAQS` array is the source for **both** the visible accordion
+and the schema, so the two cannot disagree. Each uses `faqPageSchema()` with its canonical URL
+to set a stable `#faq` identity and a `mainEntityOfPage` reference to that page's `#webpage`.
 
 | Page | Questions | Source |
 | --- | --- | --- |
 | `/` | **4** | `FAQS` + `faqJsonLd` in [`index.astro`](../web/src/pages/index.astro) |
 | `/what-we-do` | **3** | `FAQS` + `faqJsonLd` in [`what-we-do.astro`](../web/src/pages/what-we-do.astro) |
+| `/condo-insurance/` | **3** | `FAQS` + `faqJsonLd` in [`condo-insurance.astro`](../web/src/pages/condo-insurance.astro) |
 
 The four homepage questions, as they now stand: what an HOA master policy covers · which of the
 three master-policy types an association has · who pays when a pipe leaks into a unit · whether an
@@ -711,6 +729,12 @@ owner still needs an HO-6. The previous six — which included *"What states doe
 Agency serve?"*, answered with the six-state list — were replaced on 2026-08-11. The three
 `/what-we-do` questions: master policy vs HO-6 · who pays for the master policy · what a board
 should review at renewal.
+
+The three `/condo-insurance/` questions cover identifying the master-policy form, responsibility
+for a multi-unit water-loss deductible, and how association insurance can affect mortgage
+eligibility. Answers qualify coverage and owner responsibility by policy terms, governing
+documents, applicable law, and lender requirements; they do not promise HO-6 reimbursement or
+automatic assessment of every uninsured cost to owners.
 
 **These blocks will not produce a rich result, and they were never going to.** In August 2023
 Google restricted FAQ rich results to well-known government and health websites. A commercial
@@ -738,7 +762,8 @@ Hub-and-spoke, correctly built:
 state page ────────┼──► its own city pages (from the `cities` array)
                    └──► /about-us /what-we-do /why-choose-us /quote
 city page ─────────────► its parent state page
-Navbar   (every page) ─► / /what-we-do /why-choose-us / /contact
+Navbar   (shared layout) ► / /why-choose-us / /contact/
+                   └──► Coverage: /what-we-do/ /condo-insurance/
 Footer   (every page) ─► /privacy-policy /terms-of-service
 ```
 
@@ -750,9 +775,12 @@ is the intent (`noindex, follow` passes link equity onward). It renders on `/` a
 
 The 45 pending state pages have an empty `cities` array, so they link to no city page.
 
-Nav links are defined once in [`constants.ts:95-114`](../web/src/constants.ts#L95-L114).
-Two things there are deliberate and easy to misread:
+Nav links are defined once in [`constants.ts`](../web/src/constants.ts).
+Three things there are deliberate and easy to misread:
 
+- **Coverage groups two real links:** `/what-we-do/` for HOA coverage and
+  `/condo-insurance/` for condominium associations. The disclosure button is not itself a
+  destination; keep its expanded state and closed-menu keyboard behavior synchronized.
 - **"About Us" points at `/`, not `/about-us`.** `/about-us` still exists and is still
   indexed, but its only internal link is now the "About our insurance agency" link in the
   homepage practice section. Do not remove that link without restoring the nav path.
@@ -851,11 +879,24 @@ Five separate lead-capture surfaces:
 
 | Component | Used on | Purpose |
 | --- | --- | --- |
-| `ContactForm.tsx` | `/`, `/what-we-do`, `/about-us`, `/why-choose-us`, state + city pages | General contact |
+| `ContactForm.tsx` | `/contact/`, `/condo-insurance/`, `/what-we-do/`, `/about-us/`, `/why-choose-us/`, state + city pages | General contact; optional claims/service details |
 | `CoverageCalculator.tsx` | `/` | Interactive coverage estimator |
 | `InstantAssessment.tsx` | `/get-started/*` | Ad-landing assessment funnel |
 | `AssociationLeadForm.tsx` | `/associations/*` | HO-6 quote, pre-filled with property |
 | `QuoteApp.tsx` | `/quote` | Multi-step quote wizard (`client:only`) |
+
+On `/contact/`, `ContactForm` renders `part="form"` as the hydrated form and `part="info"`
+as server-rendered contact details with `showClaims`; the static information block does not need
+a second React island. Other callers retain the default combined layout and its `#contact`
+anchor. The redesigned contact page preserves `/contact/#brian-cole` and the exact visible and
+structured-data role **Licensed Insurance Producer**. New-business links use the sales mailbox;
+claim notices use the general/service mailbox and retain the policy-notice warning.
+
+The quote wizard's shared final contact step requires **name, email, and phone** for all three
+roles: board member, property manager, and unit owner. Phone input must contain at least ten
+digits; formatted US numbers and a `+1` prefix are accepted. The supplied number is retained in
+both CRM and email payloads. This requirement belongs to `/quote/`; it does not add a phone
+field to the separate `/contact/` form.
 
 Each submission can fan out to three destinations, all independent:
 
@@ -909,7 +950,7 @@ either is absent.
 ```sh
 cd web && npm install
 npm run dev      # → http://localhost:4321
-npm run build    # → web/dist  (155 pages, ~1s)
+npm run build    # → web/dist  (156 content pages + /home/ redirect)
 npm run typecheck # Astro template diagnostics + TypeScript check
 npm run preview
 npm run sync     # regenerate data/properties.json from Buildium
@@ -987,8 +1028,10 @@ listed separately; code changes and local verification do not complete those act
    either established route or title.
 
 9. **CLOSED — stale SEO baseline.** `web/seo-baseline.json` was regenerated from the final
-   reviewed production build on 2026-09-07. The cross-platform comparison passes for **156
-   HTML files**: 155 content pages plus the legacy `/home/` redirect page. See §14.
+   reviewed production build on 2026-09-08. The cross-platform comparison passes for **157
+   HTML files**: 156 content pages plus the legacy `/home/` redirect page. The only baseline
+   addition in this integration is `/condo-insurance/`; the prior 156 records are unchanged.
+   See §14.
 
 10. **Buildium credential rotation remains external.** The hardcoded fallback values have been
 removed from `web/scripts/sync-buildium.ts`; the script now requires environment variables and
@@ -1068,17 +1111,31 @@ npm --prefix web run seo:save
 npm --prefix web run seo:check
 ```
 
-The release baseline was regenerated and comparison passed on **2026-09-07**, covering **156
-HTML files** (155 content pages plus the `/home/` redirect). Do not use `seo:save` merely to
+The current baseline was regenerated and comparison passed on **2026-09-08**, covering **157
+HTML files** (156 content pages plus the `/home/` redirect). This integration adds only the
+`/condo-insurance/` record; all 156 previously tracked records remain unchanged. Do not use `seo:save` merely to
 silence an unexpected difference: inspect the affected page, canonical,
 robots directive, H1 count, and structured data first. Keep the resulting baseline in version
 control so future comparisons start from the same accepted state.
 
-Also inspect the generated sitemap and robots file. The reviewed site currently has **35
+Also inspect the generated sitemap and robots file. The reviewed site currently has **36
 sitemap URLs**, with no noindex page in the sitemap; additions/removals must be deliberate.
 The 64 private association pages intentionally have no canonical, Open Graph URL, or agency
 graph and stay noindex. A fingerprint match establishes only that the tracked SEO fields
 match the accepted build; it does not guarantee rankings or verify live host redirects.
+
+### Integration verification — 2026-09-08
+
+- Web production build and `astro check && tsc --noEmit`: **pass**, with zero errors or
+  warnings and six informational hints. CRM frontend and backend type checks: **pass**.
+  Complete CRM test suite: **91 files, 1,811 tests passed**.
+- SEO baseline saved and rechecked: **157 HTML files match**, with only `/condo-insurance/`
+  added relative to the prior baseline. Inventory: 156 content pages, 36 sitemap URLs,
+  120 noindex content pages, 92 graph-bearing pages, and no sitemap/noindex overlap.
+- Browser checks at **1280px desktop** and **390px mobile** passed for keyboard navigation,
+  closed-menu inertness, active-route indicators, one contact form, and no horizontal overflow.
+- These are local integration checks; they do not establish a push or deployment, complete the
+  external actions in §13, or replace the separately dated release verification below.
 
 ### Final release verification — 2026-09-07
 

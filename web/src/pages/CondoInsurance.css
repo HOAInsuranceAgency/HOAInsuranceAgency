@@ -1,0 +1,288 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   /condo-insurance — visual overrides only.
+
+   WHY THIS FILE EXISTS
+   /condo-insurance and /what-we-do deliberately share a structure, a stylesheet
+   and an offer; only their wording differs. The side effect was that the two
+   rendered identically section for section, so a visitor moving between them saw
+   the same page twice with different words. This file changes the LOOK and
+   nothing else.
+
+   ── EVERY RULE IS SCOPED UNDER .condo ──
+   The page markup is wrapped in `<div class="wwd condo">`. WhatWeDo.css still
+   loads and still supplies every base rule; these selectors are one class more
+   specific, so they win where they overlap and are inert everywhere else.
+   /what-we-do carries `.wwd` alone and CANNOT be reached by anything in here.
+   That is the whole safety model — do not write a bare `.cov-card {}` in this
+   file, because it would leak onto the HOA page.
+
+   ── NO COPY IS AFFECTED ──
+   This file sets no `content`, changes no text, and hides nothing. The two pages
+   say exactly what they said before.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+
+/* ── 02 · Coverages ──
+   /what-we-do packs six into a hairline-joined 3-up grid. Here they are separate
+   cards, two across, each with a gold left edge — same six cards, different
+   object. */
+.condo .cov-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  background: none;
+  border: 0;
+  border-radius: 0;
+  overflow: visible;
+}
+
+.condo .cov-card {
+  padding: 24px 24px 26px;
+  border: 1px solid var(--color-gray-200);
+  border-left: 3px solid var(--color-gold);
+  border-radius: 12px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  transition: box-shadow 0.22s ease, transform 0.22s ease;
+}
+
+.condo .cov-card:hover {
+  background: var(--color-white);
+  transform: translateY(-2px);
+  box-shadow: 0 14px 32px -16px rgba(15, 23, 42, 0.18);
+}
+
+/* Chip becomes a plain gold mark — the card's own left edge already carries the
+   accent, and two gold elements per card is one too many. */
+.condo .cov-card__mark {
+  width: auto;
+  height: auto;
+  border-radius: 0;
+  background: none;
+}
+
+.condo .cov-card:hover .cov-card__mark {
+  background: none;
+  color: var(--color-gold);
+}
+
+/* ── 03 · What we find ──
+   Single column, full width. /what-we-do splits the six into two columns; one
+   column makes each row a wider, calmer line and changes the section's rhythm
+   completely. */
+.condo .issues-acc {
+  grid-template-columns: 1fr;
+  border-radius: 16px;
+}
+
+.condo .issue-acc summary {
+  padding: 19px 26px;
+}
+
+.condo .issue-acc > p {
+  padding: 0 26px 20px 58px;
+  max-width: 92ch;
+}
+
+/* ── 04 · Where the master policy stops ──
+   Navy header row and zebra striping, against the plain bordered table on
+   /what-we-do. */
+.condo .types-table-wrap {
+  border-radius: 16px;
+}
+
+.condo .types-table thead th {
+  background: var(--color-navy);
+  color: var(--color-white);
+  border-bottom: 0;
+}
+
+.condo .types-table tbody tr:nth-child(even) {
+  background: var(--color-gray-50);
+}
+
+.condo .types-table tbody th[scope="row"] {
+  color: var(--color-navy);
+}
+
+/* The two notes below the table sit on a tinted panel here rather than bare. */
+.condo .stops-pair {
+  gap: 18px;
+}
+
+.condo .stops-item {
+  padding: 24px 26px;
+  background: var(--color-gray-50);
+  border: 1px solid var(--color-gray-200);
+  border-radius: 14px;
+}
+
+/* ── 05 · Who we work with ──
+   Left-aligned cards with a gold top edge, rather than the centred set on
+   /what-we-do. */
+.condo .aud-card {
+  text-align: left;
+  align-items: flex-start;
+  border-top: 3px solid var(--color-gold);
+}
+
+/* ── 06 · FAQ ──
+   Wider, softer, and separated — /what-we-do stacks tight bordered rows. */
+.condo .faq-list {
+  max-width: 880px;
+  gap: 12px;
+}
+
+.condo .faq-item {
+  border-radius: 14px;
+  background: var(--color-gray-50);
+  transition: background 0.22s ease;
+}
+
+.condo .faq-item[open],
+.condo .faq-item:hover {
+  background: var(--color-white);
+}
+
+.condo .faq-item summary {
+  padding: 20px 26px;
+}
+
+.condo .faq-item p {
+  padding: 0 26px 22px;
+  max-width: 84ch;
+}
+
+/* ── Section rhythm ──
+   Slightly roomier than /what-we-do, so scrolling the two pages back to back
+   does not feel like the same page twice. */
+.condo .section {
+  padding-top: 92px;
+  padding-bottom: 92px;
+}
+
+@media (max-width: 900px) {
+
+  .condo .cov-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .condo .section {
+    padding-top: 64px;
+    padding-bottom: 64px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .condo .cov-card,
+  .condo .faq-item {
+    transition: none;
+  }
+
+  .condo .cov-card:hover {
+    transform: none;
+  }
+}
+
+/* ── Section 02 band image ──
+   Full container width, capped height so a wide viewport does not turn it into a
+   letterbox. object-fit keeps the crop honest instead of stretching faces.
+   Radius matches the section 01 media, so the two images read as one treatment. */
+.condo .condo-band {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 420px;
+  object-fit: cover;
+  object-position: center;
+  border-radius: 18px;
+  margin: 0 0 34px;
+}
+
+@media (max-width: 900px) {
+  .condo .condo-band {
+    max-height: 260px;
+    border-radius: 14px;
+    margin-bottom: 26px;
+  }
+}
+
+/* ── 01 · Master policy ──
+   Single column, no image. Capped measure so the three paragraphs do not run the
+   full 1200px container, which would put roughly 150 characters on a line. */
+.condo .condo-lead {
+  max-width: 68ch;
+}
+
+.condo .condo-lead .wwd-lead {
+  margin-bottom: 18px;
+  max-width: none;
+}
+
+.condo .condo-lead .wwd-lead:last-of-type {
+  margin-bottom: 0;
+}
+
+/* Gold rule above the eyebrow, carried over from the split this section replaced. */
+.condo .condo-lead .eyebrow {
+  display: inline-block;
+  padding-top: 14px;
+  border-top: 2px solid var(--color-gold);
+}
+
+/* Button then supporting line, stacked — the note sits UNDER the button here,
+   not beside it as .wwd-cta does elsewhere. */
+.condo .condo-lead__cta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 30px;
+}
+
+/* .btn-navy is written for dark grounds and carries a translucent white border,
+   which reads as a pale halo against this white section. */
+.condo .condo-lead__cta .btn-navy {
+  border-color: transparent;
+}
+
+.condo .condo-lead__note {
+  font-size: 13.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--color-gray-500);
+}
+
+/* Section 01 has no image, so the measured column is centred in the container
+   rather than pinned left with a wide empty gutter beside it. Text stays
+   left-aligned; only the block is centred. */
+.condo .condo-lead {
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* Same button-over-note stack as section 01, centred under the coverage grid. */
+/* Used to close both section 01 and section 02. Wider gap above than the
+   left-aligned base: whitespace is what separates a call to action from the copy
+   it follows, and without it the button reads as part of the last paragraph. */
+.condo .condo-lead__cta--center {
+  align-items: center;
+  text-align: center;
+  margin-top: 38px;
+}
+
+/* Seven cards in a two-column grid leaves one on its own row. Letting the last
+   one span both keeps the block rectangular instead of ending on a stub. */
+.condo .cov-grid > .cov-card:last-child:nth-child(odd) {
+  grid-column: 1 / -1;
+}
+
+
+/* Reveal-on-scroll leaves an element at opacity 0 until the observer in
+   Layout.astro marks it. Anyone who has asked for reduced motion should get the
+   content immediately and without movement, not a fade. */
+@media (prefers-reduced-motion: reduce) {
+  .condo .reveal {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+}
