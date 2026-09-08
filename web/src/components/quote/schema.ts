@@ -259,7 +259,6 @@ export const STEPS: Record<string, Step> = {
         label: "Phone",
         placeholder: "(508) 555-1234",
         inputType: "tel",
-        optional: true,
         validation: "phone",
         half: true,
       },
