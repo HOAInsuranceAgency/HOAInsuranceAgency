@@ -52,6 +52,10 @@
   height: 100%;
   object-fit: cover;
   z-index: 0;
+  /* The background video is decoration, never a control. Pointer events pass
+     through to the hero beneath it, so nothing a visitor does can pause it and
+     no native media UI is reachable. */
+  pointer-events: none;
 }
 
 .hero-overlay {
@@ -101,6 +105,18 @@
 
 .hero--compact .hero-title {
   font-size: clamp(32px, 5vw, 48px);
+}
+
+/* Optional one-liner between the H1 and the subtitle. Gold so it reads as a
+   claim rather than more body copy, but no pill: the eyebrow above already owns
+   that shape and two of them would fight. */
+.hero-note {
+  font-size: clamp(15px, 2vw, 17px);
+  font-weight: 700;
+  color: var(--color-gold-light);
+  line-height: 1.5;
+  max-width: 600px;
+  margin: -8px 0 18px;
 }
 
 .hero-subtitle {

@@ -720,10 +720,6 @@ function QuoteFlow({ isDay, onToggleTheme }: { isDay: boolean; onToggleTheme: ()
           )}
         </SlideIn>
       </div>
-
-      {step?.type !== "submitted" && (
-        <p className="qf-footer">HOA Insurance Agency · Marlborough, MA</p>
-      )}
     </div>
   );
 }

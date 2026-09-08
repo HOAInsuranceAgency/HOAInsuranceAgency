@@ -91,6 +91,7 @@ const COVER_TYPES = [
   <Hero
     eyebrow="Contact"
     title="Talk to an HOA insurance specialist"
+    note="Nationwide coverage"
     subtitle="Whether you are renewing, reviewing, or starting from scratch, tell us about your association and we will put our recommendation in writing. No broker fee, now or at renewal."
     backgroundImage="/images/hero-people.jpg"
     backgroundVideo="/images/hero-video.mp4"
@@ -176,10 +177,6 @@ const COVER_TYPES = [
       <div class="sec-head sec-head--center">
         <p class="eyebrow">Speak to a specialist</p>
         <h2 class="section-title" id="specialist-h">Contact {SPECIALIST.name} directly</h2>
-        <p class="section-subtitle">
-          For an immediate response, call or email our producer rather than waiting on the
-          form. You will reach the person who handles the placement, not a call center.
-        </p>
       </div>
 
       <div class="spec-card">
@@ -195,6 +192,10 @@ const COVER_TYPES = [
         <div class="spec-card__body">
           <p class="spec-card__role">{SPECIALIST.role}</p>
           <h3 class="spec-card__name">{SPECIALIST.name}</h3>
+          <p class="spec-card__direct">
+            For an immediate response, call or email our producer directly. You'll connect
+            with the person handling your insurance placement.
+          </p>
           <p class="spec-card__blurb">
             Brian works directly with association boards and property managers on master
             policy placements and HO-6 coordination.
@@ -663,6 +664,18 @@ const COVER_TYPES = [
     letter-spacing: -0.02em;
     color: var(--color-navy);
     margin: 0 0 12px;
+  }
+
+  /* The direct-contact prompt, sat between the name and the blurb. Slightly
+     darker and a touch heavier than the blurb below it: it is the instruction,
+     the blurb is background. */
+  .spec-card__direct {
+    font-size: 15.5px;
+    line-height: 1.65;
+    font-weight: 600;
+    color: var(--color-gray-700);
+    margin: 0 0 12px;
+    max-width: 46ch;
   }
 
   .spec-card__blurb {

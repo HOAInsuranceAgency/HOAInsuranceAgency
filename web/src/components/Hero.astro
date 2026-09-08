@@ -5,6 +5,9 @@ interface Props {
   title: string;
   subtitle?: string;
   backgroundImage: string;
+  /** One short line under the H1, above the subtitle. Optional — only /contact
+      passes it today, so every other hero renders exactly as before. */
+  note?: string;
   backgroundVideo?: string;
   ctaText?: string;
   ctaHref?: string;
@@ -12,7 +15,7 @@ interface Props {
   eyebrow?: string;
 }
 
-const { title, subtitle, backgroundImage, backgroundVideo, ctaText, ctaHref, compact, eyebrow } = Astro.props;
+const { title, subtitle, note, backgroundImage, backgroundVideo, ctaText, ctaHref, compact, eyebrow } = Astro.props;
 
 /**
  * An `action` slot replaces the plain CTA link with a richer control (the
@@ -37,6 +40,10 @@ const hasAction = Astro.slots.has("action");
       playsinline
       preload="auto"
       poster={backgroundImage}
+      disablepictureinpicture
+      disableremoteplayback
+      tabindex="-1"
+      aria-hidden="true"
     >
       <source src={backgroundVideo} type="video/mp4" />
     </video>
@@ -45,6 +52,7 @@ const hasAction = Astro.slots.has("action");
   <div class="hero-content container">
     {eyebrow && <span class="hero-eyebrow">{eyebrow}</span>}
     <h1 class="hero-title">{title}</h1>
+    {note && <p class="hero-note">{note}</p>}
     {subtitle && <p class="hero-subtitle">{subtitle}</p>}
     {hasAction ? (
       <slot name="action" />
