@@ -8,7 +8,7 @@ applications:
             value: 'nosniff'
   - appRoot: crm
     customHeaders:
-      - pattern: '/front-sidebar*'
+      - pattern: '/front-sidebar/**'
         headers:
           - key: 'Content-Security-Policy'
             value: "frame-ancestors 'self' https://*.frontapp.com https://*.front.com"
