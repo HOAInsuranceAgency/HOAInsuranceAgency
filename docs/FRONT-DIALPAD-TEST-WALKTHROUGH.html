@@ -1,0 +1,410 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><meta name="description" content="Step-by-step staging acceptance tests for Front, Dialpad and HOA CRM."><title>HOA CRM — Front & Dialpad testing guide</title><style>
+:root{color-scheme:light;--ink:#192a3d;--muted:#617187;--navy:#142e4f;--blue:#2368ae;--line:#dbe3ec;--paper:#f3f6fa;--good:#216342;--bad:#a12830;--wait:#8a601d}
+*{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:28px}body{margin:0;color:var(--ink);background:var(--paper);font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}a{color:var(--blue);text-underline-offset:3px}button,select,textarea{font:inherit}button,select{border:1px solid var(--line);border-radius:7px;background:white;color:var(--ink);padding:8px 12px}button{cursor:pointer}button:hover{border-color:var(--blue)}button:focus-visible,a:focus-visible,select:focus-visible,summary:focus-visible,textarea:focus-visible{outline:3px solid #75aae0;outline-offset:3px}button.primary{background:var(--blue);color:white;border-color:var(--blue)}.hero{background:var(--navy);color:white;padding:38px max(28px,calc((100vw - 1260px)/2));}.eyebrow{font-size:12px;font-weight:700;letter-spacing:.13em;color:#bed0e3;text-transform:uppercase}.hero h1{font-size:clamp(28px,3vw,40px);line-height:1.2;letter-spacing:-.03em;margin:10px 0 12px}.hero p{margin:0;color:#d5e1ee;max-width:750px}.layout{display:grid;grid-template-columns:215px minmax(0,1fr);gap:32px;max-width:1320px;margin:30px auto;padding:0 28px 50px}.sidebar{align-self:start;position:sticky;top:24px;font-size:14px}.sidebar nav{display:grid;gap:6px}.sidebar nav a{text-decoration:none;color:var(--muted);padding:8px 12px;border-left:3px solid transparent;line-height:1.45}.sidebar nav a:hover{color:var(--navy);border-color:var(--blue);background:#eaf0f7}.sidebar strong{display:block;margin:0 12px 8px}.sidebar p{margin:20px 12px;color:var(--muted);font-size:12px}.main{min-width:0}.overview,.tracker{padding:23px 26px;background:white;border:1px solid var(--line);border-radius:12px;margin-bottom:22px}.overview p:first-child{margin-top:0}.overview p:last-child{margin-bottom:0}.tracker-title{display:flex;align-items:center;gap:16px;justify-content:space-between;flex-wrap:wrap}.tracker h2{font-size:19px;margin:0}.tracker progress{width:100%;height:10px;accent-color:var(--good);margin:15px 0 8px}.toolbar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:13px}.toolbar label{font-size:14px;display:flex;gap:8px;align-items:center}.toolbar button,.toolbar select{font-size:14px}.save-note,#counts{color:var(--muted);font-size:13px;margin:5px 0}.phase{margin:36px 0}.phase>h2{font-size:23px;line-height:1.3;margin:0 0 18px;letter-spacing:-.02em}.phase>p{max-width:880px}.test{border:1px solid var(--line);border-radius:10px;background:white;margin:11px 0;overflow:hidden}.test summary{list-style:none;display:flex;align-items:center;gap:13px;padding:17px 20px;cursor:pointer;line-height:1.4}.test summary::-webkit-details-marker{display:none}.test summary:after{content:'+';color:var(--muted);font-size:22px;line-height:1}.test[open] summary:after{content:'−'}.test[open] summary{border-bottom:1px solid var(--line);background:#f8fafc}.test-no{font-size:13px;font-weight:700;color:var(--blue);background:#eaf1f9;padding:5px 7px;border-radius:6px}.test-title{flex:1;font-weight:650}.badge{font-size:11px;white-space:nowrap;padding:4px 8px;border-radius:20px;background:#edf1f5;color:var(--muted)}[data-result="pass"] .badge{background:#e5f3ea;color:var(--good)}[data-result="fail"] .badge{background:#fae9e9;color:var(--bad)}[data-result="blocked"] .badge{background:#fff0d9;color:var(--wait)}.test-body{padding:10px 25px 24px}.test-body ol{padding-left:24px}.test-body li{margin:10px 0;padding-left:4px}.test-body p{margin:17px 0}.expected{padding:15px 18px;background:#eef6f1;border-left:3px solid #78a487;border-radius:0 7px 7px 0}.record{display:grid;grid-template-columns:145px minmax(0,1fr);gap:18px;border-top:1px solid var(--line);margin-top:23px;padding-top:20px}.record label{font-size:13px;font-weight:650}.record select,.record textarea{display:block;width:100%;margin-top:6px;font-size:14px;font-weight:400}.record textarea{border:1px solid var(--line);border-radius:7px;padding:10px;resize:vertical;min-height:82px}.table-scroll{overflow-x:auto}table{border-collapse:collapse;width:100%;margin:17px 0;font-size:14px;line-height:1.5}th,td{border-bottom:1px solid var(--line);padding:11px 12px;text-align:left;vertical-align:top}th{background:#f3f6fa;color:var(--navy)}code{font-size:13px;background:#edf1f5;padding:2px 5px;border-radius:4px}footer{color:var(--muted);font-size:13px;border-top:1px solid var(--line);padding-top:18px}.test[hidden]{display:none}.quick-start{margin:14px 0 0;padding:13px 16px;background:#fff7e9;border-radius:8px;font-size:14px}.export-note{color:var(--muted);font-size:13px} @media(max-width:850px){.layout{grid-template-columns:minmax(0,1fr);padding:0 16px}.sidebar{position:static}.sidebar nav{grid-template-columns:repeat(2,minmax(0,1fr))}.sidebar p{display:none}.hero{padding:28px 20px}.test summary{padding:15px 13px;gap:9px}.test-body{padding:8px 16px 18px}.badge{font-size:10px}.record{grid-template-columns:1fr}.tracker,.overview{padding:19px}.test-title{font-size:15px}}@media print{body{background:white;font-size:10pt}.hero{background:white;color:black;padding:0 0 15px}.hero p,.eyebrow{color:#444}.layout{display:block;margin:0;padding:0}.sidebar,.toolbar,.tracker,.save-note{display:none}.overview{padding:0;border:0}.test summary{padding:9px 0;background:white!important}.test summary:after{display:none}.test{break-inside:auto;border:0;border-top:1px solid #bbb;border-radius:0}.test-body{padding:0}.record{break-inside:avoid}.phase>h2{break-after:avoid}.test summary{break-after:avoid}.expected{background:white;border-left:2px solid #888}.badge{border:1px solid #bbb}.hero h1{font-size:24pt}a{color:inherit}textarea{height:auto;min-height:60px}.test[hidden]{display:block}}
+</style></head><body><header class="hero"><div class="eyebrow">HOA Insurance Agency · Staging only</div><h1>Test the whole lead workflow.</h1><p>34 guided checks for email, calls, texts, responsibilities and follow-up. Each test includes the actions, expected outcome and a place for your result.</p></header><div class="layout"><aside class="sidebar"><strong>Your walkthrough</strong><nav aria-label="Walkthrough sections"><a href="#section-1">Before you begin</a><a href="#section-2">Settings and lead intake</a><a href="#section-3">Email and the Front sidebar</a><a href="#section-4">Ownership, commitments and deadlines</a><a href="#section-5">Dialpad calls and texts</a><a href="#section-6">Cleanup, outcomes and operational checks</a><a href="#section-7">Finish and report results</a></nav><p>Prepared September 9, 2026.<br>Results stay in this browser.<br>No live messages are sent by this guide.</p></aside><main class="main"><section class="tracker" aria-label="Your test progress"><div class="tracker-title"><h2 id="progress-title">0 of 34 tests passed</h2><span class="eyebrow" style="color:var(--muted)">Keep the evidence</span></div><progress max="34" value="0" aria-label="Tests passed"></progress><p id="counts" aria-live="polite"></p><div class="toolbar"><button id="expand">Expand all</button><button id="collapse">Collapse all</button><label>Show<select id="filter"><option value="all">All tests</option><option value="remaining">Not yet passed</option></select></label><button id="download" class="primary">Download results</button><button id="print">Print guide</button></div><p class="save-note" id="save-state"></p><div class="quick-start"><strong>Start with tests 01–03.</strong> Connection checks pass, but delivery is paused and Dialpad event capture still needs enabling for the agreed test window. Keep inbox cleanup off until test 30.</div></section><div class="overview"><p>Use this guide in order. Each numbered test includes what to do and what should happen. Mark it <strong>Pass</strong>, <strong>Fail</strong>, or <strong>Blocked</strong> and record the test lead and time. An expected result is a test target, not a claim that the live feature has already passed.</p>
+<p><strong>Verified September 9, 2026:</strong> the new Front email channel is connected and all CRM connection checks pass. Jake is the default salesperson and deal champion. Delivery is paused, automatic cleanup is off, and all five call and five text event subscriptions in Dialpad are disabled. There is no verified Dialpad event receipt yet. This guide does not activate anything.</p>
+<p>Plan for a first session of roughly <strong>60–90 minutes</strong>, additional time with the team for phone coverage, and a later check across real business deadlines. The short timer test does not replace the business-day test.</p></div><section id="section-1" class="phase"><h2>Before you begin</h2><details class="test" data-test="01"><summary><span class="test-no">01</span><span class="test-title">Prepare your test contacts and screens</span><span class="badge">Not tested</span></summary><div class="test-body"><ol>
+<li>Open the <a href="https://staging.d2d4g940z91vj4.amplifyapp.com/">staging CRM</a>, <a href="https://staging.dx1256wpowwzz.amplifyapp.com/">staging website</a>, Front, and Dialpad. Keep the CRM's <strong>staging</strong> address visible.</li>
+<li>In Front, use <strong>HOA Insurance Agency LLC → CRM Staging</strong> for email. Phone activity uses the existing <strong>HOA Dialpad</strong> inbox.</li>
+<li>Choose a separate email mailbox you control to play the prospect. In <a href="https://staging.d2d4g940z91vj4.amplifyapp.com/settings/?tab=integrations">Settings → Front and Dialpad</a>, choose <strong>Edit settings</strong>, add that address under <strong>Test email recipients</strong>, and save. Keep the sender as <strong>jake+testing@protectmyhoa.com</strong>. The current permitted recipient is that same address; a separate recipient makes reply and Seen tests meaningful.</li>
+<li>Choose a mobile phone you control to play the caller/text recipient. Write it in your test notes. The shared sender, <strong>(508) 233-2261</strong>, is a real business line, not the test recipient.</li>
+<li>Prepare a harmless sample PDF and a sample spreadsheet. Use names such as <strong>TEST Oak HOA</strong>, <strong>TEST Pine HOA</strong>, and <strong>TEST Cedar HOA</strong>, or put TEST in the contact name when a form does not ask for an association name. Use only your test contact details.</li>
+<li>Keep <strong>Inbox cleanup</strong> off until test 30. No staging invitations are needed for the single-person tests; do not invite Ryan. Tests requiring a second CRM user stay Blocked until an already authorized participant is available.</li>
+</ol>
+<p class="expected"><strong>Expected:</strong> staging retains Jake in both default roles, the new recipient is saved, connection checks still pass, and delivery stays paused. Native Front/Dialpad sends are real sends and do not inherit the CRM email-recipient restriction; check the recipient before each manual send.</p><div class="record"><label for="status-01">Your result<select id="status-01" class="result"><option value="todo">Not tested</option><option value="pass">Pass</option><option value="fail">Fail</option><option value="blocked">Blocked</option></select></label><label for="notes-01">Test lead, time and observations<textarea id="notes-01" class="notes" rows="3" placeholder="Lead name · time/timezone · what happened · evidence or blocker"></textarea></label></div></div></details><details class="test" data-test="02"><summary><span class="test-no">02</span><span class="test-title">Complete the native connection checks</span><span class="badge">Not tested</span></summary><div class="test-body"><ol>
+<li>Have the integration administrator enable the <strong>existing staging Dialpad event subscriptions</strong> for the lines participating in the test. This is a provider setup step, not a CRM checkbox. Their identifiers are already recorded in the rollout runbook; no new API keys or duplicate subscriptions are needed.</li>
+<li>In Front's settings for <strong>jake+testing@protectmyhoa.com</strong>, verify <strong>Track sent emails</strong> is on for the newly created channel. Old-channel settings do not establish this. <a href="https://help.front.com/en/articles/2034">Front's tracking instructions</a></li>
+<li>Send a manual email from that staging sender to the separate test mailbox, with subject <strong>TEST CONNECTION — email</strong>. Reply from the test mailbox. Verify both directions in <strong>CRM Staging</strong>.</li>
+<li>Call the main line from the test mobile, answer through the normal phone interface, and call the test mobile back. Send a text from the shared main line to the test mobile, then reply.</li>
+<li>With the relevant teammates, repeat the native call checks for each individual number listed in test 24. Confirm the shared text's actual sender and delivery status in Front/Dialpad.</li>
+<li>Have the administrator confirm that recent, signed events from <strong>both Front and Dialpad</strong> reached staging. An enabled app or a passing access check is not sufficient.</li>
+</ol>
+<p class="expected"><strong>Expected:</strong> native email, voice and shared texting work, and both event sources have a recent receipt. Before first activation, these events are not projected into normal CRM communication history. Repeat the formal scenarios after activation; do not count the native checks as the CRM history tests.</p>
+<p><strong>If blocked:</strong> stop here for live delivery tests and record the missing connection. Dialpad subscriptions cover traffic on the selected business lines, not only your test mobile; arrange a test window with the team. Individual numbers need their own native voice connections if their calls are to appear in Front. Native personal-number SMS channels are not promised. <a href="https://help.front.com/en/articles/2891264">Front's Dialpad guide</a></p><div class="record"><label for="status-02">Your result<select id="status-02" class="result"><option value="todo">Not tested</option><option value="pass">Pass</option><option value="fail">Fail</option><option value="blocked">Blocked</option></select></label><label for="notes-02">Test lead, time and observations<textarea id="notes-02" class="notes" rows="3" placeholder="Lead name · time/timezone · what happened · evidence or blocker"></textarea></label></div></div></details><details class="test" data-test="03"><summary><span class="test-no">03</span><span class="test-title">Start staging delivery with cleanup off</span><span class="badge">Not tested</span></summary><div class="test-body"><ol>
+<li>Open <strong>Lead follow-up → Delivery queue</strong> and review any already queued test leads. Starting delivery can release them. Use the lead's <strong>Handle personally / cancel pending AI reply</strong> or admin delivery review for an unwanted queued test; do not submit it again.</li>
+<li>In <strong>Settings → Front and Dialpad</strong>, click <strong>Check connections</strong>.</li>
+<li>Expand <strong>Delivery and inbox cleanup</strong>. After completing test 02, select <strong>I verified email, calls, and shared-line texts with test contacts</strong>.</li>
+<li>Leave <strong>Automatically tidy conversations awaiting a future follow-up</strong> unchecked. Click <strong>Start delivery</strong>.</li>
+<li>Record the activation time. Create fresh test messages/calls after this time.</li>
+</ol>
+<p class="expected"><strong>Expected:</strong> activation succeeds, delivery is running, and cleanup remains off. If activation reports a missing signed test event, return to test 02. Passing the connection check alone does not bypass that requirement. Pre-activation messages and calls are not a historical import test.</p><div class="record"><label for="status-03">Your result<select id="status-03" class="result"><option value="todo">Not tested</option><option value="pass">Pass</option><option value="fail">Fail</option><option value="blocked">Blocked</option></select></label><label for="notes-03">Test lead, time and observations<textarea id="notes-03" class="notes" rows="3" placeholder="Lead name · time/timezone · what happened · evidence or blocker"></textarea></label></div></div></details></section><section id="section-2" class="phase"><h2>Settings and lead intake</h2><details class="test" data-test="04"><summary><span class="test-no">04</span><span class="test-title">Confirm team selection and protected connection values</span><span class="badge">Not tested</span></summary><div class="test-body"><ol>
+<li>In <strong>Settings → Team</strong>, confirm Jake has both <strong>Salesperson</strong> and <strong>Deal champion</strong> checked.</li>
+<li>Verify Front and Dialpad IDs display as reference text, not editable table fields. Click <strong>Edit connections</strong>.</li>
+<li>Check that the dialog contains the current values and Save is disabled until a change is made. Enter an invalid sample value, such as <code>not-an-id</code>, and verify validation blocks saving. Click <strong>Cancel</strong>.</li>
+<li>Reopen the dialog and verify the original values remain. Close it without saving.</li>
+<li>In integration settings, open the default-owner dropdown. Verify Jake is offered. Cancel the edit.</li>
+<li>Create a disposable lead using the CRM's <strong>New lead</strong> form. Leave its role selections empty to exercise the saved default, or deliberately choose Jake for both. Open the saved lead's <strong>Overview → Lead follow-up</strong> and check both assignments.</li>
+</ol>
+<p class="expected"><strong>Expected:</strong> IDs require deliberate editing and an explicit save; canceling discards changes. Existing mappings remain intact. Eligibility determines dropdown choices and does not change sign-in permissions or CRM access. A manually created lead receives the selected/default responsibilities; it does not automatically run the website's intake/initial-AI-email sequence.</p><div class="record"><label for="status-04">Your result<select id="status-04" class="result"><option value="todo">Not tested</option><option value="pass">Pass</option><option value="fail">Fail</option><option value="blocked">Blocked</option></select></label><label for="notes-04">Test lead, time and observations<textarea id="notes-04" class="notes" rows="3" placeholder="Lead name · time/timezone · what happened · evidence or blocker"></textarea></label></div></div></details><details class="test" data-test="05"><summary><span class="test-no">05</span><span class="test-title">Submit a lead and receive the AI email in the same Front conversation</span><span class="badge">Not tested</span></summary><div class="test-body"><ol>
+<li>Open the <a href="https://staging.dx1256wpowwzz.amplifyapp.com/contact/">staging contact form</a>. Use first name <strong>TEST</strong>, last name <strong>Oak</strong>, your permitted test email, and this message: <strong>This is a staging test. We need an HOA insurance review. Please contact this test address only.</strong></li>
+<li>Submit once. Find <strong>TEST Oak</strong> in CRM Leads and open <strong>Overview → Lead follow-up</strong>.</li>
+<li>Verify the original form answers/contact details and Jake in both roles. Find the related <strong>Website enquiry</strong> conversation in <strong>CRM Staging</strong>.</li>
+<li>Leave this browser confirmation open and wait for the reply. With no uploads, the normal reply window is <strong>eight minutes</strong>, followed by background processing and generation time. Allow a few additional minutes; it is not an instant-send promise.</li>
+<li>Check the test mailbox, the Front conversation, and CRM <strong>Communication history</strong>. Use <strong>Refresh</strong> as needed.</li>
+</ol>
+<p class="expected"><strong>Expected:</strong> one lead, one labelled website-submission record in Front, and one initial AI email in that same Front conversation. The email's display name is <strong>Brian Cole</strong> and its staging From address is <strong>jake+testing@protectmyhoa.com</strong>. There is no separate FormSubmit copy or AWS fallback email for this flow. The confirmed outbound email produces a <strong>Follow up with prospect</strong> action. Receipt/acceptance alone must not be presented as confirmed sending.</p>
+<p><strong>Check content too:</strong> the email should match the submitted context and contain no invented policy, quote or binding claim. Exact AI wording can vary. Verify any document-upload link opens the staging website.</p><div class="record"><label for="status-05">Your result<select id="status-05" class="result"><option value="todo">Not tested</option><option value="pass">Pass</option><option value="fail">Fail</option><option value="blocked">Blocked</option></select></label><label for="notes-05">Test lead, time and observations<textarea id="notes-05" class="notes" rows="3" placeholder="Lead name · time/timezone · what happened · evidence or blocker"></textarea></label></div></div></details><details class="test" data-test="06"><summary><span class="test-no">06</span><span class="test-title">Submit with documents and finish the upload window</span><span class="badge">Not tested</span></summary><div class="test-body"><ol>
+<li>Open the <a href="https://staging.dx1256wpowwzz.amplifyapp.com/get-started/">staging assessment</a>. Use a new TEST contact and your permitted email.</li>
+<li>After submission, upload the sample PDF and spreadsheet. Wait until both say <strong>Received</strong>, then select <strong>Done uploading</strong>.</li>
+<li>Open the lead's <strong>Documents</strong> tab. Confirm both files are present and readable. Follow the PDF's processing status.</li>
+<li>Wait for the initial AI reply and confirm it appears once in the same intake conversation. Check whether it uses readable document context accurately.</li>
+<li>On another assessment, choose <strong>Skip, send my summary</strong> instead of uploading.</li>
+</ol>
+<p class="expected"><strong>Expected:</strong> Done/Skip closes the upload window early. PDF/image processing may delay the reply; a spreadsheet is attached without waiting for OCR. If the browser is simply left open, the window closes after eight idle minutes after the last upload. Files remain saved even if extraction fails; the reply must not pretend unreadable content was understood. Invalid file types or files over 25 MB show an error rather than a successful upload.</p><div class="record"><label for="status-06">Your result<select id="status-06" class="result"><option value="todo">Not tested</option><option value="pass">Pass</option><option value="fail">Fail</option><option value="blocked">Blocked</option></select></label><label for="notes-06">Test lead, time and observations<textarea id="notes-06" class="notes" rows="3" placeholder="Lead name · time/timezone · what happened · evidence or blocker"></textarea></label></div></div></details><details class="test" data-test="07"><summary><span class="test-no">07</span><span class="test-title">Exercise all five website entry points</span><span class="badge">Not tested</span></summary><div class="test-body"><p>Submit once through each row below, with a distinct test identity or address. Reuse test 05/06 results where applicable. Search by contact email, recorded address, source and time if the form chooses the lead name automatically.</p>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>Entry point</th>
+<th>What to exercise</th>
+<th>Expected source/context</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://staging.dx1256wpowwzz.amplifyapp.com/contact/">Contact</a></td>
+<td>Name, email and message</td>
+<td>Contact answers preserved</td>
+</tr>
+<tr>
+<td><a href="https://staging.dx1256wpowwzz.amplifyapp.com/get-started/">Instant assessment</a></td>
+<td>Property details and optional uploads</td>
+<td>Assessment answers preserved</td>
+</tr>
+<tr>
+<td><a href="https://staging.dx1256wpowwzz.amplifyapp.com/quote/">Full quote application</a></td>
+<td>Complete the form with fictional test details</td>
+<td>Full application answers preserved</td>
+</tr>
+<tr>
+<td><a href="https://staging.dx1256wpowwzz.amplifyapp.com/">Homepage coverage calculator</a></td>
+<td>Complete calculator, then submit its email form</td>
+<td>Address, unit count and shown coverages preserved</td>
+</tr>
+<tr>
+<td><a href="https://staging.dx1256wpowwzz.amplifyapp.com/associations/114-elm-street-condominium/">Association-specific HO-6 form</a></td>
+<td>Use a TEST contact and test email; retain the page's association context</td>
+<td>Personal/HO-6 lead, unit details and association context preserved</td>
+</tr>
+</tbody>
+</table></div>
+<p class="expected"><strong>Expected for every row:</strong> one lead per deliberate submission, Jake defaults, a labelled Front intake, and one AI reply in its conversation. Where a form offers uploads, those continue to work. A new deliberate enquiry is not the same as retrying a failed request.</p><div class="record"><label for="status-07">Your result<select id="status-07" class="result"><option value="todo">Not tested</option><option value="pass">Pass</option><option value="fail">Fail</option><option value="blocked">Blocked</option></select></label><label for="notes-07">Test lead, time and observations<textarea id="notes-07" class="notes" rows="3" placeholder="Lead name · time/timezone · what happened · evidence or blocker"></textarea></label></div></div></details><details class="test" data-test="08"><summary><span class="test-no">08</span><span class="test-title">Retry and interrupted submission</span><span class="badge">Not tested</span></summary><div class="test-body"><ol>
+<li>During a normal test submission, press Submit twice quickly. Verify the button cannot create two enquiries while the request is pending.</li>
+<li>For the interrupted-response case, have the integration administrator simulate a lost response on a test form after its request may have reached the server. Retry the <strong>same answers in the same browser tab</strong>, including after a reload where supported.</li>
+<li>Repeat with corrected answers after a failed attempt.</li>
+</ol>
+<p class="expected"><strong>Expected:</strong> an unchanged retry returns the same lead/receipt without a second AI email or team alert. Corrected answers are accepted as a new submission identity; if the earlier request already committed, its lead can still exist. The visitor must not be permanently locked out. Mark the interruption portion Blocked until a controlled simulation is available; submitting a brand-new form twice is not this test.</p><div class="record"><label for="status-08">Your result<select id="status-08" class="result"><option value="todo">Not tested</option><option value="pass">Pass</option><option value="fail">Fail</option><option value="blocked">Blocked</option></select></label><label for="notes-08">Test lead, time and observations<textarea id="notes-08" class="notes" rows="3" placeholder="Lead name · time/timezone · what happened · evidence or blocker"></textarea></label></div></div></details><details class="test" data-test="09"><summary><span class="test-no">09</span><span class="test-title">Optional internal new-lead text alert</span><span class="badge">Not tested</span></summary><div class="test-body"><ol>
+<li>In <strong>Settings → Team → Team members</strong>, confirm your own <strong>Lead texts</strong> preference and enter a mobile number you control if you want this alert tested. Verify there are no unintended opted-in staging recipients.</li>
+<li>Submit one new website test enquiry, then perform the unchanged-retry check from test 08.</li>
+</ol>
+<p class="expected"><strong>Expected:</strong> one internal new-lead alert per submission for each configured opted-in recipient; retrying does not produce another. Without a mobile number, an enabled checkbox alone sends nothing. This internal alert is separate from prospect texting through Dialpad and may occur even while CRM delivery is paused. Do not expect its sender to be the shared Dialpad line.</p><div class="record"><label for="status-09">Your result<select id="status-09" class="result"><option value="todo">Not tested</option><option value="pass">Pass</option><option value="fail">Fail</option><option value="blocked">Blocked</option></select></label><label for="notes-09">Test lead, time and observations<textarea id="notes-09" class="notes" rows="3" placeholder="Lead name · time/timezone · what happened · evidence or blocker"></textarea></label></div></div></details></section><section id="section-3" class="phase"><h2>Email and the Front sidebar</h2><details class="test" data-test="10"><summary><span class="test-no">10</span><span class="test-title">Verify Seen without changing the follow-up date</span><span class="badge">Not tested</span></summary><div class="test-body"><ol>
+<li>Use a newly sent test email in the separate prospect mailbox. Record its current CRM follow-up deadline.</li>
+<li>Open it in a mail client that loads images. Check the sent message in Front for a <strong>Seen</strong> indicator.</li>
+<li>In CRM <strong>Communication history</strong>, expand the outbound email and select <strong>Refresh Seen status</strong>. Wait for background processing, then click the panel's <strong>Refresh</strong>.</li>
+<li>Compare the displayed Seen result and check time with Front. Recheck the task deadline.</li>
+</ol>
+<p class="expected"><strong>Expected:</strong> a Front Seen signal is reflected in CRM when available. Otherwise CRM says it has not checked, no signal was returned, or the status is unavailable—it must not assert the recipient has not read it. The deadline is unchanged and no email is resent. Image blocking and mail-provider privacy/proxy behavior affect open signals; this is not proof of human reading. <a href="https://help.front.com/en/articles/2034">Front explains these limits</a>.</p><div class="record"><label for="status-10">Your result<select id="status-10" class="result"><option value="todo">Not tested</option><option value="pass">Pass</option><option value="fail">Fail</option><option value="blocked">Blocked</option></select></label><label for="notes-10">Test lead, time and observations<textarea id="notes-10" class="notes" rows="3" placeholder="Lead name · time/timezone · what happened · evidence or blocker"></textarea></label></div></div></details><details class="test" data-test="11"><summary><span class="test-no">11</span><span class="test-title">Receive a reply, then handle it explicitly</span><span class="badge">Not tested</span></summary><div class="test-body"><ol>
+<li>From the test prospect mailbox, reply to TEST Oak's AI email: <strong>Please clarify what documents you need.</strong></li>
+<li>In CRM, verify the inbound email appears and <strong>Respond to prospect</strong> is in <strong>Next actions</strong> and <strong>Lead follow-up → Needs response</strong>. Write down the due time.</li>
+<li>Send another reply about the same unanswered request a few minutes later. Refresh.</li>
+<li>Reply as the salesperson in Front. Then return to CRM and select <strong>Complete with outcome</strong> on the specific response task.</li>
+<li>Record what happened, select <strong>Record next action or waiting commitment</strong>, and enter <strong>Wait for test documents</strong> with a future due time. Save.</li>
+</ol>
+<p class="expected"><strong>Expected:</strong> the first substantive reply replaces the stale automatic waiting follow-up for that conversation. Additional unanswered replies do not push its deadline later. Sending a human email alone does not prove which open request was resolved; the explicit outcome closes the selected task and creates its successor. Other independent tasks remain open.</p><div class="record"><label for="status-11">Your result<select id="status-11" class="result"><option value="todo">Not tested</option><option value="pass">Pass</option><option value="fail">Fail</option><option value="blocked">Blocked</option></select></label><label for="notes-11">Test lead, time and observations<textarea id="notes-11" class="notes" rows="3" placeholder="Lead name · time/timezone · what happened · evidence or blocker"></textarea></label></div></div></details><details class="test" data-test="12"><summary><span class="test-no">12</span><span class="test-title">Automatic replies do not count as prospect handling</span><span class="badge">Not tested</span></summary><div class="test-body"><ol>
+<li>Use a separate waiting test lead. Send a controlled reply with subject <strong>Automatic reply: TEST availability</strong> and a short out-of-office message, or use an actual automatic responder on the test mailbox.</li>
+<li>Compare its existing waiting task and due time before and after processing.</li>
+</ol>
+<p class="expected"><strong>Expected:</strong> the automatic response is recorded without creating a normal substantive response task or satisfying the prospect's outstanding request. The waiting deadline remains. This checks automatic-reply classification, not every possible provider's responder format.</p><div class="record"><label for="status-12">Your result<select id="status-12" class="result"><option value="todo">Not tested</option><option value="pass">Pass</option><option value="fail">Fail</option><option value="blocked">Blocked</option></select></label><label for="notes-12">Test lead, time and observations<textarea id="notes-12" class="notes" rows="3" placeholder="Lead name · time/timezone · what happened · evidence or blocker"></textarea></label></div></div></details><details class="test" data-test="13"><summary><span class="test-no">13</span><span class="test-title">Take over before the initial AI email</span><span class="badge">Not tested</span></summary><div class="test-body"><ol>
+<li>Submit <strong>TEST Takeover</strong> through a form and immediately open its CRM lead, during the eight-minute window.</li>
+<li>Choose <strong>Handle personally / cancel pending AI reply</strong> before any AI send has started.</li>
+<li>Wait beyond the normal reply window, then inspect the test mailbox, Front and delivery queue.</li>
+<li>Add a dated next action and record the human follow-up plan.</li>
+</ol>
+<p class="expected"><strong>Expected:</strong> the queued initial AI reply is suppressed and no automatic first-contact email arrives. If a send was already dispatched or its result is uncertain, the notice must explain that cancellation is not recall. Check Front before sending a replacement yourself. A missed/unanswered call alone should not count as human resolution.</p><div class="record"><label for="status-13">Your result<select id="status-13" class="result"><option value="todo">Not tested</option><option value="pass">Pass</option><option value="fail">Fail</option><option value="blocked">Blocked</option></select></label><label for="notes-13">Test lead, time and observations<textarea id="notes-13" class="notes" rows="3" placeholder="Lead name · time/timezone · what happened · evidence or blocker"></textarea></label></div></div></details><details class="test" data-test="14"><summary><span class="test-no">14</span><span class="test-title">Use the CRM inside Front</span><span class="badge">Not tested</span></summary><div class="test-body"><ol>
+<li>Select TEST Oak's email conversation in Front and open the <strong>HOA CRM — Staging</strong> sidebar app. Sign in with your existing staging CRM identity if prompted.</li>
+<li>Verify the correct lead name, contact, source, documents, quote context, salesperson, champion and next actions. Try <strong>Open CRM account</strong>, <strong>All documents</strong>, and <strong>Quotes / bind workflow</strong> as navigation checks only.</li>
+<li>Start an unsaved note or edit, then select TEST Pine's conversation. Verify the sidebar changes to Pine and does not apply Oak's unsaved content.</li>
+<li>For a fresh unlinked test email, expand <strong>Link to a CRM lead</strong>, search its association/contact, select <strong>Prospect</strong>, and choose the correct result.</li>
+</ol>
+<p class="expected"><strong>Expected:</strong> the sidebar follows the selected conversation, opens the correct staging account, and shares the same tasks as CRM. An unlinked conversation requires an explicit selection. If embedded sign-in asks for a private sign-in link, use your own unopened CRM sign-in email link there; do not paste it into a shared comment or test report.</p><div class="record"><label for="status-14">Your result<select id="status-14" class="result"><option value="todo">Not tested</option><option value="pass">Pass</option><option value="fail">Fail</option><option value="blocked">Blocked</option></select></label><label for="notes-14">Test lead, time and observations<textarea id="notes-14" class="notes" rows="3" placeholder="Lead name · time/timezone · what happened · evidence or blocker"></textarea></label></div></div></details><details class="test" data-test="15"><summary><span class="test-no">15</span><span class="test-title">Internal notes and email attachments</span><span class="badge">Not tested</span></summary><div class="test-body"><ol>
+<li>In a test lead, add <strong>TEST internal note — waiting for sample documents</strong>, leaving <strong>Also add to the Front email conversation</strong> off. Save.</li>
+<li>Add another note with that checkbox on. Check CRM history and Front's internal comments.</li>
+<li>From the test prospect mailbox, reply with the harmless PDF attached. Once captured, expand the email in CRM and choose <strong>Save to CRM documents</strong>.</li>
+<li>Open <strong>Documents</strong>, confirm the file, then repeat <strong>Save to CRM documents</strong> for that same source attachment.</li>
+</ol>
+<p class="expected"><strong>Expected:</strong> the first note stays in CRM; the second also appears as an internal Front comment. Neither is a customer-facing email. The attachment enters the normal document workflow once; saving it again does not create a duplicate document. Unsupported/oversized or unavailable downloads should produce a visible issue, not an empty successful document. Test those failure cases with the administrator rather than modifying real files or links.</p><div class="record"><label for="status-15">Your result<select id="status-15" class="result"><option value="todo">Not tested</option><option value="pass">Pass</option><option value="fail">Fail</option><option value="blocked">Blocked</option></select></label><label for="notes-15">Test lead, time and observations<textarea id="notes-15" class="notes" rows="3" placeholder="Lead name · time/timezone · what happened · evidence or blocker"></textarea></label></div></div></details><details class="test" data-test="16"><summary><span class="test-no">16</span><span class="test-title">Later document uploads notify the team in Front</span><span class="badge">Not tested</span></summary><div class="test-body"><ol>
+<li>Open the staging document-upload link included in a test AI email, as the prospect. Upload another harmless file.</li>
+<li>Confirm it appears on that same CRM lead. Leave the portal idle for at least <strong>ten minutes</strong>, plus any document-processing time.</li>
+<li>Check the lead's Front conversation for the document-arrival internal comment and its summary of received/outstanding documents.</li>
+</ol>
+<p class="expected"><strong>Expected:</strong> the later upload is attached to the existing account and generates a grouped internal Front notification after the quiet/processing window. It does not create another lead or initial AI email. Several files uploaded together should be grouped. A missing upload link or missing notification is a test failure to record; do not substitute a production portal.</p><div class="record"><label for="status-16">Your result<select id="status-16" class="result"><option value="todo">Not tested</option><option value="pass">Pass</option><option value="fail">Fail</option><option value="blocked">Blocked</option></select></label><label for="notes-16">Test lead, time and observations<textarea id="notes-16" class="notes" rows="3" placeholder="Lead name · time/timezone · what happened · evidence or blocker"></textarea></label></div></div></details></section><section id="section-4" class="phase"><h2>Ownership, commitments and deadlines</h2><details class="test" data-test="17"><summary><span class="test-no">17</span><span class="test-title">Create and deliberately change a commitment</span><span class="badge">Not tested</span></summary><div class="test-body"><ol>
+<li>On TEST Pine, click <strong>Add action</strong>. Set Action to <strong>TEST request carrier clarification</strong>, role <strong>Deal champion</strong>, type <strong>carrier</strong>, and a future due time. Enter a reason and <strong>Save action</strong>.</li>
+<li>Add a separate salesperson action. Verify both are visible.</li>
+<li>Use <strong>Change action/date</strong> on one action, change its due time, supply a reason, and save. Inspect the account's <strong>Activity</strong> tab.</li>
+<li>Try saving a past date or leaving the required reason empty, then cancel the invalid edit.</li>
+</ol>
+<p class="expected"><strong>Expected:</strong> commitments have a named role and a date. A deliberate edit changes only the selected commitment and leaves an activity record. A new promise cannot be saved in the past or without a reason. Front snoozes are not the way to change this date.</p><div class="record"><label for="status-17">Your result<select id="status-17" class="result"><option value="todo">Not tested</option><option value="pass">Pass</option><option value="fail">Fail</option><option value="blocked">Blocked</option></select></label><label for="notes-17">Test lead, time and observations<textarea id="notes-17" class="notes" rows="3" placeholder="Lead name · time/timezone · what happened · evidence or blocker"></textarea></label></div></div></details><details class="test" data-test="18"><summary><span class="test-no">18</span><span class="test-title">Test a reminder quickly</span><span class="badge">Not tested</span></summary><div class="test-body"><ol>
+<li>On a test lead with a linked Front conversation, add a salesperson follow-up called <strong>TEST short reminder</strong>, due <strong>five minutes from now</strong>. Record the exact time.</li>
+<li>Archive or snooze its Front conversation beyond that time. Do not change the CRM action.</li>
+<li>After the due time, allow a few background cycles. Open <strong>Lead follow-up → Overdue</strong>, <strong>Notifications</strong>, and the Front conversation.</li>
+</ol>
+<p class="expected"><strong>Expected:</strong> the action becomes overdue, you receive an in-app lead-follow-up notification, and the linked Front conversation reopens while delivery is running. This does not require a separate reminder email/SMS. The task remains open until handled. This tests dispatch/reopening, not the two-business-day schedule.</p><div class="record"><label for="status-18">Your result<select id="status-18" class="result"><option value="todo">Not tested</option><option value="pass">Pass</option><option value="fail">Fail</option><option value="blocked">Blocked</option></select></label><label for="notes-18">Test lead, time and observations<textarea id="notes-18" class="notes" rows="3" placeholder="Lead name · time/timezone · what happened · evidence or blocker"></textarea></label></div></div></details><details class="test" data-test="19"><summary><span class="test-no">19</span><span class="test-title">Verify the real business-day schedule and escalation</span><span class="badge">Not tested</span></summary><div class="test-body"><ol>
+<li>Keep a separate lead untouched after its initial confirmed AI email. Do not reply or replace its automatic follow-up with a custom date.</li>
+<li>Check the due date: <strong>9 a.m. Eastern on the second business date after sending</strong>. Revisit at that time, then on the next business date at 9 a.m.</li>
+<li>Separately, receive a substantive email or missed call during working hours and record the original time. Verify its deadline uses <strong>eight staffed hours</strong>, 9 a.m.–5 p.m. Eastern, Monday–Friday, excluding configured holidays. Escalation follows another eight staffed hours after that deadline.</li>
+<li>Because Jake holds both roles, check that the reminder escalates without producing duplicate notifications to the same person. The task should show <strong>Escalated</strong>.</li>
+</ol>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>Example, with no agency holiday</th>
+<th>Expected due</th>
+<th>Expected champion escalation</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>AI email sent Wednesday, September 9</td>
+<td>Friday, September 11, 9 a.m.</td>
+<td>Monday, September 14, 9 a.m.</td>
+</tr>
+<tr>
+<td>Prospect reply Thursday, September 10, 2 p.m.</td>
+<td>Friday, September 11, 2 p.m.</td>
+<td>Monday, September 14, 2 p.m.</td>
+</tr>
+<tr>
+<td>Missed call Friday, September 11, 4 p.m.</td>
+<td>Monday, September 14, 4 p.m.</td>
+<td>Tuesday, September 15, 4 p.m.</td>
+</tr>
+<tr>
+<td>Request arrives after hours Friday</td>
+<td>Monday, September 14, 5 p.m.</td>
+<td>Tuesday, September 15, 5 p.m.</td>
+</tr>
+</tbody>
+</table></div>
+<p class="expected"><strong>Expected:</strong> weekends are skipped and the original unanswered request starts the clock. Current staging holidays are empty; enter actual agency holidays before testing holiday handling. Keep the computer timezone set to Eastern while entering test dates. Do not change the computer clock to accelerate this test.</p><div class="record"><label for="status-19">Your result<select id="status-19" class="result"><option value="todo">Not tested</option><option value="pass">Pass</option><option value="fail">Fail</option><option value="blocked">Blocked</option></select></label><label for="notes-19">Test lead, time and observations<textarea id="notes-19" class="notes" rows="3" placeholder="Lead name · time/timezone · what happened · evidence or blocker"></textarea></label></div></div></details><details class="test" data-test="20"><summary><span class="test-no">20</span><span class="test-title">Prove personal cleanup cannot postpone team work</span><span class="badge">Not tested</span></summary><div class="test-body"><ol>
+<li>On a lead with an open response/callback task, record both owners and its due time.</li>
+<li>In Front, mark the conversation read, snooze it, and archive it. Check the personal inbox view and shared inbox view separately.</li>
+<li>Refresh the CRM after each action. Then allow the task to reach its due time, or use a separate short action as in test 18.</li>
+</ol>
+<p class="expected"><strong>Expected:</strong> the CRM owners, task and deadline remain unchanged. Due work stays visible to the team and its linked conversation reopens while delivery runs. Do not judge success solely by whether every personal inbox copy disappears; record personal and shared behavior separately.</p><div class="record"><label for="status-20">Your result<select id="status-20" class="result"><option value="todo">Not tested</option><option value="pass">Pass</option><option value="fail">Fail</option><option value="blocked">Blocked</option></select></label><label for="notes-20">Test lead, time and observations<textarea id="notes-20" class="notes" rows="3" placeholder="Lead name · time/timezone · what happened · evidence or blocker"></textarea></label></div></div></details><details class="test" data-test="21"><summary><span class="test-no">21</span><span class="test-title">Separate ownership, Front handling and CRM permissions</span><span class="badge">Not tested</span></summary><div class="test-body"><ol>
+<li>With Jake in both roles, use <strong>Use deal champion as Front handler</strong>, then <strong>Use salesperson as Front handler</strong> in the lead/sidebar. Verify the mapped Front teammate and unchanged CRM deadlines.</li>
+<li>With a second authorized staging teammate available, change only the deal champion and click <strong>Save responsibilities</strong>. Verify the salesperson and task dates stay unchanged.</li>
+<li>Change a conversation's handler manually in Front. Verify that this does not replace either CRM owner. Use the role-routing buttons to deliberately return it to role-based handling.</li>
+<li>As an admin, enable only one eligibility role for the second test teammate and verify they appear only in that role's dropdown. Restore the intended setting afterward. Their CRM access should not change.</li>
+</ol>
+<p class="expected"><strong>Expected:</strong> owners are separate duties; the Front handler is separate again. Existing manual handling is respected until deliberately changed. Reassignment directs overdue work to its new responsible person without moving the deadline. The two-person portions are Blocked with only Jake in staging; do not create invitations just to bypass that limitation.</p><div class="record"><label for="status-21">Your result<select id="status-21" class="result"><option value="todo">Not tested</option><option value="pass">Pass</option><option value="fail">Fail</option><option value="blocked">Blocked</option></select></label><label for="notes-21">Test lead, time and observations<textarea id="notes-21" class="notes" rows="3" placeholder="Lead name · time/timezone · what happened · evidence or blocker"></textarea></label></div></div></details><details class="test" data-test="22"><summary><span class="test-no">22</span><span class="test-title">Keep carrier work separate from prospect work</span><span class="badge">Not tested</span></summary><div class="test-body"><ol>
+<li>Keep an unanswered prospect task open on a test lead.</li>
+<li>Send a separate controlled email representing a carrier question. In the Front sidebar, link that conversation to the test lead with <strong>Conversation purpose → Carrier</strong>.</li>
+<li>Verify <strong>Respond to carrier</strong> appears for the deal champion and in <strong>Champion work</strong>.</li>
+<li>Complete the carrier task with a recorded outcome. Recheck the prospect task.</li>
+</ol>
+<p class="expected"><strong>Expected:</strong> carrier work does not satisfy or postpone prospect response work. Both can exist on the same account with their own deadlines. Merely changing a Front handler is not the same as classifying a conversation as carrier work.</p><div class="record"><label for="status-22">Your result<select id="status-22" class="result"><option value="todo">Not tested</option><option value="pass">Pass</option><option value="fail">Fail</option><option value="blocked">Blocked</option></select></label><label for="notes-22">Test lead, time and observations<textarea id="notes-22" class="notes" rows="3" placeholder="Lead name · time/timezone · what happened · evidence or blocker"></textarea></label></div></div></details></section><section id="section-5" class="phase"><h2>Dialpad calls and texts</h2><details class="test" data-test="23"><summary><span class="test-no">23</span><span class="test-title">Missed main-line call and voicemail</span><span class="badge">Not tested</span></summary><div class="test-body"><ol>
+<li>After activation, call <strong>(508) 233-2261</strong> from your test mobile and let it go unanswered. Leave <strong>TEST callback request</strong> as voicemail. Coordinate this with the team.</li>
+<li>Find the call/voicemail in Dialpad and Front's phone inbox. In CRM, open <strong>Lead follow-up → Unlinked activity</strong>.</li>
+<li>Select <strong>Link activity</strong>, search TEST Oak, choose <strong>Prospect or client</strong>, and link it. Alternatively, use the linked lead's Front sidebar <strong>Link a call or text to this conversation</strong>.</li>
+<li>Check <strong>Return prospect call</strong>, its due time, communication history, and any later voicemail/transcript/summary update.</li>
+</ol>
+<p class="expected"><strong>Expected:</strong> the unknown call enters review rather than automatically creating a sales lead. Allow several minutes for final missed-call reconciliation; the implementation schedules a concluded-call check after roughly three minutes. Linking yields callback work due eight staffed hours from the original call—not from linking or later transcription. Late enrichment does not restart the deadline. One logical customer call should not turn into one callback per ringing agent.</p><div class="record"><label for="status-23">Your result<select id="status-23" class="result"><option value="todo">Not tested</option><option value="pass">Pass</option><option value="fail">Fail</option><option value="blocked">Blocked</option></select></label><label for="notes-23">Test lead, time and observations<textarea id="notes-23" class="notes" rows="3" placeholder="Lead name · time/timezone · what happened · evidence or blocker"></textarea></label></div></div></details><details class="test" data-test="24"><summary><span class="test-no">24</span><span class="test-title">Verify every monitored business number</span><span class="badge">Not tested</span></summary><div class="test-body"><p>Make a fresh controlled inbound and outbound call for each row. Capture the time, actual line, answering/calling teammate and CRM activity. Explicitly link the activity to the test lead if needed.</p>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>Line</th>
+<th>Number</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Shared main line</td>
+<td>(508) 233-2261</td>
+</tr>
+<tr>
+<td>Jake</td>
+<td>(617) 702-4123</td>
+</tr>
+<tr>
+<td>Christina</td>
+<td>(508) 545-9125</td>
+</tr>
+<tr>
+<td>Brian</td>
+<td>(508) 257-1566</td>
+</tr>
+<tr>
+<td>Mike</td>
+<td>(508) 538-4962</td>
+</tr>
+</tbody>
+</table></div>
+<p class="expected"><strong>Expected for each row:</strong> CRM captures the correct direction, actual business line, external test number and actor where available. Dialpad's existing routing/caller-ID behavior is preserved. Front visibility depends on that number's native voice channel; API capture alone does not prove its Front channel is installed. Mark each untested line Blocked, not Pass because the main line worked.</p><div class="record"><label for="status-24">Your result<select id="status-24" class="result"><option value="todo">Not tested</option><option value="pass">Pass</option><option value="fail">Fail</option><option value="blocked">Blocked</option></select></label><label for="notes-24">Test lead, time and observations<textarea id="notes-24" class="notes" rows="3" placeholder="Lead name · time/timezone · what happened · evidence or blocker"></textarea></label></div></div></details><details class="test" data-test="25"><summary><span class="test-no">25</span><span class="test-title">Answered call, multiple rings and transfer</span><span class="badge">Not tested</span></summary><div class="test-body"><ol>
+<li>Call the main line again. Have one teammate let it ring while another answers. When feasible, transfer the test call to another participating teammate.</li>
+<li>Wait for the call to end and the provider's final details to arrive. Refresh CRM history and callback tasks.</li>
+<li>Inspect any transcript or summary when available, without changing recording settings just for the test.</li>
+</ol>
+<p class="expected"><strong>Expected:</strong> one reconciled customer call with an answered result. A teammate's missed ringing leg must not leave a false callback when someone answered. Transfer details enrich that call; ambiguous provider relationships remain visible for review rather than being confidently guessed. Missing AI/media does not block basic call capture. Answered status or an AI summary alone does not complete an open CRM request.</p><div class="record"><label for="status-25">Your result<select id="status-25" class="result"><option value="todo">Not tested</option><option value="pass">Pass</option><option value="fail">Fail</option><option value="blocked">Blocked</option></select></label><label for="notes-25">Test lead, time and observations<textarea id="notes-25" class="notes" rows="3" placeholder="Lead name · time/timezone · what happened · evidence or blocker"></textarea></label></div></div></details><details class="test" data-test="26"><summary><span class="test-no">26</span><span class="test-title">Prospect texting from the shared main line</span><span class="badge">Not tested</span></summary><div class="test-body"><ol>
+<li>On TEST Oak's Front email conversation, open the CRM sidebar's <strong>Text from the shared main line</strong> section.</li>
+<li>Enter your test mobile and <strong>TEST message from HOA staging</strong>. Click <strong>Open draft in Front</strong>.</li>
+<li>Verify the draft's From is <strong>(508) 233-2261</strong> and To is your test mobile. Review, then send in Front. If the handoff fails, record it and test the native shared-line composer separately.</li>
+<li>Reply from the test mobile: <strong>TEST: please call me about the documents.</strong> Link the inbound/outbound activities explicitly as needed.</li>
+<li>In CRM, filter <strong>Communication history → SMS</strong> and inspect message bodies, directions, status updates and response work. Repeat an inbound text to an individual business number where supported and subscribed.</li>
+</ol>
+<p class="expected"><strong>Expected:</strong> opening the draft does not send it. One text activity is enriched with delivery status; it is not duplicated for every status update. A substantive inbound text creates response work after linking. A delivered SMS does not mean read or resolved. Calls/texts remain separate from the email thread in Front, with combined history in the CRM.</p><div class="record"><label for="status-26">Your result<select id="status-26" class="result"><option value="todo">Not tested</option><option value="pass">Pass</option><option value="fail">Fail</option><option value="blocked">Blocked</option></select></label><label for="notes-26">Test lead, time and observations<textarea id="notes-26" class="notes" rows="3" placeholder="Lead name · time/timezone · what happened · evidence or blocker"></textarea></label></div></div></details><details class="test" data-test="27"><summary><span class="test-no">27</span><span class="test-title">One phone number representing two associations</span><span class="badge">Not tested</span></summary><div class="test-body"><ol>
+<li>Keep TEST Oak and TEST Pine as separate leads with the same test phone contact.</li>
+<li>Send two new texts/calls representing different associations. In <strong>Unlinked activity</strong>, link one to Oak and one to Pine.</li>
+<li>Inspect both histories and the remaining unlinked activity. Then leave a third new activity unlinked briefly.</li>
+</ol>
+<p class="expected"><strong>Expected:</strong> choosing one activity does not assign all past/future traffic from that number to the HOA. No association is chosen from a phone match alone. The third item stays visible for triage with its original time; late linking must not give it a fresh business day.</p><div class="record"><label for="status-27">Your result<select id="status-27" class="result"><option value="todo">Not tested</option><option value="pass">Pass</option><option value="fail">Fail</option><option value="blocked">Blocked</option></select></label><label for="notes-27">Test lead, time and observations<textarea id="notes-27" class="notes" rows="3" placeholder="Lead name · time/timezone · what happened · evidence or blocker"></textarea></label></div></div></details><details class="test" data-test="28"><summary><span class="test-no">28</span><span class="test-title">Combine the same request across channels</span><span class="badge">Not tested</span></summary><div class="test-body"><ol>
+<li>On TEST Oak, create an unanswered email request and a missed-call request about that same issue. Link both to Oak, retaining their original timestamps.</li>
+<li>Under <strong>Next actions</strong>, select <strong>Same request as another activity</strong> on the two open response/callback tasks.</li>
+<li>Enter why they are the same request and click <strong>Combine and keep the earliest deadline</strong>.</li>
+<li>Keep an unrelated carrier or document task open and recheck it.</li>
+</ol>
+<p class="expected"><strong>Expected:</strong> the combined request keeps the earliest applicable deadline and source activity. Redundant tasks close with a recorded reason; unrelated work remains. If linking already grouped the same episode into one task, record that result rather than inventing duplicates to combine.</p><div class="record"><label for="status-28">Your result<select id="status-28" class="result"><option value="todo">Not tested</option><option value="pass">Pass</option><option value="fail">Fail</option><option value="blocked">Blocked</option></select></label><label for="notes-28">Test lead, time and observations<textarea id="notes-28" class="notes" rows="3" placeholder="Lead name · time/timezone · what happened · evidence or blocker"></textarea></label></div></div></details><details class="test" data-test="29"><summary><span class="test-no">29</span><span class="test-title">Record an attempt versus a resolution</span><span class="badge">Not tested</span></summary><div class="test-body"><ol>
+<li>Call the test mobile back and let it go unanswered. Link the outbound activity; expand it in CRM and choose <strong>Record call outcome → No answer / voicemail left</strong>. Add notes and save.</li>
+<li>Verify the existing response/callback task is still open with its original due time.</li>
+<li>Make an answered test call. Record <strong>Request handled</strong>, <strong>Follow-up required</strong>, or <strong>Waiting on documents</strong>. Select the exact <strong>Request this call resolved</strong>, add notes and a future <strong>Next action or waiting commitment</strong>, and save.</li>
+<li>Verify that another unrelated request stays open. Check CRM's internal note/history.</li>
+</ol>
+<p class="expected"><strong>Expected:</strong> an attempt is logged without erasing the commitment. A human-confirmed resolution closes only the selected request and records the successor. Wrong number/unrelated classifications require human review; they must not silently dispose of unrelated obligations. A call connection alone is insufficient.</p><div class="record"><label for="status-29">Your result<select id="status-29" class="result"><option value="todo">Not tested</option><option value="pass">Pass</option><option value="fail">Fail</option><option value="blocked">Blocked</option></select></label><label for="notes-29">Test lead, time and observations<textarea id="notes-29" class="notes" rows="3" placeholder="Lead name · time/timezone · what happened · evidence or blocker"></textarea></label></div></div></details></section><section id="section-6" class="phase"><h2>Cleanup, outcomes and operational checks</h2><details class="test" data-test="30"><summary><span class="test-no">30</span><span class="test-title">Enable and test inbox cleanup last</span><span class="badge">Not tested</span></summary><div class="test-body"><ol>
+<li>Finish the earlier email/phone tests. In integration settings, recheck connections, expand <strong>Delivery and inbox cleanup</strong>, confirm the native test checkbox, enable <strong>Automatically tidy conversations awaiting a future follow-up</strong>, and click <strong>Apply delivery settings</strong>. Activation checks still require recent signed events.</li>
+<li>Use a clean test lead with both owners, confirmed delivery, no unresolved inbound request or communication issue, and a future follow-up. Choose <strong>Clean up inbox when ready</strong>.</li>
+<li>Verify the conversation archives while the CRM lead and dated commitment remain. Use a fresh outbound test with no open response/callback/custom task to check automatic cleanup after a new waiting follow-up is created.</li>
+<li>On another lead with an unresolved reply or missed call, try the same cleanup action. Then test a due/overdue action.</li>
+<li>Let the archived lead's commitment become due and verify it reopens. Compare the personal and shared Front views.</li>
+</ol>
+<p class="expected"><strong>Expected:</strong> only eligible conversations archive. Unanswered requests, overdue work, missing owners, uncertain delivery or sync problems block cleanup. No CRM commitment is completed or postponed. Completing a task alone need not trigger an archive; use the explicit cleanup action when checking an existing conversation.</p><div class="record"><label for="status-30">Your result<select id="status-30" class="result"><option value="todo">Not tested</option><option value="pass">Pass</option><option value="fail">Fail</option><option value="blocked">Blocked</option></select></label><label for="notes-30">Test lead, time and observations<textarea id="notes-30" class="notes" rows="3" placeholder="Lead name · time/timezone · what happened · evidence or blocker"></textarea></label></div></div></details><details class="test" data-test="31"><summary><span class="test-no">31</span><span class="test-title">Lost, disqualified, reopened and bound outcomes</span><span class="badge">Not tested</span></summary><div class="test-body"><ol>
+<li>On a disposable test lead, use <strong>Complete with outcome → Lead lost</strong>, with a reason. Verify its obsolete open tasks close after background processing.</li>
+<li>Select <strong>Reopen lead with a next action</strong>, enter a future commitment/reason, and save. Confirm there is no second initial AI email. Repeat the outcome check with <strong>Lead disqualified</strong> on another test lead.</li>
+<li>For the bind case, use a prepared fictional staging quote through the existing <strong>Quotes / bind workflow</strong>, with the administrator present to satisfy its existing validation and avoid external carrier/customer actions. Do not simulate binding by changing a communication status.</li>
+</ol>
+<p class="expected"><strong>Expected:</strong> lost/disqualified outcomes retire obsolete work; reopening restores an explicit plan and human handling. A successfully validated bind converts the account through the existing CRM flow and retires obsolete lead tasks. Call outcomes, Seen signals and AI summaries cannot bind a lead. Keep the bind portion Blocked until its staging fixture is ready.</p><div class="record"><label for="status-31">Your result<select id="status-31" class="result"><option value="todo">Not tested</option><option value="pass">Pass</option><option value="fail">Fail</option><option value="blocked">Blocked</option></select></label><label for="notes-31">Test lead, time and observations<textarea id="notes-31" class="notes" rows="3" placeholder="Lead name · time/timezone · what happened · evidence or blocker"></textarea></label></div></div></details><details class="test" data-test="32"><summary><span class="test-no">32</span><span class="test-title">Pause and resume without losing enquiries</span><span class="badge">Not tested</span></summary><div class="test-body"><ol>
+<li>In integration settings, click <strong>Pause delivery</strong>. Submit one new website enquiry with your permitted test contact.</li>
+<li>Verify the CRM lead is captured and its delivery remains pending in <strong>Delivery queue</strong>. Wait beyond the upload window; no initial prospect email should be sent while paused.</li>
+<li>Review the queued lead, recheck connections, confirm the test checkbox, and choose <strong>Resume delivery</strong>, with the intended cleanup setting.</li>
+<li>Wait for delivery and verify one initial email in the correct conversation.</li>
+</ol>
+<p class="expected"><strong>Expected:</strong> pause holds queued CRM delivery, not lead capture. Resume processes the saved enquiry without a second form submission. Existing CRM commitments keep their original deadlines. Native Front/Dialpad messages and internal new-lead alerts are separate; pausing the CRM does not stop those. Queued reminders may reopen conversations after resume.</p><div class="record"><label for="status-32">Your result<select id="status-32" class="result"><option value="todo">Not tested</option><option value="pass">Pass</option><option value="fail">Fail</option><option value="blocked">Blocked</option></select></label><label for="notes-32">Test lead, time and observations<textarea id="notes-32" class="notes" rows="3" placeholder="Lead name · time/timezone · what happened · evidence or blocker"></textarea></label></div></div></details><details class="test" data-test="33"><summary><span class="test-no">33</span><span class="test-title">Check every work view and the activity record</span><span class="badge">Not tested</span></summary><div class="test-body"><ol>
+<li>Open <a href="https://staging.d2d4g940z91vj4.amplifyapp.com/lead-work">Lead follow-up</a> and visit each view below. Use <strong>Refresh</strong>, <strong>My leads</strong>, and any <strong>Load more / Continue searching</strong> control.</li>
+<li>Open a listed lead and compare its task, role and deadline. Review the account's <strong>Activity</strong> tab for your responsibility changes, dated actions, outcomes and links.</li>
+</ol>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>View</th>
+<th>What belongs there</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Needs response</td>
+<td>Open prospect response/callback requests</td>
+</tr>
+<tr>
+<td>Due today / Overdue</td>
+<td>Open work matching the date or passed deadline</td>
+</tr>
+<tr>
+<td>Waiting on prospect</td>
+<td>Follow-up commitments</td>
+</tr>
+<tr>
+<td>Champion work</td>
+<td>Tasks assigned to the deal-champion role</td>
+</tr>
+<tr>
+<td>Needs assignment</td>
+<td>Leads whose responsibilities need attention</td>
+</tr>
+<tr>
+<td>Communication issues</td>
+<td>Unresolved delivery, linking or processing problems</td>
+</tr>
+<tr>
+<td>Unlinked activity</td>
+<td>Calls/texts requiring an explicit association decision</td>
+</tr>
+<tr>
+<td>Notifications</td>
+<td>Current reminders addressed to your signed-in identity</td>
+</tr>
+<tr>
+<td>Delivery queue</td>
+<td>Pending, failed or uncertain operations requiring progress/review</td>
+</tr>
+<tr>
+<td>Event processing</td>
+<td>Pending or failed captured provider events</td>
+</tr>
+</tbody>
+</table></div>
+<p class="expected"><strong>Expected:</strong> records agree with the lead panels. Confirmed/canceled delivery and processed events can disappear from actionable queues—that is not lost history. My leads is a work filter, not an access rule. An incomplete paginated search must offer a way to continue rather than falsely declaring there is no work. With only Jake, another owner's filtering requires a second-user test.</p><div class="record"><label for="status-33">Your result<select id="status-33" class="result"><option value="todo">Not tested</option><option value="pass">Pass</option><option value="fail">Fail</option><option value="blocked">Blocked</option></select></label><label for="notes-33">Test lead, time and observations<textarea id="notes-33" class="notes" rows="3" placeholder="Lead name · time/timezone · what happened · evidence or blocker"></textarea></label></div></div></details><details class="test" data-test="34"><summary><span class="test-no">34</span><span class="test-title">Admin recovery, migration and access checks</span><span class="badge">Not tested</span></summary><div class="test-body"><p>Run these with the integration administrator using test records. You do not need to break live credentials, submit forged events yourself, or guess technical message identifiers.</p>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>Scenario and steps</th>
+<th>Expected outcome</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Review an issue:</strong> inspect its source; open <strong>Record review</strong>, enter the resolution, and <strong>Mark reviewed</strong>.</td>
+<td>The review is recorded. It does not send a customer message or substitute for completing the linked task.</td>
+</tr>
+<tr>
+<td><strong>Uncertain delivery:</strong> administrator creates a controlled uncertain-send fixture; inspect Front, then use <strong>Delivery queue → Review delivery</strong> to link verified delivery, cancel, or retry only after confirming it did not send.</td>
+<td>Uncertainty is visible and there is no automatic duplicate customer send. A retry requires explicit evidence and notes.</td>
+</tr>
+<tr>
+<td><strong>Failed event:</strong> after its underlying cause is fixed, use <strong>Event processing → Repair processing → Replay saved event</strong> with a reason.</td>
+<td>The saved event processes once; existing activities/tasks are not duplicated and original deadlines remain.</td>
+</tr>
+<tr>
+<td><strong>Repair history:</strong> after activation, use <strong>Advanced tools → Repair missing history</strong>, enter a reason, and restart the appropriate provider search. For one test conversation, let the administrator supply its verified reference and use <strong>Retry conversation history</strong>.</td>
+<td>Missing in-scope history is recovered without resending emails. This does not promise recovery of historical SMS; inspect native history for an SMS gap.</td>
+</tr>
+<tr>
+<td><strong>Temporary outage/rate limit:</strong> administrator runs a controlled provider-failure fixture and restores it.</td>
+<td>Pending delivery and commitments remain durable, issues/backlog are visible, cleanup is held during uncertainty, and recovery does not duplicate sends.</td>
+</tr>
+<tr>
+<td><strong>Existing lead responsibilities:</strong> use a reviewed staging batch with one missing assignment and one already-assigned lead; click <strong>Fill missing lead responsibilities</strong>, then further batches if offered.</td>
+<td>The configured default fills missing duties without overwriting existing owners/dates or replaying historical first emails. This is a batch action, not a selected-lead-only button.</td>
+</tr>
+<tr>
+<td><strong>Older Front conversation:</strong> explicitly link a test conversation containing activity after activation.</td>
+<td>In-scope history becomes visible on the lead; the same manager's other conversations remain separate. A cross-lead merge requires review.</td>
+</tr>
+<tr>
+<td><strong>Access and event security:</strong> use an existing authorized non-admin/second-user fixture and controlled duplicate, invalid-signature and wrong-scope events.</td>
+<td>Admin settings remain protected; invalid events cause no task/send/history change; provider identities do not grant CRM access.</td>
+</tr>
+<tr>
+<td><strong>SMS opt-out:</strong> use a disposable consenting test contact and a coordinated opt-out test; inspect Dialpad preference and CRM issue.</td>
+<td>An explicit STOP-style text is treated as a contact-preference issue, not ordinary sales-response work. CRM does not automatically text it back or bypass Dialpad's preference.</td>
+</tr>
+</tbody>
+</table></div>
+<p class="expected"><strong>Expected:</strong> each scenario has its own recorded result. Mark unavailable fixtures Blocked. These checks, two-person assignment, every business line, Seen availability, and the real business-day checks remain part of full acceptance even if the basic email test passes.</p><div class="record"><label for="status-34">Your result<select id="status-34" class="result"><option value="todo">Not tested</option><option value="pass">Pass</option><option value="fail">Fail</option><option value="blocked">Blocked</option></select></label><label for="notes-34">Test lead, time and observations<textarea id="notes-34" class="notes" rows="3" placeholder="Lead name · time/timezone · what happened · evidence or blocker"></textarea></label></div></div></details></section><section id="section-7" class="phase"><h2>Finish and report results</h2><p>For each test, record <strong>Pass / Fail / Blocked</strong>, the TEST lead name, local time/timezone, expected result, actual result, and a CRM/Front link or screenshot where useful. Record each of the five forms and each business number separately. Do not include passwords, API keys or private sign-in/upload links.</p>
+<p>If a message is missing or duplicated, preserve the test record and inspect <strong>Communication issues</strong> and <strong>Delivery queue</strong> before resubmitting or manually retrying it. A refresh and a few processing cycles are reasonable; persistent pending/error state is evidence to report, not a pass.</p>
+<p>Keep the dedicated no-reply/calendar test active until its reminder and escalation have both been observed. After the agreed test window, turn automatic cleanup off and <strong>Pause delivery</strong>. Have the administrator return temporary staging Dialpad subscriptions to the agreed disabled state; pausing the CRM alone does not disable provider capture. Leave test history available for review rather than bulk deleting it or changing real inbox snoozes.</p>
+<p><strong>Ready for rollout review:</strong> core email and document flow, explicit responsibilities, every required phone/text path, sidebar behavior, deadline/escalation protections, and cleanup/recovery checks all have passing evidence. Any blocked mandatory test remains an open acceptance item. Completing this guide does not deploy or activate production.</p>
+<p>Implementation reference: <a href="COMMUNICATIONS-RUNBOOK.md">rollout and recovery runbook</a>. The linked provider help pages describe Front behavior; the CRM button names and expected workflow above were checked against the current implementation.</p></section><footer>Source: FRONT-DIALPAD-TEST-WALKTHROUGH.md · This is a testing document, not a production activation control.</footer></main></div><script>
+const key='hoa-front-dialpad-walkthrough-v1';
+const cards=[...document.querySelectorAll('.test')];
+const names={todo:'Not tested',pass:'Pass',fail:'Fail',blocked:'Blocked'};
+let state={};let available=true;
+try{state=JSON.parse(localStorage.getItem(key)||'{}')}catch(e){available=false}
+if(!state||typeof state!=='object'||Array.isArray(state))state={};
+function refresh(){let counts={todo:0,pass:0,fail:0,blocked:0};for(const card of cards){const status=card.querySelector('.result').value;counts[status]++;card.dataset.result=status;card.querySelector('.badge').textContent=names[status];card.hidden=document.querySelector('#filter').value==='remaining'&&status==='pass'}document.querySelector('#counts').textContent=`${counts.pass} passed · ${counts.fail} failed · ${counts.blocked} blocked · ${counts.todo} not tested`;document.querySelector('progress').value=counts.pass;document.querySelector('#progress-title').textContent=`${counts.pass} of ${cards.length} tests passed`;document.querySelector('#save-state').textContent=available?'Your results save in this browser. Download a copy to keep or share them.':'Local saving is unavailable. Download results before closing this page.'}
+function save(){try{localStorage.setItem(key,JSON.stringify(state))}catch(e){available=false}refresh()}
+for(const card of cards){const id=card.dataset.test;const stored=state[id]||{};const select=card.querySelector('.result'),notes=card.querySelector('.notes');select.value=Object.hasOwn(names,stored.result)?stored.result:'todo';notes.value=typeof stored.notes==='string'?stored.notes:'';const update=()=>{state[id]={result:select.value,notes:notes.value,updatedAt:new Date().toISOString()};save()};select.addEventListener('change',update);notes.addEventListener('input',update)}
+document.querySelector('#filter').addEventListener('change',refresh);
+document.querySelector('#expand').onclick=()=>cards.filter(c=>!c.hidden).forEach(c=>c.open=true);
+document.querySelector('#collapse').onclick=()=>cards.forEach(c=>c.open=false);
+document.querySelector('#download').onclick=()=>{const results={guide:'Front, Dialpad & CRM staging walkthrough',version:1,exportedAt:new Date().toISOString(),tests:cards.map(c=>({number:c.dataset.test,title:c.querySelector('.test-title').textContent,result:c.querySelector('.result').value,notes:c.querySelector('.notes').value}))};const blob=new Blob([JSON.stringify(results,null,2)],{type:'application/json'});const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='hoa-staging-test-results-'+new Date().toISOString().slice(0,10)+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)};
+let printState=[];window.addEventListener('beforeprint',()=>{printState=cards.map(c=>c.open);cards.forEach(c=>c.open=true)});window.addEventListener('afterprint',()=>cards.forEach((c,i)=>c.open=printState[i]));document.querySelector('#print').onclick=()=>window.print();
+for(const a of document.querySelectorAll('a[href^="https://"]')){a.target='_blank';a.rel='noopener noreferrer'}
+refresh();
+</script></body></html>
