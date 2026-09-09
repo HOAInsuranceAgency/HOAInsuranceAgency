@@ -9,7 +9,7 @@ import { trackLead, PHONE, PHONE_HREF } from "../constants";
  * See the footer at the bottom of this file for why the suffix matters.
  */
 import { AGENCY } from "../../../shared/agency";
-import { submitCrmLead } from "../lib/crmLead";
+import { useLeadSubmission } from "../lib/crmLead";
 import LeadUploadPanel from "./LeadUploadPanel";
 import { attachAddressAutocomplete, loadGooglePlaces } from "../lib/googlePlaces";
 import { takeHandoff } from "../lib/addressHandoff";
@@ -25,7 +25,7 @@ import {
   saveState,
   type Agent,
 } from "./quote/session";
-import { buildCrmLead, sendQuoteEmail } from "./quote/submission";
+import { buildCrmLead } from "./quote/submission";
 import {
   AgentHeader,
   BackButton,
@@ -387,35 +387,14 @@ function QuoteFlow({ isDay, onToggleTheme }: { isDay: boolean; onToggleTheme: ()
     else goNext();
   }
 
+  const leadSubmission = useLeadSubmission();
+
   async function submitForm(finalData: FormData) {
     setSubmitting(true);
     setError("");
-    /**
-     * Both go out together, and the token is in hand before the confirmation
-     * screen renders.
-     *
-     * Intake used to be fire-and-forget with the panel appearing whenever it
-     * answered, which meant the upload box popped in a beat after the "Thank
-     * you" screen. Since the notification email is awaited anyway and is the
-     * slower of the two, waiting on intake alongside it costs nothing in the
-     * normal case and the panel is there on first paint.
-     *
-     * Capped so a hanging intake cannot hold the confirmation hostage: past the
-     * cap we advance without a token and the `.then` below fills it in late,
-     * which is the old behaviour rather than a broken one.
-     */
-    const intake = submitCrmLead(buildCrmLead(finalData, agent.name));
-    void intake.then((r) => setUploadToken(r?.uploadToken ?? null));
-    const intakeOrGiveUp = Promise.race([
-      intake,
-      new Promise<null>((resolve) => setTimeout(() => resolve(null), 4000)),
-    ]);
     try {
-      const [, leadResult] = await Promise.all([
-        sendQuoteEmail(finalData, agent.name),
-        intakeOrGiveUp,
-      ]);
-      if (leadResult?.uploadToken) setUploadToken(leadResult.uploadToken);
+      const leadResult = await leadSubmission.submit(buildCrmLead(finalData, agent.name));
+      setUploadToken(leadResult.uploadToken);
       setDirection(1);
       setStepIndex(flow.length - 1);
       resetInput();

@@ -4,6 +4,7 @@ import { list, uploadData } from "aws-amplify/storage";
 import { ACORD_FORMS, listTemplateFields, type AcordFormDef } from "../lib/acord";
 import FileButton from "../components/FileButton";
 import Team from "./Team";
+import CommunicationSettings from "../components/CommunicationSettings";
 import Licensing from "../components/Licensing";
 import SignatureManager from "../components/SignatureManager";
 import { friendlyError, type UserProfile } from "../lib/client";
@@ -20,7 +21,7 @@ import {
 } from "../lib/agencySettings";
 
 type TemplateDef = AcordFormDef;
-type Tab = "templates" | "licensing" | "signature" | "agency" | "team";
+type Tab = "templates" | "licensing" | "signature" | "agency" | "team" | "integrations";
 
 /** New ACORD forms: add to ACORD_FORMS + a mapping in lib/acord.ts. */
 const TEMPLATES: TemplateDef[] = ACORD_FORMS;
@@ -40,6 +41,7 @@ export default function Settings({ profile }: { profile: UserProfile }) {
       ? ([
           ["agency", "Agency"],
           ["team", "Team"],
+          ["integrations", "Front and Dialpad"],
         ] as [Tab, string][])
       : []),
   ];
@@ -79,6 +81,7 @@ export default function Settings({ profile }: { profile: UserProfile }) {
       {tab === "signature" && <MySignature profile={profile} />}
       {tab === "agency" && isAdmin && <AgencyPanel profile={profile} />}
       {tab === "team" && isAdmin && <Team profile={profile} />}
+      {tab === "integrations" && isAdmin && <CommunicationSettings />}
     </>
   );
 }

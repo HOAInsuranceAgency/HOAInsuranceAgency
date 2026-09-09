@@ -71,7 +71,7 @@ describe("web lead fields agree across all four declarations", () => {
   });
 
   it("declares, forwards and accepts exactly the input's fields", () => {
-    const input = inputFields().sort();
+    const input = [...inputFields(), "submissionId", "retryProof"].sort();
     expect(declaredVariables().sort()).toEqual(input);
     expect(forwardedArguments().sort()).toEqual(input);
     expect(schemaArguments().sort()).toEqual(input);

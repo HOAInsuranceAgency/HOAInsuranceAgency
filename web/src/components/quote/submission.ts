@@ -1,12 +1,5 @@
 import type { CrmLeadInput } from "../../lib/crmLead";
-import { FORMSUBMIT_URL } from "../../constants";
 import type { FormData } from "./schema";
-
-/* ──────────────────────────────────────────────────────────
-   EMAIL SUBMISSION
-   Uses FormSubmit (formsubmit.co) — no API key required.
-   First send to a new address triggers a confirmation email.
-   ────────────────────────────────────────────────────────── */
 
 const ROLE_LABELS: Record<string, string> = {
   board: "Board Member / Trustee",
@@ -30,7 +23,7 @@ const HO6_LABELS: Record<string, string> = {
   not_sure: "Not sure — needs guidance",
 };
 
-/** Build a flat, label-friendly payload for FormSubmit. */
+/** Preserve every useful wizard answer in the durable intake snapshot. */
 function buildSubmission(data: FormData, agentName: string) {
   const get = (k: string) => (typeof data[k] === "string" ? (data[k] as string) : "");
   const role = get("role");
@@ -38,18 +31,7 @@ function buildSubmission(data: FormData, agentName: string) {
   const association = get("associationName") || "—";
 
   const payload: Record<string, string> = {
-    /* ── FormSubmit control fields ── */
-    _subject: `🏢 New HOA Insurance Quote — ${name}${association !== "—" ? " · " + association : ""}`,
-    _template: "table",
-    _captcha: "false",
-    _replyto: get("contactEmail") || "",
-
-    /* ── Lead summary ── */
-    "Submitted": new Date().toLocaleString("en-US", {
-      dateStyle: "full",
-      timeStyle: "short",
-    }),
-    "Assigned Agent": agentName,
+    "Website Agent": agentName,
     "Role": ROLE_LABELS[role] || role || "—",
 
     /* ── Contact ── */
@@ -140,27 +122,7 @@ export function buildCrmLead(data: FormData, agentName: string): CrmLeadInput {
     unitCount: (!isOwner && get("unitCount")) || undefined,
     currentPolicyExpiration: (!isOwner && get("renewalDate")) || undefined,
     source: "website-quote",
+    answerSnapshot: JSON.stringify(buildSubmission(data, agentName)),
     notes,
   };
-}
-
-export async function sendQuoteEmail(data: FormData, agentName: string): Promise<void> {
-  const payload = buildSubmission(data, agentName);
-  const res = await fetch(FORMSUBMIT_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "application/json",
-    },
-    body: JSON.stringify(payload),
-  });
-  if (!res.ok) {
-    throw new Error(`Mail relay returned ${res.status}`);
-  }
-  const json = (await res.json()) as { success?: string | boolean; message?: string };
-  // FormSubmit returns success: "true" as a string in their JSON response
-  const ok = json.success === true || json.success === "true";
-  if (!ok) {
-    throw new Error(json.message || "Mail relay rejected the submission");
-  }
 }

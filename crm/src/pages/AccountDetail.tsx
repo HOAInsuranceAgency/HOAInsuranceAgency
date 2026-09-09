@@ -1,3 +1,4 @@
+import LeadWorkflowPanel from "../components/LeadWorkflowPanel";
 import { useEffect, useRef, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 import {
@@ -236,6 +237,7 @@ export default function AccountDetail({ profile }: { profile: UserProfile }) {
         <>
           <OverviewTab account={account} onChange={setAccount} />
           <ContactsCard accountId={account.id} />
+          <LeadWorkflowPanel key={account.id} accountId={account.id} />
           <PropertyPanel account={account} onChange={setAccount} />
           {account.stage === "LEAD" && <DeleteLeadZone account={account} />}
         </>

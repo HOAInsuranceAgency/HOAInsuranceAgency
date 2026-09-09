@@ -11,7 +11,8 @@ import { signIn, confirmSignIn } from "aws-amplify/auth";
  * sign-in for the email embedded in the token (mode="consume" — no email
  * sent) and answer the challenge with the token itself.
  */
-export default function MagicLinkSignIn() {
+export default function MagicLinkSignIn({ embedded = false }: { embedded?: boolean }) {
+  const [sidebarLink, setSidebarLink] = useState("");
   const [email, setEmail] = useState("");
   const [phase, setPhase] = useState<"email" | "sent" | "completing">("email");
   const [error, setError] = useState("");
@@ -108,6 +109,19 @@ export default function MagicLinkSignIn() {
               is on its way. Open the email on this device and click the link —
               it's valid for 15 minutes.
             </p>
+            {embedded && <form onSubmit={e => {
+              e.preventDefault();
+              try {
+                const url = new URL(sidebarLink);
+                const token = url.hash.match(/(?:^#|&)magic=([^&]+)/)?.[1];
+                if (url.origin !== window.location.origin || !token) throw new Error("Invalid link");
+                setSidebarLink(""); void completeSignIn(decodeURIComponent(token));
+              } catch { setError("Paste the sign-in link from your CRM email."); }
+            }}>
+              <p className="muted small">For the Front sidebar, copy the sign-in link from your email without opening it, then paste it here. This signs in this panel directly.</p>
+              <label className="field">Private sign-in link<input type="password" autoComplete="off" required value={sidebarLink} onChange={e => setSidebarLink(e.target.value)} /></label>
+              <button disabled={!sidebarLink}>Sign in to this sidebar</button>
+            </form>}
             <button className="link" onClick={() => setPhase("email")}>
               ← Use a different email
             </button>

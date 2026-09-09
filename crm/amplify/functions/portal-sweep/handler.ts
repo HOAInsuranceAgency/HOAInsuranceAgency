@@ -1,6 +1,6 @@
 import { LambdaClient, InvokeCommand } from "@aws-sdk/client-lambda";
 import { HeadObjectCommand, S3Client } from "@aws-sdk/client-s3";
-import { SESv2Client, SendEmailCommand } from "@aws-sdk/client-sesv2";
+import { enqueueOperation } from "../communications/operations";
 import { Amplify } from "aws-amplify";
 import { generateClient } from "aws-amplify/data";
 import { getAmplifyDataClientConfig } from "@aws-amplify/backend/function/runtime";
@@ -8,7 +8,6 @@ import type { Schema } from "../../data/resource";
 import { listAllPages } from "../../../src/lib/pagination";
 import { extractedAt, parseStoredJson } from "../../../src/lib/aiExtraction";
 import { isExtractableCategory } from "../../../src/lib/enums";
-import { AGENCY, AGENCY_FMT } from "../../../../shared/agency";
 import { REQUESTED_DOCUMENTS } from "../../../../shared/leadDocuments";
 import { decideSweep } from "./decide";
 import { arrivedSections, renderNotification } from "./email";
@@ -33,7 +32,6 @@ async function getDataClient() {
   return dataClient;
 }
 
-const ses = new SESv2Client();
 const lambda = new LambdaClient();
 const s3 = new S3Client();
 
@@ -87,10 +85,6 @@ async function landed<T extends { s3Key?: string | null }>(
   return documents.filter((_, i) => checks[i]);
 }
 
-/** Same per-branch mailbox as the auto-reply: sales on main, a test box else. */
-const MAILBOX = process.env.AGENCY_MAILBOX || AGENCY_FMT.leadEmailLower;
-const FROM = `${AGENCY.name} <${MAILBOX}>`;
-
 /**
  * The fields worth putting in the email.
  *
@@ -127,7 +121,7 @@ function headlines(raw: unknown): Record<string, string> {
 export const handler = async () => {
   const client = await getDataClient();
   const now = new Date().toISOString();
-  const summary = { open: 0, sent: 0, extracting: 0, waiting: 0, failed: 0 };
+  const summary = { open: 0, queued: 0, extracting: 0, waiting: 0, failed: 0 };
 
   /**
    * Only portals with something unreported.
@@ -239,7 +233,7 @@ export const handler = async () => {
         (r) => !receivedCategories.has(r.category as never)
       ).map((r) => r.label);
 
-      const { subject, text, html } = renderNotification({
+      const { subject, text } = renderNotification({
         associationName: account.data.name,
         accountId: portal.accountId,
         arrived,
@@ -248,21 +242,9 @@ export const handler = async () => {
         crmBaseUrl: process.env.CRM_BASE_URL ?? "",
       });
 
-      await ses.send(
-        new SendEmailCommand({
-          FromEmailAddress: FROM,
-          Destination: { ToAddresses: [MAILBOX] },
-          Content: {
-            Simple: {
-              Subject: { Data: subject, Charset: "UTF-8" },
-              Body: {
-                Text: { Data: text, Charset: "UTF-8" },
-                Html: { Data: html, Charset: "UTF-8" },
-              },
-            },
-          },
-        })
-      );
+      await enqueueOperation(`op:documents:${portal.id}:${decision.upTo}`, {
+        type: "COMMENT", accountId: portal.accountId, text,
+      });
 
       /**
        * Marked with the `lastUploadAt` the decision was made against, not with
@@ -274,8 +256,8 @@ export const handler = async () => {
         id: portal.id,
         notifiedUpTo: decision.upTo,
       });
-      summary.sent++;
-      console.log("portal-sweep sent", portal.id, JSON.stringify({ subject }));
+      summary.queued++;
+      console.log("portal-sweep queued", portal.id, JSON.stringify({ subject }));
     } catch (err) {
       // One bad portal must not stop the others.
       summary.failed++;

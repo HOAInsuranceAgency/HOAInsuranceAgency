@@ -11,6 +11,9 @@ applications:
             - npm ci --cache .npm --prefer-offline
         build:
           commands:
+            # A push starts two independent apps. Keep the currently deployed
+            # website until the CRM accepts this bundle's submission contract.
+            - node scripts/wait-for-intake-contract.mjs
             - npm run build
       artifacts:
         baseDirectory: dist

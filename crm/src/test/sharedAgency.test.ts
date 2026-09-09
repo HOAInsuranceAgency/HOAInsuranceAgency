@@ -89,7 +89,6 @@ const WEB_CANONICAL: Record<string, string> = {
   LEAD_EMAIL_HREF: AGENCY_FMT.leadEmailHref,
   ADDRESS_LINE1: AGENCY.addressLine1,
   ADDRESS_LINE2: AGENCY_FMT.addressLine2,
-  FORMSUBMIT_URL: AGENCY_FMT.formsubmitUrl,
 };
 
 describe("shared/agency — stored fields", () => {
@@ -208,11 +207,7 @@ describe("shared/agency — derived shapes", () => {
     // The point of the split. `email` is printed on ACORD forms already sent
     // to carriers and on issued certificates; a lead-routing change must not
     // be able to reach it, which is why these are two stored fields and the
-    // FormSubmit endpoint is built from the lead one.
-    expect(AGENCY_FMT.formsubmitUrl).toBe(
-      `https://formsubmit.co/ajax/${AGENCY_FMT.leadEmailLower}`
-    );
-    expect(AGENCY_FMT.formsubmitUrl).not.toContain(AGENCY_FMT.emailLower);
+    // Front sender is configured independently from the general address.
     expect(AGENCY.leadEmail).not.toBe(AGENCY.email);
   });
 
@@ -221,10 +216,6 @@ describe("shared/agency — derived shapes", () => {
     expect(AGENCY.leadEmail).toBe("sales@ProtectMyHOA.com");
     expect(AGENCY_FMT.emailHref).toContain("ProtectMyHOA");
     expect(AGENCY_FMT.leadEmailHref).toContain("ProtectMyHOA");
-    expect(AGENCY_FMT.formsubmitUrl).not.toContain("ProtectMyHOA");
-    expect(AGENCY_FMT.formsubmitUrl).toBe(
-      AGENCY_FMT.formsubmitUrl.toLowerCase()
-    );
   });
 
   it("reproduces byte-for-byte what the two apps render today", () => {
@@ -234,9 +225,6 @@ describe("shared/agency — derived shapes", () => {
     expect(AGENCY_FMT.phoneHref).toBe("tel:+15082332261"); // constants.ts
     expect(AGENCY_FMT.emailHref).toBe("mailto:insurance@ProtectMyHOA.com");
     expect(AGENCY_FMT.leadEmailHref).toBe("mailto:sales@ProtectMyHOA.com");
-    expect(AGENCY_FMT.formsubmitUrl).toBe(
-      "https://formsubmit.co/ajax/sales@protectmyhoa.com"
-    );
     expect(AGENCY_FMT.emailLower).toBe("insurance@protectmyhoa.com"); // license-alerts recipient
     expect(AGENCY_FMT.leadEmailLower).toBe("sales@protectmyhoa.com");
     expect(AGENCY_FMT.phoneIntl).toBe("+1-508-233-2261"); // Layout.astro JSON-LD

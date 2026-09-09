@@ -817,7 +817,7 @@ not the only permissible source of evidence.
 | Email (sales / lead delivery) | sales@ProtectMyHOA.com | `AGENCY.leadEmail` |
 | Site | https://www.protectmyhoa.com | `AGENCY.site` |
 
-`AGENCY_FMT` derives every reformatted variant — `tel:` href, E.164, schema.org `telephone`, footer address line, FormSubmit endpoint, the unmarked brand/entity line, and the visible `ProtectMyHOA™` label. **Edit `AGENCY` only; never hand-edit `AGENCY_FMT`.** Founder identity fields are deliberately separate from the operational `contactName` used by ACORD generation.
+`AGENCY_FMT` derives every reformatted variant — `tel:` href, E.164, schema.org `telephone`, footer address line, the unmarked brand/entity line, and the visible `ProtectMyHOA™` label. **Edit `AGENCY` only; never hand-edit `AGENCY_FMT`.** Founder identity fields are deliberately separate from the operational `contactName` used by ACORD generation.
 
 ### Trade name / DBA — NOT VERIFIED
 
@@ -898,26 +898,18 @@ digits; formatted US numbers and a `+1` prefix are accepted. The supplied number
 both CRM and email payloads. This requirement belongs to `/quote/`; it does not add a phone
 field to the separate `/contact/` form.
 
-Each submission can fan out to three destinations, all independent:
+All five website forms use one durable CRM capture through AppSync. The browser retains
+one submission ID and retry proof through retries; success means the lead, answers and
+pending delivery work were saved together. A failed save preserves the entered answers.
+Missing `PUBLIC_CRM_API_URL` or `PUBLIC_CRM_API_KEY` shows a retryable error.
 
-1. **Website-lead email** via FormSubmit → `https://formsubmit.co/ajax/sales@protectmyhoa.com`
-2. **CRM** via AppSync ([`lib/crmLead.ts`](../web/src/lib/crmLead.ts)) — skipped silently if `PUBLIC_CRM_API_URL` / `PUBLIC_CRM_API_KEY` are unset
-3. **Zapier** webhooks — one per form type (`PUBLIC_ZAPIER_HOOK_HO6`, `_QUOTE`, `_LEAD`)
+Front imports the labelled website submission and sends Brian Cole's initial AI reply in
+that exact conversation using the shared `sales@protectmyhoa.com` channel. There is no
+FormSubmit delivery or provider-selection environment flag. The general/service address
+remains `insurance@protectmyhoa.com`. Existing optional Zapier hooks remain separate.
 
-The production recipient comes from `AGENCY.leadEmail` in `shared/agency.ts`, consumed by
-`FORMSUBMIT_URL` in `web/src/constants.ts`. `insurance@protectmyhoa.com` remains the
-general/service/ACORD address; it is not the website-lead recipient.
-
-**Release gate:** FormSubmit must be activated separately for every recipient. Activation of
-`insurance@protectmyhoa.com` or a staging address does not activate `sales@protectmyhoa.com`.
-Do not deploy production until `sales@protectmyhoa.com` is activated and tested by the user.
-The first submission to an unactivated recipient triggers a confirmation email, not a delivered
-lead; the recipient must follow that confirmation before delivery can be tested. No real forms
-were submitted during this repository pass.
-
-`PUBLIC_LEAD_NOTIFY_EMAIL` may override the recipient for staging or branch previews. Keep
-production unset or set to `sales@protectmyhoa.com`, activate any override recipient separately,
-and disable analytics for test submissions to avoid recording test conversions.
+Staging uses its own CRM backend, Front inbox/channel and permitted test recipients.
+Deployment and controlled live acceptance follow [the integration runbook](COMMUNICATIONS-RUNBOOK.md).
 
 ---
 
@@ -930,8 +922,7 @@ either is absent.
 | Variable | Effect if unset |
 | --- | --- |
 | `PUBLIC_GOOGLE_PLACES_KEY` | Address autocomplete disabled |
-| `PUBLIC_CRM_API_URL` / `PUBLIC_CRM_API_KEY` | Forms skip the CRM write, still send email |
-| `PUBLIC_LEAD_NOTIFY_EMAIL` | Website leads use `sales@protectmyhoa.com`; overrides need separate FormSubmit activation |
+| `PUBLIC_CRM_API_URL` / `PUBLIC_CRM_API_KEY` | Required for durable capture; missing configuration displays a form error |
 | `PUBLIC_ANALYTICS_DISABLED` | **Analytics ON** (see below) |
 | `PUBLIC_ZAPIER_HOOK_HO6` / `_QUOTE` / `_LEAD` | No Zapier routing |
 | `PUBLIC_OWNER_LOOKUP_URL` | Owner lookup falls through gracefully |
@@ -1055,7 +1046,7 @@ were performed here.
 - **Rotate Buildium credentials** and put replacements in the appropriate Amplify environment
   before deployment. Removing source fallbacks does not revoke exposed credentials; review
   Git history and other local worktree copies separately.
-- **Activate and test `sales@protectmyhoa.com` with FormSubmit** before production deployment.
+- **Validate the Front sales channel and controlled website submission** before production cutover.
   Every recipient requires its own activation; see §10.
 - **Change the apex redirect from 302 to permanent 301/308** at the hosting/CDN layer, pointing
   `https://protectmyhoa.com/` to `https://www.protectmyhoa.com/` and preserving path/query.

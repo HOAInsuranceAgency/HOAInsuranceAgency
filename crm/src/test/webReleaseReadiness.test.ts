@@ -69,29 +69,15 @@ describe("production website-lead recipient and operational documentation", () =
     expect(AGENCY_FMT.leadEmailLower).toBe("sales@protectmyhoa.com");
     expect(AGENCY_FMT.emailLower).toBe("insurance@protectmyhoa.com");
     expect(AGENCY_FMT.leadEmailLower).not.toBe(AGENCY_FMT.emailLower);
-    expect(AGENCY_FMT.formsubmitUrl).toBe(
-      "https://formsubmit.co/ajax/sales@protectmyhoa.com"
-    );
-    expect(CONSTANTS).toMatch(
-      /const NOTIFY_EMAIL = import\.meta\.env\.PUBLIC_LEAD_NOTIFY_EMAIL \|\| AGENCY\.leadEmail;/
-    );
-    expect(CONSTANTS).toContain(
-      'export const FORMSUBMIT_URL = `https://formsubmit.co/ajax/${NOTIFY_EMAIL.toLowerCase()}`;'
-    );
+    expect(CONSTANTS).not.toContain("FORMSUBMIT_URL");
+    expect(CONSTANTS).not.toContain("PUBLIC_LEAD_NOTIFY_EMAIL");
     expect(CONSTANTS).toContain("export const EMAIL = AGENCY.email;");
   });
 
-  it("documents the same FormSubmit endpoint production code uses", () => {
-    expect(STRUCTURE).toContain(AGENCY_FMT.formsubmitUrl);
-    expect(STRUCTURE).not.toContain(
-      `https://formsubmit.co/ajax/${AGENCY_FMT.emailLower}`
-    );
-    expect(STRUCTURE).toContain(
-      "FormSubmit must be activated separately for every recipient"
-    );
-    expect(STRUCTURE).toContain(
-      "Do not deploy production until `sales@protectmyhoa.com` is activated and tested by the user."
-    );
+  it("documents durable CRM capture and the Front cutover", () => {
+    expect(STRUCTURE).toContain("durable CRM capture");
+    expect(STRUCTURE).toContain("Front");
+    expect(STRUCTURE).not.toContain("forms silently skip");
   });
 
   it("keeps the closed guide-count note consistent with the homepage", () => {

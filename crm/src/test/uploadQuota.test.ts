@@ -120,28 +120,16 @@ describe("upload quotas hold under concurrency", () => {
 });
 
 describe("a lead cannot be emailed the same reply twice", () => {
-  /**
-   * The claim that flips a row to SENDING carries no condition on its current
-   * status, so two overlapping passes can both claim it. Amplify's data client
-   * cannot express a conditional update, so the overlap is removed instead.
-   */
-  it("runs one sweep at a time", () => {
-    expect(BACKEND).toContain("reservedConcurrentExecutions = 1");
-    // Anchored to the reserved-concurrency loop specifically — other config
-    // loops over functions exist now (the pf log-table wiring).
-    const at = BACKEND.indexOf("reservedConcurrentExecutions");
-    const before = BACKEND.slice(0, at);
-    const block = [...before.matchAll(/for \(const fn of \[([^\]]*)\]\)/g)].pop()?.[1] ?? "";
-    expect(block).toContain("backend.leadReply");
-    expect(block).toContain("backend.portalSweep");
+  it("runs the reply producer and delivery worker with bounded concurrency", () => {
+    expect(BACKEND).toContain("for (const fn of [backend.leadReply, backend.portalSweep])");
+    expect(BACKEND).toMatch(/^\(backend\.communicationWorker\.resources\.lambda\.node\.defaultChild as CfnFunction\)\.reservedConcurrentExecutions = 1;$/m);
+    expect(BACKEND).toMatch(/for \(const fn of \[backend\.leadReply, backend\.portalSweep\]\) \{\s*\(fn\.resources\.lambda\.node\.defaultChild as CfnFunction\)\.reservedConcurrentExecutions = 1;/);
   });
-
-  it("does not claim the comment guarantees something it does not", () => {
-    // An earlier comment said flipping to SENDING "is what stops two sweeps
-    // emailing the same person twice". It is not, and a comment asserting a
-    // guarantee the code lacks is what makes a reviewer skim the line.
+  it("conditionally claims generation and queues delivery instead of sending inline", () => {
     const handler = read("../../amplify/functions/lead-reply/handler.ts");
-    expect(handler).toContain("does NOT make a double send impossible");
+    expect(handler).toContain('ConditionExpression: "#s = :waiting"');
+    expect(handler).toContain('await enqueueOperation(`op:ai:${reply.id}`');
+    expect(handler).not.toContain("ses.send");
   });
 });
 

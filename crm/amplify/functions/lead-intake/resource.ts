@@ -8,4 +8,5 @@ export const leadIntake = defineFunction({
   name: "lead-intake",
   entry: "./handler.ts",
   timeoutSeconds: 30,
+  resourceGroupName: "data",
 });

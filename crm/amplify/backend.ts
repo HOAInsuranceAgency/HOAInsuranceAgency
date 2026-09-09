@@ -1,4 +1,5 @@
 import { defineBackend } from "@aws-amplify/backend";
+import { CfnWebACL, CfnWebACLAssociation } from "aws-cdk-lib/aws-wafv2";
 import { Duration } from "aws-cdk-lib";
 import { PolicyStatement } from "aws-cdk-lib/aws-iam";
 import { Secret } from "aws-cdk-lib/aws-secretsmanager";
@@ -45,6 +46,7 @@ import { pfElection } from "./functions/pf-election/resource";
 import { pfAutopay } from "./functions/pf-autopay/resource";
 import { resolveMailbox } from "./functions/mailbox";
 import { activityLog } from "./functions/activity-log/resource";
+import { communications, communicationWorker, communicationWebhook } from "./functions/communications/resource";
 import {
   magicLinkDefine,
   magicLinkCreate,
@@ -84,6 +86,9 @@ export const backend = defineBackend({
   pfElection,
   pfAutopay,
   activityLog,
+  communications,
+  communicationWorker,
+  communicationWebhook,
   magicLinkDefine,
   magicLinkCreate,
   magicLinkVerify,
@@ -292,6 +297,73 @@ const magicLinkFrom = "HOA Insurance Agency <noreply@protectmyhoa.com>";
 const branch = process.env.AWS_BRANCH;
 const leadReplyMailbox = resolveMailbox("lead", branch);
 const internalMailbox = resolveMailbox("internal", branch);
+
+// Bound unauthenticated lead capture; keep ordinary authenticated CRM work outside the rule.
+const intakeFirewall = new CfnWebACL(backend.data.resources.graphqlApi, "LeadIntakeRateLimit", {
+  scope: "REGIONAL", defaultAction: { allow: {} },
+  visibilityConfig: { cloudWatchMetricsEnabled: true, metricName: "LeadIntake", sampledRequestsEnabled: false },
+  rules: [{ name: "PublicLeadIntakePerIp", priority: 0, action: { block: {} },
+    visibilityConfig: { cloudWatchMetricsEnabled: true, metricName: "LeadIntakePerIp", sampledRequestsEnabled: false },
+    statement: { rateBasedStatement: { aggregateKeyType: "IP", limit: 100, evaluationWindowSec: 300,
+      scopeDownStatement: { andStatement: { statements: [
+        { sizeConstraintStatement: { fieldToMatch: { singleHeader: { name: "x-api-key" } }, comparisonOperator: "GT", size: 0, textTransformations: [{ priority: 0, type: "NONE" }] } },
+        { orStatement: { statements: ["submitweblead", "leadintakeready"].map(searchString => ({ byteMatchStatement: { fieldToMatch: { body: { oversizeHandling: "MATCH" } }, positionalConstraint: "CONTAINS", searchString, textTransformations: [{ priority: 0, type: "LOWERCASE" }] } })) } },
+      ] } } } } }],
+});
+new CfnWebACLAssociation(backend.data.resources.graphqlApi, "LeadIntakeFirewallAssociation", { resourceArn: backend.data.resources.graphqlApi.arn, webAclArn: intakeFirewall.attrArn });
+
+// Workflow records are server-only. Custom resolvers enforce permissions and
+// transact duties, deadlines, audit records and delivery work atomically.
+const communicationTable = new Table(backend.data.resources.graphqlApi, "CommunicationRecords", {
+  partitionKey: { name: "id", type: AttributeType.STRING }, billingMode: BillingMode.PAY_PER_REQUEST,
+  encryption: TableEncryption.AWS_MANAGED, pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true },
+});
+communicationTable.addGlobalSecondaryIndex({ indexName: "kind", partitionKey: { name: "kind", type: AttributeType.STRING }, sortKey: { name: "id", type: AttributeType.STRING } });
+communicationTable.addGlobalSecondaryIndex({ indexName: "work", partitionKey: { name: "workKind", type: AttributeType.STRING }, sortKey: { name: "workAt", type: AttributeType.STRING } });
+communicationTable.addGlobalSecondaryIndex({ indexName: "account", partitionKey: { name: "accountId", type: AttributeType.STRING }, sortKey: { name: "accountSort", type: AttributeType.STRING } });
+communicationTable.addGlobalSecondaryIndex({ indexName: "due", partitionKey: { name: "dueGroup", type: AttributeType.STRING }, sortKey: { name: "dueAt", type: AttributeType.STRING } });
+const communicationSecret = new Secret(backend.data.resources.graphqlApi, "CommunicationCredentials", {
+  generateSecretString: { secretStringTemplate: "{}", generateStringKey: "installationKey", excludePunctuation: true },
+});
+for (const fn of [backend.communications, backend.communicationWorker, backend.communicationWebhook, backend.leadIntake, backend.leadReply, backend.portalSweep]) {
+  communicationTable.grantReadWriteData(fn.resources.lambda);
+  fn.addEnvironment("COMMUNICATION_TABLE", communicationTable.tableName);
+  fn.addEnvironment("COMMUNICATION_ENV", branch ?? "local");
+  fn.addEnvironment("CRM_BASE_URL", magicLinkBaseUrl);
+  fn.addEnvironment("AGENCY_MAILBOX", leadReplyMailbox);
+}
+for (const fn of [backend.communications, backend.communicationWorker, backend.communicationWebhook, backend.leadReply]) {
+  communicationSecret.grantRead(fn.resources.lambda);
+  fn.addEnvironment("COMMUNICATION_SECRET", communicationSecret.secretArn);
+}
+communicationSecret.grantWrite(backend.communications.resources.lambda);
+for (const fn of [backend.communications, backend.communicationWorker, backend.leadIntake, backend.leadReply]) {
+  fn.addEnvironment("USER_POOL_ID", backend.auth.resources.userPool.userPoolId);
+  fn.resources.lambda.addToRolePolicy(new PolicyStatement({ actions: ["cognito-idp:ListUsers"], resources: [backend.auth.resources.userPool.userPoolArn] }));
+}
+for (const model of ["Account", "Contact", "PriorCarrier", "LeadReply"] as const) {
+  const modelTable = backend.data.resources.tables[model];
+  const envName = `${model.replace(/([a-z])([A-Z])/g, "$1_$2").toUpperCase()}_TABLE`;
+  for (const fn of [backend.leadIntake, backend.communications, backend.leadReply]) {
+    modelTable.grantReadWriteData(fn.resources.lambda); fn.addEnvironment(envName, modelTable.tableName);
+  }
+}
+for (const fn of [backend.communications, backend.communicationWorker, backend.leadIntake, backend.leadReply, backend.portalSweep]) {
+  backend.data.resources.tables.Activity.grantReadWriteData(fn.resources.lambda);
+  fn.addEnvironment("ACTIVITY_TABLE", backend.data.resources.tables.Activity.tableName);
+}
+backend.storage.resources.bucket.grantReadWrite(backend.communicationWorker.resources.lambda, "documents/*");
+backend.communicationWorker.addEnvironment("DOCUMENT_BUCKET", backend.storage.resources.bucket.bucketName);
+backend.communicationWorker.resources.lambda.addToRolePolicy(new PolicyStatement({ actions: ["sns:Publish"], resources: ["*"] }));
+// Keep one worker: call unions and workflow repair jobs rely on serial execution.
+// Increasing this requires cross-invocation fencing, including around provider sends.
+(backend.communicationWorker.resources.lambda.node.defaultChild as CfnFunction).reservedConcurrentExecutions = 1;
+backend.communicationWorker.resources.lambda.addEventSource(new DynamoEventSource(backend.data.resources.tables.Account, {
+  startingPosition: StartingPosition.LATEST, batchSize: 10, retryAttempts: 3, reportBatchItemFailures: true,
+}));
+const communicationWebhookUrl = backend.communicationWebhook.resources.lambda.addFunctionUrl({ authType: FunctionUrlAuthType.NONE });
+backend.communications.addEnvironment("COMMUNICATION_WEBHOOK_URL", communicationWebhookUrl.url);
+backend.addOutput({ custom: { communicationWebhookUrl: communicationWebhookUrl.url, frontSidebarUrl: `${magicLinkBaseUrl}/front-sidebar` } });
 
 backend.magicLinkCreate.addEnvironment("MAGIC_LINK_SECRET_ARN", magicLinkSecret.secretArn);
 backend.magicLinkVerify.addEnvironment("MAGIC_LINK_SECRET_ARN", magicLinkSecret.secretArn);
@@ -811,22 +883,11 @@ backend.portalSweep.addEnvironment(
 backend.extractLead.resources.lambda.grantInvoke(
   backend.portalSweep.resources.lambda
 );
-backend.portalSweep.resources.lambda.addToRolePolicy(
-  new PolicyStatement({
-    actions: ["ses:SendEmail"],
-    resources: ["*"],
-  })
-);
+
 backend.leadReply.addEnvironment(
   "EXTRACT_LEAD_FUNCTION",
   backend.extractLead.resources.lambda.functionName
 );
 backend.extractLead.resources.lambda.grantInvoke(
   backend.leadReply.resources.lambda
-);
-backend.leadReply.resources.lambda.addToRolePolicy(
-  new PolicyStatement({
-    actions: ["ses:SendEmail"],
-    resources: ["*"],
-  })
 );

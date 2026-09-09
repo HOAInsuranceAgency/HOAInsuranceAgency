@@ -97,14 +97,24 @@ The public `submitWebLead` mutation (API-key auth, handled by
 [amplify/functions/lead-intake](amplify/functions/lead-intake)) lets
 protectmyhoa.com forms create leads directly; the handler forces
 `stage=LEAD`, so the public surface can never touch existing data. The web
-app calls it via `web/src/lib/crmLead.ts` (dual-write alongside the
-FormSubmit email, fail-soft). Set `PUBLIC_CRM_API_URL` / `PUBLIC_CRM_API_KEY`
+app calls it via `web/src/lib/crmLead.ts` (durable capture with queued Front delivery). Set `PUBLIC_CRM_API_URL` / `PUBLIC_CRM_API_KEY`
 on the **web** Amplify app per environment (values from this app's
 `amplify_outputs.json` → `data.url` / `data.api_key`). Note the API key
 expires after 365 days and must be rotated.
 
-## Next phases
+## Front and Dialpad integration
 
-1. **Role enforcement** — wire the Cognito groups into per-model auth rules.
-2. **ACORD carrier-submission forms** (125/126/140) on the template+mapping
-   engine above.
+Website intake now uses durable CRM capture and queued Front import/reply delivery.
+The account panel, Lead follow-up views and `/front-sidebar` share responsibilities,
+commitments, communication history and recovery controls. Dialpad events add calls
+and texts; native Front remains the human shared-line SMS sender.
+
+Start with the [setup and rollout runbook](../docs/COMMUNICATIONS-RUNBOOK.md).
+New deployments start paused. Credentials, actual tenant mappings and controlled
+live acceptance are required before activation. No production connection is
+established merely by building the repository.
+
+The reviewed designs remain available:
+[Front product spec](../docs/specs/front-crm-integration.md),
+[technical design](../docs/specs/front-crm-integration-technical.md), and
+[Dialpad extension](../docs/specs/dialpad-crm-integration.md).

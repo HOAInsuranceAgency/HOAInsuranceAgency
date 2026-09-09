@@ -51,7 +51,8 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
-import type { App } from "aws-cdk-lib";
+import { Stack, type App } from "aws-cdk-lib";
+import type { CfnFunction } from "aws-cdk-lib/aws-lambda";
 
 const AMPLIFY = resolve(process.cwd(), "amplify");
 
@@ -129,6 +130,10 @@ try {
   // Then the assembly itself, which is the half an import alone would miss.
   const app = backend.stack.node.root as App;
   const assembly = app.synth();
+  for (const fn of [backend.communicationWorker, backend.leadReply, backend.portalSweep]) {
+    const resource = fn.resources.lambda.node.defaultChild as CfnFunction;
+    if (Stack.of(resource).resolve(resource.reservedConcurrentExecutions) !== 1) throw new Error(`${resource.node.path} must retain reserved concurrency 1`);
+  }
   const stacks = assembly.stacks.length;
 
   console.log(`✔ Backend synthesised — ${stacks} stack${stacks === 1 ? "" : "s"}.`);

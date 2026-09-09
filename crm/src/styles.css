@@ -1036,3 +1036,14 @@ th.internal { color: var(--muted); }
 
 /* The invoice currently open, tied to the editor below the table. */
 .row-open td { background: var(--blue-bg); }
+
+/* Shared CRM / Front lead workflow controls. */
+.lead-workflow .workflow-task { border-top: 1px solid var(--border, #e2e8f0); padding: 12px 0; }
+.workflow-editor { border: 1px solid var(--border, #e2e8f0); border-radius: 8px; background: #f8fafc; padding: 16px; margin: 12px 0; }
+.lead-workflow textarea { width: 100%; box-sizing: border-box; }
+.front-crm-sidebar { max-width: 720px; padding: 16px; margin: 0 auto; overflow-wrap: anywhere; }
+.front-crm-sidebar h1 { font-size: 22px; }
+.front-crm-sidebar .card { padding: 16px; }
+.front-crm-sidebar .form-grid { grid-template-columns: 1fr; }
+.front-crm-sidebar .toolbar { flex-wrap: wrap; }
+.front-crm-sidebar .field input, .front-crm-sidebar .field select { min-width: 0; width: 100%; }

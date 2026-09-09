@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   getFlow,
   STEPS,
@@ -7,7 +7,6 @@ import {
 } from "../../../web/src/components/quote/schema";
 import {
   buildCrmLead,
-  sendQuoteEmail,
 } from "../../../web/src/components/quote/submission";
 
 function contactPhoneField() {
@@ -17,10 +16,6 @@ function contactPhoneField() {
   if (!phone) throw new Error("Contact step must include a phone field");
   return phone;
 }
-
-afterEach(() => {
-  vi.unstubAllGlobals();
-});
 
 describe.each(["board", "manager", "owner"])("%s quote contact step", (role) => {
   it("uses the shared required phone field before submission", () => {
@@ -67,16 +62,10 @@ describe.each(["board", "manager", "owner"])("%s quote contact step", (role) => 
       };
       expect(buildCrmLead(data, "Brian Cole").contactPhone).toBe(contactPhone);
 
-      const fetchMock = vi.fn().mockResolvedValue({
-        ok: true,
-        json: async () => ({ success: "true" }),
-      });
-      vi.stubGlobal("fetch", fetchMock);
-      await sendQuoteEmail(data, "Brian Cole");
+      const snapshot = JSON.parse(buildCrmLead(data, "Brian Cole").answerSnapshot!);
+      expect(snapshot.Phone).toBe(contactPhone);
+      expect(snapshot["Full Name"]).toBe("Taylor Example");
 
-      expect(fetchMock).toHaveBeenCalledTimes(1);
-      const request = fetchMock.mock.calls[0][1] as RequestInit;
-      expect(JSON.parse(String(request.body))).toMatchObject({ Phone: contactPhone });
     }
   );
 });

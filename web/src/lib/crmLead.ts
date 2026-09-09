@@ -1,17 +1,5 @@
-/**
- * Website → CRM lead intake.
- *
- * Posts the public `submitWebLead` mutation to the CRM's AppSync API
- * (API-key auth, create-lead-only surface). Runs alongside the FormSubmit
- * email dual-write and NEVER throws — a CRM hiccup must not break the
- * visitor-facing form.
- *
- * Configure per environment (Amplify env vars on the web app):
- *   PUBLIC_CRM_API_URL — the CRM AppSync GraphQL endpoint
- *   PUBLIC_CRM_API_KEY — its API key
- * Unset (e.g. local dev) → intake is skipped silently.
- */
-
+/** Durable website lead capture. A success means the CRM saved the enquiry. */
+import { useRef } from "react";
 import type { AccountType } from "../../../shared/accountType";
 
 export interface CrmLeadInput {
@@ -19,6 +7,7 @@ export interface CrmLeadInput {
    *  enum both apps use, and `web` cannot import the CRM's Amplify schema. */
   type?: AccountType;
   name: string;
+  answerSnapshot?: string;
   contactFirstName?: string;
   contactLastName?: string;
   contactEmail?: string;
@@ -46,6 +35,7 @@ export interface CrmLeadInput {
  * `webLeadFields.test.ts` in the CRM compares all three and fails on a mismatch.
  */
 const MUTATION = `mutation SubmitWebLead(
+  $submissionId: String!, $retryProof: String!, $answerSnapshot: String,
   $type: String, $name: String!, $contactFirstName: String, $contactLastName: String,
   $contactEmail: String, $contactPhone: String, $address: String, $city: String,
   $state: String, $zip: String, $unitNumber: String, $currentCarrier: String,
@@ -53,6 +43,7 @@ const MUTATION = `mutation SubmitWebLead(
   $buildiumId: String, $source: String, $notes: String
 ) {
   submitWebLead(
+    submissionId: $submissionId, retryProof: $retryProof, answerSnapshot: $answerSnapshot,
     type: $type, name: $name, contactFirstName: $contactFirstName,
     contactLastName: $contactLastName, contactEmail: $contactEmail,
     contactPhone: $contactPhone, address: $address, city: $city, state: $state,
@@ -63,8 +54,8 @@ const MUTATION = `mutation SubmitWebLead(
 }`;
 
 /**
- * What intake handed back. `null` for every failure and for an unconfigured
- * build — the caller shows no upload panel and the visitor sees nothing.
+ * Successful durable intake receipt. Failures throw so the form keeps its
+ * answers and shows a retryable error.
  */
 export interface CrmLeadResult {
   accountId: string;
@@ -97,34 +88,58 @@ function unwrap(payload: unknown): Record<string, unknown> | null {
   return null;
 }
 
-export async function submitCrmLead(
-  input: CrmLeadInput
-): Promise<CrmLeadResult | null> {
+export interface SubmissionIdentity { submissionId: string; retryProof: string }
+export async function submitCrmLead(input: CrmLeadInput, identity: SubmissionIdentity): Promise<CrmLeadResult> {
   const url = import.meta.env.PUBLIC_CRM_API_URL;
   const key = import.meta.env.PUBLIC_CRM_API_KEY;
-  if (!url || !key) return null;
+  if (!url || !key) throw new Error("The enquiry form is temporarily unavailable. Please call us.");
+  const response = await fetch(url, {
+    method: "POST", headers: { "Content-Type": "application/json", "x-api-key": key },
+    body: JSON.stringify({ query: MUTATION, variables: { ...input, ...identity } }),
+    signal: AbortSignal.timeout(40000),
+  });
+  if (!response.ok) throw new Error("We couldn't confirm your request. Please try again.");
+  const body = await response.json();
+  if (body.errors?.length) throw new Error("We couldn't save your request. Please try again.");
+  const result = unwrap(body.data?.submitWebLead);
+  if (!result?.ok || typeof result.id !== "string") throw new Error(String(result?.error ?? "We couldn't save your request."));
+  return { accountId: result.id, uploadToken: typeof result.uploadToken === "string" ? result.uploadToken : null };
+}
 
-  try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-api-key": key },
-      body: JSON.stringify({ query: MUTATION, variables: input }),
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const body = await res.json();
-    if (body.errors?.length) throw new Error(body.errors[0].message);
-    const result = unwrap(body.data?.submitWebLead);
-    if (!result?.ok || typeof result.id !== "string") return null;
-    return {
-      accountId: result.id,
-      uploadToken:
-        typeof result.uploadToken === "string" ? result.uploadToken : null,
-    };
-  } catch (err) {
-    // Fail-soft by design; the FormSubmit email still captures the lead.
-    console.warn("CRM lead intake failed", err);
-    return null;
-  }
+/** Keep the same identity and proof through double clicks, timeouts and reloads. */
+export function createLeadSubmission(send: typeof submitCrmLead = submitCrmLead) {
+  const state: { current?: { identity: SubmissionIdentity; source: string; pending?: Promise<CrmLeadResult>; result?: CrmLeadResult; payload?: string } } = {};
+  return {
+    async submit(input: CrmLeadInput): Promise<CrmLeadResult> {
+      const source = input.source ?? "website", payload = JSON.stringify(input);
+      const storageKey = `hoa:submission:${source}`;
+      // Identities belong to exact answers. A corrected enquiry is a new
+      // submission; retrying unchanged answers still recovers the same receipt.
+      if (state.current && (state.current.payload !== payload || state.current.source !== source)) state.current = undefined;
+      if (!state.current) {
+        let identity: SubmissionIdentity | undefined;
+        try { const saved = JSON.parse(sessionStorage.getItem(storageKey) ?? "null"); if (saved?.payload === payload && saved?.identity?.submissionId && saved.identity.retryProof) identity = saved.identity; } catch { /* Storage may be disabled. Memory still protects retries. */ }
+        identity ??= { submissionId: crypto.randomUUID(), retryProof: Array.from(crypto.getRandomValues(new Uint8Array(32)), x => x.toString(16).padStart(2, "0")).join("") };
+        state.current = { identity, source, payload };
+        try { sessionStorage.setItem(storageKey, JSON.stringify({ identity, payload })); } catch { /* Optional reload recovery. */ }
+      }
+      const current = state.current;
+      if (current.result) return current.result;
+      if (current.pending) return current.pending;
+      current.pending = send(input, current.identity);
+      try {
+        current.result = await current.pending;
+        try { if (JSON.parse(sessionStorage.getItem(storageKey) ?? "null")?.identity?.submissionId === current.identity.submissionId) sessionStorage.removeItem(storageKey); } catch { /* Capture already succeeded. */ }
+        return current.result;
+      } finally { current.pending = undefined; }
+    },
+    reset() { state.current = undefined; },
+  };
+}
+export function useLeadSubmission() {
+  const controller = useRef<ReturnType<typeof createLeadSubmission>>();
+  controller.current ??= createLeadSubmission();
+  return controller.current;
 }
 
 /* ──────────────────────────────────────────────────────────
@@ -174,7 +189,7 @@ async function crmMutation(
  * Reserve somewhere for one file and PUT it there.
  *
  * Throws with a message meant for the visitor — the panel shows it against the
- * row for that file. Unlike intake, this is not fail-soft: someone who just
+ * row for that file. Like intake, this is not fail-soft: someone who just
  * chose a file needs to know it did not arrive.
  */
 export async function uploadLeadFile(

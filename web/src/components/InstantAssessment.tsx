@@ -3,14 +3,14 @@ import { useState, useRef, useEffect, useCallback } from "react";
    used to carry four hand-written copies of the number — an error message, the
    success screen's tel: href and its visible label, and the "Prefer to talk?"
    block — which is four places to miss on the day the number changes. */
-import { FORMSUBMIT_URL, LEAD_EMAIL, LEAD_EMAIL_HREF, PHONE, PHONE_HREF, trackLead } from "../constants";
+import { LEAD_EMAIL, LEAD_EMAIL_HREF, PHONE, PHONE_HREF, trackLead } from "../constants";
 /* The licensed entity's name, interpolated rather than typed. `../constants`
    re-exports the contact details but not the name, and this lander names the
    operator twice in copy — under the submit button and above the phone number.
    `displayName` is the entity name without the LLC suffix, which is the form
    marketing copy uses; the full legal name lives on the LegalStrip below. */
 import { AGENCY_FMT } from "../../../shared/agency";
-import { submitCrmLead } from "../lib/crmLead";
+import { useLeadSubmission } from "../lib/crmLead";
 // One loader for the whole site — see lib/googlePlaces.ts.
 import { loadGooglePlaces } from "../lib/googlePlaces";
 import LeadUploadPanel from "./LeadUploadPanel";
@@ -88,13 +88,16 @@ export function InstantAssessment({
     if (addressRef.current && window.google?.maps?.places && !acRef.current) initAC();
   });
 
+  const leadSubmission = useLeadSubmission();
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!email.trim()) { setError("Please enter your email."); return; }
     if (!name.trim()) { setError("Please enter your name."); return; }
     setSending(true);
     setError("");
-    void submitCrmLead({
+    try {
+      const received = await leadSubmission.submit({
       type: "ASSOCIATION",
       name: address.trim() || name.trim(),
       contactFirstName: name.trim().split(/\s+/)[0],
@@ -105,12 +108,8 @@ export function InstantAssessment({
       state: detectedState || undefined,
       source: `website-assessment:${source}`,
       unitCount: units ? String(units) : undefined,
-    }).then((r) => setUploadToken(r?.uploadToken ?? null));
-    try {
-      const res = await fetch(FORMSUBMIT_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify({
+
+      answerSnapshot: JSON.stringify({
           _subject: `🏢 Instant Assessment — ${name.trim()}${detectedState ? ` (${detectedState})` : ""}`,
           _template: "table",
           _captcha: "false",
@@ -124,7 +123,8 @@ export function InstantAssessment({
           Source: source,
         }),
       });
-      if (!res.ok) throw new Error("fail");
+      setUploadToken(received.uploadToken);
+
       trackLead("instant_assessment");
       setSent(true);
     } catch {

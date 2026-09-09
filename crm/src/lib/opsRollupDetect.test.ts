@@ -495,6 +495,9 @@ describe("web leads that heard nothing", () => {
     const overdue = reply({ status: "WAITING", dueAt: "2026-08-24T10:08:00Z" });
     expect(kinds(buildFindings(overdue, TUESDAY))).toContain("web-lead-heard-nothing");
   });
+  it("reports an initial reply stranded in the Front queue", () => {
+    expect(kinds(buildFindings(reply({ status: "QUEUED", submittedAt: "2026-08-24T10:00:00Z" }), TUESDAY))).toContain("web-lead-heard-nothing");
+  });
 });
 
 describe("leads and quotes", () => {

@@ -79,8 +79,6 @@ export const AGENCY_FMT = {
   leadEmailHref: `mailto:${AGENCY.leadEmail}`,
   /** Lowercase transport form of the sales address. */
   leadEmailLower: AGENCY.leadEmail.toLowerCase(),
-  /** FormSubmit endpoint derived from the sales address. */
-  formsubmitUrl: `https://formsubmit.co/ajax/${AGENCY.leadEmail.toLowerCase()}`,
   /** Trading name without the entity suffix, for signatures and letterheads. */
   displayName: AGENCY.name.replace(/\s+LLC$/, ""),
   /** Brand presentation for visible identity marks only, never structured data. */

@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useMemo, useCallback } from "react";
-import { QUOTE_URL, FORMSUBMIT_URL, PHONE, trackLead } from "../constants";
+import { QUOTE_URL, PHONE, trackLead } from "../constants";
 import { states as ALL_STATES } from "../data/states";
-import { submitCrmLead } from "../lib/crmLead";
+import { useLeadSubmission } from "../lib/crmLead";
 import "./CoverageCalculator.css";
 
 /* ── Types ── */
@@ -223,12 +223,15 @@ export function CoverageCalculator() {
     if (units > 0) setStep("results");
   }
 
+  const leadSubmission = useLeadSubmission();
+
   async function handleEmailSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!email.trim() || sending) return;
     setSending(true);
     setEmailError("");
-    void submitCrmLead({
+    try {
+      await leadSubmission.submit({
       type: "ASSOCIATION",
       name: address || email.trim(),
       contactEmail: email.trim(),
@@ -243,12 +246,8 @@ export function CoverageCalculator() {
       ]
         .filter(Boolean)
         .join("\n") || undefined,
-    });
-    try {
-      const res = await fetch(FORMSUBMIT_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify({
+
+      answerSnapshot: JSON.stringify({
           _subject: `Coverage Calculator Lead — ${address}`,
           _template: "table",
           _captcha: "false",
@@ -261,7 +260,7 @@ export function CoverageCalculator() {
           Source: "Coverage Calculator",
         }),
       });
-      if (!res.ok) throw new Error("fail");
+
       trackLead("coverage_calculator");
       setEmailSent(true);
     } catch {
@@ -272,6 +271,7 @@ export function CoverageCalculator() {
   }
 
   function handleReset() {
+    leadSubmission.reset();
     setStep("address");
     setAddress("");
     setStateAbbr("");

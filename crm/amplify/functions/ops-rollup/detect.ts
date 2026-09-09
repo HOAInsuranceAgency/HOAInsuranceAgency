@@ -642,7 +642,7 @@ export function buildFindings(input: DetectInputs, edition: Edition): Finding[] 
       (reply.status === "WAITING" &&
         reply.dueAt &&
         now - Date.parse(reply.dueAt) > REPLY_OVERDUE_MINUTES * 60_000) ||
-      (reply.status === "SENDING" &&
+      (["SENDING", "QUEUED"].includes(reply.status ?? "") &&
         reply.submittedAt &&
         now - Date.parse(reply.submittedAt) > REPLY_SENDING_MINUTES * 60_000);
     if (!broken) continue;

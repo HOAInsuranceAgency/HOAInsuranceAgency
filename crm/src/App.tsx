@@ -1,5 +1,7 @@
+import LeadWork from "./pages/LeadWork";
+import FrontSidebar from "./pages/FrontSidebar";
 import { useEffect, useState } from "react";
-import { Navigate, NavLink, Route, Routes } from "react-router-dom";
+import { Navigate, NavLink, Route, Routes, useLocation } from "react-router-dom";
 import { Authenticator, useAuthenticator } from "@aws-amplify/ui-react";
 import type { AuthUser } from "aws-amplify/auth";
 import { client, listAllPages, type UserProfile } from "./lib/client";
@@ -68,7 +70,7 @@ function AuthGate() {
 
   return (
     <div className="auth-screen">
-      <MagicLinkSignIn />
+      <MagicLinkSignIn embedded={window.location.pathname === "/front-sidebar"} />
     </div>
   );
 }
@@ -306,6 +308,7 @@ function AgencyIdentifiers() {
 }
 
 function Shell({ profile, signOut }: { profile: UserProfile; signOut: () => void }) {
+  const location = useLocation();
   const [menuOpen, setMenuOpen] = useState(false);
   /**
    * Financing sits between Documents' old slot and Settings for everyone:
@@ -314,9 +317,12 @@ function Shell({ profile, signOut }: { profile: UserProfile; signOut: () => void
    */
   const navItems = [
     ...NAV_ITEMS.slice(0, 5),
+    { to: "/lead-work", label: "Lead follow-up", icon: <IconCheck /> },
     { to: "/financing", label: "Financing", icon: <IconCoin /> } as const,
     ...NAV_ITEMS.slice(5),
   ];
+
+  if (location.pathname === "/front-sidebar") return <FrontSidebar />;
 
   return (
     <div className="shell">
@@ -358,6 +364,7 @@ function Shell({ profile, signOut }: { profile: UserProfile; signOut: () => void
           <Route path="/" element={<Dashboard />} />
           <Route path="/leads" element={<AccountsList stage="LEAD" />} />
           <Route path="/leads/new" element={<NewLead />} />
+          <Route path="/lead-work" element={<LeadWork profile={profile} />} />
           <Route path="/clients" element={<AccountsList stage="CLIENT" />} />
           <Route path="/accounts/:id" element={<AccountDetail profile={profile} />} />
           <Route path="/carriers" element={<Carriers />} />

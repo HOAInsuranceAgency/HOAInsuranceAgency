@@ -1,4 +1,7 @@
-import { useState } from "react";
+import { communicationRequest, type TeamEligibility } from "../lib/communications";
+import { ResponsibilitySelect } from "../components/LeadWorkflowPanel";
+import { useAsyncResource } from "../lib/useAsyncResource";
+import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { uploadData } from "aws-amplify/storage";
 import {
@@ -28,6 +31,14 @@ import {
 
 export default function NewLead() {
   const navigate = useNavigate();
+  const requestId = useRef(crypto.randomUUID());
+  const [salespersonId, setSalesperson] = useState("");
+  const [championId, setChampion] = useState("");
+  const members = useAsyncResource(() => communicationRequest<{ team: TeamEligibility[] }>("team"), [], { initialData: { team: [] } });
+  useEffect(() => {
+    const brian = members.data.team.find(t => t.name.toLowerCase() === "brian cole" && t.enabled && t.salesperson && t.champion);
+    if (brian) { setSalesperson(s => s || brian.userId); setChampion(s => s || brian.userId); }
+  }, [members.data]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [stagedFiles, setStagedFiles] = useState<File[]>([]);
@@ -64,7 +75,12 @@ export default function NewLead() {
     }
     setSaving(true);
     setError("");
-    const { data, errors } = await client.models.Account.create({
+    let data: { id: string } | null = null;
+    let errors: { message: string }[] = [];
+    try {
+      data = await communicationRequest<{ id: string }>("createLead", {
+        requestId: requestId.current, salespersonId: salespersonId || undefined, championId: championId || undefined,
+        fields: {
       stage: "LEAD",
       type: form.type as AccountType,
       name: form.name.trim(),
@@ -80,7 +96,9 @@ export default function NewLead() {
       currentPolicyExpiration: form.currentPolicyExpiration || undefined,
       source: form.source.trim() || undefined,
       notes: form.notes.trim() || undefined,
-    });
+    },
+      }, true);
+    } catch (e) { errors = [{ message: e instanceof Error ? e.message : "Could not create lead" }]; }
     if (errors?.length || !data) {
       setSaving(false);
       setError(friendlyError(errors?.[0]?.message, "Failed to create lead."));
@@ -170,6 +188,10 @@ export default function NewLead() {
   return (
     <>
       <h1>New lead</h1>
+      <div className="card"><div className="form-grid">
+        <ResponsibilitySelect label="Salesperson" value={salespersonId} team={members.data.team} kind="salesperson" onChange={setSalesperson} disabled={saving} />
+        <ResponsibilitySelect label="Deal champion" value={championId} team={members.data.team} kind="champion" onChange={setChampion} disabled={saving} />
+      </div>{members.error && <p className="error-text">{members.error}</p>}</div>
       <p className="sub">Association or individual prospect</p>
 
       <div className="card">

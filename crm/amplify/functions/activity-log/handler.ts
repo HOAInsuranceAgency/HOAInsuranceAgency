@@ -48,6 +48,7 @@ const nameCache = new Map<string, string>();
  * should stay reserved for.
  */
 const ROBOT_NAMES: Record<string, string> = {
+  "front-attachment": "Front attachment import",
   "lead-intake": "Lead intake",
   "extract-lead": "AI extraction",
   "lead-upload": "Lead upload",

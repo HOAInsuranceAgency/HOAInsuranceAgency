@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { LeadEligibilitySettings } from "../components/CommunicationSettings";
 import { client, fmtDate, type UserProfile } from "../lib/client";
 import { toE164 } from "../../amplify/functions/lead-intake/sms";
 import { Badge, flagBadge } from "../lib/badges";
@@ -216,6 +217,7 @@ export default function Team({ profile }: { profile: UserProfile }) {
 
   return (
     <>
+      <LeadEligibilitySettings />
       <div className="card">
         <h2>Team — invite someone</h2>
         <p className="muted small">

@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from "react";
-import { FORMSUBMIT_URL, PHONE, PHONE_HREF, EMAIL, LEAD_EMAIL, LEAD_EMAIL_HREF, ADDRESS_LINE1, ADDRESS_LINE2, trackLead } from "../constants";
-import { submitCrmLead } from "../lib/crmLead";
+import { PHONE, PHONE_HREF, EMAIL, LEAD_EMAIL, LEAD_EMAIL_HREF, ADDRESS_LINE1, ADDRESS_LINE2, trackLead } from "../constants";
+import { useLeadSubmission } from "../lib/crmLead";
 import { AGENCY } from "../../../shared/agency";
 import "./ContactForm.css";
 
@@ -42,11 +42,14 @@ export function ContactForm({
   const [message, setMessage] = useState("");
   const [status, setStatus] = useState<"idle" | "sending" | "sent" | "error">("idle");
 
+  const leadSubmission = useLeadSubmission();
+
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     if (!firstName.trim() || !lastName.trim() || !email.trim() || !message.trim()) return;
     setStatus("sending");
-    void submitCrmLead({
+    try {
+      await leadSubmission.submit({
       type: "ASSOCIATION",
       name: `${firstName.trim()} ${lastName.trim()}`,
       contactFirstName: firstName.trim(),
@@ -54,12 +57,8 @@ export function ContactForm({
       contactEmail: email.trim(),
       source: "website-contact",
       notes: message.trim(),
-    });
-    try {
-      const res = await fetch(FORMSUBMIT_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify({
+
+      answerSnapshot: JSON.stringify({
           _subject: `Website Contact — ${firstName.trim()} ${lastName.trim()}`,
           _template: "table",
           _captcha: "false",
@@ -70,7 +69,7 @@ export function ContactForm({
           Message: message.trim(),
         }),
       });
-      if (!res.ok) throw new Error("failed");
+
       trackLead("contact");
       setStatus("sent");
       setFirstName("");

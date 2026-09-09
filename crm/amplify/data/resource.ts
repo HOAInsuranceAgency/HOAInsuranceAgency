@@ -24,6 +24,7 @@ import { uploadPortal } from "../functions/upload-portal/resource";
 import { portalSweep } from "../functions/portal-sweep/resource";
 import { leadReply } from "../functions/lead-reply/resource";
 import { activityLog } from "../functions/activity-log/resource";
+import { communications, communicationWorker } from "../functions/communications/resource";
 
 /**
  * HOA CRM data model.
@@ -121,7 +122,7 @@ const schema = a
      * SENDING — a sweep has claimed it; stops a second sweep double-sending.
      * SENT / FAILED — terminal.
      */
-    LeadReplyStatus: a.enum(["WAITING", "SENDING", "SENT", "FAILED"]),
+    LeadReplyStatus: a.enum(["WAITING", "SENDING", "QUEUED", "SENT", "FAILED", "SUPPRESSED"]),
     /**
      * DRAFT      — being built, nothing sent, freely editable.
      * SENT       — emailed to the insured; the amount is now a claim on them.
@@ -1782,6 +1783,8 @@ const schema = a
         status: a.ref("LeadReplyStatus").required(),
         /** Secret for the two public mutations. */
         uploadToken: a.string().required(),
+        submissionId: a.string(),
+        frontGenerationClaimedAt: a.datetime(),
         submittedAt: a.datetime().required(),
         /** When the window closes. Pushed out by each upload, pulled in by a
          *  "done" signal. The sweep sends once this is in the past. */
@@ -1802,7 +1805,7 @@ const schema = a
         /** Why the reply did not go, or went without document context. */
         note: a.string(),
       })
-      .secondaryIndexes((index) => [index("uploadToken")])
+      .secondaryIndexes((index) => [index("uploadToken"), index("status").sortKeys(["dueAt"]).queryField("leadRepliesByStatusAndDueAt")])
       /**
        * ADMIN only, and nothing in the app reads this model at all.
        *
@@ -1915,9 +1918,16 @@ const schema = a
     // ── Public website → CRM lead intake ───────────────────────────────
     // API-key-only surface for protectmyhoa.com forms. The handler forces
     // stage=LEAD; this cannot create clients or touch existing records.
+    // Non-writing deployment readiness check. Returns no account or secret data.
+    leadIntakeReady: a.query().arguments({ readinessContract: a.integer().required() }).returns(a.json()).authorization(allow => [allow.publicApiKey()])
+      .handler(a.handler.function(leadIntake)),
     submitWebLead: a
       .mutation()
       .arguments({
+        // Additive contract: cached website bundles still submit without these.
+        submissionId: a.string(),
+        retryProof: a.string(),
+        answerSnapshot: a.string(),
         type: a.string(), // ASSOCIATION | PERSONAL | COMMERCIAL_OTHER
         name: a.string().required(),
         contactFirstName: a.string(),
@@ -1946,6 +1956,15 @@ const schema = a
       .returns(a.json())
       .authorization((allow) => [allow.publicApiKey()])
       .handler(a.handler.function(leadIntake)),
+
+    communicationRead: a.query()
+      .arguments({ readOperation: a.string().required(), input: a.json() })
+      .returns(a.json()).authorization(allow => [allow.authenticated()])
+      .handler(a.handler.function(communications)),
+    communicationWrite: a.mutation()
+      .arguments({ operation: a.string().required(), input: a.json() })
+      .returns(a.json()).authorization(allow => [allow.authenticated()])
+      .handler(a.handler.function(communications)),
 
     /**
      * Ask for somewhere to put a file. Public, and gated entirely by the
@@ -2268,6 +2287,8 @@ const schema = a
     allow.resource(processDocument),
     // The web-lead intake function creates Account records.
     allow.resource(leadIntake),
+    allow.resource(communications),
+    allow.resource(communicationWorker),
     // The AI extraction function reads Documents and updates Accounts.
     allow.resource(extractLead),
     // The form filler reads an account and everything under it. It writes

@@ -1,13 +1,15 @@
 import { randomBytes } from "node:crypto";
 import Anthropic from "@anthropic-ai/sdk";
 import { LambdaClient, InvokeCommand } from "@aws-sdk/client-lambda";
-import { SESv2Client, SendEmailCommand } from "@aws-sdk/client-sesv2";
+import { UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import { db, get, issue } from "../communications/store";
+import { enqueueOperation, type Operation } from "../communications/operations";
+import { ensureWorkflow } from "../communications/workflow";
 import { Amplify } from "aws-amplify";
 import { generateClient } from "aws-amplify/data";
 import { getAmplifyDataClientConfig } from "@aws-amplify/backend/function/runtime";
 import type { Schema } from "../../data/resource";
 import { listAllPages } from "../../../src/lib/pagination";
-import { AGENCY, AGENCY_FMT } from "../../../../shared/agency";
 import { CLAUDE_MODEL } from "../model";
 import { decide } from "./decide";
 import { flattenExtraction } from "./extraction";
@@ -44,35 +46,10 @@ async function getDataClient() {
   return dataClient;
 }
 
-const ses = new SESv2Client();
 const lambda = new LambdaClient();
 
 /** The real producer these emails come from. Matches the website's wizard. */
 const PRODUCER_NAME = "Brian Cole";
-
-/**
- * The agency-side mailbox: From, Reply-To and the team's BCC all use it.
- *
- * Set per branch in `backend.ts` — sales@ on main, a plus-addressed test box
- * everywhere else — so staging can send real mail without putting a test
- * conversation in front of the team or routing a reply into their queue. The
- * fallback is the agency's sales address only if the variable is missing
- * entirely, which should not happen once deployed.
- */
-const MAILBOX = process.env.AGENCY_MAILBOX || AGENCY_FMT.leadEmailLower;
-
-/** Named sender, so it reads as a person rather than a system. */
-const FROM = `${PRODUCER_NAME} · ${AGENCY.name} <${MAILBOX}>`;
-
-/**
- * The team's own copy.
- *
- * SES sends straight to the lead, so a From of the mailbox puts nothing in it:
- * there is no submission through it and no Sent folder. Without this BCC the
- * agency would have no idea what any lead had been told. BCC rather than CC so
- * the lead does not see an internal address on their own email.
- */
-const BCC = [MAILBOX];
 
 /** How many leads one tick will send for. Keeps a backlog from timing out. */
 const MAX_PER_TICK = 8;
@@ -81,23 +58,57 @@ export const handler = async () => {
   const client = await getDataClient();
   const now = new Date().toISOString();
 
-  const waiting = (await listAllPages((nextToken) =>
-    client.models.LeadReply.list({
-      filter: { status: { eq: "WAITING" } },
-      nextToken,
-      limit: 200,
-    })
-  )) as Schema["LeadReply"]["type"][];
+  // Query the due index; historical SENT rows never join the sweep.
+  const result = await client.models.LeadReply.leadRepliesByStatusAndDueAt(
+    { status: "WAITING", dueAt: { le: now } }, { limit: MAX_PER_TICK, sortDirection: "ASC" }
+  );
+  if (result.errors?.length) throw new Error(result.errors[0].message);
+  const waiting = result.data;
+  // Generating has no external send side effect. Recover a crashed generation
+  // only after checking whether its durable send operation already exists.
+  const stalled = await client.models.LeadReply.leadRepliesByStatusAndDueAt(
+    { status: "SENDING", dueAt: { le: now } }, { limit: MAX_PER_TICK, sortDirection: "ASC" }
+  );
+  for (const r of stalled.data ?? []) {
+    if (Date.parse(r.updatedAt) > Date.now() - 15 * 60_000) continue;
+    if (!r.frontGenerationClaimedAt) {
+      await client.models.LeadReply.update({ id: r.id, status: "FAILED", note: "Legacy email send could not be confirmed. Review its AWS/Front history before any new reply." });
+      await issue(`generation:${r.id}`, "Legacy initial email needs delivery review; it has not been resent", r.accountId); continue;
+    }
+    const op = await get<Operation>(`op:ai:${r.id}`);
+    const status = !op ? "WAITING" : op.data.state === "CONFIRMED" ? "SENT" : op.data.state === "SUPPRESSED" ? "SUPPRESSED" : op.data.state === "FAILED" ? "FAILED" : "QUEUED";
+    await db.send(new UpdateCommand({ TableName: process.env.LEAD_REPLY_TABLE, Key: { id: r.id },
+      UpdateExpression: "SET #s = :status, updatedAt = :now", ConditionExpression: "#s = :sending",
+      ExpressionAttributeNames: { "#s": "status" }, ExpressionAttributeValues: { ":status": status, ":sending": "SENDING", ":now": now },
+    })).catch(e => { if (e?.name !== "ConditionalCheckFailedException") throw e; });
+    await issue(`generation:${r.id}`, op ? "Recovered queued initial email" : "Initial email generation was interrupted and will retry", r.accountId);
+  }
 
   // Oldest deadline first, so a backlog drains in the order people submitted.
   const due = waiting
     .filter((r) => r.dueAt <= now)
     .sort((a, b) => a.dueAt.localeCompare(b.dueAt));
 
-  const summary = { waiting: waiting.length, due: due.length, sent: 0, extracting: 0, failed: 0 };
+  const summary = { waiting: waiting.length, due: due.length, queued: 0, extracting: 0, failed: 0 };
 
   for (const reply of due.slice(0, MAX_PER_TICK)) {
+    let queued = false;
     try {
+      if (!reply.submissionId) {
+        await client.models.LeadReply.update({ id: reply.id, status: "FAILED", note: "Legacy pending reply held for migration review; no Front resend was attempted." });
+        await issue(`generation:${reply.id}`, "Review the legacy initial reply and existing Front conversation before contacting this lead", reply.accountId); continue;
+      }
+      const priorOperation = await get<Operation>(`op:ai:${reply.id}`);
+      if (priorOperation) {
+        await client.models.LeadReply.update({ id: reply.id, status: priorOperation.data.state === "CONFIRMED" ? "SENT" : priorOperation.data.state === "SUPPRESSED" ? "SUPPRESSED" : priorOperation.data.state === "FAILED" ? "FAILED" : "QUEUED" });
+        continue;
+      }
+      const workflow = await ensureWorkflow(reply.accountId);
+      if (workflow.data.humanTakeover || workflow.data.disposition !== "ACTIVE") {
+        await client.models.LeadReply.update({ id: reply.id, status: "SUPPRESSED", note: "The team is handling this lead." });
+        continue;
+      }
+
       const [account, documents, contacts] = await Promise.all([
         client.models.Account.get({ id: reply.accountId }),
         listAllPages((nextToken) =>
@@ -124,6 +135,7 @@ export const handler = async () => {
         ),
       ]);
 
+      if (account.errors?.length) throw new Error("The lead could not be read; generation needs retry");
       if (!account.data) {
         // The lead was deleted under us. Nothing to reply about.
         await client.models.LeadReply.update({
@@ -171,28 +183,13 @@ export const handler = async () => {
         continue;
       }
 
-      /**
-       * Claim it before generating.
-       *
-       * Sending takes a model call plus an SES round trip, which is long enough
-       * for the next tick to start, so this marks the row before doing either
-       * and `decide` refuses anything that is not WAITING.
-       *
-       * This alone does NOT make a double send impossible, and an earlier
-       * version of this comment claimed it did. The update carries no condition
-       * on the current status, so two overlapping passes can both read WAITING
-       * and both claim. What actually prevents it is a reserved concurrency of
-       * one on this function (backend.ts) — the overlap is removed rather than
-       * the race being won.
-       */
-      const claimed = await client.models.LeadReply.update({
-        id: reply.id,
-        status: "SENDING",
-      });
-      if (claimed.errors?.length) {
-        console.warn("lead-reply could not claim", reply.id, claimed.errors[0].message);
-        continue;
-      }
+      await db.send(new UpdateCommand({
+        TableName: process.env.LEAD_REPLY_TABLE, Key: { id: reply.id },
+        UpdateExpression: "SET #s = :sending, updatedAt = :now, frontGenerationClaimedAt = :now",
+        ConditionExpression: "#s = :waiting",
+        ExpressionAttributeNames: { "#s": "status" },
+        ExpressionAttributeValues: { ":sending": "SENDING", ":waiting": "WAITING", ":now": now },
+      }));
 
       /**
        * Before generating, not after: the prompt is told a link is coming so it
@@ -221,22 +218,11 @@ export const handler = async () => {
         uploadUrl,
       });
 
-      await ses.send(
-        new SendEmailCommand({
-          FromEmailAddress: FROM,
-          ReplyToAddresses: [MAILBOX],
-          Destination: { ToAddresses: [reply.contactEmail], BccAddresses: BCC },
-          Content: {
-            Simple: {
-              Subject: { Data: subject, Charset: "UTF-8" },
-              Body: {
-                Text: { Data: text, Charset: "UTF-8" },
-                Html: { Data: html, Charset: "UTF-8" },
-              },
-            },
-          },
-        })
-      );
+      await enqueueOperation(`op:ai:${reply.id}`, {
+        type: "EMAIL", accountId: reply.accountId, replyId: reply.id,
+        recipient: reply.contactEmail, subject, text, html,
+      });
+      queued = true;
 
       /**
        * The producer-facing trail: a reply that never names the association
@@ -247,21 +233,29 @@ export const handler = async () => {
       const nameNote = lead.nameProblem
         ? `The association name "${account.data.name}" looks incomplete or not real (${lead.nameProblem}); the reply avoided using it.`
         : null;
-      await client.models.LeadReply.update({
-        id: reply.id,
-        status: "SENT",
-        sentAt: new Date().toISOString(),
-        // Stored as sent, after the dash-stripping in renderReply, so the
-        // record matches the email rather than the model's raw output.
-        sentSubject: subject,
-        sentBody: text,
-        note: [decision.note, nameNote].filter(Boolean).join(" ") || null,
-      });
-      summary.sent++;
-      console.log("lead-reply sent", reply.id, JSON.stringify({ subject }));
+      // The delivery worker may already have confirmed SENT. Never overwrite
+      // that result with this producer's delayed QUEUED projection.
+      await db.send(new UpdateCommand({ TableName: process.env.LEAD_REPLY_TABLE, Key: { id: reply.id },
+        UpdateExpression: "SET #s = :queued, sentSubject = :subject, sentBody = :body, note = :note, updatedAt = :now",
+        ConditionExpression: "#s = :sending", ExpressionAttributeNames: { "#s": "status" },
+        ExpressionAttributeValues: { ":queued": "QUEUED", ":sending": "SENDING", ":subject": subject, ":body": text, ":note": [decision.note, nameNote].filter(Boolean).join(" ") || null, ":now": new Date().toISOString() },
+      })).catch(e => { if (e?.name !== "ConditionalCheckFailedException") throw e; });
+      summary.queued++;
+      console.log("lead-reply queued", reply.id, JSON.stringify({ subject }));
     } catch (err) {
-      summary.failed++;
       const message = err instanceof Error ? err.message : String(err);
+      // A reporting failure after capture cannot turn a pending send into a
+      // claim of non-delivery. If storage is unavailable, keep SENDING so the
+      // existing recovery pass can reconcile it after storage returns.
+      let operation: Awaited<ReturnType<typeof get<Operation>>>;
+      try { operation = await get<Operation>(`op:ai:${reply.id}`); }
+      catch { await issue(`generation:${reply.id}`, "Could not verify initial email delivery. Check the delivery queue before contacting the prospect.", reply.accountId).catch(() => {}); continue; }
+      if (queued || operation) {
+        summary.queued++;
+        await issue(`generation:${reply.id}`, "Initial email is in the delivery queue; its status display needs reconciliation. Do not send another initial reply.", reply.accountId);
+        continue;
+      }
+      summary.failed++;
       /**
        * FAILED, not back to WAITING.
        *
@@ -274,6 +268,7 @@ export const handler = async () => {
         status: "FAILED",
         note: `Auto-reply failed: ${message}`.slice(0, 500),
       }).catch(() => {});
+      await issue(`generation:${reply.id}`, `Initial email generation failed: ${message}`.slice(0, 500), reply.accountId);
       console.error("lead-reply failed", reply.id, message);
     }
   }

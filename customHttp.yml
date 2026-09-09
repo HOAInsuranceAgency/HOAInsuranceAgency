@@ -1,0 +1,11 @@
+applications:
+  - appRoot: crm
+    customHeaders:
+      - pattern: '/front-sidebar*'
+        headers:
+          - key: 'Content-Security-Policy'
+            value: "frame-ancestors 'self' https://*.frontapp.com https://*.front.com"
+          - key: 'Cache-Control'
+            value: 'no-store'
+          - key: 'Referrer-Policy'
+            value: 'no-referrer'

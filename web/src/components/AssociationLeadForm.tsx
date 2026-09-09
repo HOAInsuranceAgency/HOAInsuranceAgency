@@ -1,7 +1,7 @@
 import { useState } from "react";
-import { FORMSUBMIT_URL, LEAD_EMAIL, LEAD_EMAIL_HREF, PHONE, PHONE_HREF, trackLead } from "../constants";
+import { LEAD_EMAIL, LEAD_EMAIL_HREF, PHONE, PHONE_HREF, trackLead } from "../constants";
 import { AGENCY, AGENCY_FMT } from "../../../shared/agency";
-import { submitCrmLead } from "../lib/crmLead";
+import { useLeadSubmission } from "../lib/crmLead";
 import LeadUploadPanel from "./LeadUploadPanel";
 import "./AssociationLeadForm.css";
 
@@ -37,6 +37,8 @@ export function AssociationLeadForm({ property }: Props) {
     .filter(Boolean)
     .join(", ");
 
+  const leadSubmission = useLeadSubmission();
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!firstName.trim() || !lastName.trim() || !email.trim()) {
@@ -45,8 +47,8 @@ export function AssociationLeadForm({ property }: Props) {
     }
     setSending(true);
     setError("");
-    // CRM lead (fail-soft, runs alongside the notification email)
-    void submitCrmLead({
+    try {
+      const received = await leadSubmission.submit({
       type: "PERSONAL",
       name: `${firstName.trim()} ${lastName.trim()}`,
       contactFirstName: firstName.trim(),
@@ -62,12 +64,8 @@ export function AssociationLeadForm({ property }: Props) {
       buildiumId: String(property.id),
       source: `website-ho6:${property.slug}`,
       notes: [`Association: ${property.name}`, notes.trim()].filter(Boolean).join("\n"),
-    }).then((r) => setUploadToken(r?.uploadToken ?? null));
-    try {
-      const res = await fetch(FORMSUBMIT_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify({
+
+      answerSnapshot: JSON.stringify({
           _subject: `🏠 HO-6 Quote — ${firstName.trim()} ${lastName.trim()}${unitNumber.trim() ? ` (Unit ${unitNumber.trim()})` : ""} — ${property.name}`,
           _template: "table",
           _captcha: "false",
@@ -86,7 +84,8 @@ export function AssociationLeadForm({ property }: Props) {
           Source: `Association Page (HO-6) — ${property.slug}`,
         }),
       });
-      if (!res.ok) throw new Error("fail");
+      setUploadToken(received.uploadToken);
+
       trackLead("association_ho6");
       setSent(true);
     } catch {
