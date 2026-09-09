@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { load } from "js-yaml";
 
 const filePath = (relativePath: string) => fileURLToPath(new URL(relativePath, import.meta.url));
 const read = (relativePath: string) => readFileSync(filePath(relativePath), "utf8");
@@ -59,6 +60,20 @@ describe("cross-platform SEO fingerprint", () => {
 });
 
 describe("Astro 7 build compatibility", () => {
+  it("provides a custom-header configuration for every independently deployed app", () => {
+    const build = load(read("../../../amplify.yml")) as {
+      applications: { appRoot: string }[];
+    };
+    const headers = load(read("../../../customHttp.yml")) as {
+      applications: { appRoot: string; customHeaders: unknown[] }[];
+    };
+    for (const app of build.applications) {
+      const matches = headers.applications.filter((entry) => entry.appRoot === app.appRoot);
+      expect(matches, app.appRoot).toHaveLength(1);
+      expect(Array.isArray(matches[0].customHeaders), app.appRoot).toBe(true);
+    }
+  });
+
   it("passes visible trademark text to Hero without double-encoding it", () => {
     for (const page of ["index", "what-we-do", "why-choose-us", "hoa-insurance-[state]"]) {
       const source = read(`../../../web/src/pages/${page}.astro`);

@@ -70,7 +70,7 @@ function AuthGate() {
 
   return (
     <div className="auth-screen">
-      <MagicLinkSignIn embedded={window.location.pathname === "/front-sidebar"} />
+      <MagicLinkSignIn embedded={/^\/front-sidebar\/?$/.test(window.location.pathname)} />
     </div>
   );
 }
@@ -322,7 +322,7 @@ function Shell({ profile, signOut }: { profile: UserProfile; signOut: () => void
     ...NAV_ITEMS.slice(5),
   ];
 
-  if (location.pathname === "/front-sidebar") return <FrontSidebar />;
+  if (/^\/front-sidebar\/?$/.test(location.pathname)) return <FrontSidebar />;
 
   return (
     <div className="shell">

@@ -1,4 +1,8 @@
 applications:
+  # Both independent Amplify apps read this root file, including the website
+  # which needs no additional headers.
+  - appRoot: web
+    customHeaders: []
   - appRoot: crm
     customHeaders:
       - pattern: '/front-sidebar*'
