@@ -1,10 +1,11 @@
 import { config } from "./config";
 import type { HistoryJob } from "./history";
 import { uniteCalls, combineLegs, callStatus, queueCallSync, type Call } from "./calls";
-import { front, permittedConversation, messageConversation, type FrontMessage } from "./providers";
+import { front, permittedConversation, messageConversation, FrontScopeError, type FrontMessage } from "./providers";
 import { row, save, get, issue, hash, canonical, type Row } from "./store";
 import { recordInbound, recordOutbound, ensureWorkflow, accountRows, makeTask } from "./workflow";
 import { normalizePhone, businessDeadline, type Communication } from "../../../../shared/leadWorkflow";
+import { dialpadBusinessLine } from "./phoneScope";
 
 export type EventRecord = { provider: "front" | "dialpad"; payload: Record<string, unknown>; attempts: number; processedAt?: string; snapshot?: { message: FrontMessage; conversationId: string } };
 export interface ConversationLink { accountId: string; conversationId: string; purpose: "PROSPECT" | "CARRIER"; routing?: "SALESPERSON" | "CHAMPION" | "MANUAL" }
@@ -58,11 +59,17 @@ export async function ingestFrontMessage(message: FrontMessage, conversationId?:
   }
 }
 async function frontEvent(event: Json, type: string) {
+  if (!/inbound|outbound|message|delivery_failed|bounce/.test(type) && !["assignee_changed", "assign"].includes(type)) return;
   const conv = object(event.conversation), target = object(event.target);
   const cnv = str(conv.id) || str(object(event.payload).conversation_id);
   if (!/^cnv_[a-z0-9]+$/.test(cnv)) return;
-  await permittedConversation(cnv);
   const link = await get<ConversationLink>(`front-link:${cnv}`);
+  if ((type === "assignee_changed" || type === "assign") && !link) return;
+  try { await permittedConversation(cnv); }
+  catch (error) {
+    if (error instanceof FrontScopeError) return { ignored: error.message };
+    throw error;
+  }
   if (type === "assignee_changed" || type === "assign") {
     if (link) {
       const actual = str(object(target.data).id || object(conv.assignee).id);
@@ -91,7 +98,7 @@ export async function dialpadEvent(p: Json) {
   const inbound = p.direction === "inbound";
   if (!["inbound", "outbound"].includes(str(p.direction))) throw new Error("Dialpad event direction needs review");
   const firstNumber = (x: unknown) => str(Array.isArray(x) ? x[0] : x);
-  const line = normalizePhone(str(p.internal_number || target.phone_number || target.phone || object(p.entry_point_target).phone || firstNumber(inbound ? p.to_number : p.from_number)));
+  const line = dialpadBusinessLine(p);
   if (!line) throw new Error("Dialpad event has no identifiable business line");
   if (!c.dialpadNumbers.includes(line)) return { ignored: "Business line outside configured scope", line };
   const isCall = !!p.call_id;
@@ -143,11 +150,11 @@ export function smsStatus(previous: string | undefined, incoming: string, inboun
 }
 export async function processEvent(record: Row<EventRecord>) {
   const p = record.data.payload;
-  let outcome: Awaited<ReturnType<typeof dialpadEvent>>;
+  let outcome: { ignored: string; line?: string } | undefined;
   if (record.data.snapshot) {
     await permittedConversation(record.data.snapshot.conversationId);
     await ingestFrontMessage(record.data.snapshot.message, record.data.snapshot.conversationId);
-  } else if (record.data.provider === "front") await frontEvent(object(p.payload), str(p.type));
+  } else if (record.data.provider === "front") outcome = await frontEvent(object(p.payload), str(p.type));
   else outcome = await dialpadEvent(p);
   await save(row("EVENT", record.id, { ...record.data, outcome, attempts: 0, processedAt: new Date().toISOString() }, { previous: record }), record);
 }

@@ -2,6 +2,8 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import type { APIGatewayProxyEventV2 } from "aws-lambda";
 import { config, credentials } from "./config";
 import { row, save, hash, get } from "./store";
+import { scopedFrontReceipt } from "./frontReceipt";
+import { dialpadBusinessLine, unidentifiedDialpadReceipt } from "./phoneScope";
 
 const equal = (a: string, b: string) => { const x = Buffer.from(a), y = Buffer.from(b); return x.length === y.length && timingSafeEqual(x, y); };
 export function verifyFront(raw: string, headers: Record<string, string | undefined>, secret: string, now = Date.now()) {
@@ -37,13 +39,19 @@ export const handler = async (event: APIGatewayProxyEventV2) => {
       payload = verifyFront(raw, event.headers, keys.frontSigningKey);
       if ((payload.authorization as { id?: string })?.id !== c.frontCompanyId) return response(403, "Company mismatch");
       if (payload.type === "sync" && event.headers["x-front-challenge"]) return response(200, event.headers["x-front-challenge"]!);
+      const receipt = scopedFrontReceipt(payload, [c.frontInboxId, ...c.allowedInboxIds].filter((id): id is string => !!id));
+      if (!receipt) return response(202, "Outside configured inboxes");
+      payload = receipt;
     } else if (event.rawPath.endsWith("/dialpad")) {
       provider = "dialpad";
       if (!keys.dialpadSigningKey || !c.dialpadCompanyId) return response(503, "Webhook is not configured");
       payload = verifyDialpad(raw, keys.dialpadSigningKey);
       // A dedicated secret binds events to the configured company. Check an
-      // explicit company ID when present; target/line allowlists are checked by the worker.
+      // explicit company ID when present, then enforce the business-line scope.
       if (payload.company_id && String(payload.company_id) !== c.dialpadCompanyId) return response(403, "Company mismatch");
+      const line = dialpadBusinessLine(payload);
+      if (line && !c.dialpadNumbers.includes(line)) return response(202, "Outside configured business lines");
+      if (!line) payload = unidentifiedDialpadReceipt(payload);
     } else return response(404, "Unknown webhook");
   } catch { return response(401, "Invalid webhook"); }
   const id = `event:${provider}:${hash(JSON.stringify(payload))}`;

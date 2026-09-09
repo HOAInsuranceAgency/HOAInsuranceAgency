@@ -3,6 +3,7 @@ import { historyDue, restartHistory, type HistoryJob } from "./history";
 import { front, dialpad } from "./providers";
 import { get, row, save, put, commit, canonical, hash, issue } from "./store";
 import type { EventRecord } from "./events";
+import { dialpadBusinessLine, unidentifiedDialpadReceipt } from "./phoneScope";
 
 async function reconcileFront() {
   const c = await config(); if (!c.activatedAt) return;
@@ -41,13 +42,16 @@ async function reconcileDialpad() {
   for (const item of page.items) {
     const p = item && typeof item === "object" ? item : {}, id = String(p.call_id ?? p.id);
     const valid = /^\d+$/.test(id);
+    const line = dialpadBusinessLine(p);
+    if (line && !c.dialpadNumbers.includes(line)) continue;
     const snapshot = Object.fromEntries(["call_id", "master_call_id", "entry_point_call_id", "operator_call_id", "internal_number", "external_number", "from_number", "to_number", "direction", "date_started", "date_connected", "date_ended", "target", "entry_point_target", "transcription_text", "recap_summary"].map(key => [key, p[key]]));
     const key = `reconcile:dialpad:${valid ? id : "invalid"}:${hash(canonical(valid ? snapshot : item))}`;
     if (await get(key)) continue;
-    const error = valid ? undefined : "Dialpad call history returned an invalid call ID";
-    // Invalid items are parked with their original payload, not thrown away.
+    const error = !valid ? "Dialpad call history returned an invalid call ID" : !line ? "Dialpad call history has no identifiable business line; review the provider record" : undefined;
+    // Unidentified items retain provider IDs for review, without storing content
+    // whose business-line scope could not be established.
     // Any failed storage write still prevents checkpoint advancement.
-    await commit([put(row<EventRecord & { error?: string }>("EVENT", key, { provider: "dialpad", payload: valid ? { ...p, call_id: id, state: "hangup" } : p, attempts: 0, error }, { dueAt: valid ? new Date().toISOString() : undefined })),
+    await commit([put(row<EventRecord & { error?: string }>("EVENT", key, { provider: "dialpad", payload: line ? valid ? { ...p, call_id: id, state: "hangup" } : p : unidentifiedDialpadReceipt(p), attempts: 0, error }, { dueAt: !error ? new Date().toISOString() : undefined })),
       ...(error ? [put(row("ISSUE", `issue:${key}`, { sourceId: key, message: error, at: new Date().toISOString(), resolved: false }))] : [])]);
   }
   await save(row("CURSOR", "cursor:dialpad", { cursor: page.cursor, after: page.cursor ? after : Math.max(activation, through - 86400_000), through: page.cursor ? through : undefined, checkedAt: new Date().toISOString() }, { previous: old }), old);

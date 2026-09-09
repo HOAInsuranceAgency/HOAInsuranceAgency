@@ -9,7 +9,7 @@ import { get, row, query, save, put, commit, audit, conflict, retryableStorage, 
 import { config, credentials, saveCredentials, saveConfig, type Credentials } from "./config";
 import { dataClient } from "./data";
 import { accountRows, defaultWorkflow, ensureWorkflow, expected, validRole, setResponsibilities, saveTask, completeTask, mergeTasks, team, enabledUser } from "./workflow";
-import { front, permittedConversation } from "./providers";
+import { permittedConversation, verifySmsChannel } from "./providers";
 import { operationRow } from "./outbox";
 import { connectionChecks, activationChecks } from "./setup";
 import { enqueueOperation } from "./operations";
@@ -52,7 +52,7 @@ export const handler = async (event: { arguments: { operation?: string; readOper
           more: !!(contacts.nextToken || quotes.nextToken || documents.nextToken), url: `${process.env.CRM_BASE_URL}/accounts/${id}` } };
       }
       if (op === "activity") { const r = await get<Communication>(text(input, "id")); if (!r || r.kind !== "COMMUNICATION") throw new Error("Communication not found"); return { ok: true, communication: safeCommunication({ ...r.data, version: r.version }) }; }
-      if (op === "smsComposer") { const c = await config(); if (!c.frontSmsChannelId || !c.activatedAt || c.paused) throw new Error("Activate the shared-line text channel first"); const channel = await front<{ address: string; is_valid?: boolean }>(`/channels/${c.frontSmsChannelId}`); if (normalizePhone(channel.address) !== c.sharedSmsNumber || channel.is_valid === false) throw new Error("The configured text channel no longer matches the main line"); return { ok: true, channelId: c.frontSmsChannelId, sender: c.sharedSmsNumber }; }
+      if (op === "smsComposer") { const c = await config(); if (!c.frontSmsChannelId || !c.activatedAt || c.paused) throw new Error("Activate the shared-line text channel first"); await verifySmsChannel(); return { ok: true, channelId: c.frontSmsChannelId, sender: c.sharedSmsNumber }; }
       if (op === "team") return { ok: true, team: await roster() };
       if (op === "settings") {
         requireAdmin(); const keys = await credentials();

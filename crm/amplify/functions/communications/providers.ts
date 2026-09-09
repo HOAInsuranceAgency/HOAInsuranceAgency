@@ -1,11 +1,13 @@
 import { remainingDelay, rememberBudget, authorizationDelay, authorizationFailed, authorizationRestored } from "./budget";
 import { get, row, put, commit, hash } from "./store";
 import { credentials, config } from "./config";
+import { normalizePhone } from "../../../../shared/leadWorkflow";
 
 export class ProviderError extends Error {
   constructor(message: string, public status: number, public uncertain: boolean, public retryAfter = 60) { super(message); }
 }
-export async function providerRequest<T = Record<string, unknown>>(provider: "front" | "dialpad", path: string, method = "GET", body?: unknown, redirects = 0): Promise<T> {
+export class FrontScopeError extends Error {}
+export async function providerRequest<T = Record<string, unknown>>(provider: "front" | "dialpad", path: string, method = "GET", body?: unknown, redirects = 0, inboxScopeProbe = false): Promise<T> {
   const base = provider === "front" ? "https://api2.frontapp.com" : "https://dialpad.com/api/v2";
   const key = (await credentials())[provider === "front" ? "frontToken" : "dialpadToken"];
   if (!key) throw new ProviderError(`${provider === "front" ? "Front" : "Dialpad"} credentials need setup`, 401, false);
@@ -28,11 +30,14 @@ export async function providerRequest<T = Record<string, unknown>>(provider: "fr
     if (method === "GET" && provider === "front" && location && redirects < 3) {
       const moved = new URL(location, url);
       if (moved.origin !== url.origin || !/^\/conversations\/cnv_[a-z0-9]+(?:\/|$)/.test(moved.pathname)) throw new Error("Untrusted Front redirect");
-      return providerRequest<T>(provider, moved.href, "GET", undefined, redirects + 1);
+      return providerRequest<T>(provider, moved.href, "GET", undefined, redirects + 1, inboxScopeProbe);
     }
     // Mutations are never implicitly changed into GET by a redirect.
     throw new ProviderError(`${provider} resource moved; refresh its verified conversation link`, response.status, false);
   }
+  // A company-wide hook can name a conversation outside this token's workspace.
+  // Its denied metadata lookup must not pause every authorized send.
+  if (response.status === 403 && provider === "front" && method === "GET" && inboxScopeProbe) throw new FrontScopeError("Conversation is unavailable within the Front token's inbox scope");
   if ([401, 403].includes(response.status)) {
     const delay = await authorizationFailed(provider, fingerprint).catch(() => 60);
     throw new ProviderError(`${provider} authorization needs repair`, response.status, false, delay);
@@ -58,11 +63,12 @@ export interface FrontMessage { id: string; message_uid?: string; uid?: string; 
   author?: { id: string }; recipients?: { handle: string; role: string }[]; conversation?: { id: string }; _links?: { related?: { conversation?: string } }; metadata?: Record<string, unknown> }
 export async function permittedConversation(id: string) {
   if (!/^cnv_[a-z0-9]+$/.test(id)) throw new Error("Invalid Front conversation ID");
-  const [conversation, inboxes, settings] = await Promise.all([
-    front<{ id: string; status: string; assignee?: { id: string }; last_message?: FrontMessage }>(`/conversations/${id}`),
-    front<{ _results: { id: string }[] }>(`/conversations/${id}/inboxes`), config(),
+  const [inboxes, settings] = await Promise.all([
+    providerRequest<{ _results: { id: string }[] }>("front", `/conversations/${id}/inboxes`, "GET", undefined, 0, true), config(),
   ]);
-  if (!inboxes._results.some(x => [settings.frontInboxId, ...settings.allowedInboxIds].includes(x.id))) throw new Error("Conversation is outside the configured inboxes");
+  if (!Array.isArray(inboxes._results)) throw new Error("Front inbox membership could not be verified");
+  if (!inboxes._results.some(x => [settings.frontInboxId, ...settings.allowedInboxIds].includes(x.id))) throw new FrontScopeError("Conversation is outside the configured inboxes");
+  const conversation = await front<{ id: string; status: string; assignee?: { id: string }; last_message?: FrontMessage }>(`/conversations/${id}`);
   if (conversation.id !== id) {
     if (!/^cnv_[a-z0-9]+$/.test(conversation.id)) throw new Error("Invalid canonical Front conversation");
     const source = await get<{ accountId: string; conversationId: string }>(`front-link:${id}`), target = await get<{ accountId: string }>(`front-link:${conversation.id}`);
@@ -101,6 +107,25 @@ export async function verifyEmailChannel() {
   if (!["gmail", "office365", "imap", "smtp", "front_mail"].includes(channel.type) || (channel.send_as || channel.address)?.toLowerCase() !== c.frontSender.toLowerCase()) throw new Error("The Front channel must be a valid email channel using the configured sales address");
   if (channel._links?.related?.inbox?.split("/").pop() !== c.frontInboxId) throw new Error("The sales email channel must belong to the configured sales inbox");
   return channel;
+}
+export async function verifySmsChannel() {
+  const c = await config();
+  if (!c.frontSmsChannelId) throw new Error("Connect the native Dialpad shared SMS channel");
+  const channel = await front<{ type?: string; address?: string; send_as?: string; is_valid?: boolean }>(`/channels/${c.frontSmsChannelId}`);
+  // Native Dialpad channels expose an address such as +15082332261_sms;
+  // send_as is the actual customer-facing number. A voice channel is not SMS.
+  const sender = channel.send_as || channel.address?.replace(/_sms$/, "");
+  if (channel.type !== "dialpad_sms" || !sender || normalizePhone(sender) !== c.sharedSmsNumber || channel.is_valid === false) throw new Error("The configured text channel no longer matches the main line");
+  return channel;
+}
+export async function verifyDialpadCompany() {
+  const c = await config();
+  if (!c.dialpadCompanyId) throw new Error("Enter the Dialpad company ID");
+  // A company API key has no /users/me identity. The company endpoint also
+  // proves the administrator access needed for all configured business lines.
+  const company = await dialpad<{ id?: string | number }>("/company");
+  if (String(company.id) !== c.dialpadCompanyId) throw new Error("Dialpad company does not match settings");
+  return company;
 }
 export function providerTimestamp(value: string | number): number {
   const numeric = Number(value);

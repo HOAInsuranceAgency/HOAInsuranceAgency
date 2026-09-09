@@ -35,7 +35,7 @@ vi.mock("@aws-sdk/lib-dynamodb", async importOriginal => {
   } }) } };
 });
 vi.mock("@aws-sdk/client-cognito-identity-provider", () => ({ CognitoIdentityProviderClient: class { send = async () => ({ Users: [{ Enabled: true }] }); }, ListUsersCommand: class { constructor(public input: unknown) {} } }));
-vi.mock("../../amplify/functions/communications/config", async importOriginal => ({ ...(await importOriginal<typeof import("../../amplify/functions/communications/config")>()), saveCredentials: vi.fn(), config: async () => h.c, credentials: async () => ({ frontSigningKey: "test-signing-key" }) }));
+vi.mock("../../amplify/functions/communications/config", async importOriginal => ({ ...(await importOriginal<typeof import("../../amplify/functions/communications/config")>()), saveCredentials: vi.fn(), config: async () => h.c, credentials: async () => ({ frontSigningKey: "test-signing-key", dialpadSigningKey: "test-dialpad-signing-key" }) }));
 vi.mock("../../amplify/functions/communications/data", () => ({ dataClient: async () => ({ models: {
   Account: { get: async ({ id }: { id: string }) => (h.accountError ? { data: null, errors: [{ message: "Simulated account read failure" }] } : { data: h.records.get(`Account:${id}`) ?? { id, name: "Willow HOA", stage: "LEAD" } }) },
   LeadReply: { update: h.update },
@@ -51,7 +51,7 @@ import { defaultWorkflow, makeTask, saveTask, recordInbound, recordOutbound, com
 import { archiveAllowed } from "../../amplify/functions/communications/cleanup";
 import { remainingDelay, rememberBudget } from "../../amplify/functions/communications/budget";
 import { enqueueOperation, runOperation, type Operation } from "../../amplify/functions/communications/operations";
-import { permittedConversation } from "../../amplify/functions/communications/providers";
+import { permittedConversation, FrontScopeError } from "../../amplify/functions/communications/providers";
 import { dialpadEvent, processEvent } from "../../amplify/functions/communications/events";
 const NOW = "2026-09-08T14:00:00.000Z";
 const record = (id: string) => h.records.get(`comms:${id}`)!;
@@ -280,6 +280,23 @@ describe("review regressions: deadline delivery and recovery", () => {
 });
 
 describe("review regressions: provider capture and delivery", () => {
+  it("discards signed outside-inbox traffic and persists only identifiers for eligible Front events", async () => {
+    const { handler } = await import("../../amplify/functions/communications/webhook");
+    const { createHmac } = await import("node:crypto");
+    const send = async (inbox: string) => {
+      const body = JSON.stringify({ authorization: { id: "cmp_a" }, type: "inbound_received", payload: { id: "evt_1", conversation: { id: "cnv_a", subject: "Private subject" }, target: { data: { id: "msg_a", text: "Private body" } }, source: { _meta: { type: "inboxes" }, data: [{ id: inbox }] } } }), stamp = String(Date.now());
+      return handler({ rawPath: "/front", requestContext: { http: { method: "POST" } }, body, headers: { "x-front-request-timestamp": stamp, "x-front-signature": createHmac("sha256", "test-signing-key").update(`${stamp}:${body}`).digest("base64") } } as never);
+    };
+    expect(await send("inb_other")).toMatchObject({ statusCode: 202 }); expect(entries("EVENT")).toHaveLength(0);
+    expect(await send("inb_a")).toMatchObject({ statusCode: 202 }); expect(entries("EVENT")).toHaveLength(1);
+    expect(JSON.stringify(entries("EVENT"))).not.toContain("Private");
+  });
+  it("finishes an excluded Front event without fetching its message or blocking other work", async () => {
+    vi.mocked(permittedConversation).mockRejectedValueOnce(new FrontScopeError("Conversation is outside the configured inboxes"));
+    const event = await save(row("EVENT", "event:front-other", { provider: "front" as const, payload: { type: "inbound_received", payload: { conversation: { id: "cnv_other" }, target: { data: { id: "msg_other" } } } }, attempts: 0 }, { dueAt: NOW }));
+    await processEvent(event);
+    expect(h.front).not.toHaveBeenCalled(); expect(record(event.id).data.outcome.ignored).toContain("outside"); expect(record(event.id).dueAt).toBeUndefined(); expect(entries("COMMUNICATION")).toHaveLength(0);
+  });
   it("acknowledges only a durable webhook receipt, never a throttled transaction", async () => {
     const { handler } = await import("../../amplify/functions/communications/webhook");
     const { createHmac } = await import("node:crypto");
@@ -299,6 +316,34 @@ describe("review regressions: provider capture and delivery", () => {
     for (let n = 0; n < 5; n++) { h.dialpad.mockResolvedValue({ items: [{ ...call, recording_url: `https://media.example/call?temporary=${n}` }] }); await reconcile(); vi.setSystemTime(new Date(Date.now() + 60_000)); }
     expect(entries("EVENT")).toHaveLength(1);
     h.dialpad.mockResolvedValue({ items: [{ ...call, transcription_text: "Please call me" }] }); await reconcile(); expect(entries("EVENT")).toHaveLength(2);
+  });
+  it("excludes other business lines before storing call history and redacts unidentified records", async () => {
+    h.c.frontInboxId = undefined; h.c.dialpadCompanyId = "1";
+    h.dialpad.mockResolvedValue({ items: [
+      { call_id: 800, direction: "inbound", internal_number: "+12125550000", transcription_text: "Unrelated private transcript" },
+      { call_id: 801, direction: "inbound", transcription_text: "Unidentified private transcript", external_number: "+12125550001" },
+      { call_id: 802, direction: "inbound", internal_number: "+15082332261", transcription_text: "Authorized HOA transcript" },
+    ] });
+    const { reconcile } = await import("../../amplify/functions/communications/reconcile"); await reconcile();
+    expect(entries("EVENT")).toHaveLength(2);
+    expect(JSON.stringify(entries("EVENT"))).not.toMatch(/private transcript|12125550001/);
+    expect(entries("EVENT").filter(e => e.dueAt)).toHaveLength(1);
+    expect(entries("EVENT").find(e => !e.dueAt)?.data.payload.call_id).toBe(801);
+    expect(entries("ISSUE").some(e => e.data.message.includes("business line"))).toBe(true);
+  });
+  it("applies business-line scope before persisting signed Dialpad content", async () => {
+    h.c.dialpadCompanyId = "1";
+    const { handler } = await import("../../amplify/functions/communications/webhook");
+    const { createHmac } = await import("node:crypto");
+    const send = async (line?: string) => {
+      const a = Buffer.from(JSON.stringify({ alg: "HS256" })).toString("base64url");
+      const b = Buffer.from(JSON.stringify({ id: "100", company_id: "1", direction: "inbound", internal_number: line, text: "Private SMS content" })).toString("base64url");
+      const body = `${a}.${b}.${createHmac("sha256", "test-dialpad-signing-key").update(`${a}.${b}`).digest("base64url")}`;
+      return handler({ rawPath: "/dialpad", requestContext: { http: { method: "POST" } }, body, headers: {} } as never);
+    };
+    expect(await send("+12125550000")).toMatchObject({ statusCode: 202 }); expect(entries("EVENT")).toHaveLength(0);
+    expect(await send()).toMatchObject({ statusCode: 202 }); expect(JSON.stringify(entries("EVENT"))).not.toContain("Private SMS content");
+    expect(await send("+15082332261")).toMatchObject({ statusCode: 202 }); expect(entries("EVENT").some(e => e.data.payload.text === "Private SMS content")).toBe(true);
   });
   it("does not rearm an already checked missed call when history enriches it", async () => {
     const p = { call_id: 401, internal_number: "+15082332261", external_number: "+16175550111", date_started: Date.parse(NOW), direction: "inbound", state: "hangup" };
