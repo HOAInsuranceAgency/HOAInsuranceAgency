@@ -57,6 +57,15 @@ export async function front<T = Record<string, unknown>>(path: string, method = 
   return providerRequest<T>("front", path, method, body);
 }
 export const dialpad = <T = Record<string, unknown>>(path: string) => providerRequest<T>("dialpad", path);
+export function dialpadCallItems(page: unknown): Record<string, unknown>[] {
+  if (page && typeof page === "object" && !Array.isArray(page)) {
+    // The live API serializes an empty concluded-call window as {}, without items.
+    if (!Object.keys(page).length) return [];
+    const items = (page as { items?: unknown }).items;
+    if (Array.isArray(items)) return items;
+  }
+  throw new Error("Dialpad call-history response needs review");
+}
 export const htmlEscape = (value: string) => value.replace(/[&<>"']/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]!));
 export interface FrontMessage { id: string; message_uid?: string; uid?: string; created_at: number; is_inbound: boolean; type?: string; text?: string; subject?: string;
   attachments?: { id: string; filename: string; content_type: string; size: number }[];

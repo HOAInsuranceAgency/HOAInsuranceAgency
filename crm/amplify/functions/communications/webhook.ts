@@ -26,7 +26,11 @@ export function verifyDialpad(raw: string, secret: string) {
   return payload as Record<string, unknown>;
 }
 export const handler = async (event: APIGatewayProxyEventV2) => {
-  const response = (statusCode: number, body: string) => ({ statusCode, body, headers: { "content-type": "text/plain", "cache-control": "no-store" } });
+  const response = (statusCode: number, body: string) => {
+    // Log fixed rejection reasons only, never signatures, secrets or event bodies.
+    if (statusCode >= 400) console.warn("Communication webhook rejected", { provider: event.rawPath.endsWith("/front") ? "front" : event.rawPath.endsWith("/dialpad") ? "dialpad" : "unknown", statusCode, reason: body });
+    return { statusCode, body, headers: { "content-type": "text/plain", "cache-control": "no-store" } };
+  };
   if (event.requestContext.http.method !== "POST") return response(405, "POST required");
   const raw = event.isBase64Encoded ? Buffer.from(event.body ?? "", "base64").toString("utf8") : event.body ?? "";
   if (Buffer.byteLength(raw) > 180_000) return response(413, "Payload too large");
@@ -53,7 +57,11 @@ export const handler = async (event: APIGatewayProxyEventV2) => {
       if (line && !c.dialpadNumbers.includes(line)) return response(202, "Outside configured business lines");
       if (!line) payload = unidentifiedDialpadReceipt(payload);
     } else return response(404, "Unknown webhook");
-  } catch { return response(401, "Invalid webhook"); }
+  } catch (error) {
+    const reason = error instanceof Error && ["Expired signature", "Invalid signature", "Signed Dialpad payload required", "Unsupported webhook signature"].includes(error.message) ? error.message : "Malformed or unavailable verification input";
+    console.warn("Communication webhook verification failed", { reason });
+    return response(401, "Invalid webhook");
+  }
   const id = `event:${provider}:${hash(JSON.stringify(payload))}`;
   try { await save(row("EVENT", id, { provider, payload, attempts: 0 }, { dueAt: new Date().toISOString() })); }
   catch {

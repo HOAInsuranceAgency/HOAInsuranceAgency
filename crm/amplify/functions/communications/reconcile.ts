@@ -1,6 +1,6 @@
 import { config } from "./config";
 import { historyDue, restartHistory, type HistoryJob } from "./history";
-import { front, dialpad } from "./providers";
+import { front, dialpad, dialpadCallItems } from "./providers";
 import { get, row, save, put, commit, canonical, hash, issue } from "./store";
 import type { EventRecord } from "./events";
 import { dialpadBusinessLine, unidentifiedDialpadReceipt } from "./phoneScope";
@@ -38,8 +38,7 @@ async function reconcileDialpad() {
   const params = new URLSearchParams({ started_after: String(after), started_before: String(through) });
   if (old?.data.cursor) params.set("cursor", old.data.cursor);
   const page = await dialpad<{ items?: Record<string, unknown>[]; cursor?: string }>(`/call?${params}`);
-  if (!Array.isArray(page.items)) throw new Error("Dialpad call-history response needs review");
-  for (const item of page.items) {
+  for (const item of dialpadCallItems(page)) {
     const p = item && typeof item === "object" ? item : {}, id = String(p.call_id ?? p.id);
     const valid = /^\d+$/.test(id);
     const line = dialpadBusinessLine(p);

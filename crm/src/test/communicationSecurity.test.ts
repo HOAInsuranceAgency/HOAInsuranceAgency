@@ -4,7 +4,7 @@ const h = vi.hoisted(() => ({ fetch: vi.fn(), authorizationFailed: vi.fn(async (
 vi.mock("../../amplify/functions/communications/budget", () => ({ authorizationDelay: async () => 0, authorizationFailed: h.authorizationFailed, authorizationRestored: async () => {}, remainingDelay: async () => 0, rememberBudget: async () => {} }));
 vi.mock("../../amplify/functions/communications/config", () => ({ credentials: async () => ({ frontToken: "test-secret", dialpadToken: "test-secret" }), config: async () => ({ environment: "staging", frontInboxId: "inb_a", allowedInboxIds: [], frontChannelId: "cha_a", frontSender: "test@example.com", testRecipients: ["test@example.com"], frontSmsChannelId: "cha_sms", sharedSmsNumber: "+15082332261", dialpadCompanyId: "4972992849059840" }) }));
 import { verifyFront, verifyDialpad } from "../../amplify/functions/communications/webhook";
-import { providerRequest, assertRecipient, providerTimestamp, verifyEmailChannel, verifySmsChannel, verifyDialpadCompany, permittedConversation, FrontScopeError } from "../../amplify/functions/communications/providers";
+import { providerRequest, assertRecipient, providerTimestamp, verifyEmailChannel, verifySmsChannel, verifyDialpadCompany, permittedConversation, FrontScopeError, dialpadCallItems } from "../../amplify/functions/communications/providers";
 import { scopedFrontReceipt } from "../../amplify/functions/communications/frontReceipt";
 const secret = "webhook-signing-secret";
 beforeEach(() => { vi.stubGlobal("fetch", h.fetch); h.fetch.mockReset(); h.authorizationFailed.mockClear(); });
@@ -25,6 +25,10 @@ describe("signed provider receipts", () => {
   });
 });
 describe("provider boundaries", () => {
+  it("accepts Dialpad's empty call window without accepting malformed responses", () => {
+    expect(dialpadCallItems({})).toEqual([]); expect(dialpadCallItems({ items: [], cursor: "next" })).toEqual([]);
+    for (const value of [null, [], { error: "Unavailable" }, { items: null }, { cursor: "unexplained" }]) expect(() => dialpadCallItems(value)).toThrow("needs review");
+  });
   it("does not fetch conversation content before verifying its inbox membership", async () => {
     h.fetch.mockResolvedValue(new Response('{"_results":[{"id":"inb_other"}]}'));
     await expect(permittedConversation("cnv_a")).rejects.toBeInstanceOf(FrontScopeError);

@@ -317,6 +317,12 @@ describe("review regressions: provider capture and delivery", () => {
     expect(entries("EVENT")).toHaveLength(1);
     h.dialpad.mockResolvedValue({ items: [{ ...call, transcription_text: "Please call me" }] }); await reconcile(); expect(entries("EVENT")).toHaveLength(2);
   });
+  it("advances an empty Dialpad call window without a sync-gap issue", async () => {
+    h.c.frontInboxId = undefined; h.c.dialpadCompanyId = "1"; h.dialpad.mockResolvedValue({});
+    const { reconcile } = await import("../../amplify/functions/communications/reconcile");
+    expect(await reconcile()).toEqual({ lagging: false });
+    expect(record("cursor:dialpad").data.checkedAt).toBeTruthy(); expect(entries("EVENT")).toHaveLength(0); expect(entries("ISSUE")).toHaveLength(0);
+  });
   it("excludes other business lines before storing call history and redacts unidentified records", async () => {
     h.c.frontInboxId = undefined; h.c.dialpadCompanyId = "1";
     h.dialpad.mockResolvedValue({ items: [

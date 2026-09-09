@@ -1,5 +1,5 @@
 import { config, credentials } from "./config";
-import { front, dialpad, verifyEmailChannel, verifySmsChannel, verifyDialpadCompany } from "./providers";
+import { front, dialpad, dialpadCallItems, verifyEmailChannel, verifySmsChannel, verifyDialpadCompany } from "./providers";
 import { get } from "./store";
 import { validRole } from "./workflow";
 export async function connectionChecks() {
@@ -11,7 +11,7 @@ export async function connectionChecks() {
     ["Front sales channel", async () => { await verifyEmailChannel(); }],
     ["Front inbox access", async () => { for (const id of [c.frontInboxId, ...c.allowedInboxIds]) { if (!id) throw new Error("Choose the sales inbox"); await front(`/inboxes/${id}`); } }],
     ["Dialpad company", async () => { await verifyDialpadCompany(); }],
-    ["Dialpad call history", async () => { if (!c.dialpadNumbers.includes(c.sharedSmsNumber)) throw new Error("Include the main line in the monitored numbers"); const p = await dialpad<{ items?: unknown[] }>(`/call?started_after=${Date.now() - 60_000}`); if (!Array.isArray(p.items)) throw new Error("Call history is unavailable"); }],
+    ["Dialpad call history", async () => { if (!c.dialpadNumbers.includes(c.sharedSmsNumber)) throw new Error("Include the main line in the monitored numbers"); dialpadCallItems(await dialpad(`/call?started_after=${Date.now() - 60_000}`)); }],
     ["Shared text channel", async () => { await verifySmsChannel(); }],
     ["Webhook signatures", async () => { if (!keys.frontSigningKey || !keys.dialpadSigningKey) throw new Error("Save both webhook signing secrets"); }],
   ];
