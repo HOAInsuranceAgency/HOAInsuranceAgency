@@ -1,8 +1,11 @@
 applications:
-  # Both independent Amplify apps read this root file, including the website
-  # which needs no additional headers.
+  # Amplify requires a matching appRoot and nonempty header list for each app.
   - appRoot: web
-    customHeaders: []
+    customHeaders:
+      - pattern: '**/*'
+        headers:
+          - key: 'X-Content-Type-Options'
+            value: 'nosniff'
   - appRoot: crm
     customHeaders:
       - pattern: '/front-sidebar*'

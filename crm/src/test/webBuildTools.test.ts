@@ -71,6 +71,7 @@ describe("Astro 7 build compatibility", () => {
       const matches = headers.applications.filter((entry) => entry.appRoot === app.appRoot);
       expect(matches, app.appRoot).toHaveLength(1);
       expect(Array.isArray(matches[0].customHeaders), app.appRoot).toBe(true);
+      expect(matches[0].customHeaders.length, app.appRoot).toBeGreaterThan(0);
     }
   });
 
