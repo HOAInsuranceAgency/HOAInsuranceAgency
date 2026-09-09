@@ -13,7 +13,7 @@ Updated September 8, 2026. Front is the default transport for this lead flow.
 | Decision | Requirement |
 | --- | --- |
 | Lead responsibilities | Every lead has a **Salesperson** and a **Deal champion**; the same person may fill both |
-| Assignment | Automatically set **Brian Cole** as both salesperson and deal champion; the team can reassign either role |
+| Assignment | Automatically set both roles to the admin-selected default teammate, initially **Brian Cole** in production; any active teammate eligible for both roles may be selected |
 | Salesperson | Owns the prospect relationship, sales communication, and prospect follow-up |
 | Deal champion | Coordinates carriers and salespeople and drives the work required to get the deal bound |
 | Eligibility | Admin controls whether each teammate appears in the Salesperson dropdown, Deal champion dropdown, both, or neither |
@@ -42,7 +42,7 @@ Its Front conversation contains that submission, Brian's AI reply, subsequent
 prospect replies, and the team's outgoing messages. The account links directly
 to that conversation, and the Front sidebar shows the account's CRM context.
 
-New leads start with Brian as both salesperson and deal champion. The team can
+New leads start with the configured default teammate as both salesperson and deal champion (Brian is the intended production default). The team can
 reassign either role. Once all immediate work is handled, the conversation may be archived.
 The CRM still lists the lead, its next actions, and deadlines. A prospect reply
 returns it to an actionable state; an unanswered outreach generates a due task
@@ -89,13 +89,15 @@ members with existing lead-edit rights can assign or reassign either role.
 Saving both is one audited operation. Same-person assignments are valid and
 must not produce duplicate reminders.
 
-Automatically populate both roles with Brian's verified CRM user ID during
-new-lead creation. Manual creation forms show Brian in both selectors and allow
-the team to choose different eligible people before saving. Public forms do
-not choose staff; the server applies Brian as the default. Technical retries
-never overwrite assignments that the team has since changed.
+Automatically populate both roles with the admin-selected teammate's verified CRM
+user ID during new-lead creation. Brian remains the intended production default,
+but this is a configurable choice, never a name-based restriction. Any active
+CRM teammate enabled for both roles may be selected, including Jake in staging.
+Manual creation forms show the configured default in both selectors and allow
+the team to choose different eligible people before saving. Public forms cannot
+choose staff. Technical retries never overwrite later team assignments.
 
-Configure Brian as eligible for both roles at setup. If his default assignment
+Configure the selected teammate as eligible for both roles at setup. If the default
 cannot be applied because the account is missing, disabled or ineligible,
 preserve the incoming lead and show an assignment/configuration exception to
 admins. Such a lead stays in **Needs assignment** and cannot be auto-archived.
@@ -108,7 +110,7 @@ If an exceptional lead has due work before its assignments are repaired, that
 work remains visible and cannot be marked delivered to a missing assignee.
 Reassignment preserves the original deadline rather than granting a new delay.
 
-During migration, fill missing roles on existing active leads with Brian while
+During migration, fill missing roles on existing active leads with the configured default while
 preserving any explicitly recorded assignments. Never infer responsibility from
 an old email subscription or a website "Assigned agent" label. Roles remain on
 the account when binding converts it to a client, preserving attribution and
@@ -373,7 +375,7 @@ validation. FormSubmit is removed
 only when the durable replacement and customer-facing error flow work end to end.
 There is no long-term dual provider option.
 
-Backfill missing roles on existing active leads with Brian, preserving explicit
+Backfill missing roles on existing active leads with the configured default, preserving explicit
 assignments. Identify relevant Front conversations in a review list and retain
 existing follow-up commitments before
 changing their inbox status. Do not resend initial AI emails to historical leads.
@@ -395,7 +397,7 @@ texting, correct activity linking and callbacks that survive inbox cleanup.
 
 ## 11. Final operational decisions
 
-Brian as the automatic default for both roles (with manual reassignment), the
+Brian as the intended production default for both roles (admin-configurable, with manual reassignment), the
 2-business-day / 1-overdue-business-day cadence, Brian as initial sender, and
 keeping CRM deadlines independent of Front snoozes are confirmed. Automatic
 assignment replaces the earlier choice of manual initial assignment and the

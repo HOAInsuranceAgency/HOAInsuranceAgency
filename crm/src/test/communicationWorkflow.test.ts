@@ -1,6 +1,6 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import type { Communication, IntegrationConfig, LeadTask } from "../../../shared/leadWorkflow";
-const h = vi.hoisted(() => ({ records: new Map<string, Record<string, any>>(), transactions: [] as any[][], inFlight: 0, maxInFlight: 0, fail: false, writeError: undefined as Error | undefined, accountError: false,
+const h = vi.hoisted(() => ({ records: new Map<string, Record<string, any>>(), transactions: [] as any[][], inFlight: 0, maxInFlight: 0, fail: false, writeError: undefined as Error | undefined, accountError: false, userEnabled: true,
   front: vi.fn(), dialpad: vi.fn(), update: vi.fn(), c: {} as IntegrationConfig }));
 vi.mock("@aws-sdk/lib-dynamodb", async importOriginal => {
   const actual = await importOriginal<typeof import("@aws-sdk/lib-dynamodb")>();
@@ -34,11 +34,12 @@ vi.mock("@aws-sdk/lib-dynamodb", async importOriginal => {
     throw new Error(`Unexpected storage command ${command.constructor.name}`);
   } }) } };
 });
-vi.mock("@aws-sdk/client-cognito-identity-provider", () => ({ CognitoIdentityProviderClient: class { send = async () => ({ Users: [{ Enabled: true }] }); }, ListUsersCommand: class { constructor(public input: unknown) {} } }));
+vi.mock("@aws-sdk/client-cognito-identity-provider", () => ({ CognitoIdentityProviderClient: class { send = async () => ({ Users: [{ Enabled: h.userEnabled }] }); }, ListUsersCommand: class { constructor(public input: unknown) {} } }));
 vi.mock("../../amplify/functions/communications/config", async importOriginal => ({ ...(await importOriginal<typeof import("../../amplify/functions/communications/config")>()), saveCredentials: vi.fn(), config: async () => h.c, credentials: async () => ({ frontSigningKey: "test-signing-key", dialpadSigningKey: "test-dialpad-signing-key" }) }));
 vi.mock("../../amplify/functions/communications/data", () => ({ dataClient: async () => ({ models: {
   Account: { get: async ({ id }: { id: string }) => (h.accountError ? { data: null, errors: [{ message: "Simulated account read failure" }] } : { data: h.records.get(`Account:${id}`) ?? { id, name: "Willow HOA", stage: "LEAD" } }) },
   LeadReply: { update: h.update },
+  UserProfile: { list: async () => ({ data: [...h.records.entries()].filter(([key]) => key.startsWith("UserProfile:")).map(([,profile]) => profile) }) },
 } }) }));
 vi.mock("../../amplify/functions/communications/providers", async importOriginal => {
   const actual = await importOriginal<typeof import("../../amplify/functions/communications/providers")>();
@@ -59,7 +60,7 @@ const entries = (kind: string) => [...h.records.values()].filter(r => r.kind ===
 async function lead() { const wf = await defaultWorkflow("a1", "Willow HOA"); return save(row("WORKFLOW", "workflow:a1", { ...wf, conversationId: "cnv_a" }, { accountId: "a1" })); }
 async function inbound(id = "m1", at = NOW, extra: Partial<Communication> = {}) { const c: Communication = { id: `comm:${id}`, providerId: id, provider: "front", channel: "EMAIL", direction: "INBOUND", accountId: "a1", conversationId: "cnv_a", at, status: "RECEIVED", version: 1, ...extra }; await save(row("COMMUNICATION", c.id, c, { accountId: c.accountId })); return c; }
 beforeEach(async () => {
-  vi.useFakeTimers(); vi.setSystemTime(NOW); h.records.clear(); h.transactions.length = 0; h.inFlight = 0; h.maxInFlight = 0; h.fail = false; h.accountError = false; h.writeError = undefined; vi.clearAllMocks();
+  vi.useFakeTimers(); vi.setSystemTime(NOW); h.records.clear(); h.transactions.length = 0; h.inFlight = 0; h.maxInFlight = 0; h.fail = false; h.accountError = false; h.userEnabled = true; h.writeError = undefined; vi.clearAllMocks();
   Object.assign(process.env, { COMMUNICATION_TABLE: "comms", ACTIVITY_TABLE: "Activity", ACCOUNT_TABLE: "Account", CONTACT_TABLE: "Contact", PRIOR_CARRIER_TABLE: "PriorCarrier", LEAD_REPLY_TABLE: "LeadReply", USER_POOL_ID: "pool" });
   h.c = { frontCompanyId: "cmp_a", environment: "main", defaultUserId: "brian", frontSender: "sales@protectmyhoa.com", frontInboxId: "inb_a", frontChannelId: "cha_a", holidays: [], paused: false, activatedAt: "2026-09-01T00:00:00Z", allowedInboxIds: [], testRecipients: [], dialpadNumbers: ["+15082332261", "+16175550123"], sharedSmsNumber: "+15082332261", version: 1 };
   await save(row("ELIGIBILITY", "eligibility:brian", { userId: "brian", name: "Brian Cole", email: "brian@example.com", salesperson: true, champion: true, enabled: true }));
@@ -702,5 +703,50 @@ describe("round three: recoverable history capture", () => {
     const job = await save(row("CONVERSATION_BACKFILL", "front-reconcile:cnv_a", { conversationId: "cnv_a", attempts: 12, error: "Mailbox needs repair" }));
     h.front.mockResolvedValue({ _results: [{ id: "cnv_a" }] }); vi.setSystemTime(new Date(Date.parse(NOW) + 86400_000));
     await reconcile(); expect(record(job.id).version).toBe(job.version); expect(record(job.id).data.attempts).toBe(12);
+  });
+});
+
+
+describe("configured default lead owner", () => {
+  async function prepareJake(flags = { enabled: true, salesperson: true, champion: true }) {
+    h.records.set("UserProfile:jake", { userId: "jake", firstName: "Jake", lastName: "Greasley", email: "jake@example.com" });
+    await save(row("ELIGIBILITY", "eligibility:jake", { userId: "jake", name: "Jake Greasley", email: "jake@example.com", ...flags }));
+    await save(row("CONFIG", "config", h.c));
+  }
+  async function chooseJake() {
+    const { handler } = await import("../../amplify/functions/communications/handler");
+    return handler({ arguments: { operation: "saveSettings", input: { config: { ...h.c, defaultUserId: "jake" } } }, identity: { sub: "admin", groups: ["ADMIN"] } as never });
+  }
+  it.each(["staging", "main"])("accepts an eligible non-Brian default in %s and keeps existing assignments", async environment => {
+    vi.stubEnv("COMMUNICATION_ENV", environment);
+    try {
+      h.c = { ...h.c, environment, frontSender: environment === "main" ? "sales@protectmyhoa.com" : "test@example.com" };
+      await lead(); await prepareJake();
+      expect(await chooseJake()).toMatchObject({ ok: true, config: { defaultUserId: "jake" } });
+      h.c = record("config").data;
+      expect(await defaultWorkflow("new-lead", "New HOA")).toMatchObject({ salespersonId: "jake", championId: "jake", assignmentIssue: undefined });
+      expect(record("workflow:a1").data).toMatchObject({ salespersonId: "brian", championId: "brian" });
+      const { connectionChecks } = await import("../../amplify/functions/communications/setup");
+      expect((await connectionChecks()).find(check => check.name === "Default responsibilities")).toMatchObject({ ok: true });
+    } finally { vi.unstubAllEnvs(); }
+  });
+  it.each([
+    { enabled: true, salesperson: true, champion: false },
+    { enabled: true, salesperson: false, champion: true },
+    { enabled: false, salesperson: true, champion: true },
+  ])("rejects an ineligible default before saving: %j", async flags => {
+    await prepareJake(flags);
+    expect(await chooseJake()).toMatchObject({ ok: false, error: expect.stringContaining("eligible") });
+    expect(record("config").data.defaultUserId).toBe("brian");
+  });
+  it("rejects a disabled sign-in account even when both eligibility flags remain enabled", async () => {
+    await prepareJake(); h.userEnabled = false;
+    expect(await chooseJake()).toMatchObject({ ok: false, error: expect.stringContaining("disabled") });
+    expect(record("config").data.defaultUserId).toBe("brian");
+  });
+  it("rejects a stale eligibility record without a current CRM teammate", async () => {
+    await prepareJake(); h.records.delete("UserProfile:jake");
+    expect(await chooseJake()).toMatchObject({ ok: false, error: expect.stringContaining("current CRM teammate") });
+    expect(record("config").data.defaultUserId).toBe("brian");
   });
 });

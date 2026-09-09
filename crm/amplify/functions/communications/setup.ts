@@ -6,7 +6,7 @@ export async function connectionChecks() {
   const c = await config(), keys = await credentials();
   const checks: { name: string; ok: boolean; detail: string }[] = [];
   const tasks: [string, () => Promise<void>][] = [
-    ["Default responsibilities", async () => { if (!c.defaultUserId) throw new Error("Choose Brian Cole and enable both assignment roles"); await validRole(c.defaultUserId, "SALESPERSON"); await validRole(c.defaultUserId, "CHAMPION", false); }],
+    ["Default responsibilities", async () => { if (!c.defaultUserId) throw new Error("Choose a default teammate and enable both assignment roles"); await validRole(c.defaultUserId, "SALESPERSON"); await validRole(c.defaultUserId, "CHAMPION", false); }],
     ["Front company", async () => { if (!c.frontCompanyId) throw new Error("Enter the Front company ID"); const me = await front<{ id: string }>("/me"); if (me.id !== c.frontCompanyId) throw new Error("Front company does not match settings"); }],
     ["Front sales channel", async () => { await verifyEmailChannel(); }],
     ["Front inbox access", async () => { for (const id of [c.frontInboxId, ...c.allowedInboxIds]) { if (!id) throw new Error("Choose the sales inbox"); await front(`/inboxes/${id}`); } }],

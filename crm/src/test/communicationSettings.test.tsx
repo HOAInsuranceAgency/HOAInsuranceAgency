@@ -94,3 +94,38 @@ describe("communication settings edit sessions", () => {
     await act(async () => finish({ config: { ...config, version: 8 } }));
   });
 });
+
+
+describe("default teammate eligibility", () => {
+  it("lets Jake select himself when both roles are enabled", async () => {
+    const jake = { userId: "jake", name: "Jake Greasley", email: "jake@example.com", enabled: true, salesperson: true, champion: true };
+    h.request.mockImplementation(async (op: string, input: { config: IntegrationConfig }) => {
+      if (op === "settings") return { ...settings(), config: { ...config, defaultUserId: undefined } };
+      if (op === "team") return { team: [jake] };
+      return { config: { ...input.config, version: 8 } };
+    });
+    render(<CommunicationSettings />); await editSettings();
+    const select = screen.getByRole("combobox", { name: /Default salesperson and champion/ });
+    expect(screen.getByRole("option", { name: "Jake Greasley" })).toBeEnabled();
+    fireEvent.change(select, { target: { value: "jake" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(h.request).toHaveBeenCalledWith("saveSettings", { config: { ...config, defaultUserId: "jake" }, credentials: {} }, true));
+    expect(await screen.findByText("Jake Greasley")).toBeVisible();
+  });
+  it("offers only active teammates eligible for both roles and preserves an unavailable saved choice", async () => {
+    h.request.mockImplementation(async (op: string) => op === "settings" ? settings() : { team: [
+      { ...team[0], champion: false },
+      { ...team[0], userId: "jake", name: "Jake Greasley" },
+      { ...team[0], userId: "sales", name: "Sales only", champion: false },
+      { ...team[0], userId: "champ", name: "Champion only", salesperson: false },
+      { ...team[0], userId: "disabled", name: "Disabled teammate", enabled: false },
+    ] });
+    render(<CommunicationSettings />); await editSettings();
+    expect(screen.getByRole("option", { name: "Jake Greasley" })).toBeEnabled();
+    expect(screen.queryByRole("option", { name: "Sales only" })).toBeNull();
+    expect(screen.queryByRole("option", { name: "Champion only" })).toBeNull();
+    expect(screen.queryByRole("option", { name: "Disabled teammate" })).toBeNull();
+    expect(screen.getByRole("option", { name: "Brian Cole (unavailable)" })).toBeDisabled();
+    expect(screen.getByRole("combobox", { name: /Default salesperson and champion/ })).toHaveValue("brian");
+  });
+});

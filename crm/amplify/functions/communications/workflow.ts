@@ -28,7 +28,7 @@ export async function defaultWorkflow(accountId: string, name: string): Promise<
   const c = await config();
   let assignmentIssue: string | undefined;
   try {
-    if (!c.defaultUserId) throw new Error("Set Brian Cole as the default teammate in Integration settings");
+    if (!c.defaultUserId) throw new Error("Choose a default teammate in Integration settings");
     await validRole(c.defaultUserId, "SALESPERSON"); await validRole(c.defaultUserId, "CHAMPION", false);
   } catch (e) { assignmentIssue = e instanceof Error ? e.message : "Default assignment needs attention"; }
   return { accountId, name, salespersonId: assignmentIssue ? undefined : c.defaultUserId, championId: assignmentIssue ? undefined : c.defaultUserId,

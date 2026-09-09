@@ -4,10 +4,10 @@ Implementation is deployed to staging. Front and Dialpad credentials and channel
 
 ## Operating behavior
 
-- Website enquiries are captured once, together with their original answers, Brian's two responsibilities, the pending Front import and team SMS alert. An unchanged browser retry uses the same submission ID, retry proof and answers to retrieve its receipt, including after reload. Corrected answers receive a new submission identity; a previous attempt whose response was lost may already have arrived. Cached older forms without an identity remain accepted during cutover, but cannot receive retry deduplication. A storage failure does not show a success screen.
+- Website enquiries are captured once, together with their original answers, the configured default responsibilities, the pending Front import and team SMS alert. An unchanged browser retry uses the same submission ID, retry proof and answers to retrieve its receipt, including after reload. Corrected answers receive a new submission identity; a previous attempt whose response was lost may already have arrived. Cached older forms without an identity remain accepted during cutover, but cannot receive retry deduplication. A storage failure does not show a success screen.
 - Front imports the labelled website submission. After the existing document/upload window, the AI producer queues a reply as Brian Cole through the shared sales channel, using that exact conversation. There is no email provider selector and no SES fallback for this flow.
 - Front acceptance is pending delivery. The worker resolves the returned message UID to a message and conversation before recording SENT and scheduling follow-up. An ambiguous outbound result is held for review, without an automatic resend.
-- Brian is the default salesperson and deal champion. Team settings control dropdown eligibility independently of Cognito access. Explicit reassignment preserves deadlines. Large accounts apply notification and Front-routing changes through durable batches of 25 records after committing the two duties. A unavailable or unconfigured default leaves a visible assignment exception.
+- Brian is the intended production default salesperson and deal champion; admins may choose any active teammate eligible for both roles. Team settings control dropdown eligibility independently of Cognito access. Explicit reassignment preserves deadlines. Large accounts apply notification and Front-routing changes through durable batches of 25 records after committing the two duties. A unavailable or unconfigured default leaves a visible assignment exception.
 - Ordinary no-reply follow-up is 9 a.m. Eastern on the second business date after confirmed outbound email; escalation is 9 a.m. the next business date. Inbound response and callbacks use eight staffed hours, 9–5 Eastern, Monday–Friday excluding the configured holidays. Custom promises require a reason and a future date and survive later messages. A late-linked request retains its original deadline; if its escalation deadline has already passed, the salesperson and champion are informed together, using one escalated notice when they are the same person.
 - CRM tasks and notifications remain authoritative when any Front user snoozes, archives, marks read or changes the handler. Due work reopens its linked conversation. Cleanup checks current activity, ownership, commitments, delivery uncertainty and synchronization health before archiving.
 - Dialpad is authoritative for calls and texts. Front's native integration remains the human calling/texting interface. Calls and SMS conversations stay separate from email. Explicit activity links unify their CRM history without manufacturing duplicate Front messages.
@@ -32,7 +32,7 @@ Infrastructure additions: one server-only DynamoDB table with kind/account/due/o
 
 ### Team
 
-In **Settings → Team**, enable both salesperson and deal-champion eligibility for Brian Cole. Map each teammate to their real Front teammate ID (`tea_…`) and Dialpad user ID. These fields do not alter roles, groups, visibility or permissions. In **Settings → Integrations**, select Brian as the default for both duties.
+In **Settings → Team**, enable both salesperson and deal-champion eligibility for the intended default teammate. Map each teammate to their real Front teammate ID (`tea_…`) and Dialpad user ID. These fields do not alter roles, groups, visibility or permissions. In **Settings → Integrations**, select that teammate as the default for both duties. Brian is the intended production default; Jake can be selected in staging. This setting is validated by identity and eligibility, not by name.
 
 ### Front
 
@@ -101,7 +101,7 @@ Seen is cached separately from confirmed delivery. The worker supports numeric/s
 
 ### Existing leads and legacy replies
 
-Use **Fill missing lead responsibilities** in batches to apply Brian defaults without overwriting existing assignments or dates. Link existing Front conversations explicitly; this queues a paginated backfill of messages from the activation window and repairs account links for previously unlinked messages. Do not merge every historic message from a shared property-manager address.
+Use **Fill missing lead responsibilities** in batches to apply the configured default without overwriting existing assignments or dates. Link existing Front conversations explicitly; this queues a paginated backfill of messages from the activation window and repairs account links for previously unlinked messages. Do not merge every historic message from a shared property-manager address.
 
 The cutover does not replay historical initial emails. Old pending replies without a new submission identity, and old SENDING rows without a Front-generation claim, are held for migration review. Inspect their previous AWS/Front history before any human contact. New generation crashes can recover their durable outbox operation; old ambiguous AWS sends cannot safely be treated as unsent.
 
@@ -283,3 +283,10 @@ Settings use an isolated edit session with explicit Save and Cancel. Multiline i
 Validation: 1,943 tests across 98 files, frontend/backend type checks, both builds and backend synthesis passed. Browser checks of the actual components with local fixture responses passed at desktop and mobile widths, including no horizontal overflow, collapsed technical controls, and edit isolation. Live staging hosting verification follows deployment. Existing provider setup blockers remain unchanged.
 
 Commit `a2f6d3202df06401e122e563a8a3356f7176b8cb` deployed successfully in CRM job **173** and website job **172**, including hosting verification. Chrome live verification at approximately 4:22 p.m. Eastern confirmed the compact overview, collapsed advanced controls, Edit/Cancel behavior, and a real connection check reporting the two existing setup issues: lead ownership and email sending. No integration values were changed or delivery activated during browser verification. The updated settings page was left open for the user.
+
+
+### Default teammate correction — September 9, 2026
+
+The admin's chosen default may be any current, enabled CRM teammate eligible for both salesperson and deal champion. The original Brian-only dropdown and server name check incorrectly turned the intended production default into a permanent restriction. Both restrictions are removed; empty-state and validation messages now refer to the selected default. Changing this setting does not reassign existing leads, alter permissions, or change the AI email's Brian Cole sender identity. No invitation is needed to select an existing eligible staging member. This supersedes the earlier requirement to add Brian to the staging roster as a setup prerequisite.
+
+Validation for this correction: 1,952 tests across 98 files, frontend/backend type checks, CRM and website builds, and backend synthesis passed. New regressions cover selecting and saving Jake, applying the configured default to a new lead, preserving existing assignments, and rejecting missing roles, disabled teammates/sign-in accounts, or stale roster identities. Both staging and production environments use the same eligibility rule; production configuration is not changed by this correction.

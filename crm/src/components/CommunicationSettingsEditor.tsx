@@ -17,8 +17,9 @@ export default function CommunicationSettingsEditor({ config, team, teamError, c
   const candidate = { ...draft, ...Object.fromEntries(listFields.map(key => [key, parseList(lists[key])])) } as IntegrationConfig;
   const dirty = JSON.stringify(candidate) !== JSON.stringify(config) || Object.values(keys).some(value => value.trim());
   const edit = <K extends keyof IntegrationConfig>(key: K, value: IntegrationConfig[K]) => setDraft(previous => ({ ...previous, [key]: value }));
-  const brian = team.find(member => member.name.trim().toLowerCase() === "brian cole");
-  const canAssignBrian = brian?.enabled && brian.salesperson && brian.champion;
+  const eligible = team.filter(member => member.enabled && member.salesperson && member.champion).sort((a, b) => a.name.localeCompare(b.name));
+  const selected = team.find(member => member.userId === draft.defaultUserId);
+  const selectedEligible = eligible.some(member => member.userId === draft.defaultUserId);
   function listInput(key: ListField, label: string, hint?: string) {
     return <label className="field">{label}<textarea value={lists[key]} onChange={event => setLists(previous => ({ ...previous, [key]: event.target.value }))} rows={3} />{hint && <small className="muted">{hint}</small>}</label>;
   }
@@ -30,10 +31,10 @@ export default function CommunicationSettingsEditor({ config, team, teamError, c
         <div className="communication-fields">
           <label className="field">Email sender<input type="email" value={draft.frontSender} onChange={event => edit("frontSender", event.target.value)} /><small className="muted">The mailbox Front sends from. Test recipients are listed separately.</small></label>
           <label className="field">Default salesperson and champion<select value={draft.defaultUserId ?? ""} onChange={event => edit("defaultUserId", event.target.value || undefined)}>
-            <option value="">Choose Brian Cole</option>
-            {brian && <option value={brian.userId} disabled={!canAssignBrian}>Brian Cole</option>}
-            {!brian && draft.defaultUserId && <option value={draft.defaultUserId} disabled>Saved teammate unavailable</option>}
-          </select><small className="muted">{canAssignBrian ? "Both roles apply to new leads." : "Enable both assignment roles for Brian in Team settings first."}</small>
+            <option value="">Choose a teammate</option>
+            {eligible.map(member => <option key={member.userId} value={member.userId}>{member.name}</option>)}
+            {!selectedEligible && draft.defaultUserId && <option value={draft.defaultUserId} disabled>{selected?.name ?? "Saved teammate"} (unavailable)</option>}
+          </select><small className="muted">{eligible.length ? "Teammates enabled for both roles in Team settings can be selected." : "Enable salesperson and deal champion for a teammate in Team settings first."}</small>
           {teamError && <span className="error-text small">{teamError}</span>}</label>
         </div>
         {config.environment !== "main" && listInput("testRecipients", "Test email recipients", "Only these addresses can receive staging emails. Enter one per line.")}

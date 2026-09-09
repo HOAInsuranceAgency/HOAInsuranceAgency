@@ -21,7 +21,7 @@ Updated September 8, 2026. Service names below describe the reviewed design; the
 | New integration settings section | Front company/inbox/channel validation, user mapping, health and recovery controls |
 
 Inspect and migrate all lead-creation paths, including manual entry, imports and
-extractors. Default both lead roles to Brian's verified user ID; preserve valid
+extractors. Default both lead roles to the configured teammate's verified user ID; preserve valid
 explicit selections on authenticated creation/import. System capture exceptions
 remain visible if the default cannot be applied. Account
 conversion continues to happen through the existing bind workflow.
@@ -56,11 +56,14 @@ unrestricted direct-write fields that bypass `setLeadResponsibilities`.
 A separate eligibility record is preferable because UserProfile currently
 allows people to update their own profile.
 
-Resolve and verify Brian's stable CRM user ID during setup and configure both
-eligibility flags. Set both responsibilities as part of new-lead provisioning,
+Resolve and verify the admin-selected default teammate's stable CRM user ID during
+setup and require both eligibility flags plus an enabled Cognito account. Brian
+is the intended production choice, not a name-based validation rule. The default
+dropdown and server accept any active CRM teammate eligible for both roles,
+including Jake in staging. Set both responsibilities as part of new-lead provisioning,
 not in a later optional notification worker. Public callers cannot override
 these defaults. An idempotent replay returns the existing lead without restoring
-Brian over a later team reassignment. An unavailable default is a visible
+the default over a later team reassignment. An unavailable default is a visible
 configuration/assignment exception; preserve capture instead of dropping the
 enquiry or selecting an arbitrary teammate. Backfill only missing roles on
 existing active leads with conditional writes that preserve concurrent edits.
@@ -363,8 +366,8 @@ sidebar as ready. Background syncing runs in workers, not in the user's open tab
 
 - Inventory all five form entry points, manual/import lead creation, Front sales
   channels, inbox rules, subscribers, current snoozes and existing AI replies.
-- Admin configures Brian's identity and eligibility for both roles. New leads
-  default to him; migration fills only missing roles on active leads and
+- Admin configures a default teammate eligible for both roles, with Brian as the
+  intended production choice. New leads use that selected teammate; migration fills only missing roles on active leads and
   preserves existing explicit assignments. Show coverage and exception counts.
 - Link historical conversations using verified IDs and review ambiguous matches.
   Preserve prior snooze commitments as reviewed CRM dates before clearing them.
@@ -416,11 +419,11 @@ complete a prospect request or restart its deadline.
 | Team member changes eligibility | New dropdown choices change; access and existing assignments remain intact |
 | Non-admin attempts eligibility/config write | Server rejects it; normal lead access unaffected |
 | User deactivated with active leads | Clear reassignment exceptions and retained deadlines/history |
-| New lead created without explicit authenticated selections | Both responsibilities automatically reference Brian's verified user ID |
+| New lead created without explicit authenticated selections | Both responsibilities reference the configured default teammate's verified user ID |
 | Team reassigns either role | Both roles remain valid; audit recorded; pending due work transfers without deadline reset |
-| Submission replay after team reassignment | Existing responsibility selections survive; retry does not reset them to Brian |
-| Brian's default cannot be applied | Lead captured with visible assignment/configuration exception; no auto-archive or arbitrary replacement |
-| Migration fills missing roles | Brian fills only empty values; existing/concurrent explicit assignments remain intact |
+| Submission replay after team reassignment | Existing responsibility selections survive; retry does not reset them to the default |
+| Configured default cannot be applied | Lead captured with visible assignment/configuration exception; no auto-archive or arbitrary replacement |
+| Migration fills missing roles | The configured default fills only empty values; existing/concurrent explicit assignments remain intact |
 | Prospect sends several messages before the team replies | One response episode retains the deadline from the first unanswered message |
 | Prospect reply remains unanswered for one business day | Response task becomes overdue; no automatic customer email; later messages or Front cleanup do not extend the deadline |
 | Front assignee changed manually | Current handler changes; salesperson/champion remain unchanged |

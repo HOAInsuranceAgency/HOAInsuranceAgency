@@ -34,7 +34,7 @@ type SettingsSnapshot = {
 };
 
 const checkLabels: Record<string, [string, string]> = {
-  "Default responsibilities": ["Lead ownership", "Set Brian as the default salesperson and deal champion."],
+  "Default responsibilities": ["Lead ownership", "Choose a default teammate eligible for both salesperson and deal champion."],
   "Front company": ["Front access", "Review the Front connection in Edit settings."],
   "Front sales channel": ["Email sending", "Connect and verify the sending mailbox in Front."],
   "Front inbox access": ["Front inbox", "Review which inboxes the connection can access."],
@@ -114,7 +114,7 @@ export default function CommunicationSettings() {
           {saved.environment !== "main" && <small>Test recipients: {saved.testRecipients.join(", ") || "Not set"}</small>}</div>
         <div><dt>Shared text number</dt><dd>{phoneLabel(saved.sharedSmsNumber)}</dd><small>{saved.dialpadNumbers.length} business {saved.dialpadNumbers.length === 1 ? "number" : "numbers"} configured</small></div>
         <div><dt>Default salesperson &amp; deal champion</dt><dd>{owner?.name || (saved.defaultUserId ? (members.loading ? "Checking teammate…" : "Teammate unavailable") : "Not set")}</dd>
-          <small>{saved.defaultUserId ? "Both roles apply to new leads." : "Brian Cole needs to be configured in Team settings."}</small>
+          <small>{saved.defaultUserId ? "Both roles apply to new leads." : "Choose a teammate enabled for both roles in Team settings."}</small>
           {members.error && <span className="error-text small">{members.error} <button type="button" className="secondary" disabled={members.loading} onClick={() => void members.refetch()}>Retry teammates</button></span>}</div>
         <div><dt>Inbox cleanup</dt><dd>{saved.cleanupEnabled ? "Automatic" : "Off"}</dd><small>Snoozing in Front never moves a CRM deadline.</small></div>
       </dl>
@@ -177,7 +177,7 @@ export default function CommunicationSettings() {
             await request("restartConversationHistory", { conversationId: historyConversation.trim(), reason: recoveryReason }, true);
             setMessage("Conversation history is queued for another check.");
           })}>Retry conversation history</button>
-          <h3>Existing lead assignments</h3><p className="muted small">Fill missing responsibilities with Brian. Existing assignments and deadlines stay in place; historical emails are not resent.</p>
+          <h3>Existing lead assignments</h3><p className="muted small">Fill missing responsibilities with the selected default teammate. Existing assignments and deadlines stay in place; historical emails are not resent.</p>
           <button type="button" className="secondary" disabled={!saved.defaultUserId || migrationCursor === null} onClick={() => void run("backfill", async () => {
             const result = await request<{ assigned: number; exceptions: number; nextToken?: string }>("backfill", { nextToken: migrationCursor }, true);
             setMigrationCursor(result.nextToken ?? null); setMessage(`${result.assigned} assignments updated; ${result.exceptions} need attention.${result.nextToken ? " Continue with the next batch." : " All batches reviewed."}`);

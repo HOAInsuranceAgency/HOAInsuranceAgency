@@ -147,8 +147,7 @@ export const handler = async (event: { arguments: { operation?: string; readOper
       value.sharedSmsNumber = normalizePhone(value.sharedSmsNumber) ?? "";
       if (value.sharedSmsNumber !== "+15082332261") throw new Error("Prospect texts use the confirmed shared main line (508) 233-2261");
       if (value.defaultUserId) {
-        const brian = (await roster()).find(t => t.userId === value.defaultUserId);
-        if (brian?.name.toLowerCase().trim() !== "brian cole") throw new Error("Choose Brian Cole as the default teammate");
+        if (!(await roster()).some(member => member.userId === value.defaultUserId)) throw new Error("Choose a current CRM teammate as the default");
         await validRole(value.defaultUserId, "SALESPERSON"); await validRole(value.defaultUserId, "CHAMPION", false);
       }
       if (input.credentials && Object.values(object(input.credentials)).some(v => typeof v === "string" && v.trim())) { value.paused = true; value.cleanupEnabled = false; }
