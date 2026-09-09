@@ -1047,3 +1047,51 @@ th.internal { color: var(--muted); }
 .front-crm-sidebar .form-grid { grid-template-columns: 1fr; }
 .front-crm-sidebar .toolbar { flex-wrap: wrap; }
 .front-crm-sidebar .field input, .front-crm-sidebar .field select { min-width: 0; width: 100%; }
+
+/* Communication settings: a compact overview with deliberate edit sessions. */
+.communication-settings { max-width: 1040px; }
+.communication-settings .card { margin-bottom: 12px; }
+.communication-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
+.communication-heading h2 { margin-bottom: 5px; }
+.communication-heading p { margin: 0; font-size: 14px; }
+.communication-status { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 18px 0; font-size: 13px; }
+.communication-summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px 28px; margin: 0; padding: 18px 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+.communication-summary dt { color: var(--muted); font-size: 12px; margin-bottom: 5px; }
+.communication-summary dd { font-size: 15px; font-weight: 600; margin: 0; overflow-wrap: anywhere; }
+.communication-summary small, .communication-check small { display: block; font-size: 12px; color: var(--muted); margin-top: 5px; overflow-wrap: anywhere; }
+.communication-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
+.communication-settings button { border: 1px solid var(--accent-dark); border-radius: 6px; background: var(--accent-dark); color: white; padding: 8px 12px; font: inherit; font-size: 13px; cursor: pointer; }
+.communication-settings button.secondary { background: white; color: var(--text); border-color: var(--border); }
+.communication-settings button:hover:not(:disabled) { filter: brightness(.96); }
+.communication-settings button:disabled { opacity: .5; cursor: not-allowed; }
+.communication-settings button:focus-visible, .communication-settings summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.communication-success { color: var(--green); font-size: 13px; }
+.communication-checks { margin-top: 16px; padding: 12px 14px; background: var(--bg); border-radius: 6px; font-size: 13px; }
+.communication-checks ul { margin-bottom: 0; padding-left: 18px; }
+.communication-checks li + li { margin-top: 6px; }
+.communication-checks p { margin-bottom: 0; }
+.communication-disclosure > summary { cursor: pointer; font-size: 14px; font-weight: 600; }
+.communication-disclosure > summary > span { display: inline-block; vertical-align: top; max-width: calc(100% - 24px); }
+.communication-disclosure > summary small { display: block; font-size: 12px; font-weight: 400; color: var(--muted); margin-top: 5px; }
+.communication-controls { min-width: 0; padding: 0; margin: 16px 0 0; border: 0; }
+.communication-controls > .field { margin: 14px 0; }
+.communication-check { display: flex; gap: 9px; align-items: flex-start; font-size: 13px; margin: 16px 0; }
+.communication-check input { flex: 0 0 auto; margin: 2px 0 0; }
+.communication-advanced { margin-top: 18px; border-top: 1px solid var(--border); padding-top: 16px; }
+.communication-technical { font-size: 12px; }
+.communication-technical > div { display: grid; grid-template-columns: 160px minmax(0, 1fr); gap: 12px; padding: 7px 0; border-bottom: 1px solid var(--border); }
+.communication-technical dt { color: var(--muted); }
+.communication-technical dd { margin: 0; overflow-wrap: anywhere; }
+.communication-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.communication-editor .field { font-size: 13px; min-width: 0; }
+.communication-editor input, .communication-editor textarea, .communication-editor select { min-width: 0; width: 100%; }
+.communication-editor textarea { resize: vertical; }
+.communication-editor .field small { line-height: 1.45; }
+.communication-edit-section { margin-top: 16px; border-top: 1px solid var(--border); padding-top: 14px; }
+.communication-edit-section > summary { cursor: pointer; font-size: 13px; font-weight: 600; }
+.communication-edit-section .communication-fields, .communication-edit-section > .field { margin-top: 12px; }
+@media (max-width: 640px) {
+  .communication-summary, .communication-fields { grid-template-columns: 1fr; }
+  .communication-technical > div { grid-template-columns: 1fr; gap: 4px; }
+  .communication-status { align-items: flex-start; }
+}

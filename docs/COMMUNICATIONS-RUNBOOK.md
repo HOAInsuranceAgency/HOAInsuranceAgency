@@ -265,3 +265,19 @@ Front delivered a real signed `new_comment_added` event at `2026-09-09T17:27:20.
 All five call subscriptions and five SMS subscriptions listed above were re-read and verified **disabled** by their exact IDs. Dialpad list responses identify their endpoint through the nested `webhook` object, not a top-level `endpoint_id`. No ordinary signed Dialpad receipt has arrived yet.
 
 Final saved state: staging, delivery paused, cleanup disabled, no activation timestamp. No staging invitation, prospect email, SMS or call was sent. Google’s identity-verification popup remains open for Jake; the forwarding destination has not yet been confirmed and no mailbox-wide forwarding was enabled. The controlled phone recipient remains unspecified. Complete those steps and resolve Brian's staging assignment without sending an invitation before running the remaining acceptance matrix and activating.
+
+### Staging address clarification — September 9, 2026
+
+The user confirmed **`jake+testing@protectmyhoa.com`** as the staging test recipient; it already delivers to their mailbox. The pending Gmail forwarding request and Google verification window were cancelled. Gmail again shows only **Add a forwarding address**, with no forwarding destination configured; no forwarding rule was enabled. Earlier instructions to complete Google verification for that request are superseded. The recipient was also configured as the Front sender during setup; that sending-channel arrangement remains unresolved and must not be described as ready.
+
+### Readiness recheck — September 9, 2026, 1:52 p.m. Eastern
+
+Both latest Amplify staging jobs remain successful (CRM 172, website 171). A live read confirms delivery is paused, cleanup is disabled, activation has not occurred, and the default responsibility user is unset. The worker heartbeat at `2026-09-09T17:50:41.451Z` reports no lag; Front receipt health is `2026-09-09T17:51:34.067Z`. There is still no Dialpad receipt health record. Front reports staging email channel `cha_glct6` invalid and native shared SMS channel `cha_glcre` valid. The permitted test email recipient is saved correctly. The full workflow is not ready for user acceptance: resolve the sending channel and Brian's staging responsibilities, designate the controlled phone recipient, then enable and verify scoped phone capture and activate delivery for controlled tests. No invitations or messages were sent by this recheck.
+
+### Settings usability update — September 9, 2026
+
+The Front and Dialpad settings page now starts with a compact, saved-state overview of the sender, test recipients, shared text number, default responsibilities, delivery state and cleanup. Delivery controls and advanced tools are collapsed. Technical IDs, webhook URLs, recovery controls and credentials remain available through deliberate disclosure/editing; connection checks present plain-language actions with raw diagnostics under Advanced tools. This UI change does not activate delivery or change provider configuration.
+
+Settings use an isolated edit session with explicit Save and Cancel. Multiline input is parsed on submission, so saving does not depend on blur. Failed saves retain edits; successful saves adopt the returned version and clear new credential input. Connection checks, activation and recovery cannot run while editing, and duplicate actions are fenced while requests are pending. Previously saved cleanup preferences are preserved when resuming delivery.
+
+Validation: 1,943 tests across 98 files, frontend/backend type checks, both builds and backend synthesis passed. Browser checks of the actual components with local fixture responses passed at desktop and mobile widths, including no horizontal overflow, collapsed technical controls, and edit isolation. Live staging hosting verification follows deployment. Existing provider setup blockers remain unchanged.

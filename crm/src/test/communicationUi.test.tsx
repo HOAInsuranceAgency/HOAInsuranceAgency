@@ -12,17 +12,18 @@ const context = { workflow: null, tasks: [], communications: [], team: [], issue
 beforeEach(() => { vi.clearAllMocks(); h.request.mockResolvedValue(context); });
 describe("communication UI boundaries", () => {
   it("preserves saved cleanup when revalidating and resuming the integration", async () => {
-    const config = { environment: "main", version: 1, activatedAt: "2026-09-08T14:00:00Z", cleanupEnabled: true, frontSender: "sales@protectmyhoa.com", allowedInboxIds: [], dialpadNumbers: [], holidays: [], testRecipients: [] };
+    const config = { environment: "main", version: 1, activatedAt: "2026-09-08T14:00:00Z", paused: true, cleanupEnabled: true, frontSender: "sales@protectmyhoa.com", allowedInboxIds: [], dialpadNumbers: [], holidays: [], testRecipients: [] };
     h.request.mockImplementation(async (op: string) => op === "settings" || op === "activate" ? { config, credentialStatus: {} } : { team: [] });
     render(<CommunicationSettings />);
-    const cleanup = await screen.findByLabelText(/Enable automatic cleanup/); expect(cleanup).toBeChecked();
-    fireEvent.click(screen.getByLabelText(/I verified the individual lines/)); fireEvent.click(screen.getByRole("button", { name: "Revalidate and resume" }));
+    fireEvent.click(await screen.findByText("Delivery and inbox cleanup"));
+    const cleanup = screen.getByLabelText(/Automatically tidy/); expect(cleanup).toBeChecked();
+    fireEvent.click(screen.getByLabelText(/I verified email, calls/)); fireEvent.click(screen.getByRole("button", { name: "Resume delivery" }));
     await waitFor(() => expect(h.request).toHaveBeenCalledWith("activate", { nativeChecksConfirmed: true, cleanupEnabled: true }, true));
   });
   it("provides admin recovery controls with the current provider cursor version", async () => {
     const config = { environment: "staging", version: 1, activatedAt: "2026-09-08T14:00Z", frontSender: "test@example.com", allowedInboxIds: [], dialpadNumbers: [], holidays: [], testRecipients: [] };
     h.request.mockImplementation(async op => op === "settings" ? { config, credentialStatus: {}, recovery: { dialpad: { version: 7 } } } : op === "team" ? { team: [] } : { ok: true });
-    render(<CommunicationSettings />); await screen.findByLabelText("Recovery reason");
+    render(<CommunicationSettings />); fireEvent.click(await screen.findByText("Advanced tools")); await screen.findByLabelText("Recovery reason");
     fireEvent.change(screen.getByLabelText("Recovery reason"), { target: { value: "Expired pagination" } });
     fireEvent.click(screen.getByRole("button", { name: "Restart Dialpad history search" }));
     await waitFor(() => expect(h.request).toHaveBeenCalledWith("restartReconciliation", { provider: "dialpad", version: 7, reason: "Expired pagination" }, true));
