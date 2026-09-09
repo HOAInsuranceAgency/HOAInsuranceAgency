@@ -178,3 +178,20 @@ Website job 166 waited for the new backend contract and reported readiness befor
 The hosting redirect adds a trailing slash to `/front-sidebar`; both authenticated and sign-in routing now recognize either form. Website job 167 additionally established that Amplify requires a nonempty `customHeaders` array: the website entry now sets `X-Content-Type-Options: nosniff`, and the configuration regression enforces both app matching and a nonempty list. Redeploy both staging apps with these corrections and verify their successful hosting steps, the deployed sidebar and response headers. Provider traffic acceptance remains pending Front/Dialpad credentials, test channels and designated recipients; infrastructure deployment alone does not complete that soak.
 
 CRM job 168 and website job 168 succeeded. Live browser checks rendered both the sidebar sign-in and the website contact form, and the backend readiness probe passed. The sidebar nevertheless returned HTTP 404 through the existing SPA fallback, omitting its custom headers. The CRM build now emits `front-sidebar/index.html` from the generated app shell, and the header rule covers that directory. This fixes the sidebar route in build artifacts without changing the app-wide hosting rewrite rules. Verify HTTP 200, Front `frame-ancestors`, `no-store` and `no-referrer` after redeploying this correction.
+
+### Verified staging outcome — September 9, 2026, 11:58 a.m. Eastern
+
+Code commit `e3d5eac9f6b5e97df2f13ec341867c89d4b9199d` deployed successfully in CRM job **170** and website job **169**, including their hosting verification steps. Production was not deployed.
+
+| Live check | Result |
+| --- | --- |
+| [CRM Front sidebar](https://staging.d2d4g940z91vj4.amplifyapp.com/front-sidebar/) | HTTP 200; sign-in screen renders. `frame-ancestors 'self' https://*.frontapp.com https://*.front.com`, `Cache-Control: no-store`, `Referrer-Policy: no-referrer`; no conflicting `X-Frame-Options`. |
+| [Website contact form](https://staging.dx1256wpowwzz.amplifyapp.com/contact/) | HTTP 200; form renders; `X-Content-Type-Options: nosniff`. No enquiry was submitted. |
+| Deployed intake contract | Non-writing readiness probe returned true. |
+| Scheduled worker | Staging environment, reserved concurrency one, heartbeat at `2026-09-09T15:58:41.335Z`, `lagging: false`. |
+| Paused runtime observation | The 11:16–11:46 a.m. Eastern CloudWatch window reported 28 invocations, zero errors and zero throttles across 28 reported minute buckets. This is an idle baseline, not provider-traffic acceptance. |
+| Provider setup | No saved integration configuration; all four API/signing credential fields absent. Default delivery paused and cleanup disabled. Staging sender: `jake+testing@protectmyhoa.com`. Unconfigured Front and Dialpad webhook endpoints each returned 503 for an empty unsigned request. |
+
+Local verification reached **1,921 tests across 97 files**. Frontend/backend type checks, website type checks, both builds and backend synthesis passed during remediation. The subsequent hosting corrections passed the isolated CRM build, generated-sidebar artifact comparison, seven relevant build-configuration tests and whitespace checks.
+
+**Connected soak remains pending.** An admin must configure credentials through [staging Settings → Front and Dialpad](https://staging.d2d4g940z91vj4.amplifyapp.com/settings/?tab=integrations), identify the Front test inbox/email/SMS channels and Dialpad test lines, and designate recipient email/phone numbers. Do not count this deployment as evidence for real email threading/open events, signed webhook capture, call-leg reconciliation, SMS, provider cursor recovery, or reminder/escalation delivery. Run the controlled acceptance matrix and observe a business deadline after that setup. No customer message or live lead was created in this validation.
