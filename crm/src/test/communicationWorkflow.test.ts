@@ -750,3 +750,16 @@ describe("configured default lead owner", () => {
     expect(record("config").data.defaultUserId).toBe("brian");
   });
 });
+
+it("returns the committed teammate version so the next edit does not depend on an index refresh", async () => {
+  const profile = { userId: "jake", firstName: "Jake", lastName: "Greasley", email: "jake@example.com" };
+  h.records.set("UserProfile:jake", profile);
+  const initial = { userId: "jake", name: "Jake Greasley", email: profile.email, enabled: true, salesperson: true, champion: true };
+  await save(row("ELIGIBILITY", "eligibility:jake", initial));
+  const { handler } = await import("../../amplify/functions/communications/handler");
+  const write = (input: Record<string, unknown>) => handler({ arguments: { operation: "saveEligibility", input }, identity: { sub: "admin", groups: ["ADMIN"] } as never });
+  const first = await write({ ...initial, version: 1, frontId: "tea_jake", dialpadId: "5655281245659136" });
+  expect(first).toMatchObject({ ok: true, member: { ...initial, frontId: "tea_jake", dialpadId: "5655281245659136", version: 2 } });
+  const committed = (first as { member: Record<string, unknown> }).member;
+  expect(await write({ ...committed, salesperson: false })).toMatchObject({ ok: true, member: { version: 3, salesperson: false, champion: true, frontId: "tea_jake", dialpadId: "5655281245659136" } });
+});

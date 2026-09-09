@@ -3,26 +3,6 @@ import { communicationRequest as request, type IntegrationConfig, type TeamEligi
 import CommunicationSettingsEditor from "./CommunicationSettingsEditor";
 import { useAsyncResource } from "../lib/useAsyncResource";
 
-export function LeadEligibilitySettings() {
-  const resource = useAsyncResource(() => request<{ team: TeamEligibility[] }>("team"), [], { initialData: { team: [] }, errorMessage: "Could not load assignment settings" });
-  const [busy, setBusy] = useState(""), [error, setError] = useState("");
-  async function save(member: TeamEligibility, patch: Partial<TeamEligibility>) {
-    setBusy(member.userId); setError("");
-    try { await request("saveEligibility", { ...member, ...patch }, true); await resource.refetch(); }
-    catch(e) { setError(e instanceof Error ? e.message : "Could not save eligibility"); } finally { setBusy(""); }
-  }
-  return <div className="card"><h2>Lead assignment eligibility</h2><p className="muted small">These choices control who appears in the salesperson and deal champion dropdowns. They do not change access or permissions.</p>
-    {(error || resource.error) && <p role="alert" className="error-text">{error || resource.error}</p>}
-    {resource.loading && <p>Loading teammates…</p>}
-    <div className="table-wrap"><table><thead><tr><th>Teammate</th><th>Salesperson</th><th>Deal champion</th><th>Front teammate</th><th>Dialpad user</th></tr></thead><tbody>
-      {resource.data.team.map(m => <tr key={m.userId}><td>{m.name}<div className="muted small">{m.email}</div></td>
-        <td><input aria-label={`Salesperson eligibility for ${m.name}`} type="checkbox" checked={m.salesperson} disabled={!!busy} onChange={e => void save(m, { salesperson: e.target.checked })} /></td>
-        <td><input aria-label={`Deal champion eligibility for ${m.name}`} type="checkbox" checked={m.champion} disabled={!!busy} onChange={e => void save(m, { champion: e.target.checked })} /></td>
-        <td><input key={`${m.userId}:front:${m.frontId}`} aria-label={`Front teammate ID for ${m.name}`} defaultValue={m.frontId ?? ""} placeholder="tea_…" onBlur={e => { if (e.target.value !== (m.frontId ?? "")) void save(m, { frontId: e.target.value }); }} disabled={!!busy} /></td>
-        <td><input key={`${m.userId}:dialpad:${m.dialpadId}`} aria-label={`Dialpad user ID for ${m.name}`} defaultValue={m.dialpadId ?? ""} onBlur={e => { if (e.target.value !== (m.dialpadId ?? "")) void save(m, { dialpadId: e.target.value }); }} disabled={!!busy} /></td>
-      </tr>)}
-    </tbody></table></div></div>;
-}
 type ConnectionCheck = { name: string; ok: boolean; detail: string };
 type SettingsSnapshot = {
   config: IntegrationConfig;

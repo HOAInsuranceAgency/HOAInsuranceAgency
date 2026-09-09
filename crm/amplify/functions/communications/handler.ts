@@ -138,8 +138,9 @@ export const handler = async (event: { arguments: { operation?: string; readOper
         frontId: text(input, "frontId") || undefined, dialpadId: text(input, "dialpadId") || undefined };
       if (next.frontId && !/^tea_[a-z0-9]+$/.test(next.frontId)) throw new Error("Invalid Front teammate ID");
       if (next.dialpadId && !/^\d+$/.test(next.dialpadId)) throw new Error("Invalid Dialpad user ID");
-      await commit([put(row("ELIGIBILITY", `eligibility:${userId}`, next, { previous: old }), old), audit("TEAM", actor, "Assignment eligibility changed", next)]);
-      return { ok: true, member: next };
+      const saved = row("ELIGIBILITY", `eligibility:${userId}`, next, { previous: old });
+      await commit([put(saved, old), audit("TEAM", actor, "Assignment eligibility changed", next)]);
+      return { ok: true, member: { ...next, version: saved.version } };
     }
     if (op === "saveSettings") {
       requireAdmin(); const value = object(input.config) as unknown as IntegrationConfig;

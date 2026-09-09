@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { LeadEligibilitySettings } from "../components/CommunicationSettings";
+import LeadEligibilitySettings from "../components/LeadEligibilitySettings";
 import { client, fmtDate, type UserProfile } from "../lib/client";
 import { toE164 } from "../../amplify/functions/lead-intake/sms";
 import { Badge, flagBadge } from "../lib/badges";
