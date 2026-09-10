@@ -22,20 +22,26 @@ export async function saveCredentials(input: Credentials) {
   await secrets.send(new PutSecretValueCommand({ SecretId: process.env.COMMUNICATION_SECRET, SecretString: JSON.stringify(next) }));
   cached = undefined;
 }
+/** Old saved rows and cached clients may still include the retired toggle. */
+function currentSettings(input: IntegrationConfig & { cleanupEnabled?: unknown }): IntegrationConfig {
+  const { cleanupEnabled: _retired, ...settings } = input;
+  return settings;
+}
 export async function config(): Promise<IntegrationConfig> {
   const existing = await get<IntegrationConfig>("config");
-  return existing ? { ...existing.data, version: existing.version } : {
+  return existing ? currentSettings({ ...existing.data, version: existing.version }) : {
     environment: process.env.COMMUNICATION_ENV ?? "local", frontSender: process.env.AGENCY_MAILBOX ?? "jake+testing@protectmyhoa.com",
-    holidays: [], paused: true, cleanupEnabled: false, allowedInboxIds: [], testRecipients: [], dialpadNumbers: [], sharedSmsNumber: "+15082332261", version: 0,
+    holidays: [], paused: true, allowedInboxIds: [], testRecipients: [], dialpadNumbers: [], sharedSmsNumber: "+15082332261", version: 0,
   };
 }
 export async function saveConfig(input: IntegrationConfig, activating = false, auditWrites: Write[] = []) {
+  input = currentSettings(input);
   const old = await get<IntegrationConfig>("config");
   if (!Array.isArray(input.allowedInboxIds) || !Array.isArray(input.holidays) || !Array.isArray(input.testRecipients) || typeof input.frontSender !== "string") throw new Error("Invalid integration settings");
   if (old?.data.activatedAt && (input.frontCompanyId !== old.data.frontCompanyId || input.dialpadCompanyId !== old.data.dialpadCompanyId)) throw new Error("Changing connected companies requires a separate migration of existing conversation links");
   const scopeChanged = old && ["frontInboxId", "frontChannelId", "frontSmsChannelId", "allowedInboxIds", "dialpadNumbers", "dialpadOfficeId"].some(key => JSON.stringify(input[key as keyof IntegrationConfig]) !== JSON.stringify(old.data[key as keyof IntegrationConfig]));
-  if (!activating && scopeChanged) input = { ...input, paused: true, cleanupEnabled: false };
-  if (!activating) input = { ...input, activatedAt: old?.data.activatedAt, cleanupEnabled: !!old?.data.activatedAt && input.cleanupEnabled, paused: !old?.data.activatedAt || input.paused };
+  if (!activating && scopeChanged) input = { ...input, paused: true };
+  if (!activating) input = { ...input, activatedAt: old?.data.activatedAt, paused: !old?.data.activatedAt || input.paused };
   if (input.version !== (old?.version ?? 0)) throw new Error("Settings changed. Refresh and try again.");
   const environment = process.env.COMMUNICATION_ENV ?? "local";
   if (input.environment !== environment) throw new Error("The settings environment does not match this deployment");

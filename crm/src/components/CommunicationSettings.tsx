@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { communicationRequest as request, type IntegrationConfig, type TeamEligibility } from "../lib/communications";
 import CommunicationSettingsEditor from "./CommunicationSettingsEditor";
 import CommunicationDiagnostics from "./CommunicationDiagnostics";
@@ -37,11 +37,10 @@ export default function CommunicationSettings() {
   const inFlight = useRef(false);
   const [checks, setChecks] = useState<ConnectionCheck[]>([]);
   const [checkedAt, setCheckedAt] = useState("");
-  const [nativeVerified, setNativeVerified] = useState(false), [cleanup, setCleanup] = useState(false);
+  const [nativeVerified, setNativeVerified] = useState(false);
   const [recoveryReason, setRecoveryReason] = useState(""), [historyConversation, setHistoryConversation] = useState("");
   const [migrationCursor, setMigrationCursor] = useState<string | null | undefined>();
   const saved = resource.data?.config;
-  useEffect(() => { setCleanup(!!saved?.cleanupEnabled); }, [saved?.cleanupEnabled, saved?.version]);
 
   async function run(action: string, fn: () => Promise<void>) {
     if (inFlight.current) return;
@@ -98,7 +97,7 @@ export default function CommunicationSettings() {
         <div><dt>Default salesperson &amp; deal champion</dt><dd>{owner?.name || (saved.defaultUserId ? (members.loading ? "Checking teammate…" : "Teammate unavailable") : "Not set")}</dd>
           <small>{saved.defaultUserId ? "Both roles apply to new leads." : "Choose a teammate enabled for both roles in Team settings."}</small>
           {members.error && <span className="error-text small">{members.error} <button type="button" className="secondary" disabled={members.loading} onClick={() => void members.refetch()}>Retry teammates</button></span>}</div>
-        <div><dt>Inbox cleanup</dt><dd>{saved.cleanupEnabled ? "Automatic" : "Off"}</dd><small>Snoozing in Front never moves a CRM deadline.</small></div>
+        <div><dt>Inbox cleanup</dt><dd>Automatic</dd><small>Conversations with a future follow-up are tidied when no work needs attention. CRM deadlines stay in place.</small></div>
       </dl>
       <div className="communication-actions">
         <button type="button" className="secondary" disabled={disabled} onClick={() => void run("check", async () => {
@@ -120,19 +119,18 @@ export default function CommunicationSettings() {
       busy={!!busy} onSave={saveSettings} onCancel={() => { setEditing(false); setError(""); }} />}
 
     <details className="card communication-disclosure">
-      <summary><span>Delivery and inbox cleanup<small>Pause delivery, resume after testing, or change automatic cleanup.</small></span></summary>
+      <summary><span>Delivery<small>Pause delivery or resume after testing. Inbox cleanup runs automatically with delivery.</small></span></summary>
       <fieldset disabled={disabled} className="communication-controls">
         {saved.activatedAt && !saved.paused && <div className="communication-actions"><button type="button" className="secondary" onClick={() => void run("pause", async () => {
           const result = await request<{ config: IntegrationConfig }>("saveSettings", { config: { ...saved, paused: true } }, true);
           adoptConfig(result.config); setMessage("Delivery paused. Team deadlines are unchanged.");
         })}>Pause delivery</button></div>}
         <p className="muted small">{saved.environment !== "main"
-          ? "First verify sending from the test mailbox, a call on a connected business number, and shared-line texts in Front and Dialpad. Start delivery to test the automated email and CRM activity with your allowed test recipients. Complete reply, callback, and follow-up checks before enabling inbox cleanup."
+          ? "First verify sending from the test mailbox, a call on a connected business number, and shared-line texts in Front and Dialpad. Start delivery to test the automated email and CRM activity with your allowed test recipients. Eligible conversations are tidied automatically; conversations needing a response stay visible."
           : "Before starting or resuming delivery, test email replies, calls on each business number, and texts from the shared main line. Confirm that activity and text delivery status appear in the CRM."}</p>
         <label className="communication-check"><input type="checkbox" checked={nativeVerified} onChange={event => setNativeVerified(event.target.checked)} /><span>I verified email, calls, and shared-line texts with test contacts.</span></label>
-        <label className="communication-check"><input type="checkbox" checked={cleanup} onChange={event => setCleanup(event.target.checked)} /><span>Automatically tidy conversations awaiting a future follow-up.<small>Conversations needing a response stay visible. CRM deadlines stay in place.</small></span></label>
         <button type="button" disabled={!nativeVerified} onClick={() => void run("activate", async () => {
-          const result = await request<{ config: IntegrationConfig }>("activate", { nativeChecksConfirmed: nativeVerified, cleanupEnabled: cleanup }, true);
+          const result = await request<{ config: IntegrationConfig }>("activate", { nativeChecksConfirmed: nativeVerified }, true);
           adoptConfig(result.config); setNativeVerified(false); setMessage("Delivery settings applied. Lead deadlines remain controlled by the CRM.");
         })}>{busy === "activate" ? "Checking and applying…" : !saved.activatedAt ? "Start delivery" : saved.paused ? "Resume delivery" : "Apply delivery settings"}</button>
       </fieldset>

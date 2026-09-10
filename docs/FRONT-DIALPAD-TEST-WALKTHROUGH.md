@@ -2,7 +2,7 @@
 
 Use this guide in order. Each numbered test includes what to do and what should happen. Mark it **Pass**, **Fail**, or **Blocked** and record the test lead and time. An expected result is a test target, not a claim that the live feature has already passed.
 
-**Verified September 9, 2026:** the new Front email channel is connected and all CRM connection checks pass. Jake is the default salesperson and deal champion. Delivery is paused, automatic cleanup is off, and all five call and five text event subscriptions in Dialpad are disabled. There is no verified Dialpad event receipt yet. This guide does not activate anything.
+**Setup snapshot September 9, 2026 (historical):** the new Front email channel is connected and all CRM connection checks pass. Jake is the default salesperson and deal champion. Delivery is paused, automatic cleanup is off, and all five call and five text event subscriptions in Dialpad are disabled. There is no verified Dialpad event receipt yet. This guide does not activate anything.
 
 Plan for a first session of roughly **60–90 minutes**, additional time with the team for phone coverage, and a later check across real business deadlines. The short timer test does not replace the business-day test.
 
@@ -15,7 +15,7 @@ Plan for a first session of roughly **60–90 minutes**, additional time with th
 3. Choose a separate email mailbox you control to play the prospect. In [Settings → Front and Dialpad](https://staging.d2d4g940z91vj4.amplifyapp.com/settings/?tab=integrations), choose **Edit settings**, add that address under **Test email recipients**, and save. Keep the sender as **jake+testing@protectmyhoa.com**. The current permitted recipient is that same address; a separate recipient makes reply and Seen tests meaningful.
 4. Choose a mobile phone you control to play the caller/text recipient. Write it in your test notes. The shared sender, **(508) 233-2261**, is a real business line, not the test recipient.
 5. Prepare a harmless sample PDF and a sample spreadsheet. Use names such as **TEST Oak HOA**, **TEST Pine HOA**, and **TEST Cedar HOA**, or put TEST in the contact name when a form does not ask for an association name. Use only your test contact details.
-6. Keep **Inbox cleanup** off until test 30. No staging invitations are needed for the single-person tests; do not invite Ryan. Tests requiring a second CRM user stay Blocked until an already authorized participant is available.
+6. Inbox cleanup runs automatically while delivery is active. Review test 30 before starting; eligible test conversations may archive as soon as their next follow-up is recorded. No staging invitations are needed for the single-person tests; do not invite Ryan. Tests requiring a second CRM user stay Blocked until an already authorized participant is available.
 
 **Expected:** staging retains Jake in both default roles, the new recipient is saved, connection checks still pass, and delivery stays paused. Native Front/Dialpad sends are real sends and do not inherit the CRM email-recipient restriction; check the recipient before each manual send.
 
@@ -32,15 +32,15 @@ Plan for a first session of roughly **60–90 minutes**, additional time with th
 
 **If blocked:** stop here for live delivery tests and record the missing connection. Dialpad subscriptions cover traffic on the selected business lines, not only your test mobile; arrange a test window with the team. Individual numbers need their own native voice connections if their calls are to appear in Front. Native personal-number SMS channels are not promised. [Front's Dialpad guide](https://help.front.com/en/articles/2891264)
 
-### 03 — Start staging delivery with cleanup off
+### 03 — Start staging delivery
 
 1. Open **Settings → Front and Dialpad → Advanced tools → Connection issues and queues → Delivery queue** and review any already queued test leads. Starting delivery can release them. Use the lead's **Handle personally / cancel pending AI reply** or admin delivery review for an unwanted queued test; do not submit it again.
 2. In **Settings → Front and Dialpad**, click **Check connections**.
-3. Expand **Delivery and inbox cleanup**. After completing test 02, select **I verified email, calls, and shared-line texts with test contacts**.
-4. Leave **Automatically tidy conversations awaiting a future follow-up** unchecked. Click **Start delivery**.
+3. Expand **Delivery**. After completing test 02, select **I verified email, calls, and shared-line texts with test contacts**.
+4. Click **Start delivery**. Cleanup is automatic; there is no separate switch.
 5. Record the activation time. Create fresh test messages/calls after this time.
 
-**Expected:** activation succeeds, delivery is running, and cleanup remains off. If activation reports a missing signed test event, return to test 02. Passing the connection check alone does not bypass that requirement. Pre-activation messages and calls are not a historical import test.
+**Expected:** activation succeeds, delivery is running, and eligible conversations are tidied automatically. CRM deadlines remain unchanged. If activation reports a missing signed test event, return to test 02. Passing the connection check alone does not bypass that requirement. Pre-activation messages and calls are not a historical import test.
 
 ## Settings and lead intake
 
@@ -301,9 +301,9 @@ Make a fresh controlled inbound and outbound call for each row. Capture the time
 
 ## Cleanup, outcomes and operational checks
 
-### 30 — Enable and test inbox cleanup last
+### 30 — Verify automatic inbox cleanup
 
-1. Finish the earlier email/phone tests. In integration settings, recheck connections, expand **Delivery and inbox cleanup**, confirm the native test checkbox, enable **Automatically tidy conversations awaiting a future follow-up**, and click **Apply delivery settings**. Activation checks still require recent signed events.
+1. Confirm delivery is active in integration settings. **Inbox cleanup** shows **Automatic** and has no on/off control. Existing integrations work automatically even if cleanup was previously off. Activation checks still require recent signed events when starting or resuming delivery.
 2. Use a clean test lead with both owners, confirmed delivery, no unresolved inbound request or communication issue, and a future follow-up. Choose **Clean up inbox when ready** in the CRM, or **Conversation tools → Tidy this conversation** in Front.
 3. Verify the conversation archives while the CRM lead and dated commitment remain. Use a fresh outbound test with no open response/callback/custom task to check automatic cleanup after a new waiting follow-up is created.
 4. On another lead with an unresolved reply or missed call, try the same cleanup action. Then test a due/overdue action.
@@ -370,7 +370,7 @@ For each test, record **Pass / Fail / Blocked**, the TEST lead name, local time/
 
 If a message is missing or duplicated, preserve the test record and ask an administrator to inspect **Connection issues** and **Delivery queue** under **Settings → Front and Dialpad → Advanced tools → Connection issues and queues** before resubmitting or manually retrying it. A refresh and a few processing cycles are reasonable; persistent pending/error state is evidence to report, not a pass.
 
-Keep the dedicated no-reply/calendar test active until its reminder and escalation have both been observed. After the agreed test window, turn automatic cleanup off and **Pause delivery**. Have the administrator return temporary staging Dialpad subscriptions to the agreed disabled state; pausing the CRM alone does not disable provider capture. Leave test history available for review rather than bulk deleting it or changing real inbox snoozes.
+Keep the dedicated no-reply/calendar test active until its reminder and escalation have both been observed. After the agreed test window, **Pause delivery** to stop automated delivery and cleanup together. Have the administrator return temporary staging Dialpad subscriptions to the agreed disabled state; pausing the CRM alone does not disable provider capture. Leave test history available for review rather than bulk deleting it or changing real inbox snoozes.
 
 **Ready for rollout review:** core email and document flow, explicit responsibilities, every required phone/text path, sidebar behavior, deadline/escalation protections, and cleanup/recovery checks all have passing evidence. Any blocked mandatory test remains an open acceptance item. Completing this guide does not deploy or activate production.
 

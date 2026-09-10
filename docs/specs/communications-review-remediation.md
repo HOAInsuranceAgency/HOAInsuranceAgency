@@ -23,7 +23,7 @@ This records the findings supplied in the September 9 review and the implementat
 | Rejected attachment leaves empty document | The complete download and host/size checks precede document creation. Unsupported redirects are tested against the actual importer. |
 | Document-arrival notification lost while unlinked | Not reproduced in the supplied working tree: it already queues a durable COMMENT before marking the portal batch. A new test proves paused and unlinked comments remain retryable. Sweep reporting now says queued, not sent. |
 | QUEUED initial reply absent from owner alarm | Added QUEUED to the stalled-reply detector, with a regression test. QUEUED remains pending, not sent. |
-| Cleanup checkbox reset on resume | Initialize the activation checkbox from saved cleanupEnabled. |
+| Cleanup checkbox reset on resume | Originally preserved on resume; superseded September 10 by always-automatic cleanup with no separate setting. |
 | Weak concurrency assertions | Exact assignment assertions replace the cross-file wildcard match. The backend synthesis gate verifies resolved reserved concurrency for the worker, lead-reply and portal-sweep functions. |
 
 The shared worker's reserved concurrency remains one. The review withdrew that finding, and it is independent of the retry/capture defects fixed here.

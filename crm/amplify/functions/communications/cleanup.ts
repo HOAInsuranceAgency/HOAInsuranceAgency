@@ -6,7 +6,7 @@ import { front, permittedConversation, type FrontMessage } from "./providers";
 /** Recheck immediately before Front cleanup. Any uncertainty keeps work visible. */
 export async function archiveAllowed(accountId: string, conversationId: string) {
   const c = await config();
-  if (!c.activatedAt || !c.cleanupEnabled || c.paused) return false;
+  if (!c.activatedAt || c.paused) return false;
   const [wf, tasks, activity, issues, health, conversation] = await Promise.all([
     ensureWorkflow(accountId), accountRows<LeadTask>(accountId, "TASK"), accountRows<Communication>(accountId, "COMMUNICATION"),
     accountRows<{ resolved?: boolean }>(accountId, "ISSUE"), get<{ at: string; lagging: boolean }>("health:worker"), permittedConversation(conversationId),

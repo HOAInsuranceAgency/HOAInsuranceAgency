@@ -168,9 +168,9 @@ export const handler = async (event: { arguments: { operation?: string; readOper
         if (!(await roster()).some(member => member.userId === value.defaultUserId)) throw new Error("Choose a current CRM teammate as the default");
         await validRole(value.defaultUserId, "SALESPERSON"); await validRole(value.defaultUserId, "CHAMPION", false);
       }
-      if (input.credentials && Object.values(object(input.credentials)).some(v => typeof v === "string" && v.trim())) { value.paused = true; value.cleanupEnabled = false; }
+      if (input.credentials && Object.values(object(input.credentials)).some(v => typeof v === "string" && v.trim())) value.paused = true;
       const credentialFields = Object.entries(object(input.credentials)).filter(([key, value]) => ["frontToken", "frontSigningKey", "dialpadToken", "dialpadSigningKey"].includes(key) && typeof value === "string" && !!value.trim()).map(([key]) => key);
-      const saved = await saveConfig(value, false, [audit("SETTINGS", actor, "Integration settings saved", { paused: value.paused, cleanupEnabled: value.cleanupEnabled, credentialUpdatesRequested: credentialFields })]);
+      const saved = await saveConfig(value, false, [audit("SETTINGS", actor, "Integration settings saved", { paused: value.paused, credentialUpdatesRequested: credentialFields })]);
       if (credentialFields.length) {
         await saveCredentials(object(input.credentials) as Credentials);
         await commit([audit("SETTINGS", actor, "Integration credentials updated", { fields: credentialFields })]);
@@ -213,8 +213,8 @@ export const handler = async (event: { arguments: { operation?: string; readOper
       const checks = await activationChecks();
       if (checks.some(c => !c.ok)) return { ok: false, error: checks.filter(c => !c.ok).map(c => `${c.name}: ${c.detail}`).join("; ") };
       const c = await config();
-      const saved = await saveConfig({ ...c, activatedAt: c.activatedAt ?? new Date().toISOString(), paused: false, cleanupEnabled: input.cleanupEnabled === true }, true);
-      await commit([audit("SETTINGS", actor, "Integration activated after connection checks", { at: saved.activatedAt, cleanupEnabled: saved.cleanupEnabled })]);
+      const saved = await saveConfig({ ...c, activatedAt: c.activatedAt ?? new Date().toISOString(), paused: false }, true);
+      await commit([audit("SETTINGS", actor, "Integration activated after connection checks", { at: saved.activatedAt })]);
       return { ok: true, config: saved };
     }
     if (op === "cancelAi") {

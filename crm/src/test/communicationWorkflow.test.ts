@@ -130,12 +130,59 @@ describe("agency commitments", () => {
 });
 describe("cleanup and combined requests", () => {
   it("only archives after a durable future action and blocks uncertain sends", async () => {
-    h.c.cleanupEnabled = true; await lead(); await save(row("HEALTH", "health:worker", { at: NOW, lagging: false }));
+    await lead(); await save(row("HEALTH", "health:worker", { at: NOW, lagging: false }));
     expect(await archiveAllowed("a1", "cnv_a")).toBe(false);
     const comm = await inbound("out", NOW, { direction: "OUTBOUND" }); await recordOutbound(comm);
     expect(await archiveAllowed("a1", "cnv_a")).toBe(true);
     await save(row("OPERATION", "unknown", { type: "EMAIL", state: "UNKNOWN" }, { accountId: "a1" }));
     expect(await archiveAllowed("a1", "cnv_a")).toBe(false);
+  });
+  it("archives automatically and through manual Tidy despite an old disabled setting, preserving commitments", async () => {
+    Object.assign(h.c, { cleanupEnabled: false });
+    const wf = await lead(); await save(row("HEALTH", "health:worker", { at: NOW, lagging: false }));
+    await recordOutbound(await inbound("out", NOW, { direction: "OUTBOUND" }));
+    const commitments = structuredClone(entries("TASK"));
+    await runOperation((await get<Operation>(entries("OPERATION").find(op => op.data.type === "ARCHIVE")!.id))!);
+    expect(h.front).toHaveBeenCalledWith("/conversations/cnv_a", "PATCH", { status: "archived" });
+    const { handler } = await import("../../amplify/functions/communications/handler");
+    expect(await handler({ arguments: { operation: "archive", input: { accountId: "a1", version: wf.version } }, identity: { sub: "brian", groups: [] } as never })).toMatchObject({ ok: true });
+    const manual = (await get<Operation>(entries("OPERATION").find(op => op.id.startsWith("op:manual-cleanup:"))!.id))!;
+    await runOperation(manual);
+    expect(record(manual.id).data.state).toBe("CONFIRMED");
+    expect(entries("TASK")).toEqual(commitments);
+  });
+  it.each(["paused", "not activated", "unanswered request", "overdue", "sync gap", "missing owner"])("still holds cleanup for %s", async condition => {
+    const wf = await lead(); await save(row("HEALTH", "health:worker", { at: NOW, lagging: false }));
+    await recordOutbound(await inbound("out", NOW, { direction: "OUTBOUND" }));
+    if (condition === "paused") h.c.paused = true;
+    if (condition === "not activated") h.c.activatedAt = undefined;
+    if (condition === "unanswered request") await recordInbound(await inbound("reply"));
+    if (condition === "overdue") {
+      const task = (await get<LeadTask>(entries("TASK")[0].id))!;
+      await save(row("TASK", task.id, { ...task.data, dueAt: NOW }, { accountId: "a1", previous: task }), task);
+    }
+    if (condition === "sync gap") await save(row("ISSUE", "issue:sync-gap", { resolved: false }));
+    if (condition === "missing owner") await save(row("WORKFLOW", wf.id, { ...wf.data, championId: undefined }, { accountId: "a1", previous: wf }), wf);
+    const commitments = structuredClone(entries("TASK"));
+    expect(await archiveAllowed("a1", "cnv_a")).toBe(false);
+    await runOperation((await get<Operation>(entries("OPERATION").find(op => op.data.type === "ARCHIVE")!.id))!);
+    expect(h.front).not.toHaveBeenCalledWith("/conversations/cnv_a", "PATCH", { status: "archived" });
+    expect(entries("TASK")).toEqual(commitments);
+  });
+  it("retires the old setting on reads and saves without changing delivery or requiring activation again", async () => {
+    vi.stubEnv("COMMUNICATION_ENV", "main");
+    try {
+      const actual = await vi.importActual<typeof import("../../amplify/functions/communications/config")>("../../amplify/functions/communications/config");
+      await save(row("CONFIG", "config", { ...h.c, cleanupEnabled: false }));
+      const loaded = await actual.config();
+      expect(loaded).not.toHaveProperty("cleanupEnabled");
+      expect(loaded).toMatchObject({ paused: false, activatedAt: h.c.activatedAt });
+      const staleClient = { ...loaded, cleanupEnabled: false };
+      const saved = await actual.saveConfig(staleClient);
+      expect(saved).not.toHaveProperty("cleanupEnabled");
+      expect(record("config").data).not.toHaveProperty("cleanupEnabled");
+      expect(saved).toMatchObject({ paused: false, activatedAt: h.c.activatedAt });
+    } finally { vi.unstubAllEnvs(); }
   });
   it("combines explicitly selected phone/email requests and retains the earliest commitment", async () => {
     await lead(); await recordInbound(await inbound("email", "2026-09-08T14:00:00Z"));

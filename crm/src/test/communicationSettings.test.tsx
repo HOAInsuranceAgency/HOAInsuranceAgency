@@ -7,7 +7,7 @@ import CommunicationSettings from "../components/CommunicationSettings";
 import type { IntegrationConfig } from "../lib/communications";
 
 const config: IntegrationConfig = {
-  environment: "staging", version: 7, paused: true, cleanupEnabled: true, activatedAt: "2026-09-08T14:00:00Z",
+  environment: "staging", version: 7, paused: true, activatedAt: "2026-09-08T14:00:00Z",
   defaultUserId: "brian", frontSender: "staging@example.com", frontCompanyId: "cmp_test", frontInboxId: "inb_test", frontChannelId: "cha_test",
   frontSmsChannelId: "cha_sms", dialpadCompanyId: "123", dialpadOfficeId: "456", allowedInboxIds: ["inb_phone"],
   dialpadNumbers: ["+15082332261"], sharedSmsNumber: "+15082332261", holidays: ["2026-12-25"], testRecipients: ["test@example.com"],
@@ -47,7 +47,7 @@ describe("communication settings edit sessions", () => {
   });
   it("blocks activation, checks, and repairs during editing and discards cancelled input", async () => {
     render(<CommunicationSettings />); await editSettings();
-    fireEvent.click(screen.getByText("Delivery and inbox cleanup"));
+    fireEvent.click(screen.getByText("Delivery"));
     fireEvent.click(screen.getByText("Advanced tools"));
     fireEvent.change(screen.getByLabelText(/Email sender/), { target: { value: "changed@example.com" } });
     expect(screen.getByRole("button", { name: "Check connections" })).toBeDisabled();

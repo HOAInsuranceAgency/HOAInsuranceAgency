@@ -282,6 +282,10 @@ both responsibilities and an actionable plan.
 
 ## 7. Inbox rules and personal views
 
+Cleanup is automatic whenever the integration is activated and delivery is running.
+There is no separate cleanup setting; previously saved off values have no effect.
+The delivery pause still pauses provider changes, including cleanup.
+
 Auto-archive a prospect conversation only when:
 
 1. The correct CRM account and conversation are linked.

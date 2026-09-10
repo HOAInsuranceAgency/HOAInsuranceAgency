@@ -36,7 +36,7 @@ export interface IntegrationConfig {
   frontSender: string; allowedInboxIds: string[]; testRecipients: string[];
   dialpadCompanyId?: string; dialpadOfficeId?: string; dialpadNumbers: string[];
   sharedSmsNumber: string; frontSmsChannelId?: string;
-  activatedAt?: string; cleanupEnabled?: boolean; version: number;
+  activatedAt?: string; version: number;
 }
 export interface WorkflowContext {
   frontContext?: { conversationId: string; assigneeId?: string; routing?: string };

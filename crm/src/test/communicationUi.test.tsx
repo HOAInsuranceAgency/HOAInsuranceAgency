@@ -61,18 +61,20 @@ describe("communication UI boundaries", () => {
     const config = { environment: "staging", paused: true, allowedInboxIds: [], dialpadNumbers: [], holidays: [], testRecipients: ["tester@example.com"] };
     h.request.mockImplementation(async op => op === "settings" ? { config, credentialStatus: {} } : { team: [] });
     render(<CommunicationSettings />);
-    fireEvent.click(await screen.findByText("Delivery and inbox cleanup"));
+    fireEvent.click(await screen.findByText("Delivery"));
     expect(screen.getByText(/Start delivery to test the automated email/)).toBeTruthy();
     expect(screen.getByRole("button", { name: "Start delivery" })).toBeDisabled();
   });
-  it("preserves saved cleanup when revalidating and resuming the integration", async () => {
-    const config = { environment: "main", version: 1, activatedAt: "2026-09-08T14:00:00Z", paused: true, cleanupEnabled: true, frontSender: "sales@protectmyhoa.com", allowedInboxIds: [], dialpadNumbers: [], holidays: [], testRecipients: [] };
+  it("resumes with automatic cleanup and no toggle even when an older response says cleanup is off", async () => {
+    const config = { environment: "main", version: 1, activatedAt: "2026-09-08T14:00:00Z", paused: true, cleanupEnabled: false, frontSender: "sales@protectmyhoa.com", allowedInboxIds: [], dialpadNumbers: [], holidays: [], testRecipients: [] };
     h.request.mockImplementation(async (op: string) => op === "settings" || op === "activate" ? { config, credentialStatus: {} } : { team: [] });
     render(<CommunicationSettings />);
-    fireEvent.click(await screen.findByText("Delivery and inbox cleanup"));
-    const cleanup = screen.getByLabelText(/Automatically tidy/); expect(cleanup).toBeChecked();
+    fireEvent.click(await screen.findByText("Delivery"));
+    expect(screen.getByText("Automatic")).toBeVisible();
+    expect(screen.queryByLabelText(/Automatically tidy/)).toBeNull();
+    expect(screen.queryByText("Off")).toBeNull();
     fireEvent.click(screen.getByLabelText(/I verified email, calls/)); fireEvent.click(screen.getByRole("button", { name: "Resume delivery" }));
-    await waitFor(() => expect(h.request).toHaveBeenCalledWith("activate", { nativeChecksConfirmed: true, cleanupEnabled: true }, true));
+    await waitFor(() => expect(h.request).toHaveBeenCalledWith("activate", { nativeChecksConfirmed: true }, true));
   });
   it("provides admin recovery controls with the current provider cursor version", async () => {
     const config = { environment: "staging", version: 1, activatedAt: "2026-09-08T14:00Z", frontSender: "test@example.com", allowedInboxIds: [], dialpadNumbers: [], holidays: [], testRecipients: [] };
