@@ -15,7 +15,7 @@ Lost/not-a-fit decisions remain explicit under Conversation tools → Lead statu
 ## Matching and recovery
 
 - Progress requires a sent/delivered substantive message or a connected, ended call. Drafts, failed sends, automatic replies, ringing calls and calls still in progress do not satisfy a contact reminder. Provider delivery failures remain visible as issues/correction work.
-- Matching stays within the same CRM account and prospect/carrier purpose. A linked conversation or matching external phone/email identifies the contact. Known different recipients in an email thread remain separate. Newer inbound requests and unknown/missing sources are not silently closed.
+- Matching stays within the same CRM account and prospect/carrier purpose. A linked conversation, matching external phone/email, or the email and phone saved on the same CRM contact identifies the person. Known different recipients in an email thread remain separate. Newer inbound requests and unknown/missing sources are not silently closed.
 - Ambiguous or unlinked calls/texts still need the correct lead identified; the integration cannot safely guess which association a shared contact means.
 - The task and source messages point to the actual handling communication. There is no synthetic call note pretending to describe the work.
 - Existing open work is repaired from saved communications in resumable pages. Late inbound events are compared with already-recorded replies. Replayed sends cannot consume their own follow-up or move a newer commitment. Already-answered inbound events do not reopen the inbox again.
@@ -28,4 +28,6 @@ Call completion uses Dialpad's connection and end timestamps, with the existing 
 
 Automated checks cover reply-driven completion, SMS delivery, completed versus unanswered/in-progress calls, duplicate and out-of-order events, carrier separation, other contacts/accounts, preserved deliberate promises, interrupted writes, bounded histories, automatic dates, and the absence of routine completion forms. Deployment and browser verification are recorded below when complete. Real provider events and the 9 a.m. batch remain separate live acceptance checks.
 
-Repository checks: **2,076 tests across 105 files passed**; the final sidebar refresh/status refinement passed **181 focused tests**, the CRM build and backend type check. The 156-page website build and backend synthesis also passed. No production configuration or branch was changed.
+Repository checks are being rerun after the live draft correction; final results appear below. The 156-page website build and backend synthesis also passed. No production configuration or branch was changed.
+
+The first live check exposed a shared Front draft being classified as sent. Front includes an explicit `is_draft` flag in its [message object](https://dev.frontapp.com/reference/messages). Ingestion and saved history now retain and check that flag, reject unknown sending status, and repair earlier draft projections without discarding the original commitment. Drafts neither count as last contact nor permit cleanup. Tests cover draft-to-send transitions, stale replay, interrupted repair, and grouped requests.

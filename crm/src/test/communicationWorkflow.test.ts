@@ -38,7 +38,7 @@ vi.mock("@aws-sdk/lib-dynamodb", async importOriginal => {
 vi.mock("@aws-sdk/client-cognito-identity-provider", () => ({ CognitoIdentityProviderClient: class { send = async () => ({ Users: [{ Enabled: h.userEnabled }] }); }, ListUsersCommand: class { constructor(public input: unknown) {} } }));
 vi.mock("../../amplify/functions/communications/config", async importOriginal => ({ ...(await importOriginal<typeof import("../../amplify/functions/communications/config")>()), saveCredentials: vi.fn(), config: async () => h.c, credentials: async () => ({ frontSigningKey: "test-signing-key", dialpadSigningKey: "test-dialpad-signing-key" }) }));
 vi.mock("../../amplify/functions/communications/data", () => ({ dataClient: async () => ({ models: {
-  Account: { get: async ({ id }: { id: string }) => (h.accountError ? { data: null, errors: [{ message: "Simulated account read failure" }] } : { data: h.records.get(`Account:${id}`) ?? { id, name: "Willow HOA", stage: "LEAD" } }) },
+  Account: { get: async ({ id }: { id: string }) => (h.accountError ? { data: null, errors: [{ message: "Simulated account read failure" }] } : { data: h.records.get(`Account:${id}`) ?? { id, name: "Willow HOA", stage: "LEAD", contacts: async () => ({ data: [] }) } }) },
   LeadReply: { update: h.update },
   UserProfile: { list: async () => ({ data: [...h.records.entries()].filter(([key]) => key.startsWith("UserProfile:")).map(([,profile]) => profile) }) },
 } }) }));
@@ -60,7 +60,7 @@ const NOW = "2026-09-08T14:00:00.000Z";
 const record = (id: string) => h.records.get(`comms:${id}`)!;
 const entries = (kind: string) => [...h.records.values()].filter(r => r.kind === kind);
 async function lead() { const wf = await defaultWorkflow("a1", "Willow HOA"); return save(row("WORKFLOW", "workflow:a1", { ...wf, conversationId: "cnv_a" }, { accountId: "a1" })); }
-async function inbound(id = "m1", at = NOW, extra: Partial<Communication> = {}) { const c: Communication = { id: `comm:${id}`, providerId: id, provider: "front", channel: "EMAIL", direction: "INBOUND", accountId: "a1", conversationId: "cnv_a", at, status: extra.direction === "OUTBOUND" ? "SENT" : "RECEIVED", text: "A message about the policy", version: 1, ...extra }; await save(row("COMMUNICATION", c.id, c, { accountId: c.accountId })); return c; }
+async function inbound(id = "m1", at = NOW, extra: Partial<Communication> = {}) { const c: Communication = { id: `comm:${id}`, providerId: id, provider: "front", frontDraft: false, channel: "EMAIL", direction: "INBOUND", accountId: "a1", conversationId: "cnv_a", at, status: extra.direction === "OUTBOUND" ? "SENT" : "RECEIVED", text: "A message about the policy", version: 1, ...extra }; await save(row("COMMUNICATION", c.id, c, { accountId: c.accountId })); return c; }
 beforeEach(async () => {
   vi.useFakeTimers(); vi.setSystemTime(NOW); h.records.clear(); h.transactions.length = 0; h.inFlight = 0; h.maxInFlight = 0; h.fail = false; h.failAt = undefined; h.accountError = false; h.userEnabled = true; h.writeError = undefined; vi.clearAllMocks();
   Object.assign(process.env, { COMMUNICATION_TABLE: "comms", ACTIVITY_TABLE: "Activity", ACCOUNT_TABLE: "Account", CONTACT_TABLE: "Contact", PRIOR_CARRIER_TABLE: "PriorCarrier", LEAD_REPLY_TABLE: "LeadReply", USER_POOL_ID: "pool" });
@@ -73,6 +73,105 @@ afterEach(() => vi.useRealTimers());
 describe("communication is the work record", () => {
   const later = "2026-09-08T15:00:00.000Z";
   const open = () => entries("TASK").filter(t => t.data.status === "OPEN");
+  it("ignores shared drafts through history and only records the eventual send", async () => {
+    await lead(); await recordInbound(await inbound());
+    await save(row("LINK", "front-link:cnv_a", { accountId: "a1", purpose: "PROSPECT" }, { accountId: "a1" }));
+    const { backfillConversation } = await import("../../amplify/functions/communications/events");
+    const { restartHistory } = await import("../../amplify/functions/communications/history");
+    const message = { id: "msg_draft", type: "email", is_inbound: false, is_draft: true, created_at: Date.parse(later) / 1000, text: "Here is my reply", author: { id: "tea_b" } };
+    h.front.mockResolvedValue({ _results: [message] });
+    let job = await save(restartHistory("history:draft", "cnv_a", "a1"));
+    await backfillConversation(job);
+    expect(record("comm:front:msg_draft")).toBeUndefined();
+    expect(open().map(t => t.data.kind)).toEqual(["RESPONSE"]);
+    expect(record("workflow:a1").data.humanTakeover).not.toBe(true);
+    expect(entries("EVENT").find(e => e.data.snapshot?.message.id === message.id)?.data.snapshot.message.is_draft).toBe(true);
+    h.front.mockResolvedValue({ _results: [{ ...message, is_draft: false }] });
+    const finished = (await get<import("../../amplify/functions/communications/history").HistoryJob>(job.id))!;
+    job = await save(restartHistory(job.id, "cnv_a", "a1", finished), finished);
+    await backfillConversation(job);
+    expect(record("comm:front:msg_draft").data).toMatchObject({ status: "SENT", frontDraft: false, contactApplied: true });
+    expect(record("comm:m1").data.resolvedByCommunicationId).toBe("comm:front:msg_draft");
+    expect(open().map(t => t.data.kind)).toEqual(["FOLLOW_UP"]);
+    await ingestFrontMessage(message, "cnv_a"); // Stale draft replay cannot undo a verified send.
+    expect(record("comm:front:msg_draft").data.status).toBe("SENT");
+  });
+  it.each([false, true])("repairs a legacy draft without losing the original commitment (interrupted=%s)", async interrupted => {
+    await lead(); await recordInbound(await inbound()); const original = open()[0].data.dueAt;
+    const wrong = await inbound("front:msg_wrongdraft", later, { direction: "OUTBOUND", frontDraft: undefined });
+    await recordOutbound(wrong);
+    expect(open().map(t => t.data.kind)).toEqual(["FOLLOW_UP"]);
+    const draft = { id: "msg_wrongdraft", is_inbound: false, is_draft: true, created_at: Date.parse(later) / 1000, text: "Unsent reply" };
+    if (interrupted) {
+      h.failAt = h.transactions.length + 1;
+      await expect(ingestFrontMessage(draft, "cnv_a")).rejects.toThrow("Interrupted");
+    }
+    await ingestFrontMessage(draft, "cnv_a");
+    expect(record(wrong.id).data.status).toBe("DRAFT");
+    expect(record("comm:m1").data.resolved).toBe(false);
+    expect(open().map(t => t.data)).toMatchObject([{ kind: "RESPONSE", dueAt: original }]);
+    await ingestFrontMessage(draft, "cnv_a");
+    expect(open()).toHaveLength(1);
+    await save(row("LINK", "front-link:cnv_a", { accountId: "a1", purpose: "PROSPECT" }, { accountId: "a1" }));
+    await ingestFrontMessage({ ...draft, is_draft: false, created_at: Date.parse(later) / 1000 }, "cnv_a");
+    expect(record(wrong.id).data).toMatchObject({ status: "SENT", frontDraft: false, contactApplied: true });
+    expect(open().map(t => t.data.kind)).toEqual(["FOLLOW_UP"]);
+  });
+  it("restores only the request falsely answered by a legacy draft in a grouped task", async () => {
+    await lead(); await recordInbound(await inbound("one", NOW, { from: "one@example.com" }));
+    await recordInbound(await inbound("two", NOW, { from: "two@example.com" }));
+    const wrong = await inbound("front:msg_partial", later, { direction: "OUTBOUND", to: ["one@example.com"], frontDraft: undefined });
+    await recordOutbound(wrong);
+    expect(open().find(t => t.data.kind === "RESPONSE")!.data.sourceIds).toEqual(["comm:two"]);
+    await ingestFrontMessage({ id: "msg_partial", is_draft: true, is_inbound: false, created_at: Date.parse(later) / 1000 }, "cnv_a");
+    expect(open().find(t => t.data.kind === "RESPONSE")!.data.sourceIds.sort()).toEqual(["comm:one", "comm:two"]);
+  });
+  it("uses a saved contact's email and phone without merging other people on the lead", async () => {
+    await lead();
+    h.records.set("Account:a1", { id: "a1", stage: "LEAD", contacts: async () => ({ data: [{ email: "prospect@example.com", phone: "617-555-0111" }] }) });
+    const sms = await inbound("sms", NOW, { provider: "dialpad", channel: "SMS", from: "+16175550111", conversationId: undefined });
+    const other = await inbound("other-sms", NOW, { provider: "dialpad", channel: "SMS", from: "+16175550222", conversationId: undefined });
+    await recordInbound(sms); await recordInbound(other);
+    await recordOutbound(await inbound("reply", later, { direction: "OUTBOUND", to: ["PROSPECT@example.com"] }));
+    expect(record(sms.id).data.resolvedByCommunicationId).toBe("comm:reply");
+    expect(record(other.id).data.resolved).not.toBe(true);
+    expect(open().filter(t => t.data.kind === "FOLLOW_UP")).toHaveLength(1);
+    await recordInbound(await inbound("new-sms", "2026-09-08T16:00:00Z", { provider: "dialpad", channel: "SMS", from: "+16175550111", conversationId: undefined }));
+    expect(open().filter(t => t.data.kind === "FOLLOW_UP")).toHaveLength(0);
+    expect(open().filter(t => t.data.kind === "RESPONSE")).toHaveLength(2);
+  });
+  it("does not guess that an outbound Front message without its draft flag was sent", async () => {
+    await lead(); await recordInbound(await inbound());
+    await expect(ingestFrontMessage({ id: "msg_unknown", is_inbound: false, created_at: Date.parse(later) / 1000, text: "Maybe sent" }, "cnv_a")).rejects.toThrow("sending status");
+    expect(open().map(t => t.data.kind)).toEqual(["RESPONSE"]);
+  });
+  it("does not confirm a queued send while Front still reports a draft", async () => {
+    await lead();
+    const op = await save(row<Operation>("OPERATION", "op:draft", { type: "EMAIL", accountId: "a1", state: "ACCEPTED", attempts: 1, uid: "draft", replyId: "r1" }, { accountId: "a1" }));
+    h.front.mockResolvedValue({ id: "msg_draft", is_inbound: false, is_draft: true, created_at: Date.parse(NOW) / 1000, conversation: { id: "cnv_a" } });
+    await runOperation(op);
+    expect(record(op.id).data.state).not.toBe("CONFIRMED"); expect(h.update).not.toHaveBeenCalled(); expect(open()).toHaveLength(0);
+  });
+  it("does not mistake a human draft for an already sent reply in AI preflight", async () => {
+    await lead(); const op = await enqueueOperation("op:draft-preflight", { type: "EMAIL", accountId: "a1", recipient: "prospect@example.com", text: "Hello" });
+    h.front.mockImplementation(async (_path: string, method?: string) => method === "POST" ? { message_uid: "uid_send" } : { _results: [{ is_inbound: false, is_draft: true, author: { id: "tea_b" } }] });
+    await runOperation(op);
+    expect(record(op.id).data.state).toBe("ACCEPTED"); expect(h.front.mock.calls.filter(c => c[1] === "POST")).toHaveLength(1);
+  });
+  it("does not show a draft as last contact", async () => {
+    const { contactCandidate } = await import("../../amplify/functions/communications/lastContact");
+    expect(contactCandidate(await inbound("draft", later, { direction: "OUTBOUND", status: "DRAFT" }))).toBe(false);
+    expect(contactCandidate(await inbound("stale-draft", later, { direction: "OUTBOUND", status: "SENT", frontDraft: true }))).toBe(false);
+  });
+  it("recaptures old history once to repair drafts, then observes the normal cooldown", async () => {
+    const { historyDue, restartHistory } = await import("../../amplify/functions/communications/history");
+    const old = row("CONVERSATION_BACKFILL", "history:old", { conversationId: "cnv_a", completedAt: NOW });
+    expect(historyDue(old)).toBe(true);
+    const running = restartHistory(old.id, "cnv_a", "a1", old);
+    expect(historyDue(running)).toBe(false);
+    const finished = row("CONVERSATION_BACKFILL", old.id, { ...running.data, completedAt: NOW });
+    expect(historyDue(finished)).toBe(false);
+  });
   it("handles duplicate and old replies without closing the replacement follow-up", async () => {
     await lead(); await recordInbound(await inbound());
     const reply = await inbound("reply", later, { direction: "OUTBOUND" }); await recordOutbound(reply);
@@ -116,7 +215,7 @@ describe("communication is the work record", () => {
     await lead(); await save(row("LINK", "front-link:cnv_c", { accountId: "a1", conversationId: "cnv_c", purpose: "CARRIER" }, { accountId: "a1" }));
     const base = { type: "email", conversation: { id: "cnv_c" }, text: "Policy question", recipients: [{ role: "from", handle: "carrier@example.com" }] };
     await ingestFrontMessage({ ...base, id: "msg_in", is_inbound: true, created_at: Date.parse(NOW) / 1000 }, "cnv_c");
-    await ingestFrontMessage({ ...base, id: "msg_out", is_inbound: false, recipients: [{ role: "to", handle: "carrier@example.com" }], created_at: Date.parse(later) / 1000 }, "cnv_c");
+    await ingestFrontMessage({ ...base, id: "msg_out", is_inbound: false, is_draft: false, recipients: [{ role: "to", handle: "carrier@example.com" }], created_at: Date.parse(later) / 1000 }, "cnv_c");
     expect(open().map(t => t.data)).toMatchObject([{ kind: "FOLLOW_UP", role: "CHAMPION", dueAt: "2026-09-10T13:00:00.000Z" }]);
     expect(record("comm:front:msg_in").data.resolved).toBe(true);
   });
@@ -298,6 +397,13 @@ describe("agency commitments", () => {
   });
 });
 describe("cleanup and combined requests", () => {
+  it("keeps a conversation open while its last Front message is still a draft", async () => {
+    await lead(); await save(row("HEALTH", "health:worker", { at: NOW, lagging: false }));
+    const sent = await inbound("sent", NOW, { direction: "OUTBOUND" }); await recordOutbound(sent);
+    expect(await archiveAllowed("a1", "cnv_a")).toBe(true);
+    vi.mocked(permittedConversation).mockResolvedValueOnce({ id: "cnv_a", status: "open", last_message: { id: "msg_draft", is_draft: true, is_inbound: false, created_at: Date.parse(NOW) / 1000 } });
+    expect(await archiveAllowed("a1", "cnv_a")).toBe(false);
+  });
   it("only archives after a durable future action and blocks uncertain sends", async () => {
     await lead(); await save(row("HEALTH", "health:worker", { at: NOW, lagging: false }));
     expect(await archiveAllowed("a1", "cnv_a")).toBe(false);
@@ -428,7 +534,7 @@ describe("Front durable delivery", () => {
     const op = await save(row<Operation>("OPERATION", "op:recovered", { type: "EMAIL", accountId: "a1", state: "ACCEPTED", attempts: 1, uid: "uid_recovered", recipient: "prospect@example.com", error: "Waiting for the Front intake conversation", failures: 3 }, { accountId: "a1" }));
     await save(row("ISSUE", `issue:${op.id}`, { resolved: false, message: op.data.error }, { accountId: "a1" }));
     await save(row("ISSUE", "issue:sync-gap", { resolved: false, message: "Review missed SMS" }));
-    h.front.mockResolvedValueOnce({ id: "msg_recovered", is_inbound: false, created_at: Date.parse(NOW) / 1000, conversation: { id: "cnv_a" } });
+    h.front.mockResolvedValueOnce({ id: "msg_recovered", is_inbound: false, is_draft: false, created_at: Date.parse(NOW) / 1000, conversation: { id: "cnv_a" } });
     await runOperation(op);
     expect(record(op.id).data).toMatchObject({ state: "CONFIRMED", failures: 0 });
     expect(record(op.id).data.error).toBeUndefined();
@@ -460,7 +566,7 @@ describe("Front durable delivery", () => {
   });
   it("treats accepted UID as pending until the outbound message resolves", async () => {
     await lead(); const op = await enqueueOperation("op:test", { type: "EMAIL", accountId: "a1", replyId: "r1", recipient: "prospect@example.com", text: "Hello", html: "<p>Hello</p>" });
-    h.front.mockImplementation(async (path: string, method?: string) => method === "POST" ? { message_uid: "uid_1" } : path.startsWith("/messages/alt") ? { id: "msg_1", message_uid: "uid_1", is_inbound: false, created_at: Date.parse(NOW) / 1000, conversation: { id: "cnv_a" } } : { _results: [] });
+    h.front.mockImplementation(async (path: string, method?: string) => method === "POST" ? { message_uid: "uid_1" } : path.startsWith("/messages/alt") ? { id: "msg_1", message_uid: "uid_1", is_inbound: false, is_draft: false, created_at: Date.parse(NOW) / 1000, conversation: { id: "cnv_a" } } : { _results: [] });
     await runOperation(op); expect(record(op.id).data.state).toBe("ACCEPTED"); expect(h.update).not.toHaveBeenCalled(); expect(entries("TASK")).toHaveLength(0);
     await runOperation((await get<Operation>(op.id))!); expect(record(op.id).data.state).toBe("CONFIRMED"); expect(h.update).toHaveBeenCalledWith(expect.objectContaining({ status: "SENT" })); expect(entries("TASK")[0].data.kind).toBe("FOLLOW_UP");
     const body = h.front.mock.calls.find(c => c[1] === "POST")![2]; expect(body).toMatchObject({ sender_name: "Brian Cole", to: ["prospect@example.com"], cc: [], bcc: [], quote_body: "", signature_id: null, options: { archive: false } });
@@ -473,7 +579,7 @@ describe("Front durable delivery", () => {
   it("confirms an accepted email after a verified Front merge without resending it", async () => {
     await lead();
     const op = await save(row<Operation>("OPERATION", "op:merged", { type: "EMAIL", accountId: "a1", state: "ACCEPTED", attempts: 1, uid: "uid_merged", replyId: "r1", recipient: "prospect@example.com", text: "Hello" }, { accountId: "a1" }));
-    h.front.mockResolvedValue({ id: "msg_merged", is_inbound: false, created_at: Date.parse(NOW) / 1000, conversation: { id: "cnv_b" } });
+    h.front.mockResolvedValue({ id: "msg_merged", is_inbound: false, is_draft: false, created_at: Date.parse(NOW) / 1000, conversation: { id: "cnv_b" } });
     vi.mocked(permittedConversation).mockResolvedValueOnce({ id: "cnv_b", status: "open" }).mockResolvedValueOnce({ id: "cnv_b", status: "open" });
     await runOperation(op);
     expect(record(op.id).data.state).toBe("CONFIRMED"); expect(record("workflow:a1").data.conversationId).toBe("cnv_b");
@@ -482,7 +588,7 @@ describe("Front durable delivery", () => {
   it("does not reconcile an accepted email into an unrelated conversation", async () => {
     await lead();
     const op = await save(row<Operation>("OPERATION", "op:unrelated", { type: "EMAIL", accountId: "a1", state: "ACCEPTED", attempts: 1, uid: "uid_wrong", recipient: "prospect@example.com" }, { accountId: "a1" }));
-    h.front.mockResolvedValue({ id: "msg_wrong", is_inbound: false, created_at: Date.parse(NOW) / 1000, conversation: { id: "cnv_b" } });
+    h.front.mockResolvedValue({ id: "msg_wrong", is_inbound: false, is_draft: false, created_at: Date.parse(NOW) / 1000, conversation: { id: "cnv_b" } });
     await runOperation(op); expect(record(op.id).data.state).not.toBe("CONFIRMED"); expect(h.update).not.toHaveBeenCalled(); expect(entries("TASK")).toHaveLength(0);
   });
   it("rate-limits a requested Seen refresh, checks an older email once, and preserves its commitment", async () => {
@@ -499,7 +605,7 @@ describe("Front durable delivery", () => {
     expect(entries("TASK")[0].data.dueAt).toBe(deadline); expect(h.front.mock.calls.some(c => c[1] === "POST")).toBe(false);
   });
   it("suppresses a queued AI send when a human already replied", async () => {
-    await lead(); const op = await enqueueOperation("op:test", { type: "EMAIL", accountId: "a1", recipient: "prospect@example.com" }); h.front.mockResolvedValue({ _results: [{ is_inbound: false, author: { id: "tea_b" } }] });
+    await lead(); const op = await enqueueOperation("op:test", { type: "EMAIL", accountId: "a1", recipient: "prospect@example.com" }); h.front.mockResolvedValue({ _results: [{ is_inbound: false, is_draft: false, author: { id: "tea_b" } }] });
     await runOperation(op); expect(record(op.id).data.state).toBe("SUPPRESSED"); expect(h.front.mock.calls.filter(c => c[1] === "POST")).toHaveLength(0);
   });
 });

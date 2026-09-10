@@ -3,7 +3,7 @@ import { get, query, type Row } from "./store";
 export interface ContactStamp { at: string; channel: string; direction: string }
 export function contactCandidate(c: Communication): boolean {
   return ["EMAIL", "CALL", "SMS"].includes(c.channel) && ["INBOUND", "OUTBOUND"].includes(c.direction)
-    && c.classification !== "AUTOMATIC" && !["UNRELATED", "WRONG_NUMBER"].includes(c.outcome ?? "")
+    && !c.frontDraft && c.status !== "DRAFT" && c.classification !== "AUTOMATIC" && !["UNRELATED", "WRONG_NUMBER"].includes(c.outcome ?? "")
     && !["FAILED", "REJECTED", "UNDELIVERED", "IN_PROGRESS", "QUEUED", "PENDING"].includes(c.status)
     && Number.isFinite(Date.parse(c.at));
 }

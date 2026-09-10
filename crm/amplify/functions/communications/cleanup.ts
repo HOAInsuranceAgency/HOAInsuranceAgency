@@ -21,6 +21,7 @@ export async function archiveAllowed(accountId: string, conversationId: string) 
   // An inbound event may still be in transit. Front's current last message must
   // already be accounted for, not merely absent from the CRM task list.
   const last = conversation.last_message ?? (await front<{ _results: FrontMessage[] }>(`/conversations/${conversation.id}/messages?limit=1`))._results[0];
+  if (last?.is_draft) return false;
   if (last) {
     const known = await get<Communication>(`comm:front:${last.id}`);
     if (!known || last.is_inbound && !known.data.resolved && known.data.classification !== "AUTOMATIC") return false;

@@ -67,7 +67,7 @@ export function dialpadCallItems(page: unknown): Record<string, unknown>[] {
   throw new Error("Dialpad call-history response needs review");
 }
 export const htmlEscape = (value: string) => value.replace(/[&<>"']/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]!));
-export interface FrontMessage { id: string; message_uid?: string; uid?: string; created_at: number; is_inbound: boolean; type?: string; text?: string; body?: string; subject?: string;
+export interface FrontMessage { id: string; message_uid?: string; uid?: string; created_at: number; is_inbound: boolean; is_draft?: boolean; type?: string; text?: string; body?: string; subject?: string;
   attachments?: { id: string; filename: string; content_type: string; size: number }[];
   author?: { id: string }; recipients?: { handle: string; role: string }[]; conversation?: { id: string }; _links?: { related?: { conversation?: string } }; metadata?: Record<string, unknown> }
 export async function permittedConversation(id: string) {

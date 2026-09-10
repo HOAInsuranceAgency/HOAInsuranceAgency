@@ -31,6 +31,16 @@ export async function ingestFrontMessage(message: FrontMessage, conversationId?:
   // Dialpad is authoritative for phone activity. Native call/SMS records are
   // linked in the sidebar, never imported as a second customer interaction.
   if (message.type && message.type !== "email") return;
+  const id = `comm:front:${message.id}`, old = await get<Communication>(id);
+  // Front lists shared drafts in message history. They are never sent activity.
+  if (message.is_draft) {
+    if (old && old.data.frontDraft !== false) {
+      const { repairMisclassifiedDraft } = await import("./drafts");
+      await repairMisclassifiedDraft(old);
+    }
+    return;
+  }
+  if (!message.is_inbound && message.is_draft !== false) throw new Error("Front message sending status could not be verified");
   const link = await get<ConversationLink>(`front-link:${cnv}`);
   const c = await config();
   if (!c.activatedAt || message.created_at * 1000 < Date.parse(c.activatedAt)) return;
@@ -48,15 +58,17 @@ export async function ingestFrontMessage(message: FrontMessage, conversationId?:
     const operation = operationId ? await get<{ type: string; uid?: string }>(operationId) : undefined;
     if (operation?.data.type === "IMPORT" && operation.data.uid === message.message_uid) return;
   }
-  const id = `comm:front:${message.id}`, old = await get<Communication>(id);
   const comm: Communication = { ...old?.data, id, provider: "front", providerId: message.id, accountId: link?.data.accountId,
     conversationId: cnv, channel: "EMAIL", direction: message.is_inbound ? "INBOUND" : "OUTBOUND", at: eventAt(message.created_at),
     attachments: message.attachments?.map(a => ({ id: a.id, filename: a.filename, content_type: a.content_type, size: a.size })), subject: message.subject, text: message.text?.slice(0, 50000), from: message.recipients?.find(r => r.role === "from")?.handle,
-    to: message.recipients?.filter(r => r.role === "to").map(r => r.handle), actorId: message.author?.id, status: message.is_inbound ? "RECEIVED" : "SENT",
+    to: message.recipients?.filter(r => r.role === "to").map(r => r.handle), actorId: message.author?.id, status: message.is_inbound ? "RECEIVED" : "SENT", frontDraft: false,
     classification: classifyEmail(message), purpose: link?.data.purpose, version: (old?.version ?? 0) + 1 };
   // Duplicate event delivery must not reopen a completed episode.
-  if (old?.data.workflowApplied || old?.data.resolved) return;
-  if (!old || old.accountId !== comm.accountId || old.data.conversationId !== cnv) await save(row("COMMUNICATION", id, comm, { accountId: comm.accountId, previous: old,
+  if (old?.data.workflowApplied || old?.data.resolved) {
+    if (old.data.frontDraft !== false) await save(row("COMMUNICATION", old.id, { ...old.data, frontDraft: false }, { accountId: old.accountId, previous: old, dueAt: old.dueAt }), old);
+    return;
+  }
+  if (!old || old.accountId !== comm.accountId || old.data.conversationId !== cnv || old.data.status === "DRAFT" || old.data.frontDraft !== false) await save(row("COMMUNICATION", id, comm, { accountId: comm.accountId, previous: old,
     dueAt: old?.dueAt ?? (comm.direction === "OUTBOUND" ? new Date(Date.now() + 900_000).toISOString() : undefined) }), old);
   if (!link) { await issue(id, "Link this Front enquiry to the correct lead"); return; }
   const linkingIssue = await get(`issue:${id}`);
@@ -185,7 +197,10 @@ export async function processEvent(record: Row<EventRecord>) {
   let outcome: { ignored: string; line?: string } | undefined;
   if (record.data.snapshot) {
     await permittedConversation(record.data.snapshot.conversationId);
-    await ingestFrontMessage(record.data.snapshot.message, record.data.snapshot.conversationId);
+    const snapshot = record.data.snapshot.message;
+    // Old receipts predate the draft flag. Verify instead of guessing on replay.
+    const message = !snapshot.is_inbound && snapshot.is_draft === undefined ? await front<FrontMessage>(`/messages/${snapshot.id}`) : snapshot;
+    await ingestFrontMessage(message, record.data.snapshot.conversationId);
   } else if (record.data.provider === "front") outcome = await frontEvent(object(p.payload), str(p.type));
   else outcome = await dialpadEvent(p);
   await save(row("EVENT", record.id, { ...record.data, outcome, attempts: 0, processedAt: new Date().toISOString() }, { previous: record }), record);
@@ -206,11 +221,11 @@ export async function backfillConversation(candidate: Row<HistoryJob>) {
       || incoming.recipients != null && (!Array.isArray(incoming.recipients) || incoming.recipients.some(r => !r || typeof r.handle !== "string"))) {
       await issue(`front-history:${cnv}:${hash(canonical(incoming))}`, `Front history in ${cnv} returned a malformed message`); continue;
     }
-    const message = incoming && { id: incoming.id, created_at: incoming.created_at, is_inbound: incoming.is_inbound, type: incoming.type,
+    const message = incoming && { id: incoming.id, created_at: incoming.created_at, is_inbound: incoming.is_inbound, is_draft: incoming.is_draft, type: incoming.type,
       text: incoming.text?.slice(0, 50000), subject: incoming.subject, recipients: incoming.recipients, author: incoming.author,
       message_uid: incoming.message_uid, conversation: { id: cnv }, attachments: incoming.attachments?.map(a => ({ id: a.id, filename: a.filename, content_type: a.content_type, size: a.size })),
       metadata: { auto_submitted: incoming.metadata?.auto_submitted, autoSubmitted: incoming.metadata?.autoSubmitted, external_id: incoming.metadata?.external_id } };
-    const key = `front-history:${cnv}:${message.id}:${linkVersion}`, old = await get<EventRecord>(key);
+    const key = `front-history:${cnv}:${message.id}:${linkVersion}:draft-v2:${message.is_draft ? "draft" : "sent"}`, old = await get<EventRecord>(key);
     // Persist the exact item before projection. A poisonous message remains
     // replayable while the rest of the page and subsequent pages progress.
     const event = old ?? await save(row<EventRecord>("EVENT", key, { provider: "front", payload: {}, snapshot: { message, conversationId: cnv }, attempts: 0 }, { dueAt: new Date().toISOString() }));
@@ -223,5 +238,5 @@ export async function backfillConversation(candidate: Row<HistoryJob>) {
       catch (e) { await issue(key, e instanceof Error ? e.message : "Front message needs review", job.accountId); }
     }
   }
-  await save(row("CONVERSATION_BACKFILL", job.id, { ...job.data, next: page._pagination?.next, attempts: 0, error: undefined, firstFailureAt: undefined, completedAt: page._pagination?.next ? undefined : new Date().toISOString() }, { accountId: job.accountId, previous: job, dueAt: page._pagination?.next ? new Date().toISOString() : undefined }), job);
+  await save(row("CONVERSATION_BACKFILL", job.id, { ...job.data, draftAware: true, next: page._pagination?.next, attempts: 0, error: undefined, firstFailureAt: undefined, completedAt: page._pagination?.next ? undefined : new Date().toISOString() }, { accountId: job.accountId, previous: job, dueAt: page._pagination?.next ? new Date().toISOString() : undefined }), job);
 }

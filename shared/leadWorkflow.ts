@@ -35,6 +35,7 @@ export interface Communication {
   endedAt?: string; purpose?: "PROSPECT" | "CARRIER";
   contactApplied?: boolean; resolvedByCommunicationId?: string;
   contactAppliedKind?: "CONTACT" | "ATTEMPT";
+  frontDraft?: boolean;
 }
 export interface IntegrationConfig {
   environment: string; defaultUserId?: string; holidays: string[]; paused: boolean;

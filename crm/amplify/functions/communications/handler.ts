@@ -89,7 +89,7 @@ export const handler = async (event: { arguments: { operation?: string; readOper
           accountRows<{ message: string; at: string }>(accountId, "ISSUE"), roster(),
         ]);
         return { ok: true, frontContext, workflow: wf ? { ...wf.data, version: wf.version } : null,
-          tasks: tasks.map(t => ({ ...t.data, version: t.version })), communications: communications.items.map(r => safeCommunication({ ...r.data, version: r.version })),
+          tasks: tasks.map(t => ({ ...t.data, version: t.version })), communications: communications.items.filter(r => r.data.status !== "DRAFT").map(r => safeCommunication({ ...r.data, version: r.version })),
           communicationNextToken: communications.nextToken, issues: issues.filter(r => !(r.data as { resolved?: boolean }).resolved).map(r => ({ id: r.id, ...r.data })), team: members };
       }
       if (op === "work") {
@@ -120,7 +120,7 @@ export const handler = async (event: { arguments: { operation?: string; readOper
     }
     if (op === "refreshSeen") {
       const comm = await get<Communication>(text(input, "id"));
-      if (!comm?.accountId || comm.kind !== "COMMUNICATION" || comm.data.provider !== "front" || comm.data.channel !== "EMAIL" || comm.data.direction !== "OUTBOUND") throw new Error("Choose a sent Front email");
+      if (!comm?.accountId || comm.kind !== "COMMUNICATION" || comm.data.provider !== "front" || comm.data.channel !== "EMAIL" || comm.data.direction !== "OUTBOUND" || comm.data.status === "DRAFT") throw new Error("Choose a sent Front email");
       const last = Math.max(Date.parse(comm.data.seenRequestedAt ?? "") || 0, Date.parse(comm.data.seenCheckedAt ?? "") || 0);
       if (Date.now() - last < 60_000) return { ok: true, notice: "Seen status was recently checked or queued. Refresh the history shortly." };
       const now = new Date().toISOString();

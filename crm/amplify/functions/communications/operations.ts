@@ -116,7 +116,7 @@ export async function runOperation(candidate: Row<Operation>) {
       await permittedConversation(wf.data.conversationId);
       await verifyEmailChannel();
       const messages = await front<{ _results: FrontMessage[] }>(`/conversations/${wf.data.conversationId}/messages`);
-      if (messages._results.some(m => !m.is_inbound && m.author)) {
+      if (messages._results.some(m => !m.is_inbound && m.is_draft === false && m.author)) {
         await transition(op, { state: "SUPPRESSED" }); await updateReply(op.data, "SUPPRESSED", "A teammate already replied in Front"); return;
       }
       path = `/conversations/${wf.data.conversationId}/messages`;
@@ -188,7 +188,7 @@ async function resolveAccepted(op: Row<Operation>) {
   const message = await front<FrontMessage & { message_uid?: string; error_type?: string; is_draft?: boolean }>(`/messages/alt:uid:${encodeURIComponent(op.data.uid!)}`);
   if (message.error_type) { await updateReply(op.data, "FAILED", message.error_type); await transition(op, { state: "FAILED", error: message.error_type }); await issue(op.id, "Front could not deliver this message", op.accountId); return; }
   const messageConversationId = messageConversation(message);
-  if (!messageConversationId || !message.id || message.is_draft) throw new ProviderError("Front is still preparing the message", 0, false);
+  if (!messageConversationId || !message.id || message.is_draft !== false) throw new ProviderError("Front is still preparing the message", 0, false);
   const conversationId = (await permittedConversation(messageConversationId)).id;
   const wf = await ensureWorkflow(op.data.accountId);
   const linkedConversationId = wf.data.conversationId && (wf.data.conversationId === conversationId ? conversationId : (await permittedConversation(wf.data.conversationId)).id);
@@ -205,7 +205,7 @@ async function resolveAccepted(op: Row<Operation>) {
     if (message.is_inbound || conversationId !== linkedConversationId) throw new Error("The outbound message does not match the linked conversation");
     if (wf.data.conversationId !== conversationId) await save(row("WORKFLOW", wf.id, { ...wf.data, conversationId, version: wf.version + 1 }, { accountId: wf.accountId, previous: wf }), wf);
     const at = new Date(message.created_at * 1000).toISOString();
-    const comm: Communication = { actorId: "crm:initial-ai", id: `comm:front:${message.id}`, provider: "front", providerId: message.id, accountId: op.accountId, conversationId,
+    const comm: Communication = { actorId: "crm:initial-ai", frontDraft: false, id: `comm:front:${message.id}`, provider: "front", providerId: message.id, accountId: op.accountId, conversationId,
       channel: "EMAIL", direction: "OUTBOUND", at, subject: op.data.subject, text: op.data.text, to: [op.data.recipient!], status: "SENT", version: 1 };
     const previous = await get<Communication>(comm.id);
     await save(row("COMMUNICATION", comm.id, { ...previous?.data, ...comm, classification: "SUBSTANTIVE" }, { accountId: op.accountId, previous, dueAt: previous?.dueAt ?? new Date(Date.now() + 900_000).toISOString() }), previous);

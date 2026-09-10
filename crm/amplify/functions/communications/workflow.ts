@@ -175,8 +175,9 @@ export async function recordInbound(comm: Communication, kind: TaskKind = "RESPO
   if (projection?.data.workflowApplied) { const { repairContactWork } = await import("./contactProgress"); await repairContactWork(comm.accountId, comm); return; }
   const wf = await ensureWorkflow(comm.accountId);
   if (wf.data.disposition !== "ACTIVE") return;
-  const { contactFence } = await import("./contactProgress");
+  const { contactFence, accountContactPairs } = await import("./contactProgress");
   const fence = await contactFence(comm.accountId);
+  const contactPairs = await accountContactPairs(comm.accountId);
   const tasks = await accountRows<LeadTask>(comm.accountId, "TASK");
   let key = `task:${kind === "CARRIER" ? "carrier" : "response"}:${comm.accountId}:${comm.conversationId ?? comm.providerId}`;
   const alias = await get<{ targetId: string }>(`task-alias:${key}`);
@@ -198,12 +199,18 @@ export async function recordInbound(comm: Communication, kind: TaskKind = "RESPO
     let matches = !!comm.conversationId && task.data.conversationId === comm.conversationId;
     if (!matches) for (const id of task.data.sourceIds ?? []) {
       const source = await get<Communication>(id);
-      if (source?.accountId === comm.accountId && sameContact(comm, source.data)) matches = true;
+      if (source?.accountId === comm.accountId && sameContact(comm, source.data, contactPairs)) matches = true;
     }
     if (!matches) continue;
     writes.push(put(row("TASK", task.id, { ...task.data, status: "CANCELLED", reason: "Prospect responded", version: task.version + 1 }, { accountId: task.accountId, previous: task }), task));
   }
-  if (comm.conversationId) writes.push(put(operationRow(`op:inbound:${comm.id}`, { type: "REOPEN", accountId: comm.accountId, conversationId: comm.conversationId })));
+  if (comm.conversationId) {
+    const reopenId = `op:inbound:${comm.id}`, existing = await get<import("./operations").Operation>(reopenId);
+    if (!existing) writes.push(put(operationRow(reopenId, { type: "REOPEN", accountId: comm.accountId, conversationId: comm.conversationId })));
+    else if (comm.resolvedByCommunicationId && ["CONFIRMED", "SUPPRESSED"].includes(existing.data.state)) {
+      writes.push(put(row("OPERATION", reopenId, { ...existing.data, state: "READY", error: undefined, attempts: 0 }, { accountId: comm.accountId, previous: existing, dueAt: new Date().toISOString() }), existing));
+    }
+  }
   await commit(writes);
   const { repairContactWork } = await import("./contactProgress");
   await repairContactWork(comm.accountId, comm);

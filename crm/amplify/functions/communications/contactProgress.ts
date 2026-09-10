@@ -1,14 +1,28 @@
-import { automaticContactTask, contactAt, contactProgress, sameContact } from "../../../../shared/contactProgress";
+import { automaticContactTask, contactAt, contactProgress, sameContact, type ContactPair } from "../../../../shared/contactProgress";
 import { followUpDeadline, taskWakeAt, type Communication, type LeadTask } from "../../../../shared/leadWorkflow";
 import { accountRows, ensureWorkflow, makeTask } from "./workflow";
 import { get, row, put, commit, check, query, save, conflict, type Row } from "./store";
 import { operationRow } from "./outbox";
 import { config } from "./config";
+import { dataClient } from "./data";
 import type { Operation } from "./operations";
 
 async function purpose(c: Communication): Promise<Communication> {
   const link = c.conversationId ? await get<{ purpose?: "PROSPECT" | "CARRIER" }>(`front-link:${c.conversationId}`) : undefined;
   return { ...c, purpose: link?.data.purpose ?? c.purpose ?? "PROSPECT" };
+}
+
+/** Only contacts already belonging to this lead can join email and phone activity. */
+export async function accountContactPairs(accountId: string): Promise<ContactPair[]> {
+  const account = await (await dataClient()).models.Account.get({ id: accountId });
+  if (account.errors?.length || !account.data) throw new Error("The lead's contacts could not be loaded");
+  const contacts: ContactPair[] = []; let nextToken: string | undefined;
+  do {
+    const page = await account.data.contacts({ limit: 100, nextToken });
+    if (page.errors?.length) throw new Error("The lead's contacts could not be loaded");
+    contacts.push(...page.data); nextToken = page.nextToken ?? undefined;
+  } while (nextToken);
+  return contacts;
 }
 
 /** Serialize inbound/waiting transitions without changing the editable lead-team version. */
@@ -30,6 +44,7 @@ export async function applyContactProgress(input: Communication, repair = false)
   const accountId = projection.accountId, at = contactAt(comm), wf = await ensureWorkflow(accountId);
   if (wf.data.disposition !== "ACTIVE") return;
   const fence = await contactFence(accountId);
+  const contactPairs = await accountContactPairs(accountId);
   const role = comm.purpose === "CARRIER" ? "CHAMPION" : "SALESPERSON";
   const activity = new Map((await accountRows<Communication>(accountId, "COMMUNICATION")).map(r => [r.id, r]));
   activity.set(projection.id, projection);
@@ -56,7 +71,7 @@ export async function applyContactProgress(input: Communication, repair = false)
       if (source?.kind === "COMMUNICATION" && source.accountId === accountId) { sources.push({ ...source, id }); activity.set(source.id, source); }
     }
     const matched: string[] = [];
-    for (const source of sources) if (source.data.at <= at && sameContact(comm, await purpose(source.data))) matched.push(source.id);
+    for (const source of sources) if (source.data.at <= at && sameContact(comm, await purpose(source.data), contactPairs)) matched.push(source.id);
     const fallback = !ids.length && !!comm.conversationId && t.data.conversationId === comm.conversationId && (t.data.sourceAt ?? t.createdAt) <= at;
     if (progress !== "CONTACT" || !matched.length && !fallback) continue;
     const remaining = ids.filter(id => !matched.includes(id));
@@ -68,7 +83,7 @@ export async function applyContactProgress(input: Communication, repair = false)
   const scoped: Communication[] = [];
   for (const candidate of activity.values()) scoped.push(await purpose(candidate.data));
   if (progress === "CONTACT") {
-    const resolved = scoped.filter(c => c.id !== comm.id && c.direction === "INBOUND" && c.at <= at && sameContact(comm, c));
+    const resolved = scoped.filter(c => c.id !== comm.id && c.direction === "INBOUND" && c.at <= at && sameContact(comm, c, contactPairs));
     for (let i = 0; i < resolved.length; i += 60) {
       const writes = [check(wf), check(fence), check(projection)];
       for (const c of resolved.slice(i, i + 60)) {
@@ -78,15 +93,15 @@ export async function applyContactProgress(input: Communication, repair = false)
       if (writes.length > 3) { await commit(writes); changed = true; }
     }
   }
-  const laterInbound = scoped.some(c => c.direction === "INBOUND" && c.id !== comm.id && c.at > at && c.classification !== "AUTOMATIC" && sameContact(comm, c));
-  const laterContact = scoped.some(c => c.id !== comm.id && !!contactProgress(c) && contactAt(c) > at && sameContact(comm, c));
+  const laterInbound = scoped.some(c => c.direction === "INBOUND" && c.id !== comm.id && c.at > at && c.classification !== "AUTOMATIC" && sameContact(comm, c, contactPairs));
+  const laterContact = scoped.some(c => c.id !== comm.id && !!contactProgress(c) && contactAt(c) > at && sameContact(comm, c, contactPairs));
   const custom = [...candidates.values()].some(t => t.data.status === "OPEN" && t.data.custom && !automaticContactTask(t.data) && t.data.role === role);
   const pendingCallback = [...candidates.values()].some(t => t.data.status === "OPEN" && t.data.kind === "CALLBACK" && t.data.role === role);
   const id = `task:wait:${accountId}:${comm.conversationId ?? (comm.direction === "INBOUND" ? comm.from : comm.to?.[0]) ?? comm.providerId}${role === "CHAMPION" ? ":champion" : ""}`;
   const previous = await get<LeadTask>(id);
   const writes = [check(wf), put(row("CONTACT_FENCE", fence.id, {}, { previous: fence }), fence)];
   // Newer inbound work supersedes waiting; old/replayed sends cannot move its date.
-  if (!laterInbound && !laterContact && !custom && !(progress === "ATTEMPT" && pendingCallback) && (!previous?.data.sourceAt || previous.data.sourceAt < at || projection.data.contactAppliedKind === "ATTEMPT" && progress === "CONTACT")) {
+  if (!laterInbound && !laterContact && !custom && !(progress === "ATTEMPT" && pendingCallback) && (!previous?.data.sourceAt || previous.data.sourceAt < at || previous.data.status === "CANCELLED" && previous.data.reason === "The email has not been sent" && previous.data.sourceIds?.includes(comm.id) || projection.data.contactAppliedKind === "ATTEMPT" && progress === "CONTACT")) {
     const task = await makeTask({ id, accountId, role, kind: "FOLLOW_UP",
       title: progress === "ATTEMPT" ? "Try the prospect again" : role === "CHAMPION" ? "Follow up with carrier" : "Follow up with prospect",
       sourceAt: at, conversationId: comm.conversationId,
@@ -111,14 +126,16 @@ export async function applyContactProgress(input: Communication, repair = false)
 /** Old unanswered work and out-of-order provider events also use the actual communication. */
 export async function repairContactWork(accountId: string, target?: Communication) {
   const activity = await accountRows<Communication>(accountId, "COMMUNICATION");
-  const contacts = activity.filter(r => !!contactProgress(r.data)).sort((a,b) => contactAt(b.data).localeCompare(contactAt(a.data)));
+  const contacts = activity.filter(r => !!contactProgress(r.data) && (r.data.provider !== "front" || r.data.frontDraft === false)).sort((a,b) => contactAt(b.data).localeCompare(contactAt(a.data)));
+  if (!contacts.length) return;
+  const contactPairs = await accountContactPairs(accountId);
   // Choose the newest matching contact for each request, rather than only the
   // account's newest ten messages (which could all concern someone else).
   const requests = target ? [target] : activity.filter(r => !r.data.resolved && r.data.direction === "INBOUND").map(r => r.data);
   const selected = new Map<string, Communication>();
   for (const request of requests) {
     const scoped = await purpose(request);
-    for (const c of contacts) if (contactAt(c.data) >= request.at && sameContact(await purpose(c.data), scoped)) { selected.set(c.id, c.data); break; }
+    for (const c of contacts) if (contactAt(c.data) >= request.at && sameContact(await purpose(c.data), scoped, contactPairs)) { selected.set(c.id, c.data); break; }
   }
   // Also create waiting work for recent outbound contact with no inbound episode.
   if (!target) for (const c of contacts.slice(0, 10)) selected.set(c.id, c.data);
@@ -126,7 +143,7 @@ export async function repairContactWork(accountId: string, target?: Communicatio
 }
 
 export async function migrateContactProgress() {
-  const key = "migration:automatic-contact-progress:v1", old = await get<{ cursor?: string; complete?: boolean }>(key);
+  const key = "migration:automatic-contact-progress:v2", old = await get<{ cursor?: string; complete?: boolean }>(key);
   if (old?.data.complete && Date.now() - Date.parse(old.updatedAt) < 3600_000) return;
   const page = await query<LeadTask>("work", "TASK", old?.data.complete ? undefined : old?.data.cursor, 5);
   for (const accountId of new Set(page.items.map(t => t.accountId).filter((s): s is string => !!s))) await repairContactWork(accountId);

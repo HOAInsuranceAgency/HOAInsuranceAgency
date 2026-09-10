@@ -100,6 +100,9 @@ export async function refreshCommunication(candidate: Row<Communication>) {
     const current = (await get<Communication>(comm.id))!;
     await save(row("COMMUNICATION", current.id, current.data, { accountId: current.accountId, previous: current }), current); return;
   }
+  if (comm.data.status === "DRAFT") {
+    await save(row("COMMUNICATION", comm.id, comm.data, { accountId: comm.accountId, previous: comm }), comm); return;
+  }
   if (comm.data.provider !== "front" || comm.data.channel !== "EMAIL" || comm.data.direction !== "OUTBOUND") return;
   const age = Date.now() - Date.parse(comm.data.at), wf = comm.accountId ? await ensureWorkflow(comm.accountId) : undefined;
   const replied = comm.accountId && (await accountRows<Communication>(comm.accountId, "COMMUNICATION")).some(r => r.data.direction === "INBOUND" && r.data.conversationId === comm.data.conversationId && r.data.classification === "SUBSTANTIVE" && r.data.at > comm.data.at);
@@ -131,7 +134,14 @@ export const handler = async (event?: Partial<DynamoDBStreamEvent>) => {
   await migrateReminderSchedules();
   if (c.activatedAt) {
     const { migrateContactProgress } = await import("./contactProgress");
-    await migrateContactProgress();
+    try {
+      await migrateContactProgress();
+      const warning = await get("issue:contact-progress-repair");
+      if (warning && !warning.data.resolved) await save(row("ISSUE", warning.id, { ...warning.data, resolved: true }, { previous: warning }), warning);
+    } catch (error) {
+      lagging = true;
+      await issue("contact-progress-repair", error instanceof Error ? error.message : "Contact history repair will retry");
+    }
   }
   // Reserve reconciliation a turn even while due work is backlogged. Each
   // provider captures one independent page; a failure cannot starve the other.
