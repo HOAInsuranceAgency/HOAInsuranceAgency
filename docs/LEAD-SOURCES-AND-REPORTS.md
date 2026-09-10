@@ -57,3 +57,16 @@ Print / save PDF opens a separate, branded report with the same data. Click its 
 5. Choose Download → Print / save PDF. Check the branded report and use its print button to save a PDF. Long reports should retain all rows across pages.
 
 Automated validation: 2,015 tests across 104 files, frontend/backend type checks, backend synthesis, CRM build, and website build (156 pages) passed before deployment. Live staging verification is recorded after the release.
+
+
+## Live staging verification
+
+Release `ca67c70` deployed successfully: CRM Amplify job 184 and website job 183.
+
+- Chrome: Dashboard → Leads showed all 15 existing leads, readable historical source labels, last-contact dates, and explicit no-contact states. TEST Lead Brief 0910 showed September 10 at 8:47 AM.
+- Lead follow-up → Waiting on prospect showed that same 8:47 AM contact and its unchanged September 14, 9:00 AM commitment.
+- Browser-downloaded CSV contained exactly the 15 displayed rows, correct columns, filter/snapshot metadata, and the matching contact timestamp. Chrome saved the PDF successfully; its three pages included all rows and repeated column headers.
+- New lead creation refused a missing source. Created TEST Source Lock 0910 (`b4b36240-1efd-4323-b39d-5f7284225156`) with Phone and Jake in both assignment roles. Its source is read-only in the overview; an ordinary note edit saved successfully. No prospect contact information was entered and this manual creation did not queue outreach.
+- All five Reporting exports appeared in the live interface. Automated component tests exercise all 15 dashboard controls and check that the selected reporting window and cancelled-policy filter affect exported commission rows.
+- Inspected the deployed AppSync account policy: acquisition fields are absent from user/admin update allowlists, with no admin bypass. Evaluated the deployed policy with Cognito mode simulated (the standalone evaluator otherwise reports API-key mode): ordinary name/notes allowed; changing or clearing leadSource, changing source, and changing leadAttribution denied. Direct generated Account creation was also denied for a simulated admin.
+- Google/organic/Meta classification, cross-page capture, campaign replacement, and backend persistence were verified in automated tests. No additional prospect emails were sent to perform campaign attribution testing.
