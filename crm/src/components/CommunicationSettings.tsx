@@ -124,7 +124,9 @@ export default function CommunicationSettings() {
           const result = await request<{ config: IntegrationConfig }>("saveSettings", { config: { ...saved, paused: true } }, true);
           adoptConfig(result.config); setMessage("Delivery paused. Team deadlines are unchanged.");
         })}>Pause delivery</button></div>}
-        <p className="muted small">Before starting or resuming delivery, test email replies, calls on each business number, and texts from the shared main line. Confirm that activity and text delivery status appear in the CRM.</p>
+        <p className="muted small">{saved.environment !== "main"
+          ? "First verify sending from the test mailbox, a call on a connected business number, and shared-line texts in Front and Dialpad. Start delivery to test the automated email and CRM activity with your allowed test recipients. Complete reply, callback, and follow-up checks before enabling inbox cleanup."
+          : "Before starting or resuming delivery, test email replies, calls on each business number, and texts from the shared main line. Confirm that activity and text delivery status appear in the CRM."}</p>
         <label className="communication-check"><input type="checkbox" checked={nativeVerified} onChange={event => setNativeVerified(event.target.checked)} /><span>I verified email, calls, and shared-line texts with test contacts.</span></label>
         <label className="communication-check"><input type="checkbox" checked={cleanup} onChange={event => setCleanup(event.target.checked)} /><span>Automatically tidy conversations awaiting a future follow-up.<small>Conversations needing a response stay visible. CRM deadlines stay in place.</small></span></label>
         <button type="button" disabled={!nativeVerified} onClick={() => void run("activate", async () => {

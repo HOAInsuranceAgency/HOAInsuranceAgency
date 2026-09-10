@@ -11,6 +11,14 @@ import CommunicationSettings from "../components/CommunicationSettings";
 const context = { workflow: null, tasks: [], communications: [], team: [], issues: [] };
 beforeEach(() => { vi.clearAllMocks(); h.request.mockResolvedValue(context); });
 describe("communication UI boundaries", () => {
+  it("explains that staging CRM acceptance follows controlled activation", async () => {
+    const config = { environment: "staging", paused: true, allowedInboxIds: [], dialpadNumbers: [], holidays: [], testRecipients: ["tester@example.com"] };
+    h.request.mockImplementation(async op => op === "settings" ? { config, credentialStatus: {} } : { team: [] });
+    render(<CommunicationSettings />);
+    fireEvent.click(await screen.findByText("Delivery and inbox cleanup"));
+    expect(screen.getByText(/Start delivery to test the automated email/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Start delivery" })).toBeDisabled();
+  });
   it("preserves saved cleanup when revalidating and resuming the integration", async () => {
     const config = { environment: "main", version: 1, activatedAt: "2026-09-08T14:00:00Z", paused: true, cleanupEnabled: true, frontSender: "sales@protectmyhoa.com", allowedInboxIds: [], dialpadNumbers: [], holidays: [], testRecipients: [] };
     h.request.mockImplementation(async (op: string) => op === "settings" || op === "activate" ? { config, credentialStatus: {} } : { team: [] });

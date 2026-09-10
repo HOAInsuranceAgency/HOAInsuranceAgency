@@ -68,6 +68,11 @@ function renderValue(field: string, v: unknown): string {
   return String(v);
 }
 
+const USER_ID = /^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i;
+const actorKey = (r: Activity) => r.actor || r.actorName || "System";
+const needsName = (r: Activity) => !!r.actor && USER_ID.test(r.actor) &&
+  (!r.actorName || r.actorName === r.actor || r.actorName === "Unknown user");
+
 export function ActivityTab({ accountId }: { accountId: string }) {
   const res = useAsyncResource(
     () =>
@@ -87,18 +92,40 @@ export function ActivityTab({ accountId }: { accountId: string }) {
   const [actorFilter, setActorFilter] = useState("");
 
   const rows = res.data;
+  // Resolve old communication rows without changing their immutable audit data.
+  // A profile lookup failure must not hide the account's activity.
+  const unresolvedActors = useMemo(
+    () => [...new Set(rows.filter(needsName).map((r) => r.actor!))].sort(),
+    [rows]
+  );
+  const names = useAsyncResource(async () => {
+    const entries: [string, string][] = [];
+    for (const userId of unresolvedActors) {
+      const profiles = await listAllPages((nextToken) =>
+        client.models.UserProfile.listUserProfileByUserId({ userId }, { nextToken })
+      );
+      const profile = profiles[0];
+      const name = [profile?.firstName, profile?.lastName].filter(Boolean).join(" ").trim();
+      entries.push([userId, name || profile?.email || "Unknown teammate"]);
+    }
+    return Object.fromEntries(entries);
+  }, [unresolvedActors], { initialData: {} as Record<string, string>, errorMessage: "Teammate names could not be loaded." });
+  const actorLabel = (r: Activity) => needsName(r)
+    ? names.data[r.actor!] || "Unknown teammate"
+    : r.actorName || (r.actor ? "Unknown teammate" : "System");
   const subjects = useMemo(
     () => [...new Set(rows.map((r) => r.subjectType))].sort(),
     [rows]
   );
   const actors = useMemo(
-    () => [...new Set(rows.map((r) => r.actorName).filter(Boolean))].sort() as string[],
-    [rows]
+    () => [...new Map(rows.map((r) => [actorKey(r), { key: actorKey(r), label: actorLabel(r) }])).values()]
+      .sort((a, b) => a.label.localeCompare(b.label)),
+    [rows, names.data]
   );
   const filtered = rows.filter(
     (r) =>
       (!subjectFilter || r.subjectType === subjectFilter) &&
-      (!actorFilter || r.actorName === actorFilter)
+      (!actorFilter || actorKey(r) === actorFilter)
   );
 
   return (
@@ -128,10 +155,12 @@ export function ActivityTab({ accountId }: { accountId: string }) {
         </p>
       ) : (
         <>
+          {names.error && <p className="muted small">Activity is available, but some teammate names could not be loaded. <button className="btn secondary small" onClick={() => void names.refetch()}>Retry names</button></p>}
           <div className="toolbar">
             <div className="field">
-              <label>Subject</label>
+              <label htmlFor="activity-subject">Subject</label>
               <select
+                id="activity-subject"
                 value={subjectFilter}
                 onChange={(e) => setSubjectFilter(e.target.value)}
               >
@@ -142,14 +171,15 @@ export function ActivityTab({ accountId }: { accountId: string }) {
               </select>
             </div>
             <div className="field">
-              <label>Who</label>
+              <label htmlFor="activity-actor">Who</label>
               <select
+                id="activity-actor"
                 value={actorFilter}
                 onChange={(e) => setActorFilter(e.target.value)}
               >
                 <option value="">Anyone</option>
                 {actors.map((a) => (
-                  <option key={a}>{a}</option>
+                  <option key={a.key} value={a.key}>{a.label}</option>
                 ))}
               </select>
             </div>
@@ -176,7 +206,7 @@ export function ActivityTab({ accountId }: { accountId: string }) {
                         <td style={{ whiteSpace: "nowrap" }}>
                           {fmtDateTime(r.occurredAt)}
                         </td>
-                        <td>{r.actorName ?? "System"}</td>
+                        <td>{actorLabel(r)}</td>
                         <td>
                           <span className="badge gray">{r.action}</span>{" "}
                           {[r.subjectType, r.subjectLabel].filter(Boolean).join(" ")}
