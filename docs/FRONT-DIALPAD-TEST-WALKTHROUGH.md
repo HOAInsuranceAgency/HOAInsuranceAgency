@@ -145,7 +145,7 @@ Submit once through each row below, with a distinct test identity or address. Re
 
 ### 14 — Use the CRM inside Front
 
-1. Select TEST Oak's email conversation in Front and open the **HOA CRM — Staging** sidebar app. Sign in with your existing staging CRM identity if prompted.
+1. Select TEST Oak's email conversation in Front and open the **HOA CRM — Staging** sidebar app. Sign in with your existing staging CRM identity if prompted. If the panel feels cramped, drag its left edge to the left to give it more room.
 2. Verify the correct lead name, contact, source, documents, quote context, salesperson, champion and next actions. Use **Open CRM account**, then expand **Account details** for **View all documents** and **View quotes & bind**. Expand **Recent activity** for the message history. Try **Lead team → Edit team → Cancel** and confirm both saved names stay unchanged.
 3. Start an unsaved note or edit, then select TEST Pine's conversation. Verify the sidebar changes to Pine and does not apply Oak's unsaved content.
 4. For a fresh unlinked test email, expand **Find or link a lead**, search its association/contact, select **Prospect**, and choose the correct result.
