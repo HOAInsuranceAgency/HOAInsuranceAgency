@@ -1173,3 +1173,27 @@ th.internal { color: var(--muted); }
 .report-download { display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-left: auto; }
 .report-download select { width: auto; min-width: 116px; padding: 6px 28px 6px 10px; font-size: 12px; background-color: #fff; }
 .report-actions { display: flex; justify-content: flex-end; margin-bottom: 10px; }
+
+/* Daily lead work keeps priority, responsibility, and shared intake separate. */
+.lead-work-filters { align-items: flex-end; gap: 16px; }
+.lead-work-filters .field { min-width: 180px; margin: 0; }
+.lead-work-filters select { width: 100%; }
+.lead-work-mine { display: flex; align-items: center; gap: 8px; padding: 9px 0; font-size: 13px; white-space: nowrap; }
+.lead-work-action { margin: 5px 0; }
+.lead-work-escalation { display: block; color: var(--muted); margin-top: 6px; }
+.lead-work-shared { margin: 24px 0 12px; }
+.lead-work-shared > h2 { font-size: 17px; margin-bottom: 5px; }
+.lead-work-shared-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.lead-work-shared-card { min-width: 0; }
+.lead-work-shared-card h3 { margin: 0 0 12px; font-size: 14px; }
+.lead-work-shared-item { padding: 12px 0; border-top: 1px solid var(--border); overflow-wrap: anywhere; }
+.lead-work-shared-item p { margin: 5px 0 8px; }
+.lead-work-shared-item details { margin-top: 8px; font-size: 12px; }
+.lead-work-reminders > summary { font-size: 14px; font-weight: 600; cursor: pointer; }
+.lead-work-reminder-list { margin-top: 14px; }
+.lead-work-page button:not(.link) { border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px; font: inherit; font-size: 13px; background: #fff; color: var(--text); cursor: pointer; }
+.lead-work-page button:disabled { opacity: .5; cursor: not-allowed; }
+@media (max-width: 720px) {
+  .lead-work-shared-grid { grid-template-columns: 1fr; }
+  .lead-work-filters .field { flex: 1 1 180px; }
+}

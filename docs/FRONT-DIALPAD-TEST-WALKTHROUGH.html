@@ -21,7 +21,7 @@
 </ol>
 <p class="expected"><strong>Expected:</strong> native email, voice and shared texting work, and both event sources have a recent receipt. Before first activation, these events are not projected into normal CRM communication history. Repeat the formal scenarios after activation; do not count the native checks as the CRM history tests.</p>
 <p><strong>If blocked:</strong> stop here for live delivery tests and record the missing connection. Dialpad subscriptions cover traffic on the selected business lines, not only your test mobile; arrange a test window with the team. Individual numbers need their own native voice connections if their calls are to appear in Front. Native personal-number SMS channels are not promised. <a href="https://help.front.com/en/articles/2891264">Front's Dialpad guide</a></p><div class="record"><label for="status-02">Your result<select id="status-02" class="result"><option value="todo">Not tested</option><option value="pass">Pass</option><option value="fail">Fail</option><option value="blocked">Blocked</option></select></label><label for="notes-02">Test lead, time and observations<textarea id="notes-02" class="notes" rows="3" placeholder="Lead name · time/timezone · what happened · evidence or blocker"></textarea></label></div></div></details><details class="test" data-test="03"><summary><span class="test-no">03</span><span class="test-title">Start staging delivery with cleanup off</span><span class="badge">Not tested</span></summary><div class="test-body"><ol>
-<li>Open <strong>Lead follow-up → Delivery queue</strong> and review any already queued test leads. Starting delivery can release them. Use the lead's <strong>Handle personally / cancel pending AI reply</strong> or admin delivery review for an unwanted queued test; do not submit it again.</li>
+<li>Open <strong>Settings → Front and Dialpad → Advanced tools → Connection issues and queues → Delivery queue</strong> and review any already queued test leads. Starting delivery can release them. Use the lead's <strong>Handle personally / cancel pending AI reply</strong> or admin delivery review for an unwanted queued test; do not submit it again.</li>
 <li>In <strong>Settings → Front and Dialpad</strong>, click <strong>Check connections</strong>.</li>
 <li>Expand <strong>Delivery and inbox cleanup</strong>. After completing test 02, select <strong>I verified email, calls, and shared-line texts with test contacts</strong>.</li>
 <li>Leave <strong>Automatically tidy conversations awaiting a future follow-up</strong> unchecked. Click <strong>Start delivery</strong>.</li>
@@ -104,7 +104,7 @@
 </ol>
 <p class="expected"><strong>Expected:</strong> a Front Seen signal is reflected in CRM when available. Otherwise CRM says it has not checked, no signal was returned, or the status is unavailable—it must not assert the recipient has not read it. The deadline is unchanged and no email is resent. Image blocking and mail-provider privacy/proxy behavior affect open signals; this is not proof of human reading. <a href="https://help.front.com/en/articles/2034">Front explains these limits</a>.</p><div class="record"><label for="status-10">Your result<select id="status-10" class="result"><option value="todo">Not tested</option><option value="pass">Pass</option><option value="fail">Fail</option><option value="blocked">Blocked</option></select></label><label for="notes-10">Test lead, time and observations<textarea id="notes-10" class="notes" rows="3" placeholder="Lead name · time/timezone · what happened · evidence or blocker"></textarea></label></div></div></details><details class="test" data-test="11"><summary><span class="test-no">11</span><span class="test-title">Receive a reply, then handle it explicitly</span><span class="badge">Not tested</span></summary><div class="test-body"><ol>
 <li>From the test prospect mailbox, reply to TEST Oak's AI email: <strong>Please clarify what documents you need.</strong></li>
-<li>In CRM, verify the inbound email appears and <strong>Respond to prospect</strong> is in <strong>Next actions</strong> and <strong>Lead follow-up → Needs response</strong>. Write down the due time.</li>
+<li>In CRM, verify the inbound email appears and <strong>Respond to prospect</strong> is in <strong>Next actions</strong> and <strong>Lead follow-up → Needs attention</strong>. Write down the due time.</li>
 <li>Send another reply about the same unanswered request a few minutes later. Refresh.</li>
 <li>Reply as the salesperson in Front. Then return to CRM and select <strong>Complete with outcome</strong> on the specific response task.</li>
 <li>Record what happened, select <strong>Record next action or waiting commitment</strong>, and enter <strong>Wait for test documents</strong> with a future due time. Save.</li>
@@ -145,7 +145,7 @@
 <p class="expected"><strong>Expected:</strong> commitments have a named role and a date. A deliberate edit changes only the selected commitment and leaves an activity record. A new promise cannot be saved in the past or without a reason. Front snoozes are not the way to change this date.</p><div class="record"><label for="status-17">Your result<select id="status-17" class="result"><option value="todo">Not tested</option><option value="pass">Pass</option><option value="fail">Fail</option><option value="blocked">Blocked</option></select></label><label for="notes-17">Test lead, time and observations<textarea id="notes-17" class="notes" rows="3" placeholder="Lead name · time/timezone · what happened · evidence or blocker"></textarea></label></div></div></details><details class="test" data-test="18"><summary><span class="test-no">18</span><span class="test-title">Test a reminder quickly</span><span class="badge">Not tested</span></summary><div class="test-body"><ol>
 <li>On a test lead with a linked Front conversation, add a salesperson follow-up called <strong>TEST short reminder</strong>, due <strong>five minutes from now</strong>. Record the exact time.</li>
 <li>Archive or snooze its Front conversation beyond that time. Do not change the CRM action.</li>
-<li>After the due time, allow a few background cycles. Open <strong>Lead follow-up → Overdue</strong>, <strong>Notifications</strong>, and the Front conversation.</li>
+<li>After the due time, allow a few background cycles. Open <strong>Lead follow-up → Needs attention (Overdue timing)</strong>, <strong>My reminders</strong>, and the Front conversation.</li>
 </ol>
 <p class="expected"><strong>Expected:</strong> the action becomes overdue, you receive an in-app lead-follow-up notification, and the linked Front conversation reopens while delivery is running. This does not require a separate reminder email/SMS. The task remains open until handled. This tests dispatch/reopening, not the two-business-day schedule.</p><div class="record"><label for="status-18">Your result<select id="status-18" class="result"><option value="todo">Not tested</option><option value="pass">Pass</option><option value="fail">Fail</option><option value="blocked">Blocked</option></select></label><label for="notes-18">Test lead, time and observations<textarea id="notes-18" class="notes" rows="3" placeholder="Lead name · time/timezone · what happened · evidence or blocker"></textarea></label></div></div></details><details class="test" data-test="19"><summary><span class="test-no">19</span><span class="test-title">Verify the real business-day schedule and escalation</span><span class="badge">Not tested</span></summary><div class="test-body"><ol>
 <li>Keep a separate lead untouched after its initial confirmed AI email. Do not reply or replace its automatic follow-up with a custom date.</li>
@@ -198,12 +198,12 @@
 <p class="expected"><strong>Expected:</strong> owners are separate duties; the Front handler is separate again. Existing manual handling is respected until deliberately changed. Reassignment directs overdue work to its new responsible person without moving the deadline. The two-person portions are Blocked with only Jake in staging; do not create invitations just to bypass that limitation.</p><div class="record"><label for="status-21">Your result<select id="status-21" class="result"><option value="todo">Not tested</option><option value="pass">Pass</option><option value="fail">Fail</option><option value="blocked">Blocked</option></select></label><label for="notes-21">Test lead, time and observations<textarea id="notes-21" class="notes" rows="3" placeholder="Lead name · time/timezone · what happened · evidence or blocker"></textarea></label></div></div></details><details class="test" data-test="22"><summary><span class="test-no">22</span><span class="test-title">Keep carrier work separate from prospect work</span><span class="badge">Not tested</span></summary><div class="test-body"><ol>
 <li>Keep an unanswered prospect task open on a test lead.</li>
 <li>Send a separate controlled email representing a carrier question. In the Front sidebar, link that conversation to the test lead with <strong>Conversation purpose → Carrier</strong>.</li>
-<li>Verify <strong>Respond to carrier</strong> appears for the deal champion and in <strong>Champion work</strong>.</li>
+<li>Verify <strong>Respond to carrier</strong> appears for the deal champion and in <strong>Responsibility → Deal champion</strong>.</li>
 <li>Complete the carrier task with a recorded outcome. Recheck the prospect task.</li>
 </ol>
 <p class="expected"><strong>Expected:</strong> carrier work does not satisfy or postpone prospect response work. Both can exist on the same account with their own deadlines. Merely changing a Front handler is not the same as classifying a conversation as carrier work.</p><div class="record"><label for="status-22">Your result<select id="status-22" class="result"><option value="todo">Not tested</option><option value="pass">Pass</option><option value="fail">Fail</option><option value="blocked">Blocked</option></select></label><label for="notes-22">Test lead, time and observations<textarea id="notes-22" class="notes" rows="3" placeholder="Lead name · time/timezone · what happened · evidence or blocker"></textarea></label></div></div></details></section><section id="section-5" class="phase"><h2>Dialpad calls and texts</h2><details class="test" data-test="23"><summary><span class="test-no">23</span><span class="test-title">Missed main-line call and voicemail</span><span class="badge">Not tested</span></summary><div class="test-body"><ol>
 <li>After activation, call <strong>(508) 233-2261</strong> from your test mobile and let it go unanswered. Leave <strong>TEST callback request</strong> as voicemail. Coordinate this with the team.</li>
-<li>Find the call/voicemail in Dialpad and Front's phone inbox. In CRM, open <strong>Lead follow-up → Unlinked activity</strong>.</li>
+<li>Find the call/voicemail in Dialpad and Front's phone inbox. In CRM, open <strong>Lead follow-up → Needs attention → Link a call or text</strong>.</li>
 <li>Select <strong>Link activity</strong>, search TEST Oak, choose <strong>Prospect or client</strong>, and link it. Alternatively, use the linked lead's Front sidebar <strong>Conversation tools → Link a call or text to this conversation</strong>.</li>
 <li>Check <strong>Return prospect call</strong>, its due time, communication history, and any later voicemail/transcript/summary update.</li>
 </ol>
@@ -252,7 +252,7 @@
 </ol>
 <p class="expected"><strong>Expected:</strong> opening the draft does not send it. One text activity is enriched with delivery status; it is not duplicated for every status update. A substantive inbound text creates response work after linking. A delivered SMS does not mean read or resolved. Calls/texts remain separate from the email thread in Front, with combined history in the CRM.</p><div class="record"><label for="status-26">Your result<select id="status-26" class="result"><option value="todo">Not tested</option><option value="pass">Pass</option><option value="fail">Fail</option><option value="blocked">Blocked</option></select></label><label for="notes-26">Test lead, time and observations<textarea id="notes-26" class="notes" rows="3" placeholder="Lead name · time/timezone · what happened · evidence or blocker"></textarea></label></div></div></details><details class="test" data-test="27"><summary><span class="test-no">27</span><span class="test-title">One phone number representing two associations</span><span class="badge">Not tested</span></summary><div class="test-body"><ol>
 <li>Keep TEST Oak and TEST Pine as separate leads with the same test phone contact.</li>
-<li>Send two new texts/calls representing different associations. In <strong>Unlinked activity</strong>, link one to Oak and one to Pine.</li>
+<li>Send two new texts/calls representing different associations. In <strong>Link a call or text</strong>, link one to Oak and one to Pine.</li>
 <li>Inspect both histories and the remaining unlinked activity. Then leave a third new activity unlinked briefly.</li>
 </ol>
 <p class="expected"><strong>Expected:</strong> choosing one activity does not assign all past/future traffic from that number to the HOA. No association is chosen from a phone match alone. The third item stays visible for triage with its original time; late linking must not give it a fresh business day.</p><div class="record"><label for="status-27">Your result<select id="status-27" class="result"><option value="todo">Not tested</option><option value="pass">Pass</option><option value="fail">Fail</option><option value="blocked">Blocked</option></select></label><label for="notes-27">Test lead, time and observations<textarea id="notes-27" class="notes" rows="3" placeholder="Lead name · time/timezone · what happened · evidence or blocker"></textarea></label></div></div></details><details class="test" data-test="28"><summary><span class="test-no">28</span><span class="test-title">Combine the same request across channels</span><span class="badge">Not tested</span></summary><div class="test-body"><ol>
@@ -289,56 +289,7 @@
 <li>Open <a href="https://staging.d2d4g940z91vj4.amplifyapp.com/lead-work">Lead follow-up</a> and visit each view below. Use <strong>Refresh</strong>, <strong>My leads</strong>, and any <strong>Load more / Continue searching</strong> control.</li>
 <li>Open a listed lead and compare its task, role and deadline. Review the account's <strong>Activity</strong> tab for your responsibility changes, dated actions, outcomes and links.</li>
 </ol>
-<div class="table-scroll"><table>
-<thead>
-<tr>
-<th>View</th>
-<th>What belongs there</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>Needs response</td>
-<td>Open prospect response/callback requests</td>
-</tr>
-<tr>
-<td>Due today / Overdue</td>
-<td>Open work matching the date or passed deadline</td>
-</tr>
-<tr>
-<td>Waiting on prospect</td>
-<td>Follow-up commitments</td>
-</tr>
-<tr>
-<td>Champion work</td>
-<td>Tasks assigned to the deal-champion role</td>
-</tr>
-<tr>
-<td>Needs assignment</td>
-<td>Leads whose responsibilities need attention</td>
-</tr>
-<tr>
-<td>Communication issues</td>
-<td>Unresolved delivery, linking or processing problems</td>
-</tr>
-<tr>
-<td>Unlinked activity</td>
-<td>Calls/texts requiring an explicit association decision</td>
-</tr>
-<tr>
-<td>Notifications</td>
-<td>Current reminders addressed to your signed-in identity</td>
-</tr>
-<tr>
-<td>Delivery queue</td>
-<td>Pending, failed or uncertain operations requiring progress/review</td>
-</tr>
-<tr>
-<td>Event processing</td>
-<td>Pending or failed captured provider events</td>
-</tr>
-</tbody>
-</table></div>
+<div class="table-scroll"><table><thead><tr><th>View or control</th><th>What belongs there</th></tr></thead><tbody><tr><td>Needs attention</td><td>Replies, callbacks, carrier responses, delivery corrections, and work due today or overdue</td></tr><tr><td>Upcoming</td><td>Scheduled work due after today that does not already need a response</td></tr><tr><td>All open</td><td>Every open task</td></tr><tr><td>Responsibility filter</td><td>Choose salesperson or deal champion independently of the view; with My leads, show your selected responsibility</td></tr><tr><td>Waiting on prospect label</td><td>Shown beside automatic no-reply follow-ups; it is not a separate view</td></tr><tr><td>Shared team items</td><td>Assign a teammate and Link a call or text remain visible in Needs attention and All open, even with My leads selected</td></tr><tr><td>My reminders</td><td>Expand the separate section for current reminders addressed to you</td></tr><tr><td>Administrator troubleshooting</td><td>Connection issues, Delivery queue, and Event processing live under Settings → Front and Dialpad → Advanced tools → Connection issues and queues</td></tr></tbody></table></div>
 <p class="expected"><strong>Expected:</strong> records agree with the lead panels. Confirmed/canceled delivery and processed events can disappear from actionable queues—that is not lost history. My leads is a work filter, not an access rule. An incomplete paginated search must offer a way to continue rather than falsely declaring there is no work. With only Jake, another owner's filtering requires a second-user test.</p><div class="record"><label for="status-33">Your result<select id="status-33" class="result"><option value="todo">Not tested</option><option value="pass">Pass</option><option value="fail">Fail</option><option value="blocked">Blocked</option></select></label><label for="notes-33">Test lead, time and observations<textarea id="notes-33" class="notes" rows="3" placeholder="Lead name · time/timezone · what happened · evidence or blocker"></textarea></label></div></div></details><details class="test" data-test="34"><summary><span class="test-no">34</span><span class="test-title">Admin recovery, migration and access checks</span><span class="badge">Not tested</span></summary><div class="test-body"><p>Run these with the integration administrator using test records. You do not need to break live credentials, submit forged events yourself, or guess technical message identifiers.</p>
 <div class="table-scroll"><table>
 <thead>
@@ -387,7 +338,7 @@
 </tbody>
 </table></div>
 <p class="expected"><strong>Expected:</strong> each scenario has its own recorded result. Mark unavailable fixtures Blocked. These checks, two-person assignment, every business line, Seen availability, and the real business-day checks remain part of full acceptance even if the basic email test passes.</p><div class="record"><label for="status-34">Your result<select id="status-34" class="result"><option value="todo">Not tested</option><option value="pass">Pass</option><option value="fail">Fail</option><option value="blocked">Blocked</option></select></label><label for="notes-34">Test lead, time and observations<textarea id="notes-34" class="notes" rows="3" placeholder="Lead name · time/timezone · what happened · evidence or blocker"></textarea></label></div></div></details></section><section id="section-7" class="phase"><h2>Finish and report results</h2><p>For each test, record <strong>Pass / Fail / Blocked</strong>, the TEST lead name, local time/timezone, expected result, actual result, and a CRM/Front link or screenshot where useful. Record each of the five forms and each business number separately. Do not include passwords, API keys or private sign-in/upload links.</p>
-<p>If a message is missing or duplicated, preserve the test record and inspect <strong>Communication issues</strong> and <strong>Delivery queue</strong> before resubmitting or manually retrying it. A refresh and a few processing cycles are reasonable; persistent pending/error state is evidence to report, not a pass.</p>
+<p>If a message is missing or duplicated, preserve the test record and ask an administrator to inspect <strong>Connection issues</strong> and <strong>Delivery queue</strong> under <strong>Settings → Front and Dialpad → Advanced tools → Connection issues and queues</strong> before resubmitting or manually retrying it. A refresh and a few processing cycles are reasonable; persistent pending/error state is evidence to report, not a pass.</p>
 <p>Keep the dedicated no-reply/calendar test active until its reminder and escalation have both been observed. After the agreed test window, turn automatic cleanup off and <strong>Pause delivery</strong>. Have the administrator return temporary staging Dialpad subscriptions to the agreed disabled state; pausing the CRM alone does not disable provider capture. Leave test history available for review rather than bulk deleting it or changing real inbox snoozes.</p>
 <p><strong>Ready for rollout review:</strong> core email and document flow, explicit responsibilities, every required phone/text path, sidebar behavior, deadline/escalation protections, and cleanup/recovery checks all have passing evidence. Any blocked mandatory test remains an open acceptance item. Completing this guide does not deploy or activate production.</p>
 <p>Implementation reference: <a href="COMMUNICATIONS-RUNBOOK.md">rollout and recovery runbook</a>. The linked provider help pages describe Front behavior; the CRM button names and expected workflow above were checked against the current implementation.</p></section><footer>Source: FRONT-DIALPAD-TEST-WALKTHROUGH.md · This is a testing document, not a production activation control.</footer></main></div><script>

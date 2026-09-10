@@ -68,7 +68,11 @@ After controlled signed events arrive, select **Validate and activate**. Activat
 
 ## Daily use and recovery
 
-**Lead follow-up** contains response, due/overdue, waiting, champion, assignment, communication issue, unlinked activity, notification, delivery and event views. Views query an index of actionable records and fill pages with matching work on the server, including the selected view and My leads filter. Each request searches up to eight source pages. If more records remain, an empty result explicitly offers Continue searching; it does not claim there is no work. Dates use Eastern time. There is no global communication-body export through the work endpoint.
+**Lead follow-up** offers Needs attention, Upcoming, and All open. Needs attention includes prospect/carrier responses, callbacks, delivery corrections, and work due today or overdue; Upcoming contains the remaining future tasks. Responsibility is a separate salesperson/champion filter. My leads retains lead ownership filtering; combined with a responsibility, it requires the signed-in teammate to hold that role. Waiting on prospect is a label on automatic follow-ups, not a view. None of these reads changes a task or deadline.
+
+Shared assignment and unlinked-activity cards appear in Needs attention and All open independently of personal/role filters, so work without an owner stays visible. Each list has its own bounded pagination and error/retry state. My reminders is a separate collapsible section retaining the existing current-recipient checks. Technical ISSUE, OPERATION, and EVENT reads and issue resolution now require ADMIN. They are available under **Settings → Front and Dialpad → Advanced tools → Connection issues and queues**; staff retain activity linking and their own reminders.
+
+Views fill pages with matching work on the server. Each request searches up to eight source pages. If more records remain, an empty result explicitly offers Continue searching; it does not claim there is no work. Date grouping uses the agency's Eastern calendar. There is no global communication-body export through the work endpoint.
 
 Use the account panel or Front sidebar to assign the two duties, make dated commitments, record a result, add internal notes, and explicitly link activity. Complete a prospect task together with its successor/waiting commitment or a lost/disqualified outcome. Binding continues through the existing quote/bind flow. Reopen lost/disqualified leads with a dated next action; do not trigger another initial AI email.
 

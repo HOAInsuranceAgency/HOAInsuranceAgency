@@ -34,7 +34,7 @@ Plan for a first session of roughly **60–90 minutes**, additional time with th
 
 ### 03 — Start staging delivery with cleanup off
 
-1. Open **Lead follow-up → Delivery queue** and review any already queued test leads. Starting delivery can release them. Use the lead's **Handle personally / cancel pending AI reply** or admin delivery review for an unwanted queued test; do not submit it again.
+1. Open **Settings → Front and Dialpad → Advanced tools → Connection issues and queues → Delivery queue** and review any already queued test leads. Starting delivery can release them. Use the lead's **Handle personally / cancel pending AI reply** or admin delivery review for an unwanted queued test; do not submit it again.
 2. In **Settings → Front and Dialpad**, click **Check connections**.
 3. Expand **Delivery and inbox cleanup**. After completing test 02, select **I verified email, calls, and shared-line texts with test contacts**.
 4. Leave **Automatically tidy conversations awaiting a future follow-up** unchecked. Click **Start delivery**.
@@ -120,7 +120,7 @@ Submit once through each row below, with a distinct test identity or address. Re
 ### 11 — Receive a reply, then handle it explicitly
 
 1. From the test prospect mailbox, reply to TEST Oak's AI email: **Please clarify what documents you need.**
-2. In CRM, verify the inbound email appears and **Respond to prospect** is in **Next actions** and **Lead follow-up → Needs response**. Write down the due time.
+2. In CRM, verify the inbound email appears and **Respond to prospect** is in **Next actions** and **Lead follow-up → Needs attention**. Write down the due time.
 3. Send another reply about the same unanswered request a few minutes later. Refresh.
 4. Reply as the salesperson in Front. Then return to CRM and select **Complete with outcome** on the specific response task.
 5. Record what happened, select **Record next action or waiting commitment**, and enter **Wait for test documents** with a future due time. Save.
@@ -184,7 +184,7 @@ Submit once through each row below, with a distinct test identity or address. Re
 
 1. On a test lead with a linked Front conversation, add a salesperson follow-up called **TEST short reminder**, due **five minutes from now**. Record the exact time.
 2. Archive or snooze its Front conversation beyond that time. Do not change the CRM action.
-3. After the due time, allow a few background cycles. Open **Lead follow-up → Overdue**, **Notifications**, and the Front conversation.
+3. After the due time, allow a few background cycles. Open **Lead follow-up → Needs attention (Overdue timing)**, **My reminders**, and the Front conversation.
 
 **Expected:** the action becomes overdue, you receive an in-app lead-follow-up notification, and the linked Front conversation reopens while delivery is running. This does not require a separate reminder email/SMS. The task remains open until handled. This tests dispatch/reopening, not the two-business-day schedule.
 
@@ -225,7 +225,7 @@ Submit once through each row below, with a distinct test identity or address. Re
 
 1. Keep an unanswered prospect task open on a test lead.
 2. Send a separate controlled email representing a carrier question. In the Front sidebar, link that conversation to the test lead with **Conversation purpose → Carrier**.
-3. Verify **Respond to carrier** appears for the deal champion and in **Champion work**.
+3. Verify **Respond to carrier** appears for the deal champion and in **Responsibility → Deal champion**.
 4. Complete the carrier task with a recorded outcome. Recheck the prospect task.
 
 **Expected:** carrier work does not satisfy or postpone prospect response work. Both can exist on the same account with their own deadlines. Merely changing a Front handler is not the same as classifying a conversation as carrier work.
@@ -235,7 +235,7 @@ Submit once through each row below, with a distinct test identity or address. Re
 ### 23 — Missed main-line call and voicemail
 
 1. After activation, call **(508) 233-2261** from your test mobile and let it go unanswered. Leave **TEST callback request** as voicemail. Coordinate this with the team.
-2. Find the call/voicemail in Dialpad and Front's phone inbox. In CRM, open **Lead follow-up → Unlinked activity**.
+2. Find the call/voicemail in Dialpad and Front's phone inbox. In CRM, open **Lead follow-up → Needs attention → Link a call or text**.
 3. Select **Link activity**, search TEST Oak, choose **Prospect or client**, and link it. Alternatively, use the linked lead's Front sidebar **Conversation tools → Link a call or text to this conversation**.
 4. Check **Return prospect call**, its due time, communication history, and any later voicemail/transcript/summary update.
 
@@ -276,7 +276,7 @@ Make a fresh controlled inbound and outbound call for each row. Capture the time
 ### 27 — One phone number representing two associations
 
 1. Keep TEST Oak and TEST Pine as separate leads with the same test phone contact.
-2. Send two new texts/calls representing different associations. In **Unlinked activity**, link one to Oak and one to Pine.
+2. Send two new texts/calls representing different associations. In **Link a call or text**, link one to Oak and one to Pine.
 3. Inspect both histories and the remaining unlinked activity. Then leave a third new activity unlinked briefly.
 
 **Expected:** choosing one activity does not assign all past/future traffic from that number to the HOA. No association is chosen from a phone match alone. The third item stays visible for triage with its original time; late linking must not give it a fresh business day.
@@ -333,18 +333,16 @@ Make a fresh controlled inbound and outbound call for each row. Capture the time
 1. Open [Lead follow-up](https://staging.d2d4g940z91vj4.amplifyapp.com/lead-work) and visit each view below. Use **Refresh**, **My leads**, and any **Load more / Continue searching** control.
 2. Open a listed lead and compare its task, role and deadline. Review the account's **Activity** tab for your responsibility changes, dated actions, outcomes and links.
 
-| View | What belongs there |
+| View or control | What belongs there |
 | --- | --- |
-| Needs response | Open prospect response/callback requests |
-| Due today / Overdue | Open work matching the date or passed deadline |
-| Waiting on prospect | Follow-up commitments |
-| Champion work | Tasks assigned to the deal-champion role |
-| Needs assignment | Leads whose responsibilities need attention |
-| Communication issues | Unresolved delivery, linking or processing problems |
-| Unlinked activity | Calls/texts requiring an explicit association decision |
-| Notifications | Current reminders addressed to your signed-in identity |
-| Delivery queue | Pending, failed or uncertain operations requiring progress/review |
-| Event processing | Pending or failed captured provider events |
+| Needs attention | Replies, callbacks, carrier responses, delivery corrections, and work due today or overdue |
+| Upcoming | Scheduled work due after today that does not already need a response |
+| All open | Every open task |
+| Responsibility filter | Choose salesperson or deal champion independently of the view; with My leads, show your selected responsibility |
+| Waiting on prospect label | Shown beside automatic no-reply follow-ups; it is not a separate view |
+| Shared team items | Assign a teammate and Link a call or text remain visible in Needs attention and All open, even with My leads selected |
+| My reminders | Expand the separate section for current reminders addressed to you |
+| Administrator troubleshooting | Connection issues, Delivery queue, and Event processing live under Settings → Front and Dialpad → Advanced tools → Connection issues and queues |
 
 **Expected:** records agree with the lead panels. Confirmed/canceled delivery and processed events can disappear from actionable queues—that is not lost history. My leads is a work filter, not an access rule. An incomplete paginated search must offer a way to continue rather than falsely declaring there is no work. With only Jake, another owner's filtering requires a second-user test.
 
@@ -370,7 +368,7 @@ Run these with the integration administrator using test records. You do not need
 
 For each test, record **Pass / Fail / Blocked**, the TEST lead name, local time/timezone, expected result, actual result, and a CRM/Front link or screenshot where useful. Record each of the five forms and each business number separately. Do not include passwords, API keys or private sign-in/upload links.
 
-If a message is missing or duplicated, preserve the test record and inspect **Communication issues** and **Delivery queue** before resubmitting or manually retrying it. A refresh and a few processing cycles are reasonable; persistent pending/error state is evidence to report, not a pass.
+If a message is missing or duplicated, preserve the test record and ask an administrator to inspect **Connection issues** and **Delivery queue** under **Settings → Front and Dialpad → Advanced tools → Connection issues and queues** before resubmitting or manually retrying it. A refresh and a few processing cycles are reasonable; persistent pending/error state is evidence to report, not a pass.
 
 Keep the dedicated no-reply/calendar test active until its reminder and escalation have both been observed. After the agreed test window, turn automatic cleanup off and **Pause delivery**. Have the administrator return temporary staging Dialpad subscriptions to the agreed disabled state; pausing the CRM alone does not disable provider capture. Leave test history available for review rather than bulk deleting it or changing real inbox snoozes.
 

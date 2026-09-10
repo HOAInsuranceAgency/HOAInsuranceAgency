@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { communicationRequest as request, type IntegrationConfig, type TeamEligibility } from "../lib/communications";
 import CommunicationSettingsEditor from "./CommunicationSettingsEditor";
+import CommunicationDiagnostics from "./CommunicationDiagnostics";
 import { useAsyncResource } from "../lib/useAsyncResource";
 
 type ConnectionCheck = { name: string; ok: boolean; detail: string };
@@ -31,6 +32,7 @@ export default function CommunicationSettings() {
   const resource = useAsyncResource(() => request<SettingsSnapshot>("settings"), [], { initialData: null, errorMessage: "Could not load integration settings" });
   const members = useAsyncResource(() => request<{ team: TeamEligibility[] }>("team"), [], { initialData: { team: [] }, errorMessage: "Could not load teammates" });
   const [editing, setEditing] = useState(false);
+  const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const [busy, setBusy] = useState(""), [message, setMessage] = useState(""), [error, setError] = useState("");
   const inFlight = useRef(false);
   const [checks, setChecks] = useState<ConnectionCheck[]>([]);
@@ -137,8 +139,12 @@ export default function CommunicationSettings() {
     </details>
 
     <details className="card communication-disclosure">
-      <summary><span>Advanced tools<small>Connection details, history repair, and existing lead assignments.</small></span></summary>
+      <summary><span>Advanced tools<small>Connection details, troubleshooting, history repair, and lead assignments.</small></span></summary>
       <div className="communication-advanced">
+        <details className="tucked" onToggle={event => setDiagnosticsOpen(event.currentTarget.open)}>
+          <summary>Connection issues and queues</summary>
+          {diagnosticsOpen && <fieldset disabled={disabled} className="communication-controls"><CommunicationDiagnostics /></fieldset>}
+        </details>
         <details className="tucked"><summary>Connection details</summary>
           <dl className="communication-technical">{summaryFields.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value || "Not set"}</dd></div>)}
             <div><dt>Last background check</dt><dd>{resource.data?.health?.at ? new Date(resource.data.health.at).toLocaleString() : "Awaiting first check"}{resource.data?.health?.lagging ? " — updates delayed" : ""}</dd></div>

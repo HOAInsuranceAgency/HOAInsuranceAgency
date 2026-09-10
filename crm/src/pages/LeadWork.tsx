@@ -1,33 +1,56 @@
-import { useLastContacts } from "../lib/lastContact";
-import { ActivityReview, DeliveryReview, ReviewAction } from "../components/CommunicationReview";
-import { useIsAdmin } from "../lib/auth";
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { Link } from "react-router-dom";
-import { communicationRequest as request, type LeadTask, type LeadWorkflow } from "../lib/communications";
-import { useAsyncResource } from "../lib/useAsyncResource";
-import { fmtDateTime, fmtProviderPhone, type UserProfile } from "../lib/client";
+import { LEAD_WORK_VIEWS, dueToday, workContext, type LeadWorkView } from "../../../shared/leadWorkViews";
+import { useLastContacts } from "../lib/lastContact";
+import { useWorkItems } from "../lib/communicationWork";
+import { fmtDateTime, type UserProfile } from "../lib/client";
+import { WorkPagination, SharedLeadAttention, LeadReminders } from "../components/LeadWorkExtras";
 
-type WorkItem = Partial<LeadTask & LeadWorkflow> & { id: string; version: number; resolved?: boolean; processedAt?: string; message?: string; title?: string; at?: string; recipient?: string; state?: string; error?: string; communicationId?: string; accountId?: string; phone?: string };
-const VIEWS = ["Needs response", "Due today", "Overdue", "Waiting on prospect", "Champion work", "Needs assignment", "Communication issues", "Unlinked activity", "Notifications", "Delivery queue", "Event processing"];
+const descriptions: Record<LeadWorkView, string> = {
+  "Needs attention": "Replies, callbacks, and work due today or overdue.",
+  "Upcoming": "Scheduled follow-ups and other work due after today.",
+  "All open": "Every open action, including future follow-ups.",
+};
 export default function LeadWork(_props: { profile: UserProfile }) {
-  const admin = useIsAdmin();
-  const [reviewId, setReviewId] = useState<string | null>(null);
-  const [view, setView] = useState(VIEWS[0]), [mine, setMine] = useState(false), [moreError, setMoreError] = useState("");
-  const kind = view === "Event processing" ? "EVENT" : view === "Delivery queue" ? "OPERATION" : view === "Needs assignment" ? "WORKFLOW" : view === "Communication issues" ? "ISSUE" : view === "Unlinked activity" ? "TRIAGE" : view === "Notifications" ? "NOTIFICATION" : "TASK";
-  const scope = `${kind}:${view}:${mine}`, activeScope = useRef(scope); activeScope.current = scope;
-  const resource = useAsyncResource(() => request<{ items: WorkItem[]; nextToken?: string }>("work", { kind, view, mine }), [kind, view, mine], { initialData: { items: [] }, errorMessage: "Could not load lead work" });
+  const [view, setView] = useState<LeadWorkView>("Needs attention");
+  const [mine, setMine] = useState(false), [responsibility, setResponsibility] = useState("");
+  const [revision, setRevision] = useState(0), [remindersOpen, setRemindersOpen] = useState(false);
+  const work = useWorkItems("TASK", { view, mine, responsibility });
+  const contacts = useLastContacts(work.data.items.flatMap(item => item.accountId ? [item.accountId] : []), work.data);
   const now = new Date().toISOString();
-  const rows = resource.data.items;
-  const contactHistory = useLastContacts(rows.flatMap(r => r.accountId ? [r.accountId] : []), resource.data);
-  return <><h1>Lead follow-up</h1><p className="sub">Team commitments across email, phone and text</p><div className="toolbar"><label>View <select value={view} onChange={e => { setView(e.target.value); setReviewId(null); }}>{VIEWS.map(v => <option key={v}>{v}</option>)}</select></label><label><input type="checkbox" checked={mine} onChange={e => setMine(e.target.checked)} /> My leads</label><div className="grow"/><button className="secondary" onClick={() => void resource.refetch()}>Refresh</button></div>
-    {contactHistory.error && <p className="error-text">{contactHistory.error}</p>}
-    {(resource.error || moreError) && <p className="error-text">{resource.error || moreError}</p>}
-    <div className="card">{resource.loading ? <p>Loading…</p> : !rows.length ? <p className="muted">{resource.data.nextToken ? "More records remain to be searched. Continue to find matching work." : "No matching work."}</p> : <div className="table-wrap"><table><thead><tr><th>Lead / action</th><th>Responsible role</th><th>Last contact</th><th>Due</th><th>Status</th><th>Review</th></tr></thead><tbody>{rows.map(t => <tr key={t.id}><td>{t.accountId ? <Link to={`/accounts/${t.accountId}`}>{t.name ?? "Open lead"}</Link> : "Needs linking"}<div>{t.title ?? t.message ?? t.error ?? (kind === "TRIAGE" ? `Call or text from ${t.phone ? fmtProviderPhone(t.phone) : "an unknown number"}` : t.assignmentIssue)}</div></td><td>{t.role === "CHAMPION" ? "Deal champion" : t.role === "SALESPERSON" ? "Salesperson" : "Team"}</td><td>{!t.accountId ? "—" : contactHistory.loading ? "Loading…" : contactHistory.error ? "Unavailable" : contactHistory.contacts[t.accountId]?.at ? fmtDateTime(contactHistory.contacts[t.accountId]!.at) : "No contact recorded"}</td><td>{fmtDateTime(t.dueAt ?? t.at)}</td><td>{t.escalatedAt ? "Escalated" : t.dueAt && t.dueAt < now ? "Overdue" : t.state ?? t.status?.toLowerCase() ?? "Needs review"}</td><td>
-      {kind === "TRIAGE" && t.communicationId && <button className="link" onClick={() => setReviewId(t.communicationId!)}>Link activity</button>}
-      {["ISSUE", "TRIAGE", "NOTIFICATION"].includes(kind) && <ReviewAction id={t.id} version={t.version} onSaved={() => void resource.refetch()} />}
-      {kind === "EVENT" && admin && <ReviewAction id={t.id} version={t.version} event onSaved={() => void resource.refetch()} />}
-      {kind === "OPERATION" && admin && <DeliveryReview item={t} onSaved={() => void resource.refetch()} />}
-    </td></tr>)}</tbody></table></div>}
-    {reviewId && <ActivityReview key={reviewId} id={reviewId} onSaved={() => { setReviewId(null); void resource.refetch(); }} />}
-    {resource.data.nextToken && <button onClick={async () => { try { const page = await request<{ items: WorkItem[]; nextToken?: string }>("work", { kind, view, mine, nextToken: resource.data.nextToken }); if (activeScope.current !== scope) return; resource.setData(p => ({ items: [...p.items, ...page.items], nextToken: page.nextToken })); } catch(e) { setMoreError(String(e)); } }}>{rows.length ? "Load more" : "Continue searching"}</button>}</div></>;
+  async function refresh() { setRevision(n => n + 1); await work.refresh(); }
+  return <div className="lead-work-page">
+    <h1>Lead follow-up</h1><p className="sub">Know what needs attention and what happens next.</p>
+    <div className="toolbar lead-work-filters">
+      <label className="field">View<select value={view} onChange={e => setView(e.target.value as LeadWorkView)}>{LEAD_WORK_VIEWS.map(label => <option key={label}>{label}</option>)}</select></label>
+      <label className="field">Responsibility<select value={responsibility} onChange={e => setResponsibility(e.target.value)}><option value="">All responsibilities</option><option value="SALESPERSON">Salesperson</option><option value="CHAMPION">Deal champion</option></select></label>
+      <label className="lead-work-mine"><input type="checkbox" checked={mine} onChange={e => setMine(e.target.checked)} /> My leads</label>
+      <div className="grow" /><button className="secondary" disabled={work.loading} onClick={() => void refresh()}>Refresh</button>
+    </div>
+    <p className="muted small">{descriptions[view]} Front snoozes never change these deadlines.</p>
+    <section className="card" aria-label="Lead actions">
+      {contacts.error && <p role="alert" className="error-text">{contacts.error}</p>}
+      {work.error && <p role="alert" className="error-text">{work.error}</p>}
+      {work.loading ? <p role="status">Loading actions…</p> : work.error ? null : !work.data.items.length ? <p className="muted">{work.data.nextToken ? "More actions remain to be checked. Continue searching to see matching work." : view === "Needs attention" ? "No actions need attention in this view." : "No matching open actions."}</p> :
+        <div className="table-wrap"><table><thead><tr><th>Lead / next action</th><th>Responsibility</th><th>Last contact</th><th>Due</th><th>Timing</th></tr></thead>
+          <tbody>{work.data.items.map(item => {
+            const late = !!item.dueAt && Date.parse(item.dueAt) < Date.parse(now);
+            const today = !!item.dueAt && dueToday(item.dueAt, now);
+            return <tr key={item.id}>
+              <td>{item.accountId ? <Link to={`/accounts/${item.accountId}`}>{item.name || "Open lead"}</Link> : "Lead needs linking"}
+                <div className="lead-work-action">{item.title}</div>{item.kind && <span className="small muted">{workContext({ kind: item.kind, custom: item.custom })}</span>}</td>
+              <td>{item.role === "CHAMPION" ? "Deal champion" : item.role === "SALESPERSON" ? "Salesperson" : "Team"}</td>
+              <td>{!item.accountId ? "—" : contacts.loading ? "Loading…" : contacts.error ? "Unavailable" : contacts.contacts[item.accountId]?.at ? fmtDateTime(contacts.contacts[item.accountId]!.at) : "No contact recorded"}</td>
+              <td>{fmtDateTime(item.dueAt)}</td>
+              <td><span className={`badge ${late ? "red" : today ? "amber" : "gray"}`}>{late ? "Overdue" : today ? "Due today" : item.dueAt ? "Upcoming" : "Check due date"}</span>{item.escalatedAt && <small className="lead-work-escalation">Champion notified</small>}</td>
+            </tr>;
+          })}</tbody></table></div>}
+      <WorkPagination work={work} />
+    </section>
+    {view !== "Upcoming" && <SharedLeadAttention key={revision} onChanged={() => void work.refresh()} />}
+    <details className="card lead-work-reminders" onToggle={e => setRemindersOpen(e.currentTarget.open)}>
+      <summary>My reminders</summary>
+      {remindersOpen && <LeadReminders key={revision} />}
+    </details>
+  </div>;
 }

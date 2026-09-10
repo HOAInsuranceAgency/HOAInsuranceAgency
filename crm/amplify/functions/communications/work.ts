@@ -1,9 +1,10 @@
 import { get, query, type Row } from "./store";
 import type { LeadWorkflow } from "../../../../shared/leadWorkflow";
+import { needsAttention } from "../../../../shared/leadWorkViews";
 const day = (value: string) => new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(value));
 
 /** Fill a page of matching work, not one page of arbitrary global records. */
-export async function workPage(input: { kind: string; view?: string; mine?: boolean; actor: string; nextToken?: string }) {
+export async function workPage(input: { kind: string; view?: string; responsibility?: string; mine?: boolean; actor: string; nextToken?: string }) {
   const items: Row[] = [], now = new Date().toISOString();
   let nextToken = input.nextToken;
   const owners = new Map<string, LeadWorkflow | undefined>();
@@ -16,9 +17,17 @@ export async function workPage(input: { kind: string; view?: string; mine?: bool
       const t = r.data;
       if (t.resolved || t.processedAt || ["CONFIRMED", "SUPPRESSED"].includes(String(t.state))) continue;
       if (input.kind === "NOTIFICATION" && t.recipient !== input.actor) continue;
-      if (input.mine) { const wf = owners.get(r.accountId ?? ""); if (wf?.salespersonId !== input.actor && wf?.championId !== input.actor && t.recipient !== input.actor) continue; }
+      if (input.mine) {
+        const wf = owners.get(r.accountId ?? "");
+        if (input.responsibility === "SALESPERSON" ? wf?.salespersonId !== input.actor
+          : input.responsibility === "CHAMPION" ? wf?.championId !== input.actor
+          : wf?.salespersonId !== input.actor && wf?.championId !== input.actor && t.recipient !== input.actor) continue;
+      }
       if (input.kind === "TASK") {
         if (t.status !== "OPEN") continue;
+        if (input.responsibility && t.role !== input.responsibility) continue;
+        if (input.view === "Needs attention" && !needsAttention(t, now)) continue;
+        if (input.view === "Upcoming" && needsAttention(t, now)) continue;
         if (input.view === "Needs response" && !["RESPONSE", "CALLBACK"].includes(String(t.kind))) continue;
         if (input.view === "Overdue" && String(t.dueAt) >= now) continue;
         if (input.view === "Due today" && day(String(t.dueAt)) !== day(now)) continue;

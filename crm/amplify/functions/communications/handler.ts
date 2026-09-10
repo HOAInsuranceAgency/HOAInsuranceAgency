@@ -94,8 +94,11 @@ export const handler = async (event: { arguments: { operation?: string; readOper
       if (op === "work") {
         const kind = text(input, "kind") || "TASK";
         if (!["TASK", "WORKFLOW", "ISSUE", "TRIAGE", "NOTIFICATION", "OPERATION", "EVENT"].includes(kind)) throw new Error("Unknown work view");
+        if (["ISSUE", "OPERATION", "EVENT"].includes(kind)) requireAdmin();
+        const responsibility = text(input, "responsibility");
+        if (responsibility && !["SALESPERSON", "CHAMPION"].includes(responsibility)) throw new Error("Choose a valid responsibility");
         const { workPage } = await import("./work");
-        const p = await workPage({ kind, view: text(input, "view"), mine: input.mine === true, actor, nextToken: text(input, "nextToken") || undefined });
+        const p = await workPage({ kind, view: text(input, "view"), responsibility, mine: input.mine === true, actor, nextToken: text(input, "nextToken", 4000) || undefined });
         if (kind === "NOTIFICATION") {
           const current = [];
           for (const notice of p.items.filter(r => r.data.recipient === actor)) {
@@ -249,7 +252,8 @@ export const handler = async (event: { arguments: { operation?: string; readOper
     if (op === "reviewIssue") {
       const old = await get(text(input, "id")); if (!old || !["ISSUE", "TRIAGE", "NOTIFICATION", "EVENT"].includes(old.kind)) throw new Error("Review item not found"); expected(old, version(input));
       const reason = text(input, "reason", 2000); if (!reason) throw new Error("Record the review reason");
-      if (old.kind === "EVENT") requireAdmin();
+      if (["EVENT", "ISSUE"].includes(old.kind)) requireAdmin();
+      if (old.kind === "NOTIFICATION" && old.data.recipient !== actor) throw new Error("This reminder belongs to another teammate");
       const replay = input.replay === true && old.kind === "EVENT";
       await commit([put(row(old.kind, old.id, { ...old.data, resolved: !replay, attempts: replay ? 0 : old.data.attempts, error: undefined }, { accountId: old.accountId, previous: old, dueAt: replay ? new Date().toISOString() : undefined }), old), audit(old.accountId ?? "TRIAGE", actor, replay ? "Event replay requested" : "Review item resolved", { id: old.id, reason })]);
       return { ok: true };

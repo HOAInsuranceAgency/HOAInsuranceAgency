@@ -889,3 +889,65 @@ describe("last prospect contact", () => {
     expect((await lastContactPage("a1")).contact).toBeNull();
   });
 });
+
+describe("simplified staff work views", () => {
+  async function readWork(input: Record<string, unknown>, groups: string[] = []) {
+    const { handler } = await import("../../amplify/functions/communications/handler");
+    return handler({ arguments: { readOperation: "work", input }, identity: { sub: "brian", groups } as never });
+  }
+  it("partitions open work into attention and upcoming without changing deadlines", async () => {
+    await lead();
+    const fixtures = [
+      ["overdue", "FOLLOW_UP", "2026-09-07T13:00:00Z"],
+      ["today", "DOCUMENTS", "2026-09-08T20:00:00Z"],
+      ["reply", "RESPONSE", "2026-09-09T20:00:00Z"],
+      ["callback", "CALLBACK", "2026-09-09T20:00:00Z"],
+      ["carrier", "CARRIER", "2026-09-09T20:00:00Z"],
+      ["delivery", "CORRECTION", "2026-09-09T20:00:00Z"],
+      ["future", "FOLLOW_UP", "2026-09-11T13:00:00Z"],
+      ["documents", "DOCUMENTS", "2026-09-12T13:00:00Z"],
+    ];
+    for (const [id, kind, dueAt] of fixtures) await save(row("TASK", id, { kind, dueAt, role: "SALESPERSON", status: "OPEN" }, { accountId: "a1" }));
+    await save(row("TASK", "closed", { kind: "RESPONSE", dueAt: NOW, status: "COMPLETE" }, { accountId: "a1" }));
+    const before = structuredClone(entries("TASK")), writes = h.transactions.length;
+    const attention = await readWork({ kind: "TASK", view: "Needs attention" });
+    const upcoming = await readWork({ kind: "TASK", view: "Upcoming" });
+    const all = await readWork({ kind: "TASK", view: "All open" });
+    expect((attention as any).items.map((r: any) => r.id).sort()).toEqual(["callback", "carrier", "delivery", "overdue", "reply", "today"]);
+    expect((upcoming as any).items.map((r: any) => r.id).sort()).toEqual(["documents", "future"]);
+    expect((all as any).items).toHaveLength(8);
+    expect(entries("TASK")).toEqual(before); expect(h.transactions).toHaveLength(writes);
+  });
+  it("uses the agency date near midnight and honors the selected responsibility with My leads", async () => {
+    const wf = await lead();
+    await save(row("WORKFLOW", wf.id, { ...wf.data, championId: "another" }, { accountId: "a1", previous: wf }), wf);
+    await save(row("TASK", "sales", { kind: "DOCUMENTS", dueAt: "2026-09-09T02:00:00Z", role: "SALESPERSON", status: "OPEN" }, { accountId: "a1" }));
+    await save(row("TASK", "champ", { kind: "CARRIER", dueAt: "2026-09-10T14:00:00Z", role: "CHAMPION", status: "OPEN" }, { accountId: "a1" }));
+    expect(await readWork({ kind: "TASK", view: "Needs attention", responsibility: "SALESPERSON", mine: true })).toMatchObject({ ok: true, items: [{ id: "sales" }] });
+    expect(await readWork({ kind: "TASK", view: "Needs attention", responsibility: "CHAMPION", mine: true })).toMatchObject({ ok: true, items: [] });
+    expect(await readWork({ kind: "TASK", view: "Needs attention", responsibility: "CHAMPION" })).toMatchObject({ ok: true, items: [{ id: "champ" }] });
+    expect(await readWork({ kind: "TASK", responsibility: "ADMIN" })).toMatchObject({ ok: false });
+  });
+  it("keeps a cursor when matching work lies beyond the bounded search", async () => {
+    await lead();
+    for (let n = 0; n < 450; n++) await save(row("TASK", `later:${n}`, { kind: "FOLLOW_UP", dueAt: "2026-09-10T13:00:00Z", status: "OPEN", role: "SALESPERSON" }, { accountId: "a1" }));
+    await save(row("TASK", "answer-this", { kind: "CALLBACK", dueAt: "2026-09-11T13:00:00Z", status: "OPEN", role: "SALESPERSON" }, { accountId: "a1" }));
+    const first = await readWork({ kind: "TASK", view: "Needs attention" });
+    expect(first).toMatchObject({ ok: true, items: [], nextToken: expect.any(String) });
+    expect(await readWork({ kind: "TASK", view: "Needs attention", nextToken: (first as any).nextToken })).toMatchObject({ ok: true, items: [{ id: "answer-this" }], nextToken: undefined });
+  });
+  it("reserves technical queues and issue resolution for admins but keeps shared intake accessible", async () => {
+    await save(row("ISSUE", "issue:connection", { message: "Reconnect Front", resolved: false }));
+    await save(row("TRIAGE", "triage:shared", { phone: "+16175550123", resolved: false }));
+    for (const kind of ["ISSUE", "OPERATION", "EVENT"]) {
+      expect(await readWork({ kind })).toMatchObject({ ok: false });
+      expect(await readWork({ kind }, ["ADMIN"])).toMatchObject({ ok: true });
+    }
+    expect(await readWork({ kind: "TRIAGE" })).toMatchObject({ ok: true, items: [{ id: "triage:shared" }] });
+    const { handler } = await import("../../amplify/functions/communications/handler");
+    const args = { arguments: { operation: "reviewIssue", input: { id: "issue:connection", version: 1, reason: "Reconnected" } } };
+    expect(await handler({ ...args, identity: { sub: "brian", groups: [] } as never })).toMatchObject({ ok: false });
+    expect(record("issue:connection").data.resolved).toBe(false);
+    expect(await handler({ ...args, identity: { sub: "admin", groups: ["ADMIN"] } as never })).toMatchObject({ ok: true });
+  });
+});
