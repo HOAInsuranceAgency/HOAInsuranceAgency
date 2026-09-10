@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { client, fmtPhone } from "../lib/client";
+import { client, fmtProviderPhone } from "../lib/client";
 import { communicationRequest as request, type Communication, type LeadTask } from "../lib/communications";
 import { useAsyncResource } from "../lib/useAsyncResource";
 
@@ -8,7 +8,7 @@ export function ActivityReview({ id, onSaved, accountId, conversationId }: { id:
   const [name, setName] = useState(""), [matches, setMatches] = useState<{ id: string; name: string }[]>([]), [purpose, setPurpose] = useState("PROSPECT");
   const [busy, setBusy] = useState(false), [error, setError] = useState("");
   return <div className="workflow-editor"><h3>Link communication to an association</h3>
-    {resource.data && <p>{fmtPhone(resource.data.communication.from)} · {resource.data.communication.status}<br />{resource.data.communication.text?.slice(0, 500)}</p>}
+    {resource.data && <p>{fmtProviderPhone(resource.data.communication.from)} · {resource.data.communication.status}<br />{resource.data.communication.text?.slice(0, 500)}</p>}
     {(error || resource.error) && <p role="alert" className="error-text">{error || resource.error}</p>}
     {accountId && <button disabled={busy || !resource.data} onClick={async () => { setBusy(true); try { await request("linkActivity", { id, accountId, conversationId, version: resource.data!.communication.version, purpose }, true); onSaved(); } catch(e) { setError(String(e)); } finally { setBusy(false); } }}>Link this activity to the selected lead and Front conversation</button>}
     <form onSubmit={async e => { e.preventDefault(); setError(""); setBusy(true); try { const p = await client.models.Account.list({ filter: { name: { contains: name.trim() } }, limit: 50 }); if (p.errors?.length) throw new Error(p.errors[0].message); setMatches(p.data.map(a => ({ id: a.id, name: a.name }))); } catch(e) { setError(String(e)); } finally { setBusy(false); } }}>
@@ -50,7 +50,7 @@ export function SidebarActivityLinker({ accountId, conversationId, onSaved }: { 
   const [id, setId] = useState(""), [error, setError] = useState("");
   const rows = useAsyncResource(() => request<{ items: { id: string; communicationId: string; phone?: string; at?: string; resolved?: boolean }[]; nextToken?: string }>("work", { kind: "TRIAGE" }), [accountId, conversationId], { initialData: { items: [] } });
   return <details><summary>Link a call or text to this conversation</summary><p className="muted small">Review the source before choosing its association.</p>
-    {rows.data.items.filter(r => !r.resolved).map(r => <p key={r.id}><button className="link" onClick={() => setId(r.communicationId)}>{r.phone ? fmtPhone(r.phone) : "Unknown contact"} · {r.at ? new Date(r.at).toLocaleString() : "Time unavailable"}</button></p>)}
+    {rows.data.items.filter(r => !r.resolved).map(r => <p key={r.id}><button className="link" onClick={() => setId(r.communicationId)}>{r.phone ? fmtProviderPhone(r.phone) : "Unknown contact"} · {r.at ? new Date(r.at).toLocaleString() : "Time unavailable"}</button></p>)}
     {rows.data.nextToken && <button className="link" onClick={async () => { try { const page = await request<typeof rows.data>("work", { kind: "TRIAGE", nextToken: rows.data.nextToken }); rows.setData(p => ({ ...page, items: [...p.items, ...page.items] })); } catch(e) { setError(String(e)); } }}>More activity</button>}
     {(error || rows.error) && <p className="error-text">{error || rows.error}</p>}
     {id && <ActivityReview key={id} id={id} accountId={accountId} conversationId={conversationId} onSaved={() => { setId(""); void rows.refetch(); onSaved(); }} />}

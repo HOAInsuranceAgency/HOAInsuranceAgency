@@ -16,6 +16,7 @@ import {
   fmtDate,
   fmtDateTime,
   fmtPhone,
+  fmtProviderPhone,
   friendlyError,
   normalizePhone,
   unwrap,
@@ -755,6 +756,16 @@ describe("normalizePhone", () => {
     expect(normalizePhone("15551234567")).toBe("15551234567");
     expect(normalizePhone("")).toBe("");
     expect(normalizePhone("n/a")).toBe("n/a");
+  });
+});
+
+describe("fmtProviderPhone", () => {
+  it("formats exact North American provider numbers without changing international or extended input", () => {
+    expect(fmtProviderPhone("+16178959530")).toBe("(617) 895-9530");
+    expect(fmtProviderPhone("+442071234567")).toBe("+442071234567");
+    expect(fmtProviderPhone("+16178959530 x42")).toBe("+16178959530 x42");
+    expect(fmtProviderPhone(undefined)).toBe("—");
+    expect(normalizePhone("+16178959530")).toBe("+16178959530");
   });
 });
 

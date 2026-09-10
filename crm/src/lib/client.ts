@@ -308,6 +308,12 @@ export function fmtPhone(v: string | null | undefined): string {
   return normalizePhone(String(v));
 }
 
+/** Display a provider's exact North American E.164 number using our usual
+ * phone style. This is display-only; freeform contact input remains unchanged. */
+export function fmtProviderPhone(v: string | null | undefined): string {
+  return fmtPhone(v?.replace(/^\+1(\d{10})$/, "$1"));
+}
+
 /**
  * Throws on GraphQL errors or a null payload; returns the data.
  *
