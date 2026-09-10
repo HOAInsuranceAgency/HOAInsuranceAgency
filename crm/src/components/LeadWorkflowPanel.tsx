@@ -1,3 +1,5 @@
+import { followUpDeadline } from "../../../shared/leadWorkflow";
+import { leadActionGuidance } from "../../../shared/leadActionGuidance";
 import CommunicationAccountSummary from "./CommunicationAccountSummary";
 import { CallOutcome, SidebarActivityLinker } from "./CommunicationReview";
 import { useEffect, useState, useRef } from "react";
@@ -51,15 +53,22 @@ export default function LeadWorkflowPanel({ accountId, conversationId, onOpen }:
     <div className="toolbar"><h3>{compact ? "Next action" : "Next actions"}</h3><div className="grow" />{workflow.disposition === "ACTIVE" && <button className="secondary" onClick={() => setEditing("new")}>Add action</button>}</div>
     {["LOST", "DISQUALIFIED"].includes(workflow.disposition) && <button className="secondary" onClick={() => setEditing("new")}>Reopen lead with a next action</button>}
     {!openTasks.length && <p className="muted">{workflow.disposition === "ACTIVE" ? "No next action recorded. Add a commitment so this lead stays visible." : `Lead outcome: ${workflow.disposition.toLowerCase()}`}</p>}
-    {openTasks.sort((a,b) => a.dueAt.localeCompare(b.dueAt)).map(t => <article key={t.id} className={`workflow-task${t.dueAt < new Date().toISOString() ? " is-overdue" : ""}`}>
-      <strong className="workflow-task-title">{t.title}</strong>{["RESPONSE", "CALLBACK"].includes(t.kind) && <label className="small"><input type="checkbox" aria-label={`Combine ${t.title}`} checked={mergeIds.includes(t.id)} onChange={e => setMergeIds(ids => e.target.checked ? [...ids, t.id] : ids.filter(id => id !== t.id))} /> Same request as another activity</label>}<div className="small workflow-task-meta">{t.role === "CHAMPION" ? "Deal champion" : "Salesperson"} · {compact ? compactDateTime(t.dueAt) : fmtDateTime(t.dueAt)}{t.escalatedAt ? " · Escalated" : t.dueAt < new Date().toISOString() ? " · Overdue" : ""}</div>
-      <div className="toolbar"><button className={compact ? "secondary" : "link"} onClick={() => setEditing(t)}>{compact ? "Edit action" : "Change action/date"}</button><button className={compact ? "primary" : "link"} onClick={() => setCompleting(t)}>{compact ? "Complete" : "Complete with outcome"}</button></div>
-    </article>)}
+    {openTasks.sort((a,b) => a.dueAt.localeCompare(b.dueAt)).map(t => {
+      const guidance = leadActionGuidance(t, communications);
+      return <article key={t.id} className={`workflow-task${t.dueAt < new Date().toISOString() ? " is-overdue" : ""}`}>
+        <p className="workflow-why"><span>{t.escalatedAt ? "Why this was escalated" : t.notifiedAt ? "Why this is back" : "Why this needs attention"}</span>{guidance.why}</p>
+        <strong className="workflow-task-title">{guidance.action}</strong>
+        <div className="small workflow-task-meta">{t.role === "CHAMPION" || t.escalatedAt ? "Deal champion" : "Salesperson"} · Due {compact ? compactDateTime(t.dueAt) : fmtDateTime(t.dueAt)}{t.dueAt < new Date().toISOString() ? " · Overdue" : ""}</div>
+        <p className="workflow-next-help">{guidance.after}</p>
+        <div className="toolbar"><button className="primary" onClick={() => setCompleting(t)}>Record outcome</button><button className="link" onClick={() => setEditing(t)}>Edit action</button></div>
+        {["RESPONSE", "CALLBACK"].includes(t.kind) && openTasks.filter(task => ["RESPONSE", "CALLBACK"].includes(task.kind)).length > 1 && <details className="workflow-related"><summary>Related requests</summary><label className="small"><input type="checkbox" aria-label={`Combine ${t.title}`} checked={mergeIds.includes(t.id)} onChange={e => setMergeIds(ids => e.target.checked ? [...ids, t.id] : ids.filter(id => id !== t.id))} /> Same request as another activity</label></details>}
+      </article>;
+    })}
     {mergeIds.length >= 2 && <div className="workflow-editor"><label className="field">Why these contacts concern the same request<input value={mergeReason} onChange={e => setMergeReason(e.target.value)} /></label><button disabled={busy || !mergeReason.trim()} onClick={async () => { if (await run("mergeTasks", { accountId: workflow.accountId, tasks: openTasks.filter(t => mergeIds.includes(t.id)).map(t => ({ id: t.id, version: t.version })), reason: mergeReason })) { setMergeIds([]); setMergeReason(""); } }}>Combine and keep the earliest deadline</button></div>}
     {editing && <TaskEditor key={editing === "new" ? "new" : editing.id} task={editing === "new" ? undefined : editing} busy={busy} onCancel={() => setEditing(null)}
       onSave={async value => { if (await run(workflow.disposition === "ACTIVE" ? "saveTask" : "reopenLead", { ...value as Record<string, unknown>, accountId: workflow.accountId, ...(workflow.disposition === "ACTIVE" ? {} : { version: workflow.version }) })) setEditing(null); }} />}
     {completing && <CompletionEditor task={completing} busy={busy} onCancel={() => setCompleting(null)} onSave={async value => { if (await run("completeTask", value)) setCompleting(null); }} />}
-    {compact && <p className="front-deadline-note">Front snoozes never move this deadline.</p>}
+    {compact && <p className="front-deadline-note">Reminders arrive at 9 a.m. Eastern. Snoozing never changes the due date.</p>}
   </section>;
   const history = <>
     <div className="toolbar">{!compact && <h3>Communication history</h3>}<select aria-label="Communication channel" value={channel} onChange={e => setChannel(e.target.value)}>{["ALL", "EMAIL", "CALL", "SMS", "NOTE"].map(c => <option key={c} value={c}>{communicationChannelLabels[c]}</option>)}</select></div>
@@ -122,7 +131,7 @@ export default function LeadWorkflowPanel({ accountId, conversationId, onOpen }:
   </section>;
 }
 function TaskEditor({ task, busy, onSave, onCancel }: { task?: LeadTask; busy: boolean; onSave: (value: unknown) => Promise<void>; onCancel: () => void }) {
-  const [title, setTitle] = useState(task?.title ?? ""), [due, setDue] = useState(localDate(task?.dueAt ?? new Date(Date.now() + 86400_000).toISOString()));
+  const [title, setTitle] = useState(task?.title ?? ""), [due, setDue] = useState(localDate(task?.dueAt ?? followUpDeadline(new Date().toISOString(), 1)));
   const [role, setRole] = useState(task?.role ?? "SALESPERSON"), [kind, setKind] = useState(task?.kind ?? "FOLLOW_UP"), [reason, setReason] = useState("");
   return <form className="workflow-editor" onSubmit={e => { e.preventDefault(); void onSave({ id: task?.id, version: task?.version, title, dueAt: new Date(due).toISOString(), role, kind, reason }); }}>
     <h3>{task ? "Change next action" : "New next action"}</h3><label className="field">Action<input required value={title} onChange={e => setTitle(e.target.value)} /></label>
@@ -134,13 +143,13 @@ function TaskEditor({ task, busy, onSave, onCancel }: { task?: LeadTask; busy: b
   </form>;
 }
 function CompletionEditor({ task, busy, onSave, onCancel }: { task: LeadTask; busy: boolean; onSave: (value: unknown) => Promise<void>; onCancel: () => void }) {
-  const [reason, setReason] = useState(""), [next, setNext] = useState(""), [due, setDue] = useState(localDate(new Date(Date.now() + 86400_000).toISOString()));
+  const [reason, setReason] = useState(""), [next, setNext] = useState(""), [due, setDue] = useState(localDate(followUpDeadline(new Date().toISOString(), 1)));
   const [outcome, setOutcome] = useState(task.role === "CHAMPION" ? "DONE" : "NEXT");
   return <form className="workflow-editor" onSubmit={e => { e.preventDefault(); void onSave({ id: task.id, version: task.version, reason,
     successor: outcome === "NEXT" ? { title: next, dueAt: new Date(due).toISOString(), role: task.role, kind: "FOLLOW_UP" } : undefined,
     outcome: ["LOST", "DISQUALIFIED"].includes(outcome) ? outcome : undefined }); }}>
-    <h3>Complete: {task.title}</h3><label className="field">What happened?<textarea required value={reason} onChange={e => setReason(e.target.value)} /></label>
-    <label className="field">What happens next?<select value={outcome} onChange={e => setOutcome(e.target.value)}><option value="NEXT">Record next action or waiting commitment</option>{task.role === "CHAMPION" && <option value="DONE">This carrier/champion task is complete</option>}<option value="LOST">Lead lost</option><option value="DISQUALIFIED">Lead disqualified</option></select></label>
+    <h3>Record outcome</h3><p className="muted small">Record what happened and the next step. Sending a message alone does not close this action.</p><label className="field">What happened?<textarea placeholder="For example: answered their question and requested the current policy." required value={reason} onChange={e => setReason(e.target.value)} /></label>
+    <label className="field">Next step<select value={outcome} onChange={e => setOutcome(e.target.value)}><option value="NEXT">Set the next follow-up</option>{task.role === "CHAMPION" && <option value="DONE">This carrier/champion task is complete</option>}<option value="LOST">Lead lost</option><option value="DISQUALIFIED">Lead disqualified</option></select></label>
     {outcome === "NEXT" && <><label className="field">Next action<input required value={next} onChange={e => setNext(e.target.value)} /></label><label className="field">Due<input required type="datetime-local" value={due} onChange={e => setDue(e.target.value)} /></label></>}
     <div className="toolbar"><button disabled={busy}>Save outcome</button><button type="button" className="secondary" onClick={onCancel}>Cancel</button></div>
   </form>;

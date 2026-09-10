@@ -1,3 +1,4 @@
+import { taskWakeAt } from "../../../../shared/leadWorkflow";
 import type { Communication, LeadTask } from "../../../../shared/leadWorkflow";
 import { get, row, save, put, commit, check, issue, type Row } from "./store";
 import { accountRows, ensureWorkflow } from "./workflow";
@@ -87,7 +88,7 @@ export async function syncCall(candidate: Row<{ providerId: string }>) {
     const wf = await ensureWorkflow(comm.accountId), writes = [check(wf), check(comm)];
     if (survivor && edits.length) {
       const data = { ...survivor.data, sourceIds: [comm.id], escalationAt: automatic.map(t => t.data.escalationAt).sort()[0], version: survivor.version + 1 };
-      writes.push(put(row("TASK", survivor.id, data, { accountId: comm.accountId, previous: survivor, dueAt: survivor.dueAt ? (data.notifiedAt ? data.escalationAt : data.dueAt) : undefined }), survivor));
+      writes.push(put(row("TASK", survivor.id, data, { accountId: comm.accountId, previous: survivor, dueAt: taskWakeAt(data) }), survivor));
     }
     for (const task of edits) writes.push(put(row("TASK", task.id, { ...task.data, status: "CANCELLED", reason: survivor ? `Same Dialpad call as ${survivor.id}` : "A related call leg was answered or handled; record its outcome", version: task.version + 1 }, { accountId: comm.accountId, previous: task }), task));
     writes.push(put(row("CALL_SYNC", job.id, job.data, { previous: job, dueAt: automatic.length - (survivor ? 1 : 0) > edits.length ? new Date().toISOString() : undefined }), job));

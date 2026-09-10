@@ -14,6 +14,8 @@ export interface LeadWorkflow {
 export interface LeadTask {
   id: string; accountId: string; title: string; kind: TaskKind; role: Responsibility;
   dueAt: string; escalationAt: string; status: "OPEN" | "COMPLETE" | "CANCELLED";
+  /** Morning reminder is separate from the team's actual commitment. */
+  reminderAt?: string;
   episode?: string; conversationId?: string; sourceAt?: string; custom?: boolean;
   sourceIds?: string[];
   reason?: string; notifiedAt?: string; escalatedAt?: string; version: number;
@@ -99,6 +101,34 @@ export function followUpDeadline(from: string, days = 2, holidays: readonly stri
     if (businessDate(day, holidays) && --remaining === 0) return new Date(localHour(day, 9)).toISOString();
   }
   throw new Error("Agency calendar has no available follow-up date");
+}
+
+/** Remind at 9am on the due date, or the last business morning before it. */
+export function morningReminderAt(dueAt: string, holidays: readonly string[] = []): string {
+  const ms = Date.parse(dueAt);
+  if (!Number.isFinite(ms)) throw new Error("Invalid reminder date");
+  let day = parts(ms).day;
+  for (let i = 0; i < 120; i++) {
+    if (businessDate(day, holidays) && localHour(day, 9) <= ms) return new Date(localHour(day, 9)).toISOString();
+    day = new Date(Date.parse(`${day}T12:00:00Z`) - 86400_000).toISOString().slice(0, 10);
+  }
+  throw new Error("Agency calendar has no available reminder date");
+}
+/** The 9am batch allows a short processing window, never an afternoon catch-up. */
+export function reminderWindow(now: string, holidays: readonly string[] = []): boolean {
+  const p = parts(Date.parse(now));
+  return businessDate(p.day, holidays) && p.hour === 9 && p.minute < 10;
+}
+export function nextReminderMorning(now: string, holidays: readonly string[] = []): string {
+  const ms = Date.parse(now), p = parts(ms);
+  return businessDate(p.day, holidays) && ms <= localHour(p.day, 9)
+    ? new Date(localHour(p.day, 9)).toISOString() : followUpDeadline(now, 1, holidays);
+}
+export function scheduleReminders<T extends LeadTask>(task: T, holidays: readonly string[] = []): T {
+  return { ...task, reminderAt: morningReminderAt(task.dueAt, holidays), escalationAt: followUpDeadline(task.dueAt, 1, holidays) };
+}
+export function taskWakeAt(task: LeadTask): string | undefined {
+  return task.status !== "OPEN" || task.escalatedAt ? undefined : task.notifiedAt ? task.escalationAt : task.reminderAt ?? morningReminderAt(task.dueAt);
 }
 
 export function mergeInboundDeadline(existing: LeadTask | undefined, incoming: LeadTask): LeadTask {

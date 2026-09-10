@@ -1,3 +1,4 @@
+import { taskWakeAt } from "../../../../shared/leadWorkflow";
 import { randomUUID } from "node:crypto";
 import { get, put, row, commit, audit } from "./store";
 import { ensureWorkflow, expected, makeTask, recordInbound } from "./workflow";
@@ -38,7 +39,7 @@ export async function recordCallOutcome(input: { id: string; version: number; ou
   const writes = [put(row("COMMUNICATION", comm.id, { ...comm.data, outcome: input.outcome, outcomeBy: actor, outcomeAt: new Date().toISOString(), resolved: resolving || input.outcome === "UNRELATED", version: comm.version + 1 }, { accountId: comm.accountId, previous: comm, dueAt: resolving || input.outcome === "UNRELATED" ? undefined : comm.dueAt }), comm), audit(comm.accountId, actor, "Call outcome recorded", input)];
   if (input.nextAction) {
     const task = await makeTask({ accountId: comm.accountId, ...input.nextAction, role: "SALESPERSON", kind: input.outcome === "DOCUMENTS" ? "DOCUMENTS" : "FOLLOW_UP", custom: true });
-    writes.push(put(row("TASK", task.id, task, { accountId: comm.accountId, dueAt: task.dueAt })));
+    writes.push(put(row("TASK", task.id, task, { accountId: comm.accountId, dueAt: taskWakeAt(task) })));
   }
   if (input.taskId) {
     if (!resolving) throw new Error("An unanswered attempt cannot complete prospect work");

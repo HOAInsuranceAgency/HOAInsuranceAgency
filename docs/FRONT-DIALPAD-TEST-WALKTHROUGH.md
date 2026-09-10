@@ -122,7 +122,7 @@ Submit once through each row below, with a distinct test identity or address. Re
 1. From the test prospect mailbox, reply to TEST Oak's AI email: **Please clarify what documents you need.**
 2. In CRM, verify the inbound email appears and **Respond to prospect** is in **Next actions** and **Lead follow-up → Needs attention**. Write down the due time.
 3. Send another reply about the same unanswered request a few minutes later. Refresh.
-4. Reply as the salesperson in Front. Then return to CRM and select **Complete with outcome** on the specific response task.
+4. Reply as the salesperson in Front. Then return to CRM and select **Record outcome** on the specific response task.
 5. Record what happened, select **Record next action or waiting commitment**, and enter **Wait for test documents** with a future due time. Save.
 
 **Expected:** the first substantive reply replaces the stale automatic waiting follow-up for that conversation. Additional unanswered replies do not push its deadline later. Sending a human email alone does not prove which open request was resolved; the explicit outcome closes the selected task and creates its successor. Other independent tasks remain open.
@@ -175,32 +175,34 @@ Submit once through each row below, with a distinct test identity or address. Re
 
 1. On TEST Pine, click **Add action**. Set Action to **TEST request carrier clarification**, role **Deal champion**, type **carrier**, and a future due time. Enter a reason and **Save action**.
 2. Add a separate salesperson action. Verify both are visible.
-3. Use **Change action/date** on one action, change its due time, supply a reason, and save. Inspect the account's **Activity** tab.
+3. Use **Edit action** on one action, change its due time, supply a reason, and save. Inspect the account's **Activity** tab.
 4. Try saving a past date or leaving the required reason empty, then cancel the invalid edit.
 
 **Expected:** commitments have a named role and a date. A deliberate edit changes only the selected commitment and leaves an activity record. A new promise cannot be saved in the past or without a reason. Front snoozes are not the way to change this date.
 
-### 18 — Test a reminder quickly
+### 18 — Test the 9 a.m. reminder
 
-1. On a test lead with a linked Front conversation, add a salesperson follow-up called **TEST short reminder**, due **five minutes from now**. Record the exact time.
-2. Archive or snooze its Front conversation beyond that time. Do not change the CRM action.
-3. After the due time, allow a few background cycles. Open **Lead follow-up → Needs attention (Overdue timing)**, **My reminders**, and the Front conversation.
+1. Before the next business morning, add a salesperson action called **TEST morning reminder**, due at **5 p.m. on that business day**.
+2. Archive or snooze the linked Front conversation beyond that date. Keep the CRM action unchanged.
+3. At **9 a.m. Eastern**, allow a few processing cycles. Check **My reminders** and Front.
+4. Read the internal reminder's **Why this is back**, **Next step**, responsible teammate and deadline. Check that the sidebar gives the same next step and a **Record outcome** button.
+5. Verify the due time remains 5 p.m. At 5 p.m., it may become overdue, but there should be no new scheduled reminder or reopen.
 
-**Expected:** the action becomes overdue, you receive an in-app lead-follow-up notification, and the linked Front conversation reopens while delivery is running. This does not require a separate reminder email/SMS. The task remains open until handled. This tests dispatch/reopening, not the two-business-day schedule.
+**Expected:** the 9 a.m. reminder explains why the conversation returned and what to do. Handle the request, choose **Record outcome**, and save the next follow-up. Cleanup is requested automatically once the remaining work is safely tracked. Missed morning batches wait until the next business morning; current work remains visible in CRM. Do not change the computer clock or move a live reminder to the afternoon to accelerate this test.
 
 ### 19 — Verify the real business-day schedule and escalation
 
 1. Keep a separate lead untouched after its initial confirmed AI email. Do not reply or replace its automatic follow-up with a custom date.
 2. Check the due date: **9 a.m. Eastern on the second business date after sending**. Revisit at that time, then on the next business date at 9 a.m.
-3. Separately, receive a substantive email or missed call during working hours and record the original time. Verify its deadline uses **eight staffed hours**, 9 a.m.–5 p.m. Eastern, Monday–Friday, excluding configured holidays. Escalation follows another eight staffed hours after that deadline.
+3. Separately, receive a substantive email or missed call during working hours and record the original time. Verify its deadline uses **eight staffed hours**, 9 a.m.–5 p.m. Eastern, Monday–Friday, excluding configured holidays. The reminder is at 9 a.m. on the due date; escalation is at 9 a.m. on the next business date after the deadline.
 4. Because Jake holds both roles, check that the reminder escalates without producing duplicate notifications to the same person. The task should show **Escalated**.
 
 | Example, with no agency holiday | Expected due | Expected champion escalation |
 | --- | --- | --- |
 | AI email sent Wednesday, September 9 | Friday, September 11, 9 a.m. | Monday, September 14, 9 a.m. |
-| Prospect reply Thursday, September 10, 2 p.m. | Friday, September 11, 2 p.m. | Monday, September 14, 2 p.m. |
-| Missed call Friday, September 11, 4 p.m. | Monday, September 14, 4 p.m. | Tuesday, September 15, 4 p.m. |
-| Request arrives after hours Friday | Monday, September 14, 5 p.m. | Tuesday, September 15, 5 p.m. |
+| Prospect reply Thursday, September 10, 2 p.m. | Friday, September 11, 2 p.m. | Monday, September 14, 9 a.m. |
+| Missed call Friday, September 11, 4 p.m. | Monday, September 14, 4 p.m. | Tuesday, September 15, 9 a.m. |
+| Request arrives after hours Friday | Monday, September 14, 5 p.m. | Tuesday, September 15, 9 a.m. |
 
 **Expected:** weekends are skipped and the original unanswered request starts the clock. Current staging holidays are empty; enter actual agency holidays before testing holiday handling. Keep the computer timezone set to Eastern while entering test dates. Do not change the computer clock to accelerate this test.
 
@@ -208,7 +210,7 @@ Submit once through each row below, with a distinct test identity or address. Re
 
 1. On a lead with an open response/callback task, record both owners and its due time.
 2. In Front, mark the conversation read, snooze it, and archive it. Check the personal inbox view and shared inbox view separately.
-3. Refresh the CRM after each action. Then allow the task to reach its due time, or use a separate short action as in test 18.
+3. Refresh the CRM after each action. Then wait for its 9 a.m. reminder, as in test 18.
 
 **Expected:** the CRM owners, task and deadline remain unchanged. Due work stays visible to the team and its linked conversation reopens while delivery runs. Do not judge success solely by whether every personal inbox copy disappears; record personal and shared behavior separately.
 
@@ -313,7 +315,7 @@ Make a fresh controlled inbound and outbound call for each row. Capture the time
 
 ### 31 — Lost, disqualified, reopened and bound outcomes
 
-1. On a disposable test lead, use **Complete with outcome → Lead lost**, with a reason. Verify its obsolete open tasks close after background processing.
+1. On a disposable test lead, use **Record outcome → Lead lost**, with a reason. Verify its obsolete open tasks close after background processing.
 2. Select **Reopen lead with a next action**, enter a future commitment/reason, and save. Confirm there is no second initial AI email. Repeat the outcome check with **Lead disqualified** on another test lead.
 3. For the bind case, use a prepared fictional staging quote through the existing **Quotes / bind workflow**, with the administrator present to satisfy its existing validation and avoid external carrier/customer actions. Do not simulate binding by changing a communication status.
 

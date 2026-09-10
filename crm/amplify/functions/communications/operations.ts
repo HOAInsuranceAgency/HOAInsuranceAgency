@@ -8,7 +8,7 @@ import { textLeadAlerts } from "../lead-intake/alerts";
 import type { LeadSummary } from "../lead-intake/sms";
 import type { Submission } from "../lead-intake/handler";
 import { renderIntakeBrief } from "../lead-intake/brief";
-import type { Communication } from "../../../../shared/leadWorkflow";
+import { reminderWindow, nextReminderMorning, type Communication, type LeadTask } from "../../../../shared/leadWorkflow";
 
 export interface Operation {
   type: "ATTACHMENT" | "IMPORT" | "EMAIL" | "COMMENT" | "SMS_ALERT" | "ARCHIVE" | "REOPEN" | "ASSIGN";
@@ -17,6 +17,8 @@ export interface Operation {
   conversationId?: string; recipient?: string; subject?: string; html?: string; text?: string;
   uid?: string; messageId?: string; error?: string; leaseUntil?: string; assigneeId?: string;
   lead?: LeadSummary; sourceMessageId?: string; attachmentId?: string; requestedBy?: string;
+  reminder?: { taskId: string; noticeAt: string; recipientId: string; escalated: boolean };
+  afterOperationId?: string;
 }
 export async function enqueueOperation(id: string, data: Omit<Operation, "state" | "attempts">) {
   const old = await get<Operation>(id);
@@ -58,6 +60,34 @@ export async function runOperation(candidate: Row<Operation>) {
       await importAttachment(op.data); await transition(op, { state: "CONFIRMED" }); return;
     }
     const wf = await ensureWorkflow(op.data.accountId);
+    // Retire old queued reminder reopens: their old notices contain no reason.
+    // The migrated task remains open and its next morning escalation is retained.
+    if (op.data.type === "REOPEN" && op.id.startsWith("op:reopen:notice:") && !op.data.reminder) {
+      await transition(op, { state: "SUPPRESSED", error: "Replaced by morning reminders" }); return;
+    }
+    let reminderTask: Row<LeadTask> | undefined;
+    if (op.data.reminder) {
+      const reminder = op.data.reminder;
+      reminderTask = await get<LeadTask>(reminder.taskId);
+      const recipient = reminder.escalated || reminderTask?.data.role === "CHAMPION" ? wf.data.championId : wf.data.salespersonId;
+      const noticeAt = reminder.escalated ? reminderTask?.data.escalatedAt : reminderTask?.data.notifiedAt;
+      if (!reminderTask || reminderTask.data.status !== "OPEN" || wf.data.disposition !== "ACTIVE" || recipient !== reminder.recipientId || noticeAt !== reminder.noticeAt || (!reminder.escalated && reminderTask.data.escalationAt <= new Date().toISOString())) {
+        await transition(op, { state: "SUPPRESSED", error: "This action was completed, changed or reassigned" }); return;
+      }
+      const now = new Date().toISOString();
+      if (!reminderWindow(now, c.holidays)) {
+        await transition(op, { state: "RETRY_WAIT" }, Math.max(1, (Date.parse(nextReminderMorning(now, c.holidays)) - Date.now()) / 1000)); return;
+      }
+      if (op.data.afterOperationId) {
+        const comment = await get<Operation>(op.data.afterOperationId);
+        if (comment?.data.state !== "CONFIRMED") {
+          if (comment && ["FAILED", "UNKNOWN", "SUPPRESSED"].includes(comment.data.state)) {
+            await transition(op, { state: "SUPPRESSED", error: "The reminder explanation could not be confirmed; the CRM reminder remains visible" }); return;
+          }
+          await transition(op, { state: "RETRY_WAIT" }, 60); return;
+        }
+      }
+    }
     if (op.data.type === "EMAIL" && (wf.data.humanTakeover || wf.data.disposition !== "ACTIVE")) { await transition(op, { state: "SUPPRESSED" }); await updateReply(op.data, "SUPPRESSED", "Handled by the team"); return; }
     let path = "", body: unknown, method = "POST";
     if (op.data.type === "IMPORT") {
@@ -104,7 +134,7 @@ export async function runOperation(candidate: Row<Operation>) {
       }
     }
     const leased = row("OPERATION", op.id, { ...op.data, state: "LEASED" as const, attempts: op.data.attempts + 1, leaseUntil: new Date(Date.now() + 180_000).toISOString() }, { accountId: op.accountId, previous: op, dueAt: new Date(Date.now() + 180_000).toISOString() });
-    await commit([put(leased, op), ...(["EMAIL", "ASSIGN"].includes(op.data.type) ? [check(wf)] : [])]);
+    await commit([put(leased, op), ...(["EMAIL", "ASSIGN"].includes(op.data.type) || reminderTask ? [check(wf)] : []), ...(reminderTask ? [check(reminderTask)] : [])]);
     op = leased;
     posted = true;
     if (op.data.type === "SMS_ALERT") {

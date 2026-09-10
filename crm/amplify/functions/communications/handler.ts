@@ -1,3 +1,4 @@
+import { taskWakeAt } from "../../../../shared/leadWorkflow";
 import { isLeadSource } from "../../../../shared/leadSource";
 import { historyStopped, restartHistory, type HistoryJob } from "./history";
 import { reviewOperation, recordCallOutcome, linkActivity } from "./review";
@@ -140,7 +141,7 @@ export const handler = async (event: { arguments: { operation?: string; readOper
       const reason = text(input, "reason"); if (!reason) throw new Error("Record the reopening reason");
       const { makeTask } = await import("./workflow");
       const task = await makeTask({ accountId, title: text(input, "title"), dueAt: text(input, "dueAt"), kind: "FOLLOW_UP", custom: true });
-      await commit([put(row("WORKFLOW", wf.id, { ...wf.data, disposition: "ACTIVE", humanTakeover: true, version: wf.version + 1 }, { accountId, previous: wf }), wf), put(row("TASK", task.id, task, { accountId, dueAt: task.dueAt })), audit(accountId, actor, "Lead reopened with next action", { reason, task })]);
+      await commit([put(row("WORKFLOW", wf.id, { ...wf.data, disposition: "ACTIVE", humanTakeover: true, version: wf.version + 1 }, { accountId, previous: wf }), wf), put(row("TASK", task.id, task, { accountId, dueAt: taskWakeAt(task) })), audit(accountId, actor, "Lead reopened with next action", { reason, task })]);
       return { ok: true };
     }
     if (op === "saveTask") return { ok: true, task: await saveTask(input as unknown as Parameters<typeof saveTask>[0], actor) };

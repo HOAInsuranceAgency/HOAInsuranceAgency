@@ -7,12 +7,28 @@ import { processEvent, dialpadEvent, ingestFrontMessage, type EventRecord } from
 import { ensureWorkflow, recordInbound, enabledUser, accountRows } from "./workflow";
 import { front, dialpad, ProviderError, providerTimestamp, type FrontMessage } from "./providers";
 import type { LeadTask, Communication } from "../../../../shared/leadWorkflow";
+import { scheduleReminders, taskWakeAt, reminderWindow, nextReminderMorning } from "../../../../shared/leadWorkflow";
+import { leadActionGuidance } from "../../../../shared/leadActionGuidance";
+import { migrateReminderSchedules } from "./reminders";
 import { dataClient } from "./data";
 import { callRoot, syncCall } from "./calls";
 
 export async function dispatchTask(candidate: Row<LeadTask>) {
-  const task = await get<LeadTask>(candidate.id);
+  let task = await get<LeadTask>(candidate.id);
   if (!task || task.data.status !== "OPEN") return;
+  const c = await config(), now = new Date().toISOString();
+  const scheduled = scheduleReminders(task.data, c.holidays);
+  if (scheduled.reminderAt !== task.data.reminderAt || scheduled.escalationAt !== task.data.escalationAt) {
+    scheduled.version = task.version + 1;
+    task = await save(row("TASK", task.id, scheduled, { accountId: task.accountId, previous: task, dueAt: taskWakeAt(scheduled) }), task);
+  }
+  const wake = taskWakeAt(task.data);
+  if (!wake) return;
+  if (wake > now || !reminderWindow(now, c.holidays)) {
+    const dueAt = wake > now ? wake : nextReminderMorning(now, c.holidays);
+    if (task.dueAt !== dueAt) await save(row("TASK", task.id, task.data, { accountId: task.accountId, previous: task, dueAt }), task);
+    return;
+  }
   if (task.data.kind === "FOLLOW_UP" && !task.data.custom && task.data.conversationId) {
     const latest = await front<{ _results: FrontMessage[] }>(`/conversations/${task.data.conversationId}/messages?limit=1`);
     for (const message of latest._results) await ingestFrontMessage(message, task.data.conversationId);
@@ -24,23 +40,34 @@ export async function dispatchTask(candidate: Row<LeadTask>) {
   if (wf.data.disposition !== "ACTIVE" || account.data.stage === "CLIENT") {
     await save(row("TASK", task.id, { ...task.data, status: "CANCELLED", reason: "Lead no longer active", version: task.version + 1 }, { accountId: task.accountId, previous: task }), task); return;
   }
-  const escalated = !!task.data.notifiedAt || task.data.escalationAt <= new Date().toISOString();
-  const due = escalated ? task.data.escalationAt : task.data.dueAt;
+  const escalated = task.data.escalationAt <= now;
+  const due = escalated ? task.data.escalationAt : task.data.reminderAt!;
   if (due > new Date().toISOString() || task.data.escalatedAt) return;
   const recipient = escalated || task.data.role === "CHAMPION" ? wf.data.championId : wf.data.salespersonId;
   if (!recipient) { await issue(task.id, "Assign a teammate to this overdue work", task.accountId); return; }
   try { await enabledUser(recipient); }
   catch { await issue(task.id, "The responsible teammate needs reassignment", task.accountId); return; }
   const id = `notice:${task.id}:${recipient}`;
-  const now = new Date().toISOString(), oldNotice = await get(id);
+  const oldNotice = await get(id);
+  const sources = await Promise.all((task.data.sourceIds ?? (task.data.episode ? [task.data.episode] : [])).map(id => get<Communication>(id)));
+  const guidance = leadActionGuidance(task.data, sources.flatMap(r => r ? [r.data] : []), escalated);
   const writes = [check(wf), put(row("TASK", task.id, { ...task.data, attempts: 0, error: undefined, firstFailureAt: undefined, notifiedAt: task.data.notifiedAt ?? now, notifiedRecipientId: task.data.role === "CHAMPION" ? wf.data.championId : wf.data.salespersonId, ...(escalated ? { escalatedAt: now, escalatedRecipientId: recipient } : {}), version: task.version + 1 }, { accountId: task.accountId, previous: task, dueAt: escalated ? undefined : task.data.escalationAt }), task)];
-  writes.push(put(row("NOTIFICATION", id, { recipient, accountId: task.accountId, taskId: task.id, title: task.data.title, urgency: escalated ? "ESCALATED" : "DUE", at: now }, { accountId: task.accountId, previous: oldNotice }), oldNotice));
+  writes.push(put(row("NOTIFICATION", id, { recipient, accountId: task.accountId, taskId: task.id, title: guidance.action, why: guidance.why, instruction: guidance.after, dueAt: task.data.dueAt, urgency: escalated ? "ESCALATED" : "DUE", at: now }, { accountId: task.accountId, previous: oldNotice }), oldNotice));
   if (escalated && !task.data.notifiedAt && task.data.role === "SALESPERSON" && wf.data.salespersonId && wf.data.salespersonId !== recipient) {
     const key = `notice:${task.id}:${wf.data.salespersonId}`, previous = await get(key);
-    writes.push(put(row("NOTIFICATION", key, { recipient: wf.data.salespersonId, accountId: task.accountId, taskId: task.id, title: task.data.title, urgency: "DUE", at: now }, { accountId: task.accountId, previous }), previous));
+    const direct = leadActionGuidance(task.data, sources.flatMap(r => r ? [r.data] : []), false);
+    writes.push(put(row("NOTIFICATION", key, { recipient: wf.data.salespersonId, accountId: task.accountId, taskId: task.id, title: direct.action, why: direct.why, instruction: direct.after, dueAt: task.data.dueAt, urgency: "DUE", at: now }, { accountId: task.accountId, previous }), previous));
   }
   const cnv = task.data.conversationId ?? wf.data.conversationId;
-  if (cnv) writes.push(put(operationRow(`op:reopen:${id}:${task.version}`, { type: "REOPEN", accountId: task.data.accountId, conversationId: cnv })));
+  if (cnv) {
+    const member = await get<{ name?: string }>(`eligibility:${recipient}`);
+    const deadline = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(task.data.dueAt));
+    const text = `${escalated ? "Deal champion — overdue action" : "9 a.m. lead reminder"}\n\nWhy this is back: ${guidance.why}\nNext step: ${guidance.action}\nResponsible: ${member?.data.name ?? (escalated || task.data.role === "CHAMPION" ? "Deal champion" : "Salesperson")}\nDue: ${deadline} Eastern\n\n${guidance.after}`;
+    const reminder = { taskId: task.id, noticeAt: now, recipientId: recipient, escalated };
+    const commentId = `op:reminder-comment:${id}:${task.version}`;
+    writes.push(put(operationRow(commentId, { type: "COMMENT", accountId: task.data.accountId, conversationId: cnv, text, reminder })));
+    writes.push(put(operationRow(`op:reopen:${id}:${task.version}`, { type: "REOPEN", accountId: task.data.accountId, conversationId: cnv, reminder, afterOperationId: commentId })));
+  }
   await commit(writes);
 }
 export async function refreshCommunication(candidate: Row<Communication>) {
@@ -100,6 +127,7 @@ export const handler = async (event?: Partial<DynamoDBStreamEvent>) => {
   const start = Date.now(), counters = { handled: 0, failed: 0 };
   let cursor: string | undefined, lagging = false, callChecks = 0;
   const c = await config();
+  await migrateReminderSchedules();
   // Reserve reconciliation a turn even while due work is backlogged. Each
   // provider captures one independent page; a failure cannot starve the other.
   if (c.activatedAt && !c.paused) {

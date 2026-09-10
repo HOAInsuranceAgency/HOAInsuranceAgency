@@ -46,7 +46,7 @@ describe("communication UI boundaries", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Edit action" }));
     fireEvent.change(screen.getByLabelText("Action"), { target: { value: "Unfinished change" } });
     fireEvent.click(within(screen.getByRole("region", { name: "Next actions" })).getByRole("button", { name: "Cancel" }));
-    expect(screen.getByText("Follow up with prospect")).toBeTruthy();
+    expect(screen.getByText("Follow up with the prospect")).toBeTruthy();
     expect(h.request.mock.calls.some(([op]) => op === "saveTask")).toBe(false);
   });
   it("clears a team edit when Front switches to another conversation", async () => {
@@ -127,5 +127,22 @@ describe("communication UI boundaries", () => {
     render(<CallOutcome communication={{ id: "c", accountId: "a", channel: "CALL", provider: "dialpad", providerId: "1", direction: "OUTBOUND", status: "MISSED", at: "2026-09-08T14:00Z", version: 3 }} tasks={[]} onSaved={() => {}} />);
     fireEvent.change(screen.getByLabelText("Outcome"), { target: { value: "NO_ANSWER" } }); fireEvent.change(screen.getByLabelText("Notes"), { target: { value: "Left a voicemail" } }); fireEvent.click(screen.getByRole("button", { name: "Save call outcome" }));
     await waitFor(() => expect(h.request).toHaveBeenCalledWith("recordCallOutcome", expect.objectContaining({ outcome: "NO_ANSWER", taskId: undefined, nextAction: undefined }), true));
+  });
+});
+
+
+describe("clear reminder actions", () => {
+  it("explains the request and saves an explicit outcome with the next commitment", async () => {
+    const data = linkedLead(); data.tasks[0].kind = "RESPONSE";
+    render(<FrontSidebar />); act(() => h.listener?.({ conversation: { id: "cnv_a" } }));
+    await screen.findByText("Reply to the prospect");
+    expect(screen.getByText("A prospect's message still needs a response.")).toBeTruthy();
+    expect(screen.queryByLabelText(/Combine/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Record outcome" }));
+    fireEvent.change(screen.getByLabelText("What happened?"), { target: { value: "Answered the question and requested the current policy." } });
+    fireEvent.change(screen.getByLabelText("Next action"), { target: { value: "Check for the current policy" } });
+    fireEvent.change(screen.getByLabelText("Due"), { target: { value: "2026-09-16T09:00" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save outcome" }));
+    await waitFor(() => expect(h.request).toHaveBeenCalledWith("completeTask", expect.objectContaining({ id: "task", version: 2, reason: "Answered the question and requested the current policy.", successor: expect.objectContaining({ title: "Check for the current policy" }) }), true));
   });
 });

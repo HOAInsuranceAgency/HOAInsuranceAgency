@@ -1,5 +1,7 @@
 # Front + CRM lead management specification
 
+**September 10 timing update:** scheduled reminders now run at **9 a.m. Eastern** on the due date; overdue escalation runs at **9 a.m. the next business date**. Original staffed-hour response deadlines and custom promises remain unchanged. Reminders explain why the conversation returned and the next action. This supersedes the earlier reminder-at-deadline and eight-staffed-hour escalation timing below. See [morning reminder behavior](../MORNING-LEAD-REMINDERS.md).
+
 Implementation is now present in the repository. Deployment and real-provider acceptance remain pending; see the [rollout runbook](../COMMUNICATIONS-RUNBOOK.md). The design below records the reviewed requirements, not a claim of a live connection.
 **Status: implementation built; deployment and live acceptance pending.**
 Updated September 8, 2026. Front is the default transport for this lead flow.

@@ -4,7 +4,7 @@ import { useAsyncResource } from "./useAsyncResource";
 
 export type WorkItem = Partial<LeadTask & LeadWorkflow> & {
   id: string; version: number; message?: string; at?: string; state?: string; error?: string;
-  communicationId?: string; phone?: string; urgency?: string; provider?: string; type?: string;
+  communicationId?: string; phone?: string; urgency?: string; why?: string; instruction?: string; provider?: string; type?: string;
 };
 type WorkPage = { items: WorkItem[]; nextToken?: string };
 export function useWorkItems(kind: string, filters: { view?: string; mine?: boolean; responsibility?: string } = {}) {

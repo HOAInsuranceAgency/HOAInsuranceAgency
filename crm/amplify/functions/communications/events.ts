@@ -1,3 +1,4 @@
+import { taskWakeAt } from "../../../../shared/leadWorkflow";
 import { config } from "./config";
 import type { HistoryJob } from "./history";
 import { uniteCalls, combineLegs, callStatus, queueCallSync, type Call } from "./calls";
@@ -96,7 +97,7 @@ async function frontEvent(event: Json, type: string) {
     await issue(`delivery:${str(event.id) || cnv}`, "An outbound message failed. Check the recipient and arrange the next contact.", link?.accountId);
     if (link) {
       const id = `task:correction:${cnv}`;
-      if (!await get(id)) { const task = await makeTask({ id, accountId: link.data.accountId, title: "Correct failed email delivery", kind: "CORRECTION", conversationId: cnv }); await save(row("TASK", id, task, { accountId: task.accountId, dueAt: task.dueAt })); }
+      if (!await get(id)) { const task = await makeTask({ id, accountId: link.data.accountId, title: "Correct failed email delivery", kind: "CORRECTION", conversationId: cnv }); await save(row("TASK", id, task, { accountId: task.accountId, dueAt: taskWakeAt(task) })); }
     }
     return;
   }
