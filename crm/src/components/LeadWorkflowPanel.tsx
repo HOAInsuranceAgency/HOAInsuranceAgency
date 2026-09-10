@@ -3,7 +3,7 @@ import { CallOutcome, SidebarActivityLinker } from "./CommunicationReview";
 import { useEffect, useState, useRef } from "react";
 import { communicationRequest as request, type WorkflowContext, type LeadTask, type TeamEligibility } from "../lib/communications";
 import { useAsyncResource } from "../lib/useAsyncResource";
-import { fmtDateTime } from "../lib/client";
+import { fmtDateTime, fmtPhone } from "../lib/client";
 
 const EMPTY: WorkflowContext = { workflow: null, tasks: [], communications: [], team: [], issues: [] };
 const localDate = (value: string) => { const d = new Date(value); return new Date(d.getTime() - d.getTimezoneOffset() * 60_000).toISOString().slice(0, 16); };
@@ -77,9 +77,9 @@ export default function LeadWorkflowPanel({ accountId, conversationId, onOpen }:
     {completing && <CompletionEditor task={completing} busy={busy} onCancel={() => setCompleting(null)} onSave={async value => { if (await run("completeTask", value)) setCompleting(null); }} />}
     <div className="toolbar"><h3>Communication history</h3><select aria-label="Communication channel" value={channel} onChange={e => setChannel(e.target.value)}>{["ALL", "EMAIL", "CALL", "SMS", "NOTE"].map(c => <option key={c}>{c}</option>)}</select></div>
     {!communications.length && <p className="muted">No linked communication yet.</p>}
-    {communications.filter(c => channel === "ALL" || c.channel === channel).map(c => <details key={c.id} className="workflow-task"><summary>{c.channel === "CALL" ? "Call" : c.channel === "SMS" ? "Text" : c.channel === "NOTE" ? "Internal note" : "Email"} · {c.subject ?? c.summary?.slice(0, 70) ?? c.status} · {fmtDateTime(c.at)}</summary>
-      <p className="small">{c.direction.toLowerCase()} · {c.status.toLowerCase()}{c.from ? ` · ${c.from}` : ""}</p>
-      {c.to?.length && <p className="small">To: {c.to.join(", ")}</p>}{c.actorId && <p className="small">Handled by: {c.actorId === "crm:initial-ai" ? "Brian Cole (initial AI email)" : team.find(t => t.frontId === c.actorId || t.dialpadId === c.actorId || t.userId === c.actorId)?.name ?? "Unmapped teammate"}</p>}
+    {communications.filter(c => channel === "ALL" || c.channel === channel).map(c => <details key={c.id} className="workflow-task"><summary>{c.channel === "CALL" ? "Call" : c.channel === "SMS" ? "Text" : c.channel === "NOTE" ? "Internal note" : "Email"} · {c.subject || c.summary?.slice(0, 70) || (c.channel === "SMS" ? c.text?.slice(0, 70) : undefined) || c.status} · {fmtDateTime(c.at)}</summary>
+      <p className="small">{c.direction.toLowerCase()} · {c.status.toLowerCase()}{c.from ? ` · ${c.channel === "SMS" || c.channel === "CALL" ? fmtPhone(c.from) : c.from}` : ""}</p>
+      {c.to?.length && <p className="small">To: {c.to.map(to => c.channel === "SMS" || c.channel === "CALL" ? fmtPhone(to) : to).join(", ")}</p>}{c.actorId && (c.direction === "OUTBOUND" || team.some(t => t.frontId === c.actorId || t.dialpadId === c.actorId || t.userId === c.actorId)) && <p className="small">Handled by: {c.actorId === "crm:initial-ai" ? "Brian Cole (initial AI email)" : team.find(t => t.frontId === c.actorId || t.dialpadId === c.actorId || t.userId === c.actorId)?.name ?? "Unmapped teammate"}</p>}
       {c.channel === "CALL" && <><p className="muted small">{c.enrichment}</p><CallOutcome communication={c} tasks={tasks} onSaved={() => void resource.refetch()} /></>}
       {c.summary && <p>{c.summary}</p>}<p style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{c.text || "Content is unavailable. Open the source for details."}</p>
       {c.channel === "EMAIL" && c.direction === "OUTBOUND" && <p className="muted small">{c.seenAt ? `Seen signal: ${fmtDateTime(c.seenAt)}` : c.seenCheckedAt ? "No Seen signal returned" : "Seen status not checked yet"}{c.seenCheckedAt && ` · Checked ${fmtDateTime(c.seenCheckedAt)}`}. An email-open signal does not prove it was read.</p>}
