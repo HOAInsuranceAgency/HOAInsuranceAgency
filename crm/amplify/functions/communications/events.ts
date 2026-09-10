@@ -6,6 +6,7 @@ import { row, save, get, issue, hash, canonical, type Row } from "./store";
 import { recordInbound, recordOutbound, ensureWorkflow, accountRows, makeTask } from "./workflow";
 import { normalizePhone, businessDeadline, type Communication } from "../../../../shared/leadWorkflow";
 import { dialpadBusinessLine } from "./phoneScope";
+import { intakeReferenceFromHtml } from "../lead-intake/brief";
 
 export type EventRecord = { provider: "front" | "dialpad"; payload: Record<string, unknown>; attempts: number; processedAt?: string; snapshot?: { message: FrontMessage; conversationId: string } };
 export interface ConversationLink { accountId: string; conversationId: string; purpose: "PROSPECT" | "CARRIER"; routing?: "SALESPERSON" | "CHAMPION" | "MANUAL" }
@@ -40,7 +41,8 @@ export async function ingestFrontMessage(message: FrontMessage, conversationId?:
     // matching text by itself must never suppress a real prospect message.
     const lines = message.text?.replace(/^<pre>/, "").trimStart().split("\n") ?? [];
     const prefix = `Reference: hoa:${c.environment}:`;
-    const submissionId = lines[0] === "Website submission" && lines[1]?.startsWith(prefix) ? lines[1].slice(prefix.length).trim() : undefined;
+    const submissionId = (lines[0] === "Website submission" && lines[1]?.startsWith(prefix) ? lines[1].slice(prefix.length).trim() : undefined)
+      ?? intakeReferenceFromHtml(message.body, process.env.CRM_BASE_URL);
     const operationId = uid?.data.operationId ?? (submissionId ? `op:intake:${submissionId}` : undefined);
     const operation = operationId ? await get<{ type: string; uid?: string }>(operationId) : undefined;
     if (operation?.data.type === "IMPORT" && operation.data.uid === message.message_uid) return;

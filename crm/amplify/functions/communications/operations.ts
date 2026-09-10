@@ -1,12 +1,13 @@
 import { archiveAllowed } from "./cleanup";
 import { config } from "./config";
 import { get, row, save, issue, commit, put, conflict, retryableStorage, check, type Row } from "./store";
-import { front, ProviderError, assertRecipient, htmlEscape, messageConversation, permittedConversation, type FrontMessage, verifyEmailChannel } from "./providers";
+import { front, ProviderError, assertRecipient, messageConversation, permittedConversation, type FrontMessage, verifyEmailChannel } from "./providers";
 import { ensureWorkflow, recordOutbound } from "./workflow";
 import { dataClient } from "./data";
 import { textLeadAlerts } from "../lead-intake/alerts";
 import type { LeadSummary } from "../lead-intake/sms";
 import type { Submission } from "../lead-intake/handler";
+import { renderIntakeBrief } from "../lead-intake/brief";
 import type { Communication } from "../../../../shared/leadWorkflow";
 
 export interface Operation {
@@ -66,10 +67,11 @@ export async function runOperation(candidate: Row<Operation>) {
       const email = String(submission.data.snapshot.contactEmail ?? "");
       await assertRecipient(email);
       const externalId = `hoa:${c.environment}:${op.data.submissionId}`;
-      const text = `Website submission\nReference: ${externalId}\nReceived: ${submission.data.receivedAt}\n\n${JSON.stringify(submission.data.snapshot, null, 2)}`;
+      const brief = renderIntakeBrief({ snapshot: submission.data.snapshot, receivedAt: submission.data.receivedAt,
+        accountId: op.data.accountId, accountName: wf.data.name, submissionId: op.data.submissionId!, environment: c.environment, crmBaseUrl: process.env.CRM_BASE_URL });
       path = `/inboxes/${c.frontInboxId}/imported_messages`;
       body = { sender: { handle: email, name: [submission.data.snapshot.contactFirstName, submission.data.snapshot.contactLastName].filter(Boolean).join(" ") || wf.data.name },
-        to: [c.frontSender], subject: `Website enquiry — ${wf.data.name}`, body: `<pre>${htmlEscape(text)}</pre>`, body_format: "html", external_id: externalId,
+        to: [c.frontSender], subject: `Website enquiry — ${wf.data.name}`, body: brief.html, body_format: "html", external_id: externalId,
         created_at: Date.parse(submission.data.receivedAt) / 1000, metadata: { is_inbound: true, is_archived: false, should_skip_rules: true, thread_ref: externalId } };
     } else if (op.data.type === "EMAIL") {
       await assertRecipient(op.data.recipient ?? "");
