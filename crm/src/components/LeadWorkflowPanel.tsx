@@ -48,7 +48,7 @@ export default function LeadWorkflowPanel({ accountId, conversationId, onOpen }:
     {onOpen && <CommunicationAccountSummary accountId={workflow.accountId} open={open} />}
     {onOpen && conversationId && <SidebarActivityLinker accountId={workflow.accountId} conversationId={conversationId} onSaved={() => void resource.refetch()} />}
     {notice && <p role="status">{notice}</p>}
-    {resource.data.frontContext && <p className="muted small">Front handler: {team.find(t => t.frontId === resource.data.frontContext?.assigneeId)?.name ?? resource.data.frontContext.assigneeId ?? "Unassigned"} · {resource.data.frontContext.routing === "MANUAL" ? "Manually assigned" : "Follows the lead role"}</p>}
+    {resource.data.frontContext && <p className="muted small">Front handler: {team.find(t => t.frontId === resource.data.frontContext?.assigneeId)?.name ?? (resource.data.frontContext.assigneeId ? "Unmapped teammate" : "Unassigned")} · {resource.data.frontContext.routing === "MANUAL" ? "Manually assigned" : "Follows the lead role"}</p>}
     {workflow.assignmentIssue && <p className="error-text">{workflow.assignmentIssue}</p>}
     <div className="form-grid">
       <ResponsibilitySelect label="Salesperson" value={salesperson} team={team} kind="salesperson" onChange={setSalesperson} disabled={busy} />
@@ -79,7 +79,7 @@ export default function LeadWorkflowPanel({ accountId, conversationId, onOpen }:
     {!communications.length && <p className="muted">No linked communication yet.</p>}
     {communications.filter(c => channel === "ALL" || c.channel === channel).map(c => <details key={c.id} className="workflow-task"><summary>{c.channel === "CALL" ? "Call" : c.channel === "SMS" ? "Text" : c.channel === "NOTE" ? "Internal note" : "Email"} · {c.subject ?? c.summary?.slice(0, 70) ?? c.status} · {fmtDateTime(c.at)}</summary>
       <p className="small">{c.direction.toLowerCase()} · {c.status.toLowerCase()}{c.from ? ` · ${c.from}` : ""}</p>
-      {c.to?.length && <p className="small">To: {c.to.join(", ")}</p>}{c.actorId && <p className="small">Handled by: {team.find(t => t.frontId === c.actorId || t.dialpadId === c.actorId || t.userId === c.actorId)?.name ?? c.actorId}</p>}
+      {c.to?.length && <p className="small">To: {c.to.join(", ")}</p>}{c.actorId && <p className="small">Handled by: {c.actorId === "crm:initial-ai" ? "Brian Cole (initial AI email)" : team.find(t => t.frontId === c.actorId || t.dialpadId === c.actorId || t.userId === c.actorId)?.name ?? "Unmapped teammate"}</p>}
       {c.channel === "CALL" && <><p className="muted small">{c.enrichment}</p><CallOutcome communication={c} tasks={tasks} onSaved={() => void resource.refetch()} /></>}
       {c.summary && <p>{c.summary}</p>}<p style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{c.text || "Content is unavailable. Open the source for details."}</p>
       {c.channel === "EMAIL" && c.direction === "OUTBOUND" && <p className="muted small">{c.seenAt ? `Seen signal: ${fmtDateTime(c.seenAt)}` : c.seenCheckedAt ? "No Seen signal returned" : "Seen status not checked yet"}{c.seenCheckedAt && ` · Checked ${fmtDateTime(c.seenCheckedAt)}`}. An email-open signal does not prove it was read.</p>}

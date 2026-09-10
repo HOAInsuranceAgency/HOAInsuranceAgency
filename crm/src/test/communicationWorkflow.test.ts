@@ -53,7 +53,7 @@ import { archiveAllowed } from "../../amplify/functions/communications/cleanup";
 import { remainingDelay, rememberBudget } from "../../amplify/functions/communications/budget";
 import { enqueueOperation, runOperation, type Operation } from "../../amplify/functions/communications/operations";
 import { permittedConversation, FrontScopeError } from "../../amplify/functions/communications/providers";
-import { dialpadEvent, processEvent } from "../../amplify/functions/communications/events";
+import { dialpadEvent, processEvent, ingestFrontMessage } from "../../amplify/functions/communications/events";
 const NOW = "2026-09-08T14:00:00.000Z";
 const record = (id: string) => h.records.get(`comms:${id}`)!;
 const entries = (kind: string) => [...h.records.values()].filter(r => r.kind === kind);
@@ -171,6 +171,29 @@ describe("durable public capture", () => {
   });
 });
 describe("Front durable delivery", () => {
+  it.each(["<pre>Website submission\nReference: hoa:main:s1\nDetails</pre>", "Website submission\n\nChanged formatting"])("does not turn an imported form into a prospect reply: %s", async text => {
+    await lead();
+    await save(row("LINK", "front-link:cnv_a", { accountId: "a1", conversationId: "cnv_a", purpose: "PROSPECT" }, { accountId: "a1" }));
+    await save(row("OPERATION", "op:intake:s1", { type: "IMPORT", uid: "uid_intake" }, { accountId: "a1" }));
+    await save(row("UID", "front-uid:uid_intake", { operationId: "op:intake:s1", accountId: "a1" }));
+    await ingestFrontMessage({ id: "msg_intake", message_uid: "uid_intake", is_inbound: true, created_at: Date.parse(NOW) / 1000, text }, "cnv_a");
+    expect(entries("TASK")).toHaveLength(0); expect(entries("COMMUNICATION")).toHaveLength(0);
+    await recordOutbound(await inbound("ai", NOW, { direction: "OUTBOUND", actorId: "crm:initial-ai", status: "SENT" }));
+    expect(entries("TASK")).toHaveLength(1); expect(entries("TASK")[0].data.kind).toBe("FOLLOW_UP");
+  });
+  it("recognizes a verified import when its UID index write was interrupted", async () => {
+    await lead();
+    await save(row("OPERATION", "op:intake:s1", { type: "IMPORT", uid: "uid_intake" }, { accountId: "a1" }));
+    await ingestFrontMessage({ id: "msg_intake", message_uid: "uid_intake", is_inbound: true, created_at: Date.parse(NOW) / 1000, text: "<pre>Website submission\nReference: hoa:main:s1\nDetails</pre>" }, "cnv_a");
+    expect(entries("COMMUNICATION")).toHaveLength(0);
+  });
+  it("still creates response work for a real reply quoting the intake reference", async () => {
+    await lead();
+    await save(row("LINK", "front-link:cnv_a", { accountId: "a1", conversationId: "cnv_a", purpose: "PROSPECT" }, { accountId: "a1" }));
+    await save(row("OPERATION", "op:intake:s1", { type: "IMPORT", uid: "uid_intake" }, { accountId: "a1" }));
+    await ingestFrontMessage({ id: "msg_reply", message_uid: "uid_reply", is_inbound: true, created_at: Date.parse(NOW) / 1000, text: "Website submission\nReference: hoa:main:s1\nPlease call me." }, "cnv_a");
+    expect(entries("TASK")[0].data.kind).toBe("RESPONSE");
+  });
   it("clears only the recovered delivery warning when Front confirms an accepted email", async () => {
     await lead();
     const op = await save(row<Operation>("OPERATION", "op:recovered", { type: "EMAIL", accountId: "a1", state: "ACCEPTED", attempts: 1, uid: "uid_recovered", recipient: "prospect@example.com", error: "Waiting for the Front intake conversation", failures: 3 }, { accountId: "a1" }));

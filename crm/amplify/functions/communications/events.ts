@@ -32,7 +32,19 @@ export async function ingestFrontMessage(message: FrontMessage, conversationId?:
   const link = await get<ConversationLink>(`front-link:${cnv}`);
   const c = await config();
   if (!c.activatedAt || message.created_at * 1000 < Date.parse(c.activatedAt)) return;
-  if (String(message.metadata?.external_id ?? "").startsWith(`hoa:${c.environment}:`) || message.text?.startsWith("Website submission\nReference: hoa:")) return;
+  if (message.is_inbound && message.message_uid) {
+    const uid = await get<{ operationId: string }>(`front-uid:${message.message_uid}`);
+    // Front does not return external_id in message metadata, and its plain
+    // text changes with body_format. Identify our import by its durable UID.
+    // The reference is only a lookup fallback if saving the UID index failed;
+    // matching text by itself must never suppress a real prospect message.
+    const lines = message.text?.replace(/^<pre>/, "").trimStart().split("\n") ?? [];
+    const prefix = `Reference: hoa:${c.environment}:`;
+    const submissionId = lines[0] === "Website submission" && lines[1]?.startsWith(prefix) ? lines[1].slice(prefix.length).trim() : undefined;
+    const operationId = uid?.data.operationId ?? (submissionId ? `op:intake:${submissionId}` : undefined);
+    const operation = operationId ? await get<{ type: string; uid?: string }>(operationId) : undefined;
+    if (operation?.data.type === "IMPORT" && operation.data.uid === message.message_uid) return;
+  }
   const id = `comm:front:${message.id}`, old = await get<Communication>(id);
   const comm: Communication = { ...old?.data, id, provider: "front", providerId: message.id, accountId: link?.data.accountId,
     conversationId: cnv, channel: "EMAIL", direction: message.is_inbound ? "INBOUND" : "OUTBOUND", at: eventAt(message.created_at),
