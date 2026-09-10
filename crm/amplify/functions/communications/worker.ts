@@ -49,13 +49,14 @@ export async function dispatchTask(candidate: Row<LeadTask>) {
   catch { await issue(task.id, "The responsible teammate needs reassignment", task.accountId); return; }
   const id = `notice:${task.id}:${recipient}`;
   const oldNotice = await get(id);
+  const taskAccountId = task.data.accountId;
   const sources = await Promise.all((task.data.sourceIds ?? (task.data.episode ? [task.data.episode] : [])).map(id => get<Communication>(id)));
-  const guidance = leadActionGuidance(task.data, sources.flatMap(r => r ? [r.data] : []), escalated);
+  const guidance = leadActionGuidance(task.data, sources.flatMap(r => r?.accountId === taskAccountId ? [r.data] : []), escalated);
   const writes = [check(wf), put(row("TASK", task.id, { ...task.data, attempts: 0, error: undefined, firstFailureAt: undefined, notifiedAt: task.data.notifiedAt ?? now, notifiedRecipientId: task.data.role === "CHAMPION" ? wf.data.championId : wf.data.salespersonId, ...(escalated ? { escalatedAt: now, escalatedRecipientId: recipient } : {}), version: task.version + 1 }, { accountId: task.accountId, previous: task, dueAt: escalated ? undefined : task.data.escalationAt }), task)];
   writes.push(put(row("NOTIFICATION", id, { recipient, accountId: task.accountId, taskId: task.id, title: guidance.action, why: guidance.why, instruction: guidance.after, dueAt: task.data.dueAt, urgency: escalated ? "ESCALATED" : "DUE", at: now }, { accountId: task.accountId, previous: oldNotice }), oldNotice));
   if (escalated && !task.data.notifiedAt && task.data.role === "SALESPERSON" && wf.data.salespersonId && wf.data.salespersonId !== recipient) {
     const key = `notice:${task.id}:${wf.data.salespersonId}`, previous = await get(key);
-    const direct = leadActionGuidance(task.data, sources.flatMap(r => r ? [r.data] : []), false);
+    const direct = leadActionGuidance(task.data, sources.flatMap(r => r?.accountId === taskAccountId ? [r.data] : []), false);
     writes.push(put(row("NOTIFICATION", key, { recipient: wf.data.salespersonId, accountId: task.accountId, taskId: task.id, title: direct.action, why: direct.why, instruction: direct.after, dueAt: task.data.dueAt, urgency: "DUE", at: now }, { accountId: task.accountId, previous }), previous));
   }
   const cnv = task.data.conversationId ?? wf.data.conversationId;

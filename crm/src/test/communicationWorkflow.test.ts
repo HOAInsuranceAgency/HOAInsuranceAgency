@@ -1061,6 +1061,16 @@ describe("9am reminders with a clear next step", () => {
     expect(h.front.mock.calls.filter(([,method]) => method === "POST" || method === "PATCH")).toHaveLength(0);
     expect(entries("OPERATION").filter(o => o.data.reminder).every(o => o.data.state === "SUPPRESSED")).toBe(true);
   });
+  it("never includes another lead's message in a reminder preview", async () => {
+    const original = await textRequest();
+    await save(row("COMMUNICATION", "comm:foreign", { id: "comm:foreign", accountId: "a2", channel: "SMS", direction: "INBOUND", text: "Unrelated private message" }, { accountId: "a2" }));
+    await save(row("TASK", original.id, { ...original.data, sourceIds: ["comm:foreign"] }, { accountId: "a1", previous: original, dueAt: original.dueAt }), original);
+    vi.setSystemTime("2026-09-10T13:00:00.000Z");
+    const { dispatchTask } = await import("../../amplify/functions/communications/worker"); await dispatchTask(original);
+    const comment = entries("OPERATION").find(o => o.data.reminder && o.data.type === "COMMENT")!;
+    expect(comment.data.text).not.toContain("Unrelated private message");
+    expect(comment.data.text).not.toContain("Original request:");
+  });
   it("does not reopen when an explanation has an uncertain delivery result", async () => {
     await morningRequest();
     const comment = (await get<Operation>(entries("OPERATION").find(o => o.data.reminder && o.data.type === "COMMENT")!.id))!;
