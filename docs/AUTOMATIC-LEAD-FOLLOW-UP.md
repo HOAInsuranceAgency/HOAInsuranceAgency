@@ -28,6 +28,26 @@ Call completion uses Dialpad's connection and end timestamps, with the existing 
 
 Automated checks cover reply-driven completion, SMS delivery, completed versus unanswered/in-progress calls, duplicate and out-of-order events, carrier separation, other contacts/accounts, preserved deliberate promises, interrupted writes, bounded histories, automatic dates, and the absence of routine completion forms. Deployment and browser verification are recorded below when complete. Real provider events and the 9 a.m. batch remain separate live acceptance checks.
 
-Repository checks are being rerun after the live draft correction; final results appear below. The 156-page website build and backend synthesis also passed. No production configuration or branch was changed.
+Repository checks: **2,087 tests across 105 files passed**, along with the CRM build and backend type check. The 156-page website build and backend synthesis passed earlier in this change; both hosted application deployments also succeeded. No production configuration or branch was changed.
 
 The first live check exposed a shared Front draft being classified as sent. Front includes an explicit `is_draft` flag in its [message object](https://dev.frontapp.com/reference/messages). Ingestion and saved history now retain and check that flag, reject unknown sending status, and repair earlier draft projections without discarding the original commitment. Drafts neither count as last contact nor permit cleanup. Tests cover draft-to-send transitions, stale replay, interrupted repair, and grouped requests.
+
+
+## Staging deployment and live acceptance
+
+- Implementation: `a5c8c40`; draft handling and contact pairing correction: `668d9b3`.
+- Amplify CRM staging **192: SUCCEED**; website staging **191: SUCCEED**.
+- Production/main remained `1b17a22d00227f6e23728b589a22b9f77d75a219`.
+
+On September 10, the controlled Cedar test used the already-authorized prospect address `jake@jakegreasley.com` and staging sender `jake+testing@protectmyhoa.com`. Only one email was sent. The existing linked inbound text said “TEST: please call me about the documents.”
+
+1. Before sending, the deployed history repair identified the old draft projection, removed its premature follow-up, and retained the original response commitment. Draft repair was observed at **6:38:45 p.m. Eastern**.
+2. The sidebar showed the original text, the action to take, and automatic tracking guidance. It contained no routine completion/outcome form or date picker.
+3. At **6:41:13 p.m.**, the test reply was sent with Front’s **Send as open** option. Front retained the message ID and updated its timestamp from draft creation to the actual send time.
+4. At **6:41:43 p.m.**, the matching response task became **COMPLETE**, linked to the actual sent email. The inbound text was resolved by that same email. The next follow-up was automatically set to **Monday, September 14, 9 a.m. Eastern**, with champion escalation **Tuesday, September 15, 9 a.m.** if still outstanding.
+5. The sidebar updated automatically. No Refresh, Complete, note, outcome, or date entry was used to produce this result.
+6. At **6:42:45 p.m.**, cleanup was confirmed and Front displayed **Resolved in CRM Staging**. The sole open task was the Monday follow-up. **Zero internal notes** were created by this test.
+
+Evidence: account `7b1b11b0-eb7a-4170-87ae-97cc13733888`, conversation `cnv_1hxxvna2`, sent email `msg_2tx9jehm`, inbound SMS `6305271534624768`. The response and source activity both point to the sent email as their completion evidence.
+
+This verifies the live email-to-linked-text response path, automatic follow-up scheduling, sidebar refresh, and inbox cleanup. Call completion, unsuccessful attempts, failed sends, carrier separation, and replay/concurrency cases passed automated tests; this run did not place a new live call or send another text. The first real 9 a.m. reminder delivery and production cutover remain separate acceptance checks.
