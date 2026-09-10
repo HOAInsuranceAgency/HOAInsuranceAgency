@@ -18,12 +18,12 @@ function eventAt(value: unknown) {
   const n = Number(value); const at = n > 10_000_000_000 ? n : n * 1000;
   return Number.isFinite(at) && at > 0 ? new Date(at).toISOString() : new Date().toISOString();
 }
-export function classifyEmail(message: Pick<FrontMessage, "text" | "subject" | "metadata">): Communication["classification"] {
+export function classifyEmail(message: Pick<FrontMessage, "text" | "subject" | "metadata" | "attachments">): Communication["classification"] {
   const metadata = message.metadata ?? {};
   const automatic = metadata.auto_submitted || metadata.autoSubmitted;
   if (automatic && automatic !== "no") return "AUTOMATIC";
   if (/^(automatic reply|auto.?reply|out of office|delivery status notification|undeliverable)/i.test(message.subject ?? "")) return "AUTOMATIC";
-  return message.text?.trim() ? "SUBSTANTIVE" : "REVIEW";
+  return message.text?.trim() || message.attachments?.length ? "SUBSTANTIVE" : "REVIEW";
 }
 export async function ingestFrontMessage(message: FrontMessage, conversationId?: string) {
   const cnv = conversationId ?? messageConversation(message);
@@ -53,7 +53,7 @@ export async function ingestFrontMessage(message: FrontMessage, conversationId?:
     conversationId: cnv, channel: "EMAIL", direction: message.is_inbound ? "INBOUND" : "OUTBOUND", at: eventAt(message.created_at),
     attachments: message.attachments?.map(a => ({ id: a.id, filename: a.filename, content_type: a.content_type, size: a.size })), subject: message.subject, text: message.text?.slice(0, 50000), from: message.recipients?.find(r => r.role === "from")?.handle,
     to: message.recipients?.filter(r => r.role === "to").map(r => r.handle), actorId: message.author?.id, status: message.is_inbound ? "RECEIVED" : "SENT",
-    classification: classifyEmail(message), version: (old?.version ?? 0) + 1 };
+    classification: classifyEmail(message), purpose: link?.data.purpose, version: (old?.version ?? 0) + 1 };
   // Duplicate event delivery must not reopen a completed episode.
   if (old?.data.workflowApplied || old?.data.resolved) return;
   if (!old || old.accountId !== comm.accountId || old.data.conversationId !== cnv) await save(row("COMMUNICATION", id, comm, { accountId: comm.accountId, previous: old,
@@ -61,7 +61,11 @@ export async function ingestFrontMessage(message: FrontMessage, conversationId?:
   if (!link) { await issue(id, "Link this Front enquiry to the correct lead"); return; }
   const linkingIssue = await get(`issue:${id}`);
   if (linkingIssue && !linkingIssue.data.resolved) await save(row("ISSUE", linkingIssue.id, { ...linkingIssue.data, resolved: true }, { accountId: comm.accountId, previous: linkingIssue }), linkingIssue);
-  if (link.data.purpose === "CARRIER") { if (comm.direction === "INBOUND" && comm.classification !== "AUTOMATIC") await recordInbound(comm, "CARRIER"); return; }
+  if (link.data.purpose === "CARRIER") {
+    if (comm.direction === "INBOUND" && comm.classification !== "AUTOMATIC") await recordInbound(comm, "CARRIER");
+    else if (comm.direction === "OUTBOUND") await recordOutbound(comm);
+    return;
+  }
   if (comm.direction === "INBOUND" && comm.classification !== "AUTOMATIC") await recordInbound(comm);
   else if (comm.direction === "OUTBOUND") {
     await recordOutbound(comm);
@@ -124,7 +128,7 @@ export async function dialpadEvent(p: Json) {
   if (isCall) providerId = await uniteCalls([p.master_call_id, p.entry_point_call_id, p.call_id, p.operator_call_id].filter(Boolean).map(str));
   const external = normalizePhone(str(p.external_number || contact.phone_number || contact.phone || firstNumber(inbound ? p.from_number : p.to_number)));
   const id = `comm:dialpad:${isCall ? "call" : "sms"}:${providerId}`, old = await get<Call>(id);
-  const exact = await get<{ accountId: string; conversationId?: string }>(`activity-link:${id}`);
+  const exact = await get<{ accountId: string; conversationId?: string; purpose?: "PROSPECT" | "CARRIER" }>(`activity-link:${id}`);
   const phone = external ? await get<{ accountId: string }>(`phone-link:${external}`) : undefined;
   const accountId = exact?.data.accountId ?? old?.accountId ?? phone?.data.accountId;
   const at = old?.data.at && old.data.at < sourceAt ? old.data.at : sourceAt;
@@ -134,12 +138,16 @@ export async function dialpadEvent(p: Json) {
     legs[legId] = { connected: !!(previous?.connected || p.date_connected || p.state === "connected"), ended: !!(previous?.ended || p.state === "hangup" || p.state === "voicemail" || p.date_ended) };
   }
   const status = callStatus(legs);
+  const connectedLegs = Object.values(legs).filter(leg => leg.connected);
+  const finished = isCall && (connectedLegs.length ? connectedLegs.every(leg => leg.ended) : Object.values(legs).every(leg => leg.ended));
   const comm: Communication & { legs?: typeof legs } = { ...old?.data, id, accountId, provider: "dialpad", providerId, conversationId: exact?.data.conversationId ?? old?.data.conversationId,
     channel: isCall ? "CALL" : "SMS", direction: p.direction === "inbound" ? "INBOUND" : "OUTBOUND", at, from: p.direction === "inbound" ? external ?? undefined : line,
     to: [p.direction === "inbound" ? line : external ?? ""], actorId: str(p.sender_id || target.id),
     status: isCall ? status : smsStatus(old?.data.status, str(p.message_status).toUpperCase(), p.direction === "inbound"),
     text: str(p.text || p.transcription_text || old?.data.text).slice(0, 50000), summary: str(p.recap_summary || old?.data.summary).slice(0, 20000),
     enrichment: isCall ? (p.transcription_text || p.recap_summary ? "Available" : old?.data.enrichment ?? "Transcript or summary unavailable or still processing") : undefined,
+    purpose: exact?.data.purpose ?? old?.data.purpose,
+    endedAt: finished ? [old?.data.endedAt, p.date_ended ? eventAt(p.date_ended) : undefined].filter((s): s is string => !!s).sort().at(-1) : undefined,
     version: (old?.version ?? 0) + 1, ...(isCall ? { legs } : {}) };
   await save(row("COMMUNICATION", id, comm, { accountId, previous: old,
     dueAt: isCall && status === "MISSED" ? old?.data.status === "MISSED" ? old.dueAt : new Date(Date.now() + 180_000).toISOString() : undefined }), old);
@@ -149,6 +157,15 @@ export async function dialpadEvent(p: Json) {
     if (!await get(`triage:${id}`)) await save(row("TRIAGE", `triage:${id}`, { communicationId: id, dueAt, at, phone: external, resolved: false }, { dueAt }));
   }
   if (isCall) await queueCallSync(providerId);
+  if (accountId && (isCall || comm.direction === "OUTBOUND")) await recordOutbound(comm);
+  if (accountId && !isCall && comm.direction === "OUTBOUND" && ["FAILED", "UNDELIVERED"].includes(comm.status)) {
+    await issue(`sms-delivery:${id}`, "A text could not be delivered. Check the number and contact the prospect.", accountId);
+    const taskId = `task:correction:${id}`, previous = await get<import("../../../../shared/leadWorkflow").LeadTask>(taskId);
+    if (!previous || previous.data.status !== "OPEN") {
+      const task = await makeTask({ id: taskId, accountId, title: "Correct failed text delivery", kind: "CORRECTION", conversationId: comm.conversationId });
+      await save(row("TASK", taskId, task, { accountId, previous, dueAt: taskWakeAt(task) }), previous);
+    }
+  }
   if (accountId && !isCall && !comm.workflowApplied && comm.direction === "INBOUND") {
     if (/^\s*(stop|unsubscribe|cancel|end|quit)\s*$/i.test(comm.text ?? "")) { await issue(`optout:${id}`, "Prospect opted out of texts; respect the Dialpad contact preference", accountId); return; }
     await recordInbound(comm);

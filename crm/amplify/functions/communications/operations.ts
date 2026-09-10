@@ -60,6 +60,13 @@ export async function runOperation(candidate: Row<Operation>) {
       await importAttachment(op.data); await transition(op, { state: "CONFIRMED" }); return;
     }
     const wf = await ensureWorkflow(op.data.accountId);
+    let inboundSource: Row<Communication> | undefined;
+    if (op.data.type === "REOPEN" && op.id.startsWith("op:inbound:")) {
+      inboundSource = await get<Communication>(op.id.slice("op:inbound:".length));
+      if (inboundSource && inboundSource.accountId === op.accountId && inboundSource.data.resolved) {
+        await transition(op, { state: "SUPPRESSED", error: "This request was already answered" }); return;
+      }
+    }
     // Retire old queued reminder reopens: their old notices contain no reason.
     // The migrated task remains open and its next morning escalation is retained.
     if (op.data.type === "REOPEN" && op.id.startsWith("op:reopen:notice:") && !op.data.reminder) {
@@ -134,7 +141,7 @@ export async function runOperation(candidate: Row<Operation>) {
       }
     }
     const leased = row("OPERATION", op.id, { ...op.data, state: "LEASED" as const, attempts: op.data.attempts + 1, leaseUntil: new Date(Date.now() + 180_000).toISOString() }, { accountId: op.accountId, previous: op, dueAt: new Date(Date.now() + 180_000).toISOString() });
-    await commit([put(leased, op), ...(["EMAIL", "ASSIGN"].includes(op.data.type) || reminderTask ? [check(wf)] : []), ...(reminderTask ? [check(reminderTask)] : [])]);
+    await commit([put(leased, op), ...(["EMAIL", "ASSIGN"].includes(op.data.type) || reminderTask ? [check(wf)] : []), ...(reminderTask ? [check(reminderTask)] : []), ...(inboundSource ? [check(inboundSource)] : [])]);
     op = leased;
     posted = true;
     if (op.data.type === "SMS_ALERT") {
@@ -201,7 +208,7 @@ async function resolveAccepted(op: Row<Operation>) {
     const comm: Communication = { actorId: "crm:initial-ai", id: `comm:front:${message.id}`, provider: "front", providerId: message.id, accountId: op.accountId, conversationId,
       channel: "EMAIL", direction: "OUTBOUND", at, subject: op.data.subject, text: op.data.text, to: [op.data.recipient!], status: "SENT", version: 1 };
     const previous = await get<Communication>(comm.id);
-    if (!previous) await save(row("COMMUNICATION", comm.id, comm, { accountId: op.accountId, dueAt: new Date(Date.now() + 900_000).toISOString() }));
+    await save(row("COMMUNICATION", comm.id, { ...previous?.data, ...comm, classification: "SUBSTANTIVE" }, { accountId: op.accountId, previous, dueAt: previous?.dueAt ?? new Date(Date.now() + 900_000).toISOString() }), previous);
     await recordOutbound(comm); await updateReply(op.data, "SENT", undefined, at);
   }
   await transition(op, { state: "CONFIRMED", messageId: message.id, conversationId });

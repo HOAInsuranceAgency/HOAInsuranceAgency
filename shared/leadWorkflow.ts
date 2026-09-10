@@ -20,6 +20,7 @@ export interface LeadTask {
   sourceIds?: string[];
   reason?: string; notifiedAt?: string; escalatedAt?: string; version: number;
   notifiedRecipientId?: string; escalatedRecipientId?: string;
+  completedByCommunicationId?: string;
 }
 export interface Communication {
   id: string; accountId?: string; channel: "EMAIL" | "CALL" | "SMS" | "NOTE";
@@ -31,6 +32,9 @@ export interface Communication {
   resolved?: boolean; workflowApplied?: boolean; version: number;
   attachments?: { id: string; filename: string; content_type: string; size: number }[];
   outcome?: string; outcomeBy?: string; outcomeAt?: string; enrichment?: string;
+  endedAt?: string; purpose?: "PROSPECT" | "CARRIER";
+  contactApplied?: boolean; resolvedByCommunicationId?: string;
+  contactAppliedKind?: "CONTACT" | "ATTEMPT";
 }
 export interface IntegrationConfig {
   environment: string; defaultUserId?: string; holidays: string[]; paused: boolean;

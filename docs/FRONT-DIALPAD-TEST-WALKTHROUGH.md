@@ -117,15 +117,15 @@ Submit once through each row below, with a distinct test identity or address. Re
 
 **Expected:** a Front Seen signal is reflected in CRM when available. Otherwise CRM says it has not checked, no signal was returned, or the status is unavailable—it must not assert the recipient has not read it. The deadline is unchanged and no email is resent. Image blocking and mail-provider privacy/proxy behavior affect open signals; this is not proof of human reading. [Front explains these limits](https://help.front.com/en/articles/2034).
 
-### 11 — Receive a reply, then handle it explicitly
+### 11 — Reply normally and let the CRM update the work
 
 1. From the test prospect mailbox, reply to TEST Oak's AI email: **Please clarify what documents you need.**
-2. In CRM, verify the inbound email appears and **Respond to prospect** is in **Next actions** and **Lead follow-up → Needs attention**. Write down the due time.
-3. Send another reply about the same unanswered request a few minutes later. Refresh.
-4. Reply as the salesperson in Front. Then return to CRM and select **Record outcome** on the specific response task.
-5. Record what happened, select **Record next action or waiting commitment**, and enter **Wait for test documents** with a future due time. Save.
+2. Verify the inbound message and response deadline appear in the lead workspace.
+3. Send another message about the same unanswered request. Its deadline must not move later.
+4. Reply as the salesperson in Front. Do not enter a note, outcome, or due date in CRM.
+5. Refresh the lead workspace after background processing.
 
-**Expected:** the first substantive reply replaces the stale automatic waiting follow-up for that conversation. Additional unanswered replies do not push its deadline later. Sending a human email alone does not prove which open request was resolved; the explicit outcome closes the selected task and creates its successor. Other independent tasks remain open.
+**Expected:** the sent email is the record. The matching response task closes automatically and a follow-up is scheduled for 9 a.m. Eastern on the second business date after sending. Eligible email conversations archive automatically. The original messages remain in history. Other contacts, carrier requests, and newer unanswered messages remain separate.
 
 ### 12 — Automatic replies do not count as prospect handling
 
@@ -139,7 +139,7 @@ Submit once through each row below, with a distinct test identity or address. Re
 1. Submit **TEST Takeover** through a form and immediately open its CRM lead, during the eight-minute window.
 2. Choose **Handle personally / cancel pending AI reply** in the CRM, or **Conversation tools → Handle personally** in Front, before any AI send has started.
 3. Wait beyond the normal reply window, then inspect the test mailbox, Front and delivery queue.
-4. Add a dated next action and record the human follow-up plan.
+4. Send the human reply in Front. Verify the email is recorded and the next follow-up is scheduled automatically.
 
 **Expected:** the queued initial AI reply is suppressed and no automatic first-contact email arrives. If a send was already dispatched or its result is uncertain, the notice must explain that cancellation is not recall. Check Front before sending a replacement yourself. A missed/unanswered call alone should not count as human resolution.
 
@@ -171,24 +171,24 @@ Submit once through each row below, with a distinct test identity or address. Re
 
 ## Ownership, commitments and deadlines
 
-### 17 — Create and deliberately change a commitment
+### 17 — Let the CRM choose the next follow-up
 
-1. On TEST Pine, click **Add action**. Set Action to **TEST request carrier clarification**, role **Deal champion**, type **carrier**, and a future due time. Enter a reason and **Save action**.
-2. Add a separate salesperson action. Verify both are visible.
-3. Use **Edit action** on one action, change its due time, supply a reason, and save. Inspect the account's **Activity** tab.
-4. Try saving a past date or leaving the required reason empty, then cancel the invalid edit.
+1. Send a normal email or shared-line text on a linked test lead.
+2. Verify its follow-up is scheduled automatically for 9 a.m. Eastern on the second business date after contact. There should be no routine due-date picker or completion form.
+3. Create a separate test conversation, link it to the same lead with purpose **Carrier**, and send a controlled incoming question from your test mailbox.
+4. Reply to that carrier conversation in Front.
 
-**Expected:** commitments have a named role and a date. A deliberate edit changes only the selected commitment and leaves an activity record. A new promise cannot be saved in the past or without a reason. Front snoozes are not the way to change this date.
+**Expected:** the carrier response closes automatically and the next carrier follow-up belongs to the deal champion. Prospect and carrier work stay separate. Existing deliberately dated promises remain intact until handled; staff do not choose routine dates.
 
 ### 18 — Test the 9 a.m. reminder
 
-1. Before the next business morning, add a salesperson action called **TEST morning reminder**, due at **5 p.m. on that business day**.
-2. Archive or snooze the linked Front conversation beyond that date. Keep the CRM action unchanged.
-3. At **9 a.m. Eastern**, allow a few processing cycles. Check **My reminders** and Front.
-4. Read the internal reminder's **Why this is back**, **Next step**, responsible teammate and deadline. Check that the sidebar gives the same next step and a **Record outcome** button.
-5. Verify the due time remains 5 p.m. At 5 p.m., it may become overdue, but there should be no new scheduled reminder or reopen.
+1. Send a controlled incoming prospect request after business hours. Verify its response deadline is 5 p.m. on the next business day.
+2. Archive or snooze the linked Front conversation beyond that date without changing the CRM deadline.
+3. At 9 a.m. Eastern on that business day, allow a few processing cycles. Check **My reminders** and Front.
+4. Read **Why this is back**, the original request, the next step, responsible teammate, and deadline. No completion form should be required.
+5. Leave this test request unanswered through 5 p.m. It may become overdue, but there should be no new scheduled reminder at 5 p.m.
 
-**Expected:** the 9 a.m. reminder explains why the conversation returned and what to do. Handle the request, choose **Record outcome**, and save the next follow-up. Cleanup is requested automatically once the remaining work is safely tracked. Missed morning batches wait until the next business morning; current work remains visible in CRM. Do not change the computer clock or move a live reminder to the afternoon to accelerate this test.
+**Expected:** the morning reminder explains why the conversation returned. Reply, call, or text through the connected tools to handle it; the communication supplies the record and the next follow-up is automatic. Unanswered work escalates at 9 a.m. on the next business date. Do not change the computer clock or manipulate live dates to accelerate this test.
 
 ### 19 — Verify the real business-day schedule and escalation
 
@@ -292,14 +292,15 @@ Make a fresh controlled inbound and outbound call for each row. Capture the time
 
 **Expected:** the combined request keeps the earliest applicable deadline and source activity. Redundant tasks close with a recorded reason; unrelated work remains. If linking already grouped the same episode into one task, record that result rather than inventing duplicates to combine.
 
-### 29 — Record an attempt versus a resolution
+### 29 — Let calls record attempts and completed contact automatically
 
-1. Call the test mobile back and let it go unanswered. Link the outbound activity; expand it in CRM and choose **Record call outcome → No answer / voicemail left**. Add notes and save.
-2. Verify the existing response/callback task is still open with its original due time.
-3. Make an answered test call. Record **Request handled**, **Follow-up required**, or **Waiting on documents**. Select the exact **Request this call resolved**, add notes and a future **Next action or waiting commitment**, and save.
-4. Verify that another unrelated request stays open. Check CRM's internal note/history.
+1. Return a linked test prospect's call through Dialpad and let it go unanswered. Do not fill out a call outcome or note.
+2. Verify the attempt appears in history and the existing unanswered callback keeps its original deadline. A first outbound attempt with no existing callback schedules a retry for the next business morning.
+3. Make an answered test call and end it. Wait for the provider event to be processed.
+4. Verify the matching response/callback closes, the completed call remains in history, and the next follow-up is two business days later at 9 a.m.
+5. Verify unrelated contact/carrier work remains open. A ringing or still-active call must not count as completed contact.
 
-**Expected:** an attempt is logged without erasing the commitment. A human-confirmed resolution closes only the selected request and records the successor. Wrong number/unrelated classifications require human review; they must not silently dispose of unrelated obligations. A call connection alone is insufficient.
+**Expected:** Dialpad supplies the call record and available transcript/summary. No duplicate notes, completion form, or due-date entry are required. A linked completed call satisfies the contact reminder; it does not prove documents arrived or bind the lead. If a number cannot be matched to one lead, identify the correct lead before expecting automatic progression.
 
 ## Cleanup, outcomes and operational checks
 
@@ -311,15 +312,15 @@ Make a fresh controlled inbound and outbound call for each row. Capture the time
 4. On another lead with an unresolved reply or missed call, try the same cleanup action. Then test a due/overdue action.
 5. Let the archived lead's commitment become due and verify it reopens. Compare the personal and shared Front views.
 
-**Expected:** only eligible conversations archive. Unanswered requests, overdue work, missing owners, uncertain delivery or sync problems block cleanup. No CRM commitment is completed or postponed. Completing a task alone need not trigger an archive; use the explicit cleanup action when checking an existing conversation.
+**Expected:** only eligible conversations archive. Unanswered requests, overdue work, missing owners, uncertain delivery or sync problems block cleanup. No CRM commitment is completed or postponed. A successful linked reply or completed call requests cleanup automatically. Existing unrelated work and sync checks still apply.
 
-### 31 — Lost, disqualified, reopened and bound outcomes
+### 31 — Lost, not a fit, reopened and bound decisions
 
-1. On a disposable test lead, use **Record outcome → Lead lost**, with a reason. Verify its obsolete open tasks close after background processing.
-2. Select **Reopen lead with a next action**, enter a future commitment/reason, and save. Confirm there is no second initial AI email. Repeat the outcome check with **Lead disqualified** on another test lead.
-3. For the bind case, use a prepared fictional staging quote through the existing **Quotes / bind workflow**, with the administrator present to satisfy its existing validation and avoid external carrier/customer actions. Do not simulate binding by changing a communication status.
+1. On a disposable test lead, open **Conversation tools → Lead status**, choose **Lost**, and click **Update lead status**. Verify obsolete work closes after background processing.
+2. Use **Reopen lead**. Verify the next follow-up is scheduled automatically and no second initial AI email is sent. Repeat with **Not a fit** on another test lead.
+3. Test binding only through the existing quote/bind workflow using a prepared fictional staging fixture.
 
-**Expected:** lost/disqualified outcomes retire obsolete work; reopening restores an explicit plan and human handling. A successfully validated bind converts the account through the existing CRM flow and retires obsolete lead tasks. Call outcomes, Seen signals and AI summaries cannot bind a lead. Keep the bind portion Blocked until its staging fixture is ready.
+**Expected:** these are explicit business decisions. Ordinary emails, texts, calls, Seen signals, and AI summaries cannot mark a lead lost or bound. Reopening restores automatic follow-up. Keep binding blocked until its staging fixture is ready.
 
 ### 32 — Pause and resume without losing enquiries
 

@@ -1,6 +1,6 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import type { Communication, IntegrationConfig, LeadTask } from "../../../shared/leadWorkflow";
-const h = vi.hoisted(() => ({ records: new Map<string, Record<string, any>>(), transactions: [] as any[][], inFlight: 0, maxInFlight: 0, fail: false, writeError: undefined as Error | undefined, accountError: false, userEnabled: true,
+const h = vi.hoisted(() => ({ records: new Map<string, Record<string, any>>(), transactions: [] as any[][], inFlight: 0, maxInFlight: 0, fail: false, failAt: undefined as number | undefined, writeError: undefined as Error | undefined, accountError: false, userEnabled: true,
   front: vi.fn(), dialpad: vi.fn(), update: vi.fn(), c: {} as IntegrationConfig }));
 vi.mock("@aws-sdk/lib-dynamodb", async importOriginal => {
   const actual = await importOriginal<typeof import("@aws-sdk/lib-dynamodb")>();
@@ -20,6 +20,7 @@ vi.mock("@aws-sdk/lib-dynamodb", async importOriginal => {
       h.inFlight++; h.maxInFlight = Math.max(h.maxInFlight, h.inFlight);
       await Promise.resolve(); h.inFlight--;
       if (h.fail) throw new Error("Simulated storage outage");
+      if (h.failAt === h.transactions.length) { h.failAt = undefined; throw new Error("Interrupted contact progress"); }
       if (h.writeError) { const error = h.writeError; h.writeError = undefined; throw error; }
       const writes = p.TransactItems;
       for (const entry of writes) {
@@ -59,9 +60,9 @@ const NOW = "2026-09-08T14:00:00.000Z";
 const record = (id: string) => h.records.get(`comms:${id}`)!;
 const entries = (kind: string) => [...h.records.values()].filter(r => r.kind === kind);
 async function lead() { const wf = await defaultWorkflow("a1", "Willow HOA"); return save(row("WORKFLOW", "workflow:a1", { ...wf, conversationId: "cnv_a" }, { accountId: "a1" })); }
-async function inbound(id = "m1", at = NOW, extra: Partial<Communication> = {}) { const c: Communication = { id: `comm:${id}`, providerId: id, provider: "front", channel: "EMAIL", direction: "INBOUND", accountId: "a1", conversationId: "cnv_a", at, status: "RECEIVED", version: 1, ...extra }; await save(row("COMMUNICATION", c.id, c, { accountId: c.accountId })); return c; }
+async function inbound(id = "m1", at = NOW, extra: Partial<Communication> = {}) { const c: Communication = { id: `comm:${id}`, providerId: id, provider: "front", channel: "EMAIL", direction: "INBOUND", accountId: "a1", conversationId: "cnv_a", at, status: extra.direction === "OUTBOUND" ? "SENT" : "RECEIVED", text: "A message about the policy", version: 1, ...extra }; await save(row("COMMUNICATION", c.id, c, { accountId: c.accountId })); return c; }
 beforeEach(async () => {
-  vi.useFakeTimers(); vi.setSystemTime(NOW); h.records.clear(); h.transactions.length = 0; h.inFlight = 0; h.maxInFlight = 0; h.fail = false; h.accountError = false; h.userEnabled = true; h.writeError = undefined; vi.clearAllMocks();
+  vi.useFakeTimers(); vi.setSystemTime(NOW); h.records.clear(); h.transactions.length = 0; h.inFlight = 0; h.maxInFlight = 0; h.fail = false; h.failAt = undefined; h.accountError = false; h.userEnabled = true; h.writeError = undefined; vi.clearAllMocks();
   Object.assign(process.env, { COMMUNICATION_TABLE: "comms", ACTIVITY_TABLE: "Activity", ACCOUNT_TABLE: "Account", CONTACT_TABLE: "Contact", PRIOR_CARRIER_TABLE: "PriorCarrier", LEAD_REPLY_TABLE: "LeadReply", USER_POOL_ID: "pool" });
   h.c = { frontCompanyId: "cmp_a", environment: "main", defaultUserId: "brian", frontSender: "sales@protectmyhoa.com", frontInboxId: "inb_a", frontChannelId: "cha_a", holidays: [], paused: false, activatedAt: "2026-09-01T00:00:00Z", allowedInboxIds: [], testRecipients: [], dialpadNumbers: ["+15082332261", "+16175550123"], sharedSmsNumber: "+15082332261", version: 1 };
   await save(row("ELIGIBILITY", "eligibility:brian", { userId: "brian", name: "Brian Cole", email: "brian@example.com", salesperson: true, champion: true, enabled: true }));
@@ -69,6 +70,175 @@ beforeEach(async () => {
   h.front.mockImplementation(async (path: string) => path.includes("/messages") && path.includes("/conversations") ? { _results: [] } : {});
 });
 afterEach(() => vi.useRealTimers());
+describe("communication is the work record", () => {
+  const later = "2026-09-08T15:00:00.000Z";
+  const open = () => entries("TASK").filter(t => t.data.status === "OPEN");
+  it("handles duplicate and old replies without closing the replacement follow-up", async () => {
+    await lead(); await recordInbound(await inbound());
+    const reply = await inbound("reply", later, { direction: "OUTBOUND" }); await recordOutbound(reply);
+    const before = structuredClone(open());
+    await recordOutbound(reply); await recordOutbound(reply, true);
+    const older = await inbound("older", NOW, { direction: "OUTBOUND" }); await recordOutbound(older);
+    expect(open()).toEqual(before); expect(open()).toHaveLength(1);
+  });
+  it("keeps a newer request open when an older send is replayed", async () => {
+    await lead(); const reply = await inbound("reply", NOW, { direction: "OUTBOUND" }); await recordOutbound(reply);
+    const next = await inbound("next", later); await recordInbound(next);
+    await recordOutbound(reply, true);
+    expect(record(next.id).data.resolved).not.toBe(true);
+    expect(open().map(t => t.data.kind)).toEqual(["RESPONSE"]);
+  });
+  it("resolves a delayed inbound event using the reply already recorded", async () => {
+    await lead(); const reply = await inbound("reply", later, { direction: "OUTBOUND" }); await recordOutbound(reply);
+    const delayed = await inbound("delayed", NOW); await recordInbound(delayed);
+    expect(record(delayed.id).data.resolvedByCommunicationId).toBe(reply.id);
+    expect(open().map(t => t.data.kind)).toEqual(["FOLLOW_UP"]);
+  });
+  it.each([
+    { status: "FAILED" }, { status: "DRAFT" }, { classification: "AUTOMATIC" as const }, { text: "", classification: "REVIEW" as const },
+  ])("does not treat %j as completed contact", async extra => {
+    await lead(); await recordInbound(await inbound()); const before = structuredClone(open());
+    await recordOutbound(await inbound("not-sent", later, { direction: "OUTBOUND", ...extra }));
+    expect(open()).toEqual(before); expect(record("comm:m1").data.resolved).not.toBe(true);
+  });
+  it("keeps other contacts, carrier requests, custom promises and other accounts separate", async () => {
+    await lead(); await recordInbound(await inbound("right", NOW, { from: "right@example.com" }));
+    await recordInbound(await inbound("other", NOW, { from: "other@example.com", conversationId: "cnv_other" }));
+    await recordInbound(await inbound("carrier", NOW, { purpose: "CARRIER", conversationId: "cnv_carrier" }), "CARRIER");
+    await recordInbound(await inbound("foreign", NOW, { accountId: "a2", from: "right@example.com" }));
+    await saveTask({ accountId: "a1", title: "Send proposal Friday", kind: "DOCUMENTS", role: "CHAMPION", dueAt: "2026-09-11T19:00:00Z", reason: "Existing promise" }, "brian");
+    await recordOutbound(await inbound("sent", later, { direction: "OUTBOUND", to: ["right@example.com"] }));
+    expect(record("comm:right").data.resolved).toBe(true);
+    for (const id of ["other", "carrier", "foreign"]) expect(record(`comm:${id}`).data.resolved).not.toBe(true);
+    expect(open().find(t => t.data.custom)!.data.dueAt).toBe("2026-09-11T19:00:00.000Z");
+  });
+  it("automatically handles carrier replies with champion follow-up", async () => {
+    await lead(); await save(row("LINK", "front-link:cnv_c", { accountId: "a1", conversationId: "cnv_c", purpose: "CARRIER" }, { accountId: "a1" }));
+    const base = { type: "email", conversation: { id: "cnv_c" }, text: "Policy question", recipients: [{ role: "from", handle: "carrier@example.com" }] };
+    await ingestFrontMessage({ ...base, id: "msg_in", is_inbound: true, created_at: Date.parse(NOW) / 1000 }, "cnv_c");
+    await ingestFrontMessage({ ...base, id: "msg_out", is_inbound: false, recipients: [{ role: "to", handle: "carrier@example.com" }], created_at: Date.parse(later) / 1000 }, "cnv_c");
+    expect(open().map(t => t.data)).toMatchObject([{ kind: "FOLLOW_UP", role: "CHAMPION", dueAt: "2026-09-10T13:00:00.000Z" }]);
+    expect(record("comm:front:msg_in").data.resolved).toBe(true);
+  });
+  it("uses a delivered shared-line text to resolve the linked response automatically", async () => {
+    await lead(); await recordInbound(await inbound("question", NOW, { channel: "SMS", provider: "dialpad", from: "+16175550111" }));
+    await save(row("LINK", "activity-link:comm:dialpad:sms:801", { accountId: "a1", conversationId: "cnv_a" }, { accountId: "a1" }));
+    const sms = { id: 801, direction: "outbound", created_date: Date.parse(later), internal_number: "+15082332261", external_number: "+16175550111", text: "Here are the documents", message_status: "delivered" };
+    await dialpadEvent(sms); await dialpadEvent(sms);
+    expect(record("comm:question").data.resolvedByCommunicationId).toBe("comm:dialpad:sms:801");
+    expect(open().map(t => t.data.kind)).toEqual(["FOLLOW_UP"]);
+  });
+  const phoneCall = { call_id: 802, direction: "outbound", date_started: Date.parse(later), internal_number: "+15082332261", external_number: "+16175550111" };
+  async function callback() {
+    await lead(); await save(row("LINK", "activity-link:comm:dialpad:call:802", { accountId: "a1", conversationId: "cnv_a" }, { accountId: "a1" }));
+    await recordInbound(await inbound("missed", NOW, { channel: "CALL", provider: "dialpad", from: "+16175550111", status: "MISSED" }), "CALLBACK");
+  }
+  it("waits for a connected call to finish, then handles callback and follow-up without notes", async () => {
+    await callback();
+    await dialpadEvent({ ...phoneCall, state: "connected", date_connected: Date.parse(later) });
+    expect(open().map(t => t.data.kind)).toEqual(["CALLBACK"]);
+    await dialpadEvent({ ...phoneCall, state: "hangup", date_connected: Date.parse(later), date_ended: Date.parse(later) + 60_000 });
+    expect(record("comm:missed").data.resolvedByCommunicationId).toBe("comm:dialpad:call:802");
+    expect(open().map(t => t.data.kind)).toEqual(["FOLLOW_UP"]);
+    expect(entries("COMMUNICATION").some(c => c.data.channel === "NOTE")).toBe(false);
+  });
+  it("logs no-answer attempts without closing or postponing the callback", async () => {
+    await callback(); const before = structuredClone(open());
+    await dialpadEvent({ ...phoneCall, state: "hangup", date_ended: Date.parse(later) + 60_000 });
+    expect(open()).toEqual(before); expect(record("comm:missed").data.resolved).not.toBe(true);
+    expect(record("comm:dialpad:call:802").data).toMatchObject({ outcome: "NO_ANSWER", contactApplied: true });
+  });
+  it("sets a first unanswered outbound call retry to the next business morning", async () => {
+    await lead(); await save(row("LINK", "activity-link:comm:dialpad:call:802", { accountId: "a1", conversationId: "cnv_a" }, { accountId: "a1" }));
+    await dialpadEvent({ ...phoneCall, state: "hangup", date_ended: Date.parse(later) + 60_000 });
+    expect(open().map(t => t.data)).toMatchObject([{ dueAt: "2026-09-09T13:00:00.000Z", title: "Try the prospect again" }]);
+    await dialpadEvent({ ...phoneCall, state: "hangup", date_ended: Date.parse(later) + 60_000 });
+    expect(open()).toHaveLength(1);
+  });
+  it("repairs existing replies once without changing the next date on repeated repair", async () => {
+    await lead(); await recordInbound(await inbound());
+    await inbound("legacy", later, { direction: "OUTBOUND", workflowApplied: true });
+    const { migrateContactProgress, repairContactWork } = await import("../../amplify/functions/communications/contactProgress");
+    await migrateContactProgress(); const after = structuredClone(open());
+    await repairContactWork("a1");
+    expect(open()).toEqual(after); expect(open().map(t => t.data.kind)).toEqual(["FOLLOW_UP"]);
+  });
+  it("schedules a non-communication task's next follow-up without asking for a note or date", async () => {
+    await lead(); const task = await makeTask({ accountId: "a1", kind: "DOCUMENTS", role: "CHAMPION", title: "Review documents" });
+    await save(row("TASK", task.id, task, { accountId: "a1", dueAt: taskWakeAt(task) }));
+    await completeTask({ id: task.id, version: 1 }, "brian");
+    expect(open().map(t => t.data)).toMatchObject([{ kind: "FOLLOW_UP", role: "CHAMPION", dueAt: "2026-09-10T13:00:00.000Z" }]);
+  });
+  it("resumes interrupted progress without losing the request or the next follow-up", async () => {
+    await lead(); await recordInbound(await inbound());
+    const sent = await inbound("sent", later, { direction: "OUTBOUND" });
+    h.failAt = h.transactions.length + 1;
+    await expect(recordOutbound(sent)).rejects.toThrow("Interrupted contact progress");
+    expect(record(sent.id).data.contactApplied).not.toBe(true);
+    await recordOutbound(sent);
+    expect(record("comm:m1").data.resolvedByCommunicationId).toBe(sent.id);
+    expect(open().map(t => t.data.kind)).toEqual(["FOLLOW_UP"]);
+  });
+  it("does not reopen a delayed request after its reply has already handled it", async () => {
+    await lead(); await recordOutbound(await inbound("sent", later, { direction: "OUTBOUND" }));
+    await recordInbound(await inbound("late", NOW));
+    const reopen = entries("OPERATION").find(o => o.id === "op:inbound:comm:late");
+    await runOperation(reopen as any);
+    expect(record(reopen!.id).data.state).toBe("SUPPRESSED");
+    expect(h.front).not.toHaveBeenCalledWith("/conversations/cnv_a", "PATCH", { status: "open" });
+  });
+  it("closes a dated response automatically when the actual reply is sent", async () => {
+    await lead(); await recordInbound(await inbound()); const task = open()[0];
+    await saveTask({ ...task.data, version: task.version, dueAt: "2026-09-11T19:00:00Z", reason: "Earlier deliberate promise" }, "brian");
+    await recordOutbound(await inbound("sent", later, { direction: "OUTBOUND" }));
+    expect(open().map(t => t.data.kind)).toEqual(["FOLLOW_UP"]);
+  });
+  it("does not infer a lost or bound lead from contact and uses explicit status decisions", async () => {
+    const wf = await lead(); await recordOutbound(await inbound("sent", later, { direction: "OUTBOUND" }));
+    expect(record(wf.id).data.disposition).toBe("ACTIVE");
+    const { setLeadDisposition, syncAccountLifecycle } = await import("../../amplify/functions/communications/workflow");
+    await setLeadDisposition("a1", "LOST", record(wf.id).version, "brian"); await syncAccountLifecycle("a1");
+    expect(open()).toHaveLength(0);
+    await setLeadDisposition("a1", "ACTIVE", record(wf.id).version, "brian");
+    expect(open().map(t => t.data)).toMatchObject([{ kind: "FOLLOW_UP", dueAt: "2026-09-10T13:00:00.000Z" }]);
+    await expect(setLeadDisposition("a1", "BOUND", record(wf.id).version, "brian")).rejects.toThrow("quote/bind");
+  });
+  it("keeps large activity histories in bounded writes while resolving the actual messages", async () => {
+    await lead();
+    for (let i = 0; i < 145; i++) await inbound(`many${i}`, NOW);
+    await recordOutbound(await inbound("sent", later, { direction: "OUTBOUND" }));
+    expect(entries("COMMUNICATION").filter(c => c.data.direction === "INBOUND" && c.data.resolved)).toHaveLength(145);
+    expect(Math.max(...h.transactions.map(t => t.length))).toBeLessThanOrEqual(100);
+  });
+  it("serializes a simultaneous newer inbound request and outgoing reply without a stale waiting task", async () => {
+    await lead(); await recordInbound(await inbound("original", NOW));
+    const sent = await inbound("sent", later, { direction: "OUTBOUND" });
+    const newer = await inbound("newer", "2026-09-08T16:00:00.000Z");
+    await Promise.allSettled([recordOutbound(sent), recordInbound(newer)]);
+    await recordOutbound(sent); await recordInbound(newer);
+    expect(record(newer.id).data.resolved).not.toBe(true);
+    expect(open().map(t => t.data.kind)).toEqual(["RESPONSE"]);
+  });
+  it("keeps an active answered call open after another call leg has ended", async () => {
+    await callback();
+    const group = { ...phoneCall, entry_point_call_id: 802 };
+    await dialpadEvent({ ...group, state: "hangup", date_ended: Date.parse(later) + 1_000 });
+    await dialpadEvent({ ...group, call_id: 803, state: "connected", date_connected: Date.parse(later) + 2_000 });
+    expect(record("comm:dialpad:call:802").data.endedAt).toBeUndefined();
+    expect(record("comm:missed").data.resolved).not.toBe(true);
+    await dialpadEvent({ ...group, call_id: 803, state: "hangup", date_connected: Date.parse(later) + 2_000, date_ended: Date.parse(later) + 60_000 });
+    expect(record("comm:missed").data.resolved).toBe(true);
+    expect(open().map(t => t.data.kind)).toEqual(["FOLLOW_UP"]);
+  });
+  it("keeps a failed text visible for correction instead of counting it as contact", async () => {
+    await lead(); await recordInbound(await inbound());
+    await save(row("LINK", "activity-link:comm:dialpad:sms:801", { accountId: "a1", conversationId: "cnv_a" }, { accountId: "a1" }));
+    await dialpadEvent({ id: 801, direction: "outbound", created_date: Date.parse(later), internal_number: "+15082332261", external_number: "+16175550111", text: "Here are the documents", message_status: "failed" });
+    expect(record("comm:m1").data.resolved).not.toBe(true);
+    expect(open().some(t => t.data.kind === "CORRECTION")).toBe(true);
+    expect(entries("ISSUE").some(i => i.data.message.includes("text could not be delivered"))).toBe(true);
+  });
+});
 describe("agency commitments", () => {
   it.each([
     ["2026-09-08T14:00:30Z", [], "2026-09-09T14:00:30.000Z"],
@@ -102,9 +272,8 @@ describe("agency commitments", () => {
     await setResponsibilities("a1", "sally", "brian", wf.version, "brian");
     const changed = record(original.id); expect(changed.data.notifiedAt).toBeUndefined(); expect(changed.data.dueAt).toBe(original.data.dueAt); expect(changed.dueAt).toBe(original.data.reminderAt);
   });
-  it("requires a successor and atomically resolves only selected source requests", async () => {
+  it("resolves only selected source requests when a specific successor is supplied", async () => {
     await lead(); await recordInbound(await inbound()); const t = entries("TASK")[0];
-    await expect(completeTask({ id: t.id, version: t.version, reason: "Called" }, "brian")).rejects.toThrow("next action");
     await completeTask({ id: t.id, version: t.version, reason: "Answered", successor: { title: "Check documents", dueAt: "2026-09-10T14:00:00Z", role: "SALESPERSON", kind: "DOCUMENTS" } }, "brian");
     expect(record("comm:m1").data.resolved).toBe(true); expect(entries("TASK").filter(t => t.data.status === "OPEN")).toHaveLength(1);
     await recordInbound(record("comm:m1").data); expect(entries("TASK").filter(t => t.data.kind === "RESPONSE" && t.data.status === "OPEN")).toHaveLength(0);
@@ -1045,7 +1214,7 @@ describe("9am reminders with a clear next step", () => {
     expect(posted[2].body).toContain("Next step: Respond to the prospect");
     expect(posted[2].body).toContain("Responsible: Brian Cole");
     expect(posted[2].body).toContain("Original request: TEST: please call me about the documents.");
-    expect(posted[2].body).toContain("Record outcome");
+    expect(posted[2].body).toContain("tracked automatically");
     await runOperation(reopen as any); expect(h.front).toHaveBeenCalledWith("/conversations/cnv_a", "PATCH", { status: "open" });
     await runOperation(comment as any); expect(h.front.mock.calls.filter(([path]) => path.endsWith("/comments"))).toHaveLength(1);
   });
@@ -1129,17 +1298,16 @@ describe("automatic cleanup after agent work", () => {
     await runOperation(entries("OPERATION").find(o => o.data.type === "ARCHIVE") as any);
     expect(h.front).toHaveBeenCalledWith("/conversations/cnv_a", "PATCH", { status: "archived" });
   });
-  it("keeps an unanswered request open until an outcome is recorded, then cleans up", async () => {
+  it("records the email reply itself, schedules follow-up and cleans up without a completion form", async () => {
     await lead(); await save(row("HEALTH", "health:worker", { at: NOW, lagging: false }));
-    await recordInbound(await inbound());
-    await recordOutbound(await inbound("human", NOW, { direction: "OUTBOUND" }));
+    const incoming = await inbound(); await recordInbound(incoming);
+    const sent = await inbound("human", NOW, { direction: "OUTBOUND" }); await recordOutbound(sent);
     await runOperation(entries("OPERATION").find(o => o.data.type === "ARCHIVE") as any);
-    expect(h.front).not.toHaveBeenCalledWith("/conversations/cnv_a", "PATCH", { status: "archived" });
-    const task = entries("TASK")[0];
-    await completeTask({ id: task.id, version: task.version, reason: "Answered and requested documents", successor: { title: "Check documents", dueAt: "2026-09-11T13:00:00Z", role: "SALESPERSON", kind: "FOLLOW_UP" } }, "brian");
-    await runOperation(entries("OPERATION").find(o => o.id.startsWith("op:outcome-cleanup:")) as any);
     expect(h.front).toHaveBeenCalledWith("/conversations/cnv_a", "PATCH", { status: "archived" });
-    expect(entries("TASK").filter(t => t.data.status === "OPEN")).toHaveLength(1);
+    expect(record(incoming.id).data.resolvedByCommunicationId).toBe(sent.id);
+    expect(entries("TASK").find(t => t.data.kind === "RESPONSE")!.data).toMatchObject({ status: "COMPLETE", completedByCommunicationId: sent.id });
+    expect(entries("TASK").filter(t => t.data.status === "OPEN").map(t => t.data)).toMatchObject([{ kind: "FOLLOW_UP", dueAt: "2026-09-10T13:00:00.000Z" }]);
+    expect(entries("COMMUNICATION").filter(c => c.data.channel === "NOTE")).toHaveLength(0);
   });
   it("retires lead work and requests cleanup once after binding", async () => {
     await lead(); await save(row("HEALTH", "health:worker", { at: NOW, lagging: false }));

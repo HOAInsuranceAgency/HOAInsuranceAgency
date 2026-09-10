@@ -129,6 +129,10 @@ export const handler = async (event?: Partial<DynamoDBStreamEvent>) => {
   let cursor: string | undefined, lagging = false, callChecks = 0;
   const c = await config();
   await migrateReminderSchedules();
+  if (c.activatedAt) {
+    const { migrateContactProgress } = await import("./contactProgress");
+    await migrateContactProgress();
+  }
   // Reserve reconciliation a turn even while due work is backlogged. Each
   // provider captures one independent page; a failure cannot starve the other.
   if (c.activatedAt && !c.paused) {

@@ -147,6 +147,7 @@ export const handler = async (event: { arguments: { operation?: string; readOper
     if (op === "saveTask") return { ok: true, task: await saveTask(input as unknown as Parameters<typeof saveTask>[0], actor) };
     if (op === "mergeTasks") { await mergeTasks(input as unknown as Parameters<typeof mergeTasks>[0], actor); return { ok: true }; }
     if (op === "completeTask") { await completeTask(input as unknown as Parameters<typeof completeTask>[0], actor); return { ok: true }; }
+    if (op === "setLeadDisposition") { const { setLeadDisposition } = await import("./workflow"); await setLeadDisposition(text(input, "accountId"), text(input, "disposition"), Number(input.version), actor); return { ok: true }; }
     if (op === "saveEligibility") {
       requireAdmin(); const userId = text(input, "userId"); await enabledUser(userId);
       const member = (await roster()).find(t => t.userId === userId); if (!member) throw new Error("Teammate not found");

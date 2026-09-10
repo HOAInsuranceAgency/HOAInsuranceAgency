@@ -1,7 +1,7 @@
 import { taskWakeAt } from "../../../../shared/leadWorkflow";
 import { randomUUID } from "node:crypto";
 import { get, put, row, commit, audit } from "./store";
-import { ensureWorkflow, expected, makeTask, recordInbound } from "./workflow";
+import { ensureWorkflow, expected, makeTask, recordInbound, recordOutbound } from "./workflow";
 import { permittedConversation, front, messageConversation, type FrontMessage } from "./providers";
 import type { Operation } from "./operations";
 import type { Communication, LeadTask } from "../../../../shared/leadWorkflow";
@@ -66,7 +66,7 @@ export async function linkActivity(input: { id: string; accountId: string; versi
   if (old.accountId && old.accountId !== input.accountId) throw new Error("This activity already belongs to another account");
   await ensureWorkflow(input.accountId);
   const conversationId = input.conversationId ? (await permittedConversation(input.conversationId)).id : old.data.conversationId;
-  const comm = { ...old.data, accountId: input.accountId, conversationId, workflowApplied: false, version: old.version + 1 };
+  const comm: Communication = { ...old.data, accountId: input.accountId, conversationId, purpose: input.purpose === "CARRIER" ? "CARRIER" : "PROSPECT", workflowApplied: false, contactApplied: false, contactAppliedKind: undefined, version: old.version + 1 };
   const key = `activity-link:${old.id}`, link = await get(key), triage = await get(`triage:${old.id}`), issue = await get(`issue:${old.id}`);
   const writes = [put(row("COMMUNICATION", old.id, comm, { accountId: input.accountId, previous: old, dueAt: old.dueAt }), old), put(row("LINK", key, { accountId: input.accountId, conversationId: comm.conversationId, purpose: input.purpose === "CARRIER" ? "CARRIER" : "PROSPECT" }, { accountId: input.accountId, previous: link }), link), audit(input.accountId, actor, "Activity linked", input)];
   if (conversationId) {
@@ -78,4 +78,5 @@ export async function linkActivity(input: { id: string; accountId: string; versi
   await commit(writes);
   // Replays repair the projection if the first linking request stops here.
   if (comm.direction === "INBOUND" && (comm.channel !== "CALL" || comm.status === "MISSED")) await recordInbound(comm, input.purpose === "CARRIER" ? "CARRIER" : comm.channel === "CALL" ? "CALLBACK" : "RESPONSE");
+  else await recordOutbound(comm);
 }

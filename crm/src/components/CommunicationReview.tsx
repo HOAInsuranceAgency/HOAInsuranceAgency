@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { client, fmtProviderPhone } from "../lib/client";
-import { communicationRequest as request, type Communication, type LeadTask } from "../lib/communications";
+import { communicationRequest as request, type Communication } from "../lib/communications";
 import { useAsyncResource } from "../lib/useAsyncResource";
 
 export function ActivityReview({ id, onSaved, accountId, conversationId }: { id: string; onSaved: () => void; accountId?: string; conversationId?: string }) {
@@ -32,18 +32,11 @@ export function DeliveryReview({ item, onSaved }: { item: { id: string; version:
     <label className="field">Review notes<input required value={reason} onChange={e => setReason(e.target.value)} /></label><button disabled={busy}>Save review</button>{error && <p className="error-text">{error}</p>}
   </form></details>;
 }
-const tomorrow = () => { const d = new Date(Date.now() + 86400_000); return new Date(d.getTime() - d.getTimezoneOffset() * 60_000).toISOString().slice(0, 16); };
-export function CallOutcome({ communication: c, tasks, onSaved }: { communication: Communication; tasks: LeadTask[]; onSaved: () => void }) {
-  const [outcome, setOutcome] = useState("HANDLED"), [note, setNote] = useState(""), [next, setNext] = useState(""), [due, setDue] = useState(tomorrow), [taskId, setTaskId] = useState("");
-  const [error, setError] = useState(""), [busy, setBusy] = useState(false);
-  const resolving = ["HANDLED", "FOLLOW_UP", "DOCUMENTS"].includes(outcome);
-  return <details><summary>{c.outcome ? `Outcome: ${c.outcome.toLowerCase().replaceAll("_", " ")}` : "Record call outcome"}</summary>
-    <form className="workflow-editor" onSubmit={async e => { e.preventDefault(); setBusy(true); setError(""); try { const task = tasks.find(t => t.id === taskId); await request("recordCallOutcome", { id: c.id, version: c.version, outcome, note, nextAction: resolving ? { title: next, dueAt: new Date(due).toISOString() } : undefined, taskId: resolving ? task?.id : undefined, taskVersion: task?.version }, true); onSaved(); } catch(e) { setError(String(e)); } finally { setBusy(false); } }}>
-      <label className="field">Outcome<select value={outcome} onChange={e => setOutcome(e.target.value)}>{[ ["HANDLED", "Request handled"], ["FOLLOW_UP", "Follow-up required"], ["DOCUMENTS", "Waiting on documents"], ["NO_ANSWER", "No answer / voicemail left"], ["WRONG_NUMBER", "Wrong number"], ["UNRELATED", "Unrelated / spam"] ].map(([v,l]) => <option key={v} value={v}>{l}</option>)}</select></label>
-      <label className="field">Notes<textarea required value={note} onChange={e => setNote(e.target.value)} /></label>
-      {resolving && <><label className="field">Request this call resolved<select value={taskId} onChange={e => setTaskId(e.target.value)}><option value="">No existing request</option>{tasks.filter(t => t.status === "OPEN").map(t => <option key={t.id} value={t.id}>{t.title}</option>)}</select></label><label className="field">Next action or waiting commitment<input required value={next} onChange={e => setNext(e.target.value)} /></label><label className="field">Due<input required type="datetime-local" value={due} onChange={e => setDue(e.target.value)} /></label></>}
-      <button disabled={busy}>Save call outcome</button>{error && <p className="error-text">{error}</p>}
-    </form></details>;
+/** Dialpad activity is the record; no second outcome form or note is required. */
+export function CallOutcome({ communication: c }: { communication: Communication }) {
+  return <p className="muted small">{c.status === "CONNECTED" ? c.endedAt ? "Completed call · logged automatically" : "Call in progress"
+    : c.status === "MISSED" ? c.direction === "OUTBOUND" ? "No answer · callback stays tracked automatically" : "Missed call · callback tracked automatically"
+    : "Call activity is recorded automatically"}</p>;
 }
 
 export function SidebarActivityLinker({ accountId, conversationId, onSaved }: { accountId: string; conversationId: string; onSaved: () => void }) {

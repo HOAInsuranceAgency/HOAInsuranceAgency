@@ -49,6 +49,8 @@ export async function uniteCalls(ids: string[]) {
       const data: Call = { ...source.data, ...target?.data, id: commId(root), providerId: root, accountId, legs, relatedIds,
         relatedConversationIds: [...new Set([target?.data.conversationId, source.data.conversationId, ...(target?.data.relatedConversationIds ?? []), ...(source.data.relatedConversationIds ?? [])].filter((id): id is string => !!id))],
         at: [source.data.at, target?.data.at].filter((s): s is string => !!s).sort()[0], status: callStatus(legs),
+        endedAt: Object.values(legs).some(leg => leg.connected && !leg.ended) ? undefined : [source.data.endedAt, target?.data.endedAt].filter((s): s is string => !!s).sort().at(-1),
+        contactApplied: false, contactAppliedKind: undefined,
         conversationId: targetLink?.data.conversationId ?? target?.data.conversationId ?? sourceLink?.data.conversationId ?? source.data.conversationId,
         resolved: !!(target?.data.resolved || source.data.resolved), workflowApplied: !!(target?.data.workflowApplied || source.data.workflowApplied),
         text: target?.data.text || source.data.text, summary: target?.data.summary || source.data.summary, version: (target?.version ?? 0) + 1 };
@@ -90,7 +92,7 @@ export async function syncCall(candidate: Row<{ providerId: string }>) {
       const data = { ...survivor.data, sourceIds: [comm.id], escalationAt: automatic.map(t => t.data.escalationAt).sort()[0], version: survivor.version + 1 };
       writes.push(put(row("TASK", survivor.id, data, { accountId: comm.accountId, previous: survivor, dueAt: taskWakeAt(data) }), survivor));
     }
-    for (const task of edits) writes.push(put(row("TASK", task.id, { ...task.data, status: "CANCELLED", reason: survivor ? `Same Dialpad call as ${survivor.id}` : "A related call leg was answered or handled; record its outcome", version: task.version + 1 }, { accountId: comm.accountId, previous: task }), task));
+    for (const task of edits) writes.push(put(row("TASK", task.id, { ...task.data, status: "CANCELLED", reason: survivor ? `Same Dialpad call as ${survivor.id}` : "A related call leg was answered or handled", version: task.version + 1 }, { accountId: comm.accountId, previous: task }), task));
     writes.push(put(row("CALL_SYNC", job.id, job.data, { previous: job, dueAt: automatic.length - (survivor ? 1 : 0) > edits.length ? new Date().toISOString() : undefined }), job));
     await commit(writes);
   } else await save(row("CALL_SYNC", job.id, job.data, { previous: job }), job);

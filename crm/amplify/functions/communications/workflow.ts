@@ -5,6 +5,7 @@ import { get, row, put, commit, query, audit, save, conflict, check, type Row, t
 import { config } from "./config";
 import { operationRow } from "./outbox";
 import { dataClient } from "./data";
+import { sameContact } from "../../../../shared/contactProgress";
 
 const cognito = new CognitoIdentityProviderClient();
 export async function enabledUser(userId: string) {
@@ -117,18 +118,21 @@ export async function saveTask(input: { accountId: string; id?: string; title: s
   await commit([check(workflow), put(next, old), audit(input.accountId, actor, "Next action saved", { before: old?.data, after: data, reason: input.reason })]);
   return data;
 }
-export async function completeTask(input: { id: string; version: number; reason: string; successor?: { title: string; dueAt: string; role: Responsibility; kind: TaskKind }; outcome?: "LOST" | "DISQUALIFIED" }, actor: string) {
+export async function completeTask(input: { id: string; version: number; reason?: string; successor?: { title: string; dueAt: string; role: Responsibility; kind: TaskKind }; outcome?: "LOST" | "DISQUALIFIED" }, actor: string) {
   const old = await get<LeadTask>(input.id);
   if (!old || old.kind !== "TASK") throw new Error("Task not found");
   expected(old, input.version);
-  if (old.data.status !== "OPEN" || !input.reason?.trim()) throw new Error("An open task and completion reason are required");
+  if (old.data.status !== "OPEN") throw new Error("This task is already closed");
   const wf = await ensureWorkflow(old.data.accountId);
-  if (old.data.role === "SALESPERSON" && wf.data.disposition === "ACTIVE" && !input.successor && !input.outcome) throw new Error("Record the next action or the lead outcome before completing this task");
+  input = { ...input, reason: input.reason?.trim() || "Marked done" };
   const writes: Write[] = [put(row("TASK", old.id, { ...old.data, status: "COMPLETE", reason: input.reason, version: old.version + 1 }, { accountId: old.accountId, previous: old }), old)];
   if (input.successor && input.outcome) throw new Error("Choose a next action or a terminal outcome");
   if (input.successor) {
     if (!input.successor.title.trim()) throw new Error("Next action is required");
     const task = await makeTask({ ...input.successor, accountId: old.data.accountId, custom: true });
+    writes.push(put(row("TASK", task.id, task, { accountId: task.accountId, dueAt: taskWakeAt(task) })));
+  } else if (!input.outcome && wf.data.disposition === "ACTIVE") {
+    const task = await makeTask({ accountId: old.data.accountId, title: old.data.role === "CHAMPION" ? "Follow up with carrier" : "Follow up with prospect", role: old.data.role, kind: "FOLLOW_UP", conversationId: old.data.conversationId ?? wf.data.conversationId });
     writes.push(put(row("TASK", task.id, task, { accountId: task.accountId, dueAt: taskWakeAt(task) })));
   }
   if (input.outcome) {
@@ -149,12 +153,30 @@ export async function completeTask(input: { id: string; version: number; reason:
   if (conversationId) writes.push(put(operationRow(`op:outcome-cleanup:${old.id}:${old.version}`, { type: "ARCHIVE", accountId: old.data.accountId, conversationId })));
   await commit(writes);
 }
+
+/** Business decisions remain explicit; routine communication needs no second entry. */
+export async function setLeadDisposition(accountId: string, disposition: string, version: number, actor: string) {
+  const wf = await ensureWorkflow(accountId); expected(wf, version);
+  if (!["ACTIVE", "LOST", "DISQUALIFIED"].includes(disposition) || wf.data.disposition === "BOUND") throw new Error("Use the existing quote/bind workflow for a bound lead");
+  if (wf.data.disposition === disposition) return;
+  const account = await (await dataClient()).models.Account.get({ id: accountId });
+  if (account.errors?.length || !account.data || account.data.stage === "CLIENT") throw new Error("This lead's status could not be changed");
+  const writes = [put(row("WORKFLOW", wf.id, { ...wf.data, disposition: disposition as LeadWorkflow["disposition"], humanTakeover: true, version: wf.version + 1 }, { accountId, previous: wf }), wf), audit(accountId, actor, "Lead status changed", { disposition })];
+  if (disposition === "ACTIVE") {
+    const task = await makeTask({ accountId, title: "Follow up with prospect", kind: "FOLLOW_UP", conversationId: wf.data.conversationId });
+    writes.push(put(row("TASK", task.id, task, { accountId, dueAt: taskWakeAt(task) })));
+  } else writes.push(put(row("LIFECYCLE", `lifecycle:${wf.id}:${wf.version}`, { accountId }, { accountId, dueAt: new Date().toISOString() })));
+  await commit(writes);
+}
 export async function recordInbound(comm: Communication, kind: TaskKind = "RESPONSE") {
   if (!comm.accountId) return;
   const projection = await get<Communication>(comm.id);
-  if (projection?.data.workflowApplied || projection?.data.resolved) return;
+  if (projection?.data.resolved) return;
+  if (projection?.data.workflowApplied) { const { repairContactWork } = await import("./contactProgress"); await repairContactWork(comm.accountId, comm); return; }
   const wf = await ensureWorkflow(comm.accountId);
   if (wf.data.disposition !== "ACTIVE") return;
+  const { contactFence } = await import("./contactProgress");
+  const fence = await contactFence(comm.accountId);
   const tasks = await accountRows<LeadTask>(comm.accountId, "TASK");
   let key = `task:${kind === "CARRIER" ? "carrier" : "response"}:${comm.accountId}:${comm.conversationId ?? comm.providerId}`;
   const alias = await get<{ targetId: string }>(`task-alias:${key}`);
@@ -170,39 +192,26 @@ export async function recordInbound(comm: Communication, kind: TaskKind = "RESPO
   else if (comm.at < newTask.sourceAt!) newTask.sourceAt = comm.at;
   Object.assign(newTask, scheduleReminders(newTask, (await config()).holidays));
   newTask.version = (old?.version ?? 0) + 1;
-  const writes: Write[] = [check(wf), put(row("TASK", key, newTask, { accountId: comm.accountId, dueAt: taskWakeAt(newTask), previous: old }), old)];
+  const writes: Write[] = [check(wf), put(row("CONTACT_FENCE", fence.id, {}, { previous: fence }), fence), put(row("TASK", key, newTask, { accountId: comm.accountId, dueAt: taskWakeAt(newTask), previous: old }), old)];
   if (projection) writes.push(put(row("COMMUNICATION", projection.id, { ...projection.data, workflowApplied: true }, { accountId: comm.accountId, previous: projection }), projection));
-  for (const task of tasks.filter(t => kind !== "CARRIER" && t.data.status === "OPEN" && t.data.kind === "FOLLOW_UP" && !t.data.custom && t.data.conversationId === comm.conversationId).slice(0, 90)) {
+  for (const task of tasks.filter(t => t.data.role === (kind === "CARRIER" ? "CHAMPION" : "SALESPERSON") && t.data.status === "OPEN" && t.data.kind === "FOLLOW_UP" && !t.data.custom && (t.data.sourceAt ?? t.createdAt) <= comm.at).slice(0, 90)) {
+    let matches = !!comm.conversationId && task.data.conversationId === comm.conversationId;
+    if (!matches) for (const id of task.data.sourceIds ?? []) {
+      const source = await get<Communication>(id);
+      if (source?.accountId === comm.accountId && sameContact(comm, source.data)) matches = true;
+    }
+    if (!matches) continue;
     writes.push(put(row("TASK", task.id, { ...task.data, status: "CANCELLED", reason: "Prospect responded", version: task.version + 1 }, { accountId: task.accountId, previous: task }), task));
   }
   if (comm.conversationId) writes.push(put(operationRow(`op:inbound:${comm.id}`, { type: "REOPEN", accountId: comm.accountId, conversationId: comm.conversationId })));
   await commit(writes);
+  const { repairContactWork } = await import("./contactProgress");
+  await repairContactWork(comm.accountId, comm);
 }
-export async function recordOutbound(comm: Communication) {
-  if (!comm.accountId || comm.channel !== "EMAIL") return;
-  const projection = await get<Communication>(comm.id);
-  if (projection?.data.workflowApplied) return;
-  const wf = await ensureWorkflow(comm.accountId);
-  if (wf.data.disposition !== "ACTIVE") return;
-  const tasks = await accountRows<LeadTask>(comm.accountId, "TASK");
-  // Native sends cannot establish which of several unanswered requests was resolved.
-  if (tasks.some(t => t.data.status === "OPEN" && (["RESPONSE", "CALLBACK"].includes(t.data.kind) || t.data.custom))) {
-    const writes = [check(wf)];
-    if (projection) writes.push(put(row("COMMUNICATION", projection.id, { ...projection.data, workflowApplied: true }, { accountId: comm.accountId, previous: projection, dueAt: projection.dueAt }), projection));
-    const key = `op:cleanup:${comm.id}`;
-    if (comm.conversationId && !await get(key)) writes.push(put(operationRow(key, { type: "ARCHIVE", accountId: comm.accountId, conversationId: comm.conversationId })));
-    await commit(writes);
-    return;
-  }
-  const id = `task:wait:${comm.accountId}:${comm.conversationId ?? comm.providerId}`;
-  const old = await get<LeadTask>(id);
-  if (old?.data.sourceAt && old.data.sourceAt >= comm.at) return;
-  const task = await makeTask({ id, accountId: comm.accountId, title: "Follow up with prospect", kind: "FOLLOW_UP", sourceAt: comm.at, conversationId: comm.conversationId });
-  task.version = (old?.version ?? 0) + 1;
-  const writes = [check(wf), put(row("TASK", id, task, { accountId: comm.accountId, dueAt: taskWakeAt(task), previous: old }), old)];
-  if (projection) writes.push(put(row("COMMUNICATION", projection.id, { ...projection.data, workflowApplied: true }, { accountId: comm.accountId, previous: projection, dueAt: projection.dueAt }), projection));
-  if (comm.conversationId) writes.push(put(operationRow(`op:cleanup:${comm.id}`, { type: "ARCHIVE", accountId: comm.accountId, conversationId: comm.conversationId })));
-  await commit(writes);
+/** Email, text and completed calls are their own completion evidence. */
+export async function recordOutbound(comm: Communication, repair = false) {
+  const { applyContactProgress } = await import("./contactProgress");
+  await applyContactProgress(comm, repair);
 }
 
 /** Binding remains controlled by the existing CRM bind flow. */
