@@ -25,8 +25,16 @@ export async function enqueueOperation(id: string, data: Omit<Operation, "state"
   return next;
 }
 async function transition(old: Row<Operation>, patch: Partial<Operation>, delay?: number) {
-  return save(row("OPERATION", old.id, { ...old.data, ...patch }, { accountId: old.accountId, previous: old,
-    dueAt: delay === undefined ? undefined : new Date(Date.now() + delay * 1000).toISOString() }), old);
+  const confirmed = patch.state === "CONFIRMED";
+  const next = row("OPERATION", old.id, { ...old.data, ...patch, ...(confirmed ? { error: undefined, failures: 0, leaseUntil: undefined } : {}) }, { accountId: old.accountId, previous: old,
+    dueAt: delay === undefined ? undefined : new Date(Date.now() + delay * 1000).toISOString() });
+  const previousIssue = confirmed ? await get(`issue:${old.id}`) : undefined;
+  const writes = [put(next, old)];
+  // Resolve only this operation's warning, atomically with confirmed delivery.
+  // Provider-wide gaps and unrelated issues still require their own review.
+  if (previousIssue && !previousIssue.data.resolved) writes.push(put(row("ISSUE", previousIssue.id, { ...previousIssue.data, resolved: true, resolvedAt: new Date().toISOString(), resolution: "Operation completed successfully" }, { accountId: previousIssue.accountId, previous: previousIssue }), previousIssue));
+  await commit(writes);
+  return next;
 }
 export async function runOperation(candidate: Row<Operation>) {
   let op = await get<Operation>(candidate.id);
@@ -61,7 +69,7 @@ export async function runOperation(candidate: Row<Operation>) {
       const text = `Website submission\nReference: ${externalId}\nReceived: ${submission.data.receivedAt}\n\n${JSON.stringify(submission.data.snapshot, null, 2)}`;
       path = `/inboxes/${c.frontInboxId}/imported_messages`;
       body = { sender: { handle: email, name: [submission.data.snapshot.contactFirstName, submission.data.snapshot.contactLastName].filter(Boolean).join(" ") || wf.data.name },
-        to: [c.frontSender], subject: `Website enquiry — ${wf.data.name}`, body: `<pre>${htmlEscape(text)}</pre>`, external_id: externalId,
+        to: [c.frontSender], subject: `Website enquiry — ${wf.data.name}`, body: `<pre>${htmlEscape(text)}</pre>`, body_format: "html", external_id: externalId,
         created_at: Date.parse(submission.data.receivedAt) / 1000, metadata: { is_inbound: true, is_archived: false, should_skip_rules: true, thread_ref: externalId } };
     } else if (op.data.type === "EMAIL") {
       await assertRecipient(op.data.recipient ?? "");

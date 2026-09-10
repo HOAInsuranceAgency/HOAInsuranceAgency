@@ -171,6 +171,39 @@ describe("durable public capture", () => {
   });
 });
 describe("Front durable delivery", () => {
+  it("clears only the recovered delivery warning when Front confirms an accepted email", async () => {
+    await lead();
+    const op = await save(row<Operation>("OPERATION", "op:recovered", { type: "EMAIL", accountId: "a1", state: "ACCEPTED", attempts: 1, uid: "uid_recovered", recipient: "prospect@example.com", error: "Waiting for the Front intake conversation", failures: 3 }, { accountId: "a1" }));
+    await save(row("ISSUE", `issue:${op.id}`, { resolved: false, message: op.data.error }, { accountId: "a1" }));
+    await save(row("ISSUE", "issue:sync-gap", { resolved: false, message: "Review missed SMS" }));
+    h.front.mockResolvedValueOnce({ id: "msg_recovered", is_inbound: false, created_at: Date.parse(NOW) / 1000, conversation: { id: "cnv_a" } });
+    await runOperation(op);
+    expect(record(op.id).data).toMatchObject({ state: "CONFIRMED", failures: 0 });
+    expect(record(op.id).data.error).toBeUndefined();
+    expect(record(`issue:${op.id}`).data.resolved).toBe(true);
+    expect(record(`issue:${op.id}`).workKind).toBeUndefined();
+    expect(record("issue:sync-gap").data.resolved).toBe(false);
+    expect(h.transactions.some(writes => writes.some(w => w.Put?.Item.id === op.id && w.Put.Item.data.state === "CONFIRMED") && writes.some(w => w.Put?.Item.id === `issue:${op.id}` && w.Put.Item.data.resolved))).toBe(true);
+    expect(h.front.mock.calls.some(c => c[1] === "POST")).toBe(false);
+  });
+  it("keeps a delivery warning open while its UID is still pending", async () => {
+    await lead();
+    const op = await save(row<Operation>("OPERATION", "op:pending", { type: "EMAIL", accountId: "a1", state: "ACCEPTED", attempts: 1, uid: "uid_pending" }, { accountId: "a1" }));
+    await save(row("ISSUE", `issue:${op.id}`, { resolved: false }, { accountId: "a1" }));
+    h.front.mockResolvedValue({ is_draft: true });
+    await runOperation(op);
+    expect(record(op.id).data.state).toBe("ACCEPTED");
+    expect(record(`issue:${op.id}`).data.resolved).toBe(false);
+  });
+  it("imports escaped HTML using Front's explicit HTML body format", async () => {
+    await lead();
+    await save(row("SUBMISSION", "submission:html", { snapshot: { contactEmail: "prospect@example.com", notes: "<script>alert('test')</script>" }, receivedAt: NOW }));
+    const op = await enqueueOperation("op:html", { type: "IMPORT", accountId: "a1", submissionId: "html" });
+    h.front.mockResolvedValue({ message_uid: "uid_html" });
+    await runOperation(op);
+    const body = h.front.mock.calls.find(c => c[1] === "POST")![2];
+    expect(body.body_format).toBe("html"); expect(body.body).toContain("&lt;script&gt;"); expect(body.body).not.toContain("<script>");
+  });
   it("treats accepted UID as pending until the outbound message resolves", async () => {
     await lead(); const op = await enqueueOperation("op:test", { type: "EMAIL", accountId: "a1", replyId: "r1", recipient: "prospect@example.com", text: "Hello", html: "<p>Hello</p>" });
     h.front.mockImplementation(async (path: string, method?: string) => method === "POST" ? { message_uid: "uid_1" } : path.startsWith("/messages/alt") ? { id: "msg_1", message_uid: "uid_1", is_inbound: false, created_at: Date.parse(NOW) / 1000, conversation: { id: "cnv_a" } } : { _results: [] });
