@@ -1004,7 +1004,7 @@ describe("9am reminders with a clear next step", () => {
   async function textRequest() {
     vi.setSystemTime("2026-09-10T02:37:23.000Z");
     await lead();
-    await recordInbound(await inbound("text", new Date().toISOString(), { channel: "SMS", provider: "dialpad" }));
+    await recordInbound(await inbound("text", new Date().toISOString(), { channel: "SMS", provider: "dialpad", text: "TEST: please call me about the documents." }));
     return (await get<LeadTask>(entries("TASK")[0].id))!;
   }
   async function morningRequest() {
@@ -1028,7 +1028,7 @@ describe("9am reminders with a clear next step", () => {
     vi.setSystemTime("2026-09-10T12:59:00.000Z"); await dispatchTask(task); expect(entries("NOTIFICATION")).toHaveLength(0);
     vi.setSystemTime("2026-09-10T13:00:00.000Z"); await dispatchTask(task);
     expect(entries("NOTIFICATION")).toHaveLength(1);
-    expect(entries("NOTIFICATION")[0].data).toMatchObject({ title: "Reply to the prospect", why: "A prospect's text still needs a response.", dueAt: "2026-09-10T21:00:00.000Z", urgency: "DUE" });
+    expect(entries("NOTIFICATION")[0].data).toMatchObject({ title: "Respond to the prospect", why: "A prospect's text still needs a response.", dueAt: "2026-09-10T21:00:00.000Z", urgency: "DUE" });
     const ops = entries("OPERATION").filter(o => o.data.reminder); expect(ops).toHaveLength(2);
     vi.setSystemTime("2026-09-10T21:00:00.000Z"); await dispatchTask(task);
     expect(entries("NOTIFICATION")).toHaveLength(1); expect(entries("OPERATION").filter(o => o.data.reminder)).toHaveLength(2);
@@ -1042,8 +1042,9 @@ describe("9am reminders with a clear next step", () => {
     h.front.mockResolvedValue({ id: "com_reminder" }); await runOperation(comment as any);
     const posted = h.front.mock.calls.find(([path]) => path === "/conversations/cnv_a/comments")!;
     expect(posted[2].body).toContain("Why this is back: A prospect's text still needs a response.");
-    expect(posted[2].body).toContain("Next step: Reply to the prospect");
+    expect(posted[2].body).toContain("Next step: Respond to the prospect");
     expect(posted[2].body).toContain("Responsible: Brian Cole");
+    expect(posted[2].body).toContain("Original request: TEST: please call me about the documents.");
     expect(posted[2].body).toContain("Record outcome");
     await runOperation(reopen as any); expect(h.front).toHaveBeenCalledWith("/conversations/cnv_a", "PATCH", { status: "open" });
     await runOperation(comment as any); expect(h.front.mock.calls.filter(([path]) => path.endsWith("/comments"))).toHaveLength(1);

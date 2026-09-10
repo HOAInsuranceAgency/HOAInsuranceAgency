@@ -62,7 +62,7 @@ export async function dispatchTask(candidate: Row<LeadTask>) {
   if (cnv) {
     const member = await get<{ name?: string }>(`eligibility:${recipient}`);
     const deadline = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(task.data.dueAt));
-    const text = `${escalated ? "Deal champion — overdue action" : "9 a.m. lead reminder"}\n\nWhy this is back: ${guidance.why}\nNext step: ${guidance.action}\nResponsible: ${member?.data.name ?? (escalated || task.data.role === "CHAMPION" ? "Deal champion" : "Salesperson")}\nDue: ${deadline} Eastern\n\n${guidance.after}`;
+    const text = `${escalated ? "Deal champion — overdue action" : "9 a.m. lead reminder"}\n\nWhy this is back: ${guidance.why}\nNext step: ${guidance.action}${guidance.preview ? `\nOriginal request: ${guidance.preview}` : ""}\nResponsible: ${member?.data.name ?? (escalated || task.data.role === "CHAMPION" ? "Deal champion" : "Salesperson")}\nDue: ${deadline} Eastern\n\n${guidance.after}`;
     const reminder = { taskId: task.id, noticeAt: now, recipientId: recipient, escalated };
     const commentId = `op:reminder-comment:${id}:${task.version}`;
     writes.push(put(operationRow(commentId, { type: "COMMENT", accountId: task.data.accountId, conversationId: cnv, text, reminder })));

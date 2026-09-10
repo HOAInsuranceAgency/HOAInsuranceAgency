@@ -4,7 +4,7 @@ The user confirmed that scheduled reminders should arrive at 9 a.m. and clearly 
 
 ## Staff workflow
 
-At 9 a.m. Eastern on business days, due lead work surfaces with a short internal Front comment: **Why this is back**, **Next step**, responsible teammate, and the actual deadline. The sidebar shows the same explanation and a primary **Record outcome** button. The staff member handles the request, records what happened, and sets the next follow-up. Safe inbox cleanup is requested automatically after that outcome.
+At 9 a.m. Eastern on business days, due lead work surfaces with a short internal Front comment: **Why this is back**, **Next step**, a brief **Original request** preview when available, responsible teammate, and the actual deadline. The sidebar shows the same explanation and a primary **Record outcome** button. The preview preserves an explicit request such as “please call me about the documents” without guessing that every text needs a text response. The staff member handles the request, records what happened, and sets the next follow-up. Safe inbox cleanup is requested automatically after that outcome.
 
 New messages and calls still appear when they arrive. Scheduled reminders are separate from incoming activity. Original response deadlines and deliberate promises remain unchanged: an after-hours request can still be due at 5 p.m., but its reminder arrives at 9 a.m. that day. Unfinished work escalates to the champion at 9 a.m. on the following business date. This replaces the old escalation time of another eight staffed hours after the deadline.
 
@@ -25,3 +25,5 @@ Automated coverage checks morning timing, unchanged 5 p.m. deadlines, DST, weeke
 Live 9 a.m. provider delivery must still be observed in staging after deployment; simulated test clocks do not count as live acceptance. Production rollout remains separate.
 
 Repository checks: **2,052 tests across 105 files passed**, frontend and backend type checks passed, the CRM build and 156-page website build passed, and backend synthesis passed. Chrome verified the sidebar at all three preview widths and the outcome form. These checks do not establish live morning delivery.
+
+The initial change (`1864eee`) deployed in CRM job **188** and website job **187**. A read-only staging check of TEST Cedar at approximately 5:34 p.m. verified its original September 10, 5 p.m. deadline was unchanged, its escalation and next queue time moved to September 11, 9 a.m., and its original 5 p.m. notification receipt remained intact. No new afternoon reminder was produced by migration. A final follow-up adds the original-request preview; its 157 focused tests, CRM build, and backend type check passed.

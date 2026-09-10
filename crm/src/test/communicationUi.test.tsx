@@ -134,9 +134,12 @@ describe("communication UI boundaries", () => {
 describe("clear reminder actions", () => {
   it("explains the request and saves an explicit outcome with the next commitment", async () => {
     const data = linkedLead(); data.tasks[0].kind = "RESPONSE";
+    Object.assign(data.tasks[0], { sourceIds: ["sms-request"] });
+    Object.assign(data, { communications: [{ id: "sms-request", channel: "SMS", direction: "INBOUND", text: "Please call me about the documents.", at: "2026-09-09T22:00:00Z", status: "RECEIVED" }] });
     render(<FrontSidebar />); act(() => h.listener?.({ conversation: { id: "cnv_a" } }));
-    await screen.findByText("Reply to the prospect");
-    expect(screen.getByText("A prospect's message still needs a response.")).toBeTruthy();
+    await screen.findByText("Respond to the prospect");
+    expect(screen.getByText("A prospect's text still needs a response.")).toBeTruthy();
+    expect(screen.getByRole("blockquote")).toHaveTextContent("Please call me about the documents.");
     expect(screen.queryByLabelText(/Combine/)).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Record outcome" }));
     fireEvent.change(screen.getByLabelText("What happened?"), { target: { value: "Answered the question and requested the current policy." } });
