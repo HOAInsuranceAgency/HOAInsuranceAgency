@@ -164,7 +164,7 @@ Submit once through each row below, with a distinct test identity or address. Re
 ### 16 — Later document uploads notify the team in Front
 
 1. Open the staging document-upload link included in a test AI email, as the prospect. Upload another harmless file.
-2. Confirm it appears on that same CRM lead. Leave the portal idle for at least **ten minutes**, plus any document-processing time.
+2. Confirm it appears on that same CRM lead. Leave the portal idle for at least **ten minutes**. Allow roughly **20–30 minutes** when the new file needs fresh extraction: the grouped notification runs on the next scheduled check after processing. Larger or stalled files can take longer.
 3. Check the lead's Front conversation for the document-arrival internal comment and its summary of received/outstanding documents.
 
 **Expected:** the later upload is attached to the existing account and generates a grouped internal Front notification after the quiet/processing window. It does not create another lead or initial AI email. Several files uploaded together should be grouped. A missing upload link or missing notification is a test failure to record; do not substitute a production portal.
