@@ -137,7 +137,7 @@ Submit once through each row below, with a distinct test identity or address. Re
 ### 13 — Take over before the initial AI email
 
 1. Submit **TEST Takeover** through a form and immediately open its CRM lead, during the eight-minute window.
-2. Choose **Handle personally / cancel pending AI reply** before any AI send has started.
+2. Choose **Handle personally / cancel pending AI reply** in the CRM, or **Conversation tools → Handle personally** in Front, before any AI send has started.
 3. Wait beyond the normal reply window, then inspect the test mailbox, Front and delivery queue.
 4. Add a dated next action and record the human follow-up plan.
 
@@ -146,15 +146,15 @@ Submit once through each row below, with a distinct test identity or address. Re
 ### 14 — Use the CRM inside Front
 
 1. Select TEST Oak's email conversation in Front and open the **HOA CRM — Staging** sidebar app. Sign in with your existing staging CRM identity if prompted.
-2. Verify the correct lead name, contact, source, documents, quote context, salesperson, champion and next actions. Try **Open CRM account**, **All documents**, and **Quotes / bind workflow** as navigation checks only.
+2. Verify the correct lead name, contact, source, documents, quote context, salesperson, champion and next actions. Use **Open CRM account**, then expand **Account details** for **View all documents** and **View quotes & bind**. Expand **Recent activity** for the message history. Try **Lead team → Edit team → Cancel** and confirm both saved names stay unchanged.
 3. Start an unsaved note or edit, then select TEST Pine's conversation. Verify the sidebar changes to Pine and does not apply Oak's unsaved content.
-4. For a fresh unlinked test email, expand **Link to a CRM lead**, search its association/contact, select **Prospect**, and choose the correct result.
+4. For a fresh unlinked test email, expand **Find or link a lead**, search its association/contact, select **Prospect**, and choose the correct result.
 
 **Expected:** the sidebar follows the selected conversation, opens the correct staging account, and shares the same tasks as CRM. An unlinked conversation requires an explicit selection. If embedded sign-in asks for a private sign-in link, use your own unopened CRM sign-in email link there; do not paste it into a shared comment or test report.
 
 ### 15 — Internal notes and email attachments
 
-1. In a test lead, add **TEST internal note — waiting for sample documents**, leaving **Also add to the Front email conversation** off. Save.
+1. In a test lead, add **TEST internal note — waiting for sample documents**, leaving **Also post as a Front comment** off. Save.
 2. Add another note with that checkbox on. Check CRM history and Front's internal comments.
 3. From the test prospect mailbox, reply with the harmless PDF attached. Once captured, expand the email in CRM and choose **Save to CRM documents**.
 4. Open **Documents**, confirm the file, then repeat **Save to CRM documents** for that same source attachment.
@@ -236,7 +236,7 @@ Submit once through each row below, with a distinct test identity or address. Re
 
 1. After activation, call **(508) 233-2261** from your test mobile and let it go unanswered. Leave **TEST callback request** as voicemail. Coordinate this with the team.
 2. Find the call/voicemail in Dialpad and Front's phone inbox. In CRM, open **Lead follow-up → Unlinked activity**.
-3. Select **Link activity**, search TEST Oak, choose **Prospect or client**, and link it. Alternatively, use the linked lead's Front sidebar **Link a call or text to this conversation**.
+3. Select **Link activity**, search TEST Oak, choose **Prospect or client**, and link it. Alternatively, use the linked lead's Front sidebar **Conversation tools → Link a call or text to this conversation**.
 4. Check **Return prospect call**, its due time, communication history, and any later voicemail/transcript/summary update.
 
 **Expected:** the unknown call enters review rather than automatically creating a sales lead. Allow several minutes for final missed-call reconciliation; the implementation schedules a concluded-call check after roughly three minutes. Linking yields callback work due eight staffed hours from the original call—not from linking or later transcription. Late enrichment does not restart the deadline. One logical customer call should not turn into one callback per ringing agent.
@@ -265,11 +265,11 @@ Make a fresh controlled inbound and outbound call for each row. Capture the time
 
 ### 26 — Prospect texting from the shared main line
 
-1. On TEST Oak's Front email conversation, open the CRM sidebar's **Text from the shared main line** section.
+1. On TEST Oak's Front email conversation, open the CRM sidebar's **Send a text** section.
 2. Enter your test mobile and **TEST message from HOA staging**. Click **Open draft in Front**.
 3. Verify the draft's From is **(508) 233-2261** and To is your test mobile. Review, then send in Front. If the handoff fails, record it and test the native shared-line composer separately.
 4. Reply from the test mobile: **TEST: please call me about the documents.** Link the inbound/outbound activities explicitly as needed.
-5. In CRM, filter **Communication history → SMS** and inspect message bodies, directions, status updates and response work. Repeat an inbound text to an individual business number where supported and subscribed.
+5. In CRM, filter **Communication history → Texts** and inspect message bodies, directions, status updates and response work. Repeat an inbound text to an individual business number where supported and subscribed.
 
 **Expected:** opening the draft does not send it. One text activity is enriched with delivery status; it is not duplicated for every status update. A substantive inbound text creates response work after linking. A delivered SMS does not mean read or resolved. Calls/texts remain separate from the email thread in Front, with combined history in the CRM.
 
@@ -304,7 +304,7 @@ Make a fresh controlled inbound and outbound call for each row. Capture the time
 ### 30 — Enable and test inbox cleanup last
 
 1. Finish the earlier email/phone tests. In integration settings, recheck connections, expand **Delivery and inbox cleanup**, confirm the native test checkbox, enable **Automatically tidy conversations awaiting a future follow-up**, and click **Apply delivery settings**. Activation checks still require recent signed events.
-2. Use a clean test lead with both owners, confirmed delivery, no unresolved inbound request or communication issue, and a future follow-up. Choose **Clean up inbox when ready**.
+2. Use a clean test lead with both owners, confirmed delivery, no unresolved inbound request or communication issue, and a future follow-up. Choose **Clean up inbox when ready** in the CRM, or **Conversation tools → Tidy this conversation** in Front.
 3. Verify the conversation archives while the CRM lead and dated commitment remain. Use a fresh outbound test with no open response/callback/custom task to check automatic cleanup after a new waiting follow-up is created.
 4. On another lead with an unresolved reply or missed call, try the same cleanup action. Then test a due/overdue action.
 5. Let the archived lead's commitment become due and verify it reopens. Compare the personal and shared Front views.

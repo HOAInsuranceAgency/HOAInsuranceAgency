@@ -1,6 +1,7 @@
 /** Compact labels for the Front panel; stored values and deadlines stay intact. */
 export function leadSourceLabel(source?: string): string {
-  if (!source) return "Website enquiry";
+  if (!source) return "CRM lead";
+  if (source === "website") return "Website enquiry";
   if (source.startsWith("website-ho6:")) return "HO-6 association form";
   if (source.startsWith("website-assessment:")) return "Insurance assessment";
   if (source === "website-quote") return "Quote request";
