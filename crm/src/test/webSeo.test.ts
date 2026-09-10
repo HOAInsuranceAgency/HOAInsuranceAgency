@@ -427,17 +427,12 @@ describe("the /contact specialist", () => {
     );
   });
 
-  it("publishes Brian's confirmed title in both the card and schema", () => {
+  it("does not publish specialist metadata after the contact card is removed", () => {
     const contact = read("../../../web/src/pages/contact.astro");
-    expect(brian.jobTitle).toBe("Licensed Insurance Producer");
-    expect(contact).toContain('role: "Licensed Insurance Producer"');
-    expect(contact).toContain("jobTitle: SPECIALIST.role");
-    expect(contact).toContain("{SPECIALIST.role}</p>");
-    expect(contact).toContain(`id="${SPECIALIST_ID.split("#")[1]}"`);
-    expect(contact).toContain("#brian-cole,");
-    expect(contact).not.toContain('id="specialist"');
-    expect(contact).toContain("jsonLd={[specialistJsonLd]}");
-    expect(contact).not.toContain("UNVERIFIED");
+    expect(contact).not.toContain("personSpecialist");
+    expect(contact).not.toContain("specialistJsonLd");
+    expect(contact).not.toContain('id="brian-cole"');
+    expect(contact).toContain("<ContactForm");
   });
 
   it("is not merged with the founder", () => {

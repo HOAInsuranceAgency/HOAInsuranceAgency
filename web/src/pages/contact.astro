@@ -14,25 +14,9 @@ import Hero from "../components/Hero.astro";
 import HeroLookup from "../components/HeroLookup.astro";
 import CoverageMap from "../components/CoverageMap.astro";
 import { ContactForm } from "../components/ContactForm";
-import { QUOTE_URL, PHONE, PHONE_HREF } from "../constants";
-import { personSpecialist } from "../lib/seo";
+import { QUOTE_URL, PHONE } from "../constants";
 import { AGENCY } from "../../../shared/agency";
 import { MARKETS } from "../data/markets";
-
-/** Brian's confirmed public identity; agency phone and mailboxes stay separate. */
-const SPECIALIST = {
-  name: "Brian Cole",
-  role: "Licensed Insurance Producer",
-  email: "brian@protectmyhoa.com",
-  photo: "/images/brian-cole.jpg",
-};
-
-/** This page's Person node resolves to the visible #brian-cole section. */
-const specialistJsonLd = personSpecialist({
-  name: SPECIALIST.name,
-  jobTitle: SPECIALIST.role,
-  image: SPECIALIST.photo,
-});
 
 /* Meta description.
    The phone number used to be typed out here as a literal, which made this the
@@ -69,7 +53,6 @@ const COVER_TYPES = [
   title="Contact HOA Insurance Agency — ProtectMyHOA"
   description={META_DESCRIPTION}
   canonicalPath="/contact/"
-  jsonLd={[specialistJsonLd]}
 >
   {/* ═══ 01 · Hero — same treatment as the homepage ══════════════════ */}
   {/* `compact` is deliberately NOT passed alongside the action slot. Hero.astro
@@ -159,106 +142,10 @@ const COVER_TYPES = [
     </div>
   </section>
 
-  {/* ── Why there is no mailbox directory section here ──
-       Three agency addresses render within one scroll of this page: sales@ in
-       the contact card above, insurance@ in the claims block and again in the
-       site footer, and the specialist's own address in the card below. That was
-       once three bare addresses with nothing saying what any of them was for,
-       and this page briefly carried a 'Which address reaches whom' section to
-       explain them.
-
-       It was removed once each address gained a purpose label where it actually
-       renders: components/ContactForm.tsx labels sales@ as new business and
-       spells out that claims go to insurance@, and components/Footer.astro
-       labels insurance@ as general, service and claims. Those labels ship on
-       every page that mounts them, not just this one, so a page-level directory
-       repeating them made a visitor read insurance@ three times and the
-       carrier-notice qualifier twice before reaching the specialist.
-
-       Before re-adding anything of the kind, check those two files first: if
-       the labels are still there, the page already answers the question. The
-       brand-and-entity sentence that closed the removed section is likewise
-       already on the page — Footer.astro prints AGENCY_FMT.brandLine in its
-       mark, and the contact card heads the postal address with AGENCY.name. */}
-
-  {/* ═══ 03 · Speak to a specialist ═════════════════════════════════ */}
-  {/* Sits directly beneath the "Contact Us Today" block by request: the form and
-       the agency's own details come first, then the named producer as the direct
-       route for anyone who does not want to wait on a form. */}
-  {/* id="brian-cole" is load-bearing, not decoration: it is the fragment of the
-       Person node's `@id` (SPECIALIST_ID in lib/seo.ts), so the identifier
-       resolves to the block that actually shows his photo, name and biography.
-       Renaming or removing it orphans the structured data. */}
-  <section class="section specialist" id="brian-cole" aria-labelledby="specialist-h">
-    <div class="container">
-      <div class="sec-head sec-head--center">
-        <p class="eyebrow">Speak to a specialist</p>
-        <h2 class="section-title" id="specialist-h">Contact {SPECIALIST.name} directly</h2>
-        <p class="section-subtitle">
-          For an immediate response, call or email our producer rather than waiting on the
-          form. You will reach the person who handles the placement, not a call center.
-        </p>
-      </div>
-
-      <div class="spec-card">
-        <img
-          class="spec-card__photo"
-          src={SPECIALIST.photo}
-          alt={`${SPECIALIST.name}, ${SPECIALIST.role} at HOA Insurance Agency`}
-          width="560"
-          height="560"
-          loading="lazy"
-          decoding="async"
-        />
-        <div class="spec-card__body">
-          <p class="spec-card__role">{SPECIALIST.role}</p>
-          <h3 class="spec-card__name">{SPECIALIST.name}</h3>
-          <p class="spec-card__blurb">
-            Brian works directly with association boards and property managers on master
-            policy placements and HO-6 coordination.
-          </p>
-          {/* Each row says what the thing IS before it prints it. The phone is
-               labelled 'Main line', not 'direct line': it is the agency's one
-               published number, the same one the navbar and footer show, and
-               calling it a direct line would promise a private extension that
-               does not exist. The email genuinely is his own, so it says so —
-               and that label is what distinguishes it from the two agency
-               mailboxes the same page shows, sales@ in the contact card above
-               and insurance@ in the claims block and the footer. */}
-          <ul class="spec-card__contacts">
-            <li>
-              <span class="spec-card__ico" aria-hidden="true">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.13.96.37 1.9.72 2.81a2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.91.35 1.85.59 2.81.72A2 2 0 0122 16.92z"/></svg>
-              </span>
-              <span class="spec-card__contact">
-                <span class="spec-card__label">Main line</span>
-                <a href={PHONE_HREF}>{PHONE}</a>
-              </span>
-            </li>
-            <li>
-              <span class="spec-card__ico" aria-hidden="true">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><path d="M22 6l-10 7L2 6"/></svg>
-              </span>
-              <span class="spec-card__contact">
-                <span class="spec-card__label">{SPECIALIST.name.split(" ")[0]}&rsquo;s direct address</span>
-                <a href={"mailto:" + SPECIALIST.email}>{SPECIALIST.email}</a>
-              </span>
-            </li>
-          </ul>
-          <div class="spec-card__actions">
-            <a href={PHONE_HREF} class="btn btn-primary">Call {PHONE}</a>
-            <a href={"mailto:" + SPECIALIST.email} class="btn btn-outline-dark">Email {SPECIALIST.name.split(" ")[0]}</a>
-          </div>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  {/* ═══ 04 · Our markets ═══════════════════════════════════════════ */}
+  {/* ═══ 03 · Our markets ═══════════════════════════════════════════ */}
   {/* Same wall as the homepage, /why-choose-us and every state page — it reads
        data/markets.ts, so a carrier added or retired there changes all of them at
-       once. Placed under the producer block on purpose: having met the person, the
-       next question a board asks is who he can actually place with.
+       once. Follows the enquiry form so visitors can see our available markets.
 
        The .carrier-* classes live in global.css, not Home.css, which is why this
        needs no CSS of its own here. */}
@@ -318,7 +205,7 @@ const COVER_TYPES = [
     </div>
   </section>
 
-  {/* ═══ 05 · Where we cover ════════════════════════════════════════ */}
+  {/* ═══ 04 · Where we cover ════════════════════════════════════════ */}
   <section class="section section--alt" id="states" aria-labelledby="states-h">
     <div class="container" style="text-align: center">
       <div class="sec-head sec-head--center">
@@ -348,7 +235,6 @@ const COVER_TYPES = [
   /* Clears the fixed navbar so a deep link (e.g. /contact#states) lands with the
      heading visible rather than tucked under it. */
   #review,
-  #brian-cole,
   #markets,
   #states {
     scroll-margin-top: calc(var(--nav-height) + 20px);
@@ -658,171 +544,4 @@ const COVER_TYPES = [
     }
   }
 
-  .spec-card {
-    display: grid;
-    grid-template-columns: 220px 1fr;
-    gap: 40px;
-    align-items: center;
-    max-width: 860px;
-    margin: 0 auto;
-    padding: 32px 36px;
-    background: var(--color-white);
-    border: 1px solid var(--color-gray-200);
-    border-radius: 18px;
-    box-shadow: 0 16px 40px -18px rgba(15, 23, 42, 0.16);
-  }
-
-  /* Square source cropped to a circle. object-fit keeps the crop honest at any
-     rendered size rather than squashing the headshot. */
-  .spec-card__photo {
-    width: 220px;
-    height: 220px;
-    border-radius: 50%;
-    object-fit: cover;
-    display: block;
-    border: 4px solid var(--color-gold-dim);
-  }
-
-  .spec-card__role {
-    font-size: 11.5px;
-    font-weight: 700;
-    letter-spacing: 0.16em;
-    text-transform: uppercase;
-    color: var(--color-gold);
-    margin: 0 0 6px;
-  }
-
-  .spec-card__name {
-    font-size: 28px;
-    font-weight: 800;
-    line-height: 1.15;
-    letter-spacing: -0.02em;
-    color: var(--color-navy);
-    margin: 0 0 12px;
-  }
-
-  .spec-card__blurb {
-    font-size: 15.5px;
-    line-height: 1.65;
-    color: var(--color-gray-600);
-    margin: 0 0 18px;
-    max-width: 46ch;
-  }
-
-  .spec-card__contacts {
-    list-style: none;
-    padding: 0;
-    margin: 0 0 22px;
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-  }
-
-  .spec-card__contacts li {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    font-size: 15.5px;
-  }
-
-  .spec-card__ico {
-    display: inline-flex;
-    color: var(--color-gold);
-    flex: 0 0 auto;
-  }
-
-  /* The label sits above its value rather than beside it, so a long address
-     wraps under the label instead of shoving the row off the card. */
-  .spec-card__contact {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 2px;
-    min-width: 0;
-  }
-
-  .spec-card__label {
-    font-size: 10.5px;
-    font-weight: 700;
-    letter-spacing: 0.13em;
-    text-transform: uppercase;
-    color: var(--color-gray-600);
-  }
-
-  .spec-card__contacts a {
-    color: var(--color-navy);
-    font-weight: 600;
-    text-decoration: none;
-    word-break: break-word;
-  }
-
-  .spec-card__contacts a:hover {
-    color: var(--color-accent);
-    text-decoration: underline;
-  }
-
-  .spec-card__actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 12px;
-  }
-
-  /* global.css ships .btn-outline for navy grounds — white border, white text —
-     which is invisible on this white card. This is the light-ground counterpart,
-     matching the one the city page declares for the same reason. */
-  .spec-card__actions .btn-outline-dark {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    padding: 14px 28px;
-    border-radius: 8px;
-    font-size: 15px;
-    font-weight: 600;
-    background: transparent;
-    color: var(--color-accent);
-    border: 2px solid var(--color-gray-200);
-    transition: all 0.25s ease;
-  }
-
-  .spec-card__actions .btn-outline-dark:hover {
-    border-color: var(--color-accent);
-    background: var(--color-sky);
-  }
-
-  @media (max-width: 760px) {
-    .spec-card {
-      grid-template-columns: 1fr;
-      justify-items: center;
-      text-align: center;
-      gap: 24px;
-      padding: 28px 22px;
-    }
-
-    .spec-card__photo {
-      width: 160px;
-      height: 160px;
-    }
-
-    .spec-card__blurb {
-      max-width: none;
-    }
-
-    .spec-card__contacts li,
-    .spec-card__actions {
-      justify-content: center;
-    }
-
-    /* The card centres its text at this width, so the stacked label/value pair
-       has to centre with it or the rows read as if they were left-aligned. */
-    .spec-card__contact {
-      align-items: center;
-      text-align: center;
-    }
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .spec-card__actions .btn-outline-dark {
-      transition: none;
-    }
-  }
 </style>
