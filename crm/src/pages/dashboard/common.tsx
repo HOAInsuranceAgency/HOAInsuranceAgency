@@ -1,3 +1,4 @@
+import { ReportContext } from "../../components/ReportDownload";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
 /** Today as YYYY-MM-DD in the local calendar — the same civil-day frame
@@ -86,6 +87,8 @@ export function TabFrame({
   children: ReactNode;
 }) {
   const succeeded = useRef(false);
+  const [asOf, setAsOf] = useState<Date | null>(null);
+  useEffect(() => { if (res.loaded && !res.loading && !res.error) setAsOf(new Date()); }, [res.loaded, res.loading, res.error]);
   // A settled, error-free fetch — not merely `loaded`, which is also true
   // while a retry after a failed first load is in flight (loaded stuck from
   // the failed settle, error just cleared). Latching there would render the
@@ -107,7 +110,7 @@ export function TabFrame({
   }
 
   return (
-    <>
+    <ReportContext.Provider value={{ disabled: res.loading || !!res.error, asOf }}>
       <RefreshStamp res={res} />
       {res.error && (
         <p className="error-text">
@@ -115,7 +118,7 @@ export function TabFrame({
         </p>
       )}
       {children}
-    </>
+    </ReportContext.Provider>
   );
 }
 

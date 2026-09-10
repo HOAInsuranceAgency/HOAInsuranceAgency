@@ -1,3 +1,4 @@
+import { isLeadSource, LEAD_SOURCE_LABELS } from "../../../shared/leadSource";
 /**
  * The dashboard's money aggregations, pure and dependency-free — the same
  * discipline as `invoiceTotals.ts`, so the figures the agency steers by can
@@ -35,6 +36,7 @@ interface PolicyLike {
 
 interface AccountLike {
   id: string;
+  leadSource?: string | null;
   source?: string | null;
 }
 
@@ -63,7 +65,7 @@ export function commissionBySource(
   policies: readonly PolicyLike[],
   accounts: readonly AccountLike[]
 ): MoneyRow[] {
-  const sourceByAccount = new Map(accounts.map((a) => [a.id, a.source]));
+  const sourceByAccount = new Map(accounts.map((a) => [a.id, isLeadSource(a.leadSource) ? LEAD_SOURCE_LABELS[a.leadSource] : a.source]));
   const groups = new Map<string, { name: string; total: number; count: number }>();
   for (const p of policies) {
     const raw = (sourceByAccount.get(p.accountId) ?? "").trim();

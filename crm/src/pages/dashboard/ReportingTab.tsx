@@ -1,3 +1,4 @@
+import { ReportDownload } from "../../components/ReportDownload";
 import { useMemo, useState } from "react";
 import {
   client,
@@ -193,6 +194,8 @@ export default function ReportingTab() {
   );
 
   const windowLabel = PRESET_LABEL[preset];
+  const exportFilters = `${from || "Beginning"} through ${to || "all dates"} · cancelled policies ${excludeCancelled ? "excluded" : "included"} · policy/quote effective dates; cash by paid/posted date · ${missingPct} policies missing commission %`;
+  const invalidRange = !!(from && to && from > to);
 
   return (
     <TabFrame res={res}>
@@ -245,6 +248,7 @@ export default function ReportingTab() {
         </div>
       )}
 
+      <div className="report-actions"><ReportDownload disabled={invalidRange} report={{ title: "Production and income summary", filters: exportFilters, sections: [{ title: "Summary", columns: ["Measure", "Value", "Unit"], rows: [["Written premium", writtenPremium, "USD"], ["Estimated commission", estCommission, "USD"], ["Quote win rate", winRate.rate == null ? null : Math.round(winRate.rate * 100), "%"], ["Decided quotes", winRate.decided, "quotes"], ["Collected", collected.total, "USD"], ["PF interest income", interest.total, "USD"]] }] }} /></div>
       <div className="stat-row">
         <Tile n={fmtMoney(writtenPremium)} label={`Written premium · ${windowLabel}`} />
         <Tile n={fmtMoney(estCommission)} label={`Est. commission · ${windowLabel}`} />
@@ -259,6 +263,7 @@ export default function ReportingTab() {
       <div className="card">
         <div className="card-head">
           <h2>Written premium by month</h2>
+          <ReportDownload disabled={invalidRange} report={{ title: "Written premium by month", filters: exportFilters, sections: [{ title: "Monthly production", columns: ["Month", "Written premium (USD)", "Policy count"], rows: months.map(m => [m.key, m.total, m.count]) }] }} />
           <span className="muted small">policy effective date</span>
         </div>
         <div className="months">
@@ -305,12 +310,14 @@ export default function ReportingTab() {
           heroLabel="written premium"
           rows={premiumRows}
           setTip={setTip}
+          filters={exportFilters} disabled={invalidRange}
         />
         <BarCard
           title="Commission by lead source"
           heroLabel="commission, by where the account came from"
           rows={sourceRows}
           setTip={setTip}
+          filters={exportFilters} disabled={invalidRange}
         />
       </div>
       <BarCard
@@ -318,6 +325,7 @@ export default function ReportingTab() {
         heroLabel="commission (baked into premium)"
         rows={commissionRows}
         setTip={setTip}
+        filters={exportFilters} disabled={invalidRange}
       />
       {missingPct > 0 && (
         <p className="muted small">
@@ -339,11 +347,15 @@ export default function ReportingTab() {
 function BarCard({
   title,
   heroLabel,
+  filters,
+  disabled,
   rows,
   setTip,
 }: {
   title: string;
   heroLabel: string;
+  filters: string;
+  disabled: boolean;
   rows: { key: string; name: string; total: number; count: number }[];
   setTip: (t: { x: number; y: number; text: string } | null) => void;
 }) {
@@ -353,7 +365,7 @@ function BarCard({
 
   return (
     <div className="card">
-      <h2>{title}</h2>
+      <div className="card-head"><h2>{title}</h2><ReportDownload disabled={disabled} report={{ title, filters, sections: [{ title, columns: ["Name", "Amount (USD)", "Policy count"], rows: rows.map(r => [r.name, r.total, r.count]) }] }} /></div>
       <div className="chart-hero">
         <span className="n">{fmtMoney(total)}</span>
         <span className="l">

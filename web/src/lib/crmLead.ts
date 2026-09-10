@@ -1,4 +1,5 @@
 /** Durable website lead capture. A success means the CRM saved the enquiry. */
+import { captureLeadAttribution } from "./leadAttribution";
 import { useRef } from "react";
 import type { AccountType } from "../../../shared/accountType";
 
@@ -8,6 +9,7 @@ export interface CrmLeadInput {
   type?: AccountType;
   name: string;
   answerSnapshot?: string;
+  attribution?: string;
   contactFirstName?: string;
   contactLastName?: string;
   contactEmail?: string;
@@ -35,7 +37,7 @@ export interface CrmLeadInput {
  * `webLeadFields.test.ts` in the CRM compares all three and fails on a mismatch.
  */
 const MUTATION = `mutation SubmitWebLead(
-  $submissionId: String!, $retryProof: String!, $answerSnapshot: String,
+  $submissionId: String!, $retryProof: String!, $answerSnapshot: String, $attribution: String,
   $type: String, $name: String!, $contactFirstName: String, $contactLastName: String,
   $contactEmail: String, $contactPhone: String, $address: String, $city: String,
   $state: String, $zip: String, $unitNumber: String, $currentCarrier: String,
@@ -43,7 +45,7 @@ const MUTATION = `mutation SubmitWebLead(
   $buildiumId: String, $source: String, $notes: String
 ) {
   submitWebLead(
-    submissionId: $submissionId, retryProof: $retryProof, answerSnapshot: $answerSnapshot,
+    submissionId: $submissionId, retryProof: $retryProof, answerSnapshot: $answerSnapshot, attribution: $attribution,
     type: $type, name: $name, contactFirstName: $contactFirstName,
     contactLastName: $contactLastName, contactEmail: $contactEmail,
     contactPhone: $contactPhone, address: $address, city: $city, state: $state,
@@ -111,6 +113,7 @@ export function createLeadSubmission(send: typeof submitCrmLead = submitCrmLead)
   const state: { current?: { identity: SubmissionIdentity; source: string; pending?: Promise<CrmLeadResult>; result?: CrmLeadResult; payload?: string } } = {};
   return {
     async submit(input: CrmLeadInput): Promise<CrmLeadResult> {
+      input = { ...input, attribution: input.attribution ?? JSON.stringify(captureLeadAttribution()) };
       const source = input.source ?? "website", payload = JSON.stringify(input);
       const storageKey = `hoa:submission:${source}`;
       // Identities belong to exact answers. A corrected enquiry is a new

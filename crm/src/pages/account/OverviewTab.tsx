@@ -1,3 +1,4 @@
+import { acquisitionLabel } from "../../../../shared/leadSource";
 import {
   client,
   unwrap,
@@ -33,7 +34,6 @@ export function OverviewTab({
     totalInsuredValue: inputValue(account.totalInsuredValue),
     currentAgent: inputValue(account.currentAgent),
     currentPolicyExpiration: inputValue(account.currentPolicyExpiration),
-    source: inputValue(account.source),
     notes: inputValue(account.notes),
   }, { onEdit: saveStatus.markDirty });
 
@@ -61,7 +61,6 @@ export function OverviewTab({
               totalInsuredValue: num(form.totalInsuredValue),
               currentAgent: str(form.currentAgent),
               currentPolicyExpiration: str(form.currentPolicyExpiration),
-              source: str(form.source),
               notes: str(form.notes),
             })
           )
@@ -152,8 +151,9 @@ export function OverviewTab({
         </div>
         )}
         <div className="field">
-          <label>Source</label>
-          <input value={form.source} onChange={(e) => setF("source", e.target.value)} />
+          <label>Lead source</label>
+          <div>{acquisitionLabel(account.leadSource, account.source)}</div>
+          <span className="muted small">Set at creation. This value cannot be changed.</span>
         </div>
         <div className="field full">
           <label>Notes</label>

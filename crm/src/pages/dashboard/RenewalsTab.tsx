@@ -1,3 +1,4 @@
+import { ReportDownload } from "../../components/ReportDownload";
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
@@ -197,6 +198,7 @@ export default function RenewalsTab() {
         <div className="toolbar" style={{ marginBottom: 8 }}>
           <h2 style={{ margin: 0 }}>Upcoming renewals</h2>
           <div className="grow" />
+          <ReportDownload report={{ title: "Upcoming renewals", filters: `${horizon === "overdue" ? "Overdue only" : `Next ${horizon} days, including overdue`} · sorted by ${sortKey} (${dir}) · ${hero.accounts} accounts · ${hero.unmarketed} not yet marketed`, sections: [{ title: "Renewals", columns: ["Account", "Stage", "Carrier", "Lines", "Expires", "Days", "Premium (USD)", "Marketing", "Submit by"], rows: sorted.map(r => [r.name, r.kind, r.carrierName ?? (r.kind === "LEAD" ? "Incumbent" : "—"), r.lines?.join(", "), r.date, r.days, r.premium, r.marketing.kind, r.marketing.kind === "missed" || r.marketing.kind === "open" ? r.marketing.submitBy : null]) }] }} />
           <div className="chip-row">
             <button
               className={horizon === "overdue" ? "on" : ""}

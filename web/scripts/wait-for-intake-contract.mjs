@@ -3,7 +3,7 @@ import { pathToFileURL } from "node:url";
 // GraphQL validates skipped fields but never executes their resolvers. This
 // proves schema compatibility without creating a test lead or sending mail.
 export const probe = `mutation IntakeContract {
-  submitWebLead(name: "", submissionId: "contract-check-no-write", retryProof: "contract-check-no-write-contract-check-no-write", answerSnapshot: "{}") @skip(if: true)
+  submitWebLead(name: "", submissionId: "contract-check-no-write", retryProof: "contract-check-no-write-contract-check-no-write", answerSnapshot: "{}", attribution: "{}") @skip(if: true)
 }`;
 export async function contractReady(url, key, request = fetch) {
   const read = async query => {
@@ -13,9 +13,9 @@ export async function contractReady(url, key, request = fetch) {
     return body.errors?.length ? null : body.data;
   };
   if (await read(probe) == null) return false;
-  const state = (await read("query IntakeReadiness { leadIntakeReady(readinessContract: 1) }"))?.leadIntakeReady;
+  const state = (await read("query IntakeReadiness { leadIntakeReady(readinessContract: 2) }"))?.leadIntakeReady;
   const ready = typeof state === "string" ? JSON.parse(state) : state;
-  return ready?.ready === true && ready.contractVersion === 1;
+  return ready?.ready === true && ready.contractVersion >= 2;
 }
 export async function waitForContract() {
   const url = process.env.PUBLIC_CRM_API_URL, key = process.env.PUBLIC_CRM_API_KEY;

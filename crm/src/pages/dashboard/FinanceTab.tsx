@@ -1,3 +1,4 @@
+import { ReportDownload } from "../../components/ReportDownload";
 import { useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import {
@@ -121,6 +122,7 @@ export default function FinanceTab() {
 
   return (
     <TabFrame res={res}>
+      <div className="report-actions"><ReportDownload report={{ title: "Finance summary", filters: `Snapshot as of ${today}; collected from ${today.slice(0,8)}01 through ${today}`, sections: [{ title: "Finance summary", columns: ["Measure", "Amount (USD)", "Count"], rows: [["Total receivable", r.invoiceTotal + r.loanTotal, r.invoiceCount + r.loanCount], ["Billed and uncollected", r.invoiceTotal, r.invoiceCount], ["Overdue", aging.overdueTotal, aging.overdueCount], ["Financed outstanding", r.loanTotal, r.loanCount], ["Collected this month", collected.total, collected.count]] }] }} /></div>
       <div className="stat-row">
         <Tile n={fmtMoney(r.invoiceTotal + r.loanTotal)} label="Total receivable" />
         <Tile
@@ -142,6 +144,10 @@ export default function FinanceTab() {
       <div className="card">
         <div className="card-head">
           <h2>Invoice aging</h2>
+          <ReportDownload report={{ title: "Invoice aging", filters: `Open invoices only · sorted by ${sortKey} (${dir}) · ${aging.unpriced} without stored amounts`, sections: [
+            { title: "Aging totals", columns: ["Age", "Amount (USD)", "Invoice count"], rows: [["Current", aging.current.total, aging.current.count], ["1–30 days", aging.d1to30.total, aging.d1to30.count], ["31–60 days", aging.d31to60.total, aging.d31to60.count], ["Over 60 days", aging.d60plus.total, aging.d60plus.count]] },
+            { title: "Open invoices", columns: ["Invoice", "Account", "Amount (USD)", "Due", "Days until due", "Status"], rows: sorted.map(row => [row.number, row.account, row.amount, row.dueAt, row.days, row.status]) }
+          ] }} />
           <span className="muted small">by due date, open invoices only</span>
         </div>
         {open.length === 0 ? (
@@ -256,7 +262,11 @@ function PortfolioCard({
 
   return (
     <div className="card">
-      <h2>Premium finance portfolio</h2>
+      <div className="card-head"><h2>Premium finance portfolio</h2>
+      <ReportDownload report={{ title: "Premium finance portfolio", filters: "Live loans sorted by next due date", sections: [
+        { title: "Loan counts", columns: ["Status", "Count"], rows: ["ACTIVE", "ACCEPTED", "DEFAULTED", "QUOTED"].map(status => [status, count(status)]) },
+        { title: "Live loans", columns: ["Account", "Balance (USD)", "Next due", "Status", "Autopay"], rows: rows.map(l => [accountName.get(l.accountId) ?? "—", l.balance ?? l.amountFinanced, l.nextDueAt, l.status, l.autopayFailedInstallment != null ? `Failed · #${l.autopayFailedInstallment}` : l.autopayPendingIntentId ? "Clearing" : l.stripePaymentMethodId ? "On" : "Off"]) }
+      ] }} /></div>
       <div className="chip-row" style={{ marginBottom: 10, flexWrap: "wrap" }}>
         <Badge cls="green" label={`Active · ${count("ACTIVE")}`} />
         <Badge cls="gray" label={`Accepted · ${count("ACCEPTED")}`} />
@@ -397,7 +407,8 @@ function InMotionCard({
 
   return (
     <div className="card">
-      <h2>In motion</h2>
+      <div className="card-head"><h2>In motion</h2>
+      <ReportDownload report={{ title: "Finance in motion", sections: [{ title: "In motion", columns: ["Item", "Count", "Details"], rows: [["Pending elections", elections.length, oldestElectionDays == null ? "None outstanding" : `Oldest ${oldestElectionDays} days`], ["Cancellation clocks", clocks.length, soonestClockDays == null ? "None running" : `${accountName.get(clocks[0].accountId) ?? "—"} · soonest in ${soonestClockDays} days`], ["Expected installments · 30 days", installments.count, fmtMoney(installments.total)], ["Carrier refunds expected", refunds.length, refunds[0]?.expectedCarrierRefundAt], ["Draft invoices unsent", drafts.length, oldestDraftDays == null ? "None" : `Oldest ${oldestDraftDays} days`]] }] }} /></div>
       <div className="table-wrap">
         <table>
           <tbody>

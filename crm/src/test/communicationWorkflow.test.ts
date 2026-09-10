@@ -546,7 +546,7 @@ it("continues accepting cached website forms during the additive schema rollout"
 
 it("readiness checks storage without creating a lead or dispatching communication", async () => {
   const before = h.transactions.length;
-  expect(await capture({ arguments: { readinessContract: 1 }, identity: null, source: null, request: {}, prev: null } as never, {} as never, () => {})).toMatchObject({ ready: true, contractVersion: 1 });
+  expect(await capture({ arguments: { readinessContract: 2 }, identity: null, source: null, request: {}, prev: null } as never, {} as never, () => {})).toMatchObject({ ready: true, contractVersion: 2 });
   expect(h.transactions).toHaveLength(before); expect(entries("SUBMISSION")).toHaveLength(0); expect(h.front).not.toHaveBeenCalled();
 });
 
@@ -833,4 +833,59 @@ it("returns the committed teammate version so the next edit does not depend on a
   expect(first).toMatchObject({ ok: true, member: { ...initial, frontId: "tea_jake", dialpadId: "5655281245659136", version: 2 } });
   const committed = (first as { member: Record<string, unknown> }).member;
   expect(await write({ ...committed, salesperson: false })).toMatchObject({ ok: true, member: { version: 3, salesperson: false, champion: true, frontId: "tea_jake", dialpadId: "5655281245659136" } });
+});
+
+
+describe("creation-only lead acquisition", () => {
+  it("requires one of the six choices and ignores a free-text source", async () => {
+    const { handler } = await import("../../amplify/functions/communications/handler");
+    const create = (fields: Record<string, unknown>, requestId = "manual-source-test-123456789") => handler({ arguments: { operation: "createLead", input: { requestId, fields: { name: "Source test HOA", ...fields } } }, identity: { sub: "brian", groups: ["ADMIN"] } as never });
+    expect(await create({ source: "anything" })).toMatchObject({ ok: false });
+    expect(await create({ leadSource: "REFERRAL" })).toMatchObject({ ok: false });
+    expect([...h.records.keys()].filter(k => k.startsWith("Account:"))).toHaveLength(0);
+    const result = await create({ leadSource: "PHONE", source: "pretend-google" }) as { id: string };
+    expect(h.records.get(`Account:${result.id}`)).toMatchObject({ leadSource: "PHONE" });
+    expect(h.records.get(`Account:${result.id}`)?.source).toBeUndefined();
+    // An idempotent retry never changes the already-created acquisition.
+    expect(await create({ leadSource: "EMAIL" })).toMatchObject({ id: result.id });
+    expect(h.records.get(`Account:${result.id}`)?.leadSource).toBe("PHONE");
+  });
+  it.each([["gclid", "GOOGLE_AD_WEBSITE"], ["wbraid", "GOOGLE_AD_WEBSITE"], ["", "ORGANIC_WEBSITE"]])("classifies website creation from %s", async (key, expected) => {
+    const { handler: capture } = await import("../../amplify/functions/lead-intake/handler");
+    const result = await capture({ arguments: { name: "Campaign test", attribution: JSON.stringify(key ? { [key]: "test-click" } : {}), source: "website-quote" } } as never, {} as never, () => {}) as { id: string };
+    expect(h.records.get(`Account:${result.id}`)).toMatchObject({ leadSource: expected, source: "website-quote" });
+  });
+});
+
+describe("last prospect contact", () => {
+  const stamp = "2026-09-08T14:00:00.000Z";
+  async function link(purpose = "PROSPECT") { await save(row("LINK", "front-link:cnv_a", { accountId: "a1", purpose })); }
+  it("includes either direction and keeps task updates, notes and Seen out of the clock", async () => {
+    const { lastContactPage } = await import("../../amplify/functions/communications/lastContact");
+    await link(); await inbound("reply", stamp);
+    await inbound("sent", "2026-09-08T15:00:00.000Z", { direction: "OUTBOUND", seenAt: "2026-09-09T16:00:00.000Z" });
+    await inbound("note", "2026-09-09T16:00:00.000Z", { channel: "NOTE", direction: "INTERNAL" });
+    expect(await lastContactPage("a1")).toMatchObject({ complete: true, contact: { at: "2026-09-08T15:00:00.000Z", direction: "OUTBOUND" } });
+  });
+  it("excludes carrier conversations, automatic replies and unrelated or failed activity", async () => {
+    const { lastContactPage } = await import("../../amplify/functions/communications/lastContact");
+    await link("CARRIER"); await inbound("carrier", stamp);
+    await inbound("auto", stamp, { classification: "AUTOMATIC" });
+    await inbound("wrong", stamp, { channel: "CALL", outcome: "UNRELATED", conversationId: undefined });
+    await inbound("failed", stamp, { channel: "SMS", status: "FAILED", conversationId: undefined });
+    expect(await lastContactPage("a1")).toMatchObject({ complete: true, contact: null });
+  });
+  it("paginates past recent notes to find the historical call instead of reporting no contact", async () => {
+    const { lastContactPage } = await import("../../amplify/functions/communications/lastContact");
+    await inbound("call", stamp, { channel: "CALL", direction: "OUTBOUND", status: "CONNECTED", conversationId: undefined });
+    for (let i = 0; i < 30; i++) await inbound(`note-${i}`, "2026-09-09T16:00:00.000Z", { channel: "NOTE", direction: "INTERNAL" });
+    const first = await lastContactPage("a1"); expect(first).toMatchObject({ complete: false, contact: null });
+    expect(first.nextToken).toBeTruthy();
+    expect(await lastContactPage("a1", first.nextToken)).toMatchObject({ complete: true, contact: { at: stamp, channel: "CALL" } });
+  });
+  it("does not count another account's stale link", async () => {
+    const { lastContactPage } = await import("../../amplify/functions/communications/lastContact");
+    await save(row("LINK", "front-link:cnv_a", { accountId: "a2", purpose: "PROSPECT" })); await inbound("email", stamp);
+    expect((await lastContactPage("a1")).contact).toBeNull();
+  });
 });

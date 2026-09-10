@@ -1,3 +1,4 @@
+import { isLeadSource } from "../../../../shared/leadSource";
 import { historyStopped, restartHistory, type HistoryJob } from "./history";
 import { reviewOperation, recordCallOutcome, linkActivity } from "./review";
 import { archiveAllowed } from "./cleanup";
@@ -42,12 +43,25 @@ export const handler = async (event: { arguments: { operation?: string; readOper
     const input = object(event.arguments.input), op = event.arguments.readOperation ?? event.arguments.operation;
     const requireAdmin = () => { if (!admin) throw new Error("Only an admin can change integration or team settings"); };
     if (event.arguments.readOperation) {
+      if (op === "lastContacts") {
+        const accounts = input.accounts;
+        if (!Array.isArray(accounts) || accounts.length > 10) throw new Error("Choose up to 10 leads at a time");
+        const { lastContactPage } = await import("./lastContact");
+        const items = [];
+        // Keep provider-free history reads bounded and below table bursts.
+        for (const raw of accounts) {
+          const entry = object(raw), id = text(entry, "accountId", 100);
+          if (!/^[a-zA-Z0-9_-]{1,100}$/.test(id)) throw new Error("Choose a valid lead");
+          items.push(await lastContactPage(id, text(entry, "nextToken", 4000) || undefined));
+        }
+        return { ok: true, items };
+      }
       if (op === "accountSummary") {
         const id = text(input, "accountId"), client = await dataClient(), account = await client.models.Account.get({ id });
         if (account.errors?.length || !account.data) throw new Error("Could not load this account");
         const [contacts, quotes, documents] = await Promise.all([account.data.contacts({ limit: 25 }), account.data.quotes({ limit: 25 }), client.models.Document.listDocumentByEntityId({ entityId: id }, { limit: 25 })]);
         if (contacts.errors?.length || quotes.errors?.length || documents.errors?.length) throw new Error("Could not load account context");
-        return { ok: true, summary: { name: account.data.name, source: account.data.source, notes: account.data.notes, currentPolicyExpiration: account.data.currentPolicyExpiration,
+        return { ok: true, summary: { name: account.data.name, source: account.data.source, leadSource: account.data.leadSource, notes: account.data.notes, currentPolicyExpiration: account.data.currentPolicyExpiration,
           contacts: contacts.data.map(c => ({ id: c.id, name: c.name, email: c.email, phone: c.phone })), quotes: quotes.data.map(q => ({ id: q.id, status: q.status, lines: q.lines })), documents: documents.data.map(d => ({ id: d.id, name: d.name, status: d.ocrStatus })),
           more: !!(contacts.nextToken || quotes.nextToken || documents.nextToken), url: `${process.env.CRM_BASE_URL}/accounts/${id}` } };
       }
@@ -268,14 +282,15 @@ export const handler = async (event: { arguments: { operation?: string; readOper
       if (!name || !/^[a-zA-Z0-9-]{20,100}$/.test(requestId)) throw new Error("A name and valid request ID are required");
       const key = `manual:${actor}:${requestId}`, existing = await get<{ accountId: string }>(key);
       if (existing) return { ok: true, id: existing.data.accountId };
+      if (!isLeadSource(fields.leadSource)) throw new Error("Choose a lead source before creating the lead");
       const id = randomUUID(), wf = await defaultWorkflow(id, name);
       if (input.salespersonId || input.championId) {
         const salespersonId = text(input, "salespersonId"), championId = text(input, "championId");
         await validRole(salespersonId, "SALESPERSON"); await validRole(championId, "CHAMPION");
         Object.assign(wf, { salespersonId, championId, assignmentIssue: undefined });
       }
-      const account: Input = { name, stage: "LEAD", type: ["ASSOCIATION", "PERSONAL", "COMMERCIAL_OTHER"].includes(String(fields.type)) ? fields.type : "ASSOCIATION", lastWriteBy: actor };
-      for (const field of ["address", "city", "state", "zip", "currentAgent", "currentPolicyExpiration", "source", "notes"]) if (fields[field]) account[field] = text(fields, field, field === "notes" ? 10000 : 500);
+      const account: Input = { name, leadSource: fields.leadSource, stage: "LEAD", type: ["ASSOCIATION", "PERSONAL", "COMMERCIAL_OTHER"].includes(String(fields.type)) ? fields.type : "ASSOCIATION", lastWriteBy: actor };
+      for (const field of ["address", "city", "state", "zip", "currentAgent", "currentPolicyExpiration", "notes"]) if (fields[field]) account[field] = text(fields, field, field === "notes" ? 10000 : 500);
       for (const field of ["unitCount", "totalInsuredValue"]) if (fields[field] != null && fields[field] !== "") {
         const value = Number(fields[field]); if (!Number.isFinite(value) || value < 0 || field === "unitCount" && !Number.isInteger(value)) throw new Error("Enter valid units and insured value"); account[field] = value;
       }

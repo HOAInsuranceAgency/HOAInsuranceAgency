@@ -1,3 +1,4 @@
+import { isLeadSource, LEAD_SOURCE_LABELS } from "../../../../shared/leadSource";
 /** The internal Front intake email. The original snapshot remains unchanged. */
 const escape = (value: string) => value.replace(/[&<>"']/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]!));
 const key = (value: string) => value.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/[^a-z0-9]/gi, "").toLowerCase();
@@ -101,10 +102,11 @@ export function renderIntakeBrief(input: IntakeBriefInput): { html: string; text
   const additional: Detail[] = Object.entries(answers).filter(([k]) => !used.has(k) && !technical(k)).map(([k, v]) => [label(k), valueText(v)]);
   if (websiteAgent) additional.push(["Website agent", websiteAgent]);
   // Preserve a useful source label without exposing route slugs or system keys.
-  const sourceLabel = source.startsWith("website-ho6:") ? "Association page"
+  const formSourceLabel = source.startsWith("website-ho6:") ? "Association page"
     : source === "website-quote" ? "Quote form" : source === "website-contact" ? "Contact form"
     : source.startsWith("website-assessment:") ? sourceAnswer || "Instant assessment"
     : source === "website-coverage-calculator" ? "Coverage calculator" : sourceAnswer || "Website form";
+  const sourceLabel = isLeadSource(s.leadSource) ? `${LEAD_SOURCE_LABELS[s.leadSource]} · ${formSourceLabel}` : formSourceLabel;
   if (leadType && !/^(HO-6 Unit Owner|ASSOCIATION|PERSONAL)$/i.test(leadType)) additional.push(["Lead type", leadType]);
   const received = new Date(input.receivedAt);
   const receivedLabel = Number.isFinite(received.getTime()) ? new Intl.DateTimeFormat("en-US", {

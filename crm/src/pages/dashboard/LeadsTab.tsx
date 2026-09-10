@@ -1,9 +1,13 @@
+import { ReportDownload } from "../../components/ReportDownload";
+import { acquisitionLabel } from "../../../../shared/leadSource";
+import { useLastContacts } from "../../lib/lastContact";
 import { useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   client,
   daysUntil,
   fmtDate,
+  fmtDateTime,
   fmtMoney,
   listAllPages,
   type Account,
@@ -40,6 +44,7 @@ interface LeadRow {
   id: string;
   name: string;
   source: string | null;
+  lastContact: string | null;
   /** ISO datetime — when the lead entered the pipeline. */
   entered: string | null;
   /** Incumbent policy expiration, the sales clock for HOA business. */
@@ -82,6 +87,7 @@ export default function LeadsTab() {
     { initialData: EMPTY, errorMessage: "Failed to load the lead pipeline" }
   );
   const { leads, clients, quotes } = res.data;
+  const contactHistory = useLastContacts(leads.map(l => l.id), res.data);
 
   const stats = useMemo(
     () => leadStats(leads, clients, new Date()),
@@ -112,14 +118,15 @@ export default function LeadsTab() {
       leads.map((l) => ({
         id: l.id,
         name: l.name,
-        source: l.source ?? null,
+        source: acquisitionLabel(l.leadSource, l.source),
+        lastContact: contactHistory.contacts[l.id]?.at ?? null,
         entered: l.createdAt ?? null,
         expires: l.currentPolicyExpiration ?? null,
         days: l.currentPolicyExpiration ? daysUntil(l.currentPolicyExpiration) : null,
         standing: leadQuoteStanding(quotesByLead.get(l.id) ?? []),
         tiv: l.totalInsuredValue ?? null,
       })),
-    [leads, quotesByLead]
+    [leads, quotesByLead, contactHistory.contacts]
   );
 
   // Soonest incumbent expiration first: the lead about to renew with someone
@@ -130,6 +137,7 @@ export default function LeadsTab() {
       lead: (r) => r.name,
       source: (r) => r.source,
       entered: (r) => r.entered,
+      lastContact: (r) => r.lastContact,
       expires: (r) => r.expires,
       // Ranked, not alphabetized: this column encodes a progression, and
       // "DECLINED between BOUND and DRAFT" is what sorting the raw status
@@ -156,6 +164,7 @@ export default function LeadsTab() {
 
   return (
     <TabFrame res={res}>
+      <div className="report-actions"><ReportDownload report={{ title: "Lead summary", sections: [{ title: "Lead summary", columns: ["Measure", "Value"], rows: [["New this week", stats.newThisWeek], ["Open leads", leads.length], ["Quotes in flight", openQuoteCount], ["Converted this quarter", stats.convertedThisQuarter], ["Median days to convert", stats.medianDaysToConvert]] }] }} /></div>
       <div className="stat-row">
         <Tile n={stats.newThisWeek} label="New this week" />
         <Tile n={leads.length} label="Open leads" onClick={() => navigate("/leads")} />
@@ -174,6 +183,7 @@ export default function LeadsTab() {
       <div className="card">
         <div className="card-head">
           <h2>Pipeline</h2>
+          <ReportDownload report={{ title: "Lead pipeline", filters: "Stage inferred from quotes; bound in the last 30 days", sections: [{ title: "Pipeline", columns: ["Stage", "Leads"], rows: stages }] }} />
           <span className="muted small">stage inferred from each lead's quotes</span>
         </div>
         <div className="funnel">
@@ -193,8 +203,11 @@ export default function LeadsTab() {
       <div className="card">
         <div className="card-head">
           <h2>Lead work list</h2>
+          <ReportDownload disabled={contactHistory.loading || !!contactHistory.error} report={{ title: "Lead work list", filters: `Open leads · sorted by ${sortKey} (${dir}) · last contact in either direction`, sections: [{ title: "Leads", columns: ["Lead", "Lead source", "Last contact (local)", "Entered", "Incumbent expires", "Pipeline", "Quote count", "TIV (USD)"], rows: sorted.map(r => [r.name, r.source, r.lastContact ? fmtDateTime(r.lastContact) : "No contact recorded", r.entered?.slice(0, 10), r.expires, r.standing?.status ?? "Unworked", r.standing?.count ?? 0, r.tiv]) }] }} />
           <span className="muted small">sorted by incumbent expiration</span>
         </div>
+        <p className="muted small">Last contact includes prospect emails, calls and texts in either direction. Times are shown in your local time zone.</p>
+        {contactHistory.error && <p className="error-text">{contactHistory.error}</p>}
         {rows.length === 0 ? (
           <p className="muted small">
             No open leads. New leads land here from the website form or New
@@ -207,6 +220,7 @@ export default function LeadsTab() {
                 <tr>
                   <SortTh label="Lead" colKey="lead" sortKey={sortKey} dir={dir} onToggle={toggle} />
                   <SortTh label="Source" colKey="source" sortKey={sortKey} dir={dir} onToggle={toggle} />
+                  <SortTh label="Last contact" colKey="lastContact" sortKey={sortKey} dir={dir} onToggle={toggle} />
                   <SortTh label="Entered" colKey="entered" sortKey={sortKey} dir={dir} onToggle={toggle} />
                   <SortTh label="Incumbent expires" colKey="expires" sortKey={sortKey} dir={dir} onToggle={toggle} />
                   <th></th>
@@ -225,6 +239,7 @@ export default function LeadsTab() {
                       <strong>{r.name}</strong>
                     </td>
                     <td>{r.source || "—"}</td>
+                    <td>{contactHistory.loading ? "Loading…" : contactHistory.error ? "Unavailable" : r.lastContact ? fmtDateTime(r.lastContact) : "No contact recorded"}</td>
                     <td>{fmtDate(r.entered?.slice(0, 10))}</td>
                     <td>{fmtDate(r.expires ?? undefined)}</td>
                     <td className="days-badge">

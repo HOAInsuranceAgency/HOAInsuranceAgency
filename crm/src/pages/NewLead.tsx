@@ -1,3 +1,4 @@
+import { LEAD_SOURCES, LEAD_SOURCE_LABELS } from "../../../shared/leadSource";
 import { communicationRequest, type TeamEligibility } from "../lib/communications";
 import { ResponsibilitySelect } from "../components/LeadWorkflowPanel";
 import { useAsyncResource } from "../lib/useAsyncResource";
@@ -59,7 +60,7 @@ export default function NewLead() {
     totalInsuredValue: "",
     currentAgent: "",
     currentPolicyExpiration: "",
-    source: "",
+    leadSource: "",
     notes: "",
   });
 
@@ -73,6 +74,7 @@ export default function NewLead() {
       setError(problems.join(" "));
       return;
     }
+    if (!form.leadSource) { setError("Choose a lead source before creating the lead."); return; }
     setSaving(true);
     setError("");
     let data: { id: string } | null = null;
@@ -94,7 +96,7 @@ export default function NewLead() {
         : undefined,
       currentAgent: form.currentAgent.trim() || undefined,
       currentPolicyExpiration: form.currentPolicyExpiration || undefined,
-      source: form.source.trim() || undefined,
+      leadSource: form.leadSource,
       notes: form.notes.trim() || undefined,
     },
       }, true);
@@ -197,7 +199,7 @@ export default function NewLead() {
       <div className="card">
         <div className="form-grid">
           <div className="field">
-            <label>Type</label>
+            <label>Account type</label>
             <select value={form.type} onChange={(e) => setF("type", e.target.value)}>
               {ACCOUNT_TYPE_OPTIONS.map((o) => (
                 <option key={o.value} value={o.value}>
@@ -211,12 +213,12 @@ export default function NewLead() {
             <input value={form.name} onChange={(e) => setF("name", e.target.value)} />
           </div>
           <div className="field">
-            <label>Source</label>
-            <input
-              placeholder="website, referral, cold…"
-              value={form.source}
-              onChange={(e) => setF("source", e.target.value)}
-            />
+            <label htmlFor="new-lead-source">Lead source *</label>
+            <select id="new-lead-source" required value={form.leadSource} onChange={e => setF("leadSource", e.target.value)}>
+              <option value="">Choose a source</option>
+              {LEAD_SOURCES.map(value => <option key={value} value={value}>{LEAD_SOURCE_LABELS[value]}</option>)}
+            </select>
+            <span className="muted small">Set once when the lead is created.</span>
           </div>
           {/* One person, matching `Contact` exactly — this used to be a first
               and last name feeding two Account columns, which then had to be

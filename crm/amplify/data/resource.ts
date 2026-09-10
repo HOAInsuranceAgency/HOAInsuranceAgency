@@ -270,9 +270,12 @@ const schema = a
     // unable to say which band belonged to which.
     PaperType: a.enum(["ADMITTED", "SURPLUS_LINES"]),
 
+    LeadSource: a.enum(["GOOGLE_AD_WEBSITE", "ORGANIC_WEBSITE", "PHONE", "EMAIL", "META_AD", "PROPERTY_MANAGER"]),
+
     // ── Account: Lead → Client, converted in place ─────────────────────
     //
-    // Authenticated read/write, ADMIN-only delete. Deleting an account is the
+    // Authenticated read/update; creation uses the validated createLead mutation.
+    // ADMIN-only delete. Deleting an account is the
     // cascade in DeleteLeadZone — it takes the quotes and documents with it —
     // and that was gated in the client only (`if (!isAdmin) return null`),
     // which is not a gate at all as far as the API is concerned.
@@ -400,7 +403,11 @@ const schema = a
         // never read back in the app. Kept because it is the only link from an
         // account to its Buildium property record.
         buildiumId: a.string(), // lineage from web lead forms / Buildium sync
-        source: a.string(), // e.g. "website", "referral", "cold"
+        // Creation runs through createLead / submitWebLead. Even admins cannot
+        // rewrite acquisition history through generated account mutations.
+        source: a.string().authorization(allow => [allow.authenticated().to(["read"])]),
+        leadSource: a.ref("LeadSource").authorization(allow => [allow.authenticated().to(["read"])]),
+        leadAttribution: a.string().authorization(allow => [allow.authenticated().to(["read"])]),
         notes: a.string(),
         convertedAt: a.datetime(), // set when first quote is bound
         // Who made this write — see the Contact model's note.
@@ -412,8 +419,8 @@ const schema = a
       })
       .secondaryIndexes((index) => [index("stage").sortKeys(["name"])])
       .authorization((allow) => [
-        allow.authenticated().to(["read", "create", "update"]),
-        allow.groups(["ADMIN"]),
+        allow.authenticated().to(["read", "update"]),
+        allow.groups(["ADMIN"]).to(["read", "update", "delete"]),
       ]),
 
     // ── Contacts: the people at an association ─────────────────────────
@@ -1928,6 +1935,7 @@ const schema = a
         submissionId: a.string(),
         retryProof: a.string(),
         answerSnapshot: a.string(),
+        attribution: a.string(),
         type: a.string(), // ASSOCIATION | PERSONAL | COMMERCIAL_OTHER
         name: a.string().required(),
         contactFirstName: a.string(),

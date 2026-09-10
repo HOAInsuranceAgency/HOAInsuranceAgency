@@ -1,3 +1,4 @@
+import { ReportDownload } from "../../components/ReportDownload";
 import { useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import {
@@ -158,6 +159,7 @@ export default function OverviewTab() {
 
   return (
     <TabFrame res={res}>
+      <div className="report-actions"><ReportDownload report={{ title: "Dashboard overview", sections: [{ title: "Overview", columns: ["Measure", "Value"], rows: [["Open leads", d.leads.length], ["Clients", d.clients.length], ["Quotes in flight", openQuotes], ["Active policies", activePolicies], ["Accounts receivable (USD)", ar.invoiceTotal + ar.loanTotal], ["Need attention", attention.length]] }] }} /></div>
       <div className="stat-row">
         <Tile n={d.leads.length} label="Open leads" onClick={() => navigate("/leads")} />
         <Tile n={d.clients.length} label="Clients" onClick={() => navigate("/clients")} />
@@ -186,6 +188,7 @@ export default function OverviewTab() {
       <div className="card">
         <div className="card-head">
           <h2>Needs attention</h2>
+          <ReportDownload report={{ title: "Needs attention", filters: "Ranked by severity, then age", sections: [{ title: "Attention queue", columns: ["Severity", "Item", "Details"], rows: attention.map(item => { const p = present(item); return [item.severity, p.strong + p.rest, p.detail]; }) }] }} />
           <span className="muted small">ranked by severity, then age</span>
         </div>
         {attention.length === 0 ? (

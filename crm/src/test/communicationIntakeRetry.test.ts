@@ -29,11 +29,11 @@ describe("independent app deployment", () => {
     const schema = (args: string) => buildSchema(`type Query { ready: Boolean } type Mutation { submitWebLead(name: String!${args}): String }`);
     const old = await graphql({ schema: schema(""), source: probe, rootValue: { submitWebLead: send } });
     expect(old.errors?.length).toBeGreaterThan(0);
-    const compatible = await graphql({ schema: schema(", submissionId: String, retryProof: String, answerSnapshot: String"), source: probe, rootValue: { submitWebLead: send } });
+    const compatible = await graphql({ schema: schema(", submissionId: String, retryProof: String, answerSnapshot: String, attribution: String"), source: probe, rootValue: { submitWebLead: send } });
     expect(compatible.errors).toBeUndefined(); expect(send).not.toHaveBeenCalled();
   });
   it("keeps the website build blocked on validation errors or an unavailable backend", async () => {
-    const request = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ errors: [{ message: "Unknown argument" }] }))).mockResolvedValueOnce(new Response("Unavailable", { status: 503 })).mockResolvedValueOnce(new Response(JSON.stringify({ data: {} }))).mockResolvedValueOnce(new Response(JSON.stringify({ data: { leadIntakeReady: JSON.stringify({ ready: true, contractVersion: 1 }) } })));
+    const request = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ errors: [{ message: "Unknown argument" }] }))).mockResolvedValueOnce(new Response("Unavailable", { status: 503 })).mockResolvedValueOnce(new Response(JSON.stringify({ data: {} }))).mockResolvedValueOnce(new Response(JSON.stringify({ data: { leadIntakeReady: JSON.stringify({ ready: true, contractVersion: 2 }) } })));
     expect(await contractReady("https://example.test/graphql", "public-key", request)).toBe(false);
     expect(await contractReady("https://example.test/graphql", "public-key", request)).toBe(false);
     expect(await contractReady("https://example.test/graphql", "public-key", request)).toBe(true);
