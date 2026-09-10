@@ -1,16 +1,62 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 const h = vi.hoisted(() => ({ request: vi.fn(), list: vi.fn(), draft: vi.fn(), listener: undefined as undefined | ((context: unknown) => void) }));
 vi.mock("../lib/communications", () => ({ communicationRequest: h.request }));
-vi.mock("../lib/client", () => ({ client: { models: { Account: { list: h.list } } }, fmtDateTime: (v: string) => v }));
+vi.mock("../lib/client", async importOriginal => ({ ...await importOriginal<typeof import("../lib/client")>(), client: { models: { Account: { list: h.list } } } }));
 vi.mock("@frontapp/plugin-sdk", () => ({ default: { contextUpdates: { subscribe: (fn: (context: unknown) => void) => { h.listener = fn; return { unsubscribe: vi.fn() }; } }, createDraft: h.draft, openUrl: vi.fn() } }));
 import FrontSidebar from "../pages/FrontSidebar";
 import { ResponsibilitySelect } from "../components/LeadWorkflowPanel";
 import { CallOutcome } from "../components/CommunicationReview";
 import CommunicationSettings from "../components/CommunicationSettings";
 const context = { workflow: null, tasks: [], communications: [], team: [], issues: [] };
+function linkedLead() {
+  const linked = { ...context, workflow: { accountId: "a", name: "Willow HOA", salespersonId: "jake", championId: "jake", version: 4, disposition: "ACTIVE", updatedAt: "2026-09-10T12:00:00Z", conversationId: "cnv_a" },
+    team: ["jake", "brian"].map(userId => ({ userId, name: userId === "jake" ? "Jake Greasley" : "Brian Cole", email: `${userId}@example.com`, enabled: true, salesperson: true, champion: true })),
+    tasks: [{ id: "task", accountId: "a", kind: "FOLLOW_UP", role: "SALESPERSON", title: "Follow up with prospect", status: "OPEN", dueAt: "2026-09-14T13:00:00Z", escalationAt: "2026-09-15T13:00:00Z", version: 2 }],
+  };
+  h.request.mockImplementation(async (op: string) => op === "context" ? linked : op === "accountSummary" ? { summary: { name: "Willow HOA", source: "website-ho6:willow-condominium", contacts: [{ id: "c", name: "Willow HOA", email: "jake@example.com", phone: "6178959530" }], quotes: [], documents: [], more: true, url: "https://staging.example.com/accounts/a" } } : op === "work" ? { items: [] } : { ok: true });
+  return linked;
+}
 beforeEach(() => { vi.clearAllMocks(); h.request.mockResolvedValue(context); });
 describe("communication UI boundaries", () => {
+  it("shows readable lead details and requires an explicit team edit that can be cancelled", async () => {
+    linkedLead(); render(<FrontSidebar />); act(() => h.listener?.({ conversation: { id: "cnv_a" } }));
+    await screen.findByRole("heading", { name: "Willow HOA" });
+    expect(screen.getByText("HO-6 association form")).toBeTruthy(); expect(screen.getByText("(617) 895-9530")).toBeTruthy();
+    expect(screen.queryByText(/website-ho6:/)).toBeNull(); expect(screen.queryByText(/Documents \(0\+/)).toBeNull();
+    expect(screen.queryByRole("combobox", { name: "Salesperson" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Open in Front" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Edit team" }));
+    fireEvent.change(screen.getByRole("combobox", { name: "Salesperson" }), { target: { value: "brian" } });
+    fireEvent.click(within(screen.getByRole("region", { name: "Lead team" })).getByRole("button", { name: "Cancel" }));
+    fireEvent.click(screen.getByRole("button", { name: "Edit team" }));
+    expect(screen.getByRole("combobox", { name: "Salesperson" })).toHaveValue("jake");
+    expect(h.request.mock.calls.some(([op]) => op === "setResponsibilities")).toBe(false);
+  });
+  it("saves both chosen roles with the existing workflow version", async () => {
+    linkedLead(); render(<FrontSidebar />); act(() => h.listener?.({ conversation: { id: "cnv_a" } }));
+    fireEvent.click(await screen.findByRole("button", { name: "Edit team" }));
+    fireEvent.change(screen.getByRole("combobox", { name: "Deal champion" }), { target: { value: "brian" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save responsibilities" }));
+    await waitFor(() => expect(h.request).toHaveBeenCalledWith("setResponsibilities", { accountId: "a", salespersonId: "jake", championId: "brian", version: 4 }, true));
+    await waitFor(() => expect(screen.queryByRole("combobox", { name: "Deal champion" })).toBeNull());
+  });
+  it("keeps task edits explicit and preserves the date when the editor is cancelled", async () => {
+    linkedLead(); render(<FrontSidebar />); act(() => h.listener?.({ conversation: { id: "cnv_a" } }));
+    fireEvent.click(await screen.findByRole("button", { name: "Edit action" }));
+    fireEvent.change(screen.getByLabelText("Action"), { target: { value: "Unfinished change" } });
+    fireEvent.click(within(screen.getByRole("region", { name: "Next actions" })).getByRole("button", { name: "Cancel" }));
+    expect(screen.getByText("Follow up with prospect")).toBeTruthy();
+    expect(h.request.mock.calls.some(([op]) => op === "saveTask")).toBe(false);
+  });
+  it("clears a team edit when Front switches to another conversation", async () => {
+    linkedLead(); render(<FrontSidebar />); act(() => h.listener?.({ conversation: { id: "cnv_a" } }));
+    fireEvent.click(await screen.findByRole("button", { name: "Edit team" }));
+    fireEvent.change(screen.getByRole("combobox", { name: "Salesperson" }), { target: { value: "brian" } });
+    act(() => h.listener?.({ conversation: { id: "cnv_b" } }));
+    await screen.findByRole("button", { name: "Edit team" });
+    expect(screen.queryByRole("combobox", { name: "Salesperson" })).toBeNull();
+  });
   it("explains that staging CRM acceptance follows controlled activation", async () => {
     const config = { environment: "staging", paused: true, allowedInboxIds: [], dialpadNumbers: [], holidays: [], testRecipients: ["tester@example.com"] };
     h.request.mockImplementation(async op => op === "settings" ? { config, credentialStatus: {} } : { team: [] });

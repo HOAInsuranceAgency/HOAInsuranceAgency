@@ -1041,12 +1041,78 @@ th.internal { color: var(--muted); }
 .lead-workflow .workflow-task { border-top: 1px solid var(--border, #e2e8f0); padding: 12px 0; }
 .workflow-editor { border: 1px solid var(--border, #e2e8f0); border-radius: 8px; background: #f8fafc; padding: 16px; margin: 12px 0; }
 .lead-workflow textarea { width: 100%; box-sizing: border-box; }
-.front-crm-sidebar { max-width: 720px; padding: 16px; margin: 0 auto; overflow-wrap: anywhere; }
-.front-crm-sidebar h1 { font-size: 22px; }
-.front-crm-sidebar .card { padding: 16px; }
-.front-crm-sidebar .form-grid { grid-template-columns: 1fr; }
-.front-crm-sidebar .toolbar { flex-wrap: wrap; }
-.front-crm-sidebar .field input, .front-crm-sidebar .field select { min-width: 0; width: 100%; }
+/* Front is a 260–400px workspace, not a miniature full CRM page. */
+.front-crm-sidebar { max-width: 520px; padding: 12px; margin: 0 auto; font-size: 13px; line-height: 1.45; overflow-wrap: anywhere; }
+.front-crm-sidebar h1 { font-size: 18px; line-height: 1.3; margin: 7px 0 12px; letter-spacing: -.2px; color: var(--navy); }
+.front-crm-sidebar h2, .front-crm-sidebar h3 { font-size: 13px; line-height: 1.4; margin: 0; color: var(--navy); }
+.front-crm-sidebar p { margin: 9px 0; }
+.front-crm-sidebar .small { font-size: 12px; line-height: 1.5; }
+.front-crm-sidebar .card { padding: 14px; margin: 0 0 10px; box-shadow: none; }
+.front-crm-sidebar .card.lead-workflow { padding: 0; border: 0; background: transparent; margin-bottom: 0; }
+.front-crm-sidebar .toolbar { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; margin: 0; }
+.front-crm-sidebar .toolbar .grow { flex: 1; }
+.front-crm-sidebar .workflow-heading { margin-bottom: 10px; }
+.front-crm-sidebar .workflow-heading h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .7px; color: var(--muted); }
+.front-crm-sidebar .workflow-heading button { font-size: 12px; min-height: 28px; padding: 4px 8px; }
+.front-crm-sidebar button { max-width: 100%; min-height: 32px; padding: 6px 11px; border: 1px solid var(--navy); border-radius: 6px; background: var(--navy); color: #fff; font-family: inherit; font-weight: 600; font-size: 12px; line-height: 1.4; cursor: pointer; text-align: center; }
+.front-crm-sidebar button.secondary { color: var(--navy); background: #fff; border-color: #d5deea; }
+.front-crm-sidebar button.link { background: transparent; border-color: transparent; color: var(--accent-dark); padding: 4px 2px; min-height: 28px; text-align: left; }
+.front-crm-sidebar button:hover:not(:disabled) { filter: brightness(.95); }
+.front-crm-sidebar button:disabled { opacity: .45; cursor: not-allowed; }
+.front-crm-sidebar :is(button, summary, a):focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.front-crm-sidebar .form-grid { grid-template-columns: minmax(0, 1fr); gap: 10px; margin: 0 0 12px; }
+.front-crm-sidebar .field { display: flex; flex-direction: column; gap: 5px; font-size: 12px; line-height: 1.4; color: var(--muted); margin: 12px 0; min-width: 0; }
+.front-crm-sidebar .form-grid > .field { margin: 0; }
+.front-crm-sidebar :is(input:not([type=checkbox]):not([type=radio]), select, textarea) { box-sizing: border-box; display: block; width: 100%; min-width: 0; max-width: 100%; padding: 8px 9px; color: var(--text); background: #fff; border: 1px solid #cfd9e6; border-radius: 6px; font: inherit; line-height: 1.4; }
+.front-crm-sidebar textarea { resize: vertical; min-height: 86px; }
+.front-crm-sidebar :is(input, select, textarea):focus { outline: 2px solid #a8caeb; outline-offset: 1px; border-color: var(--accent); }
+.front-crm-sidebar :is(input[type=checkbox], input[type=radio]) { accent-color: var(--navy); width: 15px; height: 15px; flex: 0 0 15px; margin: 2px 6px 0 0; }
+.front-lead-summary, .front-next-actions, .front-team, .front-disclosure { border: 1px solid var(--border); border-radius: 9px; background: #fff; padding: 14px; margin: 0 0 10px; }
+.front-crm-sidebar .front-eyebrow { display: inline-block; margin: 0; padding: 3px 7px; border-radius: 4px; font-size: 10px; letter-spacing: .2px; color: #71541f; background: #f7f0df; }
+.front-contact { display: flex; flex-direction: column; gap: 3px; margin: 8px 0 12px; font-size: 12px; }
+.front-contact strong { font-weight: 600; }
+.front-contact a { overflow-wrap: anywhere; }
+.front-contact-phone { color: var(--muted); font-variant-numeric: tabular-nums; }
+.front-crm-sidebar .front-open-account { width: 100%; display: flex; justify-content: space-between; align-items: center; }
+.front-crm-sidebar details > summary { cursor: pointer; list-style: none; position: relative; padding-right: 20px; font-size: 13px; font-weight: 600; color: var(--navy); }
+.front-crm-sidebar details > summary::-webkit-details-marker { display: none; }
+.front-crm-sidebar details > summary::after { content: ""; position: absolute; right: 3px; top: 5px; width: 6px; height: 6px; border-right: 1.5px solid var(--muted); border-bottom: 1.5px solid var(--muted); transform: rotate(-45deg); transition: transform .15s; }
+.front-crm-sidebar details[open] > summary::after { transform: rotate(45deg); top: 3px; }
+.front-crm-sidebar details[open] > summary { margin-bottom: 12px; }
+.front-summary-hint { display: block; color: var(--muted); font-weight: 400; font-size: 11px; line-height: 1.45; margin-top: 3px; }
+.front-account-details { border-top: 1px solid var(--border); margin-top: 13px; padding-top: 11px; }
+.front-account-details > summary { font-size: 12px !important; }
+.front-subdetails { margin: 12px 0; }
+.front-detail-group { border-top: 1px solid var(--border); padding-top: 10px; margin-top: 10px; }
+.front-preserve-lines { white-space: pre-wrap; }
+.front-next-actions { border-top: 3px solid #c7a45c; }
+.front-crm-sidebar .front-next-actions .workflow-task { padding: 12px 0 0; margin-top: 10px; }
+.front-crm-sidebar .workflow-task-title { display: block; font-size: 15px; font-weight: 650; line-height: 1.4; color: var(--navy); }
+.front-crm-sidebar .workflow-task-meta { font-size: 12px; color: var(--muted); margin: 5px 0 11px; }
+.front-crm-sidebar .is-overdue .workflow-task-meta { color: var(--red); font-weight: 600; }
+.front-crm-sidebar .front-deadline-note { font-size: 11px; color: var(--muted); line-height: 1.5; margin: 12px 0 0; }
+.front-team-list { margin: 10px 0 0; display: grid; gap: 9px; }
+.front-team-list > div { display: grid; grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr); gap: 8px; }
+.front-team-list dt { font-size: 12px; color: var(--muted); }
+.front-team-list dd { font-size: 12px; font-weight: 600; color: var(--navy); margin: 0; }
+.front-crm-sidebar .front-handler { padding-top: 10px; border-top: 1px solid var(--border); margin: 12px 0 0; font-size: 11px; }
+.front-handler span { display: block; margin-top: 2px; }
+.front-crm-sidebar .workflow-editor { padding: 12px; margin: 12px 0 0; background: #f6f8fb; }
+.front-crm-sidebar .workflow-editor h3 { margin-bottom: 8px; }
+.front-crm-sidebar .workflow-note-publish { display: flex; align-items: flex-start; font-size: 12px; color: var(--muted); margin: 10px 0 12px; }
+.workflow-activity-title { display: block; }
+.workflow-activity-meta { display: block; color: var(--muted); font-size: 12px; font-weight: 400; margin-top: 4px; }
+.front-crm-sidebar .workflow-task summary { font-size: 12px; }
+.front-count { display: inline-block; font-size: 10px; line-height: 16px; border-radius: 5px; padding: 0 5px; background: #edf2f8; color: var(--muted); margin-left: 5px; vertical-align: 1px; }
+.front-tool-action { margin: 14px 0; }
+.front-crm-sidebar .front-tool-action p { font-size: 11px; margin: 5px 0 0; }
+.front-crm-sidebar .workflow-notice { border: 1px solid var(--border); background: #fff; border-radius: 8px; padding: 12px; }
+.front-extra-tools { margin-top: 0; }
+@media (prefers-reduced-motion: reduce) { .front-crm-sidebar details > summary::after { transition: none; } }
+@media (max-width: 300px) {
+  .front-crm-sidebar .workflow-editor { padding: 10px 0; border-inline: 0; border-radius: 0; background: transparent; }
+  .front-crm-sidebar input[type=datetime-local] { padding-inline: 5px; }
+}
 
 /* Communication settings: a compact overview with deliberate edit sessions. */
 .communication-settings { max-width: 1040px; }
