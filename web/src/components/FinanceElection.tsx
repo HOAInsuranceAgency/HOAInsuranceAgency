@@ -124,15 +124,14 @@ export function FinanceElection() {
       <div className="fe">
         <h1>You're set</h1>
         <p>
-          Your down payment — payment 1 of {totalPayments || 12} — has been
+          Your initial payment — payment 1 of {totalPayments || 12} — has been
           submitted, and your bank account is saved for the monthly payments
           that follow. Bank transfers usually clear within a few business days;
-          we'll email a receipt once it settles.
+          monthly billing turns on automatically once it settles.
         </p>
         <p>
-          One thing remains on paper: your board's signed resolution
-          authorizing the financing. Your agent will send it if they haven't
-          already — monthly payments begin only after it's on file.
+          Your monthly payments will be collected from this bank account on
+          the agreed schedule. No separate activation step is needed.
         </p>
       </div>
     );
@@ -164,25 +163,26 @@ export function FinanceElection() {
       <h1>Finance {terms.associationName}'s premium</h1>
       <p>
         Instead of paying {money(terms.premium)} up front, pay{" "}
-        <strong>{money(terms.downPayment)} today</strong> as payment 1 of{" "}
+        <strong>{money(terms.initialPaymentAmount)} today</strong> as payment 1 of{" "}
         {totalPayments}, then {terms.months} monthly payments of{" "}
         <strong>{money(terms.payment)}</strong>.
       </p>
       <table className="fe-terms">
         <tbody>
           <tr><td>Total premium</td><td>{money(terms.premium)}</td></tr>
-          <tr><td>Down payment (payment 1 of {totalPayments})</td><td>{money(terms.downPayment)}</td></tr>
+          <tr><td>Premium down payment</td><td>{money(terms.downPayment)}</td></tr>
+          <tr><td>Total initial payment (payment 1 of {totalPayments})</td><td>{money(terms.initialPaymentAmount)}</td></tr>
           <tr><td>Amount financed</td><td>{money(terms.amountFinanced)}</td></tr>
           <tr><td>Annual percentage rate</td><td>{terms.apr}%</td></tr>
           <tr><td>Monthly payment ({terms.months} payments)</td><td>{money(terms.payment)}</td></tr>
           <tr><td>Finance charge</td><td>{money(terms.totalInterest)}</td></tr>
-          <tr><td>Origination fee (refunded in full on prepayment)</td><td>{money(terms.originationFee)}</td></tr>
+          <tr><td>Origination fee (included today; refunded on prepayment)</td><td>{money(terms.originationFee)}</td></tr>
         </tbody>
       </table>
       <p className="fe-fine">
-        The down payment is collected today by bank transfer; the monthly
-        payments are drawn from the same account automatically, starting once
-        your board's signed resolution is on file with your agent. Early
+        Today's bank transfer includes the premium down payment and origination
+        fee. Once it settles, monthly payments are automatically collected from
+        the same account on the agreed schedule. No separate activation is needed. Early
         payoff is the outstanding principal only — the actuarial method; no
         other charge exists. Accepting closes the pay-in-full link on your
         invoice.
@@ -240,7 +240,7 @@ export function FinanceElection() {
       >
         {busy
           ? "Starting your payment…"
-          : `Sign, accept, and pay ${money(terms.downPayment)} down`}
+          : `Sign, accept, and pay ${money(terms.initialPaymentAmount)}`}
       </button>
       <p className="fe-fine">
         You'll finish the down payment on Stripe, our payment processor, and

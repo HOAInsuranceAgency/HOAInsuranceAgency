@@ -102,6 +102,7 @@ export function decideEvent(event: StripeEventLike): EventDecision | null {
  */
 export interface PfEventDecision {
   loanId: string;
+  billingVersion?: number | null;
   kind: "down" | "installment";
   /** Which schedule row an installment debit was FOR. Null on a down payment. */
   installment: number | null;
@@ -172,6 +173,7 @@ export function decidePfEvent(event: StripeEventLike): PfEventDecision | null {
   const cents = object.amount;
   return {
     loanId: loanId.trim(),
+    billingVersion: metadata?.pfBillingVersion === "2" ? 2 : null,
     kind,
     installment,
     outcome,

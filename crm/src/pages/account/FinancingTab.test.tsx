@@ -1,4 +1,4 @@
-import { render, screen, waitFor, fireEvent } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -22,15 +22,7 @@ vi.mock("aws-amplify/data", () => ({
 import { FinancingTab } from "./FinancingTab";
 import type { Account } from "../../lib/client";
 
-/**
- * The quote engine, gate, and eligibility rules have their own suites under
- * lib/premiumFinance; the servicing Lambda has its own. What is asserted here
- * is what this screen decides for itself: activation offers the account's
- * executed resolutions by NAME (Documents expose no id anywhere, so a paste-an-id
- * input was a dead end), loan money renders to the cent, and the posting button
- * numbers financed installment n as payment n+1 — the down payment is payment 1
- * everywhere the schedule is shown.
- */
+/** Servicing displays automatic enrollment and preserves installment posting safeguards. */
 
 const account = {
   id: "a1",
@@ -91,62 +83,14 @@ const openServicing = async () => {
   await userEvent.click(service);
 };
 
-describe("activation resolution picker", () => {
-  it("offers the account's executed resolutions by name and activates with the chosen id", async () => {
-    models.Document.list.mockImplementation(() =>
-      page([
-        { id: "d-exec", name: "Board resolution — signed.pdf", category: "PF_RESOLUTION_EXECUTED" },
-        { id: "d-exec-2", name: "Board resolution — prior term.pdf", category: "PF_RESOLUTION_EXECUTED" },
-      ])
-    );
-    mutations.servicePfLoan.mockResolvedValue({ data: JSON.stringify({ ok: true }) });
-
+describe("automatic enrollment", () => {
+  it("shows pending settlement without requiring staff activation or a document upload", async () => {
+    models.PfLoan.list.mockImplementation(() => page([{ ...quotedLoan, downPaymentIntentId: "pi_pending" }]));
     await openServicing();
-
-    const picker = await screen.findByLabelText("Executed resolution");
-    expect(picker.tagName).toBe("SELECT");
-    await waitFor(() =>
-      expect(models.Document.list).toHaveBeenCalledWith(
-        expect.objectContaining({
-          filter: {
-            entityId: { eq: "a1" },
-            category: { eq: "PF_RESOLUTION_EXECUTED" },
-          },
-        })
-      )
-    );
-    await screen.findByRole("option", { name: "Board resolution — signed.pdf" });
-
-    const activate = screen.getByRole("button", { name: "Activate loan" });
-    expect(activate).toBeDisabled();
-
-    fireEvent.change(screen.getByLabelText("Board resolution executed"), {
-      target: { value: "2026-08-23" },
-    });
-    await userEvent.selectOptions(picker, "d-exec");
-    expect(activate).toBeEnabled();
-
-    await userEvent.click(activate);
-    await waitFor(() =>
-      expect(mutations.servicePfLoan).toHaveBeenCalledWith({
-        loanId: "loan-q",
-        action: "ACTIVATE",
-        boardResolutionExecutedAt: "2026-08-23",
-        boardResolutionDocumentId: "d-exec",
-      })
-    );
-  });
-
-  it("says when nothing is on file and keeps activation disabled", async () => {
-    await openServicing();
-
-    await screen.findByText(
-      "None on file — upload the signed copy under “Executed board resolution” on the Documents tab."
-    );
-    fireEvent.change(screen.getByLabelText("Board resolution executed"), {
-      target: { value: "2026-08-23" },
-    });
-    expect(screen.getByRole("button", { name: "Activate loan" })).toBeDisabled();
+    expect(await screen.findByText(/Initial payment is processing/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Activate loan" })).not.toBeInTheDocument();
+    expect(models.Document.list).not.toHaveBeenCalled();
+    expect(mutations.servicePfLoan).not.toHaveBeenCalled();
   });
 });
 
@@ -189,7 +133,7 @@ describe("origination has no UI — servicing reaches every loan", () => {
 });
 
 describe("ACCEPTED loans and autopay", () => {
-  it("shows the election and offers activation on an ACCEPTED loan", async () => {
+  it("shows automatic enrollment on a legacy ACCEPTED loan", async () => {
     models.PfLoan.list.mockImplementation(() =>
       page([
         {
@@ -213,9 +157,9 @@ describe("ACCEPTED loans and autopay", () => {
     expect(
       screen.getByText(/down payment received.*autopay\s+mandate on file/i)
     ).toBeInTheDocument();
-    // The paper gate is unchanged: activation is offered, with the picker.
-    expect(await screen.findByLabelText("Executed resolution")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Activate loan" })).toBeInTheDocument();
+    expect(screen.getByText(/Monthly collections are enabled automatically/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Activate loan" })).not.toBeInTheDocument();
+    expect(models.Document.list).not.toHaveBeenCalled();
   });
 
   it("holds the posting button while a debit is clearing", async () => {

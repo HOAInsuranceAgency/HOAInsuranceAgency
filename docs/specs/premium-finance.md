@@ -5,6 +5,24 @@ decisions below).
 Target: `crm/` — a `premium_finance` module, feature-flagged off by default.
 Written against `staging` @ f3ba3df.
 
+## Billing revision (Jake, 2026-09-10)
+
+Customer-selected financing requires no staff activation. A signed election and
+successful initial ACH settlement with a saved reusable mandate automatically
+move the loan to ACTIVE. Monthly debits then follow the frozen schedule. Neither
+an uploaded resolution nor a later bind action blocks these collections; this
+supersedes the customer-election activation gates described below. Documents
+remain available for the agreement and the borrower's authority representation.
+Processing or failed initial payments never activate collection. The daily job
+also recovers signed, settled legacy ACCEPTED elections automatically.
+
+Every new initial Checkout payment includes the premium down payment plus the
+contractual origination fee, shown separately. The fee does not reduce financed
+principal. Initial receipts record actual total and origination fee collected;
+corporate accounting receives their breakdown on settlement. An already-processing
+legacy debit is reconciled at its actual amount without adding a second debit or
+claiming an uncollected fee was received. Existing amortization remains unchanged.
+
 ## What this is
 
 HOA Insurance Agency LLC lends to its own clients so they can pay association

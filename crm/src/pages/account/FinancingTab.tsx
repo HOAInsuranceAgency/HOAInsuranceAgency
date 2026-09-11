@@ -4,7 +4,6 @@ import {
   fmtDate,
   listAllPages,
   type Account,
-  type CrmDocument,
   type Policy,
 } from "../../lib/client";
 import type { Schema } from "../../../amplify/data/resource";
@@ -24,8 +23,6 @@ type PfNotice = Schema["PfNotice"]["type"];
  */
 function LoanActions({ loan, onChanged }: { loan: PfLoan; onChanged: () => void }) {
   const status = useSaveStatus({ autoClearMs: 6000 });
-  const [resolutionDate, setResolutionDate] = useState("");
-  const [resolutionDocId, setResolutionDocId] = useState("");
   const [certNoticeId, setCertNoticeId] = useState("");
   const [certDate, setCertDate] = useState("");
   const [certNumber, setCertNumber] = useState("");
@@ -41,30 +38,6 @@ function LoanActions({ loan, onChanged }: { loan: PfLoan; onChanged: () => void 
     [loan.id, loan.status],
     { initialData: [] as PfNotice[], errorMessage: "Failed to load notices" }
   );
-  /**
-   * The executed resolutions this account has on file. Documents carry no
-   * visible id anywhere in the UI, so activation offers the valid candidates
-   * by name instead of asking for an id to be pasted. The server still
-   * re-checks account and category at ACTIVATE — a selection that went stale
-   * (deleted, re-categorized) is refused there, not trusted from here.
-   */
-  const resolutions = useAsyncResource(
-    () =>
-      loan.status === "QUOTED" || loan.status === "ACCEPTED"
-        ? listAllPages((nextToken) =>
-            client.models.Document.list({
-              filter: {
-                entityId: { eq: loan.accountId },
-                category: { eq: "PF_RESOLUTION_EXECUTED" },
-              },
-              nextToken,
-            })
-          )
-        : Promise.resolve([] as CrmDocument[]),
-    [loan.id, loan.status],
-    { initialData: [] as CrmDocument[], errorMessage: "Failed to load documents" }
-  );
-
   /**
    * W8 rollover repair. The bind flow rolls quote-anchored loans onto the
    * new policy best-effort; when that step failed (a closed tab, a
@@ -124,8 +97,8 @@ function LoanActions({ loan, onChanged }: { loan: PfLoan; onChanged: () => void 
         <p className="muted small">
           The association elected financing{loan.electedAt ? ` on ${fmtDate(loan.electedAt.slice(0, 10))}` : ""}:
           down payment received{loan.downPaidAt ? ` ${fmtDate(loan.downPaidAt.slice(0, 10))}` : ""}, autopay
-          mandate on file. Monthly debits begin at activation — file the
-          executed resolution below.
+          mandate on file. Monthly collections are enabled automatically; no
+          staff activation or document upload is needed to start billing.
         </p>
       )}
 
@@ -134,7 +107,7 @@ function LoanActions({ loan, onChanged }: { loan: PfLoan; onChanged: () => void 
           <p className="muted small">
             This loan still anchors its quote, but the quote is bound —
             policy {rollTarget.data.policyNumber ?? rollTarget.data.id.slice(0, 8)} exists.
-            Roll the loan onto it; activation and the exclusion checks read
+            Roll the loan onto it; the exclusion checks read
             the policy from then on.
           </p>
           <button
@@ -154,56 +127,8 @@ function LoanActions({ loan, onChanged }: { loan: PfLoan; onChanged: () => void 
         </div>
       )}
 
-      {(loan.status === "QUOTED" || loan.status === "ACCEPTED") && (
-        <div className="inline-actions">
-          <div className="field">
-            <label htmlFor={`pf-res-${loan.id}`}>Board resolution executed</label>
-            <input
-              id={`pf-res-${loan.id}`}
-              type="date"
-              value={resolutionDate}
-              onChange={(e) => setResolutionDate(e.target.value)}
-            />
-          </div>
-          <div className="field">
-            <label htmlFor={`pf-resdoc-${loan.id}`}>Executed resolution</label>
-            <select
-              id={`pf-resdoc-${loan.id}`}
-              value={resolutionDocId}
-              onChange={(e) => setResolutionDocId(e.target.value)}
-            >
-              <option value="">Choose…</option>
-              {resolutions.data.map((d) => (
-                <option key={d.id} value={d.id}>
-                  {d.name}
-                </option>
-              ))}
-            </select>
-            {resolutions.loaded && resolutions.data.length === 0 && (
-              <p className="muted small">
-                None on file — upload the signed copy under “Executed board
-                resolution” on the Documents tab.
-              </p>
-            )}
-          </div>
-          <button
-            type="button"
-            className="primary"
-            disabled={!resolutionDate || !resolutionDocId.trim() || status.busy}
-            onClick={() =>
-              void act(
-                "ACTIVATE",
-                {
-                  boardResolutionExecutedAt: resolutionDate,
-                  boardResolutionDocumentId: resolutionDocId.trim(),
-                },
-                "Loan activated."
-              )
-            }
-          >
-            Activate loan
-          </button>
-        </div>
+      {loan.status === "QUOTED" && loan.downPaymentIntentId && (
+        <p className="muted small">Initial payment is processing. Monthly collections turn on automatically when it settles.</p>
       )}
 
       {(loan.status === "ACTIVE" || loan.status === "DEFAULTED") && (
@@ -345,13 +270,13 @@ function LoanActions({ loan, onChanged }: { loan: PfLoan; onChanged: () => void 
  * Origination has no UI anywhere: an offer originates automatically when an
  * invoice is sent, at the product's fixed terms, through the server's gates.
  * What this tab holds is everything AFTER a loan exists — the loans table,
- * agreement paper, activation behind the resolution rule, posting, and the
+ * agreement paper, automatic monthly collection, posting, and the
  * notice-clocked cancellation sequence.
  */
 
 const LOAN_BADGE: Record<string, BadgeSpec> = {
   QUOTED: { cls: "blue", label: "QUOTED" },
-  /** Elected from the invoice email: down paid, mandate saved, paper pending. */
+  /** Legacy settled election; the daily job automatically enables collection. */
   ACCEPTED: { cls: "amber", label: "ACCEPTED" },
   ACTIVE: { cls: "green", label: "ACTIVE" },
   PAID: { cls: "gray", label: "PAID" },

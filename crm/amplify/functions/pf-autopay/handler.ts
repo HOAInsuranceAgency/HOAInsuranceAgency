@@ -10,6 +10,7 @@ import { listAllPages } from "../../../src/lib/pagination";
 import { parseScheduleJson } from "../../../src/lib/premiumFinance/quote";
 import { PF_CONFIG_SHA256 } from "../../../src/lib/premiumFinance/jurisdictions";
 import { postInstallment } from "../pfPosting";
+import { activateSettledElection } from "../pfAutomaticActivation";
 
 /**
  * Daily: one off-session debit attempt per due installment, for ACTIVE loans
@@ -98,13 +99,25 @@ export const handler = async () => {
   const today = new Date().toISOString().slice(0, 10);
   const now = new Date().toISOString();
 
-  const loans = await listAllPages((nextToken) =>
+  const candidates = await listAllPages((nextToken) =>
     client.models.PfLoan.list({
-      filter: { status: { eq: "ACTIVE" } },
+      filter: { or: [{ status: { eq: "ACTIVE" } }, { status: { eq: "ACCEPTED" } }] },
       limit: 200,
       nextToken,
     })
   );
+
+  // Existing settled elections must not depend on a migration or staff click.
+  const loans = [] as typeof candidates;
+  for (const loan of candidates) {
+    if (loan.status === "ACTIVE") loans.push(loan);
+    else if (await activateSettledElection(ddb, loanTable, loan)) {
+      loans.push({ ...loan, status: "ACTIVE" });
+      await log({ accountId: loan.accountId, jurisdiction: loan.state, outcome: "PASS",
+        reason: "Settled financing election automatically activated for monthly collections.",
+        inputs: { loanId: loan.id } });
+    }
+  }
 
   /**
    * Who gets an attempt today:

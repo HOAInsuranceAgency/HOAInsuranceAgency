@@ -90,7 +90,7 @@ async function financeOffer(
   anchor: FinanceAnchor | null,
   retailTotal: number,
   recipientEmail: string | null
-): Promise<{ url: string; downPayment: number; monthly: number; months: number; apr: number } | null> {
+): Promise<{ url: string; downPayment: number; monthly: number; months: number; apr: number; originationFee: number } | null> {
   if (!anchor || retailTotal <= 0) return null;
   const loanTable = process.env.PF_LOAN_TABLE;
   const siteUrl = process.env.SITE_URL;
@@ -277,6 +277,7 @@ async function financeOffer(
     return {
       url: `${siteUrl}/finance/?t=${token}`,
       downPayment: loan.downPayment,
+      originationFee: loan.originationFee,
       monthly: loan.payment,
       months: loan.months,
       apr: loan.apr,

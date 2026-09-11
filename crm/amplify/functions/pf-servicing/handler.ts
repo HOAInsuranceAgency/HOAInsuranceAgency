@@ -160,18 +160,14 @@ export const handler = async (event: {
 
     switch (a.action) {
       /**
-       * QUOTED/ACCEPTED → ACTIVE, behind the staleness rule: the executed
-       * board resolution must be from the financed term. A resolution
-       * executed before the term's effective date is the prior board's paper
-       * — boards turn over annually and a receiver can replace one mid-term —
-       * and the power of attorney must trace to a body that currently exists.
-       *
-       * ACCEPTED (W7) activates through the same gate as QUOTED: the
-       * association's election moved money and saved a mandate, but the
-       * paper rule is the paper rule. Activation from ACCEPTED is what turns
-       * the mandate on — the autopay cron only debits ACTIVE loans.
+       * Legacy staff-originated activation retains its original document checks.
+       * Customer elections activate in the settlement webhook; a manual action
+       * must never advance a still-processing initial payment past that webhook.
        */
       case "ACTIVATE": {
+        if (loan.electedAt || loan.downPaymentIntentId) {
+          return { ok: false, error: "Customer-selected financing activates automatically when the initial payment settles. No manual activation is needed." };
+        }
         if (loan.status !== "QUOTED" && loan.status !== "ACCEPTED") {
           return { ok: false, error: `A ${loan.status.toLowerCase()} loan cannot be activated.` };
         }

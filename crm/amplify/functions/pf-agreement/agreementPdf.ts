@@ -164,7 +164,7 @@ export async function renderAgreementPdf(v: AgreementView): Promise<Uint8Array> 
   y = boxTop - 92;
 
   y = paragraph(page, fonts, null,
-    `Total premium ${formatMoney(v.premium)}, paid as ${v.months + 1} payments over the policy year. Payment 1 is the down payment of ${formatMoney(v.downPayment)}, due at inception and paid to the Lender's premium trust account. Payments 2 through ${v.months + 1} are ${v.months} monthly payments of ${formatMoney(v.payment)} (the final payment may differ by cents), first due one month after ${v.effectiveDate}. A flat origination fee of ${formatMoney(v.originationFee)} applies once per agreement and is refundable on prepayment. There are no late fees, delinquency charges, or reinstatement fees under this agreement.`,
+    `Total premium ${formatMoney(v.premium)}, paid as ${v.months + 1} payments over the policy year. Payment 1 is the down payment of ${formatMoney(v.downPayment)}, due at inception and paid to the Lender's premium trust account. Payments 2 through ${v.months + 1} are ${v.months} monthly payments of ${formatMoney(v.payment)} (the final payment may differ by cents), first due one month after ${v.effectiveDate}. A flat origination fee of ${formatMoney(v.originationFee)} is collected with the down payment, making the initial payment ${formatMoney(Math.round((v.downPayment + v.originationFee) * 100) / 100)}. The fee is refundable on prepayment and does not reduce principal. Monthly payments start automatically on the agreed schedule after the initial payment clears. There are no late fees, delinquency charges, or reinstatement fees under this agreement.`,
     y);
 
   // ── Payment schedule ──────────────────────────────────────────────────
@@ -187,7 +187,7 @@ export async function renderAgreementPdf(v: AgreementView): Promise<Uint8Array> 
    */
   page.drawText("1", { x: M.left, y, size: 8.5, font: fonts.regular, color: INK });
   page.drawText(`${v.effectiveDate} (down payment)`, { x: M.left + 30, y, size: 8.5, font: fonts.regular, color: INK });
-  drawRight(page, formatMoney(v.downPayment), M.left + 220, y, fonts.regular, 8.5);
+  drawRight(page, formatMoney(Math.round((v.downPayment + v.originationFee) * 100) / 100), M.left + 220, y, fonts.regular, 8.5);
   drawRight(page, formatMoney(0), M.left + 310, y, fonts.regular, 8.5);
   drawRight(page, formatMoney(v.downPayment), M.left + 410, y, fonts.regular, 8.5);
   drawRight(page, formatMoney(v.amountFinanced), M.right, y, fonts.regular, 8.5);
@@ -269,11 +269,12 @@ export async function renderAgreementPdf(v: AgreementView): Promise<Uint8Array> 
   } else {
     page.drawLine({ start: { x: M.left, y }, end: { x: M.left + 220, y }, thickness: 0.75, color: INK });
     page.drawLine({ start: { x: M.left + 260, y }, end: { x: M.left + 360, y }, thickness: 0.75, color: INK });
-    page.drawText(`${v.associationName} — Authorized signatory, per board resolution`, {
-      x: M.left, y: y - 12, size: 8, font: fonts.regular, color: MUTED,
-    });
+    const signatureLabel = wrap(`${v.associationName} — Authorized signatory, per board resolution`, fonts.regular, 8, 220);
+    signatureLabel.forEach((line, i) => page.drawText(line, {
+      x: M.left, y: y - 12 - i * 10, size: 8, font: fonts.regular, color: MUTED,
+    }));
     page.drawText("Date", { x: M.left + 260, y: y - 12, size: 8, font: fonts.regular, color: MUTED });
-    y -= 44;
+    y -= Math.max(44, 24 + signatureLabel.length * 10);
   }
   {
     const who = AGENCY.name;
@@ -316,7 +317,7 @@ export async function renderBoardResolutionPdf(v: AgreementView): Promise<Uint8A
   y -= 28;
 
   const body = [
-    `RESOLVED, that ${v.associationName} (the "Association") is authorized to enter into a premium finance agreement with ${AGENCY.name} to finance ${formatMoney(v.amountFinanced)} of the ${formatMoney(v.premium)} premium for insurance policy ${v.policyNumber ?? "(number pending)"}${v.carrierName ? ` issued by ${v.carrierName}` : ""}, for the policy term beginning ${v.effectiveDate}, with a down payment of ${formatMoney(v.downPayment)} due at inception as payment 1, at ${v.apr.toFixed(2)}% APR over ${v.months} further monthly installments of ${formatMoney(v.payment)};`,
+    `RESOLVED, that ${v.associationName} (the "Association") is authorized to enter into a premium finance agreement with ${AGENCY.name} to finance ${formatMoney(v.amountFinanced)} of the ${formatMoney(v.premium)} premium for insurance policy ${v.policyNumber ?? "(number pending)"}${v.carrierName ? ` issued by ${v.carrierName}` : ""}, for the policy term beginning ${v.effectiveDate}, with an initial payment of ${formatMoney(Math.round((v.downPayment + v.originationFee) * 100) / 100)} (premium down payment ${formatMoney(v.downPayment)} plus origination fee ${formatMoney(v.originationFee)}) due at inception as payment 1, at ${v.apr.toFixed(2)}% APR over ${v.months} further monthly installments of ${formatMoney(v.payment)};`,
     `RESOLVED FURTHER, that the person named below is authorized to execute the premium finance agreement, including its power of attorney, on the Association's behalf;`,
     `RESOLVED FURTHER, that the board acknowledges the lender is the same company that placed the insurance, earning interest in addition to commission, and that the Association is free to finance elsewhere or pay the premium in full.`,
     `This resolution is executed for the current policy term. A new resolution is required at each renewal.`,
