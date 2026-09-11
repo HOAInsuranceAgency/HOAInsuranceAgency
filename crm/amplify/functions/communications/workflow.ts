@@ -8,10 +8,12 @@ import { dataClient } from "./data";
 import { sameContact } from "../../../../shared/contactProgress";
 
 const cognito = new CognitoIdentityProviderClient();
+export class UnavailableTeammateError extends Error {}
 export async function enabledUser(userId: string) {
   if (!/^[a-zA-Z0-9_-]{1,128}$/.test(userId)) throw new Error("Invalid teammate identity");
   const out = await cognito.send(new ListUsersCommand({ UserPoolId: process.env.USER_POOL_ID, Filter: `sub = "${userId}"`, Limit: 1 }));
-  if (!out.Users?.[0]?.Enabled) throw new Error("This teammate is disabled or no longer available");
+  if (!out.Users?.[0]?.Enabled) throw new UnavailableTeammateError("This teammate is disabled or no longer available");
+  return out.Users[0];
 }
 export async function team() {
   const out: TeamEligibility[] = [];
@@ -28,12 +30,12 @@ export async function validRole(userId: string, role: Responsibility, checkEnabl
 export async function defaultWorkflow(accountId: string, name: string): Promise<LeadWorkflow> {
   const c = await config();
   let assignmentIssue: string | undefined;
+  const salespersonId = c.defaultSalespersonId ?? c.defaultUserId, championId = c.defaultChampionId ?? c.defaultUserId;
   try {
-    if (!c.defaultUserId) throw new Error("Choose a default teammate in Integration settings");
-    await validRole(c.defaultUserId, "SALESPERSON"); await validRole(c.defaultUserId, "CHAMPION", false);
+    if (!salespersonId || !championId) throw new Error("Choose default sales and champion owners in Team settings");
+    await validRole(salespersonId, "SALESPERSON"); await validRole(championId, "CHAMPION", championId !== salespersonId);
   } catch (e) { assignmentIssue = e instanceof Error ? e.message : "Default assignment needs attention"; }
-  return { accountId, name, salespersonId: assignmentIssue ? undefined : c.defaultUserId, championId: assignmentIssue ? undefined : c.defaultUserId,
-    assignmentIssue, disposition: "ACTIVE", version: 1, updatedAt: new Date().toISOString() };
+  return { accountId, name, salespersonId, championId, assignmentIssue, disposition: "ACTIVE", version: 1, updatedAt: new Date().toISOString() };
 }
 export async function ensureWorkflow(accountId: string): Promise<Row<LeadWorkflow>> {
   const old = await get<LeadWorkflow>(`workflow:${accountId}`);
@@ -84,74 +86,34 @@ export async function syncResponsibilities(candidate: Row<{ phase: string; accou
     if (task.data.status !== "OPEN" || (task.data.reminderAt ?? task.data.dueAt) > new Date().toISOString()) continue;
     const direct = task.data.role === "CHAMPION" ? championId : salespersonId;
     const directChanged = !!task.data.notifiedAt && task.data.notifiedRecipientId !== direct;
-    const escalationChanged = !!task.data.escalatedAt && task.data.escalatedRecipientId !== championId;
+    const route = await (await import("./routing")).resolveTaskRoute(task.data, wf.data);
+    const escalationChanged = !!task.data.escalatedAt && task.data.escalatedRecipientId !== route.managerId;
     if (!directChanged && !escalationChanged) continue;
-    const data = { ...task.data, notifiedAt: directChanged ? undefined : task.data.notifiedAt, escalatedAt: undefined, version: task.version + 1 };
+    const data = { ...task.data, notifiedAt: directChanged ? undefined : task.data.notifiedAt, nextReminderAt: undefined, lastReminderAt: undefined, version: task.version + 1 };
     writes.push(put(row("TASK", task.id, data, { accountId, previous: task, dueAt: taskWakeAt(data) }), task));
   }
   const done = phase === "LINK" && !page.nextToken;
   writes.push(put(row("ROLE_SYNC", job.id, { ...job.data, phase: page.nextToken ? phase : "LINK", cursor: page.nextToken }, { accountId, previous: job, dueAt: done ? undefined : new Date().toISOString() }), job));
   await commit(writes);
 }
-export async function makeTask(input: { accountId: string; title: string; kind: TaskKind; role?: Responsibility; dueAt?: string; sourceAt?: string; episode?: string; conversationId?: string; custom?: boolean; id?: string }): Promise<LeadTask> {
-  if (!input.title?.trim() || input.title.length > 500 || !["FOLLOW_UP", "RESPONSE", "CALLBACK", "CARRIER", "DOCUMENTS", "CORRECTION", "TRIAGE"].includes(input.kind) || input.role && !["SALESPERSON", "CHAMPION"].includes(input.role)) throw new Error("Invalid next action or responsible role");
+export async function makeTask(input: { accountId: string; title: string; kind: TaskKind; role?: Responsibility; dueAt?: string; sourceAt?: string; episode?: string; conversationId?: string; custom?: boolean; id?: string; domain?: LeadTask["domain"]; context?: LeadTask["context"]; term?: string; policyId?: string; quoteId?: string; milestone?: boolean; obligationKey?: string; lines?: string[]; marketingTaskId?: string; carrierId?: string; waitingOn?: LeadTask["waitingOn"]; businessDueAt?: string; shortTimeline?: boolean }): Promise<LeadTask> {
+  if (!input.title?.trim() || input.title.length > 500 || !["FOLLOW_UP", "RESPONSE", "CALLBACK", "CARRIER", "DOCUMENTS", "CORRECTION", "TRIAGE", "FIRST_CONTACT", "ANNUAL_RETURN", "PROSPECT_UPDATE", "RENEWAL_START", "SUBMISSION", "QUOTE_TARGET", "QUOTE_PRESENTATION", "BIND", "SERVICE"].includes(input.kind) || input.role && !["SALESPERSON", "CHAMPION"].includes(input.role)) throw new Error("Invalid next action or responsible role");
   const holidays = (await config()).holidays;
   const sourceAt = input.sourceAt ?? new Date().toISOString();
   const dueAt = input.dueAt ?? (input.kind === "FOLLOW_UP" ? followUpDeadline(sourceAt, 2, holidays) : businessDeadline(sourceAt, 1, holidays));
   if (!Number.isFinite(Date.parse(dueAt))) throw new Error("Choose a valid due date");
   if (input.custom && Date.parse(dueAt) <= Date.now()) throw new Error("Choose a future date for a new promise");
-  return scheduleReminders({ ...input, id: input.id ?? `task:${randomUUID()}`, role: input.role ?? "SALESPERSON", dueAt: new Date(dueAt).toISOString(),
+  return scheduleReminders({ ...input, id: input.id ?? `task:${randomUUID()}`, domain: input.domain ?? (input.kind === "CARRIER" ? "CARRIER" : "CLIENT"), context: input.context ?? "LEAD", role: input.role ?? "SALESPERSON", dueAt: new Date(dueAt).toISOString(),
     escalationAt: followUpDeadline(dueAt, 1, holidays), sourceAt, status: "OPEN", version: 1 }, holidays);
 }
 export async function saveTask(input: { accountId: string; id?: string; title: string; kind: TaskKind; role: Responsibility; dueAt: string; version?: number; reason: string }, actor: string) {
-  if (!input.title?.trim() || !input.reason?.trim()) throw new Error("A next action and a reason are required");
-  if (!["FOLLOW_UP", "RESPONSE", "CALLBACK", "CARRIER", "DOCUMENTS", "CORRECTION", "TRIAGE"].includes(input.kind) || !["SALESPERSON", "CHAMPION"].includes(input.role)) throw new Error("Invalid action type or responsibility");
-  const workflow = await ensureWorkflow(input.accountId);
-  if (workflow.data.disposition !== "ACTIVE") throw new Error("Reopen this lead before adding follow-up work");
-  const old = input.id ? await get<LeadTask>(input.id) : undefined;
-  if (input.id && (!old || old.kind !== "TASK" || old.accountId !== input.accountId)) throw new Error("Task not found");
-  if (old) { expected(old, input.version); if (old.data.status !== "OPEN") throw new Error("This task is already closed"); }
-  const data = await makeTask({ ...old?.data, ...input, id: old?.id, custom: true });
-  data.notifiedAt = undefined; data.escalatedAt = undefined;
-  data.version = (old?.version ?? 0) + 1;
-  const next = row("TASK", data.id, data, { accountId: input.accountId, dueAt: taskWakeAt(data), previous: old });
-  await commit([check(workflow), put(next, old), audit(input.accountId, actor, "Next action saved", { before: old?.data, after: data, reason: input.reason })]);
-  return data;
+  void input; void actor;
+  throw new Error("Routine work is scheduled automatically. Use the account, quote or policy workflow for business changes.");
 }
+
 export async function completeTask(input: { id: string; version: number; reason?: string; successor?: { title: string; dueAt: string; role: Responsibility; kind: TaskKind }; outcome?: "LOST" | "DISQUALIFIED" }, actor: string) {
-  const old = await get<LeadTask>(input.id);
-  if (!old || old.kind !== "TASK") throw new Error("Task not found");
-  expected(old, input.version);
-  if (old.data.status !== "OPEN") throw new Error("This task is already closed");
-  const wf = await ensureWorkflow(old.data.accountId);
-  input = { ...input, reason: input.reason?.trim() || "Marked done" };
-  const writes: Write[] = [put(row("TASK", old.id, { ...old.data, status: "COMPLETE", reason: input.reason, version: old.version + 1 }, { accountId: old.accountId, previous: old }), old)];
-  if (input.successor && input.outcome) throw new Error("Choose a next action or a terminal outcome");
-  if (input.successor) {
-    if (!input.successor.title.trim()) throw new Error("Next action is required");
-    const task = await makeTask({ ...input.successor, accountId: old.data.accountId, custom: true });
-    writes.push(put(row("TASK", task.id, task, { accountId: task.accountId, dueAt: taskWakeAt(task) })));
-  } else if (!input.outcome && wf.data.disposition === "ACTIVE") {
-    const task = await makeTask({ accountId: old.data.accountId, title: old.data.role === "CHAMPION" ? "Follow up with carrier" : "Follow up with prospect", role: old.data.role, kind: "FOLLOW_UP", conversationId: old.data.conversationId ?? wf.data.conversationId });
-    writes.push(put(row("TASK", task.id, task, { accountId: task.accountId, dueAt: taskWakeAt(task) })));
-  }
-  if (input.outcome) {
-    if (!["LOST", "DISQUALIFIED"].includes(input.outcome)) throw new Error("Use the existing quote/bind workflow to bind a lead");
-    writes.push(put(row("WORKFLOW", wf.id, { ...wf.data, disposition: input.outcome, version: wf.version + 1 }, { accountId: wf.accountId, previous: wf }), wf));
-    writes.push(put(row("LIFECYCLE", `lifecycle:${wf.id}:${wf.version}`, { accountId: wf.data.accountId }, { accountId: wf.accountId, dueAt: new Date().toISOString() })));
-  }
-  if (!input.outcome) writes.push(check(wf));
-  // Resolve the specific source episode only. Independent requests stay open.
-  for (const sourceId of old.data.sourceIds ?? (old.data.episode ? [old.data.episode] : [])) {
-    const comm = await get<Communication>(sourceId);
-    if (comm && comm.accountId === old.accountId) writes.push(put(row("COMMUNICATION", comm.id, { ...comm.data, resolved: true }, { accountId: comm.accountId, previous: comm }), comm));
-  }
-  // Notification reads retire closed episodes; former-assignee history must
-  // not make this bounded completion transaction exceed DynamoDB's limit.
-  writes.push(audit(old.data.accountId, actor, "Task completed", input));
-  const conversationId = old.data.conversationId ?? wf.data.conversationId;
-  if (conversationId) writes.push(put(operationRow(`op:outcome-cleanup:${old.id}:${old.version}`, { type: "ARCHIVE", accountId: old.data.accountId, conversationId })));
-  await commit(writes);
+  void input; void actor;
+  throw new Error("Complete the actual email, call, quote or policy work; progress is recorded automatically.");
 }
 
 /** Business decisions remain explicit; routine communication needs no second entry. */
@@ -172,9 +134,21 @@ export async function recordInbound(comm: Communication, kind: TaskKind = "RESPO
   if (!comm.accountId) return;
   const projection = await get<Communication>(comm.id);
   if (projection?.data.resolved) return;
+  const serviceWorkflow = await ensureWorkflow(comm.accountId);
+  if ((comm.context ?? (serviceWorkflow.data.disposition === "BOUND" && !serviceWorkflow.data.openLeadQuoteIds?.length ? "SERVICE" : "LEAD")) === "SERVICE" && comm.purpose !== "CARRIER" && comm.classification !== "AUTOMATIC") {
+    const key = `task:service:${comm.id}`;
+    if (!await get(key)) {
+      const { serviceRequestType } = await import("../../../../shared/serviceEvidence");
+      const task = await makeTask({ id: key, accountId: comm.accountId, title: "Deliver the requested client service", kind: "SERVICE", role: "CHAMPION", context: "SERVICE", domain: "CLIENT", sourceAt: comm.at, conversationId: comm.conversationId, milestone: true });
+      task.sourceIds = [comm.id]; task.serviceType = serviceRequestType(comm);
+      await commit([check(serviceWorkflow), put(row("TASK", key, task, { accountId: comm.accountId, dueAt: taskWakeAt(task) }))]);
+    }
+  }
   if (projection?.data.workflowApplied) { const { repairContactWork } = await import("./contactProgress"); await repairContactWork(comm.accountId, comm); return; }
   const wf = await ensureWorkflow(comm.accountId);
-  if (wf.data.disposition !== "ACTIVE") return;
+  if (["LOST", "DISQUALIFIED"].includes(wf.data.disposition)) return;
+  const context = comm.context ?? (wf.data.disposition === "BOUND" && !wf.data.openLeadQuoteIds?.length ? "SERVICE" : "LEAD");
+  const role = kind === "CARRIER" || context !== "LEAD" ? "CHAMPION" : "SALESPERSON";
   const { contactFence, accountContactPairs } = await import("./contactProgress");
   const fence = await contactFence(comm.accountId);
   const contactPairs = await accountContactPairs(comm.accountId);
@@ -183,7 +157,7 @@ export async function recordInbound(comm: Communication, kind: TaskKind = "RESPO
   const alias = await get<{ targetId: string }>(`task-alias:${key}`);
   if (alias && (await get<LeadTask>(alias.data.targetId))?.data.status === "OPEN") key = alias.data.targetId;
   const old = await get<LeadTask>(key);
-  const newTask = await makeTask({ id: key, accountId: comm.accountId, kind, role: kind === "CARRIER" ? "CHAMPION" : "SALESPERSON", title: kind === "CARRIER" ? "Respond to carrier" : kind === "CALLBACK" ? "Return prospect call" : "Respond to prospect", sourceAt: comm.at, episode: comm.id, conversationId: comm.conversationId });
+  const newTask = await makeTask({ id: key, accountId: comm.accountId, kind, role, domain: kind === "CARRIER" ? "CARRIER" : "CLIENT", context, title: kind === "CARRIER" ? "Respond to carrier" : kind === "CALLBACK" ? "Return the call" : context === "LEAD" ? "Respond to prospect" : "Respond to client", sourceAt: comm.at, episode: comm.id, conversationId: comm.conversationId });
   newTask.sourceIds = Array.from(new Set([...(old?.data.status === "OPEN" ? old.data.sourceIds ?? [] : []), comm.id]));
   // Keep transaction size bounded without silently discarding source activity.
   if (newTask.sourceIds.length > 80) throw new Error("This unanswered conversation needs review before more messages can be grouped");
@@ -195,7 +169,7 @@ export async function recordInbound(comm: Communication, kind: TaskKind = "RESPO
   newTask.version = (old?.version ?? 0) + 1;
   const writes: Write[] = [check(wf), put(row("CONTACT_FENCE", fence.id, {}, { previous: fence }), fence), put(row("TASK", key, newTask, { accountId: comm.accountId, dueAt: taskWakeAt(newTask), previous: old }), old)];
   if (projection) writes.push(put(row("COMMUNICATION", projection.id, { ...projection.data, workflowApplied: true }, { accountId: comm.accountId, previous: projection }), projection));
-  for (const task of tasks.filter(t => t.data.role === (kind === "CARRIER" ? "CHAMPION" : "SALESPERSON") && t.data.status === "OPEN" && t.data.kind === "FOLLOW_UP" && !t.data.custom && (t.data.sourceAt ?? t.createdAt) <= comm.at).slice(0, 90)) {
+  for (const task of tasks.filter(t => t.data.role === role && t.data.status === "OPEN" && t.data.kind === "FOLLOW_UP" && !t.data.custom && (t.data.sourceAt ?? t.createdAt) <= comm.at).slice(0, 90)) {
     let matches = !!comm.conversationId && task.data.conversationId === comm.conversationId;
     if (!matches) for (const id of task.data.sourceIds ?? []) {
       const source = await get<Communication>(id);
@@ -230,11 +204,12 @@ export async function syncAccountLifecycle(accountId: string) {
   if (disposition !== wf.data.disposition || account.data.name !== wf.data.name) {
     wf = await save(row("WORKFLOW", wf.id, { ...wf.data, name: account.data.name, disposition, version: wf.version + 1 }, { accountId, previous: wf }), wf);
   }
-  if (wf.data.disposition !== "ACTIVE") {
-    const tasks = (await accountRows<LeadTask>(accountId, "TASK")).filter(t => t.data.status === "OPEN");
-    for (let i = 0; i < tasks.length; i += 90) await commit(tasks.slice(i, i + 90).map(t => put(row("TASK", t.id, { ...t.data, status: "CANCELLED", reason: "Lead is no longer active", version: t.version + 1 }, { accountId, previous: t }), t)));
-    const key = `op:closed-cleanup:${wf.id}:${wf.version}`;
-    if (wf.data.conversationId && !await get(key)) await commit([check(wf), put(operationRow(key, { type: "ARCHIVE", accountId, conversationId: wf.data.conversationId }))]);
+  const { reconcileAccountWork } = await import("./coverage");
+  await reconcileAccountWork(account.data, wf);
+  const current = await get<LeadWorkflow>(wf.id);
+  if (current?.data.disposition === "BOUND" && !current.data.openLeadQuoteIds?.length && current.data.conversationId) {
+    const id = `op:closed-cleanup:${accountId}`;
+    if (!await get(id)) await save(operationRow(id, { type: "ARCHIVE", accountId, conversationId: current.data.conversationId }));
   }
 }
 

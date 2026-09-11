@@ -17,7 +17,7 @@ export interface Operation {
   conversationId?: string; recipient?: string; subject?: string; html?: string; text?: string;
   uid?: string; messageId?: string; error?: string; leaseUntil?: string; assigneeId?: string;
   lead?: LeadSummary; sourceMessageId?: string; attachmentId?: string; requestedBy?: string;
-  reminder?: { taskId: string; noticeAt: string; recipientId: string; escalated: boolean };
+  reminder?: { taskId: string; noticeAt: string; recipientId: string; escalated: boolean; stage?: string; workflowVersion?: number };
   afterOperationId?: string;
 }
 export async function enqueueOperation(id: string, data: Omit<Operation, "state" | "attempts">) {
@@ -73,12 +73,15 @@ export async function runOperation(candidate: Row<Operation>) {
       await transition(op, { state: "SUPPRESSED", error: "Replaced by morning reminders" }); return;
     }
     let reminderTask: Row<LeadTask> | undefined;
+    let reminderRouting: Row | undefined;
     if (op.data.reminder) {
       const reminder = op.data.reminder;
+      reminderRouting = await get("team-routing");
       reminderTask = await get<LeadTask>(reminder.taskId);
-      const recipient = reminder.escalated || reminderTask?.data.role === "CHAMPION" ? wf.data.championId : wf.data.salespersonId;
-      const noticeAt = reminder.escalated ? reminderTask?.data.escalatedAt : reminderTask?.data.notifiedAt;
-      if (!reminderTask || reminderTask.data.status !== "OPEN" || wf.data.disposition !== "ACTIVE" || recipient !== reminder.recipientId || noticeAt !== reminder.noticeAt || (!reminder.escalated && reminderTask.data.escalationAt <= new Date().toISOString())) {
+      const route = reminderTask ? await (await import("./routing")).resolveTaskRoute(reminderTask.data, wf.data) : undefined;
+      const recipient = reminder.stage === "OWNER" ? route?.ownerId : reminder.escalated ? route?.managerId : route?.recipientId;
+      const noticeAt = reminderTask?.data.lastReminderAt ?? (reminder.escalated ? reminderTask?.data.escalatedAt : reminderTask?.data.notifiedAt);
+      if (reminder.workflowVersion != null && reminder.workflowVersion !== wf.version || !reminderTask || reminderTask.data.status !== "OPEN" || wf.data.disposition === "BOUND" && (reminderTask.data.context ?? "LEAD") === "LEAD" && !wf.data.openLeadQuoteIds?.length || recipient !== reminder.recipientId || noticeAt !== reminder.noticeAt || (!reminder.escalated && route?.managerId !== route?.accountableId && reminderTask.data.escalationAt <= new Date().toISOString())) {
         await transition(op, { state: "SUPPRESSED", error: "This action was completed, changed or reassigned" }); return;
       }
       const now = new Date().toISOString();
@@ -141,7 +144,7 @@ export async function runOperation(candidate: Row<Operation>) {
       }
     }
     const leased = row("OPERATION", op.id, { ...op.data, state: "LEASED" as const, attempts: op.data.attempts + 1, leaseUntil: new Date(Date.now() + 180_000).toISOString() }, { accountId: op.accountId, previous: op, dueAt: new Date(Date.now() + 180_000).toISOString() });
-    await commit([put(leased, op), ...(["EMAIL", "ASSIGN"].includes(op.data.type) || reminderTask ? [check(wf)] : []), ...(reminderTask ? [check(reminderTask)] : []), ...(inboundSource ? [check(inboundSource)] : [])]);
+    await commit([put(leased, op), ...(reminderRouting ? [check(reminderRouting)] : []), ...(["EMAIL", "ASSIGN"].includes(op.data.type) || reminderTask ? [check(wf)] : []), ...(reminderTask ? [check(reminderTask)] : []), ...(inboundSource ? [check(inboundSource)] : [])]);
     op = leased;
     posted = true;
     if (op.data.type === "SMS_ALERT") {

@@ -137,7 +137,7 @@ describe("clear reminder actions", () => {
     Object.assign(data, { communications: [{ id: "sms-request", channel: "SMS", direction: "INBOUND", text: "Please call me about the documents.", at: "2026-09-09T22:00:00Z", status: "RECEIVED" }] });
     render(<FrontSidebar />); act(() => h.listener?.({ conversation: { id: "cnv_a" } }));
     await screen.findByText("Respond to the prospect");
-    expect(screen.getByText("A prospect's text still needs a response.")).toBeTruthy();
+    expect(screen.getByText("A prospect's message needs a response.")).toBeTruthy();
     expect(screen.getByRole("blockquote")).toHaveTextContent("Please call me about the documents.");
     expect(screen.queryByLabelText(/Combine/)).toBeNull();
     expect(screen.queryByRole("button", { name: "Record outcome" })).toBeNull();
@@ -145,7 +145,7 @@ describe("clear reminder actions", () => {
     expect(screen.queryByRole("button", { name: "Add action" })).toBeNull();
     expect(screen.queryByLabelText("What happened?")).toBeNull();
     expect(screen.queryByLabelText("Due")).toBeNull();
-    expect(screen.getByText(/Your activity and next follow-up are tracked automatically/)).toBeTruthy();
+    expect(screen.getByText(/Your activity and the next follow-up are tracked automatically/)).toBeTruthy();
 
   });
 });

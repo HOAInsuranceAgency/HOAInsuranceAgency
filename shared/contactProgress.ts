@@ -2,6 +2,7 @@ import { normalizePhone, type Communication, type LeadTask } from "./leadWorkflo
 
 /** Provider activity is the evidence. A draft, failed send or ringing call is not contact. */
 export function contactProgress(c: Communication): "CONTACT" | "ATTEMPT" | undefined {
+  if (c.internalReport) return;
   if (c.channel === "CALL") {
     if (!c.endedAt) return;
     if (c.status === "CONNECTED") return "CONTACT";
@@ -21,7 +22,9 @@ const handles = (c: Communication) => (c.direction === "INBOUND" ? [c.from] : c.
 /** Never resolve another account, carrier thread, contact, or newer request. */
 export type ContactPair = { email?: string | null; phone?: string | null };
 export function sameContact(a: Communication, b: Communication, contacts: ContactPair[] = []): boolean {
-  if (!a.accountId || a.accountId !== b.accountId || (a.purpose ?? "PROSPECT") !== (b.purpose ?? "PROSPECT")) return false;
+  if (!a.accountId || a.accountId !== b.accountId || (a.domain ?? (a.purpose === "CARRIER" ? "CARRIER" : "CLIENT")) !== (b.domain ?? (b.purpose === "CARRIER" ? "CARRIER" : "CLIENT"))) return false;
+  if (a.context && b.context && a.context !== b.context) return false;
+  if (a.policyId && b.policyId && a.policyId !== b.policyId || a.quoteId && b.quoteId && a.quoteId !== b.quoteId) return false;
   const left = handles(a), right = handles(b);
   const sameChannelType = (a.channel === "EMAIL") === (b.channel === "EMAIL");
   // A linked conversation is also an explicit cross-channel association.
@@ -35,5 +38,5 @@ export function sameContact(a: Communication, b: Communication, contacts: Contac
 }
 
 export function automaticContactTask(task: LeadTask) {
-  return ["RESPONSE", "CALLBACK", "CARRIER"].includes(task.kind) || !task.custom && task.kind === "FOLLOW_UP";
+  return !task.milestone && (task.kind === "DOCUMENTS" && !!task.parentTaskId || ["RESPONSE", "CALLBACK", "CARRIER"].includes(task.kind) || !task.custom && ["FOLLOW_UP", "FIRST_CONTACT", "ANNUAL_RETURN", "PROSPECT_UPDATE"].includes(task.kind));
 }

@@ -1,7 +1,19 @@
-# Front sidebar visual preview
+# Workflow visual review
 
-From `crm`, run `npx vite --config scripts/front-sidebar-preview/vite.config.ts` and open `http://127.0.0.1:8767/`.
+This preview uses the actual Front sidebar, daily-report, team-routing and email-rendering components with fictional fixtures. It has no CRM credentials, provider connection or ability to send messages. Links are intercepted. Data resets on reload.
 
-This renders the actual sidebar components and app stylesheet at 260, 340, and 440 pixels using fictional data. The isolated Vite aliases replace the CRM client and Front SDK: forms do not send messages or change real records. The preview is not part of the deployed application.
+Open `docs/WORKFLOW-UX-TEST-WORKSPACE.html` directly in a browser, or run from `crm`:
 
-Check the default view, team editing, action editing and completion, activity, notes, conversation tools, text draft, and lead linking. Automated behavior checks live in `src/test/communicationUi.test.tsx`; live staging verification is still needed for the real Front context.
+```sh
+npx vite --config scripts/front-sidebar-preview/vite.config.ts
+```
+
+Use http://127.0.0.1:8767. Choose a role, situation and panel width. Dates in report fixtures are frozen at September 14, 2026, 9 a.m. Eastern; the surrounding component's live overdue labels use the browser clock. Scenarios show what the screen looks like; they do not simulate provider delivery or a full database lifecycle.
+
+Rebuild the shareable HTML after component changes:
+
+```sh
+node scripts/build-workflow-ux-preview.mjs
+```
+
+Follow `docs/WORKFLOW-UX-ACCEPTANCE.md` for visual and connected staging tests. Do not claim a preview pass proves email delivery, call ingestion or scheduled escalation.

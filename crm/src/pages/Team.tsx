@@ -1,3 +1,4 @@
+import TeamWorkflowSettings from "../components/TeamWorkflowSettings";
 import { useState } from "react";
 import LeadEligibilitySettings from "../components/LeadEligibilitySettings";
 import { client, fmtDate, type UserProfile } from "../lib/client";
@@ -218,6 +219,7 @@ export default function Team({ profile }: { profile: UserProfile }) {
   return (
     <>
       <LeadEligibilitySettings />
+      <TeamWorkflowSettings />
       <div className="card">
         <h2>Team — invite someone</h2>
         <p className="muted small">

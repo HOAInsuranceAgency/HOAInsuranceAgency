@@ -1,5 +1,7 @@
 # Front + CRM lead management specification
 
+**September 10 next-revision specification:** [Sales, managers and carrier work](sales-carrier-workflow-revision.md) supersedes conflicting ownership, escalation, reporting and routine task-entry rules below. Salespeople manage leads; champions own carrier work and become the client's main contact after binding. Both sales and marketing managers escalate to the owner. The approved Next year behavior advances lead incumbent expiration one calendar year and brings sales outreach back 90 days before that new date. Business policies are confirmed; this is a specification, not a claim of implementation or deployment.
+
 **September 10 timing update:** scheduled reminders now run at **9 a.m. Eastern** on the due date; overdue escalation runs at **9 a.m. the next business date**. Original staffed-hour response deadlines and custom promises remain unchanged. Reminders explain why the conversation returned and the next action. This supersedes the earlier reminder-at-deadline and eight-staffed-hour escalation timing below. See [morning reminder behavior](../MORNING-LEAD-REMINDERS.md).
 
 Implementation is now present in the repository. Deployment and real-provider acceptance remain pending; see the [rollout runbook](../COMMUNICATIONS-RUNBOOK.md). The design below records the reviewed requirements, not a claim of a live connection.

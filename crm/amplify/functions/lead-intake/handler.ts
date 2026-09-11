@@ -1,3 +1,4 @@
+import { taskWakeAt } from "../../../../shared/leadWorkflow";
 import { cleanAttribution, websiteLeadSource } from "../../../../shared/leadSource";
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import type { Schema } from "../../data/resource";
@@ -6,7 +7,7 @@ import { contactKey, priorCarrierKey } from "../../../src/lib/extractionKeys";
 import { NO_UPLOAD_WINDOW_MINUTES } from "../../../../shared/leadUpload";
 import { parsePolicyExpiration, parseUnitCount } from "./fields";
 import { canonical, hash, get, row, put, commit, conflict, type Write } from "../communications/store";
-import { defaultWorkflow } from "../communications/workflow";
+import { defaultWorkflow, makeTask } from "../communications/workflow";
 
 export interface Submission {
   fingerprint: string; proofHash: string; accountId: string; uploadToken: string | null;
@@ -64,7 +65,8 @@ export const handler: Schema["submitWebLead"]["functionHandler"] = async event =
   if (typeof args.answerSnapshot === "string") { try { snapshot = { ...answers, answers: JSON.parse(args.answerSnapshot) }; } catch { return { ok: false, error: "The form answers could not be read." }; } }
   snapshot.leadSource = account.leadSource;
   const submission: Submission = { fingerprint, proofHash: hash(proof), accountId: id, uploadToken: token, snapshot, receivedAt: at };
-  const writes: Write[] = [put(row("SUBMISSION", key, submission)), modelPut("Account", id, account),
+  const first = await makeTask({ id: `task:first:${id}`, accountId: id, title: "Ensure the enquiry receives a response", kind: "FIRST_CONTACT", sourceAt: at });
+  const writes: Write[] = [put(row("TASK", first.id, first, { accountId: id, dueAt: taskWakeAt(first) })), put(row("SUBMISSION", key, submission)), modelPut("Account", id, account),
     put(row("WORKFLOW", `workflow:${id}`, workflow, { accountId: id })),
     put(row("OPERATION", `op:intake:${submissionId}`, { type: "IMPORT", state: "READY", submissionId, accountId: id, attempts: 0 }, { accountId: id, dueAt: at })),
     put(row("OPERATION", `op:sms-alert:${submissionId}`, { type: "SMS_ALERT", state: "READY", accountId: id, attempts: 0,

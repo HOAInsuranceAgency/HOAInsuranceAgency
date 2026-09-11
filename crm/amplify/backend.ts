@@ -1,3 +1,6 @@
+import { Alarm, TreatMissingData, Metric, ComparisonOperator } from "aws-cdk-lib/aws-cloudwatch";
+import { SnsAction } from "aws-cdk-lib/aws-cloudwatch-actions";
+import { Topic } from "aws-cdk-lib/aws-sns";
 import { defineBackend } from "@aws-amplify/backend";
 import { CfnWebACL, CfnWebACLAssociation } from "aws-cdk-lib/aws-wafv2";
 import { Duration } from "aws-cdk-lib";
@@ -46,7 +49,7 @@ import { pfElection } from "./functions/pf-election/resource";
 import { pfAutopay } from "./functions/pf-autopay/resource";
 import { resolveMailbox } from "./functions/mailbox";
 import { activityLog } from "./functions/activity-log/resource";
-import { communications, communicationWorker, communicationWebhook } from "./functions/communications/resource";
+import { communications, communicationWorker, communicationWebhook, communicationReports, communicationMonitor } from "./functions/communications/resource";
 import {
   magicLinkDefine,
   magicLinkCreate,
@@ -88,6 +91,8 @@ export const backend = defineBackend({
   activityLog,
   communications,
   communicationWorker,
+  communicationReports,
+  communicationMonitor,
   communicationWebhook,
   magicLinkDefine,
   magicLinkCreate,
@@ -322,45 +327,77 @@ communicationTable.addGlobalSecondaryIndex({ indexName: "kind", partitionKey: { 
 communicationTable.addGlobalSecondaryIndex({ indexName: "work", partitionKey: { name: "workKind", type: AttributeType.STRING }, sortKey: { name: "workAt", type: AttributeType.STRING } });
 communicationTable.addGlobalSecondaryIndex({ indexName: "account", partitionKey: { name: "accountId", type: AttributeType.STRING }, sortKey: { name: "accountSort", type: AttributeType.STRING } });
 communicationTable.addGlobalSecondaryIndex({ indexName: "due", partitionKey: { name: "dueGroup", type: AttributeType.STRING }, sortKey: { name: "dueAt", type: AttributeType.STRING } });
+for (const fn of [backend.taskDigest, backend.opsRollup]) {
+  communicationTable.grantReadData(fn.resources.lambda);
+  fn.addEnvironment("COMMUNICATION_TABLE", communicationTable.tableName);
+}
+communicationTable.grantReadWriteData(backend.renewalTasks.resources.lambda);
+backend.renewalTasks.addEnvironment("COMMUNICATION_TABLE", communicationTable.tableName);
 const communicationSecret = new Secret(backend.data.resources.graphqlApi, "CommunicationCredentials", {
   generateSecretString: { secretStringTemplate: "{}", generateStringKey: "installationKey", excludePunctuation: true },
 });
-for (const fn of [backend.communications, backend.communicationWorker, backend.communicationWebhook, backend.leadIntake, backend.leadReply, backend.portalSweep]) {
+for (const fn of [backend.communicationReports, backend.communicationMonitor, backend.communications, backend.communicationWorker, backend.communicationWebhook, backend.leadIntake, backend.leadReply, backend.portalSweep]) {
   communicationTable.grantReadWriteData(fn.resources.lambda);
   fn.addEnvironment("COMMUNICATION_TABLE", communicationTable.tableName);
   fn.addEnvironment("COMMUNICATION_ENV", branch ?? "local");
   fn.addEnvironment("CRM_BASE_URL", magicLinkBaseUrl);
   fn.addEnvironment("AGENCY_MAILBOX", leadReplyMailbox);
 }
-for (const fn of [backend.communications, backend.communicationWorker, backend.communicationWebhook, backend.leadReply]) {
+for (const fn of [backend.communicationReports, backend.communicationMonitor, backend.communications, backend.communicationWorker, backend.communicationWebhook, backend.leadReply]) {
   communicationSecret.grantRead(fn.resources.lambda);
   fn.addEnvironment("COMMUNICATION_SECRET", communicationSecret.secretArn);
 }
 communicationSecret.grantWrite(backend.communications.resources.lambda);
-for (const fn of [backend.communications, backend.communicationWorker, backend.leadIntake, backend.leadReply]) {
+for (const fn of [backend.communicationReports, backend.communications, backend.communicationWorker, backend.leadIntake, backend.leadReply]) {
   fn.addEnvironment("USER_POOL_ID", backend.auth.resources.userPool.userPoolId);
   fn.resources.lambda.addToRolePolicy(new PolicyStatement({ actions: ["cognito-idp:ListUsers"], resources: [backend.auth.resources.userPool.userPoolArn] }));
 }
 for (const model of ["Account", "Contact", "PriorCarrier", "LeadReply"] as const) {
   const modelTable = backend.data.resources.tables[model];
   const envName = `${model.replace(/([a-z])([A-Z])/g, "$1_$2").toUpperCase()}_TABLE`;
-  for (const fn of [backend.leadIntake, backend.communications, backend.leadReply]) {
+  for (const fn of [backend.leadIntake, backend.communications, backend.communicationWorker, backend.leadReply]) {
     modelTable.grantReadWriteData(fn.resources.lambda); fn.addEnvironment(envName, modelTable.tableName);
   }
 }
-for (const fn of [backend.communications, backend.communicationWorker, backend.leadIntake, backend.leadReply, backend.portalSweep]) {
+for (const model of ["Quote", "Certificate", "Document"] as const) for (const fn of [backend.communications, backend.communicationWorker]) {
+  backend.data.resources.tables[model].grantReadWriteData(fn.resources.lambda);
+  fn.addEnvironment(`${model.toUpperCase()}_TABLE`, backend.data.resources.tables[model].tableName);
+}
+backend.storage.resources.bucket.grantRead(backend.communicationWorker.resources.lambda, "certificates/*");
+for (const fn of [backend.communicationReports, backend.communications, backend.communicationWorker, backend.leadIntake, backend.leadReply, backend.portalSweep]) {
   backend.data.resources.tables.Activity.grantReadWriteData(fn.resources.lambda);
   fn.addEnvironment("ACTIVITY_TABLE", backend.data.resources.tables.Activity.tableName);
 }
+backend.storage.resources.bucket.grantRead(backend.communications.resources.lambda, "documents/*");
+backend.storage.resources.bucket.grantRead(backend.communications.resources.lambda, "certificates/*");
+backend.communications.addEnvironment("DOCUMENT_BUCKET", backend.storage.resources.bucket.bucketName);
 backend.storage.resources.bucket.grantReadWrite(backend.communicationWorker.resources.lambda, "documents/*");
 backend.communicationWorker.addEnvironment("DOCUMENT_BUCKET", backend.storage.resources.bucket.bucketName);
 backend.communicationWorker.resources.lambda.addToRolePolicy(new PolicyStatement({ actions: ["sns:Publish"], resources: ["*"] }));
 // Keep one worker: call unions and workflow repair jobs rely on serial execution.
 // Increasing this requires cross-invocation fencing, including around provider sends.
 (backend.communicationWorker.resources.lambda.node.defaultChild as CfnFunction).reservedConcurrentExecutions = 1;
-backend.communicationWorker.resources.lambda.addEventSource(new DynamoEventSource(backend.data.resources.tables.Account, {
-  startingPosition: StartingPosition.LATEST, batchSize: 10, retryAttempts: 3, reportBatchItemFailures: true,
+for (const model of ["Account", "Quote", "Policy", "MarketingTask", "Certificate", "Document"] as const) backend.communicationWorker.resources.lambda.addEventSource(new DynamoEventSource(backend.data.resources.tables[model], {
+  startingPosition: StartingPosition.LATEST, batchSize: 1, retryAttempts: 3, reportBatchItemFailures: true,
 }));
+(backend.communicationReports.resources.lambda.node.defaultChild as CfnFunction).reservedConcurrentExecutions = 1;
+// A separate alert path still works when Front or either scheduled worker stops.
+// An administrator connects and confirms the intended operations recipient.
+const communicationAlerts = new Topic(backend.data.resources.graphqlApi, "CommunicationOperationsAlerts");
+backend.communications.addEnvironment("COMMUNICATION_ALERT_TOPIC", communicationAlerts.topicArn);
+backend.communications.resources.lambda.addToRolePolicy(new PolicyStatement({ actions: ["sns:ListSubscriptionsByTopic"], resources: [communicationAlerts.topicArn] }));
+backend.addOutput({ custom: { communicationAlertTopicArn: communicationAlerts.topicArn } });
+for (const [name, metricName, threshold, comparisonOperator] of [
+  ["CommunicationCoverageAlarm", "Errors", 1, ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD],
+  ["CommunicationMonitorStopped", "Invocations", 1, ComparisonOperator.LESS_THAN_THRESHOLD],
+] as const) {
+  const alarm = new Alarm(backend.data.resources.graphqlApi, name, {
+  metric: new Metric({ namespace: "AWS/Lambda", metricName, dimensionsMap: { FunctionName: backend.communicationMonitor.resources.lambda.functionName }, statistic: "Sum", period: Duration.minutes(5) }),
+  threshold, comparisonOperator, evaluationPeriods: 2, treatMissingData: TreatMissingData.BREACHING,
+  alarmDescription: "Communication processing, account coverage or morning reports need attention. Missing monitor runs also breach.",
+});
+  alarm.addAlarmAction(new SnsAction(communicationAlerts));
+}
 const communicationWebhookUrl = backend.communicationWebhook.resources.lambda.addFunctionUrl({ authType: FunctionUrlAuthType.NONE });
 backend.communications.addEnvironment("COMMUNICATION_WEBHOOK_URL", communicationWebhookUrl.url);
 backend.addOutput({ custom: { communicationWebhookUrl: communicationWebhookUrl.url, frontSidebarUrl: `${magicLinkBaseUrl}/front-sidebar` } });

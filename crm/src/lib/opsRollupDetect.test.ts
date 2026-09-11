@@ -92,11 +92,13 @@ describe("coverage gaps", () => {
   it("is not a gap when a quote landed inside the marketing window", () => {
     const withQuote = {
       ...withPolicy("2026-08-21"),
+      policies: withPolicy("2026-08-21").policies.map(p => ({ ...p, lines: ["Property"] })),
       quotes: [
         {
           id: "q1",
           accountId: "a1",
-          status: "SUBMITTED",
+          status: "QUOTED",
+          renewalPolicyId: "p1", premium: 1000, lines: ["Property"], effectiveDate: "2026-08-21", expirationDate: "2027-08-21",
           createdAt: "2026-07-20T12:00:00Z",
         },
       ],

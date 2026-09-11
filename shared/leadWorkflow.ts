@@ -1,6 +1,14 @@
 /** Public, credential-free workflow contracts shared by the CRM and workers. */
 export type Responsibility = "SALESPERSON" | "CHAMPION";
-export type TaskKind = "FOLLOW_UP" | "RESPONSE" | "CALLBACK" | "CARRIER" | "DOCUMENTS" | "CORRECTION" | "TRIAGE";
+export type TaskKind = "FOLLOW_UP" | "RESPONSE" | "CALLBACK" | "CARRIER" | "DOCUMENTS" | "CORRECTION" | "TRIAGE" | "FIRST_CONTACT" | "ANNUAL_RETURN" | "PROSPECT_UPDATE" | "RENEWAL_START" | "SUBMISSION" | "QUOTE_TARGET" | "QUOTE_PRESENTATION" | "BIND" | "SERVICE";
+export type WorkDomain = "CLIENT" | "CARRIER";
+export type BusinessContext = "LEAD" | "RENEWAL" | "SERVICE";
+/** Server-only admin-managed reporting relationships, separate from CRM access. */
+export interface TeamRouting {
+  version: number; ownerId?: string; marketingManagerId?: string; intakeOwnerId?: string; integrationOwnerId?: string;
+  reportChannelId?: string;
+  members: { userId: string; salesManager?: boolean; marketingManager?: boolean; salesManagerId?: string; coverId?: string; away?: boolean; coverFrom?: string; coverThrough?: string }[];
+}
 export interface TeamEligibility {
   userId: string; name: string; email: string; enabled: boolean;
   salesperson: boolean; champion: boolean; frontId?: string; dialpadId?: string; version?: number;
@@ -10,6 +18,9 @@ export interface LeadWorkflow {
   disposition: "ACTIVE" | "BOUND" | "LOST" | "DISQUALIFIED";
   conversationId?: string; assignmentIssue?: string; humanTakeover?: boolean;
   version: number; updatedAt: string;
+  deferredUntil?: string; deferredExpiration?: string; deferredAt?: string;
+  /** Retain acquisition work for unbound coverage after an account partially binds. */
+  openLeadQuoteIds?: string[];
 }
 export interface LeadTask {
   id: string; accountId: string; title: string; kind: TaskKind; role: Responsibility;
@@ -21,6 +32,15 @@ export interface LeadTask {
   reason?: string; notifiedAt?: string; escalatedAt?: string; version: number;
   notifiedRecipientId?: string; escalatedRecipientId?: string;
   completedByCommunicationId?: string;
+  domain?: WorkDomain; context?: BusinessContext; policyId?: string; quoteId?: string; marketingTaskId?: string;
+  term?: string; lines?: string[]; carrierId?: string;
+  /** Milestones require business records; outreach alone cannot close them. */
+  milestone?: boolean; helperId?: string; helperRequestedBy?: string; helperReason?: "SALES_ASSIST" | "MANAGER_COVER"; specialistId?: string;
+  accountableRole?: Responsibility; waitingOn?: "PROSPECT" | "CARRIER" | "CLIENT";
+  followUpCount?: number; attemptAt?: string; requirementSourceIds?: string[];
+  nextReminderAt?: string; lastReminderAt?: string; ownerEscalationAt?: string; ownerNotifiedAt?: string;
+  managerRecipientId?: string; ownerRecipientId?: string; obligationKey?: string; sourceUrl?: string;
+  shortTimeline?: boolean; businessDueAt?: string; serviceProgressAt?: string; serviceType?: "CERTIFICATE" | "DOCUMENT" | "GENERAL"; parentTaskId?: string;
 }
 export interface Communication {
   id: string; accountId?: string; channel: "EMAIL" | "CALL" | "SMS" | "NOTE";
@@ -36,9 +56,12 @@ export interface Communication {
   contactApplied?: boolean; resolvedByCommunicationId?: string;
   contactAppliedKind?: "CONTACT" | "ATTEMPT";
   frontDraft?: boolean;
+  domain?: WorkDomain; context?: BusinessContext; policyId?: string; quoteId?: string;
+  outreachAt?: string; outreachByCommunicationId?: string;
+  internalReport?: boolean;
 }
 export interface IntegrationConfig {
-  environment: string; defaultUserId?: string; holidays: string[]; paused: boolean;
+  environment: string; defaultUserId?: string; defaultSalespersonId?: string; defaultChampionId?: string; holidays: string[]; paused: boolean;
   frontCompanyId?: string; frontInboxId?: string; frontChannelId?: string;
   frontSender: string; allowedInboxIds: string[]; testRecipients: string[];
   dialpadCompanyId?: string; dialpadOfficeId?: string; dialpadNumbers: string[];
@@ -46,7 +69,8 @@ export interface IntegrationConfig {
   activatedAt?: string; version: number;
 }
 export interface WorkflowContext {
-  frontContext?: { conversationId: string; assigneeId?: string; routing?: string };
+  actorId?: string;
+  frontContext?: { conversationId: string; assigneeId?: string; routing?: string; purpose?: "PROSPECT" | "CARRIER"; context?: BusinessContext; policyId?: string };
   workflow: LeadWorkflow | null; tasks: LeadTask[]; communications: Communication[];
   team: TeamEligibility[]; issues: { id: string; message: string; at: string }[];
   nextToken?: string; communicationNextToken?: string;
@@ -68,11 +92,11 @@ function parts(ms: number) {
   const p = Object.fromEntries(formatter.formatToParts(ms).map(x => [x.type, x.value]));
   return { day: `${p.year}-${p.month}-${p.day}`, hour: +p.hour, minute: +p.minute };
 }
-function businessDate(day: string, holidays: readonly string[]) {
+export function businessDate(day: string, holidays: readonly string[]) {
   const weekday = new Date(`${day}T12:00:00Z`).getUTCDay();
   return weekday !== 0 && weekday !== 6 && !holidays.includes(day);
 }
-function localHour(day: string, hour: number): number {
+export function localHour(day: string, hour: number): number {
   const target = Date.parse(`${day}T${String(hour).padStart(2, "0")}:00:00Z`);
   let at = target;
   for (let i = 0; i < 3; i++) {
@@ -130,10 +154,12 @@ export function nextReminderMorning(now: string, holidays: readonly string[] = [
     ? new Date(localHour(p.day, 9)).toISOString() : followUpDeadline(now, 1, holidays);
 }
 export function scheduleReminders<T extends LeadTask>(task: T, holidays: readonly string[] = []): T {
-  return { ...task, reminderAt: morningReminderAt(task.dueAt, holidays), escalationAt: followUpDeadline(task.dueAt, 1, holidays) };
+  const escalationAt = followUpDeadline(task.dueAt, 1, holidays);
+  return { ...task, reminderAt: morningReminderAt(task.dueAt, holidays), escalationAt, ownerEscalationAt: followUpDeadline(escalationAt, 1, holidays) };
 }
 export function taskWakeAt(task: LeadTask): string | undefined {
-  return task.status !== "OPEN" || task.escalatedAt ? undefined : task.notifiedAt ? task.escalationAt : task.reminderAt ?? morningReminderAt(task.dueAt);
+  if (task.status !== "OPEN") return undefined;
+  return task.nextReminderAt ?? (task.escalatedAt ? task.ownerEscalationAt ?? followUpDeadline(task.escalationAt, 1) : task.notifiedAt ? task.escalationAt : task.reminderAt ?? morningReminderAt(task.dueAt));
 }
 
 export function mergeInboundDeadline(existing: LeadTask | undefined, incoming: LeadTask): LeadTask {

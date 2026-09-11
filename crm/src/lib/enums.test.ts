@@ -171,11 +171,11 @@ describe("every table covers its schema enum exactly", () => {
     );
   });
 
-  it("MarketingTaskResolution — the menu is every member but QUOTED", () => {
+  it("MarketingTaskResolution — the menu excludes automatic quoted and superseded outcomes", () => {
     // The close menu is built from MANUAL_TASK_RESOLUTIONS, so a resolution
     // added to the schema and not to that list is one nobody can ever pick —
     // it would compile, render, and simply be missing from the dropdown.
-    expect([...MANUAL_TASK_RESOLUTIONS, "QUOTED"].sort()).toEqual(
+    expect([...MANUAL_TASK_RESOLUTIONS, "QUOTED", "SUPERSEDED"].sort()).toEqual(
       schemaEnum("MarketingTaskResolution").sort()
     );
     // And QUOTED stays out of it: it is detected from an existing quote, so

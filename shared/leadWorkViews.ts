@@ -16,5 +16,5 @@ export function needsAttention(task: { kind?: string; dueAt?: string }, now: str
 }
 export function workContext(task: Pick<LeadTask, "kind" | "custom">) {
   if (task.kind === "FOLLOW_UP") return task.custom ? "Follow-up" : "Waiting on prospect";
-  return { RESPONSE: "Reply needed", CALLBACK: "Return call", CARRIER: "Carrier response", DOCUMENTS: "Documents", CORRECTION: "Delivery needs attention", TRIAGE: "Needs linking" }[task.kind];
+  return { RESPONSE: "Reply needed", CALLBACK: "Return call", CARRIER: "Carrier response", DOCUMENTS: "Documents", CORRECTION: "Delivery needs attention", TRIAGE: "Needs linking", FIRST_CONTACT: "First contact", ANNUAL_RETURN: "Next renewal opportunity", PROSPECT_UPDATE: "Keep prospect informed", RENEWAL_START: "Renewal preparation", SUBMISSION: "Carrier submission", QUOTE_TARGET: "Usable quotes", QUOTE_PRESENTATION: "Present quote", BIND: "Binding", SERVICE: "Client service" }[task.kind];
 }

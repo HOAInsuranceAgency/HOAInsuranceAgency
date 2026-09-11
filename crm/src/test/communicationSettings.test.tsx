@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, within, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 const h = vi.hoisted(() => ({ request: vi.fn() }));
 vi.mock("../lib/communications", () => ({ communicationRequest: h.request }));
@@ -105,14 +105,16 @@ describe("default teammate eligibility", () => {
       return { config: { ...input.config, version: 8 } };
     });
     render(<CommunicationSettings />); await editSettings();
-    const select = screen.getByRole("combobox", { name: /Default salesperson and champion/ });
-    expect(screen.getByRole("option", { name: "Jake Greasley" })).toBeEnabled();
+    const select = screen.getByRole("combobox", { name: "Default salesperson" });
+    const champion = screen.getByRole("combobox", { name: "Default deal champion" });
+    expect(screen.getAllByRole("option", { name: "Jake Greasley" })).toHaveLength(2);
     fireEvent.change(select, { target: { value: "jake" } });
+    fireEvent.change(champion, { target: { value: "jake" } });
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
-    await waitFor(() => expect(h.request).toHaveBeenCalledWith("saveSettings", { config: { ...config, defaultUserId: "jake" }, credentials: {} }, true));
-    expect(await screen.findByText("Jake Greasley")).toBeVisible();
+    await waitFor(() => expect(h.request).toHaveBeenCalledWith("saveSettings", { config: { ...config, defaultUserId: undefined, defaultSalespersonId: "jake", defaultChampionId: "jake" }, credentials: {} }, true));
+    expect(await screen.findAllByText("Jake Greasley")).toHaveLength(2);
   });
-  it("offers only active teammates eligible for both roles and preserves an unavailable saved choice", async () => {
+  it("offers each role independently and preserves unavailable saved choices", async () => {
     h.request.mockImplementation(async (op: string) => op === "settings" ? settings() : { team: [
       { ...team[0], champion: false },
       { ...team[0], userId: "jake", name: "Jake Greasley" },
@@ -121,11 +123,11 @@ describe("default teammate eligibility", () => {
       { ...team[0], userId: "disabled", name: "Disabled teammate", enabled: false },
     ] });
     render(<CommunicationSettings />); await editSettings();
-    expect(screen.getByRole("option", { name: "Jake Greasley" })).toBeEnabled();
-    expect(screen.queryByRole("option", { name: "Sales only" })).toBeNull();
-    expect(screen.queryByRole("option", { name: "Champion only" })).toBeNull();
+    expect(screen.getAllByRole("option", { name: "Jake Greasley" })).toHaveLength(2);
+    expect(within(screen.getByRole("combobox", { name: "Default salesperson" })).getByRole("option", { name: "Sales only" })).toBeEnabled();
+    expect(within(screen.getByRole("combobox", { name: "Default deal champion" })).getByRole("option", { name: "Champion only" })).toBeEnabled();
     expect(screen.queryByRole("option", { name: "Disabled teammate" })).toBeNull();
     expect(screen.getByRole("option", { name: "Brian Cole (unavailable)" })).toBeDisabled();
-    expect(screen.getByRole("combobox", { name: /Default salesperson and champion/ })).toHaveValue("brian");
+    expect(screen.getByRole("combobox", { name: "Default deal champion" })).toHaveValue("brian");
   });
 });

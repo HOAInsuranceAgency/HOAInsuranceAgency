@@ -1,3 +1,4 @@
+import { get } from "../communications/store";
 import { SESv2Client, SendEmailCommand } from "@aws-sdk/client-sesv2";
 import { Amplify } from "aws-amplify";
 import { generateClient } from "aws-amplify/data";
@@ -141,6 +142,7 @@ export const handler = async () => {
     } while (token);
   }
 
+  const consolidated = process.env.COMMUNICATION_TABLE && (await get("team-routing"))?.data.reportChannelId;
   const findings = buildFindings(
     {
       leads,
@@ -156,7 +158,7 @@ export const handler = async () => {
       premiumFinanceEnabled,
     },
     edition
-  );
+  ).filter(f => !consolidated || !["coverage-gap-unmarketed", "submission-window-blown", "renewal-not-started", "web-lead-heard-nothing", "quote-stalled", "new-lead-untouched"].includes(f.kind));
 
   const done = buildDone(
     {

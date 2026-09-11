@@ -13,6 +13,8 @@ import { Badge, statusBadge, QUOTE_STATUS_BADGE } from "../lib/badges";
 import { useAsyncResource } from "../lib/useAsyncResource";
 import { useSort, SortTh } from "../lib/useSort";
 import CoverageForm from "./CoverageForm";
+import { communicationRequest } from "../lib/communications";
+import { authorizedQuoteTerms } from "../../../shared/quoteAuthorization";
 import { SaveStatus, useSaveStatus } from "./SaveStatus";
 import {
   isOpenQuoteStatus,
@@ -64,6 +66,9 @@ export default function QuotesPanel({
   const [editing, setEditing] = useState<Quote | null>(null);
   const [binding, setBinding] = useState<Quote | null>(null);
   const [bindError, setBindError] = useState("");
+  const [authorization, setAuthorization] = useState<Quote | null>(null);
+  const [clientAuthorized, setClientAuthorized] = useState(false);
+  const [authorizing, setAuthorizing] = useState(false);
   // Auto-clearing: the status change is made from a per-row <select> that
   // then re-renders with the new value, and an open quote that moves to
   // DECLINED/LOST leaves the table entirely — there is no form to go dirty
@@ -105,6 +110,8 @@ export default function QuotesPanel({
         const { errors } = await client.models.Quote.update({
           id: quote.id,
           status,
+          ...(["QUOTED", "PRESENTED"].includes(status) && !quote.readyAt ? { readyAt: new Date().toISOString() } : {}),
+          ...(status === "PRESENTED" && !quote.presentedAt ? { presentedAt: new Date().toISOString() } : {}),
         });
         if (errors?.length) throw new Error(errors[0].message);
         refresh();
@@ -239,6 +246,8 @@ export default function QuotesPanel({
                         <button className="link" onClick={() => setBinding(qt)}>
                           Bind
                         </button>
+                        {["QUOTED", "PRESENTED"].includes(qt.status) && (!qt.bindAuthorizedAt || qt.bindAuthorizedTerms !== authorizedQuoteTerms(qt)) && <button className="link" onClick={() => { setAuthorization(qt); setClientAuthorized(false); }}>Request binding</button>}
+                        {qt.bindAuthorizedAt && <span className="small muted">Carrier confirmation pending</span>}
                       </>
                     )}
                   </td>
@@ -249,6 +258,7 @@ export default function QuotesPanel({
         </div>
       )}
 
+      {authorization && <section className="card" aria-label="Client bind authorization"><h3>Request binding</h3><p>{carrierName(authorization.carrierId)} · {fmtMoney(authorization.premium)} · Effective {fmtDate(authorization.effectiveDate)}</p><p>This records the client's approval of these quoted terms and puts carrier confirmation in the champion's work. Coverage becomes bound only through the confirmed bind process.</p><label><input type="checkbox" checked={clientAuthorized} onChange={e => setClientAuthorized(e.target.checked)} /> The client has authorized binding these terms.</label><div className="form-actions"><button className="primary" disabled={!clientAuthorized || authorizing} onClick={async () => { setAuthorizing(true); setBindError(""); try { await communicationRequest("authorizeBind", { quoteId: authorization.id, updatedAt: authorization.updatedAt, clientAuthorized }, true); setAuthorization(null); await refresh(); } catch(e) { setBindError(friendlyError(e, "Could not record authorization")); } finally { setAuthorizing(false); } }}>Send to champion's bind work</button><button className="secondary" disabled={authorizing} onClick={() => setAuthorization(null)}>Cancel</button></div></section>}
       {binding && (
         <BindForm
           quote={binding}
@@ -289,6 +299,7 @@ function BindForm({
 
   // A quote must carry real terms before it can become a policy.
   const blockers = [
+    quote.bindAuthorizedAt && quote.bindAuthorizedTerms !== authorizedQuoteTerms(quote) && "renewed client authorization for the changed terms",
     !quote.carrierId && "a carrier",
     !(quote.premium && quote.premium > 0) && "a premium",
     !quote.effectiveDate && "an effective date",

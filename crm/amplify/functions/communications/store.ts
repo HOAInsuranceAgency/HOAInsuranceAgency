@@ -18,6 +18,7 @@ export function row<T>(kind: string, id: string, data: T, opts: { accountId?: st
   const actionable = kind === "TASK" ? values.status === "OPEN"
     : kind === "WORKFLOW" ? values.disposition === "ACTIVE" && (!values.salespersonId || !values.championId || !!values.assignmentIssue)
     : kind === "OPERATION" ? !["CONFIRMED", "SUPPRESSED"].includes(values.state ?? "")
+    : kind === "REPORT_EDITION" ? values.state !== "SENT"
     : kind === "EVENT" ? !values.processedAt && !values.resolved
     : ["ISSUE", "TRIAGE", "NOTIFICATION"].includes(kind) && !values.resolved;
   return { id, kind, data, ...(actionable ? { workKind: kind, workAt: values.dueAt ?? values.at ?? opts.previous?.createdAt ?? now } : {}), version: (opts.previous?.version ?? 0) + 1, createdAt: opts.previous?.createdAt ?? now, updatedAt: now,

@@ -47,6 +47,7 @@ import { inWindow, businessDaysBetween, dayOf, type Edition } from "./window";
  * two cannot drift apart unnoticed.
  */
 export const ROBOT_ACTORS: ReadonlySet<string> = new Set([
+  "communication-delivery",
   "front-attachment",
   "system",
   "lead-intake",

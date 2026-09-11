@@ -7,7 +7,7 @@ import { processEvent, dialpadEvent, ingestFrontMessage, type EventRecord } from
 import { ensureWorkflow, recordInbound, enabledUser, accountRows } from "./workflow";
 import { front, dialpad, ProviderError, providerTimestamp, type FrontMessage } from "./providers";
 import type { LeadTask, Communication } from "../../../../shared/leadWorkflow";
-import { scheduleReminders, taskWakeAt, reminderWindow, nextReminderMorning } from "../../../../shared/leadWorkflow";
+import { scheduleReminders, taskWakeAt, followUpDeadline, reminderWindow, nextReminderMorning } from "../../../../shared/leadWorkflow";
 import { leadActionGuidance } from "../../../../shared/leadActionGuidance";
 import { migrateReminderSchedules } from "./reminders";
 import { dataClient } from "./data";
@@ -37,37 +37,38 @@ export async function dispatchTask(candidate: Row<LeadTask>) {
   const wf = await ensureWorkflow(task.data.accountId);
   const account = await (await dataClient()).models.Account.get({ id: task.data.accountId });
   if (account.errors?.length || !account.data) throw new Error("Could not verify the account; its commitment remains open");
-  if (wf.data.disposition !== "ACTIVE" || account.data.stage === "CLIENT") {
-    await save(row("TASK", task.id, { ...task.data, status: "CANCELLED", reason: "Lead no longer active", version: task.version + 1 }, { accountId: task.accountId, previous: task }), task); return;
-  }
-  const escalated = task.data.escalationAt <= now;
-  const due = escalated ? task.data.escalationAt : task.data.reminderAt!;
-  if (due > new Date().toISOString() || task.data.escalatedAt) return;
-  const recipient = escalated || task.data.role === "CHAMPION" ? wf.data.championId : wf.data.salespersonId;
-  if (!recipient) { await issue(task.id, "Assign a teammate to this overdue work", task.accountId); return; }
-  try { await enabledUser(recipient); }
-  catch { await issue(task.id, "The responsible teammate needs reassignment", task.accountId); return; }
-  const id = `notice:${task.id}:${recipient}`;
-  const oldNotice = await get(id);
-  const taskAccountId = task.data.accountId;
-  const sources = await Promise.all((task.data.sourceIds ?? (task.data.episode ? [task.data.episode] : [])).map(id => get<Communication>(id)));
-  const guidance = leadActionGuidance(task.data, sources.flatMap(r => r?.accountId === taskAccountId ? [r.data] : []), escalated);
-  const writes = [check(wf), put(row("TASK", task.id, { ...task.data, attempts: 0, error: undefined, firstFailureAt: undefined, notifiedAt: task.data.notifiedAt ?? now, notifiedRecipientId: task.data.role === "CHAMPION" ? wf.data.championId : wf.data.salespersonId, ...(escalated ? { escalatedAt: now, escalatedRecipientId: recipient } : {}), version: task.version + 1 }, { accountId: task.accountId, previous: task, dueAt: escalated ? undefined : task.data.escalationAt }), task)];
-  writes.push(put(row("NOTIFICATION", id, { recipient, accountId: task.accountId, taskId: task.id, title: guidance.action, why: guidance.why, instruction: guidance.after, dueAt: task.data.dueAt, urgency: escalated ? "ESCALATED" : "DUE", at: now }, { accountId: task.accountId, previous: oldNotice }), oldNotice));
-  if (escalated && !task.data.notifiedAt && task.data.role === "SALESPERSON" && wf.data.salespersonId && wf.data.salespersonId !== recipient) {
-    const key = `notice:${task.id}:${wf.data.salespersonId}`, previous = await get(key);
-    const direct = leadActionGuidance(task.data, sources.flatMap(r => r?.accountId === taskAccountId ? [r.data] : []), false);
-    writes.push(put(row("NOTIFICATION", key, { recipient: wf.data.salespersonId, accountId: task.accountId, taskId: task.id, title: direct.action, why: direct.why, instruction: direct.after, dueAt: task.data.dueAt, urgency: "DUE", at: now }, { accountId: task.accountId, previous }), previous));
+  const { resolveTaskRoute } = await import("./routing");
+  const routingRecord = await get("team-routing");
+  const route = await resolveTaskRoute(task.data, wf.data);
+  const manager = task.data.escalationAt <= now && route.managerId !== route.accountableId, owner = !!task.data.ownerEscalationAt && task.data.ownerEscalationAt <= now && route.ownerId !== route.accountableId;
+  const recipient = owner ? route.ownerId : manager ? route.managerId : route.recipientId;
+  if (!recipient) { await issue(task.id, "Choose an available manager or owner for this work", task.accountId); throw new Error("Responsible team coverage is missing"); }
+  await enabledUser(recipient);
+  const sources = await Promise.all((task.data.sourceIds ?? []).map(id => get<Communication>(id)));
+  const guidance = leadActionGuidance(task.data, sources.flatMap(r => r && r.accountId === task!.accountId ? [r.data] : []), manager);
+  const stage = owner ? "OWNER" : manager ? "MANAGER" : "DUE";
+  const previousStage = task.data.ownerNotifiedAt ? "OWNER" : task.data.escalatedAt ? "MANAGER" : task.data.notifiedAt ? "DUE" : "";
+  const next: LeadTask = { ...task.data, notifiedAt: task.data.notifiedAt ?? now, notifiedRecipientId: route.recipientId,
+    ...(manager ? { escalatedAt: task.data.escalatedAt ?? now, escalatedRecipientId: route.managerId } : {}),
+    ...(owner ? { ownerNotifiedAt: task.data.ownerNotifiedAt ?? now, ownerRecipientId: route.ownerId } : {}),
+    lastReminderAt: now, nextReminderAt: followUpDeadline(now, 1, c.holidays), version: task.version + 1 };
+  const writes = [check(wf), ...(routingRecord ? [check(routingRecord)] : []), put(row("TASK", task.id, { ...next, attempts: 0, error: undefined, firstFailureAt: undefined }, { accountId: task.accountId, previous: task, dueAt: taskWakeAt(next) }), task)];
+  for (const target of new Set([route.recipientId, ...(manager ? [route.managerId] : []), ...(owner ? [route.ownerId] : [])].filter((id): id is string => !!id))) {
+    const id = `notice:${task.id}:${target}`, old = await get(id);
+    writes.push(put(row("NOTIFICATION", id, { recipient: target, accountId: task.accountId, taskId: task.id, title: guidance.action, why: guidance.why, instruction: guidance.after, dueAt: task.data.dueAt, urgency: stage, at: now }, { accountId: task.accountId, previous: old }), old));
   }
   const cnv = task.data.conversationId ?? wf.data.conversationId;
   if (cnv) {
-    const member = await get<{ name?: string }>(`eligibility:${recipient}`);
-    const deadline = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(task.data.dueAt));
-    const text = `${escalated ? "Deal champion — overdue action" : "9 a.m. lead reminder"}\n\nWhy this is back: ${guidance.why}\nNext step: ${guidance.action}${guidance.preview ? `\nOriginal request: ${guidance.preview}` : ""}\nResponsible: ${member?.data.name ?? (escalated || task.data.role === "CHAMPION" ? "Deal champion" : "Salesperson")}\nDue: ${deadline} Eastern\n\n${guidance.after}`;
-    const reminder = { taskId: task.id, noticeAt: now, recipientId: recipient, escalated };
-    const commentId = `op:reminder-comment:${id}:${task.version}`;
-    writes.push(put(operationRow(commentId, { type: "COMMENT", accountId: task.data.accountId, conversationId: cnv, text, reminder })));
-    writes.push(put(operationRow(`op:reopen:${id}:${task.version}`, { type: "REOPEN", accountId: task.data.accountId, conversationId: cnv, reminder, afterOperationId: commentId })));
+    const reminder = { taskId: task.id, noticeAt: now, recipientId: recipient, escalated: manager, stage, workflowVersion: wf.version };
+    let commentId: string | undefined;
+    if (stage !== previousStage) {
+      commentId = `op:reminder-comment:${task.id}:${stage}:${task.version}`;
+      const member = await get<{ name: string }>(`eligibility:${route.recipientId}`);
+      const deadline = new Date(task.data.dueAt).toLocaleString("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+      const text = `9 a.m. work reminder\n\nWhy this is back: ${guidance.why}\nNext step: ${guidance.action}\nResponsible: ${member?.data.name ?? "Team coverage needed"}\nDue: ${deadline} Eastern${guidance.preview ? `\nOriginal request: ${guidance.preview}` : ""}\n\n${guidance.after}${manager ? "\nThe manager's morning report includes this overdue work." : ""}`;
+      writes.push(put(operationRow(commentId, { type: "COMMENT", accountId: task.data.accountId, conversationId: cnv, text, reminder })));
+    }
+    writes.push(put(operationRow(`op:reopen:${task.id}:${task.version}`, { type: "REOPEN", accountId: task.data.accountId, conversationId: cnv, reminder, afterOperationId: commentId })));
   }
   await commit(writes);
 }
@@ -119,7 +120,8 @@ export const handler = async (event?: Partial<DynamoDBStreamEvent>) => {
   if (event?.Records) {
     const batchItemFailures = [];
     for (const record of event.Records) {
-      const id = record.dynamodb?.NewImage?.id?.S;
+      if (record.dynamodb?.NewImage?.__typename?.S === "Document" && record.dynamodb.NewImage.entityType?.S !== "ACCOUNT") continue;
+      const id = record.dynamodb?.NewImage?.accountId?.S ?? record.dynamodb?.NewImage?.entityId?.S ?? record.dynamodb?.NewImage?.id?.S;
       if (!id || record.eventName === "REMOVE") continue;
       try { const { syncAccountLifecycle } = await import("./workflow"); await syncAccountLifecycle(id); }
       catch { await issue(`assignment:${id}`, "Lead responsibilities need repair after account creation", id).catch(() => {}); batchItemFailures.push({ itemIdentifier: record.dynamodb?.SequenceNumber ?? record.eventID! }); }
@@ -132,6 +134,8 @@ export const handler = async (event?: Partial<DynamoDBStreamEvent>) => {
   let cursor: string | undefined, lagging = false, callChecks = 0;
   const c = await config();
   await migrateReminderSchedules();
+  try { await (await import("./coverage")).coverageSweep(); await (await import("./routing")).resolveIssue("coverage-census"); }
+  catch (error) { lagging = true; await issue("coverage-census", error instanceof Error ? error.message : "Work coverage needs attention"); }
   if (c.activatedAt) {
     const { migrateContactProgress } = await import("./contactProgress");
     try {
@@ -147,7 +151,7 @@ export const handler = async (event?: Partial<DynamoDBStreamEvent>) => {
   // provider captures one independent page; a failure cannot starve the other.
   if (c.activatedAt && !c.paused) {
     const { reconcile } = await import("./reconcile");
-    try { lagging ||= (await reconcile()).lagging; }
+    try { const result = await reconcile(); lagging = lagging || result.lagging; }
     catch (e) { lagging = true; await issue("reconcile", e instanceof Error ? e.message : "Reconciliation failed"); }
   }
   // Indexed due work only. Bound each run and resume naturally on the next tick.

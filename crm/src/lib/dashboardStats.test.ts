@@ -328,7 +328,7 @@ describe("buildRenewalRows", () => {
 describe("renewalMarketing", () => {
   const TODAY = "2026-08-24";
 
-  it("a quote anywhere settles it, whatever else is open", () => {
+  it("a quoted carrier does not erase another missed carrier deadline", () => {
     expect(
       renewalMarketing(
         [
@@ -337,7 +337,7 @@ describe("renewalMarketing", () => {
         ],
         TODAY
       )
-    ).toEqual({ kind: "quoted" });
+    ).toEqual({ kind: "missed", submitBy: "2026-08-01" });
   });
 
   it("an open task past submit-by is missed, reporting the earliest blown deadline", () => {
@@ -378,26 +378,19 @@ describe("renewalMarketing", () => {
     expect(renewalMarketing([], TODAY, true)).toEqual({ kind: "quoted" });
     expect(
       renewalMarketing([{ status: "OPEN", submitBy: "2026-08-01" }], TODAY, true)
-    ).toEqual({ kind: "quoted" });
+    ).toEqual({ kind: "missed", submitBy: "2026-08-01" });
   });
 });
 
 describe("quotedWithinWindow", () => {
-  it("counts only quotes created inside the expiration's marketing window", () => {
-    const expiration = "2026-09-11"; // 18d out
-    expect(
-      quotedWithinWindow([{ createdAt: "2026-08-01T09:00:00Z" }], expiration, fakeDaysUntil)
-    ).toBe(true);
-    // A quote from the prior term's marketing is not this renewal's.
-    expect(
-      quotedWithinWindow([{ createdAt: "2025-09-01T09:00:00Z" }], expiration, fakeDaysUntil)
-    ).toBe(false);
-    // A quote after the expiration belongs to whatever comes next.
-    expect(
-      quotedWithinWindow([{ createdAt: "2026-10-01T09:00:00Z" }], expiration, fakeDaysUntil)
-    ).toBe(false);
-    expect(quotedWithinWindow([], expiration, fakeDaysUntil)).toBe(false);
-    expect(quotedWithinWindow([{ createdAt: null }], expiration, fakeDaysUntil)).toBe(false);
+  it("requires usable coverage for the actual term, regardless of creation time", () => {
+    const risk = { accountId: "a1", lines: ["Property"] }, expiration = "2026-09-11";
+    const q = { accountId: "a1", status: "QUOTED", premium: 1000, effectiveDate: expiration, expirationDate: "2027-09-11", lines: ["Property"], createdAt: "2025-09-01T09:00:00Z" };
+    expect(quotedWithinWindow([q], expiration, fakeDaysUntil, risk)).toBe(true);
+    expect(quotedWithinWindow([{ ...q, status: "SUBMITTED" }], expiration, fakeDaysUntil, risk)).toBe(false);
+    expect(quotedWithinWindow([{ ...q, effectiveDate: "2025-09-11" }], expiration, fakeDaysUntil, risk)).toBe(false);
+    expect(quotedWithinWindow([{ ...q, lines: ["General Liability"] }], expiration, fakeDaysUntil, risk)).toBe(false);
+    expect(quotedWithinWindow([{ createdAt: "2026-08-01T09:00:00Z" }], expiration, fakeDaysUntil, risk)).toBe(false);
   });
 });
 

@@ -1,3 +1,4 @@
+import { quoteCoverage, type QuoteEvidence, type RiskTerm } from "../../../shared/renewalPolicy";
 import { isLeadSource, LEAD_SOURCE_LABELS } from "../../../shared/leadSource";
 /**
  * The dashboard's money aggregations, pure and dependency-free — the same
@@ -382,6 +383,7 @@ export interface RenewalRowBase {
   carrierId: string | null;
   lines: string[] | null;
   policyNumber: string | null;
+  policyId?: string;
 }
 
 /**
@@ -399,6 +401,7 @@ export function buildRenewalRows(
   }[],
   clients: readonly { id: string; name: string }[],
   policies: readonly {
+    id?: string;
     accountId: string;
     status?: string | null;
     expirationDate?: string | null;
@@ -428,6 +431,7 @@ export function buildRenewalRows(
       carrierId: p.carrierId ?? null,
       lines: (p.lines ?? []).filter((l): l is string => Boolean(l)),
       policyNumber: p.policyNumber ?? null,
+      ...(p.id ? { policyId: p.id } : {}),
     });
   }
   for (const l of leads) {
@@ -449,36 +453,15 @@ export function buildRenewalRows(
   return out;
 }
 
-/**
- * The widest plausible marketing window before an expiration: the longest
- * carrier lead time in use (~30d) plus the sweep's 14-day head start, with
- * room. A quote for the account created inside this window is renewal
- * marketing for that expiration; one from months earlier belongs to the
- * prior term.
- */
-const MARKETING_WINDOW_DAYS = 90;
-
-/**
- * Whether the account was quoted inside the expiration's marketing window.
- *
- * This exists because "no MarketingTask row" does not mean "nobody
- * started": the nightly sweep deliberately never CREATES a task for a
- * carrier that is already quoted (it counts the skip and moves on), so a
- * quote landing before the first sweep leaves no task trail at all. Any
- * surface inferring "not started" from missing tasks must ask the quotes
- * too, or it renders the best-case renewal as the worst.
- */
+/** Legacy name retained for callers; quote evidence must match the actual term. */
 export function quotedWithinWindow(
-  quotes: readonly { createdAt?: string | null }[],
-  expiration: string,
-  daysUntil: (d: string) => number | null
+  quotes: readonly (Partial<QuoteEvidence> & { createdAt?: string | null })[], expiration: string,
+  daysUntil: (d: string) => number | null, risk?: Omit<RiskTerm, "term">
 ): boolean {
-  const expDays = daysUntil(expiration);
-  if (expDays == null) return false;
-  return quotes.some((q) => {
-    const d = q.createdAt ? daysUntil(q.createdAt.slice(0, 10)) : null;
-    return d != null && d >= expDays - MARKETING_WINDOW_DAYS && d <= expDays;
-  });
+  void daysUntil;
+  if (!risk) return false;
+  const complete = quotes.filter((q): q is QuoteEvidence => !!q.accountId);
+  return quoteCoverage(complete, { ...risk, term: expiration }, new Date().toISOString()).complete;
 }
 
 /**
@@ -508,15 +491,13 @@ export function renewalMarketing(
   today: string,
   hasQuote = false
 ): RenewalMarketing {
-  if (hasQuote || tasks.some((t) => t.resolution === "QUOTED")) {
-    return { kind: "quoted" };
-  }
   const open = tasks.filter((t) => t.status === "OPEN");
   const missed = open
     .filter((t) => t.submitBy && t.submitBy < today)
     .map((t) => t.submitBy as string)
     .sort();
   if (missed.length > 0) return { kind: "missed", submitBy: missed[0] };
+  if (hasQuote) return { kind: "quoted" };
   if (open.length > 0) {
     const submitBys = open
       .filter((t) => t.submitBy)

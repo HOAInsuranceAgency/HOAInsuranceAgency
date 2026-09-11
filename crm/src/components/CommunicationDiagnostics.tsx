@@ -4,6 +4,7 @@ import { DeliveryReview, ReviewAction } from "./CommunicationReview";
 import { WorkPagination } from "./LeadWorkExtras";
 import { useWorkItems } from "../lib/communicationWork";
 import { fmtDateTime } from "../lib/client";
+import ReportDeliveryReview from "./ReportDeliveryReview";
 
 const queues = { ISSUE: "Connection issues", OPERATION: "Delivery queue", EVENT: "Event processing" };
 export default function CommunicationDiagnostics() {
@@ -20,5 +21,6 @@ export default function CommunicationDiagnostics() {
       <td>{kind === "OPERATION" ? <DeliveryReview item={item} onSaved={() => void work.refresh()} /> : <ReviewAction id={item.id} version={item.version} event={kind === "EVENT"} onSaved={() => void work.refresh()} />}</td>
     </tr>)}</tbody></table></div>}
     <WorkPagination work={work} />
+    <details><summary>Morning report delivery</summary><ReportDeliveryReview /></details>
   </section>;
 }

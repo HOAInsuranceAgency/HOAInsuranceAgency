@@ -287,6 +287,10 @@ export interface DetectInputs {
     status?: string | null;
     premium?: number | null;
     effectiveDate?: string | null;
+    expirationDate?: string | null;
+    renewalPolicyId?: string | null;
+    lines?: (string | null)[] | null;
+    offerExpiresAt?: string | null;
     createdAt?: string | null;
     updatedAt?: string | null;
   }[];
@@ -414,7 +418,7 @@ export function buildFindings(input: DetectInputs, edition: Edition): Finding[] 
 
   for (const r of renewals) {
     const accountQuotes = quotesByAccount.get(r.accountId) ?? [];
-    const hasQuote = quotedWithinWindow(accountQuotes, r.date, daysUntil);
+    const hasQuote = quotedWithinWindow(accountQuotes, r.date, daysUntil, { accountId: r.accountId, policyId: r.policyId, lines: r.lines ?? [] });
     const keyTasks = tasksByKey.get(`${r.accountId}:${r.date}`) ?? [];
     const marketing = renewalMarketing(keyTasks, todayDay, hasQuote);
 

@@ -60,6 +60,7 @@ export default function DocumentsPanel({
   entityId,
   linkAccountId,
   initialLink,
+  sourceCommunicationId,
 }: {
   entityType: EntityType;
   entityId: string;
@@ -72,6 +73,7 @@ export default function DocumentsPanel({
   linkAccountId?: string;
   /** A "policy:<id>" / "quote:<id>" key to open pre-filtered on. */
   initialLink?: string;
+  sourceCommunicationId?: string;
 }) {
   const [docs, setDocs] = useState<CrmDocument[]>([]);
   /**
@@ -179,6 +181,7 @@ export default function DocumentsPanel({
         const { data: doc, errors } = await client.models.Document.create({
           entityType,
           entityId,
+          sourceCommunicationId,
           category,
           name: file.name,
           s3Key: "pending",

@@ -19,7 +19,10 @@ export async function workPage(input: { kind: string; view?: string; responsibil
       if (input.kind === "NOTIFICATION" && t.recipient !== input.actor) continue;
       if (input.mine) {
         const wf = owners.get(r.accountId ?? "");
-        if (input.responsibility === "SALESPERSON" ? wf?.salespersonId !== input.actor
+        if (input.kind === "TASK" && wf) {
+          const route = await (await import("./routing")).resolveTaskRoute(t as unknown as import("../../../../shared/leadWorkflow").LeadTask, wf);
+          if (route.recipientId !== input.actor) continue;
+        } else if (input.responsibility === "SALESPERSON" ? wf?.salespersonId !== input.actor
           : input.responsibility === "CHAMPION" ? wf?.championId !== input.actor
           : wf?.salespersonId !== input.actor && wf?.championId !== input.actor && t.recipient !== input.actor) continue;
       }

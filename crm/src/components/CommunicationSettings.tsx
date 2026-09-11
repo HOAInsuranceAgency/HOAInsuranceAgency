@@ -10,12 +10,15 @@ type SettingsSnapshot = {
   recovery?: Record<string, { version: number; checkedAt?: string }>;
   credentialStatus: Record<string, boolean>;
   webhookUrl?: string;
+  alertTopicArn?: string;
   sidebarUrl?: string;
   health?: { at?: string; lagging?: boolean };
 };
 
 const checkLabels: Record<string, [string, string]> = {
-  "Default responsibilities": ["Lead ownership", "Choose a default teammate eligible for both salesperson and deal champion."],
+  "Default responsibilities": ["Lead ownership", "Choose eligible default sales and champion owners."],
+  "Team reports": ["Managers and daily reports", "Complete manager assignments and the internal reporting connection in Team settings."],
+  "Independent alerts": ["Operations alerts", "Connect and confirm the operations alert recipient in AWS before starting delivery."],
   "Front company": ["Front access", "Review the Front connection in Edit settings."],
   "Front sales channel": ["Email sending", "Connect and verify the sending mailbox in Front."],
   "Front inbox access": ["Front inbox", "Review which inboxes the connection can access."],
@@ -70,13 +73,14 @@ export default function CommunicationSettings() {
   </div>;
   const disabled = !!busy || editing || resource.loading;
   const failures = checks.filter(check => !check.ok);
-  const owner = members.data.team.find(member => member.userId === saved.defaultUserId);
+  const owner = members.data.team.find(member => member.userId === (saved.defaultSalespersonId ?? saved.defaultUserId));
   const status = !saved.activatedAt ? "Setup incomplete" : saved.paused ? "Delivery paused" : "Delivery active";
   const editingHint = editing ? "Finish or cancel your edits before checking or changing delivery." : "";
   const summaryFields: [string, string | undefined][] = [
     ["Front company", saved.frontCompanyId], ["Sales inbox", saved.frontInboxId], ["Email channel", saved.frontChannelId],
     ["Text channel", saved.frontSmsChannelId], ["Dialpad company", saved.dialpadCompanyId], ["Dialpad office", saved.dialpadOfficeId],
     ["Additional inboxes", saved.allowedInboxIds.join(", ")],
+    ["Operations alert topic", resource.data?.alertTopicArn],
   ];
 
   return <div className="communication-settings">
@@ -94,9 +98,10 @@ export default function CommunicationSettings() {
         <div><dt>Email sender</dt><dd>{saved.frontSender || "Not configured"}</dd>
           {saved.environment !== "main" && <small>Test recipients: {saved.testRecipients.join(", ") || "Not set"}</small>}</div>
         <div><dt>Shared text number</dt><dd>{phoneLabel(saved.sharedSmsNumber)}</dd><small>{saved.dialpadNumbers.length} business {saved.dialpadNumbers.length === 1 ? "number" : "numbers"} configured</small></div>
-        <div><dt>Default salesperson &amp; deal champion</dt><dd>{owner?.name || (saved.defaultUserId ? (members.loading ? "Checking teammate…" : "Teammate unavailable") : "Not set")}</dd>
-          <small>{saved.defaultUserId ? "Both roles apply to new leads." : "Choose a teammate enabled for both roles in Team settings."}</small>
+        <div><dt>Default salesperson</dt><dd>{owner?.name || ((saved.defaultSalespersonId ?? saved.defaultUserId) ? (members.loading ? "Checking teammate…" : "Teammate unavailable") : "Not set")}</dd>
+          <small>{(saved.defaultSalespersonId ?? saved.defaultUserId) ? "Default assignments apply to new leads." : "Choose eligible default teammates in Team settings."}</small>
           {members.error && <span className="error-text small">{members.error} <button type="button" className="secondary" disabled={members.loading} onClick={() => void members.refetch()}>Retry teammates</button></span>}</div>
+        <div><dt>Default deal champion</dt><dd>{members.data.team.find(m => m.userId === (saved.defaultChampionId ?? saved.defaultUserId))?.name ?? "Not set"}</dd></div>
         <div><dt>Inbox cleanup</dt><dd>Automatic</dd><small>Conversations with a future follow-up are tidied when no work needs attention. CRM deadlines stay in place.</small></div>
       </dl>
       <div className="communication-actions">
@@ -164,7 +169,7 @@ export default function CommunicationSettings() {
             setMessage("Conversation history is queued for another check.");
           })}>Retry conversation history</button>
           <h3>Existing lead assignments</h3><p className="muted small">Fill missing responsibilities with the selected default teammate. Existing assignments and deadlines stay in place; historical emails are not resent.</p>
-          <button type="button" className="secondary" disabled={!saved.defaultUserId || migrationCursor === null} onClick={() => void run("backfill", async () => {
+          <button type="button" className="secondary" disabled={!(saved.defaultSalespersonId ?? saved.defaultUserId) || !(saved.defaultChampionId ?? saved.defaultUserId) || migrationCursor === null} onClick={() => void run("backfill", async () => {
             const result = await request<{ assigned: number; exceptions: number; nextToken?: string }>("backfill", { nextToken: migrationCursor }, true);
             setMigrationCursor(result.nextToken ?? null); setMessage(`${result.assigned} assignments updated; ${result.exceptions} need attention.${result.nextToken ? " Continue with the next batch." : " All batches reviewed."}`);
           })}>{migrationCursor === null ? "Backfill complete" : migrationCursor ? "Review next lead batch" : "Fill missing lead responsibilities"}</button>

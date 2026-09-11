@@ -1,3 +1,4 @@
+import type { QuoteEvidence } from "../../../shared/renewalPolicy";
 /**
  * The Overview tab's "Needs attention" queue — every signal in the data that
  * means someone should act today, ranked in one list.
@@ -90,7 +91,7 @@ export interface AttentionInputs {
   /** Every quote, all statuses — the unmarketed rule needs them because the
    * sweep skips task creation for already-quoted carriers (see
    * quotedWithinWindow), so missing tasks alone prove nothing. */
-  quotes: readonly { accountId: string; createdAt?: string | null }[];
+  quotes: readonly (Partial<QuoteEvidence> & { accountId: string; createdAt?: string | null })[];
   invoices: readonly {
     accountId: string;
     number?: string | null;
@@ -117,6 +118,8 @@ export interface AttentionInputs {
     date: string;
     days: number;
     premium: number | null;
+    policyId?: string;
+    lines?: string[] | null;
   }[];
   tasks: readonly {
     accountId: string;
@@ -237,7 +240,7 @@ export function buildAttentionQueue(
   const taskKeys = new Set(
     inputs.tasks.map((t) => `${t.accountId}:${t.expirationDate ?? ""}`)
   );
-  const quotesByAccount = new Map<string, { createdAt?: string | null }[]>();
+  const quotesByAccount = new Map<string, AttentionInputs["quotes"][number][]>();
   for (const q of inputs.quotes) {
     const list = quotesByAccount.get(q.accountId);
     if (list) list.push(q);
@@ -248,7 +251,7 @@ export function buildAttentionQueue(
       continue;
     if (taskKeys.has(`${r.accountId}:${r.date}`)) continue;
     if (
-      quotedWithinWindow(quotesByAccount.get(r.accountId) ?? [], r.date, daysUntil)
+      quotedWithinWindow(quotesByAccount.get(r.accountId) ?? [], r.date, daysUntil, { accountId: r.accountId, policyId: r.policyId, lines: r.lines ?? [] })
     )
       continue;
     items.push({

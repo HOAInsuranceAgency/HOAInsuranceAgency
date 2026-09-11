@@ -1,3 +1,4 @@
+import { get } from "../communications/store";
 import { SESv2Client, SendEmailCommand } from "@aws-sdk/client-sesv2";
 import { Amplify } from "aws-amplify";
 import { generateClient } from "aws-amplify/data";
@@ -47,6 +48,7 @@ const ses = new SESv2Client();
 const TO = `${AGENCY.name} <${process.env.AGENCY_MAILBOX || AGENCY_FMT.emailLower}>`;
 
 export const handler = async () => {
+  if (process.env.COMMUNICATION_TABLE && (await get("team-routing"))?.data.reportChannelId) return { consolidatedIntoMorningReports: true };
   const client = await getDataClient();
   const today = isoDay(new Date());
 

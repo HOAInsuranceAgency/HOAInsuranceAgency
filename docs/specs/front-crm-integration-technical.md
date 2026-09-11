@@ -1,5 +1,7 @@
 # Front + CRM integration: technical design and acceptance
 
+**September 10 next revision:** Use [Sales, managers and carrier work](sales-carrier-workflow-revision.md) and its [confirmed business decisions](sales-carrier-business-decisions.md) for revised ownership, manager-to-owner escalation, annual incumbent-date rollover, outreach-attempt credit, reporting and routine task-entry behavior where they conflict with this earlier design. Those business policies are confirmed; implementation, deployment and live acceptance remain separate.
+
 Implementation is now present in the repository. Deployment and real-provider acceptance remain pending; see the [rollout runbook](../COMMUNICATIONS-RUNBOOK.md). The design below records the reviewed requirements, not a claim of a live connection.
 Companion to the [product specification](front-crm-integration.md).
 Updated September 8, 2026. Service names below describe the reviewed design; the rollout runbook maps the implemented UI and operations.

@@ -7,7 +7,9 @@ import { randomUUID } from "node:crypto";
 import type { AppSyncIdentityCognito } from "aws-lambda";
 import type { Communication, IntegrationConfig, LeadTask, LeadWorkflow, TeamEligibility } from "../../../../shared/leadWorkflow";
 import { normalizePhone } from "../../../../shared/leadWorkflow";
-import { get, row, query, save, put, commit, audit, conflict, retryableStorage, check } from "./store";
+import { get, row, query, save, put, commit, audit, conflict, retryableStorage, check, hash } from "./store";
+import { authorizedQuoteTerms } from "../../../../shared/quoteAuthorization";
+import { validCalendarDate } from "../../../../shared/renewalPolicy";
 import { config, credentials, saveCredentials, saveConfig, type Credentials } from "./config";
 import { dataClient } from "./data";
 import { accountRows, defaultWorkflow, ensureWorkflow, expected, validRole, setResponsibilities, saveTask, completeTask, mergeTasks, team, enabledUser } from "./workflow";
@@ -44,6 +46,16 @@ export const handler = async (event: { arguments: { operation?: string; readOper
     const input = object(event.arguments.input), op = event.arguments.readOperation ?? event.arguments.operation;
     const requireAdmin = () => { if (!admin) throw new Error("Only an admin can change integration or team settings"); };
     if (event.arguments.readOperation) {
+      if (op === "nextYearPreview") {
+        const account = await (await dataClient()).models.Account.get({ id: text(input, "accountId") });
+        if (account.errors?.length || !account.data?.currentPolicyExpiration) throw new Error("Record the incumbent expiration in the account first");
+        const result = (await import("../../../../shared/renewalPolicy")).annualReturn(account.data.currentPolicyExpiration, (await config()).holidays, new Date().toISOString());
+        return { ok: true, current: account.data.currentPolicyExpiration, next: result.expiration, returnAt: result.returnAt };
+      }
+      if (op === "reportDelivery") {
+        requireAdmin(); const page = await query<{ recipientId: string; day: string; state: string; error?: string }>("work", "REPORT_EDITION", text(input, "nextToken") || undefined, 50), members = await roster();
+        return { ok: true, items: page.items.map(r => ({ id: r.id, recipient: members.find(m => m.userId === r.data.recipientId)?.name ?? "Unavailable teammate", day: r.data.day, state: r.data.state, error: r.data.error })), nextToken: page.nextToken };
+      }
       if (op === "lastContacts") {
         const accounts = input.accounts;
         if (!Array.isArray(accounts) || accounts.length > 10) throw new Error("Choose up to 10 leads at a time");
@@ -66,8 +78,18 @@ export const handler = async (event: { arguments: { operation?: string; readOper
           contacts: contacts.data.map(c => ({ id: c.id, name: c.name, email: c.email, phone: c.phone })), quotes: quotes.data.map(q => ({ id: q.id, status: q.status, lines: q.lines })), documents: documents.data.map(d => ({ id: d.id, name: d.name, status: d.ocrStatus })),
           more: !!(contacts.nextToken || quotes.nextToken || documents.nextToken), url: `${process.env.CRM_BASE_URL}/accounts/${id}` } };
       }
+      if (op === "deliveryOptions") {
+        const task = await get<LeadTask>(text(input, "taskId")); if (!task || task.data.status !== "OPEN") throw new Error("Choose an open service request");
+        const client = await dataClient(), options: { id: string; kind: string; name: string }[] = [];
+        let nextToken: string | undefined;
+        if (task.data.serviceType === "CERTIFICATE") do { const p = await client.models.Certificate.list({ filter: { accountId: { eq: task.data.accountId } }, nextToken, limit: 100 }); if (p.errors?.length) throw new Error("Could not load certificates"); options.push(...p.data.filter(d => d.s3Key && task.data.sourceIds?.includes(d.sourceCommunicationId ?? "")).map(d => ({ id: d.id, kind: "CERTIFICATE", name: `${d.certificateNumber ?? "Certificate"} · ${d.holderName}` }))); nextToken = p.nextToken ?? undefined; } while (nextToken);
+        else do { const p = await client.models.Document.listDocumentByEntityId({ entityId: task.data.accountId }, { nextToken, limit: 100 }); if (p.errors?.length) throw new Error("Could not load documents"); options.push(...p.data.filter(d => d.s3Key && d.s3Key !== "pending" && task.data.sourceIds?.includes(d.sourceCommunicationId ?? "")).map(d => ({ id: d.id, kind: "DOCUMENT", name: d.name }))); nextToken = p.nextToken ?? undefined; } while (nextToken);
+        return { ok: true, options };
+      }
       if (op === "activity") { const r = await get<Communication>(text(input, "id")); if (!r || r.kind !== "COMMUNICATION") throw new Error("Communication not found"); return { ok: true, communication: safeCommunication({ ...r.data, version: r.version }) }; }
       if (op === "smsComposer") { const c = await config(); if (!c.frontSmsChannelId || !c.activatedAt || c.paused) throw new Error("Activate the shared-line text channel first"); await verifySmsChannel(); return { ok: true, channelId: c.frontSmsChannelId, sender: c.sharedSmsNumber }; }
+      if (op === "myReport") return { ok: true, report: await (await import("./reports")).reportFor(actor) };
+      if (op === "teamRouting") return { ok: true, routing: await (await import("./routing")).routing() };
       if (op === "team") return { ok: true, team: await roster() };
       if (op === "settings") {
         requireAdmin(); const keys = await credentials();
@@ -75,20 +97,20 @@ export const handler = async (event: { arguments: { operation?: string; readOper
           const cursor = await get(`cursor:${provider}`);
           return [provider, { version: cursor?.version ?? 0, checkedAt: cursor?.data.checkedAt, restartedAt: cursor?.data.restartedAt }];
         })));
-        return { ok: true, recovery, config: await config(), webhookUrl: process.env.COMMUNICATION_WEBHOOK_URL, sidebarUrl: `${process.env.CRM_BASE_URL}/front-sidebar`, health: (await get("health:worker"))?.data, credentialStatus: Object.fromEntries(Object.entries(keys).filter(([k]) => k !== "installationKey").map(([k,v]) => [k, !!v])) };
+        return { ok: true, recovery, config: await config(), webhookUrl: process.env.COMMUNICATION_WEBHOOK_URL, alertTopicArn: process.env.COMMUNICATION_ALERT_TOPIC, sidebarUrl: `${process.env.CRM_BASE_URL}/front-sidebar`, health: (await get("health:worker"))?.data, credentialStatus: Object.fromEntries(Object.entries(keys).filter(([k]) => k !== "installationKey").map(([k,v]) => [k, !!v])) };
       }
       if (op === "context") {
         let accountId = text(input, "accountId");
-        let frontContext: { conversationId: string; assigneeId?: string; routing?: string } | undefined;
+        let frontContext: import("../../../../shared/leadWorkflow").WorkflowContext["frontContext"] | undefined;
         const conversationId = text(input, "conversationId");
-        if (conversationId) { const conversation = await permittedConversation(conversationId); const link = await get<ConversationLink>(`front-link:${conversation.id}`); accountId = link?.data.accountId ?? ""; frontContext = { conversationId: conversation.id, assigneeId: conversation.assignee?.id, routing: link?.data.routing }; }
+        if (conversationId) { const conversation = await permittedConversation(conversationId); const link = await get<ConversationLink>(`front-link:${conversation.id}`); accountId = link?.data.accountId ?? ""; frontContext = { conversationId: conversation.id, assigneeId: conversation.assignee?.id, routing: link?.data.routing, purpose: link?.data.purpose, context: link?.data.context, policyId: link?.data.policyId }; }
         if (!accountId) return { ok: true, workflow: null, tasks: [], communications: [], issues: [], team: await roster() };
         const [wf, tasks, communications, issues, members] = await Promise.all([
           get<LeadWorkflow>(`workflow:${accountId}`), accountRows<LeadTask>(accountId, "TASK"),
           query<Communication>("account", accountId, text(input, "nextToken") || undefined, 50, "COMMUNICATION#"),
           accountRows<{ message: string; at: string }>(accountId, "ISSUE"), roster(),
         ]);
-        return { ok: true, frontContext, workflow: wf ? { ...wf.data, version: wf.version } : null,
+        return { ok: true, actorId: actor, frontContext, workflow: wf ? { ...wf.data, version: wf.version } : null,
           tasks: tasks.map(t => ({ ...t.data, version: t.version })), communications: communications.items.filter(r => r.data.status !== "DRAFT").map(r => safeCommunication({ ...r.data, version: r.version })),
           communicationNextToken: communications.nextToken, issues: issues.filter(r => !(r.data as { resolved?: boolean }).resolved).map(r => ({ id: r.id, ...r.data })), team: members };
       }
@@ -104,8 +126,10 @@ export const handler = async (event: { arguments: { operation?: string; readOper
           const current = [];
           for (const notice of p.items.filter(r => r.data.recipient === actor)) {
             const [task, wf] = await Promise.all([get<LeadTask>(String(notice.data.taskId)), get<LeadWorkflow>(`workflow:${notice.accountId}`)]);
-            const role = notice.data.urgency === "ESCALATED" || task?.data.role === "CHAMPION" ? "championId" : "salespersonId";
-            if (task?.data.status === "OPEN" && wf?.data.disposition === "ACTIVE" && wf.data[role] === actor && [task.data.notifiedAt, task.data.escalatedAt].includes(String(notice.data.at))) { current.push(notice); continue; }
+            const route = task && wf ? await (await import("./routing")).resolveTaskRoute(task.data, wf.data) : undefined;
+            const now = new Date().toISOString();
+            const allowed = route && task && (route.recipientId === actor || task.data.escalationAt <= now && route.managerId === actor || task.data.ownerEscalationAt && task.data.ownerEscalationAt <= now && route.ownerId === actor);
+            if (task?.data.status === "OPEN" && allowed && [task.data.lastReminderAt, task.data.notifiedAt, task.data.escalatedAt, task.data.ownerNotifiedAt].includes(String(notice.data.at))) { current.push(notice); continue; }
             // A cancelled episode, changed owner or edited promise retires its old reminder.
             try { await commit([put(row("NOTIFICATION", notice.id, { ...notice.data, resolved: true }, { accountId: notice.accountId, previous: notice }), notice), ...(task ? [check(task)] : []), ...(wf ? [check(wf)] : [])]); }
             catch (e) { if (!conflict(e) && !retryableStorage(e)) throw e; }
@@ -117,6 +141,66 @@ export const handler = async (event: { arguments: { operation?: string; readOper
         return { ok: true, items: items.map(item => { const wf = workflows.get((item as { accountId?: string }).accountId ?? ""); return { ...item, ...(wf ? { name: wf.name, salespersonId: wf.salespersonId, championId: wf.championId } : {}) }; }), nextToken: p.nextToken };
       }
       throw new Error("Unknown read operation");
+    }
+    if (op === "prepareBusinessDraft") return { ok: true, draft: await (await import("./businessDelivery")).prepareBusinessDraft(input as unknown as Parameters<typeof import("./businessDelivery").prepareBusinessDraft>[0], actor) };
+    if (op === "authorizeBind") {
+      if (input.clientAuthorized !== true) throw new Error("Client authorization is required before requesting binding");
+      const q = await (await dataClient()).models.Quote.get({ id: text(input, "quoteId") });
+      if (q.errors?.length || !q.data) throw new Error("Could not load the quote");
+      const terms = authorizedQuoteTerms(q.data);
+      if (q.data.bindAuthorizedAt && q.data.bindAuthorizedTerms === terms) return { ok: true };
+      if (!["QUOTED", "PRESENTED"].includes(q.data.status) || !q.data.carrierId || !validCalendarDate(q.data.effectiveDate) || !validCalendarDate(q.data.expirationDate) || q.data.expirationDate <= q.data.effectiveDate || !(q.data.premium != null && q.data.premium > 0) || !q.data.lines?.filter(Boolean).length) throw new Error("Finish the usable quote before recording client authorization");
+      const today = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+      if (q.data.offerExpiresAt && (!validCalendarDate(q.data.offerExpiresAt) || q.data.offerExpiresAt < today)) throw new Error("The carrier offer has expired. Obtain current terms before requesting binding.");
+      if (q.data.updatedAt !== text(input, "updatedAt")) throw new Error("The quote changed. Review its current terms before authorizing binding.");
+      const now = new Date().toISOString();
+      await commit([{ Update: { TableName: process.env.QUOTE_TABLE!, Key: { id: q.data.id }, UpdateExpression: "SET bindAuthorizedAt = :at, bindAuthorizedBy = :actor, bindAuthorizedTerms = :terms, updatedAt = :at, lastWriteBy = :actor", ConditionExpression: "updatedAt = :old", ExpressionAttributeValues: { ":at": now, ":actor": actor, ":terms": terms, ":old": q.data.updatedAt } } },
+        put(row("LIFECYCLE", `lifecycle:bind-authorization:${q.data.id}:${hash(`${terms}:${q.data.updatedAt}`).slice(0,16)}`, { accountId: q.data.accountId }, { accountId: q.data.accountId, dueAt: now })), audit(q.data.accountId, actor, "Client authorized binding of quoted terms", { quoteId: q.data.id })]);
+      return { ok: true };
+    }
+    if (op === "recoverReport") { requireAdmin(); await (await import("./reports")).recoverEdition(text(input, "editionId"), text(input, "messageId")); return { ok: true }; }
+    if (op === "saveTeamRouting") { requireAdmin(); return { ok: true, routing: await (await import("./routing")).saveRouting(input as unknown as import("../../../../shared/leadWorkflow").TeamRouting, actor, await roster()) }; }
+    if (op === "nextYear") return { ok: true, result: await (await import("./annualReturn")).nextYear(input as unknown as Parameters<typeof import("./annualReturn").nextYear>[0], actor) };
+    if (op === "takeResponse" || op === "delegateService" || op === "requestProspectInformation") {
+      const task = await get<LeadTask>(text(input, "taskId")); if (!task || task.data.status !== "OPEN") throw new Error("Choose an open request"); expected(task, version(input));
+      const wf = await ensureWorkflow(task.data.accountId), routingRecord = await get("team-routing");
+      const route = await (await import("./routing")).resolveTaskRoute(task.data, wf.data);
+      if (op === "takeResponse") {
+        if (actor !== route.managerId && actor !== route.ownerId) throw new Error("Only the responsible manager or owner can take this response");
+        await commit([check(wf), ...(routingRecord ? [check(routingRecord)] : []), put(row("TASK", task.id, { ...task.data, helperId: actor, helperRequestedBy: actor, helperReason: "MANAGER_COVER", version: task.version + 1 }, { accountId: task.accountId, previous: task, dueAt: task.dueAt }), task)]);
+      } else {
+        if (actor !== wf.data.championId && actor !== route.managerId && actor !== route.ownerId) throw new Error("The champion or responsible manager coordinates this request");
+        if (op === "delegateService") {
+          if ((task.data.context ?? "LEAD") === "LEAD") throw new Error("Use the lead's salesperson for client work");
+          const specialist = text(input, "specialistId"); await enabledUser(specialist);
+          await commit([check(wf), put(row("TASK", task.id, { ...task.data, specialistId: specialist, accountableRole: "CHAMPION", version: task.version + 1 }, { accountId: task.accountId, previous: task, dueAt: task.dueAt }), task), audit(task.data.accountId, actor, "Specialist assigned to client request", { taskId: task.id, specialist })]);
+        } else {
+          if (task.data.kind !== "CARRIER" || (task.data.context ?? "LEAD") !== "LEAD") throw new Error("Choose the carrier's new-business information request");
+          const key = `task:client-information:${task.id}`;
+          if (!await get(key)) {
+            const { makeTask } = await import("./workflow");
+            const child = await makeTask({ accountId: task.data.accountId, id: key, kind: "DOCUMENTS", title: "Obtain the information requested by underwriting", role: "SALESPERSON", domain: "CLIENT", context: "LEAD", sourceAt: new Date().toISOString(), conversationId: wf.data.conversationId });
+            child.parentTaskId = task.id; child.sourceIds = []; child.requirementSourceIds = task.data.sourceIds; child.waitingOn = "PROSPECT";
+            const requirementId = `task:requirement:${task.id}`, oldRequirement = await get(requirementId);
+            const requirement = { ...task.data, id: requirementId, kind: "DOCUMENTS" as const, title: "Supply the information requested by underwriting", milestone: true, serviceType: "GENERAL" as const, parentTaskId: task.id, version: 1 };
+            await commit([check(wf), check(task), ...(!oldRequirement ? [put(row("TASK", requirementId, requirement, { accountId: task.accountId, dueAt: taskWakeAt(requirement) }))] : []), put(row("TASK", key, child, { accountId: task.accountId, dueAt: taskWakeAt(child) })), audit(task.data.accountId, actor, "Requested prospect information from salesperson", { taskId: task.id })]);
+          }
+        }
+      }
+      return { ok: true };
+    }
+    if (op === "requestChampionHelp") {
+      const task = await get<LeadTask>(text(input, "taskId"));
+      if (!task || task.data.status !== "OPEN") throw new Error("Choose an open client request");
+      expected(task, version(input));
+      const wf = await ensureWorkflow(task.data.accountId);
+      const { taskDomain, taskContext } = await import("../../../../shared/workRouting");
+      if (taskDomain(task.data) !== "CLIENT" || taskContext(task.data) !== "LEAD") throw new Error("Champion help applies to a prospect request");
+      if (actor !== wf.data.salespersonId) throw new Error("The salesperson requests help with their prospect");
+      if (!wf.data.championId) throw new Error("Assign the deal champion first");
+      await validRole(wf.data.championId, "CHAMPION");
+      await commit([check(wf), put(row("TASK", task.id, { ...task.data, helperId: wf.data.championId, helperRequestedBy: actor, helperReason: "SALES_ASSIST", accountableRole: "SALESPERSON", version: task.version + 1 }, { accountId: task.accountId, previous: task, dueAt: task.dueAt }), task), audit(task.data.accountId, actor, "Asked champion to help with prospect", { taskId: task.id })]);
+      return { ok: true };
     }
     if (op === "refreshSeen") {
       const comm = await get<Communication>(text(input, "id"));
@@ -166,9 +250,8 @@ export const handler = async (event: { arguments: { operation?: string; readOper
       value.dialpadNumbers = (value.dialpadNumbers ?? []).map(n => { const phone = normalizePhone(n); if (!phone) throw new Error("Invalid business phone number"); return phone; });
       value.sharedSmsNumber = normalizePhone(value.sharedSmsNumber) ?? "";
       if (value.sharedSmsNumber !== "+15082332261") throw new Error("Prospect texts use the confirmed shared main line (508) 233-2261");
-      if (value.defaultUserId) {
-        if (!(await roster()).some(member => member.userId === value.defaultUserId)) throw new Error("Choose a current CRM teammate as the default");
-        await validRole(value.defaultUserId, "SALESPERSON"); await validRole(value.defaultUserId, "CHAMPION", false);
+      for (const [id, role] of [[value.defaultSalespersonId ?? value.defaultUserId, "SALESPERSON"], [value.defaultChampionId ?? value.defaultUserId, "CHAMPION"]] as const) {
+        if (id) { if (!(await roster()).some(member => member.userId === id)) throw new Error("Choose a current CRM teammate as the default"); await validRole(id, role); }
       }
       if (input.credentials && Object.values(object(input.credentials)).some(v => typeof v === "string" && v.trim())) value.paused = true;
       const credentialFields = Object.entries(object(input.credentials)).filter(([key, value]) => ["frontToken", "frontSigningKey", "dialpadToken", "dialpadSigningKey"].includes(key) && typeof value === "string" && !!value.trim()).map(([key]) => key);
@@ -230,18 +313,23 @@ export const handler = async (event: { arguments: { operation?: string; readOper
       const accountId = text(input, "accountId"), cnv = (await permittedConversation(text(input, "conversationId"))).id;
       const wf = await ensureWorkflow(accountId), old = await get<ConversationLink>(`front-link:${cnv}`);
       if (old && old.accountId !== accountId) throw new Error("This conversation already belongs to another account; review its link first");
-      const purpose = input.purpose === "CARRIER" ? "CARRIER" : "PROSPECT";
-      const changed = old?.data.purpose !== purpose;
+      const purpose = input.purpose === "CARRIER" ? "CARRIER" : input.purpose === "PROSPECT" ? "PROSPECT" : old?.data.purpose ?? "PROSPECT";
+      const context = ["LEAD", "RENEWAL", "SERVICE"].includes(String(input.context)) ? input.context as Communication["context"] : old?.data.context ?? (wf.data.disposition === "BOUND" ? "SERVICE" : "LEAD");
+      const policyId = context === "RENEWAL" ? text(input, "policyId") || old?.data.policyId : undefined;
+      if (policyId) { const policy = await (await dataClient()).models.Policy.get({ id: policyId }); if (policy.errors?.length || policy.data?.accountId !== accountId) throw new Error("Choose a policy on this account"); }
+      if (context === "RENEWAL" && !policyId) throw new Error("Choose the policy this renewal concerns");
+      const changed = old?.data.purpose !== purpose || old?.data.context !== context || old?.data.policyId !== policyId;
       const writes = [];
-      if (changed) writes.push(put(row("LINK", `front-link:${cnv}`, { accountId, conversationId: cnv, purpose, routing: purpose === "CARRIER" ? "CHAMPION" : "SALESPERSON" }, { accountId, previous: old }), old));
+      if (changed) writes.push(put(row("LINK", `front-link:${cnv}`, { accountId, conversationId: cnv, purpose, context, policyId, routing: old?.data.routing === "MANUAL" ? "MANUAL" : (purpose === "CARRIER" || context !== "LEAD" ? "CHAMPION" : "SALESPERSON") }, { accountId, previous: old }), old));
       if (!wf.data.conversationId && purpose === "PROSPECT") writes.push(put(row("WORKFLOW", wf.id, { ...wf.data, conversationId: cnv, version: wf.version + 1 }, { accountId, previous: wf }), wf));
       if (changed) {
-        const handlerId = purpose === "CARRIER" ? wf.data.championId : wf.data.salespersonId;
+        writes.push(put(row("LIFECYCLE", `lifecycle:conversation-context:${cnv}:${old?.version ?? 0}`, { accountId }, { accountId, dueAt: new Date().toISOString() })));
+        const handlerId = purpose === "CARRIER" || context !== "LEAD" ? wf.data.championId : wf.data.salespersonId;
         const handler = handlerId ? await get<TeamEligibility>(`eligibility:${handlerId}`) : undefined;
         if (handler?.data.frontId) writes.push(put(operationRow(`op:link-route:${cnv}:${old?.version ?? 0}`, { type: "ASSIGN", accountId, conversationId: cnv, assigneeId: handler.data.frontId })));
       }
       const backfillId = `conversation-backfill:${cnv}`, backfill = await get<HistoryJob>(backfillId);
-      if (!backfill || historyStopped(backfill)) writes.push(put(restartHistory(backfillId, cnv, accountId, backfill), backfill));
+      if (changed || !backfill || historyStopped(backfill)) writes.push(put(restartHistory(backfillId, cnv, accountId, backfill), backfill));
       if (writes.length) {
         if (!changed && old) writes.push(check(old));
         writes.push(audit(accountId, actor, changed ? "Conversation linked" : "Conversation link repaired", { cnv, purpose }));
@@ -300,7 +388,8 @@ export const handler = async (event: { arguments: { operation?: string; readOper
       for (const field of ["unitCount", "totalInsuredValue"]) if (fields[field] != null && fields[field] !== "") {
         const value = Number(fields[field]); if (!Number.isFinite(value) || value < 0 || field === "unitCount" && !Number.isInteger(value)) throw new Error("Enter valid units and insured value"); account[field] = value;
       }
-      try { await commit([modelPut("Account", id, account), put(row("WORKFLOW", `workflow:${id}`, wf, { accountId: id })), put(row("MANUAL_REQUEST", key, { accountId: id })), audit(id, actor, "Lead created", { name })]); }
+      const first = await (await import("./workflow")).makeTask({ id: `task:first:${id}`, accountId: id, kind: "FIRST_CONTACT", title: "Make first contact" });
+      try { await commit([put(row("TASK", first.id, first, { accountId: id, dueAt: taskWakeAt(first) })), modelPut("Account", id, account), put(row("WORKFLOW", `workflow:${id}`, wf, { accountId: id })), put(row("MANUAL_REQUEST", key, { accountId: id })), audit(id, actor, "Lead created", { name })]); }
       catch(e) { if (conflict(e)) { const winner = await get<{ accountId: string }>(key); if (winner) return { ok: true, id: winner.data.accountId }; } throw e; }
       return { ok: true, id };
     }

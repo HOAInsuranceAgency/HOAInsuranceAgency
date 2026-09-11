@@ -28,7 +28,7 @@ describe("staff follow-up", () => {
   it("filters task requests while leaving unassigned and unlinked work shared", async () => {
     h.request.mockImplementation(async (_op: string, input: { kind: string }) => ({ items: input.kind === "WORKFLOW" ? [{ id: "wf", accountId: "missing", name: "Oak HOA", version: 1 }] : input.kind === "TRIAGE" ? [{ id: "triage", communicationId: "comm", phone: "+16175550123", version: 1 }] : [future] }));
     page(); await screen.findByText("Oak HOA");
-    fireEvent.click(screen.getByLabelText("My leads"));
+    expect(screen.getByLabelText("My work")).toBeChecked();
     fireEvent.change(screen.getByRole("combobox", { name: "Responsibility" }), { target: { value: "CHAMPION" } });
     await waitFor(() => expect(h.request).toHaveBeenCalledWith("work", { kind: "TASK", view: "Needs attention", responsibility: "CHAMPION", mine: true }));
     expect(screen.getByText("Oak HOA")).toBeVisible(); expect(screen.getByText("(617) 555-0123")).toBeVisible();

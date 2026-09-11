@@ -24,21 +24,40 @@ vi.mock("@aws-sdk/lib-dynamodb", async importOriginal => {
       if (h.writeError) { const error = h.writeError; h.writeError = undefined; throw error; }
       const writes = p.TransactItems;
       for (const entry of writes) {
-        const w = entry.Put ?? entry.ConditionCheck;
+        const w = entry.Put ?? entry.ConditionCheck ?? entry.Update;
         const old = h.records.get(`${w.TableName}:${w.Item?.id ?? w.Key?.id}`);
+        if (entry.Update) {
+          const v = w.ExpressionAttributeValues;
+          const changed = v[":before"] != null ? old?.currentPolicyExpiration !== v[":before"] || old?.updatedAt !== v[":version"] || old?.stage !== v[":lead"] : old?.updatedAt !== v[":old"] || v[":quoted"] && old?.status !== v[":quoted"];
+          if (changed) throw Object.assign(new Error("Source record changed"), { name: "TransactionCanceledException", CancellationReasons: [{ Code: "ConditionalCheckFailed" }] });
+          continue;
+        }
         if (w.ConditionExpression === "attribute_not_exists(id)" ? !!old : old?.version !== w.ExpressionAttributeValues[":v"]) throw Object.assign(new Error("Conflict"), { name: "TransactionCanceledException", CancellationReasons: [{ Code: "ConditionalCheckFailed" }] });
       }
       h.transactions.push(writes);
       for (const { Put: w } of writes.filter((w: any) => w.Put)) h.records.set(`${w.TableName}:${w.Item.id}`, structuredClone(w.Item));
+      for (const { Update: u } of writes.filter((w: any) => w.Update)) {
+        const key = `${u.TableName}:${u.Key.id}`, record = { ...h.records.get(key) };
+        for (const assignment of u.UpdateExpression.replace(/^SET /, "").split(", ")) {
+          const [raw, variable] = assignment.split(" = "); record[u.ExpressionAttributeNames?.[raw] ?? raw] = u.ExpressionAttributeValues[variable];
+        }
+        h.records.set(key, record);
+      }
       return {};
     }
     throw new Error(`Unexpected storage command ${command.constructor.name}`);
   } }) } };
 });
-vi.mock("@aws-sdk/client-cognito-identity-provider", () => ({ CognitoIdentityProviderClient: class { send = async () => ({ Users: [{ Enabled: h.userEnabled }] }); }, ListUsersCommand: class { constructor(public input: unknown) {} } }));
+vi.mock("@aws-sdk/client-cognito-identity-provider", () => ({ CognitoIdentityProviderClient: class { send = async (command: any) => { const id = /"([^"]+)"/.exec(command.input.Filter)?.[1] ?? "brian"; return { Users: [{ Enabled: h.userEnabled, Attributes: [{ Name: "email", Value: `${id}@example.com` }, { Name: "email_verified", Value: "true" }] }] }; }; }, ListUsersCommand: class { constructor(public input: unknown) {} } }));
 vi.mock("../../amplify/functions/communications/config", async importOriginal => ({ ...(await importOriginal<typeof import("../../amplify/functions/communications/config")>()), saveCredentials: vi.fn(), config: async () => h.c, credentials: async () => ({ frontSigningKey: "test-signing-key", dialpadSigningKey: "test-dialpad-signing-key" }) }));
 vi.mock("../../amplify/functions/communications/data", () => ({ dataClient: async () => ({ models: {
-  Account: { get: async ({ id }: { id: string }) => (h.accountError ? { data: null, errors: [{ message: "Simulated account read failure" }] } : { data: h.records.get(`Account:${id}`) ?? { id, name: "Willow HOA", stage: "LEAD", contacts: async () => ({ data: [] }) } }) },
+  Account: { list: async () => ({ data: [] }), get: async ({ id }: { id: string }) => (h.accountError ? { data: null, errors: [{ message: "Simulated account read failure" }] } : { data: { id, name: "Willow HOA", stage: "LEAD", createdAt: "2026-09-08T14:00:00.000Z", updatedAt: "2026-09-08T14:00:00.000Z", ...Object.fromEntries([["quotes", "Quote"], ["policies", "Policy"], ["priorCarriers", "PriorCarrier"], ["certificates", "Certificate"]].map(([name, model]) => [name, async () => ({ data: [...h.records.entries()].filter(([key, r]) => key.startsWith(`${model}:`) && r.accountId === id).map(([, r]) => r) })])), contacts: async () => ({ data: [...h.records.entries()].filter(([key, c]) => key.startsWith("Contact:") && c.accountId === id).map(([,c]) => c) }), ...h.records.get(`Account:${id}`) } }) },
+  Quote: { get: async ({ id }: { id: string }) => ({ data: h.records.get(`Quote:${id}`) ?? null }), list: async () => ({ data: [...h.records.entries()].filter(([key]) => key.startsWith("Quote:")).map(([,r]) => r) }) },
+  Policy: { get: async ({ id }: { id: string }) => ({ data: h.records.get(`Policy:${id}`) ?? null }), list: async () => ({ data: [...h.records.entries()].filter(([key]) => key.startsWith("Policy:")).map(([,r]) => r) }) },
+  MarketingTask: { list: async () => ({ data: [] }), listMarketingTaskByAccountId: async () => ({ data: [] }) },
+  PriorCarrier: { list: async () => ({ data: [] }) },
+  Certificate: { list: async () => ({ data: [...h.records.entries()].filter(([key]) => key.startsWith("Certificate:")).map(([,d]) => d) }) },
+  Document: { listDocumentByEntityId: async () => ({ data: [...h.records.entries()].filter(([key]) => key.startsWith("Document:")).map(([,d]) => d) }) },
   LeadReply: { update: h.update },
   UserProfile: { list: async () => ({ data: [...h.records.entries()].filter(([key]) => key.startsWith("UserProfile:")).map(([,profile]) => profile) }) },
 } }) }));
@@ -49,7 +68,7 @@ vi.mock("../../amplify/functions/communications/providers", async importOriginal
 import { businessDeadline, followUpDeadline, morningReminderAt, taskWakeAt } from "../../../shared/leadWorkflow";
 import { get, row, save } from "../../amplify/functions/communications/store";
 import { handler as capture } from "../../amplify/functions/lead-intake/handler";
-import { defaultWorkflow, makeTask, saveTask, recordInbound, recordOutbound, completeTask, setResponsibilities, mergeTasks } from "../../amplify/functions/communications/workflow";
+import { defaultWorkflow, makeTask, saveTask as retiredSaveTask, recordInbound, recordOutbound, completeTask, setResponsibilities, mergeTasks } from "../../amplify/functions/communications/workflow";
 import { archiveAllowed } from "../../amplify/functions/communications/cleanup";
 import { remainingDelay, rememberBudget } from "../../amplify/functions/communications/budget";
 import { enqueueOperation, runOperation, type Operation } from "../../amplify/functions/communications/operations";
@@ -61,16 +80,31 @@ const record = (id: string) => h.records.get(`comms:${id}`)!;
 const entries = (kind: string) => [...h.records.values()].filter(r => r.kind === kind);
 async function lead() { const wf = await defaultWorkflow("a1", "Willow HOA"); return save(row("WORKFLOW", "workflow:a1", { ...wf, conversationId: "cnv_a" }, { accountId: "a1" })); }
 async function inbound(id = "m1", at = NOW, extra: Partial<Communication> = {}) { const c: Communication = { id: `comm:${id}`, providerId: id, provider: "front", frontDraft: false, channel: "EMAIL", direction: "INBOUND", accountId: "a1", conversationId: "cnv_a", at, status: extra.direction === "OUTBOUND" ? "SENT" : "RECEIVED", text: "A message about the policy", version: 1, ...extra }; await save(row("COMMUNICATION", c.id, c, { accountId: c.accountId })); return c; }
+/** Fixtures from the retired action editor: migration must preserve these promises. */
+async function seedLegacyPromise(input: any, actor: string) {
+  void actor;
+  const old = input.id ? await get<LeadTask>(input.id) : undefined;
+  const task = await makeTask({ ...old?.data, ...input, custom: true });
+  const data = { ...task, notifiedAt: undefined, escalatedAt: undefined, nextReminderAt: undefined, lastReminderAt: undefined, version: (old?.version ?? 0) + 1 };
+  await save(row("TASK", data.id, data, { accountId: data.accountId, previous: old, dueAt: taskWakeAt(data) }), old);
+  return data;
+}
 beforeEach(async () => {
   vi.useFakeTimers(); vi.setSystemTime(NOW); h.records.clear(); h.transactions.length = 0; h.inFlight = 0; h.maxInFlight = 0; h.fail = false; h.failAt = undefined; h.accountError = false; h.userEnabled = true; h.writeError = undefined; vi.clearAllMocks();
-  Object.assign(process.env, { COMMUNICATION_TABLE: "comms", ACTIVITY_TABLE: "Activity", ACCOUNT_TABLE: "Account", CONTACT_TABLE: "Contact", PRIOR_CARRIER_TABLE: "PriorCarrier", LEAD_REPLY_TABLE: "LeadReply", USER_POOL_ID: "pool" });
+  Object.assign(process.env, { COMMUNICATION_TABLE: "comms", ACTIVITY_TABLE: "Activity", ACCOUNT_TABLE: "Account", CONTACT_TABLE: "Contact", PRIOR_CARRIER_TABLE: "PriorCarrier", LEAD_REPLY_TABLE: "LeadReply", USER_POOL_ID: "pool", CRM_BASE_URL: "https://crm.example.test", QUOTE_TABLE: "Quote", CERTIFICATE_TABLE: "Certificate", DOCUMENT_TABLE: "Document" });
   h.c = { frontCompanyId: "cmp_a", environment: "main", defaultUserId: "brian", frontSender: "sales@protectmyhoa.com", frontInboxId: "inb_a", frontChannelId: "cha_a", holidays: [], paused: false, activatedAt: "2026-09-01T00:00:00Z", allowedInboxIds: [], testRecipients: [], dialpadNumbers: ["+15082332261", "+16175550123"], sharedSmsNumber: "+15082332261", version: 1 };
   await save(row("ELIGIBILITY", "eligibility:brian", { userId: "brian", name: "Brian Cole", email: "brian@example.com", salesperson: true, champion: true, enabled: true }));
+  await save(row("TEAM_ROUTING", "team-routing", { ownerId: "brian", members: [] }));
   h.update.mockResolvedValue({ data: {} });
   h.front.mockImplementation(async (path: string) => path.includes("/messages") && path.includes("/conversations") ? { _results: [] } : {});
 });
 afterEach(() => vi.useRealTimers());
 describe("communication is the work record", () => {
+  it("retires the routine action/date editor without allowing fabricated completion", async () => {
+    await lead(); await expect(retiredSaveTask({ accountId: "a1", title: "Fake task", kind: "FOLLOW_UP", role: "SALESPERSON", dueAt: NOW, reason: "test" }, "brian")).rejects.toThrow("automatically");
+    expect(entries("TASK")).toHaveLength(0);
+  });
+
   const later = "2026-09-08T15:00:00.000Z";
   const open = () => entries("TASK").filter(t => t.data.status === "OPEN");
   it("ignores shared drafts through history and only records the eventual send", async () => {
@@ -205,7 +239,7 @@ describe("communication is the work record", () => {
     await recordInbound(await inbound("other", NOW, { from: "other@example.com", conversationId: "cnv_other" }));
     await recordInbound(await inbound("carrier", NOW, { purpose: "CARRIER", conversationId: "cnv_carrier" }), "CARRIER");
     await recordInbound(await inbound("foreign", NOW, { accountId: "a2", from: "right@example.com" }));
-    await saveTask({ accountId: "a1", title: "Send proposal Friday", kind: "DOCUMENTS", role: "CHAMPION", dueAt: "2026-09-11T19:00:00Z", reason: "Existing promise" }, "brian");
+    await seedLegacyPromise({ accountId: "a1", title: "Send proposal Friday", kind: "DOCUMENTS", role: "CHAMPION", dueAt: "2026-09-11T19:00:00Z", reason: "Existing promise" }, "brian");
     await recordOutbound(await inbound("sent", later, { direction: "OUTBOUND", to: ["right@example.com"] }));
     expect(record("comm:right").data.resolved).toBe(true);
     for (const id of ["other", "carrier", "foreign"]) expect(record(`comm:${id}`).data.resolved).not.toBe(true);
@@ -241,16 +275,18 @@ describe("communication is the work record", () => {
     expect(open().map(t => t.data.kind)).toEqual(["FOLLOW_UP"]);
     expect(entries("COMMUNICATION").some(c => c.data.channel === "NOTE")).toBe(false);
   });
-  it("logs no-answer attempts without closing or postponing the callback", async () => {
+  it("credits the return attempt, retains the request and creates a next-morning retry", async () => {
     await callback(); const before = structuredClone(open());
     await dialpadEvent({ ...phoneCall, state: "hangup", date_ended: Date.parse(later) + 60_000 });
-    expect(open()).toEqual(before); expect(record("comm:missed").data.resolved).not.toBe(true);
+    expect(record(before[0].id).data).toMatchObject({ status: "COMPLETE", completedByCommunicationId: "comm:dialpad:call:802" });
+    expect(open().map(t => t.data)).toMatchObject([{ kind: "FOLLOW_UP", dueAt: "2026-09-09T13:00:00.000Z", requirementSourceIds: ["comm:missed"] }]);
+    expect(record("comm:missed").data.resolved).not.toBe(true);
     expect(record("comm:dialpad:call:802").data).toMatchObject({ outcome: "NO_ANSWER", contactApplied: true });
   });
-  it("sets a first unanswered outbound call retry to the next business morning", async () => {
+  it("uses the two-day cadence for an outbound attempt without a missed callback", async () => {
     await lead(); await save(row("LINK", "activity-link:comm:dialpad:call:802", { accountId: "a1", conversationId: "cnv_a" }, { accountId: "a1" }));
     await dialpadEvent({ ...phoneCall, state: "hangup", date_ended: Date.parse(later) + 60_000 });
-    expect(open().map(t => t.data)).toMatchObject([{ dueAt: "2026-09-09T13:00:00.000Z", title: "Try the prospect again" }]);
+    expect(open().map(t => t.data)).toMatchObject([{ dueAt: "2026-09-10T13:00:00.000Z", title: "Try again" }]);
     await dialpadEvent({ ...phoneCall, state: "hangup", date_ended: Date.parse(later) + 60_000 });
     expect(open()).toHaveLength(1);
   });
@@ -262,11 +298,11 @@ describe("communication is the work record", () => {
     await repairContactWork("a1");
     expect(open()).toEqual(after); expect(open().map(t => t.data.kind)).toEqual(["FOLLOW_UP"]);
   });
-  it("schedules a non-communication task's next follow-up without asking for a note or date", async () => {
+  it("does not let a generic completion invent a document result", async () => {
     await lead(); const task = await makeTask({ accountId: "a1", kind: "DOCUMENTS", role: "CHAMPION", title: "Review documents" });
     await save(row("TASK", task.id, task, { accountId: "a1", dueAt: taskWakeAt(task) }));
-    await completeTask({ id: task.id, version: 1 }, "brian");
-    expect(open().map(t => t.data)).toMatchObject([{ kind: "FOLLOW_UP", role: "CHAMPION", dueAt: "2026-09-10T13:00:00.000Z" }]);
+    await expect(completeTask({ id: task.id, version: 1 }, "brian")).rejects.toThrow("actual email");
+    expect(open().map(t => t.data.kind)).toEqual(["DOCUMENTS"]);
   });
   it("resumes interrupted progress without losing the request or the next follow-up", async () => {
     await lead(); await recordInbound(await inbound());
@@ -288,7 +324,7 @@ describe("communication is the work record", () => {
   });
   it("closes a dated response automatically when the actual reply is sent", async () => {
     await lead(); await recordInbound(await inbound()); const task = open()[0];
-    await saveTask({ ...task.data, version: task.version, dueAt: "2026-09-11T19:00:00Z", reason: "Earlier deliberate promise" }, "brian");
+    await seedLegacyPromise({ ...task.data, version: task.version, dueAt: "2026-09-11T19:00:00Z", reason: "Earlier deliberate promise" }, "brian");
     await recordOutbound(await inbound("sent", later, { direction: "OUTBOUND" }));
     expect(open().map(t => t.data.kind)).toEqual(["FOLLOW_UP"]);
   });
@@ -355,7 +391,7 @@ describe("agency commitments", () => {
   });
   it("preserves explicit promised dates and source links when a later message arrives", async () => {
     await lead(); const a = await inbound(); await recordInbound(a); const t = entries("TASK")[0];
-    await saveTask({ ...t.data, version: t.version, dueAt: "2026-09-15T15:00:00Z", reason: "Prospect requested Tuesday" }, "brian");
+    await seedLegacyPromise({ ...t.data, version: t.version, dueAt: "2026-09-15T15:00:00Z", reason: "Prospect requested Tuesday" }, "brian");
     await recordInbound(await inbound("m2")); expect(entries("TASK")[0].data.dueAt).toBe("2026-09-15T15:00:00.000Z"); expect(entries("TASK")[0].data.sourceIds).toHaveLength(2);
   });
   it("rejects stale role edits and never moves a deadline on reassignment", async () => {
@@ -371,9 +407,9 @@ describe("agency commitments", () => {
     await setResponsibilities("a1", "sally", "brian", wf.version, "brian");
     const changed = record(original.id); expect(changed.data.notifiedAt).toBeUndefined(); expect(changed.data.dueAt).toBe(original.data.dueAt); expect(changed.dueAt).toBe(original.data.reminderAt);
   });
-  it("resolves only selected source requests when a specific successor is supplied", async () => {
-    await lead(); await recordInbound(await inbound()); const t = entries("TASK")[0];
-    await completeTask({ id: t.id, version: t.version, reason: "Answered", successor: { title: "Check documents", dueAt: "2026-09-10T14:00:00Z", role: "SALESPERSON", kind: "DOCUMENTS" } }, "brian");
+  it("resolves the actual answered request and creates the next touch from sent evidence", async () => {
+    await lead(); await recordInbound(await inbound());
+    await recordOutbound(await inbound("sent", "2026-09-08T15:00:00Z", { direction: "OUTBOUND" }));
     expect(record("comm:m1").data.resolved).toBe(true); expect(entries("TASK").filter(t => t.data.status === "OPEN")).toHaveLength(1);
     await recordInbound(record("comm:m1").data); expect(entries("TASK").filter(t => t.data.kind === "RESPONSE" && t.data.status === "OPEN")).toHaveLength(0);
   });
@@ -385,7 +421,7 @@ describe("agency commitments", () => {
     const read = () => handler({ arguments: { readOperation: "work", input: { kind: "NOTIFICATION" } }, identity: { sub: "brian", groups: [] } as never });
     expect(await read()).toMatchObject({ ok: true, items: [{ id: "notice:test" }] });
     const current = (await get<LeadTask>(task.id))!;
-    await saveTask({ ...current.data, version: current.version, dueAt: "2026-09-15T14:00:00Z", reason: "Prospect requested next Tuesday" }, "brian");
+    await seedLegacyPromise({ ...current.data, version: current.version, dueAt: "2026-09-15T14:00:00Z", reason: "Prospect requested next Tuesday" }, "brian");
     expect(await read()).toMatchObject({ ok: true, items: [] });
     expect(record("notice:test").data.resolved).toBe(true); expect(record("notice:test").workKind).toBeUndefined();
     expect(record(task.id).data.status).toBe("OPEN");
@@ -636,19 +672,22 @@ describe("review regressions: deadline delivery and recovery", () => {
   });
   it("delivers the morning notice, then escalates the next business morning without changing the deadline", async () => {
     const task = await dueTask();
-    await save(row("ELIGIBILITY", "eligibility:champ", { enabled: true }));
+    await save(row("ELIGIBILITY", "eligibility:champ", { userId: "champ", enabled: true, champion: true }));
+    for (const id of ["manager", "owner"]) await save(row("ELIGIBILITY", `eligibility:${id}`, { userId: id, enabled: true, name: id }));
+    const routing = (await get("team-routing"))!;
+    await save(row("TEAM_ROUTING", routing.id, { ownerId: "owner", members: [{ userId: "brian", salesManagerId: "manager" }, { userId: "manager", salesManager: true }] }, { previous: routing }), routing);
     const wf = (await get<any>("workflow:a1"))!; await save(row("WORKFLOW", wf.id, { ...wf.data, championId: "champ" }, { accountId: "a1", previous: wf }), wf);
     const { handler } = await import("../../amplify/functions/communications/worker"); h.c.paused = true;
     await handler(); expect(entries("NOTIFICATION")).toHaveLength(1); expect(entries("NOTIFICATION")[0].data.recipient).toBe("brian");
     expect(record(task.id).dueAt).toBe(task.data.escalationAt);
     vi.setSystemTime(new Date(Date.parse(task.data.escalationAt) + 1)); await handler();
-    expect(entries("NOTIFICATION")).toHaveLength(2); expect(entries("NOTIFICATION").find(r => r.data.recipient === "champ")?.data.urgency).toBe("ESCALATED");
+    expect(entries("NOTIFICATION")).toHaveLength(2); expect(entries("NOTIFICATION").find(r => r.data.recipient === "manager")?.data.urgency).toBe("MANAGER");
     expect(record(task.id).data.dueAt).toBe(task.data.dueAt); expect(record(task.id).data.escalatedAt).toBeTruthy();
   });
-  it("coalesces already overdue work for the same salesperson/champion into one escalated notice", async () => {
+  it("keeps owner-producer work persistent without escalating to the same person", async () => {
     const task = await dueTask(); vi.setSystemTime(new Date(Date.parse(task.data.escalationAt) + 1));
     const { dispatchTask } = await import("../../amplify/functions/communications/worker"); await dispatchTask(task);
-    expect(entries("NOTIFICATION")).toHaveLength(1); expect(entries("NOTIFICATION")[0].data.urgency).toBe("ESCALATED"); expect(record(task.id).dueAt).toBeUndefined();
+    expect(entries("NOTIFICATION")).toHaveLength(1); expect(entries("NOTIFICATION")[0].data.urgency).toBe("DUE"); expect(record(task.id).dueAt).toBe("2026-09-11T13:00:00.000Z");
   });
   it("keeps a deadline scheduled after more than twelve processing failures and resets failures on success", async () => {
     const task = await dueTask(); h.accountError = true; h.c.paused = true;
@@ -831,7 +870,7 @@ describe("review regressions: association and accountability", () => {
   it("completes work despite more than a hundred former assignee reminders", async () => {
     await lead(); await recordInbound(await inbound()); const task = entries("TASK")[0];
     for (let n = 0; n < 120; n++) await save(row("NOTIFICATION", `notice:old:${n}`, { taskId: task.id, recipient: `former:${n}` }, { accountId: "a1" }));
-    await completeTask({ id: task.id, version: task.version, reason: "Answered", successor: { title: "Check documents", dueAt: "2026-09-10T14:00:00Z", role: "SALESPERSON", kind: "DOCUMENTS" } }, "brian");
+    await recordOutbound(await inbound("sent", "2026-09-08T15:00:00Z", { direction: "OUTBOUND" }));
     expect(record(task.id).data.status).toBe("COMPLETE"); expect(h.transactions.every(t => t.length <= 100)).toBe(true);
   });
   it("retains a document-arrival comment while paused or waiting for its Front conversation", async () => {
@@ -897,7 +936,7 @@ describe("second review: adverse ordering and recovery", () => {
   });
   it("keeps a custom promise when a late leg shows the original call was answered", async () => {
     await lead(); await missed(601); const task = entries("TASK")[0];
-    await saveTask({ ...task.data, version: task.version, dueAt: "2026-09-15T14:00:00Z", reason: "Promised Tuesday" }, "brian");
+    await seedLegacyPromise({ ...task.data, version: task.version, dueAt: "2026-09-15T14:00:00Z", reason: "Promised Tuesday" }, "brian");
     await dialpadEvent(call(602, { master_call_id: 601, date_connected: Date.parse(NOW) }));
     expect(record(task.id).data.status).toBe("OPEN"); expect(record(task.id).data.dueAt).toBe("2026-09-15T14:00:00.000Z");
   });
@@ -1242,6 +1281,7 @@ describe("simplified staff work views", () => {
   });
   it("uses the agency date near midnight and honors the selected responsibility with My leads", async () => {
     const wf = await lead();
+    await save(row("ELIGIBILITY", "eligibility:another", { userId: "another", enabled: true, champion: true }));
     await save(row("WORKFLOW", wf.id, { ...wf.data, championId: "another" }, { accountId: "a1", previous: wf }), wf);
     await save(row("TASK", "sales", { kind: "DOCUMENTS", dueAt: "2026-09-09T02:00:00Z", role: "SALESPERSON", status: "OPEN" }, { accountId: "a1" }));
     await save(row("TASK", "champ", { kind: "CARRIER", dueAt: "2026-09-10T14:00:00Z", role: "CHAMPION", status: "OPEN" }, { accountId: "a1" }));
@@ -1303,7 +1343,7 @@ describe("9am reminders with a clear next step", () => {
     vi.setSystemTime("2026-09-10T12:59:00.000Z"); await dispatchTask(task); expect(entries("NOTIFICATION")).toHaveLength(0);
     vi.setSystemTime("2026-09-10T13:00:00.000Z"); await dispatchTask(task);
     expect(entries("NOTIFICATION")).toHaveLength(1);
-    expect(entries("NOTIFICATION")[0].data).toMatchObject({ title: "Respond to the prospect", why: "A prospect's text still needs a response.", dueAt: "2026-09-10T21:00:00.000Z", urgency: "DUE" });
+    expect(entries("NOTIFICATION")[0].data).toMatchObject({ title: "Respond to the prospect", why: "A prospect's message needs a response.", dueAt: "2026-09-10T21:00:00.000Z", urgency: "DUE" });
     const ops = entries("OPERATION").filter(o => o.data.reminder); expect(ops).toHaveLength(2);
     vi.setSystemTime("2026-09-10T21:00:00.000Z"); await dispatchTask(task);
     expect(entries("NOTIFICATION")).toHaveLength(1); expect(entries("OPERATION").filter(o => o.data.reminder)).toHaveLength(2);
@@ -1316,7 +1356,7 @@ describe("9am reminders with a clear next step", () => {
     await runOperation(reopen as any); expect(h.front).not.toHaveBeenCalledWith("/conversations/cnv_a", "PATCH", { status: "open" });
     h.front.mockResolvedValue({ id: "com_reminder" }); await runOperation(comment as any);
     const posted = h.front.mock.calls.find(([path]) => path === "/conversations/cnv_a/comments")!;
-    expect(posted[2].body).toContain("Why this is back: A prospect's text still needs a response.");
+    expect(posted[2].body).toContain("Why this is back: A prospect's message needs a response.");
     expect(posted[2].body).toContain("Next step: Respond to the prospect");
     expect(posted[2].body).toContain("Responsible: Brian Cole");
     expect(posted[2].body).toContain("Original request: TEST: please call me about the documents.");
@@ -1327,7 +1367,7 @@ describe("9am reminders with a clear next step", () => {
   it.each(["completed", "edited", "reassigned", "bound"])("suppresses queued explanations and reopens after the task is %s", async change => {
     const old = await morningRequest(); const task = (await get<LeadTask>(old.id))!;
     if (change === "completed") await save(row("TASK", task.id, { ...task.data, status: "COMPLETE" }, { accountId: "a1", previous: task }), task);
-    if (change === "edited") await saveTask({ ...task.data, version: task.version, dueAt: "2026-09-15T19:00:00Z", reason: "Prospect asked for Tuesday" }, "brian");
+    if (change === "edited") await seedLegacyPromise({ ...task.data, version: task.version, dueAt: "2026-09-15T19:00:00Z", reason: "Prospect asked for Tuesday" }, "brian");
     if (change === "reassigned" || change === "bound") {
       const wf = (await get<any>("workflow:a1"))!;
       await save(row("WORKFLOW", wf.id, { ...wf.data, ...(change === "bound" ? { disposition: "BOUND" } : { salespersonId: "other" }) }, { accountId: "a1", previous: wf }), wf);
@@ -1397,7 +1437,7 @@ describe("9am reminders with a clear next step", () => {
 describe("automatic cleanup after agent work", () => {
   it("requests cleanup after a human email without moving a custom promise", async () => {
     await lead(); await save(row("HEALTH", "health:worker", { at: NOW, lagging: false }));
-    await saveTask({ accountId: "a1", title: "Call on Friday", kind: "FOLLOW_UP", role: "SALESPERSON", dueAt: "2026-09-11T19:00:00Z", reason: "Prospect request" }, "brian");
+    await seedLegacyPromise({ accountId: "a1", title: "Call on Friday", kind: "FOLLOW_UP", role: "SALESPERSON", dueAt: "2026-09-11T19:00:00Z", reason: "Prospect request" }, "brian");
     const before = structuredClone(entries("TASK"));
     await recordOutbound(await inbound("human", NOW, { direction: "OUTBOUND" }));
     expect(entries("TASK")).toEqual(before);
@@ -1418,11 +1458,204 @@ describe("automatic cleanup after agent work", () => {
   it("retires lead work and requests cleanup once after binding", async () => {
     await lead(); await save(row("HEALTH", "health:worker", { at: NOW, lagging: false }));
     await recordOutbound(await inbound("out", NOW, { direction: "OUTBOUND" }));
-    h.records.set("Account:a1", { id: "a1", name: "Willow HOA", stage: "CLIENT" });
+    h.records.set("Account:a1", { id: "a1", name: "Willow HOA", stage: "CLIENT", createdAt: NOW, updatedAt: NOW });
     const { syncAccountLifecycle } = await import("../../amplify/functions/communications/workflow");
     await syncAccountLifecycle("a1"); await syncAccountLifecycle("a1");
     const ops = entries("OPERATION").filter(o => o.id.startsWith("op:closed-cleanup:")); expect(ops).toHaveLength(1);
-    await runOperation(ops[0] as any); expect(h.front).toHaveBeenCalledWith("/conversations/cnv_a", "PATCH", { status: "archived" });
+    await runOperation(ops[0] as any); expect(record("issue:policy-handoff:a1")).toBeTruthy();
+    expect(h.front).not.toHaveBeenCalledWith("/conversations/cnv_a", "PATCH", { status: "archived" });
     expect(entries("TASK").every(t => t.data.status === "CANCELLED")).toBe(true);
+  });
+});
+
+describe("approved sales and carrier revision: integration evidence", () => {
+  async function routingSetup() {
+    for (const id of ["manager", "marketing", "owner", "champion", "specialist"]) await save(row("ELIGIBILITY", `eligibility:${id}`, { userId: id, name: id, email: `${id}@example.com`, enabled: true, salesperson: false, champion: id === "champion" }));
+    const r = (await get("team-routing"))!;
+    await save(row("TEAM_ROUTING", r.id, { ownerId: "owner", marketingManagerId: "marketing", reportChannelId: "cha_reports", members: [{ userId: "brian", salesManagerId: "manager" }, { userId: "manager", salesManager: true }, { userId: "marketing", marketingManager: true }] }, { previous: r }), r);
+  }
+  it("atomically advances exactly one year and makes retries harmless", async () => {
+    const wf = await lead();
+    h.records.set("Account:a1", { id: "a1", name: "Willow", stage: "LEAD", currentPolicyExpiration: "2026-12-01", createdAt: NOW, updatedAt: NOW });
+    const { nextYear } = await import("../../amplify/functions/communications/annualReturn");
+    const input = { accountId: "a1", version: wf.version, expiration: "2026-12-01", requestId: "repeatable-request-1234567890" };
+    const a = await nextYear(input, "brian"), b = await nextYear(input, "brian");
+    expect(a.expiration).toBe("2027-12-01"); expect(b.expiration).toBe(a.expiration); expect(a.returnAt).toBe("2027-09-02T13:00:00.000Z");
+    expect(h.records.get("Account:a1")!.currentPolicyExpiration).toBe("2027-12-01");
+    expect(entries("TASK").filter(t => t.data.kind === "ANNUAL_RETURN")).toHaveLength(1);
+    expect(record(wf.id).data.humanTakeover).toBe(true);
+  });
+  it("rejects a concurrent incumbent change without an orphan checkpoint", async () => {
+    const wf = await lead(); h.records.set("Account:a1", { id: "a1", stage: "LEAD", currentPolicyExpiration: "2026-12-02", updatedAt: NOW });
+    const { nextYear } = await import("../../amplify/functions/communications/annualReturn");
+    await expect(nextYear({ accountId: "a1", version: wf.version, expiration: "2026-12-01", requestId: "repeatable-request-1234567890" }, "brian")).rejects.toThrow("date changed");
+    expect(entries("ANNUAL_RETURN")).toHaveLength(0); expect(entries("TASK")).toHaveLength(0);
+  });
+  it("delivers sales escalation to the salesperson's manager, then keeps owner escalation alive", async () => {
+    await routingSetup(); const wf = await lead();
+    await save(row("WORKFLOW", wf.id, { ...wf.data, championId: "champion" }, { accountId: "a1", previous: wf }), wf);
+    await recordInbound(await inbound()); const task = entries("TASK")[0];
+    const { dispatchTask } = await import("../../amplify/functions/communications/worker");
+    vi.setSystemTime(task.data.escalationAt); await dispatchTask(task as any);
+    expect(entries("NOTIFICATION").map(n => n.data.recipient).sort()).toEqual(["brian", "manager"]);
+    vi.setSystemTime(task.data.ownerEscalationAt); await dispatchTask(record(task.id) as any);
+    expect(entries("NOTIFICATION").map(n => n.data.recipient)).toContain("owner");
+    const originalDue = task.data.dueAt, next = record(task.id).dueAt;
+    vi.setSystemTime(next); await dispatchTask(record(task.id) as any);
+    expect(record(task.id).data.dueAt).toBe(originalDue); expect(record(task.id).dueAt > next).toBe(true);
+    expect(entries("NOTIFICATION").some(n => n.data.recipient === "champion" || n.data.recipient === "marketing")).toBe(false);
+  });
+  it("does not turn a partial bind into completed acquisition", async () => {
+    await lead(); await recordInbound(await inbound());
+    h.records.set("Account:a1", { id: "a1", name: "Willow", stage: "CLIENT", createdAt: NOW, updatedAt: NOW });
+    h.records.set("Quote:remaining", { id: "remaining", accountId: "a1", status: "DRAFT", effectiveDate: "2026-10-01", lines: ["Umbrella"] });
+    const { syncAccountLifecycle } = await import("../../amplify/functions/communications/workflow"); await syncAccountLifecycle("a1");
+    expect(record("workflow:a1").data.openLeadQuoteIds).toEqual(["remaining"]);
+    expect(entries("TASK").find(t => t.data.kind === "RESPONSE")!.data).toMatchObject({ role: "SALESPERSON", context: "LEAD", status: "OPEN" });
+  });
+  it("hands client correspondence to the champion after the final bind", async () => {
+    await lead(); await save(row("LINK", "front-link:cnv_a", { accountId: "a1", conversationId: "cnv_a", purpose: "PROSPECT", context: "LEAD", routing: "SALESPERSON" }, { accountId: "a1" }));
+    await recordInbound(await inbound()); h.records.set("Account:a1", { id: "a1", name: "Willow", stage: "CLIENT", createdAt: NOW, updatedAt: NOW });
+    const { syncAccountLifecycle } = await import("../../amplify/functions/communications/workflow"); await syncAccountLifecycle("a1");
+    expect(record("front-link:cnv_a").data).toMatchObject({ context: "SERVICE", routing: "CHAMPION" });
+    expect(entries("TASK").find(t => t.data.kind === "RESPONSE")!.data).toMatchObject({ role: "CHAMPION", context: "SERVICE", status: "OPEN" });
+  });
+  it("a courtesy response cannot fulfill a certificate request", async () => {
+    const wf = await lead(); await save(row("WORKFLOW", wf.id, { ...wf.data, disposition: "BOUND" }, { accountId: "a1", previous: wf }), wf);
+    await recordInbound(await inbound("certificate", NOW, { context: "SERVICE", text: "Please issue a certificate of insurance for our lender." }));
+    await recordOutbound(await inbound("ack", "2026-09-08T15:00:00Z", { direction: "OUTBOUND", context: "SERVICE", text: "Thanks, I will look into this." }));
+    expect(entries("TASK").find(t => t.data.kind === "SERVICE")!.data).toMatchObject({ status: "OPEN", serviceType: "CERTIFICATE", role: "CHAMPION" });
+    expect(entries("TASK").find(t => t.data.kind === "RESPONSE")!.data.status).toBe("COMPLETE");
+  });
+  async function reportSetup() {
+    vi.setSystemTime("2026-09-09T13:00:00Z"); await routingSetup();
+    for (const [id, data] of [["health:worker", { at: new Date().toISOString(), lagging: false }], ["coverage:census", { completedAt: new Date().toISOString() }]] as const) await save(row("HEALTH", id, data));
+    h.front.mockImplementation(async (path: string, method?: string) => path.startsWith("/channels/") && method !== "POST" ? { id: "cha_reports", is_valid: true, type: "gmail", _links: { related: { inbox: "https://api2.frontapp.com/inboxes/inb_reports" } } } : method === "POST" ? { message_uid: `uid-${h.front.mock.calls.length}` } : { id: "msg_report", is_draft: false, is_inbound: false, conversation: { id: "cnv_report" } });
+  }
+  it("sends one healthy daily edition per salesperson and manager, with provider confirmation", async () => {
+    await reportSetup(); const { handler } = await import("../../amplify/functions/communications/reports");
+    await handler(); expect(h.front.mock.calls.filter(([,m]) => m === "POST")).toHaveLength(2);
+    expect(entries("REPORT_EDITION").every(r => r.data.state === "ACCEPTED")).toBe(true);
+    await handler(); await handler();
+    expect(h.front.mock.calls.filter(([,m]) => m === "POST")).toHaveLength(2);
+    expect(entries("REPORT_EDITION").every(r => r.data.state === "SENT")).toBe(true);
+    expect(record("health:reports").data.incomplete).toBe(false);
+    expect(record("report-conversation:cnv_report")).toBeTruthy();
+  });
+  it("retains the provider receipt when its first persistence attempt fails", async () => {
+    await reportSetup(); h.front.mockImplementation(async (path: string, method?: string) => method === "POST" ? (h.writeError = new Error("Temporary storage outage"), { message_uid: "accepted-proof" }) : path.startsWith("/channels/") ? { is_valid: true, type: "gmail", _links: { related: { inbox: "https://api2.frontapp.com/inboxes/inb_reports" } } } : {});
+    const { handler } = await import("../../amplify/functions/communications/reports"); await handler();
+    expect(entries("REPORT_EDITION").every(r => r.data.state === "ACCEPTED" && r.data.uid === "accepted-proof")).toBe(true);
+  });
+  it("never blindly resends an uncertain report or sends outside the morning window", async () => {
+    await reportSetup(); h.front.mockImplementation(async (_path: string, method?: string) => { if (method === "POST") throw new Error("Network lost after send"); return { is_valid: true, type: "gmail", _links: { related: { inbox: "https://api2.frontapp.com/inboxes/inb_reports" } } }; });
+    const { handler } = await import("../../amplify/functions/communications/reports"); await handler(); await handler();
+    const sends = h.front.mock.calls.filter(([,m]) => m === "POST").length;
+    await handler(); vi.setSystemTime("2026-09-10T21:00:00Z"); await handler();
+    expect(h.front.mock.calls.filter(([,m]) => m === "POST")).toHaveLength(sends);
+    expect(entries("REPORT_EDITION").every(r => r.data.state === "UNKNOWN")).toBe(true);
+    const recipients = h.front.mock.calls.filter(([,m]) => m === "POST").map(([, , b]) => b.to[0]); expect(new Set(recipients).size).toBe(recipients.length);
+  });
+  it("a normal staff member cannot edit manager routing", async () => {
+    const { handler } = await import("../../amplify/functions/communications/handler");
+    expect(await handler({ arguments: { operation: "saveTeamRouting", input: { ownerId: "brian", version: 1, members: [] } }, identity: { sub: "brian", groups: [] } as never })).toMatchObject({ ok: false, error: expect.stringContaining("admin") });
+  });
+});
+
+describe("native Front quote presentation", () => {
+  async function prepare() {
+    await lead(); await save(row("LINK", "front-link:cnv_a", { accountId: "a1", conversationId: "cnv_a", purpose: "PROSPECT" }, { accountId: "a1" }));
+    h.records.set("Quote:q1", { id: "q1", accountId: "a1", status: "QUOTED", premium: 1000, effectiveDate: "2026-10-01", expirationDate: "2027-10-01", lines: ["Property"], createdAt: NOW, updatedAt: NOW });
+    h.front.mockResolvedValue({ _results: [{ id: "msg_original", is_inbound: true, recipients: [{ role: "from", handle: "jane@example.com" }] }] });
+    const { prepareBusinessDraft } = await import("../../amplify/functions/communications/businessDelivery");
+    return prepareBusinessDraft({ accountId: "a1", conversationId: "cnv_a", kind: "QUOTE", recordId: "q1" }, "brian");
+  }
+  it("a draft is not presentation; the actual matching sent quote is", async () => {
+    const draft = await prepare(); expect(h.records.get("Quote:q1")!.status).toBe("QUOTED");
+    expect(h.front.mock.calls.some(([,method]) => method === "POST")).toBe(false);
+    await ingestFrontMessage({ id: "msg_draft", is_inbound: false, is_draft: true, created_at: Date.parse(NOW) / 1000, text: draft.body }, "cnv_a");
+    expect(h.records.get("Quote:q1")!.status).toBe("QUOTED");
+    const comm = await inbound("presented", "2026-09-08T15:00:00Z", { direction: "OUTBOUND", actorId: "tea_brian", to: ["jane@example.com"], text: draft.body.replace(/<[^>]*>/g, "\n") });
+    const { applyBusinessDelivery } = await import("../../amplify/functions/communications/businessDelivery");
+    await applyBusinessDelivery(comm); await applyBusinessDelivery(comm);
+    expect(h.records.get("Quote:q1")).toMatchObject({ status: "PRESENTED", presentedAt: comm.at });
+    expect(entries("BUSINESS_DELIVERY")).toHaveLength(1); expect(entries("BUSINESS_DELIVERY")[0].data.state).toBe("SENT");
+  });
+  it("a copied reference without the quote or on another account cannot claim presentation", async () => {
+    await prepare(); const proof = entries("BUSINESS_DELIVERY")[0];
+    const { applyBusinessDelivery } = await import("../../amplify/functions/communications/businessDelivery");
+    await applyBusinessDelivery(await inbound("copy", "2026-09-08T15:00:00Z", { direction: "OUTBOUND", to: ["jane@example.com"], text: `Thanks. Reference: ${proof.data.reference}` }));
+    expect(h.records.get("Quote:q1")!.status).toBe("QUOTED");
+    const text = `${proof.data.reference}\n${proof.data.facts.join("\n")}`;
+    await applyBusinessDelivery(await inbound("foreign", "2026-09-08T15:00:00Z", { accountId: "a2", direction: "OUTBOUND", to: ["jane@example.com"], text }));
+    expect(h.records.get("Quote:q1")!.status).toBe("QUOTED");
+  });
+  it("does not mark a changed quote presented using an old draft", async () => {
+    const draft = await prepare(); h.records.set("Quote:q1", { ...h.records.get("Quote:q1"), premium: 2000, updatedAt: "2026-09-08T14:30:00Z" });
+    const { applyBusinessDelivery } = await import("../../amplify/functions/communications/businessDelivery");
+    const comm = await inbound("old-quote", "2026-09-08T15:00:00Z", { direction: "OUTBOUND", to: ["jane@example.com"], text: draft.body.replace(/<[^>]*>/g, "\n") });
+    await expect(applyBusinessDelivery(comm)).rejects.toThrow("changed");
+    expect(h.records.get("Quote:q1")).toMatchObject({ status: "QUOTED", premium: 2000 });
+    expect(entries("ISSUE").some(i => String(i.data.message).includes("changed after"))).toBe(true);
+  });
+});
+
+describe('routing repair and underlying business requirements', () => {
+  it('reclassifies open correspondence without changing its clock or reopening resolved messages', async () => {
+    await lead(); const message = await inbound('context', NOW, { resolved: true });
+    const task = await makeTask({ id:'task:context',accountId:'a1',kind:'RESPONSE',title:'Reply',conversationId:'cnv_a',sourceAt:NOW });
+    await save(row('TASK',task.id,task,{accountId:'a1',dueAt:taskWakeAt(task)}));
+    await save(row('LINK','front-link:cnv_a',{accountId:'a1',conversationId:'cnv_a',purpose:'CARRIER',context:'RENEWAL',policyId:'p1'},{accountId:'a1'}));
+    const { repairConversationContexts } = await import('../../amplify/functions/communications/conversationContext');
+    await repairConversationContexts('a1'); await repairConversationContexts('a1');
+    expect(record(task.id).data).toMatchObject({role:'CHAMPION',domain:'CARRIER',context:'RENEWAL',kind:'CARRIER',policyId:'p1',dueAt:task.dueAt,escalationAt:task.escalationAt});
+    expect(record(message.id).data).toMatchObject({resolved:true,context:'RENEWAL',policyId:'p1'});
+  });
+  it('keeps the two-day information chase after the initial request was sent while carriers are working', async () => {
+    await lead(); await save(row('MARKETING_CONTEXT','marketing-context:a1',{waitingOnCarrier:true},{accountId:'a1'}));
+    const parent = await makeTask({id:'task:requirement:carrier',accountId:'a1',title:'Supply underwriting information',kind:'DOCUMENTS',role:'CHAMPION',domain:'CARRIER',milestone:true});
+    parent.parentTaskId='task:carrier';
+    await save(row('TASK',parent.id,parent,{accountId:'a1',dueAt:taskWakeAt(parent)}));
+    const sent = await inbound('request-info','2026-09-08T15:00:00.000Z',{direction:'OUTBOUND',actorId:'tea_brian',to:['jane@example.com']});
+    await recordOutbound(sent);
+    expect(record('task:wait:a1:cnv_a').data).toMatchObject({kind:'FOLLOW_UP',waitingOn:'PROSPECT',dueAt:followUpDeadline(sent.at,2)});
+    expect(record(parent.id).data.status).toBe('OPEN');
+  });
+  it('turns explicit client authorization into bind work and closes it only on the policy record', async () => {
+    await lead();
+    h.records.set('Quote:q1',{id:'q1',accountId:'a1',carrierId:'c1',status:'PRESENTED',premium:1200,lines:['Property'],effectiveDate:'2026-12-01',expirationDate:'2027-12-01',createdAt:NOW,updatedAt:NOW});
+    const { handler } = await import('../../amplify/functions/communications/handler');
+    const request = (clientAuthorized:boolean) => handler({arguments:{operation:'authorizeBind',input:{quoteId:'q1',updatedAt:NOW,clientAuthorized}},identity:{sub:'brian',groups:[]} as never});
+    expect(await request(false)).toMatchObject({ok:false});
+    expect(await request(true)).toMatchObject({ok:true}); expect(await request(true)).toMatchObject({ok:true});
+    expect(h.records.get('Quote:q1')).toMatchObject({status:'PRESENTED',bindAuthorizedBy:'brian',bindAuthorizedAt:NOW});
+    const { reconcileAccountWork } = await import('../../amplify/functions/communications/coverage');
+    const account={id:'a1',name:'Willow HOA',stage:'LEAD',createdAt:NOW,updatedAt:NOW};
+    await reconcileAccountWork(account);
+    const task=entries('TASK').find(t=>t.data.kind==='BIND')!;
+    expect(task.data).toMatchObject({role:'CHAMPION',domain:'CARRIER',status:'OPEN',dueAt:businessDeadline(NOW,1)});
+    await recordOutbound(await inbound('bind-request','2026-09-08T15:00:00.000Z',{purpose:'CARRIER',direction:'OUTBOUND',actorId:'tea_brian',to:['underwriter@example.com']}));
+    expect(record(task.id).data.status).toBe('OPEN');
+    h.records.set('Policy:p1',{id:'p1',accountId:'a1',quoteId:'q1',status:'ACTIVE',lines:['Property'],expirationDate:'2027-12-01',createdAt:NOW});
+    await reconcileAccountWork(account);
+    expect(record(task.id).data.status).toBe('COMPLETE');
+  });
+  it.each([{premium:-1200},{offerExpiresAt:'2026-01-01'},{expirationDate:'2026-11-01'}])('rejects unusable binding terms without recording client authorization: %j', async patch => {
+    await lead();
+    h.records.set('Quote:q1',{id:'q1',accountId:'a1',carrierId:'c1',status:'PRESENTED',premium:1200,lines:['Property'],effectiveDate:'2026-12-01',expirationDate:'2027-12-01',updatedAt:NOW,...patch});
+    const { handler } = await import('../../amplify/functions/communications/handler');
+    expect(await handler({arguments:{operation:'authorizeBind',input:{quoteId:'q1',updatedAt:NOW,clientAuthorized:true}},identity:{sub:'brian',groups:[]} as never})).toMatchObject({ok:false});
+    expect(h.records.get('Quote:q1')?.bindAuthorizedAt).toBeUndefined();
+    expect(entries('LIFECYCLE')).toHaveLength(0);
+  });
+  it('retires a presentation reminder when its quote is explicitly lost', async () => {
+    await lead();
+    h.records.set('Quote:q1',{id:'q1',accountId:'a1',status:'QUOTED',premium:1200,lines:['Property'],effectiveDate:'2026-12-01',expirationDate:'2027-12-01',createdAt:NOW,updatedAt:NOW});
+    const { reconcileAccountWork } = await import('../../amplify/functions/communications/coverage');
+    const account={id:'a1',name:'Willow HOA',stage:'LEAD',createdAt:NOW,updatedAt:NOW};
+    await reconcileAccountWork(account);
+    const task=entries('TASK').find(t=>t.data.kind==='QUOTE_PRESENTATION')!;
+    h.records.get('Quote:q1')!.status='LOST'; await reconcileAccountWork(account);
+    expect(record(task.id).data.status).toBe('CANCELLED');
   });
 });

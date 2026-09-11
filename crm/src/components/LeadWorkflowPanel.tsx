@@ -1,4 +1,7 @@
-import { automaticContactTask } from "../../../shared/contactProgress";
+import ServiceDelivery from "./ServiceDelivery";
+import BusinessDraftButton from "./BusinessDraftButton";
+import ConversationContext from "./ConversationContext";
+import NextYearControl from "./NextYearControl";
 import { leadActionGuidance } from "../../../shared/leadActionGuidance";
 import CommunicationAccountSummary from "./CommunicationAccountSummary";
 import { CallOutcome, SidebarActivityLinker } from "./CommunicationReview";
@@ -54,6 +57,7 @@ export default function LeadWorkflowPanel({ accountId, conversationId, onOpen }:
   if (!workflow) return <div className="card"><h2>Lead follow-up</h2><p>{accountId ? "Set up responsibilities and follow-up for this account." : "Link this conversation to its CRM lead to see responsibilities and next actions."}</p>
     {accountId && <button disabled={busy} onClick={() => void run("initializeLead", { accountId })}>Set up lead follow-up</button>}{error && <p role="alert">{error}</p>}</div>;
   const openTasks = tasks.filter(t => t.status === "OPEN");
+  const clientWork = workflow.disposition === "BOUND" && !workflow.openLeadQuoteIds?.length;
   const teamName = (id?: string) => team.find(t => t.userId === id)?.name ?? "Needs assignment";
   const nextActions = <section className={compact ? "front-next-actions" : undefined} aria-label="Next actions">
     <div className="toolbar"><h3>{compact ? "Next action" : "Next actions"}</h3></div>
@@ -64,9 +68,16 @@ export default function LeadWorkflowPanel({ accountId, conversationId, onOpen }:
         <p className="workflow-why"><span>{t.escalatedAt ? "Why this was escalated" : t.notifiedAt ? "Why this is back" : "Why this needs attention"}</span>{guidance.why}</p>
         {guidance.preview && <blockquote className="workflow-request"><span>Original request</span>{guidance.preview}</blockquote>}
         <strong className="workflow-task-title">{guidance.action}</strong>
-        <div className="small workflow-task-meta">{t.role === "CHAMPION" || t.escalatedAt ? "Deal champion" : "Salesperson"} · Due {compact ? compactDateTime(t.dueAt) : fmtDateTime(t.dueAt)}{t.dueAt < new Date().toISOString() ? " · Overdue" : ""}</div>
+        <div className="small workflow-task-meta">{t.specialistId ? `Specialist: ${teamName(t.specialistId)}` : t.helperId ? `Helping: ${teamName(t.helperId)}` : t.role === "CHAMPION" ? "Deal champion" : "Salesperson"} · Due {compact ? compactDateTime(t.dueAt) : fmtDateTime(t.dueAt)}{t.dueAt < new Date().toISOString() ? " · Overdue" : ""}</div>
         <p className="workflow-next-help">{guidance.after}</p>
-        {!automaticContactTask(t) && <button className="secondary" disabled={busy} onClick={() => void run("completeTask", { id: t.id, version: t.version })}>Mark done</button>}
+        {compact && t.kind === "QUOTE_PRESENTATION" && t.quoteId && conversationId && <BusinessDraftButton accountId={workflow.accountId} conversationId={conversationId} kind="QUOTE" recordId={t.quoteId} label="Prepare quote email" />}
+        {compact && t.serviceType && t.serviceType !== "GENERAL" && conversationId && <ServiceDelivery task={t} conversationId={conversationId} onPrepare={() => open(`${window.location.origin}/accounts/${workflow.accountId}?tab=${t.serviceType === "CERTIFICATE" ? "certificates" : "documents"}&request=${encodeURIComponent(t.sourceIds?.[0] ?? "")}`)} />}
+        {!compact && t.serviceType === "DOCUMENT" && <button className="secondary" onClick={() => open(`${window.location.origin}/accounts/${workflow.accountId}?tab=documents&request=${encodeURIComponent(t.sourceIds?.[0] ?? "")}`)}>Prepare requested document</button>}
+        {!compact && t.serviceType === "CERTIFICATE" && <button className="secondary" onClick={() => open(`${window.location.origin}/accounts/${workflow.accountId}?tab=certificates&request=${encodeURIComponent(t.sourceIds?.[0] ?? "")}`)}>Prepare certificate</button>}
+        {t.milestone && !t.serviceType && <button className="secondary" onClick={() => open(`${window.location.origin}/accounts/${workflow.accountId}${t.quoteId ? "?tab=quotes" : t.policyId ? "?tab=policies" : ""}`)}>Open {t.quoteId ? "quote" : t.policyId ? "policy" : "account"}</button>}
+        {resource.data.actorId === workflow.salespersonId && workflow.championId !== workflow.salespersonId && !t.helperId && t.role === "SALESPERSON" && <button className="link" disabled={busy} onClick={() => void run("requestChampionHelp", { taskId: t.id, version: t.version })}>Ask champion to help</button>}
+        {resource.data.actorId === workflow.championId && t.kind === "CARRIER" && (t.context ?? "LEAD") === "LEAD" && <button className="link" disabled={busy} onClick={() => void run("requestProspectInformation", { taskId: t.id, version: t.version })}>Ask sales to obtain this information</button>}
+        {resource.data.actorId === workflow.championId && t.context === "SERVICE" && <details><summary>Coordinate with a specialist</summary><label className="field">Responsible specialist<select value={t.specialistId ?? ""} disabled={busy} onChange={e => { if (e.target.value) void run("delegateService", { taskId: t.id, version: t.version, specialistId: e.target.value }); }}><option value="">Choose teammate</option>{team.filter(m => m.enabled).map(m => <option key={m.userId} value={m.userId}>{m.name}</option>)}</select></label><p className="muted small">The champion remains the client's main contact. The deadline stays the same.</p></details>}
         {["RESPONSE", "CALLBACK"].includes(t.kind) && openTasks.filter(task => ["RESPONSE", "CALLBACK"].includes(task.kind)).length > 1 && <details className="workflow-related"><summary>Related requests</summary><label className="small"><input type="checkbox" aria-label={`Combine ${t.title}`} checked={mergeIds.includes(t.id)} onChange={e => setMergeIds(ids => e.target.checked ? [...ids, t.id] : ids.filter(id => id !== t.id))} /> Same request as another activity</label></details>}
       </article>;
     })}
@@ -94,6 +105,8 @@ export default function LeadWorkflowPanel({ accountId, conversationId, onOpen }:
     <label className="workflow-note-publish"><input type="checkbox" checked={publish} onChange={e => setPublish(e.target.checked)} /> Also post as a Front comment</label>
     <div className="toolbar"><button disabled={busy || !note.trim()} onClick={async () => { if (await run("addNote", { accountId: workflow.accountId, text: note, publishToFront: publish, requestId: noteId.current })) { setNote(""); noteId.current = crypto.randomUUID(); } }}>Save note</button></div>  </>;
   const conversationTools = <>
+    {(conversationId ?? workflow.conversationId) && <ConversationContext accountId={workflow.accountId} conversationId={(conversationId ?? workflow.conversationId)!} bound={workflow.disposition === "BOUND"} saved={resource.data.frontContext} onSaved={() => void resource.refetch()} />}
+    <NextYearControl workflow={workflow} onSaved={() => void resource.refetch()} />
     {workflow.disposition !== "BOUND" && <details className="front-disclosure"><summary>Lead status</summary>
       {workflow.disposition === "ACTIVE" ? <><label className="field">Status<select value={leadStatus} onChange={e => setLeadStatus(e.target.value)}><option value="LOST">Lost</option><option value="DISQUALIFIED">Not a fit</option></select></label><button className="secondary" disabled={busy} onClick={() => void run("setLeadDisposition", { accountId: workflow.accountId, version: workflow.version, disposition: leadStatus })}>Update lead status</button></>
         : <button className="secondary" disabled={busy} onClick={() => void run("setLeadDisposition", { accountId: workflow.accountId, version: workflow.version, disposition: "ACTIVE" })}>Reopen lead</button>}
@@ -108,16 +121,17 @@ export default function LeadWorkflowPanel({ accountId, conversationId, onOpen }:
     {compact && conversationId && <SidebarActivityLinker accountId={workflow.accountId} conversationId={conversationId} onSaved={() => void resource.refetch()} />}
   </>;
   return <section className="card lead-workflow" aria-label="Lead responsibilities and follow-up">
-    <div className="toolbar workflow-heading"><h2>{compact ? "Lead workspace" : "Lead follow-up"}</h2><div className="grow" /><button className="secondary" disabled={resource.loading} onClick={() => void resource.refetch()}>{resource.loading ? "Refreshing…" : "Refresh"}</button></div>
+    <div className="toolbar workflow-heading"><h2>{clientWork ? "Client workspace" : compact ? "Lead workspace" : "Lead follow-up"}</h2><div className="grow" /><button className="secondary" disabled={resource.loading} onClick={() => void resource.refetch()}>{resource.loading ? "Refreshing…" : "Refresh"}</button></div>
     {onOpen && <CommunicationAccountSummary accountId={workflow.accountId} open={open} />}
     {notice && <p className="workflow-notice" role="status">{notice}</p>}
     {error && <p className="error-text workflow-notice" role="alert">{error}</p>}
     {workflow.assignmentIssue && <p className="error-text workflow-notice">{workflow.assignmentIssue}</p>}
     {issues.length > 0 && <details open className="front-disclosure"><summary>Needs attention <span className="front-count">{issues.length}</span></summary>{issues.map(i => <div key={i.id}><p className="error-text small">{i.message}</p></div>)}</details>}
+    {workflow.deferredUntil && <p className="workflow-notice">Next renewal opportunity · Returns {fmtDateTime(workflow.deferredUntil)}. New requests remain tracked.</p>}
     {compact && nextActions}
     <section className={compact ? "front-team" : undefined} aria-label="Lead team">
-      {compact && <div className="toolbar"><h3>Lead team</h3><div className="grow" />{!editingTeam && <button className="link" onClick={() => setEditingTeam(true)}>Edit team</button>}</div>}
-      {compact && !editingTeam ? <dl className="front-team-list"><div><dt>Salesperson</dt><dd>{teamName(workflow.salespersonId)}</dd></div><div><dt>Deal champion</dt><dd>{teamName(workflow.championId)}</dd></div></dl> : <>
+      {compact && <div className="toolbar"><h3>{clientWork ? "Client team" : "Lead team"}</h3><div className="grow" />{!editingTeam && <button className="link" onClick={() => setEditingTeam(true)}>Edit team</button>}</div>}
+      {compact && !editingTeam ? <dl className="front-team-list">{!clientWork && <div><dt>Salesperson</dt><dd>{teamName(workflow.salespersonId)}</dd></div>}<div><dt>{clientWork ? "Main contact" : "Deal champion"}</dt><dd>{teamName(workflow.championId)}</dd></div></dl> : <>
         <div className="form-grid">
           <ResponsibilitySelect label="Salesperson" value={salesperson} team={team} kind="salesperson" onChange={setSalesperson} disabled={busy} />
           <ResponsibilitySelect label="Deal champion" value={champion} team={team} kind="champion" onChange={setChampion} disabled={busy} />

@@ -2,11 +2,26 @@ import { config, credentials } from "./config";
 import { front, dialpad, dialpadCallItems, verifyEmailChannel, verifySmsChannel, verifyDialpadCompany } from "./providers";
 import { get } from "./store";
 import { validRole } from "./workflow";
+import { SNSClient, ListSubscriptionsByTopicCommand } from "@aws-sdk/client-sns";
 export async function connectionChecks() {
   const c = await config(), keys = await credentials();
   const checks: { name: string; ok: boolean; detail: string }[] = [];
   const tasks: [string, () => Promise<void>][] = [
-    ["Default responsibilities", async () => { if (!c.defaultUserId) throw new Error("Choose a default teammate and enable both assignment roles"); await validRole(c.defaultUserId, "SALESPERSON"); await validRole(c.defaultUserId, "CHAMPION", false); }],
+    ["Independent alerts", async () => {
+      const topic = process.env.COMMUNICATION_ALERT_TOPIC;
+      if (!topic) throw new Error("Deploy the independent operations alert connection");
+      const sns = new SNSClient(); let nextToken: string | undefined, confirmed = false;
+      do { const result = await sns.send(new ListSubscriptionsByTopicCommand({ TopicArn: topic, NextToken: nextToken })); confirmed ||= !!result.Subscriptions?.some(s => s.SubscriptionArn?.startsWith("arn:aws:sns:")); nextToken = result.NextToken; } while (nextToken);
+      if (!confirmed) throw new Error("Connect and confirm the operations recipient for the independent alert topic");
+    }],
+    ["Default responsibilities", async () => { const sales = c.defaultSalespersonId ?? c.defaultUserId, champion = c.defaultChampionId ?? c.defaultUserId; if (!sales || !champion) throw new Error("Choose default sales and champion owners"); await validRole(sales, "SALESPERSON"); await validRole(champion, "CHAMPION", champion !== sales); }],
+    ["Team reports", async () => {
+      const r = await (await import("./routing")).routing(), members = await (await import("./workflow")).team();
+      if (!r.ownerId || !r.marketingManagerId || !r.reportChannelId) throw new Error("Choose the owner, marketing manager and internal report channel in Team settings");
+      (await import("../../../../shared/workRouting")).validateRouting(r, members);
+      if (members.some(m => m.enabled && m.salesperson && m.userId !== r.ownerId && !r.members.find(t => t.userId === m.userId)?.salesManagerId)) throw new Error("Choose a manager for every salesperson");
+      await (await import("./reports")).verifyReportChannel(r.reportChannelId);
+    }],
     ["Front company", async () => { if (!c.frontCompanyId) throw new Error("Enter the Front company ID"); const me = await front<{ id: string }>("/me"); if (me.id !== c.frontCompanyId) throw new Error("Front company does not match settings"); }],
     ["Front sales channel", async () => { await verifyEmailChannel(); }],
     ["Front inbox access", async () => { for (const id of [c.frontInboxId, ...c.allowedInboxIds]) { if (!id) throw new Error("Choose the sales inbox"); await front(`/inboxes/${id}`); } }],

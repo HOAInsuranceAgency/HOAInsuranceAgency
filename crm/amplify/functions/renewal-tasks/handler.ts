@@ -1,3 +1,6 @@
+import { quoteCoverage, scopeLegacyQuotes } from "../../../../shared/renewalPolicy";
+import { get, issue } from "../communications/store";
+import { resolveIssue } from "../communications/routing";
 import { Amplify } from "aws-amplify";
 import { generateClient } from "aws-amplify/data";
 import { getAmplifyDataClientConfig } from "@aws-amplify/backend/function/runtime";
@@ -51,7 +54,7 @@ export const handler = async () => {
   const client = await getDataClient();
   const today = isoDay(new Date());
 
-  const [accounts, policies, carriers, guides, quotes, tasks, losses] =
+  const [accounts, policies, carriers, guides, rawQuotes, tasks, losses, priorCoverage] =
     await Promise.all([
       // `.list()` caps at 100 — every read here must cover the whole table.
       listAllPages((nextToken) => client.models.Account.list({ nextToken, limit: 200 })),
@@ -67,8 +70,10 @@ export const handler = async () => {
       // Read for the guides' loss restrictions. A carrier that caps losses
       // gets no task for an account over the cap.
       listAllPages((nextToken) => client.models.Loss.list({ nextToken, limit: 200 })),
+      listAllPages((nextToken) => client.models.PriorCarrier.list({ nextToken, limit: 200 })),
     ]);
 
+  const { quotes } = scopeLegacyQuotes(rawQuotes, policies);
   const accountById = new Map(accounts.map((a) => [a.id, a]));
 
   // Summarised once per account rather than per (risk × carrier × guide):
@@ -121,7 +126,7 @@ export const handler = async () => {
       accountId: a.id,
       accountName: a.name,
       expirationDate: a.currentPolicyExpiration,
-      lines: [],
+      lines: [...new Set([...priorCoverage.filter(p => p.accountId === a.id && p.expirationDate === a.currentPolicyExpiration && p.lineOfBusiness).map(p => p.lineOfBusiness!), ...quotes.filter(q => q.accountId === a.id && q.effectiveDate === a.currentPolicyExpiration).flatMap(q => (q.lines ?? []).filter((l): l is string => !!l))])],
     });
   }
 
@@ -162,31 +167,29 @@ export const handler = async () => {
   }
 
   const existingKeys = new Set(tasks.map((t) => t.dedupeKey));
-  /** A quote counts as "already marketed" from the trigger date onward. */
-  const quotedSince = (accountId: string, carrierId: string, since: string) =>
-    quotes.some(
-      (q) =>
-        q.accountId === accountId &&
-        q.carrierId === carrierId &&
-        (q.createdAt ?? "").slice(0, 10) >= since
-    );
+  const quotedFor = (accountId: string, carrierId: string, term: string, lines: string[], policyId?: string | null) =>
+    quoteCoverage(quotes, { accountId, carrierId, term, lines, policyId: policyId ?? undefined }, today).complete;
 
   // ── Pass 1: raise tasks ─────────────────────────────────────────────
   let created = 0;
   let skippedAlreadyQuoted = 0;
 
   for (const risk of risks) {
-    // Once the term has lapsed there is nothing left to market.
-    if (risk.expirationDate < today) continue;
+    const wf = await get<{ disposition?: string; deferredUntil?: string }>(`workflow:${risk.accountId}`);
+    if (risk.sourceType === "LEAD" && (wf?.data.disposition && wf.data.disposition !== "ACTIVE" || wf?.data.deferredUntil && wf.data.deferredUntil > new Date().toISOString())) continue;
+    // Lapsed and unmatched risks remain owned placement exceptions.
+    if (risk.expirationDate < today) await issue(`expired-marketing:${risk.sourceId}:${risk.expirationDate}`, "The marketing term has expired. Review replacement coverage with the champion.", risk.accountId);
 
     const facts = riskFacts(risk);
-    if (!facts) continue;
+    if (!facts) { await issue(`marketing-facts:${risk.sourceId}`, "Underwriting facts need review before placement", risk.accountId); continue; }
+    let matches = 0;
 
     for (const carrier of appointed) {
       const carrierGuides = guides.filter((g) => g.carrierId === carrier.id);
       const matching = carrierGuides.filter((g) => guideFits(g, carrier, facts));
       // Appetite-matched only: a carrier with no matching guide is skipped.
       if (matching.length === 0) continue;
+      matches++;
 
       const matchedDays = matching
         .map((g) => g.quoteSubmissionLeadTimeDays)
@@ -203,13 +206,14 @@ export const handler = async () => {
       const dedupeKey = `${risk.sourceType}:${risk.sourceId}:${carrier.id}:${risk.expirationDate}`;
       if (existingKeys.has(dedupeKey)) continue;
 
-      if (quotedSince(risk.accountId, carrier.id, triggerDate)) {
+      if (quotedFor(risk.accountId, carrier.id, risk.expirationDate, risk.lines, risk.policyId)) {
         skippedAlreadyQuoted++;
         existingKeys.add(dedupeKey);
         continue;
       }
 
       const { errors } = await client.models.MarketingTask.create({
+        id: `marketing:${dedupeKey}`,
         accountId: risk.accountId,
         carrierId: carrier.id,
         policyId: risk.policyId,
@@ -228,23 +232,38 @@ export const handler = async () => {
         created++;
         existingKeys.add(dedupeKey);
       } else {
-        console.error("MarketingTask create failed", dedupeKey, errors[0].message);
+        await issue(`marketing-create:${dedupeKey}`, "Carrier submission work could not be scheduled; it will retry", risk.accountId);
+        throw new Error(errors[0].message);
       }
     }
+    if (!matches && today >= addDays(risk.expirationDate, -90)) await issue(`placement:${risk.sourceId}:${risk.expirationDate}`, "No appointed carrier currently matches this risk. The champion must review placement.", risk.accountId);
+    else await resolveIssue(`placement:${risk.sourceId}:${risk.expirationDate}`);
   }
 
   // ── Pass 2: settle tasks a quote has satisfied ──────────────────────
   let completed = 0;
   for (const t of tasks) {
-    if (t.status !== "OPEN") continue;
-    const since = t.triggerDate ?? t.createdAt?.slice(0, 10) ?? today;
-    if (!quotedSince(t.accountId, t.carrierId, since)) continue;
+    if (t.sourceType === "LEAD") {
+      const w = await get<{ disposition?: string; deferredAt?: string; deferredExpiration?: string }>(`workflow:${t.accountId}`);
+      if (w?.data.deferredAt && t.expirationDate !== w.data.deferredExpiration && t.createdAt <= w.data.deferredAt && t.status === "OPEN") {
+        const changed = await client.models.MarketingTask.update({ id: t.id, status: "COMPLETE", resolution: "SUPERSEDED", completedAt: w.data.deferredAt, completedBy: "system (recorded next-year decision)" });
+        if (changed.errors?.length) throw new Error("Could not retire the prior marketing cycle");
+        continue;
+      }
+    }
+    const covered = quotedFor(t.accountId, t.carrierId, t.expirationDate ?? "", (t.lines ?? []).filter((l): l is string => !!l), t.policyId);
+    if (t.status === "COMPLETE" && t.resolution === "QUOTED" && !covered) {
+      const result = await client.models.MarketingTask.update({ id: t.id, status: "OPEN", resolution: null, completedAt: null, completedBy: null });
+      if (result.errors?.length) throw new Error("Could not repair quote coverage for marketing work");
+      continue;
+    }
+    if (t.status !== "OPEN" || !covered) continue;
     const { errors } = await client.models.MarketingTask.update({
       id: t.id,
       status: "COMPLETE",
       resolution: "QUOTED",
       completedAt: new Date().toISOString(),
-      completedBy: "system (quote created)",
+      completedBy: "system (usable quote verified)",
     });
     if (!errors?.length) completed++;
   }

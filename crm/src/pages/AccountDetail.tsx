@@ -266,6 +266,7 @@ export default function AccountDetail({ profile }: { profile: UserProfile }) {
               entityId={account.id}
               linkAccountId={account.id}
               initialLink={searchParams.get("link") ?? undefined}
+              sourceCommunicationId={searchParams.get("request") ?? undefined}
             />
           </div>
           <ExtractionPanel account={account} onChange={setAccount} />
@@ -273,7 +274,7 @@ export default function AccountDetail({ profile }: { profile: UserProfile }) {
         </>
       )}
       {activeTab === "certificates" && (
-        <CertificatesTab account={account} profile={profile} />
+        <CertificatesTab account={account} profile={profile} sourceCommunicationId={searchParams.get("request") ?? undefined} />
       )}
       {activeTab === "activity" && <ActivityTab accountId={account.id} />}
     </>

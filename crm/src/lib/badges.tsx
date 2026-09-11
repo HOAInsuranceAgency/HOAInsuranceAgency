@@ -153,6 +153,7 @@ export const ACCOUNT_STAGE_BADGE = {
  * `amplify/data/resource.ts` for why renaming it is not a one-line change.
  */
 export const MARKETING_RESOLUTION_BADGE = {
+  SUPERSEDED: { cls: "gray", label: "Next-year cycle" },
   QUOTED: { cls: "green", label: "Quoted" },
   OUT_OF_APPETITE: { cls: "gray", label: "Out of carrier appetite" },
   OUT_OF_AGENCY_APPETITE: { cls: "gray", label: "Out of agency appetite" },

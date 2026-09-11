@@ -29,8 +29,10 @@ import { useFormState } from "../../lib/useFormState";
 export function CertificatesTab({
   account,
   profile,
+  sourceCommunicationId,
 }: {
   account: Account;
+  sourceCommunicationId?: string;
   profile: UserProfile;
 }) {
   const certRes = useAsyncResource(
@@ -72,7 +74,7 @@ export function CertificatesTab({
   );
   const carriers = carrierRes.data;
 
-  const [showForm, setShowForm] = useState(false);
+  const [showForm, setShowForm] = useState(!!sourceCommunicationId);
   const { form, setF, reset } = useFormState({
     holderName: "",
     holderAddress: "",
@@ -119,6 +121,7 @@ export function CertificatesTab({
 
     const { data } = await client.models.Certificate.create({
       accountId: account.id,
+      sourceCommunicationId,
       certificateNumber,
       policyIds: form.selectedPolicies,
       holderName: form.holderName.trim(),

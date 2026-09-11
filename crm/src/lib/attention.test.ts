@@ -72,10 +72,10 @@ describe("buildAttentionQueue", () => {
         { accountId: "a3", name: "Far Off HOA", date: "2026-11-24", days: 92, premium: 5000 },
         // The sweep never creates a task for an already-quoted carrier, so
         // a quote in the window must count as marketing started.
-        { accountId: "a4", name: "Quoted Early HOA", date: "2026-09-11", days: 18, premium: 7000 },
+        { accountId: "a4", name: "Quoted Early HOA", date: "2026-09-11", days: 18, premium: 7000, lines: ["Property"] },
       ],
       tasks: [{ accountId: "a2", expirationDate: "2026-09-11", status: "COMPLETE" }],
-      quotes: [{ accountId: "a4", createdAt: "2026-08-01T09:00:00Z" }],
+      quotes: [{ accountId: "a4", status: "QUOTED", premium: 7000, effectiveDate: "2026-09-11", expirationDate: "2027-09-11", lines: ["Property"], createdAt: "2026-08-01T09:00:00Z" }],
     });
     expect(items).toHaveLength(1);
     expect(items[0]).toMatchObject({ kind: "renewal-unmarketed", accountName: "Willow Creek", days: 18 });

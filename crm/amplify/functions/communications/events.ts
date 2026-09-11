@@ -10,7 +10,7 @@ import { dialpadBusinessLine } from "./phoneScope";
 import { intakeReferenceFromHtml } from "../lead-intake/brief";
 
 export type EventRecord = { provider: "front" | "dialpad"; payload: Record<string, unknown>; attempts: number; processedAt?: string; snapshot?: { message: FrontMessage; conversationId: string } };
-export interface ConversationLink { accountId: string; conversationId: string; purpose: "PROSPECT" | "CARRIER"; routing?: "SALESPERSON" | "CHAMPION" | "MANUAL" }
+export interface ConversationLink { accountId: string; conversationId: string; purpose: "PROSPECT" | "CARRIER"; routing?: "SALESPERSON" | "CHAMPION" | "MANUAL"; context?: Communication["context"]; policyId?: string; quoteId?: string }
 type Json = Record<string, unknown>;
 const object = (x: unknown): Json => x && typeof x === "object" && !Array.isArray(x) ? x as Json : {};
 const str = (x: unknown) => typeof x === "string" || typeof x === "number" ? String(x) : "";
@@ -27,6 +27,7 @@ export function classifyEmail(message: Pick<FrontMessage, "text" | "subject" | "
 }
 export async function ingestFrontMessage(message: FrontMessage, conversationId?: string) {
   const cnv = conversationId ?? messageConversation(message);
+  if (cnv && await get(`report-conversation:${cnv}`)) return;
   if (!cnv || !message.id) return;
   // Dialpad is authoritative for phone activity. Native call/SMS records are
   // linked in the sidebar, never imported as a second customer interaction.
@@ -62,9 +63,10 @@ export async function ingestFrontMessage(message: FrontMessage, conversationId?:
     conversationId: cnv, channel: "EMAIL", direction: message.is_inbound ? "INBOUND" : "OUTBOUND", at: eventAt(message.created_at),
     attachments: message.attachments?.map(a => ({ id: a.id, filename: a.filename, content_type: a.content_type, size: a.size })), subject: message.subject, text: message.text?.slice(0, 50000), from: message.recipients?.find(r => r.role === "from")?.handle,
     to: message.recipients?.filter(r => r.role === "to").map(r => r.handle), actorId: message.author?.id, status: message.is_inbound ? "RECEIVED" : "SENT", frontDraft: false,
-    classification: classifyEmail(message), purpose: link?.data.purpose, version: (old?.version ?? 0) + 1 };
+    classification: classifyEmail(message), purpose: link?.data.purpose, context: link?.data.context, policyId: link?.data.policyId, quoteId: link?.data.quoteId, version: (old?.version ?? 0) + 1 };
   // Duplicate event delivery must not reopen a completed episode.
   if (old?.data.workflowApplied || old?.data.resolved) {
+    if (comm.direction === "OUTBOUND" && link) await (await import("./businessDelivery")).applyBusinessDelivery(comm);
     if (old.data.frontDraft !== false) await save(row("COMMUNICATION", old.id, { ...old.data, frontDraft: false }, { accountId: old.accountId, previous: old, dueAt: old.dueAt }), old);
     return;
   }
@@ -73,6 +75,7 @@ export async function ingestFrontMessage(message: FrontMessage, conversationId?:
   if (!link) { await issue(id, "Link this Front enquiry to the correct lead"); return; }
   const linkingIssue = await get(`issue:${id}`);
   if (linkingIssue && !linkingIssue.data.resolved) await save(row("ISSUE", linkingIssue.id, { ...linkingIssue.data, resolved: true }, { accountId: comm.accountId, previous: linkingIssue }), linkingIssue);
+  if (comm.direction === "OUTBOUND") await (await import("./businessDelivery")).applyBusinessDelivery(comm);
   if (link.data.purpose === "CARRIER") {
     if (comm.direction === "INBOUND" && comm.classification !== "AUTOMATIC") await recordInbound(comm, "CARRIER");
     else if (comm.direction === "OUTBOUND") await recordOutbound(comm);

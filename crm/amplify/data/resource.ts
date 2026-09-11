@@ -24,7 +24,7 @@ import { uploadPortal } from "../functions/upload-portal/resource";
 import { portalSweep } from "../functions/portal-sweep/resource";
 import { leadReply } from "../functions/lead-reply/resource";
 import { activityLog } from "../functions/activity-log/resource";
-import { communications, communicationWorker } from "../functions/communications/resource";
+import { communications, communicationWorker, communicationReports } from "../functions/communications/resource";
 
 /**
  * HOA CRM data model.
@@ -179,6 +179,7 @@ const schema = a
       "OUT_OF_APPETITE",
       "OUT_OF_AGENCY_APPETITE",
       "NOT_SUBMITTED_ON_TIME",
+      "SUPERSEDED",
     ]),
     MarketingTaskSource: a.enum(["POLICY", "LEAD"]),
     // ── Licensing ──
@@ -771,6 +772,14 @@ const schema = a
       carrierId: a.id(),
       carrier: a.belongsTo("Carrier", "carrierId"),
       status: a.ref("QuoteStatus").required(),
+      // Additive term provenance; existing quotes remain readable during rollout.
+      renewalPolicyId: a.id(),
+      readyAt: a.datetime(),
+      presentedAt: a.datetime(),
+      bindAuthorizedAt: a.datetime(),
+      bindAuthorizedBy: a.string(),
+      bindAuthorizedTerms: a.string(),
+      offerExpiresAt: a.date(),
       lines: a.string().array(), // e.g. ["Commercial Property", "General Liability", "D&O", "Umbrella"]
       premium: a.float(),
       // Agency commission, % of premium. NOTE: already baked into the
@@ -1461,6 +1470,8 @@ const schema = a
          */
         policyId: a.id(),
         quoteId: a.id(),
+        sourceCommunicationId: a.string(),
+        deliveredAt: a.datetime(),
         category: a.ref("DocumentCategory"),
         name: a.string().required(),
         s3Key: a.string().required(),
@@ -1517,7 +1528,7 @@ const schema = a
       completedAt: a.datetime(),
       completedBy: a.string(),
       notes: a.string(),
-    }),
+    }).secondaryIndexes((index) => [index("accountId")]),
 
     // ── Certificates (ACORD 25 issuance history) ───────────────────────
     //
@@ -1526,6 +1537,8 @@ const schema = a
     // issuance record shouldn't be erasable by whoever issued it anyway.
     // No Lambda touches this model.
     Certificate: a.model({
+      sourceCommunicationId: a.string(),
+      deliveredAt: a.datetime(),
       accountId: a.id().required(),
       account: a.belongsTo("Account", "accountId"),
       // Who made this write — see the Contact model's note.
@@ -2290,6 +2303,7 @@ const schema = a
     allow.resource(leadIntake),
     allow.resource(communications),
     allow.resource(communicationWorker),
+    allow.resource(communicationReports),
     // The AI extraction function reads Documents and updates Accounts.
     allow.resource(extractLead),
     // The form filler reads an account and everything under it. It writes

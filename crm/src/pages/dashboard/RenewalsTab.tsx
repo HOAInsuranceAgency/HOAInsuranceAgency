@@ -147,7 +147,9 @@ export default function RenewalsTab() {
         quotedWithinWindow(
           quotesByAccount.get(base.accountId) ?? [],
           base.date,
-          daysUntil
+          daysUntil,
+          { accountId: base.accountId, policyId: policies.find(p => p.accountId === base.accountId && p.expirationDate === base.date)?.id,
+            lines: [...new Set(policies.filter(p => p.accountId === base.accountId && p.expirationDate === base.date).flatMap(p => (p.lines ?? []).filter((l): l is string => !!l)))] }
         )
       ),
     }));

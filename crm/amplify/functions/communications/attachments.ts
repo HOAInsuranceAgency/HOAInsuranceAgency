@@ -26,18 +26,7 @@ export async function importAttachment(op: Operation) {
   catch(e) { if ((e as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode !== 404) throw e; }
   let downloaded: Buffer | undefined;
   if (!exists || !existing.data) {
-    const token = (await credentials()).frontToken;
-    let response = await fetch(`https://api2.frontapp.com/download/${attachment.id}`, { headers: { Authorization: `Bearer ${token}` }, redirect: "manual", signal: AbortSignal.timeout(15_000) });
-    if (response.status >= 300 && response.status < 400) {
-      const url = new URL(response.headers.get("location") ?? "");
-      // A provider-signed file URL is fetched without forwarding the API token.
-      if (url.protocol !== "https:" || url.username || url.password || !/\.(?:amazonaws\.com|cloudfront\.net)$/.test(url.hostname)) throw new Error("Front attachment download location needs review");
-      response = await fetch(url, { redirect: "error", signal: AbortSignal.timeout(20_000) });
-    }
-    if (!response.ok || !response.body) throw new Error(`Attachment download failed (${response.status})`);
-    const reader = response.body.getReader(), chunks: Uint8Array[] = []; let size = 0;
-    while (true) { const value = await reader.read(); if (value.done) break; size += value.value.byteLength; if (size > MAX_BYTES) { await reader.cancel(); throw new Error("Attachment exceeds the 25 MB limit"); } chunks.push(value.value); }
-    downloaded = Buffer.concat(chunks);
+    downloaded = await downloadFrontAttachment(attachment.id);
   }
   // Validate and fully download before making a document visible. Rejected
   // hosts, oversized bodies and failed downloads cannot leave empty documents.
@@ -50,4 +39,20 @@ export async function importAttachment(op: Operation) {
   const old = await get(`attachment:${documentId}`);
   if (!old) await save(row("ATTACHMENT", `attachment:${documentId}`, { accountId: op.accountId, documentId, messageId: message.id, attachmentId: attachment.id }, { accountId: op.accountId }));
   return documentId;
+}
+
+export async function downloadFrontAttachment(attachmentId: string) {
+  if (!/^fil_[a-z0-9]+$/.test(attachmentId)) throw new Error("Invalid Front attachment");
+    const token = (await credentials()).frontToken;
+    let response = await fetch(`https://api2.frontapp.com/download/${attachmentId}`, { headers: { Authorization: `Bearer ${token}` }, redirect: "manual", signal: AbortSignal.timeout(15_000) });
+    if (response.status >= 300 && response.status < 400) {
+      const url = new URL(response.headers.get("location") ?? "");
+      // A provider-signed file URL is fetched without forwarding the API token.
+      if (url.protocol !== "https:" || url.username || url.password || !/\.(?:amazonaws\.com|cloudfront\.net)$/.test(url.hostname)) throw new Error("Front attachment download location needs review");
+      response = await fetch(url, { redirect: "error", signal: AbortSignal.timeout(20_000) });
+    }
+    if (!response.ok || !response.body) throw new Error(`Attachment download failed (${response.status})`);
+    const reader = response.body.getReader(), chunks: Uint8Array[] = []; let size = 0;
+    while (true) { const value = await reader.read(); if (value.done) break; size += value.value.byteLength; if (size > MAX_BYTES) { await reader.cancel(); throw new Error("Attachment exceeds the 25 MB limit"); } chunks.push(value.value); }
+    return Buffer.concat(chunks);
 }

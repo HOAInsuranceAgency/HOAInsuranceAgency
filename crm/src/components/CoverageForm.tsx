@@ -1,3 +1,5 @@
+import { listAllPages } from "../lib/pagination";
+import { useAsyncResource } from "../lib/useAsyncResource";
 import { useState } from "react";
 import {
   client,
@@ -48,11 +50,14 @@ export default function CoverageForm({
   onCancel: () => void;
 }) {
   const isPolicy = kind === "policy";
+  const policies = useAsyncResource(() => isPolicy ? Promise.resolve([]) : listAllPages(token => client.models.Policy.list({ filter: { accountId: { eq: accountId } }, nextToken: token })), [accountId, isPolicy], { initialData: [] });
   const editing = !!existing;
   const asPolicy = existing as Policy | null;
 
   const { form, setF, patch } = useFormState({
     carrierId: existing?.carrierId ?? "",
+    renewalPolicyId: (existing as Quote | null)?.renewalPolicyId ?? "",
+    offerExpiresAt: (existing as Quote | null)?.offerExpiresAt ?? "",
     policyNumber: asPolicy?.policyNumber ?? "",
     billType: asPolicy?.billType ?? "",
     // MEP rides along as underwriting data. Its screen — and auditable's,
@@ -162,6 +167,10 @@ export default function CoverageForm({
           id: existing.id,
           ...shared,
           status: form.status as Quote["status"],
+          renewalPolicyId: form.renewalPolicyId || null,
+          offerExpiresAt: form.offerExpiresAt || null,
+          ...(["QUOTED", "PRESENTED"].includes(form.status) && !(existing as Quote | null)?.readyAt ? { readyAt: new Date().toISOString() } : {}),
+          ...(form.status === "PRESENTED" && !(existing as Quote | null)?.presentedAt ? { presentedAt: new Date().toISOString() } : {}),
           minimumEarnedPremiumPct: form.mepPct.trim() === "" ? null : Number(form.mepPct),
         });
         if (errors?.length) throw new Error(errors[0].message);
@@ -170,6 +179,10 @@ export default function CoverageForm({
           accountId,
           ...shared,
           status: form.status as Quote["status"],
+          renewalPolicyId: form.renewalPolicyId || null,
+          offerExpiresAt: form.offerExpiresAt || null,
+          ...(["QUOTED", "PRESENTED"].includes(form.status) && !(existing as Quote | null)?.readyAt ? { readyAt: new Date().toISOString() } : {}),
+          ...(form.status === "PRESENTED" && !(existing as Quote | null)?.presentedAt ? { presentedAt: new Date().toISOString() } : {}),
           minimumEarnedPremiumPct: form.mepPct.trim() === "" ? null : Number(form.mepPct),
         });
         if (errors?.length) throw new Error(errors[0].message);
@@ -249,6 +262,8 @@ export default function CoverageForm({
             </select>
           </div>
         )}
+        {!isPolicy && policies.data.length > 0 && <label className="field">Renewal of<select value={form.renewalPolicyId} onChange={e => { const p = policies.data.find(p => p.id === e.target.value); setF("renewalPolicyId", e.target.value); if (p?.expirationDate && !form.effectiveDate) setF("effectiveDate", p.expirationDate); }}><option value="">New business</option>{policies.data.map(p => <option value={p.id} key={p.id}>{p.policyNumber || "Policy"} · {p.lines?.join(", ")} · expires {p.expirationDate}</option>)}</select></label>}
+        {!isPolicy && <label className="field">Offer valid through (if specified by carrier)<DateInput value={form.offerExpiresAt} onChange={v => setF("offerExpiresAt", v)} /></label>}
         <div className="field">
           <label>Status</label>
           <select
