@@ -12,10 +12,6 @@ import { describe, expect, it } from "vitest";
  * missing row has no supported repair path. So the transition and the row
  * are one TransactWriteItems: both land or neither does.
  *
- * And activation's board-resolution document id must be a real Document on
- * the loan's account, recorded in the compliance row — a pasted-wrong id
- * otherwise activates a lending agreement whose power-of-attorney evidence
- * points at nothing, silently and forever.
  */
 const read = (rel: string) => readFileSync(resolve(process.cwd(), rel), "utf8");
 
@@ -73,51 +69,5 @@ describe("cancellation and its notice are one write", () => {
       BACKEND.indexOf('["PF_NOTICE_TABLE", "PfNotice"]') + 400
     );
     expect(loop).toContain("grantReadWriteData(backend.pfServicing.resources.lambda)");
-  });
-});
-
-describe("activation checks the resolution document is on file", () => {
-  const SERVICING = read("amplify/functions/pf-servicing/handler.ts");
-
-  it("fetches the Document and requires this account's", () => {
-    expect(SERVICING).toContain("client.models.Document.get({ id: documentId })");
-    expect(SERVICING).toContain("resolutionDoc.entityId !== loan.accountId");
-  });
-
-  it("requires the executed-resolution category positively", () => {
-    // "Some document on this account" proves nothing — a dec page or an
-    // invoice PDF would pass a denylist. Activation accepts exactly one
-    // category, the one the upload picker labels "Executed board
-    // resolution"; the generated draft — filed on the SAME account, named
-    // for this very loan, the likeliest wrong paste — gets its own
-    // pointed refusal.
-    expect(SERVICING).toContain('resolutionDoc.category !== "PF_RESOLUTION_EXECUTED"');
-    expect(SERVICING).toContain('resolutionDoc.category === "PF_BOARD_RESOLUTION"');
-    expect(SERVICING).toContain("the generated draft, not an executed resolution");
-    expect(SERVICING).toContain("isn't filed as an executed board resolution");
-  });
-
-  it("a failed lookup is not a missing document", () => {
-    // A resolver throttle must not write a permanent BLOCK row asserting
-    // "not on file" about a registry that merely didn't answer.
-    expect(SERVICING).toMatch(/docErrs\?\.length/);
-    expect(SERVICING).toContain("Couldn't look up that document. Try again.");
-  });
-
-  it("records the attested id in the compliance rows, pass and block", () => {
-    // The BLOCK for a missing/foreign document names the id…
-    expect(SERVICING).toMatch(/rule: "board-resolution"[\s\S]{0,400}inputs: \{ loanId: loan\.id, documentId \}/);
-    // …and the staleness PASS/BLOCK row carries it too.
-    expect(SERVICING).toContain("inputs: { loanId: loan.id, executed, quotedDay, documentId }");
-  });
-
-  it("the staleness boundary is the loan's quote date, not the term start", () => {
-    // The E2E caught the original rule refusing every advance-bound deal:
-    // boards authorize the agreement in front of them BEFORE coverage
-    // begins. What must be refused is paper that predates this loan —
-    // last term's resolution — and a date from the future.
-    expect(SERVICING).toContain("executed < quotedDay");
-    expect(SERVICING).toContain("is in the future");
-    expect(SERVICING).not.toContain("before the financed term began");
   });
 });

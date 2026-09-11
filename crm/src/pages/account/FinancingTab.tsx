@@ -312,9 +312,8 @@ export function FinancingTab({ account }: { account: Account }) {
   const [openLoan, setOpenLoan] = useState<string | null>(null);
 
   /**
-   * Renders the agreement + board resolution from the loan's frozen terms and
-   * files both in Documents. Regenerating overwrites nothing — each run makes
-   * fresh Document rows — so a re-quote leaves the old paper in the trail.
+   * Renders the financing agreement from the loan's frozen terms and
+   * files it in Documents with the signature recorded at deposit.
    */
   async function generateAgreement(loanId: string) {
     await agreementStatus.run(
@@ -324,7 +323,7 @@ export function FinancingTab({ account }: { account: Account }) {
         const result =
           typeof data === "string" ? JSON.parse(data) : (data as Record<string, unknown>);
         if (!result?.ok) throw new Error(String(result?.error ?? "Generation failed."));
-        return "Agreement and board resolution filed in Documents.";
+        return "Financing agreement filed in Documents.";
       },
       { errorMessage: "Couldn't generate the agreement." }
     );

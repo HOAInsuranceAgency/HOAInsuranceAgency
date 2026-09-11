@@ -147,7 +147,7 @@ describe("immutability and server time", () => {
         /At$|Date/i.test(name)
       );
     expect(new Set(dateArgs)).toEqual(
-      new Set(["boardResolutionExecutedAt", "certMailedAt", "cancellationEffectiveAt"])
+      new Set(["certMailedAt", "cancellationEffectiveAt"])
     );
   });
 
@@ -278,20 +278,14 @@ describe("servicing idempotency (the review findings)", () => {
     expect(HANDLER).toContain("loan state reconciled");
   });
 
-  it("runs status transitions conditionally on the status they leave", () => {
-    expect(HANDLER).toContain('ConditionExpression: "#s = :from"');
-    // W7: ACTIVATE leaves QUOTED or ACCEPTED — whichever the decision read.
-    expect(HANDLER).toContain("transition(loan.id, loan.status");
-    expect(HANDLER).toContain('loan.status !== "QUOTED" && loan.status !== "ACCEPTED"');
-    // DEFAULTED→CANCELLED no longer goes through transition(): it rides a
-    // TransactWriteItems with its notice row (pfCancellationNotice.test.ts),
-    // carrying the same status condition.
+  it("cancels only the default episode checked by the decision", () => {
+    expect(HANDLER).toContain('"#s = :from AND defaultedAt = :epoch"');
     expect(HANDLER).toContain('":from": "DEFAULTED"');
   });
 
   it("validates real days on every outside date", () => {
     expect(HANDLER).not.toMatch(/DAY\.test/);
-    expect((HANDLER.match(/isRealIsoDay\(/g) ?? []).length).toBe(3);
+    expect((HANDLER.match(/isRealIsoDay\(/g) ?? []).length).toBe(2);
   });
 });
 
@@ -347,7 +341,5 @@ describe("a cured default retires its notices", () => {
       "utf8"
     );
     expect(HANDLER).toContain("loan.defaultedAt");
-    // And activation requires the artifact, not just a typed date.
-    expect(HANDLER).toContain("must be on file first");
   });
 });

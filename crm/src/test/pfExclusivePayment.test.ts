@@ -12,9 +12,9 @@ import { describe, expect, it } from "vitest";
  *  - Full payment wins retroactively: the webhook, on PAID, cancels any
  *    QUOTED loan on the invoice's policy. QUOTED only — an ACTIVE loan means
  *    money already moved, which is a human's problem, loudly.
- *  - Activation refuses proactively: while an invoice on the policy still
+ *  - Election refuses proactively: while an invoice on the policy still
  *    offers pay-in-full (PROCESSING, or SENT with a live link), the loan
- *    cannot activate.
+ *    cannot elect.
  */
 const read = (rel: string) => readFileSync(resolve(process.cwd(), rel), "utf8");
 
@@ -62,28 +62,11 @@ describe("full payment supersedes quoted loans", () => {
   });
 });
 
-describe("activation refuses while pay-in-full is open", () => {
-  const SERVICING = read("amplify/functions/pf-servicing/handler.ts");
-
-  it("blocks on PROCESSING and on SENT with a live link", () => {
-    expect(SERVICING).toContain('inv.status === "PROCESSING"');
-    expect(SERVICING).toMatch(
-      /inv\.status === "SENT" && inv\.stripePaymentLinkId\?\.trim\(\)/
-    );
-  });
-
-  it("logs the refusal as a compliance row", () => {
-    expect(SERVICING).toContain('rule: "exclusive-payment-path"');
-  });
-
-  it("sweeps every invoice page — a filter after pagination can miss", () => {
-    const at = SERVICING.indexOf('rule: "exclusive-payment-path"');
-    const guard = SERVICING.slice(at - 2000, at);
-    expect(guard).toContain("listAllPages");
-  });
-
-  it("PROCESSING means they already chose — the message says cancel, not retry", () => {
-    expect(SERVICING).toContain("this quote should be cancelled");
-    expect(SERVICING).toContain("Void it first");
+describe("initial election closes pay-in-full paths", () => {
+  const ELECTION = read("amplify/functions/pf-election/handler.ts");
+  it("refuses a processing invoice and closes sent links before checkout", () => {
+    expect(ELECTION).toContain('i.status === "PROCESSING"');
+    expect(ELECTION).toContain("voidInvoice({");
+    expect(ELECTION.indexOf("voidInvoice({")).toBeLessThan(ELECTION.indexOf("stripe.checkout.sessions.create"));
   });
 });

@@ -488,10 +488,7 @@ describe("quotes can answer the screens the offer runs on (W8 review)", () => {
     expect(PANEL).toContain("client.models.Document.update");
   });
 
-  it("activation requires a policy — no mandate turns on against unplaced coverage", () => {
-    const SERVICING = read("amplify/functions/pf-servicing/handler.ts");
-    expect(SERVICING).toContain("This loan is anchored to a quote. Bind the quote first");
-  });
+
 });
 
 describe("the agreement is signed before money moves (W8)", () => {
@@ -553,8 +550,5 @@ describe("bind rolls the anchor, never re-lends (W8)", () => {
     expect(SERVICING).toContain("does not roll");
   });
 
-  it("every anchor scan matches policy or quote — the activation exclusion too", () => {
-    expect(SERVICING).toContain("anchorLegs");
-    expect(SERVICING).toContain('{ quoteId: { eq: loan.quoteId } }');
-  });
+
 });

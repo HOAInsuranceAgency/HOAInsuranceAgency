@@ -4,7 +4,7 @@ import { formatMoney } from "../../../src/lib/invoiceTotals";
 import type { ScheduleRow } from "../../../src/lib/premiumFinance/quote";
 
 /**
- * The premium finance agreement, and the board resolution beside it.
+ * The single premium finance agreement signed at deposit.
  *
  * Drawn with pdf-lib in the send-invoice/pdf.ts manner. Everything legal in
  * here is fixed text reviewed with the spec — the variables are only names,
@@ -27,8 +27,9 @@ import {
   POWER_OF_ATTORNEY,
   PREPAYMENT_TERMS,
   CANCELLATION_PROCEDURE,
+  SECURITY_INTEREST_AND_AUTHORITY,
 } from "./agreementTerms";
-export { OWNERSHIP_DISCLOSURE, POWER_OF_ATTORNEY, PREPAYMENT_TERMS, CANCELLATION_PROCEDURE };
+export { OWNERSHIP_DISCLOSURE, POWER_OF_ATTORNEY, PREPAYMENT_TERMS, CANCELLATION_PROCEDURE, SECURITY_INTEREST_AND_AUTHORITY };
 
 export interface AgreementView {
   loanId: string;
@@ -238,10 +239,7 @@ export async function renderAgreementPdf(v: AgreementView): Promise<Uint8Array> 
   clause(null, POWER_OF_ATTORNEY);
   clause(null, PREPAYMENT_TERMS);
   clause(null, CANCELLATION_PROCEDURE);
-  clause(
-    "SECURITY INTEREST",
-    "The unearned premium and unearned dividends under the policy identified above secure this loan. The Borrower represents that the board of the association has authorized this agreement by resolution executed for the current policy term."
-  );
+  clause(null, SECURITY_INTEREST_AND_AUTHORITY);
 
   // ── Signatures ────────────────────────────────────────────────────────
   if (y < M.bottom + 110) {
@@ -256,7 +254,7 @@ export async function renderAgreementPdf(v: AgreementView): Promise<Uint8Array> 
     page.drawText(`/s/ ${v.signedName}`, { x: M.left, y, size: 11, font: fonts.bold, color: INK });
     page.drawText(signedDay, { x: M.left + 260, y, size: 10, font: fonts.regular, color: INK });
     page.drawText(
-      `${v.associationName} — ${v.signedRole ?? "Authorized signatory"}, per board resolution`,
+      `${v.associationName} — ${v.signedRole ?? "Authorized signatory"}`,
       { x: M.left, y: y - 12, size: 8, font: fonts.regular, color: MUTED }
     );
     page.drawText(
@@ -269,7 +267,7 @@ export async function renderAgreementPdf(v: AgreementView): Promise<Uint8Array> 
   } else {
     page.drawLine({ start: { x: M.left, y }, end: { x: M.left + 220, y }, thickness: 0.75, color: INK });
     page.drawLine({ start: { x: M.left + 260, y }, end: { x: M.left + 360, y }, thickness: 0.75, color: INK });
-    const signatureLabel = wrap(`${v.associationName} — Authorized signatory, per board resolution`, fonts.regular, 8, 220);
+    const signatureLabel = wrap(`${v.associationName} — Authorized signatory`, fonts.regular, 8, 220);
     signatureLabel.forEach((line, i) => page.drawText(line, {
       x: M.left, y: y - 12 - i * 10, size: 8, font: fonts.regular, color: MUTED,
     }));
@@ -289,57 +287,6 @@ export async function renderAgreementPdf(v: AgreementView): Promise<Uint8Array> 
     p.drawText(`${AGENCY.name} · ${AGENCY.addressLine1}, ${AGENCY_FMT.addressLine2} · ${AGENCY.phone}`, {
       x: M.left, y: M.bottom - 20, size: 7.5, font: fonts.regular, color: MUTED,
     });
-  }
-  return doc.save();
-}
-
-/**
- * The board resolution the association executes — re-required at every
- * renewal, because boards turn over annually and a receiver can replace one
- * mid-term. Activation refuses a resolution executed before this loan was
- * quoted (the staleness rule, re-drawn 2026-08-24: the boundary is the
- * loan's own quote date, because boards legitimately authorize the
- * agreement in front of them before coverage begins).
- */
-export async function renderBoardResolutionPdf(v: AgreementView): Promise<Uint8Array> {
-  const doc = await PDFDocument.create();
-  doc.setTitle(`Board Resolution — ${v.associationName}`);
-  const fonts: Fonts = {
-    regular: await doc.embedFont(StandardFonts.Helvetica),
-    bold: await doc.embedFont(StandardFonts.HelveticaBold),
-  };
-  const page = doc.addPage([PAGE.w, PAGE.h]);
-  let y: number = M.top;
-
-  page.drawText("RESOLUTION OF THE BOARD", { x: M.left, y, size: 16, font: fonts.bold, color: NAVY });
-  y -= 18;
-  page.drawText(v.associationName, { x: M.left, y, size: 11, font: fonts.bold, color: INK });
-  y -= 28;
-
-  const body = [
-    `RESOLVED, that ${v.associationName} (the "Association") is authorized to enter into a premium finance agreement with ${AGENCY.name} to finance ${formatMoney(v.amountFinanced)} of the ${formatMoney(v.premium)} premium for insurance policy ${v.policyNumber ?? "(number pending)"}${v.carrierName ? ` issued by ${v.carrierName}` : ""}, for the policy term beginning ${v.effectiveDate}, with an initial payment of ${formatMoney(Math.round((v.downPayment + v.originationFee) * 100) / 100)} (premium down payment ${formatMoney(v.downPayment)} plus origination fee ${formatMoney(v.originationFee)}) due at inception as payment 1, at ${v.apr.toFixed(2)}% APR over ${v.months} further monthly installments of ${formatMoney(v.payment)};`,
-    `RESOLVED FURTHER, that the person named below is authorized to execute the premium finance agreement, including its power of attorney, on the Association's behalf;`,
-    `RESOLVED FURTHER, that the board acknowledges the lender is the same company that placed the insurance, earning interest in addition to commission, and that the Association is free to finance elsewhere or pay the premium in full.`,
-    `This resolution is executed for the current policy term. A new resolution is required at each renewal.`,
-  ];
-  for (const para of body) {
-    for (const row of wrap(para, fonts.regular, 10, M.right - M.left)) {
-      page.drawText(row, { x: M.left, y, size: 10, font: fonts.regular, color: INK });
-      y -= 13;
-    }
-    y -= 8;
-  }
-
-  y -= 20;
-  for (const label of [
-    "Authorized signatory (name and office)",
-    "Signature",
-    "Date of execution",
-    "Certified by (secretary of the association)",
-  ]) {
-    page.drawLine({ start: { x: M.left, y }, end: { x: M.left + 300, y }, thickness: 0.75, color: INK });
-    page.drawText(label, { x: M.left, y: y - 12, size: 8, font: fonts.regular, color: MUTED });
-    y -= 42;
   }
   return doc.save();
 }

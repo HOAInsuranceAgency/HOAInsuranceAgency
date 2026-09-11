@@ -102,10 +102,7 @@ const schema = a
       // Generated premium-finance paperwork — never uploaded, never extracted.
       "PF_AGREEMENT",
       "PF_BOARD_RESOLUTION",
-      // The SIGNED scan of the board resolution, uploaded by hand. Its own
-      // category because activation requires it positively: "some document
-      // on the account" proves nothing, and the generated draft above is
-      // the likeliest wrong paste.
+      // Legacy category retained for historical records; no longer requested.
       "PF_RESOLUTION_EXECUTED",
       "PROPERTY_UPDATES", // roof/electrical/plumbing/heating work
       "OTHER",
@@ -1162,12 +1159,7 @@ const schema = a
         activatedAt: a.datetime(),
         /** Set when a due installment goes unposted; cured by a posting. */
         defaultedAt: a.datetime(),
-        /**
-         * For legacy staff-originated loans, the resolution date is checked against
-         * the financed term's effective date — the staleness rule. Boards
-         * turn over annually; a resolution from the prior term authorizes
-         * nothing.
-         */
+        /** Historical fields only. The financing agreement is the sole required document. */
         boardResolutionExecutedAt: a.date(),
         boardResolutionDocumentId: a.string(),
         cancellationEffectiveAt: a.date(),
@@ -2210,10 +2202,8 @@ const schema = a
       .handler(a.handler.function(pfOriginate)),
 
     /**
-     * Render the agreement + board resolution for a quoted loan, from the
-     * loan's FROZEN terms, filed through Documents. The staleness rule for
-     * the executed resolution is enforced at activation, not here — this
-     * generates the paper the board has not signed yet.
+     * Render the financing agreement from the loan's frozen terms and recorded
+     * deposit-time signature. This is the only financing document required.
      */
     generatePfAgreement: a
       .mutation()
@@ -2224,9 +2214,8 @@ const schema = a
 
     /**
      * Everything that happens to a loan after issuance, in one Lambda-backed
-     * mutation dispatched on `action`: ACTIVATE (with the board-resolution
-     * staleness rule), POST_PAYMENT (split from the frozen schedule, lending
-     * account required), NOTICE_INTENT, RECORD_CERT, REQUEST_CANCELLATION
+     * mutation dispatched on `action`: POST_PAYMENT (split from the frozen
+     * schedule), NOTICE_INTENT, RECORD_CERT, REQUEST_CANCELLATION
      * (refused until intent + certificate + 15 days). The origination gate is
      * deliberately absent from all of it: we cannot un-lend.
      */
@@ -2235,6 +2224,7 @@ const schema = a
       .arguments({
         loanId: a.string().required(),
         action: a.string().required(),
+        /** Deprecated compatibility arguments, ignored by the servicing handler. */
         boardResolutionExecutedAt: a.string(),
         boardResolutionDocumentId: a.string(),
         noticeId: a.string(),

@@ -146,11 +146,6 @@ describe("ACCEPTED loans and autopay", () => {
         },
       ])
     );
-    models.Document.list.mockImplementation(() =>
-      page([
-        { id: "d-exec", name: "Board resolution — signed.pdf", category: "PF_RESOLUTION_EXECUTED" },
-      ])
-    );
     await openServicing();
 
     expect(await screen.findByText("ACCEPTED")).toBeInTheDocument();

@@ -21,3 +21,7 @@ export const PREPAYMENT_TERMS =
 
 export const CANCELLATION_PROCEDURE =
   "CANCELLATION ON DEFAULT. If an installment is not paid when due, the Lender will mail the Borrower written notice of intent to cancel, with a United States Postal Service certificate of mailing, at least 15 days before any cancellation request is made. If the default is not cured within that period, the Lender may request cancellation of the policy from the insurer and will send the Borrower notice of the cancellation request at the same time. Unearned premium returned by the insurer, expected within 30 days of the cancellation effective date, is applied to the Borrower's balance under the power of attorney above.";
+
+/** The signer's authority is part of the single agreement signed at deposit. */
+export const SECURITY_INTEREST_AND_AUTHORITY =
+  "SECURITY INTEREST AND AUTHORITY. The unearned premium and unearned dividends under the policy identified above secure this loan. By signing this agreement, the signatory represents that they are authorized to enter into it on behalf of the Borrower.";

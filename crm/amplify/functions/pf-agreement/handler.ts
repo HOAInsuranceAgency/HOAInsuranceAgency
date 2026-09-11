@@ -5,7 +5,6 @@ import { getAmplifyDataClientConfig } from "@aws-amplify/backend/function/runtim
 import type { Schema } from "../../data/resource";
 import {
   renderAgreementPdf,
-  renderBoardResolutionPdf,
   type AgreementView,
 } from "./agreementPdf";
 import { parseScheduleJson } from "../../../src/lib/premiumFinance/quote";
@@ -14,7 +13,7 @@ import { parseScheduleJson } from "../../../src/lib/premiumFinance/quote";
  * Custom mutation handler: generatePfAgreement. See resource.ts.
  *
  * Renders from the LOAN's frozen terms, never from the live policy row — the
- * paper a board signs must match the quote that was approved, whatever has
+ * agreement the customer signs must match the approved quote, whatever has
  * been edited since. The policy contributes only its identifying facts
  * (number, carrier, term), which appear on the paper as identification.
  */
@@ -119,28 +118,19 @@ export const handler = async (event: {
       signedIp: loan.agreementSignedIp,
     };
 
-    const [agreement, resolution] = await Promise.all([
-      renderAgreementPdf(view),
-      renderBoardResolutionPdf(view),
-    ]);
+    const agreement = await renderAgreementPdf(view);
 
     /**
      * Under generated/, like the ACORD output, so the OCR upload trigger
      * never re-reads the app's own paperwork; the Document rows point there
      * with ocrStatus SKIPPED for the same reason FormsTab's do.
      */
-    const docs: { key: string; name: string; category: "PF_AGREEMENT" | "PF_BOARD_RESOLUTION"; bytes: Uint8Array }[] = [
+    const docs: { key: string; name: string; category: "PF_AGREEMENT"; bytes: Uint8Array }[] = [
       {
         key: `generated/pf/${loan.id}/premium-finance-agreement.pdf`,
         name: `Premium finance agreement — ${view.associationName}.pdf`,
         category: "PF_AGREEMENT",
         bytes: agreement,
-      },
-      {
-        key: `generated/pf/${loan.id}/board-resolution.pdf`,
-        name: `Board resolution — ${view.associationName}.pdf`,
-        category: "PF_BOARD_RESOLUTION",
-        bytes: resolution,
       },
     ];
     const created: string[] = [];
@@ -172,7 +162,7 @@ export const handler = async (event: {
       created.push(row.id);
     }
 
-    console.log(`pf-agreement: rendered agreement + resolution for loan ${loan.id}`);
+    console.log(`pf-agreement: rendered agreement for loan ${loan.id}`);
     return { ok: true, documentIds: created };
   } catch (err) {
     console.error("pf-agreement failed", err);

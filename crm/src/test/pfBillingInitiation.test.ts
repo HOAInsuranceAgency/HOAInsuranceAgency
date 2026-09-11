@@ -22,6 +22,7 @@ vi.mock("stripe", () => ({ default: class {
 vi.mock("../../amplify/functions/void-invoice/handler", () => ({ handler: vi.fn() }));
 import { handler as elect } from "../../amplify/functions/pf-election/handler";
 import { handler as collect } from "../../amplify/functions/pf-autopay/handler";
+import { SECURITY_INTEREST_AND_AUTHORITY } from "../../amplify/functions/pf-agreement/agreementTerms";
 
 const loan = {
   id: "loan-1", accountId: "account-1", policyId: "policy-1", state: "RI", status: "QUOTED",
@@ -47,6 +48,16 @@ beforeEach(() => {
 });
 
 describe("billing initiation", () => {
+  it("includes signing authority in the same agreement and requires that signature before deposit", async () => {
+    const terms = await elect({ arguments: { token: loan.electionToken } });
+    expect(terms).toMatchObject({ agreementTerms: expect.arrayContaining([SECURITY_INTEREST_AND_AUTHORITY]) });
+    m.lookup.mockResolvedValue({ data: [{ ...loan, agreementSignedAt: null }] });
+    expect(await elect({ arguments: { accept: true, token: loan.electionToken } })).toMatchObject({
+      ok: false, error: expect.stringContaining("sign the agreement first"),
+    });
+    expect(m.checkout).not.toHaveBeenCalled();
+  });
+
   it("creates the real Checkout request with premium plus fee and a reusable monthly mandate", async () => {
     expect(await elect({ arguments: { accept: true, token: loan.electionToken } })).toMatchObject({ state: "checkout" });
     const params = m.checkout.mock.calls[0][0];
