@@ -2,12 +2,19 @@ import { get, issue, row, save } from "./store";
 import { config } from "./config";
 import { resolveIssue } from "./routing";
 import { businessDate } from "../../../../shared/leadWorkflow";
+import { validateCompleteRouting } from "../../../../shared/workRouting";
+import { routing } from "./routing";
+import { team } from "./workflow";
 
 /** Runs independently of the delivery worker, including when that worker stops. */
 export const handler = async () => {
   const c = await config(); if (!c.activatedAt) return;
   const now = new Date(), worker = await get("health:worker"), census = await get("coverage:census");
   const errors: string[] = [];
+  if (!c.paused) {
+    try { validateCompleteRouting(await routing(), await team()); }
+    catch { errors.push("Manager or owner coverage is incomplete. Repair team routing before relying on escalation delivery."); }
+  }
   if (!worker || worker.data.lagging || now.getTime() - Date.parse(String(worker.data.at)) > 300_000) errors.push("Communication processing has stopped. Incoming work may be missing.");
   if (!census?.data.completedAt || now.getTime() - Date.parse(String(census.data.completedAt)) > 24 * 3600_000) errors.push("The daily account coverage check has not completed.");
   const day = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" }).format(now);

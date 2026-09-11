@@ -1,6 +1,6 @@
-import { taskRoute, validateRouting } from "../../../../shared/workRouting";
-import type { TeamRouting, TeamEligibility, LeadTask, LeadWorkflow } from "../../../../shared/leadWorkflow";
-import { get, save, row, commit, put, audit } from "./store";
+import { taskRoute, validateRouting, validateCompleteRouting } from "../../../../shared/workRouting";
+import type { TeamRouting, TeamEligibility, LeadTask, LeadWorkflow, IntegrationConfig } from "../../../../shared/leadWorkflow";
+import { get, save, row, commit, put, audit, check } from "./store";
 import { team, enabledUser, UnavailableTeammateError } from "./workflow";
 
 export async function routing(): Promise<TeamRouting> {
@@ -34,6 +34,9 @@ export async function saveRouting(input: TeamRouting, actor: string, roster?: Te
   const old = await get<TeamRouting>("team-routing");
   if (input.version !== (old?.version ?? 0)) throw new Error("Team settings changed. Refresh before saving.");
   const members = roster ?? await team(); validateRouting(input, members);
+  const configuration = await get<IntegrationConfig>("config");
+  const c = configuration?.data ?? await (await import("./config")).config();
+  if (c.activatedAt && !c.paused) validateCompleteRouting(input, members);
   const ids = new Set([input.ownerId, input.marketingManagerId, input.intakeOwnerId, input.integrationOwnerId, ...input.members.flatMap(m => [m.userId, m.salesManagerId, m.coverId])].filter((id): id is string => !!id));
   for (const id of ids) await enabledUser(id);
   if (input.reportChannelId) await (await import("./reports")).verifyReportChannel(input.reportChannelId);
@@ -43,7 +46,7 @@ export async function saveRouting(input: TeamRouting, actor: string, roster?: Te
     await save(row("ELIGIBILITY", `eligibility:${id}`, { ...member, salesperson: false, champion: false, enabled: true }));
   }
   const next = row("TEAM_ROUTING", "team-routing", { ...input, version: (old?.version ?? 0) + 1 }, { previous: old });
-  await commit([put(next, old), audit("TEAM", actor, "Managers and coverage updated", input)]);
+  await commit([put(next, old), configuration ? check(configuration) : { ConditionCheck: { TableName: process.env.COMMUNICATION_TABLE!, Key: { id: "config" }, ConditionExpression: "attribute_not_exists(id)" } }, audit("TEAM", actor, "Managers and coverage updated", input)]);
   return next.data;
 }
 export async function resolveIssue(id: string) {

@@ -92,7 +92,7 @@ Use distinct test identities for the connected tests. Accelerated test clocks ar
 | TEAM-02 | Leave sales work overdue. | Manager receives escalation at 9 a.m. on the next business morning. If still unhandled after the manager's recovery day, owner receives it next business morning. Both keep visibility until work is handled. |
 | TEAM-03 | Read/refresh the report or use “Handle this response.” | Read/administrative actions do not complete work or reset the original deadline. Actual contact is the completion evidence. |
 | TEAM-04 | Repeat with an overdue carrier or renewal obligation. | Champion → marketing manager → owner; no sales-manager leakage. |
-| TEAM-05 | Schedule temporary cover, change a manager, then end cover. | Delivery follows current responsibility, dates stay unchanged, and work returns after cover ends. No self-manager or circular-cover choices. |
+| TEAM-05 | Schedule temporary cover, change a manager, then end cover. While delivery is active, try removing a required manager or owner. | Delivery follows current responsibility, dates stay unchanged, and work returns after cover ends. No self-manager or circular-cover choices; incomplete routing cannot be saved while delivery is active. |
 | TEAM-06 | Disable a responsible test identity or remove valid coverage. | No send to a disabled user; valid cover/management or an owned exception remains. No silent missing work. |
 | TEAM-07 | Give one person multiple eligible roles. | At most one combined edition per person/environment/business date, without self-escalation duplicates. |
 | MAIL-01 | Observe a real business-day 9 a.m. run. | Salespeople and sales managers get one daily report, including a healthy zero. Champions/marketing managers/owner/exception owners receive editions when their scope requires attention. |
@@ -144,7 +144,7 @@ Use distinct test identities for the connected tests. Accelerated test clocks ar
 | ID | Follow these steps | Expected outcome |
 |---|---|---|
 | SAFE-01 | Use an old active account absent from the due queue. | Full account census finds missing work or raises a named exception. A due-index-only check is insufficient. |
-| SAFE-02 | Interrupt the worker, a provider request or a database write in engineering fixtures. | Work remains durable; retries do not cancel it. Incomplete coverage is visible and independent monitoring detects the failure. |
+| SAFE-02 | Interrupt the worker, a provider request or a database write in engineering fixtures. Separately invalidate manager coverage. | Work remains durable; retries do not cancel it. Incomplete coverage is visible and independent monitoring detects the failure, including lost escalation routing. |
 | SAFE-03 | Disconnect the operations alert destination in a controlled setup check. | Readiness fails; a CloudWatch alarm without a confirmed recipient is not accepted as an operating alert path. |
 | SAFE-04 | Test Friday/holiday/DST and an existing 5 p.m. business deadline. | Scheduled work arrives in the 9 a.m. Eastern window. Real deadlines and escalation recovery days remain correct. |
 | REG-01 | Test all website form variants and retry a failed edited submission. | One valid intake per submission; editable retries recover; readable Front brief and initial AI thread behavior remain intact. |

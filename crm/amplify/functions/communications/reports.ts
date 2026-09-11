@@ -1,7 +1,7 @@
 import { morningReport, renderMorningReport, type MorningReport } from "../../../../shared/morningReport";
 import { reminderWindow, type LeadTask, type LeadWorkflow, type Communication } from "../../../../shared/leadWorkflow";
 import { contactAt, contactProgress } from "../../../../shared/contactProgress";
-import { taskDomain, taskContext } from "../../../../shared/workRouting";
+import { taskDomain, taskContext, validateCompleteRouting } from "../../../../shared/workRouting";
 import { get, query, row, put, save, commit, check, issue, conflict, hash, type Row } from "./store";
 import { routing, resolveIssue } from "./routing";
 import { team, enabledUser, accountRows } from "./workflow";
@@ -19,6 +19,8 @@ export async function reportSnapshot() {
     team(), routing(), allRows<LeadTask>("TASK", "work"), allRows<LeadWorkflow>("WORKFLOW"), get("health:worker"), get("coverage:census"), allRows("ISSUE", "work"), allRows("TRIAGE", "work"),
   ]);
   const warnings: string[] = [];
+  try { validateCompleteRouting(settings, members); }
+  catch { warnings.push("Managers and daily reporting are not fully configured. Check Team settings before relying on escalation coverage."); }
   if (!health || health.data.lagging || Date.now() - Date.parse(String(health.data.at)) > 300_000) warnings.push("Recent communication processing could not be confirmed.");
   if (!census?.data.completedAt || Date.now() - Date.parse(String(census.data.completedAt)) > 24 * 3600_000) warnings.push("The full account coverage check has not completed recently.");
   if (issues.some(i => ["issue:sync-gap", "issue:reconcile", "issue:provider-auth", "issue:coverage-census"].includes(i.id))) warnings.push("An integration issue needs repair; the work list may be incomplete.");

@@ -14,6 +14,7 @@ This revision implements the approved role split, morning reminders and daily ed
 - Bound clients have the champion as main contact. Specialist coordination preserves that accountability. Acknowledgement/forwarding does not deliver a requested certificate or policy document.
 - Next-year rollover updates the incumbent exactly one calendar year, schedules a 90-day return, preserves independent work and issued policies, and is fenced against duplicate/concurrent changes.
 - One combined internal morning edition per person/environment/date, verified staff recipients, staging allowlist, current report/CSV, durable Front receipts and explicit uncertain-send recovery.
+- Active delivery requires complete manager routing. Routing edits and activation are checked together so concurrent changes cannot remove the escalation path. The independent monitor also detects invalid routing, and the report discloses missing setup.
 - Indexed account relationships and a paginated all-account coverage census; persisted work retries; independent monitor and an SNS-backed alarm path. The alert destination must be confirmed before readiness passes.
 
 ## Operational details made concrete
@@ -26,8 +27,8 @@ The quote/document preparation action is intentionally part of sending the work,
 
 ## Staging setup still required for connected acceptance
 
-1. Deploy this revision to staging. Existing integration sender, protected credentials and business-line configuration stay in their existing settings.
-2. Use a fresh administrator sign-in if Settings shows only Form templates, Licensing and My signature. AWS confirms Jake's existing staging identity is in ADMIN; do not create another account or broaden permissions to work around a stale sign-in.
+1. Verify the deployed staging build against the reviewer pack’s release record. Existing integration sender, protected credentials and business-line configuration stay in their existing settings.
+2. Refresh the staging page before reviewing. Refresh restored Jake’s existing administrator controls; a new account or permission change was unnecessary.
 3. In Team settings, assign the actual sales managers, marketing manager, owner, cover and exception owners. Distinct-role test recipients must be explicitly chosen. No staff invitations are part of this handoff.
 4. Connect a verified Front email channel in a separate internal reporting inbox, outside the monitored lead inboxes. Add approved verified staff addresses to staging's recipient allowlist.
 5. Confirm an operations subscription on the generated `communicationAlertTopicArn`. The value appears in Amplify outputs and the integration's advanced connection details. The independent failure alarm is an operational outage signal; normal staff reminders/report editions remain at 9 a.m. Eastern.
@@ -38,8 +39,8 @@ Staging delivery was deliberately paused before this deployment, with an integra
 
 ## Verification and handoff
 
-The local suite has 2,139 passing tests across 109 files, including real handler/store-boundary scenarios for routing, persistent escalation, annual rollover, quote delivery, partial binding and information follow-up. Frontend/backend type checks, infrastructure synthesis and both app builds pass. Re-run the documented repository gates after any further code change.
+The local suite has 2,142 passing tests across 109 files, including real handler/store-boundary scenarios for routing, persistent escalation, annual rollover, quote delivery, partial binding and information follow-up. Frontend/backend type checks, infrastructure synthesis and both app builds pass. Re-run the documented repository gates after any further code change.
 
-Browser checks in the local component preview exercise fictional data: sales first contact, manager report scope, champion certificate draft preparation, protected team routing, mobile/sidebar widths and report email rendering. The portable HTML has no credentials and sends no messages. Its bundle was generated successfully; automated browser review used the local development preview because the browser policy blocks opening local HTML files directly. The acceptance CSV deliberately starts at **Not run** so engineering evidence is not mistaken for your UX person's sign-off.
+Browser checks in the local component preview exercise fictional data: sales first contact, manager report scope, champion certificate draft preparation, protected team routing, narrow sidebar widths and report email rendering. The portable HTML has no credentials and sends no messages. Its bundle was generated successfully; automated browser review used the local development preview because the browser policy blocks opening local HTML files directly. The acceptance CSV deliberately starts at **Not run** so engineering evidence is not mistaken for your UX person's sign-off.
 
 Production/main has not been changed. Production approval requires connected acceptance and review of real ownership, monitoring and sender configuration.

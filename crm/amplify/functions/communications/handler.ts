@@ -295,11 +295,12 @@ export const handler = async (event: { arguments: { operation?: string; readOper
     if (op === "activate") {
       requireAdmin();
       if (input.nativeChecksConfirmed !== true) throw new Error("Verify the connected numbers and shared-line text sender before activation");
+      const c = await config(), teamRouting = await get("team-routing");
       const checks = await activationChecks();
       if (checks.some(c => !c.ok)) return { ok: false, error: checks.filter(c => !c.ok).map(c => `${c.name}: ${c.detail}`).join("; ") };
-      const c = await config();
-      const saved = await saveConfig({ ...c, activatedAt: c.activatedAt ?? new Date().toISOString(), paused: false }, true);
-      await commit([audit("SETTINGS", actor, "Integration activated after connection checks", { at: saved.activatedAt })]);
+      if (!teamRouting) throw new Error("Complete manager routing before starting delivery");
+      const at = c.activatedAt ?? new Date().toISOString();
+      const saved = await saveConfig({ ...c, activatedAt: at, paused: false }, true, [check(teamRouting), audit("SETTINGS", actor, "Integration activated after connection checks", { at })]);
       return { ok: true, config: saved };
     }
     if (op === "cancelAi") {

@@ -1533,6 +1533,37 @@ describe("approved sales and carrier revision: integration evidence", () => {
     for (const [id, data] of [["health:worker", { at: new Date().toISOString(), lagging: false }], ["coverage:census", { completedAt: new Date().toISOString() }]] as const) await save(row("HEALTH", id, data));
     h.front.mockImplementation(async (path: string, method?: string) => path.startsWith("/channels/") && method !== "POST" ? { id: "cha_reports", is_valid: true, type: "gmail", _links: { related: { inbox: "https://api2.frontapp.com/inboxes/inb_reports" } } } : method === "POST" ? { message_uid: `uid-${h.front.mock.calls.length}` } : { id: "msg_report", is_draft: false, is_inbound: false, conversation: { id: "cnv_report" } });
   }
+  it("requires complete manager routing while active, but allows a paused setup draft", async () => {
+    await reportSetup();
+    const { saveRouting } = await import("../../amplify/functions/communications/routing");
+    const current = record("team-routing"), input = { ...current.data, ownerId: undefined, version: current.version };
+    await expect(saveRouting(input as any, "owner")).rejects.toThrow("Choose the owner");
+    expect(record("team-routing").version).toBe(current.version);
+    h.c.paused = true;
+    await expect(saveRouting(input as any, "owner")).resolves.toMatchObject({ ownerId: undefined });
+  });
+  it("fences a paused routing edit against concurrent activation", async () => {
+    await reportSetup(); h.c.paused = true;
+    await save(row("CONFIG", "config", h.c));
+    const current = record("team-routing"), input = { ...current.data, ownerId: undefined, version: current.version };
+    h.front.mockImplementation(async () => {
+      const config = record("config"); h.records.set(`${process.env.COMMUNICATION_TABLE}:config`, { ...config, version: config.version + 1, data: { ...config.data, paused: false } });
+      return { is_valid: true, type: "gmail", _links: { related: { inbox: "https://api2.frontapp.com/inboxes/inb_reports" } } };
+    });
+    const { saveRouting } = await import("../../amplify/functions/communications/routing");
+    await expect(saveRouting(input as any, "owner")).rejects.toThrow("Conflict");
+    expect(record("team-routing").version).toBe(current.version);
+  });
+  it("independently alerts on lost manager coverage even when processing and the census are healthy", async () => {
+    await reportSetup(); const current = (await get("team-routing"))!;
+    await save(row("TEAM_ROUTING", current.id, { ...current.data, marketingManagerId: undefined }, { previous: current }), current);
+    const { handler } = await import("../../amplify/functions/communications/monitor");
+    await expect(handler()).rejects.toThrow("requires intervention");
+    expect(record("issue:independent-monitor").data.message).toContain("Manager or owner coverage is incomplete");
+    const { reportSnapshot } = await import("../../amplify/functions/communications/reports");
+    expect((await reportSnapshot()).warnings.join(" ")).toContain("not fully configured");
+    expect(h.front).not.toHaveBeenCalled();
+  });
   it("sends one healthy daily edition per salesperson and manager, with provider confirmation", async () => {
     await reportSetup(); const { handler } = await import("../../amplify/functions/communications/reports");
     await handler(); expect(h.front.mock.calls.filter(([,m]) => m === "POST")).toHaveLength(2);

@@ -17,10 +17,8 @@ export async function connectionChecks() {
     ["Default responsibilities", async () => { const sales = c.defaultSalespersonId ?? c.defaultUserId, champion = c.defaultChampionId ?? c.defaultUserId; if (!sales || !champion) throw new Error("Choose default sales and champion owners"); await validRole(sales, "SALESPERSON"); await validRole(champion, "CHAMPION", champion !== sales); }],
     ["Team reports", async () => {
       const r = await (await import("./routing")).routing(), members = await (await import("./workflow")).team();
-      if (!r.ownerId || !r.marketingManagerId || !r.reportChannelId) throw new Error("Choose the owner, marketing manager and internal report channel in Team settings");
-      (await import("../../../../shared/workRouting")).validateRouting(r, members);
-      if (members.some(m => m.enabled && m.salesperson && m.userId !== r.ownerId && !r.members.find(t => t.userId === m.userId)?.salesManagerId)) throw new Error("Choose a manager for every salesperson");
-      await (await import("./reports")).verifyReportChannel(r.reportChannelId);
+      (await import("../../../../shared/workRouting")).validateCompleteRouting(r, members);
+      await (await import("./reports")).verifyReportChannel(r.reportChannelId!);
     }],
     ["Front company", async () => { if (!c.frontCompanyId) throw new Error("Enter the Front company ID"); const me = await front<{ id: string }>("/me"); if (me.id !== c.frontCompanyId) throw new Error("Front company does not match settings"); }],
     ["Front sales channel", async () => { await verifyEmailChannel(); }],

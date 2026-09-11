@@ -61,3 +61,10 @@ export function validateRouting(routing: TeamRouting, team: TeamEligibility[]) {
   }
   if (routing.reportChannelId && !/^cha_[a-z0-9]+$/.test(routing.reportChannelId)) throw new Error("Choose a valid internal reporting channel");
 }
+
+/** Incomplete drafts are allowed during setup; active delivery needs the full chain. */
+export function validateCompleteRouting(routing: TeamRouting, team: TeamEligibility[]) {
+  if (!routing.ownerId || !routing.marketingManagerId || !routing.reportChannelId) throw new Error("Choose the owner, marketing manager and internal report channel in Team settings");
+  validateRouting(routing, team);
+  if (team.some(m => m.enabled && m.salesperson && m.userId !== routing.ownerId && !routing.members.find(t => t.userId === m.userId)?.salesManagerId)) throw new Error("Choose a manager for every salesperson");
+}
