@@ -4,6 +4,8 @@ This revision implements the approved role split, morning reminders and daily ed
 
 ## Implemented behavior
 
+- A compact light-green “All caught up” confirmation appears near the top of a healthy account with no open work. It replaces the empty action prompt and stays hidden when tracking, responsibility or communication needs attention.
+
 - Separate default sales and champion owners; administrator-managed per-salesperson managers, marketing manager, owner and scheduled cover. Eligibility does not grant permissions.
 - Client-side lead escalation follows sales management. Carrier, renewal and bound-client service escalation follows marketing management. The owner receives persistent unresolved escalations. Acknowledgement/reassignment does not reset a business deadline.
 - Actual communication supplies outreach evidence. Drafts, failed sends and ringing calls do not. Completed unanswered attempts count as effort, with retries that preserve the underlying question.
@@ -39,7 +41,7 @@ Staging delivery was deliberately paused before this deployment, with an integra
 
 ## Verification and handoff
 
-The local suite has 2,142 passing tests across 109 files, including real handler/store-boundary scenarios for routing, persistent escalation, annual rollover, quote delivery, partial binding and information follow-up. Frontend/backend type checks, infrastructure synthesis and both app builds pass. Re-run the documented repository gates after any further code change.
+The local suite has 2,157 passing tests across 109 files, including real handler/store-boundary scenarios for routing, persistent escalation, annual rollover, quote delivery, partial binding and information follow-up. Frontend/backend type checks, infrastructure synthesis and both app builds pass. Re-run the documented repository gates after any further code change.
 
 Browser checks in the local component preview exercise fictional data: sales first contact, manager report scope, champion certificate draft preparation, protected team routing, narrow sidebar widths and report email rendering. The portable HTML has no credentials and sends no messages. Its bundle was generated successfully; automated browser review used the local development preview because the browser policy blocks opening local HTML files directly. The acceptance CSV deliberately starts at **Not run** so engineering evidence is not mistaken for your UX person's sign-off.
 

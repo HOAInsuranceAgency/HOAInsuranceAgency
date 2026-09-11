@@ -100,6 +100,23 @@ beforeEach(async () => {
   h.front.mockImplementation(async (path: string) => path.includes("/messages") && path.includes("/conversations") ? { _results: [] } : {});
 });
 afterEach(() => vi.useRealTimers());
+describe("caught-up tracking confirmation", () => {
+  it.each(["healthy", "paused", "missing monitor", "monitor failure", "stale worker", "invalid worker time", "stale census", "sync gap"])("reports %s accurately in the account context", async state => {
+    await lead();
+    await save(row("HEALTH", "health:worker", { at: NOW, lagging: false }));
+    await save(row("HEALTH", "health:monitor", { at: NOW, errors: [] }));
+    await save(row("HEALTH", "coverage:census", { completedAt: NOW }));
+    if (state === "paused") h.c.paused = true;
+    if (state === "missing monitor") h.records.delete("comms:health:monitor");
+    if (state === "monitor failure") record("health:monitor").data.errors = ["Routing needs attention"];
+    if (state === "stale worker") record("health:worker").data.at = "2026-09-08T13:00:00.000Z";
+    if (state === "invalid worker time") record("health:worker").data.at = "invalid";
+    if (state === "stale census") record("coverage:census").data.completedAt = "2026-09-06T14:00:00.000Z";
+    if (state === "sync gap") await save(row("ISSUE", "issue:sync-gap", { resolved: false }));
+    const { handler } = await import("../../amplify/functions/communications/handler");
+    expect(await handler({ arguments: { readOperation: "context", input: { accountId: "a1" } }, identity: { sub: "brian", groups: [] } as never })).toMatchObject({ ok: true, trackingHealthy: state === "healthy" });
+  });
+});
 describe("communication is the work record", () => {
   it("retires the routine action/date editor without allowing fabricated completion", async () => {
     await lead(); await expect(retiredSaveTask({ accountId: "a1", title: "Fake task", kind: "FOLLOW_UP", role: "SALESPERSON", dueAt: NOW, reason: "test" }, "brian")).rejects.toThrow("automatically");

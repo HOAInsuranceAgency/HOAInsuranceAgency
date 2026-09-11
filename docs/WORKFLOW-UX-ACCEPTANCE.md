@@ -58,7 +58,7 @@ Previously approved prospect for controlled tests: **jake@jakegreasley.com**, **
 | UX-08 | Marketing manager → Renewal needs usable quotes → report/email. | Carrier/renewal work is clear; no routine prospect-chasing work is mixed into this role. |
 | UX-09 | Owner → an overdue situation → report/email. | Persistent escalation is visible, with a link to the actual work. Merely reading the report does not resolve it. |
 | UX-10 | Owner → Team settings; edit, then cancel. | Saved mappings are initially read-only. Manager eligibility, per-salesperson manager and temporary cover are understandable. Cancel discards the draft. |
-| UX-11 | Healthy and connection-gap scenarios → report/email. | Healthy zero and “coverage could not be verified” look different. Incomplete capture never looks like an all-clear. |
+| UX-11 | Healthy and connection-gap scenarios → report/email. | A healthy Front workspace shows a compact light-green checkmark with “All caught up” near the top and no empty Next action card. It says follow-up is tracked. Pending work, unresolved messages, missing owners, paused or unverified tracking never show the green confirmation. Healthy zero and a coverage gap remain distinct in reports. |
 | UX-12 | Download a report and inspect the CSV. | Useful headings, actual rows, as-of/timezone/filter context; no cut-off preview falsely presented as the whole report. |
 
 ## B. Connected staging: an ordinary sales day

@@ -70,6 +70,8 @@ export interface IntegrationConfig {
 }
 export interface WorkflowContext {
   actorId?: string;
+  /** Positive confirmation that automatic tracking is active and recently healthy. */
+  trackingHealthy?: boolean;
   frontContext?: { conversationId: string; assigneeId?: string; routing?: string; purpose?: "PROSPECT" | "CARRIER"; context?: BusinessContext; policyId?: string };
   workflow: LeadWorkflow | null; tasks: LeadTask[]; communications: Communication[];
   team: TeamEligibility[]; issues: { id: string; message: string; at: string }[];

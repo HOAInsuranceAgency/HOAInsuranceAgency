@@ -105,12 +105,21 @@ export const handler = async (event: { arguments: { operation?: string; readOper
         const conversationId = text(input, "conversationId");
         if (conversationId) { const conversation = await permittedConversation(conversationId); const link = await get<ConversationLink>(`front-link:${conversation.id}`); accountId = link?.data.accountId ?? ""; frontContext = { conversationId: conversation.id, assigneeId: conversation.assignee?.id, routing: link?.data.routing, purpose: link?.data.purpose, context: link?.data.context, policyId: link?.data.policyId }; }
         if (!accountId) return { ok: true, workflow: null, tasks: [], communications: [], issues: [], team: await roster() };
-        const [wf, tasks, communications, issues, members] = await Promise.all([
+        const [wf, tasks, communications, issues, members, settings, health, monitor, census, syncGap] = await Promise.all([
           get<LeadWorkflow>(`workflow:${accountId}`), accountRows<LeadTask>(accountId, "TASK"),
           query<Communication>("account", accountId, text(input, "nextToken") || undefined, 50, "COMMUNICATION#"),
-          accountRows<{ message: string; at: string }>(accountId, "ISSUE"), roster(),
+          accountRows<{ message: string; at: string }>(accountId, "ISSUE"), roster(), config(),
+          get("health:worker"), get("health:monitor"), get("coverage:census"), get("issue:sync-gap"),
         ]);
-        return { ok: true, actorId: actor, frontContext, workflow: wf ? { ...wf.data, version: wf.version } : null,
+        const recent = (value: unknown, maxAge: number) => {
+          const age = typeof value === "string" ? Date.now() - Date.parse(value) : NaN;
+          return age >= 0 && age <= maxAge;
+        };
+        const trackingHealthy = !!settings.activatedAt && !settings.paused
+          && health?.data.lagging === false && recent(health.data.at, 300_000)
+          && Array.isArray(monitor?.data.errors) && monitor.data.errors.length === 0 && recent(monitor.data.at, 600_000)
+          && recent(census?.data.completedAt, 24 * 3600_000) && (!syncGap || syncGap.data.resolved === true);
+        return { ok: true, actorId: actor, trackingHealthy, frontContext, workflow: wf ? { ...wf.data, version: wf.version } : null,
           tasks: tasks.map(t => ({ ...t.data, version: t.version })), communications: communications.items.filter(r => r.data.status !== "DRAFT").map(r => safeCommunication({ ...r.data, version: r.version })),
           communicationNextToken: communications.nextToken, issues: issues.filter(r => !(r.data as { resolved?: boolean }).resolved).map(r => ({ id: r.id, ...r.data })), team: members };
       }

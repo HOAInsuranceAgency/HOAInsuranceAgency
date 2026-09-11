@@ -59,9 +59,16 @@ export default function LeadWorkflowPanel({ accountId, conversationId, onOpen }:
   const openTasks = tasks.filter(t => t.status === "OPEN");
   const clientWork = workflow.disposition === "BOUND" && !workflow.openLeadQuoteIds?.length;
   const teamName = (id?: string) => team.find(t => t.userId === id)?.name ?? "Needs assignment";
-  const nextActions = <section className={compact ? "front-next-actions" : undefined} aria-label="Next actions">
+  const caughtUp = resource.data.trackingHealthy === true && !busy && !error
+    && ["ACTIVE", "BOUND"].includes(workflow.disposition) && !workflow.assignmentIssue && !issues.length && !openTasks.length
+    && team.some(t => t.userId === workflow.salespersonId && t.enabled && t.salesperson)
+    && team.some(t => t.userId === workflow.championId && t.enabled && t.champion)
+    && !resource.data.communicationNextToken
+    && (clientWork || communications.some(c => c.contactApplied || c.resolved && c.classification !== "AUTOMATIC"))
+    && communications.every(c => c.internalReport || c.resolved || c.classification === "AUTOMATIC" || c.direction !== "INBOUND" && (c.channel !== "CALL" || !!c.outcome));
+  const nextActions = caughtUp ? null : <section className={compact ? "front-next-actions" : undefined} aria-label="Next actions">
     <div className="toolbar"><h3>{compact ? "Next action" : "Next actions"}</h3></div>
-    {!openTasks.length && <p className="muted">{workflow.disposition === "ACTIVE" ? "Email, call, or text the prospect. Follow-up is tracked automatically." : `Lead outcome: ${workflow.disposition.toLowerCase()}`}</p>}
+    {!openTasks.length && <p className="muted">{workflow.disposition === "ACTIVE" ? "No open actions." : `Lead outcome: ${workflow.disposition.toLowerCase()}`}</p>}
     {openTasks.sort((a,b) => a.dueAt.localeCompare(b.dueAt)).map(t => {
       const guidance = leadActionGuidance(t, communications);
       return <article key={t.id} className={`workflow-task${t.dueAt < new Date().toISOString() ? " is-overdue" : ""}`}>
@@ -122,6 +129,10 @@ export default function LeadWorkflowPanel({ accountId, conversationId, onOpen }:
   </>;
   return <section className="card lead-workflow" aria-label="Lead responsibilities and follow-up">
     <div className="toolbar workflow-heading"><h2>{clientWork ? "Client workspace" : compact ? "Lead workspace" : "Lead follow-up"}</h2><div className="grow" /><button className="secondary" disabled={resource.loading} onClick={() => void resource.refetch()}>{resource.loading ? "Refreshing…" : "Refresh"}</button></div>
+    {caughtUp && <div className="workflow-caught-up" role="status">
+      <svg aria-hidden="true" viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="8" /><path d="m6 10 2.5 2.5L14 7" /></svg>
+      <div><strong>All caught up</strong><p>Nothing needs your attention. Follow-up is tracked automatically.</p></div>
+    </div>}
     {onOpen && <CommunicationAccountSummary accountId={workflow.accountId} open={open} />}
     {notice && <p className="workflow-notice" role="status">{notice}</p>}
     {error && <p className="error-text workflow-notice" role="alert">{error}</p>}

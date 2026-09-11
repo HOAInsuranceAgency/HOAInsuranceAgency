@@ -48,6 +48,27 @@ describe("communication UI boundaries", () => {
     expect(screen.queryByRole("button", { name: "Record outcome" })).toBeNull();
     expect(h.request.mock.calls.some(([op]) => op === "saveTask")).toBe(false);
   });
+  it("reassures a caught-up lead without inventing another action", async () => {
+    const data = linkedLead();
+    Object.assign(data, { tasks: [], trackingHealthy: true, communications: [{ id: "reply", channel: "EMAIL", direction: "INBOUND", status: "RECEIVED", at: "2026-09-10T12:00:00Z", resolved: true }] });
+    render(<FrontSidebar />); act(() => h.listener?.({ conversation: { id: "cnv_a" } }));
+    await screen.findByText("All caught up");
+    expect(screen.getByRole("status")).toHaveTextContent("Nothing needs your attention. Follow-up is tracked automatically.");
+    expect(screen.queryByRole("region", { name: "Next actions" })).toBeNull();
+  });
+  it.each(["unknown tracking", "unhealthy tracking", "open action", "assignment", "unresolved message", "new lead"])("does not show all caught up with %s", async reason => {
+    const data = linkedLead();
+    Object.assign(data, { trackingHealthy: true, communications: [{ id: "reply", channel: "EMAIL", direction: "INBOUND", status: "RECEIVED", at: "2026-09-10T12:00:00Z", resolved: true }] });
+    if (reason !== "open action") data.tasks = [];
+    if (reason === "unknown tracking") Object.assign(data, { trackingHealthy: undefined });
+    if (reason === "unhealthy tracking") Object.assign(data, { trackingHealthy: false });
+    if (reason === "assignment") data.workflow.championId = "missing";
+    if (reason === "unresolved message") Object.assign(data, { communications: [{ id: "new", channel: "EMAIL", direction: "INBOUND", status: "RECEIVED", at: "2026-09-10T12:00:00Z", resolved: false }] });
+    if (reason === "new lead") Object.assign(data, { communications: [] });
+    render(<FrontSidebar />); act(() => h.listener?.({ conversation: { id: "cnv_a" } }));
+    await screen.findByRole("heading", { name: "Willow HOA" });
+    expect(screen.queryByText("All caught up")).toBeNull();
+  });
   it("clears a team edit when Front switches to another conversation", async () => {
     linkedLead(); render(<FrontSidebar />); act(() => h.listener?.({ conversation: { id: "cnv_a" } }));
     fireEvent.click(await screen.findByRole("button", { name: "Edit team" }));
