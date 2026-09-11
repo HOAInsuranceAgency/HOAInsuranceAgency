@@ -1,7 +1,7 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import type { Communication, IntegrationConfig, LeadTask } from "../../../shared/leadWorkflow";
 const h = vi.hoisted(() => ({ records: new Map<string, Record<string, any>>(), transactions: [] as any[][], inFlight: 0, maxInFlight: 0, fail: false, failAt: undefined as number | undefined, writeError: undefined as Error | undefined, accountError: false, userEnabled: true,
-  front: vi.fn(), dialpad: vi.fn(), update: vi.fn(), c: {} as IntegrationConfig }));
+  front: vi.fn(), dialpad: vi.fn(), update: vi.fn(), accountList: vi.fn(), c: {} as IntegrationConfig }));
 vi.mock("@aws-sdk/lib-dynamodb", async importOriginal => {
   const actual = await importOriginal<typeof import("@aws-sdk/lib-dynamodb")>();
   return { ...actual, DynamoDBDocumentClient: { from: () => ({ send: async (command: any) => {
@@ -51,7 +51,7 @@ vi.mock("@aws-sdk/lib-dynamodb", async importOriginal => {
 vi.mock("@aws-sdk/client-cognito-identity-provider", () => ({ CognitoIdentityProviderClient: class { send = async (command: any) => { const id = /"([^"]+)"/.exec(command.input.Filter)?.[1] ?? "brian"; return { Users: [{ Enabled: h.userEnabled, Attributes: [{ Name: "email", Value: `${id}@example.com` }, { Name: "email_verified", Value: "true" }] }] }; }; }, ListUsersCommand: class { constructor(public input: unknown) {} } }));
 vi.mock("../../amplify/functions/communications/config", async importOriginal => ({ ...(await importOriginal<typeof import("../../amplify/functions/communications/config")>()), saveCredentials: vi.fn(), config: async () => h.c, credentials: async () => ({ frontSigningKey: "test-signing-key", dialpadSigningKey: "test-dialpad-signing-key" }) }));
 vi.mock("../../amplify/functions/communications/data", () => ({ dataClient: async () => ({ models: {
-  Account: { list: async () => ({ data: [] }), get: async ({ id }: { id: string }) => (h.accountError ? { data: null, errors: [{ message: "Simulated account read failure" }] } : { data: { id, name: "Willow HOA", stage: "LEAD", createdAt: "2026-09-08T14:00:00.000Z", updatedAt: "2026-09-08T14:00:00.000Z", ...Object.fromEntries([["quotes", "Quote"], ["policies", "Policy"], ["priorCarriers", "PriorCarrier"], ["certificates", "Certificate"]].map(([name, model]) => [name, async () => ({ data: [...h.records.entries()].filter(([key, r]) => key.startsWith(`${model}:`) && r.accountId === id).map(([, r]) => r) })])), contacts: async () => ({ data: [...h.records.entries()].filter(([key, c]) => key.startsWith("Contact:") && c.accountId === id).map(([,c]) => c) }), ...h.records.get(`Account:${id}`) } }) },
+  Account: { list: h.accountList, get: async ({ id }: { id: string }) => (h.accountError ? { data: null, errors: [{ message: "Simulated account read failure" }] } : { data: { id, name: "Willow HOA", stage: "LEAD", createdAt: "2026-09-08T14:00:00.000Z", updatedAt: "2026-09-08T14:00:00.000Z", ...Object.fromEntries([["quotes", "Quote"], ["policies", "Policy"], ["priorCarriers", "PriorCarrier"], ["certificates", "Certificate"]].map(([name, model]) => [name, async () => ({ data: [...h.records.entries()].filter(([key, r]) => key.startsWith(`${model}:`) && r.accountId === id).map(([, r]) => r) })])), contacts: async () => ({ data: [...h.records.entries()].filter(([key, c]) => key.startsWith("Contact:") && c.accountId === id).map(([,c]) => c) }), ...h.records.get(`Account:${id}`) } }) },
   Quote: { get: async ({ id }: { id: string }) => ({ data: h.records.get(`Quote:${id}`) ?? null }), list: async () => ({ data: [...h.records.entries()].filter(([key]) => key.startsWith("Quote:")).map(([,r]) => r) }) },
   Policy: { get: async ({ id }: { id: string }) => ({ data: h.records.get(`Policy:${id}`) ?? null }), list: async () => ({ data: [...h.records.entries()].filter(([key]) => key.startsWith("Policy:")).map(([,r]) => r) }) },
   MarketingTask: { list: async () => ({ data: [] }), listMarketingTaskByAccountId: async () => ({ data: [] }) },
@@ -97,9 +97,31 @@ beforeEach(async () => {
   await save(row("ELIGIBILITY", "eligibility:brian", { userId: "brian", name: "Brian Cole", email: "brian@example.com", salesperson: true, champion: true, enabled: true }));
   await save(row("TEAM_ROUTING", "team-routing", { ownerId: "brian", members: [] }));
   h.update.mockResolvedValue({ data: {} });
+  h.accountList.mockReset().mockResolvedValue({ data: [] });
   h.front.mockImplementation(async (path: string) => path.includes("/messages") && path.includes("/conversations") ? { _results: [] } : {});
 });
 afterEach(() => vi.useRealTimers());
+describe("existing lead assignment migration", () => {
+  it("reaches later batches using the complete opaque AppSync continuation token", async () => {
+    const token = "opaque-AppSync-cursor/+=_".repeat(80);
+    h.accountList.mockImplementation(async ({ nextToken }) => !nextToken
+      ? { data: [], nextToken: token }
+      : nextToken === token ? { data: [{ id: "a1", name: "Willow HOA" }] }
+        : { data: [], errors: [{ message: "Invalid pagination token" }] });
+    const { handler } = await import("../../amplify/functions/communications/handler");
+    const request = (nextToken?: string) => handler({ arguments: { operation: "backfill", input: { nextToken } }, identity: { sub: "admin", groups: ["ADMIN"] } as never });
+    expect(await request()).toMatchObject({ ok: true, nextToken: token });
+    expect(await request(token)).toMatchObject({ ok: true, exceptions: 0, nextToken: undefined });
+    expect(record("workflow:a1").data).toMatchObject({ salespersonId: "brian", championId: "brian" });
+    expect(entries("OPERATION")).toHaveLength(0);
+  });
+
+  it.each([123, "x".repeat(16_385)])("rejects invalid migration cursors before querying accounts", async nextToken => {
+    const { handler } = await import("../../amplify/functions/communications/handler");
+    expect(await handler({ arguments: { operation: "backfill", input: { nextToken } }, identity: { sub: "admin", groups: ["ADMIN"] } as never })).toMatchObject({ ok: false, error: "Invalid pagination token. Refresh and try again." });
+    expect(h.accountList).not.toHaveBeenCalled();
+  });
+});
 describe("caught-up tracking confirmation", () => {
   it.each(["healthy", "paused", "missing monitor", "monitor failure", "stale worker", "invalid worker time", "stale census", "sync gap"])("reports %s accurately in the account context", async state => {
     await lead();

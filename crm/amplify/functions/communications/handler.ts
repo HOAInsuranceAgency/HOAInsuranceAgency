@@ -405,7 +405,10 @@ export const handler = async (event: { arguments: { operation?: string; readOper
     }
     if (op === "backfill") {
       requireAdmin(); const client = await dataClient();
-      const page = await client.models.Account.list({ filter: { stage: { eq: "LEAD" } }, nextToken: text(input, "nextToken") || undefined, limit: 25 });
+      // AppSync cursors are opaque and can exceed the text helper's 500-character limit.
+      const nextToken = input.nextToken;
+      if (nextToken != null && (typeof nextToken !== "string" || nextToken.length > 16_384)) throw new Error("Invalid pagination token. Refresh and try again.");
+      const page = await client.models.Account.list({ filter: { stage: { eq: "LEAD" } }, nextToken: nextToken || undefined, limit: 25 });
       if (page.errors?.length) throw new Error("Could not load the next lead batch");
       let assigned = 0, exceptions = 0;
       for (const account of page.data) {
