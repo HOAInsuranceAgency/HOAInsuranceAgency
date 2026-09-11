@@ -106,6 +106,11 @@ const APPROACH = [
       <nav class="founder-profiles" aria-label={`${AGENCY.founderDisplayName} profiles`}>
         <span class="founder-profiles__label">Public profiles</span>
         <ul>
+          <li>
+            <a href="https://jakegreasley.com/" target="_blank" rel="me noopener noreferrer">
+              Jake Greasley’s personal website<span aria-hidden="true"> ↗</span>
+            </a>
+          </li>
           {FOUNDER_PROFILES.map((profile) => (
             <li>
               <a href={profile.url} target="_blank" rel="me noopener noreferrer">
