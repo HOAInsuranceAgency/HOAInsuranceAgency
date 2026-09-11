@@ -15,6 +15,7 @@ import { decide } from "./decide";
 import { flattenExtraction } from "./extraction";
 import { PORTAL_TTL_DAYS } from "../../../../shared/leadDocuments";
 import { propertyNameProblem } from "../../../../shared/propertyName";
+import type { Submission } from "../lead-intake/handler";
 import {
   REPLY_SCHEMA,
   WORD_BUDGET,
@@ -22,6 +23,7 @@ import {
   capitalizeName,
   countWords,
   renderReply,
+  replyCopyIssues,
   systemPrompt,
   type LeadContext,
 } from "./email";
@@ -109,7 +111,7 @@ export const handler = async () => {
         continue;
       }
 
-      const [account, documents, contacts] = await Promise.all([
+      const [account, documents, contacts, submission] = await Promise.all([
         client.models.Account.get({ id: reply.accountId }),
         listAllPages((nextToken) =>
           client.models.Document.list({
@@ -133,6 +135,7 @@ export const handler = async () => {
             limit: 50,
           })
         ),
+        get<Submission>(`submission:${reply.submissionId}`),
       ]);
 
       if (account.errors?.length) throw new Error("The lead could not be read; generation needs retry");
@@ -201,9 +204,11 @@ export const handler = async () => {
       const lead = toContext(
         account.data,
         documents as { name?: string | null }[],
-        contacts as { name?: string | null; isPrimary?: boolean | null }[],
+        contacts as { name?: string | null; email?: string | null; isPrimary?: boolean | null }[],
         decision.withDocuments,
-        uploadUrl !== null
+        uploadUrl !== null,
+        reply.contactEmail,
+        submission?.data.accountId === reply.accountId ? submission.data.snapshot : undefined
       );
       if (lead.nameProblem) {
         console.warn(
@@ -281,13 +286,15 @@ export const handler = async () => {
 function toContext(
   account: Schema["Account"]["type"],
   documents: { name?: string | null }[],
-  contacts: { name?: string | null; isPrimary?: boolean | null }[],
+  contacts: { name?: string | null; email?: string | null; isPrimary?: boolean | null }[],
   withDocuments: boolean,
-  hasUploadLink: boolean
+  hasUploadLink: boolean,
+  recipient: string,
+  submission?: Record<string, unknown>
 ): LeadContext {
-  // The primary if one is flagged, otherwise whichever came first — intake
-  // creates exactly one, so the fallback is for accounts touched by hand.
-  const contact = contacts.find((c) => c.isPrimary) ?? contacts[0];
+  // Use the actual recipient before considering another primary contact.
+  const contact = contacts.find(c => c.email?.trim().toLowerCase() === recipient.trim().toLowerCase())
+    ?? contacts.find((c) => c.isPrimary) ?? contacts[0];
   const rawContactName = contact?.name?.trim() || null;
   /**
    * Intake reuses the association name as the Contact's `name` when the form
@@ -296,18 +303,23 @@ function toContext(
    * the plain "Hello,", so a contact whose name is the account's own is
    * treated as having none.
    */
-  const personName =
+  // Contact forms also use the person's name as Account.name. Explicit form
+  // name fields establish it is a person even when both names are identical.
+  const submittedFirst = typeof submission?.contactFirstName === "string" ? submission.contactFirstName.trim() : "";
+  const submittedLast = typeof submission?.contactLastName === "string" ? submission.contactLastName.trim() : "";
+  const submittedName = [submittedFirst, submittedLast].filter(Boolean).join(" ");
+  const personName = submittedName || (
     rawContactName &&
     rawContactName.toLowerCase() !== account.name.trim().toLowerCase()
       ? rawContactName
-      : null;
+      : null);
   // Typed-without-shift names get their capitals back before the model or the
   // greeting ever sees them: "jake greasley" reads as "Jake Greasley" in both.
   const contactName = capitalizeName(personName);
   return {
     name: account.name,
     contactName,
-    contactFirstName: contactName ? contactName.split(/\s+/)[0] : null,
+    contactFirstName: capitalizeName(submittedFirst) || (contactName ? contactName.split(/\s+/)[0] : null),
     state: account.state ?? null,
     city: account.city ?? null,
     unitCount: account.unitCount ?? null,
@@ -428,50 +440,41 @@ async function callModel(lead: LeadContext, extraTurns: Anthropic.MessageParam[]
 }
 
 /**
- * Generate a reply, and hold it to the word budget.
- *
- * A length in a prompt is a suggestion. The instruction said 80 to 140 and the
- * first real lead came back at 153, because a stated range reads as a target to
- * fill rather than a ceiling. So the count is checked here, and over the hard cap
- * the model is asked again with its own draft quoted back at it.
- *
- * One retry, not a loop: the second attempt is nearly always inside the budget,
- * and a lead waiting on an email should not wait on a model arguing with itself.
- * Whichever draft is shorter wins, so the retry can never make things worse.
- * Nothing is truncated — an email cut off at 80 words ends mid-clause, which is
- * a worse failure than a long one.
+ * Retry once for excess length or repetition of the template's opening/request.
+ * Keep complete prose. If neither draft avoids repetition, use a short neutral
+ * body so the lead still receives the greeting, next step and document link.
  */
 async function generate(lead: LeadContext) {
   const first = await callModel(lead);
   const words = countWords(first.body);
-  if (words <= WORD_BUDGET.HARD) return first;
+  const issues = replyCopyIssues(first.body, !!lead.hasUploadLink);
+  if (words <= WORD_BUDGET.HARD && !issues.length) return first;
 
   console.warn(
-    `[lead-reply] body was ${words} words, over the ${WORD_BUDGET.HARD} cap; regenerating`
+    `[lead-reply] regenerating: ${words} words; ${issues.join(" ")}`
   );
+  const fallback = {
+    subject: first.subject,
+    body: "I'll review what you shared about your insurance enquiry. If it's easier to talk it through, tell me a good time to call.",
+  };
   try {
     const second = await callModel(lead, [
       { role: "assistant", content: first.body },
       {
         role: "user",
         content:
-          `That draft is ${words} words. The ceiling is ${WORD_BUDGET.MAX}. ` +
-          `Cut it to under ${WORD_BUDGET.MAX} words. Drop whole sentences rather ` +
-          `than trimming words out of every one, and keep the specific detail from ` +
-          `their documents over anything general. Do not add a greeting or sign-off.`,
+          `Revise this draft to under ${WORD_BUDGET.MAX} words, keeping specific enquiry details. ` +
+          `${issues.join(" ")} Do not add a greeting, thank-you, or sign-off.`,
       },
     ]);
-    const shorter = countWords(second.body) < words ? second : first;
-    console.log(
-      `[lead-reply] retry produced ${countWords(second.body)} words; sending ${countWords(shorter.body)}`
-    );
-    return shorter;
+    const candidates = [first, second].filter(draft => !replyCopyIssues(draft.body, !!lead.hasUploadLink).length);
+    return candidates.sort((a, b) => countWords(a.body) - countWords(b.body))[0] ?? fallback;
   } catch (err) {
-    // A failed retry must not cost the lead their email. The long one is fine.
+    // A failed copy retry must not prevent first contact or duplicate the request.
     console.warn(
-      "[lead-reply] length retry failed, sending the first draft",
+      "[lead-reply] copy retry failed; using the non-repetitive draft or neutral body",
       err instanceof Error ? err.message : err
     );
-    return first;
+    return issues.length ? fallback : first;
   }
 }

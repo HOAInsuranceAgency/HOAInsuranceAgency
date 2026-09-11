@@ -81,7 +81,7 @@ WHAT MAKES THIS EMAIL WORTH SENDING:
 - Say what happens next and roughly when.
 - Ask for at most two specific things that would speed the review up, chosen from what is actually missing.
 
-DOCUMENTS. If the lead context says a document link is being included, DO NOT ask them to send anything and DO NOT list documents. A link to a page listing exactly what we need is added below your text, and asking as well means the email asks twice and contradicts the page. One clause noting that a list is attached is the most you should write, and even that is optional. This is most of what keeps the email short.
+DOCUMENTS. If the lead context says a document link is being included, DO NOT ask them to send anything, list documents, or mention a link, list, upload page, or portal. The template adds the entire document request and link after your text. Even a sentence such as "I've put a short list below" repeats that request. You may still describe facts already read from their documents and offer a quick call.
 
 HOW TO SOUND LIKE A PERSON. This matters as much as the content. A reader who suspects this was generated will not reply to it.
 
@@ -89,7 +89,7 @@ You are a working broker typing a quick reply between calls. Not a support desk,
 
 DO NOT WRITE A GREETING OR A SIGN-OFF. Both are added around your text, using the reader's real name. Your first word is the first word of the first paragraph.
 
-OPEN ON SOMETHING SPECIFIC. Name their association in the first sentence. Refer to the thing they actually asked about. Do not thank them for contacting you, do not tell them their request was received, and do not repeat anything the confirmation page already said.
+THE OPENING IS ALREADY WRITTEN. After the personalized greeting, the template starts with "Thank you for contacting HOA Insurance Agency." Your text follows that sentence. Start with a specific detail about their enquiry, using their association name when known. Do not add another thank-you, "Glad you got in touch", or another acknowledgement.
 
 STRUCTURE, and this is where generated email gives itself away:
 - Do NOT enumerate. No "Two things would help", no "First... Second...", no lists in prose.
@@ -105,7 +105,7 @@ VOICE:
 - One mild, concrete aside is welcome if the facts support it ("September gives us room" beats "that gives us plenty of runway, which helps").
 - Never explain your own process in the abstract. "I'll pull the underwriting picture together" is broker-speak; "I'll get your program in front of the markets that write this" is what one would actually say.
 
-BE EASY TO DEAL WITH. This is the first thing they have ever received from the agency and the only thing it has to earn is a reply. Warm, not formal. You are glad they got in touch. Make anything you ask for sound optional and low effort: "if you can lay hands on it" beats "please provide". Say you will work with whatever they have. Offering to get on a quick call instead reads as helpful; a list of requirements reads as a gate.
+BE EASY TO DEAL WITH. This is the first thing they have ever received from the agency and the only thing it has to earn is a reply. Warm, not formal. Offering a quick call is helpful. When no upload link is included, make any request sound optional and low effort. When a link is included, leave all requests and reassurance about sending what they have to the template.
 
 NEVER use an em dash or an en dash. Not for asides, not for emphasis, not anywhere. A comma, a full stop, or brackets.
 
@@ -187,7 +187,7 @@ export function buildPrompt(lead: LeadContext): string {
   if (lead.hasUploadLink) {
     lines.push(
       "",
-      "A document link IS being included below your text. Do not ask them to send anything and do not list documents."
+      "A document link IS being included below your text. Do not ask them to send anything, list documents, or mention the link, list, page, or portal. The template supplies the complete request."
     );
   }
 
@@ -343,6 +343,24 @@ export function countWords(text: string): number {
   return text.trim().split(/\s+/).filter(Boolean).length;
 }
 
+/** Detect duplicated template copy so we can regenerate whole prose, never splice sentences. */
+export function replyCopyIssues(body: string, hasUploadLink: boolean): string[] {
+  const issues: string[] = [];
+  if (/^\s*(?:hi\b|hello\b|dear\b|thanks\b|thank you\b|glad you (?:got in touch|reached out))/i.test(body)) {
+    issues.push("Start with the specific enquiry detail. The template already supplies the greeting and thank-you.");
+  }
+  if (hasUploadLink && [
+    /\b(?:link|list|page|portal)\b[^.!?\n]{0,120}\b(?:below|attached|documents?|need|helps?)\b/i,
+    /\b(?:documents?|upload)\b[^.!?\n]{0,80}\b(?:link|list|page|portal)\b/i,
+    /\b(?:send|share|provide|forward|upload|attach|email|dig out|lay hands on)\b[^.!?\n]{0,100}\b(?:documents?|polic(?:y|ies)|dec(?:laration)? pages?|loss runs?|budget|bylaws|what you have|anything)\b/i,
+    /\b(?:documents?|policies|loss runs?)\b[^.!?\n]{0,60}\b(?:send|share|upload|attach)\b/i,
+    /\b(?:whatever|what) you have (?:on hand|available)\b/i,
+  ].some(pattern => pattern.test(body))) {
+    issues.push("Remove the document request and every reference to the list or upload link. The template supplies that once below your text.");
+  }
+  return issues;
+}
+
 export interface RenderedReply {
   subject: string;
   text: string;
@@ -488,6 +506,7 @@ export function renderReply(opts: {
     .split(/\n{2,}/)
     .map((p) => p.trim())
     .filter(Boolean);
+  paragraphs[0] = `Thank you for contacting HOA Insurance Agency.${paragraphs[0] ? ` ${paragraphs[0]}` : ""}`;
 
   /**
    * One sentence and the link, in our words.
@@ -514,7 +533,7 @@ export function renderReply(opts: {
     }
   }
   const uploadLine = uploadUrl
-    ? `I've put a page together with the documents that would help, so you don't have to hunt through email for them. Send what you have whenever you get a chance:`
+    ? "You can upload any available documents using the link below. Whatever you have is a good start."
     : null;
 
   const text = [

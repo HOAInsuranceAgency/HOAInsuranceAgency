@@ -6,6 +6,7 @@ import {
   capitalizeName,
   findAiTells,
   renderReply,
+  replyCopyIssues,
   stripDashes,
   systemPrompt,
   type LeadContext,
@@ -420,6 +421,7 @@ describe("the rendered email", () => {
     // Both paragraphs survive the plain-text → HTML split.
     expect(html).toContain("First paragraph");
     expect(html).toContain("Second paragraph");
+    expect(text).toContain("Hi Pat,\n\nThank you for contacting HOA Insurance Agency. First paragraph");
   });
 
   it("signs off by name, above the signature", () => {
@@ -499,6 +501,26 @@ describe("the rendered email", () => {
   it("declares a charset, so accented names and the strapline survive", () => {
     const { html } = renderReply({ generated, lead: lead(), producerName: "Brian Cole" });
     expect(html).toContain('<meta charset="utf-8">');
+  });
+});
+
+describe("avoiding duplicate opening and document requests", () => {
+  it.each([
+    "I've put a short list of what helps below.",
+    "Please send your current policy and loss runs.",
+    "You can use the document upload page whenever you have time.",
+    "Whatever you have on hand is fine.",
+  ])("flags repeated request copy: %s", body => {
+    expect(replyCopyIssues(body, true)).not.toHaveLength(0);
+    expect(replyCopyIssues(body, false)).toEqual([]);
+  });
+
+  it("allows specific facts from documents already received", () => {
+    expect(replyCopyIssues("Your declaration page shows Acme as the carrier and a September renewal. I'll review how your documents divide responsibility between the association and unit owners.", true)).toEqual([]);
+  });
+
+  it.each(["Thanks for contacting us.", "Thank you for reaching out.", "Glad you got in touch about your community.", "Hi Tom, here is the next step."])("rejects another opening: %s", body => {
+    expect(replyCopyIssues(body, false)).not.toHaveLength(0);
   });
 });
 
