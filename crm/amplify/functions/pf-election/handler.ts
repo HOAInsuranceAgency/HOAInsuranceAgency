@@ -15,6 +15,7 @@ import type { Schema } from "../../data/resource";
 import { listAllPages } from "../../../src/lib/pagination";
 import { PF_CONFIG_SHA256 } from "../../../src/lib/premiumFinance/jurisdictions";
 import { looksLikeElectionToken } from "../pfElectionToken";
+import { initialPaymentTotals, PF_CHECKOUT_BILLING_VERSION } from "../pfInitialPayment";
 import { handler as voidInvoice } from "../void-invoice/handler";
 import {
   OWNERSHIP_DISCLOSURE,
@@ -48,7 +49,7 @@ import {
  *    being QUOTED under this token.
  * 4. Mint the Checkout Session (down payment + off-session mandate) and hand
  *    its URL back. Money moving is what advances the loan — the webhook flips
- *    QUOTED → ACCEPTED when the down payment succeeds, never this handler.
+ *    QUOTED → ACTIVE when the initial payment succeeds, never this handler.
  *
  * Since W8 a loan may anchor to a quote instead of a policy (pre-bind
  * billing); every sibling and invoice scan matches on whichever anchor ids
@@ -123,6 +124,7 @@ function termsShape(loan: PfLoan, associationName: string, state: "open" | "done
     months: loan.months,
     apr: loan.apr,
     downPayment: loan.downPayment,
+    initialPaymentAmount: initialPaymentTotals(loan).totalCents / 100,
     amountFinanced: loan.amountFinanced,
     payment: loan.payment,
     totalInterest: loan.totalInterest,
@@ -516,7 +518,13 @@ async function handleAccept(
       ? url
       : null;
   const stored = liveStoredSession(loan.electionCheckoutUrl, loan.electionCheckoutExpiresAt);
-  if (stored) return { ok: true, state: "checkout", url: stored };
+  if (stored) {
+    if (loan.electionCheckoutBillingVersion === PF_CHECKOUT_BILLING_VERSION) {
+      return { ok: true, state: "checkout", url: stored };
+    }
+    // Do not reuse an old fee-free session, or create a second payable session beside it.
+    return { ok: true, state: "closed", reason: "Your previous payment session is still open. Reopen this financing link after that session expires to see the updated initial payment." };
+  }
 
   const sessionClaim = `claim-${randomUUID()}`;
   const claimExpiry = new Date(Date.now() + 36 * 60 * 1000).toISOString();
@@ -611,8 +619,8 @@ async function handleAccept(
       await new Promise((r) => setTimeout(r, 750));
       const fresh = await loanForToken(client, args.token);
       const url = liveStoredSession(fresh?.electionCheckoutUrl, fresh?.electionCheckoutExpiresAt);
-      if (url) return { ok: true, state: "checkout", url };
-      if (fresh?.status === "ACCEPTED") return { ok: true, state: "done" };
+      if (url && fresh?.electionCheckoutBillingVersion === PF_CHECKOUT_BILLING_VERSION) return { ok: true, state: "checkout", url };
+      if (fresh?.status === "ACCEPTED" || fresh?.status === "ACTIVE") return { ok: true, state: "done" };
     }
     return {
       ok: true,
@@ -636,6 +644,7 @@ async function handleAccept(
    */
   const stripe = new Stripe(key);
   let session: Stripe.Checkout.Session;
+  const initial = initialPaymentTotals(loan);
   try {
     session = await stripe.checkout.sessions.create({
     mode: "payment",
@@ -650,18 +659,23 @@ async function handleAccept(
         quantity: 1,
         price_data: {
           currency: "usd",
-          unit_amount: Math.round(loan.downPayment * 100),
+          unit_amount: initial.premiumCents,
           product_data: {
             name: `${name} — down payment (payment 1 of ${totalPayments})`,
           },
         },
       },
+      ...(initial.originationFeeCents > 0 ? [{
+        quantity: 1,
+        price_data: { currency: "usd", unit_amount: initial.originationFeeCents,
+          product_data: { name: "Origination fee (refundable on prepayment)" } },
+      }] : []),
     ],
     payment_intent_data: {
       setup_future_usage: "off_session",
-      metadata: { pfLoanId: loan.id, pfKind: "down" },
+      metadata: { pfLoanId: loan.id, pfKind: "down", pfBillingVersion: String(PF_CHECKOUT_BILLING_VERSION) },
     },
-    metadata: { pfLoanId: loan.id, pfKind: "down" },
+    metadata: { pfLoanId: loan.id, pfKind: "down", pfBillingVersion: String(PF_CHECKOUT_BILLING_VERSION) },
     success_url: `${siteUrl}/finance/?t=${loan.electionToken}&done=1`,
     cancel_url: `${siteUrl}/finance/?t=${loan.electionToken}`,
     });
@@ -722,10 +736,11 @@ async function handleAccept(
         TableName: loanTable,
         Key: { id: loan.id },
         UpdateExpression:
-          "SET electionCheckoutUrl = :url, electionCheckoutExpiresAt = :exp, updatedAt = :now",
+          "SET electionCheckoutUrl = :url, electionCheckoutExpiresAt = :exp, electionCheckoutBillingVersion = :version, updatedAt = :now",
         ConditionExpression: "electionCheckoutUrl = :claim",
         ExpressionAttributeValues: {
           ":url": session.url,
+          ":version": PF_CHECKOUT_BILLING_VERSION,
           ":exp": new Date((session.expires_at ?? 0) * 1000).toISOString(),
           ":claim": sessionClaim,
           ":now": new Date().toISOString(),

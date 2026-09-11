@@ -58,6 +58,7 @@ export interface InvoiceView {
   finance?: {
     url: string;
     downPayment: number;
+    originationFee?: number;
     monthly: number;
     months: number;
     apr: number;
@@ -168,7 +169,7 @@ export function renderInvoice(inv: InvoiceView): RenderedInvoice {
     ...(inv.finance
       ? [
           "",
-          `Prefer monthly payments? Finance with ${formatMoney(inv.finance.downPayment)} down (payment 1 of ${inv.finance.months + 1}), then ${inv.finance.months} monthly payments of ${formatMoney(inv.finance.monthly)} at ${inv.finance.apr}% APR:`,
+          `Prefer monthly payments? Finance with ${formatMoney(inv.finance.downPayment)} down (payment 1 of ${inv.finance.months + 1})${inv.finance.originationFee ? ` plus a ${formatMoney(inv.finance.originationFee)} origination fee in the initial payment` : ""}, then ${inv.finance.months} monthly payments of ${formatMoney(inv.finance.monthly)} at ${inv.finance.apr}% APR:`,
           inv.finance.url,
         ]
       : []),
@@ -206,7 +207,7 @@ export function renderInvoice(inv: InvoiceView): RenderedInvoice {
           ${
             inv.finance
               ? `<div style="font:400 13px/1.6 ${font};color:#475569;margin:14px 0 0;padding:12px 14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px">
-            Prefer monthly payments? Finance with <b>${escapeHtml(formatMoney(inv.finance.downPayment))} down</b> — payment 1 of ${inv.finance.months + 1} — then ${inv.finance.months} monthly payments of <b>${escapeHtml(formatMoney(inv.finance.monthly))}</b> at ${escapeHtml(String(inv.finance.apr))}% APR.<br>
+            Prefer monthly payments? Finance with <b>${escapeHtml(formatMoney(inv.finance.downPayment))} down</b>${inv.finance.originationFee ? ` plus a <b>${formatMoney(inv.finance.originationFee)}</b> origination fee in the initial payment` : ""} — payment 1 of ${inv.finance.months + 1} — then ${inv.finance.months} monthly payments of <b>${escapeHtml(formatMoney(inv.finance.monthly))}</b> at ${escapeHtml(String(inv.finance.apr))}% APR.<br>
             <a href="${escapeHtml(inv.finance.url)}" style="display:inline-block;margin:8px 0 0;font:700 14px/1 ${font};color:#1a365d;text-decoration:underline">Set up financing</a>
           </div>`
               : ""

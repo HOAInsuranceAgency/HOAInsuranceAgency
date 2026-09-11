@@ -128,7 +128,7 @@ describe("the premium finance agreement", () => {
     // Payment 1 is the down payment: due at inception, zero finance charge,
     // and the balance column opens at the amount financed.
     expect(text).toContain("2026-09-01 (down payment)");
-    expect(text).toContain("$250,000.00 $0.00 $250,000.00 $750,000.00");
+    expect(text).toContain("$250,010.00 $0.00 $250,000.00 $750,000.00");
     for (const row of view.schedule) {
       expect(text, row.dueDate).toContain(row.dueDate);
     }

@@ -12,10 +12,12 @@ import { PF_CONFIG_SHA256 } from "../../../src/lib/premiumFinance/jurisdictions"
 import { postInstallment, type PostableLoan } from "../pfPosting";
 import type { PfEventDecision } from "./decide";
 import { readPaidContext } from "./lookups";
+import { initialPaymentReceipt } from "../pfInitialPayment";
+import { activateSettledElection } from "../pfAutomaticActivation";
 
 /**
  * W7: the loan side of the webhook — the down payment that turns a QUOTED
- * offer into an ACCEPTED loan, and the autopay debits that post installments.
+ * offer into an ACTIVE loan, and the autopay debits that post installments.
  *
  * Same discipline as the invoice side: only `succeeded` moves anything,
  * writes are conditional on the state the decision read, and money that
@@ -35,6 +37,12 @@ interface LoanRow extends PostableLoan {
   quoteId: string | null;
   months: number;
   downPayment: number;
+  originationFee: number;
+  electedAt: string | null;
+  agreementSignedAt: string | null;
+  downPaidAt: string | null;
+  stripeCustomerId: string | null;
+  stripePaymentMethodId: string | null;
   autopayPendingIntentId: string | null;
   downPaymentIntentId: string | null;
   electionEmail: string | null;
@@ -62,6 +70,12 @@ async function readLoan(loanId: string): Promise<LoanRow | null> {
     quoteId: typeof item.quoteId === "string" ? item.quoteId : null,
     months: typeof item.months === "number" ? item.months : 11,
     downPayment: typeof item.downPayment === "number" ? item.downPayment : 0,
+    originationFee: typeof item.originationFee === "number" ? item.originationFee : 0,
+    electedAt: typeof item.electedAt === "string" ? item.electedAt : null,
+    agreementSignedAt: typeof item.agreementSignedAt === "string" ? item.agreementSignedAt : null,
+    downPaidAt: typeof item.downPaidAt === "string" ? item.downPaidAt : null,
+    stripeCustomerId: typeof item.stripeCustomerId === "string" ? item.stripeCustomerId : null,
+    stripePaymentMethodId: typeof item.stripePaymentMethodId === "string" ? item.stripePaymentMethodId : null,
     autopayPendingIntentId:
       typeof item.autopayPendingIntentId === "string" ? item.autopayPendingIntentId : null,
     downPaymentIntentId:
@@ -118,7 +132,7 @@ async function mailAccounting(subject: string, lines: string[]) {
     console.warn("stripe-webhook: accounting mailbox unset; not reporting the loan receipt");
     return;
   }
-  await ses.send(
+  const sent = await ses.send(
     new SendEmailCommand({
       FromEmailAddress: from,
       Destination: { ToAddresses: [to] },
@@ -130,6 +144,7 @@ async function mailAccounting(subject: string, lines: string[]) {
       },
     })
   );
+  console.log(`stripe-webhook: accounting email accepted by SES ${sent.MessageId ?? "(no id)"}: ${subject}`);
 }
 
 const money = (n: number) =>
@@ -186,8 +201,15 @@ async function applyDownPayment(d: PfEventDecision, loan: LoanRow): Promise<stri
    * quiet mirror of the installment path's "already posted".
    */
   if (loan.downPaymentIntentId === d.paymentIntentId && loan.status !== "QUOTED") {
+    await activateSettledElection(ddb, table, loan);
     return "already accepted";
   }
+  // A customer election is the activation authorization. Never mark a pending
+  // debit paid or require a later staff action to enroll the monthly schedule.
+  if (!d.customerId || !d.paymentMethodId || !loan.agreementSignedAt || !loan.electedAt) {
+    throw new Error("Settled financing election is missing its signature or saved payment mandate");
+  }
+  const receipt = initialPaymentReceipt(loan, d.amount, d.billingVersion ?? null);
   const now = new Date().toISOString();
   try {
     await ddb.send(
@@ -195,13 +217,16 @@ async function applyDownPayment(d: PfEventDecision, loan: LoanRow): Promise<stri
         TableName: table,
         Key: { id: loan.id },
         UpdateExpression:
-          "SET #s = :accepted, downPaidAt = :now, downPaymentIntentId = :pi, " +
+          "SET #s = :active, downPaidAt = :now, downPaymentIntentId = :pi, " +
           "stripeCustomerId = :cus, stripePaymentMethodId = :pm, " +
-          "electedAt = if_not_exists(electedAt, :now), updatedAt = :now",
-        ConditionExpression: "#s = :quoted",
+          "initialPaymentAmount = :received, originationFeeCollected = :fee, " +
+          "activatedAt = if_not_exists(activatedAt, :now), updatedAt = :now",
+        ConditionExpression: "#s = :quoted AND attribute_exists(agreementSignedAt) AND attribute_exists(electedAt)",
         ExpressionAttributeNames: { "#s": "status" },
         ExpressionAttributeValues: {
-          ":accepted": "ACCEPTED",
+          ":active": "ACTIVE",
+          ":received": receipt.initialPaymentAmount,
+          ":fee": receipt.originationFeeCollected,
           ":quoted": "QUOTED",
           ":now": now,
           ":pi": d.paymentIntentId,
@@ -251,7 +276,7 @@ async function applyDownPayment(d: PfEventDecision, loan: LoanRow): Promise<stri
     rule: "election",
     outcome: "PASS",
     reason:
-      `Down payment received (payment 1 of ${loan.months + 1}); loan accepted, mandate on file. Debits begin at activation.` +
+      `Down payment received (payment 1 of ${loan.months + 1}); loan automatically activated, mandate on file. Monthly debits follow the signed schedule.` +
       (moduleOffAtSettle
         ? " NOTE: the module was OFF at settle — the election predated the disable (its stamp transacted with the flag); review whether to unwind."
         : ""),
@@ -261,6 +286,8 @@ async function applyDownPayment(d: PfEventDecision, loan: LoanRow): Promise<stri
       customerId: d.customerId,
       paymentMethodId: d.paymentMethodId,
       moduleOffAtSettle,
+      initialPaymentAmount: receipt.initialPaymentAmount,
+      originationFeeCollected: receipt.originationFeeCollected,
     },
   });
   if (moduleOffAtSettle) {
@@ -270,10 +297,10 @@ async function applyDownPayment(d: PfEventDecision, loan: LoanRow): Promise<stri
         `Down payment settled under a disabled module — review loan ${loan.id}`,
         [
           `The financing module is OFF, but a down payment just settled and`,
-          `loan ${loan.id} is now ACCEPTED. The election itself predates the`,
+          `loan ${loan.id} is now ACTIVE. The election itself predates the`,
           `disable — its stamp can only exist from a transaction with the flag on —`,
           `so nothing was refused. Review whether this one should be unwound`,
-          `(refund ${d.paymentIntentId}) or carried to activation.`,
+          `(refund ${d.paymentIntentId}) or continue servicing.`,
         ]
       );
     } catch (err) {
@@ -352,13 +379,21 @@ async function applyDownPayment(d: PfEventDecision, loan: LoanRow): Promise<stri
   try {
     const deal = await dealNames(loan);
     await mailAccounting(
-      `Financing down payment received — ${deal.name} — ${money(loan.downPayment)} (payment 1 of ${loan.months + 1})`,
+      `Financing initial payment received — ${deal.name} — ${money(receipt.initialPaymentAmount)} (payment 1 of ${loan.months + 1})`,
       [
         `Association: ${deal.name}`,
         `Policy: ${deal.policy}`,
         ``,
-        `Character: premium (the down payment takes the amount owed to the amount financed).`,
-        `Settles to the trust on the Stripe rail.`,
+        `Total received: ${money(receipt.initialPaymentAmount)}`,
+        `Premium down payment: ${money(loan.downPayment)}`,
+        `Origination fee collected: ${money(receipt.originationFeeCollected)}`,
+        `Loan principal repayment: ${money(0)}`,
+        `Interest received: ${money(0)}`,
+        ...(receipt.originationFeeCollected < loan.originationFee
+          ? [`Legacy checkout: ${money(loan.originationFee - receipt.originationFeeCollected)} of the contractual origination fee was not collected.`]
+          : []),
+        `Premium and fee settle to the trust on the Stripe rail; keep the fee separate from premium.`,
+        `Monthly collections are enabled automatically on the signed schedule.`,
         ``,
         `Loan: ${loan.id}`,
         `Payment intent: ${d.paymentIntentId}`,
@@ -368,8 +403,8 @@ async function applyDownPayment(d: PfEventDecision, loan: LoanRow): Promise<stri
   } catch (err) {
     console.error("stripe-webhook: could not mail the down-payment split", err);
   }
-  console.log(`stripe-webhook: loan ${loan.id} ACCEPTED on ${d.paymentIntentId}`);
-  return "accepted";
+  console.log(`stripe-webhook: loan ${loan.id} automatically ACTIVE on ${d.paymentIntentId}`);
+  return "activated";
 }
 
 /** Clear the pending marker, if it still names this debit. */

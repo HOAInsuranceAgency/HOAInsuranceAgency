@@ -67,6 +67,7 @@ export interface ElectionTerms {
   months: number;
   apr: number;
   downPayment: number;
+  initialPaymentAmount: number;
   amountFinanced: number;
   payment: number;
   totalInterest: number;
@@ -89,6 +90,7 @@ export async function fetchElectionTerms(token: string): Promise<ElectionTerms> 
     months: Number(r.months ?? 0),
     apr: Number(r.apr ?? 0),
     downPayment: Number(r.downPayment ?? 0),
+    initialPaymentAmount: Number(r.initialPaymentAmount ?? (Number(r.downPayment ?? 0) + Number(r.originationFee ?? 0))),
     amountFinanced: Number(r.amountFinanced ?? 0),
     payment: Number(r.payment ?? 0),
     totalInterest: Number(r.totalInterest ?? 0),

@@ -199,9 +199,10 @@ describe("the webhook's loan side", () => {
     );
   });
 
-  it("accepts a loan only out of QUOTED, and alarms on anything else", () => {
+  it("automatically activates a settled signed election only out of QUOTED", () => {
     expect(PF).toContain('ConditionExpression: "#s = :quoted"');
-    expect(PF).toContain('":accepted": "ACCEPTED"');
+    expect(PF).toContain('":active": "ACTIVE"');
+    expect(PF).toContain("attribute_exists(agreementSignedAt) AND attribute_exists(electedAt)");
     expect(PF).toContain("refund needed");
   });
 

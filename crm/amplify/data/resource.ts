@@ -70,12 +70,10 @@ const schema = a
      */
     BillType: a.enum(["AGENCY", "DIRECT"]),
     /**
-     * QUOTED until someone commits to it; see the premium-finance spec.
-     * ACCEPTED (W7) sits between QUOTED and ACTIVE: the association elected
-     * financing from the invoice email — down payment received, autopay
-     * mandate on file — but the executed board resolution is not yet. Money
-     * has moved on an ACCEPTED loan, so nothing may auto-cancel it; the
-     * webhook's superseded-by-payment rule reaches QUOTED only.
+     * Signed customer elections move QUOTED → ACTIVE when the initial ACH
+     * payment settles with a saved mandate. ACCEPTED remains for legacy rows;
+     * the daily job automatically activates settled, signed elections.
+     * Money-touched loans must never be automatically cancelled.
      */
     PfLoanStatus: a.enum(["QUOTED", "ACCEPTED", "ACTIVE", "PAID", "DEFAULTED", "CANCELLED"]),
     DocumentEntityType: a.enum([
@@ -1147,6 +1145,11 @@ const schema = a
         payment: a.float().required(),
         totalInterest: a.float().required(),
         originationFee: a.float().required(),
+        /** Actual initial receipt; legacy checkouts may have collected no originationFee. */
+        initialPaymentAmount: a.float(),
+        originationFeeCollected: a.float(),
+        /** Identifies reusable Checkout sessions that include the initial originationFee. */
+        electionCheckoutBillingVersion: a.integer(),
         /** The frozen amortization schedule, as issued. */
         schedule: a.json().required(),
         /** Servicing state (W5): current balance, next due, last posted n. */
@@ -1160,7 +1163,7 @@ const schema = a
         /** Set when a due installment goes unposted; cured by a posting. */
         defaultedAt: a.datetime(),
         /**
-         * The executed board resolution's date, checked at activation against
+         * For legacy staff-originated loans, the resolution date is checked against
          * the financed term's effective date — the staleness rule. Boards
          * turn over annually; a resolution from the prior term authorizes
          * nothing.
@@ -1219,7 +1222,7 @@ const schema = a
          * page BEFORE any Checkout session can exist. Name and role are what
          * the signer typed (PM, PM's finance team, board member); the
          * instant and IP are server-stamped in the election transaction.
-         * Distinct from the board resolution the activation gate demands.
+         * The signed election authorizes automatic collection after settlement.
          */
         agreementSignedAt: a.datetime(),
         agreementSignedName: a.string(),
