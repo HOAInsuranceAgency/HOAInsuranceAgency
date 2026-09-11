@@ -5,6 +5,17 @@ decisions below).
 Target: `crm/` — a `premium_finance` module, feature-flagged off by default.
 Written against `staging` @ f3ba3df.
 
+## Single-document revision (Jake, 2026-09-10)
+
+The financing agreement electronically signed at the initial deposit is the
+only required financing document. Stop generating a separate board resolution,
+requesting its upload, or requiring it for activation. The signer's authority
+confirmation belongs inside that same agreement and appears identically on
+the signing page and new PDF. Historical resolution records remain readable.
+This supersedes every separate board-resolution requirement described below,
+including the legacy manual ACTIVATE path, which now refuses all requests.
+Automatic collection still starts only after the signed initial payment settles.
+
 ## Billing revision (Jake, 2026-09-10)
 
 Customer-selected financing requires no staff activation. A signed election and

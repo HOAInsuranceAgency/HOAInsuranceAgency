@@ -355,12 +355,7 @@ describe("option lists reproduce the hand-written ones they replaced", () => {
   });
 
   it("DOCUMENT_CATEGORY_OPTIONS — the panel's pickable categories", () => {
-    // Twelve: the upload portal added STATEMENT_OF_VALUES and
-    // PROPERTY_UPDATES, and premium finance added PF_RESOLUTION_EXECUTED —
-    // uploadable, unlike the generated pair, because activation requires a
-    // document filed under exactly that category. Both are pickable: a producer sorting a document by hand
-    // needs the same vocabulary the portal files them under, or a file that
-    // arrived correctly categorised cannot be re-categorised back to itself.
+    // Financing requires only the agreement signed at deposit.
     expect(DOCUMENT_CATEGORY_OPTIONS.map((o) => [o.value, o.label])).toEqual([
       // "Budget" sorts before "Building updates": localeCompare reaches the
       // third character and 'd' precedes 'i'.
@@ -368,7 +363,6 @@ describe("option lists reproduce the hand-written ones they replaced", () => {
       ["PROPERTY_UPDATES", "Building updates"],
       ["CONDO_DOCS", "Condo documents"],
       ["DUES_SCHEDULE", "Dues per unit"],
-      ["PF_RESOLUTION_EXECUTED", "Executed board resolution"],
       ["LICENSE", "License"],
       ["LOSS_RUNS", "Loss runs"],
       ["OTHER", "Other"],
@@ -384,13 +378,13 @@ describe("option lists reproduce the hand-written ones they replaced", () => {
     // through to "—" for them, which is the behaviour this preserves.
     expect(valuesOf(DOCUMENT_CATEGORY_OPTIONS)).not.toContain("ACORD_FORM");
     expect(schemaEnum("DocumentCategory")).toContain("ACORD_FORM");
-    // Three generated-only categories carry no label: ACORD_FORM and the two
-    // premium-finance documents. None are offered for upload.
+    // Generated forms and historical resolution categories are not offered for upload.
     expect(DOCUMENT_CATEGORY_OPTIONS).toHaveLength(
-      schemaEnum("DocumentCategory").length - 3
+      schemaEnum("DocumentCategory").length - 4
     );
     expect(valuesOf(DOCUMENT_CATEGORY_OPTIONS)).not.toContain("PF_AGREEMENT");
     expect(valuesOf(DOCUMENT_CATEGORY_OPTIONS)).not.toContain("PF_BOARD_RESOLUTION");
+    expect(valuesOf(DOCUMENT_CATEGORY_OPTIONS)).not.toContain("PF_RESOLUTION_EXECUTED");
   });
 
   it("DOCUMENT_CATEGORY_EXTRACTION_PRIORITY — extract-lead CATEGORY_PRIORITY", () => {

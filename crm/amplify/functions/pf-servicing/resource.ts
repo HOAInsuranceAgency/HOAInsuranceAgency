@@ -1,7 +1,7 @@
 import { defineFunction } from "@aws-amplify/backend";
 
 /**
- * Loan servicing: activation, payment posting, and the notice sequence.
+ * Loan servicing: payment posting, bind rollover, and the notice sequence.
  *
  * The one property that holds across every action here: the origination gate
  * is never consulted. A jurisdiction closing in the signed file stops new

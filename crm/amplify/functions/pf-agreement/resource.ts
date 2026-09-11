@@ -1,8 +1,8 @@
 import { defineFunction } from "@aws-amplify/backend";
 
 /**
- * Renders the premium finance agreement and the board resolution for a
- * QUOTED loan, and files both through the Documents system so they carry the
+ * Renders the premium finance agreement for a
+ * QUOTED loan, and files it through the Documents system so they carry the
  * same permissions and audit trail as everything else on the account.
  *
  * Generation is part of origination, so the module flag is re-checked here —

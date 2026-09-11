@@ -8,7 +8,7 @@ import {
   POWER_OF_ATTORNEY,
   PREPAYMENT_TERMS,
   renderAgreementPdf,
-  renderBoardResolutionPdf,
+  SECURITY_INTEREST_AND_AUTHORITY,
   type AgreementView,
 } from "../../amplify/functions/pf-agreement/agreementPdf";
 import { buildQuote } from "../lib/premiumFinance/quote";
@@ -158,18 +158,11 @@ describe("the premium finance agreement", () => {
   });
 });
 
-describe("the board resolution", () => {
-  it("authorizes the financing, names a signatory line, and expires with the term", async () => {
-    const text = decode(await renderBoardResolutionPdf(view));
-    expect(text).toContain("RESOLUTION OF THE BOARD");
-    expect(text).toContain("Maple Court Condominium Trust");
-    expect(text).toContain("$750,000.00");
-    expect(text).toContain("Authorized signatory");
-    expect(text).toContain("Date of execution");
-    // The staleness rule's other half: the paper says a new one is required.
-    expect(text).toContain("new resolution is required at each renewal");
-    // The board acknowledges the conflict too.
-    expect(text).toContain("same company that placed the insurance");
+describe("the single agreement", () => {
+  it("contains the signer's authority confirmation without requiring a second document", async () => {
+    const text = decode(await renderAgreementPdf(view));
+    expect(text).toContain(SECURITY_INTEREST_AND_AUTHORITY);
+    expect(text.toLowerCase()).not.toContain("board resolution");
   });
 });
 

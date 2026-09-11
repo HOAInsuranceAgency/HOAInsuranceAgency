@@ -15,7 +15,6 @@ import {
   NOTICE_DAYS,
   type NoticeRow,
 } from "../../../src/lib/premiumFinance/noticeSequence";
-import { listAllPages } from "../../../src/lib/pagination";
 import { PF_CONFIG_SHA256 } from "../../../src/lib/premiumFinance/jurisdictions";
 import { postInstallment } from "../pfPosting";
 
@@ -26,8 +25,8 @@ import { postInstallment } from "../pfPosting";
  * Two overlapping requests must not double-post an installment or double-run
  * a transition. Payments get a DETERMINISTIC id — pf-pay-{loanId}-{n} — so
  * the ledger itself refuses a duplicate atomically, and the loan's advance
- * is a conditional write on the paidThrough it was computed from. Status
- * transitions (activate, cancel) are conditional on the status they leave,
+ * is a conditional write on the paidThrough it was computed from. Cancellation
+ * transitions are conditional on the status they leave,
  * so the loser of a race fails cleanly instead of writing twice. The same
  * persist.ts shape as everywhere else money moves in this codebase.
  *
@@ -88,50 +87,11 @@ async function logRow(row: {
   }
 }
 
-/**
- * A conditional status transition on the loan table: apply the patch only if
- * the status is still what the decision read. Returns false on a lost race.
- */
-async function transition(
-  loanId: string,
-  fromStatus: string,
-  patch: Record<string, unknown>
-): Promise<boolean> {
-  const loanTable = process.env.PF_LOAN_TABLE;
-  if (!loanTable) throw new Error("PF_LOAN_TABLE unset");
-  const names: Record<string, string> = { "#s": "status" };
-  const sets: string[] = ["updatedAt = :now"];
-  const values: Record<string, unknown> = {
-    ":from": fromStatus,
-    ":now": new Date().toISOString(),
-  };
-  for (const [i, [k, v]] of Object.entries(patch).entries()) {
-    names[`#f${i}`] = k;
-    values[`:f${i}`] = v;
-    sets.push(`#f${i} = :f${i}`);
-  }
-  try {
-    await ddb.send(
-      new UpdateCommand({
-        TableName: loanTable,
-        Key: { id: loanId },
-        UpdateExpression: `SET ${sets.join(", ")}`,
-        ConditionExpression: "#s = :from",
-        ExpressionAttributeNames: names,
-        ExpressionAttributeValues: values,
-      })
-    );
-    return true;
-  } catch (err) {
-    if ((err as { name?: string }).name === "ConditionalCheckFailedException") return false;
-    throw err;
-  }
-}
-
 export const handler = async (event: {
   arguments?: {
     loanId?: string;
     action?: string;
+    /** Deprecated compatibility arguments; no document-based activation exists. */
     boardResolutionExecutedAt?: string;
     boardResolutionDocumentId?: string;
     noticeId?: string;
@@ -159,254 +119,9 @@ export const handler = async (event: {
     const now = new Date().toISOString();
 
     switch (a.action) {
-      /**
-       * Legacy staff-originated activation retains its original document checks.
-       * Customer elections activate in the settlement webhook; a manual action
-       * must never advance a still-processing initial payment past that webhook.
-       */
-      case "ACTIVATE": {
-        if (loan.electedAt || loan.downPaymentIntentId) {
-          return { ok: false, error: "Customer-selected financing activates automatically when the initial payment settles. No manual activation is needed." };
-        }
-        if (loan.status !== "QUOTED" && loan.status !== "ACCEPTED") {
-          return { ok: false, error: `A ${loan.status.toLowerCase()} loan cannot be activated.` };
-        }
-        /**
-         * W8: no activation without a policy. A quote-anchored loan can be
-         * elected and its down payment collected, but turning the mandate
-         * on lends against unearned premium — collateral that exists only
-         * once coverage is placed. Bind rolls the loan onto the policy;
-         * activation follows.
-         */
-        if (!loan.policyId) {
-          return {
-            ok: false,
-            error:
-              "This loan is anchored to a quote. Bind the quote first — the loan rolls to the policy at bind, and activation follows with the executed resolution.",
-          };
-        }
-        /**
-         * The kill switch reaches activation. Activation is the last
-         * origination act — the moment the lending relationship commences
-         * and (W7) the mandate turns on — not servicing, which the gate
-         * never touches. Before W7 this hole was cosmetic; a standing
-         * inventory of money-committed ACCEPTED loans makes it real.
-         */
-        const { data: activateSettings } = await client.models.AgencySettings.get({
-          id: "AGENCY",
-        });
-        if (activateSettings?.premiumFinanceEnabled !== true) {
-          await logRow({
-            accountId: loan.accountId,
-            jurisdiction: loan.state,
-            rule: "module-flag",
-            outcome: "BLOCK",
-            reason: "Premium finance is switched off; activation refused.",
-            inputs: { loanId: loan.id, status: loan.status },
-            actor,
-            actorName,
-          });
-          return {
-            ok: false,
-            error:
-              loan.status === "ACCEPTED"
-                ? "Premium finance is switched off. This loan's down payment is already in — resolve the module state or refund the association; activation stays refused."
-                : "Premium finance is switched off.",
-          };
-        }
-        const executed = a.boardResolutionExecutedAt;
-        if (!isRealIsoDay(executed)) {
-          return { ok: false, error: "The board resolution's execution date is required." };
-        }
-        if (!a.boardResolutionDocumentId?.trim()) {
-          // The power of attorney must trace to an artifact on file, not to a
-          // date someone typed. Upload the executed resolution to Documents
-          // first; the id is the proof.
-          return {
-            ok: false,
-            error: "The executed board resolution must be on file first — upload it to Documents and reference it here.",
-          };
-        }
-        /**
-         * And "on file" is checked POSITIVELY, not attested: the id is
-         * pasted by hand (FinancingTab), and a typo'd or wrong-document id
-         * would activate a lending agreement whose power-of-attorney
-         * evidence points at the wrong paper — silently, forever. Nothing
-         * short of a Document filed under this account AS an executed
-         * board resolution passes: "some document on the account" proves
-         * nothing, and the generated PF_BOARD_RESOLUTION draft — filed on
-         * this very account, named for this very loan — is the likeliest
-         * wrong paste there is.
-         */
-        const documentId = a.boardResolutionDocumentId.trim();
-        const { data: resolutionDoc, errors: docErrs } =
-          await client.models.Document.get({ id: documentId });
-        if (docErrs?.length) {
-          // A failed read is not a missing document — no BLOCK row claiming
-          // "not on file" over a registry that merely didn't answer.
-          console.error(`[pf-servicing] document lookup failed for ${documentId}`, docErrs[0].message);
-          return { ok: false, error: "Couldn't look up that document. Try again." };
-        }
-        const docProblem = !resolutionDoc
-          ? {
-              reason: `Document ${documentId} is not on file.`,
-              error:
-                "That document id is not on file. Upload the executed resolution to Documents and paste its id.",
-            }
-          : resolutionDoc.entityId !== loan.accountId
-            ? {
-                reason: `Document ${documentId} belongs to a different account.`,
-                error:
-                  "That document belongs to a different account. Reference the executed resolution filed under this association.",
-              }
-            : resolutionDoc.category === "PF_BOARD_RESOLUTION" ||
-                resolutionDoc.category === "PF_AGREEMENT"
-              ? {
-                  reason: `Document ${documentId} is the generated draft, not an executed resolution.`,
-                  error:
-                    "That is the generated draft, not an executed resolution. Print it, have the board sign it, and upload the signed copy under “Executed board resolution”.",
-                }
-              : resolutionDoc.category !== "PF_RESOLUTION_EXECUTED"
-                ? {
-                    reason: `Document ${documentId} is not filed as an executed board resolution (category ${resolutionDoc.category ?? "none"}).`,
-                    error:
-                      "That document isn't filed as an executed board resolution. Upload the signed copy under “Executed board resolution” — or re-categorize it there if this is it.",
-                  }
-                : null;
-        if (docProblem) {
-          await logRow({
-            accountId: loan.accountId,
-            jurisdiction: loan.state,
-            rule: "board-resolution",
-            outcome: "BLOCK",
-            reason: docProblem.reason,
-            inputs: { loanId: loan.id, documentId },
-            actor,
-            actorName,
-          });
-          return { ok: false, error: docProblem.error };
-        }
-        /**
-         * One payment path at a time. If an invoice billing this policy still
-         * has a live Stripe link (SENT), or a payment already clearing on it
-         * (PROCESSING), the association has an open pay-in-full route — and
-         * activating the loan would open the financed route beside it. The
-         * fix is one click away: voiding the invoice kills its link through
-         * the path that already knows how. PROCESSING refuses outright,
-         * because money in flight means they already chose.
-         */
-        // W8: the loan's anchor may be a quote (pre-bind), a policy, or —
-        // after a bind rollover — both ids; invoices on either are this
-        // premium's billing.
-        const anchorLegs: Record<string, unknown>[] = [];
-        if (loan.policyId) anchorLegs.push({ policyId: { eq: loan.policyId } });
-        if (loan.quoteId) anchorLegs.push({ quoteId: { eq: loan.quoteId } });
-        if (!anchorLegs.length) {
-          return { ok: false, error: "This loan has no policy or quote anchor — it cannot be activated." };
-        }
-        const policyInvoices = await listAllPages((nextToken) =>
-          client.models.Invoice.list({
-            filter: anchorLegs.length === 1 ? anchorLegs[0] : { or: anchorLegs },
-            limit: 200,
-            nextToken,
-          })
-        );
-        /**
-         * PAID is in the scan since W7: before ACCEPTED existed, a paid
-         * invoice had already cancelled every QUOTED loan, so this case was
-         * unreachable. An ACCEPTED loan survives payment by design — which
-         * makes "premium already collected in full" a state activation can
-         * now meet, and must refuse.
-         */
-        const paidInvoice = policyInvoices.find((inv) => inv.status === "PAID");
-        if (paidInvoice) {
-          await logRow({
-            accountId: loan.accountId,
-            jurisdiction: loan.state,
-            rule: "exclusive-payment-path",
-            outcome: "BLOCK",
-            reason: `Invoice ${paidInvoice.number ?? paidInvoice.id} is PAID — the premium is already collected in full.`,
-            inputs: { loanId: loan.id, invoiceId: paidInvoice.id },
-            actor,
-            actorName,
-          });
-          return {
-            ok: false,
-            error: `Invoice ${paidInvoice.number ?? paidInvoice.id} on this policy is PAID — the premium is already collected in full. This loan should be cancelled and any down payment refunded, not activated.`,
-          };
-        }
-        const openInvoice = policyInvoices.find(
-          (inv) =>
-            inv.status === "PROCESSING" ||
-            (inv.status === "SENT" && inv.stripePaymentLinkId?.trim())
-        );
-        if (openInvoice) {
-          await logRow({
-            accountId: loan.accountId,
-            jurisdiction: loan.state,
-            rule: "exclusive-payment-path",
-            outcome: "BLOCK",
-            reason: `Invoice ${openInvoice.number ?? openInvoice.id} (${openInvoice.status}) still offers pay-in-full on this policy.`,
-            inputs: { loanId: loan.id, invoiceId: openInvoice.id },
-            actor,
-            actorName,
-          });
-          return {
-            ok: false,
-            error:
-              openInvoice.status === "PROCESSING"
-                ? `A pay-in-full payment on invoice ${openInvoice.number ?? openInvoice.id} is already clearing. The association chose to pay in full — this quote should be cancelled, not activated.`
-                : `Invoice ${openInvoice.number ?? openInvoice.id} still has a live payment link for the full premium. Void it first — the association cannot have both a pay-in-full link and a signed finance agreement open at once.`,
-          };
-        }
-
-        /**
-         * The staleness rule, re-drawn after the W8 E2E caught its original
-         * form refusing the NORMAL case. "Executed before the term starts"
-         * blocked every advance-bound deal — boards authorize the agreement
-         * in front of them, before coverage begins; that is how binding
-         * works. What the rule actually protects against is last term's
-         * paper: a resolution that predates THIS loan cannot be authorizing
-         * it, whatever term it names. So the boundary is the loan's own
-         * quote date — and an execution date in the future is a typo, not a
-         * meeting that happened.
-         */
-        const quotedDay = (loan.quotedAt ?? "").slice(0, 10);
-        const todayDay = now.slice(0, 10);
-        const staleReason =
-          executed > todayDay
-            ? `Resolution execution date ${executed} is in the future.`
-            : quotedDay && executed < quotedDay
-              ? `Resolution executed ${executed} predates this financing (quoted ${quotedDay}). Boards turn over — the resolution must authorize the agreement in front of them, not a prior term's.`
-              : null;
-        await logRow({
-          accountId: loan.accountId,
-          jurisdiction: loan.state,
-          rule: "board-resolution",
-          outcome: staleReason ? "BLOCK" : "PASS",
-          reason: staleReason ?? undefined,
-          inputs: { loanId: loan.id, executed, quotedDay, documentId },
-          actor,
-          actorName,
-        });
-        if (staleReason) {
-          return {
-            ok: false,
-            error:
-              executed > todayDay
-                ? `That resolution is dated ${executed} — a day that hasn't happened. Check the execution date.`
-                : `That resolution was executed ${executed}, before this financing was quoted (${quotedDay}). Boards turn over — obtain a resolution executed for this agreement.`,
-          };
-        }
-        const won = await transition(loan.id, loan.status, {
-          status: "ACTIVE",
-          activatedAt: now,
-          boardResolutionExecutedAt: executed,
-          boardResolutionDocumentId: documentId,
-        });
-        if (!won) return { ok: false, error: "The loan changed underneath this activation. Look at it and try again." };
-        return { ok: true };
-      }
+      // Kept as a refusal for older clients. Only settlement enables collection.
+      case "ACTIVATE":
+        return { ok: false, error: "Financing starts automatically when the initial payment settles after the financing agreement is signed. No separate activation is needed." };
 
       /**
        * W8: a quote became a policy — the loan follows it. Clients cannot

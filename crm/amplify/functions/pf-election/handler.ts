@@ -22,6 +22,7 @@ import {
   POWER_OF_ATTORNEY,
   PREPAYMENT_TERMS,
   CANCELLATION_PROCEDURE,
+  SECURITY_INTEREST_AND_AUTHORITY,
 } from "../pf-agreement/agreementTerms";
 
 /**
@@ -142,6 +143,7 @@ function termsShape(loan: PfLoan, associationName: string, state: "open" | "done
       POWER_OF_ATTORNEY,
       PREPAYMENT_TERMS,
       CANCELLATION_PROCEDURE,
+      SECURITY_INTEREST_AND_AUTHORITY,
     ],
     agreementSignedName: state === "open" ? (loan.agreementSignedName ?? null) : null,
     agreementSignedRole: state === "open" ? (loan.agreementSignedRole ?? null) : null,
