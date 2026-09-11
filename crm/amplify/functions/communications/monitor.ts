@@ -1,7 +1,7 @@
 import { get, issue, row, save } from "./store";
 import { config } from "./config";
 import { resolveIssue } from "./routing";
-import { businessDate } from "../../../../shared/leadWorkflow";
+import { businessDate, morningReminderAt } from "../../../../shared/leadWorkflow";
 import { validateCompleteRouting } from "../../../../shared/workRouting";
 import { routing } from "./routing";
 import { team } from "./workflow";
@@ -19,7 +19,10 @@ export const handler = async () => {
   if (!census?.data.completedAt || now.getTime() - Date.parse(String(census.data.completedAt)) > 24 * 3600_000) errors.push("The daily account coverage check has not completed.");
   const day = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" }).format(now);
   const hour = Number(new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "2-digit", hourCycle: "h23" }).format(now));
-  if (businessDate(day, c.holidays) && hour >= 10 && !c.paused) {
+  // New delivery activated after the 9am batch cannot have sent that day's
+  // report. Its first eligible morning is still monitored normally.
+  const reportWindowEnd = Date.parse(morningReminderAt(now.toISOString(), c.holidays)) + 10 * 60_000;
+  if (businessDate(day, c.holidays) && hour >= 10 && !c.paused && Date.parse(c.activatedAt) < reportWindowEnd) {
     const reportHealth = await get("health:reports");
     if (!reportHealth || String(reportHealth.data.day) !== day || reportHealth.data.incomplete) errors.push("Morning report delivery is incomplete. Check the assigned report exceptions.");
   }

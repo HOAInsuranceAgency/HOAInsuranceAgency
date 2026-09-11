@@ -1603,6 +1603,29 @@ describe("approved sales and carrier revision: integration evidence", () => {
     expect((await reportSnapshot()).warnings.join(" ")).toContain("not fully configured");
     expect(h.front).not.toHaveBeenCalled();
   });
+  it.each([
+    ["2026-09-11T16:47:36Z", "2026-09-11T17:00:00Z", false],
+    ["2026-09-11T13:10:00Z", "2026-09-11T14:00:00Z", false],
+    ["2026-09-11T13:09:59Z", "2026-09-11T14:00:00Z", true],
+    ["2026-09-11T12:00:00Z", "2026-09-11T14:00:00Z", true],
+    ["2026-09-11T16:47:36Z", "2026-09-14T14:00:00Z", true],
+    ["2026-11-02T17:00:00Z", "2026-11-02T18:00:00Z", false],
+  ])("checks missing morning reports only after an eligible send window: activation %s, now %s", async (activation, now, expected) => {
+    await reportSetup(); h.c.activatedAt = activation; vi.setSystemTime(now);
+    for (const [id, data] of [["health:worker", { at: now, lagging: false }], ["coverage:census", { completedAt: now }]] as const) {
+      const old = await get(id); await save(row("HEALTH", id, data, { previous: old }), old);
+    }
+    const { handler } = await import("../../amplify/functions/communications/monitor");
+    if (expected) {
+      await expect(handler()).rejects.toThrow("requires intervention");
+      expect(record("health:monitor").data.errors).toEqual(["Morning report delivery is incomplete. Check the assigned report exceptions."]);
+    } else {
+      await save(row("ISSUE", "issue:independent-monitor", { resolved: false, message: "Morning report delivery is incomplete" }));
+      await expect(handler()).resolves.toEqual({ errors: [] });
+      expect(record("issue:independent-monitor").data.resolved).toBe(true);
+    }
+    expect(h.front).not.toHaveBeenCalled();
+  });
   it("sends one healthy daily edition per salesperson and manager, with provider confirmation", async () => {
     await reportSetup(); const { handler } = await import("../../amplify/functions/communications/reports");
     await handler(); expect(h.front.mock.calls.filter(([,m]) => m === "POST")).toHaveLength(2);
