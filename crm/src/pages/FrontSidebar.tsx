@@ -3,17 +3,21 @@ import Front from "@frontapp/plugin-sdk";
 import LeadWorkflowPanel from "../components/LeadWorkflowPanel";
 import { client } from "../lib/client";
 import { communicationRequest as request } from "../lib/communications";
+import { listAllPages } from "../lib/pagination";
 
 export default function FrontSidebar() {
   const activeId = useRef<string | null>(null);
+  const searchVersion = useRef(0);
   const [smsTo, setSmsTo] = useState(""), [smsBody, setSmsBody] = useState(""), [smsBusy, setSmsBusy] = useState(false);
   const [conversationId, setConversationId] = useState<string | null>(null), [status, setStatus] = useState("Select one conversation in Front.");
   const [search, setSearch] = useState(""), [matches, setMatches] = useState<{ id: string; name: string }[]>([]), [error, setError] = useState("");
+  const [searchBusy, setSearchBusy] = useState(false), [searched, setSearched] = useState(false);
   const [revision, setRevision] = useState(0), [purpose, setPurpose] = useState("PROSPECT");
   useEffect(() => {
     const subscription = Front.contextUpdates.subscribe(context => {
       const id = "conversation" in context && context.conversation ? context.conversation.id : null;
       if (id === activeId.current) return;
+      searchVersion.current++; setSearchBusy(false); setSearched(false);
       setPurpose("PROSPECT"); setSmsBusy(false);
       activeId.current = id; setConversationId(id); setSmsTo(""); setSmsBody(""); setStatus(id ? "" : "Select one conversation in Front."); setSearch(""); setMatches([]); setError("");
     });
@@ -30,10 +34,22 @@ export default function FrontSidebar() {
         await Front.createDraft({ channelId: setup.channelId as Parameters<typeof Front.createDraft>[0]["channelId"], to: [smsTo.trim()], content: { body: smsBody, type: "text" } });
       } catch(e) { setError(`Could not open the text draft: ${String(e)}. Use Front's native composer and select the shared main line.`); } finally { setSmsBusy(false); } }}>
       <label className="field">Prospect number<input required type="tel" value={smsTo} onChange={e => setSmsTo(e.target.value)} placeholder="(617) 555-0123" /></label><label className="field">Message<textarea required rows={3} value={smsBody} onChange={e => setSmsBody(e.target.value)} placeholder="Write your message…" /></label><button disabled={smsBusy || !smsTo.trim() || !smsBody.trim()}>Open draft in Front</button></form></details>
-      <details className="front-disclosure"><summary>Find or link a lead <span className="front-summary-hint">Choose the right CRM account</span></summary><form onSubmit={async e => { e.preventDefault(); const captured = conversationId; setError(""); try {
-        const p = await client.models.Account.list({ filter: { name: { contains: search.trim() } }, limit: 25 });
-        if (p.errors?.length) throw new Error(p.errors[0].message); if (captured === activeId.current) setMatches(p.data.map(a => ({ id: a.id, name: a.name })));
-      } catch(e) { setError(String(e)); } }}><label className="field">Association or client name<input required value={search} onChange={e => setSearch(e.target.value)} placeholder="Search by name" /></label><button disabled={!search.trim()}>Search CRM</button></form>
+      <details className="front-disclosure"><summary>Find or link a lead <span className="front-summary-hint">Choose the right CRM account</span></summary><form onSubmit={async e => { e.preventDefault(); const captured = conversationId, version = ++searchVersion.current, term = search.trim().toLocaleLowerCase(); setError(""); setMatches([]); setSearched(false); setSearchBusy(true); try {
+        // DynamoDB's limit applies before filtering. Search every page, and
+        // compare locally so capitalization cannot hide an existing account.
+        const accounts = await listAllPages(async nextToken => {
+          const p = await client.models.Account.list({ nextToken, limit: 200, selectionSet: ["id", "name"] });
+          if (p.errors?.length) throw new Error(p.errors[0].message);
+          return p;
+        });
+        if (captured === activeId.current && version === searchVersion.current) {
+          setMatches(accounts.filter(a => a.name.toLocaleLowerCase().includes(term)).map(a => ({ id: a.id, name: a.name })).sort((a, b) => a.name.localeCompare(b.name)));
+          setSearched(true);
+        }
+      } catch(e) { if (captured === activeId.current && version === searchVersion.current) setError(String(e)); }
+      finally { if (captured === activeId.current && version === searchVersion.current) setSearchBusy(false); }
+      }}><label className="field">Association or client name<input required value={search} onChange={e => { setSearch(e.target.value); searchVersion.current++; setMatches([]); setSearched(false); setSearchBusy(false); }} placeholder="Search by name" /></label><button disabled={searchBusy || !search.trim()}>{searchBusy ? "Searching…" : "Search CRM"}</button></form>
+      {searched && !matches.length && <p role="status" className="muted small">No matching CRM leads or clients. Try another part of the name.</p>}
       <label className="field">Conversation purpose<select value={purpose} onChange={e => setPurpose(e.target.value)}><option value="PROSPECT">Prospect</option><option value="CARRIER">Carrier</option></select></label>
       {matches.map(m => <p key={m.id}><button className="link" onClick={async () => { try { await request("linkConversation", { accountId: m.id, conversationId, purpose }, true); setRevision(n => n + 1); setMatches([]); } catch(e) { setError(String(e)); } }}>{m.name}</button></p>)}
       </details></div></>}

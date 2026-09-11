@@ -124,6 +124,36 @@ describe("communication UI boundaries", () => {
     await act(async () => resolve({ data: [{ id: "a", name: "Wrong old search result" }] }));
     expect(screen.queryByRole("button", { name: "Wrong old search result" })).toBeNull();
   });
+  it("finds and links accounts beyond the first page regardless of capitalization", async () => {
+    h.list.mockResolvedValueOnce({ data: [{ id: "other", name: "Willow HOA" }], nextToken: "next-page" })
+      .mockResolvedValueOnce({ data: [{ id: "kahale", name: "Kahale Manor HOA" }] });
+    render(<FrontSidebar />); act(() => h.listener?.({ conversation: { id: "cnv_a" } }));
+    fireEvent.click(screen.getByText("Find or link a lead"));
+    fireEvent.change(screen.getByLabelText("Association or client name"), { target: { value: "kahale" } });
+    fireEvent.click(screen.getByRole("button", { name: "Search CRM" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Kahale Manor HOA" }));
+    expect(h.list).toHaveBeenNthCalledWith(2, expect.objectContaining({ nextToken: "next-page" }));
+    await waitFor(() => expect(h.request).toHaveBeenCalledWith("linkConversation", { accountId: "kahale", conversationId: "cnv_a", purpose: "PROSPECT" }, true));
+  });
+  it("shows a useful empty result after searching every page", async () => {
+    h.list.mockResolvedValueOnce({ data: [], nextToken: "next-page" }).mockResolvedValueOnce({ data: [] });
+    render(<FrontSidebar />); act(() => h.listener?.({ conversation: { id: "cnv_a" } }));
+    fireEvent.click(screen.getByText("Find or link a lead"));
+    fireEvent.change(screen.getByLabelText("Association or client name"), { target: { value: "missing" } });
+    fireEvent.click(screen.getByRole("button", { name: "Search CRM" }));
+    expect(await screen.findByText(/No matching CRM leads or clients/)).toBeVisible();
+    expect(h.list).toHaveBeenCalledTimes(2);
+  });
+  it("discards a search if its query changes before results return", async () => {
+    let resolve!: (value: unknown) => void; h.list.mockReturnValue(new Promise(r => { resolve = r; }));
+    render(<FrontSidebar />); act(() => h.listener?.({ conversation: { id: "cnv_a" } }));
+    fireEvent.click(screen.getByText("Find or link a lead"));
+    fireEvent.change(screen.getByLabelText("Association or client name"), { target: { value: "Willow" } });
+    fireEvent.click(screen.getByRole("button", { name: "Search CRM" }));
+    fireEvent.change(screen.getByLabelText("Association or client name"), { target: { value: "Kahale" } });
+    await act(async () => resolve({ data: [{ id: "a", name: "Willow HOA" }] }));
+    expect(screen.queryByRole("button", { name: "Willow HOA" })).toBeNull();
+  });
   it("does not create a text draft if Front context changes while setup is loading", async () => {
     let resolve!: (value: unknown) => void;
     h.request.mockImplementation((op: string) => op === "smsComposer" ? new Promise(r => { resolve = r; }) : Promise.resolve(context));
