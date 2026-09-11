@@ -28,9 +28,10 @@ export function quoteMatchesRisk(quote: QuoteEvidence, risk: RiskTerm) {
     && validCalendarDate(quote.expirationDate) && quote.expirationDate > risk.term;
 }
 export function usableQuote(quote: QuoteEvidence, risk: RiskTerm, now: string) {
+  const today = /^\d{4}-\d{2}-\d{2}$/.test(now) ? now : new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(now));
   return quoteMatchesRisk(quote, risk) && ["QUOTED", "PRESENTED", "BOUND"].includes(quote.status ?? "")
-    && quote.premium != null && quote.premium > 0 && !!quote.lines?.filter(Boolean).length
-    && (quote.status === "BOUND" || !quote.offerExpiresAt || quote.offerExpiresAt >= now.slice(0, 10));
+    && !!quote.carrierId && quote.premium != null && quote.premium > 0 && !!quote.lines?.filter(Boolean).length
+    && (quote.status === "BOUND" || !quote.offerExpiresAt || validCalendarDate(quote.offerExpiresAt) && quote.offerExpiresAt >= today);
 }
 export function quoteCoverage(quotes: QuoteEvidence[], risk: RiskTerm, now: string) {
   const matches = quotes.filter(q => usableQuote(q, risk, now));

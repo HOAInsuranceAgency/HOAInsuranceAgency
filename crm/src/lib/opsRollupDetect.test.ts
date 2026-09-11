@@ -98,7 +98,7 @@ describe("coverage gaps", () => {
           id: "q1",
           accountId: "a1",
           status: "QUOTED",
-          renewalPolicyId: "p1", premium: 1000, lines: ["Property"], effectiveDate: "2026-08-21", expirationDate: "2027-08-21",
+          carrierId: "c1", renewalPolicyId: "p1", premium: 1000, lines: ["Property"], effectiveDate: "2026-08-21", expirationDate: "2027-08-21",
           createdAt: "2026-07-20T12:00:00Z",
         },
       ],

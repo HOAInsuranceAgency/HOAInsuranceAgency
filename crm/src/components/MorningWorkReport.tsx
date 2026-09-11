@@ -15,7 +15,7 @@ export default function MorningWorkReport() {
     <button className="secondary" disabled={report.loading} onClick={() => void report.refetch()}>Refresh</button></div>
     {(report.error || actionError) && <p className="error-text" role="alert">{actionError || report.error}</p>}
     {report.loading && <p role="status">Checking your work…</p>}
-    {data && <><p className="muted">{data.accountCount} accounts · {data.items.length} actions · As of {fmtDateTime(data.asOf)}</p>
+    {data && <><p className="muted">{data.accountCount} account{data.accountCount === 1 ? "" : "s"} · {data.items.length} action{data.items.length === 1 ? "" : "s"} · As of {fmtDateTime(data.asOf)}</p>
       {data.health.map(h => <p key={h} role="status" className="error-text">{h}</p>)}
       {data.teamCounts.length > 0 && <div className="table-wrap"><table><thead><tr><th>My sales team</th><th>Needs attention</th><th>Overdue</th></tr></thead><tbody>{data.teamCounts.map(t => <tr key={t.name}><td>{t.name}</td><td>{t.due}</td><td>{t.overdue}</td></tr>)}</tbody></table></div>}
       {!data.items.length && <p>{data.complete ? "Nothing needs attention in your report." : "No actions found yet. Coverage must be checked before calling this clear."}</p>}

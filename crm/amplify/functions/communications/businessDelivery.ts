@@ -4,6 +4,7 @@ import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { createHash } from "node:crypto";
 import type { Communication } from "../../../../shared/leadWorkflow";
 import { contactProgress } from "../../../../shared/contactProgress";
+import { usableQuote } from "../../../../shared/renewalPolicy";
 import { dataClient } from "./data";
 import { ensureWorkflow } from "./workflow";
 import { config } from "./config";
@@ -39,8 +40,7 @@ export async function prepareBusinessDraft(input: { accountId: string; conversat
   let recordVersion: string, heading: string, facts: string[] = [], file: { filename: string; key: string } | undefined;
   if (input.kind === "QUOTE") {
     const q = await client.models.Quote.get({ id: input.recordId });
-    if (q.errors?.length || !q.data || q.data.accountId !== input.accountId || q.data.status !== "QUOTED" || !q.data.premium || !q.data.effectiveDate || !q.data.expirationDate || !q.data.lines?.length) throw new Error("Finish the usable quote before presenting it");
-    if (q.data.offerExpiresAt && q.data.offerExpiresAt < new Date().toISOString().slice(0,10)) throw new Error("This quote offer has expired");
+    if (q.errors?.length || !q.data || q.data.status !== "QUOTED" || q.data.premium == null || !q.data.lines?.length || !q.data.effectiveDate || !usableQuote(q.data, { accountId: input.accountId, term: q.data.effectiveDate, lines: [], policyId: q.data.renewalPolicyId ?? undefined }, new Date().toISOString())) throw new Error("Finish the usable quote before presenting it");
     recordVersion = q.data.updatedAt; heading = "Your insurance quote";
     facts = [`Premium: ${new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(q.data.premium)}`, `Coverage: ${q.data.lines.filter(Boolean).join(", ")}`, `Term: ${q.data.effectiveDate} to ${q.data.expirationDate}`];
     if (q.data.carrierId) { const carrier = await client.models.Carrier.get({ id: q.data.carrierId }); if (carrier.errors?.length || !carrier.data) throw new Error("Could not verify the quoted carrier"); facts.unshift(`Carrier: ${carrier.data.name}`); }

@@ -385,7 +385,7 @@ describe("renewalMarketing", () => {
 describe("quotedWithinWindow", () => {
   it("requires usable coverage for the actual term, regardless of creation time", () => {
     const risk = { accountId: "a1", lines: ["Property"] }, expiration = "2026-09-11";
-    const q = { accountId: "a1", status: "QUOTED", premium: 1000, effectiveDate: expiration, expirationDate: "2027-09-11", lines: ["Property"], createdAt: "2025-09-01T09:00:00Z" };
+    const q = { accountId: "a1", carrierId: "c1", status: "QUOTED", premium: 1000, effectiveDate: expiration, expirationDate: "2027-09-11", lines: ["Property"], createdAt: "2025-09-01T09:00:00Z" };
     expect(quotedWithinWindow([q], expiration, fakeDaysUntil, risk)).toBe(true);
     expect(quotedWithinWindow([{ ...q, status: "SUBMITTED" }], expiration, fakeDaysUntil, risk)).toBe(false);
     expect(quotedWithinWindow([{ ...q, effectiveDate: "2025-09-11" }], expiration, fakeDaysUntil, risk)).toBe(false);

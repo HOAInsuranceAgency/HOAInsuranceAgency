@@ -109,7 +109,9 @@ describe("usable quote evidence", () => {
     expect(quoteCoverage([{ ...quote, lines: ["Property"] }], risk, "2026-11-01")).toMatchObject({ complete: false, missingLines: ["Liability"] });
     expect(quoteMatchesRisk({ ...quote, renewalPolicyId: "different" }, risk)).toBe(false);
     expect(quoteCoverage([{ ...quote, premium: null }], risk, "2026-11-01").complete).toBe(false);
+    expect(quoteCoverage([{ ...quote, carrierId: null }], risk, "2026-11-01").complete).toBe(false);
     expect(quoteCoverage([{ ...quote, offerExpiresAt: "2026-10-31" }], risk, "2026-11-01").complete).toBe(false);
+    expect(quoteCoverage([{ ...quote, offerExpiresAt: "2026-10-31" }], risk, "2026-11-01T02:00:00Z").complete).toBe(true); // Still October 31 in the agency's timezone.
   });
   it("keeps contact evidence separate from business results and internal reports", () => {
     const call = { id: "c", providerId: "c", provider: "dialpad", channel: "CALL", direction: "OUTBOUND", at: "2026-09-10T13:00:00Z", status: "MISSED", version: 1 } as const;

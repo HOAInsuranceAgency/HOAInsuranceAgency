@@ -56,6 +56,7 @@ vi.mock("../../amplify/functions/communications/data", () => ({ dataClient: asyn
   Policy: { get: async ({ id }: { id: string }) => ({ data: h.records.get(`Policy:${id}`) ?? null }), list: async () => ({ data: [...h.records.entries()].filter(([key]) => key.startsWith("Policy:")).map(([,r]) => r) }) },
   MarketingTask: { list: async () => ({ data: [] }), listMarketingTaskByAccountId: async () => ({ data: [] }) },
   PriorCarrier: { list: async () => ({ data: [] }) },
+  Carrier: { get: async ({ id }: { id: string }) => ({ data: h.records.get(`Carrier:${id}`) ?? null }) },
   Certificate: { list: async () => ({ data: [...h.records.entries()].filter(([key]) => key.startsWith("Certificate:")).map(([,d]) => d) }) },
   Document: { listDocumentByEntityId: async () => ({ data: [...h.records.entries()].filter(([key]) => key.startsWith("Document:")).map(([,d]) => d) }) },
   LeadReply: { update: h.update },
@@ -1565,7 +1566,8 @@ describe("approved sales and carrier revision: integration evidence", () => {
 describe("native Front quote presentation", () => {
   async function prepare() {
     await lead(); await save(row("LINK", "front-link:cnv_a", { accountId: "a1", conversationId: "cnv_a", purpose: "PROSPECT" }, { accountId: "a1" }));
-    h.records.set("Quote:q1", { id: "q1", accountId: "a1", status: "QUOTED", premium: 1000, effectiveDate: "2026-10-01", expirationDate: "2027-10-01", lines: ["Property"], createdAt: NOW, updatedAt: NOW });
+    h.records.set("Quote:q1", { id: "q1", accountId: "a1", carrierId: "c1", status: "QUOTED", premium: 1000, effectiveDate: "2026-10-01", expirationDate: "2027-10-01", lines: ["Property"], createdAt: NOW, updatedAt: NOW });
+    h.records.set("Carrier:c1", { id: "c1", name: "Example Carrier" });
     h.front.mockResolvedValue({ _results: [{ id: "msg_original", is_inbound: true, recipients: [{ role: "from", handle: "jane@example.com" }] }] });
     const { prepareBusinessDraft } = await import("../../amplify/functions/communications/businessDelivery");
     return prepareBusinessDraft({ accountId: "a1", conversationId: "cnv_a", kind: "QUOTE", recordId: "q1" }, "brian");
@@ -1650,7 +1652,7 @@ describe('routing repair and underlying business requirements', () => {
   });
   it('retires a presentation reminder when its quote is explicitly lost', async () => {
     await lead();
-    h.records.set('Quote:q1',{id:'q1',accountId:'a1',status:'QUOTED',premium:1200,lines:['Property'],effectiveDate:'2026-12-01',expirationDate:'2027-12-01',createdAt:NOW,updatedAt:NOW});
+    h.records.set('Quote:q1',{id:'q1',accountId:'a1',carrierId:'c1',status:'QUOTED',premium:1200,lines:['Property'],effectiveDate:'2026-12-01',expirationDate:'2027-12-01',createdAt:NOW,updatedAt:NOW});
     const { reconcileAccountWork } = await import('../../amplify/functions/communications/coverage');
     const account={id:'a1',name:'Willow HOA',stage:'LEAD',createdAt:NOW,updatedAt:NOW};
     await reconcileAccountWork(account);
