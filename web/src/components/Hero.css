@@ -53,6 +53,8 @@
   height: 100%;
   object-fit: cover;
   z-index: 0;
+  /* Decorative media must not intercept hero links or the video toggle. */
+  pointer-events: none;
 }
 
 .hero-video {
@@ -139,6 +141,18 @@
 
 .hero--compact .hero-title {
   font-size: clamp(32px, 5vw, 48px);
+}
+
+/* Optional one-liner between the H1 and the subtitle. Gold so it reads as a
+   claim rather than more body copy, but no pill: the eyebrow above already owns
+   that shape and two of them would fight. */
+.hero-note {
+  font-size: clamp(15px, 2vw, 17px);
+  font-weight: 700;
+  color: var(--color-gold-light);
+  line-height: 1.5;
+  max-width: 600px;
+  margin: -8px 0 18px;
 }
 
 .hero-subtitle {

@@ -5,6 +5,8 @@ interface Props {
   title: string;
   subtitle?: string;
   backgroundImage: string;
+  /** Optional short line under the H1, above the subtitle. */
+  note?: string;
   backgroundVideo?: string;
   ctaText?: string;
   ctaHref?: string;
@@ -12,7 +14,7 @@ interface Props {
   eyebrow?: string;
 }
 
-const { title, subtitle, backgroundImage, backgroundVideo, ctaText, ctaHref, compact, eyebrow } = Astro.props;
+const { title, subtitle, note, backgroundImage, backgroundVideo, ctaText, ctaHref, compact, eyebrow } = Astro.props;
 
 // Action-slot heroes keep the lookup form above the fold.
 const hasAction = Astro.slots.has("action");
@@ -53,6 +55,7 @@ const hasAction = Astro.slots.has("action");
   <div class="hero-content container">
     {eyebrow && <span class="hero-eyebrow">{eyebrow}</span>}
     <h1 class="hero-title">{title}</h1>
+    {note && <p class="hero-note">{note}</p>}
     {subtitle && <p class="hero-subtitle">{subtitle}</p>}
     {hasAction ? (
       <slot name="action" />

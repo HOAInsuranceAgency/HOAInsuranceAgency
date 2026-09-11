@@ -115,7 +115,8 @@ describe("condominium page release integration", () => {
       .toHaveLength(2);
     expect(source).toContain("all 50 states and the District of Columbia");
     expect(source).toContain("Coverage availability depends on the");
-    expect(source).toContain('backgroundVideo="/images/hero-video.mp4"');
+    expect(source).toContain('backgroundImage="/images/modern-building.jpg"');
+    expect(source).not.toContain("backgroundVideo");
     expect(source).toContain('<ContactForm showClaims client:visible />');
   });
 });
