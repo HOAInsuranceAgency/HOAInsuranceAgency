@@ -51,6 +51,7 @@ const SOCIAL_PROFILES = [
   "https://www.instagram.com/hoainsuranceagency",
   "https://www.facebook.com/people/HOA-Insurance-Agency/61575377498498/",
   "https://www.linkedin.com/company/hoa-insurance-agency",
+  "https://www.wikidata.org/wiki/Q141443333",
 ];
 
 /** The sole agency node. The brand is an alternate name and separate Brand node. */
@@ -128,7 +129,10 @@ export function personFounder(): Record<string, unknown> {
     familyName: "Greasley",
     jobTitle: AGENCY.founderJobTitle,
     url: FOUNDER_ID,
-    sameAs: FOUNDER_PROFILES.map((profile) => profile.url),
+    sameAs: [
+      ...FOUNDER_PROFILES.map((profile) => profile.url),
+      "https://www.wikidata.org/wiki/Q141443360",
+    ],
     worksFor: { "@id": ORG_ID },
   };
 }
