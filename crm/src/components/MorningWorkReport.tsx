@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import type { MorningReport } from "../../../shared/morningReport";
+import { reportGroup } from "../../../shared/morningReport";
 import { communicationRequest as request } from "../lib/communications";
 import { useAsyncResource } from "../lib/useAsyncResource";
 import { fmtDateTime } from "../lib/client";
@@ -19,7 +20,12 @@ export default function MorningWorkReport() {
       {data.health.map(h => <p key={h} role="status" className="error-text">{h}</p>)}
       {data.teamCounts.length > 0 && <div className="table-wrap"><table><thead><tr><th>My sales team</th><th>Needs attention</th><th>Overdue</th></tr></thead><tbody>{data.teamCounts.map(t => <tr key={t.name}><td>{t.name}</td><td>{t.due}</td><td>{t.overdue}</td></tr>)}</tbody></table></div>}
       {!data.items.length && <p>{data.complete ? "Nothing needs attention in your report." : "No actions found yet. Coverage must be checked before calling this clear."}</p>}
-      {data.items.map(item => <article className="workflow-task" key={item.id}><span className="small muted">{item.section} · {item.responsible}</span><h3>{item.account}</h3><strong>{item.title}</strong>{item.taskVersion != null && ["MANAGER", "OWNER"].includes(item.stage) && <button className="secondary" onClick={async () => { try { setActionError(""); await request("takeResponse", { taskId: item.id, version: item.taskVersion }, true); await report.refetch(); } catch (e) { setActionError(e instanceof Error ? e.message : "Could not take this response"); } }}>Handle this response</button>}<p>{item.why}</p><p className="muted small">{item.dueAt && `Due ${fmtDateTime(item.dueAt)}`}{item.lastOutreach && ` · Last ${item.lastOutreachKind}: ${fmtDateTime(item.lastOutreach)}`}</p>{item.accountId ? <Link to={`/accounts/${item.accountId}`}>Open the work →</Link> : <Link to="/lead-work">Review shared activity →</Link>}</article>)}
+      {["Sales", "Client and carrier", "Setup and data"].map(group => {
+        const items = data.items.filter(i => reportGroup(i) === group);
+        if (!items.length) return null;
+        const content = items.map(item => <article className="workflow-task" key={item.id}><span className="small muted">{item.section} · {item.role && `${item.role}: `}{item.responsible}</span><h3>{item.account}</h3><strong>{item.title}</strong>{item.canTakeResponse && !item.blockerOwner && item.taskVersion != null && ["MANAGER", "OWNER"].includes(item.stage) && <button className="secondary" onClick={async () => { try { setActionError(""); await request("takeResponse", { taskId: item.id, version: item.taskVersion }, true); await report.refetch(); } catch (e) { setActionError(e instanceof Error ? e.message : "Could not take this response"); } }}>Handle this response</button>}<p>{item.why}</p><p className="muted small">{item.dueAt && `Due ${fmtDateTime(item.dueAt)}`}{item.lastOutreach && ` · Last ${item.lastOutreachKind}: ${fmtDateTime(item.lastOutreach)}`}</p>{item.blockerOwner && <p>Blocker owner: {item.blockerOwner} · Review {fmtDateTime(item.blockerReviewAt!)}</p>}<p>{item.next}</p>{item.url?.startsWith("https://") ? <a href={item.url} target="_blank" rel="noreferrer">{item.linkLabel ?? "Open the work"} →</a> : <Link to={item.url ?? (item.accountId ? `/accounts/${item.accountId}` : "/lead-work")}>{item.linkLabel ?? "Open the work"} →</Link>}</article>);
+        return group === "Setup and data" ? <details key={group}><summary>{group} · {items.length} issues</summary>{content}</details> : <section key={group} aria-label={group}><h3>{group} · {items.length} action{items.length === 1 ? "" : "s"}</h3>{content}</section>;
+      })}
     </>}
   </section>;
 }

@@ -1,6 +1,6 @@
 import LeadWorkflowPanel from "../components/LeadWorkflowPanel";
 import { useEffect, useRef, useState } from "react";
-import { useParams, useSearchParams } from "react-router-dom";
+import { useLocation, useParams, useSearchParams } from "react-router-dom";
 import {
   client,
   fmtDate,
@@ -140,6 +140,7 @@ export function resolveTab(
 export default function AccountDetail({ profile }: { profile: UserProfile }) {
   const { id } = useParams<{ id: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
+  const { hash } = useLocation();
 
   /**
    * Derived from the URL, not stored — the Dashboard's lesson applied here.
@@ -176,6 +177,11 @@ export default function AccountDetail({ profile }: { profile: UserProfile }) {
   );
   const account = res.data;
   const setAccount = res.setData;
+  useEffect(() => {
+    if (!res.loaded || !account || !["#contacts", "#lead-workspace", "#carrier-work"].includes(hash)) return;
+    const frame = requestAnimationFrame(() => document.getElementById(hash.slice(1))?.scrollIntoView({ block: "start" }));
+    return () => cancelAnimationFrame(frame);
+  }, [res.loaded, account?.id, tab, hash]);
 
   // Fire the celebration on a LEAD → CLIENT transition (quote bound). Runs off
   // the locally-patched account QuotesPanel hands back, not a re-read.
@@ -236,8 +242,8 @@ export default function AccountDetail({ profile }: { profile: UserProfile }) {
       {activeTab === "overview" && (
         <>
           <OverviewTab account={account} onChange={setAccount} />
-          <ContactsCard accountId={account.id} />
-          <LeadWorkflowPanel key={account.id} accountId={account.id} />
+          <div id="contacts"><ContactsCard accountId={account.id} /></div>
+          <div id="lead-workspace"><LeadWorkflowPanel key={account.id} accountId={account.id} /></div>
           <PropertyPanel account={account} onChange={setAccount} />
           {account.stage === "LEAD" && <DeleteLeadZone account={account} />}
         </>
@@ -247,10 +253,10 @@ export default function AccountDetail({ profile }: { profile: UserProfile }) {
           <div className="card">
             <QuotesPanel account={account} onAccountChange={setAccount} />
           </div>
-          <AccountMarketingTasks
+          <div id="carrier-work"><AccountMarketingTasks
             accountId={account.id}
             completedByName={`${profile.firstName} ${profile.lastName}`}
-          />
+          /></div>
         </>
       )}
       {activeTab === "priorcarrier" && <PriorCarrierTab accountId={account.id} />}

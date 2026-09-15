@@ -170,11 +170,13 @@ export const handler = async (event: { arguments: { operation?: string; readOper
     if (op === "recoverReport") { requireAdmin(); await (await import("./reports")).recoverEdition(text(input, "editionId"), text(input, "messageId")); return { ok: true }; }
     if (op === "saveTeamRouting") { requireAdmin(); return { ok: true, routing: await (await import("./routing")).saveRouting(input as unknown as import("../../../../shared/leadWorkflow").TeamRouting, actor, await roster()) }; }
     if (op === "nextYear") return { ok: true, result: await (await import("./annualReturn")).nextYear(input as unknown as Parameters<typeof import("./annualReturn").nextYear>[0], actor) };
+    if (op === "updateBlocker") return await (await import("./blockers")).updateBlocker(input as unknown as Parameters<typeof import("./blockers").updateBlocker>[0], actor);
     if (op === "takeResponse" || op === "delegateService" || op === "requestProspectInformation") {
       const task = await get<LeadTask>(text(input, "taskId")); if (!task || task.data.status !== "OPEN") throw new Error("Choose an open request"); expected(task, version(input));
       const wf = await ensureWorkflow(task.data.accountId), routingRecord = await get("team-routing");
       const route = await (await import("./routing")).resolveTaskRoute(task.data, wf.data);
       if (op === "takeResponse") {
+        if (!(await import("../../../../shared/leadActionGuidance")).canTakeResponse(task.data) || task.data.blocker) throw new Error("Open the business record to handle this work");
         if (actor !== route.managerId && actor !== route.ownerId) throw new Error("Only the responsible manager or owner can take this response");
         await commit([check(wf), ...(routingRecord ? [check(routingRecord)] : []), put(row("TASK", task.id, { ...task.data, helperId: actor, helperRequestedBy: actor, helperReason: "MANAGER_COVER", version: task.version + 1 }, { accountId: task.accountId, previous: task, dueAt: task.dueAt }), task)]);
       } else {

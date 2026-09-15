@@ -48,6 +48,8 @@ export async function applyContactProgress(input: Communication, repair = false)
   const context = comm.context ?? (wf.data.disposition === "BOUND" && !wf.data.openLeadQuoteIds?.length ? "SERVICE" : "LEAD"), domain = comm.purpose === "CARRIER" ? "CARRIER" : "CLIENT";
   const fence = await contactFence(accountId);
   const contactPairs = await accountContactPairs(accountId);
+  const explicitLink = comm.conversationId ? await get<{ purpose?: string }>(`front-link:${comm.conversationId}`) : undefined;
+  const linkedProspect = explicitLink?.accountId === accountId && explicitLink.data.purpose === "PROSPECT";
   const role = domain === "CARRIER" || context !== "LEAD" ? "CHAMPION" : "SALESPERSON";
   const activity = new Map((await accountRows<Communication>(accountId, "COMMUNICATION")).map(r => [r.id, r]));
   activity.set(projection.id, projection);
@@ -90,7 +92,7 @@ export async function applyContactProgress(input: Communication, repair = false)
     const matched: string[] = [];
     for (const source of sources) if (source.data.at <= at && sameContact(comm, await purpose(source.data), contactPairs)) matched.push(source.id);
     const knownContact = contactPairs.some(p => [p.email?.toLowerCase(), p.phone ? normalizePhone(p.phone) : undefined].some(handle => handle && (comm.to ?? [comm.from]).some(to => to && (to.toLowerCase() === handle || normalizePhone(to) === handle))));
-    const fallback = !ids.length && (t.data.conversationId && t.data.conversationId === comm.conversationId || (["FIRST_CONTACT", "ANNUAL_RETURN"].includes(t.data.kind) || t.data.kind === "DOCUMENTS" && t.data.parentTaskId) && knownContact) && (t.data.sourceAt ?? t.createdAt) <= at;
+    const fallback = !ids.length && (t.data.conversationId && t.data.conversationId === comm.conversationId || t.data.kind === "FIRST_CONTACT" && linkedProspect || (["FIRST_CONTACT", "ANNUAL_RETURN"].includes(t.data.kind) || t.data.kind === "DOCUMENTS" && t.data.parentTaskId) && knownContact) && (t.data.sourceAt ?? t.createdAt) <= at;
     if (!matched.length && !fallback) continue;
     returnedMissedCall ||= t.data.kind === "CALLBACK";
     annualReturned ||= t.data.kind === "ANNUAL_RETURN";
@@ -99,7 +101,7 @@ export async function applyContactProgress(input: Communication, repair = false)
     const remaining = ids.filter(id => !matched.includes(id));
     const data: LeadTask = remaining.length ? { ...t.data, sourceIds: remaining, version: t.version + 1 }
       : { ...t.data, status: "COMPLETE", completedByCommunicationId: comm.id, attemptAt: at, reason: progress === "ATTEMPT" ? "Outbound attempt recorded; request remains open with a next retry" : "Contact recorded automatically", version: t.version + 1 };
-    await commit([check(wf), check(fence), check(projection), put(row("TASK", t.id, data, { accountId, previous: t, dueAt: taskWakeAt(data) }), t)]);
+    await commit([check(wf), check(fence), check(projection), ...(explicitLink ? [check(explicitLink)] : []), put(row("TASK", t.id, data, { accountId, previous: t, dueAt: taskWakeAt(data) }), t)]);
     changed = true;
   }
   const scoped: Communication[] = [];

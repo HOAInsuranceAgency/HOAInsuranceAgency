@@ -3,9 +3,9 @@ import { config } from "./config";
 import type { HistoryJob } from "./history";
 import { uniteCalls, combineLegs, callStatus, queueCallSync, type Call } from "./calls";
 import { front, permittedConversation, messageConversation, FrontScopeError, type FrontMessage } from "./providers";
-import { row, save, get, issue, hash, canonical, type Row } from "./store";
+import { row, save, get, issue, hash, canonical, check, put, commit, type Row } from "./store";
 import { recordInbound, recordOutbound, ensureWorkflow, accountRows, makeTask } from "./workflow";
-import { normalizePhone, businessDeadline, type Communication } from "../../../../shared/leadWorkflow";
+import { normalizePhone, businessDeadline, type Communication, type LeadTask } from "../../../../shared/leadWorkflow";
 import { dialpadBusinessLine } from "./phoneScope";
 import { intakeReferenceFromHtml } from "../lead-intake/brief";
 
@@ -62,7 +62,7 @@ export async function ingestFrontMessage(message: FrontMessage, conversationId?:
   const comm: Communication = { ...old?.data, id, provider: "front", providerId: message.id, accountId: link?.data.accountId,
     conversationId: cnv, channel: "EMAIL", direction: message.is_inbound ? "INBOUND" : "OUTBOUND", at: eventAt(message.created_at),
     attachments: message.attachments?.map(a => ({ id: a.id, filename: a.filename, content_type: a.content_type, size: a.size })), subject: message.subject, text: message.text?.slice(0, 50000), from: message.recipients?.find(r => r.role === "from")?.handle,
-    to: message.recipients?.filter(r => r.role === "to").map(r => r.handle), actorId: message.author?.id, status: message.is_inbound ? "RECEIVED" : "SENT", frontDraft: false,
+    to: message.recipients?.filter(r => r.role === "to").map(r => r.handle), actorId: message.author?.id, status: message.is_inbound ? "RECEIVED" : old?.data.status === "FAILED" ? "FAILED" : "SENT", frontDraft: false,
     classification: classifyEmail(message), purpose: link?.data.purpose, context: link?.data.context, policyId: link?.data.policyId, quoteId: link?.data.quoteId, version: (old?.version ?? 0) + 1 };
   // Duplicate event delivery must not reopen a completed episode.
   if (old?.data.workflowApplied || old?.data.resolved) {
@@ -117,6 +117,17 @@ async function frontEvent(event: Json, type: string) {
     if (link) {
       const id = `task:correction:${cnv}`;
       if (!await get(id)) { const task = await makeTask({ id, accountId: link.data.accountId, title: "Correct failed email delivery", kind: "CORRECTION", conversationId: cnv }); await save(row("TASK", id, task, { accountId: task.accountId, dueAt: taskWakeAt(task) })); }
+      const messageId = str(object(target.data).id || object(event.message).id);
+      const message = /^msg_/.test(messageId) ? await get<Communication>(`comm:front:${messageId}`) : undefined;
+      if (message && message.accountId === link.data.accountId && message.data.direction === "OUTBOUND" && message.data.conversationId === cnv) {
+        const current = await save(row("COMMUNICATION", message.id, { ...message.data, status: "FAILED" }, { accountId: message.accountId, previous: message }), message);
+        for (const candidate of await accountRows<LeadTask>(link.data.accountId, "TASK")) {
+          const task = await get<LeadTask>(candidate.id);
+          if (task?.data.status === "OPEN" && !task.data.custom && task.data.kind === "FOLLOW_UP" && task.data.sourceIds?.length === 1 && task.data.sourceIds[0] === message.id) {
+            await commit([check(current), put(row("TASK", task.id, { ...task.data, status: "CANCELLED", reason: "Delivery failed; the correction task tracks the next contact", version: task.version + 1 }, { accountId: task.accountId, previous: task }), task)]);
+          }
+        }
+      }
     }
     return;
   }

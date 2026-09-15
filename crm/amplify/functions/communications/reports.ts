@@ -1,4 +1,5 @@
-import { morningReport, renderMorningReport, type MorningReport } from "../../../../shared/morningReport";
+import { morningReport, renderMorningReport, prioritizeReportItems, selectReportItems, type MorningReport } from "../../../../shared/morningReport";
+import { leadActionGuidance } from "../../../../shared/leadActionGuidance";
 import { reminderWindow, type LeadTask, type LeadWorkflow, type Communication } from "../../../../shared/leadWorkflow";
 import { contactAt, contactProgress } from "../../../../shared/contactProgress";
 import { taskDomain, taskContext, validateCompleteRouting } from "../../../../shared/workRouting";
@@ -38,20 +39,23 @@ export async function reportFor(recipientId: string, snapshot?: Awaited<ReturnTy
     const visible = business ? wf?.championId === recipientId || recipientId === s.settings.marketingManagerId
       : assignment ? recipientId === s.settings.ownerId : item.kind === "TRIAGE" || /Link this|Unlinked/.test(String(item.data.message)) ? isIntake : isIntegration;
     if (!visible || item.data.resolved) continue;
-    const section = business ? "Your client and carrier work today" : "Assigned exceptions";
+    const section = business ? "Your client and carrier work today" : "Setup and data";
     if (!report.sections.includes(section)) report.sections.push(section);
-    report.items.push({ id: item.id, accountId: item.accountId, account: wf?.name ?? "Team coverage", title: String(item.data.message ?? "Link this incoming activity to its account"), why: "This gap needs a named person to restore coverage.", next: "Open the record and correct the source information.", responsible: report.name, section, stage: "EXCEPTION", dueAt: typeof item.data.dueAt === "string" ? item.data.dueAt : undefined });
+    report.items.push({ id: item.id, accountId: item.accountId, account: wf?.name ?? "Shared activity", title: String(item.data.message ?? "Link this incoming activity to its account"), why: business ? "Confirm the source information so the next business step can be tracked accurately." : "Repair this tracking or assignment issue; it is separate from client outreach.", next: "Open the record and correct the source information.", responsible: report.name, section, group: business ? "Client and carrier" : "Setup and data", stage: "EXCEPTION", dueAt: typeof item.data.dueAt === "string" ? item.data.dueAt : undefined,
+      url: item.accountId ? `/accounts/${item.accountId}?tab=overview#lead-workspace` : "/lead-work", linkLabel: business ? "Review account facts" : "Review setup issue" });
   }
   for (const accountId of includeHistory ? new Set(report.items.flatMap(i => i.accountId ? [i.accountId] : [])) : []) {
-    const contacts = (await accountRows<Communication>(accountId, "COMMUNICATION")).map(r => r.data).filter(c => !c.internalReport && c.actorId !== "crm:initial-ai" && !!contactProgress(c)).sort((a,b) => contactAt(b).localeCompare(contactAt(a)));
+    const activity = (await accountRows<Communication>(accountId, "COMMUNICATION")).map(r => r.data);
+    const contacts = activity.filter(c => !c.internalReport && c.actorId !== "crm:initial-ai" && !!contactProgress(c)).sort((a,b) => contactAt(b).localeCompare(contactAt(a)));
     for (const item of report.items.filter(i => i.accountId === accountId)) {
       const task = s.taskRows.find(t => t.id === item.id)?.data;
       const contact = contacts.find(c => !task || (c.purpose === "CARRIER" ? "CARRIER" : "CLIENT") === taskDomain(task) && (c.context ?? "LEAD") === taskContext(task) && (!task.policyId || task.policyId === c.policyId));
-      item.url = `${process.env.CRM_BASE_URL}/accounts/${accountId}`;
+      if (task) { const guidance = leadActionGuidance(task, activity, item.stage !== "DUE", now); item.why = guidance.why; item.next = guidance.after; }
       if (contact) { item.lastOutreach = contactAt(contact); item.lastOutreachKind = contactProgress(contact) === "ATTEMPT" ? "call attempt" : contact.direction === "INBOUND" ? "connected inbound call" : "human outreach"; }
     }
   }
   report.accountCount = new Set(report.items.flatMap(i => i.accountId ? [i.accountId] : [])).size;
+  report.items = prioritizeReportItems(report.items, report.asOf);
   return report;
 }
 
@@ -119,8 +123,9 @@ export const handler = async () => {
       const next = row("REPORT_EDITION", id, data, { previous: edition });
       const currentMember = await get(`eligibility:${member.userId}`);
       const checks = [];
-      for (const item of report.items.slice(0, 20)) {
+      for (const item of selectReportItems(report)) {
         const source = await get(item.id);
+        if (item.taskVersion != null && (!source || source.version !== item.taskVersion)) throw new Error("Work changed; refresh the morning edition before sending");
         if (source?.kind === "TASK" && source.data.status !== "OPEN" || source?.data.resolved) throw new Error("Work changed; refresh the morning edition before sending");
         if (source) checks.push(check(source));
       }

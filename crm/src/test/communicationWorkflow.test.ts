@@ -1384,15 +1384,15 @@ describe("9am reminders with a clear next step", () => {
     vi.setSystemTime("2026-09-10T13:00:00.000Z"); await dispatchTask(task);
     expect(entries("NOTIFICATION")).toHaveLength(1);
     expect(entries("NOTIFICATION")[0].data).toMatchObject({ title: "Respond to the prospect", why: "A prospect's message needs a response.", dueAt: "2026-09-10T21:00:00.000Z", urgency: "DUE" });
-    const ops = entries("OPERATION").filter(o => o.data.reminder); expect(ops).toHaveLength(2);
+    const ops = entries("OPERATION").filter(o => (o.data.reminder || o.data.reminderGroup)); expect(ops).toHaveLength(2);
     vi.setSystemTime("2026-09-10T21:00:00.000Z"); await dispatchTask(task);
-    expect(entries("NOTIFICATION")).toHaveLength(1); expect(entries("OPERATION").filter(o => o.data.reminder)).toHaveLength(2);
+    expect(entries("NOTIFICATION")).toHaveLength(1); expect(entries("OPERATION").filter(o => (o.data.reminder || o.data.reminderGroup))).toHaveLength(2);
     expect(record(task.id).data.dueAt).toBe(task.data.dueAt);
   });
   it("puts the reason and action into Front before reopening", async () => {
     await morningRequest();
-    const comment = entries("OPERATION").find(o => o.data.reminder && o.data.type === "COMMENT")!;
-    const reopen = entries("OPERATION").find(o => o.data.reminder && o.data.type === "REOPEN")!;
+    const comment = entries("OPERATION").find(o => (o.data.reminder || o.data.reminderGroup) && o.data.type === "COMMENT")!;
+    const reopen = entries("OPERATION").find(o => (o.data.reminder || o.data.reminderGroup) && o.data.type === "REOPEN")!;
     await runOperation(reopen as any); expect(h.front).not.toHaveBeenCalledWith("/conversations/cnv_a", "PATCH", { status: "open" });
     h.front.mockResolvedValue({ id: "com_reminder" }); await runOperation(comment as any);
     const posted = h.front.mock.calls.find(([path]) => path === "/conversations/cnv_a/comments")!;
@@ -1412,9 +1412,9 @@ describe("9am reminders with a clear next step", () => {
       const wf = (await get<any>("workflow:a1"))!;
       await save(row("WORKFLOW", wf.id, { ...wf.data, ...(change === "bound" ? { disposition: "BOUND" } : { salespersonId: "other" }) }, { accountId: "a1", previous: wf }), wf);
     }
-    for (const op of entries("OPERATION").filter(o => o.data.reminder)) await runOperation(op as any);
+    for (const op of entries("OPERATION").filter(o => (o.data.reminder || o.data.reminderGroup))) await runOperation(op as any);
     expect(h.front.mock.calls.filter(([,method]) => method === "POST" || method === "PATCH")).toHaveLength(0);
-    expect(entries("OPERATION").filter(o => o.data.reminder).every(o => o.data.state === "SUPPRESSED")).toBe(true);
+    expect(entries("OPERATION").filter(o => (o.data.reminder || o.data.reminderGroup)).every(o => o.data.state === "SUPPRESSED")).toBe(true);
   });
   it("never includes another lead's message in a reminder preview", async () => {
     const original = await textRequest();
@@ -1422,23 +1422,25 @@ describe("9am reminders with a clear next step", () => {
     await save(row("TASK", original.id, { ...original.data, sourceIds: ["comm:foreign"] }, { accountId: "a1", previous: original, dueAt: original.dueAt }), original);
     vi.setSystemTime("2026-09-10T13:00:00.000Z");
     const { dispatchTask } = await import("../../amplify/functions/communications/worker"); await dispatchTask(original);
-    const comment = entries("OPERATION").find(o => o.data.reminder && o.data.type === "COMMENT")!;
-    expect(comment.data.text).not.toContain("Unrelated private message");
-    expect(comment.data.text).not.toContain("Original request:");
+    const comment = entries("OPERATION").find(o => (o.data.reminder || o.data.reminderGroup) && o.data.type === "COMMENT")!;
+    await runOperation(comment as any);
+    const text = h.front.mock.calls.find(([path]) => path.endsWith("/comments"))![2].body;
+    expect(text).not.toContain("Unrelated private message");
+    expect(text).not.toContain("Original request:");
   });
   it("does not reopen when an explanation has an uncertain delivery result", async () => {
     await morningRequest();
-    const comment = (await get<Operation>(entries("OPERATION").find(o => o.data.reminder && o.data.type === "COMMENT")!.id))!;
+    const comment = (await get<Operation>(entries("OPERATION").find(o => (o.data.reminder || o.data.reminderGroup) && o.data.type === "COMMENT")!.id))!;
     await save(row("OPERATION", comment.id, { ...comment.data, state: "UNKNOWN" }, { accountId: "a1", previous: comment }), comment);
-    await runOperation(entries("OPERATION").find(o => o.data.reminder && o.data.type === "REOPEN") as any);
+    await runOperation(entries("OPERATION").find(o => (o.data.reminder || o.data.reminderGroup) && o.data.type === "REOPEN") as any);
     expect(h.front).not.toHaveBeenCalledWith("/conversations/cnv_a", "PATCH", { status: "open" });
     expect(entries("NOTIFICATION")).toHaveLength(1);
   });
   it("holds delayed Front reminder delivery until the next business morning", async () => {
     const task = await morningRequest(); vi.setSystemTime("2026-09-10T21:01:00.000Z");
-    for (const op of entries("OPERATION").filter(o => o.data.reminder)) await runOperation(op as any);
+    for (const op of entries("OPERATION").filter(o => (o.data.reminder || o.data.reminderGroup))) await runOperation(op as any);
     expect(h.front.mock.calls.filter(([,method]) => method === "POST" || method === "PATCH")).toHaveLength(0);
-    expect(entries("OPERATION").filter(o => o.data.reminder).every(o => o.dueAt === "2026-09-11T13:00:00.000Z")).toBe(true);
+    expect(entries("OPERATION").filter(o => (o.data.reminder || o.data.reminderGroup)).every(o => o.dueAt === "2026-09-11T13:00:00.000Z")).toBe(true);
     expect(record(task.id).data.dueAt).toBe("2026-09-10T21:00:00.000Z");
   });
   it("leaves genuine new inbound activity immediate outside the reminder window", async () => {
@@ -1505,6 +1507,127 @@ describe("automatic cleanup after agent work", () => {
     await runOperation(ops[0] as any); expect(record("issue:policy-handoff:a1")).toBeTruthy();
     expect(h.front).not.toHaveBeenCalledWith("/conversations/cnv_a", "PATCH", { status: "archived" });
     expect(entries("TASK").every(t => t.data.status === "CANCELLED")).toBe(true);
+  });
+});
+
+describe("consolidated morning work", () => {
+  async function seed(kind: LeadTask["kind"], id: string, extra: Partial<LeadTask> = {}) {
+    const task = await makeTask({ id, accountId: "a1", title: id, kind, role: kind === "SUBMISSION" ? "CHAMPION" : "SALESPERSON", domain: kind === "SUBMISSION" ? "CARRIER" : "CLIENT", context: "LEAD", conversationId: "cnv_a", dueAt: "2026-09-14T21:00:00.000Z", ...extra });
+    return save(row("TASK", id, task, { accountId: "a1", dueAt: taskWakeAt(task) }));
+  }
+  it("keeps five carrier commitments but delivers one carrier explanation and one separate sales explanation", async () => {
+    await lead(); vi.setSystemTime("2026-09-14T13:00:00.000Z");
+    const { dispatchTask } = await import("../../amplify/functions/communications/worker");
+    const tasks = await Promise.all(Array.from({ length: 5 }, (_, i) => seed("SUBMISSION", `Submit to market ${i}`, { milestone: true })));
+    tasks.push(await seed("RESPONSE", "Client reply"));
+    for (const t of tasks) await dispatchTask(t);
+    expect(entries("NOTIFICATION")).toHaveLength(6);
+    const comments = entries("OPERATION").filter(o => o.data.reminderGroup && o.data.type === "COMMENT");
+    expect(comments).toHaveLength(2);
+    for (const op of comments) await runOperation(op as any);
+    const posts = h.front.mock.calls.filter(([path]) => path.endsWith("/comments"));
+    expect(posts).toHaveLength(2);
+    const carrier = posts.find(c => c[2].body.includes("Client and carrier work"))![2].body;
+    for (let i = 0; i < 5; i++) expect(carrier).toContain(`Submit to market ${i}`);
+    expect(carrier).not.toContain("Respond to the prospect");
+    for (const op of entries("OPERATION").filter(o => o.data.reminderGroup && o.data.type === "REOPEN")) await runOperation(op as any);
+    expect(h.front.mock.calls.filter(([, method]) => method === "PATCH")).toHaveLength(2);
+    expect(entries("TASK").every(t => t.data.status === "OPEN")).toBe(true);
+  });
+  it("removes a completed item at delivery without dropping the other commitments", async () => {
+    await lead(); vi.setSystemTime("2026-09-14T13:00:00.000Z");
+    const a = await seed("SUBMISSION", "Submit to A", { milestone: true }); await seed("SUBMISSION", "Submit to B", { milestone: true });
+    const { dispatchTask } = await import("../../amplify/functions/communications/worker"); await dispatchTask(a);
+    const current = (await get<LeadTask>(a.id))!;
+    await save(row("TASK", a.id, { ...current.data, status: "COMPLETE" }, { accountId: "a1", previous: current }), current);
+    await runOperation(entries("OPERATION").find(o => o.data.reminderGroup && o.data.type === "COMMENT") as any);
+    const text = h.front.mock.calls.find(([p]) => p.endsWith("/comments"))![2].body;
+    expect(text).toContain("Submit to B"); expect(text).not.toContain("Submit to A");
+  });
+  it("fences every displayed task against a response arriving during provider checks", async () => {
+    await lead(); vi.setSystemTime("2026-09-14T13:00:00.000Z");
+    const a = await seed("RESPONSE", "Reply"), { dispatchTask } = await import("../../amplify/functions/communications/worker"); await dispatchTask(a);
+    vi.mocked(permittedConversation).mockImplementationOnce(async id => { const t = (await get<LeadTask>(a.id))!; await save(row("TASK", t.id, { ...t.data, status: "COMPLETE" }, { accountId: "a1", previous: t }), t); return { id, status: "open" }; });
+    await runOperation(entries("OPERATION").find(o => o.data.reminderGroup && o.data.type === "COMMENT") as any);
+    expect(h.front.mock.calls.filter(([, method]) => method === "POST")).toHaveLength(0);
+  });
+  it("bounds the summary and transaction when one account has over 100 tasks", async () => {
+    await lead(); vi.setSystemTime("2026-09-14T13:00:00.000Z");
+    const tasks = await Promise.all(Array.from({ length: 105 }, (_, i) => seed("SUBMISSION", `Market ${i}`, { milestone: true })));
+    const { dispatchTask } = await import("../../amplify/functions/communications/worker"); await dispatchTask(tasks[0]);
+    await runOperation(entries("OPERATION").find(o => o.data.reminderGroup && o.data.type === "COMMENT") as any);
+    expect(h.front.mock.calls.find(([p]) => p.endsWith("/comments"))![2].body).toContain("85 more actions");
+    expect(Math.max(...h.transactions.map(t => t.length))).toBeLessThanOrEqual(100);
+    expect(entries("TASK")).toHaveLength(105);
+  });
+  it("retires yesterday's delayed group instead of delivering a second stale summary", async () => {
+    await lead(); vi.setSystemTime("2026-09-14T13:00:00.000Z");
+    const t = await seed("RESPONSE", "Reply"), { dispatchTask } = await import("../../amplify/functions/communications/worker"); await dispatchTask(t);
+    const old = entries("OPERATION").find(o => o.data.reminderGroup && o.data.type === "COMMENT")!;
+    vi.setSystemTime("2026-09-15T13:00:00.000Z"); await runOperation(old as any);
+    expect(record(old.id).data.state).toBe("SUPPRESSED");
+    await dispatchTask(record(t.id) as any);
+    expect(entries("OPERATION").filter(o => o.data.type === "COMMENT" && o.data.state === "READY")).toHaveLength(1);
+  });
+  it("closes a first-contact obligation from an explicitly linked prospect email even without a CRM contact row", async () => {
+    await lead();
+    const first = await seed("FIRST_CONTACT", "old:first", { conversationId: undefined });
+    const source = await inbound("new:out", "2026-09-08T15:00:00.000Z", { direction: "OUTBOUND", to: ["prospect@example.test"] });
+    await recordOutbound(source);
+    expect(record(first.id).data.status).toBe("OPEN");
+    await save(row("LINK", "front-link:cnv_a", { purpose: "PROSPECT", accountId: "a1", conversationId: "cnv_a" }, { accountId: "a1" }));
+    await (await import("../../amplify/functions/communications/contactProgress")).repairContactWork("a1");
+    expect(record(first.id).data).toMatchObject({ status: "COMPLETE", completedByCommunicationId: source.id });
+    expect(entries("TASK").some(t => t.data.kind === "FOLLOW_UP" && t.data.status === "OPEN")).toBe(true);
+  });
+  it("cancels only waiting work tied to a proven failed message and keeps the correction tracked", async () => {
+    await lead(); await save(row("LINK", "front-link:cnv_a", { purpose: "PROSPECT", accountId: "a1", conversationId: "cnv_a" }, { accountId: "a1" }));
+    const source = await inbound("front:msg_failed", NOW, { providerId: "msg_failed", direction: "OUTBOUND" }); await recordOutbound(source);
+    await seed("SUBMISSION", "Submit to A", { milestone: true });
+    const event = await save(row("EVENT", "event:bounce", { provider: "front" as const, payload: { type: "outbound_failed", payload: { conversation: { id: "cnv_a" }, target: { data: { id: "msg_failed" } } } }, attempts: 0 }));
+    await processEvent(event);
+    expect(record(source.id).data.status).toBe("FAILED");
+    expect(entries("TASK").find(t => t.data.kind === "FOLLOW_UP")!.data.status).toBe("CANCELLED");
+    expect(entries("TASK").find(t => t.data.kind === "CORRECTION")!.data.status).toBe("OPEN");
+    expect(record("Submit to A").data.status).toBe("OPEN");
+  });
+  it("records an owned blocker for the next business morning without moving deadlines or client updates", async () => {
+    await lead(); vi.setSystemTime("2026-09-11T19:00:00.000Z"); h.c.holidays = ["2026-09-14"];
+    const carrier = await seed("SUBMISSION", "Submit", { milestone: true }), update = await seed("PROSPECT_UPDATE", "Keep prospect informed");
+    const { updateBlocker } = await import("../../amplify/functions/communications/blockers");
+    await expect(updateBlocker({ taskId: carrier.id, version: carrier.version, action: "SET", reason: "Licensing pending" }, "unrelated")).rejects.toThrow("responsible");
+    await updateBlocker({ taskId: carrier.id, version: carrier.version, action: "SET", reason: "Licensing pending" }, "brian");
+    const blocked = record(carrier.id);
+    expect(blocked.data).toMatchObject({ dueAt: carrier.data.dueAt, escalationAt: carrier.data.escalationAt, status: "OPEN", blocker: { ownerId: "brian", reviewAt: "2026-09-15T13:00:00.000Z" } });
+    expect(record(update.id)).toEqual(update);
+    await updateBlocker({ taskId: carrier.id, version: blocked.version, action: "CLEAR" }, "brian");
+    expect(record(carrier.id).data).toMatchObject({ status: "OPEN", dueAt: carrier.data.dueAt });
+    expect(record(carrier.id).data.blocker).toBeUndefined();
+  });
+  it("rejects the response takeover API for carrier submission milestones", async () => {
+    await lead(); const t = await seed("SUBMISSION", "Submit", { milestone: true });
+    const { handler } = await import("../../amplify/functions/communications/handler");
+    expect(await handler({ arguments: { operation: "takeResponse", input: { taskId: t.id, version: t.version } }, identity: { sub: "brian", groups: ["ADMIN"] } as never })).toMatchObject({ ok: false, error: "Open the business record to handle this work" });
+    expect(record(t.id).data.helperId).toBeUndefined();
+  });
+  it("restores the real reminder date after an early blocker is resolved", async () => {
+    await lead(); const carrier = await seed("SUBMISSION", "Future submission", { milestone: true, dueAt: "2026-10-01T13:00:00.000Z" });
+    const { updateBlocker } = await import("../../amplify/functions/communications/blockers");
+    await updateBlocker({ taskId: carrier.id, version: carrier.version, action: "SET", reason: "Licensing pending" }, "brian");
+    vi.setSystemTime("2026-09-09T13:00:00.000Z");
+    const { dispatchTask } = await import("../../amplify/functions/communications/worker"); await dispatchTask(record(carrier.id) as any);
+    await updateBlocker({ taskId: carrier.id, version: record(carrier.id).version, action: "CLEAR" }, "brian");
+    expect(record(carrier.id).dueAt).toBe("2026-10-01T13:00:00.000Z");
+    expect(record(carrier.id).data.status).toBe("OPEN");
+  });
+  it("retires legacy per-task deliveries while retaining the task's next morning", async () => {
+    await lead(); const t = await seed("RESPONSE", "Old response");
+    vi.setSystemTime("2026-09-14T13:00:00.000Z");
+    const old = await enqueueOperation("op:reminder-comment:old", { type: "COMMENT", accountId: "a1", conversationId: "cnv_a", text: "Old per-task notice", reminder: { taskId: t.id, recipientId: "brian", noticeAt: NOW, escalated: false } });
+    await runOperation(old);
+    expect(record(old.id).data.state).toBe("SUPPRESSED");
+    expect(record(t.id)).toEqual(t);
+    expect(h.front.mock.calls.filter(([, method]) => method === "POST")).toHaveLength(0);
   });
 });
 

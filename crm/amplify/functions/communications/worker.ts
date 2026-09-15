@@ -1,5 +1,5 @@
 import type { DynamoDBStreamEvent } from "aws-lambda";
-import { get, query, row, save, put, commit, issue, conflict, check, type Row } from "./store";
+import { get, query, row, save, put, commit, issue, conflict, check, hash, type Row } from "./store";
 import { config } from "./config";
 import { operationRow } from "./outbox";
 import { runOperation, type Operation } from "./operations";
@@ -12,6 +12,8 @@ import { leadActionGuidance } from "../../../../shared/leadActionGuidance";
 import { migrateReminderSchedules } from "./reminders";
 import { dataClient } from "./data";
 import { callRoot, syncCall } from "./calls";
+import { agencyDay } from "../../../../shared/leadActionGuidance";
+import { accountableRole } from "../../../../shared/workRouting";
 
 export async function dispatchTask(candidate: Row<LeadTask>) {
   let task = await get<LeadTask>(candidate.id);
@@ -47,7 +49,6 @@ export async function dispatchTask(candidate: Row<LeadTask>) {
   const sources = await Promise.all((task.data.sourceIds ?? []).map(id => get<Communication>(id)));
   const guidance = leadActionGuidance(task.data, sources.flatMap(r => r && r.accountId === task!.accountId ? [r.data] : []), manager);
   const stage = owner ? "OWNER" : manager ? "MANAGER" : "DUE";
-  const previousStage = task.data.ownerNotifiedAt ? "OWNER" : task.data.escalatedAt ? "MANAGER" : task.data.notifiedAt ? "DUE" : "";
   const next: LeadTask = { ...task.data, notifiedAt: task.data.notifiedAt ?? now, notifiedRecipientId: route.recipientId,
     ...(manager ? { escalatedAt: task.data.escalatedAt ?? now, escalatedRecipientId: route.managerId } : {}),
     ...(owner ? { ownerNotifiedAt: task.data.ownerNotifiedAt ?? now, ownerRecipientId: route.ownerId } : {}),
@@ -59,16 +60,11 @@ export async function dispatchTask(candidate: Row<LeadTask>) {
   }
   const cnv = task.data.conversationId ?? wf.data.conversationId;
   if (cnv) {
-    const reminder = { taskId: task.id, noticeAt: now, recipientId: recipient, escalated: manager, stage, workflowVersion: wf.version };
-    let commentId: string | undefined;
-    if (stage !== previousStage) {
-      commentId = `op:reminder-comment:${task.id}:${stage}:${task.version}`;
-      const member = await get<{ name: string }>(`eligibility:${route.recipientId}`);
-      const deadline = new Date(task.data.dueAt).toLocaleString("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
-      const text = `9 a.m. work reminder\n\nWhy this is back: ${guidance.why}\nNext step: ${guidance.action}\nResponsible: ${member?.data.name ?? "Team coverage needed"}\nDue: ${deadline} Eastern${guidance.preview ? `\nOriginal request: ${guidance.preview}` : ""}\n\n${guidance.after}${manager ? "\nThe manager's morning report includes this overdue work." : ""}`;
-      writes.push(put(operationRow(commentId, { type: "COMMENT", accountId: task.data.accountId, conversationId: cnv, text, reminder })));
-    }
-    writes.push(put(operationRow(`op:reopen:${task.id}:${task.version}`, { type: "REOPEN", accountId: task.data.accountId, conversationId: cnv, reminder, afterOperationId: commentId })));
+    const group = { day: agencyDay(now), role: accountableRole(task.data), recipientId: recipient, accountableId: route.accountableId, anchorTaskId: task.id };
+    const key = hash(`${task.data.accountId}:${cnv}:${group.day}:${group.role}:${recipient}:${route.accountableId}`).slice(0, 32);
+    const commentId = `op:morning-summary:${key}`, reopenId = `op:morning-reopen:${key}`;
+    if (!await get(commentId)) writes.push(put(operationRow(commentId, { type: "COMMENT", accountId: task.data.accountId, conversationId: cnv, reminderGroup: group })));
+    if (!await get(reopenId)) writes.push(put(operationRow(reopenId, { type: "REOPEN", accountId: task.data.accountId, conversationId: cnv, reminderGroup: group, afterOperationId: commentId })));
   }
   await commit(writes);
 }

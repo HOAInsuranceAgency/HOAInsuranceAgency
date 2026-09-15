@@ -21,7 +21,7 @@ export function taskRoute(task: LeadTask, workflow: LeadWorkflow, routing: TeamR
     if (settings?.away || scheduledAway || !active(id)) return cover(settings?.coverId, visited);
     return id;
   };
-  const assigneeId = task.specialistId ?? task.helperId ?? accountableId;
+  const assigneeId = task.blocker?.ownerId ?? task.specialistId ?? task.helperId ?? accountableId;
   const configuredManager = role === "SALESPERSON" ? routing.members.find(m => m.userId === accountableId)?.salesManagerId : routing.marketingManagerId;
   const ownerId = cover(routing.ownerId);
   const managerCover = configuredManager === accountableId ? routing.members.find(m => m.userId === configuredManager)?.coverId : undefined;
