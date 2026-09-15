@@ -2,6 +2,7 @@ import { businessDeadline, followUpDeadline, scheduleReminders, localHour, taskW
 import { addCalendarDays, scopeLegacyQuotes, quoteCoverage, quoteMatchesRisk, usableQuote, validCalendarDate, type RiskTerm } from "../../../../shared/renewalPolicy";
 import { deliveredServiceResponse } from "../../../../shared/serviceEvidence";
 import { authorizedQuoteTerms } from "../../../../shared/quoteAuthorization";
+import { alternativeQuoteIds, packageTerms, type CommercialPlan } from '../../../../shared/quotePackages';
 import { taskContext, taskDomain } from "../../../../shared/workRouting";
 import { contactAt, contactProgress } from "../../../../shared/contactProgress";
 import { dataClient } from "./data";
@@ -21,6 +22,7 @@ async function all<T>(fetch: (nextToken?: string) => Promise<{ data: T[]; errors
 
 /** Project existing business evidence into reminders; never create a second business ledger. */
 export async function reconcileAccountWork(account: Account, workflow?: Row<LeadWorkflow>) {
+  if (await get(`deleted-account:${account.id}`)) return;
   await (await import("./conversationContext")).repairConversationContexts(account.id);
   let wf = workflow ?? await ensureWorkflow(account.id);
   const client = await dataClient(), c = await config(), now = new Date().toISOString();
@@ -36,9 +38,11 @@ export async function reconcileAccountWork(account: Account, workflow?: Row<Lead
     all(token => client.models.Document.listDocumentByEntityId({ entityId: account.id }, { nextToken: token, limit: 100 })),
     accountRows<Communication>(account.id, "COMMUNICATION"), accountRows<LeadTask>(account.id, "TASK"),
   ]);
-  const { quotes, ambiguous } = scopeLegacyQuotes(rawQuotes, policies);
+  const commercial = await get<CommercialPlan>(`commercial:${account.id}`), alternativeIds = alternativeQuoteIds(commercial?.data);
+  const selectedPackage = commercial?.data.options.find(o => o.id === commercial.data.selectedOptionId);
+  const { quotes, ambiguous } = scopeLegacyQuotes(rawQuotes.filter(q => q.status === 'BOUND' || !alternativeIds.includes(q.id)), policies);
   if (ambiguous.length) await issue(`renewal-context:${account.id}`, "Choose which expiring policy the ambiguous renewal quotes replace", account.id); else await resolveIssue(`renewal-context:${account.id}`);
-  const pendingLead = quotes.filter(q => ["DRAFT", "SUBMITTED", "QUOTED", "PRESENTED"].includes(q.status) && !q.renewalPolicyId && !policies.some(p => p.quoteId === q.id)).map(q => q.id);
+  const pendingLead = [...new Set([...quotes.filter(q => ["DRAFT", "SUBMITTED", "QUOTED", "PRESENTED"].includes(q.status) && !q.renewalPolicyId && !policies.some(p => p.quoteId === q.id)).map(q => q.id), ...(selectedPackage?.quoteIds.filter(id => !rawQuotes.some(q => q.id === id && q.status === 'BOUND') || !policies.some(p => p.quoteId === id)) ?? [])])];
   if (JSON.stringify(wf.data.openLeadQuoteIds ?? []) !== JSON.stringify(pendingLead)) wf = await save(row("WORKFLOW", wf.id, { ...wf.data, openLeadQuoteIds: pendingLead, version: wf.version + 1 }, { accountId: account.id, previous: wf }), wf);
   if (wf.data.disposition === "BOUND" && !pendingLead.length) {
     for (const link of await accountRows<ConversationLink>(account.id, "LINK")) {
@@ -56,7 +60,7 @@ export async function reconcileAccountWork(account: Account, workflow?: Row<Lead
   }
   const contacts = activity.map(r => r.data).filter(comm => !!contactProgress(comm));
   const latest = contacts.filter(comm => comm.purpose !== "CARRIER").sort((a,b) => contactAt(b).localeCompare(contactAt(a)))[0];
-  const writes = async (task: Row<LeadTask>, data: LeadTask) => commit([check(wf!), put(row("TASK", task.id, { ...data, version: task.version + 1 }, { accountId: account.id, previous: task, dueAt: taskWakeAt(data) }), task)]);
+  const writes = async (task: Row<LeadTask>, data: LeadTask) => commit([check(wf!), ...(commercial ? [check(commercial)] : []), put(row("TASK", task.id, { ...data, version: task.version + 1 }, { accountId: account.id, previous: task, dueAt: taskWakeAt(data) }), task)]);
   for (const t of tasks.filter(t => t.data.status === "OPEN")) {
     if (terminal && taskContext(t.data) === "LEAD" && !t.data.custom && t.data.kind !== "BIND") { await writes(t, { ...t.data, status: "CANCELLED", reason: "Lead closed by the team" }); continue; }
     if (deferred && !t.data.custom && ["FIRST_CONTACT", "FOLLOW_UP", "PROSPECT_UPDATE", "SUBMISSION", "QUOTE_TARGET"].includes(t.data.kind) && taskContext(t.data) === "LEAD" && (!t.data.term || t.data.term !== wf.data.deferredExpiration) && (t.data.sourceAt ?? t.createdAt) <= wf.data.deferredAt!) {
@@ -90,9 +94,13 @@ export async function reconcileAccountWork(account: Account, workflow?: Row<Lead
     const t = await makeTask({ ...input, id, obligationKey: key });
     if (t.businessDueAt && t.businessDueAt < t.dueAt) t.shortTimeline = true;
     t.version = (old?.version ?? 0) + 1;
-    await commit([check(wf!), put(row("TASK", id, t, { accountId: account.id, previous: old, dueAt: taskWakeAt(t) }), old)]);
+    await commit([check(wf!), ...(commercial ? [check(commercial)] : []), put(row("TASK", id, t, { accountId: account.id, previous: old, dueAt: taskWakeAt(t) }), old)]);
   }
   const marketingState = await get(`marketing-context:${account.id}`);
+  if (selectedPackage) {
+    const finished = selectedPackage.quoteIds.every(id => policies.some(p => p.quoteId === id) && rawQuotes.some(q => q.id === id && q.status === 'BOUND'));
+    await obligation(`package-bind:${selectedPackage.id}`, { accountId: account.id, kind: 'BIND', title: 'Finish binding the selected package', role: 'CHAMPION', domain: 'CARRIER', context: 'LEAD', milestone: true, sourceAt: commercial!.data.selectedAt ?? commercial!.createdAt }, finished, 'Every selected policy is bound');
+  }
   const waitingOnCarrier = quotes.some(q => q.status === "SUBMITTED") || marketing.some(m => m.status === "OPEN");
   if (marketingState?.data.waitingOnCarrier !== waitingOnCarrier) await save(row("MARKETING_CONTEXT", `marketing-context:${account.id}`, { waitingOnCarrier }, { accountId: account.id, previous: marketingState }), marketingState);
   const incoming = activity.some(r => r.data.direction === "INBOUND" && r.data.classification !== "AUTOMATIC" && !r.data.resolved);
@@ -144,11 +152,11 @@ export async function reconcileAccountWork(account: Account, workflow?: Row<Lead
     const risk = { accountId: account.id, term: q.effectiveDate ?? "", policyId: q.renewalPolicyId ?? undefined, lines: (q.lines ?? []).filter((s): s is string => !!s) };
     if (!["QUOTED", "PRESENTED", "BOUND"].includes(q.status) || !usableQuote(q, risk, now)) continue;
     const renewal = !!q.renewalPolicyId;
-    await obligation(`presentation:${q.id}`, { accountId: account.id, quoteId: q.id, policyId: q.renewalPolicyId ?? undefined, kind: "QUOTE_PRESENTATION", title: renewal ? "Present the renewal quote" : "Present the quote", role: renewal ? "CHAMPION" : "SALESPERSON", domain: "CLIENT", context: renewal ? "RENEWAL" : "LEAD", sourceAt: q.readyAt ?? q.updatedAt, milestone: true, term: risk.term }, ["PRESENTED", "BOUND"].includes(q.status), "Quote presentation recorded");
+    await obligation(`presentation:${q.id}`, { accountId: account.id, quoteId: q.id, policyId: q.renewalPolicyId ?? undefined, kind: "QUOTE_PRESENTATION", title: renewal ? "Present the renewal quote" : "Present the quote", role: renewal ? "CHAMPION" : "SALESPERSON", domain: "CLIENT", context: renewal ? "RENEWAL" : "LEAD", sourceAt: q.readyAt ?? q.updatedAt, milestone: true, term: risk.term }, ["PRESENTED", "BOUND"].includes(q.status) || !!selectedPackage?.quoteIds.includes(q.id) && commercial?.data.selectedTerms?.[q.id] === packageTerms(q), "Quote presentation or client package selection recorded");
   }
   for (const t of tasks) {
     if (t.data.status !== "OPEN" || !t.data.obligationKey || currentObligations.has(t.data.obligationKey)) continue;
-    if (/^(quote-target|submission|presentation|renewal-start):/.test(t.data.obligationKey)) {
+    if (/^(quote-target|submission|presentation|renewal-start|package-bind):/.test(t.data.obligationKey)) {
       const current = await get<LeadTask>(t.id);
       if (current?.data.status === "OPEN") await writes(current, { ...current.data, status: "CANCELLED", reason: "The underlying quote or coverage cycle is no longer current" });
     }

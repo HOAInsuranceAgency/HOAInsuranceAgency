@@ -1,6 +1,6 @@
 import { archiveAllowed } from "./cleanup";
 import { config } from "./config";
-import { get, row, save, issue, commit, put, conflict, retryableStorage, check, type Row } from "./store";
+import { get, row, save, issue, commit, put, conflict, retryableStorage, check, absent, type Row } from "./store";
 import { front, ProviderError, assertRecipient, messageConversation, permittedConversation, type FrontMessage, verifyEmailChannel } from "./providers";
 import { ensureWorkflow, recordOutbound } from "./workflow";
 import { dataClient } from "./data";
@@ -45,6 +45,7 @@ async function transition(old: Row<Operation>, patch: Partial<Operation>, delay?
 export async function runOperation(candidate: Row<Operation>) {
   let op = await get<Operation>(candidate.id);
   if (!op || ["CONFIRMED", "FAILED", "SUPPRESSED", "UNKNOWN"].includes(op.data.state)) return;
+  if (!['LEASED', 'ACCEPTED'].includes(op.data.state) && await get(`deleted-account:${op.data.accountId}`)) { await transition(op, { state: 'SUPPRESSED', error: 'Lead deleted' }); return; }
   if (op.data.state === "LEASED") {
     if (op.data.leaseUntil! > new Date().toISOString()) return;
     const safe = ["IMPORT", "ATTACHMENT", "ARCHIVE", "REOPEN", "ASSIGN"].includes(op.data.type);
@@ -59,7 +60,9 @@ export async function runOperation(candidate: Row<Operation>) {
     if ((c.paused || !c.activatedAt) && op.data.type !== "SMS_ALERT") { await transition(op, { state: "RETRY_WAIT" }, 60); return; }
     if (op.data.type === "ATTACHMENT") {
       const { importAttachment } = await import("./attachments");
-      op = await transition(op, { state: "LEASED", attempts: op.data.attempts + 1, leaseUntil: new Date(Date.now() + 180_000).toISOString() }, 180);
+      const leased = row('OPERATION', op.id, { ...op.data, state: 'LEASED' as const, attempts: op.data.attempts + 1, leaseUntil: new Date(Date.now() + 180_000).toISOString() }, { accountId: op.accountId, previous: op, dueAt: new Date(Date.now() + 180_000).toISOString() });
+      await commit([put(leased, op), absent(`deleted-account:${op.data.accountId}`)]);
+      op = leased;
       await importAttachment(op.data); await transition(op, { state: "CONFIRMED" }); return;
     }
     const wf = await ensureWorkflow(op.data.accountId);
@@ -169,7 +172,7 @@ export async function runOperation(candidate: Row<Operation>) {
       }
     }
     const leased = row("OPERATION", op.id, { ...op.data, ...(summaryText ? { text: summaryText, summaryTaskIds: summaryTasks.map(t => t.id) } : {}), state: "LEASED" as const, attempts: op.data.attempts + 1, leaseUntil: new Date(Date.now() + 180_000).toISOString() }, { accountId: op.accountId, previous: op, dueAt: new Date(Date.now() + 180_000).toISOString() });
-    await commit([put(leased, op), ...(reminderRouting ? [check(reminderRouting)] : []), ...(["EMAIL", "ASSIGN"].includes(op.data.type) || reminderTask || summaryTasks.length ? [check(wf)] : []), ...(reminderTask ? [check(reminderTask)] : []), ...summaryTasks.map(check), ...(inboundSource ? [check(inboundSource)] : [])]);
+    await commit([put(leased, op), absent(`deleted-account:${op.data.accountId}`), ...(reminderRouting ? [check(reminderRouting)] : []), ...(["EMAIL", "ASSIGN"].includes(op.data.type) || reminderTask || summaryTasks.length ? [check(wf)] : []), ...(reminderTask ? [check(reminderTask)] : []), ...summaryTasks.map(check), ...(inboundSource ? [check(inboundSource)] : [])]);
     op = leased;
     posted = true;
     if (op.data.type === "SMS_ALERT") {
@@ -218,6 +221,11 @@ async function resolveAccepted(op: Row<Operation>) {
   const messageConversationId = messageConversation(message);
   if (!messageConversationId || !message.id || message.is_draft !== false) throw new ProviderError("Front is still preparing the message", 0, false);
   const conversationId = (await permittedConversation(messageConversationId)).id;
+  if (await get(`deleted-account:${op.data.accountId}`)) {
+    if (op.data.type === 'EMAIL') await updateReply(op.data, 'SENT', 'Delivery was already accepted before lead deletion', new Date(message.created_at * 1000).toISOString());
+    await transition(op, { state: 'CONFIRMED', messageId: message.id });
+    return;
+  }
   const wf = await ensureWorkflow(op.data.accountId);
   const linkedConversationId = wf.data.conversationId && (wf.data.conversationId === conversationId ? conversationId : (await permittedConversation(wf.data.conversationId)).id);
   if (op.data.type === "IMPORT") {

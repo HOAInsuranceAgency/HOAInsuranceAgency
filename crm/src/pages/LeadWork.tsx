@@ -3,6 +3,7 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { LEAD_WORK_VIEWS, dueToday, workContext, type LeadWorkView } from "../../../shared/leadWorkViews";
 import { useLastContacts } from "../lib/lastContact";
+import { useCommercial, teammateName } from '../lib/commercial';
 import { useWorkItems } from "../lib/communicationWork";
 import { fmtDateTime, type UserProfile } from "../lib/client";
 import { WorkPagination, SharedLeadAttention, LeadReminders } from "../components/LeadWorkExtras";
@@ -19,6 +20,7 @@ export default function LeadWork(_props: { profile: UserProfile }) {
   const [revision, setRevision] = useState(0), [remindersOpen, setRemindersOpen] = useState(false);
   const work = useWorkItems("TASK", { view, mine, responsibility });
   const contacts = useLastContacts(work.data.items.flatMap(item => item.accountId ? [item.accountId] : []), work.data);
+  const assignments = useCommercial(work.data.items.flatMap(item => item.accountId ? [item.accountId] : []), work.data);
   const now = new Date().toISOString();
   async function refresh() { setRevision(n => n + 1); await work.refresh(); }
   return <div className="lead-work-page">
@@ -34,9 +36,10 @@ export default function LeadWork(_props: { profile: UserProfile }) {
     <p className="muted small">{descriptions[view]} Front snoozes never change these deadlines.</p>
     <section className="card" aria-label="Lead actions">
       {contacts.error && <p role="alert" className="error-text">{contacts.error}</p>}
+      {assignments.error && <p role="alert" className="error-text">{assignments.error}</p>}
       {work.error && <p role="alert" className="error-text">{work.error}</p>}
       {work.loading ? <p role="status">Loading actions…</p> : work.error ? null : !work.data.items.length ? <p className="muted">{work.data.nextToken ? "More actions remain to be checked. Continue searching to see matching work." : view === "Needs attention" ? "No actions need attention in this view." : "No matching open actions."}</p> :
-        <div className="table-wrap"><table><thead><tr><th>Lead / next action</th><th>Responsibility</th><th>Last contact</th><th>Due</th><th>Timing</th></tr></thead>
+        <div className="table-wrap"><table><thead><tr><th>Lead / next action</th><th>Responsibility</th><th>Salesperson</th><th>Deal champion</th><th>Last contact</th><th>Due</th><th>Timing</th></tr></thead>
           <tbody>{work.data.items.map(item => {
             const late = !!item.dueAt && Date.parse(item.dueAt) < Date.parse(now);
             const today = !!item.dueAt && dueToday(item.dueAt, now);
@@ -44,6 +47,7 @@ export default function LeadWork(_props: { profile: UserProfile }) {
               <td>{item.accountId ? <Link to={`/accounts/${item.accountId}`}>{item.name || "Open lead"}</Link> : "Lead needs linking"}
                 <div className="lead-work-action">{item.title}</div>{item.kind && <span className="small muted">{workContext({ kind: item.kind, custom: item.custom })}</span>}</td>
               <td>{item.role === "CHAMPION" ? "Deal champion" : item.role === "SALESPERSON" ? "Salesperson" : "Team"}</td>
+              {(['salespersonId', 'championId'] as const).map(role => <td key={role}>{assignments.loading ? 'Loading…' : assignments.error ? 'Unavailable' : teammateName(assignments.data.entries[item.accountId ?? '']?.[role], assignments.data.team)}</td>)}
               <td>{!item.accountId ? "—" : contacts.loading ? "Loading…" : contacts.error ? "Unavailable" : contacts.contacts[item.accountId]?.at ? fmtDateTime(contacts.contacts[item.accountId]!.at) : "No contact recorded"}</td>
               <td>{fmtDateTime(item.dueAt)}</td>
               <td><span className={`badge ${late ? "red" : today ? "amber" : "gray"}`}>{late ? "Overdue" : today ? "Due today" : item.dueAt ? "Upcoming" : "Check due date"}</span>{item.escalatedAt && <small className="lead-work-escalation">Manager escalation</small>}</td>

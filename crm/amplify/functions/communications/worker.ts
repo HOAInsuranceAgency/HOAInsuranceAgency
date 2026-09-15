@@ -18,6 +18,7 @@ import { accountableRole } from "../../../../shared/workRouting";
 export async function dispatchTask(candidate: Row<LeadTask>) {
   let task = await get<LeadTask>(candidate.id);
   if (!task || task.data.status !== "OPEN") return;
+  if (await get(`deleted-account:${task.data.accountId}`)) { await save(row('TASK', task.id, { ...task.data, status: 'CANCELLED', reason: 'Lead deleted', version: task.version + 1 }, { accountId: task.accountId, previous: task }), task); return; }
   const c = await config(), now = new Date().toISOString();
   const scheduled = scheduleReminders(task.data, c.holidays);
   if (scheduled.reminderAt !== task.data.reminderAt || scheduled.escalationAt !== task.data.escalationAt) {
@@ -118,6 +119,11 @@ export const handler = async (event?: Partial<DynamoDBStreamEvent>) => {
     for (const record of event.Records) {
       if (record.dynamodb?.NewImage?.__typename?.S === "Document" && record.dynamodb.NewImage.entityType?.S !== "ACCOUNT") continue;
       const id = record.dynamodb?.NewImage?.accountId?.S ?? record.dynamodb?.NewImage?.entityId?.S ?? record.dynamodb?.NewImage?.id?.S;
+      if (record.eventName === 'REMOVE' && (record.dynamodb?.OldImage?.__typename?.S === 'Account' || record.dynamodb?.OldImage?.stage?.S && !record.dynamodb?.OldImage?.accountId)) {
+        const removedId = record.dynamodb?.OldImage?.id?.S;
+        if (removedId) try { await (await import('./deletion')).retireAccount(removedId, 'system (account deleted)'); } catch { batchItemFailures.push({ itemIdentifier: record.dynamodb?.SequenceNumber ?? record.eventID! }); }
+        continue;
+      }
       if (!id || record.eventName === "REMOVE") continue;
       try { const { syncAccountLifecycle } = await import("./workflow"); await syncAccountLifecycle(id); }
       catch { await issue(`assignment:${id}`, "Lead responsibilities need repair after account creation", id).catch(() => {}); batchItemFailures.push({ itemIdentifier: record.dynamodb?.SequenceNumber ?? record.eventID! }); }
@@ -158,7 +164,8 @@ export const handler = async (event?: Partial<DynamoDBStreamEvent>) => {
     for (const candidate of work) {
       if (Date.now() - start > 75_000) { lagging = true; break dueWork; }
       try {
-        if (candidate.kind === "OPERATION") await runOperation(candidate as unknown as Row<Operation>);
+        if (candidate.kind === 'ACCOUNT_DELETE') { const { retireAccountPage } = await import('./deletion'); await retireAccountPage(candidate as unknown as Parameters<typeof retireAccountPage>[0]); }
+        else if (candidate.kind === "OPERATION") await runOperation(candidate as unknown as Row<Operation>);
         else if (candidate.kind === "EVENT") await processEvent(candidate as unknown as Row<EventRecord>);
         else if (candidate.kind === "TASK") await dispatchTask(candidate as unknown as Row<LeadTask>);
         else if (candidate.kind === "ROLE_SYNC") { const { syncResponsibilities } = await import("./workflow"); await syncResponsibilities(candidate as unknown as Parameters<typeof syncResponsibilities>[0]); }
