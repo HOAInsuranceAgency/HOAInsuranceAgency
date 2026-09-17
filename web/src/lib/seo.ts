@@ -38,8 +38,8 @@ export const WEBSITE_ID = `${SITE_ORIGIN}/#website`;
  * visible claim lives and structured data must not assert what the page does
  * not show.
  *
- * Keep the local anchor until https://jakegreasley.com/#person is live and
- * declares the apex host as canonical.
+ * Keep this stable local anchor. The founder's sameAs links connect it to his
+ * personal website and Wikidata identity without changing graph references.
  */
 export const FOUNDER_ID = `${SITE_ORIGIN}/about-us/#jake-greasley`;
 
@@ -131,6 +131,7 @@ export function personFounder(): Record<string, unknown> {
     url: FOUNDER_ID,
     sameAs: [
       ...FOUNDER_PROFILES.map((profile) => profile.url),
+      "https://jakegreasley.com/",
       "https://www.wikidata.org/wiki/Q141443360",
     ],
     worksFor: { "@id": ORG_ID },
