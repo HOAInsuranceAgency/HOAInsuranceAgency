@@ -11,7 +11,7 @@ import { CallOutcome, SidebarActivityLinker } from "./CommunicationReview";
 import { useEffect, useState, useRef } from "react";
 import { communicationRequest as request, type WorkflowContext, type TeamEligibility } from "../lib/communications";
 import { useAsyncResource } from "../lib/useAsyncResource";
-import { fmtDateTime, fmtProviderPhone } from "../lib/client";
+import { fmtDateTime, fmtProviderPhone, friendlyError } from "../lib/client";
 import { compactDateTime, communicationChannelLabels } from "../lib/communicationLabels";
 
 const EMPTY: WorkflowContext = { workflow: null, tasks: [], communications: [], team: [], issues: [] };
@@ -51,7 +51,7 @@ export default function LeadWorkflowPanel({ accountId, conversationId, onOpen }:
   const run = async (op: string, input: unknown) => {
     setBusy(true); setError(""); setNotice("");
     try { const result = await request<{ notice?: string }>(op, input, true); if (result.notice) setNotice(result.notice); setRevision(n => n + 1); return true; }
-    catch (e) { setError(e instanceof Error ? e.message : "Could not save"); return false; }
+    catch (e) { setError(friendlyError(e, "Could not save")); return false; }
     finally { setBusy(false); }
   };
   function open(url: string) { if (onOpen) onOpen(url); else window.open(url, "_blank", "noopener,noreferrer"); }

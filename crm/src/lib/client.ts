@@ -431,6 +431,9 @@ const TEMPLATE_MISSING_RE = /Template fetch failed/;
 /** Turn raw GraphQL/AppSync errors into something a human can act on. */
 export function friendlyError(err: unknown, fallback: string): string {
   const msg = err instanceof Error ? err.message : String(err ?? "");
+  if (msg.includes("Conversation is unavailable within the Front token's inbox scope")
+    || msg.includes("Conversation is outside the configured inboxes"))
+    return "Move this conversation to HOA Sales or Insurance to enable CRM tracking.";
   if (TEMPLATE_MISSING_RE.test(msg)) return TEMPLATE_MISSING_MESSAGE;
   const varMatch = msg.match(/Variable '(\w+)' has an invalid value/);
   if (varMatch) return `"${varMatch[1]}" has an invalid value — please check that field.`;
