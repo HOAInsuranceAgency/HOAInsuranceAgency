@@ -340,7 +340,8 @@ backend.honeycombStatus.addEnvironment("HONEYCOMB_ESTIMATE_TABLE", estimateTable
 backend.leadIntake.addEnvironment("HONEYCOMB_ENABLED", String(branch === "staging"));
 backend.data.resources.cfnResources.amplifyDynamoDbTables.HoneycombEstimate.streamSpecification = { streamViewType: StreamViewType.NEW_IMAGE };
 backend.honeycombWorker.resources.lambda.addEventSource(new DynamoEventSource(estimateTable, {
-  startingPosition: StartingPosition.LATEST, batchSize: 1, retryAttempts: 10,
+  // Include jobs captured while the new event mapping is still being deployed.
+  startingPosition: StartingPosition.TRIM_HORIZON, batchSize: 1, retryAttempts: 10,
   maxRecordAge: Duration.hours(1), reportBatchItemFailures: true,
 }));
 (backend.honeycombWorker.resources.lambda.node.defaultChild as CfnFunction).reservedConcurrentExecutions = 2;
