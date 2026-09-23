@@ -12,6 +12,7 @@ import { trackLead, PHONE, PHONE_HREF } from "../constants";
 import { AGENCY } from "../../../shared/agency";
 import { useLeadSubmission } from "../lib/crmLead";
 import QuoteConfirmation from "./quote/QuoteConfirmation";
+import NumberField from "./quote/NumberField";
 import { attachAddressAutocomplete, loadGooglePlaces } from "../lib/googlePlaces";
 import { takeHandoff } from "../lib/addressHandoff";
 import { DARK, LIGHT, ThemeContext, isDaytime, type ThemeMode } from "./quote/theme";
@@ -605,7 +606,26 @@ function QuoteFlow({ isDay, onToggleTheme }: { isDay: boolean; onToggleTheme: ()
                       />
                     )}
 
-                    {f.kind === "text" && (
+                    {f.kind === "text" && f.inputType === "number" && (
+                      <NumberField
+                        id={`qf-${f.field}`}
+                        className="qf-input"
+                        inputMode={f.field === "unitCount" ? "numeric" : "decimal"}
+                        value={(groupVal[f.field] as string) || ""}
+                        placeholder={f.placeholder}
+                        aria-describedby={f.help ? `qf-${f.field}-help` : undefined}
+                        autoComplete="off"
+                        onChange={(value) => setGroupField(f, value)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
+                            event.preventDefault();
+                            handleGroupSubmit();
+                          }
+                        }}
+                      />
+                    )}
+
+                    {f.kind === "text" && f.inputType !== "number" && (
                       <input
                         id={`qf-${f.field}`}
                         ref={f.places ? placesInputRef : undefined}

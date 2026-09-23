@@ -135,9 +135,9 @@ export const STEPS: Record<string, Step> = {
       { kind: "select", field: "propertyKind", label: "Property type", optional: true, half: true,
         options: [{ value: "condominium", label: "Condominium association" }, { value: "other", label: "Other HOA / common areas only" }, { value: "unknown", label: "Not sure" }] },
       { kind: "text", field: "grossSquareFeet", label: "Gross building area (sq ft)", half: true,
-        placeholder: "e.g. 25000", help: "Include common areas and garages; exclude basements.", optional: true, inputType: "number", validation: "area" },
+        placeholder: "e.g. 25,000", help: "Include common areas and garages; exclude basements.", optional: true, inputType: "number", validation: "area" },
       { kind: "text", field: "replacementValue", label: "Building replacement cost ($)", half: true,
-        placeholder: "e.g. 5000000", help: "Cost to rebuild, excluding land. Use reconstruction cost, not market value.", optional: true, inputType: "number", validation: "replacement" },
+        placeholder: "e.g. 5,000,000", help: "Cost to rebuild, excluding land. Use reconstruction cost, not market value.", optional: true, inputType: "number", validation: "replacement" },
     ],
   },
   assocOwner: {
