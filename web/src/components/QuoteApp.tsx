@@ -1,3 +1,4 @@
+import PriceIndication from "./quote/PriceIndication";
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { trackLead, PHONE, PHONE_HREF } from "../constants";
 /**
@@ -166,6 +167,7 @@ function QuoteFlow({ isDay, onToggleTheme }: { isDay: boolean; onToggleTheme: ()
    * screen offer to take documents. No token — an unconfigured build, or a
    * lead with no email — means no panel, never a broken one.
    */
+  const [estimateToken, setEstimateToken] = useState<string>();
   const [uploadToken, setUploadToken] = useState<string | null>(null);
 
   function handleRestart() {
@@ -362,18 +364,18 @@ function QuoteFlow({ isDay, onToggleTheme }: { isDay: boolean; onToggleTheme: ()
       if (f.kind === "multi") {
         const arr = Array.isArray(raw) ? raw : [];
         if (!arr.length && !f.optional) errs[f.field] = "Select at least one option.";
-        else if (arr.length) collected[f.field] = arr;
+        else collected[f.field] = arr;
         continue;
       }
       const v = typeof raw === "string" ? raw : "";
       if (f.kind === "select") {
         if (!v && !f.optional) errs[f.field] = "Please choose an option.";
-        else if (v) collected[f.field] = v;
+        else collected[f.field] = v;
         continue;
       }
       const msg = validateText(v, f.validation, !!f.optional);
       if (msg) errs[f.field] = msg;
-      else if (v.trim()) collected[f.field] = v.trim();
+      else collected[f.field] = v.trim();
     }
 
     if (Object.keys(errs).length) {
@@ -395,6 +397,7 @@ function QuoteFlow({ isDay, onToggleTheme }: { isDay: boolean; onToggleTheme: ()
     try {
       const leadResult = await leadSubmission.submit(buildCrmLead(finalData, agent.name));
       setUploadToken(leadResult.uploadToken);
+      setEstimateToken(leadResult.estimateToken);
       setDirection(1);
       setStepIndex(flow.length - 1);
       resetInput();
@@ -607,6 +610,7 @@ function QuoteFlow({ isDay, onToggleTheme }: { isDay: boolean; onToggleTheme: ()
                         type={f.inputType || "text"}
                         value={(groupVal[f.field] as string) || ""}
                         placeholder={f.placeholder}
+                        aria-describedby={f.help ? `qf-${f.field}-help` : undefined}
                         autoComplete="off"
                         onChange={(e) => setGroupField(f, e.target.value)}
                         onKeyDown={(e) => {
@@ -617,6 +621,8 @@ function QuoteFlow({ isDay, onToggleTheme }: { isDay: boolean; onToggleTheme: ()
                         }}
                       />
                     )}
+
+                    {f.help && <p id={`qf-${f.field}-help`} className="qf-sub-small" style={{ margin: "6px 0 0", fontSize: 12 }}>{f.help}</p>}
 
                     {f.kind === "multi" && (
                       <div className="qf-options qf-options--compact">
@@ -723,6 +729,7 @@ function QuoteFlow({ isDay, onToggleTheme }: { isDay: boolean; onToggleTheme: ()
                   so this is the place a visitor is most likely to have one to
                   hand — and nothing here can cost the submission, which has
                   already happened. */}
+              <PriceIndication token={estimateToken} />
               {uploadToken && <LeadUploadPanel uploadToken={uploadToken} />}
               {/* Both halves of this link were literals. The href carried its
                   own hand-typed E.164 string, and the visible number was

@@ -134,6 +134,11 @@ try {
     const resource = fn.resources.lambda.node.defaultChild as CfnFunction;
     if (Stack.of(resource).resolve(resource.reservedConcurrentExecutions) !== 1) throw new Error(`${resource.node.path} must retain reserved concurrency 1`);
   }
+  const carrierEnv = Stack.of(backend.honeycombWorker.resources.lambda).resolve((backend.honeycombWorker.resources.lambda.node.defaultChild as CfnFunction).environment);
+  const intakeEnv = Stack.of(backend.leadIntake.resources.lambda).resolve((backend.leadIntake.resources.lambda.node.defaultChild as CfnFunction).environment);
+  const staging = process.env.AWS_BRANCH === "staging";
+  if (carrierEnv.variables.HONEYCOMB_ENABLED !== String(staging) || intakeEnv.variables.HONEYCOMB_ENABLED !== String(staging)) throw new Error("Honeycomb must only run on staging");
+  if (!staging && JSON.stringify(carrierEnv).includes("HONEYCOMB_API_SECRET_KEY")) throw new Error("Non-staging deployment must not resolve Honeycomb secrets");
   const stacks = assembly.stacks.length;
 
   console.log(`✔ Backend synthesised — ${stacks} stack${stacks === 1 ? "" : "s"}.`);

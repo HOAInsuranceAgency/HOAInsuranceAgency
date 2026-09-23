@@ -24,10 +24,11 @@ export type GroupField = {
   field: string;
   label: string;
   placeholder?: string;
+  help?: string;
   options?: Option[];
   optional?: boolean;
   inputType?: string;
-  validation?: "email" | "phone";
+  validation?: "email" | "phone" | "area" | "replacement";
   /**
    * Attach Google Places autocomplete, and let a chosen address fill the other
    * location fields in the same group. Only meaningful on `kind: "text"`.
@@ -48,7 +49,7 @@ type Step =
       inputType?: string;
       optional?: boolean;
       sub?: string;
-      validation?: "email" | "phone";
+      validation?: "email" | "phone" | "area" | "replacement";
     }
   | { type: "multi"; question: string; sub?: string; field: string; options: Option[] }
   | { type: "group"; question: string; sub?: string; fields: GroupField[] }
@@ -59,13 +60,15 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
 export function validateText(
   raw: string,
-  validation: "email" | "phone" | undefined,
+  validation: "email" | "phone" | "area" | "replacement" | undefined,
   optional: boolean
 ): string | null {
   const v = raw.trim();
   if (!v) {
     return optional ? null : "Please enter a value to continue.";
   }
+  if (validation === "area" && (!/^\d+(\.\d+)?$/.test(v) || !Number.isFinite(Number(v)) || Number(v) <= 0)) return "Enter a positive area, or leave blank if unsure.";
+  if (validation === "replacement" && (!/^\d+(\.\d+)?$/.test(v) || !Number.isFinite(Number(v)) || Number(v) <= 0)) return "Enter a positive replacement cost, or leave blank if unsure.";
   if (validation === "email") {
     if (!EMAIL_RE.test(v)) return "Please enter a valid email address.";
   }
@@ -113,7 +116,7 @@ export const STEPS: Record<string, Step> = {
   assocBoard: {
     type: "group",
     question: "What's the association called?",
-    sub: "Full legal name if you have it — the name on the policy.",
+    sub: "Use the name on the policy. Add building details if you have them; you can leave those blank.",
     fields: [
       {
         kind: "text",
@@ -129,6 +132,12 @@ export const STEPS: Record<string, Step> = {
         inputType: "number",
         half: true,
       },
+      { kind: "select", field: "propertyKind", label: "Property type", optional: true,
+        options: [{ value: "condominium", label: "Condominium association" }, { value: "other", label: "Other HOA / common areas only" }, { value: "unknown", label: "Not sure" }] },
+      { kind: "text", field: "grossSquareFeet", label: "Gross building area (sq ft)",
+        placeholder: "e.g. 25000", help: "Include common areas and garages; exclude basements.", optional: true, inputType: "number", validation: "area" },
+      { kind: "text", field: "replacementValue", label: "Building replacement cost ($)",
+        placeholder: "e.g. 5000000", help: "Cost to rebuild, excluding land. Use reconstruction cost, not market value.", optional: true, inputType: "number", validation: "replacement" },
     ],
   },
   assocOwner: {

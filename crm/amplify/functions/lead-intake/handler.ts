@@ -1,3 +1,4 @@
+import { estimateInput, PUBLIC_WINDOW_MS } from "../honeycomb/contract";
 import { taskWakeAt } from "../../../../shared/leadWorkflow";
 import { cleanAttribution, websiteLeadSource } from "../../../../shared/leadSource";
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
@@ -11,7 +12,7 @@ import { defaultWorkflow, makeTask } from "../communications/workflow";
 
 export interface Submission {
   fingerprint: string; proofHash: string; accountId: string; uploadToken: string | null;
-  snapshot: Record<string, unknown>; receivedAt: string;
+  snapshot: Record<string, unknown>; receivedAt: string; estimateToken?: string;
 }
 const clean = (v: unknown, max = 500): string | undefined => typeof v === "string" && v.trim() ? v.trim().slice(0, max) : undefined;
 export function replay(existing: Submission, fingerprint: string, proof: string) {
@@ -19,7 +20,7 @@ export function replay(existing: Submission, fingerprint: string, proof: string)
   if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected) || existing.fingerprint !== fingerprint) {
     return { ok: false, error: "This submission could not be verified. Keep your answers and try again." };
   }
-  return { ok: true, duplicate: true, id: existing.accountId, uploadToken: existing.uploadToken, uploadWindowMinutes: existing.uploadToken ? NO_UPLOAD_WINDOW_MINUTES : null };
+  return { ok: true, duplicate: true, id: existing.accountId, estimateToken: existing.estimateToken, uploadToken: existing.uploadToken, uploadWindowMinutes: existing.uploadToken ? NO_UPLOAD_WINDOW_MINUTES : null };
 }
 export function modelPut(name: string, id: string, fields: Record<string, unknown>): Write {
   const tableName = process.env[`${name.replace(/([a-z])([A-Z])/g, "$1_$2").toUpperCase()}_TABLE`];
@@ -31,7 +32,7 @@ export const handler: Schema["submitWebLead"]["functionHandler"] = async event =
   // Amplify's generated resolver supplies arguments, but no event.info.
   if ("readinessContract" in event.arguments) {
     const contractVersion = Number(event.arguments.readinessContract);
-    if (![1, 2].includes(contractVersion)) return { ready: false, contractVersion: 2 };
+    if (![1, 2, 3].includes(contractVersion)) return { ready: false, contractVersion: 3 };
     if (!["COMMUNICATION_TABLE", "ACCOUNT_TABLE", "CONTACT_TABLE", "PRIOR_CARRIER_TABLE", "LEAD_REPLY_TABLE", "USER_POOL_ID"].every(key => process.env[key])) return { ready: false, contractVersion };
     try { await get("config"); return { ready: true, contractVersion }; }
     catch { return { ready: false, contractVersion }; }
@@ -64,7 +65,10 @@ export const handler: Schema["submitWebLead"]["functionHandler"] = async event =
   let snapshot: Record<string, unknown> = { ...answers };
   if (typeof args.answerSnapshot === "string") { try { snapshot = { ...answers, answers: JSON.parse(args.answerSnapshot) }; } catch { return { ok: false, error: "The form answers could not be read." }; } }
   snapshot.leadSource = account.leadSource;
-  const submission: Submission = { fingerprint, proofHash: hash(proof), accountId: id, uploadToken: token, snapshot, receivedAt: at };
+  const estimationEnabled = process.env.HONEYCOMB_ENABLED === "true" && !!process.env.HONEYCOMB_ESTIMATE_TABLE && account.type === "ASSOCIATION";
+  const carrierInput = estimateInput({ ...args, type: account.type, address: account.address, city: account.city, state: account.state });
+  const estimateToken = estimationEnabled && carrierInput ? randomBytes(32).toString("base64url") : undefined;
+  const submission: Submission = { fingerprint, proofHash: hash(proof), accountId: id, uploadToken: token, estimateToken, snapshot, receivedAt: at };
   const first = await makeTask({ id: `task:first:${id}`, accountId: id, title: "Ensure the enquiry receives a response", kind: "FIRST_CONTACT", sourceAt: at });
   const writes: Write[] = [put(row("TASK", first.id, first, { accountId: id, dueAt: taskWakeAt(first) })), put(row("SUBMISSION", key, submission)), modelPut("Account", id, account),
     put(row("WORKFLOW", `workflow:${id}`, workflow, { accountId: id })),
@@ -72,6 +76,11 @@ export const handler: Schema["submitWebLead"]["functionHandler"] = async event =
     put(row("OPERATION", `op:sms-alert:${submissionId}`, { type: "SMS_ALERT", state: "READY", accountId: id, attempts: 0,
       lead: { id, name, city: account.city, state: account.state, contactName, contactPhone: clean(args.contactPhone, 50), source: account.source } }, { accountId: id, dueAt: at })),
   ];
+  if (estimationEnabled) writes.push(modelPut("HoneycombEstimate", estimateToken ? hash(estimateToken) : randomUUID(), {
+    accountId: id, status: carrierInput ? "PENDING" : "NEEDS_DETAILS",
+    ...(carrierInput ? { input: JSON.stringify(carrierInput) } : { issue: "Confirmed condominium type, street address, city, state, building area and replacement value are needed." }),
+    expiresAt: Math.floor((Date.now() + PUBLIC_WINDOW_MS) / 1000),
+  }));
   if (contactName || validEmail || args.contactPhone) {
     const person = { name: contactName, email: validEmail, phone: clean(args.contactPhone, 50), type: DEFAULT_CONTACT_TYPE };
     writes.push(modelPut("Contact", randomUUID(), { accountId: id, ...person, isPrimary: true, lastWriteBy: "lead-intake", extractionSourceKey: contactKey(person) }));
@@ -87,5 +96,5 @@ export const handler: Schema["submitWebLead"]["functionHandler"] = async event =
     console.error("Durable lead capture failed", e instanceof Error ? e.name : "unknown");
     return { ok: false, error: "We couldn't save your request. Your answers are still here; please try again." };
   }
-  return { ok: true, id, uploadToken: token, uploadWindowMinutes: token ? NO_UPLOAD_WINDOW_MINUTES : null };
+  return { ok: true, id, estimateToken, uploadToken: token, uploadWindowMinutes: token ? NO_UPLOAD_WINDOW_MINUTES : null };
 };

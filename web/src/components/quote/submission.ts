@@ -49,6 +49,9 @@ function buildSubmission(data: FormData, agentName: string) {
   };
 
   if (role === "board" || role === "manager") {
+    payload["Property type"] = get("propertyKind") || "—";
+    payload["Gross building area (sq ft)"] = get("grossSquareFeet") || "—";
+    payload["Building replacement value (USD)"] = get("replacementValue") || "—";
     payload["Unit Count"] = get("unitCount") || "—";
 
     const coverage = data.coverageNeeds;
@@ -117,6 +120,9 @@ export function buildCrmLead(data: FormData, agentName: string): CrmLeadInput {
     // options. The guard stays for leads persisted under the old schema.
     state: state && state !== "OTHER" ? state : undefined,
     zip: get("zip") || undefined,
+    propertyKind: (!isOwner && get("propertyKind")) || undefined,
+    grossSquareFeet: (!isOwner && get("grossSquareFeet")) || undefined,
+    replacementValue: (!isOwner && get("replacementValue")) || undefined,
     currentCarrier: (!isOwner && get("currentCarrier")) || undefined,
     // A unit owner is asked for their own unit, not the association's size.
     unitCount: (!isOwner && get("unitCount")) || undefined,
