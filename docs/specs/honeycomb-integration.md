@@ -1,6 +1,6 @@
 # Honeycomb integration: implementation plan and blockers
 
-Updated September 23, 2026. Phase 1 is implemented in `codex/honeycomb-staging-estimates`, in the isolated worktree `/Users/jake/Repos/HOAInsuranceAgency-honeycomb`. The application changes have not been deployed. The staging credentials were verified with a real signed estimation request, which returned a valid declined result and an estimation ID in about five seconds. No production calls, full/partial submissions, portal login, emails or Slack messages were made.
+Updated September 23, 2026. Phase 1 is implemented in `codex/honeycomb-staging-estimates`, in the isolated worktree `/Users/jake/Repos/HOAInsuranceAgency-honeycomb`. The backend, website and CRM are deployed to staging at commit `ee04021`; both Amplify jobs completed successfully. The staging credentials were verified with a real signed estimation request, which returned a valid declined result and an estimation ID in about five seconds. No production calls, full/partial submissions, portal login, emails or Slack messages were made. A second synthetic estimate also passed through the deployed AWS worker and public status endpoint.
 
 Every valid condominium association estimate reaches Honeycomb regardless of state. Lead capture and the estimate job are saved atomically; the website receives confirmation immediately while the worker runs. Declines, unavailable prices and errors leave the ordinary agent-follow-up confirmation in place. The CRM's Quotes tab shows internal results separately from bindable quotes.
 
@@ -18,11 +18,18 @@ The implementation uses the minimum condominium payload. Multiple-building inter
 
 ## Verification and deployment
 
-The full CRM test suite, CRM/backend/website type checks, both application builds, and staging/main backend synthesis passed. Tests cover signing, out-of-state input routing, eligible/declined/missing-price/error responses, 25/45/60-second waits, timeout fallback, duplicate jobs and intake receipts, and public result isolation. A local browser check confirmed the new form fields render. The live smoke test confirmed staging authentication and a real decline; it did **not** prove an eligible quote or a deployed end-to-end AWS flow.
+The full CRM test suite passed on both the original main base (2,265 tests) and the isolated staging base (2,204 tests). CRM/backend/website type checks, both application builds, and staging/main backend synthesis passed. Tests cover signing, out-of-state input routing, eligible/declined/missing-price/error responses, 25/45/60-second waits, timeout fallback, duplicate jobs and intake receipts, and public result isolation. Browser checks confirmed the new form fields on both the local preview and deployed staging website. The deployed AWS test queued a synthetic estimate, received `DECLINED` with an estimation ID in nine seconds, and exposed only `unavailable` through the public status endpoint. The public API key was denied direct access to the private estimate model. The synthetic estimate record was removed; no customer lead or follow-up communication was created. Eligible-price behavior has automated coverage but still needs a representative live eligible fixture from Honeycomb.
 
 Run the repeatable staging-only API check from `crm/` with `npx tsx scripts/check-honeycomb-staging.ts`. It loads encrypted staging parameters in memory and prints only a status summary. It uses synthetic data at the example address in Honeycomb's Swagger contract; it does not create a submission or contact anyone.
 
-Deploy through the CRM staging branch before the website staging build. The existing staging branch is behind the main checkout; this feature has been isolated rather than replacing that branch with unrelated changes. After deployment, verify a queued estimate, the public status receipt and the CRM result against staging. Confirm an eligible example with Honeycomb before the partner demo. Production requires separate credentials, explicit enablement and Honeycomb approval.
+The feature was replayed onto the existing staging branch and deployed through Amplify, retaining its existing source baseline. The website waited for backend contract version 3 before deployment. The new stream consumer uses `TRIM_HORIZON` so jobs captured during deployment are retained. The staging website's API endpoint was checked against the staging AppSync API. Production was not deployed or configured.
+
+- Website: [staging quote form](https://staging.dx1256wpowwzz.amplifyapp.com/quote/) — Amplify job 205 succeeded.
+- CRM: [staging CRM](https://staging.d2d4g940z91vj4.amplifyapp.com) — Amplify job 206 succeeded; backend CloudFormation update is complete.
+- Source: `ee04021c1e52a9199421e1b8d19eaadcf64d9e63`, remote `staging` and local `codex/honeycomb-staging-estimates`.
+- A local `codex/honeycomb-main-ready` branch preserves the original main-based implementation. When later moving the feature to main, include the subsequent stream-start fix from `ee04021`.
+
+Confirm an eligible example with Honeycomb before the partner demo. Production requires separate credentials, explicit enablement and Honeycomb approval.
 
 ## Source findings that change the plan
 
@@ -78,7 +85,7 @@ All four parameters were created at version 1 and verified by decrypting the sto
 
 The Honeycomb worker uses Amplify's `secret("HONEYCOMB_API_SECRET_KEY")` and corresponding references for the other names only on the staging branch. Amplify resolves these by branch; do not hard-code the staging parameter path as a fallback for production. Keep the integration disabled in production until separate production credentials and approval exist. Match the allowed API host to the configured environment before sending a signed request. [Amplify branch secrets](https://docs.amplify.aws/react/deploy-and-host/fullstack-branching/secrets-and-vars/)
 
-Secret storage and application implementation are complete. A signed staging request verified API access; application deployment and portal login remain unverified.
+Secret storage and application implementation are complete. A signed staging request verified API access; deployed API behavior is verified, while portal login remains unverified.
 
 ## Phase 1: website estimation and lead capture
 
@@ -152,7 +159,7 @@ Do not convert an estimate or an accepted completion request into a bound policy
 
 | Priority / gate | Owner | Required resolution |
 | --- | --- | --- |
-| **Staging application deployment** | Engineering | Source implementation and a signed API smoke test are complete. Deploy the isolated changes to staging, then validate the deployed intake → worker → status → CRM flow. Obtain a representative eligible fixture. |
+| **Staging validation** | Engineering + Honeycomb | Deployment and worker → public status checks passed for a synthetic decline. Intake/job atomicity and UI behavior have automated coverage. Obtain a representative eligible fixture and include the CRM staff view in the partner demo. |
 | **Staging portal access: login verification** | Jake; Inbar/Lior for support | Inbar confirmed allowlist activation September 23, and portal username/password are present in the shared item. Verify login from the allowlisted connection. No AWS static-IP setup is required for this allowlist. |
 | **Estimation acceptance: rating contract** | Lior + engineering | Obtain representative condo payloads; settle required-field conditions, multiple-building handling, reconstruction value semantics, and enum gaps. |
 | **Staging coverage: producer/program behavior** | Engineering + Lior | Verify the enabled producer/program configuration and representative eligible and out-of-state responses. Per Jake's September 23 instruction, do not wait for a static state list or use one to skip carrier calls. Validate that unsuccessful estimates return the ordinary visitor confirmation while retaining internal reasons. |
@@ -162,9 +169,9 @@ Do not convert an estimate or an accepted completion request into a bound policy
 | **CRM full completion only** | Engineering + Honeycomb | Implement/confirm the full questionnaire, webhook URL registration and signing material, delivery semantics, and update-event behavior. |
 | **Production release** | Agency + Honeycomb | Complete the staging demo, obtain approval and separate production credentials/configuration, and agree the actual release date within or after the proposed October 11 week. |
 
-The Slack channel, Jake's participation, Lior's introduction, delivery of Jake's IP, the staging credential fields, Honeycomb's confirmation of allowlist activation, and encrypted staging secret setup are evidenced. Inbar supplied the access update; Lior remains a working contact while Omer is away. The remaining access check is portal login; deployed application verification also remains. A webhook verification key is not visible in the shared item; obtain it with webhook registration when enabling full submission completion. It does not block estimation or the initial partial-submission workflow. Codex configured and readback-verified the API secrets, then made the staging estimation smoke test described above. The 1Password link was not opened and no external messages were sent.
+The Slack channel, Jake's participation, Lior's introduction, delivery of Jake's IP, the staging credential fields, Honeycomb's confirmation of allowlist activation, and encrypted staging secret setup are evidenced. Inbar supplied the access update; Lior remains a working contact while Omer is away. The remaining access check is portal login; a representative eligible fixture and partner demo remain. A webhook verification key is not visible in the shared item; obtain it with webhook registration when enabling full submission completion. It does not block estimation or the initial partial-submission workflow. Codex configured and readback-verified the API secrets, then made the staging estimation smoke test described above. The 1Password link was not opened and no external messages were sent.
 
-## Delivery sequence and acceptance
+## Original delivery sequence and acceptance (implementation status above)
 
 | Work package | Deliverable / completion evidence |
 | --- | --- |
