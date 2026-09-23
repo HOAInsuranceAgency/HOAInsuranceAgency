@@ -1,3 +1,4 @@
+import HoneycombEstimates from "../components/HoneycombEstimates";
 import LeadWorkflowPanel from "../components/LeadWorkflowPanel";
 import { useEffect, useRef, useState } from "react";
 import { useLocation, useParams, useSearchParams } from "react-router-dom";
@@ -251,6 +252,7 @@ export default function AccountDetail({ profile }: { profile: UserProfile }) {
       {activeTab === "quotes" && (
         <>
           <div className="card">
+            <HoneycombEstimates accountId={account.id} />
             <QuotesPanel account={account} onAccountChange={setAccount} />
           </div>
           <div id="carrier-work"><AccountMarketingTasks

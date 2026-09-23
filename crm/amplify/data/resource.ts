@@ -1,5 +1,6 @@
 import { type ClientSchema, a, defineData } from "@aws-amplify/backend";
 import { processDocument } from "../functions/process-document/resource";
+import { honeycombStatus } from "../functions/honeycomb/resource";
 import { leadIntake } from "../functions/lead-intake/resource";
 import { teamAdmin } from "../functions/team-admin/resource";
 import { extractLead } from "../functions/extract-lead/resource";
@@ -1930,6 +1931,17 @@ const schema = a
       })
       .authorization((allow) => [allow.authenticated().to(["read"])]),
 
+    // Private carrier results; only server code writes these records.
+    HoneycombEstimate: a.model({
+      accountId: a.id().required(), status: a.string().required(),
+      input: a.string(), result: a.string(), issue: a.string(),
+      price: a.float(), estimationId: a.string(), expiresAt: a.integer().required(),
+    }).secondaryIndexes(index => [index("accountId")])
+      .authorization(allow => [allow.authenticated().to(["read"])]),
+    webLeadEstimate: a.query().arguments({ estimateToken: a.string().required() })
+      .returns(a.json()).authorization(allow => [allow.publicApiKey()])
+      .handler(a.handler.function(honeycombStatus)),
+
     // ── Public website → CRM lead intake ───────────────────────────────
     // API-key-only surface for protectmyhoa.com forms. The handler forces
     // stage=LEAD; this cannot create clients or touch existing records.
@@ -1955,6 +1967,9 @@ const schema = a
         state: a.string(),
         zip: a.string(),
         unitNumber: a.string(),
+        propertyKind: a.string(),
+        grossSquareFeet: a.string(),
+        replacementValue: a.string(),
         currentCarrier: a.string(),
         /**
          * Both are strings on this surface even though their columns are

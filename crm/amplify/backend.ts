@@ -23,6 +23,7 @@ import { auth } from "./auth/resource";
 import { data } from "./data/resource";
 import { storage } from "./storage/resource";
 import { processDocument } from "./functions/process-document/resource";
+import { honeycombWorker, honeycombStatus } from "./functions/honeycomb/resource";
 import { leadIntake } from "./functions/lead-intake/resource";
 import { teamAdmin } from "./functions/team-admin/resource";
 import { extractLead } from "./functions/extract-lead/resource";
@@ -65,6 +66,8 @@ export const backend = defineBackend({
   storage,
   processDocument,
   leadIntake,
+  honeycombWorker,
+  honeycombStatus,
   teamAdmin,
   extractLead,
   formFiller,
@@ -313,9 +316,34 @@ const intakeFirewall = new CfnWebACL(backend.data.resources.graphqlApi, "LeadInt
       scopeDownStatement: { andStatement: { statements: [
         { sizeConstraintStatement: { fieldToMatch: { singleHeader: { name: "x-api-key" } }, comparisonOperator: "GT", size: 0, textTransformations: [{ priority: 0, type: "NONE" }] } },
         { orStatement: { statements: ["submitweblead", "leadintakeready"].map(searchString => ({ byteMatchStatement: { fieldToMatch: { body: { oversizeHandling: "MATCH" } }, positionalConstraint: "CONTAINS", searchString, textTransformations: [{ priority: 0, type: "LOWERCASE" }] } })) } },
-      ] } } } } }],
+      ] } } } } },
+    // Polls have their own budget so they cannot exhaust lead capture's limit.
+    { name: "PublicEstimateStatusPerIp", priority: 1, action: { block: {} },
+      visibilityConfig: { cloudWatchMetricsEnabled: true, metricName: "EstimateStatusPerIp", sampledRequestsEnabled: false },
+      statement: { rateBasedStatement: { aggregateKeyType: "IP", limit: 600, evaluationWindowSec: 300,
+        scopeDownStatement: { andStatement: { statements: [
+          { sizeConstraintStatement: { fieldToMatch: { singleHeader: { name: "x-api-key" } }, comparisonOperator: "GT", size: 0, textTransformations: [{ priority: 0, type: "NONE" }] } },
+          { byteMatchStatement: { fieldToMatch: { body: { oversizeHandling: "MATCH" } }, positionalConstraint: "CONTAINS", searchString: "webleadestimate", textTransformations: [{ priority: 0, type: "LOWERCASE" }] } },
+        ] } } } },
+    }],
 });
 new CfnWebACLAssociation(backend.data.resources.graphqlApi, "LeadIntakeFirewallAssociation", { resourceArn: backend.data.resources.graphqlApi.arn, webAclArn: intakeFirewall.attrArn });
+
+// Carrier processing is asynchronous: API latency exceeds AppSync's timeout.
+const estimateTable = backend.data.resources.tables.HoneycombEstimate;
+for (const fn of [backend.leadIntake, backend.honeycombWorker]) {
+  estimateTable.grantReadWriteData(fn.resources.lambda);
+  fn.addEnvironment("HONEYCOMB_ESTIMATE_TABLE", estimateTable.tableName);
+}
+estimateTable.grantReadData(backend.honeycombStatus.resources.lambda);
+backend.honeycombStatus.addEnvironment("HONEYCOMB_ESTIMATE_TABLE", estimateTable.tableName);
+backend.leadIntake.addEnvironment("HONEYCOMB_ENABLED", String(branch === "staging"));
+backend.data.resources.cfnResources.amplifyDynamoDbTables.HoneycombEstimate.streamSpecification = { streamViewType: StreamViewType.NEW_IMAGE };
+backend.honeycombWorker.resources.lambda.addEventSource(new DynamoEventSource(estimateTable, {
+  startingPosition: StartingPosition.LATEST, batchSize: 1, retryAttempts: 10,
+  maxRecordAge: Duration.hours(1), reportBatchItemFailures: true,
+}));
+(backend.honeycombWorker.resources.lambda.node.defaultChild as CfnFunction).reservedConcurrentExecutions = 2;
 
 // Workflow records are server-only. Custom resolvers enforce permissions and
 // transact duties, deadlines, audit records and delivery work atomically.

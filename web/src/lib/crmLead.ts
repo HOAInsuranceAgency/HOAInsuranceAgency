@@ -19,6 +19,9 @@ export interface CrmLeadInput {
   state?: string;
   zip?: string;
   unitNumber?: string;
+  propertyKind?: string;
+  grossSquareFeet?: string;
+  replacementValue?: string;
   currentCarrier?: string;
   /** Sent as a string: the mutation parses it into `Account.unitCount`. */
   unitCount?: string;
@@ -42,6 +45,7 @@ const MUTATION = `mutation SubmitWebLead(
   $contactEmail: String, $contactPhone: String, $address: String, $city: String,
   $state: String, $zip: String, $unitNumber: String, $currentCarrier: String,
   $unitCount: String, $currentPolicyExpiration: String,
+  $propertyKind: String, $grossSquareFeet: String, $replacementValue: String,
   $buildiumId: String, $source: String, $notes: String
 ) {
   submitWebLead(
@@ -51,6 +55,7 @@ const MUTATION = `mutation SubmitWebLead(
     contactPhone: $contactPhone, address: $address, city: $city, state: $state,
     zip: $zip, unitNumber: $unitNumber, currentCarrier: $currentCarrier,
     unitCount: $unitCount, currentPolicyExpiration: $currentPolicyExpiration,
+    propertyKind: $propertyKind, grossSquareFeet: $grossSquareFeet, replacementValue: $replacementValue,
     buildiumId: $buildiumId, source: $source, notes: $notes
   )
 }`;
@@ -61,6 +66,7 @@ const MUTATION = `mutation SubmitWebLead(
  */
 export interface CrmLeadResult {
   accountId: string;
+  estimateToken?: string;
   /** Absent when the lead had no email address to reply to. */
   uploadToken: string | null;
 }
@@ -105,7 +111,7 @@ export async function submitCrmLead(input: CrmLeadInput, identity: SubmissionIde
   if (body.errors?.length) throw new Error("We couldn't save your request. Please try again.");
   const result = unwrap(body.data?.submitWebLead);
   if (!result?.ok || typeof result.id !== "string") throw new Error(String(result?.error ?? "We couldn't save your request."));
-  return { accountId: result.id, uploadToken: typeof result.uploadToken === "string" ? result.uploadToken : null };
+  return { accountId: result.id, ...(typeof result.estimateToken === "string" ? { estimateToken: result.estimateToken } : {}), uploadToken: typeof result.uploadToken === "string" ? result.uploadToken : null };
 }
 
 /** Keep the same identity and proof through double clicks, timeouts and reloads. */

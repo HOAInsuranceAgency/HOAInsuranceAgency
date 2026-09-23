@@ -683,6 +683,31 @@ describe("cleanup and combined requests", () => {
 describe("durable public capture", () => {
   const args = { submissionId: "submission-12345678901234567890", retryProof: "p".repeat(64), name: "Willow HOA", contactEmail: "prospect@example.com", contactFirstName: "Mary", contactPhone: "6175550100", answerSnapshot: '{"coverages":["D&O"]}' };
   const submit = (overrides = {}) => capture({ arguments: { ...args, ...overrides } } as never, {} as never, () => {});
+  it("atomically queues one carrier estimate and replays its receipt across concurrent retries", async () => {
+    vi.stubEnv("HONEYCOMB_ENABLED", "true"); vi.stubEnv("HONEYCOMB_ESTIMATE_TABLE", "HoneycombEstimate");
+    try {
+      const property = { type: "ASSOCIATION", propertyKind: "condominium", address: "1 Main St", city: "Juneau", state: "AK", grossSquareFeet: "10000", replacementValue: "2500000" };
+      const [a, b] = await Promise.all([submit(property), submit(property)]) as any[];
+      expect(a.ok).toBe(true); expect(a.estimateToken).toMatch(/^[A-Za-z0-9_-]{43}$/); expect(b.estimateToken).toBe(a.estimateToken);
+      const estimates = [...h.records.entries()].filter(([key]) => key.startsWith("HoneycombEstimate:"));
+      expect(estimates).toHaveLength(1); expect(estimates[0][1]).toMatchObject({ accountId: a.id, status: "PENDING" });
+      expect(JSON.parse(estimates[0][1].input).address).toContain("AK");
+      const writes = h.transactions.find(items => items.some(w => w.Put?.TableName === "HoneycombEstimate"))!;
+      expect(writes.some(w => w.Put?.TableName === "Account")).toBe(true);
+      expect(await submit({ ...property, retryProof: "z".repeat(64) })).toMatchObject({ ok: false });
+    } finally { vi.unstubAllEnvs(); }
+  });
+  it("preserves leads without inventing missing carrier inputs, and disables estimates outside staging", async () => {
+    vi.stubEnv("HONEYCOMB_ESTIMATE_TABLE", "HoneycombEstimate"); vi.stubEnv("HONEYCOMB_ENABLED", "true");
+    try {
+      const captured = await submit() as any;
+      expect(captured.ok).toBe(true); expect(captured.estimateToken).toBeUndefined();
+      expect([...h.records.values()].some(r => r.__typename === "HoneycombEstimate" && r.status === "NEEDS_DETAILS")).toBe(true);
+      vi.stubEnv("HONEYCOMB_ENABLED", "false");
+      await submit({ submissionId: "another-submission-12345678901234567890" });
+      expect([...h.records.values()].filter(r => r.__typename === "HoneycombEstimate")).toHaveLength(1);
+    } finally { vi.unstubAllEnvs(); }
+  });
   it("captures one lead, intake and AI reply across concurrent browser retries", async () => {
     const [a,b] = await Promise.all([submit(), submit()]); expect(a).toMatchObject({ ok: true }); expect(b).toMatchObject({ ok: true }); expect((a as any).id).toBe((b as any).id);
     expect([...h.records.keys()].filter(k => k.startsWith("Account:"))).toHaveLength(1); expect(entries("OPERATION").filter(o => o.data.type === "IMPORT")).toHaveLength(1); expect(entries("WORKFLOW")[0].data).toMatchObject({ salespersonId: "brian", championId: "brian" });
