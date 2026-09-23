@@ -494,7 +494,8 @@ a {
 
 /* Light theme keeps the logo as-is; dark theme inverts/brightens it
    so the dark text reads against the dark background */
-:root[data-theme="dark"] .qf-splash-logo img {
+:root[data-theme="dark"] .qf-splash-logo img,
+:root[data-theme="dark"] .qf-brand img {
   filter: brightness(0) invert(1);
 }
 
@@ -611,6 +612,12 @@ a {
   gap: 12px;
   margin-bottom: 8px;
 }
+
+/* Keep the compact grid from being overridden by the base option stack. */
+.qf-options.qf-options--compact { display: grid; }
+.qf-options--compact .qf-card-option { padding: 10px 12px; gap: 10px; }
+.qf-options--compact .qf-card-icon { width: 30px; height: 30px; }
+.qf-options--compact .qf-card-label { font-size: 14px; }
 
 .qf-card-option {
   display: flex;
@@ -816,6 +823,78 @@ a {
   .qf-footer {
     font-size: 11px;
   }
+}
+
+/* Give questions more room without shrinking inputs or their touch targets. */
+.qf-root--question { padding-top: 110px; }
+.qf-root--question .qf-agent-header {
+  flex-direction: row;
+  justify-content: flex-start;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+.qf-root--question .qf-agent-avatar { width: 44px; height: 44px; border-width: 2px; }
+.qf-root--question .qf-agent-greeting { margin: 0; text-align: left; }
+.qf-root--question .qf-primary-btn { margin-top: 8px; }
+.qf-input { scroll-margin-top: 115px; }
+.qf-theme-toggle, .qf-restart-btn { min-width: 44px; min-height: 44px; }
+.qf-steps { top: 72px; }
+
+/* Confirmation: estimate beside optional uploads on desktop, in order on mobile. */
+.qf-root--submitted {
+  min-height: 0;
+  padding: 106px 24px 30px;
+}
+.qf-root--submitted .qf-stage { max-width: 960px; }
+.qf-root--submitted .qf-footer { margin-top: 24px; padding: 0; }
+.qf-confirmation-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+  gap: 32px;
+  align-items: start;
+}
+.qf-confirmation-grid:not(:has(.lup)) { grid-template-columns: minmax(0, 1fr); max-width: 620px; margin-inline: auto; }
+.qf-confirmation-summary { min-width: 0; }
+.qf-confirmation-heading { display: flex; align-items: center; gap: 12px; }
+.qf-confirmation-heading h2 { margin: 0; font-size: clamp(24px, 3vw, 30px); line-height: 1.2; letter-spacing: -0.025em; }
+.qf-confirmation-check { flex-shrink: 0; color: var(--qf-accent); }
+.qf-confirmation-intro { margin: 12px 0 20px; color: var(--qf-text-muted); line-height: 1.55; font-size: 16px; }
+.qf-confirmation .lup { width: 100%; max-width: none; margin: 0; padding: 20px; }
+.qf-confirmation .lup__pick, .qf-confirmation .lup__btn--primary { min-height: 44px; }
+.qf-confirmation .lup__pick { align-items: center; }
+.qf-confirmation-disclaimer { margin: 24px 0 12px; font-size: 12px; line-height: 1.6; color: var(--qf-text-muted); }
+.qf-confirmation-links { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 20px; }
+.qf-confirmation-links .qf-phone-cta { margin: 0; padding: 12px 16px; }
+.qf-confirmation-links .qf-back-link { display: inline-flex; align-items: center; min-height: 44px; }
+.qf-price-indication { border: 1px solid var(--qf-border); border-radius: 14px; padding: 20px; background: var(--qf-field-bg); }
+.qf-price-indication h3 { margin: 0; font-size: 15px; line-height: 1.4; font-weight: 600; }
+.qf-price-indication p { margin: 10px 0 0; font-size: 13px; line-height: 1.55; color: var(--qf-text-muted); }
+.qf-price-indication .qf-estimate-price { margin: 8px 0; font-size: clamp(28px, 5vw, 36px); font-weight: 700; color: var(--qf-text-strong); line-height: 1.2; overflow-wrap: anywhere; }
+.qf-estimate-badge { display: inline-block; margin-bottom: 10px; padding: 4px 8px; border-radius: 6px; background: var(--qf-track); font-size: 11px; font-weight: 600; color: var(--qf-text-muted); }
+.qf-price-indication--pending { display: flex; align-items: flex-start; gap: 12px; }
+.qf-estimate-spinner { flex-shrink: 0; width: 20px; height: 20px; margin-top: 1px; border: 2px solid var(--qf-border); border-top-color: var(--qf-accent); border-radius: 50%; animation: qf-estimate-spin 1s linear infinite; }
+@keyframes qf-estimate-spin { to { transform: rotate(360deg); } }
+
+@media (max-width: 740px) {
+  .qf-root--submitted { padding: 92px 16px 24px; }
+  .qf-confirmation-grid { grid-template-columns: minmax(0, 1fr); gap: 20px; }
+  .qf-confirmation-heading { gap: 10px; }
+  .qf-confirmation-check { width: 30px; height: 30px; }
+  .qf-confirmation-intro { margin-bottom: 16px; }
+  .qf-price-indication, .qf-confirmation .lup { padding: 16px; }
+  .qf-confirmation-links { justify-content: center; }
+  .qf-confirmation-links .qf-phone-cta { justify-content: center; width: 100%; }
+  .qf-confirmation-disclaimer { margin-top: 20px; }
+}
+
+@media (max-width: 480px) {
+  .qf-root--question { padding-top: 110px; padding-bottom: 24px; }
+  /* Keep support in the page flow so it cannot cover fields above the keyboard. */
+  .qf-root--question .qf-support { position: static; order: 2; margin: 24px auto 0; min-height: 44px; }
+  .qf-root--question .qf-footer { order: 3; margin-top: 16px; }
+  .qf-bar { gap: 4px; padding-inline: 12px; }
+  .qf-brand--small img { height: 22px; }
+  .qf-root--question .qf-sub-small { line-height: 1.45; margin-bottom: 18px; }
 }
 
 /* ── Reduced motion ── */

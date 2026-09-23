@@ -11,11 +11,10 @@ import { trackLead, PHONE, PHONE_HREF } from "../constants";
  */
 import { AGENCY } from "../../../shared/agency";
 import { useLeadSubmission } from "../lib/crmLead";
-import LeadUploadPanel from "./LeadUploadPanel";
+import QuoteConfirmation from "./quote/QuoteConfirmation";
 import { attachAddressAutocomplete, loadGooglePlaces } from "../lib/googlePlaces";
 import { takeHandoff } from "../lib/addressHandoff";
-import { DARK, LIGHT, ThemeContext, isDaytime, useTheme, type ThemeMode } from "./quote/theme";
-import { Icon } from "./quote/icons";
+import { DARK, LIGHT, ThemeContext, isDaytime, type ThemeMode } from "./quote/theme";
 import { STEPS, getFlow, validateText, type FormData, type GroupField } from "./quote/schema";
 import {
   THEME_KEY,
@@ -107,7 +106,6 @@ export default function QuoteApp() {
 }
 
 function QuoteFlow({ isDay, onToggleTheme }: { isDay: boolean; onToggleTheme: () => void }) {
-  const c = useTheme();
   // Hydrate from localStorage on first render
   const persisted = useMemo(() => loadState(), []);
   const prefill = useMemo(() => getPrefillFromUrl(), []);
@@ -193,6 +191,13 @@ function QuoteFlow({ isDay, onToggleTheme }: { isDay: boolean; onToggleTheme: ()
   const stepKey = flow[stepIndex];
   const step = STEPS[stepKey];
   const totalSteps = flow.length - 1;
+  const stageRef = useRef<HTMLDivElement>(null);
+
+  // Long mobile steps must open at their heading, not at the previous Continue button.
+  useEffect(() => {
+    stageRef.current?.querySelector<HTMLElement>("h2")?.focus({ preventScroll: true });
+    window.scrollTo({ top: 0, left: 0, behavior: "instant" });
+  }, [stepKey]);
 
   /* Seed a group screen from answers already given, so going Back shows what was
      typed instead of empty fields. `data` survives a refresh; the in-progress
@@ -438,7 +443,6 @@ function QuoteFlow({ isDay, onToggleTheme }: { isDay: boolean; onToggleTheme: ()
   // Splash renders the avatar inline (below the logo). Other question steps
   // get the avatar at the top of the stage. Submitted screen has neither.
   const showAgentHeader = step?.type !== "submitted" && step?.type !== "splash";
-  const firstName = (data.contactName as string | undefined)?.split(" ")[0];
   const agentFirst = agent.name.split(" ")[0];
 
   /* Question numbering excludes the splash and the confirmation, so "Step 3 of 5"
@@ -459,7 +463,7 @@ function QuoteFlow({ isDay, onToggleTheme }: { isDay: boolean; onToggleTheme: ()
   }, [stepKey]);
 
   return (
-    <div className="qf-root">
+    <div className={"qf-root" + (step?.type === "submitted" ? " qf-root--submitted" : showAgentHeader ? " qf-root--question" : "")}>
       <Confetti active={showConfetti} />
       <ProgressBar current={Math.min(stepIndex, totalSteps)} total={totalSteps} />
 
@@ -477,9 +481,8 @@ function QuoteFlow({ isDay, onToggleTheme }: { isDay: boolean; onToggleTheme: ()
             <span className="qf-bar-spacer" aria-hidden="true" />
           )}
         </div>
-        {/* The splash and confirmation render their own full-size logo, so the bar
-            skips it there rather than showing the mark twice. */}
-        {step?.type !== "splash" && step?.type !== "submitted" ? (
+        {/* The splash has its own full-size logo. */}
+        {step?.type !== "splash" ? (
           <BrandMark small />
         ) : (
           <span className="qf-bar-spacer" aria-hidden="true" />
@@ -496,9 +499,9 @@ function QuoteFlow({ isDay, onToggleTheme }: { isDay: boolean; onToggleTheme: ()
         <StepIndicator current={questionNumber} total={questionCount} />
       )}
 
-      <SupportChip phone={PHONE} href={PHONE_HREF} />
+      {step?.type !== "submitted" && <SupportChip phone={PHONE} href={PHONE_HREF} />}
 
-      <div className="qf-stage">
+      <div className="qf-stage" ref={stageRef}>
         {/* No `progress` prop: the ring around the avatar is gone in favor of the
             single linear bar at the top of the screen. Two competing progress
             indicators read as two different measurements. */}
@@ -526,7 +529,7 @@ function QuoteFlow({ isDay, onToggleTheme }: { isDay: boolean; onToggleTheme: ()
           {/* SELECT */}
           {step?.type === "select" && (
             <div>
-              <h2 className="qf-question">{step.question}</h2>
+              <h2 className="qf-question" tabIndex={-1}>{step.question}</h2>
               {step.sub && <p className="qf-sub-small">{step.sub}</p>}
               <div className="qf-options">
                 {step.options.map((opt) => {
@@ -550,7 +553,7 @@ function QuoteFlow({ isDay, onToggleTheme }: { isDay: boolean; onToggleTheme: ()
           {/* TEXT */}
           {step?.type === "text" && (
             <div>
-              <h2 className="qf-question">{step.question}</h2>
+              <h2 className="qf-question" tabIndex={-1}>{step.question}</h2>
               {step.optional && (
                 <p className="qf-sub-small">Optional — press Continue to skip</p>
               )}
@@ -579,7 +582,7 @@ function QuoteFlow({ isDay, onToggleTheme }: { isDay: boolean; onToggleTheme: ()
           {/* GROUP — several related fields on one screen */}
           {step?.type === "group" && (
             <div>
-              <h2 className="qf-question">{step.question}</h2>
+              <h2 className="qf-question" tabIndex={-1}>{step.question}</h2>
               {step.sub && <p className="qf-sub-small">{step.sub}</p>}
               <div className="qf-group">
                 {step.fields.map((f) => (
@@ -659,7 +662,7 @@ function QuoteFlow({ isDay, onToggleTheme }: { isDay: boolean; onToggleTheme: ()
           {/* MULTI */}
           {step?.type === "multi" && (
             <div>
-              <h2 className="qf-question">{step.question}</h2>
+              <h2 className="qf-question" tabIndex={-1}>{step.question}</h2>
               {step.sub && <p className="qf-sub-small">{step.sub}</p>}
               <div className="qf-options">
                 {step.options.map((opt) => (
@@ -680,72 +683,10 @@ function QuoteFlow({ isDay, onToggleTheme }: { isDay: boolean; onToggleTheme: ()
 
           {/* SUBMITTED */}
           {step?.type === "submitted" && (
-            <div className="qf-center">
-              <a
-                href="/"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="qf-splash-logo qf-splash-logo--small qf-splash-logo--link"
-                aria-label="Visit ProtectMyHOA.com"
-              >
-                <img src="/logo.png" alt="HOA Insurance Agency" draggable={false} />
-              </a>
-              <div className="qf-success-icon">
-                <svg width="80" height="80" viewBox="0 0 80 80" fill="none">
-                  <circle cx="40" cy="40" r="40" fill={c.accentDim} />
-                  <circle cx="40" cy="40" r="30" fill={c.accent} />
-                  <path
-                    d="M26 40l10 10 18-22"
-                    stroke={c.white}
-                    strokeWidth="5"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
-              </div>
-              <h2 className="qf-headline">Thank you. We have it.</h2>
-              <p className="qf-sub">
-                A member of our team will be in touch within one business day. We may ask for
-                your current declarations page — that is usually all we need to start.
-              </p>
-              {/* The one place this wizard has to be unambiguous.
-                  A visitor has just answered five questions about their
-                  insurance and been shown a green check and confetti, which is
-                  the visual grammar of a completed transaction; on the highest
-                  intent surface on the site, "we have it" on its own can be
-                  read as coverage arranged. Nothing here was ever an
-                  application and nothing submitted binds anything, so the
-                  screen now says so. The wording is the site's existing
-                  qualifier voice rather than new boilerplate, and it sits once,
-                  here, rather than being appended to every paragraph above. */}
-              <p className="qf-sub-small">
-                This starts a review — it does not bind coverage or change a policy you already
-                have. Anything we put forward is subject to underwriting, policy terms, and
-                eligibility, and carrier availability varies by state, association type and
-                risk profile.
-              </p>
-              {/* The offer to take documents, only once the lead is safely in
-                  the CRM. The copy above already asks for a declarations page,
-                  so this is the place a visitor is most likely to have one to
-                  hand — and nothing here can cost the submission, which has
-                  already happened. */}
-              <PriceIndication token={estimateToken} />
-              {uploadToken && <LeadUploadPanel uploadToken={uploadToken} />}
-              {/* Both halves of this link were literals. The href carried its
-                  own hand-typed E.164 string, and the visible number was
-                  written with U+2011 non-breaking hyphens, which is why it
-                  survived every sweep for the number: a plain search for
-                  508-233-2261 does not match it. Interpolated now, so the
-                  number a visitor dials from the confirmation screen is the
-                  one number the repo actually stores. */}
-              <a href={PHONE_HREF} className="qf-phone-cta">
-                <Icon.Phone size={16} />
-                <span>Or call us — {PHONE}</span>
-              </a>
-              <a href="/" className="qf-back-link">
-                ← Back to ProtectMyHOA.com
-              </a>
-            </div>
+            <QuoteConfirmation
+              estimate={<PriceIndication token={estimateToken} />}
+              uploadToken={uploadToken ?? undefined}
+            />
           )}
         </SlideIn>
       </div>

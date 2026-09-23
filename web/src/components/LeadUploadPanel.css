@@ -97,7 +97,17 @@
 :root[data-theme="dark"] .lup__pick { background: rgba(255, 255, 255, 0.04); }
 .lup__pick:hover { border-color: var(--lup-edge-strong); }
 .lup__pick:focus-within { outline: 2px solid var(--lup-edge-strong); outline-offset: 2px; }
-.lup__pick input[type="file"] { display: none; }
+.lup__pick input[type="file"] {
+  /* Visually hidden but reachable by keyboard and assistive technology. */
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
 .lup__pick:has(input:disabled) { opacity: 0.5; cursor: default; }
 
 .lup__list {
