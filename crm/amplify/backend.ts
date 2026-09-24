@@ -23,7 +23,7 @@ import { auth } from "./auth/resource";
 import { data } from "./data/resource";
 import { storage } from "./storage/resource";
 import { processDocument } from "./functions/process-document/resource";
-import { honeycombWorker, honeycombStatus } from "./functions/honeycomb/resource";
+import { honeycombWorker, honeycombStatus, honeycombSubmissions, honeycombSubmissionWorker } from "./functions/honeycomb/resource";
 import { leadIntake } from "./functions/lead-intake/resource";
 import { teamAdmin } from "./functions/team-admin/resource";
 import { extractLead } from "./functions/extract-lead/resource";
@@ -68,6 +68,8 @@ export const backend = defineBackend({
   leadIntake,
   honeycombWorker,
   honeycombStatus,
+  honeycombSubmissions,
+  honeycombSubmissionWorker,
   teamAdmin,
   extractLead,
   formFiller,
@@ -345,6 +347,23 @@ backend.honeycombWorker.resources.lambda.addEventSource(new DynamoEventSource(es
   maxRecordAge: Duration.hours(1), reportBatchItemFailures: true,
 }));
 (backend.honeycombWorker.resources.lambda.node.defaultChild as CfnFunction).reservedConcurrentExecutions = 2;
+
+// An agent explicitly queues each partial submission; the stream keeps carrier latency off AppSync.
+const submissionTable = backend.data.resources.tables.HoneycombSubmission;
+for (const fn of [backend.honeycombSubmissions, backend.honeycombSubmissionWorker]) {
+  submissionTable.grantReadWriteData(fn.resources.lambda);
+  fn.addEnvironment("HONEYCOMB_SUBMISSION_TABLE", submissionTable.tableName);
+}
+backend.data.resources.tables.Account.grantReadData(backend.honeycombSubmissions.resources.lambda);
+backend.honeycombSubmissions.addEnvironment("HONEYCOMB_ACCOUNT_TABLE", backend.data.resources.tables.Account.tableName);
+estimateTable.grantReadData(backend.honeycombSubmissions.resources.lambda);
+backend.honeycombSubmissions.addEnvironment("HONEYCOMB_ESTIMATE_TABLE", estimateTable.tableName);
+backend.data.resources.cfnResources.amplifyDynamoDbTables.HoneycombSubmission.streamSpecification = { streamViewType: StreamViewType.NEW_IMAGE };
+backend.honeycombSubmissionWorker.resources.lambda.addEventSource(new DynamoEventSource(submissionTable, {
+  startingPosition: StartingPosition.TRIM_HORIZON, batchSize: 1, retryAttempts: 10,
+  maxRecordAge: Duration.hours(1), reportBatchItemFailures: true,
+}));
+(backend.honeycombSubmissionWorker.resources.lambda.node.defaultChild as CfnFunction).reservedConcurrentExecutions = 2;
 
 // Workflow records are server-only. Custom resolvers enforce permissions and
 // transact duties, deadlines, audit records and delivery work atomically.

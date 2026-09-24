@@ -139,6 +139,11 @@ try {
   const staging = process.env.AWS_BRANCH === "staging";
   if (carrierEnv.variables.HONEYCOMB_ENABLED !== String(staging) || intakeEnv.variables.HONEYCOMB_ENABLED !== String(staging)) throw new Error("Honeycomb must only run on staging");
   if (!staging && JSON.stringify(carrierEnv).includes("HONEYCOMB_API_SECRET_KEY")) throw new Error("Non-staging deployment must not resolve Honeycomb secrets");
+  for (const fn of [backend.honeycombSubmissions, backend.honeycombSubmissionWorker]) {
+    const env = Stack.of(fn.resources.lambda).resolve((fn.resources.lambda.node.defaultChild as CfnFunction).environment);
+    if (env.variables.HONEYCOMB_ENABLED !== String(staging)) throw new Error("Submissions must only run on staging");
+    if (!staging && JSON.stringify(env).includes("HONEYCOMB_API_SECRET_KEY")) throw new Error("Non-staging submissions must not resolve secrets");
+  }
   const stacks = assembly.stacks.length;
 
   console.log(`✔ Backend synthesised — ${stacks} stack${stacks === 1 ? "" : "s"}.`);

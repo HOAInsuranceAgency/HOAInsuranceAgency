@@ -25,6 +25,7 @@ describe("tabsFor", () => {
       "overview",
       "priorcarrier",
       "losses",
+      "submissions",
       "quotes",
       "invoices",
       "financing",
@@ -38,6 +39,7 @@ describe("tabsFor", () => {
     expect(tabsFor("CLIENT").map(([t]) => t)).toEqual([
       "overview",
       "losses",
+      "submissions",
       "quotes",
       "policies",
       "invoices",
@@ -146,6 +148,7 @@ describe("resolveTab", () => {
       for (const t of [
         "overview",
         "losses",
+        "submissions",
         "quotes",
         "documents",
         "certificates",

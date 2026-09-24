@@ -1,3 +1,4 @@
+import SubmissionsPanel from "../components/SubmissionsPanel";
 import HoneycombEstimates from "../components/HoneycombEstimates";
 import LeadWorkflowPanel from "../components/LeadWorkflowPanel";
 import { useEffect, useRef, useState } from "react";
@@ -32,6 +33,7 @@ type Tab =
   | "overview"
   | "priorcarrier"
   | "losses"
+  | "submissions"
   | "quotes"
   | "policies"
   | "invoices"
@@ -44,6 +46,7 @@ const VALID_TABS: Tab[] = [
   "overview",
   "priorcarrier",
   "losses",
+  "submissions",
   "quotes",
   "policies",
   "invoices",
@@ -99,6 +102,7 @@ export function tabsFor(stage: string | null | undefined): [Tab, string][] {
     // Not lead-only: loss history follows the account, and a renewal
     // submission declares the same losses a new-business one did.
     ["losses", "Losses"],
+    ["submissions", "Submissions"],
     ["quotes", "Quotes"],
     // Policies stay client-only — a lead by definition has none. Invoices
     // and Financing do NOT (since the W8 E2E caught them hidden): billing
@@ -243,6 +247,7 @@ export default function AccountDetail({ profile }: { profile: UserProfile }) {
           {account.stage === "LEAD" && <DeleteLeadZone account={account} />}
         </>
       )}
+      {activeTab === "submissions" && <SubmissionsPanel key={account.id} account={account} initialEstimateId={searchParams.get("estimate") ?? undefined} />}
       {activeTab === "quotes" && (
         <>
           <div className="card">

@@ -1,3 +1,6 @@
+import { Link } from "react-router-dom";
+import { eligibleEstimate } from "../../amplify/functions/honeycomb/submission-contract";
+import { listAllPages } from "../lib/pagination";
 import { useEffect } from "react";
 import { client } from "../lib/client";
 import { useAsyncResource } from "../lib/useAsyncResource";
@@ -5,9 +8,11 @@ import { visibleStatus } from "../../amplify/functions/honeycomb/contract";
 
 export default function HoneycombEstimates({ accountId }: { accountId: string }) {
   const resource = useAsyncResource(async () => {
-    const result = await client.models.HoneycombEstimate.listHoneycombEstimateByAccountId({ accountId });
-    if (result.errors?.length) throw new Error("Unable to load carrier estimates");
-    return result.data;
+    return listAllPages(async nextToken => {
+      const result = await client.models.HoneycombEstimate.listHoneycombEstimateByAccountId({ accountId }, { nextToken });
+      if (result.errors?.length) throw new Error("Unable to load carrier estimates");
+      return result;
+    });
   }, [accountId], { initialData: [], errorMessage: "Carrier estimates could not be loaded." });
   const pending = resource.data.some(r => ["PENDING", "RUNNING"].includes(visibleStatus(r)));
   useEffect(() => {
@@ -26,6 +31,7 @@ export default function HoneycombEstimates({ accountId }: { accountId: string })
         <strong>{status.replaceAll("_", " ")}</strong>
         {record.price != null && <span> · {new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(record.price)}</span>}
         <p className="muted small">{new Date(record.createdAt).toLocaleString()}{record.estimationId ? ` · ${record.estimationId}` : ""}</p>
+        {eligibleEstimate(record) && <p><Link to={`?tab=submissions&estimate=${encodeURIComponent(record.id)}`}>Start submission from this estimate →</Link></p>}
         {record.issue && <p className="small">{record.issue}</p>}
         {status === "TIMED_OUT" && <p className="small">The request did not finish in time. Continue agent follow-up; the website retains its normal confirmation.</p>}
         {record.result && <details><summary>Carrier response (internal)</summary><pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{pretty(record.result)}</pre></details>}

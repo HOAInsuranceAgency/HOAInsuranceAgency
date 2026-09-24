@@ -1,5 +1,7 @@
 # Honeycomb integration: implementation plan and blockers
 
+Phase 2 implementation update: see [Honeycomb partial submissions](honeycomb-submissions.md) for the Lead/Client tab, estimate conversion, retry handling and staging validation.
+
 Updated September 23, 2026. Phase 1 is implemented in `codex/honeycomb-staging-estimates`, in the isolated worktree `/Users/jake/Repos/HOAInsuranceAgency-honeycomb`. The backend, website and CRM are deployed to staging at commit `ee04021`; both Amplify jobs completed successfully. The staging credentials were verified with a real signed estimation request, which returned a valid declined result and an estimation ID in about five seconds. No production calls, full/partial submissions, portal login, emails or Slack messages were made. A second synthetic estimate also passed through the deployed AWS worker and public status endpoint.
 
 Every valid condominium association estimate reaches Honeycomb regardless of state. Lead capture and the estimate job are saved atomically; the website receives confirmation immediately while the worker runs. Declines, unavailable prices and errors leave the ordinary agent-follow-up confirmation in place. The CRM's Quotes tab shows internal results separately from bindable quotes.
@@ -15,7 +17,7 @@ Every valid condominium association estimate reaches Honeycomb regardless of sta
 - Worker secrets and intake execution are enabled only for `AWS_BRANCH=staging`. Non-staging builds do not resolve Honeycomb credentials. Runtime requests are restricted to the exact staging API host and refuse redirects.
 - Updated the website's deployment readiness check to contract version 3 so its new fields cannot reach an older backend.
 
-The implementation uses the minimum condominium payload. Multiple-building interpretation, representative eligible fixtures, and the public price/coverage wording still need Honeycomb confirmation before production. Phase 2 submission endpoints remain separate work.
+The implementation uses the minimum condominium payload. Multiple-building interpretation, representative eligible fixtures, and the public price/coverage wording still need Honeycomb confirmation before production. The agent-controlled partial submission workflow is described in [Phase 2](honeycomb-submissions.md). Full completion, API updates and carrier-status synchronization remain future work.
 
 ## Verification and deployment
 
