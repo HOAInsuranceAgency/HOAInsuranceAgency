@@ -870,6 +870,7 @@ a {
 .qf-price-indication h3 { margin: 0; font-size: 15px; line-height: 1.4; font-weight: 600; }
 .qf-price-indication p { margin: 10px 0 0; font-size: 13px; line-height: 1.55; color: var(--qf-text-muted); }
 .qf-price-indication .qf-estimate-price { margin: 8px 0; font-size: clamp(28px, 5vw, 36px); font-weight: 700; color: var(--qf-text-strong); line-height: 1.2; overflow-wrap: anywhere; }
+.qf-price-indication .qf-estimate-disclaimer { font-size: 14px; line-height: 1.6; }
 .qf-estimate-badge { display: inline-block; margin-bottom: 10px; padding: 4px 8px; border-radius: 6px; background: var(--qf-track); font-size: 11px; font-weight: 600; color: var(--qf-text-muted); }
 .qf-price-indication--pending { display: flex; align-items: flex-start; gap: 12px; }
 .qf-estimate-spinner { flex-shrink: 0; width: 20px; height: 20px; margin-top: 1px; border: 2px solid var(--qf-border); border-top-color: var(--qf-accent); border-radius: 50%; animation: qf-estimate-spin 1s linear infinite; }
