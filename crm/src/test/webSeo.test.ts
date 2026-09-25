@@ -265,14 +265,15 @@ describe("agency identity — one entity, two names, one brand", () => {
     }
   });
 
-  it("asserts sameAs only for profiles the agency owns", () => {
+  it("asserts sameAs only for profiles identifying the agency", () => {
     const sameAs = org.sameAs as string[];
     expect(sameAs).toEqual([
       "https://www.instagram.com/hoainsuranceagency",
       "https://www.facebook.com/people/HOA-Insurance-Agency/61575377498498/",
       "https://www.linkedin.com/company/hoa-insurance-agency",
+      "https://www.wikidata.org/wiki/Q141443333",
     ]);
-    expect(JSON.stringify(HOME)).not.toContain("jakegreasley.com");
+    expect(JSON.stringify(sameAs)).not.toContain("jakegreasley.com");
   });
 });
 
@@ -377,7 +378,11 @@ describe("the founder — three names, one person", () => {
       "https://directories.apps.realtor/memberDetail/?personId=4940266&officeStreetCountry=US&memberLastName=Greasley",
       "https://www.realtor.com/realestateagents/656d3c88398ad2f645a8b94b",
     ]);
-    expect(jake.sameAs).toEqual(urls);
+    expect(jake.sameAs).toEqual([
+      ...urls,
+      "https://jakegreasley.com/",
+      "https://www.wikidata.org/wiki/Q141443360",
+    ]);
     const aboutUs = read("../../../web/src/pages/about-us.astro");
     expect(aboutUs).toContain("FOUNDER_PROFILES.map");
     expect(aboutUs).toContain("href={profile.url}");
@@ -387,12 +392,13 @@ describe("the founder — three names, one person", () => {
     }
   });
 
-  it("keeps the local founder id until the apex personal entity is live", () => {
+  it("keeps the stable local founder id while linking his personal website", () => {
     expect(FOUNDER_ID).not.toContain("jakegreasley.com");
-    expect(JSON.stringify(jake.sameAs)).not.toContain("jakegreasley.com");
-    const seoSource = read("../../../web/src/lib/seo.ts");
-    expect(seoSource).toContain("https://jakegreasley.com/#person");
-    expect(seoSource).not.toContain("https://www.jakegreasley.com/#person");
+    expect(jake["@id"]).toBe(FOUNDER_ID);
+    expect(jake.url).toBe(FOUNDER_ID);
+    expect(jake.sameAs).toContain("https://jakegreasley.com/");
+    expect(jake.sameAs).not.toContain("https://www.jakegreasley.com/");
+    expect(organizationSchema().founder).toEqual({ "@id": FOUNDER_ID });
   });
 
   it("is never typed as an Organization", () => {

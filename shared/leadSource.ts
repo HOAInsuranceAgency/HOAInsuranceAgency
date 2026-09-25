@@ -13,6 +13,15 @@ export function acquisitionLabel(value: unknown, legacy?: string | null): string
   if (legacy?.toLowerCase().startsWith("website")) return "Website · attribution not recorded";
   return legacy?.trim() || "Not recorded";
 }
+/** Form identity is distinct from paid/organic acquisition attribution. */
+export function websiteFormLabel(source?: string | null): string {
+  if (source === 'website-quote') return 'Quote form';
+  if (source === 'website-contact') return 'Contact form';
+  if (source === 'website-coverage-calculator') return 'Coverage calculator';
+  if (source?.startsWith('website-assessment:')) return 'Instant assessment';
+  if (source?.startsWith('website-ho6:')) return 'Association / HO-6 form';
+  return 'Not recorded';
+}
 export const ATTRIBUTION_KEYS = ["gclid", "gbraid", "wbraid", "utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term", "landingPath"] as const;
 export type LeadAttribution = Partial<Record<typeof ATTRIBUTION_KEYS[number], string>>;
 export function cleanAttribution(value: unknown): LeadAttribution {

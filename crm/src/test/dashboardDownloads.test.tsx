@@ -3,6 +3,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 const h = vi.hoisted(() => ({ data: {} as Record<string, unknown>, save: vi.fn() }));
 vi.mock("../lib/useAsyncResource", () => ({ useAsyncResource: () => ({ data: h.data, loading: false, loaded: true, error: "", refetch: async () => {} }) }));
+vi.mock("../lib/commercial", () => ({ useCommercial: () => ({ data: { entries: { a1: { salespersonId: "sales", championId: "champ", plan: { accountId: "a1", version: 1, estimatedCents: 123456, requiredLines: [], options: [], selectedOptionId: null } } }, team: [{ userId: "sales", name: "Avery Brooks" }, { userId: "champ", name: "Morgan Lee" }] }, loading: false, error: "", setData: vi.fn() }), teammateName: (id: string, team: { userId: string; name: string }[]) => team.find(t => t.userId === id)?.name ?? "Not assigned" }));
 vi.mock("../lib/lastContact", () => ({ useLastContacts: () => ({ contacts: { a1: { at: "2026-09-10T14:00:00.000Z", channel: "EMAIL", direction: "INBOUND" } }, loading: false, error: "" }) }));
 vi.mock("../lib/reportDownload", async original => ({ ...await original<typeof import("../lib/reportDownload")>(), saveReport: h.save }));
 import LeadsTab from "../pages/dashboard/LeadsTab";
@@ -10,7 +11,7 @@ import OverviewTab from "../pages/dashboard/OverviewTab";
 import FinanceTab from "../pages/dashboard/FinanceTab";
 import RenewalsTab from "../pages/dashboard/RenewalsTab";
 import ReportingTab from "../pages/dashboard/ReportingTab";
-const lead = { id: "a1", name: "Elm HOA", stage: "LEAD", type: "ASSOCIATION", createdAt: "2026-09-01T14:00:00Z", source: "website-quote", leadSource: "GOOGLE_AD_WEBSITE" };
+const lead = { id: "a1", name: "Elm HOA", stage: "LEAD", type: "ASSOCIATION", createdAt: "2026-09-01T14:00:00Z", city: "Worcester", state: "MA", source: "website-quote", leadSource: "GOOGLE_AD_WEBSITE" };
 beforeEach(() => { h.save.mockClear(); h.data = { leads: [lead], clients: [], accounts: [lead], quotes: [], policies: [], carriers: [], tasks: [], openInvoices: [], invoices: [], pfLoans: [], notices: [], failedDocs: [], licenses: [], paidInvoices: [], pfPayments: [] }; });
 describe("dashboard report controls", () => {
   it.each([[OverviewTab, 2], [LeadsTab, 3], [FinanceTab, 4], [RenewalsTab, 1], [ReportingTab, 5]] as const)("provides a working export for every report in %s", (Tab, count) => {
@@ -29,8 +30,17 @@ describe("dashboard report controls", () => {
     expect(screen.getByText("Google Ad Website")).toBeTruthy();
     fireEvent.change(screen.getByRole("combobox", { name: "Download Lead work list" }), { target: { value: "csv" } });
     const report = h.save.mock.calls[0][0];
-    expect(report.sections[0].rows[0][1]).toBe("Google Ad Website");
-    expect(report.sections[0].rows[0][2]).not.toBe("No contact recorded");
+    const section = report.sections[0];
+    const value = (column: string) => section.rows[0][section.columns.indexOf(column)];
+    expect(value("Lead source")).toBe("Google Ad Website");
+    expect(value("Last contact (local)")).not.toBe("No contact recorded");
+    expect(value("Salesperson")).toBe("Avery Brooks");
+    expect(value("Deal champion")).toBe("Morgan Lee");
+    expect(value("City")).toBe("Worcester");
+    expect(value("State")).toBe("MA");
+    expect(value("Website form")).toBe("Quote form");
+    expect(value("Estimated opportunity (USD)")).toBe(1234.56);
+    expect(value("Pending commission (USD)")).toBe(null);
     expect(JSON.stringify(report)).not.toContain("website-quote");
   });
   it("exports the selected reporting window and excludes cancelled policies", () => {

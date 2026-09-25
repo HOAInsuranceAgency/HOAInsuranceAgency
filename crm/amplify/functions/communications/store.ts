@@ -32,6 +32,9 @@ export function put(record: Row<unknown>, previous?: Row<unknown>): Write {
   return { Put: { TableName: table(), Item: record, ConditionExpression: previous ? "#v = :v" : "attribute_not_exists(id)",
     ...(previous ? { ExpressionAttributeNames: { "#v": "version" }, ExpressionAttributeValues: { ":v": previous.version } } : {}) } };
 }
+export function absent(id: string): Write {
+  return { ConditionCheck: { TableName: table(), Key: { id }, ConditionExpression: "attribute_not_exists(id)" } };
+}
 export function check(record: Row<unknown>): Write {
   return { ConditionCheck: { TableName: table(), Key: { id: record.id }, ConditionExpression: "#v = :v", ExpressionAttributeNames: { "#v": "version" }, ExpressionAttributeValues: { ":v": record.version } } };
 }

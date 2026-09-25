@@ -3,12 +3,15 @@ import BusinessDraftButton from "./BusinessDraftButton";
 import ConversationContext from "./ConversationContext";
 import NextYearControl from "./NextYearControl";
 import { leadActionGuidance } from "../../../shared/leadActionGuidance";
+import { workLink } from "../../../shared/leadActionGuidance";
+import { canRecordBlocker } from "../../../shared/workBlocker";
+import WorkBlocker from "./WorkBlocker";
 import CommunicationAccountSummary from "./CommunicationAccountSummary";
 import { CallOutcome, SidebarActivityLinker } from "./CommunicationReview";
 import { useEffect, useState, useRef } from "react";
 import { communicationRequest as request, type WorkflowContext, type TeamEligibility } from "../lib/communications";
 import { useAsyncResource } from "../lib/useAsyncResource";
-import { fmtDateTime, fmtProviderPhone } from "../lib/client";
+import { fmtDateTime, fmtProviderPhone, friendlyError } from "../lib/client";
 import { compactDateTime, communicationChannelLabels } from "../lib/communicationLabels";
 
 const EMPTY: WorkflowContext = { workflow: null, tasks: [], communications: [], team: [], issues: [] };
@@ -48,7 +51,7 @@ export default function LeadWorkflowPanel({ accountId, conversationId, onOpen }:
   const run = async (op: string, input: unknown) => {
     setBusy(true); setError(""); setNotice("");
     try { const result = await request<{ notice?: string }>(op, input, true); if (result.notice) setNotice(result.notice); setRevision(n => n + 1); return true; }
-    catch (e) { setError(e instanceof Error ? e.message : "Could not save"); return false; }
+    catch (e) { setError(friendlyError(e, "Could not save")); return false; }
     finally { setBusy(false); }
   };
   function open(url: string) { if (onOpen) onOpen(url); else window.open(url, "_blank", "noopener,noreferrer"); }
@@ -81,7 +84,8 @@ export default function LeadWorkflowPanel({ accountId, conversationId, onOpen }:
         {compact && t.serviceType && t.serviceType !== "GENERAL" && conversationId && <ServiceDelivery task={t} conversationId={conversationId} onPrepare={() => open(`${window.location.origin}/accounts/${workflow.accountId}?tab=${t.serviceType === "CERTIFICATE" ? "certificates" : "documents"}&request=${encodeURIComponent(t.sourceIds?.[0] ?? "")}`)} />}
         {!compact && t.serviceType === "DOCUMENT" && <button className="secondary" onClick={() => open(`${window.location.origin}/accounts/${workflow.accountId}?tab=documents&request=${encodeURIComponent(t.sourceIds?.[0] ?? "")}`)}>Prepare requested document</button>}
         {!compact && t.serviceType === "CERTIFICATE" && <button className="secondary" onClick={() => open(`${window.location.origin}/accounts/${workflow.accountId}?tab=certificates&request=${encodeURIComponent(t.sourceIds?.[0] ?? "")}`)}>Prepare certificate</button>}
-        {t.milestone && !t.serviceType && <button className="secondary" onClick={() => open(`${window.location.origin}/accounts/${workflow.accountId}${t.quoteId ? "?tab=quotes" : t.policyId ? "?tab=policies" : ""}`)}>Open {t.quoteId ? "quote" : t.policyId ? "policy" : "account"}</button>}
+        {t.milestone && !t.serviceType && <button className="secondary" onClick={() => open(`${window.location.origin}${workLink({ ...t, blocker: undefined }).path}`)}>{workLink({ ...t, blocker: undefined }).label}</button>}
+        {canRecordBlocker(t) && <WorkBlocker task={t} team={team} busy={busy} run={run} />}
         {resource.data.actorId === workflow.salespersonId && workflow.championId !== workflow.salespersonId && !t.helperId && t.role === "SALESPERSON" && <button className="link" disabled={busy} onClick={() => void run("requestChampionHelp", { taskId: t.id, version: t.version })}>Ask champion to help</button>}
         {resource.data.actorId === workflow.championId && t.kind === "CARRIER" && (t.context ?? "LEAD") === "LEAD" && <button className="link" disabled={busy} onClick={() => void run("requestProspectInformation", { taskId: t.id, version: t.version })}>Ask sales to obtain this information</button>}
         {resource.data.actorId === workflow.championId && t.context === "SERVICE" && <details><summary>Coordinate with a specialist</summary><label className="field">Responsible specialist<select value={t.specialistId ?? ""} disabled={busy} onChange={e => { if (e.target.value) void run("delegateService", { taskId: t.id, version: t.version, specialistId: e.target.value }); }}><option value="">Choose teammate</option>{team.filter(m => m.enabled).map(m => <option key={m.userId} value={m.userId}>{m.name}</option>)}</select></label><p className="muted small">The champion remains the client's main contact. The deadline stays the same.</p></details>}

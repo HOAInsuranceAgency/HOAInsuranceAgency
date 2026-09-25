@@ -9,6 +9,7 @@ import {
 } from "../../lib/client";
 import { useIsAdmin } from "../../lib/auth";
 import ConfirmButton from "../../components/ConfirmButton";
+import { communicationRequest } from '../../lib/communications';
 
 /**
  * Leads (and only leads — clients carry bound policies and stay for the
@@ -45,6 +46,7 @@ export function DeleteLeadZone({ account }: { account: Account }) {
   // message lands in `error` via onError.
   async function deleteLead() {
     setError("");
+    await communicationRequest('prepareLeadDeletion', { accountId: account.id, name: account.name }, true);
     const quotes = await listAllPages((nextToken) =>
       client.models.Quote.list({
         filter: { accountId: { eq: account.id } },
@@ -80,6 +82,9 @@ export function DeleteLeadZone({ account }: { account: Account }) {
     );
     throwFirstError(docResults);
 
+    const contacts = await listAllPages(nextToken => client.models.Contact.list({ filter: { accountId: { eq: account.id } }, nextToken }));
+    throwFirstError(await Promise.all(contacts.map(c => client.models.Contact.delete({ id: c.id }))));
+
     const { errors } = await client.models.Account.delete({ id: account.id });
     if (errors?.length) throw new Error(errors[0].message);
     navigate("/leads");
@@ -96,12 +101,12 @@ export function DeleteLeadZone({ account }: { account: Account }) {
           className="secondary"
           confirmLabel="Yes, delete this lead"
           cancelClassName="secondary"
-          message={`Permanently delete ${account.name} and its quotes and documents? This can't be undone.`}
+          message={`Permanently delete ${account.name}, its contacts, quotes and documents, and retire its automated work? This can't be undone.`}
           onConfirm={deleteLead}
           onError={(err) => setError(friendlyError(err, "Delete failed"))}
         />
         <span className="muted small">
-          Removes the lead, its quotes, and its documents.
+          Removes the lead, its contacts, quotes and documents. Stops its automated work.
         </span>
       </div>
       {error && <p className="error-text">{error}</p>}

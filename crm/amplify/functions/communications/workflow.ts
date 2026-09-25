@@ -131,6 +131,7 @@ export async function setLeadDisposition(accountId: string, disposition: string,
   await commit(writes);
 }
 export async function recordInbound(comm: Communication, kind: TaskKind = "RESPONSE") {
+  if (comm.accountId && await get(`deleted-account:${comm.accountId}`)) return;
   if (!comm.accountId) return;
   const projection = await get<Communication>(comm.id);
   if (projection?.data.resolved) return;
@@ -191,12 +192,14 @@ export async function recordInbound(comm: Communication, kind: TaskKind = "RESPO
 }
 /** Email, text and completed calls are their own completion evidence. */
 export async function recordOutbound(comm: Communication, repair = false) {
+  if (comm.accountId && await get(`deleted-account:${comm.accountId}`)) return;
   const { applyContactProgress } = await import("./contactProgress");
   await applyContactProgress(comm, repair);
 }
 
 /** Binding remains controlled by the existing CRM bind flow. */
 export async function syncAccountLifecycle(accountId: string) {
+  if (await get(`deleted-account:${accountId}`)) return;
   let wf = await ensureWorkflow(accountId);
   const account = await (await dataClient()).models.Account.get({ id: accountId });
   if (account.errors?.length || !account.data) throw new Error("Could not verify account lifecycle");

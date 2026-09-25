@@ -46,6 +46,7 @@ export const handler = async (event: { arguments: { operation?: string; readOper
     const input = object(event.arguments.input), op = event.arguments.readOperation ?? event.arguments.operation;
     const requireAdmin = () => { if (!admin) throw new Error("Only an admin can change integration or team settings"); };
     if (event.arguments.readOperation) {
+      if (op === "commercialTable") return { ok: true, items: await (await import("./commercial")).commercialTable(input.accountIds) };
       if (op === "nextYearPreview") {
         const account = await (await dataClient()).models.Account.get({ id: text(input, "accountId") });
         if (account.errors?.length || !account.data?.currentPolicyExpiration) throw new Error("Record the incumbent expiration in the account first");
@@ -151,30 +152,39 @@ export const handler = async (event: { arguments: { operation?: string; readOper
       }
       throw new Error("Unknown read operation");
     }
+    if (op === "saveCommercial") return { ok: true, plan: await (await import("./commercial")).saveCommercial(input, actor) };
+    if (op === 'prepareLeadDeletion') { requireAdmin(); await (await import('./deletion')).prepareLeadDeletion(text(input, 'accountId'), text(input, 'name'), actor); return { ok: true }; }
     if (op === "prepareBusinessDraft") return { ok: true, draft: await (await import("./businessDelivery")).prepareBusinessDraft(input as unknown as Parameters<typeof import("./businessDelivery").prepareBusinessDraft>[0], actor) };
     if (op === "authorizeBind") {
       if (input.clientAuthorized !== true) throw new Error("Client authorization is required before requesting binding");
       const q = await (await dataClient()).models.Quote.get({ id: text(input, "quoteId") });
       if (q.errors?.length || !q.data) throw new Error("Could not load the quote");
       const terms = authorizedQuoteTerms(q.data);
+      const commercial = await get<import('../../../../shared/quotePackages').CommercialPlan>(`commercial:${q.data.accountId}`);
+      if (commercial?.data.selectedOptionId && !q.data.renewalPolicyId) {
+        const selected = commercial.data.options.find(o => o.id === commercial.data.selectedOptionId);
+        if (!selected?.quoteIds.includes(q.data.id) || commercial.data.selectedTerms?.[q.data.id] !== (await import('../../../../shared/quotePackages')).packageTerms(q.data)) throw new Error('Review the client-selected package before requesting binding of this quote');
+      }
       if (q.data.bindAuthorizedAt && q.data.bindAuthorizedTerms === terms) return { ok: true };
       if (!["QUOTED", "PRESENTED"].includes(q.data.status) || !q.data.carrierId || !validCalendarDate(q.data.effectiveDate) || !validCalendarDate(q.data.expirationDate) || q.data.expirationDate <= q.data.effectiveDate || !(q.data.premium != null && q.data.premium > 0) || !q.data.lines?.filter(Boolean).length) throw new Error("Finish the usable quote before recording client authorization");
       const today = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
       if (q.data.offerExpiresAt && (!validCalendarDate(q.data.offerExpiresAt) || q.data.offerExpiresAt < today)) throw new Error("The carrier offer has expired. Obtain current terms before requesting binding.");
       if (q.data.updatedAt !== text(input, "updatedAt")) throw new Error("The quote changed. Review its current terms before authorizing binding.");
       const now = new Date().toISOString();
-      await commit([{ Update: { TableName: process.env.QUOTE_TABLE!, Key: { id: q.data.id }, UpdateExpression: "SET bindAuthorizedAt = :at, bindAuthorizedBy = :actor, bindAuthorizedTerms = :terms, updatedAt = :at, lastWriteBy = :actor", ConditionExpression: "updatedAt = :old", ExpressionAttributeValues: { ":at": now, ":actor": actor, ":terms": terms, ":old": q.data.updatedAt } } },
+      await commit([...(commercial ? [check(commercial)] : []), { Update: { TableName: process.env.QUOTE_TABLE!, Key: { id: q.data.id }, UpdateExpression: "SET bindAuthorizedAt = :at, bindAuthorizedBy = :actor, bindAuthorizedTerms = :terms, updatedAt = :at, lastWriteBy = :actor", ConditionExpression: "updatedAt = :old", ExpressionAttributeValues: { ":at": now, ":actor": actor, ":terms": terms, ":old": q.data.updatedAt } } },
         put(row("LIFECYCLE", `lifecycle:bind-authorization:${q.data.id}:${hash(`${terms}:${q.data.updatedAt}`).slice(0,16)}`, { accountId: q.data.accountId }, { accountId: q.data.accountId, dueAt: now })), audit(q.data.accountId, actor, "Client authorized binding of quoted terms", { quoteId: q.data.id })]);
       return { ok: true };
     }
     if (op === "recoverReport") { requireAdmin(); await (await import("./reports")).recoverEdition(text(input, "editionId"), text(input, "messageId")); return { ok: true }; }
     if (op === "saveTeamRouting") { requireAdmin(); return { ok: true, routing: await (await import("./routing")).saveRouting(input as unknown as import("../../../../shared/leadWorkflow").TeamRouting, actor, await roster()) }; }
     if (op === "nextYear") return { ok: true, result: await (await import("./annualReturn")).nextYear(input as unknown as Parameters<typeof import("./annualReturn").nextYear>[0], actor) };
+    if (op === "updateBlocker") return await (await import("./blockers")).updateBlocker(input as unknown as Parameters<typeof import("./blockers").updateBlocker>[0], actor);
     if (op === "takeResponse" || op === "delegateService" || op === "requestProspectInformation") {
       const task = await get<LeadTask>(text(input, "taskId")); if (!task || task.data.status !== "OPEN") throw new Error("Choose an open request"); expected(task, version(input));
       const wf = await ensureWorkflow(task.data.accountId), routingRecord = await get("team-routing");
       const route = await (await import("./routing")).resolveTaskRoute(task.data, wf.data);
       if (op === "takeResponse") {
+        if (!(await import("../../../../shared/leadActionGuidance")).canTakeResponse(task.data) || task.data.blocker) throw new Error("Open the business record to handle this work");
         if (actor !== route.managerId && actor !== route.ownerId) throw new Error("Only the responsible manager or owner can take this response");
         await commit([check(wf), ...(routingRecord ? [check(routingRecord)] : []), put(row("TASK", task.id, { ...task.data, helperId: actor, helperRequestedBy: actor, helperReason: "MANAGER_COVER", version: task.version + 1 }, { accountId: task.accountId, previous: task, dueAt: task.dueAt }), task)]);
       } else {

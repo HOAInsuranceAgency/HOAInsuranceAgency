@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef } from "react";
 import Front from "@frontapp/plugin-sdk";
 import LeadWorkflowPanel from "../components/LeadWorkflowPanel";
-import { client } from "../lib/client";
+import { client, friendlyError } from "../lib/client";
 import { communicationRequest as request } from "../lib/communications";
 import { listAllPages } from "../lib/pagination";
 
@@ -25,7 +25,7 @@ export default function FrontSidebar() {
   }, []);
   const open = (url: string) => { void Front.openUrl(url); };
   return <main className="front-crm-sidebar">{status && <div className="card front-empty"><h1>Your lead workspace</h1><p>{status}</p><p className="muted small">Contact details, next actions, and your team will appear here.</p></div>}
-    {error && <p role="alert" className="error-text workflow-notice">{error}</p>}
+    {error && <p role="alert" className="error-text workflow-notice">{friendlyError(error, "Could not complete that action. Please try again.")}</p>}
     {conversationId && <><LeadWorkflowPanel key={`${conversationId}:${revision}`} conversationId={conversationId} onOpen={open} />
       <div key={conversationId} className="front-extra-tools"><details className="front-disclosure"><summary>Send a text <span className="front-summary-hint">From the shared main line</span></summary><p className="muted small">Prepare a draft, then review and send it in Front.</p>
       <form onSubmit={async e => { e.preventDefault(); const captured = activeId.current; setSmsBusy(true); setError(""); try {

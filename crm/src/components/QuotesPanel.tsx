@@ -1,4 +1,6 @@
 import { useState } from "react";
+import QuotePackages from "./QuotePackages";
+import { packageTerms, type CommercialPlan } from '../../../shared/quotePackages';
 import {
   client,
   fmtDate,
@@ -147,6 +149,8 @@ export default function QuotesPanel({
 
   return (
     <div>
+      <QuotePackages accountId={account.id} quotes={quotes} carriers={carrierRows} />
+      <div id="quote-list" />
       <div className="toolbar">
         {/* Per-row status changes have no per-row place to report; this is
             the panel's one status line. */}
@@ -328,6 +332,14 @@ function BindForm({
         throw new Error(
           "This quote is no longer open — it may already be bound. Refresh and check the policies list."
         );
+      }
+      if (packageTerms(freshQuote) !== packageTerms(quote)) throw new Error('The quote changed. Refresh and review its current terms before binding.');
+      const packages = await communicationRequest<{ items: { plan: CommercialPlan }[] }>('commercialTable', { accountIds: [account.id] });
+      const plan = packages.items[0]?.plan;
+      if (!plan) throw new Error('Could not verify the selected package. Refresh before binding.');
+      if (plan.selectedOptionId && !freshQuote.renewalPolicyId) {
+        const selected = plan.options.find(o => o.id === plan.selectedOptionId);
+        if (!selected?.quoteIds.includes(quote.id) || plan.selectedTerms?.[quote.id] !== packageTerms(freshQuote)) throw new Error('This quote is not in the current client-selected package. Review the package before binding.');
       }
       const { data: priorPolicies, errors: ppErr } = await client.models.Policy.list({
         filter: { quoteId: { eq: quote.id } },

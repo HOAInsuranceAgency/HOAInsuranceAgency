@@ -41,6 +41,8 @@ export interface LeadTask {
   nextReminderAt?: string; lastReminderAt?: string; ownerEscalationAt?: string; ownerNotifiedAt?: string;
   managerRecipientId?: string; ownerRecipientId?: string; obligationKey?: string; sourceUrl?: string;
   shortTimeline?: boolean; businessDueAt?: string; serviceProgressAt?: string; serviceType?: "CERTIFICATE" | "DOCUMENT" | "GENERAL"; parentTaskId?: string;
+  /** An explicit obstacle, never a snooze or evidence of completed business work. */
+  blocker?: { reason: string; detail?: string; ownerId: string; reviewAt: string; recordedAt: string; recordedBy: string };
 }
 export interface Communication {
   id: string; accountId?: string; channel: "EMAIL" | "CALL" | "SMS" | "NOTE";
@@ -161,7 +163,8 @@ export function scheduleReminders<T extends LeadTask>(task: T, holidays: readonl
 }
 export function taskWakeAt(task: LeadTask): string | undefined {
   if (task.status !== "OPEN") return undefined;
-  return task.nextReminderAt ?? (task.escalatedAt ? task.ownerEscalationAt ?? followUpDeadline(task.escalationAt, 1) : task.notifiedAt ? task.escalationAt : task.reminderAt ?? morningReminderAt(task.dueAt));
+  const wake = task.nextReminderAt ?? (task.escalatedAt ? task.ownerEscalationAt ?? followUpDeadline(task.escalationAt, 1) : task.notifiedAt ? task.escalationAt : task.reminderAt ?? morningReminderAt(task.dueAt));
+  return task.blocker && task.blocker.reviewAt > (task.lastReminderAt ?? "") && task.blocker.reviewAt < wake ? task.blocker.reviewAt : wake;
 }
 
 export function mergeInboundDeadline(existing: LeadTask | undefined, incoming: LeadTask): LeadTask {
