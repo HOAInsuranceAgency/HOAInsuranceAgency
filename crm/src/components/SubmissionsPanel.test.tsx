@@ -43,7 +43,7 @@ it("closes an empty composer when canceled", async () => {
 });
 it("does not allow creation when lists fail or staging is disabled", async () => {
   h.list.mockResolvedValue({ data: [], errors: [{ message: "denied" }] }); const view = render(<SubmissionsPanel account={account} />); await screen.findByRole("alert"); expect(screen.queryByRole("form")).toBeNull(); view.unmount();
-  h.list.mockResolvedValue({ data: [] }); h.settings.mockResolvedValue({ data: { enabled: false } }); render(<SubmissionsPanel account={account} />); await screen.findByText("Honeycomb integration is not available in this environment"); expect(screen.queryByRole("form")).toBeNull();
+  h.list.mockResolvedValue({ data: [] }); h.settings.mockResolvedValue({ data: { enabled: false } }); render(<SubmissionsPanel account={account} />); await screen.findByText("Honeycomb submissions are currently enabled in staging only."); expect(screen.queryByRole("form")).toBeNull();
 });
 it("shows a timeout review path rather than an automatic retry", async () => {
   h.list.mockResolvedValue({ data: [{ ...job, status: "RUNNING", updatedAt: new Date(Date.now()-130000).toISOString() }] }); render(<SubmissionsPanel account={account} />);

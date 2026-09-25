@@ -2,7 +2,7 @@ import { type ReactNode } from "react";
 import Modal from "./Modal";
 import ConfirmButton from "./ConfirmButton";
 import { SaveStatus } from "./SaveStatus";
-import { MobileSort, SortTh, useSort } from "../lib/useSort";
+import { SortTh, useSort } from "../lib/useSort";
 import type { ChildRows } from "../lib/useChildRows";
 
 /**
@@ -61,7 +61,6 @@ export interface ChildRowsCardProps<T extends { id: string }, F extends object> 
   emptyMessage: string;
   /** Add-button label. */
   addLabel: string;
-  collapseAdd?: boolean;
   /** Rendered next to the heading, and only once the read has settled. */
   summary?: ReactNode;
   /** Column key to sort by initially. Defaults to the first sortable column. */
@@ -82,7 +81,6 @@ export default function ChildRowsCard<T extends { id: string }, F extends object
   editIn = "inline",
   emptyMessage,
   addLabel,
-  collapseAdd = false,
   summary,
   defaultSort,
   defaultDir = "asc",
@@ -135,8 +133,6 @@ export default function ChildRowsCard<T extends { id: string }, F extends object
         <p className="error-text">{child.error}</p>
       ) : (
         <>
-          <details className="optional-fields" open={collapseAdd ? undefined : true}>
-            <summary>{addLabel.replace(/^\+ /, "")}</summary>
           <div className="toolbar">
             {addFields}
             <button
@@ -148,7 +144,6 @@ export default function ChildRowsCard<T extends { id: string }, F extends object
             </button>
             <SaveStatus {...child.addStatus.status} />
           </div>
-          </details>
           {/* Outside the toolbar: a delete confirmation names a row that is no
               longer in the table, so it has nowhere better to live. */}
           <SaveStatus {...child.delStatus.status} />
@@ -166,8 +161,7 @@ export default function ChildRowsCard<T extends { id: string }, F extends object
             <p className="muted small">{emptyMessage}</p>
           ) : (
             <div className="table-wrap">
-              <MobileSort options={sortable.map(column => [column.key, column.label] as const)} sortKey={sortKey} dir={dir} onToggle={toggle} />
-              <table className="stacked-table">
+              <table>
                 <thead>
                   <tr>
                     {columns.map((c) =>
@@ -204,7 +198,7 @@ export default function ChildRowsCard<T extends { id: string }, F extends object
                     ) : (
                       <tr key={row.id}>
                         {columns.map((c) => (
-                          <td key={c.key} data-label={c.label}>{c.cell(row)}</td>
+                          <td key={c.key}>{c.cell(row)}</td>
                         ))}
                         <td>
                           <button

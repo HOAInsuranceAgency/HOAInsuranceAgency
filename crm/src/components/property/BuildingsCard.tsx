@@ -1,4 +1,3 @@
-import { Field } from "../ui/kit";
 import { type KeyboardEvent as ReactKeyboardEvent } from "react";
 import {
   client,
@@ -347,31 +346,31 @@ function AddFields({
     : undefined;
   return (
     <>
-      <Field className="field">
+      <div className="field">
         <label>Label</label>
         <input
           placeholder={labelPlaceholder}
           value={form.form.label}
           onChange={(e) => form.setF("label", e.target.value)}
         />
-      </Field>
-      <Field className="field">
+      </div>
+      <div className="field">
         <label>Street address</label>
         <input
           placeholder="2 John Hancock Dr"
           value={form.form.streetAddress}
           onChange={(e) => form.setF("streetAddress", e.target.value)}
         />
-      </Field>
-      <Field className="field">
+      </div>
+      <div className="field">
         <label>Sq ft</label>
         <IntegerInput
           value={form.form.sqft}
           onChange={(v) => form.setF("sqft", v)}
           onKeyDown={enter}
         />
-      </Field>
-      <Field className="field" style={{ flex: "1 1 260px" }}>
+      </div>
+      <div className="field" style={{ flex: "1 1 260px" }}>
         <label>Description (prints on ACORD 125)</label>
         <input
           placeholder="2, 4, 10, 12 John Hancock. Two-story wood frame…"
@@ -379,7 +378,7 @@ function AddFields({
           onChange={(e) => form.setF("description", e.target.value)}
           onKeyDown={enter}
         />
-      </Field>
+      </div>
     </>
   );
 }
@@ -396,45 +395,45 @@ function EditFields({
   const set = form.setF;
 
   const text = (key: keyof BuildingForm, label: string, placeholder?: string) => (
-    <Field className="field" key={key}>
+    <div className="field" key={key}>
       <label>{label}</label>
       <input
         placeholder={placeholder}
         value={f[key]}
         onChange={(e) => set(key, e.target.value)}
       />
-    </Field>
+    </div>
   );
   const year = (key: keyof BuildingForm, label: string) => (
-    <Field className="field" key={key}>
+    <div className="field" key={key}>
       <label>{label}</label>
       <YearInput value={f[key]} onChange={(v) => set(key, v)} />
-    </Field>
+    </div>
   );
   const count = (key: keyof BuildingForm, label: string) => (
-    <Field className="field" key={key}>
+    <div className="field" key={key}>
       <label>{label}</label>
       <IntegerInput value={f[key]} onChange={(v) => set(key, v)} />
-    </Field>
+    </div>
   );
   const money = (key: keyof BuildingForm, label: string) => (
-    <Field className="field" key={key}>
+    <div className="field" key={key}>
       <label>{label}</label>
       <MoneyInput value={f[key]} onChange={(v) => set(key, v)} />
-    </Field>
+    </div>
   );
   const pct = (key: keyof BuildingForm, label: string) => (
-    <Field className="field" key={key}>
+    <div className="field" key={key}>
       <label>{label}</label>
       <PercentInput value={f[key]} onChange={(v) => set(key, v)} />
-    </Field>
+    </div>
   );
   const choice = (
     key: keyof BuildingForm,
     label: string,
     options: readonly { value: string; label: string }[]
   ) => (
-    <Field className="field" key={key}>
+    <div className="field" key={key}>
       <label>{label}</label>
       <select value={f[key]} onChange={(e) => set(key, e.target.value)}>
         <option value="">—</option>
@@ -444,13 +443,13 @@ function EditFields({
           </option>
         ))}
       </select>
-    </Field>
+    </div>
   );
   const yesNo = (key: keyof BuildingForm, label: string) => (
-    <Field className="field" key={key}>
+    <div className="field" key={key}>
       <label>{label}</label>
       <YesNoRadio name={`building-${key}`} value={f[key]} onChange={(v) => set(key, v)} />
-    </Field>
+    </div>
   );
 
   return (
@@ -458,13 +457,13 @@ function EditFields({
       <h3 className="field full">Identity</h3>
       {text("label", "Label", "Building A")}
       {text("streetAddress", "Street address", "2 John Hancock Dr")}
-      <Field className="field full">
+      <div className="field full">
         <label>Description (prints on ACORD 125)</label>
         <input
           value={f.description}
           onChange={(e) => set("description", e.target.value)}
         />
-      </Field>
+      </div>
 
       <h3 className="field full">Construction</h3>
       {year("yearBuilt", "Year built")}
@@ -480,7 +479,7 @@ function EditFields({
 
       <h3 className="field full">Protection</h3>
       {count("distanceToHydrantFt", "Distance to hydrant (ft)")}
-      <Field className="field">
+      <div className="field">
         <label>Distance to fire station (mi)</label>
         {/* Fractional miles, like `milesToCoast` — none of the formatted
             inputs is a fractional non-money quantity. */}
@@ -491,7 +490,7 @@ function EditFields({
           value={f.distanceToFireStationMi}
           onChange={(e) => set("distanceToFireStationMi", e.target.value)}
         />
-      </Field>
+      </div>
       {text("fireProtectionType", "Fire protection", "Wet sprinkler, central station")}
       {pct("sprinklerPct", "Sprinklered")}
 
@@ -501,7 +500,7 @@ function EditFields({
       {pct("coinsurancePct", "Coinsurance")}
       {choice("deductibleType", "Deductible applies", BUILDING_DEDUCTIBLE_TYPE_OPTIONS)}
       {money("deductibleAmount", "Deductible ($)")}
-      <Field className="field">
+      <div className="field">
         <label>Blanket #</label>
         {/* Free text with suggestions, not a foreign key: the form prints the
             number an underwriter wrote, and a number with no Blanket row is
@@ -516,7 +515,7 @@ function EditFields({
             <option key={n} value={n} />
           ))}
         </datalist>
-      </Field>
+      </div>
       {choice("causeOfLoss", "Cause of loss", CAUSE_OF_LOSS_OPTIONS)}
       {text("formsConditions", "Forms & conditions")}
 
@@ -525,14 +524,14 @@ function EditFields({
       {yesNo("historicalLandmark", "Historical landmark?")}
       {yesNo("sinkholeCoverageAccepted", "Sinkhole coverage accepted?")}
       {yesNo("mineSubsidenceCoverage", "Mine subsidence coverage?")}
-      <Field className="field full">
+      <div className="field full">
         <label>Remarks (ACORD 101 overflow)</label>
         <textarea
           rows={2}
           value={f.remarks}
           onChange={(e) => set("remarks", e.target.value)}
         />
-      </Field>
+      </div>
     </>
   );
 }

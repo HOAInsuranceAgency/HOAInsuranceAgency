@@ -1,4 +1,3 @@
-import { Breadcrumb, Disclosure } from "../components/ui/kit";
 import { useParams } from "react-router-dom";
 import { client, type Carrier } from "../lib/client";
 import { Badge, flagBadge, CARRIER_APPOINTMENT_BADGE } from "../lib/badges";
@@ -31,15 +30,13 @@ export default function CarrierDetail() {
 
   return (
     <>
-      <Breadcrumb to="/carriers">Carriers</Breadcrumb>
       <h1>
         {carrier.name}{" "}
         <Badge {...flagBadge(carrier.appointed, CARRIER_APPOINTMENT_BADGE)} />
       </h1>
       <p className="sub">Carrier appointment &amp; appetite</p>
 
-      <section className="card"><dl className="summary-grid"><div><dt>Primary contact</dt><dd>{carrier.primaryContactName || "Not recorded"}{carrier.primaryContactEmail && <div><a href={`mailto:${carrier.primaryContactEmail}`}>{carrier.primaryContactEmail}</a></div>}{carrier.primaryContactPhone && <div><a href={`tel:${carrier.primaryContactPhone}`}>{carrier.primaryContactPhone}</a></div>}</dd></div><div><dt>Underwriter</dt><dd>{carrier.primaryUnderwriterName || "Not recorded"}{carrier.primaryUnderwriterEmail && <div><a href={`mailto:${carrier.primaryUnderwriterEmail}`}>{carrier.primaryUnderwriterEmail}</a></div>}</dd></div><div><dt>States covered</dt><dd><details><summary>{(carrier.states ?? []).filter(Boolean).length} states</summary>{carrier.states?.filter(Boolean).join(", ") || "Not recorded"}</details></dd></div></dl></section>
-      <Disclosure key={carrier.id} title="Edit appointment details"><CarrierForm carrier={carrier} onChange={res.setData} /></Disclosure>
+      <CarrierForm carrier={carrier} onChange={res.setData} />
       <AppetiteGuides carrierId={carrier.id} />
 
       <div className="card">

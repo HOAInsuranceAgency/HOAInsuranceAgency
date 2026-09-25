@@ -1,5 +1,3 @@
-import { Pagination } from "./ui/kit";
-import { useListPage } from "../lib/useListPage";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import type { MorningReport } from "../../../shared/morningReport";
@@ -13,27 +11,21 @@ export default function MorningWorkReport() {
   const report = useAsyncResource(() => request<{ report: MorningReport }>("myReport"), [], { initialData: null, errorMessage: "Could not load your morning work report" });
   const data = report.data?.report;
   const [actionError, setActionError] = useState("");
-  const [group, setGroup] = useState("Sales"), [search, setSearch] = useState("");
-  const matching = (data?.items ?? []).filter(i => reportGroup(i) === group && `${i.account} ${i.title} ${i.responsible}`.toLowerCase().includes(search.toLowerCase()));
-  const page = useListPage(matching, `${group}:${search}`, 12);
-  return <section className="card" aria-label="My daily report"><div className="toolbar"><h2>Your reporting scope</h2><div className="grow" />
+  return <section className="card" aria-label="My daily report"><div className="toolbar"><h2>Your work today</h2><div className="grow" />
     <button className="secondary" disabled={!data} onClick={() => data && saveReport({ title: "My work report", filters: data.complete ? "Complete current scope" : `Incomplete: ${data.health.join("; ")}`, sections: [{ title: "Work", columns: ["Account", "Action", "Responsible", "Why", "Due (Eastern)", "Last outreach (Eastern)", "Outreach type", "Report section"], rows: data.items.map(i => [i.account, i.title, i.responsible, i.why, i.dueAt ? fmtDateTime(i.dueAt) : "", i.lastOutreach ? fmtDateTime(i.lastOutreach) : "", i.lastOutreachKind, i.section]) }] }, { asOf: new Date(data.asOf), timezone: "America/New_York" }, "csv")}>Download report</button>
     <button className="secondary" disabled={report.loading} onClick={() => void report.refetch()}>Refresh</button></div>
     {(report.error || actionError) && <p className="error-text" role="alert">{actionError || report.error}</p>}
     {report.loading && <p role="status">Checking your work…</p>}
-    <p className="muted small">This report includes work within your reporting responsibilities and setup issues. My actions shows your personal task queue.</p>
     {data && <><p className="muted">{data.accountCount} account{data.accountCount === 1 ? "" : "s"} · {data.items.length} action{data.items.length === 1 ? "" : "s"} · As of {fmtDateTime(data.asOf)}</p>
       {data.health.map(h => <p key={h} role="status" className="error-text">{h}</p>)}
       {data.teamCounts.length > 0 && <div className="table-wrap"><table><thead><tr><th>My sales team</th><th>Needs attention</th><th>Overdue</th></tr></thead><tbody>{data.teamCounts.map(t => <tr key={t.name}><td>{t.name}</td><td>{t.due}</td><td>{t.overdue}</td></tr>)}</tbody></table></div>}
       {!data.items.length && <p>{data.complete ? "Nothing needs attention in your report." : "No actions found yet. Coverage must be checked before calling this clear."}</p>}
-      <div className="view-tools"><label className="field">Report section<select value={group} onChange={e => setGroup(e.target.value)}>{["Sales", "Client and carrier", "Setup and data"].map(g => <option key={g} value={g}>{g} · {data.items.filter(i => reportGroup(i) === g).length}</option>)}</select></label><label className="field">Find account or teammate<input type="search" value={search} onChange={e => setSearch(e.target.value)} /></label></div>
-      {[group].map(group => {
-        const items = page.rows;
-        if (!items.length) return <p key={group}>No actions match this section and search.</p>;
+      {["Sales", "Client and carrier", "Setup and data"].map(group => {
+        const items = data.items.filter(i => reportGroup(i) === group);
+        if (!items.length) return null;
         const content = items.map(item => <article className="workflow-task" key={item.id}><span className="small muted">{item.section} · {item.role && `${item.role}: `}{item.responsible}</span><h3>{item.account}</h3><strong>{item.title}</strong>{item.canTakeResponse && !item.blockerOwner && item.taskVersion != null && ["MANAGER", "OWNER"].includes(item.stage) && <button className="secondary" onClick={async () => { try { setActionError(""); await request("takeResponse", { taskId: item.id, version: item.taskVersion }, true); await report.refetch(); } catch (e) { setActionError(e instanceof Error ? e.message : "Could not take this response"); } }}>Handle this response</button>}<p>{item.why}</p><p className="muted small">{item.dueAt && `Due ${fmtDateTime(item.dueAt)}`}{item.lastOutreach && ` · Last ${item.lastOutreachKind}: ${fmtDateTime(item.lastOutreach)}`}</p>{item.blockerOwner && <p>Blocker owner: {item.blockerOwner} · Review {fmtDateTime(item.blockerReviewAt!)}</p>}<p>{item.next}</p>{item.url?.startsWith("https://") ? <a href={item.url} target="_blank" rel="noreferrer">{item.linkLabel ?? "Open the work"} →</a> : <Link to={item.url ?? (item.accountId ? `/accounts/${item.accountId}` : "/lead-work")}>{item.linkLabel ?? "Open the work"} →</Link>}</article>);
-        return <section key={group} aria-label={group}><h3>{group}</h3><div className="work-grid">{content}</div></section>;
+        return group === "Setup and data" ? <details key={group}><summary>{group} · {items.length} issues</summary>{content}</details> : <section key={group} aria-label={group}><h3>{group} · {items.length} action{items.length === 1 ? "" : "s"}</h3>{content}</section>;
       })}
-      <Pagination total={matching.length} page={page.page} onPage={page.setPage} size={page.size} noun="actions" />
     </>}
   </section>;
 }

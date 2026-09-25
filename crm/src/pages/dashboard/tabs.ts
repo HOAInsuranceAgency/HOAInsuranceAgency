@@ -16,10 +16,10 @@ export type DashboardTab =
 /** Display order — this array IS the tab bar. */
 export const DASHBOARD_TABS: readonly [DashboardTab, string][] = [
   ["overview", "Overview"],
-  ["leads", "Lead pipeline"],
+  ["leads", "Leads"],
   ["finance", "Finance"],
   ["renewals", "Renewals"],
-  ["reporting", "Performance"],
+  ["reporting", "Reporting"],
 ];
 
 export function resolveDashboardTab(

@@ -1,4 +1,3 @@
-import { Field } from "../ui/kit";
 import { useState } from "react";
 import {
   client,
@@ -29,7 +28,7 @@ export default function LicenseForm({
   onCancel: () => void;
   onSaved: (l: License) => void;
 }) {
-  const { form, setF, markSaved } = useFormState({
+  const { form, setF } = useFormState({
     userProfileId: existing?.userProfileId ?? "",
     state: existing?.state ?? "",
     licenseNumber: existing?.licenseNumber ?? "",
@@ -101,7 +100,7 @@ export default function LicenseForm({
       setError(friendlyError(errors?.[0]?.message, "Save failed"));
       return;
     }
-    markSaved(); onSaved(data);
+    onSaved(data);
   }
 
   /**
@@ -114,7 +113,7 @@ export default function LicenseForm({
     <>
       <div className="form-grid">
         {holderType === "PRODUCER" && (
-          <Field className="field">
+          <div className="field">
             <label>Team member *</label>
             <select value={form.userProfileId} onChange={(e) => setF("userProfileId", e.target.value)}>
               <option value="">—</option>
@@ -130,9 +129,9 @@ export default function LicenseForm({
                   </option>
                 ))}
             </select>
-          </Field>
+          </div>
         )}
-        <Field className="field">
+        <div className="field">
           <label>State *</label>
           <select value={form.state} onChange={(e) => setF("state", e.target.value)}>
             <option value="">—</option>
@@ -140,16 +139,16 @@ export default function LicenseForm({
               <option key={s}>{s}</option>
             ))}
           </select>
-        </Field>
-        <Field className="field">
+        </div>
+        <div className="field">
           <label>License number *</label>
           <input value={form.licenseNumber} onChange={(e) => setF("licenseNumber", e.target.value)} />
-        </Field>
-        <Field className="field">
+        </div>
+        <div className="field">
           <label>NPN</label>
           <input value={form.npn} onChange={(e) => setF("npn", e.target.value)} />
-        </Field>
-        <Field className="field">
+        </div>
+        <div className="field">
           <label>License class</label>
           <select value={form.licenseClass} onChange={(e) => setF("licenseClass", e.target.value)}>
             {Object.entries(LICENSE_CLASS_LABELS)
@@ -160,8 +159,8 @@ export default function LicenseForm({
                 </option>
               ))}
           </select>
-        </Field>
-        <Field className="field">
+        </div>
+        <div className="field">
           <label>Residency</label>
           <select value={form.residency} onChange={(e) => setF("residency", e.target.value)}>
             {LICENSE_RESIDENCY_OPTIONS.map((o) => (
@@ -170,8 +169,8 @@ export default function LicenseForm({
               </option>
             ))}
           </select>
-        </Field>
-        <Field className="field">
+        </div>
+        <div className="field">
           <label>Status</label>
           <select value={form.status} onChange={(e) => setF("status", e.target.value)}>
             {Object.entries(LICENSE_STATUS_LABELS)
@@ -182,24 +181,24 @@ export default function LicenseForm({
                 </option>
               ))}
           </select>
-        </Field>
-        <Field className="field">
+        </div>
+        <div className="field">
           <label>Effective date</label>
           <input type="date" value={form.effectiveDate} onChange={(e) => setF("effectiveDate", e.target.value)} />
-        </Field>
-        <Field className="field">
+        </div>
+        <div className="field">
           <label>Expiration date</label>
           <input type="date" value={form.expirationDate} onChange={(e) => setF("expirationDate", e.target.value)} />
-        </Field>
-        <Field className="field">
+        </div>
+        <div className="field">
           <label>CE due date</label>
           <input
             type="date"
             value={form.continuingEducationDueDate}
             onChange={(e) => setF("continuingEducationDueDate", e.target.value)}
           />
-        </Field>
-        <Field className="field full">
+        </div>
+        <div className="field full">
           <label>Lines of authority</label>
           <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 14px" }}>
             {LINES_OF_AUTHORITY.map((l) => (
@@ -221,11 +220,11 @@ export default function LicenseForm({
               </label>
             ))}
           </div>
-        </Field>
-        <Field className="field full">
+        </div>
+        <div className="field full">
           <label>Notes</label>
           <textarea rows={2} value={form.notes} onChange={(e) => setF("notes", e.target.value)} />
-        </Field>
+        </div>
       </div>
       <div className="form-actions">
         <button className="primary" disabled={saving} onClick={save}>

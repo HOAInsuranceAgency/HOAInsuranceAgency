@@ -42,15 +42,9 @@ import { friendlyError } from "./client";
  * different one: showing the previous account's quotes under the new account's
  * heading is wrong, not merely jumpy.
  */
-const snapshots = new Map<string, { data: unknown; at: number }>();
-let cacheGeneration = 0;
-/** Memory only, scoped to one authenticated session. In-flight reads cannot refill it after logout. */
-export function clearAsyncResourceCache() { snapshots.clear(); cacheGeneration++; }
-
 export interface AsyncResource<T> {
   /** Last successful result. Unchanged by a failed refetch. */
   data: T;
-  updatedAt?: number;
   /** A fetch is in flight right now. True on the first render unless `manual`. */
   loading: boolean;
   /**
@@ -81,9 +75,6 @@ export interface AsyncResourceOptions<T> {
   errorMessage?: string;
   /** Don't fetch on mount or on `deps` change — only when `refetch()` is called. */
   manual?: boolean;
-  /** Opt-in short-lived cache for read-only overview/report data. */
-  cacheKey?: string;
-  cacheMaxAgeMs?: number;
 }
 
 export function useAsyncResource<T>(
@@ -101,14 +92,12 @@ export function useAsyncResource<T>(
   deps: DependencyList,
   options: AsyncResourceOptions<T> = {}
 ): AsyncResource<T | undefined> {
-  const { initialData, errorMessage = "Couldn't load that — please try again.", manual = false, cacheKey, cacheMaxAgeMs = 30_000 } =
+  const { initialData, errorMessage = "Couldn't load that — please try again.", manual = false } =
     options;
 
-  const cached = cacheKey ? snapshots.get(cacheKey) : undefined;
-  const [data, setData] = useState<T | undefined>(cached ? cached.data as T : initialData);
-  const [updatedAt, setUpdatedAt] = useState<number | undefined>(cached?.at);
-  const [loading, setLoading] = useState(!manual && (!cached || Date.now() - cached.at >= cacheMaxAgeMs));
-  const [loaded, setLoaded] = useState(!!cached);
+  const [data, setData] = useState<T | undefined>(initialData);
+  const [loading, setLoading] = useState(!manual);
+  const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState("");
 
   // The fetcher closes over props and state, so it is a different function
@@ -117,10 +106,10 @@ export function useAsyncResource<T>(
   // that thread `refresh` down as a prop need that, or every render of the
   // parent re-renders the child.
   const fetcherRef = useRef(fetcher);
-  const configRef = useRef({ initialData, errorMessage, cacheKey, cacheMaxAgeMs });
+  const configRef = useRef({ initialData, errorMessage });
   useEffect(() => {
     fetcherRef.current = fetcher;
-    configRef.current = { initialData, errorMessage, cacheKey, cacheMaxAgeMs };
+    configRef.current = { initialData, errorMessage };
   });
 
   // Declared before the fetch effect so it is set up first on mount and torn
@@ -139,23 +128,19 @@ export function useAsyncResource<T>(
 
   const run = useCallback(async (reset: boolean): Promise<void> => {
     const id = ++ticket.current;
-    const generation = cacheGeneration;
-    const config = configRef.current;
     if (reset) {
-      const snapshot = config.cacheKey ? snapshots.get(config.cacheKey) : undefined;
-      setData(snapshot ? snapshot.data as T : config.initialData);
-      setLoaded(!!snapshot);
-      setUpdatedAt(snapshot?.at);
-      if (snapshot && Date.now() - snapshot.at < config.cacheMaxAgeMs) { setLoading(false); setError(""); return; }
+      // A different resource, not a refresh of this one: back to pristine, so
+      // `!loaded` re-arms the caller's loader instead of showing "none found"
+      // over the new resource's empty initial data.
+      setData(configRef.current.initialData);
+      setLoaded(false);
     }
     setLoading(true);
     setError("");
     try {
       const result = await fetcherRef.current();
       if (!mounted.current || id !== ticket.current) return;
-      const at = Date.now();
-      if (config.cacheKey && generation === cacheGeneration) snapshots.set(config.cacheKey, { data: result, at });
-      setData(result); setUpdatedAt(at);
+      setData(result);
     } catch (err) {
       if (!mounted.current || id !== ticket.current) return;
       setError(friendlyError(err, configRef.current.errorMessage));
@@ -177,5 +162,5 @@ export function useAsyncResource<T>(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, deps);
 
-  return { data, loading, loaded, error, refetch, setData, updatedAt };
+  return { data, loading, loaded, error, refetch, setData };
 }

@@ -1,4 +1,3 @@
-import { Breadcrumb, Field } from "../components/ui/kit";
 import { LEAD_SOURCES, LEAD_SOURCE_LABELS } from "../../../shared/leadSource";
 import { communicationRequest, type TeamEligibility } from "../lib/communications";
 import { ResponsibilitySelect } from "../components/LeadWorkflowPanel";
@@ -46,7 +45,7 @@ export default function NewLead() {
   const [stagedFiles, setStagedFiles] = useState<File[]>([]);
   // Set once the lead exists — pressing Create again would duplicate it.
   const [createdId, setCreatedId] = useState<string | null>(null);
-  const { form, setF, patch, markSaved } = useFormState({
+  const { form, setF, patch } = useFormState({
     type: DEFAULT_ACCOUNT_TYPE as string,
     name: "",
     contactName: "",
@@ -121,17 +120,13 @@ export default function NewLead() {
         email: str(form.contactEmail),
         phone: str(form.contactPhone),
       };
-      try {
-        const { errors: contactErrors } = await client.models.Contact.create({
-          accountId: data.id,
-          ...contact,
-          isPrimary: true,
-          extractionSourceKey: contactKey(contact),
-        });
-        contactFailed = Boolean(contactErrors?.length);
-      } catch {
-        contactFailed = true;
-      }
+      const { errors: contactErrors } = await client.models.Contact.create({
+        accountId: data.id,
+        ...contact,
+        isPrimary: true,
+        extractionSourceKey: contactKey(contact),
+      });
+      contactFailed = Boolean(contactErrors?.length);
     }
 
     // Upload any staged documents to the new account so OCR + AI extraction
@@ -181,28 +176,29 @@ export default function NewLead() {
         "the contact wasn't saved. Open the lead and add it from the Contacts card."
       );
     }
-    // The lead exists even when a follow-up write failed. Preserve the
-    // recovery warning without treating navigation to that lead as data loss.
-    markSaved();
     if (afterCreate.length) {
       setCreatedId(data.id);
       setError(`The lead was created, but ${afterCreate.join(" Also, ")}`);
       return;
     }
-    navigate(`/accounts/${data.id}${stagedFiles.length ? "?tab=documents" : ""}`);
+    // Land on Documents so OCR completes and AI extraction is the next step.
+    navigate(`/accounts/${data.id}?tab=documents`);
   }
 
   const isPersonal = form.type === "PERSONAL";
 
   return (
     <>
-      <Breadcrumb to="/leads">Accounts</Breadcrumb>
       <h1>New lead</h1>
-      <p className="sub">Start with a name, source, and contact. You can add underwriting details later.</p>
+      <div className="card"><div className="form-grid">
+        <ResponsibilitySelect label="Salesperson" value={salespersonId} team={members.data.team} kind="salesperson" onChange={setSalesperson} disabled={saving} />
+        <ResponsibilitySelect label="Deal champion" value={championId} team={members.data.team} kind="champion" onChange={setChampion} disabled={saving} />
+      </div>{members.error && <p className="error-text">{members.error}</p>}</div>
+      <p className="sub">Association or individual prospect</p>
 
       <div className="card">
         <div className="form-grid">
-          <Field className="field">
+          <div className="field">
             <label>Account type</label>
             <select value={form.type} onChange={(e) => setF("type", e.target.value)}>
               {ACCOUNT_TYPE_OPTIONS.map((o) => (
@@ -211,32 +207,32 @@ export default function NewLead() {
                 </option>
               ))}
             </select>
-          </Field>
-          <Field className="field">
+          </div>
+          <div className="field">
             <label>Name (association / insured) *</label>
             <input value={form.name} onChange={(e) => setF("name", e.target.value)} />
-          </Field>
-          <Field className="field">
+          </div>
+          <div className="field">
             <label htmlFor="new-lead-source">Lead source *</label>
             <select id="new-lead-source" required value={form.leadSource} onChange={e => setF("leadSource", e.target.value)}>
               <option value="">Choose a source</option>
               {LEAD_SOURCES.map(value => <option key={value} value={value}>{LEAD_SOURCE_LABELS[value]}</option>)}
             </select>
             <span className="muted small">Set once when the lead is created.</span>
-          </Field>
+          </div>
           {/* One person, matching `Contact` exactly — this used to be a first
               and last name feeding two Account columns, which then had to be
               re-joined by everything that rendered them. More contacts are
               added on the account's Contacts card; this one is the primary. */}
-          <Field className="field">
+          <div className="field">
             <label>Contact name</label>
             <input
               placeholder="Pat Alvarez"
               value={form.contactName}
               onChange={(e) => setF("contactName", e.target.value)}
             />
-          </Field>
-          <Field className="field">
+          </div>
+          <div className="field">
             <label>Contact role</label>
             <select
               value={form.contactType}
@@ -249,21 +245,19 @@ export default function NewLead() {
                 </option>
               ))}
             </select>
-          </Field>
-          <Field className="field">
+          </div>
+          <div className="field">
             <label>Contact email</label>
             <input type="email" value={form.contactEmail} onChange={(e) => setF("contactEmail", e.target.value)} />
-          </Field>
-          <Field className="field">
+          </div>
+          <div className="field">
             <label>Contact phone</label>
             <PhoneInput
               value={form.contactPhone}
               onChange={(v) => setF("contactPhone", v)}
             />
-          </Field>
-        </div>
-        <details className="optional-fields"><summary>Add property and incumbent details (optional)</summary><div className="form-grid">
-          <Field className="field">
+          </div>
+          <div className="field">
             <label>Street address</label>
             <AddressAutocomplete
               value={form.address}
@@ -277,12 +271,12 @@ export default function NewLead() {
                 }))
               }
             />
-          </Field>
-          <Field className="field">
+          </div>
+          <div className="field">
             <label>City</label>
             <input value={form.city} onChange={(e) => setF("city", e.target.value)} />
-          </Field>
-          <Field className="field">
+          </div>
+          <div className="field">
             <label>State</label>
             <select value={form.state} onChange={(e) => setF("state", e.target.value)}>
               <option value="">—</option>
@@ -290,19 +284,19 @@ export default function NewLead() {
                 <option key={s}>{s}</option>
               ))}
             </select>
-          </Field>
-          <Field className="field">
+          </div>
+          <div className="field">
             <label>ZIP</label>
             <input value={form.zip} onChange={(e) => setF("zip", e.target.value)} />
-          </Field>
+          </div>
           {!isPersonal && (
-            <Field className="field">
+            <div className="field">
               <label>Unit count</label>
               <IntegerInput
                 value={form.unitCount}
                 onChange={(v) => setF("unitCount", v)}
               />
-            </Field>
+            </div>
           )}
           {/* No "Year built" here any more. A year built belongs to a
               building, not to a site — that is why the Property card lost it
@@ -310,42 +304,38 @@ export default function NewLead() {
               the one form that creates the account put it back, on a column
               nothing reads. An association with a 1978 clubhouse and 2016
               townhouses has no answer to give this field. */}
-          <Field className="field">
+          <div className="field">
             <label>Total insured value ($)</label>
             <MoneyInput
               value={form.totalInsuredValue}
               onChange={(v) => setF("totalInsuredValue", v)}
             />
-          </Field>
-          <Field className="field">
+          </div>
+          <div className="field">
             <label>Current agent / broker</label>
             <input
               placeholder="Incumbent agency"
               value={form.currentAgent}
               onChange={(e) => setF("currentAgent", e.target.value)}
             />
-          </Field>
-          <Field className="field">
+          </div>
+          <div className="field">
             <label>Current policy expiration</label>
             <DateInput
               value={form.currentPolicyExpiration}
               onChange={(v) => setF("currentPolicyExpiration", v)}
             />
-          </Field>
-          <Field className="field full">
+          </div>
+          <div className="field full">
             <label>Notes</label>
             <textarea rows={3} value={form.notes} onChange={(e) => setF("notes", e.target.value)} />
-          </Field>
+          </div>
         </div>
 
-        </details>
-      <details className="card"><summary>Assignment</summary><div className="form-grid">
-        <ResponsibilitySelect label="Salesperson" value={salespersonId} team={members.data.team} kind="salesperson" onChange={setSalesperson} disabled={saving} />
-        <ResponsibilitySelect label="Deal champion" value={championId} team={members.data.team} kind="champion" onChange={setChampion} disabled={saving} />
-      </div>{members.error && <p className="error-text">{members.error}</p>}</details>
         <h3>Documents (optional)</h3>
         <p className="muted small" style={{ marginTop: 0 }}>
-          Attach any documents you already have. You can review suggested account details afterward.
+          Attach prior policy packets, budgets, or condo docs now. They're
+          OCR'd on the account, then AI extraction can auto-fill the details.
         </p>
         <div className="toolbar">
           <FileButton
@@ -402,8 +392,7 @@ export default function NewLead() {
                   : "Create lead"}
             </button>
           )}
-          <button type="button" className="secondary" disabled={saving} onClick={() => navigate("/leads")}>Cancel</button>
-          {error && <span role="alert" className="error-text">{error}</span>}
+          {error && <span className="error-text">{error}</span>}
         </div>
       </div>
     </>

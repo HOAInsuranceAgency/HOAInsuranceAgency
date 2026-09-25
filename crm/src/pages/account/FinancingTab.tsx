@@ -1,5 +1,3 @@
-import { Link } from "react-router-dom";
-import { Field } from "../../components/ui/kit";
 import { useState } from "react";
 import {
   client,
@@ -171,7 +169,7 @@ function LoanActions({ loan, onChanged }: { loan: PfLoan; onChanged: () => void 
           </div>
           {uncertifiedIntents.length > 0 && (
             <div className="form-grid">
-              <Field className="field">
+              <div className="field">
                 <label>Notice</label>
                 <select value={certNoticeId} onChange={(e) => setCertNoticeId(e.target.value)}>
                   <option value="">Choose…</option>
@@ -181,16 +179,16 @@ function LoanActions({ loan, onChanged }: { loan: PfLoan; onChanged: () => void 
                     </option>
                   ))}
                 </select>
-              </Field>
-              <Field className="field">
+              </div>
+              <div className="field">
                 <label>USPS mailing date</label>
                 <input type="date" value={certDate} onChange={(e) => setCertDate(e.target.value)} />
-              </Field>
-              <Field className="field">
+              </div>
+              <div className="field">
                 <label>Certificate number</label>
                 <input value={certNumber} onChange={(e) => setCertNumber(e.target.value)} />
-              </Field>
-              <Field className="field">
+              </div>
+              <div className="field">
                 <label>&nbsp;</label>
                 <button
                   type="button"
@@ -206,11 +204,11 @@ function LoanActions({ loan, onChanged }: { loan: PfLoan; onChanged: () => void 
                 >
                   Record certificate
                 </button>
-              </Field>
+              </div>
             </div>
           )}
           <div className="inline-actions">
-            <Field className="field">
+            <div className="field">
               <label htmlFor={`pf-cx-${loan.id}`}>Cancellation effective</label>
               <input
                 id={`pf-cx-${loan.id}`}
@@ -218,7 +216,7 @@ function LoanActions({ loan, onChanged }: { loan: PfLoan; onChanged: () => void 
                 value={cancelDate}
                 onChange={(e) => setCancelDate(e.target.value)}
               />
-            </Field>
+            </div>
             <button
               type="button"
               className="danger"
@@ -311,7 +309,6 @@ export function FinancingTab({ account }: { account: Account }) {
   );
 
   const agreementStatus = useSaveStatus({ autoClearMs: 6000 });
-  const [showHistory, setShowHistory] = useState(false);
   const [openLoan, setOpenLoan] = useState<string | null>(null);
 
   /**
@@ -346,7 +343,8 @@ export function FinancingTab({ account }: { account: Account }) {
           <p className="muted small">
             No financing on this association. Offers originate automatically
             when an invoice is sent — at 25% down, 14% APR, 11 monthly
-            installments — and appear here once one exists. <Link to="?tab=invoices">View invoices</Link>.
+            installments — and appear here once one exists. See the Invoices
+            tab.
           </p>
         </div>
       )}
@@ -355,12 +353,10 @@ export function FinancingTab({ account }: { account: Account }) {
         <div className="card">
           <div className="card-head">
             <h2>Loans</h2>
-            <label>View <select value={showHistory ? "all" : "active"} onChange={e => setShowHistory(e.target.value === "all")}><option value="active">Current offers & loans</option><option value="all">All loans & history</option></select></label>
             <SaveStatus {...agreementStatus.status} />
           </div>
-          {!showHistory && loans.every(loan => ["PAID", "CANCELLED"].includes(loan.status)) && <p className="muted">No current offers or loans. Select All loans &amp; history to review previous financing.</p>}
           <div className="table-wrap">
-            <table className="stacked-table">
+            <table>
               <thead>
                 <tr>
                   <th>Quoted</th>
@@ -374,20 +370,20 @@ export function FinancingTab({ account }: { account: Account }) {
                 </tr>
               </thead>
               <tbody>
-                {loans.filter(loan => showHistory || !["PAID", "CANCELLED"].includes(loan.status))
+                {[...loans]
                   .sort((a, b) => (b.quotedAt ?? "").localeCompare(a.quotedAt ?? ""))
                   .map((l) => (
                     <tr key={l.id}>
-                      <td data-label="Quoted">{fmtDate(l.quotedAt?.slice(0, 10))}</td>
-                      <td data-label="Status">
+                      <td>{fmtDate(l.quotedAt?.slice(0, 10))}</td>
+                      <td>
                         <Badge {...(LOAN_BADGE[l.status] ?? LOAN_BADGE.QUOTED)} />
                       </td>
-                      <td className="num" data-label="Financed">{fmtLoanMoney(l.amountFinanced)}</td>
-                      <td className="num" data-label="APR">{l.apr}%</td>
-                      <td className="num" data-label="Payment">{fmtLoanMoney(l.payment)}</td>
-                      <td className="num" data-label="Balance">{fmtLoanMoney(l.balance)}</td>
-                      <td data-label="Next due">{fmtDate(l.nextDueAt)}</td>
-                      <td className="row-action" data-label="Actions">
+                      <td className="num">{fmtLoanMoney(l.amountFinanced)}</td>
+                      <td className="num">{l.apr}%</td>
+                      <td className="num">{fmtLoanMoney(l.payment)}</td>
+                      <td className="num">{fmtLoanMoney(l.balance)}</td>
+                      <td>{fmtDate(l.nextDueAt)}</td>
+                      <td className="row-action">
                         <div className="row-tools">
                           {(l.status === "QUOTED" ||
                             l.status === "ACCEPTED" ||

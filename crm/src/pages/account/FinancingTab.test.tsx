@@ -1,4 +1,3 @@
-import { MemoryRouter } from "react-router-dom";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -79,7 +78,7 @@ beforeEach(() => {
 });
 
 const openServicing = async () => {
-  render(<MemoryRouter><FinancingTab account={account} /></MemoryRouter>);
+  render(<FinancingTab account={account} />);
   const service = await screen.findByRole("button", { name: "Service" });
   await userEvent.click(service);
 };
@@ -101,7 +100,7 @@ describe("origination has no UI — servicing reaches every loan", () => {
     models.PfLoan.list.mockImplementation(() => page([activeLoan]));
     mutations.servicePfLoan.mockResolvedValue({ data: JSON.stringify({ ok: true }) });
 
-    render(<MemoryRouter><FinancingTab account={closed} /></MemoryRouter>);
+    render(<FinancingTab account={closed} />);
 
     // W8: origination happens at invoice send, never here — no policy
     // picker, no offer button, on any account in any state.
@@ -126,9 +125,9 @@ describe("origination has no UI — servicing reaches every loan", () => {
 
   it("points an empty account at the invoice flow instead of a form", async () => {
     models.PfLoan.list.mockImplementation(() => page([]));
-    render(<MemoryRouter><FinancingTab account={account} /></MemoryRouter>);
+    render(<FinancingTab account={account} />);
     expect(
-      await screen.findByText(/Offers originate automatically/)
+      await screen.findByText(/Offers originate automatically\s+when an invoice is sent/)
     ).toBeInTheDocument();
   });
 });
@@ -193,7 +192,7 @@ describe("ACCEPTED loans and autopay", () => {
 
 describe("loan money and payment numbering", () => {
   it("renders loan money to the cent and leaves absent balances as an em dash", async () => {
-    render(<MemoryRouter><FinancingTab account={account} /></MemoryRouter>);
+    render(<FinancingTab account={account} />);
     expect(await screen.findByText("$75,000.00")).toBeInTheDocument();
     expect(screen.getByText("$7,304.68")).toBeInTheDocument();
     // The QUOTED loan has no balance yet — absent must not become $0.00.
@@ -203,7 +202,7 @@ describe("loan money and payment numbering", () => {
 
   it("numbers financed installment n as payment n+1 of the full schedule", async () => {
     models.PfLoan.list.mockImplementation(() => page([activeLoan]));
-    render(<MemoryRouter><FinancingTab account={account} /></MemoryRouter>);
+    render(<FinancingTab account={account} />);
     await userEvent.click(await screen.findByRole("button", { name: "Service" }));
     // paidThrough 1 of an 11-installment loan: next posting is payment 3 of 12.
     expect(

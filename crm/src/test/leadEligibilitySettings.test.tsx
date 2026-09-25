@@ -15,10 +15,10 @@ const frontInput = () => screen.getByRole("textbox", { name: /^Front teammate ID
 const dialpadInput = () => screen.getByRole("textbox", { name: /^Dialpad user ID/ });
 
 describe("protected teammate connection IDs", () => {
-  it("shows connection readiness and only exposes exact IDs in the editor", async () => {
+  it("shows exact IDs as read-only text until the user explicitly opens the editor", async () => {
     render(<LeadEligibilitySettings />);
-    expect(await screen.findAllByText("Connected")).toHaveLength(2);
-    expect(screen.queryByText(member.frontId!)).toBeNull();
+    expect(await screen.findByText(member.frontId!)).toBeVisible();
+    expect(screen.getByText(member.dialpadId!)).toBeVisible();
     expect(screen.queryByRole("textbox")).toBeNull();
     await edit();
     expect(screen.getByRole("dialog", { name: "Connections for Jake Greasley" })).toBeVisible();
@@ -49,7 +49,7 @@ describe("protected teammate connection IDs", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save connections" }));
     await waitFor(() => expect(h.request).toHaveBeenCalledWith("saveEligibility", { ...member, frontId: "tea_new123" }, true));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    expect(screen.getAllByText("Connected")).toHaveLength(2);
+    expect(screen.getByText("tea_new123")).toBeVisible();
     expect(screen.getByRole("checkbox", { name: "Salesperson eligibility for Jake Greasley" })).toBeChecked();
     expect(screen.getByRole("checkbox", { name: "Deal champion eligibility for Jake Greasley" })).toBeChecked();
     fireEvent.click(screen.getByRole("checkbox", { name: "Salesperson eligibility for Jake Greasley" }));
@@ -69,7 +69,7 @@ describe("protected teammate connection IDs", () => {
     expect(frontInput()).toHaveValue("tea_retry");
     fireEvent.click(screen.getByRole("button", { name: "Save connections" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    await edit(); expect(frontInput()).toHaveValue("tea_retry");
+    expect(screen.getByText("tea_retry")).toBeVisible();
   });
   it("prevents repeated saves or dismissing a request while it is in progress", async () => {
     let finish!: (result: unknown) => void;

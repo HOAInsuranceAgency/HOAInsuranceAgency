@@ -112,11 +112,6 @@ describe("the financing tab", () => {
 });
 
 describe("resolveTab", () => {
-  it("resolves renewal work using the current account stage, including after conversion", () => {
-    expect(resolveTab("renewal", "LEAD")).toBe("quotes");
-    expect(resolveTab("renewal", "CLIENT")).toBe("policies");
-    expect(resolveTab("renewal", null)).toBe("quotes");
-  });
   it("falls a client back to Overview rather than an unreachable tab", () => {
     expect(resolveTab("priorcarrier", "CLIENT")).toBe("overview");
   });

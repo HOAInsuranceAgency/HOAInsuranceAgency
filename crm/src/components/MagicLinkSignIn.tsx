@@ -1,4 +1,3 @@
-import { Field } from "./ui/kit";
 import { useEffect, useRef, useState } from "react";
 import { signIn, confirmSignIn } from "aws-amplify/auth";
 
@@ -18,16 +17,12 @@ export default function MagicLinkSignIn({ embedded = false }: { embedded?: boole
   const [phase, setPhase] = useState<"email" | "sent" | "completing">("email");
   const [error, setError] = useState("");
   const consumed = useRef(false);
-  const requesting = useRef(false);
-  const [sending, setSending] = useState(false);
-  const [cooldown, setCooldown] = useState(0);
-  useEffect(() => { if (!cooldown) return; const timer = window.setTimeout(() => setCooldown(c => c - 1), 1000); return () => window.clearTimeout(timer); }, [cooldown]);
 
   useEffect(() => {
     const match = window.location.hash.match(/magic=([^&]+)/);
     if (match && !consumed.current) {
       consumed.current = true; // StrictMode double-mount guard
-      window.history.replaceState(null, "", window.location.pathname + window.location.search);
+      window.history.replaceState(null, "", window.location.pathname);
       completeSignIn(decodeURIComponent(match[1]));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -69,7 +64,7 @@ export default function MagicLinkSignIn({ embedded = false }: { embedded?: boole
       // URL: the restored session resolves straight to the app (the
       // configuring-splash prevents any sign-in flash). The hash is already
       // stripped, so this does not re-consume the token.
-      window.location.replace(window.location.origin + window.location.pathname + window.location.search);
+      window.location.replace(window.location.origin + window.location.pathname);
       return;
     } catch (err) {
       console.warn(err);
@@ -80,8 +75,7 @@ export default function MagicLinkSignIn({ embedded = false }: { embedded?: boole
 
   async function requestLink() {
     const addr = email.trim().toLowerCase();
-    if (!addr || requesting.current || cooldown > 0) return;
-    requesting.current = true; setSending(true);
+    if (!addr) return;
     setError("");
     try {
       await signIn({
@@ -95,7 +89,6 @@ export default function MagicLinkSignIn({ embedded = false }: { embedded?: boole
       // Same response either way — don't reveal whether the account exists.
       console.warn(err);
     }
-    requesting.current = false; setSending(false); setCooldown(30);
     setPhase("sent");
   }
 
@@ -116,8 +109,6 @@ export default function MagicLinkSignIn({ embedded = false }: { embedded?: boole
               is on its way. Open the email on this device and click the link —
               it's valid for 15 minutes.
             </p>
-            <p className="muted small">If it hasn’t arrived, check spam or ask your agency administrator to confirm your invitation.</p>
-            <button className="secondary" disabled={sending || cooldown > 0} onClick={requestLink}>{sending ? "Sending…" : cooldown ? `Resend in ${cooldown}s` : "Resend sign-in link"}</button>
             {embedded && <form onSubmit={e => {
               e.preventDefault();
               try {
@@ -131,7 +122,7 @@ export default function MagicLinkSignIn({ embedded = false }: { embedded?: boole
               <label className="field">Private sign-in link<input type="password" autoComplete="off" required value={sidebarLink} onChange={e => setSidebarLink(e.target.value)} /></label>
               <button disabled={!sidebarLink}>Sign in to this sidebar</button>
             </form>}
-            <button className="link" onClick={() => { setCooldown(0); setPhase("email"); }}>
+            <button className="link" onClick={() => setPhase("email")}>
               ← Use a different email
             </button>
           </>
@@ -141,7 +132,7 @@ export default function MagicLinkSignIn({ embedded = false }: { embedded?: boole
               Enter your work email and we'll send you a sign-in link.
               No password needed.
             </p>
-            <Field className="field">
+            <div className="field">
               <label>Email</label>
               <input
                 type="email"
@@ -150,10 +141,10 @@ export default function MagicLinkSignIn({ embedded = false }: { embedded?: boole
                 onChange={(e) => setEmail(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && requestLink()}
               />
-            </Field>
+            </div>
             <div className="form-actions">
-              <button className="primary" disabled={sending || !email.trim()} onClick={requestLink}>
-                {sending ? "Sending…" : "Email me a sign-in link"}
+              <button className="primary" disabled={!email.trim()} onClick={requestLink}>
+                Email me a sign-in link
               </button>
             </div>
           </>

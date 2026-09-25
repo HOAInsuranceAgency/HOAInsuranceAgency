@@ -1,7 +1,6 @@
 import { useMemo, useState } from "react";
 import {
   licenseHealth,
-  US_STATES,
   type License,
   type UserProfile,
 } from "../../lib/client";
@@ -27,7 +26,9 @@ export default function StateCoverage({
   const [gapsOnly, setGapsOnly] = useState(true);
 
   const rows = useMemo(() => {
-    const states = US_STATES;
+    const states = [
+      ...new Set([...firm, ...personal].map((l) => l.state).filter(Boolean)),
+    ];
     const live = (l: License) => {
       const h = licenseHealth(l);
       return h.level !== "expired";
@@ -69,7 +70,7 @@ export default function StateCoverage({
           <h2 style={{ margin: 0 }}>
             State coverage{" "}
             <span className="muted small" style={{ fontWeight: 400 }}>
-              · {rows.length - gaps.length} of {rows.length} jurisdictions writable, {gaps.length} gap
+              · {rows.length - gaps.length} writable, {gaps.length} gap
               {gaps.length === 1 ? "" : "s"}
             </span>
           </h2>
@@ -137,7 +138,7 @@ export default function StateCoverage({
         </table>
         {shown.length === 0 && (
           <p className="muted small">
-            No gaps across the 50 states and DC.
+            No gaps — every state with a license on file is writable.
           </p>
         )}
       </div>

@@ -164,7 +164,7 @@ describe("alphabetical by default", () => {
     await goTo(user, "Firm");
 
     // `SortTh` is a clickable <th>, not a button — hence columnheader.
-    await user.click(await screen.findByRole("button", { name: /Expires/ }));
+    await user.click(await screen.findByRole("columnheader", { name: /Expires/ }));
 
     expect(statesShown()).toEqual(["NY", "MA", "CA"]);
   });

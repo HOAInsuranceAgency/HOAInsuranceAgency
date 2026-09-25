@@ -1,5 +1,3 @@
-import { Pagination } from "../../components/ui/kit";
-import { useListPage } from "../../lib/useListPage";
 import { ReportDownload } from "../../components/ReportDownload";
 import { acquisitionLabel, websiteFormLabel } from "../../../../shared/leadSource";
 import { useCommercial, teammateName } from '../../lib/commercial';
@@ -8,7 +6,7 @@ import { formatCommission, pendingCommission } from '../../../../shared/quotePac
 import { agencyDay } from '../../../../shared/leadActionGuidance';
 import { useLastContacts } from "../../lib/lastContact";
 import { useMemo, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import {
   client,
   daysUntil,
@@ -94,7 +92,7 @@ export default function LeadsTab() {
       return { leads, clients, quotes };
     },
     [],
-    { cacheKey: "report:leads", initialData: EMPTY, errorMessage: "Failed to load the lead pipeline" }
+    { initialData: EMPTY, errorMessage: "Failed to load the lead pipeline" }
   );
   const { leads, clients, quotes } = res.data;
   const commercial = useCommercial([...leads, ...clients].map(l => l.id), res.data);
@@ -176,13 +174,12 @@ export default function LeadsTab() {
     funnel.bound30d
   );
   const stages: [string, number][] = [
-    ["No quotes yet", funnel.unworked],
+    ["Unworked · no quotes", funnel.unworked],
     ["Marketing · draft/submitted", funnel.marketing],
     ["Presented", funnel.presented],
     ["Bound · last 30d", funnel.bound30d],
   ];
 
-  const page = useListPage(sorted, `${salespersonFilter}:${championFilter}:${sortKey}:${dir}`);
   return (
     <TabFrame res={res}>
       <div className="report-actions"><ReportDownload report={{ title: "Lead summary", sections: [{ title: "Lead summary", columns: ["Measure", "Value"], rows: [["New this week", stats.newThisWeek], ["Open leads", leads.length], ["Quotes in flight", openQuoteCount], ["Converted this quarter", stats.convertedThisQuarter], ["Median days to convert", stats.medianDaysToConvert]] }] }} /></div>
@@ -224,7 +221,7 @@ export default function LeadsTab() {
       <div className="card">
         <div className="card-head">
           <h2>Lead work list</h2>
-          <ReportDownload disabled={contactHistory.loading || !!contactHistory.error || commercial.loading || !!commercial.error} report={{ title: "Lead work list", filters: `Open leads and packages being bound · sorted by ${sortKey} (${dir}) · Salesperson: ${commercial.data.team.find(t => t.userId === salespersonFilter)?.name ?? 'All'} · Champion: ${commercial.data.team.find(t => t.userId === championFilter)?.name ?? 'All'}`, sections: [{ title: "Leads", columns: ["Lead", "Salesperson", "Deal champion", "City", "State", "Lead source", "Website form", "Estimated opportunity (USD)", "Pending commission (USD)", "Commission basis", "Last contact (local)", "Entered", "Incumbent expires", "Pipeline", "Quote count", "TIV (USD)"], rows: sorted.map(r => [r.name, r.salesperson, r.champion, r.city, r.state, r.source, r.form, r.estimate == null ? null : r.estimate / 100, r.pending == null ? null : r.pending / 100, r.basis, r.lastContact ? fmtDateTime(r.lastContact) : "No contact recorded", r.entered?.slice(0, 10), r.expires, r.standing?.status ?? "No quotes yet", r.standing?.count ?? 0, r.tiv]) }] }} />
+          <ReportDownload disabled={contactHistory.loading || !!contactHistory.error || commercial.loading || !!commercial.error} report={{ title: "Lead work list", filters: `Open leads and packages being bound · sorted by ${sortKey} (${dir}) · Salesperson: ${commercial.data.team.find(t => t.userId === salespersonFilter)?.name ?? 'All'} · Champion: ${commercial.data.team.find(t => t.userId === championFilter)?.name ?? 'All'}`, sections: [{ title: "Leads", columns: ["Lead", "Salesperson", "Deal champion", "City", "State", "Lead source", "Website form", "Estimated opportunity (USD)", "Pending commission (USD)", "Commission basis", "Last contact (local)", "Entered", "Incumbent expires", "Pipeline", "Quote count", "TIV (USD)"], rows: sorted.map(r => [r.name, r.salesperson, r.champion, r.city, r.state, r.source, r.form, r.estimate == null ? null : r.estimate / 100, r.pending == null ? null : r.pending / 100, r.basis, r.lastContact ? fmtDateTime(r.lastContact) : "No contact recorded", r.entered?.slice(0, 10), r.expires, r.standing?.status ?? "Unworked", r.standing?.count ?? 0, r.tiv]) }] }} />
           <span className="muted small">sorted by incumbent expiration</span>
         </div>
         <p className="muted small">Last contact includes prospect emails, calls and texts in either direction. Times are shown in your local time zone.</p>
@@ -238,7 +235,7 @@ export default function LeadsTab() {
           </p>
         ) : (
           <div className="table-wrap">
-            <table className="report-table">
+            <table>
               <thead>
                 <tr>
                   <SortTh label="Lead" colKey="lead" sortKey={sortKey} dir={dir} onToggle={toggle} />
@@ -253,10 +250,14 @@ export default function LeadsTab() {
                 </tr>
               </thead>
               <tbody>
-                {page.rows.map((r) => (
-                  <tr key={r.id}>
+                {sorted.map((r) => (
+                  <tr
+                    key={r.id}
+                    className="clickable"
+                    onClick={() => navigate(`/accounts/${r.id}`)}
+                  >
                     <td>
-                      <Link to={`/accounts/${r.id}`}>{r.name}</Link>
+                      <strong>{r.name}</strong>
                       {r.partiallyBound && <div><span className="badge amber">Binding in progress</span></div>}
                     </td>
                     <td>{commercial.loading ? 'Loading…' : commercial.error ? 'Unavailable' : r.salesperson}</td><td>{commercial.loading ? 'Loading…' : commercial.error ? 'Unavailable' : r.champion}</td><td>{r.city || '—'}</td><td>{r.state || '—'}</td><td>{r.form}</td>
@@ -279,7 +280,6 @@ export default function LeadsTab() {
                 ))}
               </tbody>
             </table>
-            <Pagination total={sorted.length} page={page.page} onPage={page.setPage} noun="leads" />
           </div>
         )}
       </div>

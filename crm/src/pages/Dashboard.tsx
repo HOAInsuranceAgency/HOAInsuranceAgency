@@ -6,7 +6,6 @@ import {
 } from "./dashboard/tabs";
 import OverviewTab from "./dashboard/OverviewTab";
 import LeadsTab from "./dashboard/LeadsTab";
-import { SectionNav } from "../components/ui/kit";
 import FinanceTab from "./dashboard/FinanceTab";
 import RenewalsTab from "./dashboard/RenewalsTab";
 import ReportingTab from "./dashboard/ReportingTab";
@@ -51,10 +50,37 @@ export default function Dashboard() {
 
   return (
     <>
-      <h1>Reports</h1>
-      <p className="sub">Agency-wide summaries and reporting. Your assigned actions are in My work.</p>
+      <h1>Dashboard</h1>
+      <p className="sub">Agency command center</p>
 
-      <SectionNav label="Report view" items={DASHBOARD_TABS} value={tab} onChange={selectTab} />
+      {/* One control, two renderings: the strip on desktop, a native select
+          on phones — five buttons wrap into a ragged two-row strip under
+          800px, and the OS picker beats any custom dropdown there. CSS does
+          the swap, so both stay wired to the same selectTab. */}
+      <div className="tabs dash-tabs">
+        {DASHBOARD_TABS.map(([t, label]) => (
+          <button
+            key={t}
+            className={tab === t ? "active" : ""}
+            onClick={() => selectTab(t)}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      <div className="dash-tab-select">
+        <select
+          aria-label="Dashboard view"
+          value={tab}
+          onChange={(e) => selectTab(e.target.value as DashboardTab)}
+        >
+          {DASHBOARD_TABS.map(([t, label]) => (
+            <option key={t} value={t}>
+              {label}
+            </option>
+          ))}
+        </select>
+      </div>
 
       {tab === "overview" && <OverviewTab />}
       {tab === "leads" && <LeadsTab />}

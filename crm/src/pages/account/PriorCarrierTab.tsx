@@ -1,4 +1,3 @@
-import { Field } from "../../components/ui/kit";
 import {
   LINES_OF_BUSINESS,
   client,
@@ -84,7 +83,6 @@ export function PriorCarrierTab({ accountId }: { accountId: string }) {
 
   return (
     <ChildRowsCard
-      collapseAdd
       title="Prior coverage"
       child={child}
       addLabel="+ Add prior carrier"
@@ -181,7 +179,7 @@ function PriorCarrierFields({
     : undefined;
   return (
     <>
-      <Field className="field">
+      <div className="field">
         <label>Line of business</label>
         <select
           value={form.form.lineOfBusiness}
@@ -192,8 +190,8 @@ function PriorCarrierFields({
             <option key={l}>{l}</option>
           ))}
         </select>
-      </Field>
-      <Field className="field">
+      </div>
+      <div className="field">
         <label>Carrier</label>
         <input
           placeholder="Travelers"
@@ -201,37 +199,37 @@ function PriorCarrierFields({
           onChange={(e) => form.setF("carrierName", e.target.value)}
           onKeyDown={enter}
         />
-      </Field>
-      <Field className="field">
+      </div>
+      <div className="field">
         <label>Policy #</label>
         <input
           value={form.form.policyNumber}
           onChange={(e) => form.setF("policyNumber", e.target.value)}
           onKeyDown={enter}
         />
-      </Field>
-      <Field className="field">
+      </div>
+      <div className="field">
         <label>Premium ($)</label>
         <MoneyInput
           value={form.form.premium}
           onChange={(v) => form.setF("premium", v)}
           onKeyDown={enter}
         />
-      </Field>
-      <Field className="field">
+      </div>
+      <div className="field">
         <label>Effective</label>
         <DateInput
           value={form.form.effectiveDate}
           onChange={(v) => form.setF("effectiveDate", v)}
         />
-      </Field>
-      <Field className="field">
+      </div>
+      <div className="field">
         <label>Expiration</label>
         <DateInput
           value={form.form.expirationDate}
           onChange={(v) => form.setF("expirationDate", v)}
         />
-      </Field>
+      </div>
     </>
   );
 }

@@ -1,6 +1,3 @@
-import { Pagination } from "../../components/ui/kit";
-import { useListPage } from "../../lib/useListPage";
-import { Field } from "../../components/ui/kit";
 import { useMemo, useState } from "react";
 import {
   client,
@@ -131,7 +128,6 @@ export function ActivityTab({ accountId }: { accountId: string }) {
       (!actorFilter || actorKey(r) === actorFilter)
   );
 
-  const page = useListPage(filtered, `${accountId}:${subjectFilter}:${actorFilter}`, 20);
   return (
     <div className="card">
       <h2>
@@ -161,7 +157,7 @@ export function ActivityTab({ accountId }: { accountId: string }) {
         <>
           {names.error && <p className="muted small">Activity is available, but some teammate names could not be loaded. <button className="btn secondary small" onClick={() => void names.refetch()}>Retry names</button></p>}
           <div className="toolbar">
-            <Field className="field">
+            <div className="field">
               <label htmlFor="activity-subject">Subject</label>
               <select
                 id="activity-subject"
@@ -173,8 +169,8 @@ export function ActivityTab({ accountId }: { accountId: string }) {
                   <option key={s}>{s}</option>
                 ))}
               </select>
-            </Field>
-            <Field className="field">
+            </div>
+            <div className="field">
               <label htmlFor="activity-actor">Who</label>
               <select
                 id="activity-actor"
@@ -186,7 +182,7 @@ export function ActivityTab({ accountId }: { accountId: string }) {
                   <option key={a.key} value={a.key}>{a.label}</option>
                 ))}
               </select>
-            </Field>
+            </div>
           </div>
 
           {filtered.length === 0 ? (
@@ -203,7 +199,7 @@ export function ActivityTab({ accountId }: { accountId: string }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {page.rows.map((r) => {
+                  {filtered.map((r) => {
                     const changes = readChanges(r.changes);
                     return (
                       <tr key={r.id}>
@@ -212,7 +208,7 @@ export function ActivityTab({ accountId }: { accountId: string }) {
                         </td>
                         <td>{actorLabel(r)}</td>
                         <td>
-                          <span className="badge gray">{r.action === "CREATE" ? "Added" : r.action === "UPDATE" ? "Updated" : r.action === "DELETE" ? "Removed" : r.action}</span>{" "}
+                          <span className="badge gray">{r.action}</span>{" "}
                           {[r.subjectType, r.subjectLabel].filter(Boolean).join(" ")}
                         </td>
                         <td className="small">
@@ -221,14 +217,14 @@ export function ActivityTab({ accountId }: { accountId: string }) {
                               detail behind it, and only worth showing when it
                               says more than the sentence already did. */}
                           {changes.length > 2 && (
-                            <details className="audit-changes"><summary>View changed fields ({changes.length})</summary><ul style={{ margin: "4px 0 0", paddingLeft: 16 }}>
+                            <ul style={{ margin: "4px 0 0", paddingLeft: 16 }}>
                               {changes.map((c: FieldChange) => (
                                 <li key={c.field} className="muted">
                                   {fieldLabel(c.field)}: {renderValue(c.field, c.from)}{" "}
                                   → {renderValue(c.field, c.to)}
                                 </li>
                               ))}
-                            </ul></details>
+                            </ul>
                           )}
                         </td>
                       </tr>
@@ -236,7 +232,6 @@ export function ActivityTab({ accountId }: { accountId: string }) {
                   })}
                 </tbody>
               </table>
-              <Pagination total={filtered.length} page={page.page} onPage={page.setPage} size={page.size} noun="changes" />
             </div>
           )}
         </>
