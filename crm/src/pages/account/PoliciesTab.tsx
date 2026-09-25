@@ -12,7 +12,7 @@ import {
 } from "../../lib/client";
 import { useAsyncResource } from "../../lib/useAsyncResource";
 import { BILL_TYPE_SHORT, POLICY_STATUSES } from "../../lib/enums";
-import { useSort, SortTh } from "../../lib/useSort";
+import { MobileSort, useSort, SortTh } from "../../lib/useSort";
 import { commissionCell, termsSummary } from "../../components/QuotesPanel";
 import CoverageForm from "../../components/CoverageForm";
 import { SaveStatus, useSaveStatus } from "../../components/SaveStatus";
@@ -128,6 +128,7 @@ export function PoliciesTab({ accountId }: { accountId: string }) {
         </p>
       ) : (
         <div className="table-wrap">
+          <MobileSort options={[["number", "Policy #"], ["carrier", "Carrier"], ["lines", "Lines"], ["premium", "Premium"], ["effective", "Effective"], ["expires", "Expires"], ["status", "Status"]]} sortKey={sortKey} dir={dir} onToggle={toggle} />
           <table className="stacked-table">
             <thead>
               <tr>

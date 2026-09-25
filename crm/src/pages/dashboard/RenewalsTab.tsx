@@ -21,7 +21,7 @@ import {
   ACCOUNT_STAGE_BADGE,
   RENEWAL_HORIZON_SCALE,
 } from "../../lib/badges";
-import { useSort, SortTh } from "../../lib/useSort";
+import { MobileSort, useSort, SortTh } from "../../lib/useSort";
 import { useAsyncResource } from "../../lib/useAsyncResource";
 import {
   buildRenewalRows,
@@ -241,6 +241,7 @@ export default function RenewalsTab() {
             </div>
             <p className="muted small">Known premiums: {hero.known} of {hero.total} records. Missing premiums are excluded from the amount above.</p>
             <div className="table-wrap">
+              <MobileSort options={[["account", "Account"], ["carrier", "Carrier"], ["renewal", "Expires"], ["days", "Days"], ["premium", "Premium"], ["marketing", "Marketing"], ["submitBy", "Submit by"]]} sortKey={sortKey} dir={dir} onToggle={toggle} />
               <table className="stacked-table">
                 <thead>
                   <tr>

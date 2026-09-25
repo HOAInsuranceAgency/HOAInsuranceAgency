@@ -25,7 +25,7 @@ import FileButton from "./FileButton";
 import ConfirmButton from "./ConfirmButton";
 import { SaveStatus, useSaveStatus } from "./SaveStatus";
 import { Badge, statusBadge, OCR_STATUS_BADGE } from "../lib/badges";
-import { useSort, SortTh } from "../lib/useSort";
+import { MobileSort, useSort, SortTh } from "../lib/useSort";
 import { withExtension } from "../../amplify/functions/process-document/name";
 import {
   DEFAULT_DOCUMENT_CATEGORY,
@@ -426,6 +426,7 @@ export default function DocumentsPanel({
         </p>
       ) : (
         <div className="table-wrap">
+          <MobileSort options={[["name", "Name"], ["category", "Category"], ...(linkAccountId ? [["linked", "Linked to"] as const] : []), ["ocr", "Processing"], ["size", "Size"], ["created", "Uploaded"]]} sortKey={sortKey} dir={dir} onToggle={toggle} />
           <table className="stacked-table documents-table">
             <thead>
               <tr>

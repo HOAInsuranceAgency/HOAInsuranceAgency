@@ -23,7 +23,7 @@ import {
   restrictionSummary,
   type AppetiteRisk,
 } from "../lib/appetite";
-import { useSort, SortTh } from "../lib/useSort";
+import { MobileSort, useSort, SortTh } from "../lib/useSort";
 import { useFormState } from "../lib/useFormState";
 import { SaveStatus, useSaveStatus } from "../components/SaveStatus";
 import { useAsyncResource } from "../lib/useAsyncResource";
@@ -153,6 +153,7 @@ export default function Carriers() {
           <p className="muted small">No carriers yet.</p>
         ) : (
           <div className="table-wrap">
+            <MobileSort options={[["name", "Carrier"], ["status", "Status"], ["market", "Market"], ["underwriter", "Underwriter"], ["commission", "Commission"], ["states", "States"]]} sortKey={sortKey} dir={dir} onToggle={toggle} />
             <table className="stacked-table">
               <thead>
                 <tr>

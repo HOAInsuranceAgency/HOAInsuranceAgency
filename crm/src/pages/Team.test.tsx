@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 // ./client calls generateClient() at module scope, so importing anything from
@@ -7,6 +7,8 @@ import { describe, expect, it, vi } from "vitest";
 // same approach as client.test.ts, storage.test.ts and MarketingTasks.test.tsx.
 const listTeamUsers = vi.hoisted(() => vi.fn());
 const UserProfile = vi.hoisted(() => ({ list: vi.fn() }));
+const request = vi.hoisted(() => vi.fn());
+vi.mock("../lib/communications", () => ({ communicationRequest: request }));
 vi.mock("aws-amplify/data", () => ({
   generateClient: () => ({
     models: { UserProfile },
@@ -59,6 +61,27 @@ const renderPage = () => render(<Team profile={profile} />);
 const pending = () => new Promise<never>(() => {});
 
 describe("Team roster read states", () => {
+  it("discards the previous teammate connection editor when another teammate is selected", async () => {
+    const members = [
+      { userId: "a", name: "Alex Agent", email: "alex@example.test", frontId: "tea_alex", version: 1 },
+      { userId: "b", name: "Bea Agent", email: "bea@example.test", frontId: "tea_bea", version: 2 },
+    ];
+    listTeamUsers.mockResolvedValue({ data: { users: members.map(m => ({ ...m, groups: ["STAFF"] })) } });
+    UserProfile.list.mockResolvedValue({ data: members.map(m => ({ ...m, id: m.userId, firstName: m.name.split(" ")[0], lastName: "Agent" })) });
+    request.mockImplementation(async (op, input) => op === "team" ? { team: members } : { member: { ...input, version: input.version + 1 } });
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "Manage Alex" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Edit connections for Alex Agent" }));
+    fireEvent.change(screen.getByRole("textbox", { name: /^Front teammate ID/ }), { target: { value: "tea_draft" } });
+    fireEvent.click(screen.getByRole("button", { name: "Manage Bea" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    fireEvent.click(await screen.findByRole("button", { name: "Edit connections for Bea Agent" }));
+    expect(screen.getByRole("textbox", { name: /^Front teammate ID/ })).toHaveValue("tea_bea");
+    fireEvent.change(screen.getByRole("textbox", { name: /^Front teammate ID/ }), { target: { value: "tea_updated" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save connections" }));
+    await waitFor(() => expect(request).toHaveBeenCalledWith("saveEligibility", expect.objectContaining({ userId: "b", frontId: "tea_updated" }), true));
+    expect(request.mock.calls.filter(([op]) => op === "saveEligibility")).toHaveLength(1);
+  });
   it("shows a loader while the read is in flight", () => {
     listTeamUsers.mockReturnValue(pending());
     UserProfile.list.mockResolvedValue({ data: [] });

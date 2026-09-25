@@ -40,6 +40,7 @@ button:focus-visible, a:focus-visible, summary:focus-visible, select:focus-visib
 .account-list th:first-child { width: 30%; }
 .account-list th, .account-list td { white-space: normal; overflow-wrap: anywhere; }
 .mobile-records { display: none; }
+.mobile-sort { display: none; }
 .summary-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 18px; }
 .sidebar-collapse { border: 0; background: transparent; color: #fff; cursor: pointer; padding: 6px; }
 .sidebar--compact { width: 72px; }
@@ -73,6 +74,8 @@ button:focus-visible, a:focus-visible, summary:focus-visible, select:focus-visib
   .section-nav-mobile select { width: 100%; min-height: 42px; font-size: 15px; }
   .desktop-records { display: none; }
   .mobile-records { display: grid; gap: 12px; }
+  .mobile-sort { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 16px; }
+  .mobile-sort .field { flex: 1; min-width: min(140px, 100%); }
   .card { padding: 16px; }
   .page-heading { flex-wrap: wrap; }
   .form-grid { grid-template-columns: minmax(0, 1fr); }

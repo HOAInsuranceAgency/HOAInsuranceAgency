@@ -12,7 +12,7 @@ import {
 import { downloadFile } from "../lib/storage";
 import FilePreviewModal, { canPreview } from "../components/FilePreview";
 import { useAsyncResource } from "../lib/useAsyncResource";
-import { useSort, SortTh } from "../lib/useSort";
+import { MobileSort, useSort, SortTh } from "../lib/useSort";
 import {
   HIT_TYPE_LABEL,
   MIN_QUERY_LENGTH,
@@ -160,6 +160,7 @@ export default function SearchResults() {
               <p className="muted small">No documents match “{q}”.</p>
             ) : (
               <div className="table-wrap">
+                <MobileSort options={[["document", "Document"], ["attached", "Attached to"], ["uploaded", "Uploaded"]]} sortKey={sortKey} dir={dir} onToggle={toggle} />
                 <table className="stacked-table">
                   <thead>
                     <tr>

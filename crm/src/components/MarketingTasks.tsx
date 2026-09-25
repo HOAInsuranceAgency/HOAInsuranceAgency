@@ -4,7 +4,7 @@ import { useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useAsyncResource } from "../lib/useAsyncResource";
 import { SaveStatus, useSaveStatus } from "./SaveStatus";
-import { useSort, SortTh } from "../lib/useSort";
+import { MobileSort, useSort, SortTh } from "../lib/useSort";
 import {
   client,
   daysUntil,
@@ -312,6 +312,7 @@ export default function AccountMarketingTasks({
         <p className="muted small">All marketing tasks are complete.</p>
       ) : (
         <div className="table-wrap">
+          <MobileSort options={[["carrier", "Carrier"], ["lines", "Lines"], ["expires", "Expires"], ["submitBy", "Submit by"]]} sortKey={sortKey} dir={dir} onToggle={toggle} />
           <table className="stacked-table">
             <thead>
               <tr>
@@ -571,6 +572,7 @@ export function AllMarketingTasks({
           </p>
         ) : (
           <div className="table-wrap">
+            <MobileSort options={[["account", "Account"], ["carrier", "Carrier"], ["lines", "Lines"], ["expires", "Expires"], ["submitBy", "Submit by"]]} sortKey={sortKey} dir={dir} onToggle={toggle} />
             <table className="stacked-table">
               <thead>
                 <tr>

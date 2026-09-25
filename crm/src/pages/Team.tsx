@@ -9,7 +9,7 @@ import { Badge, flagBadge } from "../lib/badges";
 import SignatureManager from "../components/SignatureManager";
 import { SaveStatus, useSaveStatus } from "../components/SaveStatus";
 import { useAsyncResource } from "../lib/useAsyncResource";
-import { useSort, SortTh } from "../lib/useSort";
+import { MobileSort, useSort, SortTh } from "../lib/useSort";
 import { useFormState } from "../lib/useFormState";
 import { DEFAULT_USER_ROLE, USER_ROLE_OPTIONS } from "../lib/enums";
 
@@ -246,6 +246,7 @@ export default function Team({ profile }: { profile: UserProfile }) {
           <p className="muted small">No users found.</p>
         ) : (
           <div className="table-wrap">
+            <MobileSort options={[["email", "Email"], ["name", "Name"], ["role", "Role"], ["onboarded", "Onboarded"]]} sortKey={sortKey} dir={dir} onToggle={toggle} />
             <table className="stacked-table">
               <thead>
                 <tr>
@@ -298,7 +299,7 @@ export default function Team({ profile }: { profile: UserProfile }) {
         )}
       </div>
       {selectedUser && <div className="card"><div className="toolbar"><h2>Teammate settings</h2><button className="secondary" onClick={() => { if (confirmDiscard()) setSelectedUser(null); }}>Close teammate settings</button></div>
-        <LeadEligibilitySettings userId={selectedUser} />
+        <LeadEligibilitySettings key={selectedUser} userId={selectedUser} />
         {(() => { const member = profiles.find(p => p.userId === selectedUser); return member ? <><h3>Signature</h3><SignatureManager profile={member} onChange={updated => setProfiles(ps => ps.map(p => p.id === updated.id ? updated : p))} /><h3>Lead text notifications</h3><LeadTextCell key={member.id} profile={member} onSave={saveAlerts} /></> : <p>Personal settings become available after the invitation is accepted.</p>; })()}
       </div>}
       <Disclosure title="Managers and temporary coverage" description="Reporting relationships and who covers work while a teammate is away"><TeamWorkflowSettings /></Disclosure>

@@ -2,7 +2,7 @@ import { type ReactNode } from "react";
 import Modal from "./Modal";
 import ConfirmButton from "./ConfirmButton";
 import { SaveStatus } from "./SaveStatus";
-import { SortTh, useSort } from "../lib/useSort";
+import { MobileSort, SortTh, useSort } from "../lib/useSort";
 import type { ChildRows } from "../lib/useChildRows";
 
 /**
@@ -166,6 +166,7 @@ export default function ChildRowsCard<T extends { id: string }, F extends object
             <p className="muted small">{emptyMessage}</p>
           ) : (
             <div className="table-wrap">
+              <MobileSort options={sortable.map(column => [column.key, column.label] as const)} sortKey={sortKey} dir={dir} onToggle={toggle} />
               <table className="stacked-table">
                 <thead>
                   <tr>

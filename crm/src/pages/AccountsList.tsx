@@ -15,7 +15,7 @@ import {
 } from "../lib/client";
 import { primaryContact } from "../lib/contacts";
 import { useAsyncResource } from "../lib/useAsyncResource";
-import { useSort, SortTh } from "../lib/useSort";
+import { MobileSort, useSort, SortTh } from "../lib/useSort";
 import { useCommercial, teammateName } from '../lib/commercial';
 import { OpportunityEstimate } from '../components/OpportunityEstimate';
 import { ReportDownload } from '../components/ReportDownload';
@@ -199,7 +199,7 @@ export default function AccountsList({ stage }: { stage: "LEAD" | "CLIENT" }) {
         ) : sorted.length === 0 ? (
           <p className="muted small">No {label.toLowerCase()} found.</p>
         ) : (
-          <><div className={reportView ? "table-wrap desktop-records" : "table-wrap desktop-records"}>
+          <><MobileSort options={[["name", "Account"], ["salesperson", "Salesperson"], ["champion", "Deal champion"], ["renewal", stage === "LEAD" ? "Incumbent expires" : "Renewal"], ["type", "Type"], ["contact", "Contact"], ["city", "City"], ["state", "State"], ["units", "Units"], ["tiv", "TIV"], ...(stage === "LEAD" ? [["source", "Lead source"], ["form", "Website form"], ["estimate", "Estimated opportunity"], ["pending", "Pending commission"], ["entered", "Entered"]] as const : [])]} sortKey={sortKey} dir={dir} onToggle={toggle} /><div className="table-wrap desktop-records">
             {reportView ? <table>
               <thead>
                 <tr>

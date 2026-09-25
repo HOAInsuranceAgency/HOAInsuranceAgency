@@ -35,7 +35,7 @@ The shared kit and future screen conventions are documented in `crm/src/componen
 
 ## Validation
 
-- **Passed:** full Vitest suite (121 files / 2,312 tests), frontend/backend TypeScript checks, production Vite/Front-sidebar build, and `git diff --check`.
+- **Passed:** full Vitest suite (122 files / 2,321 tests), frontend/backend TypeScript checks, production Vite/Front-sidebar build, and `git diff --check`.
 - New regression coverage checks labeled fields, keyboard and URL-controlled sorting, explicit status drafts, dirty-form navigation, visible-account next-action responses, independent overview loading/error recovery, cached refresh/session clearing, and upload destination independence.
 - Local Chrome checks at **390 × 844**: Accounts/Clients, account summary, expanded property editor, quotes, documents, new lead, quote/policy directories, carriers/detail, Billing, Reports overview, Settings/signature, expanded team controls, and certificate draft/review rendered without whole-page horizontal overflow.
 - At **1280px** with the sidebar expanded, the account working table was **944px in a 944px container** with a **1280px document width**. Sidebar collapse/expand also worked at desktop widths.
@@ -46,7 +46,18 @@ The shared kit and future screen conventions are documented in `crm/src/componen
 
 - The original p95 timing budget, transferred-data target, and five unaided agent journeys still require measurement with real staging data/users. This change removes blocking dependencies and improves refresh behavior; it does not introduce materialized server-side dashboard aggregates. Some directories/reports still fetch full datasets before presentation pagination.
 - Timeline now consolidates conversations/notes and separates record changes. It does not yet synthesize every quote, policy, invoice, and submission mutation into one deduplicated business-event feed.
-- Saved view state is encoded in account URLs; there is no named-view storage or scroll-position restoration. Wide analytical tables remain deliberate report views. Mobile record cards preserve the selected/default sort; sortable table headers are desktop controls.
+- Saved view state is encoded in account URLs; there is no named-view storage or scroll-position restoration. Wide analytical tables remain deliberate report views. Mobile record cards have a sort field and direction picker that shares state with the desktop headers.
 - Unsaved protection covers forms using the shared form/dirty hooks, including consequential status drafts. Existing purpose-built action editors retain their own behavior; this is not a claim of a universal form migration or screen-reader conformance.
 - Real-device keyboard behavior, screen-reader review, email delivery/expired-link recovery, authenticated role journeys, and live billing/carrier mutations were not exercised. No real messages, financial actions, carrier submissions, or production record edits were made during verification.
 - Review with realistic large datasets and each CRM role before merging to main. The build still reports large shared bundles; route splitting improves deferred loading but is not a complete bundle-size remediation.
+
+## PR review fixes — September 25, 2026
+
+- Reset the connection editor when switching teammates, preventing an old person's draft from appearing under the new selection.
+- Resolve renewal-start links using the destination account's current stage: Quotes for leads, Policies for clients. This applies to shared work/report/reminder links and remains valid after conversion.
+- Add shared mobile sort field/direction controls to every sortable list whose table headers are hidden on phones, including account records and child-row lists.
+- Clear the saved lead draft after successful lead creation even when contact creation or file upload fails. Keep the recovery warning and protect genuinely uncreated drafts; rejected contact writes also reach the recovery state.
+
+Regression tests cover switching and saving teammate connections, renewal destinations for both stages, mobile/desktop sort synchronization with missing values, and both partial-success and failed lead creation.
+
+Review-fix validation: all 2,321 tests, frontend/backend type checks, production build, and whitespace checks passed. Local browser checks at 390px confirmed carrier/quote sorting, URL-backed account sorting, and no horizontal overflow; renewal links opened Quotes for a lead and Policies for a client. At 1280px, the mobile picker hid and desktop header sorting remained available.

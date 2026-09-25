@@ -7,7 +7,7 @@ import { StatusEditor } from './StatusEditor';
 import { DirtyFormsProvider } from './unsaved';
 import { useFormState } from '../../lib/useFormState';
 import { MoneyInput } from '../inputs';
-import { SortTh, useSort } from '../../lib/useSort';
+import { MobileSort, SortTh, useSort } from '../../lib/useSort';
 
 afterEach(() => vi.restoreAllMocks());
 describe('CRM interaction kit', () => {
@@ -72,4 +72,24 @@ it('restores a URL-controlled table sort without remounting or moving missing da
   rerender({ key: 'due', dir: 'desc' });
   expect(result.current.sorted.map(item => item.name)).toEqual(['Beta', 'Alpha', 'Gamma']);
   expect(result.current.sortKey).toBe('due');
+});
+
+function SortedRecords() {
+  const { sorted, sortKey, dir, toggle } = useSort([{ name: 'Alpha', premium: null }, { name: 'Beta', premium: 200 }, { name: 'Gamma', premium: 100 }], { name: row => row.name, premium: row => row.premium }, 'name');
+  return <><MobileSort options={[["name", "Account"], ["premium", "Premium"]]} sortKey={sortKey} dir={dir} onToggle={toggle} /><table><thead><tr><SortTh label="Account" colKey="name" sortKey={sortKey} dir={dir} onToggle={toggle} /><SortTh label="Premium" colKey="premium" sortKey={sortKey} dir={dir} onToggle={toggle} /></tr></thead><tbody>{sorted.map(row => <tr key={row.name}><td>{row.name}</td><td>{row.premium ?? 'Unknown'}</td></tr>)}</tbody></table></>;
+}
+it('keeps mobile sorting and desktop headers in sync, with missing values last in both directions', async () => {
+  const user = userEvent.setup(); render(<SortedRecords />);
+  const names = () => screen.getAllByRole('row').slice(1).map(row => row.firstElementChild?.textContent);
+  await user.selectOptions(screen.getByLabelText('Sort order'), 'desc');
+  expect(names()).toEqual(['Gamma', 'Beta', 'Alpha']);
+  expect(screen.getByRole('columnheader', { name: /Account/ })).toHaveAttribute('aria-sort', 'descending');
+  await user.selectOptions(screen.getByLabelText('Sort by'), 'premium');
+  expect(screen.getByLabelText('Sort order')).toHaveValue('asc');
+  expect(names()).toEqual(['Gamma', 'Beta', 'Alpha']);
+  await user.selectOptions(screen.getByLabelText('Sort order'), 'desc');
+  expect(names()).toEqual(['Beta', 'Gamma', 'Alpha']);
+  await user.click(screen.getByRole('button', { name: /Premium/ }));
+  expect(screen.getByLabelText('Sort order')).toHaveValue('asc');
+  expect(names()).toEqual(['Gamma', 'Beta', 'Alpha']);
 });

@@ -28,7 +28,7 @@ Use these patterns when adding or changing CRM screens. Shared appearance lives 
 ## Lists, responsiveness, and read states
 
 - Default working views to a small set of identity/action/owner/date columns. Put secondary data in details or an explicitly selected report.
-- `stacked-table` uses `data-label` on each cell to become record cards at phone widths. Hidden mobile headers must not leave invisible keyboard controls. If mobile sorting is required, supply a visible sort picker.
+- `stacked-table` uses `data-label` on each cell to become record cards at phone widths. Hidden mobile headers must not leave invisible keyboard controls. Every sortable card/table view must include `MobileSort` from `lib/useSort`, with the same keys, direction, and toggle handler as its desktop `SortTh` controls. Include any default sort key even when it has no visible desktop column.
 - Use `SortTh` for keyboard-operable sorting and `aria-sort`. `useSort` optionally accepts controlled sort state for URL-backed views.
 - Distinguish loading, failed, empty, incomplete, and zero. Use `LoadingState`, local retry, and completeness labels. Do not hide valid independent sections because another query failed.
 - Cache only named, read-only resources with an appropriate expiry. The overview cache is memory-only, clears on sign-out, and has an explicit refresh/freshness label.

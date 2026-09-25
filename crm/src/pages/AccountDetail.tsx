@@ -37,6 +37,7 @@ type Tab =
   | "property"
   | "extraction"
   | "forms"
+  | "renewal"
   | "overview"
   | "priorcarrier"
   | "losses"
@@ -49,7 +50,7 @@ type Tab =
   | "certificates"
   | "activity";
 
-const VALID_TABS: Tab[] = ["details", "contacts", "property", "extraction", "forms",
+const VALID_TABS: Tab[] = ["details", "contacts", "property", "extraction", "forms", "renewal",
   "overview",
   "priorcarrier",
   "losses",
@@ -143,6 +144,9 @@ export function resolveTab(
   stage: string | null | undefined
 ): Tab {
   const isClient = stage === "CLIENT";
+  // Work links can outlive a lead's conversion. Resolve the shared renewal
+  // entry point only after loading the account, preserving each stage's view.
+  if (requested === "renewal") return isClient ? "policies" : "quotes";
   const unreachable = isClient
     ? LEAD_ONLY_TABS.has(requested)
     : CLIENT_ONLY_TABS.has(requested);

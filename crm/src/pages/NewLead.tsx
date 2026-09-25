@@ -121,13 +121,17 @@ export default function NewLead() {
         email: str(form.contactEmail),
         phone: str(form.contactPhone),
       };
-      const { errors: contactErrors } = await client.models.Contact.create({
-        accountId: data.id,
-        ...contact,
-        isPrimary: true,
-        extractionSourceKey: contactKey(contact),
-      });
-      contactFailed = Boolean(contactErrors?.length);
+      try {
+        const { errors: contactErrors } = await client.models.Contact.create({
+          accountId: data.id,
+          ...contact,
+          isPrimary: true,
+          extractionSourceKey: contactKey(contact),
+        });
+        contactFailed = Boolean(contactErrors?.length);
+      } catch {
+        contactFailed = true;
+      }
     }
 
     // Upload any staged documents to the new account so OCR + AI extraction
@@ -177,12 +181,14 @@ export default function NewLead() {
         "the contact wasn't saved. Open the lead and add it from the Contacts card."
       );
     }
+    // The lead exists even when a follow-up write failed. Preserve the
+    // recovery warning without treating navigation to that lead as data loss.
+    markSaved();
     if (afterCreate.length) {
       setCreatedId(data.id);
       setError(`The lead was created, but ${afterCreate.join(" Also, ")}`);
       return;
     }
-    markSaved();
     navigate(`/accounts/${data.id}${stagedFiles.length ? "?tab=documents" : ""}`);
   }
 

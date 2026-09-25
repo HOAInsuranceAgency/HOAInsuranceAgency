@@ -71,3 +71,21 @@ export function SortTh({
     </th>
   );
 }
+
+/** Visible when table headers are replaced by mobile record cards. */
+export function MobileSort({ options, sortKey, dir, onToggle }: {
+  options: readonly (readonly [key: string, label: string])[];
+  sortKey: string;
+  dir: SortDir;
+  onToggle: (key: string) => void;
+}) {
+  if (!options.length) return null;
+  return <div className="mobile-sort" role="group" aria-label="Sort records">
+    <label className="field">Sort by<select value={sortKey} onChange={event => { if (event.target.value !== sortKey) onToggle(event.target.value); }}>
+      {options.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+    </select></label>
+    <label className="field">Sort order<select value={dir} onChange={event => { if (event.target.value !== dir) onToggle(sortKey); }}>
+      <option value="asc">Ascending</option><option value="desc">Descending</option>
+    </select></label>
+  </div>;
+}

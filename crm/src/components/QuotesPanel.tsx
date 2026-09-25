@@ -16,7 +16,7 @@ import {
 } from "../lib/client";
 import { Badge, statusBadge, QUOTE_STATUS_BADGE } from "../lib/badges";
 import { useAsyncResource } from "../lib/useAsyncResource";
-import { useSort, SortTh } from "../lib/useSort";
+import { MobileSort, useSort, SortTh } from "../lib/useSort";
 import CoverageForm from "./CoverageForm";
 import { communicationRequest } from "../lib/communications";
 import { authorizedQuoteTerms } from "../../../shared/quoteAuthorization";
@@ -204,6 +204,7 @@ export default function QuotesPanel({
         <p className="muted small">No quotes yet.</p>
       ) : (
         <div className="table-wrap">
+          <MobileSort options={[["carrier", "Carrier"], ["premium", "Premium"], ["effective", "Effective"], ["status", "Status"], ["created", "Added"]]} sortKey={sortKey} dir={dir} onToggle={toggle} />
           <table className="stacked-table">
             <thead>
               <tr>

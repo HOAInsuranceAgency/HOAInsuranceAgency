@@ -12,7 +12,7 @@ import {
   type Quote,
 } from "../lib/client";
 import { Badge, statusBadge, QUOTE_STATUS_BADGE } from "../lib/badges";
-import { useSort, SortTh } from "../lib/useSort";
+import { MobileSort, useSort, SortTh } from "../lib/useSort";
 import { isOpenQuoteStatus } from "../lib/quoteStatus";
 import { useAsyncResource } from "../lib/useAsyncResource";
 
@@ -104,6 +104,7 @@ export default function QuotesList() {
           <p className="muted small">No quotes.</p>
         ) : (
           <div className="table-wrap">
+            <MobileSort options={[["account", "Account"], ["carrier", "Carrier"], ["premium", "Premium"], ["effective", "Effective"], ["status", "Status"]]} sortKey={sortKey} dir={dir} onToggle={toggle} />
             <table className="stacked-table">
               <thead>
                 <tr>

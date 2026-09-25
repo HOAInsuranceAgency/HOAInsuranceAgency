@@ -20,7 +20,7 @@ import {
   type AiFilledField,
 } from "../../lib/acord";
 import { downloadFile } from "../../lib/storage";
-import { useSort, SortTh } from "../../lib/useSort";
+import { MobileSort, useSort, SortTh } from "../../lib/useSort";
 import { useAsyncResource } from "../../lib/useAsyncResource";
 import AiFilledList from "../../components/AiFilledList";
 import FilePreviewModal from "../../components/FilePreview";
@@ -356,6 +356,7 @@ export function CertificatesTab({
             <p className="muted small">No certificates issued.</p>
           ) : (
             <div className="table-wrap">
+              <MobileSort options={[["number", "Cert #"], ["holder", "Holder"], ["form", "Form"], ["issued", "Issued"], ["by", "By"]]} sortKey={sortKey} dir={dir} onToggle={toggle} />
               <table className="stacked-table">
                 <thead>
                   <tr>

@@ -11,7 +11,10 @@ export function workLink(task: LeadTask): { path: string; label: string } {
   if (task.serviceType === "CERTIFICATE") return { path: `${account}?tab=certificates`, label: "Prepare certificate" };
   if (task.kind === "DOCUMENTS" || task.serviceType === "DOCUMENT") return { path: `${account}?tab=documents`, label: "Review documents" };
   if (["SUBMISSION", "QUOTE_TARGET", "QUOTE_PRESENTATION", "BIND"].includes(task.kind) || task.quoteId) return { path: `${account}?tab=quotes${task.kind === "SUBMISSION" ? "#carrier-work" : ""}`, label: task.kind === "SUBMISSION" ? "Review carrier submissions" : "Review quotes" };
-  if (task.policyId || task.kind === "RENEWAL_START") return { path: `${account}?tab=policies`, label: "Review renewal" };
+  // Resolve renewal preparation against the account's current stage at the
+  // destination, rather than assuming that every renewal task is a client.
+  if (task.kind === "RENEWAL_START") return { path: `${account}?tab=renewal`, label: "Review renewal" };
+  if (task.policyId) return { path: `${account}?tab=policies`, label: "Review renewal" };
   if (task.conversationId) return { path: `https://app.frontapp.com/open/${encodeURIComponent(task.conversationId)}`, label: task.kind === "CALLBACK" ? "Open call request" : "Open conversation" };
   return { path: `${account}?tab=overview#lead-workspace`, label: "Open lead workspace" };
 }
