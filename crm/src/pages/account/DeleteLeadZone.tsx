@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { remove } from "aws-amplify/storage";
+import { remove } from "../../lib/scopedStorage";
 import {
   client,
   friendlyError,

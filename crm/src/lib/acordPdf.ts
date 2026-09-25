@@ -3,8 +3,8 @@
 // mappings hand it a FieldValues. Public entry point: ./acord.ts
 
 import { PDFDocument, PDFTextField, PDFCheckBox, PDFName, PDFBool } from "pdf-lib";
-import { downloadData } from "aws-amplify/storage";
-import { getUrl } from "aws-amplify/storage";
+import { downloadData } from "./scopedStorage";
+import { getUrl } from "./scopedStorage";
 import { client } from "./client";
 
 export type FieldValues = Record<string, { candidates: string[]; value: string }>;

@@ -1,3 +1,5 @@
+import { installAccountAccess } from "./account-access";
+import { crmAccess } from "./functions/crm-access/resource";
 import { Alarm, TreatMissingData, Metric, ComparisonOperator } from "aws-cdk-lib/aws-cloudwatch";
 import { SnsAction } from "aws-cdk-lib/aws-cloudwatch-actions";
 import { Topic } from "aws-cdk-lib/aws-sns";
@@ -62,6 +64,7 @@ import {
 // effects, as it always has.
 export const backend = defineBackend({
   auth,
+  crmAccess,
   data,
   storage,
   processDocument,
@@ -976,3 +979,5 @@ backend.leadReply.addEnvironment(
 backend.extractLead.resources.lambda.grantInvoke(
   backend.leadReply.resources.lambda
 );
+
+installAccountAccess(backend, communicationTable);

@@ -1401,6 +1401,13 @@ describe("creation-only lead acquisition", () => {
     expect(await create({ leadSource: "EMAIL" })).toMatchObject({ id: result.id });
     expect(h.records.get(`Account:${result.id}`)?.leadSource).toBe("PHONE");
   });
+  it("assigns a salesperson's new lead to its creator instead of the agency default", async () => {
+    await save(row("ELIGIBILITY", "eligibility:sally", { userId: "sally", name: "Sally", enabled: true, salesperson: true }));
+    const { handler } = await import("../../amplify/functions/communications/handler");
+    const result = await handler({ arguments: { operation: "createLead", input: { requestId: "manual-own-lead-123456789", fields: { name: "Sally's lead", leadSource: "PHONE" } } }, identity: { sub: "sally", groups: ["PRODUCER"] } as never }) as { ok: boolean; id: string };
+    expect(result.ok).toBe(true);
+    expect(record(`workflow:${result.id}`).data.salespersonId).toBe("sally");
+  });
   it.each([["gclid", "GOOGLE_AD_WEBSITE"], ["wbraid", "GOOGLE_AD_WEBSITE"], ["", "ORGANIC_WEBSITE"]])("classifies website creation from %s", async (key, expected) => {
     const { handler: capture } = await import("../../amplify/functions/lead-intake/handler");
     const result = await capture({ arguments: { name: "Campaign test", attribution: JSON.stringify(key ? { [key]: "test-click" } : {}), source: "website-quote" } } as never, {} as never, () => {}) as { id: string };

@@ -4,7 +4,7 @@ export type Responsibility = "SALESPERSON" | "CHAMPION";
 export type TaskKind = "FOLLOW_UP" | "RESPONSE" | "CALLBACK" | "CARRIER" | "DOCUMENTS" | "CORRECTION" | "TRIAGE" | "FIRST_CONTACT" | "ANNUAL_RETURN" | "PROSPECT_UPDATE" | "RENEWAL_START" | "SUBMISSION" | "QUOTE_TARGET" | "QUOTE_PRESENTATION" | "BIND" | "SERVICE";
 export type WorkDomain = "CLIENT" | "CARRIER";
 export type BusinessContext = "LEAD" | "RENEWAL" | "SERVICE";
-/** Server-only admin-managed reporting relationships, separate from CRM access. */
+/** Server-only, admin-managed reporting relationships also define manager account access. */
 export interface TeamRouting {
   version: number; ownerId?: string; /** @deprecated Legacy storage only. */ marketingManagerId?: string; intakeOwnerId?: string; integrationOwnerId?: string;
   reportChannelId?: string;
@@ -12,6 +12,8 @@ export interface TeamRouting {
 }
 export interface TeamEligibility {
   userId: string; name: string; email: string; enabled: boolean;
+  /** Response-only hint; never used as an authorization source. */
+  canAccessAccount?: boolean;
   salesperson: boolean; /** @deprecated Legacy storage only. */ champion?: boolean; frontId?: string; dialpadId?: string; version?: number;
 }
 export interface LeadWorkflow {
