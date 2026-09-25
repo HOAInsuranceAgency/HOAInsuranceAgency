@@ -7,13 +7,13 @@ export type WorkItem = Partial<LeadTask & LeadWorkflow> & {
   communicationId?: string; phone?: string; urgency?: string; why?: string; instruction?: string; provider?: string; type?: string;
 };
 type WorkPage = { items: WorkItem[]; nextToken?: string };
-export function useWorkItems(kind: string, filters: { view?: string; mine?: boolean; responsibility?: string } = {}) {
-  const { view = "", mine = false, responsibility = "" } = filters;
-  const scope = JSON.stringify([kind, view, mine, responsibility]);
+export function useWorkItems(kind: string, filters: { view?: string; mine?: boolean } = {}) {
+  const { view = "", mine = false } = filters;
+  const scope = JSON.stringify([kind, view, mine]);
   const current = useRef(scope); current.current = scope;
   const generation = useRef(0), paging = useRef(false);
   const [loadingMore, setLoadingMore] = useState(false), [pageError, setPageError] = useState("");
-  const resource = useAsyncResource(() => request<WorkPage>("work", { kind, view, mine, responsibility }), [scope], {
+  const resource = useAsyncResource(() => request<WorkPage>("work", { kind, view, mine }), [scope], {
     initialData: { items: [] }, errorMessage: "Could not load this work. Please refresh.",
   });
   useEffect(() => {
@@ -30,7 +30,7 @@ export function useWorkItems(kind: string, filters: { view?: string; mine?: bool
     const ticket = generation.current;
     paging.current = true; setLoadingMore(true); setPageError("");
     try {
-      const page = await request<WorkPage>("work", { kind, view, mine, responsibility, nextToken: cursor });
+      const page = await request<WorkPage>("work", { kind, view, mine, nextToken: cursor });
       if (ticket !== generation.current || current.current !== scope) return;
       if (page.nextToken === cursor) throw new Error("More work could not be loaded. Refresh and try again.");
       resource.setData(previous => ({ ...page, items: [...new Map([...previous.items, ...page.items].map(item => [item.id, item])).values()] }));

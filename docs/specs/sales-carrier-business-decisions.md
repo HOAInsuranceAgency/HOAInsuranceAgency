@@ -1,5 +1,7 @@
 # Confirmed business decisions
 
+> Ownership update (September 25, 2026): [Salesperson account ownership](salesperson-account-ownership.md) supersedes all separate champion/marketing-manager ownership rules below. The earlier decisions remain here as historical context.
+
 September 10, 2026. Companion to the [revision specification](sales-carrier-workflow-revision.md). **The owner has resolved these six policies. They are specification decisions, not implemented or deployed behavior.** The owner's annual incumbent-date rollover replaces the earlier proposal for a generic “Revisit at renewal” action.
 
 ## Established responsibilities

@@ -18,7 +18,7 @@ export async function archiveAllowed(accountId: string, conversationId: string) 
   const waitingAfterAttempt = (id: string) => tasks.some(t => t.data.status === "OPEN" && t.data.dueAt > new Date().toISOString() && t.data.requirementSourceIds?.includes(id));
   const unresolved = activity.some(r => !r.data.resolved && !waitingAfterAttempt(r.id) && (r.data.direction === "INBOUND" && r.data.classification !== "AUTOMATIC" || r.data.channel === "CALL" && !r.data.outcome));
   if (!canArchive(wf.data, tasks.map(t => t.data), unresolved, unhealthy)) return false;
-  try { await enabledUser(wf.data.salespersonId!); if (wf.data.championId !== wf.data.salespersonId) await enabledUser(wf.data.championId!); } catch { return false; }
+  try { await enabledUser(wf.data.salespersonId!); } catch { return false; }
   // An inbound event may still be in transit. Front's current last message must
   // already be accounted for, not merely absent from the CRM task list.
   const last = conversation.last_message ?? (await front<{ _results: FrontMessage[] }>(`/conversations/${conversation.id}/messages?limit=1`))._results[0];

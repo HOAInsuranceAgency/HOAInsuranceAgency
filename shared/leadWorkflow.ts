@@ -1,23 +1,24 @@
 /** Public, credential-free workflow contracts shared by the CRM and workers. */
+/** CHAMPION is accepted only when reading records written before salesperson ownership. */
 export type Responsibility = "SALESPERSON" | "CHAMPION";
 export type TaskKind = "FOLLOW_UP" | "RESPONSE" | "CALLBACK" | "CARRIER" | "DOCUMENTS" | "CORRECTION" | "TRIAGE" | "FIRST_CONTACT" | "ANNUAL_RETURN" | "PROSPECT_UPDATE" | "RENEWAL_START" | "SUBMISSION" | "QUOTE_TARGET" | "QUOTE_PRESENTATION" | "BIND" | "SERVICE";
 export type WorkDomain = "CLIENT" | "CARRIER";
 export type BusinessContext = "LEAD" | "RENEWAL" | "SERVICE";
 /** Server-only admin-managed reporting relationships, separate from CRM access. */
 export interface TeamRouting {
-  version: number; ownerId?: string; marketingManagerId?: string; intakeOwnerId?: string; integrationOwnerId?: string;
+  version: number; ownerId?: string; /** @deprecated Legacy storage only. */ marketingManagerId?: string; intakeOwnerId?: string; integrationOwnerId?: string;
   reportChannelId?: string;
-  members: { userId: string; salesManager?: boolean; marketingManager?: boolean; salesManagerId?: string; coverId?: string; away?: boolean; coverFrom?: string; coverThrough?: string }[];
+  members: { userId: string; salesManager?: boolean; /** @deprecated Legacy storage only. */ marketingManager?: boolean; salesManagerId?: string; coverId?: string; away?: boolean; coverFrom?: string; coverThrough?: string }[];
 }
 export interface TeamEligibility {
   userId: string; name: string; email: string; enabled: boolean;
-  salesperson: boolean; champion: boolean; frontId?: string; dialpadId?: string; version?: number;
+  salesperson: boolean; /** @deprecated Legacy storage only. */ champion?: boolean; frontId?: string; dialpadId?: string; version?: number;
 }
 export interface LeadWorkflow {
-  accountId: string; name: string; salespersonId?: string; championId?: string;
+  accountId: string; name: string; salespersonId?: string; /** @deprecated Legacy storage only. */ championId?: string;
   disposition: "ACTIVE" | "BOUND" | "LOST" | "DISQUALIFIED";
   conversationId?: string; assignmentIssue?: string; humanTakeover?: boolean;
-  version: number; updatedAt: string;
+  version: number; updatedAt: string; ownershipModel?: "SALESPERSON";
   deferredUntil?: string; deferredExpiration?: string; deferredAt?: string;
   /** Retain acquisition work for unbound coverage after an account partially binds. */
   openLeadQuoteIds?: string[];
@@ -174,7 +175,7 @@ export function mergeInboundDeadline(existing: LeadTask | undefined, incoming: L
     escalationAt: existing.escalationAt < incoming.escalationAt ? existing.escalationAt : incoming.escalationAt };
 }
 export function canArchive(workflow: LeadWorkflow, tasks: LeadTask[], unresolved: boolean, unhealthy: boolean): boolean {
-  if (!workflow.salespersonId || !workflow.championId || workflow.assignmentIssue || unresolved || unhealthy) return false;
+  if (!workflow.salespersonId || workflow.assignmentIssue || unresolved || unhealthy) return false;
   const open = tasks.filter(t => t.status === "OPEN");
   if (open.some(t => t.dueAt <= new Date().toISOString() || ["RESPONSE", "CALLBACK", "CORRECTION"].includes(t.kind))) return false;
   return workflow.disposition !== "ACTIVE" || open.length > 0;

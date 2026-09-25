@@ -1,3 +1,4 @@
+import { salespersonTask } from "../../../../shared/salespersonOwnership";
 import { get, query, type Row } from "./store";
 import type { LeadWorkflow } from "../../../../shared/leadWorkflow";
 import { needsAttention } from "../../../../shared/leadWorkViews";
@@ -14,7 +15,7 @@ export async function workPage(input: { kind: string; view?: string; responsibil
     const page = await query("work", input.kind, nextToken, 50 - items.length);
     if (input.mine) await Promise.all([...new Set(page.items.flatMap(r => r.accountId && !owners.has(r.accountId) ? [r.accountId] : []))].map(async id => owners.set(id, (await get<LeadWorkflow>(`workflow:${id}`))?.data)));
     for (const r of page.items) {
-      const t = r.data;
+      const t = input.kind === "TASK" ? salespersonTask(r.data as unknown as import("../../../../shared/leadWorkflow").LeadTask) as unknown as Record<string, unknown> : r.data;
       if (t.resolved || t.processedAt || ["CONFIRMED", "SUPPRESSED"].includes(String(t.state))) continue;
       if (input.kind === "NOTIFICATION" && t.recipient !== input.actor) continue;
       if (input.mine) {
@@ -22,9 +23,7 @@ export async function workPage(input: { kind: string; view?: string; responsibil
         if (input.kind === "TASK" && wf) {
           const route = await (await import("./routing")).resolveTaskRoute(t as unknown as import("../../../../shared/leadWorkflow").LeadTask, wf);
           if (route.recipientId !== input.actor) continue;
-        } else if (input.responsibility === "SALESPERSON" ? wf?.salespersonId !== input.actor
-          : input.responsibility === "CHAMPION" ? wf?.championId !== input.actor
-          : wf?.salespersonId !== input.actor && wf?.championId !== input.actor && t.recipient !== input.actor) continue;
+        } else if (wf?.salespersonId !== input.actor && t.recipient !== input.actor) continue;
       }
       if (input.kind === "TASK") {
         if (t.status !== "OPEN") continue;
@@ -35,9 +34,8 @@ export async function workPage(input: { kind: string; view?: string; responsibil
         if (input.view === "Overdue" && String(t.dueAt) >= now) continue;
         if (input.view === "Due today" && day(String(t.dueAt)) !== day(now)) continue;
         if (input.view === "Waiting on prospect" && t.kind !== "FOLLOW_UP") continue;
-        if (input.view === "Champion work" && t.role !== "CHAMPION") continue;
       }
-      items.push(r);
+      items.push({ ...r, data: t });
     }
     nextToken = page.nextToken;
     if (!nextToken || items.length === 50) break;

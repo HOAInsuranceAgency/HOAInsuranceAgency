@@ -1,4 +1,5 @@
 import { SecretsManagerClient, GetSecretValueCommand, PutSecretValueCommand } from "@aws-sdk/client-secrets-manager";
+import { salespersonSettings } from "../../../../shared/salespersonOwnership";
 import type { IntegrationConfig } from "../../../../shared/leadWorkflow";
 import { get, row, put, commit, type Write } from "./store";
 
@@ -25,7 +26,7 @@ export async function saveCredentials(input: Credentials) {
 /** Old saved rows and cached clients may still include the retired toggle. */
 function currentSettings(input: IntegrationConfig & { cleanupEnabled?: unknown }): IntegrationConfig {
   const { cleanupEnabled: _retired, ...settings } = input;
-  return settings;
+  return salespersonSettings(settings);
 }
 export async function config(): Promise<IntegrationConfig> {
   const existing = await get<IntegrationConfig>("config");

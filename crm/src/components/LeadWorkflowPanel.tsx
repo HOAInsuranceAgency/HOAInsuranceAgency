@@ -16,7 +16,7 @@ import { compactDateTime, communicationChannelLabels } from "../lib/communicatio
 
 const EMPTY: WorkflowContext = { workflow: null, tasks: [], communications: [], team: [], issues: [] };
 export function ResponsibilitySelect({ label, value, team, kind, onChange, disabled = false }: {
-  label: string; value: string; team: TeamEligibility[]; kind: "salesperson" | "champion"; onChange: (value: string) => void; disabled?: boolean;
+  label: string; value: string; team: TeamEligibility[]; kind: "salesperson"; onChange: (value: string) => void; disabled?: boolean;
 }) {
   const eligible = team.filter(t => t.enabled && t[kind]);
   return <label className="field">{label}<select aria-label={label} value={value} onChange={e => onChange(e.target.value)} disabled={disabled}>
@@ -30,7 +30,7 @@ export default function LeadWorkflowPanel({ accountId, conversationId, onOpen }:
   const [editingTeam, setEditingTeam] = useState(false);
   const [notice, setNotice] = useState("");
   const [revision, setRevision] = useState(0), [error, setError] = useState(""), [busy, setBusy] = useState(false);
-  const [salesperson, setSalesperson] = useState(""), [champion, setChampion] = useState("");
+  const [salesperson, setSalesperson] = useState("");
   const [leadStatus, setLeadStatus] = useState("LOST");
   const noteId = useRef(crypto.randomUUID());
   const [mergeIds, setMergeIds] = useState<string[]>([]), [mergeReason, setMergeReason] = useState("");
@@ -45,7 +45,7 @@ export default function LeadWorkflowPanel({ accountId, conversationId, onOpen }:
     document.addEventListener("visibilitychange", refresh);
     return () => { window.clearInterval(timer); document.removeEventListener("visibilitychange", refresh); };
   }, [compact, busy, editingTeam, note, resource.loading, resource.refetch]);
-  useEffect(() => { setSalesperson(workflow?.salespersonId ?? ""); setChampion(workflow?.championId ?? ""); }, [workflow?.salespersonId, workflow?.championId]);
+  useEffect(() => { setSalesperson(workflow?.salespersonId ?? ""); }, [workflow?.salespersonId]);
   // The parent keys the panel by conversation/account, so unsaved edits never
   // become writes against the newly selected lead in Front.
   const run = async (op: string, input: unknown) => {
@@ -65,10 +65,10 @@ export default function LeadWorkflowPanel({ accountId, conversationId, onOpen }:
   const caughtUp = resource.data.trackingHealthy === true && !busy && !error
     && ["ACTIVE", "BOUND"].includes(workflow.disposition) && !workflow.assignmentIssue && !issues.length && !openTasks.length
     && team.some(t => t.userId === workflow.salespersonId && t.enabled && t.salesperson)
-    && team.some(t => t.userId === workflow.championId && t.enabled && t.champion)
     && !resource.data.communicationNextToken
     && (clientWork || communications.some(c => c.contactApplied || c.resolved && c.classification !== "AUTOMATIC"))
     && communications.every(c => c.internalReport || c.resolved || c.classification === "AUTOMATIC" || c.direction !== "INBOUND" && (c.channel !== "CALL" || !!c.outcome));
+  const mergeableTasks = openTasks.filter(t => ["RESPONSE", "CALLBACK"].includes(t.kind) && (t.domain ?? "CLIENT") === "CLIENT" && (t.context ?? "LEAD") === "LEAD");
   const nextActions = caughtUp ? null : <section className={compact ? "front-next-actions" : undefined} aria-label="Next actions">
     <div className="toolbar"><h3>{compact ? "Next action" : "Next actions"}</h3></div>
     {!openTasks.length && <p className="muted">{workflow.disposition === "ACTIVE" ? "No open actions." : `Lead outcome: ${workflow.disposition.toLowerCase()}`}</p>}
@@ -78,7 +78,7 @@ export default function LeadWorkflowPanel({ accountId, conversationId, onOpen }:
         <p className="workflow-why"><span>{t.escalatedAt ? "Why this was escalated" : t.notifiedAt ? "Why this is back" : "Why this needs attention"}</span>{guidance.why}</p>
         {guidance.preview && <blockquote className="workflow-request"><span>Original request</span>{guidance.preview}</blockquote>}
         <strong className="workflow-task-title">{guidance.action}</strong>
-        <div className="small workflow-task-meta">{t.specialistId ? `Specialist: ${teamName(t.specialistId)}` : t.helperId ? `Helping: ${teamName(t.helperId)}` : t.role === "CHAMPION" ? "Deal champion" : "Salesperson"} · Due {compact ? compactDateTime(t.dueAt) : fmtDateTime(t.dueAt)}{t.dueAt < new Date().toISOString() ? " · Overdue" : ""}</div>
+        <div className="small workflow-task-meta">{t.specialistId ? `Specialist: ${teamName(t.specialistId)}` : t.helperId ? `Helping: ${teamName(t.helperId)}` : "Salesperson"} · Due {compact ? compactDateTime(t.dueAt) : fmtDateTime(t.dueAt)}{t.dueAt < new Date().toISOString() ? " · Overdue" : ""}</div>
         <p className="workflow-next-help">{guidance.after}</p>
         {compact && t.kind === "QUOTE_PRESENTATION" && t.quoteId && conversationId && <BusinessDraftButton accountId={workflow.accountId} conversationId={conversationId} kind="QUOTE" recordId={t.quoteId} label="Prepare quote email" />}
         {compact && t.serviceType && t.serviceType !== "GENERAL" && conversationId && <ServiceDelivery task={t} conversationId={conversationId} onPrepare={() => open(`${window.location.origin}/accounts/${workflow.accountId}?tab=${t.serviceType === "CERTIFICATE" ? "certificates" : "documents"}&request=${encodeURIComponent(t.sourceIds?.[0] ?? "")}`)} />}
@@ -86,14 +86,13 @@ export default function LeadWorkflowPanel({ accountId, conversationId, onOpen }:
         {!compact && t.serviceType === "CERTIFICATE" && <button className="secondary" onClick={() => open(`${window.location.origin}/accounts/${workflow.accountId}?tab=certificates&request=${encodeURIComponent(t.sourceIds?.[0] ?? "")}`)}>Prepare certificate</button>}
         {t.milestone && !t.serviceType && <button className="secondary" onClick={() => open(`${window.location.origin}${workLink({ ...t, blocker: undefined }).path}`)}>{workLink({ ...t, blocker: undefined }).label}</button>}
         {canRecordBlocker(t) && <WorkBlocker task={t} team={team} busy={busy} run={run} />}
-        {resource.data.actorId === workflow.salespersonId && workflow.championId !== workflow.salespersonId && !t.helperId && t.role === "SALESPERSON" && <button className="link" disabled={busy} onClick={() => void run("requestChampionHelp", { taskId: t.id, version: t.version })}>Ask champion to help</button>}
-        {resource.data.actorId === workflow.championId && t.kind === "CARRIER" && (t.context ?? "LEAD") === "LEAD" && <button className="link" disabled={busy} onClick={() => void run("requestProspectInformation", { taskId: t.id, version: t.version })}>Ask sales to obtain this information</button>}
-        {resource.data.actorId === workflow.championId && t.context === "SERVICE" && <details><summary>Coordinate with a specialist</summary><label className="field">Responsible specialist<select value={t.specialistId ?? ""} disabled={busy} onChange={e => { if (e.target.value) void run("delegateService", { taskId: t.id, version: t.version, specialistId: e.target.value }); }}><option value="">Choose teammate</option>{team.filter(m => m.enabled).map(m => <option key={m.userId} value={m.userId}>{m.name}</option>)}</select></label><p className="muted small">The champion remains the client's main contact. The deadline stays the same.</p></details>}
-        {["RESPONSE", "CALLBACK"].includes(t.kind) && openTasks.filter(task => ["RESPONSE", "CALLBACK"].includes(task.kind)).length > 1 && <details className="workflow-related"><summary>Related requests</summary><label className="small"><input type="checkbox" aria-label={`Combine ${t.title}`} checked={mergeIds.includes(t.id)} onChange={e => setMergeIds(ids => e.target.checked ? [...ids, t.id] : ids.filter(id => id !== t.id))} /> Same request as another activity</label></details>}
+        {resource.data.actorId === workflow.salespersonId && t.kind === "CARRIER" && (t.context ?? "LEAD") === "LEAD" && <button className="link" disabled={busy} onClick={() => void run("requestProspectInformation", { taskId: t.id, version: t.version })}>Request client information</button>}
+        {resource.data.actorId === workflow.salespersonId && t.context === "SERVICE" && <details><summary>Coordinate with a specialist</summary><label className="field">Responsible specialist<select value={t.specialistId ?? ""} disabled={busy} onChange={e => { if (e.target.value) void run("delegateService", { taskId: t.id, version: t.version, specialistId: e.target.value }); }}><option value="">Choose teammate</option>{team.filter(m => m.enabled).map(m => <option key={m.userId} value={m.userId}>{m.name}</option>)}</select></label><p className="muted small">The salesperson remains the client's main contact. The deadline stays the same.</p></details>}
+        {mergeableTasks.includes(t) && mergeableTasks.length > 1 && <details className="workflow-related"><summary>Related requests</summary><label className="small"><input type="checkbox" aria-label={`Combine ${t.title}`} checked={mergeIds.includes(t.id)} onChange={e => setMergeIds(ids => e.target.checked ? [...ids, t.id] : ids.filter(id => id !== t.id))} /> Same request as another activity</label></details>}
       </article>;
     })}
-    {mergeIds.length >= 2 && <div className="workflow-editor"><label className="field">Why these contacts concern the same request<input value={mergeReason} onChange={e => setMergeReason(e.target.value)} /></label><button disabled={busy || !mergeReason.trim()} onClick={async () => { if (await run("mergeTasks", { accountId: workflow.accountId, tasks: openTasks.filter(t => mergeIds.includes(t.id)).map(t => ({ id: t.id, version: t.version })), reason: mergeReason })) { setMergeIds([]); setMergeReason(""); } }}>Combine and keep the earliest deadline</button></div>}
-    {compact && <p className="front-deadline-note">Reminders arrive at 9 a.m. Eastern. Snoozing never changes the due date.</p>}
+    {mergeIds.length >= 2 && <div className="workflow-editor"><label className="field">Why these contacts concern the same request<input value={mergeReason} onChange={e => setMergeReason(e.target.value)} /></label><button disabled={busy || !mergeReason.trim()} onClick={async () => { if (await run("mergeTasks", { accountId: workflow.accountId, tasks: mergeableTasks.filter(t => mergeIds.includes(t.id)).map(t => ({ id: t.id, version: t.version })), reason: mergeReason })) { setMergeIds([]); setMergeReason(""); } }}>Combine and keep the earliest deadline</button></div>}
+    {compact && <p className="front-deadline-note">CRM reminders arrive at 9 a.m. Eastern. They do not reopen Front conversations or change snoozes.</p>}
   </section>;
   const history = <>
     <div className="toolbar">{!compact && <h3>Communication history</h3>}<select aria-label="Communication channel" value={channel} onChange={e => setChannel(e.target.value)}>{["ALL", "EMAIL", "CALL", "SMS", "NOTE"].map(c => <option key={c} value={c}>{communicationChannelLabels[c]}</option>)}</select></div>
@@ -127,7 +126,7 @@ export default function LeadWorkflowPanel({ accountId, conversationId, onOpen }:
     {workflow.conversationId && <>
       <div className="front-tool-action"><button className="secondary" disabled={busy} onClick={() => void run("archive", { accountId: workflow.accountId, conversationId: conversationId ?? workflow.conversationId, version: workflow.version })}>{compact ? "Tidy this conversation" : "Clean up inbox when ready"}</button>{compact && <p className="muted small">Archives only when the lead's work is safely tracked.</p>}</div>
       {compact && <h3>Assign Front conversation to</h3>}
-      <div className="toolbar">{["SALESPERSON", "CHAMPION"].map(role => <button className={compact ? "secondary" : "link"} key={role} disabled={busy} onClick={() => void run("routeConversation", { conversationId: conversationId ?? workflow.conversationId, role })}>{compact ? role === "CHAMPION" ? "Deal champion" : "Salesperson" : `Use ${role === "CHAMPION" ? "deal champion" : "salesperson"} as Front handler`}</button>)}</div>
+      <div className="toolbar"><button className={compact ? "secondary" : "link"} disabled={busy} onClick={() => void run("routeConversation", { conversationId: conversationId ?? workflow.conversationId, role: "SALESPERSON" })}>Use salesperson as Front handler</button></div>
     </>}
     {compact && conversationId && <SidebarActivityLinker accountId={workflow.accountId} conversationId={conversationId} onSaved={() => void resource.refetch()} />}
   </>;
@@ -144,20 +143,19 @@ export default function LeadWorkflowPanel({ accountId, conversationId, onOpen }:
     {issues.length > 0 && <details open className="front-disclosure"><summary>Needs attention <span className="front-count">{issues.length}</span></summary>{issues.map(i => <div key={i.id}><p className="error-text small">{i.message}</p></div>)}</details>}
     {workflow.deferredUntil && <p className="workflow-notice">Next renewal opportunity · Returns {fmtDateTime(workflow.deferredUntil)}. New requests remain tracked.</p>}
     {compact && nextActions}
-    <section className={compact ? "front-team" : undefined} aria-label="Lead team">
-      {compact && <div className="toolbar"><h3>{clientWork ? "Client team" : "Lead team"}</h3><div className="grow" />{!editingTeam && <button className="link" onClick={() => setEditingTeam(true)}>Edit team</button>}</div>}
-      {compact && !editingTeam ? <dl className="front-team-list">{!clientWork && <div><dt>Salesperson</dt><dd>{teamName(workflow.salespersonId)}</dd></div>}<div><dt>{clientWork ? "Main contact" : "Deal champion"}</dt><dd>{teamName(workflow.championId)}</dd></div></dl> : <>
+    <section className={compact ? "front-team" : undefined} aria-label="Account owner">
+      {compact && <div className="toolbar"><h3>Account owner</h3><div className="grow" />{!editingTeam && <button className="link" onClick={() => setEditingTeam(true)}>Edit salesperson</button>}</div>}
+      {compact && !editingTeam ? <dl className="front-team-list"><div><dt>Salesperson</dt><dd>{teamName(workflow.salespersonId)}</dd></div></dl> : <>
         <div className="form-grid">
           <ResponsibilitySelect label="Salesperson" value={salesperson} team={team} kind="salesperson" onChange={setSalesperson} disabled={busy} />
-          <ResponsibilitySelect label="Deal champion" value={champion} team={team} kind="champion" onChange={setChampion} disabled={busy} />
         </div>
         <div className="toolbar">
-          <button className="primary" disabled={busy || !salesperson || !champion || salesperson === workflow.salespersonId && champion === workflow.championId}
-            onClick={async () => { if (await run("setResponsibilities", { accountId: workflow.accountId, salespersonId: salesperson, championId: champion, version: workflow.version })) setEditingTeam(false); }}>Save responsibilities</button>
-          {compact && <button className="secondary" disabled={busy} onClick={() => { setSalesperson(workflow.salespersonId ?? ""); setChampion(workflow.championId ?? ""); setEditingTeam(false); }}>Cancel</button>}
+          <button className="primary" disabled={busy || !salesperson || salesperson === workflow.salespersonId}
+            onClick={async () => { if (await run("setResponsibilities", { accountId: workflow.accountId, salespersonId: salesperson, version: workflow.version })) setEditingTeam(false); }}>Save salesperson</button>
+          {compact && <button className="secondary" disabled={busy} onClick={() => { setSalesperson(workflow.salespersonId ?? ""); setEditingTeam(false); }}>Cancel</button>}
         </div>
       </>}
-      {resource.data.frontContext && <p className="muted small front-handler">In Front: {team.find(t => t.frontId === resource.data.frontContext?.assigneeId)?.name ?? (resource.data.frontContext.assigneeId ? "Unmapped teammate" : "Unassigned")}<span>{resource.data.frontContext.routing === "MANUAL" ? "Manually assigned" : "Follows the lead role"}</span></p>}
+      {resource.data.frontContext && <p className="muted small front-handler">In Front: {team.find(t => t.frontId === resource.data.frontContext?.assigneeId)?.name ?? (resource.data.frontContext.assigneeId ? "Unmapped teammate" : "Unassigned")}<span>{resource.data.frontContext.routing === "MANUAL" ? "Manually assigned" : "Follows the account salesperson"}</span></p>}
     </section>
     {!compact && <><div className="toolbar">{workflow.conversationId && <button className="secondary" onClick={() => open(`https://app.frontapp.com/open/${workflow.conversationId}`)}>Open in Front</button>}</div>{conversationTools}<p className="muted small">Archiving or snoozing in Front does not change these deadlines.</p>{nextActions}</>}
     {compact ? <>

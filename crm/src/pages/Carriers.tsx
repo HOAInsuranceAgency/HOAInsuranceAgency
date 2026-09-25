@@ -2,7 +2,9 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   client,
+  assertNoErrors,
   fmtMoney,
+  listAllPages,
   US_STATES,
   type AppetiteGuide,
   type Carrier,
@@ -37,7 +39,11 @@ export default function Carriers() {
   const navigate = useNavigate();
 
   const carrierRes = useAsyncResource(
-    async () => (await client.models.Carrier.list()).data,
+    () => listAllPages(async (nextToken) => {
+      const page = await client.models.Carrier.list({ nextToken });
+      assertNoErrors(page);
+      return page;
+    }),
     [],
     { initialData: [] as Carrier[], errorMessage: "Failed to load carriers" }
   );
@@ -47,7 +53,11 @@ export default function Carriers() {
   // the "Lines written" column. Without them the finder answers "no appetite"
   // for every risk, which is a wrong answer rather than a missing one.
   const guideRes = useAsyncResource(
-    async () => (await client.models.AppetiteGuide.list()).data,
+    () => listAllPages(async (nextToken) => {
+      const page = await client.models.AppetiteGuide.list({ nextToken });
+      assertNoErrors(page);
+      return page;
+    }),
     [],
     { initialData: [] as AppetiteGuide[], errorMessage: "Failed to load appetite guides" }
   );
@@ -88,10 +98,8 @@ export default function Carriers() {
       <h1>Carriers</h1>
       <p className="sub">Appointments, prospective appointments, and appetite guides</p>
 
-      {/* Gated on `loaded`: the finder answers "no appointed carrier has
-          appetite for this risk", and before the reads land that is a false
-          negative rather than a placeholder. */}
-      {carrierRes.loaded && guideRes.loaded && (
+      {/* Only complete, successful reads can support an appetite verdict. */}
+      {carrierRes.loaded && guideRes.loaded && !carrierRes.error && !guideRes.error && (
         <AppetiteFinder carriers={carriers} guides={guides} />
       )}
       {guideRes.error && <p className="error-text">{guideRes.error}</p>}

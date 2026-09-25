@@ -1,10 +1,14 @@
 # Reminder behavior — business review
 
+> Ownership update (September 25, 2026): [Salesperson account ownership](salesperson-account-ownership.md) supersedes all separate champion/marketing-manager ownership rules below. The earlier decisions remain here as historical context.
+
 September 10, 2026. Plain-language companion to the [revision specification](sales-carrier-workflow-revision.md) and [confirmed decisions](sales-carrier-business-decisions.md). **This describes the intended revision for review before code changes. It is not a claim that these behaviors are deployed.**
 
 ## What a reminder is
 
-A work reminder puts a real obligation in the responsible person's CRM list and, where linked, reopens the relevant Front conversation. It explains why the item is back, the next step, who owns it and the deadline. The daily email summarizes those same obligations; it does not create another task to complete.
+A work reminder puts a real obligation in the responsible person's CRM list. It explains what needs attention, the next step, who owns it and the deadline. The daily email summarizes those same obligations; it does not create another task to complete.
+
+**September 25, 2026 update:** Scheduled reminders no longer reopen or unsnooze Front conversations, or post daily reminder comments. Pending deliveries from the old behavior are suppressed. CRM notifications, daily email reports, deadlines and escalations continue. New inbound activity still follows the normal communication workflow.
 
 - Scheduled reminders and report emails run at **9 a.m. Eastern on business days**, excluding agency holidays. Ordinary new messages/calls appear when received. They do not wait for the next morning.
 - One business day for response work means eight staffed hours, using 9 a.m.–5 p.m. Eastern. The morning reminder comes before the deadline; there is no separate scheduled 5 p.m. reminder.
@@ -98,7 +102,7 @@ Every email below is **internal**, sent to the verified staff recipient through 
 
 Each edition includes its as-of time, relevant counts, a short list of priority items, the responsible names and links to the original work/full current list. Larger lists say “and N more,” and the full report can be downloaded. Emails are snapshots; opening their links shows the latest state after work has been handled. No one needs to reply to, acknowledge or complete the report itself.
 
-There is **no separate CRM-generated email for each task, escalation stage or completion**. The next morning's same report carries unresolved work and material changes. Front can add a short internal explanation when it first resurfaces a conversation or its escalation changes; this is context on the same obligation, not another task or a customer-facing email. Normal provider notifications continue according to existing Front/Dialpad preferences.
+There is **no separate CRM-generated email for each task, escalation stage or completion**. The next morning's same report carries unresolved work and material changes. Ordinary team comments and new inbound activity continue in Front; scheduled reminders and escalation changes do not post comments or reopen conversations. Normal provider notifications continue according to existing Front/Dialpad preferences.
 
 These staff reminders do not send automatic chase emails/texts to prospects or carriers. The previously specified initial AI introduction remains separate. Existing unrelated licensing, billing and finance notices are outside this reminder catalog; consolidate only overlapping lead/marketing sections of older reports so they are not duplicated at 7 a.m. and 9 a.m.
 

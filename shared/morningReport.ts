@@ -23,7 +23,7 @@ export function morningReport(input: { recipientId: string; team: TeamEligibilit
   const sections = new Set<string>(), items = new Map<string, ReportItem>();
   const counts = new Map<string, { name: string; due: number; overdue: number }>();
   const daily = !!member?.salesperson || !!settings?.salesManager;
-  if (member?.salesperson) sections.add("Your leads today");
+  if (member?.salesperson) sections.add("Your accounts today");
   if (settings?.salesManager) {
     sections.add("Your sales team today");
     for (const report of routing.members.filter(m => m.salesManagerId === recipientId)) counts.set(report.userId, { name: team.find(m => m.userId === report.userId)?.name ?? "Teammate", due: 0, overdue: 0 });
@@ -36,10 +36,10 @@ export function morningReport(input: { recipientId: string; team: TeamEligibilit
     const manager = task.escalationAt <= now, owner = !!task.ownerEscalationAt && task.ownerEscalationAt <= now;
     const sales = taskContext(task) === "LEAD" && taskDomain(task) === "CLIENT";
     const count = route.accountableId ? counts.get(route.accountableId) : undefined;
-    if (sales && count && attention) { count.due++; if (task.dueAt < now) count.overdue++; }
+    if (count && attention) { count.due++; if (task.dueAt < now) count.overdue++; }
     let section = "", stage: ReportItem["stage"] = "DUE";
-    if ((route.recipientId === recipientId || task.specialistId && route.accountableId === recipientId) && attention) section = sales ? task.helperReason === "SALES_ASSIST" ? "Prospect help requested" : "Your leads today" : "Your client and carrier work today";
-    if (route.managerId === recipientId && manager && route.accountableId !== recipientId) { section = sales ? "Your sales team today" : "Marketing and client-service exceptions"; stage = "MANAGER"; }
+    if ((route.recipientId === recipientId || task.specialistId && route.accountableId === recipientId) && attention) section = "Your accounts today";
+    if (route.managerId === recipientId && manager && route.accountableId !== recipientId) { section = "Your sales team today"; stage = "MANAGER"; }
     if (route.ownerId === recipientId && owner && route.accountableId !== recipientId) { section = "Needs your attention"; stage = "OWNER"; }
     if (!section) continue;
     const guidance = leadActionGuidance(task, [], stage !== "DUE", now), link = workLink(task);
@@ -47,7 +47,7 @@ export function morningReport(input: { recipientId: string; team: TeamEligibilit
     sections.add(section);
     items.set(task.id, { id: task.id, taskVersion: task.version, accountId: task.accountId, account: wf.name, title: guidance.action, why: guidance.why, next: guidance.after, dueAt: task.dueAt,
       responsible: team.find(m => m.userId === route.recipientId)?.name ?? "Needs assignment", section, stage,
-      kind: task.kind, term: task.term, role: task.blocker ? "Blocker owner" : route.role === "SALESPERSON" ? "Salesperson" : "Deal champion", group: sales ? "Sales" : "Client and carrier",
+      kind: task.kind, term: task.term, role: task.blocker ? "Blocker owner" : "Salesperson", group: sales ? "Sales" : "Client and carrier",
       verifiedEscalation: stage === "OWNER" ? !!task.escalatedAt : stage === "MANAGER" ? !!task.notifiedAt : false,
       canTakeResponse: canTakeResponse(task), url: link.path, linkLabel: link.label,
       blockerOwner: task.blocker ? team.find(m => m.userId === task.blocker!.ownerId)?.name ?? "Needs assignment" : undefined, blockerReviewAt: task.blocker?.reviewAt });
@@ -69,7 +69,7 @@ export function prioritizeReportItems(items: ReportItem[], now: string) {
   return [...items].sort((a,b) => reportPriority(a, now) - reportPriority(b, now) || (a.dueAt ?? "").localeCompare(b.dueAt ?? "") || a.id.localeCompare(b.id));
 }
 export const reportGroup = (i: ReportItem) => i.group ?? (i.stage === "EXCEPTION" ? "Setup and data" : "Sales");
-/** Reserve space for both business roles; one old account cannot fill the email. */
+/** Reserve space for prospect and client/carrier work; one old account cannot fill the email. */
 export function selectReportItems(report: MorningReport, limit = 20) {
   const sorted = prioritizeReportItems(report.items, report.asOf), picked: ReportItem[] = [];
   const queues = ["Sales", "Client and carrier"].map(g => sorted.filter(i => reportGroup(i) === g));

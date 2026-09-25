@@ -25,15 +25,14 @@ export default function LeadEligibilitySettings() {
   function closeEditor() { if (!inFlight.current) { setEditing(null); setError(""); } }
   const disabled = busy || resource.loading || !!editing;
   return <section className="card team-eligibility" aria-labelledby="lead-eligibility-title">
-    <h2 id="lead-eligibility-title">Lead assignment eligibility</h2>
-    <p className="muted small">These choices control who appears in the salesperson and deal champion dropdowns. They do not change access or permissions.</p>
+    <h2 id="lead-eligibility-title">Salesperson assignment eligibility</h2>
+    <p className="muted small">These choices control who appears in the salesperson dropdown. They do not change access or permissions.</p>
     {!editing && (error || resource.error) && <div role="alert"><p className="error-text">{error || resource.error}</p><button type="button" className="secondary" disabled={disabled} onClick={() => { setError(""); void resource.refetch(); }}>Refresh teammates</button></div>}
     <p className="small muted" role="status">{busy ? "Saving teammate settings…" : resource.loading ? "Loading teammates…" : message}</p>
-    <div className="table-wrap"><table><thead><tr><th scope="col">Teammate</th><th scope="col">Salesperson</th><th scope="col">Deal champion</th><th scope="col">Front</th><th scope="col">Dialpad</th><th scope="col">Actions</th></tr></thead><tbody>
+    <div className="table-wrap"><table><thead><tr><th scope="col">Teammate</th><th scope="col">Salesperson</th><th scope="col">Front</th><th scope="col">Dialpad</th><th scope="col">Actions</th></tr></thead><tbody>
       {resource.data.team.map(member => <tr key={member.userId}>
         <td>{member.name}<div className="muted small">{member.email}</div></td>
         <td><input aria-label={`Salesperson eligibility for ${member.name}`} type="checkbox" checked={member.salesperson} disabled={disabled} onChange={event => void save(member, { salesperson: event.target.checked })} /></td>
-        <td><input aria-label={`Deal champion eligibility for ${member.name}`} type="checkbox" checked={member.champion} disabled={disabled} onChange={event => void save(member, { champion: event.target.checked })} /></td>
         <td>{member.frontId ? <code className="team-connection-id">{member.frontId}</code> : <span className="muted small">Not linked</span>}</td>
         <td>{member.dialpadId ? <code className="team-connection-id">{member.dialpadId}</code> : <span className="muted small">Not linked</span>}</td>
         <td><button type="button" className="secondary" disabled={disabled} aria-label={`Edit connections for ${member.name}`} onClick={() => { setEditing(member); setError(""); setMessage(""); }}>Edit connections</button></td>

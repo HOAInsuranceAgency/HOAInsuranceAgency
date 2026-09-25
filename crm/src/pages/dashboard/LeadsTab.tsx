@@ -57,13 +57,13 @@ interface LeadRow {
   standing: QuoteStanding | null;
   tiv: number | null;
   city: string | null; state: string | null; form: string;
-  salespersonId?: string; championId?: string; salesperson: string; champion: string;
+  salespersonId?: string; salesperson: string;
   estimate: number | null; pending: number | null; basis: string; partiallyBound: boolean;
 }
 
 export default function LeadsTab() {
   const navigate = useNavigate();
-  const [salespersonFilter, setSalespersonFilter] = useState(''), [championFilter, setChampionFilter] = useState('');
+  const [salespersonFilter, setSalespersonFilter] = useState('');
 
   const res = useAsyncResource<LeadsData>(
     async () => {
@@ -139,11 +139,11 @@ export default function LeadsTab() {
         standing: leadQuoteStanding(quotesByLead.get(l.id) ?? []),
         tiv: l.totalInsuredValue ?? null,
         city: l.city ?? null, state: l.state ?? null, form: websiteFormLabel(l.source),
-        salespersonId: entry?.salespersonId, championId: entry?.championId,
-        salesperson: teammateName(entry?.salespersonId, commercial.data.team), champion: teammateName(entry?.championId, commercial.data.team),
+        salespersonId: entry?.salespersonId,
+        salesperson: teammateName(entry?.salespersonId, commercial.data.team),
         estimate: entry?.plan.estimatedCents ?? null, pending: forecast?.cents ?? null, basis: forecast?.label ?? 'No package options', partiallyBound: l.stage === 'CLIENT',
-      }); }).filter(r => (!salespersonFilter || r.salespersonId === salespersonFilter) && (!championFilter || r.championId === championFilter)),
-    [activeLeads, quotesByLead, contactHistory.contacts, commercial.data, today, salespersonFilter, championFilter]
+      }); }).filter(r => (!salespersonFilter || r.salespersonId === salespersonFilter)),
+    [activeLeads, quotesByLead, contactHistory.contacts, commercial.data, today, salespersonFilter]
   );
 
   // Soonest incumbent expiration first: the lead about to renew with someone
@@ -161,7 +161,7 @@ export default function LeadsTab() {
       // strings would say.
       pipeline: (r) => quoteStandingRank(r.standing),
       tiv: (r) => r.tiv,
-      salesperson: r => r.salesperson, champion: r => r.champion, city: r => r.city, state: r => r.state, form: r => r.form, estimate: r => r.estimate, pending: r => r.pending,
+      salesperson: r => r.salesperson, city: r => r.city, state: r => r.state, form: r => r.form, estimate: r => r.estimate, pending: r => r.pending,
     },
     "expires"
   );
@@ -221,11 +221,11 @@ export default function LeadsTab() {
       <div className="card">
         <div className="card-head">
           <h2>Lead work list</h2>
-          <ReportDownload disabled={contactHistory.loading || !!contactHistory.error || commercial.loading || !!commercial.error} report={{ title: "Lead work list", filters: `Open leads and packages being bound · sorted by ${sortKey} (${dir}) · Salesperson: ${commercial.data.team.find(t => t.userId === salespersonFilter)?.name ?? 'All'} · Champion: ${commercial.data.team.find(t => t.userId === championFilter)?.name ?? 'All'}`, sections: [{ title: "Leads", columns: ["Lead", "Salesperson", "Deal champion", "City", "State", "Lead source", "Website form", "Estimated opportunity (USD)", "Pending commission (USD)", "Commission basis", "Last contact (local)", "Entered", "Incumbent expires", "Pipeline", "Quote count", "TIV (USD)"], rows: sorted.map(r => [r.name, r.salesperson, r.champion, r.city, r.state, r.source, r.form, r.estimate == null ? null : r.estimate / 100, r.pending == null ? null : r.pending / 100, r.basis, r.lastContact ? fmtDateTime(r.lastContact) : "No contact recorded", r.entered?.slice(0, 10), r.expires, r.standing?.status ?? "Unworked", r.standing?.count ?? 0, r.tiv]) }] }} />
+          <ReportDownload disabled={contactHistory.loading || !!contactHistory.error || commercial.loading || !!commercial.error} report={{ title: "Lead work list", filters: `Open leads and packages being bound · sorted by ${sortKey} (${dir}) · Salesperson: ${commercial.data.team.find(t => t.userId === salespersonFilter)?.name ?? 'All'}`, sections: [{ title: "Leads", columns: ["Lead", "Salesperson", "City", "State", "Lead source", "Website form", "Estimated opportunity (USD)", "Pending commission (USD)", "Commission basis", "Last contact (local)", "Entered", "Incumbent expires", "Pipeline", "Quote count", "TIV (USD)"], rows: sorted.map(r => [r.name, r.salesperson, r.city, r.state, r.source, r.form, r.estimate == null ? null : r.estimate / 100, r.pending == null ? null : r.pending / 100, r.basis, r.lastContact ? fmtDateTime(r.lastContact) : "No contact recorded", r.entered?.slice(0, 10), r.expires, r.standing?.status ?? "Unworked", r.standing?.count ?? 0, r.tiv]) }] }} />
           <span className="muted small">sorted by incumbent expiration</span>
         </div>
         <p className="muted small">Last contact includes prospect emails, calls and texts in either direction. Times are shown in your local time zone.</p>
-        <div className="toolbar"><label className="field">Salesperson<select value={salespersonFilter} onChange={e => setSalespersonFilter(e.target.value)}><option value="">All salespeople</option>{commercial.data.team.map(t => <option key={t.userId} value={t.userId}>{t.name}</option>)}</select></label><label className="field">Deal champion<select value={championFilter} onChange={e => setChampionFilter(e.target.value)}><option value="">All champions</option>{commercial.data.team.map(t => <option key={t.userId} value={t.userId}>{t.name}</option>)}</select></label></div>
+        <div className="toolbar"><label className="field">Salesperson<select value={salespersonFilter} onChange={e => setSalespersonFilter(e.target.value)}><option value="">All salespeople</option>{commercial.data.team.map(t => <option key={t.userId} value={t.userId}>{t.name}</option>)}</select></label></div>
         {commercial.error && <p className="error-text" role="alert">{commercial.error} <button onClick={() => void commercial.refetch()}>Retry</button></p>}
         {contactHistory.error && <p className="error-text">{contactHistory.error}</p>}
         {rows.length === 0 ? (
@@ -239,7 +239,7 @@ export default function LeadsTab() {
               <thead>
                 <tr>
                   <SortTh label="Lead" colKey="lead" sortKey={sortKey} dir={dir} onToggle={toggle} />
-                  {([['Salesperson','salesperson'],['Deal champion','champion'],['City','city'],['State','state'],['Website form','form'],['Estimated opportunity','estimate'],['Pending commission','pending']] as const).map(([label,key]) => <SortTh key={key} label={label} colKey={key} sortKey={sortKey} dir={dir} onToggle={toggle} />)}
+                  {([['Salesperson','salesperson'],['City','city'],['State','state'],['Website form','form'],['Estimated opportunity','estimate'],['Pending commission','pending']] as const).map(([label,key]) => <SortTh key={key} label={label} colKey={key} sortKey={sortKey} dir={dir} onToggle={toggle} />)}
                   <SortTh label="Source" colKey="source" sortKey={sortKey} dir={dir} onToggle={toggle} />
                   <SortTh label="Last contact" colKey="lastContact" sortKey={sortKey} dir={dir} onToggle={toggle} />
                   <SortTh label="Entered" colKey="entered" sortKey={sortKey} dir={dir} onToggle={toggle} />
@@ -260,7 +260,7 @@ export default function LeadsTab() {
                       <strong>{r.name}</strong>
                       {r.partiallyBound && <div><span className="badge amber">Binding in progress</span></div>}
                     </td>
-                    <td>{commercial.loading ? 'Loading…' : commercial.error ? 'Unavailable' : r.salesperson}</td><td>{commercial.loading ? 'Loading…' : commercial.error ? 'Unavailable' : r.champion}</td><td>{r.city || '—'}</td><td>{r.state || '—'}</td><td>{r.form}</td>
+                    <td>{commercial.loading ? 'Loading…' : commercial.error ? 'Unavailable' : r.salesperson}</td><td>{r.city || '—'}</td><td>{r.state || '—'}</td><td>{r.form}</td>
                     <td>{commercial.data.entries[r.id] && !commercial.error ? <OpportunityEstimate plan={commercial.data.entries[r.id].plan} onSaved={plan => commercial.setData(data => ({ ...data, entries: { ...data.entries, [r.id]: { ...data.entries[r.id], plan } } }))} /> : commercial.error ? 'Unavailable' : 'Loading…'}</td>
                     <td>{commercial.loading ? 'Loading…' : commercial.error ? 'Unavailable' : <><strong>{r.pending == null ? '—' : formatCommission(r.pending)}</strong><div className="muted small">{r.basis}</div></>}</td>
                     <td>{r.source || "—"}</td>

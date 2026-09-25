@@ -47,7 +47,7 @@ export function leadActionGuidance(task: LeadTask, communications: Communication
   }
   if (task.shortTimeline && task.businessDueAt) why += ` The original target was ${new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", month: "short", day: "numeric" }).format(new Date(task.businessDueAt))}.`;
   if (escalated) why = `This required work is overdue. The responsible manager needs to help recover it. ${why}`;
-  if (task.helperId) why = `${task.helperReason === "MANAGER_COVER" ? "The manager is covering this response." : "The salesperson asked the champion to help with this request."} ${why}`;
+  if (task.helperId && task.helperReason === "MANAGER_COVER") why = `The manager is covering this response. ${why}`;
   if (task.blocker) { why = `${task.blocker.reason}${task.blocker.detail ? `: ${task.blocker.detail.replace(/[.!?]+$/, "")}` : ""}. The original commitment remains tracked.`; action = "Review the business blocker"; }
   const after = task.blocker ? "The named owner reviews this at 9 a.m. Client updates and the original deadline remain in effect."
     : task.kind === "CORRECTION" ? "Verify the address or use the business phone. Do not repeat an email to an address that is still bouncing."
