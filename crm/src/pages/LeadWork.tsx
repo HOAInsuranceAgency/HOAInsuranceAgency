@@ -16,9 +16,9 @@ const descriptions: Record<LeadWorkView, string> = {
 export default function LeadWork(_props: { profile: UserProfile }) {
   const [showReport, setShowReport] = useState(new URLSearchParams(window.location.search).has("report"));
   const [view, setView] = useState<LeadWorkView>("Needs attention");
-  const [mine, setMine] = useState(true), [responsibility, setResponsibility] = useState("");
+  const [mine, setMine] = useState(true);
   const [revision, setRevision] = useState(0), [remindersOpen, setRemindersOpen] = useState(false);
-  const work = useWorkItems("TASK", { view, mine, responsibility });
+  const work = useWorkItems("TASK", { view, mine });
   const contacts = useLastContacts(work.data.items.flatMap(item => item.accountId ? [item.accountId] : []), work.data);
   const assignments = useCommercial(work.data.items.flatMap(item => item.accountId ? [item.accountId] : []), work.data);
   const now = new Date().toISOString();
@@ -29,7 +29,6 @@ export default function LeadWork(_props: { profile: UserProfile }) {
     {showReport && <MorningWorkReport />}
     <div hidden={showReport}><div className="toolbar lead-work-filters">
       <label className="field">View<select value={view} onChange={e => setView(e.target.value as LeadWorkView)}>{LEAD_WORK_VIEWS.map(label => <option key={label}>{label}</option>)}</select></label>
-      <label className="field">Responsibility<select value={responsibility} onChange={e => setResponsibility(e.target.value)}><option value="">All responsibilities</option><option value="SALESPERSON">Salesperson</option><option value="CHAMPION">Deal champion</option></select></label>
       <label className="lead-work-mine"><input type="checkbox" checked={mine} onChange={e => setMine(e.target.checked)} /> My work</label>
       <div className="grow" /><button className="secondary" disabled={work.loading} onClick={() => void refresh()}>Refresh</button>
     </div>
@@ -39,15 +38,14 @@ export default function LeadWork(_props: { profile: UserProfile }) {
       {assignments.error && <p role="alert" className="error-text">{assignments.error}</p>}
       {work.error && <p role="alert" className="error-text">{work.error}</p>}
       {work.loading ? <p role="status">Loading actions…</p> : work.error ? null : !work.data.items.length ? <p className="muted">{work.data.nextToken ? "More actions remain to be checked. Continue searching to see matching work." : view === "Needs attention" ? "No actions need attention in this view." : "No matching open actions."}</p> :
-        <div className="table-wrap"><table><thead><tr><th>Lead / next action</th><th>Responsibility</th><th>Salesperson</th><th>Deal champion</th><th>Last contact</th><th>Due</th><th>Timing</th></tr></thead>
+        <div className="table-wrap"><table><thead><tr><th>Lead / next action</th><th>Salesperson</th><th>Last contact</th><th>Due</th><th>Timing</th></tr></thead>
           <tbody>{work.data.items.map(item => {
             const late = !!item.dueAt && Date.parse(item.dueAt) < Date.parse(now);
             const today = !!item.dueAt && dueToday(item.dueAt, now);
             return <tr key={item.id}>
               <td>{item.accountId ? <Link to={`/accounts/${item.accountId}`}>{item.name || "Open lead"}</Link> : "Lead needs linking"}
                 <div className="lead-work-action">{item.title}</div>{item.kind && <span className="small muted">{workContext({ kind: item.kind, custom: item.custom })}</span>}</td>
-              <td>{item.role === "CHAMPION" ? "Deal champion" : item.role === "SALESPERSON" ? "Salesperson" : "Team"}</td>
-              {(['salespersonId', 'championId'] as const).map(role => <td key={role}>{assignments.loading ? 'Loading…' : assignments.error ? 'Unavailable' : teammateName(assignments.data.entries[item.accountId ?? '']?.[role], assignments.data.team)}</td>)}
+              {(['salespersonId'] as const).map(role => <td key={role}>{assignments.loading ? 'Loading…' : assignments.error ? 'Unavailable' : teammateName(assignments.data.entries[item.accountId ?? '']?.[role], assignments.data.team)}</td>)}
               <td>{!item.accountId ? "—" : contacts.loading ? "Loading…" : contacts.error ? "Unavailable" : contacts.contacts[item.accountId]?.at ? fmtDateTime(contacts.contacts[item.accountId]!.at) : "No contact recorded"}</td>
               <td>{fmtDateTime(item.dueAt)}</td>
               <td><span className={`badge ${late ? "red" : today ? "amber" : "gray"}`}>{late ? "Overdue" : today ? "Due today" : item.dueAt ? "Upcoming" : "Check due date"}</span>{item.escalatedAt && <small className="lead-work-escalation">Manager escalation</small>}</td>

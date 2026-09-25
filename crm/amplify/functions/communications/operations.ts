@@ -8,7 +8,7 @@ import { textLeadAlerts } from "../lead-intake/alerts";
 import type { LeadSummary } from "../lead-intake/sms";
 import type { Submission } from "../lead-intake/handler";
 import { renderIntakeBrief } from "../lead-intake/brief";
-import type { Communication, Responsibility } from "../../../../shared/leadWorkflow";
+import type { Communication, Responsibility, TeamEligibility } from "../../../../shared/leadWorkflow";
 
 export interface Operation {
   type: "ATTACHMENT" | "IMPORT" | "EMAIL" | "COMMENT" | "SMS_ALERT" | "ARCHIVE" | "REOPEN" | "ASSIGN";
@@ -122,8 +122,8 @@ export async function runOperation(candidate: Row<Operation>) {
       if (op.data.type === "ASSIGN") {
         const link = await get<{ routing?: string }>(`front-link:${cnv}`);
         if (link?.data.routing === "MANUAL") { await transition(op, { state: "SUPPRESSED", error: "A teammate changed the conversation handler" }); return; }
-        const member = await get<{ frontId?: string }>(`eligibility:${link?.data.routing === "CHAMPION" ? wf.data.championId : wf.data.salespersonId}`);
-        if (!member?.data.frontId) throw new ProviderError("Map the current responsible teammate in Front", 0, false);
+        const member = await get<TeamEligibility>(`eligibility:${wf.data.salespersonId}`);
+        if (!member?.data.enabled || !member.data.salesperson || !member.data.frontId) throw new ProviderError("Choose an eligible salesperson with a mapped Front identity", 0, false);
         body = { assignee_id: member.data.frontId };
       }
     }

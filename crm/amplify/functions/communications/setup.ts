@@ -14,7 +14,7 @@ export async function connectionChecks() {
       do { const result = await sns.send(new ListSubscriptionsByTopicCommand({ TopicArn: topic, NextToken: nextToken })); confirmed ||= !!result.Subscriptions?.some(s => s.SubscriptionArn?.startsWith("arn:aws:sns:")); nextToken = result.NextToken; } while (nextToken);
       if (!confirmed) throw new Error("Connect and confirm the operations recipient for the independent alert topic");
     }],
-    ["Default responsibilities", async () => { const sales = c.defaultSalespersonId ?? c.defaultUserId, champion = c.defaultChampionId ?? c.defaultUserId; if (!sales || !champion) throw new Error("Choose default sales and champion owners"); await validRole(sales, "SALESPERSON"); await validRole(champion, "CHAMPION", champion !== sales); }],
+    ["Default responsibilities", async () => { const sales = c.defaultSalespersonId ?? c.defaultUserId; if (!sales) throw new Error("Choose a default salesperson"); await validRole(sales, "SALESPERSON"); }],
     ["Team reports", async () => {
       const r = await (await import("./routing")).routing(), members = await (await import("./workflow")).team();
       (await import("../../../../shared/workRouting")).validateCompleteRouting(r, members);

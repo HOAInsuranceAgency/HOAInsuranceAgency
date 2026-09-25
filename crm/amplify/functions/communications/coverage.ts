@@ -47,7 +47,7 @@ export async function reconcileAccountWork(account: Account, workflow?: Row<Lead
   if (wf.data.disposition === "BOUND" && !pendingLead.length) {
     for (const link of await accountRows<ConversationLink>(account.id, "LINK")) {
       if (link.data.context && link.data.context !== "LEAD") continue;
-      const nextRouting = link.data.routing === "MANUAL" ? "MANUAL" : "CHAMPION";
+      const nextRouting = link.data.routing === "MANUAL" ? "MANUAL" : "SALESPERSON";
       const operationId = `op:client-handoff:${link.id}:${link.version}`;
       await commit([check(wf), put(row("LINK", link.id, { ...link.data, context: "SERVICE", routing: nextRouting }, { accountId: account.id, previous: link }), link), ...(nextRouting !== "MANUAL" ? [put(operationRow(operationId, { type: "ASSIGN", accountId: account.id, conversationId: link.data.conversationId }))] : [])]);
     }
@@ -67,8 +67,8 @@ export async function reconcileAccountWork(account: Account, workflow?: Row<Lead
       await writes(t, { ...t.data, status: "CANCELLED", reason: "Superseded by the recorded next-year cycle" }); continue;
     }
     if (wf.data.disposition === "BOUND" && taskContext(t.data) === "LEAD" && (!t.data.quoteId || !pendingLead.includes(t.data.quoteId)) && !pendingLead.length) {
-      if (!t.data.custom && ["FIRST_CONTACT", "FOLLOW_UP", "PROSPECT_UPDATE", "ANNUAL_RETURN"].includes(t.data.kind)) { await writes(t, { ...t.data, status: "CANCELLED", reason: "Acquisition finished; champion owns client work" }); continue; }
-      if (["RESPONSE", "CALLBACK", "DOCUMENTS", "CORRECTION", "SERVICE", "CARRIER", "BIND"].includes(t.data.kind)) await writes(t, { ...t.data, context: "SERVICE", domain: taskDomain(t.data), role: "CHAMPION", accountableRole: "CHAMPION", helperId: undefined });
+      if (!t.data.custom && ["FIRST_CONTACT", "FOLLOW_UP", "PROSPECT_UPDATE", "ANNUAL_RETURN"].includes(t.data.kind)) { await writes(t, { ...t.data, status: "CANCELLED", reason: "Acquisition finished; salesperson continues client work" }); continue; }
+      if (["RESPONSE", "CALLBACK", "DOCUMENTS", "CORRECTION", "SERVICE", "CARRIER", "BIND"].includes(t.data.kind)) await writes(t, { ...t.data, context: "SERVICE", domain: taskDomain(t.data), role: "SALESPERSON", accountableRole: "SALESPERSON", helperId: undefined });
     }
   }
   for (const task of tasks.filter(t => t.data.status === "OPEN" && ["SERVICE", "DOCUMENTS"].includes(t.data.kind) && t.data.serviceType && t.data.milestone)) {
@@ -99,7 +99,7 @@ export async function reconcileAccountWork(account: Account, workflow?: Row<Lead
   const marketingState = await get(`marketing-context:${account.id}`);
   if (selectedPackage) {
     const finished = selectedPackage.quoteIds.every(id => policies.some(p => p.quoteId === id) && rawQuotes.some(q => q.id === id && q.status === 'BOUND'));
-    await obligation(`package-bind:${selectedPackage.id}`, { accountId: account.id, kind: 'BIND', title: 'Finish binding the selected package', role: 'CHAMPION', domain: 'CARRIER', context: 'LEAD', milestone: true, sourceAt: commercial!.data.selectedAt ?? commercial!.createdAt }, finished, 'Every selected policy is bound');
+    await obligation(`package-bind:${selectedPackage.id}`, { accountId: account.id, kind: 'BIND', title: 'Finish binding the selected package', role: 'SALESPERSON', domain: 'CARRIER', context: 'LEAD', milestone: true, sourceAt: commercial!.data.selectedAt ?? commercial!.createdAt }, finished, 'Every selected policy is bound');
   }
   const waitingOnCarrier = quotes.some(q => q.status === "SUBMITTED") || marketing.some(m => m.status === "OPEN");
   if (marketingState?.data.waitingOnCarrier !== waitingOnCarrier) await save(row("MARKETING_CONTEXT", `marketing-context:${account.id}`, { waitingOnCarrier }, { accountId: account.id, previous: marketingState }), marketingState);
@@ -116,7 +116,7 @@ export async function reconcileAccountWork(account: Account, workflow?: Row<Lead
   }
   const risks: RiskTerm[] = policies.filter(p => p.status === "ACTIVE" && validCalendarDate(p.expirationDate)).map(p => ({ accountId: account.id, policyId: p.id, term: p.expirationDate!, lines: (p.lines ?? []).filter((l): l is string => !!l) }));
   if (!terminal && wf.data.disposition === "ACTIVE" && validCalendarDate(account.currentPolicyExpiration) && !deferred) risks.push({ accountId: account.id, term: account.currentPolicyExpiration, lines: [...new Set([...priorCoverage.filter(p => p.expirationDate === account.currentPolicyExpiration && p.lineOfBusiness).map(p => p.lineOfBusiness!), ...quotes.filter(q => q.effectiveDate === account.currentPolicyExpiration).flatMap(q => (q.lines ?? []).filter((l): l is string => !!l))])] });
-  if (wf.data.disposition === "BOUND" && !risks.length) await issue(`policy-handoff:${account.id}`, "Record the bound policy and its expiration so the champion can manage renewal preparation", account.id);
+  if (wf.data.disposition === "BOUND" && !risks.length) await issue(`policy-handoff:${account.id}`, "Record the bound policy and its expiration so the salesperson can manage renewal preparation", account.id);
   else await resolveIssue(`policy-handoff:${account.id}`);
   for (const risk of risks) {
     const context = risk.policyId ? "RENEWAL" as const : "LEAD" as const;
@@ -125,7 +125,7 @@ export async function reconcileAccountWork(account: Account, workflow?: Row<Lead
       const target = new Date(localHour(day, 9)).toISOString();
       return target < source ? businessDeadline(source, 1, c.holidays) : target;
     };
-    const base = { accountId: account.id, role: "CHAMPION" as const, context, domain: "CARRIER" as const, policyId: risk.policyId, term: risk.term, lines: risk.lines, sourceAt: source, milestone: true };
+    const base = { accountId: account.id, role: "SALESPERSON" as const, context, domain: "CARRIER" as const, policyId: risk.policyId, term: risk.term, lines: risk.lines, sourceAt: source, milestone: true };
     const evidence = quoteCoverage(quotes, risk, now);
     const workStarted = quotes.some(q => quoteMatchesRisk(q, risk) && ["SUBMITTED", "QUOTED", "PRESENTED", "BOUND"].includes(q.status))
       || contacts.some(comm => comm.context === "RENEWAL" && comm.policyId === risk.policyId && comm.direction === "OUTBOUND" && contactProgress(comm) === "CONTACT" && contactAt(comm) >= new Date(localHour(addCalendarDays(risk.term, -90), 9)).toISOString());
@@ -133,7 +133,7 @@ export async function reconcileAccountWork(account: Account, workflow?: Row<Lead
     await obligation(`quote-target:${scope}`, { ...base, kind: "QUOTE_TARGET", title: "Obtain usable quotes before expiration", dueAt: dueFor(addCalendarDays(risk.term, -14)), businessDueAt: new Date(localHour(addCalendarDays(risk.term, -14), 9)).toISOString() }, evidence.complete, "Usable quotes cover the required term and lines");
     const issueKey = `renewal-facts:${account.id}:${scope}`;
     if (!risk.lines.length) await issue(issueKey, "Confirm the coverage lines in the quote or policy so quote readiness can be checked", account.id); else await resolveIssue(issueKey);
-    if (risk.term < now.slice(0, 10) && !quotes.some(q => q.status === "BOUND" && quoteMatchesRisk(q, risk))) await issue(`expired-risk:${scope}:${account.id}`, "The prior term has expired without confirmed replacement coverage. The champion must review placement.", account.id);
+    if (risk.term < now.slice(0, 10) && !quotes.some(q => q.status === "BOUND" && quoteMatchesRisk(q, risk))) await issue(`expired-risk:${scope}:${account.id}`, "The prior term has expired without confirmed replacement coverage. The salesperson must review placement.", account.id);
     for (const m of marketing.filter(m => m.expirationDate === risk.term && (m.policyId ?? undefined) === risk.policyId)) {
       const carrierRisk = { ...risk, carrierId: m.carrierId };
       const submitted = quotes.some(q => quoteMatchesRisk(q, carrierRisk) && ["SUBMITTED", "QUOTED", "PRESENTED", "BOUND"].includes(q.status));
@@ -145,14 +145,14 @@ export async function reconcileAccountWork(account: Account, workflow?: Row<Lead
       if (q.bindAuthorizedTerms !== authorizedQuoteTerms(q) && !policies.some(p => p.quoteId === q.id)) await issue(`bind-authorization:${q.id}`, "The quote changed after client authorization. Review the revised terms with the client before binding.", account.id);
       else await resolveIssue(`bind-authorization:${q.id}`);
       const renewal = !!q.renewalPolicyId;
-      await obligation(`bind:${q.id}`, { accountId: account.id, quoteId: q.id, policyId: q.renewalPolicyId ?? undefined, kind: "BIND", title: "Obtain carrier bind confirmation", role: "CHAMPION", domain: "CARRIER", context: renewal ? "RENEWAL" : "LEAD", sourceAt: q.bindAuthorizedAt, milestone: true, term: q.effectiveDate ?? undefined,
+      await obligation(`bind:${q.id}`, { accountId: account.id, quoteId: q.id, policyId: q.renewalPolicyId ?? undefined, kind: "BIND", title: "Obtain carrier bind confirmation", role: "SALESPERSON", domain: "CARRIER", context: renewal ? "RENEWAL" : "LEAD", sourceAt: q.bindAuthorizedAt, milestone: true, term: q.effectiveDate ?? undefined,
         dueAt: q.effectiveDate ? [new Date(localHour(q.effectiveDate, 9)).toISOString(), businessDeadline(q.bindAuthorizedAt, 1, c.holidays)].sort()[0] : businessDeadline(q.bindAuthorizedAt, 1, c.holidays), businessDueAt: q.effectiveDate ? new Date(localHour(q.effectiveDate, 9)).toISOString() : undefined },
         policies.some(p => p.quoteId === q.id) || ["DECLINED", "LOST"].includes(q.status), "Confirmed policy or explicit placement decision recorded");
     }
     const risk = { accountId: account.id, term: q.effectiveDate ?? "", policyId: q.renewalPolicyId ?? undefined, lines: (q.lines ?? []).filter((s): s is string => !!s) };
     if (!["QUOTED", "PRESENTED", "BOUND"].includes(q.status) || !usableQuote(q, risk, now)) continue;
     const renewal = !!q.renewalPolicyId;
-    await obligation(`presentation:${q.id}`, { accountId: account.id, quoteId: q.id, policyId: q.renewalPolicyId ?? undefined, kind: "QUOTE_PRESENTATION", title: renewal ? "Present the renewal quote" : "Present the quote", role: renewal ? "CHAMPION" : "SALESPERSON", domain: "CLIENT", context: renewal ? "RENEWAL" : "LEAD", sourceAt: q.readyAt ?? q.updatedAt, milestone: true, term: risk.term }, ["PRESENTED", "BOUND"].includes(q.status) || !!selectedPackage?.quoteIds.includes(q.id) && commercial?.data.selectedTerms?.[q.id] === packageTerms(q), "Quote presentation or client package selection recorded");
+    await obligation(`presentation:${q.id}`, { accountId: account.id, quoteId: q.id, policyId: q.renewalPolicyId ?? undefined, kind: "QUOTE_PRESENTATION", title: renewal ? "Present the renewal quote" : "Present the quote", role: "SALESPERSON", domain: "CLIENT", context: renewal ? "RENEWAL" : "LEAD", sourceAt: q.readyAt ?? q.updatedAt, milestone: true, term: risk.term }, ["PRESENTED", "BOUND"].includes(q.status) || !!selectedPackage?.quoteIds.includes(q.id) && commercial?.data.selectedTerms?.[q.id] === packageTerms(q), "Quote presentation or client package selection recorded");
   }
   for (const t of tasks) {
     if (t.data.status !== "OPEN" || !t.data.obligationKey || currentObligations.has(t.data.obligationKey)) continue;

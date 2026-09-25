@@ -1,5 +1,7 @@
 # Sales, managers and carrier work
 
+> Ownership update (September 25, 2026): [Salesperson account ownership](salesperson-account-ownership.md) supersedes all separate champion/marketing-manager ownership rules below. The earlier decisions remain here as historical context.
+
 ## Final revision specification — business decisions confirmed
 
 September 10, 2026. **Specification only; these revisions are not implemented or deployed.** This document replaces conflicting ownership, escalation, reporting and routine task-entry proposals in earlier Front/CRM planning documents. Existing staging verification remains evidence for the implementation tested at that time.

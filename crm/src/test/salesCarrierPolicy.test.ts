@@ -44,12 +44,12 @@ describe("responsibility and escalation routing", () => {
     expect(taskRoute(task(), workflow, routing, people)).toMatchObject({ recipientId: "sales1", managerId: "manager1", ownerId: "owner" });
     expect(taskRoute(task(), { ...workflow, salespersonId: "sales2" }, routing, people).managerId).toBe("manager2");
   });
-  it.each(["RENEWAL", "SERVICE"] as const)("routes bound-client %s through champion and marketing manager", context => {
-    expect(taskRoute(task({ context, domain: "CLIENT", role: "CHAMPION" }), { ...workflow, disposition: "BOUND" }, routing, people)).toMatchObject({ recipientId: "champ", managerId: "marketing" });
+  it.each(["RENEWAL", "SERVICE"] as const)("routes legacy bound-client %s through the account salesperson and sales manager", context => {
+    expect(taskRoute(task({ context, domain: "CLIENT", role: "CHAMPION" }), { ...workflow, disposition: "BOUND" }, routing, people)).toMatchObject({ recipientId: "sales1", managerId: "manager1" });
   });
-  it("does not confuse champion prospect help with carrier work", () => {
-    expect(taskRoute(task({ helperId: "champ" }), workflow, routing, people)).toMatchObject({ recipientId: "champ", managerId: "manager1", accountableId: "sales1" });
-    expect(taskRoute(task({ domain: "CARRIER", kind: "CARRIER", role: "CHAMPION" }), workflow, routing, people)).toMatchObject({ recipientId: "champ", managerId: "marketing" });
+  it("retires champion help and routes carrier work to the salesperson", () => {
+    expect(taskRoute(task({ helperId: "champ", helperReason: "SALES_ASSIST" }), workflow, routing, people)).toMatchObject({ recipientId: "sales1", managerId: "manager1", accountableId: "sales1" });
+    expect(taskRoute(task({ domain: "CARRIER", kind: "CARRIER", role: "CHAMPION" }), workflow, routing, people)).toMatchObject({ recipientId: "sales1", managerId: "manager1" });
   });
   it("changes cover without changing the task deadline or management clock", () => {
     const t = task(), before = structuredClone(t);
@@ -131,4 +131,40 @@ describe("service work is recorded by the response", () => {
     expect(serviceRequestType({ ...base, text: "Please send a certificate of insurance for my lender." })).toBe("CERTIFICATE");
     expect(interimResponse({ ...base, text: "Your billing question is resolved: the duplicate charge was reversed and the balance is zero." })).toBe(false);
   });
+});
+
+describe("legacy ownership compatibility", () => {
+  it("removes champion help without losing the carrier domain or deadlines", async () => {
+    const { salespersonTask } = await import("../../../shared/salespersonOwnership");
+    const old = task({ role: "CHAMPION", accountableRole: "CHAMPION", kind: "FOLLOW_UP", domain: undefined, helperId: "champ", helperRequestedBy: "sales1", helperReason: "SALES_ASSIST", context: "RENEWAL", policyId: "p1" });
+    const normalized = salespersonTask(old);
+    expect(normalized).toMatchObject({ id: old.id, role: "SALESPERSON", accountableRole: "SALESPERSON", domain: "CARRIER", context: "RENEWAL", policyId: "p1", dueAt: old.dueAt, escalationAt: old.escalationAt });
+    expect(normalized).not.toHaveProperty("helperId");
+    expect(normalized).not.toHaveProperty("helperReason");
+    expect(old.helperId).toBe("champ");
+  });
+  it("preserves explicit manager coverage and specialist work while the salesperson stays accountable", async () => {
+    const { salespersonTask } = await import("../../../shared/salespersonOwnership");
+    const covered = salespersonTask(task({ helperId: "manager1", helperReason: "MANAGER_COVER" }));
+    expect(taskRoute(covered, workflow, routing, people)).toMatchObject({ accountableId: "sales1", recipientId: "manager1" });
+    const specialist = salespersonTask(task({ role: "CHAMPION", context: "SERVICE", specialistId: "cover" }));
+    expect(taskRoute(specialist, workflow, routing, people)).toMatchObject({ accountableId: "sales1", recipientId: "cover", managerId: "manager1" });
+  });
+  it("includes carrier and bound-client work in the salesperson and sales-manager reports", () => {
+    const tasks = [task({ id: "carrier", kind: "CARRIER", role: "CHAMPION", domain: "CARRIER" }), task({ id: "renewal", context: "RENEWAL", role: "CHAMPION" }), task({ id: "service", context: "SERVICE", role: "CHAMPION" })];
+    const report = (recipientId: string) => morningReport({ recipientId, team: people, routing, workflows: [workflow], tasks, now: "2026-09-11T13:00:00Z", health: [] });
+    expect(report("sales1").items).toHaveLength(3);
+    expect(report("sales1").items.every(i => i.section === "Your accounts today" && i.role === "Salesperson")).toBe(true);
+    expect(report("manager1").items).toHaveLength(3);
+    expect(report("manager1").teamCounts).toEqual([{ name: "sales1", due: 3, overdue: 3 }]);
+    expect(report("champ").items).toHaveLength(0);
+    expect(report("marketing").items).toHaveLength(0);
+  });
+});
+
+it("routes an ineligible legacy account owner to management without promoting their old role", () => {
+  const ineligible = people.map(m => m.userId === "sales1" ? { ...m, salesperson: false, champion: true } : m);
+  const result = taskRoute(task({ kind: "SUBMISSION", domain: "CARRIER" }), workflow, routing, ineligible);
+  expect(result).toMatchObject({ accountableId: "sales1", recipientId: "manager1", managerId: "manager1" });
+  expect(result.gaps).toContain("Arrange coverage for the responsible teammate");
 });

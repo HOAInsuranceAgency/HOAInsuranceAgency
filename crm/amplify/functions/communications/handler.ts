@@ -1,3 +1,4 @@
+import { salespersonTask, salespersonWorkflow } from "../../../../shared/salespersonOwnership";
 import { taskWakeAt } from "../../../../shared/leadWorkflow";
 import { isLeadSource } from "../../../../shared/leadSource";
 import { historyStopped, restartHistory, type HistoryJob } from "./history";
@@ -33,7 +34,7 @@ async function roster() {
   const client = await dataClient(), eligibility = await team();
   const profiles = []; let nextToken: string | null | undefined;
   do { const p = await client.models.UserProfile.list({ nextToken, limit: 100 }); if (p.errors?.length) throw new Error("Could not load teammates"); profiles.push(...p.data); nextToken = p.nextToken; } while (nextToken);
-  return profiles.map(p => eligibility.find(t => t.userId === p.userId) ?? { userId: p.userId, name: `${p.firstName} ${p.lastName}`, email: p.email, enabled: true, salesperson: false, champion: false, version: 0 });
+  return profiles.map(p => eligibility.find(t => t.userId === p.userId) ?? { userId: p.userId, name: `${p.firstName} ${p.lastName}`, email: p.email, enabled: true, salesperson: false, version: 0 });
 }
 function safeCommunication(data: Communication): Communication {
   return { ...data, text: data.text?.replace(/([?&](?:t|token|uploadToken)=)[^\s&<>]+/gi, "$1[protected]") };
@@ -120,8 +121,8 @@ export const handler = async (event: { arguments: { operation?: string; readOper
           && health?.data.lagging === false && recent(health.data.at, 300_000)
           && Array.isArray(monitor?.data.errors) && monitor.data.errors.length === 0 && recent(monitor.data.at, 600_000)
           && recent(census?.data.completedAt, 24 * 3600_000) && (!syncGap || syncGap.data.resolved === true);
-        return { ok: true, actorId: actor, trackingHealthy, frontContext, workflow: wf ? { ...wf.data, version: wf.version } : null,
-          tasks: tasks.map(t => ({ ...t.data, version: t.version })), communications: communications.items.filter(r => r.data.status !== "DRAFT").map(r => safeCommunication({ ...r.data, version: r.version })),
+        return { ok: true, actorId: actor, trackingHealthy, frontContext, workflow: wf ? { ...salespersonWorkflow(wf.data), version: wf.version } : null,
+          tasks: tasks.map(t => ({ ...salespersonTask(t.data), version: t.version })), communications: communications.items.filter(r => r.data.status !== "DRAFT").map(r => safeCommunication({ ...r.data, version: r.version })),
           communicationNextToken: communications.nextToken, issues: issues.filter(r => !(r.data as { resolved?: boolean }).resolved).map(r => ({ id: r.id, ...r.data })), team: members };
       }
       if (op === "work") {
@@ -129,7 +130,7 @@ export const handler = async (event: { arguments: { operation?: string; readOper
         if (!["TASK", "WORKFLOW", "ISSUE", "TRIAGE", "NOTIFICATION", "OPERATION", "EVENT"].includes(kind)) throw new Error("Unknown work view");
         if (["ISSUE", "OPERATION", "EVENT"].includes(kind)) requireAdmin();
         const responsibility = text(input, "responsibility");
-        if (responsibility && !["SALESPERSON", "CHAMPION"].includes(responsibility)) throw new Error("Choose a valid responsibility");
+        if (responsibility && responsibility !== "SALESPERSON") throw new Error("Choose a valid responsibility");
         const { workPage } = await import("./work");
         const p = await workPage({ kind, view: text(input, "view"), responsibility, mine: input.mine === true, actor, nextToken: text(input, "nextToken", 4000) || undefined });
         if (kind === "NOTIFICATION") {
@@ -148,7 +149,7 @@ export const handler = async (event: { arguments: { operation?: string; readOper
         }
         const items = p.items.filter(r => kind !== "NOTIFICATION" || r.data.recipient === actor).map(r => kind === "EVENT" ? { id: r.id, version: r.version, provider: r.data.provider, error: r.data.error, attempts: r.data.attempts, processedAt: r.data.processedAt, dueAt: r.dueAt } : kind === "OPERATION" ? { id: r.id, accountId: r.accountId, version: r.version, type: r.data.type, state: r.data.state, error: r.data.error, uid: r.data.uid, messageId: r.data.messageId, conversationId: r.data.conversationId } : { ...r.data, id: r.id, version: r.version, accountId: r.accountId });
         const workflows = new Map((await Promise.all([...new Set(p.items.map(r => r.accountId).filter((id): id is string => !!id))].map(id => get<LeadWorkflow>(`workflow:${id}`)))).filter((w): w is NonNullable<typeof w> => !!w).map(w => [w.data.accountId, w.data]));
-        return { ok: true, items: items.map(item => { const wf = workflows.get((item as { accountId?: string }).accountId ?? ""); return { ...item, ...(wf ? { name: wf.name, salespersonId: wf.salespersonId, championId: wf.championId } : {}) }; }), nextToken: p.nextToken };
+        return { ok: true, items: items.map(item => { const wf = workflows.get((item as { accountId?: string }).accountId ?? ""); return { ...item, ...(wf ? { name: wf.name, salespersonId: wf.salespersonId } : {}) }; }), nextToken: p.nextToken };
       }
       throw new Error("Unknown read operation");
     }
@@ -188,11 +189,11 @@ export const handler = async (event: { arguments: { operation?: string; readOper
         if (actor !== route.managerId && actor !== route.ownerId) throw new Error("Only the responsible manager or owner can take this response");
         await commit([check(wf), ...(routingRecord ? [check(routingRecord)] : []), put(row("TASK", task.id, { ...task.data, helperId: actor, helperRequestedBy: actor, helperReason: "MANAGER_COVER", version: task.version + 1 }, { accountId: task.accountId, previous: task, dueAt: task.dueAt }), task)]);
       } else {
-        if (actor !== wf.data.championId && actor !== route.managerId && actor !== route.ownerId) throw new Error("The champion or responsible manager coordinates this request");
+        if (actor !== wf.data.salespersonId && actor !== route.managerId && actor !== route.ownerId) throw new Error("The salesperson or responsible manager coordinates this request");
         if (op === "delegateService") {
           if ((task.data.context ?? "LEAD") === "LEAD") throw new Error("Use the lead's salesperson for client work");
           const specialist = text(input, "specialistId"); await enabledUser(specialist);
-          await commit([check(wf), put(row("TASK", task.id, { ...task.data, specialistId: specialist, accountableRole: "CHAMPION", version: task.version + 1 }, { accountId: task.accountId, previous: task, dueAt: task.dueAt }), task), audit(task.data.accountId, actor, "Specialist assigned to client request", { taskId: task.id, specialist })]);
+          await commit([check(wf), put(row("TASK", task.id, { ...task.data, specialistId: specialist, accountableRole: "SALESPERSON", version: task.version + 1 }, { accountId: task.accountId, previous: task, dueAt: task.dueAt }), task), audit(task.data.accountId, actor, "Specialist assigned to client request", { taskId: task.id, specialist })]);
         } else {
           if (task.data.kind !== "CARRIER" || (task.data.context ?? "LEAD") !== "LEAD") throw new Error("Choose the carrier's new-business information request");
           const key = `task:client-information:${task.id}`;
@@ -202,25 +203,13 @@ export const handler = async (event: { arguments: { operation?: string; readOper
             child.parentTaskId = task.id; child.sourceIds = []; child.requirementSourceIds = task.data.sourceIds; child.waitingOn = "PROSPECT";
             const requirementId = `task:requirement:${task.id}`, oldRequirement = await get(requirementId);
             const requirement = { ...task.data, id: requirementId, kind: "DOCUMENTS" as const, title: "Supply the information requested by underwriting", milestone: true, serviceType: "GENERAL" as const, parentTaskId: task.id, version: 1 };
-            await commit([check(wf), check(task), ...(!oldRequirement ? [put(row("TASK", requirementId, requirement, { accountId: task.accountId, dueAt: taskWakeAt(requirement) }))] : []), put(row("TASK", key, child, { accountId: task.accountId, dueAt: taskWakeAt(child) })), audit(task.data.accountId, actor, "Requested prospect information from salesperson", { taskId: task.id })]);
+            await commit([check(wf), check(task), ...(!oldRequirement ? [put(row("TASK", requirementId, requirement, { accountId: task.accountId, dueAt: taskWakeAt(requirement) }))] : []), put(row("TASK", key, child, { accountId: task.accountId, dueAt: taskWakeAt(child) })), audit(task.data.accountId, actor, "Client information request recorded", { taskId: task.id })]);
           }
         }
       }
       return { ok: true };
     }
-    if (op === "requestChampionHelp") {
-      const task = await get<LeadTask>(text(input, "taskId"));
-      if (!task || task.data.status !== "OPEN") throw new Error("Choose an open client request");
-      expected(task, version(input));
-      const wf = await ensureWorkflow(task.data.accountId);
-      const { taskDomain, taskContext } = await import("../../../../shared/workRouting");
-      if (taskDomain(task.data) !== "CLIENT" || taskContext(task.data) !== "LEAD") throw new Error("Champion help applies to a prospect request");
-      if (actor !== wf.data.salespersonId) throw new Error("The salesperson requests help with their prospect");
-      if (!wf.data.championId) throw new Error("Assign the deal champion first");
-      await validRole(wf.data.championId, "CHAMPION");
-      await commit([check(wf), put(row("TASK", task.id, { ...task.data, helperId: wf.data.championId, helperRequestedBy: actor, helperReason: "SALES_ASSIST", accountableRole: "SALESPERSON", version: task.version + 1 }, { accountId: task.accountId, previous: task, dueAt: task.dueAt }), task), audit(task.data.accountId, actor, "Asked champion to help with prospect", { taskId: task.id })]);
-      return { ok: true };
-    }
+    if (op === "requestChampionHelp") throw new Error("The account salesperson now handles client and carrier work. Refresh the CRM to continue.");
     if (op === "refreshSeen") {
       const comm = await get<Communication>(text(input, "id"));
       if (!comm?.accountId || comm.kind !== "COMMUNICATION" || comm.data.provider !== "front" || comm.data.channel !== "EMAIL" || comm.data.direction !== "OUTBOUND" || comm.data.status === "DRAFT") throw new Error("Choose a sent Front email");
@@ -237,7 +226,7 @@ export const handler = async (event: { arguments: { operation?: string; readOper
       return { ok: true };
     }
     if (op === "initializeLead") return { ok: true, workflow: (await ensureWorkflow(text(input, "accountId"))).data };
-    if (op === "setResponsibilities") return { ok: true, workflow: await setResponsibilities(text(input, "accountId"), text(input, "salespersonId"), text(input, "championId"), version(input), actor) };
+    if (op === "setResponsibilities") return { ok: true, workflow: await setResponsibilities(text(input, "accountId"), text(input, "salespersonId"), version(input), actor) };
     if (op === "reopenLead") {
       const accountId = text(input, "accountId"), wf = await ensureWorkflow(accountId); expected(wf, version(input));
       if (!["LOST", "DISQUALIFIED"].includes(wf.data.disposition)) throw new Error("Only lost or disqualified leads can be reopened here");
@@ -256,7 +245,7 @@ export const handler = async (event: { arguments: { operation?: string; readOper
       const member = (await roster()).find(t => t.userId === userId); if (!member) throw new Error("Teammate not found");
       const old = await get<TeamEligibility>(`eligibility:${userId}`);
       if ((old?.version ?? 0) !== Number(input.version ?? 0)) throw new Error("Teammate settings changed. Refresh and try again.");
-      const next: TeamEligibility = { userId, name: member.name, email: member.email, enabled: input.enabled !== false, salesperson: input.salesperson === true, champion: input.champion === true,
+      const next: TeamEligibility = { userId, name: member.name, email: member.email, enabled: input.enabled !== false, salesperson: input.salesperson === true,
         frontId: text(input, "frontId") || undefined, dialpadId: text(input, "dialpadId") || undefined };
       if (next.frontId && !/^tea_[a-z0-9]+$/.test(next.frontId)) throw new Error("Invalid Front teammate ID");
       if (next.dialpadId && !/^\d+$/.test(next.dialpadId)) throw new Error("Invalid Dialpad user ID");
@@ -269,7 +258,7 @@ export const handler = async (event: { arguments: { operation?: string; readOper
       value.dialpadNumbers = (value.dialpadNumbers ?? []).map(n => { const phone = normalizePhone(n); if (!phone) throw new Error("Invalid business phone number"); return phone; });
       value.sharedSmsNumber = normalizePhone(value.sharedSmsNumber) ?? "";
       if (value.sharedSmsNumber !== "+15082332261") throw new Error("Prospect texts use the confirmed shared main line (508) 233-2261");
-      for (const [id, role] of [[value.defaultSalespersonId ?? value.defaultUserId, "SALESPERSON"], [value.defaultChampionId ?? value.defaultUserId, "CHAMPION"]] as const) {
+      for (const [id, role] of [[value.defaultSalespersonId ?? value.defaultUserId, "SALESPERSON"]] as const) {
         if (id) { if (!(await roster()).some(member => member.userId === id)) throw new Error("Choose a current CRM teammate as the default"); await validRole(id, role); }
       }
       if (input.credentials && Object.values(object(input.credentials)).some(v => typeof v === "string" && v.trim())) value.paused = true;
@@ -340,11 +329,11 @@ export const handler = async (event: { arguments: { operation?: string; readOper
       if (context === "RENEWAL" && !policyId) throw new Error("Choose the policy this renewal concerns");
       const changed = old?.data.purpose !== purpose || old?.data.context !== context || old?.data.policyId !== policyId;
       const writes = [];
-      if (changed) writes.push(put(row("LINK", `front-link:${cnv}`, { accountId, conversationId: cnv, purpose, context, policyId, routing: old?.data.routing === "MANUAL" ? "MANUAL" : (purpose === "CARRIER" || context !== "LEAD" ? "CHAMPION" : "SALESPERSON") }, { accountId, previous: old }), old));
+      if (changed) writes.push(put(row("LINK", `front-link:${cnv}`, { accountId, conversationId: cnv, purpose, context, policyId, routing: old?.data.routing === "MANUAL" ? "MANUAL" : "SALESPERSON" }, { accountId, previous: old }), old));
       if (!wf.data.conversationId && purpose === "PROSPECT") writes.push(put(row("WORKFLOW", wf.id, { ...wf.data, conversationId: cnv, version: wf.version + 1 }, { accountId, previous: wf }), wf));
       if (changed) {
         writes.push(put(row("LIFECYCLE", `lifecycle:conversation-context:${cnv}:${old?.version ?? 0}`, { accountId }, { accountId, dueAt: new Date().toISOString() })));
-        const handlerId = purpose === "CARRIER" || context !== "LEAD" ? wf.data.championId : wf.data.salespersonId;
+        const handlerId = wf.data.salespersonId;
         const handler = handlerId ? await get<TeamEligibility>(`eligibility:${handlerId}`) : undefined;
         if (handler?.data.frontId) writes.push(put(operationRow(`op:link-route:${cnv}:${old?.version ?? 0}`, { type: "ASSIGN", accountId, conversationId: cnv, assigneeId: handler.data.frontId })));
       }
@@ -376,9 +365,9 @@ export const handler = async (event: { arguments: { operation?: string; readOper
     }
     if (op === "routeConversation") {
       const cnv = (await permittedConversation(text(input, "conversationId"))).id, role = text(input, "role"), link = await get<ConversationLink>(`front-link:${cnv}`);
-      if (!link || !["SALESPERSON", "CHAMPION"].includes(role)) throw new Error("Link this conversation and select its handler role");
+      if (!link || role !== "SALESPERSON") throw new Error("Link this conversation and select its handler role");
       const wf = await ensureWorkflow(link.data.accountId);
-      const member = await get<TeamEligibility>(`eligibility:${role === "CHAMPION" ? wf.data.championId : wf.data.salespersonId}`);
+      const member = await get<TeamEligibility>(`eligibility:${wf.data.salespersonId}`);
       if (!member?.data.frontId) throw new Error("Map this teammate's Front identity in Team settings");
       await commit([put(row("LINK", link.id, { ...link.data, routing: role }, { accountId: link.accountId, previous: link }), link), put(operationRow(`op:route:${cnv}:${link.version}`, { type: "ASSIGN", accountId: wf.data.accountId, conversationId: cnv, assigneeId: member.data.frontId })), audit(wf.data.accountId, actor, "Conversation routing changed", { cnv, role })]);
       return { ok: true };
@@ -398,10 +387,10 @@ export const handler = async (event: { arguments: { operation?: string; readOper
       if (existing) return { ok: true, id: existing.data.accountId };
       if (!isLeadSource(fields.leadSource)) throw new Error("Choose a lead source before creating the lead");
       const id = randomUUID(), wf = await defaultWorkflow(id, name);
-      if (input.salespersonId || input.championId) {
-        const salespersonId = text(input, "salespersonId"), championId = text(input, "championId");
-        await validRole(salespersonId, "SALESPERSON"); await validRole(championId, "CHAMPION");
-        Object.assign(wf, { salespersonId, championId, assignmentIssue: undefined });
+      if (input.salespersonId) {
+        const salespersonId = text(input, "salespersonId");
+        await validRole(salespersonId, "SALESPERSON");
+        Object.assign(wf, { salespersonId, assignmentIssue: undefined });
       }
       const account: Input = { name, leadSource: fields.leadSource, stage: "LEAD", type: ["ASSOCIATION", "PERSONAL", "COMMERCIAL_OTHER"].includes(String(fields.type)) ? fields.type : "ASSOCIATION", lastWriteBy: actor };
       for (const field of ["address", "city", "state", "zip", "currentAgent", "currentPolicyExpiration", "notes"]) if (fields[field]) account[field] = text(fields, field, field === "notes" ? 10000 : 500);
@@ -423,10 +412,10 @@ export const handler = async (event: { arguments: { operation?: string; readOper
       let assigned = 0, exceptions = 0;
       for (const account of page.data) {
         const old = await ensureWorkflow(account.id);
-        if (!old.data.salespersonId || !old.data.championId) {
+        if (!old.data.salespersonId) {
           const defaults = await defaultWorkflow(account.id, account.name);
           if (defaults.assignmentIssue) { exceptions++; continue; }
-          await save(row("WORKFLOW", old.id, { ...old.data, salespersonId: old.data.salespersonId ?? defaults.salespersonId, championId: old.data.championId ?? defaults.championId, assignmentIssue: undefined, version: old.version + 1 }, { accountId: account.id, previous: old }), old);
+          await save(row("WORKFLOW", old.id, { ...old.data, salespersonId: old.data.salespersonId ?? defaults.salespersonId, assignmentIssue: undefined, version: old.version + 1 }, { accountId: account.id, previous: old }), old);
           assigned++;
         }
       }

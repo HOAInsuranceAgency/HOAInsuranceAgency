@@ -1,3 +1,4 @@
+import { salespersonEligibility, salespersonTask, salespersonWorkflow } from "../../../../shared/salespersonOwnership";
 import { randomUUID } from "node:crypto";
 import { CognitoIdentityProviderClient, ListUsersCommand } from "@aws-sdk/client-cognito-identity-provider";
 import { businessDeadline, followUpDeadline, scheduleReminders, taskWakeAt, type LeadWorkflow, type LeadTask, type TeamEligibility, type TaskKind, type Responsibility, type Communication } from "../../../../shared/leadWorkflow";
@@ -18,28 +19,52 @@ export async function enabledUser(userId: string) {
 export async function team() {
   const out: TeamEligibility[] = [];
   let cursor: string | undefined;
-  do { const page = await query<TeamEligibility>("kind", "ELIGIBILITY", cursor); out.push(...page.items.map(r => ({ ...r.data, version: r.version }))); cursor = page.nextToken; } while (cursor);
+  do { const page = await query<TeamEligibility>("kind", "ELIGIBILITY", cursor); out.push(...page.items.map(r => ({ ...salespersonEligibility(r.data), version: r.version }))); cursor = page.nextToken; } while (cursor);
   return out;
 }
 export async function validRole(userId: string, role: Responsibility, checkEnabled = true) {
   const member = await get<TeamEligibility>(`eligibility:${userId}`);
-  if (!member?.data.enabled || !(role === "SALESPERSON" ? member.data.salesperson : member.data.champion)) throw new Error("Choose an enabled teammate eligible for this responsibility");
+  if (role !== "SALESPERSON" || !member?.data.enabled || !member.data.salesperson) throw new Error("Choose an enabled teammate eligible for this responsibility");
   if (checkEnabled) await enabledUser(userId);
   return member.data;
 }
 export async function defaultWorkflow(accountId: string, name: string): Promise<LeadWorkflow> {
   const c = await config();
   let assignmentIssue: string | undefined;
-  const salespersonId = c.defaultSalespersonId ?? c.defaultUserId, championId = c.defaultChampionId ?? c.defaultUserId;
+  const salespersonId = c.defaultSalespersonId ?? c.defaultUserId;
   try {
-    if (!salespersonId || !championId) throw new Error("Choose default sales and champion owners in Team settings");
-    await validRole(salespersonId, "SALESPERSON"); await validRole(championId, "CHAMPION", championId !== salespersonId);
+    if (!salespersonId) throw new Error("Choose the default salesperson in Team settings");
+    await validRole(salespersonId, "SALESPERSON");
   } catch (e) { assignmentIssue = e instanceof Error ? e.message : "Default assignment needs attention"; }
-  return { accountId, name, salespersonId, championId, assignmentIssue, disposition: "ACTIVE", version: 1, updatedAt: new Date().toISOString() };
+  return { accountId, name, salespersonId, ownershipModel: "SALESPERSON", assignmentIssue, disposition: "ACTIVE", version: 1, updatedAt: new Date().toISOString() };
 }
 export async function ensureWorkflow(accountId: string): Promise<Row<LeadWorkflow>> {
   const old = await get<LeadWorkflow>(`workflow:${accountId}`);
-  if (old) return old;
+  if (old) {
+    if (old.data.ownershipModel === "SALESPERSON" && !old.data.championId) return old;
+    // Preserve the assigned salesperson. Missing owners use a verified default;
+    // a retired champion is never silently made eligible or given the account.
+    const data = salespersonWorkflow(old.data);
+    if (!data.salespersonId) {
+      const defaults = await defaultWorkflow(accountId, data.name);
+      if (!defaults.assignmentIssue) data.salespersonId = defaults.salespersonId;
+    }
+    try {
+      if (!data.salespersonId) throw new Error("Choose a salesperson for this account");
+      await validRole(data.salespersonId, "SALESPERSON"); data.assignmentIssue = undefined;
+    } catch (e) { data.assignmentIssue = e instanceof Error ? e.message : "Salesperson assignment needs attention"; }
+    const next = row("WORKFLOW", old.id, { ...data, ownershipModel: "SALESPERSON" as const, version: old.version + 1, updatedAt: new Date().toISOString() }, { accountId, previous: old });
+    const job = row("ROLE_SYNC", `role-sync:ownership:${accountId}`, { phase: "TASK", accountId }, { accountId, dueAt: new Date().toISOString() });
+    const existing = await get(job.id);
+    try { await commit([put(next, old), ...(!existing ? [put(job)] : [])]); }
+    catch (e) {
+      if (!conflict(e)) throw e;
+      const current = await get<LeadWorkflow>(old.id);
+      if (current?.data.ownershipModel === "SALESPERSON" && !current.data.championId) return current;
+      throw e; // Retry the migration page if another edit won without migrating.
+    }
+    return next;
+  }
   const client = await dataClient(); const account = await client.models.Account.get({ id: accountId });
   if (!account.data || account.errors?.length) throw new Error("The account could not be loaded");
   const data = await defaultWorkflow(accountId, account.data.name);
@@ -56,44 +81,58 @@ export async function accountRows<T>(accountId: string, kind: string): Promise<R
 export function expected(old: Row<unknown>, version: unknown) {
   if (old.version !== version) throw new Error("This record changed. Refresh before saving.");
 }
-export async function setResponsibilities(accountId: string, salespersonId: string, championId: string, version: number, actor: string) {
+export async function setResponsibilities(accountId: string, salespersonId: string, version: number, actor: string) {
   const old = await ensureWorkflow(accountId); expected(old, version);
-  await Promise.all([
-    salespersonId !== old.data.salespersonId ? validRole(salespersonId, "SALESPERSON") : enabledUser(salespersonId),
-    championId !== old.data.championId ? validRole(championId, "CHAMPION") : enabledUser(championId),
-  ]);
-  const next = row("WORKFLOW", old.id, { ...old.data, salespersonId, championId, assignmentIssue: undefined, version: old.version + 1, updatedAt: new Date().toISOString() }, { accountId, previous: old });
+  await validRole(salespersonId, "SALESPERSON");
+  const next = row("WORKFLOW", old.id, { ...salespersonWorkflow(old.data), salespersonId, assignmentIssue: undefined, version: old.version + 1, updatedAt: new Date().toISOString() }, { accountId, previous: old });
   const job = row("ROLE_SYNC", `role-sync:${accountId}:${next.version}`, { phase: "TASK", accountId }, { accountId, dueAt: new Date().toISOString() });
-  await commit([put(next, old), put(job), audit(accountId, actor, "Responsibilities changed", { salespersonId, championId })]);
+  await commit([put(next, old), put(job), audit(accountId, actor, "Salesperson changed", { salespersonId })]);
   await syncResponsibilities(job).catch(() => {}); // Durable job retries a failed first page.
   return next.data;
 }
 export async function syncResponsibilities(candidate: Row<{ phase: string; accountId: string; cursor?: string }>) {
   const job = await get<typeof candidate.data>(candidate.id); if (!job?.dueAt) return;
   const { accountId, phase } = job.data;
-  const wf = await ensureWorkflow(accountId), { salespersonId, championId } = wf.data;
+  if (await get(`deleted-account:${accountId}`)) {
+    await save(row("ROLE_SYNC", job.id, job.data, { accountId, previous: job }), job); return;
+  }
+  const wf = await ensureWorkflow(accountId), { salespersonId } = wf.data;
   const page = await query<Record<string, unknown>>("account", accountId, job.data.cursor, 25, `${phase}#`);
   const writes: Write[] = [check(wf)];
   if (phase === "LINK") for (const item of page.items) {
     const link = item as unknown as Row<{ conversationId: string; routing?: string }>;
-    if (!["SALESPERSON", "CHAMPION"].includes(link.data.routing ?? "")) continue;
-    const member = await get<TeamEligibility>(`eligibility:${link.data.routing === "CHAMPION" ? championId : salespersonId}`);
+    if (link.data.routing === "MANUAL") continue;
+    if (link.data.routing !== "SALESPERSON") writes.push(put(row("LINK", link.id, { ...link.data, routing: "SALESPERSON" }, { accountId, previous: link }), link));
+    const member = salespersonId ? await get<TeamEligibility>(`eligibility:${salespersonId}`) : undefined;
     const key = `op:route:${job.id}:${link.id}`;
-    if (member?.data.frontId && !await get(key)) writes.push(put(operationRow(key, { type: "ASSIGN", accountId, conversationId: link.data.conversationId, assigneeId: member.data.frontId })));
+    if (member?.data.enabled && member.data.salesperson && member.data.frontId && !await get(key)) writes.push(put(operationRow(key, { type: "ASSIGN", accountId, conversationId: link.data.conversationId, assigneeId: member.data.frontId })));
   }
   if (phase === "TASK") for (const item of page.items) {
     const task = item as unknown as Row<LeadTask>;
-    if (task.data.status !== "OPEN" || (task.data.reminderAt ?? task.data.dueAt) > new Date().toISOString()) continue;
-    const direct = task.data.role === "CHAMPION" ? championId : salespersonId;
-    const directChanged = !!task.data.notifiedAt && task.data.notifiedRecipientId !== direct;
-    const route = await (await import("./routing")).resolveTaskRoute(task.data, wf.data);
+    if (task.data.status !== "OPEN") continue;
+    const normalized = salespersonTask(task.data);
+    const route = await (await import("./routing")).resolveTaskRoute(normalized, wf.data);
+    const directChanged = !!task.data.notifiedAt && task.data.notifiedRecipientId !== route.recipientId;
     const escalationChanged = !!task.data.escalatedAt && task.data.escalatedRecipientId !== route.managerId;
-    if (!directChanged && !escalationChanged) continue;
-    const data = { ...task.data, notifiedAt: directChanged ? undefined : task.data.notifiedAt, nextReminderAt: undefined, lastReminderAt: undefined, version: task.version + 1 };
-    writes.push(put(row("TASK", task.id, data, { accountId, previous: task, dueAt: taskWakeAt(data) }), task));
+    if (!directChanged && !escalationChanged && JSON.stringify(normalized) === JSON.stringify(task.data)) continue;
+    // Notify the new route at the original reminder opportunity. Old manager
+    // receipts must not postpone the new salesperson until owner escalation.
+    const nextReminderAt = taskWakeAt({ ...normalized, notifiedAt: undefined, escalatedAt: undefined, nextReminderAt: undefined, lastReminderAt: undefined });
+    const data = { ...normalized, ...(directChanged || escalationChanged ? { notifiedAt: directChanged ? undefined : task.data.notifiedAt, nextReminderAt, lastReminderAt: undefined } : {}), version: task.version + 1 };
+    writes.push(put(row("TASK", task.id, data, { accountId, previous: task, dueAt: directChanged || escalationChanged ? taskWakeAt(data) : task.dueAt }), task));
   }
-  const done = phase === "LINK" && !page.nextToken;
-  writes.push(put(row("ROLE_SYNC", job.id, { ...job.data, phase: page.nextToken ? phase : "LINK", cursor: page.nextToken }, { accountId, previous: job, dueAt: done ? undefined : new Date().toISOString() }), job));
+  const checkedTaskIds = new Set<string>();
+  if (phase === "NOTIFICATION") for (const notice of page.items) {
+    if (notice.data.resolved) continue;
+    const task = await get<LeadTask>(String(notice.data.taskId));
+    const route = task ? await (await import("./routing")).resolveTaskRoute(task.data, wf.data) : undefined;
+    if (!task || task.data.status !== "OPEN" || ![route?.recipientId, route?.managerId, route?.ownerId].includes(String(notice.data.recipient))) {
+      writes.push(put(row("NOTIFICATION", notice.id, { ...notice.data, resolved: true }, { accountId, previous: notice }), notice));
+      if (task && !checkedTaskIds.has(task.id)) { writes.push(check(task)); checkedTaskIds.add(task.id); }
+    }
+  }
+  const done = phase === "NOTIFICATION" && !page.nextToken;
+  writes.push(put(row("ROLE_SYNC", job.id, { ...job.data, phase: page.nextToken ? phase : phase === "TASK" ? "LINK" : "NOTIFICATION", cursor: page.nextToken }, { accountId, previous: job, dueAt: done ? undefined : new Date().toISOString() }), job));
   await commit(writes);
 }
 export async function makeTask(input: { accountId: string; title: string; kind: TaskKind; role?: Responsibility; dueAt?: string; sourceAt?: string; episode?: string; conversationId?: string; custom?: boolean; id?: string; domain?: LeadTask["domain"]; context?: LeadTask["context"]; term?: string; policyId?: string; quoteId?: string; milestone?: boolean; obligationKey?: string; lines?: string[]; marketingTaskId?: string; carrierId?: string; waitingOn?: LeadTask["waitingOn"]; businessDueAt?: string; shortTimeline?: boolean }): Promise<LeadTask> {
@@ -103,7 +142,7 @@ export async function makeTask(input: { accountId: string; title: string; kind: 
   const dueAt = input.dueAt ?? (input.kind === "FOLLOW_UP" ? followUpDeadline(sourceAt, 2, holidays) : businessDeadline(sourceAt, 1, holidays));
   if (!Number.isFinite(Date.parse(dueAt))) throw new Error("Choose a valid due date");
   if (input.custom && Date.parse(dueAt) <= Date.now()) throw new Error("Choose a future date for a new promise");
-  return scheduleReminders({ ...input, id: input.id ?? `task:${randomUUID()}`, domain: input.domain ?? (input.kind === "CARRIER" ? "CARRIER" : "CLIENT"), context: input.context ?? "LEAD", role: input.role ?? "SALESPERSON", dueAt: new Date(dueAt).toISOString(),
+  return scheduleReminders({ ...input, id: input.id ?? `task:${randomUUID()}`, domain: input.domain ?? (input.kind === "CARRIER" || input.role === "CHAMPION" && input.kind === "FOLLOW_UP" ? "CARRIER" : "CLIENT"), context: input.context ?? "LEAD", role: "SALESPERSON", dueAt: new Date(dueAt).toISOString(),
     escalationAt: followUpDeadline(dueAt, 1, holidays), sourceAt, status: "OPEN", version: 1 }, holidays);
 }
 export async function saveTask(input: { accountId: string; id?: string; title: string; kind: TaskKind; role: Responsibility; dueAt: string; version?: number; reason: string }, actor: string) {
@@ -140,7 +179,7 @@ export async function recordInbound(comm: Communication, kind: TaskKind = "RESPO
     const key = `task:service:${comm.id}`;
     if (!await get(key)) {
       const { serviceRequestType } = await import("../../../../shared/serviceEvidence");
-      const task = await makeTask({ id: key, accountId: comm.accountId, title: "Deliver the requested client service", kind: "SERVICE", role: "CHAMPION", context: "SERVICE", domain: "CLIENT", sourceAt: comm.at, conversationId: comm.conversationId, milestone: true });
+      const task = await makeTask({ id: key, accountId: comm.accountId, title: "Deliver the requested client service", kind: "SERVICE", role: "SALESPERSON", context: "SERVICE", domain: "CLIENT", sourceAt: comm.at, conversationId: comm.conversationId, milestone: true });
       task.sourceIds = [comm.id]; task.serviceType = serviceRequestType(comm);
       await commit([check(serviceWorkflow), put(row("TASK", key, task, { accountId: comm.accountId, dueAt: taskWakeAt(task) }))]);
     }
@@ -149,7 +188,7 @@ export async function recordInbound(comm: Communication, kind: TaskKind = "RESPO
   const wf = await ensureWorkflow(comm.accountId);
   if (["LOST", "DISQUALIFIED"].includes(wf.data.disposition)) return;
   const context = comm.context ?? (wf.data.disposition === "BOUND" && !wf.data.openLeadQuoteIds?.length ? "SERVICE" : "LEAD");
-  const role = kind === "CARRIER" || context !== "LEAD" ? "CHAMPION" : "SALESPERSON";
+  const role = "SALESPERSON";
   const { contactFence, accountContactPairs } = await import("./contactProgress");
   const fence = await contactFence(comm.accountId);
   const contactPairs = await accountContactPairs(comm.accountId);
@@ -163,14 +202,14 @@ export async function recordInbound(comm: Communication, kind: TaskKind = "RESPO
   // Keep transaction size bounded without silently discarding source activity.
   if (newTask.sourceIds.length > 80) throw new Error("This unanswered conversation needs review before more messages can be grouped");
   const incomingDue = newTask.dueAt, incomingEscalation = newTask.escalationAt;
-  if (old?.data.status === "OPEN") { Object.assign(newTask, { ...old.data, sourceIds: newTask.sourceIds }); newTask.dueAt = old.data.custom || old.data.dueAt < incomingDue ? old.data.dueAt : incomingDue; newTask.escalationAt = old.data.custom || old.data.escalationAt < incomingEscalation ? old.data.escalationAt : incomingEscalation; newTask.notifiedAt = old.data.notifiedAt; newTask.escalatedAt = old.data.escalatedAt; }
+  if (old?.data.status === "OPEN") { Object.assign(newTask, { ...salespersonTask(old.data), sourceIds: newTask.sourceIds }); newTask.dueAt = old.data.custom || old.data.dueAt < incomingDue ? old.data.dueAt : incomingDue; newTask.escalationAt = old.data.custom || old.data.escalationAt < incomingEscalation ? old.data.escalationAt : incomingEscalation; newTask.notifiedAt = old.data.notifiedAt; newTask.escalatedAt = old.data.escalatedAt; }
   if (old?.data.sourceAt && old.data.sourceAt < newTask.sourceAt!) newTask.sourceAt = old.data.sourceAt;
   else if (comm.at < newTask.sourceAt!) newTask.sourceAt = comm.at;
   Object.assign(newTask, scheduleReminders(newTask, (await config()).holidays));
   newTask.version = (old?.version ?? 0) + 1;
   const writes: Write[] = [check(wf), put(row("CONTACT_FENCE", fence.id, {}, { previous: fence }), fence), put(row("TASK", key, newTask, { accountId: comm.accountId, dueAt: taskWakeAt(newTask), previous: old }), old)];
   if (projection) writes.push(put(row("COMMUNICATION", projection.id, { ...projection.data, workflowApplied: true }, { accountId: comm.accountId, previous: projection }), projection));
-  for (const task of tasks.filter(t => t.data.role === role && t.data.status === "OPEN" && t.data.kind === "FOLLOW_UP" && !t.data.custom && (t.data.sourceAt ?? t.createdAt) <= comm.at).slice(0, 90)) {
+  for (const task of tasks.filter(t => (t.data.domain ?? (t.data.role === "CHAMPION" ? "CARRIER" : "CLIENT")) === (kind === "CARRIER" ? "CARRIER" : "CLIENT") && (t.data.context ?? "LEAD") === context && t.data.status === "OPEN" && t.data.kind === "FOLLOW_UP" && !t.data.custom && (t.data.sourceAt ?? t.createdAt) <= comm.at).slice(0, 90)) {
     let matches = !!comm.conversationId && task.data.conversationId === comm.conversationId;
     if (!matches) for (const id of task.data.sourceIds ?? []) {
       const source = await get<Communication>(id);
@@ -223,7 +262,7 @@ export async function mergeTasks(input: { accountId: string; tasks: { id: string
   const wf = await ensureWorkflow(input.accountId), selected = [];
   for (const ref of input.tasks) {
     const task = await get<LeadTask>(ref.id);
-    if (!task || task.accountId !== input.accountId || task.data.status !== "OPEN" || !["RESPONSE", "CALLBACK"].includes(task.data.kind) || task.data.role !== "SALESPERSON") throw new Error("Only open prospect response/callback requests can be combined");
+    if (!task || task.accountId !== input.accountId || task.data.status !== "OPEN" || !["RESPONSE", "CALLBACK"].includes(task.data.kind) || (task.data.domain ?? "CLIENT") !== "CLIENT" || (task.data.context ?? "LEAD") !== "LEAD") throw new Error("Only open prospect response/callback requests can be combined");
     expected(task, ref.version); selected.push(task);
   }
   const [target, ...others] = selected, sourceIds = [...new Set(selected.flatMap(t => t.data.sourceIds ?? []))];

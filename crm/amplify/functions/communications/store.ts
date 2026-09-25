@@ -14,9 +14,9 @@ export function canonical(value: unknown): string {
 }
 export function row<T>(kind: string, id: string, data: T, opts: { accountId?: string; dueAt?: string; previous?: Row<unknown> } = {}): Row<T> {
   const now = new Date().toISOString();
-  const values = data as { status?: string; state?: string; resolved?: boolean; processedAt?: string; disposition?: string; salespersonId?: string; championId?: string; assignmentIssue?: string; dueAt?: string; at?: string };
+  const values = data as { status?: string; state?: string; resolved?: boolean; processedAt?: string; disposition?: string; salespersonId?: string; assignmentIssue?: string; dueAt?: string; at?: string };
   const actionable = kind === "TASK" ? values.status === "OPEN"
-    : kind === "WORKFLOW" ? values.disposition === "ACTIVE" && (!values.salespersonId || !values.championId || !!values.assignmentIssue)
+    : kind === "WORKFLOW" ? ["ACTIVE", "BOUND"].includes(values.disposition ?? "") && (!values.salespersonId || !!values.assignmentIssue)
     : kind === "OPERATION" ? !["CONFIRMED", "SUPPRESSED"].includes(values.state ?? "")
     : kind === "REPORT_EDITION" ? values.state !== "SENT"
     : kind === "EVENT" ? !values.processedAt && !values.resolved

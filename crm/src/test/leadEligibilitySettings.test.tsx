@@ -5,7 +5,7 @@ vi.mock("../lib/communications", () => ({ communicationRequest: h.request }));
 vi.mock("../lib/client", () => ({ friendlyError: (error: Error) => error.message }));
 import LeadEligibilitySettings from "../components/LeadEligibilitySettings";
 import type { TeamEligibility } from "../lib/communications";
-const member: TeamEligibility = { userId: "jake", name: "Jake Greasley", email: "jake@example.com", enabled: true, salesperson: true, champion: true, frontId: "tea_ci3mi", dialpadId: "5655281245659136", version: 3 };
+const member: TeamEligibility = { userId: "jake", name: "Jake Greasley", email: "jake@example.com", enabled: true, salesperson: true, frontId: "tea_ci3mi", dialpadId: "5655281245659136", version: 3 };
 beforeEach(() => {
   vi.clearAllMocks();
   h.request.mockImplementation(async (op: string, input: TeamEligibility) => op === "team" ? { team: [{ ...member }] } : { member: { ...input, version: (input.version ?? 0) + 1 } });
@@ -51,7 +51,7 @@ describe("protected teammate connection IDs", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(screen.getByText("tea_new123")).toBeVisible();
     expect(screen.getByRole("checkbox", { name: "Salesperson eligibility for Jake Greasley" })).toBeChecked();
-    expect(screen.getByRole("checkbox", { name: "Deal champion eligibility for Jake Greasley" })).toBeChecked();
+    expect(screen.queryByRole("checkbox", { name: /champion/i })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("checkbox", { name: "Salesperson eligibility for Jake Greasley" }));
     await waitFor(() => expect(h.request).toHaveBeenLastCalledWith("saveEligibility", { ...member, frontId: "tea_new123", salesperson: false, version: 4 }, true));
   });

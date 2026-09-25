@@ -36,7 +36,7 @@ export async function reportFor(recipientId: string, snapshot?: Awaited<ReturnTy
     const wf = item.accountId ? byId.get(item.accountId) : undefined;
     const business = /incumbent-date|renewal-facts|renewal-context|expired-risk|policy-handoff|placement|bind-authorization/.test(item.id);
     const assignment = /coverage:|assignment:/.test(item.id);
-    const visible = business ? wf?.championId === recipientId || recipientId === s.settings.marketingManagerId
+    const visible = business ? wf?.salespersonId === recipientId || recipientId === s.settings.ownerId || !!wf?.salespersonId && s.settings.members.some(m => m.userId === wf.salespersonId && m.salesManagerId === recipientId)
       : assignment ? recipientId === s.settings.ownerId : item.kind === "TRIAGE" || /Link this|Unlinked/.test(String(item.data.message)) ? isIntake : isIntegration;
     if (!visible || item.data.resolved) continue;
     const section = business ? "Your client and carrier work today" : "Setup and data";

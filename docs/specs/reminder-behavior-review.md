@@ -1,5 +1,7 @@
 # Reminder behavior — business review
 
+> Ownership update (September 25, 2026): [Salesperson account ownership](salesperson-account-ownership.md) supersedes all separate champion/marketing-manager ownership rules below. The earlier decisions remain here as historical context.
+
 September 10, 2026. Plain-language companion to the [revision specification](sales-carrier-workflow-revision.md) and [confirmed decisions](sales-carrier-business-decisions.md). **This describes the intended revision for review before code changes. It is not a claim that these behaviors are deployed.**
 
 ## What a reminder is

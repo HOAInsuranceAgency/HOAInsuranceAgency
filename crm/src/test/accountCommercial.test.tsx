@@ -17,7 +17,7 @@ beforeEach(() => {
 });
 afterEach(() => vi.useRealTimers());
 
-it('keeps unfinished packages in Leads and does not carry a hidden owner filter into Clients', async () => {
+it('keeps unfinished packages in Leads and shows the same visible salesperson filter on Clients', async () => {
   const page = render(
     <MemoryRouter>
       <AccountsList stage="LEAD" />
@@ -35,8 +35,12 @@ it('keeps unfinished packages in Leads and does not carry a hidden owner filter 
       <AccountsList stage="CLIENT" />
     </MemoryRouter>,
   );
+  expect(await screen.findByText('No clients found.')).toBeTruthy();
+  expect(screen.getByRole('combobox', { name: 'Salesperson' })).toHaveValue('champ');
+  fireEvent.change(screen.getByRole('combobox', { name: 'Salesperson' }), { target: { value: '' } });
   expect(await screen.findByText('Cedar House — partially bound')).toBeTruthy();
   expect(screen.getByRole('columnheader', { name: 'City' })).toBeTruthy();
   expect(screen.getByRole('columnheader', { name: 'State' })).toBeTruthy();
-  expect(screen.queryByRole('combobox', { name: 'Salesperson' })).toBeNull();
+  expect(screen.getByRole('columnheader', { name: 'Salesperson' })).toBeTruthy();
+  expect(screen.queryByRole('columnheader', { name: 'Deal champion' })).toBeNull();
 });

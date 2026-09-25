@@ -1,3 +1,4 @@
+import { salespersonRouting } from "../../../../shared/salespersonOwnership";
 import { taskRoute, validateRouting, validateCompleteRouting } from "../../../../shared/workRouting";
 import type { TeamRouting, TeamEligibility, LeadTask, LeadWorkflow, IntegrationConfig } from "../../../../shared/leadWorkflow";
 import { get, save, row, commit, put, audit, check } from "./store";
@@ -5,7 +6,7 @@ import { team, enabledUser, UnavailableTeammateError } from "./workflow";
 
 export async function routing(): Promise<TeamRouting> {
   const saved = await get<TeamRouting>("team-routing");
-  return saved ? { ...saved.data, version: saved.version } : { members: [], version: 0 };
+  return saved ? salespersonRouting({ ...saved.data, version: saved.version }) : { members: [], version: 0 };
 }
 export async function resolveTaskRoute(task: LeadTask, workflow: LeadWorkflow) {
   const settings = await routing(), members = await team();
@@ -31,19 +32,20 @@ export async function resolveTaskRoute(task: LeadTask, workflow: LeadWorkflow) {
 }
 const availability = new Map<string, number>();
 export async function saveRouting(input: TeamRouting, actor: string, roster?: TeamEligibility[]) {
+  input = salespersonRouting(input);
   const old = await get<TeamRouting>("team-routing");
   if (input.version !== (old?.version ?? 0)) throw new Error("Team settings changed. Refresh before saving.");
   const members = roster ?? await team(); validateRouting(input, members);
   const configuration = await get<IntegrationConfig>("config");
   const c = configuration?.data ?? await (await import("./config")).config();
   if (c.activatedAt && !c.paused) validateCompleteRouting(input, members);
-  const ids = new Set([input.ownerId, input.marketingManagerId, input.intakeOwnerId, input.integrationOwnerId, ...input.members.flatMap(m => [m.userId, m.salesManagerId, m.coverId])].filter((id): id is string => !!id));
+  const ids = new Set([input.ownerId, input.intakeOwnerId, input.integrationOwnerId, ...input.members.flatMap(m => [m.userId, m.salesManagerId, m.coverId])].filter((id): id is string => !!id));
   for (const id of ids) await enabledUser(id);
   if (input.reportChannelId) await (await import("./reports")).verifyReportChannel(input.reportChannelId);
   // Manager-only teammates need a server-owned directory entry, with no producer eligibility added.
   for (const id of ids) if (!await get(`eligibility:${id}`)) {
     const member = members.find(m => m.userId === id)!;
-    await save(row("ELIGIBILITY", `eligibility:${id}`, { ...member, salesperson: false, champion: false, enabled: true }));
+    await save(row("ELIGIBILITY", `eligibility:${id}`, { ...member, salesperson: false, enabled: true }));
   }
   const next = row("TEAM_ROUTING", "team-routing", { ...input, version: (old?.version ?? 0) + 1 }, { previous: old });
   await commit([put(next, old), configuration ? check(configuration) : { ConditionCheck: { TableName: process.env.COMMUNICATION_TABLE!, Key: { id: "config" }, ConditionExpression: "attribute_not_exists(id)" } }, audit("TEAM", actor, "Managers and coverage updated", input)]);

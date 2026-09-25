@@ -13,7 +13,7 @@ export async function repairConversationContexts(accountId: string) {
     const link = links.get(t.data.conversationId); if (!link || !link.data.context) continue;
     const { context, policyId, quoteId } = link.data;
     const domain = link.data.purpose === 'CARRIER' ? 'CARRIER' : 'CLIENT';
-    const role = domain === 'CARRIER' || context !== 'LEAD' ? 'CHAMPION' : 'SALESPERSON';
+    const role = 'SALESPERSON';
     const kind = t.data.kind === 'RESPONSE' && domain === 'CARRIER' ? 'CARRIER' : t.data.kind === 'CARRIER' && domain === 'CLIENT' ? 'RESPONSE' : t.data.kind;
     if (t.data.context === context && t.data.domain === domain && t.data.role === role && t.data.policyId === policyId && t.data.quoteId === quoteId && t.data.kind === kind) continue;
     const data: LeadTask = { ...t.data, context, domain, role, kind, policyId, quoteId, accountableRole: role, helperId: undefined, specialistId: undefined, helperRequestedBy: undefined, helperReason: undefined, version: t.version + 1 };

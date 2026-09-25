@@ -126,6 +126,13 @@ export const handler = async (event?: Partial<DynamoDBStreamEvent>) => {
   const start = Date.now(), counters = { handled: 0, failed: 0 };
   let cursor: string | undefined, lagging = false, callChecks = 0;
   const c = await config();
+  try {
+    await (await import("./ownershipMigration")).migrateSalespersonOwnership();
+    await (await import("./routing")).resolveIssue("salesperson-ownership");
+  } catch (error) {
+    lagging = true;
+    await issue("salesperson-ownership", error instanceof Error ? error.message : "Account assignment migration will retry");
+  }
   await migrateReminderSchedules();
   try { await (await import("./coverage")).coverageSweep(); await (await import("./routing")).resolveIssue("coverage-census"); }
   catch (error) { lagging = true; await issue("coverage-census", error instanceof Error ? error.message : "Work coverage needs attention"); }
