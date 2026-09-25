@@ -1,6 +1,3 @@
-import Financing from "./Financing";
-import { MAPPED_APP_FORM_KEYS } from "../lib/acord";
-import { Field, SectionNav } from "../components/ui/kit";
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { list, uploadData } from "aws-amplify/storage";
@@ -24,7 +21,7 @@ import {
 } from "../lib/agencySettings";
 
 type TemplateDef = AcordFormDef;
-type Tab = "financing" | "templates" | "licensing" | "signature" | "agency" | "team" | "integrations";
+type Tab = "templates" | "licensing" | "signature" | "agency" | "team" | "integrations";
 
 /** New ACORD forms: add to ACORD_FORMS + a mapping in lib/acord.ts. */
 const TEMPLATES: TemplateDef[] = ACORD_FORMS;
@@ -34,10 +31,10 @@ export default function Settings({ profile }: { profile: UserProfile }) {
   const isAdmin = useIsAdmin();
 
   const TABS: [Tab, string][] = [
+    ["templates", "Form templates"],
     ["licensing", "Licensing"],
     // Everyone manages their own signature; the Team tab manages others'.
     ["signature", "My signature"],
-    ["templates", "Form templates"],
     // Admin-only, matching who the schema lets write these. Everyone still
     // *sees* the NPNs — they are in the sidebar, which is the point of them.
     ...(isAdmin
@@ -45,15 +42,17 @@ export default function Settings({ profile }: { profile: UserProfile }) {
           ["agency", "Agency"],
           ["team", "Team"],
           ["integrations", "Front and Dialpad"],
-          ["financing", "Financing rules"],
         ] as [Tab, string][])
       : []),
   ];
 
   const requested = searchParams.get("tab") as Tab | null;
-  const tab: Tab = requested && TABS.some(([t]) => t === requested) ? requested : "signature";
+  const [tab, setTab] = useState<Tab>(
+    requested && TABS.some(([t]) => t === requested) ? requested : "templates"
+  );
 
   function selectTab(t: Tab) {
+    setTab(t);
     // Keep the tab in the URL so Settings views are linkable.
     const next = new URLSearchParams(searchParams);
     next.set("tab", t);
@@ -65,8 +64,17 @@ export default function Settings({ profile }: { profile: UserProfile }) {
       <h1>Settings</h1>
       <p className="sub">Form templates, licensing, agency details, and team</p>
 
-      <SectionNav label="Settings view" items={TABS} value={tab} onChange={selectTab} />
-      {tab === "financing" && isAdmin && <Financing />}
+      <div className="tabs">
+        {TABS.map(([t, label]) => (
+          <button
+            key={t}
+            className={tab === t ? "active" : ""}
+            onClick={() => selectTab(t)}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
 
       {tab === "templates" && <TemplatesPanel />}
       {tab === "licensing" && <Licensing />}
@@ -239,7 +247,7 @@ function TemplateRow({
           ) : (
             <Badge
               {...flagBadge(isUploaded, {
-                on: { cls: tpl.key === "acord25" || MAPPED_APP_FORM_KEYS.has(tpl.key) ? "green" : "amber", label: tpl.key === "acord25" || MAPPED_APP_FORM_KEYS.has(tpl.key) ? "Ready to generate" : "Uploaded · setup incomplete" },
+                on: { cls: "green", label: "Uploaded" },
                 off: { cls: "amber", label: "Missing" },
               })}
             />
@@ -346,7 +354,7 @@ function AgencyPanel({ profile }: { profile: UserProfile }) {
       ) : (
         <>
           <div className="form-grid">
-            <Field className="field">
+            <div className="field">
               <label htmlFor="agency-npn">Agency NPN</label>
               <input
                 id="agency-npn"
@@ -354,8 +362,8 @@ function AgencyPanel({ profile }: { profile: UserProfile }) {
                 value={ids.agencyNpn}
                 onChange={(e) => edit("agencyNpn", e.target.value)}
               />
-            </Field>
-            <Field className="field">
+            </div>
+            <div className="field">
               <label htmlFor="drlp-npn">DRLP NPN</label>
               <input
                 id="drlp-npn"
@@ -366,8 +374,8 @@ function AgencyPanel({ profile }: { profile: UserProfile }) {
               <p className="muted small" style={{ margin: "4px 0 0" }}>
                 The Designated Responsible Licensed Producer's own number.
               </p>
-            </Field>
-            <Field className="field">
+            </div>
+            <div className="field">
               <label htmlFor="agency-ein">Agency EIN</label>
               {/* The same formatter the association FEIN uses, so both tax
                   ids are written and read the same way. */}
@@ -379,7 +387,7 @@ function AgencyPanel({ profile }: { profile: UserProfile }) {
               <p className="muted small" style={{ margin: "4px 0 0" }}>
                 The agency's federal employer identification number.
               </p>
-            </Field>
+            </div>
           </div>
           <div className="form-actions">
             <button className="primary" disabled={saveStatus.busy} onClick={save}>

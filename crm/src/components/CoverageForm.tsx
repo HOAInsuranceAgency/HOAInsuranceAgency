@@ -1,4 +1,3 @@
-import { Field } from "./ui/kit";
 import { listAllPages } from "../lib/pagination";
 import { useAsyncResource } from "../lib/useAsyncResource";
 import { useState } from "react";
@@ -55,7 +54,7 @@ export default function CoverageForm({
   const editing = !!existing;
   const asPolicy = existing as Policy | null;
 
-  const { form, setF, patch, markSaved } = useFormState({
+  const { form, setF, patch } = useFormState({
     carrierId: existing?.carrierId ?? "",
     renewalPolicyId: (existing as Quote | null)?.renewalPolicyId ?? "",
     offerExpiresAt: (existing as Quote | null)?.offerExpiresAt ?? "",
@@ -188,7 +187,6 @@ export default function CoverageForm({
         });
         if (errors?.length) throw new Error(errors[0].message);
       }
-      markSaved();
       onSaved();
     } catch (err) {
       setError(friendlyError(err, "Save failed"));
@@ -211,7 +209,196 @@ export default function CoverageForm({
         {editing ? "Edit" : "New"} {isPolicy ? "policy" : "quote"}
       </h3>
       <div className="form-grid">
-        <Field className="field full">
+        <div className="field">
+          <label>Carrier</label>
+          <select value={form.carrierId} onChange={(e) => pickCarrier(e.target.value)}>
+            <option value="">—</option>
+            {carriers.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </select>
+        </div>
+        {isPolicy && (
+          <div className="field">
+            <label>Policy number</label>
+            <input
+              value={form.policyNumber}
+              onChange={(e) => setF("policyNumber", e.target.value)}
+            />
+          </div>
+        )}
+        {/* The financing-eligibility facts, on quotes and policies alike:
+            W8 bills — and offers financing on — a quote before bind, so the
+            screens must be answerable where the offer is made. */}
+        {(
+          <>
+            <div className="field">
+              <label>Minimum earned premium % (from the {isPolicy ? "policy" : "quote"})</label>
+              <PercentInput
+                value={form.mepPct}
+                onChange={(v) => setF("mepPct", v)}
+              />
+            </div>
+          </>
+        )}
+        {/* Set at bind and correctable here — a placement can move from direct
+            to agency bill mid-term, and the answer decides whether the agency
+            invoices the premium at all. */}
+        {isPolicy && (
+          <div className="field">
+            <label>Bill type</label>
+            <select
+              value={form.billType}
+              onChange={(e) => setF("billType", e.target.value)}
+            >
+              <option value="">Not recorded</option>
+              {BILL_TYPE_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+        {!isPolicy && policies.data.length > 0 && <label className="field">Renewal of<select value={form.renewalPolicyId} onChange={e => { const p = policies.data.find(p => p.id === e.target.value); setF("renewalPolicyId", e.target.value); if (p?.expirationDate && !form.effectiveDate) setF("effectiveDate", p.expirationDate); }}><option value="">New business</option>{policies.data.map(p => <option value={p.id} key={p.id}>{p.policyNumber || "Policy"} · {p.lines?.join(", ")} · expires {p.expirationDate}</option>)}</select></label>}
+        {!isPolicy && <label className="field">Offer valid through (if specified by carrier)<DateInput value={form.offerExpiresAt} onChange={v => setF("offerExpiresAt", v)} /></label>}
+        <div className="field">
+          <label>Status</label>
+          <select
+            value={form.status}
+            onChange={(e) => setF("status", e.target.value)}
+            disabled={statusOptions.length === 1}
+          >
+            {[...statusOptions].sort((a, b) => a.localeCompare(b)).map((s) => (
+              <option key={s}>{s}</option>
+            ))}
+          </select>
+        </div>
+        <div className="field">
+          <label>Premium ($)</label>
+          <MoneyInput
+            value={form.premium}
+            onChange={(v) => setF("premium", v)}
+          />
+        </div>
+        <div className="field">
+          <label>Commission % (baked into premium)</label>
+          <PercentInput
+            value={form.commissionPct}
+            onChange={(v) => {
+              setCommissionTouched(true);
+              setF("commissionPct", v);
+            }}
+          />
+        </div>
+        <div className="field">
+          <label>Effective date</label>
+          <DateInput
+            value={form.effectiveDate}
+            onChange={(v) => setF("effectiveDate", v)}
+          />
+        </div>
+        <div className="field">
+          <label>Expiration date</label>
+          <DateInput
+            value={form.expirationDate}
+            onChange={(v) => setF("expirationDate", v)}
+          />
+        </div>
+        <div className="field">
+          <label>Per-occurrence deductible ($)</label>
+          <MoneyInput
+            value={form.perOccDed}
+            onChange={(v) => setF("perOccDed", v)}
+          />
+        </div>
+        <div className="field">
+          <label>Per-unit deductible ($)</label>
+          <MoneyInput
+            value={form.perUnitDed}
+            onChange={(v) => setF("perUnitDed", v)}
+          />
+        </div>
+        <div className="field">
+          <label>Blanket limit ($)</label>
+          <MoneyInput
+            value={form.blanketLimit}
+            onChange={(v) => setF("blanketLimit", v)}
+          />
+        </div>
+        <div className="field">
+          <label>Coinsurance %</label>
+          <PercentInput
+            value={form.coinsurance}
+            onChange={(v) => setF("coinsurance", v)}
+          />
+        </div>
+        <div className="field">
+          <label>Replacement cost</label>
+          <select value={form.rcType} onChange={(e) => setF("rcType", e.target.value)}>
+            <option value="">—</option>
+            {REPLACEMENT_COST_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="field full">
+          <h4 style={{ margin: "6px 0 0" }}>General liability limits</h4>
+          <p className="muted small" style={{ margin: "2px 0 0" }}>
+            These print on the certificate of insurance. A COI without limits
+            is of no use to the holder.
+          </p>
+        </div>
+        <div className="field">
+          <label>Each occurrence ($)</label>
+          <MoneyInput value={form.glEachOcc} onChange={(v) => setF("glEachOcc", v)} />
+        </div>
+        <div className="field">
+          <label>Damage to rented premises ($)</label>
+          <MoneyInput value={form.glRented} onChange={(v) => setF("glRented", v)} />
+        </div>
+        <div className="field">
+          <label>Medical expense, any one person ($)</label>
+          <MoneyInput value={form.glMed} onChange={(v) => setF("glMed", v)} />
+        </div>
+        <div className="field">
+          <label>Personal &amp; advertising injury ($)</label>
+          <MoneyInput value={form.glPersAdv} onChange={(v) => setF("glPersAdv", v)} />
+        </div>
+        <div className="field">
+          <label>General aggregate ($)</label>
+          <MoneyInput value={form.glGenAgg} onChange={(v) => setF("glGenAgg", v)} />
+        </div>
+        <div className="field">
+          <label>Products &amp; completed ops aggregate ($)</label>
+          <MoneyInput value={form.glProdAgg} onChange={(v) => setF("glProdAgg", v)} />
+        </div>
+        <div className="field">
+          <label>Aggregate applies per</label>
+          <select value={form.glAggApplies} onChange={(e) => setF("glAggApplies", e.target.value as typeof form.glAggApplies)}>
+            {AGGREGATE_APPLIES_TO_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="field">
+          <label>Coverage form</label>
+          <label className="small" style={{ display: "flex", gap: 6, alignItems: "center", height: 38 }}>
+            <input
+              type="checkbox"
+              checked={form.glClaimsMade}
+              onChange={(e) => setF("glClaimsMade", e.target.checked)}
+            />
+            Claims made (otherwise occurrence)
+          </label>
+        </div>
+        <div className="field full">
           <label>Lines</label>
           <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 14px" }}>
             {/* Vocabulary first, then any legacy value this record carries
@@ -233,203 +420,11 @@ export default function CoverageForm({
               </label>
             ))}
           </div>
-        </Field>
-
-        <Field className="field">
-          <label>Carrier</label>
-          <select value={form.carrierId} onChange={(e) => pickCarrier(e.target.value)}>
-            <option value="">—</option>
-            {carriers.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
-        </Field>
-        {isPolicy && (
-          <Field className="field">
-            <label>Policy number</label>
-            <input
-              value={form.policyNumber}
-              onChange={(e) => setF("policyNumber", e.target.value)}
-            />
-          </Field>
-        )}
-        {/* The financing-eligibility facts, on quotes and policies alike:
-            W8 bills — and offers financing on — a quote before bind, so the
-            screens must be answerable where the offer is made. */}
-        {(
-          <>
-            <Field className="field">
-              <label>Minimum earned premium % (from the {isPolicy ? "policy" : "quote"})</label>
-              <PercentInput
-                value={form.mepPct}
-                onChange={(v) => setF("mepPct", v)}
-              />
-            </Field>
-          </>
-        )}
-        {/* Set at bind and correctable here — a placement can move from direct
-            to agency bill mid-term, and the answer decides whether the agency
-            invoices the premium at all. */}
-        {isPolicy && (
-          <Field className="field">
-            <label>Bill type</label>
-            <select
-              value={form.billType}
-              onChange={(e) => setF("billType", e.target.value)}
-            >
-              <option value="">Not recorded</option>
-              {BILL_TYPE_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
-          </Field>
-        )}
-        {!isPolicy && policies.data.length > 0 && <label className="field">Renewal of<select value={form.renewalPolicyId} onChange={e => { const p = policies.data.find(p => p.id === e.target.value); setF("renewalPolicyId", e.target.value); if (p?.expirationDate && !form.effectiveDate) setF("effectiveDate", p.expirationDate); }}><option value="">New business</option>{policies.data.map(p => <option value={p.id} key={p.id}>{p.policyNumber || "Policy"} · {p.lines?.join(", ")} · expires {p.expirationDate}</option>)}</select></label>}
-        {!isPolicy && <label className="field">Offer valid through (if specified by carrier)<DateInput value={form.offerExpiresAt} onChange={v => setF("offerExpiresAt", v)} /></label>}
-        <Field className="field">
-          <label>Status</label>
-          <select
-            value={form.status}
-            onChange={(e) => setF("status", e.target.value)}
-            disabled={statusOptions.length === 1}
-          >
-            {[...statusOptions].sort((a, b) => a.localeCompare(b)).map((s) => (
-              <option key={s}>{s}</option>
-            ))}
-          </select>
-        </Field>
-        <Field className="field">
-          <label>Premium ($)</label>
-          <MoneyInput
-            value={form.premium}
-            onChange={(v) => setF("premium", v)}
-          />
-        </Field>
-        <Field className="field">
-          <label>Commission % (baked into premium)</label>
-          <PercentInput
-            value={form.commissionPct}
-            onChange={(v) => {
-              setCommissionTouched(true);
-              setF("commissionPct", v);
-            }}
-          />
-        </Field>
-        <Field className="field">
-          <label>Effective date</label>
-          <DateInput
-            value={form.effectiveDate}
-            onChange={(v) => setF("effectiveDate", v)}
-          />
-        </Field>
-        <Field className="field">
-          <label>Expiration date</label>
-          <DateInput
-            value={form.expirationDate}
-            onChange={(v) => setF("expirationDate", v)}
-          />
-        </Field>
-        <Field className="field">
-          <label>Per-occurrence deductible ($)</label>
-          <MoneyInput
-            value={form.perOccDed}
-            onChange={(v) => setF("perOccDed", v)}
-          />
-        </Field>
-        <Field className="field">
-          <label>Per-unit deductible ($)</label>
-          <MoneyInput
-            value={form.perUnitDed}
-            onChange={(v) => setF("perUnitDed", v)}
-          />
-        </Field>
-        <Field className="field">
-          <label>Blanket limit ($)</label>
-          <MoneyInput
-            value={form.blanketLimit}
-            onChange={(v) => setF("blanketLimit", v)}
-          />
-        </Field>
-        <Field className="field">
-          <label>Coinsurance %</label>
-          <PercentInput
-            value={form.coinsurance}
-            onChange={(v) => setF("coinsurance", v)}
-          />
-        </Field>
-        <Field className="field">
-          <label>Replacement cost</label>
-          <select value={form.rcType} onChange={(e) => setF("rcType", e.target.value)}>
-            <option value="">—</option>
-            {REPLACEMENT_COST_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </select>
-        </Field>
-        {form.lines.some(line => /general liability/i.test(line)) && <>
-        <div className="field full">
-          <h4 style={{ margin: "6px 0 0" }}>General liability limits</h4>
-          <p className="muted small" style={{ margin: "2px 0 0" }}>
-            These print on the certificate of insurance. A COI without limits
-            is of no use to the holder.
-          </p>
         </div>
-        <Field className="field">
-          <label>Each occurrence ($)</label>
-          <MoneyInput value={form.glEachOcc} onChange={(v) => setF("glEachOcc", v)} />
-        </Field>
-        <Field className="field">
-          <label>Damage to rented premises ($)</label>
-          <MoneyInput value={form.glRented} onChange={(v) => setF("glRented", v)} />
-        </Field>
-        <Field className="field">
-          <label>Medical expense, any one person ($)</label>
-          <MoneyInput value={form.glMed} onChange={(v) => setF("glMed", v)} />
-        </Field>
-        <Field className="field">
-          <label>Personal &amp; advertising injury ($)</label>
-          <MoneyInput value={form.glPersAdv} onChange={(v) => setF("glPersAdv", v)} />
-        </Field>
-        <Field className="field">
-          <label>General aggregate ($)</label>
-          <MoneyInput value={form.glGenAgg} onChange={(v) => setF("glGenAgg", v)} />
-        </Field>
-        <Field className="field">
-          <label>Products &amp; completed ops aggregate ($)</label>
-          <MoneyInput value={form.glProdAgg} onChange={(v) => setF("glProdAgg", v)} />
-        </Field>
-        <Field className="field">
-          <label>Aggregate applies per</label>
-          <select value={form.glAggApplies} onChange={(e) => setF("glAggApplies", e.target.value as typeof form.glAggApplies)}>
-            {AGGREGATE_APPLIES_TO_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </select>
-        </Field>
-        <Field className="field">
-          <label>Coverage form</label>
-          <label className="small" style={{ display: "flex", gap: 6, alignItems: "center", height: 38 }}>
-            <input
-              type="checkbox"
-              checked={form.glClaimsMade}
-              onChange={(e) => setF("glClaimsMade", e.target.checked)}
-            />
-            Claims made (otherwise occurrence)
-          </label>
-        </Field>
-        </>}
-        <Field className="field full">
+        <div className="field full">
           <label>Notes</label>
           <textarea rows={2} value={form.notes} onChange={(e) => setF("notes", e.target.value)} />
-        </Field>
+        </div>
       </div>
       <div className="form-actions">
         <button className="primary" disabled={saving} onClick={save}>

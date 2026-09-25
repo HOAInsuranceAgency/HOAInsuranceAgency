@@ -1,5 +1,3 @@
-import { Pagination } from "../../components/ui/kit";
-import { useListPage } from "../../lib/useListPage";
 import { ReportDownload } from "../../components/ReportDownload";
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -21,7 +19,7 @@ import {
   ACCOUNT_STAGE_BADGE,
   RENEWAL_HORIZON_SCALE,
 } from "../../lib/badges";
-import { MobileSort, useSort, SortTh } from "../../lib/useSort";
+import { useSort, SortTh } from "../../lib/useSort";
 import { useAsyncResource } from "../../lib/useAsyncResource";
 import {
   buildRenewalRows,
@@ -111,7 +109,7 @@ export default function RenewalsTab() {
       };
     },
     [],
-    { cacheKey: "report:renewals", initialData: EMPTY, errorMessage: "Failed to load renewals" }
+    { initialData: EMPTY, errorMessage: "Failed to load renewals" }
   );
   const { leads, clients, policies, carriers, tasks, quotes } = res.data;
 
@@ -175,7 +173,7 @@ export default function RenewalsTab() {
     const unmarketed = visible.filter(
       (r) => r.marketing.kind === "none" || r.marketing.kind === "missed"
     ).length;
-    return { premium, accounts, unmarketed, known: visible.filter(r => r.premium != null).length, total: visible.length };
+    return { premium, accounts, unmarketed };
   }, [visible]);
 
   // Soonest renewal first — the work that's most at risk floats up.
@@ -196,7 +194,6 @@ export default function RenewalsTab() {
     "days"
   );
 
-  const page = useListPage(sorted, `${horizon}:${sortKey}:${dir}`);
   return (
     <TabFrame res={res}>
       <div className="card">
@@ -232,17 +229,15 @@ export default function RenewalsTab() {
         ) : (
           <>
             <div className="hero-line">
-              <span className="n">{hero.known ? fmtMoney(hero.premium) : "Premium not recorded"}</span>
+              <span className="n">{fmtMoney(hero.premium)}</span>
               <span className="l">
                 {horizon === "overdue"
                   ? `premium past its renewal date · ${hero.accounts} ${hero.accounts === 1 ? "account" : "accounts"}`
                   : `premium expiring in the next ${horizon} days · ${hero.accounts} ${hero.accounts === 1 ? "account" : "accounts"} · ${hero.unmarketed} not yet marketed`}
               </span>
             </div>
-            <p className="muted small">Known premiums: {hero.known} of {hero.total} records. Missing premiums are excluded from the amount above.</p>
             <div className="table-wrap">
-              <MobileSort options={[["account", "Account"], ["carrier", "Carrier"], ["renewal", "Expires"], ["days", "Days"], ["premium", "Premium"], ["marketing", "Marketing"], ["submitBy", "Submit by"]]} sortKey={sortKey} dir={dir} onToggle={toggle} />
-              <table className="stacked-table">
+              <table>
                 <thead>
                   <tr>
                     <SortTh label="Account" colKey="account" sortKey={sortKey} dir={dir} onToggle={toggle} />
@@ -257,37 +252,37 @@ export default function RenewalsTab() {
                   </tr>
                 </thead>
                 <tbody>
-                  {page.rows.map((r, i) => (
+                  {sorted.map((r, i) => (
                     <tr
                       key={`${r.accountId}-${r.date}-${i}`}
                       className="clickable"
                       onClick={() => navigate(`/accounts/${r.accountId}`)}
                     >
-                      <td data-label="Account">
+                      <td>
                         <strong>{r.name}</strong>
                       </td>
-                      <td data-label="Actions">
+                      <td>
                         <Badge {...statusBadge(ACCOUNT_STAGE_BADGE, r.kind)} />
                       </td>
-                      <td data-label="Carrier">
+                      <td>
                         {r.carrierName ?? (
                           <span className="muted">
                             {r.kind === "LEAD" ? "incumbent" : "—"}
                           </span>
                         )}
                       </td>
-                      <td className="small muted" data-label="Lines">
+                      <td className="small muted">
                         {r.lines && r.lines.length > 0 ? r.lines.join(", ") : "—"}
                       </td>
-                      <td data-label="Expires">{fmtDate(r.date)}</td>
-                      <td className="days-badge" data-label="Days">
+                      <td>{fmtDate(r.date)}</td>
+                      <td className="days-badge">
                         <Badge {...urgencyBadge(r.days, RENEWAL_HORIZON_SCALE)} />
                       </td>
-                      <td data-label="Premium">{r.premium == null ? "—" : fmtMoney(r.premium)}</td>
-                      <td data-label="Marketing">
+                      <td>{r.premium == null ? "—" : fmtMoney(r.premium)}</td>
+                      <td>
                         <MarketingBadge m={r.marketing} />
                       </td>
-                      <td data-label="Submit by">
+                      <td>
                         {r.marketing.kind === "missed"
                           ? fmtDate(r.marketing.submitBy)
                           : r.marketing.kind === "open" && r.marketing.submitBy
@@ -298,7 +293,6 @@ export default function RenewalsTab() {
                   ))}
                 </tbody>
               </table>
-            <Pagination total={sorted.length} page={page.page} onPage={page.setPage} noun="renewals" />
             </div>
           </>
         )}

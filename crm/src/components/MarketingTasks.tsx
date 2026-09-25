@@ -1,10 +1,8 @@
-import { Pagination } from "./ui/kit";
-import { useListPage } from "../lib/useListPage";
 import { useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useAsyncResource } from "../lib/useAsyncResource";
 import { SaveStatus, useSaveStatus } from "./SaveStatus";
-import { MobileSort, useSort, SortTh } from "../lib/useSort";
+import { useSort, SortTh } from "../lib/useSort";
 import {
   client,
   daysUntil,
@@ -312,8 +310,7 @@ export default function AccountMarketingTasks({
         <p className="muted small">All marketing tasks are complete.</p>
       ) : (
         <div className="table-wrap">
-          <MobileSort options={[["carrier", "Carrier"], ["lines", "Lines"], ["expires", "Expires"], ["submitBy", "Submit by"]]} sortKey={sortKey} dir={dir} onToggle={toggle} />
-          <table className="stacked-table">
+          <table>
             <thead>
               <tr>
                 <SortTh label="Carrier" colKey="carrier" sortKey={sortKey} dir={dir} onToggle={toggle} />
@@ -329,18 +326,18 @@ export default function AccountMarketingTasks({
                 const u = taskUrgency(t);
                 return (
                   <tr key={t.id}>
-                    <td data-label="Carrier">
+                    <td>
                       <strong>{t.carrierName ?? "—"}</strong>
                     </td>
-                    <td className="small" data-label="Lines">
+                    <td className="small">
                       {(t.lines ?? []).filter(Boolean).join(", ") || "—"}
                     </td>
-                    <td className="small" data-label="Expires">{fmtDate(t.expirationDate)}</td>
-                    <td className="small" data-label="Submit by">{fmtDate(t.submitBy)}</td>
-                    <td data-label="Urgency">
+                    <td className="small">{fmtDate(t.expirationDate)}</td>
+                    <td className="small">{fmtDate(t.submitBy)}</td>
+                    <td>
                       <Badge {...u} />
                     </td>
-                    <td style={{ whiteSpace: "nowrap" }} data-label="Actions">
+                    <td style={{ whiteSpace: "nowrap" }}>
                       {/* Undo here is Reopen, in the completed table below. */}
                       <CloseAsMenu
                         label={`Close ${t.carrierName ?? "task"}`}
@@ -358,7 +355,7 @@ export default function AccountMarketingTasks({
 
       {showDone && done.length > 0 && (
         <div className="table-wrap" style={{ marginTop: 10 }}>
-          <table className="stacked-table">
+          <table>
             <tbody>
               {done.map((t) => (
                 <tr key={t.id}>
@@ -513,10 +510,9 @@ export function AllMarketingTasks({
     "submitBy"
   );
 
-  const page = useListPage(sorted, `${query}:${sortKey}:${dir}`);
   return (
     <>
-      <h2>Carrier deadlines</h2>
+      <h1>Marketing tasks</h1>
       <p className="sub">
         Open carrier submissions for expiring policies and lead renewals
       </p>
@@ -531,7 +527,7 @@ export function AllMarketingTasks({
               box on a page of styled ones. */}
           <div className="field grow" style={{ maxWidth: 360 }}>
             <input
-              aria-label="Find carrier deadlines" placeholder="Search tasks by account, carrier, or line…"
+              placeholder="Search tasks by account, carrier, or line…"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
             />
@@ -572,8 +568,7 @@ export function AllMarketingTasks({
           </p>
         ) : (
           <div className="table-wrap">
-            <MobileSort options={[["account", "Account"], ["carrier", "Carrier"], ["lines", "Lines"], ["expires", "Expires"], ["submitBy", "Submit by"]]} sortKey={sortKey} dir={dir} onToggle={toggle} />
-            <table className="stacked-table">
+            <table>
               <thead>
                 <tr>
                   <SortTh label="Account" colKey="account" sortKey={sortKey} dir={dir} onToggle={toggle} />
@@ -586,25 +581,25 @@ export function AllMarketingTasks({
                 </tr>
               </thead>
               <tbody>
-                {page.rows.map((t) => {
+                {sorted.map((t) => {
                   const u = taskUrgency(t);
                   return (
                     <tr key={t.id}>
-                      <td data-label="Account">
+                      <td>
                         <Link to={`/accounts/${t.accountId}?tab=quotes`}>
                           {t.accountName ?? "(account)"}
                         </Link>
                       </td>
-                      <td data-label="Carrier">{t.carrierName ?? "—"}</td>
-                      <td className="small" data-label="Lines">
+                      <td>{t.carrierName ?? "—"}</td>
+                      <td className="small">
                         {(t.lines ?? []).filter(Boolean).join(", ") || "—"}
                       </td>
-                      <td className="small" data-label="Expires">{fmtDate(t.expirationDate)}</td>
-                      <td className="small" data-label="Submit by">{fmtDate(t.submitBy)}</td>
-                      <td data-label="Urgency">
+                      <td className="small">{fmtDate(t.expirationDate)}</td>
+                      <td className="small">{fmtDate(t.submitBy)}</td>
+                      <td>
                         <Badge {...u} />
                       </td>
-                      <td style={{ whiteSpace: "nowrap" }} data-label="Actions">
+                      <td style={{ whiteSpace: "nowrap" }}>
                         {/* Named by account as well as carrier: one carrier
                             appears against many accounts here, so the carrier
                             alone would not say which row this closes. */}
@@ -621,7 +616,6 @@ export function AllMarketingTasks({
                 })}
               </tbody>
             </table>
-            <Pagination total={sorted.length} page={page.page} onPage={page.setPage} noun="carrier deadlines" />
           </div>
         )}
       </div>

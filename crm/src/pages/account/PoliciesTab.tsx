@@ -1,6 +1,3 @@
-import { useRecordAnchor } from "../../lib/useRecordAnchor";
-import { StatusEditor } from "../../components/ui/StatusEditor";
-import { Badge, statusBadge, POLICY_STATUS_BADGE } from "../../lib/badges";
 import { useState } from "react";
 import {
   client,
@@ -12,7 +9,7 @@ import {
 } from "../../lib/client";
 import { useAsyncResource } from "../../lib/useAsyncResource";
 import { BILL_TYPE_SHORT, POLICY_STATUSES } from "../../lib/enums";
-import { MobileSort, useSort, SortTh } from "../../lib/useSort";
+import { useSort, SortTh } from "../../lib/useSort";
 import { commissionCell, termsSummary } from "../../components/QuotesPanel";
 import CoverageForm from "../../components/CoverageForm";
 import { SaveStatus, useSaveStatus } from "../../components/SaveStatus";
@@ -34,7 +31,6 @@ export function PoliciesTab({ accountId }: { accountId: string }) {
     [accountId],
     { initialData: [] as Policy[], errorMessage: "Failed to load policies" }
   );
-  useRecordAnchor("policy", policyRes.loaded);
   const policies = policyRes.data;
   const setPolicies = policyRes.setData;
   // Identity-stable, so CoverageForm's `onSaved` no longer closes over a
@@ -52,7 +48,6 @@ export function PoliciesTab({ accountId }: { accountId: string }) {
   const carrierRows = carrierRes.data;
 
   async function updatePolicy(id: string, patch: Partial<Policy>) {
-    let saved = false;
     await saveStatus.run(
       async () => {
         // `errors` used to be dropped on the floor here: a rejected status
@@ -60,11 +55,9 @@ export function PoliciesTab({ accountId }: { accountId: string }) {
         const { data, errors } = await client.models.Policy.update({ id, ...patch });
         if (errors?.length || !data) throw new Error(errors?.[0]?.message);
         setPolicies((ps) => ps.map((p) => (p.id === id ? data : p)));
-        saved = true;
       },
       { savedMessage: "Policy updated.", errorMessage: "Couldn't update that policy." }
     );
-    return saved;
   }
 
   // Carrier picker order only — no header to click, so the default stands.
@@ -128,50 +121,60 @@ export function PoliciesTab({ accountId }: { accountId: string }) {
         </p>
       ) : (
         <div className="table-wrap">
-          <MobileSort options={[["number", "Policy #"], ["carrier", "Carrier"], ["lines", "Lines"], ["premium", "Premium"], ["effective", "Effective"], ["expires", "Expires"], ["status", "Status"]]} sortKey={sortKey} dir={dir} onToggle={toggle} />
-          <table className="stacked-table">
+          <table>
             <thead>
               <tr>
                 <SortTh label="Policy #" colKey="number" sortKey={sortKey} dir={dir} onToggle={toggle} />
                 <SortTh label="Carrier" colKey="carrier" sortKey={sortKey} dir={dir} onToggle={toggle} />
                 <SortTh label="Lines" colKey="lines" sortKey={sortKey} dir={dir} onToggle={toggle} />
+                <SortTh label="Bill" colKey="billType" sortKey={sortKey} dir={dir} onToggle={toggle} />
                 <SortTh label="Premium" colKey="premium" sortKey={sortKey} dir={dir} onToggle={toggle} />
+                <SortTh label="Commission" colKey="commission" sortKey={sortKey} dir={dir} onToggle={toggle} />
+                <th>Terms</th>
                 <SortTh label="Effective" colKey="effective" sortKey={sortKey} dir={dir} onToggle={toggle} />
                 <SortTh label="Expires" colKey="expires" sortKey={sortKey} dir={dir} onToggle={toggle} />
+                <SortTh label="Bound" colKey="bound" sortKey={sortKey} dir={dir} onToggle={toggle} />
                 <SortTh label="Status" colKey="status" sortKey={sortKey} dir={dir} onToggle={toggle} />
                 <th></th>
               </tr>
             </thead>
             <tbody>
               {sorted.map((p) => (
-                <tr key={p.id} id={`policy-${p.id}`}>
+                <tr key={p.id}>
                   {/* Not a link any more. The policy page existed to host
                       billing, and billing is now the account's Invoices tab —
                       what remained was a read-only restatement of this row.
                       Editing is the button at the end of it. */}
-                  <td data-label="Policy #">{p.policyNumber || "—"}</td>
-                  <td className="small" data-label="Carrier">{carrierName(p.carrierId)}</td>
-                  <td className="small" data-label="Lines">{(p.lines ?? []).filter(Boolean).join(", ") || "—"}</td>
+                  <td>{p.policyNumber || "—"}</td>
+                  <td className="small">{carrierName(p.carrierId)}</td>
+                  <td className="small">{(p.lines ?? []).filter(Boolean).join(", ") || "—"}</td>
                   {/* Blank for anything bound before the field existed, which
                       is honest — "Direct" would be a guess about money. */}
-
-                  <td data-label="Premium">{fmtMoney(p.premium)}</td>
-
-
-                  <td data-label="Effective">{fmtDate(p.effectiveDate)}</td>
-                  <td data-label="Expires">{fmtDate(p.expirationDate)}</td>
+                  <td className="small">{BILL_TYPE_SHORT[p.billType ?? ""] ?? "—"}</td>
+                  <td>{fmtMoney(p.premium)}</td>
+                  <td className="small">{commissionCell(p)}</td>
+                  <td className="small">{termsSummary(p)}</td>
+                  <td>{fmtDate(p.effectiveDate)}</td>
+                  <td>{fmtDate(p.expirationDate)}</td>
                   {/* Stamped by the bind flow; blank for policies bound
                       before the field existed. */}
-
-                  <td data-label="Status">
-                    <Badge {...statusBadge(POLICY_STATUS_BADGE, p.status)} />
-                    <StatusEditor value={p.status} options={POLICY_STATUSES} label={`Policy ${p.policyNumber || carrierName(p.carrierId)}`} onSave={status => updatePolicy(p.id, { status })} />
+                  <td>{fmtDate(p.datePolicyBound?.slice(0, 10))}</td>
+                  <td>
+                    <select
+                      value={p.status}
+                      onChange={(e) =>
+                        updatePolicy(p.id, { status: e.target.value as Policy["status"] })
+                      }
+                    >
+                      {POLICY_STATUSES.map((s) => (
+                        <option key={s}>{s}</option>
+                      ))}
+                    </select>
                   </td>
-                  <td data-label="Actions">
+                  <td>
                     <button className="link" onClick={() => setEditing(p)}>
                       Edit
                     </button>
-                    <details><summary>Terms & billing</summary><p>Bill: {BILL_TYPE_SHORT[p.billType ?? ""] ?? "Not recorded"}</p><p>Commission: {commissionCell(p)}</p><p>{termsSummary(p)}</p><p>Bound: {fmtDate(p.datePolicyBound?.slice(0, 10))}</p></details>
                   </td>
                 </tr>
               ))}

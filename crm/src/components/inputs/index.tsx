@@ -345,13 +345,11 @@ export function DateInput({
  * radio has been picked.
  */
 export function YesNoRadio({
-  id,
   value,
   onChange,
   disabled,
   name,
 }: {
-  id?: string;
   value: string;
   onChange: (value: string) => void;
   disabled?: boolean;
@@ -359,7 +357,7 @@ export function YesNoRadio({
   name: string;
 }) {
   return (
-    <div className="chip-row" role="radiogroup" aria-label={id ? undefined : name} aria-labelledby={id ? `${id}-label` : undefined}>
+    <div className="chip-row" role="radiogroup" aria-label={name}>
       {[
         ["yes", "Yes"],
         ["no", "No"],
@@ -370,7 +368,6 @@ export function YesNoRadio({
           style={{ display: "flex", gap: 4, alignItems: "center" }}
         >
           <input
-            id={v === "yes" ? id : undefined}
             type="radio"
             name={name}
             value={v}

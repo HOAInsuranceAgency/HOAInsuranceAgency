@@ -1,4 +1,3 @@
-import { Field } from "../../components/ui/kit";
 import { useState } from "react";
 import {
   BEST_FIT_BUSINESS,
@@ -179,7 +178,7 @@ function GuideForm({
   // Read side: column value → input string. (Not `formCodec`'s `str`, which
   // runs the other way; that boundary is a separate migration.)
   const str = (n: number | null | undefined) => (n == null ? "" : String(n));
-  const { form, setF, markSaved } = useFormState({
+  const { form, setF } = useFormState({
     lines: (existing?.linesWritten ?? []).filter((l): l is string => !!l),
     bestFit: (existing?.bestFitBusiness ?? []).filter((b): b is string => !!b),
     states: (existing?.states ?? []).filter((s): s is string => !!s),
@@ -257,7 +256,6 @@ function GuideForm({
       setError(friendlyError(errors?.[0]?.message, "Save failed"));
       return;
     }
-    markSaved();
     onSaved(data);
   }
 
@@ -267,7 +265,7 @@ function GuideForm({
         {existing ? "Edit" : "Add"} appetite guide
       </h3>
       <div className="form-grid">
-        <Field className="field full">
+        <div className="field full">
           <label>Lines written</label>
           <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 14px" }}>
             {LINES_OF_BUSINESS.map((l) => (
@@ -289,8 +287,8 @@ function GuideForm({
               </label>
             ))}
           </div>
-        </Field>
-        <Field className="field full">
+        </div>
+        <div className="field full">
           <label>Best-fit business</label>
           <p className="muted small" style={{ margin: "0 0 6px" }}>
             What this programme is good at. Shown beside the results — it is
@@ -317,8 +315,8 @@ function GuideForm({
               </label>
             ))}
           </div>
-        </Field>
-        <Field className="field">
+        </div>
+        <div className="field">
           <label>Paper</label>
           <select
             value={form.paperType}
@@ -331,8 +329,8 @@ function GuideForm({
               </option>
             ))}
           </select>
-        </Field>
-        <Field className="field">
+        </div>
+        <div className="field">
           <label>Submission lead time (days)</label>
           <input
             type="number"
@@ -340,23 +338,23 @@ function GuideForm({
             value={form.leadTime}
             onChange={(e) => setF("leadTime", e.target.value)}
           />
-        </Field>
-        <Field className="field">
+        </div>
+        <div className="field">
           <label>Min TIV ($)</label>
           <input type="number" value={form.minValue} onChange={(e) => setF("minValue", e.target.value)} />
-        </Field>
-        <Field className="field">
+        </div>
+        <div className="field">
           <label>Max TIV ($)</label>
           <input type="number" value={form.maxValue} onChange={(e) => setF("maxValue", e.target.value)} />
-        </Field>
-        <Field className="field">
+        </div>
+        <div className="field">
           <label>Earliest construction year</label>
           <input type="number" value={form.minYear} onChange={(e) => setF("minYear", e.target.value)} />
-        </Field>
-        <Field className="field">
+        </div>
+        <div className="field">
           <label>Latest construction year</label>
           <input type="number" value={form.maxYear} onChange={(e) => setF("maxYear", e.target.value)} />
-        </Field>
+        </div>
         <div className="field full">
           <h4 style={{ margin: "6px 0 0" }}>Key restrictions</h4>
           <p className="muted small" style={{ margin: "4px 0 0" }}>
@@ -365,7 +363,7 @@ function GuideForm({
             don't fit these boxes belong in the notes below.
           </p>
         </div>
-        <Field className="field">
+        <div className="field">
           <label>Writes coastal?</label>
           <select
             value={form.writesCoastal}
@@ -375,8 +373,8 @@ function GuideForm({
             <option value="yes">Yes — writes coastal</option>
             <option value="no">No — declines coastal</option>
           </select>
-        </Field>
-        <Field className="field">
+        </div>
+        <div className="field">
           <label>Minimum miles to coast</label>
           <input
             type="number"
@@ -385,8 +383,8 @@ function GuideForm({
             value={form.minMilesToCoast}
             onChange={(e) => setF("minMilesToCoast", e.target.value)}
           />
-        </Field>
-        <Field className="field">
+        </div>
+        <div className="field">
           <label>Max rentals (% of units)</label>
           <input
             type="number"
@@ -396,8 +394,8 @@ function GuideForm({
             value={form.maxRentalPct}
             onChange={(e) => setF("maxRentalPct", e.target.value)}
           />
-        </Field>
-        <Field className="field">
+        </div>
+        <div className="field">
           <label>Max losses (last {LOSS_LOOKBACK_YEARS} yrs)</label>
           <input
             type="number"
@@ -406,8 +404,8 @@ function GuideForm({
             value={form.maxLosses}
             onChange={(e) => setF("maxLosses", e.target.value)}
           />
-        </Field>
-        <Field className="field">
+        </div>
+        <div className="field">
           <label>Max incurred, paid + reserved ($)</label>
           <input
             type="number"
@@ -416,8 +414,8 @@ function GuideForm({
             value={form.maxLossIncurred}
             onChange={(e) => setF("maxLossIncurred", e.target.value)}
           />
-        </Field>
-        <Field className="field full">
+        </div>
+        <div className="field full">
           <label>
             States ({form.states.length || "carrier default"})
           </label>
@@ -445,11 +443,11 @@ function GuideForm({
               </label>
             ))}
           </div>
-        </Field>
-        <Field className="field full">
+        </div>
+        <div className="field full">
           <label>Notes</label>
           <textarea rows={2} value={form.notes} onChange={(e) => setF("notes", e.target.value)} />
-        </Field>
+        </div>
       </div>
       <div className="form-actions">
         <button className="primary" disabled={saving} onClick={save}>

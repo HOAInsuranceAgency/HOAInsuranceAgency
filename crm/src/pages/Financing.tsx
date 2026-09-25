@@ -1,4 +1,3 @@
-import { Field } from "../components/ui/kit";
 import { useState } from "react";
 import { useIsAdmin } from "../lib/auth";
 import { client } from "../lib/client";
@@ -83,8 +82,8 @@ function CounselOpinionsCard() {
       </div>
       <p className="muted small">
         A conditional jurisdiction stays blocked until a signed opinion is on
-        file and within its review date. Keep the signed PDF in the agency's
-        records and include its location in the notes below. The default
+        file and within its review date. Upload the signed PDF to the
+        account-independent Documents area and record it here; the default
         review horizon is 24 months.
       </p>
       {rows.data.length > 0 && (
@@ -123,7 +122,7 @@ function CounselOpinionsCard() {
         </div>
       )}
       <div className="form-grid">
-        <Field className="field">
+        <div className="field">
           <label>Jurisdiction</label>
           <select value={code} onChange={(e) => setCode(e.target.value)}>
             <option value="">Choose…</option>
@@ -133,8 +132,8 @@ function CounselOpinionsCard() {
               </option>
             ))}
           </select>
-        </Field>
-        <Field className="field">
+        </div>
+        <div className="field">
           <label>Effective</label>
           <input
             type="date"
@@ -144,15 +143,15 @@ function CounselOpinionsCard() {
               if (e.target.value && !reviewBy) setReviewBy(defaultReviewBy(e.target.value));
             }}
           />
-        </Field>
-        <Field className="field">
+        </div>
+        <div className="field">
           <label>Review by</label>
           <input type="date" value={reviewBy} onChange={(e) => setReviewBy(e.target.value)} />
-        </Field>
-        <Field className="field">
+        </div>
+        <div className="field">
           <label>Notes</label>
           <input value={notes} onChange={(e) => setNotes(e.target.value)} />
-        </Field>
+        </div>
       </div>
       <div className="inline-actions">
         <button
@@ -183,7 +182,7 @@ export default function Financing() {
 
   return (
     <>
-      <h2>Financing rules</h2>
+      <h1>Financing</h1>
       <p className="sub">
         In-house premium finance. Eligibility is decided by the signed
         jurisdiction file — the table below is that file, as loaded.

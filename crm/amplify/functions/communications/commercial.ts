@@ -19,7 +19,7 @@ import {
   row,
   type Write,
 } from './store';
-import type { LeadWorkflow, LeadTask } from '../../../../shared/leadWorkflow';
+import type { LeadWorkflow } from '../../../../shared/leadWorkflow';
 import type { Schema } from '../../data/resource';
 
 const idOf = (id: unknown) => {
@@ -27,7 +27,7 @@ const idOf = (id: unknown) => {
     throw new Error('Choose a valid account');
   return id;
 };
-export async function commercialTable(ids: unknown, includeActions = false) {
+export async function commercialTable(ids: unknown) {
   if (
     !Array.isArray(ids) ||
     ids.length > 25 ||
@@ -41,10 +41,7 @@ export async function commercialTable(ids: unknown, includeActions = false) {
           get<CommercialPlan>(`commercial:${id}`),
           get<LeadWorkflow>(`workflow:${id}`),
         ]);
-      const tasks = includeActions ? await (await import('./workflow')).accountRows<LeadTask>(id, 'TASK') : [];
-      const open = tasks.map(task => ({ ...task.data, version: task.version })).filter(task => task.status === 'OPEN').sort((a,b) => (a.dueAt ?? "9999").localeCompare(b.dueAt ?? "9999"));
       return {
-        ...(includeActions ? { nextAction: open[0] ?? null, actionCount: open.length } : {}),
         accountId: id,
         plan: plan
           ? { ...plan.data, version: plan.version }

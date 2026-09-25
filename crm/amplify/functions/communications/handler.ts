@@ -46,7 +46,7 @@ export const handler = async (event: { arguments: { operation?: string; readOper
     const input = object(event.arguments.input), op = event.arguments.readOperation ?? event.arguments.operation;
     const requireAdmin = () => { if (!admin) throw new Error("Only an admin can change integration or team settings"); };
     if (event.arguments.readOperation) {
-      if (op === "commercialTable") return { ok: true, items: await (await import("./commercial")).commercialTable(input.accountIds, input.includeActions === true) };
+      if (op === "commercialTable") return { ok: true, items: await (await import("./commercial")).commercialTable(input.accountIds) };
       if (op === "nextYearPreview") {
         const account = await (await dataClient()).models.Account.get({ id: text(input, "accountId") });
         if (account.errors?.length || !account.data?.currentPolicyExpiration) throw new Error("Record the incumbent expiration in the account first");

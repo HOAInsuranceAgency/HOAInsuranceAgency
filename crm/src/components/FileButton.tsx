@@ -3,7 +3,6 @@ import type { ChangeEvent } from "react";
 /** Platform-styled file picker — hides the native input behind a button. */
 export default function FileButton({
   label,
-  id,
   multiple,
   accept,
   disabled,
@@ -11,7 +10,6 @@ export default function FileButton({
   onFiles,
 }: {
   label: string;
-  id?: string;
   multiple?: boolean;
   accept?: string;
   disabled?: boolean;
@@ -50,7 +48,6 @@ export default function FileButton({
       </svg>
       {busy ? "Uploading…" : label}
       <input
-        id={id}
         type="file"
         multiple={multiple}
         accept={accept}

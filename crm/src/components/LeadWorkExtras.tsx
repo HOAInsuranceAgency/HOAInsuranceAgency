@@ -1,5 +1,3 @@
-import { Pagination } from "./ui/kit";
-import { useListPage } from "../lib/useListPage";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { ActivityReview, ReviewAction } from "./CommunicationReview";
@@ -13,19 +11,18 @@ export function WorkPagination({ work }: { work: ReturnType<typeof useWorkItems>
 }
 export function SharedLeadAttention({ onChanged }: { onChanged: () => void }) {
   return <section className="lead-work-shared" aria-label="Shared team items">
-    <h2>Help the team get started</h2><p className="muted small">Shared team setup: assign ownership and match activity to the right account.</p>
+    <h2>Help the team get started</h2><p className="muted small">Unassigned leads and unlinked activity are shared team items, including when My leads is selected.</p>
     <div className="lead-work-shared-grid"><SharedItems kind="WORKFLOW" onChanged={onChanged} /><SharedItems kind="TRIAGE" onChanged={onChanged} /></div>
   </section>;
 }
 function SharedItems({ kind, onChanged }: { kind: "WORKFLOW" | "TRIAGE"; onChanged: () => void }) {
   const work = useWorkItems(kind), [reviewId, setReviewId] = useState<string | null>(null);
-  const page = useListPage(work.data.items, kind, 10);
   function saved() { setReviewId(null); void work.refresh(); onChanged(); }
   return <section className="card lead-work-shared-card" aria-label={kind === "WORKFLOW" ? "Assign a teammate" : "Link a call or text"}>
     <h3>{kind === "WORKFLOW" ? "Assign a teammate" : "Link a call or text"}</h3>
     {work.error && <p role="alert" className="error-text">{work.error} <button className="link" onClick={() => void work.refresh()}>Retry</button></p>}
     {work.loading ? <p className="muted">Checking…</p> : work.error ? null : !work.data.items.length && <p className="muted small">{work.data.nextToken ? "More items remain to be checked." : kind === "WORKFLOW" ? "No leads need assignment." : "No activity needs linking."}</p>}
-    {!work.loading && !work.error && page.rows.map(item => <div key={item.id} className="lead-work-shared-item">
+    {!work.loading && !work.error && work.data.items.map(item => <div key={item.id} className="lead-work-shared-item">
       {kind === "WORKFLOW" ? <>
         <strong>{item.name || "Lead needs assignment"}</strong><p className="small muted">Choose {item.salespersonId && !item.assignmentIssue ? "a deal champion" : item.championId && !item.assignmentIssue ? "a salesperson" : "a salesperson and deal champion"}.</p>
         {item.accountId && <Link to={`/accounts/${item.accountId}`}>Open lead to assign</Link>}
@@ -36,7 +33,6 @@ function SharedItems({ kind, onChanged }: { kind: "WORKFLOW" | "TRIAGE"; onChang
       </>}
     </div>)}
     {reviewId && <><ActivityReview key={reviewId} id={reviewId} onSaved={saved} /><button className="secondary" onClick={() => setReviewId(null)}>Cancel linking</button></>}
-    <Pagination total={work.data.items.length} page={page.page} onPage={page.setPage} size={page.size} noun="loaded items" />
     <WorkPagination work={work} />
   </section>;
 }

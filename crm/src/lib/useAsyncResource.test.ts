@@ -438,38 +438,3 @@ describe("useAsyncResource", () => {
     });
   });
 });
-
-describe('session report cache', () => {
-  it('reuses a fresh successful snapshot and refreshes on demand without blanking it', async () => {
-    const { clearAsyncResourceCache } = await import('./useAsyncResource'); clearAsyncResourceCache();
-    const read = vi.fn().mockResolvedValue(['first']);
-    const first = renderHook(() => useAsyncResource(read, [], { initialData: [] as string[], cacheKey: 'test:report' }));
-    await act(async () => {}); expect(first.result.current.data).toEqual(['first']);
-    first.unmount();
-    const second = renderHook(() => useAsyncResource(read, [], { initialData: [] as string[], cacheKey: 'test:report' }));
-    expect(second.result.current.data).toEqual(['first']); expect(read).toHaveBeenCalledTimes(1);
-    read.mockRejectedValueOnce(new Error('Offline'));
-    await act(async () => { await second.result.current.refetch(); });
-    expect(second.result.current.data).toEqual(['first']); expect(second.result.current.error).toBe('Offline');
-    read.mockResolvedValueOnce(['current']);
-    await act(async () => { await second.result.current.refetch(); });
-    expect(second.result.current.data).toEqual(['current']); expect(second.result.current.error).toBe('');
-    clearAsyncResourceCache();
-  });
-  it('refreshes stale data in place and does not refill the next session from an old in-flight request', async () => {
-    const { clearAsyncResourceCache } = await import('./useAsyncResource'); clearAsyncResourceCache();
-    const read = vi.fn().mockResolvedValue(['old']);
-    const first = renderHook(() => useAsyncResource(read, [], { initialData: [] as string[], cacheKey: 'test:stale' }));
-    await act(async () => {}); first.unmount();
-    const pending = deferred<string[]>(); read.mockReturnValueOnce(pending.promise);
-    const stale = renderHook(() => useAsyncResource(read, [], { initialData: [] as string[], cacheKey: 'test:stale', cacheMaxAgeMs: 0 }));
-    expect(stale.result.current.data).toEqual(['old']); expect(stale.result.current.loading).toBe(true);
-    clearAsyncResourceCache();
-    await act(async () => { pending.resolve(['previous-session']); }); stale.unmount();
-    const next = deferred<string[]>(); read.mockReturnValueOnce(next.promise);
-    const fresh = renderHook(() => useAsyncResource(read, [], { initialData: [] as string[], cacheKey: 'test:stale' }));
-    expect(fresh.result.current.data).toEqual([]); expect(fresh.result.current.loaded).toBe(false);
-    await act(async () => { next.resolve(['new-session']); });
-    expect(fresh.result.current.data).toEqual(['new-session']); clearAsyncResourceCache();
-  });
-});

@@ -62,7 +62,7 @@ export default function FinanceTab() {
       };
     },
     [],
-    { cacheKey: "report:finance", initialData: EMPTY, errorMessage: "Failed to load the finance view" }
+    { initialData: EMPTY, errorMessage: "Failed to load the finance view" }
   );
   const { invoices, pfLoans, accounts, notices } = res.data;
 

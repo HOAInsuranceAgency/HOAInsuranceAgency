@@ -114,7 +114,7 @@ export default function LicenseMap({
             <h2 style={{ margin: 0 }}>
               Where we can write{" "}
               <span className="muted small" style={{ fontWeight: 400 }}>
-                · {writable.length} of {codes.length} jurisdictions (states + DC)
+                · {writable.length} of {codes.length} states
               </span>
             </h2>
             <p className="muted small" style={{ margin: "4px 0 0" }}>

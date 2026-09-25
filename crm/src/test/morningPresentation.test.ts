@@ -8,9 +8,6 @@ const task = (patch: Partial<LeadTask>): LeadTask => scheduleReminders({ id: "t"
 const item = (id: string, patch: Partial<ReportItem> = {}): ReportItem => ({ id, accountId: id, account: `Account ${id}`, title: id, why: "Follow-up needed", next: "Open the conversation", responsible: "Avery", section: "Your leads today", stage: "DUE", kind: "FIRST_CONTACT", group: "Sales", dueAt: "2025-01-01T14:00:00Z", ...patch });
 const report = (items: ReportItem[]): MorningReport => ({ recipientId: "owner", name: "Owner", asOf: now, items, sections: [], complete: true, health: [], daily: true, accountCount: new Set(items.map(i => i.accountId)).size, teamCounts: [] });
 describe("simple, accurate morning guidance", () => {
-  it.each(["LEAD", "RENEWAL"] as const)("routes %s renewal-start work through the stage-aware renewal destination", context => {
-    expect(workLink(task({ kind: "RENEWAL_START", context, policyId: "p", milestone: true }))).toEqual({ path: "/accounts/a?tab=renewal", label: "Review renewal" });
-  });
   it.each(["2026-09-11", "2026-09-14"])("describes coverage needed %s without claiming a deadline is approaching", term => {
     const g = leadActionGuidance(task({ term, shortTimeline: true, businessDueAt: "2026-09-01T13:00:00Z" }), [], false, now);
     expect(g.why).not.toMatch(/approaching|remaining time/);

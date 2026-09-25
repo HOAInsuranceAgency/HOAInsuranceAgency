@@ -17,14 +17,13 @@ beforeEach(() => {
 });
 afterEach(() => vi.useRealTimers());
 
-it('keeps unfinished packages in Leads and exposes owner filters in both account views', async () => {
+it('keeps unfinished packages in Leads and does not carry a hidden owner filter into Clients', async () => {
   const page = render(
     <MemoryRouter>
       <AccountsList stage="LEAD" />
     </MemoryRouter>,
   );
   expect(await screen.findByText('Binding in progress')).toBeTruthy();
-  fireEvent.change(screen.getByRole("combobox", { name: "Columns" }), { target: { value: "report" } });
   expect(await screen.findByText('$250')).toBeTruthy();
   expect(screen.getByText('Quote form')).toBeTruthy();
   fireEvent.change(screen.getByRole('combobox', { name: 'Salesperson' }), {
@@ -36,9 +35,8 @@ it('keeps unfinished packages in Leads and exposes owner filters in both account
       <AccountsList stage="CLIENT" />
     </MemoryRouter>,
   );
-  fireEvent.change(screen.getByRole('combobox', { name: 'Salesperson' }), { target: { value: '' } });
-  expect((await screen.findAllByText('Cedar House — partially bound')).length).toBeGreaterThan(0);
+  expect(await screen.findByText('Cedar House — partially bound')).toBeTruthy();
   expect(screen.getByRole('columnheader', { name: 'City' })).toBeTruthy();
   expect(screen.getByRole('columnheader', { name: 'State' })).toBeTruthy();
-  expect(screen.getByRole('combobox', { name: 'Salesperson' })).toHaveValue("");
+  expect(screen.queryByRole('combobox', { name: 'Salesperson' })).toBeNull();
 });

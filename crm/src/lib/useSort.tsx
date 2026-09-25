@@ -11,17 +11,14 @@ export function useSort<T>(
   items: T[],
   accessors: Record<string, SortAccessor<T>>,
   defaultKey: string,
-  defaultDir: SortDir = "asc",
-  controlled?: { key: string; dir: SortDir }
+  defaultDir: SortDir = "asc"
 ) {
-  const [localKey, setSortKey] = useState(defaultKey);
-  const [localDir, setDir] = useState<SortDir>(defaultDir);
-  const sortKey = controlled?.key ?? localKey;
-  const dir = controlled?.dir ?? localDir;
+  const [sortKey, setSortKey] = useState(defaultKey);
+  const [dir, setDir] = useState<SortDir>(defaultDir);
 
   function toggle(key: string) {
     if (key === sortKey) {
-      setDir(dir === "asc" ? "desc" : "asc");
+      setDir((d) => (d === "asc" ? "desc" : "asc"));
     } else {
       setSortKey(key);
       setDir("asc");
@@ -64,28 +61,9 @@ export function SortTh({
 }) {
   const active = colKey === sortKey;
   return (
-    <th className="sortable" aria-sort={active ? (dir === "asc" ? "ascending" : "descending") : "none"}>
-      <button type="button" className="sort-button" onClick={() => onToggle(colKey)}>{label}
+    <th className="sortable" onClick={() => onToggle(colKey)}>
+      {label}
       <span className="arrow">{active ? (dir === "asc" ? " ▲" : " ▼") : ""}</span>
-      </button>
     </th>
   );
-}
-
-/** Visible when table headers are replaced by mobile record cards. */
-export function MobileSort({ options, sortKey, dir, onToggle }: {
-  options: readonly (readonly [key: string, label: string])[];
-  sortKey: string;
-  dir: SortDir;
-  onToggle: (key: string) => void;
-}) {
-  if (!options.length) return null;
-  return <div className="mobile-sort" role="group" aria-label="Sort records">
-    <label className="field">Sort by<select value={sortKey} onChange={event => { if (event.target.value !== sortKey) onToggle(event.target.value); }}>
-      {options.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
-    </select></label>
-    <label className="field">Sort order<select value={dir} onChange={event => { if (event.target.value !== dir) onToggle(sortKey); }}>
-      <option value="asc">Ascending</option><option value="desc">Descending</option>
-    </select></label>
-  </div>;
 }

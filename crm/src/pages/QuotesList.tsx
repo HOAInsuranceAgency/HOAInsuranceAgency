@@ -1,7 +1,5 @@
-import { Breadcrumb, Pagination } from "../components/ui/kit";
-import { useListPage } from "../lib/useListPage";
 import { useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import {
   client,
   fmtDate,
@@ -12,13 +10,13 @@ import {
   type Quote,
 } from "../lib/client";
 import { Badge, statusBadge, QUOTE_STATUS_BADGE } from "../lib/badges";
-import { MobileSort, useSort, SortTh } from "../lib/useSort";
+import { useSort, SortTh } from "../lib/useSort";
 import { isOpenQuoteStatus } from "../lib/quoteStatus";
 import { useAsyncResource } from "../lib/useAsyncResource";
 
 export default function QuotesList() {
   const [openOnly, setOpenOnly] = useState(true);
-  const [query, setQuery] = useState("");
+  const navigate = useNavigate();
 
   // Paginated: a bare .list() returns one ~100-row page and stops — this
   // list must not show fewer quotes than the dashboard tile that links here.
@@ -62,7 +60,7 @@ export default function QuotesList() {
     : quotes;
 
   const { sorted, sortKey, dir, toggle } = useSort(
-    visible.filter(q => [accountName.get(q.accountId), carrierName.get(q.carrierId ?? ""), ...(q.lines ?? [])].join(" ").toLowerCase().includes(query.toLowerCase())),
+    visible,
     {
       account: (q) => accountName.get(q.accountId) ?? "",
       carrier: (q) => (q.carrierId ? carrierName.get(q.carrierId) ?? "" : null),
@@ -73,10 +71,8 @@ export default function QuotesList() {
     "account"
   );
 
-  const page = useListPage(sorted, `${query}:${openOnly}:${sortKey}:${dir}`);
   return (
     <>
-      <Breadcrumb to="/leads">Accounts</Breadcrumb>
       <h1>Quotes</h1>
       <p className="sub">All quotes across leads and clients</p>
 
@@ -91,7 +87,6 @@ export default function QuotesList() {
         </div>
       </div>
 
-      <div className="toolbar"><label className="field">Find quotes<input type="search" value={query} onChange={e => setQuery(e.target.value)} placeholder="Account, carrier, coverage" /></label></div>
       {accountRes.error && <p className="error-text">{accountRes.error}</p>}
       {carrierRes.error && <p className="error-text">{carrierRes.error}</p>}
 
@@ -104,8 +99,7 @@ export default function QuotesList() {
           <p className="muted small">No quotes.</p>
         ) : (
           <div className="table-wrap">
-            <MobileSort options={[["account", "Account"], ["carrier", "Carrier"], ["premium", "Premium"], ["effective", "Effective"], ["status", "Status"]]} sortKey={sortKey} dir={dir} onToggle={toggle} />
-            <table className="stacked-table">
+            <table>
               <thead>
                 <tr>
                   <SortTh label="Account" colKey="account" sortKey={sortKey} dir={dir} onToggle={toggle} />
@@ -116,22 +110,25 @@ export default function QuotesList() {
                 </tr>
               </thead>
               <tbody>
-                {page.rows.map((q) => (
-                  <tr key={q.id}>
-                    <td data-label="Account">
-                      <Link to={`/accounts/${q.accountId}?tab=quotes&record=${q.id}#quote-${q.id}`}>{accountName.get(q.accountId) ?? "Account"}</Link>
+                {sorted.map((q) => (
+                  <tr
+                    key={q.id}
+                    className="clickable"
+                    onClick={() => navigate(`/accounts/${q.accountId}?tab=quotes`)}
+                  >
+                    <td>
+                      <strong>{accountName.get(q.accountId) ?? "—"}</strong>
                     </td>
-                    <td data-label="Carrier">{q.carrierId ? carrierName.get(q.carrierId) ?? "—" : "—"}</td>
-                    <td data-label="Premium">{fmtMoney(q.premium)}</td>
-                    <td data-label="Effective">{fmtDate(q.effectiveDate)}</td>
-                    <td data-label="Status">
+                    <td>{q.carrierId ? carrierName.get(q.carrierId) ?? "—" : "—"}</td>
+                    <td>{fmtMoney(q.premium)}</td>
+                    <td>{fmtDate(q.effectiveDate)}</td>
+                    <td>
                       <Badge {...statusBadge(QUOTE_STATUS_BADGE, q.status)} />
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
-            <Pagination total={sorted.length} page={page.page} onPage={page.setPage} noun="quotes" />
           </div>
         )}
       </div>
