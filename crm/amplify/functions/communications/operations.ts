@@ -19,8 +19,7 @@ export interface Operation {
   lead?: LeadSummary; sourceMessageId?: string; attachmentId?: string; requestedBy?: string;
   // Legacy reminder metadata is retained so queued deliveries can be retired.
   reminder?: { taskId: string; noticeAt: string; recipientId: string; escalated: boolean; stage?: string; workflowVersion?: number };
-  afterOperationId?: string;
-  reminderGroup?: { day: string; role: Responsibility; recipientId: string; accountableId?: string; anchorTaskId: string }; summaryTaskIds?: string[];
+  reminderGroup?: { day: string; role: Responsibility; recipientId: string; accountableId?: string; anchorTaskId: string };
 }
 export async function enqueueOperation(id: string, data: Omit<Operation, "state" | "attempts">) {
   const old = await get<Operation>(id);

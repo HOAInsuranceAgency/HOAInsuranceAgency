@@ -1580,9 +1580,11 @@ describe("9am reminders with a clear next step", () => {
   it.each(["COMMENT", "REOPEN"] as const)("retires retrying and expired leased %s reminders without another provider call", async type => {
     await morningRequest(); vi.setSystemTime("2026-09-10T21:01:00.000Z");
     for (const state of ["RETRY_WAIT", "LEASED"] as const) {
-      const op = await save(row<Operation>("OPERATION", `op:morning-${type === "COMMENT" ? "summary" : "reopen"}:${state}`, {
+      // Old stored rows may contain fields no longer declared by Operation.
+      const op = await save(row<Operation & { afterOperationId: string; summaryTaskIds: string[] }>("OPERATION", `op:morning-${type === "COMMENT" ? "summary" : "reopen"}:${state}`, {
         type, accountId: "a1", conversationId: "cnv_a", state, attempts: 2, leaseUntil: "2026-09-10T13:03:00.000Z",
         afterOperationId: "missing-summary",
+        summaryTaskIds: ["old-task"],
       }, { accountId: "a1", dueAt: "2026-09-10T13:03:00.000Z" }));
       await runOperation(op);
       expect(record(op.id).data).toMatchObject({ state: "SUPPRESSED", attempts: 2 });
