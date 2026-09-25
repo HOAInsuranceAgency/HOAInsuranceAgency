@@ -41,12 +41,14 @@ interface AddressParts {
 }
 
 export function AddressAutocomplete({
+  id,
   value,
   onChange,
   onPlace,
   placeholder,
 }: {
   value: string;
+  id?: string;
   onChange: (v: string) => void;
   onPlace: (parts: AddressParts) => void;
   placeholder?: string;
@@ -91,7 +93,7 @@ export function AddressAutocomplete({
   }, []);
 
   return (
-    <input
+    <input id={id}
       ref={inputRef}
       value={value}
       placeholder={placeholder ?? "Start typing an address…"}

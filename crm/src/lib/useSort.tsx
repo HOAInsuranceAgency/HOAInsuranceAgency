@@ -11,14 +11,17 @@ export function useSort<T>(
   items: T[],
   accessors: Record<string, SortAccessor<T>>,
   defaultKey: string,
-  defaultDir: SortDir = "asc"
+  defaultDir: SortDir = "asc",
+  controlled?: { key: string; dir: SortDir }
 ) {
-  const [sortKey, setSortKey] = useState(defaultKey);
-  const [dir, setDir] = useState<SortDir>(defaultDir);
+  const [localKey, setSortKey] = useState(defaultKey);
+  const [localDir, setDir] = useState<SortDir>(defaultDir);
+  const sortKey = controlled?.key ?? localKey;
+  const dir = controlled?.dir ?? localDir;
 
   function toggle(key: string) {
     if (key === sortKey) {
-      setDir((d) => (d === "asc" ? "desc" : "asc"));
+      setDir(dir === "asc" ? "desc" : "asc");
     } else {
       setSortKey(key);
       setDir("asc");
@@ -61,9 +64,10 @@ export function SortTh({
 }) {
   const active = colKey === sortKey;
   return (
-    <th className="sortable" onClick={() => onToggle(colKey)}>
-      {label}
+    <th className="sortable" aria-sort={active ? (dir === "asc" ? "ascending" : "descending") : "none"}>
+      <button type="button" className="sort-button" onClick={() => onToggle(colKey)}>{label}
       <span className="arrow">{active ? (dir === "asc" ? " ▲" : " ▼") : ""}</span>
+      </button>
     </th>
   );
 }

@@ -1,3 +1,5 @@
+import { useListPage } from "../lib/useListPage";
+import { Disclosure, Field, Pagination } from "./ui/kit";
 import { useEffect, useRef, useState } from "react";
 import { uploadData, remove } from "aws-amplify/storage";
 import {
@@ -85,7 +87,11 @@ export default function DocumentsPanel({
    * know, then stay live.
    */
   const [docsSynced, setDocsSynced] = useState(false);
+  const [readError, setReadError] = useState("");
+  const [readVersion, setReadVersion] = useState(0);
   const [category, setCategory] = useState<Category>(DEFAULT_DOCUMENT_CATEGORY);
+  const [query, setQuery] = useState(""), [categoryFilter, setCategoryFilter] = useState("");
+  const [uploadTarget, setUploadTarget] = useState(initialLink && /^(policy|quote):.+$/.test(initialLink) ? initialLink : "");
   const [view, setView] = useState(
     initialLink && /^(policy|quote):.+$/.test(initialLink) ? initialLink : ""
   );
@@ -154,6 +160,7 @@ export default function DocumentsPanel({
     // empty state) under the new one's heading.
     setDocs([]);
     setDocsSynced(false);
+    setReadError("");
     const sub = client.models.Document.observeQuery({
       filter: { entityId: { eq: entityId } },
     }).subscribe({
@@ -167,9 +174,10 @@ export default function DocumentsPanel({
         setDocs([...items]);
         setDocsSynced(true);
       },
+      error: err => { setReadError(friendlyError(err, "Could not load files")); setDocsSynced(true); },
     });
     return () => sub.unsubscribe();
-  }, [entityId]);
+  }, [entityId, readVersion]);
 
   async function handleUpload(files: File[] | null) {
     if (!files?.length) return;
@@ -188,9 +196,8 @@ export default function DocumentsPanel({
           contentType: file.type,
           sizeBytes: file.size,
           ocrStatus: "PENDING",
-          // Uploads land where the viewer is looking: the selected policy
-          // or quote, or unlinked when viewing everything.
-          ...(view ? linkFields(view) : {}),
+          // The explicit upload destination is independent of library filters.
+          ...(uploadTarget ? linkFields(uploadTarget) : {}),
         });
         if (errors?.length || !doc) throw new Error(errors?.[0]?.message);
         docId = doc.id;
@@ -313,7 +320,7 @@ export default function DocumentsPanel({
 
   // The chosen link filters the table — "you are looking at this policy's
   // documents" — and everything when nothing is chosen.
-  const visible = linkAccountId ? docs.filter((d) => matchesLink(d, view)) : docs;
+  const visible = docs.filter(d => (!linkAccountId || matchesLink(d, view)) && (!categoryFilter || d.category === categoryFilter) && d.name.toLowerCase().includes(query.toLowerCase()));
 
   // Most recently uploaded first, as the subscription used to order them.
   const { sorted, sortKey, dir, toggle } = useSort(
@@ -354,6 +361,8 @@ export default function DocumentsPanel({
     }
   }, [ocrSearch, matchIdx, openDocId, matchCount, openTables]);
 
+  const page = useListPage(sorted, `${entityId}:${view}:${query}:${categoryFilter}:${sortKey}:${dir}`, 20);
+
   function stepMatch(delta: number) {
     if (matchCount === 0) return;
     setMatchIdx((i) => (((i + delta) % matchCount) + matchCount) % matchCount);
@@ -361,13 +370,13 @@ export default function DocumentsPanel({
 
   return (
     <div>
-      <div className="toolbar">
+      <div className="view-tools">
+        <label className="field">Find files<input type="search" placeholder="File name" value={query} onChange={e => setQuery(e.target.value)} /></label>
+        <label className="field">Category filter<select value={categoryFilter} onChange={e => setCategoryFilter(e.target.value)}><option value="">All categories</option>{CATEGORIES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}</select></label>
         {linkAccountId && (
-          <div className="field">
+          <Field className="field">
             <label>Linked to</label>
-            {/* One control, two jobs on purpose: it filters the table AND
-                targets uploads — "you are looking at this policy's
-                documents; files you attach here belong to it". */}
+
             <select value={view} onChange={(e) => setView(e.target.value)}>
               <option value="">Everything</option>
               {linkOptions.map((o) => (
@@ -376,10 +385,13 @@ export default function DocumentsPanel({
                 </option>
               ))}
             </select>
-          </div>
+          </Field>
         )}
-        <div className="field">
-          <label>Category</label>
+      </div>
+      <Disclosure title="Upload documents" description="Choose where new files belong; list filters do not change the upload destination."><div className="view-tools">
+        {linkAccountId && <label className="field">Attach new files to<select value={uploadTarget} onChange={e => setUploadTarget(e.target.value)}><option value="">Account (no quote or policy link)</option>{linkOptions.map(o => <option key={o.key} value={o.key}>{o.label}</option>)}</select></label>}
+        <Field className="field">
+          <label>New file category</label>
           <select
             value={category}
             onChange={(e) => setCategory(e.target.value as Category)}
@@ -390,33 +402,31 @@ export default function DocumentsPanel({
               </option>
             ))}
           </select>
-        </div>
-        <div className="field">
-          <label>Attach files (PDF/images are OCR'd automatically)</label>
+        </Field>
+        <Field className="field">
+          <label>Files</label>
           <FileButton
             label="Choose files…"
             multiple
             busy={uploading}
             onFiles={handleUpload}
           />
-        </div>
-        {error && <span className="error-text">{error}</span>}
-        {/* Renames and deletes are per-row with no per-row place to report;
-            this is the panel's one status line. */}
-        <SaveStatus {...rowStatus.status} />
-      </div>
+        </Field>
+      </div></Disclosure>
+      {error && <p role="alert" className="error-text">{error}</p>}
+      <SaveStatus {...rowStatus.status} />
 
-      {!docsSynced ? (
+      {readError ? <p role="alert">{readError} <button onClick={() => setReadVersion(v => v + 1)}>Retry files</button></p> : !docsSynced ? (
         <p className="muted small">Loading…</p>
       ) : visible.length === 0 ? (
         <p className="muted small">
           {view
-            ? `Nothing linked to ${linkLabel(view)} yet — files attached while it's selected will be.`
-            : "No documents attached."}
+            ? `No files match ${linkLabel(view)} and these filters.`
+            : query || categoryFilter ? "No files match these filters." : "No documents attached."}
         </p>
       ) : (
         <div className="table-wrap">
-          <table>
+          <table className="stacked-table documents-table">
             <thead>
               <tr>
                 <SortTh label="Name" colKey="name" sortKey={sortKey} dir={dir} onToggle={toggle} />
@@ -430,7 +440,7 @@ export default function DocumentsPanel({
               </tr>
             </thead>
             <tbody>
-              {sorted.map((d) => {
+              {page.rows.map((d) => {
                 // No OCR status yet, or one this table doesn't know, both read
                 // as "queued" — the state a document is in before the Textract
                 // Lambda has said anything about it.
@@ -457,19 +467,17 @@ export default function DocumentsPanel({
                           />
                         </div>
                       ) : (
-                        d.name
+                        d.s3Key !== "pending" && canPreview(d.name) ? <button className="link file-name" onClick={() => setPreviewDoc(d)}>{d.name}</button> : d.name
                       )}
                     </td>
-                    <td>
+                    <td data-label="Category">
                       <span className="badge gray">
                         {CATEGORIES.find((c) => c.value === d.category)?.label ?? "—"}
                       </span>
                     </td>
                     {linkAccountId && (
-                      <td>
-                        {/* Editable in place, like the status selects on the
-                            policy rows: linking existing paper is the whole
-                            point — a scan often arrives before the policy
+                      <td data-label="Linked to">
+                        {/* Association changes save in place: a scan often arrives before the policy
                             it belongs to exists. */}
                         <select
                           aria-label={`Link ${d.name}`}
@@ -489,13 +497,13 @@ export default function DocumentsPanel({
                         </select>
                       </td>
                     )}
-                    <td>
+                    <td data-label="Processing">
                       <Badge {...badge} />
                       {d.ocrStatus === "FAILED" && d.ocrError && (
                         <div className="muted small">{d.ocrError}</div>
                       )}
                     </td>
-                    <td className="muted small">
+                    <td data-label="Size" className="muted small">
                       {d.sizeBytes ? `${Math.max(1, Math.round(d.sizeBytes / 1024))} KB` : "—"}
                     </td>
                     <td style={{ whiteSpace: "nowrap" }}>
@@ -519,7 +527,7 @@ export default function DocumentsPanel({
                           </button>
                         </>
                       ) : (
-                        <>
+                        <details className="file-actions"><summary>File actions</summary>
                           <button
                             className="link"
                             onClick={() => startRename(d)}
@@ -552,7 +560,7 @@ export default function DocumentsPanel({
                             cancelLabel="Keep"
                             onConfirm={() => deleteDoc(d)}
                           />
-                        </>
+                        </details>
                       )}
                     </td>
                   </tr>
@@ -560,6 +568,7 @@ export default function DocumentsPanel({
               })}
             </tbody>
           </table>
+          <Pagination total={sorted.length} page={page.page} onPage={page.setPage} size={page.size} noun="files" />
         </div>
       )}
 

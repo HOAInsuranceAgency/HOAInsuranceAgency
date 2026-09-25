@@ -1,11 +1,12 @@
+import { useDirtyForms } from "./components/ui/unsaved";
 import LeadWork from "./pages/LeadWork";
 import FrontSidebar from "./pages/FrontSidebar";
-import { useEffect, useState } from "react";
-import { Navigate, NavLink, Route, Routes, useLocation } from "react-router-dom";
+import { lazy, Suspense, useEffect, useState } from "react";
+import { Link, Navigate, NavLink, Route, Routes, useLocation } from "react-router-dom";
 import { Authenticator, useAuthenticator } from "@aws-amplify/ui-react";
 import type { AuthUser } from "aws-amplify/auth";
 import { client, listAllPages, type UserProfile } from "./lib/client";
-import { useAsyncResource } from "./lib/useAsyncResource";
+import { useAsyncResource, clearAsyncResourceCache } from "./lib/useAsyncResource";
 import CopyValue from "./components/CopyValue";
 import {
   AGENCY_SETTINGS_ID,
@@ -19,20 +20,21 @@ import {
   roleFromGroups,
 } from "./lib/auth";
 import MagicLinkSignIn from "./components/MagicLinkSignIn";
-import Dashboard from "./pages/Dashboard";
+const Dashboard = lazy(() => import("./pages/Dashboard"));
 import AccountsList from "./pages/AccountsList";
-import AccountDetail from "./pages/AccountDetail";
-import NewLead from "./pages/NewLead";
-import Carriers from "./pages/Carriers";
-import CarrierDetail from "./pages/CarrierDetail";
+const AccountDetail = lazy(() => import("./pages/AccountDetail"));
+const NewLead = lazy(() => import("./pages/NewLead"));
+const Carriers = lazy(() => import("./pages/Carriers"));
+const CarrierDetail = lazy(() => import("./pages/CarrierDetail"));
 import Onboarding from "./pages/Onboarding";
-import Settings from "./pages/Settings";
-import Financing from "./pages/Financing";
-import SearchResults from "./pages/SearchResults";
+const Settings = lazy(() => import("./pages/Settings"));
+import FinanceTab from "./pages/dashboard/FinanceTab";
+import { LoadingState } from "./components/ui/kit";
+const SearchResults = lazy(() => import("./pages/SearchResults"));
 import UniversalSearch from "./components/UniversalSearch";
-import QuotesList from "./pages/QuotesList";
-import PoliciesList from "./pages/PoliciesList";
-import { AllMarketingTasks } from "./components/MarketingTasks";
+const QuotesList = lazy(() => import("./pages/QuotesList"));
+const PoliciesList = lazy(() => import("./pages/PoliciesList"));
+
 
 export default function App() {
   return (
@@ -52,6 +54,8 @@ function AuthGate() {
     ctx.authStatus,
     ctx.user,
   ]);
+
+  useEffect(() => { if (authStatus !== "authenticated") clearAsyncResourceCache(); }, [authStatus]);
 
   if (authStatus === "authenticated" && user) {
     return <ProfileGate user={user} signOut={signOut} />;
@@ -153,7 +157,7 @@ function NotFound() {
       <h2>Page not found</h2>
       <p className="muted small">That page doesn't exist (or moved).</p>
       <NavLink to="/">
-        <button className="primary">Back to dashboard</button>
+        <button className="primary">Back to my work</button>
       </NavLink>
     </div>
   );
@@ -186,13 +190,6 @@ function IconCheck() {
     <svg {...iconProps}>
       <path d="M9 11l3 3L22 4" />
       <path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" />
-    </svg>
-  );
-}
-function IconFunnel() {
-  return (
-    <svg {...iconProps}>
-      <path d="M3 4h18l-7 8.5V19l-4 2v-8.5L3 4z" />
     </svg>
   );
 }
@@ -251,11 +248,11 @@ function IconCoin() {
 // which now lives in the top bar on every page (the /documents URL still
 // redirects to /search for old bookmarks).
 const NAV_ITEMS = [
-  { to: "/", end: true, label: "Dashboard", icon: <IconGrid /> },
-  { to: "/leads", label: "Leads", icon: <IconFunnel /> },
-  { to: "/clients", label: "Clients", icon: <IconUsers /> },
-  { to: "/tasks", label: "Tasks", icon: <IconCheck /> },
+  { to: "/", label: "My work", icon: <IconCheck /> },
+  { to: "/leads", label: "Accounts", icon: <IconUsers /> },
   { to: "/carriers", label: "Carriers", icon: <IconBuilding /> },
+  { to: "/billing", label: "Billing", icon: <IconCoin /> },
+  { to: "/reports", label: "Reports", icon: <IconGrid /> },
   { to: "/settings", label: "Settings", icon: <IconGear /> },
 ];
 
@@ -307,30 +304,25 @@ function AgencyIdentifiers() {
   );
 }
 
-function Shell({ profile, signOut }: { profile: UserProfile; signOut: () => void }) {
+export function Shell({ profile, signOut }: { profile: UserProfile; signOut: () => void }) {
   const location = useLocation();
+  const { confirmDiscard } = useDirtyForms();
   const [menuOpen, setMenuOpen] = useState(false);
-  /**
-   * Financing sits between Documents' old slot and Settings for everyone:
-   * the module is always on, so there is no longer a state in which the page
-   * has nothing to say.
-   */
-  const navItems = [
-    ...NAV_ITEMS.slice(0, 5),
-    { to: "/lead-work", label: "Lead follow-up", icon: <IconCheck /> },
-    { to: "/financing", label: "Financing", icon: <IconCoin /> } as const,
-    ...NAV_ITEMS.slice(5),
-  ];
+  const [collapsed, setCollapsed] = useState(() => { try { return localStorage.getItem("crm.sidebar.collapsed") === "true"; } catch { return false; } });
+  function collapse() { setCollapsed(value => { try { localStorage.setItem("crm.sidebar.collapsed", String(!value)); } catch { /* Preference storage is optional. */ } return !value; }); }
+  const reportRoute = location.pathname === "/reports" || location.pathname === "/" && new URLSearchParams(location.search).has("tab");
+  const currentSection = reportRoute ? "/reports" : /^\/(accounts|leads|clients|quotes|policies)/.test(location.pathname) ? "/leads" : /^\/(work|lead-work|tasks)/.test(location.pathname) ? "/" : location.pathname.startsWith("/carriers") ? "/carriers" : location.pathname;
 
   if (/^\/front-sidebar\/?$/.test(location.pathname)) return <FrontSidebar />;
 
   return (
     <div className="shell">
-      <aside className={`sidebar${menuOpen ? " sidebar--open" : ""}`}>
+      <aside className={`sidebar${menuOpen ? " sidebar--open" : ""}${collapsed ? " sidebar--compact" : ""}`}>
         <div className="sidebar-top">
           <NavLink to="/" className="brand" onClick={() => setMenuOpen(false)}>
             <img src="/logo.png" alt="HOA Insurance Agency" />
           </NavLink>
+          <button className="sidebar-collapse" aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"} aria-expanded={!collapsed} onClick={collapse}>{collapsed ? "→" : "←"}</button>
           <button
             className="hamburger"
             aria-label={menuOpen ? "Close menu" : "Open menu"}
@@ -341,27 +333,30 @@ function Shell({ profile, signOut }: { profile: UserProfile; signOut: () => void
           </button>
         </div>
         <nav onClick={() => setMenuOpen(false)}>
-          {navItems.map((item) => (
-            <NavLink key={item.to} to={item.to} end={"end" in item ? item.end : undefined}>
+          {NAV_ITEMS.map((item) => (
+            <Link key={item.to} to={item.to} aria-current={currentSection === item.to ? "page" : undefined} title={collapsed ? item.label : undefined} aria-label={item.label} className={currentSection === item.to ? "active" : ""}>
               {item.icon}
-              <span>{item.label}</span>
-            </NavLink>
+              <span className="nav-label">{item.label}</span>
+            </Link>
           ))}
         </nav>
         <div className="spacer" />
         <div className="user">
-          <AgencyIdentifiers />
+          <details><summary>Agency reference numbers</summary><AgencyIdentifiers /></details>
           <div>
             {profile.firstName} {profile.lastName}
           </div>
           <div className="muted small">{profile.role}</div>
-          <button onClick={signOut}>Sign out</button>
+          <button onClick={() => { if (confirmDiscard()) signOut(); }}>Sign out</button>
         </div>
       </aside>
       <main className="main">
         <UniversalSearch />
-        <Routes>
-          <Route path="/" element={<Dashboard />} />
+        <Suspense fallback={<LoadingState label="Opening workspace…" />}><Routes>
+          <Route path="/" element={reportRoute ? <Dashboard /> : <LeadWork profile={profile} />} />
+          <Route path="/work" element={<LeadWork profile={profile} />} />
+          <Route path="/reports" element={<Dashboard />} />
+          <Route path="/billing" element={<><h1>Billing</h1><p className="sub">Balances, upcoming payments, and invoices that need attention.</p><FinanceTab /></>} />
           <Route path="/leads" element={<AccountsList stage="LEAD" />} />
           <Route path="/leads/new" element={<NewLead />} />
           <Route path="/lead-work" element={<LeadWork profile={profile} />} />
@@ -369,24 +364,17 @@ function Shell({ profile, signOut }: { profile: UserProfile; signOut: () => void
           <Route path="/accounts/:id" element={<AccountDetail profile={profile} />} />
           <Route path="/carriers" element={<Carriers />} />
           <Route path="/carriers/:id" element={<CarrierDetail />} />
-          <Route
-            path="/tasks"
-            element={
-              <AllMarketingTasks
-                completedByName={`${profile.firstName} ${profile.lastName}`}
-              />
-            }
-          />
+          <Route path="/tasks" element={<Navigate to="/work?section=carrier" replace />} />
           <Route path="/quotes" element={<QuotesList />} />
           <Route path="/policies" element={<PoliciesList />} />
           <Route path="/search" element={<SearchResults />} />
           {/* The old document-search page — redirect, don't 404, the
               bookmarks people made of it. */}
           <Route path="/documents" element={<Navigate to="/search" replace />} />
-          <Route path="/financing" element={<Financing />} />
+          <Route path="/financing" element={<Navigate to="/billing" replace />} />
           <Route path="/settings" element={<Settings profile={profile} />} />
           <Route path="*" element={<NotFound />} />
-        </Routes>
+        </Routes></Suspense>
       </main>
     </div>
   );

@@ -129,6 +129,7 @@ const renderPage = async () => {
   );
   // The finder is gated on both reads landing — before that, "no appetite" is
   // a false negative rather than a placeholder.
+  await userEvent.click(await screen.findByRole("button", { name: /Find markets for a risk/ }));
   expect(await screen.findByText("Appetite finder")).toBeInTheDocument();
 };
 

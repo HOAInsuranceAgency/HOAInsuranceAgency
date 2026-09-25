@@ -1,3 +1,4 @@
+import { Field } from "../../components/ui/kit";
 import { ReportDownload } from "../../components/ReportDownload";
 import { useMemo, useState } from "react";
 import {
@@ -93,7 +94,7 @@ export default function ReportingTab() {
       };
     },
     [],
-    { initialData: EMPTY, errorMessage: "Failed to load reporting" }
+    { cacheKey: "report:reporting", initialData: EMPTY, errorMessage: "Failed to load reporting" }
   );
   const { policies, carriers, accounts, quotes, paidInvoices, pfPayments } = res.data;
 
@@ -232,18 +233,18 @@ export default function ReportingTab() {
       {preset === "custom" && (
         <div className="card">
           <div className="filter-row">
-            <div className="field">
+            <Field className="field">
               <label>Effective from</label>
               <input
                 type="date"
                 value={from}
                 onChange={(e) => setFrom(e.target.value)}
               />
-            </div>
-            <div className="field">
+            </Field>
+            <Field className="field">
               <label>Effective to</label>
               <input type="date" value={to} onChange={(e) => setTo(e.target.value)} />
-            </div>
+            </Field>
           </div>
         </div>
       )}

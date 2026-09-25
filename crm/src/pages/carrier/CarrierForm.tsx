@@ -1,3 +1,5 @@
+import { MoneyInput, PhoneInput, PercentInput } from "../../components/inputs";
+import { Field } from "../../components/ui/kit";
 import { client, US_STATES, type Carrier } from "../../lib/client";
 import { SaveStatus, useSaveStatus } from "../../components/SaveStatus";
 import { useFormState } from "../../lib/useFormState";
@@ -13,7 +15,7 @@ export function CarrierForm({
   // `useSaveStatus` owns the confirmation; `useFormState`'s `saved` is left
   // unread so there is exactly one answer to "did that save land".
   const saveStatus = useSaveStatus();
-  const { form, setF } = useFormState({
+  const { form, setF, markSaved } = useFormState({
     name: carrier.name,
     appointed: carrier.appointed,
     marketType: carrier.marketType ?? "",
@@ -79,6 +81,7 @@ export function CarrierForm({
           notes: form.notes.trim() || null,
         });
         if (errors?.length || !data) throw new Error(errors?.[0]?.message);
+        markSaved();
         onChange(data);
       },
       { errorMessage: "Save failed" }
@@ -89,11 +92,11 @@ export function CarrierForm({
     <div className="card">
       <h2>Appointment details</h2>
       <div className="form-grid">
-        <div className="field">
+        <Field className="field">
           <label>Name</label>
           <input value={form.name} onChange={(e) => setF("name", e.target.value)} />
-        </div>
-        <div className="field">
+        </Field>
+        <Field className="field">
           <label>Status</label>
           <select
             value={form.appointed ? "1" : "0"}
@@ -102,8 +105,8 @@ export function CarrierForm({
             <option value="1">Appointed</option>
             <option value="0">Prospective</option>
           </select>
-        </div>
-        <div className="field">
+        </Field>
+        <Field className="field">
           <label>Market type</label>
           <select
             value={form.marketType}
@@ -116,58 +119,32 @@ export function CarrierForm({
               </option>
             ))}
           </select>
-        </div>
-        <div className="field">
+        </Field>
+        <Field className="field">
           <label>Date appointed</label>
           <input type="date" value={form.dateAppointed} onChange={(e) => setF("dateAppointed", e.target.value)} />
-        </div>
-        <div className="field">
+        </Field>
+        <Field className="field">
           <label>NAIC code</label>
           <input value={form.naicCode} onChange={(e) => setF("naicCode", e.target.value)} />
-        </div>
-        <div className="field">
+        </Field>
+        <Field className="field">
           <label>Standard commission % (autofills new quotes)</label>
-          <input
-            type="number"
-            step="0.1"
-            min={0}
-            max={100}
-            value={form.standardCommissionPct}
-            onChange={(e) => setF("standardCommissionPct", e.target.value)}
-          />
-        </div>
-        <div className="field">
+          <PercentInput value={form.standardCommissionPct} onChange={v => setF("standardCommissionPct", v)} />
+        </Field>
+        <Field className="field">
           <label>Annual minimum premium to maintain appointment ($)</label>
-          <input
-            type="number"
-            step="1"
-            min={0}
-            value={form.annualMinimumPremium}
-            onChange={(e) => setF("annualMinimumPremium", e.target.value)}
-          />
-        </div>
-        <div className="field">
+          <MoneyInput value={form.annualMinimumPremium} onChange={v => setF("annualMinimumPremium", v)} />
+        </Field>
+        <Field className="field">
           <label>Profit sharing threshold — premium written ($)</label>
-          <input
-            type="number"
-            step="1"
-            min={0}
-            value={form.profitSharingPremiumThreshold}
-            onChange={(e) => setF("profitSharingPremiumThreshold", e.target.value)}
-          />
-        </div>
-        <div className="field">
+          <MoneyInput value={form.profitSharingPremiumThreshold} onChange={v => setF("profitSharingPremiumThreshold", v)} />
+        </Field>
+        <Field className="field">
           <label>Profit sharing loss ratio threshold (%)</label>
-          <input
-            type="number"
-            step="0.1"
-            min={0}
-            max={100}
-            value={form.profitSharingLossRatioThreshold}
-            onChange={(e) => setF("profitSharingLossRatioThreshold", e.target.value)}
-          />
-        </div>
-        <div className="field">
+          <PercentInput value={form.profitSharingLossRatioThreshold} onChange={v => setF("profitSharingLossRatioThreshold", v)} />
+        </Field>
+        <Field className="field">
           <label>Lines written</label>
           <div style={{ display: "flex", gap: 16, alignItems: "center", height: 38 }}>
             <label
@@ -193,41 +170,38 @@ export function CarrierForm({
               Personal lines
             </label>
           </div>
-        </div>
-        <div className="field">
+        </Field>
+        <Field className="field">
           <label>Primary contact</label>
           <input value={form.primaryContactName} onChange={(e) => setF("primaryContactName", e.target.value)} />
-        </div>
-        <div className="field">
+        </Field>
+        <Field className="field">
           <label>Contact email</label>
           <input value={form.primaryContactEmail} onChange={(e) => setF("primaryContactEmail", e.target.value)} />
-        </div>
-        <div className="field">
+        </Field>
+        <Field className="field">
           <label>Contact phone</label>
-          <input value={form.primaryContactPhone} onChange={(e) => setF("primaryContactPhone", e.target.value)} />
-        </div>
-        <div className="field">
+          <PhoneInput value={form.primaryContactPhone} onChange={v => setF("primaryContactPhone", v)} />
+        </Field>
+        <Field className="field">
           <label>Primary underwriter</label>
           <input
             value={form.primaryUnderwriterName}
             onChange={(e) => setF("primaryUnderwriterName", e.target.value)}
           />
-        </div>
-        <div className="field">
+        </Field>
+        <Field className="field">
           <label>Underwriter email</label>
           <input
             value={form.primaryUnderwriterEmail}
             onChange={(e) => setF("primaryUnderwriterEmail", e.target.value)}
           />
-        </div>
-        <div className="field">
+        </Field>
+        <Field className="field">
           <label>Underwriter phone</label>
-          <input
-            value={form.primaryUnderwriterPhone}
-            onChange={(e) => setF("primaryUnderwriterPhone", e.target.value)}
-          />
-        </div>
-        <div className="field full">
+          <PhoneInput value={form.primaryUnderwriterPhone} onChange={v => setF("primaryUnderwriterPhone", v)} />
+        </Field>
+        <Field className="field full">
           <label>States covered ({form.states.length})</label>
           <div className="toolbar" style={{ marginTop: 0, marginBottom: 6 }}>
             <button
@@ -261,11 +235,11 @@ export function CarrierForm({
               </label>
             ))}
           </div>
-        </div>
-        <div className="field full">
+        </Field>
+        <Field className="field full">
           <label>Notes</label>
           <textarea rows={3} value={form.notes} onChange={(e) => setF("notes", e.target.value)} />
-        </div>
+        </Field>
       </div>
       <div className="form-actions">
         <button className="primary" disabled={saveStatus.busy} onClick={save}>

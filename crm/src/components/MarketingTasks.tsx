@@ -1,3 +1,5 @@
+import { Pagination } from "./ui/kit";
+import { useListPage } from "../lib/useListPage";
 import { useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useAsyncResource } from "../lib/useAsyncResource";
@@ -310,7 +312,7 @@ export default function AccountMarketingTasks({
         <p className="muted small">All marketing tasks are complete.</p>
       ) : (
         <div className="table-wrap">
-          <table>
+          <table className="stacked-table">
             <thead>
               <tr>
                 <SortTh label="Carrier" colKey="carrier" sortKey={sortKey} dir={dir} onToggle={toggle} />
@@ -326,18 +328,18 @@ export default function AccountMarketingTasks({
                 const u = taskUrgency(t);
                 return (
                   <tr key={t.id}>
-                    <td>
+                    <td data-label="Carrier">
                       <strong>{t.carrierName ?? "—"}</strong>
                     </td>
-                    <td className="small">
+                    <td className="small" data-label="Lines">
                       {(t.lines ?? []).filter(Boolean).join(", ") || "—"}
                     </td>
-                    <td className="small">{fmtDate(t.expirationDate)}</td>
-                    <td className="small">{fmtDate(t.submitBy)}</td>
-                    <td>
+                    <td className="small" data-label="Expires">{fmtDate(t.expirationDate)}</td>
+                    <td className="small" data-label="Submit by">{fmtDate(t.submitBy)}</td>
+                    <td data-label="Urgency">
                       <Badge {...u} />
                     </td>
-                    <td style={{ whiteSpace: "nowrap" }}>
+                    <td style={{ whiteSpace: "nowrap" }} data-label="Actions">
                       {/* Undo here is Reopen, in the completed table below. */}
                       <CloseAsMenu
                         label={`Close ${t.carrierName ?? "task"}`}
@@ -355,7 +357,7 @@ export default function AccountMarketingTasks({
 
       {showDone && done.length > 0 && (
         <div className="table-wrap" style={{ marginTop: 10 }}>
-          <table>
+          <table className="stacked-table">
             <tbody>
               {done.map((t) => (
                 <tr key={t.id}>
@@ -510,9 +512,10 @@ export function AllMarketingTasks({
     "submitBy"
   );
 
+  const page = useListPage(sorted, `${query}:${sortKey}:${dir}`);
   return (
     <>
-      <h1>Marketing tasks</h1>
+      <h2>Carrier deadlines</h2>
       <p className="sub">
         Open carrier submissions for expiring policies and lead renewals
       </p>
@@ -527,7 +530,7 @@ export function AllMarketingTasks({
               box on a page of styled ones. */}
           <div className="field grow" style={{ maxWidth: 360 }}>
             <input
-              placeholder="Search tasks by account, carrier, or line…"
+              aria-label="Find carrier deadlines" placeholder="Search tasks by account, carrier, or line…"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
             />
@@ -568,7 +571,7 @@ export function AllMarketingTasks({
           </p>
         ) : (
           <div className="table-wrap">
-            <table>
+            <table className="stacked-table">
               <thead>
                 <tr>
                   <SortTh label="Account" colKey="account" sortKey={sortKey} dir={dir} onToggle={toggle} />
@@ -581,25 +584,25 @@ export function AllMarketingTasks({
                 </tr>
               </thead>
               <tbody>
-                {sorted.map((t) => {
+                {page.rows.map((t) => {
                   const u = taskUrgency(t);
                   return (
                     <tr key={t.id}>
-                      <td>
+                      <td data-label="Account">
                         <Link to={`/accounts/${t.accountId}?tab=quotes`}>
                           {t.accountName ?? "(account)"}
                         </Link>
                       </td>
-                      <td>{t.carrierName ?? "—"}</td>
-                      <td className="small">
+                      <td data-label="Carrier">{t.carrierName ?? "—"}</td>
+                      <td className="small" data-label="Lines">
                         {(t.lines ?? []).filter(Boolean).join(", ") || "—"}
                       </td>
-                      <td className="small">{fmtDate(t.expirationDate)}</td>
-                      <td className="small">{fmtDate(t.submitBy)}</td>
-                      <td>
+                      <td className="small" data-label="Expires">{fmtDate(t.expirationDate)}</td>
+                      <td className="small" data-label="Submit by">{fmtDate(t.submitBy)}</td>
+                      <td data-label="Urgency">
                         <Badge {...u} />
                       </td>
-                      <td style={{ whiteSpace: "nowrap" }}>
+                      <td style={{ whiteSpace: "nowrap" }} data-label="Actions">
                         {/* Named by account as well as carrier: one carrier
                             appears against many accounts here, so the carrier
                             alone would not say which row this closes. */}
@@ -616,6 +619,7 @@ export function AllMarketingTasks({
                 })}
               </tbody>
             </table>
+            <Pagination total={sorted.length} page={page.page} onPage={page.setPage} noun="carrier deadlines" />
           </div>
         )}
       </div>

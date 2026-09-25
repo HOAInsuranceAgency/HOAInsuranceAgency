@@ -5,7 +5,7 @@ import Modal from "./Modal";
 
 type ConnectionIds = Pick<TeamEligibility, "frontId" | "dialpadId">;
 
-export default function LeadEligibilitySettings() {
+export default function LeadEligibilitySettings({ userId }: { userId?: string }) {
   const resource = useAsyncResource(() => request<{ team: TeamEligibility[] }>("team"), [], { initialData: { team: [] }, errorMessage: "Could not load assignment settings" });
   const [busy, setBusy] = useState(false), [error, setError] = useState(""), [message, setMessage] = useState("");
   const [editing, setEditing] = useState<TeamEligibility | null>(null);
@@ -30,12 +30,12 @@ export default function LeadEligibilitySettings() {
     {!editing && (error || resource.error) && <div role="alert"><p className="error-text">{error || resource.error}</p><button type="button" className="secondary" disabled={disabled} onClick={() => { setError(""); void resource.refetch(); }}>Refresh teammates</button></div>}
     <p className="small muted" role="status">{busy ? "Saving teammate settings…" : resource.loading ? "Loading teammates…" : message}</p>
     <div className="table-wrap"><table><thead><tr><th scope="col">Teammate</th><th scope="col">Salesperson</th><th scope="col">Deal champion</th><th scope="col">Front</th><th scope="col">Dialpad</th><th scope="col">Actions</th></tr></thead><tbody>
-      {resource.data.team.map(member => <tr key={member.userId}>
+      {resource.data.team.filter(member => !userId || member.userId === userId).map(member => <tr key={member.userId}>
         <td>{member.name}<div className="muted small">{member.email}</div></td>
         <td><input aria-label={`Salesperson eligibility for ${member.name}`} type="checkbox" checked={member.salesperson} disabled={disabled} onChange={event => void save(member, { salesperson: event.target.checked })} /></td>
         <td><input aria-label={`Deal champion eligibility for ${member.name}`} type="checkbox" checked={member.champion} disabled={disabled} onChange={event => void save(member, { champion: event.target.checked })} /></td>
-        <td>{member.frontId ? <code className="team-connection-id">{member.frontId}</code> : <span className="muted small">Not linked</span>}</td>
-        <td>{member.dialpadId ? <code className="team-connection-id">{member.dialpadId}</code> : <span className="muted small">Not linked</span>}</td>
+        <td>{member.frontId ? <span className="badge green">Connected</span> : <span className="muted small">Not linked</span>}</td>
+        <td>{member.dialpadId ? <span className="badge green">Connected</span> : <span className="muted small">Not linked</span>}</td>
         <td><button type="button" className="secondary" disabled={disabled} aria-label={`Edit connections for ${member.name}`} onClick={() => { setEditing(member); setError(""); setMessage(""); }}>Edit connections</button></td>
       </tr>)}
     </tbody></table></div>

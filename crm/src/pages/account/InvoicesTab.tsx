@@ -271,7 +271,7 @@ export function InvoicesTab({ accountId }: { accountId: string }) {
           </p>
         ) : (
           <div className="table-wrap">
-            <table>
+            <table className="stacked-table">
               <thead>
                 <tr>
                   <th>Invoice</th>
@@ -288,16 +288,16 @@ export function InvoicesTab({ accountId }: { accountId: string }) {
                   const isOpen = inv.id === openId;
                   return (
                     <tr key={inv.id} className={isOpen ? "row-open" : undefined}>
-                      <td>{inv.number ?? "—"}</td>
-                      <td>{fmtDate(inv.issuedAt)}</td>
-                      <td>{fmtDate(inv.dueAt)}</td>
-                      <td>
+                      <td data-label="Invoice">{inv.number ?? "—"}</td>
+                      <td data-label="Issued">{fmtDate(inv.issuedAt)}</td>
+                      <td data-label="Due">{fmtDate(inv.dueAt)}</td>
+                      <td data-label="Status">
                         <Badge {...statusBadge(INVOICE_STATUS_BADGE, inv.status)} />
                       </td>
-                      <td className="num">
+                      <td className="num" data-label="Total">
                         {fmtMoney(invoiceTotals(own).retail)}
                       </td>
-                      <td className="row-action">
+                      <td className="row-action" data-label="Actions">
                         <button
                           type="button"
                           className="link"

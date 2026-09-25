@@ -1,3 +1,4 @@
+import { Field } from "../../components/ui/kit";
 import { useState } from "react";
 import { uploadData } from "aws-amplify/storage";
 import {
@@ -95,8 +96,9 @@ export function CertificatesTab({
   // of every run, so a stale list can never sit under a fresh outcome.
   const [aiFilled, setAiFilled] = useState<AiFilledField[]>([]);
 
+  const [reviewing, setReviewing] = useState(false);
   async function issue() {
-    if (!form.holderName.trim()) return;
+    if (!form.holderName.trim() || !form.selectedPolicies.length) return;
     setSaving(true);
     setError("");
 
@@ -135,6 +137,7 @@ export function CertificatesTab({
     if (data) {
       setCerts((cs) => [data, ...cs]);
       setShowForm(false);
+      setReviewing(false);
       // Baseline is still the blanks this mounted with — markSaved is never
       // called here — so `reset()` is the four setters it replaces.
       reset();
@@ -263,34 +266,34 @@ export function CertificatesTab({
         <>
           <div className="toolbar">
             <div className="grow" />
-            <button className="primary" onClick={() => setShowForm(!showForm)}>
+            <button className="primary" disabled={saving} onClick={() => { if (showForm) { reset(); setReviewing(false); } setShowForm(!showForm); }}>
               {showForm ? "Cancel" : "+ New certificate"}
             </button>
           </div>
 
-          {showForm && (
+          {showForm && !reviewing && (
             <div className="card" style={{ background: "#f8fafc" }}>
               <div className="form-grid">
-                <div className="field">
+                <Field className="field">
                   <label>Certificate holder *</label>
                   <input value={form.holderName} onChange={(e) => setF("holderName", e.target.value)} />
-                </div>
-                <div className="field">
+                </Field>
+                <Field className="field">
                   <label>Holder address</label>
                   <input
                     value={form.holderAddress}
                     onChange={(e) => setF("holderAddress", e.target.value)}
                   />
-                </div>
-                <div className="field full">
+                </Field>
+                <Field className="field full">
                   <label>Description of operations</label>
                   <textarea
                     rows={2}
                     value={form.description}
                     onChange={(e) => setF("description", e.target.value)}
                   />
-                </div>
-                <div className="field full">
+                </Field>
+                <Field className="field full">
                   <label>Policies on certificate</label>
                   {!policyRes.loaded ? (
                     <span className="muted small">Loading…</span>
@@ -314,25 +317,26 @@ export function CertificatesTab({
                             )
                           }
                         />
-                        {p.policyNumber || "(no number)"} —{" "}
+                        {carriers.find(c => c.id === p.carrierId)?.name || "Carrier not recorded"} · {p.policyNumber || "(no number)"} · {fmtDate(p.effectiveDate)}–{fmtDate(p.expirationDate)} —{" "}
                         {(p.lines ?? []).filter(Boolean).join(", ")}
                       </label>
                     ))
                   )}
-                </div>
+                </Field>
               </div>
               <div className="form-actions">
                 <button
                   className="primary"
-                  disabled={saving || !form.holderName.trim()}
-                  onClick={issue}
+                  disabled={saving || !form.holderName.trim() || !form.selectedPolicies.length}
+                  onClick={() => setReviewing(true)}
                 >
-                  {saving ? "Saving…" : "Record certificate"}
+                  Review certificate
                 </button>
               </div>
             </div>
           )}
 
+          {showForm && reviewing && <section className="card" aria-label="Review certificate"><h3>Review certificate</h3><p><strong>{form.holderName}</strong><br />{form.holderAddress}</p><p>{form.description}</p><ul>{policies.filter(p => form.selectedPolicies.includes(p.id)).map(p => <li key={p.id}>{carriers.find(c => c.id === p.carrierId)?.name || "Carrier not recorded"} · {p.policyNumber || "No policy number"} · {p.lines?.filter(Boolean).join(", ")} · {fmtDate(p.effectiveDate)}–{fmtDate(p.expirationDate)}</li>)}</ul><p className="muted">Generating records the issuance and files the PDF. Review the resulting PDF before sharing it.</p><div className="form-actions"><button className="primary" disabled={saving} onClick={issue}>{saving ? "Generating…" : "Generate & record certificate"}</button><button className="secondary" disabled={saving} onClick={() => setReviewing(false)}>Back to editing</button></div></section>}
           {genStatus.status.state !== "idle" && (
             <p style={{ margin: "10px 0" }}>
               <SaveStatus {...genStatus.status} />
@@ -352,7 +356,7 @@ export function CertificatesTab({
             <p className="muted small">No certificates issued.</p>
           ) : (
             <div className="table-wrap">
-              <table>
+              <table className="stacked-table">
                 <thead>
                   <tr>
                     <SortTh label="Cert #" colKey="number" sortKey={sortKey} dir={dir} onToggle={toggle} />
@@ -366,16 +370,16 @@ export function CertificatesTab({
                 <tbody>
                   {sorted.map((c) => (
                     <tr key={c.id}>
-                      <td style={{ whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>
+                      <td style={{ whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }} data-label="Cert #">
                         {c.certificateNumber ?? "—"}
                       </td>
-                      <td>{c.holderName}</td>
-                      <td>
+                      <td data-label="Holder">{c.holderName}</td>
+                      <td data-label="Form">
                         <span className="badge gray">{c.formType ?? "ACORD_25"}</span>
                       </td>
-                      <td>{fmtDate(c.issuedAt?.slice(0, 10))}</td>
-                      <td>{c.issuedBy ?? "—"}</td>
-                      <td style={{ whiteSpace: "nowrap" }}>
+                      <td data-label="Issued">{fmtDate(c.issuedAt?.slice(0, 10))}</td>
+                      <td data-label="By">{c.issuedBy ?? "—"}</td>
+                      <td style={{ whiteSpace: "nowrap" }} data-label="PDF">
                         {c.s3Key ? (
                           <>
                             <button className="link" onClick={() => setPreviewCert(c)}>

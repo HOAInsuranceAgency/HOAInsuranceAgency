@@ -1,3 +1,4 @@
+import { US_STATES } from "../lib/client";
 import { Suspense, lazy, useMemo, useState } from "react";
 import {
   client,
@@ -155,7 +156,7 @@ export default function Licensing() {
   // licensed, both unexpired. Counted over every state that appears anywhere.
   const { writableStates, touchedStates } = useMemo(() => {
     const live = (l: License) => licenseHealth(l).level !== "expired";
-    const states = new Set(licenses.map((l) => l.state).filter(Boolean));
+    const states = new Set<string>(US_STATES);
     let writable = 0;
     for (const s of states) {
       const hasFirm = allFirm.some((l) => l.state === s && live(l));
@@ -198,7 +199,7 @@ export default function Licensing() {
           <div className="lic-stat">
             <strong>{writableStates}</strong>
             <span className="muted small">
-              of {touchedStates} states writable
+              of {touchedStates} jurisdictions writable (states + DC)
             </span>
           </div>
         </div>

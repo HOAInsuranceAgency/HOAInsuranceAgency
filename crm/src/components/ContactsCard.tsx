@@ -1,3 +1,4 @@
+import { Field } from "./ui/kit";
 import {
   EMAIL_RE,
   client,
@@ -218,7 +219,7 @@ function ContactFields({
     : undefined;
   return (
     <>
-      <div className="field">
+      <Field className="field">
         <label>Name</label>
         <input
           placeholder="Pat Alvarez"
@@ -226,8 +227,8 @@ function ContactFields({
           onChange={(e) => form.setF("name", e.target.value)}
           onKeyDown={enter}
         />
-      </div>
-      <div className="field">
+      </Field>
+      <Field className="field">
         <label>Role</label>
         <select
           value={form.form.type}
@@ -240,8 +241,8 @@ function ContactFields({
             </option>
           ))}
         </select>
-      </div>
-      <div className="field">
+      </Field>
+      <Field className="field">
         <label>Email</label>
         <input
           type="email"
@@ -249,16 +250,16 @@ function ContactFields({
           onChange={(e) => form.setF("email", e.target.value)}
           onKeyDown={enter}
         />
-      </div>
-      <div className="field">
+      </Field>
+      <Field className="field">
         <label>Phone</label>
         <PhoneInput
           value={form.form.phone}
           onChange={(v) => form.setF("phone", v)}
           onKeyDown={enter}
         />
-      </div>
-      <div className="field" style={{ flex: "1 1 220px" }}>
+      </Field>
+      <Field className="field" style={{ flex: "1 1 220px" }}>
         <label>Notes</label>
         <input
           placeholder="Best reached mornings"
@@ -266,7 +267,7 @@ function ContactFields({
           onChange={(e) => form.setF("notes", e.target.value)}
           onKeyDown={enter}
         />
-      </div>
+      </Field>
     </>
   );
 }
