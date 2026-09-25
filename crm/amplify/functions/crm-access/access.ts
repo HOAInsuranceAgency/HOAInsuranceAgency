@@ -1,13 +1,17 @@
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, GetCommand } from "@aws-sdk/lib-dynamodb";
+import { DynamoDBDocumentClient, GetCommand, BatchGetCommand } from "@aws-sdk/lib-dynamodb";
 import { ACCOUNT_MODELS, ACCOUNT_REFERENCES, SHARED_MODELS, AccessDenied, id, object, type Identity, type RecordData } from "./policy";
-const db = DynamoDBDocumentClient.from(new DynamoDBClient());
+export const db = DynamoDBDocumentClient.from(new DynamoDBClient());
+export function tableName(model: string) {
+  const tables = JSON.parse(process.env.ACCESS_TABLES ?? "{}") as Record<string, string>;
+  const name = model === "Communication" ? process.env.COMMUNICATION_TABLE : tables[model] ?? (process.env.ACCESS_API_ID && `${model}-${process.env.ACCESS_API_ID}-NONE`);
+  if (!name) throw new Error("Account access is not configured");
+  return name;
+}
+const primaryKey = (model: string) => ["GlApplication", "DoApplication"].includes(model) ? "accountId" : "id";
 export type Reader = (model: string, key: string) => Promise<RecordData | undefined>;
 const read: Reader = async (model, key) => {
-  const tables = JSON.parse(process.env.ACCESS_TABLES ?? "{}") as Record<string, string>;
-  const TableName = model === "Communication" ? process.env.COMMUNICATION_TABLE : tables[model];
-  if (!TableName) throw new Error("Account access is not configured");
-  return (await db.send(new GetCommand({ TableName, Key: { [["GlApplication", "DoApplication"].includes(model) ? "accountId" : "id"]: key }, ConsistentRead: true }))).Item;
+  return (await db.send(new GetCommand({ TableName: tableName(model), Key: { [primaryKey(model)]: key }, ConsistentRead: true }))).Item;
 };
 /** Cache only within one request: reassignments and manager edits apply on the next request. */
 export class AccountAccess {
@@ -24,6 +28,27 @@ export class AccountAccess {
     const cacheKey = `${model}:${key}`;
     if (!this.records.has(cacheKey)) this.records.set(cacheKey, this.reader(model, key));
     return this.records.get(cacheKey)!;
+  }
+  async prefetch(model: string, keys: string[]) {
+    const missing = [...new Set(keys)].filter(key => key && !this.records.has(`${model}:${key}`));
+    if (this.reader !== read) { await Promise.all(missing.map(key => this.get(model, key))); return; }
+    const name = tableName(model), keyField = primaryKey(model);
+    for (let offset = 0; offset < missing.length; offset += 100) {
+      const batch = missing.slice(offset, offset + 100);
+      let pending = { [name]: { Keys: batch.map(key => ({ [keyField]: key })), ConsistentRead: true } };
+      const found = new Map<string, RecordData>();
+      for (let attempt = 0; Object.keys(pending).length; attempt++) {
+        if (attempt === 4) throw new Error("Account access lookup is busy; please retry");
+        const result = await db.send(new BatchGetCommand({ RequestItems: pending }));
+        for (const item of result.Responses?.[name] ?? []) found.set(id(item[keyField]), item);
+        pending = result.UnprocessedKeys as typeof pending ?? {};
+        if (Object.keys(pending).length) await new Promise(resolve => setTimeout(resolve, 25 * 2 ** attempt));
+      }
+      for (const key of batch) this.records.set(`${model}:${key}`, Promise.resolve(found.get(key)));
+    }
+  }
+  async prefetchAccounts(keys: string[]) {
+    await this.prefetch("Communication", keys.flatMap(key => [`workflow:${key}`, `deleted-account:${key}`]));
   }
   async team() {
     const saved = await this.get("Communication", "team-routing");
@@ -121,17 +146,35 @@ export class AccountAccess {
       if (operation === "read" && document.s3Key !== path) throw new AccessDenied();
       return;
     }
+    if (prefix === "generated" && first === "pf") {
+      const loan = await this.requireRecord("PfLoan", second);
+      if (path !== `generated/pf/${id(loan.id)}/premium-finance-agreement.pdf` || !["read", "link"].includes(operation)) throw new AccessDenied();
+      if (expectedRoot && loan.accountId !== expectedRoot) throw new AccessDenied();
+      return; // Only the agreement service may create, replace, or delete this file.
+    }
     if (["certificates", "generated", "property-photos"].includes(prefix)) {
-      const account = prefix === "generated" && first === "pf"
-        ? id((await this.requireRecord("PfLoan", second)).accountId) : first;
+      const account = first;
       if (expectedRoot && account !== expectedRoot) throw new AccessDenied();
-      await this.requireAccount(account); return;
+      await this.requireAccount(account);
+      if (path.split("/").length !== 3) throw new AccessDenied();
+      if (prefix === "certificates") {
+        const certificate = await this.get("Certificate", second.replace(/\.pdf$/, ""));
+        if (operation === "delete" && this.admin && !certificate) return;
+        if (!certificate || certificate.accountId !== account || second !== `${id(certificate.id)}.pdf` || operation === "delete" && !this.admin) throw new AccessDenied();
+        if (operation === "read" && certificate.s3Key !== path) throw new AccessDenied();
+      }
+      if (prefix === "property-photos") {
+        if (!/^(coverPhotoKey|aerialPhotoKey|plotPlanKey)-.+$/.test(second)) throw new AccessDenied();
+        const record = await this.requireRecord("Account", account);
+        if (operation === "read" && ![record.coverPhotoKey, record.aerialPhotoKey, record.plotPlanKey].includes(path)) throw new AccessDenied();
+      }
+      return;
     }
     if (prefix === "templates") { if (!["read", "link"].includes(operation) && !this.admin) throw new AccessDenied(); return; }
     if (prefix === "signatures") {
       const profileId = first?.replace(/\.[^.]+$/, "");
       const profile = await this.get("UserProfile", profileId);
-      if (!profile || operation !== "read" && !this.admin && profile.userId !== this.actor) throw new AccessDenied();
+      if (path.split("/").length !== 2 || !profile || !this.admin && profile.userId !== this.actor) throw new AccessDenied();
       return;
     }
     throw new AccessDenied();

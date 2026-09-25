@@ -1587,9 +1587,11 @@ describe("9am reminders with a clear next step", () => {
   it.each(["COMMENT", "REOPEN"] as const)("retires retrying and expired leased %s reminders without another provider call", async type => {
     await morningRequest(); vi.setSystemTime("2026-09-10T21:01:00.000Z");
     for (const state of ["RETRY_WAIT", "LEASED"] as const) {
-      const op = await save(row<Operation>("OPERATION", `op:morning-${type === "COMMENT" ? "summary" : "reopen"}:${state}`, {
+      // Old stored rows may contain fields no longer declared by Operation.
+      const op = await save(row<Operation & { afterOperationId: string; summaryTaskIds: string[] }>("OPERATION", `op:morning-${type === "COMMENT" ? "summary" : "reopen"}:${state}`, {
         type, accountId: "a1", conversationId: "cnv_a", state, attempts: 2, leaseUntil: "2026-09-10T13:03:00.000Z",
         afterOperationId: "missing-summary",
+        summaryTaskIds: ["old-task"],
       }, { accountId: "a1", dueAt: "2026-09-10T13:03:00.000Z" }));
       await runOperation(op);
       expect(record(op.id).data).toMatchObject({ state: "SUPPRESSED", attempts: 2 });
@@ -2132,4 +2134,37 @@ it("notifies the new salesperson and manager without waiting for the old owner's
   expect(entries("NOTIFICATION").map(n => n.data.recipient).sort()).toEqual(["brian", "sally"]);
   expect(record(task.id).data).toMatchObject({ dueAt: task.dueAt, escalationAt: task.escalationAt, ownerEscalationAt: task.ownerEscalationAt });
   expect(entries("OPERATION")).toHaveLength(0);
+});
+
+describe("assignment listing index rollout", () => {
+  it("backfills bounded pages without changing account ownership or deadlines", async () => {
+    const base = await lead();
+    h.records.delete("comms:workflow:a1");
+    for (let i = 0; i < 52; i++) {
+      const accountId = `indexed-${String(i).padStart(2, "0")}`;
+      const legacy = row("WORKFLOW", `workflow:${accountId}`, { ...base.data, accountId }, { accountId, dueAt: "2026-09-30T13:00:00.000Z" });
+      delete legacy.assignedSalespersonId;
+      h.records.set(`comms:${legacy.id}`, legacy);
+    }
+    const { migrateAssignmentIndex } = await import("../../amplify/functions/communications/assignmentIndex");
+    await migrateAssignmentIndex();
+    expect(record("migration:assignment-index:v1").data).toMatchObject({ complete: false });
+    expect(entries("WORKFLOW").filter(w => w.assignedSalespersonId)).toHaveLength(50);
+    await migrateAssignmentIndex();
+    expect(record("migration:assignment-index:v1").data).toMatchObject({ complete: true });
+    for (const w of entries("WORKFLOW")) {
+      expect(w.assignedSalespersonId).toBe(base.data.salespersonId);
+      expect(w.data.salespersonId).toBe(base.data.salespersonId);
+      expect(w.dueAt).toBe("2026-09-30T13:00:00.000Z");
+    }
+    const before = structuredClone(entries("WORKFLOW"));
+    await migrateAssignmentIndex(); expect(entries("WORKFLOW")).toEqual(before);
+  });
+  it("updates the listing index in the same write as assignment changes", async () => {
+    const original = await lead();
+    expect(original.assignedSalespersonId).toBe(original.data.salespersonId);
+    const reassigned = row("WORKFLOW", original.id, { ...original.data, salespersonId: "another" }, { previous: original, accountId: "a1" });
+    expect(reassigned.assignedSalespersonId).toBe("another");
+    expect(row("WORKFLOW", original.id, { ...original.data, salespersonId: undefined }, { previous: reassigned, accountId: "a1" }).assignedSalespersonId).toBeUndefined();
+  });
 });

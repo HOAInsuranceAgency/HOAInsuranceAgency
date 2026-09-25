@@ -378,6 +378,7 @@ communicationTable.addGlobalSecondaryIndex({ indexName: "kind", partitionKey: { 
 communicationTable.addGlobalSecondaryIndex({ indexName: "work", partitionKey: { name: "workKind", type: AttributeType.STRING }, sortKey: { name: "workAt", type: AttributeType.STRING } });
 communicationTable.addGlobalSecondaryIndex({ indexName: "account", partitionKey: { name: "accountId", type: AttributeType.STRING }, sortKey: { name: "accountSort", type: AttributeType.STRING } });
 communicationTable.addGlobalSecondaryIndex({ indexName: "due", partitionKey: { name: "dueGroup", type: AttributeType.STRING }, sortKey: { name: "dueAt", type: AttributeType.STRING } });
+communicationTable.addGlobalSecondaryIndex({ indexName: "assignment", partitionKey: { name: "assignedSalespersonId", type: AttributeType.STRING }, sortKey: { name: "id", type: AttributeType.STRING } });
 for (const fn of [backend.taskDigest, backend.opsRollup]) {
   communicationTable.grantReadData(fn.resources.lambda);
   fn.addEnvironment("COMMUNICATION_TABLE", communicationTable.tableName);

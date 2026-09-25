@@ -10,11 +10,21 @@ export function checkAccountAccess(backend: typeof Backend, outdir: string) {
   const functions = backend.data.resources.graphqlApi.node.findAll().filter((node): node is CfnFunctionConfiguration => node instanceof CfnFunctionConfiguration && node.name.startsWith("access_"));
   if (!functions.length) throw new Error("Assignment guards are missing");
   const ids = new Set(functions.map(fn => fn.attrFunctionId));
+  for (const model of ACCOUNT_MODELS) if (!functions.some(fn => fn.name === `access_list_${model}__`)) throw new Error(`Assignment-scoped list missing for ${model}`);
   for (const resolver of Object.values(backend.data.resources.cfnResources.cfnResolvers)) {
     const target = Object.entries(backend.data.resources.tables).find(([, table]) => resolver.requestMappingTemplate?.includes(`"tableName", "${table.tableName}"`))?.[0];
     const pipeline = resolver.pipelineConfig as CfnResolver.PipelineConfigProperty;
     const guarded = pipeline?.functions?.some(fn => ids.has(fn));
     if (target && (ACCOUNT_MODELS as readonly string[]).includes(target) && !guarded) throw new Error(`Assignment guard missing: ${resolver.typeName}.${resolver.fieldName}`);
+    if (target && (ACCOUNT_MODELS as readonly string[]).includes(target) && resolver.typeName === "Query") {
+      const data = Object.values(backend.data.resources.cfnResources.cfnFunctionConfigurations).find(fn => pipeline?.functions?.includes(fn.attrFunctionId) && fn.requestMappingTemplate?.includes('"Scan"'));
+      if (data) {
+        const indexed = functions.find(fn => fn.name === `access_list_${target}__`);
+        if (!indexed || !pipeline.functions?.includes(indexed.attrFunctionId) || !data.requestMappingTemplate?.startsWith('#if(!$util.isNull($ctx.stash.assignmentList))')) throw new Error(`Global scan remains for scoped list: ${resolver.fieldName}`);
+        const at = pipeline.functions.indexOf(indexed.attrFunctionId);
+        if (at < 1 || pipeline.functions[at + 1] !== data.attrFunctionId) throw new Error(`Scoped list must run between native authorization and data: ${resolver.fieldName}`);
+      }
+    }
     if (!target && resolver.typeName !== "Subscription" && !PUBLIC_OPERATIONS.includes(resolver.fieldName) && !ADMIN_OPERATIONS.includes(resolver.fieldName) && !["crmAccess", "crmFile"].includes(resolver.fieldName) && !guarded) throw new Error(`Custom guard missing: ${resolver.fieldName}`);
     if (resolver.typeName === "Subscription" && !(SHARED_MODELS as readonly string[]).includes(resolver.fieldName.replace(/^on(Create|Update|Delete)/, ""))) throw new Error(`Private broadcast subscription: ${resolver.fieldName}`);
   }

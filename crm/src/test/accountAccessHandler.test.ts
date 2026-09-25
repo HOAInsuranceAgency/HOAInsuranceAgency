@@ -7,7 +7,7 @@ import { handler } from "../../amplify/functions/crm-access/handler";
 const identity = { sub: "alice" };
 beforeEach(() => {
   vi.clearAllMocks(); h.records.clear();
-  process.env.ACCESS_TABLES = JSON.stringify({ Account: "accounts", Document: "documents", Quote: "quotes", GlApplication: "gl", PfLoan: "loans" });
+  process.env.ACCESS_TABLES = JSON.stringify({ Account: "accounts", Document: "documents", Quote: "quotes", GlApplication: "gl", PfLoan: "loans", UserProfile: "profiles" });
   process.env.COMMUNICATION_TABLE = "communications"; process.env.STORAGE_BUCKET = "bucket";
   h.records.set("communications:workflow:a", { data: { salespersonId: "alice" } });
   h.records.set("communications:workflow:b", { data: { salespersonId: "bob" } });
@@ -15,6 +15,7 @@ beforeEach(() => {
   h.records.set("documents:doc", { id: "doc", entityType: "ACCOUNT", entityId: "a", s3Key: "documents/ACCOUNT/a/doc/file.pdf" });
   h.records.set("gl:a", { accountId: "a" });
   h.records.set("loans:loan", { id: "loan", accountId: "a" });
+  h.records.set("profiles:bob", { id: "bob", userId: "bob" });
   h.db.mockImplementation(async ({ input }) => ({ Item: h.records.get(`${input.TableName}:${input.Key.id ?? input.Key.accountId}`) }));
   h.sign.mockResolvedValue("https://files.example.test/signed"); h.s3.mockResolvedValue({});
 });
@@ -52,6 +53,11 @@ it("supports existing finance PDF paths through their stored loan account", asyn
   expect(h.sign).toHaveBeenCalledOnce();
   h.records.set("loans:loan", { id: "loan", accountId: "b" });
   await expect(handler({ info: { fieldName: "crmFile" }, identity, arguments: { operation: "read", path: "generated/pf/loan/premium-finance-agreement.pdf" } })).rejects.toThrow("not available");
+});
+it("never signs or deletes another person's signature or a protected finance agreement", async () => {
+  for (const operation of ["read", "write", "delete"]) await expect(handler({ info: { fieldName: "crmFile" }, identity, arguments: { operation, path: "signatures/bob.png", sizeBytes: 10 } })).rejects.toThrow("not available");
+  for (const operation of ["write", "delete"]) await expect(handler({ info: { fieldName: "crmFile" }, identity, arguments: { operation, path: "generated/pf/loan/premium-finance-agreement.pdf", sizeBytes: 10 } })).rejects.toThrow("not available");
+  expect(h.sign).not.toHaveBeenCalled(); expect(h.s3).not.toHaveBeenCalled();
 });
 it("reserves raw bucket listings for administrator templates", async () => {
   await expect(handler({ info: { fieldName: "crmFile" }, identity, arguments: { operation: "list", path: "templates/" } })).rejects.toThrow("not available");

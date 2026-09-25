@@ -11,7 +11,8 @@ beforeEach(() => {
     "Communication:team-routing": { data: { members: [{ userId: "manager", salesManager: true }, { userId: "alice", salesManagerId: "manager" }, { userId: "bob", salesManagerId: "other-manager" }] } },
     "Communication:workflow:a": { data: { salespersonId: "alice" } },
     "Communication:workflow:b": { data: { salespersonId: "bob" } },
-    "Account:a": { id: "a" }, "Account:b": { id: "b" },
+    "Account:a": { id: "a", coverPhotoKey: "property-photos/a/coverPhotoKey-cover.jpg" }, "Account:b": { id: "b" },
+    "Certificate:cert": { id: "cert", accountId: "a", s3Key: "certificates/a/cert.pdf" },
     "Quote:qa": { id: "qa", accountId: "a" }, "Quote:qb": { id: "qb", accountId: "b" },
     "Policy:pa": { id: "pa", accountId: "a" }, "Policy:pb": { id: "pb", accountId: "b" },
     "Invoice:ia": { id: "ia", accountId: "a" }, "Invoice:ib": { id: "ib", accountId: "b" },
@@ -129,7 +130,25 @@ describe("model writes", () => {
 describe("files", () => {
   it.each(["read", "write", "delete"] as const)("checks %s access to document, generated, certificate, and photo keys", async op => {
     for (const path of ["documents/ACCOUNT/b/db/file.pdf", "generated/b/form.pdf", "certificates/b/cert.pdf", "property-photos/b/cover.jpg"]) await expect(user().path(path, op)).rejects.toThrow(AccessDenied);
-    for (const path of ["documents/ACCOUNT/a/da/file.pdf", "generated/a/form.pdf", "certificates/a/cert.pdf", "property-photos/a/cover.jpg"]) await expect(user().path(path, op)).resolves.toBeUndefined();
+    for (const path of ["documents/ACCOUNT/a/da/file.pdf", "generated/a/form.pdf", "property-photos/a/coverPhotoKey-cover.jpg"]) await expect(user().path(path, op)).resolves.toBeUndefined();
+  });
+  it("binds certificate files to their record and preserves administrator-only deletion", async () => {
+    for (const op of ["read", "write", "link"] as const) await expect(user().path("certificates/a/cert.pdf", op)).resolves.toBeUndefined();
+    await expect(user().path("certificates/a/cert.pdf", "delete")).rejects.toThrow(AccessDenied);
+    await expect(admin().path("certificates/a/cert.pdf", "delete")).resolves.toBeUndefined();
+    await expect(user().path("certificates/a/unknown.pdf", "write")).rejects.toThrow(AccessDenied);
+    records["Certificate:cert"].accountId = "b";
+    await expect(user().path("certificates/a/cert.pdf", "write")).rejects.toThrow(AccessDenied);
+    await expect(user().path("property-photos/a/arbitrary.pdf", "write")).rejects.toThrow(AccessDenied);
+  });
+  it("makes only the stored loan's exact generated agreement readable, never client-writable", async () => {
+    const path = "generated/pf/la/premium-finance-agreement.pdf";
+    await expect(user().path(path, "read")).resolves.toBeUndefined();
+    await expect(user().path(path, "link", "a")).resolves.toBeUndefined();
+    for (const actor of [user(), admin()]) for (const op of ["write", "delete"] as const) await expect(actor.path(path, op)).rejects.toThrow(AccessDenied);
+    await expect(user().path("generated/pf/la/other.pdf", "read")).rejects.toThrow(AccessDenied);
+    await expect(user().path(path, "link", "b")).rejects.toThrow(AccessDenied);
+    await expect(user().path("generated/pf/lb/premium-finance-agreement.pdf", "read")).rejects.toThrow(AccessDenied);
   });
   it("permits linking pending uploads but blocks document IDs from other accounts", async () => {
     records["Document:da"].s3Key = "pending";
@@ -143,12 +162,17 @@ describe("files", () => {
   it("rejects path traversal and unknown prefixes", async () => {
     for (const path of ["documents/../b/file.pdf", "generated/a/../b/file.pdf", "generated/a//f.pdf", "private/a/file", "templates/../file", "generated\\a\\file"]) await expect(user().path(path, "read")).rejects.toThrow(AccessDenied);
   });
-  it("keeps templates shared and only lets owners change signatures", async () => {
+  it("keeps templates shared", async () => {
     await expect(user().path("templates/acord.pdf", "read")).resolves.toBeUndefined();
     await expect(user().path("templates/acord.pdf", "write")).rejects.toThrow(AccessDenied);
     await expect(admin().path("templates/acord.pdf", "write")).resolves.toBeUndefined();
-    await expect(user().path("signatures/alice-profile.png", "write")).resolves.toBeUndefined();
-    await expect(user().path("signatures/bob-profile.png", "write")).rejects.toThrow(AccessDenied);
+  });
+  it.each(["read", "write", "delete", "link"] as const)("requires the signature owner or administrator for %s", async operation => {
+    await expect(user().path("signatures/alice-profile.png", operation)).resolves.toBeUndefined();
+    await expect(user().path("signatures/bob-profile.png", operation)).rejects.toThrow(AccessDenied);
+    await expect(user("manager").path("signatures/alice-profile.png", operation)).rejects.toThrow(AccessDenied);
+    await expect(admin().path("signatures/bob-profile.png", operation)).resolves.toBeUndefined();
+    await expect(admin().path("signatures/missing.png", operation)).rejects.toThrow(AccessDenied);
   });
 });
 describe("custom API operations", () => {

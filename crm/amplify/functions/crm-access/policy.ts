@@ -11,6 +11,15 @@ export const ACCOUNT_REFERENCES: Record<string, Record<string, string>> = {
   PfOverride: { policyId: "Policy" }, Document: { policyId: "Policy", quoteId: "Quote" },
   MarketingTask: { policyId: "Policy" }, HoneycombSubmission: { sourceEstimateId: "HoneycombEstimate" },
 };
+/** Listing partitions follow authoritative parents, including historical rows
+ * that predate writable accountId mirrors on invoice lines. */
+export const LIST_PARENTS: Record<string, { model: string; field: string }> = {
+  InvoiceLine: { model: "Invoice", field: "invoiceId" },
+  PfLoanPayment: { model: "PfLoan", field: "loanId" },
+  PfNotice: { model: "PfLoan", field: "loanId" },
+  PfOverride: { model: "Policy", field: "policyId" },
+};
+export const listPartition = (model: string) => model === "Document" || model === "Activity" ? "entityId" : LIST_PARENTS[model]?.field ?? "accountId";
 export type RecordData = Record<string, unknown>;
 export type Identity = { sub?: string; groups?: string[]; claims?: Record<string, unknown> };
 export class AccessDenied extends Error { constructor() { super("This record is not available to your account. Contact your manager if it needs to be assigned to you."); this.name = "Unauthorized"; } }
