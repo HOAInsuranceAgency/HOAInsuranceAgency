@@ -57,6 +57,10 @@ export default function PriceIndication({ token, read = readEstimate }: { token?
     {result.staging && <span className="qf-estimate-badge">Staging test</span>}
     <h3>Preliminary price indication</h3>
     <p className="qf-estimate-price">{new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(result.price)}</p>
-    <p>An estimate based on your property details, subject to underwriting and confirmation of coverage, limits and deductibles. Your agent will review it with you.</p>
+    <p className="qf-estimate-disclaimer">
+      This is a preliminary, non-binding estimate. Final premiums may be significantly higher
+      or lower based on underwriting, verified property details, coverage selections and other
+      factors. This estimate does not guarantee eligibility or coverage and does not bind insurance.
+    </p>
   </section>;
 }
