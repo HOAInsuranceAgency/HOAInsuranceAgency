@@ -1,6 +1,8 @@
+import { Disclosure, Pagination } from "../../components/ui/kit";
+import { useListPage } from "../../lib/useListPage";
 import { ReportDownload } from "../../components/ReportDownload";
 import { useMemo } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import {
   client,
   daysUntil,
@@ -57,7 +59,7 @@ const EMPTY: OverviewData = {
   licenses: [],
 };
 
-export default function OverviewTab() {
+function AgencyChecks() {
   const navigate = useNavigate();
 
   const res = useAsyncResource<OverviewData>(
@@ -118,7 +120,7 @@ export default function OverviewTab() {
       };
     },
     [],
-    { initialData: EMPTY, errorMessage: "Failed to load the overview" }
+    { cacheKey: "report:overview", initialData: EMPTY, errorMessage: "Failed to load the overview" }
   );
   const d = res.data;
 
@@ -157,6 +159,7 @@ export default function OverviewTab() {
     );
   }, [d]);
 
+  const page = useListPage(attention, "agency-checks", 15);
   return (
     <TabFrame res={res}>
       <div className="report-actions"><ReportDownload report={{ title: "Dashboard overview", sections: [{ title: "Overview", columns: ["Measure", "Value"], rows: [["Open leads", d.leads.length], ["Clients", d.clients.length], ["Quotes in flight", openQuotes], ["Active policies", activePolicies], ["Accounts receivable (USD)", ar.invoiceTotal + ar.loanTotal], ["Need attention", attention.length]] }] }} /></div>
@@ -197,7 +200,7 @@ export default function OverviewTab() {
           </p>
         ) : (
           <ul className="attn">
-            {attention.map((item, i) => {
+            {page.rows.map((item, i) => {
               const p = present(item);
               return (
                 // The queue is this tab's primary interactive surface, so
@@ -228,6 +231,7 @@ export default function OverviewTab() {
             })}
           </ul>
         )}
+        <Pagination total={attention.length} page={page.page} onPage={page.setPage} size={15} noun="agency checks" />
       </div>
     </TabFrame>
   );
@@ -328,4 +332,21 @@ function present(item: AttentionItem): {
         label: "Settings →",
       };
   }
+}
+
+
+/** Headline groups settle independently; slow billing or documents cannot block them. */
+export default function OverviewTab() {
+  const accounts = useAsyncResource(() => listAllPages(nextToken => client.models.Account.list({ nextToken })), [], { initialData: [] as Account[], cacheKey: "overview:accounts", errorMessage: "Could not load account counts" });
+  const quotes = useAsyncResource(() => listAllPages(nextToken => client.models.Quote.list({ nextToken })), [], { initialData: [] as Quote[], cacheKey: "overview:quotes", errorMessage: "Could not load quote counts" });
+  const policies = useAsyncResource(() => listAllPages(nextToken => client.models.Policy.list({ nextToken })), [], { initialData: [] as Policy[], cacheKey: "overview:policies", errorMessage: "Could not load policy counts" });
+  return <>
+    <p className="sub">Agency-wide totals. Use <Link to="/">My work</Link> for your next action or <Link to="/billing">Billing</Link> for balances and payments.</p>
+    <div className="overview-groups">
+      <section className="card" aria-label="Account totals"><h2>Accounts</h2><TabFrame res={accounts}><div className="stat-row"><Link to="/leads"><Tile n={accounts.data.filter(a => a.stage === "LEAD").length} label="Open leads" /></Link><Link to="/clients"><Tile n={accounts.data.filter(a => a.stage === "CLIENT").length} label="Clients" /></Link></div></TabFrame></section>
+      <section className="card" aria-label="Quote totals"><h2>Quotes</h2><TabFrame res={quotes}><Link to="/quotes"><Tile n={quotes.data.filter(q => isOpenQuoteStatus(q.status)).length} label="Quotes in flight" /></Link></TabFrame></section>
+      <section className="card" aria-label="Policy totals"><h2>Policies</h2><TabFrame res={policies}><Link to="/policies"><Tile n={policies.data.filter(p => p.status === "ACTIVE").length} label="Active policies" /></Link></TabFrame></section>
+    </div>
+    <Disclosure title="Agency checks and full overview export" description="Review billing, renewals, carrier deadlines, failed processing and license issues across the agency."><AgencyChecks /></Disclosure>
+  </>;
 }

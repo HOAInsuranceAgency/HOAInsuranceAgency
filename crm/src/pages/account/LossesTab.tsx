@@ -1,3 +1,4 @@
+import { Field } from "../../components/ui/kit";
 import {
   LINES_OF_BUSINESS,
   client,
@@ -84,10 +85,11 @@ export function LossesTab({ accountId }: { accountId: string }) {
 
   return (
     <ChildRowsCard
-      title="Loss history"
+      collapseAdd
+      title="Recorded loss history"
       child={child}
       addLabel="+ Add loss"
-      emptyMessage="No losses recorded."
+      emptyMessage="No loss events entered. This does not confirm a loss-free history; review loss runs and their covered period before submitting."
       summary={[
         `— ${child.rows.length} loss${child.rows.length === 1 ? "" : "es"}`,
         totalPaid ? `${fmtMoney(totalPaid)} paid` : "",
@@ -199,11 +201,11 @@ function LossFields({
 
   return (
     <>
-      <div className="field">
+      <Field className="field">
         <label>Date of loss *</label>
         <DateInput value={f.dateOfLoss} onChange={(v) => set("dateOfLoss", v)} />
-      </div>
-      <div className="field">
+      </Field>
+      <Field className="field">
         <label>Line of business *</label>
         <select
           value={f.lineOfBusiness}
@@ -214,8 +216,8 @@ function LossFields({
             <option key={l}>{l}</option>
           ))}
         </select>
-      </div>
-      <div className="field">
+      </Field>
+      <Field className="field">
         <label>Type of loss</label>
         <input
           placeholder="Water damage"
@@ -223,36 +225,36 @@ function LossFields({
           onChange={(e) => set("typeOfLoss", e.target.value)}
           onKeyDown={enter}
         />
-      </div>
-      <div className="field">
+      </Field>
+      <Field className="field">
         <label>Paid ($)</label>
         <MoneyInput
           value={f.amountPaid}
           onChange={(v) => set("amountPaid", v)}
           onKeyDown={enter}
         />
-      </div>
+      </Field>
       {compact ? null : (
         <>
-          <div className="field">
+          <Field className="field">
             <label>Claim date</label>
             <DateInput value={f.claimDate} onChange={(v) => set("claimDate", v)} />
-          </div>
-          <div className="field">
+          </Field>
+          <Field className="field">
             <label>Amount of loss ($)</label>
             <MoneyInput
               value={f.amountOfLoss}
               onChange={(v) => set("amountOfLoss", v)}
             />
-          </div>
-          <div className="field">
+          </Field>
+          <Field className="field">
             <label>Reserved ($)</label>
             <MoneyInput
               value={f.amountReserved}
               onChange={(v) => set("amountReserved", v)}
             />
-          </div>
-          <div className="field">
+          </Field>
+          <Field className="field">
             <label>Claim open?</label>
             {/* Radios: a claim nobody has told us the status of is not a
                 closed one, and the column is nullable to say so. */}
@@ -261,15 +263,15 @@ function LossFields({
               value={f.claimOpen}
               onChange={(v) => set("claimOpen", v)}
             />
-          </div>
-          <div className="field full">
+          </Field>
+          <Field className="field full">
             <label>Description</label>
             <textarea
               rows={2}
               value={f.description}
               onChange={(e) => set("description", e.target.value)}
             />
-          </div>
+          </Field>
         </>
       )}
     </>

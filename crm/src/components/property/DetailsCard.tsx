@@ -1,3 +1,4 @@
+import { Field } from "../ui/kit";
 import {
   client,
   US_STATES,
@@ -21,7 +22,7 @@ export default function DetailsCard({
   // One owner for "is the confirmation still true": `useFormState`'s `saved`
   // is left unread and `useSaveStatus` carries saving/saved/error together.
   const saveStatus = useSaveStatus();
-  const { form, setF, patch } = useFormState({
+  const { form, setF, patch, markSaved } = useFormState({
     address: inputValue(account.address),
     city: inputValue(account.city),
     county: inputValue(account.county),
@@ -79,6 +80,7 @@ export default function DetailsCard({
             })
           )
         );
+        markSaved();
       },
       { errorMessage: "Save failed" }
     );
@@ -88,7 +90,7 @@ export default function DetailsCard({
     <div className="card">
       <h2>Property</h2>
       <div className="form-grid">
-        <div className="field full">
+        <Field className="field full">
           <label>Street address</label>
           <AddressAutocomplete
             value={form.address}
@@ -102,20 +104,20 @@ export default function DetailsCard({
               }))
             }
           />
-        </div>
-        <div className="field">
+        </Field>
+        <Field className="field">
           <label>County</label>
           <input
             placeholder="Middlesex"
             value={form.county}
             onChange={(e) => setF("county", e.target.value)}
           />
-        </div>
-        <div className="field">
+        </Field>
+        <Field className="field">
           <label>City</label>
           <input value={form.city} onChange={(e) => setF("city", e.target.value)} />
-        </div>
-        <div className="field">
+        </Field>
+        <Field className="field">
           <label>State</label>
           <select value={form.state} onChange={(e) => setF("state", e.target.value)}>
             <option value="">—</option>
@@ -123,12 +125,12 @@ export default function DetailsCard({
               <option key={s}>{s}</option>
             ))}
           </select>
-        </div>
-        <div className="field">
+        </Field>
+        <Field className="field">
           <label>ZIP</label>
           <input value={form.zip} onChange={(e) => setF("zip", e.target.value)} />
-        </div>
-        <div className="field">
+        </Field>
+        <Field className="field">
           <label>Incorporated association</label>
           <select
             value={form.incorporated}
@@ -138,15 +140,15 @@ export default function DetailsCard({
             <option value="yes">Yes — incorporated</option>
             <option value="no">No — unincorporated</option>
           </select>
-        </div>
-        <div className="field">
+        </Field>
+        <Field className="field">
           <label>Unit count</label>
           <IntegerInput
             value={form.unitCount}
             onChange={(v) => setF("unitCount", v)}
           />
-        </div>
-        <div className="field">
+        </Field>
+        <Field className="field">
           <label>Rented units (%)</label>
           {/* Read by every appetite guide carrying a rental cap. Blank is
               "nobody has asked", which never excludes a carrier — so a guide
@@ -156,16 +158,16 @@ export default function DetailsCard({
             value={form.rentalPct}
             onChange={(v) => setF("rentalPct", v)}
           />
-        </div>
-        <div className="field">
+        </Field>
+        <Field className="field">
           <label>Fire district</label>
           <input
             placeholder="Middlesex FD #3"
             value={form.fireDistrict}
             onChange={(e) => setF("fireDistrict", e.target.value)}
           />
-        </div>
-        <div className="field">
+        </Field>
+        <Field className="field">
           <label>Firewalls verified?</label>
           <label className="small" style={{ display: "flex", gap: 6, alignItems: "center", padding: "8px 0" }}>
             <input
@@ -175,8 +177,8 @@ export default function DetailsCard({
             />
             Verified
           </label>
-        </div>
-        <div className="field">
+        </Field>
+        <Field className="field">
           <label>Coastal?</label>
           <label className="small" style={{ display: "flex", gap: 6, alignItems: "center", padding: "8px 0" }}>
             <input
@@ -186,8 +188,8 @@ export default function DetailsCard({
             />
             Coastal exposure
           </label>
-        </div>
-        <div className="field full">
+        </Field>
+        <Field className="field full">
           <label>Other updates</label>
           <textarea
             rows={2}
@@ -195,9 +197,9 @@ export default function DetailsCard({
             value={form.otherUpdates}
             onChange={(e) => setF("otherUpdates", e.target.value)}
           />
-        </div>
+        </Field>
         {form.coastal && (
-          <div className="field">
+          <Field className="field">
             <label>Miles to coast</label>
             {/* Left as a native number input: a distance under 100 miles gains
                 nothing from thousands separators, and none of the six
@@ -209,7 +211,7 @@ export default function DetailsCard({
               value={form.milesToCoast}
               onChange={(e) => setF("milesToCoast", e.target.value)}
             />
-          </div>
+          </Field>
         )}
       </div>
 

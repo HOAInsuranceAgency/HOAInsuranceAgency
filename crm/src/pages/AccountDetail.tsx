@@ -1,8 +1,10 @@
+import AccountSummary from "../components/AccountSummary";
+import { Breadcrumb, Disclosure, SectionNav } from "../components/ui/kit";
 import SubmissionsPanel from "../components/SubmissionsPanel";
 import HoneycombEstimates from "../components/HoneycombEstimates";
 import LeadWorkflowPanel from "../components/LeadWorkflowPanel";
 import { useEffect, useRef, useState } from "react";
-import { useLocation, useParams, useSearchParams } from "react-router-dom";
+import { Link, useLocation, useParams, useSearchParams } from "react-router-dom";
 import {
   client,
   fmtDate,
@@ -30,6 +32,12 @@ import { ActivityTab } from "./account/ActivityTab";
 import { CertificatesTab } from "./account/CertificatesTab";
 
 type Tab =
+  | "details"
+  | "contacts"
+  | "property"
+  | "extraction"
+  | "forms"
+  | "renewal"
   | "overview"
   | "priorcarrier"
   | "losses"
@@ -42,7 +50,7 @@ type Tab =
   | "certificates"
   | "activity";
 
-const VALID_TABS: Tab[] = [
+const VALID_TABS: Tab[] = ["details", "contacts", "property", "extraction", "forms", "renewal",
   "overview",
   "priorcarrier",
   "losses",
@@ -136,6 +144,9 @@ export function resolveTab(
   stage: string | null | undefined
 ): Tab {
   const isClient = stage === "CLIENT";
+  // Work links can outlive a lead's conversion. Resolve the shared renewal
+  // entry point only after loading the account, preserving each stage's view.
+  if (requested === "renewal") return isClient ? "policies" : "quotes";
   const unreachable = isClient
     ? LEAD_ONLY_TABS.has(requested)
     : CLIENT_ONLY_TABS.has(requested);
@@ -145,7 +156,9 @@ export function resolveTab(
 export default function AccountDetail({ profile }: { profile: UserProfile }) {
   const { id } = useParams<{ id: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
-  const { hash } = useLocation();
+  const location = useLocation();
+  const { hash } = location;
+  const returnTo = typeof location.state?.from === "string" && /^\/(leads|clients)(\?|$)/.test(location.state.from) ? location.state.from : null;
 
   /**
    * Derived from the URL, not stored — the Dashboard's lesson applied here.
@@ -167,7 +180,7 @@ export default function AccountDetail({ profile }: { profile: UserProfile }) {
   function selectTab(t: Tab) {
     const next = new URLSearchParams(searchParams);
     next.set("tab", t);
-    setSearchParams(next, { replace: true });
+    setSearchParams(next, { replace: true, state: location.state });
   }
   const [celebrate, setCelebrate] = useState(false);
   const prevStage = useRef<string | null>(null);
@@ -209,13 +222,18 @@ export default function AccountDetail({ profile }: { profile: UserProfile }) {
   if (!account) return <p className="muted">Loading…</p>;
 
   const tabs = tabsFor(account.stage);
-  const activeTab = resolveTab(tab, account.stage);
+  const activeTab: Tab = hash === "#contacts" && tab === "overview" ? "contacts" : resolveTab(tab, account.stage);
+  const section = ["details", "contacts", "property"].includes(activeTab) ? "details" : ["invoices", "financing"].includes(activeTab) ? "billing" : ["documents", "extraction"].includes(activeTab) ? "documents" : activeTab === "activity" ? "timeline" : activeTab === "overview" ? "summary" : "coverage";
+  const groups = [["summary", "Summary"], ["coverage", "Coverage & markets"], ["documents", "Documents"], ["billing", "Billing"], ["timeline", "Timeline"], ["details", "Account details"]] as const;
+  const defaults = { summary: "overview", coverage: "quotes", documents: "documents", billing: "invoices", timeline: "activity", details: "details" } as const;
+  const subviews: [Tab, string][] = section === "coverage" ? [...tabs.filter(([key]) => ["priorcarrier", "losses", "quotes", "policies", "certificates", "submissions"].includes(key) && !(key === "certificates" && account.stage !== "CLIENT")).map(([key,label]): [Tab,string] => [key, key === "submissions" ? "Honeycomb submission" : label]), ["forms", "Application forms"]] : section === "billing" ? [["invoices", "Invoices"], ["financing", "Loans"]] : section === "documents" ? [["documents", "Files"], ["extraction", "Review extracted information"]] : section === "details" ? [["details", "Account"], ["contacts", "Contacts"], ["property", "Property & underwriting"]] : [];
 
   return (
     <>
       {celebrate && (
         <Celebration name={account.name} onDone={() => setCelebrate(false)} />
       )}
+      <Breadcrumb to={returnTo ?? (account.stage === "CLIENT" ? "/clients" : "/leads")}>Back to {account.stage === "CLIENT" ? "clients" : "leads"}</Breadcrumb>
       <h1>
         {account.name}{" "}
         {/* Reads "Client"/"Lead" now, not "CLIENT"/"LEAD" — the shared table
@@ -223,7 +241,7 @@ export default function AccountDetail({ profile }: { profile: UserProfile }) {
         <Badge {...statusBadge(ACCOUNT_STAGE_BADGE, account.stage)} />
       </h1>
       <p className="sub">
-        {account.type} · {[account.city, account.state].filter(Boolean).join(", ") || "no location"}
+        {account.type === "ASSOCIATION" ? "Association" : account.type === "PERSONAL" ? "Personal" : "Commercial"} · {[account.city, account.state].filter(Boolean).join(", ") || "no location"}
         {/* Lifecycle dates, one each way: when the lead entered, and — once a
             bind converts them — when they became a client. */}
         {account.stage === "LEAD" &&
@@ -232,38 +250,31 @@ export default function AccountDetail({ profile }: { profile: UserProfile }) {
         {account.convertedAt && ` · client since ${fmtDate(account.convertedAt.slice(0, 10))}`}
       </p>
 
-      <div className="tabs">
-        {tabs.map(([t, label]) => (
-          <button
-            key={t}
-            className={activeTab === t ? "active" : ""}
-            onClick={() => selectTab(t)}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-
-      {activeTab === "overview" && (
-        <>
-          <OverviewTab account={account} onChange={setAccount} />
-          <div id="contacts"><ContactsCard accountId={account.id} /></div>
-          <div id="lead-workspace"><LeadWorkflowPanel key={account.id} accountId={account.id} /></div>
-          <PropertyPanel account={account} onChange={setAccount} />
-          {account.stage === "LEAD" && <DeleteLeadZone account={account} />}
-        </>
-      )}
+      <SectionNav label="Account section" items={groups} value={section} onChange={value => selectTab(defaults[value])} />
+      {subviews.length > 0 && <SectionNav label={`${groups.find(([key]) => key === section)?.[1]} view`} items={subviews} value={activeTab} onChange={selectTab} />}
+      {activeTab === "overview" && <>
+        <AccountSummary key={account.id} account={account} />
+        <div id="lead-workspace"><LeadWorkflowPanel key={account.id} accountId={account.id} mode="summary" /></div>
+      </>}
+      {activeTab === "details" && <>
+        <AccountSummary key={account.id} account={account} />
+        <Disclosure title="Edit account details" description="Legal name, identifiers, attribution, values, and notes"><OverviewTab key={account.id} account={account} onChange={setAccount} /></Disclosure>
+        {account.stage === "LEAD" && <Disclosure title="Delete lead"><DeleteLeadZone account={account} /></Disclosure>}
+      </>}
+      {activeTab === "contacts" && <div id="contacts"><ContactsCard key={account.id} accountId={account.id} /></div>}
+      {activeTab === "property" && <PropertyPanel key={account.id} account={account} onChange={setAccount} />}
       {activeTab === "submissions" && <SubmissionsPanel key={account.id} account={account} initialEstimateId={searchParams.get("estimate") ?? undefined} />}
+      {section === "coverage" && <p><Link to={`/carriers?account=${account.id}`}>Find markets for this account</Link></p>}
       {activeTab === "quotes" && (
         <>
           <div className="card">
             <HoneycombEstimates accountId={account.id} />
             <QuotesPanel account={account} onAccountChange={setAccount} />
           </div>
-          <div id="carrier-work"><AccountMarketingTasks
+          <div id="carrier-work"><Disclosure key={hash === "#carrier-work" ? "targeted" : "closed"} title="Carrier deadlines" description="Review submission deadlines for this account." initiallyOpen={hash === "#carrier-work"}><AccountMarketingTasks
             accountId={account.id}
             completedByName={`${profile.firstName} ${profile.lastName}`}
-          /></div>
+          /></Disclosure></div>
         </>
       )}
       {activeTab === "priorcarrier" && <PriorCarrierTab accountId={account.id} />}
@@ -282,14 +293,15 @@ export default function AccountDetail({ profile }: { profile: UserProfile }) {
               sourceCommunicationId={searchParams.get("request") ?? undefined}
             />
           </div>
-          <ExtractionPanel account={account} onChange={setAccount} />
-          <FormsTab account={account} profile={profile} />
+
         </>
       )}
+      {activeTab === "extraction" && <ExtractionPanel account={account} onChange={setAccount} />}
+      {activeTab === "forms" && <FormsTab account={account} profile={profile} />}
       {activeTab === "certificates" && (
         <CertificatesTab account={account} profile={profile} sourceCommunicationId={searchParams.get("request") ?? undefined} />
       )}
-      {activeTab === "activity" && <ActivityTab accountId={account.id} />}
+      {activeTab === "activity" && <><LeadWorkflowPanel key={account.id} accountId={account.id} mode="history" /><Disclosure title="Record change history" description="Who changed account data, with the original values available for review"><ActivityTab accountId={account.id} /></Disclosure></>}
     </>
   );
 }

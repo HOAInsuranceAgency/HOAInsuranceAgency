@@ -138,7 +138,7 @@ describe("the map", () => {
 
   it("counts the writable states over the whole country", () => {
     renderMap();
-    expect(screen.getByText(/1 of 51 states/)).toBeInTheDocument();
+    expect(screen.getByText(/1 of 51 jurisdictions/)).toBeInTheDocument();
   });
 });
 

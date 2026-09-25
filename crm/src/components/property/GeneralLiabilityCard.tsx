@@ -1,3 +1,4 @@
+import { Field } from "../ui/kit";
 import {
   client,
   fmtNum,
@@ -138,10 +139,10 @@ function GlApplicationCard({ accountId }: { accountId: string }) {
 
   const { form, setF } = gl.form;
   const money = (key: keyof GlForm, label: string) => (
-    <div className="field" key={key}>
+    <Field className="field" key={key}>
       <label>{label}</label>
       <MoneyInput value={form[key]} onChange={(v) => setF(key, v)} />
-    </div>
+    </Field>
   );
 
   return (
@@ -162,7 +163,7 @@ function GlApplicationCard({ accountId }: { accountId: string }) {
           <div className="form-grid">
             {money("eachOccurrence", "Each occurrence ($)")}
             {money("generalAggregate", "General aggregate ($)")}
-            <div className="field">
+            <Field className="field">
               <label>General aggregate applies per</label>
               <select
                 value={form.limitAppliesPer}
@@ -175,7 +176,7 @@ function GlApplicationCard({ accountId }: { accountId: string }) {
                   </option>
                 ))}
               </select>
-            </div>
+            </Field>
             {money("productsCompletedOpsAggregate", "Products / completed ops ($)")}
             {money("personalAdvInjury", "Personal & advertising injury ($)")}
             {money("damageToRentedPremises", "Damage to rented premises ($)")}
@@ -184,7 +185,7 @@ function GlApplicationCard({ accountId }: { accountId: string }) {
 
           <h3>Deductibles</h3>
           <div className="form-grid">
-            <div className="field">
+            <Field className="field">
               <label>Applies</label>
               <select
                 value={form.deductibleType}
@@ -197,7 +198,7 @@ function GlApplicationCard({ accountId }: { accountId: string }) {
                   </option>
                 ))}
               </select>
-            </div>
+            </Field>
             {money("propertyDamageDeductible", "Property damage ($)")}
             {money("bodilyInjuryDeductible", "Bodily injury ($)")}
           </div>
@@ -211,7 +212,7 @@ function GlApplicationCard({ accountId }: { accountId: string }) {
                 ["subsAllowedWithoutCoi", "Allowed to work without a COI?"],
               ] as [keyof GlForm, string][]
             ).map(([key, label]) => (
-              <div className="field" key={key}>
+              <Field className="field" key={key}>
                 <label>{label}</label>
                 {/* Radios, not checkboxes: an unanswered question and a "no"
                     are different answers on an application. */}
@@ -220,38 +221,38 @@ function GlApplicationCard({ accountId }: { accountId: string }) {
                   value={form[key]}
                   onChange={(v) => setF(key, v)}
                 />
-              </div>
+              </Field>
             ))}
             {money("paidToSubcontractors", "Paid to sub-contractors ($)")}
-            <div className="field">
+            <Field className="field">
               <label>Work sub-contracted</label>
               <PercentInput
                 value={form.workSubcontractedPct}
                 onChange={(v) => setF("workSubcontractedPct", v)}
               />
-            </div>
-            <div className="field">
+            </Field>
+            <Field className="field">
               <label>Full-time employees</label>
               <IntegerInput
                 value={form.fullTimeEmployees}
                 onChange={(v) => setF("fullTimeEmployees", v)}
               />
-            </div>
-            <div className="field">
+            </Field>
+            <Field className="field">
               <label>Part-time employees</label>
               <IntegerInput
                 value={form.partTimeEmployees}
                 onChange={(v) => setF("partTimeEmployees", v)}
               />
-            </div>
-            <div className="field full">
+            </Field>
+            <Field className="field full">
               <label>Description of work sub-contracted</label>
               <textarea
                 rows={2}
                 value={form.subcontractedWorkDescription}
                 onChange={(e) => setF("subcontractedWorkDescription", e.target.value)}
               />
-            </div>
+            </Field>
           </div>
 
           <div className="form-actions">
@@ -379,7 +380,7 @@ function ClassCodeFields({
     : undefined;
   return (
     <>
-      <div className="field">
+      <Field className="field">
         <label>Class code</label>
         <input
           placeholder="62003"
@@ -387,16 +388,16 @@ function ClassCodeFields({
           onChange={(e) => form.setF("classCode", e.target.value)}
           onKeyDown={enter}
         />
-      </div>
-      <div className="field">
+      </Field>
+      <Field className="field">
         <label>Hazard #</label>
         <input
           value={form.form.hazardNumber}
           onChange={(e) => form.setF("hazardNumber", e.target.value)}
           onKeyDown={enter}
         />
-      </div>
-      <div className="field">
+      </Field>
+      <Field className="field">
         <label>Premium basis</label>
         <select
           value={form.form.premiumBasis}
@@ -409,16 +410,16 @@ function ClassCodeFields({
             </option>
           ))}
         </select>
-      </div>
-      <div className="field">
+      </Field>
+      <Field className="field">
         <label>Exposure</label>
         <IntegerInput
           value={form.form.exposure}
           onChange={(v) => form.setF("exposure", v)}
           onKeyDown={enter}
         />
-      </div>
-      <div className="field full">
+      </Field>
+      <Field className="field full">
         <label>Description</label>
         <input
           placeholder="Condominiums — residential"
@@ -426,7 +427,7 @@ function ClassCodeFields({
           onChange={(e) => form.setF("description", e.target.value)}
           onKeyDown={enter}
         />
-      </div>
+      </Field>
     </>
   );
 }

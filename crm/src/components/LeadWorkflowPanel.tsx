@@ -1,3 +1,6 @@
+import { Pagination } from "./ui/kit";
+import { useListPage } from "../lib/useListPage";
+import { useDirtyForm } from "./ui/unsaved";
 import ServiceDelivery from "./ServiceDelivery";
 import BusinessDraftButton from "./BusinessDraftButton";
 import ConversationContext from "./ConversationContext";
@@ -25,8 +28,8 @@ export function ResponsibilitySelect({ label, value, team, kind, onChange, disab
     {eligible.map(t => <option key={t.userId} value={t.userId}>{t.name}</option>)}
   </select></label>;
 }
-export default function LeadWorkflowPanel({ accountId, conversationId, onOpen }: { accountId?: string; conversationId?: string; onOpen?: (url: string) => void }) {
-  const compact = !!onOpen;
+export default function LeadWorkflowPanel({ accountId, conversationId, onOpen, mode }: { accountId?: string; conversationId?: string; onOpen?: (url: string) => void; mode?: "summary" | "history" }) {
+  const compact = !!onOpen || mode === "summary";
   const [editingTeam, setEditingTeam] = useState(false);
   const [notice, setNotice] = useState("");
   const [revision, setRevision] = useState(0), [error, setError] = useState(""), [busy, setBusy] = useState(false);
@@ -38,8 +41,11 @@ export default function LeadWorkflowPanel({ accountId, conversationId, onOpen }:
   const [note, setNote] = useState(""), [publish, setPublish] = useState(false);
   const resource = useAsyncResource(() => request<WorkflowContext>("context", { accountId, conversationId }), [accountId, conversationId, revision], { initialData: EMPTY, errorMessage: "Could not load lead follow-up" });
   const { workflow, tasks, communications, team, issues } = resource.data;
+  useDirtyForm(!!note.trim() || editingTeam && (salesperson !== (workflow?.salespersonId ?? "") || champion !== (workflow?.championId ?? "")));
+  const actionPage = useListPage(tasks.filter(t => t.status === "OPEN").sort((a,b) => a.dueAt.localeCompare(b.dueAt)), accountId ?? conversationId ?? "", compact ? 3 : 10);
+  const activityPage = useListPage(communications.filter(c => channel === "ALL" || c.channel === channel), `${accountId}:${channel}`, 10);
   useEffect(() => {
-    if (!compact || busy || editingTeam || note.trim() || resource.loading) return;
+    if (!onOpen || busy || editingTeam || note.trim() || resource.loading) return;
     const refresh = () => { if (document.visibilityState === "visible") void resource.refetch(); };
     const timer = window.setInterval(refresh, 15_000);
     document.addEventListener("visibilitychange", refresh);
@@ -72,18 +78,19 @@ export default function LeadWorkflowPanel({ accountId, conversationId, onOpen }:
   const nextActions = caughtUp ? null : <section className={compact ? "front-next-actions" : undefined} aria-label="Next actions">
     <div className="toolbar"><h3>{compact ? "Next action" : "Next actions"}</h3></div>
     {!openTasks.length && <p className="muted">{workflow.disposition === "ACTIVE" ? "No open actions." : `Lead outcome: ${workflow.disposition.toLowerCase()}`}</p>}
-    {openTasks.sort((a,b) => a.dueAt.localeCompare(b.dueAt)).map(t => {
+    {actionPage.rows.map(t => {
       const guidance = leadActionGuidance(t, communications);
+      const context = <><p className="workflow-why"><span>{t.escalatedAt ? "Why this was escalated" : t.notifiedAt ? "Why this is back" : "Why this needs attention"}</span>{guidance.why}</p>
+        {guidance.preview && <blockquote className="workflow-request"><span>Original request</span>{guidance.preview}</blockquote>}</>;
       return <article key={t.id} className={`workflow-task${t.dueAt < new Date().toISOString() ? " is-overdue" : ""}`}>
-        <p className="workflow-why"><span>{t.escalatedAt ? "Why this was escalated" : t.notifiedAt ? "Why this is back" : "Why this needs attention"}</span>{guidance.why}</p>
-        {guidance.preview && <blockquote className="workflow-request"><span>Original request</span>{guidance.preview}</blockquote>}
-        <strong className="workflow-task-title">{guidance.action}</strong>
-        <div className="small workflow-task-meta">{t.specialistId ? `Specialist: ${teamName(t.specialistId)}` : t.helperId ? `Helping: ${teamName(t.helperId)}` : t.role === "CHAMPION" ? "Deal champion" : "Salesperson"} · Due {compact ? compactDateTime(t.dueAt) : fmtDateTime(t.dueAt)}{t.dueAt < new Date().toISOString() ? " · Overdue" : ""}</div>
-        <p className="workflow-next-help">{guidance.after}</p>
+        {mode !== "summary" && context}
+        <strong className="workflow-task-title">{guidance.action}</strong>{t.term && <p className="small muted">Coverage term: {t.term}{t.title !== guidance.action ? ` · ${t.title}` : ""}</p>}
+        <div className="small workflow-task-meta">{t.specialistId ? `Specialist: ${teamName(t.specialistId)}` : t.helperId ? `Helping: ${teamName(t.helperId)}` : t.role === "CHAMPION" ? `Deal champion${mode === "summary" ? `: ${teamName(workflow.championId)}` : ""}` : `Salesperson${mode === "summary" ? `: ${teamName(workflow.salespersonId)}` : ""}`} · Due {compact ? compactDateTime(t.dueAt) : fmtDateTime(t.dueAt)}{t.dueAt < new Date().toISOString() ? " · Overdue" : ""}</div>
+        {mode === "summary" ? <details className="workflow-related"><summary>Why and next steps</summary>{context}<p className="workflow-next-help">{guidance.after}</p></details> : <p className="workflow-next-help">{guidance.after}</p>}
         {compact && t.kind === "QUOTE_PRESENTATION" && t.quoteId && conversationId && <BusinessDraftButton accountId={workflow.accountId} conversationId={conversationId} kind="QUOTE" recordId={t.quoteId} label="Prepare quote email" />}
         {compact && t.serviceType && t.serviceType !== "GENERAL" && conversationId && <ServiceDelivery task={t} conversationId={conversationId} onPrepare={() => open(`${window.location.origin}/accounts/${workflow.accountId}?tab=${t.serviceType === "CERTIFICATE" ? "certificates" : "documents"}&request=${encodeURIComponent(t.sourceIds?.[0] ?? "")}`)} />}
-        {!compact && t.serviceType === "DOCUMENT" && <button className="secondary" onClick={() => open(`${window.location.origin}/accounts/${workflow.accountId}?tab=documents&request=${encodeURIComponent(t.sourceIds?.[0] ?? "")}`)}>Prepare requested document</button>}
-        {!compact && t.serviceType === "CERTIFICATE" && <button className="secondary" onClick={() => open(`${window.location.origin}/accounts/${workflow.accountId}?tab=certificates&request=${encodeURIComponent(t.sourceIds?.[0] ?? "")}`)}>Prepare certificate</button>}
+        {!onOpen && t.serviceType === "DOCUMENT" && <button className="secondary" onClick={() => open(`${window.location.origin}/accounts/${workflow.accountId}?tab=documents&request=${encodeURIComponent(t.sourceIds?.[0] ?? "")}`)}>Prepare requested document</button>}
+        {!onOpen && t.serviceType === "CERTIFICATE" && <button className="secondary" onClick={() => open(`${window.location.origin}/accounts/${workflow.accountId}?tab=certificates&request=${encodeURIComponent(t.sourceIds?.[0] ?? "")}`)}>Prepare certificate</button>}
         {t.milestone && !t.serviceType && <button className="secondary" onClick={() => open(`${window.location.origin}${workLink({ ...t, blocker: undefined }).path}`)}>{workLink({ ...t, blocker: undefined }).label}</button>}
         {canRecordBlocker(t) && <WorkBlocker task={t} team={team} busy={busy} run={run} />}
         {resource.data.actorId === workflow.salespersonId && workflow.championId !== workflow.salespersonId && !t.helperId && t.role === "SALESPERSON" && <button className="link" disabled={busy} onClick={() => void run("requestChampionHelp", { taskId: t.id, version: t.version })}>Ask champion to help</button>}
@@ -92,13 +99,14 @@ export default function LeadWorkflowPanel({ accountId, conversationId, onOpen }:
         {["RESPONSE", "CALLBACK"].includes(t.kind) && openTasks.filter(task => ["RESPONSE", "CALLBACK"].includes(task.kind)).length > 1 && <details className="workflow-related"><summary>Related requests</summary><label className="small"><input type="checkbox" aria-label={`Combine ${t.title}`} checked={mergeIds.includes(t.id)} onChange={e => setMergeIds(ids => e.target.checked ? [...ids, t.id] : ids.filter(id => id !== t.id))} /> Same request as another activity</label></details>}
       </article>;
     })}
+    <Pagination total={openTasks.length} page={actionPage.page} size={actionPage.size} onPage={actionPage.setPage} noun="actions" />
     {mergeIds.length >= 2 && <div className="workflow-editor"><label className="field">Why these contacts concern the same request<input value={mergeReason} onChange={e => setMergeReason(e.target.value)} /></label><button disabled={busy || !mergeReason.trim()} onClick={async () => { if (await run("mergeTasks", { accountId: workflow.accountId, tasks: openTasks.filter(t => mergeIds.includes(t.id)).map(t => ({ id: t.id, version: t.version })), reason: mergeReason })) { setMergeIds([]); setMergeReason(""); } }}>Combine and keep the earliest deadline</button></div>}
     {compact && <p className="front-deadline-note">Reminders arrive at 9 a.m. Eastern. Snoozing never changes the due date.</p>}
   </section>;
   const history = <>
     <div className="toolbar">{!compact && <h3>Communication history</h3>}<select aria-label="Communication channel" value={channel} onChange={e => setChannel(e.target.value)}>{["ALL", "EMAIL", "CALL", "SMS", "NOTE"].map(c => <option key={c} value={c}>{communicationChannelLabels[c]}</option>)}</select></div>
     {!communications.length && <p className="muted">No linked communication yet.</p>}
-    {communications.filter(c => channel === "ALL" || c.channel === channel).map(c => <details key={c.id} className="workflow-task"><summary><span className="workflow-activity-title">{c.subject || c.summary?.slice(0, 70) || (c.channel === "SMS" ? c.text?.slice(0, 70) : undefined) || (c.channel === "CALL" ? "Phone call" : c.channel === "NOTE" ? "Internal note" : "Message")}</span><span className="workflow-activity-meta">{c.channel === "CALL" ? "Call" : c.channel === "SMS" ? "Text" : c.channel === "NOTE" ? "Note" : "Email"} · {compact ? compactDateTime(c.at) : fmtDateTime(c.at)}</span></summary>
+    {activityPage.rows.map(c => <details key={c.id} className="workflow-task"><summary><span className="workflow-activity-title">{c.subject || c.summary?.slice(0, 70) || (c.channel === "SMS" ? c.text?.slice(0, 70) : undefined) || (c.channel === "CALL" ? "Phone call" : c.channel === "NOTE" ? "Internal note" : "Message")}</span><span className="workflow-activity-meta">{c.channel === "CALL" ? "Call" : c.channel === "SMS" ? "Text" : c.channel === "NOTE" ? "Note" : "Email"} · {compact ? compactDateTime(c.at) : fmtDateTime(c.at)}</span></summary>
       <p className="small">{c.direction.toLowerCase()} · {c.status.toLowerCase()}{c.from ? ` · ${c.channel === "SMS" || c.channel === "CALL" ? fmtProviderPhone(c.from) : c.from}` : ""}</p>
       {c.to?.length && <p className="small">To: {c.to.map(to => c.channel === "SMS" || c.channel === "CALL" ? fmtProviderPhone(to) : to).join(", ")}</p>}{c.actorId && (c.direction === "OUTBOUND" || team.some(t => t.frontId === c.actorId || t.dialpadId === c.actorId || t.userId === c.actorId)) && <p className="small">Handled by: {c.actorId === "crm:initial-ai" ? "Brian Cole (initial AI email)" : team.find(t => t.frontId === c.actorId || t.dialpadId === c.actorId || t.userId === c.actorId)?.name ?? "Unmapped teammate"}</p>}
       {c.channel === "CALL" && <><p className="muted small">{c.enrichment}</p><CallOutcome communication={c} /></>}
@@ -109,6 +117,7 @@ export default function LeadWorkflowPanel({ accountId, conversationId, onOpen }:
       {c.seenError && <p className="error-text small">Seen status unavailable: {c.seenError}</p>}
       {c.provider === "front" && <button className="link" onClick={() => open(`https://app.frontapp.com/open/${c.providerId}`)}>Open message</button>}
     </details>)}
+    <Pagination total={communications.filter(c => channel === "ALL" || c.channel === channel).length} page={activityPage.page} onPage={activityPage.setPage} size={activityPage.size} noun="loaded events" />
     {resource.data.communicationNextToken && <button onClick={async () => { try { const more = await request<WorkflowContext>("context", { accountId: workflow.accountId, nextToken: resource.data.communicationNextToken }); resource.setData(current => ({ ...current, communications: [...current.communications, ...more.communications], communicationNextToken: more.communicationNextToken })); } catch(e) { setError(String(e)); } }}>Load older activity</button>}
   </>;
   const noteEditor = <>
@@ -131,6 +140,7 @@ export default function LeadWorkflowPanel({ accountId, conversationId, onOpen }:
     </>}
     {compact && conversationId && <SidebarActivityLinker accountId={workflow.accountId} conversationId={conversationId} onSaved={() => void resource.refetch()} />}
   </>;
+  if (mode === "history") return <section className="card"><h2>Conversations &amp; notes</h2>{history}<details><summary>Add an internal note</summary>{noteEditor}</details></section>;
   return <section className="card lead-workflow" aria-label="Lead responsibilities and follow-up">
     <div className="toolbar workflow-heading"><h2>{clientWork ? "Client workspace" : compact ? "Lead workspace" : "Lead follow-up"}</h2><div className="grow" /><button className="secondary" disabled={resource.loading} onClick={() => void resource.refetch()}>{resource.loading ? "Refreshing…" : "Refresh"}</button></div>
     {caughtUp && <div className="workflow-caught-up" role="status">
@@ -141,7 +151,7 @@ export default function LeadWorkflowPanel({ accountId, conversationId, onOpen }:
     {notice && <p className="workflow-notice" role="status">{notice}</p>}
     {error && <p className="error-text workflow-notice" role="alert">{error}</p>}
     {workflow.assignmentIssue && <p className="error-text workflow-notice">{workflow.assignmentIssue}</p>}
-    {issues.length > 0 && <details open className="front-disclosure"><summary>Needs attention <span className="front-count">{issues.length}</span></summary>{issues.map(i => <div key={i.id}><p className="error-text small">{i.message}</p></div>)}</details>}
+    {issues.length > 0 && <details className="front-disclosure"><summary>Tracking needs review <span className="front-count">{issues.length}</span></summary>{issues.map(i => <div key={i.id}><p className="error-text small">{i.message}</p></div>)}</details>}
     {workflow.deferredUntil && <p className="workflow-notice">Next renewal opportunity · Returns {fmtDateTime(workflow.deferredUntil)}. New requests remain tracked.</p>}
     {compact && nextActions}
     <section className={compact ? "front-team" : undefined} aria-label="Lead team">

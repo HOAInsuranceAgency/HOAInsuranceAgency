@@ -15,27 +15,27 @@ beforeEach(() => {
   h.request.mockImplementation(async (_op: string, input: { kind: string }) => ({ items: input.kind === "TASK" ? [future] : [] }));
 });
 describe("staff follow-up", () => {
-  it("has only three work views, separate responsibility and last contact, with reminders outside the selector", async () => {
+  it("separates due, scheduled and all actions from reminder history and team setup", async () => {
     page(); await screen.findByText("Willow HOA");
-    expect(within(screen.getByRole("combobox", { name: "View" })).getAllByRole("option").map(o => o.textContent)).toEqual(["Needs attention", "Upcoming", "All open"]);
+    expect(within(screen.getByRole("combobox", { name: "When" })).getAllByRole("option").map(o => o.textContent)).toEqual(["Due now", "Scheduled", "All open actions"]);
     expect(within(screen.getByRole("combobox", { name: "Responsibility" })).getAllByRole("option").map(o => o.textContent)).toEqual(["All responsibilities", "Salesperson", "Deal champion"]);
-    expect(screen.getByText("Waiting on prospect")).toBeVisible(); expect(screen.getByText("2026-09-10T14:00:00Z")).toBeVisible();
+    expect(screen.getByRole("combobox", { name: "Scope" })).toHaveValue("mine");
     expect(screen.queryByText("Delivery queue")).toBeNull(); expect(screen.queryByText("Event processing")).toBeNull();
     expect(h.request.mock.calls.some(([, input]) => input.kind === "NOTIFICATION")).toBe(false);
-    fireEvent.click(screen.getByText("My reminders"));
+    fireEvent.click(screen.getByRole("button", { name: "My reminder history" }));
     await waitFor(() => expect(h.request).toHaveBeenCalledWith("work", expect.objectContaining({ kind: "NOTIFICATION" })));
   });
-  it("filters task requests while leaving unassigned and unlinked work shared", async () => {
+  it("loads shared setup only when requested and keeps task scope explicit", async () => {
     h.request.mockImplementation(async (_op: string, input: { kind: string }) => ({ items: input.kind === "WORKFLOW" ? [{ id: "wf", accountId: "missing", name: "Oak HOA", version: 1 }] : input.kind === "TRIAGE" ? [{ id: "triage", communicationId: "comm", phone: "+16175550123", version: 1 }] : [future] }));
-    page(); await screen.findByText("Oak HOA");
-    expect(screen.getByLabelText("My work")).toBeChecked();
+    page(); await screen.findByText("Willow HOA");
+    expect(h.request.mock.calls.some(([, input]) => input.kind === "WORKFLOW")).toBe(false);
     fireEvent.change(screen.getByRole("combobox", { name: "Responsibility" }), { target: { value: "CHAMPION" } });
     await waitFor(() => expect(h.request).toHaveBeenCalledWith("work", { kind: "TASK", view: "Needs attention", responsibility: "CHAMPION", mine: true }));
-    expect(screen.getByText("Oak HOA")).toBeVisible(); expect(screen.getByText("(617) 555-0123")).toBeVisible();
-    expect(h.request.mock.calls.filter(([, input]) => ["WORKFLOW", "TRIAGE"].includes(input.kind)).every(([, input]) => !input.mine && !input.responsibility)).toBe(true);
-    fireEvent.change(screen.getByRole("combobox", { name: "View" }), { target: { value: "Upcoming" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "When" }), { target: { value: "Upcoming" } });
     await waitFor(() => expect(h.request).toHaveBeenCalledWith("work", { kind: "TASK", view: "Upcoming", responsibility: "CHAMPION", mine: true }));
-    expect(screen.queryByRole("region", { name: "Shared team items" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Team setup" }));
+    expect(await screen.findByText("Oak HOA")).toBeVisible();
+    expect(h.request.mock.calls.filter(([, input]) => ["WORKFLOW", "TRIAGE"].includes(input.kind)).every(([, input]) => !input.mine && !input.responsibility)).toBe(true);
   });
   it("does not turn a failed read or an incomplete search into an empty-work claim", async () => {
     h.request.mockImplementation(async (_op: string, input: { kind: string; nextToken?: string }) => input.kind === "TASK" ? input.nextToken ? { items: [future] } : { items: [], nextToken: "next-page" } : { items: [] });

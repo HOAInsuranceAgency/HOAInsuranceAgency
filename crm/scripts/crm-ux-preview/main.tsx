@@ -1,0 +1,10 @@
+import { createRoot } from 'react-dom/client';
+import { createBrowserRouter, RouterProvider } from 'react-router-dom';
+import { Shell } from '../../src/App';
+import { DirtyFormsProvider } from '../../src/components/ui/unsaved';
+import { AdminContext } from '../../src/lib/auth';
+import { profile } from './data';
+import '../../src/styles.css';
+import '../../src/ui.css';
+const router = createBrowserRouter([{ path: '*', element: <DirtyFormsProvider><AdminContext.Provider value={true}><div className="preview-banner">LOCAL DESIGN REVIEW · FICTIONAL DATA · MUTATIONS DISABLED</div><Shell profile={profile} signOut={() => {}} /></AdminContext.Provider></DirtyFormsProvider> }]);
+createRoot(document.getElementById('root')!).render(<RouterProvider router={router} />);

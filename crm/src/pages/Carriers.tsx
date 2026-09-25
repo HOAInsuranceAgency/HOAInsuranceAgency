@@ -1,7 +1,10 @@
+import { useListPage } from "../lib/useListPage";
+import { Field, Disclosure, Pagination } from "../components/ui/kit";
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import {
   client,
+  listAllPages,
   fmtMoney,
   US_STATES,
   type AppetiteGuide,
@@ -20,7 +23,7 @@ import {
   restrictionSummary,
   type AppetiteRisk,
 } from "../lib/appetite";
-import { useSort, SortTh } from "../lib/useSort";
+import { MobileSort, useSort, SortTh } from "../lib/useSort";
 import { useFormState } from "../lib/useFormState";
 import { SaveStatus, useSaveStatus } from "../components/SaveStatus";
 import { useAsyncResource } from "../lib/useAsyncResource";
@@ -30,14 +33,18 @@ export default function Carriers() {
   // Persistent: a successful create navigates away, so what this is really
   // for is the failure that used to be swallowed entirely.
   const saveStatus = useSaveStatus();
-  const { form, setF } = useFormState(
+  const { form, setF, markSaved } = useFormState(
     { name: "", appointed: true },
     { onEdit: saveStatus.markDirty }
   );
   const navigate = useNavigate();
+  const [query, setQuery] = useState("");
+  const [params] = useSearchParams();
+  const accountId = params.get("account");
+  const accountRes = useAsyncResource(async () => accountId ? (await client.models.Account.get({ id: accountId })).data : null, [accountId], { initialData: null as import("../lib/client").Account | null });
 
   const carrierRes = useAsyncResource(
-    async () => (await client.models.Carrier.list()).data,
+    () => listAllPages(nextToken => client.models.Carrier.list({ nextToken })),
     [],
     { initialData: [] as Carrier[], errorMessage: "Failed to load carriers" }
   );
@@ -47,14 +54,14 @@ export default function Carriers() {
   // the "Lines written" column. Without them the finder answers "no appetite"
   // for every risk, which is a wrong answer rather than a missing one.
   const guideRes = useAsyncResource(
-    async () => (await client.models.AppetiteGuide.list()).data,
+    () => listAllPages(nextToken => client.models.AppetiteGuide.list({ nextToken })),
     [],
     { initialData: [] as AppetiteGuide[], errorMessage: "Failed to load appetite guides" }
   );
   const guides = guideRes.data;
 
   const { sorted, sortKey, dir, toggle } = useSort(
-    carriers,
+    carriers.filter(c => [c.name, c.primaryUnderwriterName, ...(c.states ?? [])].join(" ").toLowerCase().includes(query.toLowerCase())),
     {
       name: (c) => c.name,
       status: (c) => (c.appointed ? "Appointed" : "Prospective"),
@@ -77,12 +84,14 @@ export default function Carriers() {
           appointed: form.appointed,
         });
         if (errors?.length || !data) throw new Error(errors?.[0]?.message);
+        markSaved();
         navigate(`/carriers/${data.id}`);
       },
       { errorMessage: "Couldn't create that carrier." }
     );
   }
 
+  const page = useListPage(sorted, `${query}:${sortKey}:${dir}`);
   return (
     <>
       <h1>Carriers</h1>
@@ -91,12 +100,13 @@ export default function Carriers() {
       {/* Gated on `loaded`: the finder answers "no appointed carrier has
           appetite for this risk", and before the reads land that is a false
           negative rather than a placeholder. */}
-      {carrierRes.loaded && guideRes.loaded && (
-        <AppetiteFinder carriers={carriers} guides={guides} />
+      {carrierRes.loaded && guideRes.loaded && !carrierRes.error && !guideRes.error && (
+        <Disclosure key={accountId ?? "directory"} initiallyOpen={!!accountId} title="Find markets for a risk" description={accountRes.data ? `Using known details for ${accountRes.data.name}. Confirm the risk information before submitting.` : "Compare a risk against carrier appetite guides."}>{accountRes.loading ? <p>Loading account…</p> : accountRes.error ? <p role="alert">{accountRes.error}</p> : <AppetiteFinder key={accountRes.data?.id ?? "manual"} account={accountRes.data} carriers={carriers} guides={guides} />}</Disclosure>
       )}
       {guideRes.error && <p className="error-text">{guideRes.error}</p>}
 
       <div className="toolbar">
+        <label className="field">Find carriers<input type="search" value={query} onChange={e => setQuery(e.target.value)} placeholder="Carrier, underwriter or state" /></label>
         <div className="grow" />
         <button className="primary" onClick={() => setShowForm(!showForm)}>
           {showForm ? "Cancel" : "+ Add carrier"}
@@ -106,11 +116,11 @@ export default function Carriers() {
       {showForm && (
         <div className="card" style={{ background: "#f8fafc" }}>
           <div className="form-grid">
-            <div className="field">
+            <Field className="field">
               <label>Carrier name *</label>
               <input value={form.name} onChange={(e) => setF("name", e.target.value)} />
-            </div>
-            <div className="field">
+            </Field>
+            <Field className="field">
               <label>Status</label>
               <select
                 value={form.appointed ? "1" : "0"}
@@ -119,7 +129,7 @@ export default function Carriers() {
                 <option value="1">Appointed</option>
                 <option value="0">Prospective</option>
               </select>
-            </div>
+            </Field>
           </div>
           <div className="form-actions">
             <button
@@ -143,7 +153,8 @@ export default function Carriers() {
           <p className="muted small">No carriers yet.</p>
         ) : (
           <div className="table-wrap">
-            <table>
+            <MobileSort options={[["name", "Carrier"], ["status", "Status"], ["market", "Market"], ["underwriter", "Underwriter"], ["commission", "Commission"], ["states", "States"]]} sortKey={sortKey} dir={dir} onToggle={toggle} />
+            <table className="stacked-table">
               <thead>
                 <tr>
                   <SortTh label="Carrier" colKey="name" sortKey={sortKey} dir={dir} onToggle={toggle} />
@@ -157,7 +168,7 @@ export default function Carriers() {
                 </tr>
               </thead>
               <tbody>
-                {sorted.map((c) => {
+                {page.rows.map((c) => {
                   const cGuides = guides.filter((g) => g.carrierId === c.id);
                   const lines = [
                     ...new Set(cGuides.flatMap((g) => g.linesWritten ?? []).filter(Boolean)),
@@ -170,32 +181,29 @@ export default function Carriers() {
                     ...new Set(cGuides.map((g) => g.paperType).filter(Boolean)),
                   ].map((pt) => PAPER_TYPE_LABELS[pt as string]);
                   return (
-                    <tr
-                      key={c.id}
-                      className="clickable"
-                      onClick={() => navigate(`/carriers/${c.id}`)}
-                    >
-                      <td>
-                        <strong>{c.name}</strong>
+                    <tr key={c.id}>
+                      <td data-label="Carrier">
+                        <Link to={`/carriers/${c.id}`}>{c.name}</Link>
                       </td>
-                      <td>
+                      <td data-label="Status">
                         <Badge {...flagBadge(c.appointed, CARRIER_APPOINTMENT_BADGE)} />
                       </td>
-                      <td className="small">
+                      <td className="small" data-label="Market">
                         {c.marketType ? MARKET_TYPE_LABELS[c.marketType] : "—"}
                       </td>
-                      <td className="small">{paper.join(", ") || "—"}</td>
-                      <td>{c.primaryUnderwriterName ?? "—"}</td>
-                      <td>{c.standardCommissionPct != null ? `${c.standardCommissionPct}%` : "—"}</td>
-                      <td className="small">
-                        {(c.states ?? []).filter(Boolean).join(", ") || "—"}
+                      <td className="small" data-label="Paper">{paper.join(", ") || "—"}</td>
+                      <td data-label="Underwriter">{c.primaryUnderwriterName ?? "—"}</td>
+                      <td data-label="Commission">{c.standardCommissionPct != null ? `${c.standardCommissionPct}%` : "—"}</td>
+                      <td className="small" data-label="States">
+                        <details><summary>{(c.states ?? []).filter(Boolean).length} states</summary>{(c.states ?? []).filter(Boolean).join(", ") || "Not recorded"}</details>
                       </td>
-                      <td className="small">{lines.join(", ") || "—"}</td>
+                      <td className="small" data-label="Lines written">{lines.join(", ") || "—"}</td>
                     </tr>
                   );
                 })}
               </tbody>
             </table>
+            <Pagination total={sorted.length} page={page.page} onPage={page.setPage} noun="carriers" />
           </div>
         )}
       </div>
@@ -212,14 +220,16 @@ export default function Carriers() {
  * promising the two agreed.
  */
 function AppetiteFinder({
+  account,
   carriers,
   guides,
 }: {
+  account?: import("../lib/client").Account | null;
   carriers: Carrier[];
   guides: AppetiteGuide[];
 }) {
-  const [state, setState] = useState("");
-  const [tiv, setTiv] = useState("");
+  const [state, setState] = useState(account?.state ?? "");
+  const [tiv, setTiv] = useState(account?.totalInsuredValue?.toString() ?? "");
   const [year, setYear] = useState("");
   const [paperType, setPaperType] = useState("");
   // "" / "yes" / "no" — an unanswered coastal question must not read as "no",
@@ -272,7 +282,7 @@ function AppetiteFinder({
     <div className="card">
       <h2>Appetite finder</h2>
       <div className="form-grid">
-        <div className="field">
+        <Field className="field">
           <label>State</label>
           <select value={state} onChange={(e) => setState(e.target.value)}>
             <option value="">Any</option>
@@ -280,16 +290,16 @@ function AppetiteFinder({
               <option key={s}>{s}</option>
             ))}
           </select>
-        </div>
-        <div className="field">
+        </Field>
+        <Field className="field">
           <label>TIV ($)</label>
           <input type="number" value={tiv} onChange={(e) => setTiv(e.target.value)} />
-        </div>
-        <div className="field">
+        </Field>
+        <Field className="field">
           <label>Year built</label>
           <input type="number" value={year} onChange={(e) => setYear(e.target.value)} />
-        </div>
-        <div className="field">
+        </Field>
+        <Field className="field">
           <label>Paper</label>
           <select value={paperType} onChange={(e) => setPaperType(e.target.value)}>
             <option value="">Any</option>
@@ -299,16 +309,16 @@ function AppetiteFinder({
               </option>
             ))}
           </select>
-        </div>
-        <div className="field">
+        </Field>
+        <Field className="field">
           <label>Coastal?</label>
           <select value={coastal} onChange={(e) => setCoastal(e.target.value)}>
             <option value="">Any</option>
             <option value="yes">Coastal</option>
             <option value="no">Not coastal</option>
           </select>
-        </div>
-        <div className="field">
+        </Field>
+        <Field className="field">
           <label>Miles to coast</label>
           <input
             type="number"
@@ -317,8 +327,8 @@ function AppetiteFinder({
             value={milesToCoast}
             onChange={(e) => setMilesToCoast(e.target.value)}
           />
-        </div>
-        <div className="field">
+        </Field>
+        <Field className="field">
           <label>Rented units (%)</label>
           <input
             type="number"
@@ -327,8 +337,8 @@ function AppetiteFinder({
             value={rentalPct}
             onChange={(e) => setRentalPct(e.target.value)}
           />
-        </div>
-        <div className="field">
+        </Field>
+        <Field className="field">
           <label>Losses (last {LOSS_LOOKBACK_YEARS} yrs)</label>
           <input
             type="number"
@@ -336,8 +346,8 @@ function AppetiteFinder({
             value={lossCount}
             onChange={(e) => setLossCount(e.target.value)}
           />
-        </div>
-        <div className="field">
+        </Field>
+        <Field className="field">
           <label>Incurred, paid + reserved ($)</label>
           <input
             type="number"
@@ -345,7 +355,7 @@ function AppetiteFinder({
             value={lossIncurred}
             onChange={(e) => setLossIncurred(e.target.value)}
           />
-        </div>
+        </Field>
       </div>
       {active && (
         <div style={{ marginTop: 14 }}>
@@ -353,7 +363,7 @@ function AppetiteFinder({
             <p className="muted small">No appointed carrier has appetite for this risk.</p>
           ) : (
             <div className="table-wrap">
-              <table>
+              <table className="stacked-table">
                 <thead>
                   <tr>
                     <th>Carrier</th>
@@ -370,30 +380,30 @@ function AppetiteFinder({
                   {matches.map(({ carrier, guides: gs }) =>
                     gs.map((g) => (
                       <tr key={g.id}>
-                        <td>
+                        <td data-label="Carrier">
                           <strong>{carrier.name}</strong>
                         </td>
-                        <td className="small">
+                        <td className="small" data-label="Market">
                           {carrier.marketType
                             ? MARKET_TYPE_LABELS[carrier.marketType]
                             : "—"}
                         </td>
-                        <td className="small">
+                        <td className="small" data-label="Paper">
                           {g.paperType ? PAPER_TYPE_LABELS[g.paperType] : "—"}
                         </td>
-                        <td className="small">
+                        <td className="small" data-label="Lines">
                           {(g.linesWritten ?? []).filter(Boolean).join(", ") || "—"}
                         </td>
                         {/* Not a match criterion — see `bestFitBusiness`. It
                             is here to rank by eye what the columns cannot. */}
-                        <td className="small">
+                        <td className="small" data-label="Best fit">
                           {(g.bestFitBusiness ?? []).filter(Boolean).join(", ") || "—"}
                         </td>
-                        <td className="small">
+                        <td className="small" data-label="TIV range">
                           {fmtMoney(g.minValue)} – {fmtMoney(g.maxValue)}
                         </td>
-                        <td className="small">{restrictionSummary(g) || "—"}</td>
-                        <td className="small">
+                        <td className="small" data-label="Restrictions">{restrictionSummary(g) || "—"}</td>
+                        <td className="small" data-label="Lead time">
                           {g.quoteSubmissionLeadTimeDays != null
                             ? `${g.quoteSubmissionLeadTimeDays} days`
                             : "—"}

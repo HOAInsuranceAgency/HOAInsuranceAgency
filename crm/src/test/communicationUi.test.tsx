@@ -53,7 +53,7 @@ describe("communication UI boundaries", () => {
     Object.assign(data, { tasks: [], trackingHealthy: true, communications: [{ id: "reply", channel: "EMAIL", direction: "INBOUND", status: "RECEIVED", at: "2026-09-10T12:00:00Z", resolved: true }] });
     render(<FrontSidebar />); act(() => h.listener?.({ conversation: { id: "cnv_a" } }));
     await screen.findByText("All caught up");
-    expect(screen.getByRole("status")).toHaveTextContent("Nothing needs your attention. Follow-up is tracked automatically.");
+    expect(screen.getByText(/caught up/i).closest("[role=status]")).toHaveTextContent("Nothing needs your attention. Follow-up is tracked automatically.");
     expect(screen.queryByRole("region", { name: "Next actions" })).toBeNull();
   });
   it.each(["unknown tracking", "unhealthy tracking", "open action", "assignment", "unresolved message", "new lead"])("does not show all caught up with %s", async reason => {

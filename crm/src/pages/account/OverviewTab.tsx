@@ -1,3 +1,4 @@
+import { Field } from "../../components/ui/kit";
 import { acquisitionLabel, websiteFormLabel } from "../../../../shared/leadSource";
 import {
   client,
@@ -23,7 +24,7 @@ export function OverviewTab({
   // `useFormState`'s own `saved` is deliberately not destructured: two flags
   // answering "is the confirmation still true" is the bug this replaces.
   const saveStatus = useSaveStatus();
-  const { form, setF } = useFormState({
+  const { form, setF, markSaved } = useFormState({
     name: account.name,
     legalName: inputValue(account.legalName),
     fein: inputValue(account.fein),
@@ -65,6 +66,7 @@ export function OverviewTab({
             })
           )
         );
+        markSaved();
       },
       { errorMessage: "Save failed" }
     );
@@ -74,31 +76,31 @@ export function OverviewTab({
     <div className="card">
       <h2>Details</h2>
       <div className="form-grid">
-        <div className="field">
+        <Field className="field">
           <label>Name</label>
           <input value={form.name} onChange={(e) => setF("name", e.target.value)} />
-        </div>
-        <div className="field">
+        </Field>
+        <Field className="field">
           <label>Full legal name (carrier submissions)</label>
           <input
             placeholder={account.name}
             value={form.legalName}
             onChange={(e) => setF("legalName", e.target.value)}
           />
-        </div>
-        <div className="field">
+        </Field>
+        <Field className="field">
           <label>FEIN</label>
           <FeinInput value={form.fein} onChange={(v) => setF("fein", v)} />
-        </div>
-        <div className="field">
+        </Field>
+        <Field className="field">
           <label>SIC</label>
           <input value={form.sicCode} onChange={(e) => setF("sicCode", e.target.value)} />
-        </div>
-        <div className="field">
+        </Field>
+        <Field className="field">
           <label>NAICS</label>
           <input value={form.naicsCode} onChange={(e) => setF("naicsCode", e.target.value)} />
-        </div>
-        <div className="field">
+        </Field>
+        <Field className="field">
           <label>Legal entity type</label>
           <select
             value={form.legalEntityType}
@@ -115,51 +117,51 @@ export function OverviewTab({
               </option>
             ))}
           </select>
-        </div>
-        <div className="field">
+        </Field>
+        <Field className="field">
           <label>Annual revenue ($)</label>
           <MoneyInput
             value={form.annualRevenue}
             onChange={(v) => setF("annualRevenue", v)}
           />
-        </div>
+        </Field>
         {/* The four contact fields and the inspection pair moved to the
             Contacts card below — an association has more than two people, and
             these six columns could hold exactly two. */}
-        <div className="field">
+        <Field className="field">
           <label>Total insured value ($)</label>
           <MoneyInput
             value={form.totalInsuredValue}
             onChange={(v) => setF("totalInsuredValue", v)}
           />
-        </div>
-        <div className="field">
+        </Field>
+        <Field className="field">
           <label>Current agent / broker</label>
           <input value={form.currentAgent} onChange={(e) => setF("currentAgent", e.target.value)} />
-        </div>
+        </Field>
         {/* The five prior-carrier fields moved to the Prior coverage tab —
             an association carries property, GL, D&O and crime with different
             carriers on different terms, and these five could describe one. */}
         {/* Lead-only: once bound, the Policy records are authoritative. */}
         {account.stage !== "CLIENT" && (
-        <div className="field">
+        <Field className="field">
           <label>Current policy expiration</label>
           <DateInput
             value={form.currentPolicyExpiration}
             onChange={(v) => setF("currentPolicyExpiration", v)}
           />
-        </div>
+        </Field>
         )}
-        <div className="field">
+        <Field className="field">
           <label>Lead source</label>
           <div>{acquisitionLabel(account.leadSource, account.source)}</div>
           <span className="muted small">Set at creation. This value cannot be changed.</span>
-        </div>
-        <div className="field"><label>Website form</label><div>{websiteFormLabel(account.source)}</div></div>
-        <div className="field full">
+        </Field>
+        <Field className="field"><label>Website form</label><div>{websiteFormLabel(account.source)}</div></Field>
+        <Field className="field full">
           <label>Notes</label>
           <textarea rows={4} value={form.notes} onChange={(e) => setF("notes", e.target.value)} />
-        </div>
+        </Field>
       </div>
       <div className="form-actions">
         <button className="primary" disabled={saveStatus.busy} onClick={save}>

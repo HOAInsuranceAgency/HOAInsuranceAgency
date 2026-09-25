@@ -1,3 +1,4 @@
+import { Field } from "../components/ui/kit";
 import { useState } from "react";
 import type { AuthUser } from "aws-amplify/auth";
 import { client, friendlyError, US_STATES, type UserProfile } from "../lib/client";
@@ -42,7 +43,7 @@ export default function Onboarding({
   role: Role;
   onComplete: (p: UserProfile) => void;
 }) {
-  const { form, setF } = useFormState({
+  const { form, setF, markSaved } = useFormState({
     firstName: existing?.firstName ?? "",
     lastName: existing?.lastName ?? "",
     npn: existing?.npn ?? "",
@@ -108,6 +109,7 @@ export default function Onboarding({
           });
         }
       }
+      markSaved();
       onComplete(profile);
     } catch (err) {
       setError(friendlyError(err, "Failed to save profile."));
@@ -123,26 +125,26 @@ export default function Onboarding({
 
       <div className="card">
         <div className="form-grid">
-          <div className="field">
+          <Field className="field">
             <label>First name *</label>
             <input value={form.firstName} onChange={(e) => setF("firstName", e.target.value)} />
-          </div>
-          <div className="field">
+          </Field>
+          <Field className="field">
             <label>Last name *</label>
             <input value={form.lastName} onChange={(e) => setF("lastName", e.target.value)} />
-          </div>
-          <div className="field">
+          </Field>
+          <Field className="field">
             <label>Role</label>
             <input value={USER_ROLE_LABELS[role]} disabled />
             <span className="muted small">
               Set by whoever invited you — ask an admin to change it.
             </span>
-          </div>
+          </Field>
           {isProducer && (
-            <div className="field">
+            <Field className="field">
               <label>NPN (National Producer Number) *</label>
               <input value={form.npn} onChange={(e) => setF("npn", e.target.value)} />
-            </div>
+            </Field>
           )}
         </div>
 
@@ -151,7 +153,7 @@ export default function Onboarding({
             <h3>State licenses *</h3>
             {form.licenses.map((l, i) => (
               <div className="form-grid" key={i} style={{ marginBottom: 8 }}>
-                <div className="field">
+                <Field className="field">
                   <label>State</label>
                   <select
                     value={l.state}
@@ -162,15 +164,15 @@ export default function Onboarding({
                       <option key={s}>{s}</option>
                     ))}
                   </select>
-                </div>
-                <div className="field">
+                </Field>
+                <Field className="field">
                   <label>License number</label>
                   <input
                     value={l.licenseNumber}
                     onChange={(e) => setLicense(i, { licenseNumber: e.target.value })}
                   />
-                </div>
-                <div className="field">
+                </Field>
+                <Field className="field">
                   <label>Residency</label>
                   <select
                     value={l.residency}
@@ -186,15 +188,15 @@ export default function Onboarding({
                       </option>
                     ))}
                   </select>
-                </div>
-                <div className="field">
+                </Field>
+                <Field className="field">
                   <label>Expiration</label>
                   <input
                     type="date"
                     value={l.expirationDate}
                     onChange={(e) => setLicense(i, { expirationDate: e.target.value })}
                   />
-                </div>
+                </Field>
               </div>
             ))}
             <button

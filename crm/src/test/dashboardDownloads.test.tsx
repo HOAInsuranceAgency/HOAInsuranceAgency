@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 const h = vi.hoisted(() => ({ data: {} as Record<string, unknown>, save: vi.fn() }));
-vi.mock("../lib/useAsyncResource", () => ({ useAsyncResource: () => ({ data: h.data, loading: false, loaded: true, error: "", refetch: async () => {} }) }));
+vi.mock("../lib/useAsyncResource", () => ({ useAsyncResource: (_fn: unknown, _deps: unknown, options?: { cacheKey?: string }) => ({ data: options?.cacheKey?.startsWith("overview:") ? h.data[options.cacheKey.split(":")[1]] : h.data, loading: false, loaded: true, error: "", refetch: async () => {} }) }));
 vi.mock("../lib/commercial", () => ({ useCommercial: () => ({ data: { entries: { a1: { salespersonId: "sales", championId: "champ", plan: { accountId: "a1", version: 1, estimatedCents: 123456, requiredLines: [], options: [], selectedOptionId: null } } }, team: [{ userId: "sales", name: "Avery Brooks" }, { userId: "champ", name: "Morgan Lee" }] }, loading: false, error: "", setData: vi.fn() }), teammateName: (id: string, team: { userId: string; name: string }[]) => team.find(t => t.userId === id)?.name ?? "Not assigned" }));
 vi.mock("../lib/lastContact", () => ({ useLastContacts: () => ({ contacts: { a1: { at: "2026-09-10T14:00:00.000Z", channel: "EMAIL", direction: "INBOUND" } }, loading: false, error: "" }) }));
 vi.mock("../lib/reportDownload", async original => ({ ...await original<typeof import("../lib/reportDownload")>(), saveReport: h.save }));
@@ -16,6 +16,7 @@ beforeEach(() => { h.save.mockClear(); h.data = { leads: [lead], clients: [], ac
 describe("dashboard report controls", () => {
   it.each([[OverviewTab, 2], [LeadsTab, 3], [FinanceTab, 4], [RenewalsTab, 1], [ReportingTab, 5]] as const)("provides a working export for every report in %s", (Tab, count) => {
     render(<MemoryRouter><Tab /></MemoryRouter>);
+    if (Tab === OverviewTab) fireEvent.click(screen.getByRole("button", { name: /Agency checks and full overview export/ }));
     const controls = screen.getAllByRole("combobox", { name: /^Download / });
     expect(controls).toHaveLength(count);
     for (const control of controls) fireEvent.change(control, { target: { value: "csv" } });

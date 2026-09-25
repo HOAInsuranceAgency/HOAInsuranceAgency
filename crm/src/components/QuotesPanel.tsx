@@ -1,3 +1,6 @@
+import { useRecordAnchor } from "../lib/useRecordAnchor";
+import { StatusEditor } from "./ui/StatusEditor";
+import { Field, Disclosure } from "./ui/kit";
 import { useState } from "react";
 import QuotePackages from "./QuotePackages";
 import { packageTerms, type CommercialPlan } from '../../../shared/quotePackages';
@@ -13,7 +16,7 @@ import {
 } from "../lib/client";
 import { Badge, statusBadge, QUOTE_STATUS_BADGE } from "../lib/badges";
 import { useAsyncResource } from "../lib/useAsyncResource";
-import { useSort, SortTh } from "../lib/useSort";
+import { MobileSort, useSort, SortTh } from "../lib/useSort";
 import CoverageForm from "./CoverageForm";
 import { communicationRequest } from "../lib/communications";
 import { authorizedQuoteTerms } from "../../../shared/quoteAuthorization";
@@ -88,6 +91,7 @@ export default function QuotesPanel({
     [account.id],
     { initialData: [] as Quote[], errorMessage: "Failed to load quotes" }
   );
+  useRecordAnchor("quote", quoteRes.loaded);
   const quotes = quoteRes.data;
   // Identity-stable, so passing it to CoverageForm/BindForm no longer
   // re-renders them on every render of this panel.
@@ -105,6 +109,7 @@ export default function QuotesPanel({
   const carrierRows = carrierRes.data;
 
   async function setStatus(quote: Quote, status: Quote["status"]) {
+    let saved = false;
     await statusSave.run(
       async () => {
         // `errors` used to be dropped: the refetch quietly restored the old
@@ -116,6 +121,7 @@ export default function QuotesPanel({
           ...(status === "PRESENTED" && !quote.presentedAt ? { presentedAt: new Date().toISOString() } : {}),
         });
         if (errors?.length) throw new Error(errors[0].message);
+        saved = true;
         refresh();
       },
       {
@@ -123,6 +129,7 @@ export default function QuotesPanel({
         errorMessage: "Couldn't change that quote's status.",
       }
     );
+    return saved;
   }
 
   // Carrier picker order only — no header to click, so the default stands.
@@ -149,7 +156,7 @@ export default function QuotesPanel({
 
   return (
     <div>
-      <QuotePackages accountId={account.id} quotes={quotes} carriers={carrierRows} />
+      <p className="sub">Prepare application → Submit to markets → Record quotes → Record client approval → Confirm carrier binding</p>
       <div id="quote-list" />
       <div className="toolbar">
         {/* Per-row status changes have no per-row place to report; this is
@@ -191,20 +198,18 @@ export default function QuotesPanel({
           having no carrier set. */}
       {carrierRes.error && <p className="error-text">{carrierRes.error}</p>}
 
-      {quoteRes.error ? (
+      {!quoteRes.loaded ? <p role="status">Loading quotes…</p> : quoteRes.error ? (
         <p className="error-text">{quoteRes.error}</p>
       ) : quotes.length === 0 ? (
         <p className="muted small">No quotes yet.</p>
       ) : (
         <div className="table-wrap">
-          <table>
+          <MobileSort options={[["carrier", "Carrier"], ["premium", "Premium"], ["effective", "Effective"], ["status", "Status"], ["created", "Added"]]} sortKey={sortKey} dir={dir} onToggle={toggle} />
+          <table className="stacked-table">
             <thead>
               <tr>
                 <SortTh label="Carrier" colKey="carrier" sortKey={sortKey} dir={dir} onToggle={toggle} />
-                <SortTh label="Lines" colKey="lines" sortKey={sortKey} dir={dir} onToggle={toggle} />
                 <SortTh label="Premium" colKey="premium" sortKey={sortKey} dir={dir} onToggle={toggle} />
-                <SortTh label="Commission" colKey="commission" sortKey={sortKey} dir={dir} onToggle={toggle} />
-                <th>Terms</th>
                 <SortTh label="Effective" colKey="effective" sortKey={sortKey} dir={dir} onToggle={toggle} />
                 <SortTh label="Status" colKey="status" sortKey={sortKey} dir={dir} onToggle={toggle} />
                 <th></th>
@@ -212,17 +217,14 @@ export default function QuotesPanel({
             </thead>
             <tbody>
               {sorted.map((qt) => (
-                <tr key={qt.id}>
-                  <td>{carrierName(qt.carrierId)}</td>
-                  <td className="small">{(qt.lines ?? []).filter(Boolean).join(", ") || "—"}</td>
-                  <td>{fmtMoney(qt.premium)}</td>
-                  <td className="small">{commissionCell(qt)}</td>
-                  <td className="small">{termsSummary(qt)}</td>
-                  <td>{fmtDate(qt.effectiveDate)}</td>
-                  <td>
+                <tr key={qt.id} id={`quote-${qt.id}`}>
+                  <td data-label="Carrier">{carrierName(qt.carrierId)}<div className="small muted">{(qt.lines ?? []).filter(Boolean).join(", ") || "Coverage not recorded"}</div></td>
+                  <td data-label="Premium">{fmtMoney(qt.premium)}</td>
+                  <td data-label="Effective">{fmtDate(qt.effectiveDate)}</td>
+                  <td data-label="Status">
                     <Badge {...statusBadge(QUOTE_STATUS_BADGE, qt.status)} />
                   </td>
-                  <td style={{ whiteSpace: "nowrap" }}>
+                  <td style={{ whiteSpace: "nowrap" }} data-label="Actions">
                     <button
                       className="link"
                       onClick={() => {
@@ -232,25 +234,14 @@ export default function QuotesPanel({
                     >
                       Edit
                     </button>
+                    <details><summary>Terms & commission</summary><p>{termsSummary(qt)}</p><p>Agency commission: {commissionCell(qt)}</p></details>
                     {isOpenQuoteStatus(qt.status) && (
                       <>
-                        <select
-                          className="small"
-                          value={qt.status}
-                          onChange={(e) =>
-                            setStatus(qt, e.target.value as Quote["status"])
-                          }
-                        >
-                          {[...SELECTABLE_QUOTE_STATUSES]
-                            .sort((a, b) => a.localeCompare(b))
-                            .map((s) => (
-                              <option key={s}>{s}</option>
-                            ))}
-                        </select>{" "}
+                        <StatusEditor value={qt.status} options={SELECTABLE_QUOTE_STATUSES} label={`${carrierName(qt.carrierId)} quote`} onSave={status => setStatus(qt, status)} />
                         <button className="link" onClick={() => setBinding(qt)}>
-                          Bind
+                          Confirm carrier binding
                         </button>
-                        {["QUOTED", "PRESENTED"].includes(qt.status) && (!qt.bindAuthorizedAt || qt.bindAuthorizedTerms !== authorizedQuoteTerms(qt)) && <button className="link" onClick={() => { setAuthorization(qt); setClientAuthorized(false); }}>Request binding</button>}
+                        {["QUOTED", "PRESENTED"].includes(qt.status) && (!qt.bindAuthorizedAt || qt.bindAuthorizedTerms !== authorizedQuoteTerms(qt)) && <button className="link" onClick={() => { setAuthorization(qt); setClientAuthorized(false); }}>Record client approval</button>}
                         {qt.bindAuthorizedAt && <span className="small muted">Carrier confirmation pending</span>}
                       </>
                     )}
@@ -262,7 +253,8 @@ export default function QuotesPanel({
         </div>
       )}
 
-      {authorization && <section className="card" aria-label="Client bind authorization"><h3>Request binding</h3><p>{carrierName(authorization.carrierId)} · {fmtMoney(authorization.premium)} · Effective {fmtDate(authorization.effectiveDate)}</p><p>This records the client's approval of these quoted terms and puts carrier confirmation in the champion's work. Coverage becomes bound only through the confirmed bind process.</p><label><input type="checkbox" checked={clientAuthorized} onChange={e => setClientAuthorized(e.target.checked)} /> The client has authorized binding these terms.</label><div className="form-actions"><button className="primary" disabled={!clientAuthorized || authorizing} onClick={async () => { setAuthorizing(true); setBindError(""); try { await communicationRequest("authorizeBind", { quoteId: authorization.id, updatedAt: authorization.updatedAt, clientAuthorized }, true); setAuthorization(null); await refresh(); } catch(e) { setBindError(friendlyError(e, "Could not record authorization")); } finally { setAuthorizing(false); } }}>Send to champion's bind work</button><button className="secondary" disabled={authorizing} onClick={() => setAuthorization(null)}>Cancel</button></div></section>}
+      <Disclosure title="Compare and package quotes" description="Build client options from the quotes above."><QuotePackages accountId={account.id} quotes={quotes} carriers={carrierRows} /></Disclosure>
+      {authorization && <section className="card" aria-label="Client bind authorization"><h3>Record client approval</h3><p>{carrierName(authorization.carrierId)} · {fmtMoney(authorization.premium)} · Effective {fmtDate(authorization.effectiveDate)}</p><p>This records the client's approval of these quoted terms and puts carrier confirmation in the champion's work. Coverage becomes bound only through the confirmed bind process.</p><label><input type="checkbox" checked={clientAuthorized} onChange={e => setClientAuthorized(e.target.checked)} /> The client has authorized binding these terms.</label><div className="form-actions"><button className="primary" disabled={!clientAuthorized || authorizing} onClick={async () => { setAuthorizing(true); setBindError(""); try { await communicationRequest("authorizeBind", { quoteId: authorization.id, updatedAt: authorization.updatedAt, clientAuthorized }, true); setAuthorization(null); await refresh(); } catch(e) { setBindError(friendlyError(e, "Could not record authorization")); } finally { setAuthorizing(false); } }}>Record approval & notify champion</button><button className="secondary" disabled={authorizing} onClick={() => setAuthorization(null)}>Cancel</button></div></section>}
       {binding && (
         <BindForm
           quote={binding}
@@ -498,7 +490,7 @@ function BindForm({
 
   return (
     <div className="card" style={{ background: "#f0f7ef", marginTop: 14 }}>
-      <h3 style={{ marginTop: 0 }}>Bind quote</h3>
+      <h3 style={{ marginTop: 0 }}>Confirm carrier binding</h3>
       <p className="small muted">
         Creates a policy{account.stage === "LEAD" ? " and converts this lead to a client" : ""}.
       </p>
@@ -517,7 +509,7 @@ function BindForm({
       ) : (
         <>
           <div className="form-grid">
-            <div className="field">
+            <Field className="field">
               <label htmlFor="bind-bill-type">Bill type (required)</label>
               <select
                 id="bind-bill-type"
@@ -531,8 +523,8 @@ function BindForm({
                   </option>
                 ))}
               </select>
-            </div>
-            <div className="field">
+            </Field>
+            <Field className="field">
               <label htmlFor="bind-policy-number">
                 Policy number (can be added later)
               </label>
@@ -541,7 +533,7 @@ function BindForm({
                 value={policyNumber}
                 onChange={(e) => setPolicyNumber(e.target.value)}
               />
-            </div>
+            </Field>
           </div>
           {billType === "DIRECT" && (
             <p className="small muted">
@@ -551,7 +543,7 @@ function BindForm({
           )}
           <div className="form-actions">
             <button className="primary" disabled={saving || !billType} onClick={bind}>
-              {saving ? "Binding…" : "Confirm bind"}
+              {saving ? "Binding…" : "Confirm carrier binding"}
             </button>
             <button className="secondary" onClick={() => onDone(null)}>
               Cancel

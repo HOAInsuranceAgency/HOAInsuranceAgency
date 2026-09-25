@@ -5,6 +5,7 @@ import BlanketsCard from "./property/BlanketsCard";
 import GeneralLiabilityCard from "./property/GeneralLiabilityCard";
 import DirectorsOfficersCard from "./property/DirectorsOfficersCard";
 import PhotosCard from "./property/PhotosCard";
+import { Disclosure } from "./ui/kit";
 
 /** Underwriting property details: construction, system updates, buildings,
  * the blanket schedule, the GL and D&O applications, and site photos. Feeds
@@ -18,12 +19,12 @@ export default function PropertyPanel({
 }) {
   return (
     <>
-      <DetailsCard account={account} onChange={onChange} />
-      <BuildingsCard accountId={account.id} />
-      <BlanketsCard accountId={account.id} />
-      <GeneralLiabilityCard accountId={account.id} />
-      <DirectorsOfficersCard accountId={account.id} />
-      <PhotosCard account={account} onChange={onChange} />
+      <Disclosure title="Property details" description={[account.address, account.city, account.state].filter(Boolean).join(", ") || "Address and construction details"}><DetailsCard account={account} onChange={onChange} /></Disclosure>
+      <Disclosure title="Buildings" description="Building schedule, construction, and replacement values"><BuildingsCard accountId={account.id} /></Disclosure>
+      <Disclosure title="Blanket coverages" description="Limits shared across buildings"><BlanketsCard accountId={account.id} /></Disclosure>
+      <Disclosure title="General liability" description="Limits, operations, deductibles, and class codes"><GeneralLiabilityCard accountId={account.id} /></Disclosure>
+      <Disclosure title="Directors & officers" description="Application details and coverage parts"><DirectorsOfficersCard accountId={account.id} /></Disclosure>
+      <Disclosure title="Site photos & plans"><PhotosCard account={account} onChange={onChange} /></Disclosure>
     </>
   );
 }

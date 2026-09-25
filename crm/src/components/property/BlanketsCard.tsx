@@ -1,3 +1,4 @@
+import { Field } from "../ui/kit";
 import { client, fmtMoney, type Blanket } from "../../lib/client";
 import { inputValue, num, str } from "../../lib/formCodec";
 import { blanketKey } from "../../lib/extractionKeys";
@@ -93,7 +94,7 @@ function BlanketFields({
     : undefined;
   return (
     <>
-      <div className="field">
+      <Field className="field">
         <label>Blanket #</label>
         <input
           placeholder="BL-1"
@@ -101,8 +102,8 @@ function BlanketFields({
           onChange={(e) => form.setF("blanketNumber", e.target.value)}
           onKeyDown={enter}
         />
-      </div>
-      <div className="field" style={{ flex: "1 1 200px" }}>
+      </Field>
+      <Field className="field" style={{ flex: "1 1 200px" }}>
         <label>Type</label>
         <input
           placeholder="Blanket Bldg & BPP"
@@ -110,15 +111,15 @@ function BlanketFields({
           onChange={(e) => form.setF("type", e.target.value)}
           onKeyDown={enter}
         />
-      </div>
-      <div className="field">
+      </Field>
+      <Field className="field">
         <label>Amount ($)</label>
         <MoneyInput
           value={form.form.amount}
           onChange={(v) => form.setF("amount", v)}
           onKeyDown={enter}
         />
-      </div>
+      </Field>
     </>
   );
 }

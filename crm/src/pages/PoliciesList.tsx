@@ -1,5 +1,7 @@
-import { useMemo } from "react";
-import { useNavigate } from "react-router-dom";
+import { Breadcrumb, Pagination } from "../components/ui/kit";
+import { useListPage } from "../lib/useListPage";
+import { useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import {
   client,
   fmtDate,
@@ -10,11 +12,12 @@ import {
   type Policy,
 } from "../lib/client";
 import { Badge, statusBadge, POLICY_STATUS_BADGE } from "../lib/badges";
-import { useSort, SortTh } from "../lib/useSort";
+import { MobileSort, useSort, SortTh } from "../lib/useSort";
 import { useAsyncResource } from "../lib/useAsyncResource";
 
 export default function PoliciesList() {
-  const navigate = useNavigate();
+  const [query, setQuery] = useState("");
+  const [activeOnly, setActiveOnly] = useState(true);
 
   // Paginated: a bare .list() returns one ~100-row page and stops, so this
   // page could show fewer policies than the dashboard tile that links to it
@@ -58,7 +61,7 @@ export default function PoliciesList() {
 
   // Default: expiration ascending — next up (or already expired) first.
   const { sorted, sortKey, dir, toggle } = useSort(
-    policies,
+    policies.filter(p => (!activeOnly || p.status === "ACTIVE") && [accountName.get(p.accountId), carrierName.get(p.carrierId ?? ""), p.policyNumber].join(" ").toLowerCase().includes(query.toLowerCase())),
     {
       account: (p) => accountName.get(p.accountId) ?? "",
       carrier: (p) => (p.carrierId ? carrierName.get(p.carrierId) ?? "" : null),
@@ -72,11 +75,14 @@ export default function PoliciesList() {
     "expires"
   );
 
+  const page = useListPage(sorted, `${query}:${activeOnly}:${sortKey}:${dir}`);
   return (
     <>
+      <Breadcrumb to="/leads">Accounts</Breadcrumb>
       <h1>Policies</h1>
       <p className="sub">All bound policies — soonest expiration first</p>
 
+      <div className="toolbar"><label className="field">Find policies<input type="search" value={query} onChange={e => setQuery(e.target.value)} placeholder="Account, carrier, policy number" /></label><label className="field">View<select value={activeOnly ? "active" : "all"} onChange={e => setActiveOnly(e.target.value === "active")}><option value="active">Active policies</option><option value="all">All policies & history</option></select></label></div>
       {accountRes.error && <p className="error-text">{accountRes.error}</p>}
       {carrierRes.error && <p className="error-text">{carrierRes.error}</p>}
 
@@ -89,7 +95,8 @@ export default function PoliciesList() {
           <p className="muted small">No policies bound yet.</p>
         ) : (
           <div className="table-wrap">
-            <table>
+            <MobileSort options={[["account", "Account"], ["carrier", "Carrier"], ["number", "Policy #"], ["premium", "Premium"], ["effective", "Effective"], ["expires", "Expires"], ["bound", "Bound"], ["status", "Status"]]} sortKey={sortKey} dir={dir} onToggle={toggle} />
+            <table className="stacked-table">
               <thead>
                 <tr>
                   <SortTh label="Account" colKey="account" sortKey={sortKey} dir={dir} onToggle={toggle} />
@@ -103,28 +110,25 @@ export default function PoliciesList() {
                 </tr>
               </thead>
               <tbody>
-                {sorted.map((p) => (
-                  <tr
-                    key={p.id}
-                    className="clickable"
-                    onClick={() => navigate(`/accounts/${p.accountId}?tab=policies`)}
-                  >
-                    <td>
-                      <strong>{accountName.get(p.accountId) ?? "—"}</strong>
+                {page.rows.map((p) => (
+                  <tr key={p.id}>
+                    <td data-label="Account">
+                      <Link to={`/accounts/${p.accountId}?tab=policies&record=${p.id}#policy-${p.id}`}>{accountName.get(p.accountId) ?? "Account"}</Link>
                     </td>
-                    <td>{p.carrierId ? carrierName.get(p.carrierId) ?? "—" : "—"}</td>
-                    <td>{p.policyNumber ?? "—"}</td>
-                    <td>{fmtMoney(p.premium)}</td>
-                    <td>{fmtDate(p.effectiveDate)}</td>
-                    <td>{fmtDate(p.expirationDate)}</td>
-                    <td>{fmtDate(p.datePolicyBound?.slice(0, 10))}</td>
-                    <td>
+                    <td data-label="Carrier">{p.carrierId ? carrierName.get(p.carrierId) ?? "—" : "—"}</td>
+                    <td data-label="Policy #">{p.policyNumber ?? "—"}</td>
+                    <td data-label="Premium">{fmtMoney(p.premium)}</td>
+                    <td data-label="Effective">{fmtDate(p.effectiveDate)}</td>
+                    <td data-label="Expires">{fmtDate(p.expirationDate)}</td>
+                    <td data-label="Bound">{fmtDate(p.datePolicyBound?.slice(0, 10))}</td>
+                    <td data-label="Status">
                       <Badge {...statusBadge(POLICY_STATUS_BADGE, p.status)} />
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
+            <Pagination total={sorted.length} page={page.page} onPage={page.setPage} noun="policies" />
           </div>
         )}
       </div>

@@ -1,3 +1,4 @@
+import { Field } from "./ui/kit";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { client, type Account } from "../lib/client";
 import { listAllPages } from "../lib/pagination";
@@ -43,13 +44,13 @@ export default function SubmissionsPanel({ account, initialEstimateId }: { accou
     return () => clearInterval(timer);
   }, [pending, resource.refetch]);
   return <section className="hc-submissions" aria-label="Carrier submissions">
-    <div className="hc-heading"><div><h2>Submissions</h2><p className="muted">Create a Honeycomb partial submission, then finish it in the carrier portal.</p></div>
+    <div className="hc-heading"><div><h2>Honeycomb submission</h2><p className="muted">Create a Honeycomb partial submission, then finish it in the carrier portal.</p></div>
       {resource.data?.enabled && account.type === "ASSOCIATION" && <button className="primary" onClick={() => { setRetry(undefined); setOpen(true); }}>New submission</button>}
     </div>
-    <p className="hc-notice">Staging · For testing. Partial submissions stay on this account; they do not create a bindable quote or change a Lead to a Client.</p>
+    {resource.data?.enabled && <p className="hc-notice">Staging · For testing. Partial submissions stay on this account; they do not create a bindable quote or change a Lead to a Client.</p>}
     {resource.error && <p role="alert" className="error-text">{resource.error} <button className="secondary" onClick={() => void resource.refetch()}>Refresh</button></p>}
     {!resource.loaded && <p role="status">Loading submissions…</p>}
-    {resource.data && !resource.data.enabled && <p>Honeycomb submissions are currently enabled in staging only.</p>}
+    {resource.data && !resource.data.enabled && <div className="empty-state"><strong>Honeycomb integration is not available in this environment</strong><p>It is currently enabled in staging only. Continue with your normal carrier submission process, then record the returned quote in Coverage &amp; markets → Quotes.</p></div>}
     {account.type !== "ASSOCIATION" && <p>This Honeycomb workflow supports association accounts.</p>}
     {resource.data?.enabled && !resource.error && account.type === "ASSOCIATION" && (open ?? (!records.length && !queuedId)) && <Composer
       key={retry ? `${retry.id}:${retry.attempt}` : "new"} account={account} estimates={resource.data.estimates} records={records} retry={retry}
@@ -90,19 +91,19 @@ function Composer({ account, estimates, records, retry, initialEstimateId, onCan
   }
   return <form className="card hc-composer" onSubmit={event => void submit(event)} aria-label="Review Honeycomb submission">
     <h3>{retry ? "Correct and retry submission" : "Review property details"}</h3>
-    <div className="field"><label htmlFor="hc-source">Start from</label><select id="hc-source" value={sourceId} disabled={busy} onChange={e => { setSourceId(e.target.value); setReviewed(false); setError(""); }}>
+    <Field className="field"><label htmlFor="hc-source">Start from</label><select id="hc-source" value={sourceId} disabled={busy} onChange={e => { setSourceId(e.target.value); setReviewed(false); setError(""); }}>
       <option value="">No linked estimate — enter property details</option>
       {sourceId && !source && <option value={sourceId}>Selected estimate is no longer eligible</option>}
       {eligible.map(e => <option value={e.id} key={e.id}>Website estimate · {new Date(e.createdAt).toLocaleDateString()} · {e.price != null ? `$${e.price.toLocaleString("en-US")}` : "Eligible"} · {e.estimationId}</option>)}
-    </select></div>
+    </select></Field>
     {source && <p className="small muted">Honeycomb estimate {source.estimationId} is linked. Its original property details are preserved below.</p>}
     {!source && <p className="small muted">Enter known property details. Unanswered optional questions will be completed in Honeycomb.</p>}
     <fieldset disabled={busy} className="hc-fields"><div className="form-grid">
-      <div className="field hc-full"><label htmlFor="hc-name">Legal insured name *</label><input id="hc-name" required maxLength={200} value={form.nameInsured} readOnly={originalData.nameInsured != null} onChange={e => change("nameInsured", e.target.value)} /></div>
-      <div className="field hc-full"><label htmlFor="hc-address">Full property address *</label><input id="hc-address" required maxLength={800} value={form.address} readOnly={!!source} onChange={e => change("address", e.target.value)} /></div>
-      <div className="field"><label htmlFor="hc-date">Effective date *</label><input id="hc-date" type="date" required min={businessDate()} max={lastEffectiveDate()} value={form.effectiveDate} readOnly={!!retry || originalData.effectiveDate != null} onChange={e => change("effectiveDate", e.target.value)} /></div>
-      <div className="field"><label htmlFor="hc-type">Property type</label><select id="hc-type" value={form.buildingType ?? ""} disabled={!!source} onChange={e => change("buildingType", e.target.value)}><option value="">Not yet confirmed</option><option value="condominium">Condominium association</option></select></div>
-      {([['grossSQFeet', 'Total building area (sq ft)'], ['replacementValue', 'Building replacement cost ($)'], ['numUnits', 'Number of units'], ['yearBuilt', 'Year built'], ['numStories', 'Stories']] as const).map(([key, label]) => <div className="field" key={key}><label htmlFor={`hc-${key}`}>{label}</label><input id={`hc-${key}`} inputMode={key === "grossSQFeet" || key === "replacementValue" ? "decimal" : "numeric"} value={formatInput(form[key], key === "yearBuilt")} readOnly={originalData[key] != null} onChange={e => { const raw = e.target.value.replaceAll(",", ""); if (/^\d*(\.\d*)?$/.test(raw)) change(key, raw); }} /></div>)}
+      <Field className="field hc-full"><label htmlFor="hc-name">Legal insured name *</label><input id="hc-name" required maxLength={200} value={form.nameInsured} readOnly={originalData.nameInsured != null} onChange={e => change("nameInsured", e.target.value)} /></Field>
+      <Field className="field hc-full"><label htmlFor="hc-address">Full property address *</label><input id="hc-address" required maxLength={800} value={form.address} readOnly={!!source} onChange={e => change("address", e.target.value)} /></Field>
+      <Field className="field"><label htmlFor="hc-date">Effective date *</label><input id="hc-date" type="date" required min={businessDate()} max={lastEffectiveDate()} value={form.effectiveDate} readOnly={!!retry || originalData.effectiveDate != null} onChange={e => change("effectiveDate", e.target.value)} /></Field>
+      <Field className="field"><label htmlFor="hc-type">Property type</label><select id="hc-type" value={form.buildingType ?? ""} disabled={!!source} onChange={e => change("buildingType", e.target.value)}><option value="">Not yet confirmed</option><option value="condominium">Condominium association</option></select></Field>
+      {([['grossSQFeet', 'Total building area (sq ft)'], ['replacementValue', 'Building replacement cost ($)'], ['numUnits', 'Number of units'], ['yearBuilt', 'Year built'], ['numStories', 'Stories']] as const).map(([key, label]) => <Field className="field" key={key}><label htmlFor={`hc-${key}`}>{label}</label><input id={`hc-${key}`} inputMode={key === "grossSQFeet" || key === "replacementValue" ? "decimal" : "numeric"} value={formatInput(form[key], key === "yearBuilt")} readOnly={originalData[key] != null} onChange={e => { const raw = e.target.value.replaceAll(",", ""); if (/^\d*(\.\d*)?$/.test(raw)) change(key, raw); }} /></Field>)}
     </div></fieldset>
     <p className="small muted">Replacement cost means the cost to rebuild the buildings. Confirm it separately from the account’s total insured value.</p>
     <label className="hc-review"><input type="checkbox" checked={reviewed} disabled={busy} onChange={e => setReviewed(e.target.checked)} /><span>I reviewed these details and want to create a partial submission in Honeycomb staging.</span></label>
@@ -149,9 +150,9 @@ function Recovery({ record, refresh }: { record: Submission; refresh: () => Prom
     finally { lock.current = false; setBusy(false); }
   }
   return <details><summary>Record portal review</summary><form className="hc-recovery" onSubmit={event => void save(event)}>
-    <div className="field"><label htmlFor={`${record.id}-outcome`}>Review outcome</label><select id={`${record.id}-outcome`} value={outcome} disabled={busy} onChange={e => { setOutcome(e.target.value); setReviewed(false); }}><option value="LINK_EXISTING">Found an existing submission</option><option value="NOT_CREATED">Confirmed no submission was created</option></select></div>
-    {outcome === "LINK_EXISTING" && <div className="field"><label htmlFor={`${record.id}-carrier`}>Submission ID from Honeycomb portal URL</label><input id={`${record.id}-carrier`} required value={id} disabled={busy} onChange={e => setId(e.target.value)} /></div>}
-    <div className="field"><label htmlFor={`${record.id}-note`}>Review note</label><textarea id={`${record.id}-note`} required maxLength={2000} value={note} disabled={busy} onChange={e => setNote(e.target.value)} /></div>
+    <Field className="field"><label htmlFor={`${record.id}-outcome`}>Review outcome</label><select id={`${record.id}-outcome`} value={outcome} disabled={busy} onChange={e => { setOutcome(e.target.value); setReviewed(false); }}><option value="LINK_EXISTING">Found an existing submission</option><option value="NOT_CREATED">Confirmed no submission was created</option></select></Field>
+    {outcome === "LINK_EXISTING" && <Field className="field"><label htmlFor={`${record.id}-carrier`}>Submission ID from Honeycomb portal URL</label><input id={`${record.id}-carrier`} required value={id} disabled={busy} onChange={e => setId(e.target.value)} /></Field>}
+    <Field className="field"><label htmlFor={`${record.id}-note`}>Review note</label><textarea id={`${record.id}-note`} required maxLength={2000} value={note} disabled={busy} onChange={e => setNote(e.target.value)} /></Field>
     <label className="hc-review"><input type="checkbox" checked={reviewed} disabled={busy} onChange={e => setReviewed(e.target.checked)} /><span>I verified this outcome in the Honeycomb portal or with their team.</span></label>
     {error && <p role="alert">{error}</p>}<button className="secondary" disabled={!reviewed || busy} type="submit">{busy ? "Saving review…" : "Save review outcome"}</button>
   </form></details>;

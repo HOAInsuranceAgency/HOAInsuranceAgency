@@ -15,10 +15,10 @@ const frontInput = () => screen.getByRole("textbox", { name: /^Front teammate ID
 const dialpadInput = () => screen.getByRole("textbox", { name: /^Dialpad user ID/ });
 
 describe("protected teammate connection IDs", () => {
-  it("shows exact IDs as read-only text until the user explicitly opens the editor", async () => {
+  it("shows connection readiness and only exposes exact IDs in the editor", async () => {
     render(<LeadEligibilitySettings />);
-    expect(await screen.findByText(member.frontId!)).toBeVisible();
-    expect(screen.getByText(member.dialpadId!)).toBeVisible();
+    expect(await screen.findAllByText("Connected")).toHaveLength(2);
+    expect(screen.queryByText(member.frontId!)).toBeNull();
     expect(screen.queryByRole("textbox")).toBeNull();
     await edit();
     expect(screen.getByRole("dialog", { name: "Connections for Jake Greasley" })).toBeVisible();
@@ -49,7 +49,7 @@ describe("protected teammate connection IDs", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save connections" }));
     await waitFor(() => expect(h.request).toHaveBeenCalledWith("saveEligibility", { ...member, frontId: "tea_new123" }, true));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    expect(screen.getByText("tea_new123")).toBeVisible();
+    expect(screen.getAllByText("Connected")).toHaveLength(2);
     expect(screen.getByRole("checkbox", { name: "Salesperson eligibility for Jake Greasley" })).toBeChecked();
     expect(screen.getByRole("checkbox", { name: "Deal champion eligibility for Jake Greasley" })).toBeChecked();
     fireEvent.click(screen.getByRole("checkbox", { name: "Salesperson eligibility for Jake Greasley" }));
@@ -69,7 +69,7 @@ describe("protected teammate connection IDs", () => {
     expect(frontInput()).toHaveValue("tea_retry");
     fireEvent.click(screen.getByRole("button", { name: "Save connections" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    expect(screen.getByText("tea_retry")).toBeVisible();
+    await edit(); expect(frontInput()).toHaveValue("tea_retry");
   });
   it("prevents repeated saves or dismissing a request while it is in progress", async () => {
     let finish!: (result: unknown) => void;

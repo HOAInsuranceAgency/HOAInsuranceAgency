@@ -325,7 +325,7 @@ export default function FormsTab({
         <div className="table-wrap">
           <table>
             <tbody>
-              {APP_FORMS.map((f) => {
+              {APP_FORMS.filter(f => MAPPED_APP_FORM_KEYS.has(f.key)).map((f) => {
                 const mapped = MAPPED_APP_FORM_KEYS.has(f.key);
                 return (
                   <tr key={f.key}>
@@ -355,6 +355,7 @@ export default function FormsTab({
             </tbody>
           </table>
         </div>
+        <details><summary>Other forms · {APP_FORMS.filter(f => !MAPPED_APP_FORM_KEYS.has(f.key)).length} not available yet</summary><p className="muted small">These forms cannot yet be filled automatically. Use the carrier's form until setup is complete.</p><ul>{APP_FORMS.filter(f => !MAPPED_APP_FORM_KEYS.has(f.key)).map(f => <li key={f.key}>{f.label}</li>)}</ul></details>
         {genStatus.status.state !== "idle" && (
           <p style={{ margin: "10px 0 0" }}>
             <SaveStatus {...genStatus.status} />

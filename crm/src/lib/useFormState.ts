@@ -1,3 +1,4 @@
+import { useDirtyForm } from "../components/ui/unsaved";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 /**
@@ -144,6 +145,8 @@ export function useFormState<T extends object>(
     const seed = typeof initial === "function" ? (initial as () => T)() : initial;
     return { form: seed, baseline: seed, saved: false };
   });
+  const dirty = (Object.keys(state.form) as (keyof T)[]).some(k => !sameValue(state.form[k], state.baseline[k]));
+  const clearDirty = useDirtyForm(dirty);
 
   // The callback closes over the caller's props, so it is a different function
   // every render; the ref is what lets the setters below keep one identity.
@@ -181,21 +184,20 @@ export function useFormState<T extends object>(
   }, []);
 
   const markSaved = useCallback(() => {
+    clearDirty();
     setState((s) => ({ form: s.form, baseline: s.form, saved: true }));
-  }, []);
+  }, [clearDirty]);
 
   const reset = useCallback((next?: T) => {
+    clearDirty();
     onEditRef.current?.();
     setState((s) => {
       const seed = next ?? s.baseline;
       return { form: seed, baseline: seed, saved: false };
     });
-  }, []);
+  }, [clearDirty]);
 
-  const { form, baseline, saved } = state;
-  const dirty = (Object.keys(form) as (keyof T)[]).some(
-    (k) => !sameValue(form[k], baseline[k])
-  );
+  const { form, saved } = state;
 
   return { form, setF, patch, dirty, saved, markSaved, reset };
 }

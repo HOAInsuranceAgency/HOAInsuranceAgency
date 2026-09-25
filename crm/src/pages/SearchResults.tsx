@@ -1,5 +1,7 @@
+import { Pagination } from "../components/ui/kit";
+import { useListPage } from "../lib/useListPage";
 import { useMemo, useState } from "react";
-import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import {
   client,
   fmtDate,
@@ -10,7 +12,7 @@ import {
 import { downloadFile } from "../lib/storage";
 import FilePreviewModal, { canPreview } from "../components/FilePreview";
 import { useAsyncResource } from "../lib/useAsyncResource";
-import { useSort, SortTh } from "../lib/useSort";
+import { MobileSort, useSort, SortTh } from "../lib/useSort";
 import {
   HIT_TYPE_LABEL,
   MIN_QUERY_LENGTH,
@@ -32,7 +34,7 @@ const NO_RESULTS: CrmDocument[] = [];
  */
 export default function SearchResults() {
   const [searchParams] = useSearchParams();
-  const navigate = useNavigate();
+  const [category, setCategory] = useState("");
   const q = (searchParams.get("q") ?? "").trim();
   const runnable = q.length >= MIN_QUERY_LENGTH;
 
@@ -72,7 +74,7 @@ export default function SearchResults() {
 
   // Most recently uploaded first, as the old page ordered the hits.
   const { sorted, sortKey, dir, toggle } = useSort(
-    docs.data,
+    docs.data.filter(d => !category || d.category === category),
     {
       document: (d) => d.name,
       attached: (d) => d.entityType,
@@ -81,6 +83,8 @@ export default function SearchResults() {
     "uploaded",
     "desc"
   );
+
+  const page = useListPage(sorted, `${q}:${category}:${sortKey}:${dir}`);
 
   async function download(doc: CrmDocument) {
     setDownloadError("");
@@ -106,7 +110,7 @@ export default function SearchResults() {
       <h1>Search</h1>
       <p className="sub">
         {runnable
-          ? `Everything matching “${q}”`
+          ? `Records and document text matching “${q}”`
           : "Type in the search bar above — two characters minimum"}
       </p>
 
@@ -128,16 +132,12 @@ export default function SearchResults() {
                 )}
               </h2>
               <div className="table-wrap">
-                <table>
+                <table className="stacked-table">
                   <tbody>
                     {g.hits.map((h) => (
-                      <tr
-                        key={h.id}
-                        className="clickable"
-                        onClick={() => navigate(h.target)}
-                      >
+                      <tr key={h.id}>
                         <td>
-                          <strong>{h.label}</strong>
+                          <Link to={h.target}>{h.label}</Link>
                         </td>
                         <td className="small muted">{h.sub}</td>
                       </tr>
@@ -151,6 +151,7 @@ export default function SearchResults() {
           {downloadError && <p className="error-text">{downloadError}</p>}
           <div className="card">
             <h2>Documents</h2>
+            <label className="field">Category<select value={category} onChange={e => setCategory(e.target.value)}><option value="">All categories</option>{[...new Set(docs.data.map(d => d.category).filter(Boolean))].sort().map(c => <option key={c} value={c!}>{c}</option>)}</select></label>
             {!docs.loaded ? (
               <p className="muted small">Searching document text…</p>
             ) : docs.error ? (
@@ -159,7 +160,8 @@ export default function SearchResults() {
               <p className="muted small">No documents match “{q}”.</p>
             ) : (
               <div className="table-wrap">
-                <table>
+                <MobileSort options={[["document", "Document"], ["attached", "Attached to"], ["uploaded", "Uploaded"]]} sortKey={sortKey} dir={dir} onToggle={toggle} />
+                <table className="stacked-table">
                   <thead>
                     <tr>
                       <SortTh label="Document" colKey="document" sortKey={sortKey} dir={dir} onToggle={toggle} />
@@ -170,9 +172,9 @@ export default function SearchResults() {
                     </tr>
                   </thead>
                   <tbody>
-                    {sorted.map((d) => (
+                    {page.rows.map((d) => (
                       <tr key={d.id}>
-                        <td>
+                        <td data-label="Document">
                           <strong>{d.name}</strong>
                           {d.category && (
                             <div>
@@ -180,12 +182,12 @@ export default function SearchResults() {
                             </div>
                           )}
                         </td>
-                        <td className="small muted" style={{ maxWidth: 380 }}>
+                        <td className="small muted" style={{ maxWidth: 380 }} data-label="Match">
                           {ocrSnippet(d.ocrText, q) ?? "matched file name"}
                         </td>
-                        <td>{entityLink(d)}</td>
-                        <td className="small">{fmtDate(d.createdAt?.slice(0, 10))}</td>
-                        <td style={{ whiteSpace: "nowrap" }}>
+                        <td data-label="Attached to">{entityLink(d)}</td>
+                        <td className="small" data-label="Uploaded">{fmtDate(d.createdAt?.slice(0, 10))}</td>
+                        <td style={{ whiteSpace: "nowrap" }} data-label="Actions">
                           {canPreview(d.name) && (
                             <button className="link" onClick={() => setPreviewDoc(d)}>
                               Preview
@@ -204,6 +206,7 @@ export default function SearchResults() {
           </div>
         </>
       )}
+      {runnable && docs.loaded && !docs.error && <Pagination total={sorted.length} page={page.page} onPage={page.setPage} noun="documents" />}
       {previewDoc && (
         <FilePreviewModal
           s3Key={previewDoc.s3Key}

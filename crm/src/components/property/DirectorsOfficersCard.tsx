@@ -1,3 +1,4 @@
+import { Field } from "../ui/kit";
 import { useEffect, useRef } from "react";
 import {
   assertNoErrors,
@@ -118,22 +119,22 @@ export default function DirectorsOfficersCard({
       ) : (
         <>
           <div className="form-grid">
-            <div className="field">
+            <Field className="field">
               <label>Separate defence limit?</label>
               <YesNoRadio
                 name="do-separate-defense"
                 value={app.form.form.separateDefenseLimit}
                 onChange={(v) => app.form.setF("separateDefenseLimit", v)}
               />
-            </div>
-            <div className="field">
+            </Field>
+            <Field className="field">
               <label>Defence limit ($)</label>
               <MoneyInput
                 value={app.form.form.defenseLimit}
                 onChange={(v) => app.form.setF("defenseLimit", v)}
               />
-            </div>
-            <div className="field">
+            </Field>
+            <Field className="field">
               <label>Defence costs</label>
               <select
                 value={app.form.form.defenseLimitPosition}
@@ -146,14 +147,14 @@ export default function DirectorsOfficersCard({
                   </option>
                 ))}
               </select>
-            </div>
-            <div className="field">
+            </Field>
+            <Field className="field">
               <label>Pending / prior litigation date</label>
               <DateInput
                 value={app.form.form.pendingPriorLitigationDate}
                 onChange={(v) => app.form.setF("pendingPriorLitigationDate", v)}
               />
-            </div>
+            </Field>
           </div>
 
           <div className="form-actions">

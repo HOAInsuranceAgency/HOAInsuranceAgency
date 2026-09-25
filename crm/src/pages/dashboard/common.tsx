@@ -60,6 +60,7 @@ interface TabResource {
   loaded: boolean;
   error: string;
   refetch: () => Promise<void>;
+  updatedAt?: number;
 }
 
 /**
@@ -86,9 +87,9 @@ export function TabFrame({
   res: TabResource;
   children: ReactNode;
 }) {
-  const succeeded = useRef(false);
+  const succeeded = useRef(res.updatedAt !== undefined);
   const [asOf, setAsOf] = useState<Date | null>(null);
-  useEffect(() => { if (res.loaded && !res.loading && !res.error) setAsOf(new Date()); }, [res.loaded, res.loading, res.error]);
+  useEffect(() => { if (res.loaded && !res.loading && !res.error) setAsOf(new Date(res.updatedAt ?? Date.now())); }, [res.updatedAt, res.loaded, res.loading, res.error]);
   // A settled, error-free fetch — not merely `loaded`, which is also true
   // while a retry after a failed first load is in flight (loaded stuck from
   // the failed settle, error just cleared). Latching there would render the
@@ -138,8 +139,8 @@ export function TabFrame({
 function RefreshStamp({ res }: { res: TabResource }) {
   const [stamp, setStamp] = useState<Date | null>(null);
   useEffect(() => {
-    if (res.loaded && !res.loading && !res.error) setStamp(new Date());
-  }, [res.loaded, res.loading, res.error]);
+    if (res.loaded && !res.loading && !res.error) setStamp(new Date(res.updatedAt ?? Date.now()));
+  }, [res.updatedAt, res.loaded, res.loading, res.error]);
 
   return (
     <div className="tab-updated muted small">

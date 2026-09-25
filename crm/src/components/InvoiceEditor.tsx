@@ -1,3 +1,4 @@
+import { Field } from "./ui/kit";
 import { useCallback, useState } from "react";
 import {
   client,
@@ -555,7 +556,7 @@ export function InvoiceEditor({
       <div className="form-grid invoice-details">
         {/* Its own row. The warning below it is the loudest thing on this
             card and reads as four cramped lines in a third-width column. */}
-        <div className="field full policy-field">
+        <Field className="field full policy-field">
           <label>Bills</label>
           {/* W8: fixed at creation. Wrong anchor? Delete the draft and make
               a new one — re-pointing a bill is how two invoices land on one
@@ -586,8 +587,8 @@ export function InvoiceEditor({
               onto the new policy.
             </p>
           ) : null}
-        </div>
-        <div className="field">
+        </Field>
+        <Field className="field">
           <label htmlFor={inputId("issued")}>Issued</label>
           <input
             id={inputId("issued")}
@@ -596,8 +597,8 @@ export function InvoiceEditor({
             disabled={locked}
             onBlur={(e) => void patchInvoice({ issuedAt: e.target.value || null })}
           />
-        </div>
-        <div className="field">
+        </Field>
+        <Field className="field">
           <label htmlFor={inputId("due")}>Due</label>
           <input
             id={inputId("due")}
@@ -606,8 +607,8 @@ export function InvoiceEditor({
             disabled={locked}
             onBlur={(e) => void patchInvoice({ dueAt: e.target.value || null })}
           />
-        </div>
-        <div className="field full">
+        </Field>
+        <Field className="field full">
           <label htmlFor={inputId("memo")}>Memo</label>
           <textarea
             id={inputId("memo")}
@@ -617,14 +618,14 @@ export function InvoiceEditor({
             disabled={locked}
             onBlur={(e) => void patchInvoice({ memo: e.target.value.trim() || null })}
           />
-        </div>
+        </Field>
       </div>
 
       {/* ── Send ───────────────────────────────────────────────────────── */}
       {!locked && (
         <div className="card inset">
           <h3>Send</h3>
-          <div className="field">
+          <Field className="field">
             <label htmlFor={inputId("to")}>Send to</label>
             {withEmail.length === 0 ? (
               <p className="warn-inline">
@@ -664,7 +665,7 @@ export function InvoiceEditor({
                 </ul>
               </>
             )}
-          </div>
+          </Field>
           <p className="muted small">
             The agency is copied on every invoice, so a sent copy is findable
             without opening the CRM. A branded PDF is attached automatically,
