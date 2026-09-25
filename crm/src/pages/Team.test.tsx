@@ -18,7 +18,7 @@ vi.mock("aws-amplify/data", () => ({
 // SignatureManager (rendered once per roster row) imports these at module
 // scope. Only getUrl can fire, and only for a profile that has a signatureKey —
 // no row here does — but the module still has to resolve.
-vi.mock("aws-amplify/storage", () => ({
+vi.mock("../lib/scopedStorage", () => ({
   getUrl: vi.fn(),
   uploadData: vi.fn(),
   remove: vi.fn(),

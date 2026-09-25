@@ -4,7 +4,7 @@ import { ResponsibilitySelect } from "../components/LeadWorkflowPanel";
 import { useAsyncResource } from "../lib/useAsyncResource";
 import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import { uploadData } from "aws-amplify/storage";
+import { uploadData } from "../lib/scopedStorage";
 import {
   client,
   friendlyError,
@@ -34,10 +34,10 @@ export default function NewLead() {
   const navigate = useNavigate();
   const requestId = useRef(crypto.randomUUID());
   const [salespersonId, setSalesperson] = useState("");
-  const members = useAsyncResource(() => communicationRequest<{ team: TeamEligibility[] }>("team"), [], { initialData: { team: [] } });
+  const members = useAsyncResource(() => communicationRequest<{ team: TeamEligibility[]; actorId?: string }>("team"), [], { initialData: { team: [] } });
   useEffect(() => {
-    const brian = members.data.team.find(t => t.name.toLowerCase() === "brian cole" && t.enabled && t.salesperson);
-    if (brian) { setSalesperson(s => s || brian.userId); }
+    const self = members.data.team.find(t => t.userId === members.data.actorId && t.enabled && t.salesperson);
+    if (self) setSalesperson(s => s || self.userId);
   }, [members.data]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");

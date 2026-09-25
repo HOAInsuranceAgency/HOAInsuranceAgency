@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { list, uploadData } from "aws-amplify/storage";
+import { list, uploadData } from "../lib/scopedStorage";
 import { ACORD_FORMS, listTemplateFields, type AcordFormDef } from "../lib/acord";
 import FileButton from "../components/FileButton";
 import Team from "./Team";

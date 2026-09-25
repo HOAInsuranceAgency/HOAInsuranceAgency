@@ -4,7 +4,7 @@ import { DynamoDBDocumentClient, GetCommand, QueryCommand, TransactWriteCommand,
 
 export const db = DynamoDBDocumentClient.from(new DynamoDBClient(), { marshallOptions: { removeUndefinedValues: true } });
 export const table = () => { if (!process.env.COMMUNICATION_TABLE) throw new Error("Communication storage is not configured"); return process.env.COMMUNICATION_TABLE; };
-export type Row<T = Record<string, unknown>> = { id: string; kind: string; version: number; data: T; createdAt: string; updatedAt: string; accountId?: string; accountSort?: string; workKind?: string; workAt?: string; dueGroup?: string; dueAt?: string };
+export type Row<T = Record<string, unknown>> = { id: string; kind: string; version: number; data: T; createdAt: string; updatedAt: string; accountId?: string; assignedSalespersonId?: string; accountSort?: string; workKind?: string; workAt?: string; dueGroup?: string; dueAt?: string };
 export type Write = NonNullable<TransactWriteCommandInput["TransactItems"]>[number];
 export const hash = (value: string) => createHash("sha256").update(value).digest("hex");
 export function canonical(value: unknown): string {
@@ -22,6 +22,7 @@ export function row<T>(kind: string, id: string, data: T, opts: { accountId?: st
     : kind === "EVENT" ? !values.processedAt && !values.resolved
     : ["ISSUE", "TRIAGE", "NOTIFICATION"].includes(kind) && !values.resolved;
   return { id, kind, data, ...(actionable ? { workKind: kind, workAt: values.dueAt ?? values.at ?? opts.previous?.createdAt ?? now } : {}), version: (opts.previous?.version ?? 0) + 1, createdAt: opts.previous?.createdAt ?? now, updatedAt: now,
+    ...(kind === "WORKFLOW" && values.salespersonId ? { assignedSalespersonId: values.salespersonId } : {}),
     ...(opts.accountId ? { accountId: opts.accountId, accountSort: opts.previous?.accountSort ?? `${kind}#${(data as { at?: string }).at ?? now}#${id}` } : {}),
     ...(opts.dueAt ? { dueGroup: "DUE", dueAt: opts.dueAt } : {}) };
 }
