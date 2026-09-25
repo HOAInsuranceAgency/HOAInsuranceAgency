@@ -8,9 +8,7 @@ import { textLeadAlerts } from "../lead-intake/alerts";
 import type { LeadSummary } from "../lead-intake/sms";
 import type { Submission } from "../lead-intake/handler";
 import { renderIntakeBrief } from "../lead-intake/brief";
-import { reminderWindow, nextReminderMorning, type Communication, type LeadTask } from "../../../../shared/leadWorkflow";
-import { reminderSummary, type ReminderGroup } from "./reminderSummary";
-import { agencyDay } from "../../../../shared/leadActionGuidance";
+import type { Communication, Responsibility } from "../../../../shared/leadWorkflow";
 
 export interface Operation {
   type: "ATTACHMENT" | "IMPORT" | "EMAIL" | "COMMENT" | "SMS_ALERT" | "ARCHIVE" | "REOPEN" | "ASSIGN";
@@ -19,9 +17,10 @@ export interface Operation {
   conversationId?: string; recipient?: string; subject?: string; html?: string; text?: string;
   uid?: string; messageId?: string; error?: string; leaseUntil?: string; assigneeId?: string;
   lead?: LeadSummary; sourceMessageId?: string; attachmentId?: string; requestedBy?: string;
+  // Legacy reminder metadata is retained so queued deliveries can be retired.
   reminder?: { taskId: string; noticeAt: string; recipientId: string; escalated: boolean; stage?: string; workflowVersion?: number };
   afterOperationId?: string;
-  reminderGroup?: ReminderGroup; summaryTaskIds?: string[];
+  reminderGroup?: { day: string; role: Responsibility; recipientId: string; accountableId?: string; anchorTaskId: string }; summaryTaskIds?: string[];
 }
 export async function enqueueOperation(id: string, data: Omit<Operation, "state" | "attempts">) {
   const old = await get<Operation>(id);
@@ -45,6 +44,16 @@ async function transition(old: Row<Operation>, patch: Partial<Operation>, delay?
 export async function runOperation(candidate: Row<Operation>) {
   let op = await get<Operation>(candidate.id);
   if (!op || ["CONFIRMED", "FAILED", "SUPPRESSED", "UNKNOWN"].includes(op.data.state)) return;
+  // Retire reminders queued by earlier deployments, including retries and old
+  // per-task formats. This must run before pause, routing, or provider checks.
+  // Keep new inbound activity and ordinary team comments on their existing paths.
+  const retiredReminder = ["COMMENT", "REOPEN"].includes(op.data.type) && (op.data.reminderGroup || op.data.reminder ||
+    /^op:(morning-summary|morning-reopen|reminder-comment|reopen:notice):/.test(op.id));
+  if (retiredReminder) {
+    if (op.data.state === "LEASED" && op.data.leaseUntil! > new Date().toISOString()) return;
+    await transition(op, { state: "SUPPRESSED", leaseUntil: undefined, error: "Scheduled Front reminders have been removed; work remains tracked in the CRM" });
+    return;
+  }
   if (!['LEASED', 'ACCEPTED'].includes(op.data.state) && await get(`deleted-account:${op.data.accountId}`)) { await transition(op, { state: 'SUPPRESSED', error: 'Lead deleted' }); return; }
   if (op.data.state === "LEASED") {
     if (op.data.leaseUntil! > new Date().toISOString()) return;
@@ -71,59 +80,6 @@ export async function runOperation(candidate: Row<Operation>) {
       inboundSource = await get<Communication>(op.id.slice("op:inbound:".length));
       if (inboundSource && inboundSource.accountId === op.accountId && inboundSource.data.resolved) {
         await transition(op, { state: "SUPPRESSED", error: "This request was already answered" }); return;
-      }
-    }
-    // Retire old queued reminder reopens: their old notices contain no reason.
-    // The migrated task remains open and its next morning escalation is retained.
-    if (op.data.type === "REOPEN" && op.id.startsWith("op:reopen:notice:") && !op.data.reminder) {
-      await transition(op, { state: "SUPPRESSED", error: "Replaced by morning reminders" }); return;
-    }
-    if (op.data.reminder && (op.id.startsWith("op:reminder-comment:") || op.id.startsWith("op:reopen:"))) {
-      await transition(op, { state: "SUPPRESSED", error: "Replaced by the account's consolidated morning summary; the commitment remains tracked" }); return;
-    }
-    let reminderTask: Row<LeadTask> | undefined;
-    let summaryTasks: Row<LeadTask>[] = [], summaryText: string | undefined;
-    let reminderRouting: Row | undefined;
-    if (op.data.reminderGroup) {
-      const now = new Date().toISOString();
-      if (op.data.reminderGroup.day !== agencyDay(now)) { await transition(op, { state: "SUPPRESSED", error: "Replaced by the current morning summary" }); return; }
-      if (!reminderWindow(now, c.holidays)) { await transition(op, { state: "RETRY_WAIT" }, Math.max(1, (Date.parse(nextReminderMorning(now, c.holidays)) - Date.now()) / 1000)); return; }
-      let restrictTo: string[] | undefined;
-      if (op.data.afterOperationId) {
-        const comment = await get<Operation>(op.data.afterOperationId);
-        if (comment?.data.state !== "CONFIRMED") {
-          if (comment && ["FAILED", "UNKNOWN", "SUPPRESSED"].includes(comment.data.state)) { await transition(op, { state: "SUPPRESSED", error: "The summary could not be confirmed; commitments remain in the CRM" }); return; }
-          await transition(op, { state: "RETRY_WAIT" }, 60); return;
-        }
-        restrictTo = comment.data.summaryTaskIds ?? [];
-      }
-      reminderRouting = await get("team-routing");
-      const summary = await reminderSummary(op.data.reminderGroup, wf, op.data.conversationId!, now, restrictTo);
-      summaryTasks = summary.tasks; summaryText = summary.text;
-      if (!summaryTasks.length) { await transition(op, { state: "SUPPRESSED", error: "The summarized work was completed, changed or reassigned" }); return; }
-    }
-    if (op.data.reminder) {
-      const reminder = op.data.reminder;
-      reminderRouting = await get("team-routing");
-      reminderTask = await get<LeadTask>(reminder.taskId);
-      const route = reminderTask ? await (await import("./routing")).resolveTaskRoute(reminderTask.data, wf.data) : undefined;
-      const recipient = reminder.stage === "OWNER" ? route?.ownerId : reminder.escalated ? route?.managerId : route?.recipientId;
-      const noticeAt = reminderTask?.data.lastReminderAt ?? (reminder.escalated ? reminderTask?.data.escalatedAt : reminderTask?.data.notifiedAt);
-      if (reminder.workflowVersion != null && reminder.workflowVersion !== wf.version || !reminderTask || reminderTask.data.status !== "OPEN" || wf.data.disposition === "BOUND" && (reminderTask.data.context ?? "LEAD") === "LEAD" && !wf.data.openLeadQuoteIds?.length || recipient !== reminder.recipientId || noticeAt !== reminder.noticeAt || (!reminder.escalated && route?.managerId !== route?.accountableId && reminderTask.data.escalationAt <= new Date().toISOString())) {
-        await transition(op, { state: "SUPPRESSED", error: "This action was completed, changed or reassigned" }); return;
-      }
-      const now = new Date().toISOString();
-      if (!reminderWindow(now, c.holidays)) {
-        await transition(op, { state: "RETRY_WAIT" }, Math.max(1, (Date.parse(nextReminderMorning(now, c.holidays)) - Date.now()) / 1000)); return;
-      }
-      if (op.data.afterOperationId) {
-        const comment = await get<Operation>(op.data.afterOperationId);
-        if (comment?.data.state !== "CONFIRMED") {
-          if (comment && ["FAILED", "UNKNOWN", "SUPPRESSED"].includes(comment.data.state)) {
-            await transition(op, { state: "SUPPRESSED", error: "The reminder explanation could not be confirmed; the CRM reminder remains visible" }); return;
-          }
-          await transition(op, { state: "RETRY_WAIT" }, 60); return;
-        }
       }
     }
     if (op.data.type === "EMAIL" && (wf.data.humanTakeover || wf.data.disposition !== "ACTIVE")) { await transition(op, { state: "SUPPRESSED" }); await updateReply(op.data, "SUPPRESSED", "Handled by the team"); return; }
@@ -156,7 +112,7 @@ export async function runOperation(candidate: Row<Operation>) {
     } else if (op.data.type === "COMMENT") {
       const cnv = op.data.conversationId ?? wf.data.conversationId;
       if (!cnv) throw new ProviderError("Waiting for a linked Front conversation", 0, false);
-      await permittedConversation(cnv); path = `/conversations/${cnv}/comments`; body = { body: summaryText ?? op.data.text };
+      await permittedConversation(cnv); path = `/conversations/${cnv}/comments`; body = { body: op.data.text };
     } else if (op.data.type === "ARCHIVE" || op.data.type === "REOPEN" || op.data.type === "ASSIGN") {
       const cnv = op.data.conversationId ?? wf.data.conversationId;
       if (!cnv) throw new Error("No linked Front conversation");
@@ -171,8 +127,8 @@ export async function runOperation(candidate: Row<Operation>) {
         body = { assignee_id: member.data.frontId };
       }
     }
-    const leased = row("OPERATION", op.id, { ...op.data, ...(summaryText ? { text: summaryText, summaryTaskIds: summaryTasks.map(t => t.id) } : {}), state: "LEASED" as const, attempts: op.data.attempts + 1, leaseUntil: new Date(Date.now() + 180_000).toISOString() }, { accountId: op.accountId, previous: op, dueAt: new Date(Date.now() + 180_000).toISOString() });
-    await commit([put(leased, op), absent(`deleted-account:${op.data.accountId}`), ...(reminderRouting ? [check(reminderRouting)] : []), ...(["EMAIL", "ASSIGN"].includes(op.data.type) || reminderTask || summaryTasks.length ? [check(wf)] : []), ...(reminderTask ? [check(reminderTask)] : []), ...summaryTasks.map(check), ...(inboundSource ? [check(inboundSource)] : [])]);
+    const leased = row("OPERATION", op.id, { ...op.data, state: "LEASED" as const, attempts: op.data.attempts + 1, leaseUntil: new Date(Date.now() + 180_000).toISOString() }, { accountId: op.accountId, previous: op, dueAt: new Date(Date.now() + 180_000).toISOString() });
+    await commit([put(leased, op), absent(`deleted-account:${op.data.accountId}`), ...(["EMAIL", "ASSIGN"].includes(op.data.type) ? [check(wf)] : []), ...(inboundSource ? [check(inboundSource)] : [])]);
     op = leased;
     posted = true;
     if (op.data.type === "SMS_ALERT") {

@@ -185,10 +185,10 @@ Submit once through each row below, with a distinct test identity or address. Re
 1. Send a controlled incoming prospect request after business hours. Verify its response deadline is 5 p.m. on the next business day.
 2. Archive or snooze the linked Front conversation beyond that date without changing the CRM deadline.
 3. At 9 a.m. Eastern on that business day, allow a few processing cycles. Check **My reminders** and Front.
-4. Read **Why this is back**, the original request, the next step, responsible teammate, and deadline. No completion form should be required.
+4. In the CRM, read the reason, next step, responsible teammate, and deadline. Verify Front stays archived or snoozed and receives no scheduled reminder comment. No completion form should be required.
 5. Leave this test request unanswered through 5 p.m. It may become overdue, but there should be no new scheduled reminder at 5 p.m.
 
-**Expected:** the morning reminder explains why the conversation returned. Reply, call, or text through the connected tools to handle it; the communication supplies the record and the next follow-up is automatic. Unanswered work escalates at 9 a.m. on the next business date. Do not change the computer clock or manipulate live dates to accelerate this test.
+**Expected:** the morning CRM reminder explains what needs attention without reopening or unsnoozing the Front conversation. Reply, call, or text through the connected tools to handle it; the communication supplies the record and the next follow-up is automatic. Unanswered work escalates at 9 a.m. on the next business date. Do not change the computer clock or manipulate live dates to accelerate this test.
 
 ### 19 — Verify the real business-day schedule and escalation
 
@@ -212,7 +212,7 @@ Submit once through each row below, with a distinct test identity or address. Re
 2. In Front, mark the conversation read, snooze it, and archive it. Check the personal inbox view and shared inbox view separately.
 3. Refresh the CRM after each action. Then wait for its 9 a.m. reminder, as in test 18.
 
-**Expected:** the CRM owners, task and deadline remain unchanged. Due work stays visible to the team and its linked conversation reopens while delivery runs. Do not judge success solely by whether every personal inbox copy disappears; record personal and shared behavior separately.
+**Expected:** the CRM owners, task and deadline remain unchanged. Due work stays visible to the team in the CRM and daily reports. Scheduled reminders leave the linked Front conversation archived or snoozed and do not add comments. Do not judge success solely by whether every personal inbox copy disappears; record personal and shared behavior separately.
 
 ### 21 — Separate ownership, Front handling and CRM permissions
 
@@ -310,7 +310,7 @@ Make a fresh controlled inbound and outbound call for each row. Capture the time
 2. Use a clean test lead with both owners, confirmed delivery, no unresolved inbound request or communication issue, and a future follow-up. Choose **Clean up inbox when ready** in the CRM, or **Conversation tools → Tidy this conversation** in Front.
 3. Verify the conversation archives while the CRM lead and dated commitment remain. Use a fresh outbound test with no open response/callback/custom task to check automatic cleanup after a new waiting follow-up is created.
 4. On another lead with an unresolved reply or missed call, try the same cleanup action. Then test a due/overdue action.
-5. Let the archived lead's commitment become due and verify it reopens. Compare the personal and shared Front views.
+5. Let the archived lead's commitment become due and verify its CRM reminder appears while Front stays archived. Repeat with a conversation snoozed beyond the next two business mornings. Check both mornings for CRM reminders and no reminder comments or reopen activity in Front; compare personal and shared views.
 
 **Expected:** only eligible conversations archive. Unanswered requests, overdue work, missing owners, uncertain delivery or sync problems block cleanup. No CRM commitment is completed or postponed. A successful linked reply or completed call requests cleanup automatically. Existing unrelated work and sync checks still apply.
 
@@ -329,7 +329,7 @@ Make a fresh controlled inbound and outbound call for each row. Capture the time
 3. Review the queued lead, recheck connections, confirm the test checkbox, and choose **Resume delivery**, with the intended cleanup setting.
 4. Wait for delivery and verify one initial email in the correct conversation.
 
-**Expected:** pause holds queued CRM delivery, not lead capture. Resume processes the saved enquiry without a second form submission. Existing CRM commitments keep their original deadlines. Native Front/Dialpad messages and internal new-lead alerts are separate; pausing the CRM does not stop those. Queued reminders may reopen conversations after resume.
+**Expected:** pause holds queued CRM delivery, not lead capture. Resume processes the saved enquiry without a second form submission. Existing CRM commitments keep their original deadlines. Native Front/Dialpad messages and internal new-lead alerts are separate; pausing the CRM does not stop those. Queued Front reminder comments and reopens from the retired daily feature are suppressed after resume. A genuine new inbound message can still reopen a conversation normally.
 
 ### 33 — Check every work view and the activity record
 

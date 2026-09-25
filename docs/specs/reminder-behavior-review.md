@@ -4,7 +4,9 @@ September 10, 2026. Plain-language companion to the [revision specification](sal
 
 ## What a reminder is
 
-A work reminder puts a real obligation in the responsible person's CRM list and, where linked, reopens the relevant Front conversation. It explains why the item is back, the next step, who owns it and the deadline. The daily email summarizes those same obligations; it does not create another task to complete.
+A work reminder puts a real obligation in the responsible person's CRM list. It explains what needs attention, the next step, who owns it and the deadline. The daily email summarizes those same obligations; it does not create another task to complete.
+
+**September 25, 2026 update:** Scheduled reminders no longer reopen or unsnooze Front conversations, or post daily reminder comments. Pending deliveries from the old behavior are suppressed. CRM notifications, daily email reports, deadlines and escalations continue. New inbound activity still follows the normal communication workflow.
 
 - Scheduled reminders and report emails run at **9 a.m. Eastern on business days**, excluding agency holidays. Ordinary new messages/calls appear when received. They do not wait for the next morning.
 - One business day for response work means eight staffed hours, using 9 a.m.–5 p.m. Eastern. The morning reminder comes before the deadline; there is no separate scheduled 5 p.m. reminder.
