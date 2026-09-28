@@ -3,7 +3,7 @@ import { acquisitionLabel, cleanAttribution, isLeadSource } from "./leadSource";
 /** A read-only snapshot. Workers unwrap communication-store rows before calling. */
 export type ReportRecord = { id?: string | null; [key: string]: unknown };
 export interface ReportSnapshot {
-  accounts: ReportRecord[]; contacts: ReportRecord[]; quotes: ReportRecord[]; policies: ReportRecord[];
+  accounts: ReportRecord[]; quotes: ReportRecord[]; policies: ReportRecord[];
   priorCarriers: ReportRecord[]; carriers: ReportRecord[]; documents: ReportRecord[]; activities: ReportRecord[];
   workflows: ReportRecord[]; communications: ReportRecord[]; tasks: ReportRecord[];
 }
@@ -52,7 +52,17 @@ function days(from: string | null | undefined, to: string | null | undefined): n
 }
 const byTime = (a: { at: string }, b: { at: string }) => Date.parse(a.at) - Date.parse(b.at);
 const presentBy = (r: ReportRecord, asOf: number) => !text(r, "createdAt") || !!known(r.createdAt, asOf);
-const matching = (rows: ReportRecord[], key: string, id: string, cutoff: number) => rows.filter(r => text(r, key) === id && presentBy(r, cutoff));
+/** Index each source once, rather than rescanning the full database for every account. */
+function byAccount(rows: ReportRecord[], key: "accountId" | "entityId", cutoff: number): Map<string, ReportRecord[]> {
+  const index = new Map<string, ReportRecord[]>();
+  for (const row of rows) {
+    const id = text(row, key);
+    if (!id || !presentBy(row, cutoff)) continue;
+    const group = index.get(id);
+    if (group) group.push(row); else index.set(id, [row]);
+  }
+  return index;
+}
 function activityChanges(r: ReportRecord): ReportRecord[] {
   let changes = r.changes;
   if (typeof changes === "string") { try { changes = JSON.parse(changes); } catch { return []; } }
@@ -119,17 +129,25 @@ export function buildMarketingLeadReport(snapshot: ReportSnapshot, asOf: string)
     "Dropped off requires a verified client reply, then two unanswered human contacts in that conversation, then seven full days after the second. Calls must be connected. The template's separate editorial Stalled flag is not stored in the CRM and remains Not recorded.",
     "Editorial judgments such as competitor loss, exclusions, inquiry-only status and attribution confidence beyond recorded evidence require CRM data. Organic Website alone does not establish organic search.",
     "Dates and day counts use America/New_York. This snapshot describes current records as of generation and does not reconstruct historical states.",
+    "Completed staff-filed input documents count as available. Their filing dates are not treated as client receipt dates. First receipt uses only known portal or inbound-message evidence; earlier untracked receipt may be unknown.",
   ];
   const carriers = new Map(snapshot.carriers.map(c => [text(c, "id"), text(c, "name")]));
+  const index = {
+    quotes: byAccount(snapshot.quotes, "accountId", cutoff), policies: byAccount(snapshot.policies, "accountId", cutoff),
+    priorCarriers: byAccount(snapshot.priorCarriers, "accountId", cutoff), documents: byAccount(snapshot.documents, "entityId", cutoff),
+    activities: byAccount(snapshot.activities, "entityId", cutoff), workflows: byAccount(snapshot.workflows, "accountId", cutoff),
+    communications: byAccount(snapshot.communications, "accountId", cutoff), tasks: byAccount(snapshot.tasks, "accountId", cutoff),
+  };
   const rows = snapshot.accounts.filter(a => ["LEAD", "CLIENT"].includes(text(a, "stage")) && presentBy(a, cutoff))
     .sort((a, b) => text(a, "name").localeCompare(text(b, "name")) || text(a, "id").localeCompare(text(b, "id"))).map(account => {
       const id = text(account, "id"), notes: string[] = [];
-      const activities = matching(snapshot.activities, "entityId", id, cutoff);
-      const quotes = matching(snapshot.quotes, "accountId", id, cutoff).filter(q => !text(q, "renewalPolicyId"));
-      const policies = matching(snapshot.policies, "accountId", id, cutoff);
-      const workflow = matching(snapshot.workflows, "accountId", id, cutoff)[0];
-      const tasks = matching(snapshot.tasks, "accountId", id, cutoff).filter(t => text(t, "status") === "OPEN" && text(t, "domain") !== "CARRIER" && !["SERVICE", "RENEWAL"].includes(text(t, "context")));
-      const contacts = matching(snapshot.communications, "accountId", id, cutoff).map(c => humanContact(c, cutoff)).filter((c): c is NonNullable<typeof c> => !!c).sort(byTime);
+      const activities = index.activities.get(id) ?? [];
+      const quotes = (index.quotes.get(id) ?? []).filter(q => !text(q, "renewalPolicyId"));
+      const policies = index.policies.get(id) ?? [];
+      const workflow = index.workflows.get(id)?.[0];
+      const tasks = (index.tasks.get(id) ?? []).filter(t => text(t, "status") === "OPEN" && text(t, "domain") !== "CARRIER" && !["SERVICE", "RENEWAL"].includes(text(t, "context")));
+      const communications = index.communications.get(id) ?? [];
+      const contacts = communications.map(c => humanContact(c, cutoff)).filter((c): c is NonNullable<typeof c> => !!c).sort(byTime);
       const inbound = contacts.filter(c => text(c.row, "direction") === "INBOUND"), outbound = contacts.filter(c => text(c.row, "direction") === "OUTBOUND");
       const firstOut = outbound[0], lastOut = outbound.at(-1);
       const created = known(account.createdAt, cutoff), firstInbound = inbound[0]?.at;
@@ -165,7 +183,7 @@ export function buildMarketingLeadReport(snapshot: ReportSnapshot, asOf: string)
       else if (tasks.some(t => known(t.dueAt, cutoff))) { status = "ACTIVE - AGENCY ACTION"; group = "Active"; definition = "Agency action is overdue on this lead."; }
       else if (firstOut && !lastReply && inquiry) { status = "NO RESPONSE"; group = "No response"; definition = "No verified reply after the initial inquiry and agency outreach."; }
       else if (text(workflow, "disposition") === "ACTIVE") { status = "ACTIVE"; group = "Active"; definition = "CRM workflow is active; current engagement may be incomplete."; }
-      const prior = matching(snapshot.priorCarriers, "accountId", id, cutoff);
+      const prior = [...(index.priorCarriers.get(id) ?? [])];
       if (!prior.length && (text(account, "priorCarrierName") || number(account, "priorPremium") !== null)) prior.push({ carrierName: account.priorCarrierName, premium: account.priorPremium, effectiveDate: account.priorTermEffective, expirationDate: account.priorTermExpiration });
       const currentPrior = prior.filter(p => currentTerm(p, asOf));
       const currentPolicies = policies.filter(p => currentTerm(p, asOf));
@@ -181,12 +199,20 @@ export function buildMarketingLeadReport(snapshot: ReportSnapshot, asOf: string)
       const otherPremiums = [...prior.map(p => ({ p, origin: currentTerm(p, asOf) ? "Prior coverage (term current, status unverified)" : "Prior coverage (term unverified or historical)" })), ...policies.map(p => ({ p, origin: "Agency policy" }))]
         .filter(({ p }) => p !== premiumRecord && number(p, "premium") !== null).map(({ p, origin }) => `${origin}: ${text(p, "carrierName") || carriers.get(text(p, "carrierId")) || "carrier not recorded"}; ${list(p, "lines").join(", ") || text(p, "lineOfBusiness") || "coverage not recorded"}; $${number(p, "premium")!.toFixed(2)}`).join("\n");
       const allCommunication = new Map(contacts.map(c => [text(c.row, "id"), c]));
-      const documents = matching(snapshot.documents, "entityId", id, cutoff).filter(d => text(d, "entityType") === "ACCOUNT" && text(d, "s3Key") && text(d, "s3Key") !== "pending" && !text(d, "quoteId") && !text(d, "policyId") && !["ACORD_FORM", "PF_AGREEMENT", "PF_BOARD_RESOLUTION", "PF_RESOLUTION_EXECUTED"].includes(text(d, "category")))
-        .filter(d => ["lead-upload", "upload-portal"].includes(text(d, "lastWriteBy")) || text(allCommunication.get(text(d, "sourceCommunicationId"))?.row, "direction") === "INBOUND");
-      const docDates = documents.map(d => allCommunication.get(text(d, "sourceCommunicationId"))?.at ?? known(d.createdAt, cutoff)).filter((v): v is string => !!v).sort((a, b) => Date.parse(a) - Date.parse(b));
+      const eligibleDocuments = (index.documents.get(id) ?? []).filter(d => text(d, "entityType") === "ACCOUNT" && text(d, "s3Key") && text(d, "s3Key") !== "pending" && !text(d, "quoteId") && !text(d, "policyId") && !["ACORD_FORM", "PF_AGREEMENT", "PF_BOARD_RESOLUTION", "PF_RESOLUTION_EXECUTED"].includes(text(d, "category")));
+      const hasReceipt = (d: ReportRecord) => ["lead-upload", "upload-portal"].includes(text(d, "lastWriteBy")) || text(allCommunication.get(text(d, "sourceCommunicationId"))?.row, "direction") === "INBOUND";
+      const receivedDocuments = eligibleDocuments.filter(hasReceipt);
+      // Staff filing proves availability, not who sent a document or when. Restrict
+      // this fallback to clear input categories and completed S3 upload processing.
+      // Ambiguous quotes, policies and OTHER files still require receipt evidence.
+      const filedDocuments = eligibleDocuments.filter(d => !hasReceipt(d) && !text(d, "sourceCommunicationId")
+        && ["PRIOR_POLICY", "CONDO_DOCS", "BUDGET", "DUES_SCHEDULE", "LOSS_RUNS", "STATEMENT_OF_VALUES", "PROPERTY_UPDATES"].includes(text(d, "category"))
+        && ["COMPLETE", "SKIPPED", "FAILED"].includes(text(d, "ocrStatus")) && !!text(d, "id")
+        && text(d, "s3Key").startsWith(`documents/ACCOUNT/${id}/${text(d, "id")}/`));
+      const docDates = receivedDocuments.map(d => allCommunication.get(text(d, "sourceCommunicationId"))?.at ?? known(d.createdAt, cutoff)).filter((v): v is string => !!v).sort((a, b) => Date.parse(a) - Date.parse(b));
       const meaningfulAttachment = (value: unknown) => /\.(pdf|docx?|xlsx?|csv|txt|zip)$/i.test(text(object(value), "filename"));
       const incomingAttachments = inbound.filter(c => Array.isArray(c.row.attachments) && c.row.attachments.some(meaningfulAttachment));
-      const docNames = unique([...documents.map(d => text(d, "name")), ...incomingAttachments.flatMap(c => (c.row.attachments as unknown[]).filter(meaningfulAttachment).map(a => text(object(a), "filename")))]);
+      const docNames = unique([...receivedDocuments.map(d => text(d, "name")), ...filedDocuments.map(d => `${text(d, "name") || "Staff-filed document"} (filed in CRM; receipt date not recorded)`), ...incomingAttachments.flatMap(c => (c.row.attachments as unknown[]).filter(meaningfulAttachment).map(a => text(object(a), "filename")))]);
       const firstDocAt = [...docDates, ...incomingAttachments.map(c => c.at)].sort((a, b) => Date.parse(a) - Date.parse(b))[0];
       const expiration = bound ? (currentPolicies.length === 1 ? text(currentPolicies[0], "expirationDate") : "") : text(account, "currentPolicyExpiration") || (currentPrior.length === 1 ? text(currentPrior[0], "expirationDate") : "");
       const expiryValid = instant(expiration) !== null;
@@ -194,7 +220,7 @@ export function buildMarketingLeadReport(snapshot: ReportSnapshot, asOf: string)
       const policyBoundDates = policies.filter(p => !text(p, "quoteId") || quotes.some(q => text(q, "id") === text(p, "quoteId"))).map(p => known(p.datePolicyBound, cutoff)).filter((v): v is string => !!v);
       const boundAt = [known(account.convertedAt, cutoff), transition(activities, id, "stage", "CLIENT", cutoff), ...policyBoundDates].filter((v): v is string => !!v).sort((a, b) => Date.parse(a) - Date.parse(b))[0];
       const lostAt = lost ? transition(activities, id, "disposition", "LOST", cutoff, true) : null;
-      const lastEmail = matching(snapshot.communications, "accountId", id, cutoff).filter(c => text(c, "channel") === "EMAIL" && text(c, "direction") === "OUTBOUND" && known(c.at, cutoff) && !c.internalReport && text(c, "purpose") !== "CARRIER" && text(c, "domain") !== "CARRIER" && (text(c, "purpose") === "PROSPECT" || text(c, "domain") === "CLIENT") && !["SERVICE", "RENEWAL"].includes(text(c, "context"))).sort((a, b) => Date.parse(text(a, "at")) - Date.parse(text(b, "at"))).at(-1);
+      const lastEmail = communications.filter(c => text(c, "channel") === "EMAIL" && text(c, "direction") === "OUTBOUND" && known(c.at, cutoff) && !c.internalReport && text(c, "purpose") !== "CARRIER" && text(c, "domain") !== "CARRIER" && (text(c, "purpose") === "PROSPECT" || text(c, "domain") === "CLIENT") && !["SERVICE", "RENEWAL"].includes(text(c, "context"))).sort((a, b) => Date.parse(text(a, "at")) - Date.parse(text(b, "at"))).at(-1);
       const emailTracking = !lastEmail ? missing : lastEmail.frontDraft || text(lastEmail, "status") === "DRAFT" ? "Draft only; not sent" : ["FAILED", "REJECTED", "UNDELIVERED"].includes(text(lastEmail, "status")) ? "Delivery failed" : known(lastEmail.seenAt, cutoff) ? text(lastEmail, "actorId").startsWith("crm:") || text(lastEmail, "classification") === "AUTOMATIC" ? "Seen - automated email" : "Seen" : "Read confirmation not recorded";
       const docOutstanding = unique(tasks.filter(t => text(t, "kind") === "DOCUMENTS").map(t => text(t, "title"))).join("; ");
       if (currentPolicies.length > 1 && bound) notes.push("Multiple current bound policies; premium and expiration require policy-level review.");

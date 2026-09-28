@@ -448,7 +448,7 @@ for (const fn of [backend.marketingReportApi, backend.marketingReportWorker]) {
   fn.addEnvironment("COMMUNICATION_TABLE", communicationTable.tableName);
   fn.addEnvironment("MARKETING_REPORT_ENV", branch ?? "local");
 }
-for (const model of ["Account", "Contact", "Quote", "Policy", "PriorCarrier", "Carrier", "Document", "Activity"] as const) {
+for (const model of ["Account", "Quote", "Policy", "PriorCarrier", "Carrier", "Document", "Activity"] as const) {
   const source = backend.data.resources.tables[model];
   source.grantReadData(backend.marketingReportWorker.resources.lambda);
   backend.marketingReportWorker.addEnvironment(`${model.replace(/([a-z])([A-Z])/g, "$1_$2").toUpperCase()}_TABLE`, source.tableName);
