@@ -26,15 +26,14 @@ export async function scanComplete(input: Omit<ScanCommandInput, "ExclusiveStart
   } while (cursor);
   return rows;
 }
-const sources = { accounts: "ACCOUNT_TABLE", contacts: "CONTACT_TABLE", quotes: "QUOTE_TABLE", policies: "POLICY_TABLE", priorCarriers: "PRIOR_CARRIER_TABLE", carriers: "CARRIER_TABLE", documents: "DOCUMENT_TABLE", activities: "ACTIVITY_TABLE" } as const;
+const sources = { accounts: "ACCOUNT_TABLE", quotes: "QUOTE_TABLE", policies: "POLICY_TABLE", priorCarriers: "PRIOR_CARRIER_TABLE", carriers: "CARRIER_TABLE", documents: "DOCUMENT_TABLE", activities: "ACTIVITY_TABLE" } as const;
 const modelFields: Record<keyof typeof sources, string[]> = {
   accounts: ["name", "state", "type", "stage", "leadSource", "source", "leadAttribution", "priorCarrierName", "priorPremium", "priorTermEffective", "priorTermExpiration", "currentPolicyExpiration", "convertedAt", "notes"],
-  contacts: ["accountId"],
   quotes: ["accountId", "renewalPolicyId", "presentedAt", "status", "carrierId", "premium", "lines"],
   policies: ["accountId", "datePolicyBound", "quoteId", "status", "carrierId", "carrierName", "premium", "lines", "lineOfBusiness", "effectiveDate", "expirationDate"],
   priorCarriers: ["accountId", "carrierName", "premium", "lines", "lineOfBusiness", "effectiveDate", "expirationDate", "status"],
   carriers: ["name"],
-  documents: ["entityId", "entityType", "s3Key", "quoteId", "policyId", "category", "sourceCommunicationId", "lastWriteBy", "name"],
+  documents: ["entityId", "entityType", "s3Key", "quoteId", "policyId", "category", "sourceCommunicationId", "lastWriteBy", "name", "ocrStatus"],
   activities: ["entityId", "subjectId", "occurredAt", "changes"],
 };
 function projection(fields: string[]) {

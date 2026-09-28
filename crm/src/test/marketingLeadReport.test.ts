@@ -3,7 +3,7 @@ import { buildMarketingLeadReport, MARKETING_REPORT_HEADERS, type ReportRecord, 
 
 const now = "2026-09-28T12:00:00.000Z";
 function snapshot(overrides: Partial<ReportSnapshot> = {}): ReportSnapshot {
-  return { accounts: [{ id: "a", name: "Test association", stage: "LEAD", type: "ASSOCIATION", createdAt: "2026-09-01T12:00:00Z" }], contacts: [], quotes: [], policies: [], priorCarriers: [], carriers: [], documents: [], activities: [], workflows: [], communications: [], tasks: [], ...overrides };
+  return { accounts: [{ id: "a", name: "Test association", stage: "LEAD", type: "ASSOCIATION", createdAt: "2026-09-01T12:00:00Z" }], quotes: [], policies: [], priorCarriers: [], carriers: [], documents: [], activities: [], workflows: [], communications: [], tasks: [], ...overrides };
 }
 function values(input: Partial<ReportSnapshot>, asOf = now) {
   const report = buildMarketingLeadReport(snapshot(input), asOf);
@@ -133,6 +133,37 @@ describe("weekly marketing report truth and template contract", () => {
     expect(row["Docs Received"]).toBe("Y");
     expect(row["Docs Detail"]).toBe("Bylaws.pdf");
     expect(row["Docs First Received Date"]).toEqual(date("2026-09-04"));
+  });
+
+  it("counts completed staff-filed input documents without inventing client receipt dates", () => {
+    const filed = { id: "file", entityId: "a", entityType: "ACCOUNT", name: "Budget.pdf", s3Key: "documents/ACCOUNT/a/file/Budget.pdf", category: "BUDGET", ocrStatus: "COMPLETE", lastWriteBy: "staff-user", createdAt: "2026-09-04T12:00:00Z" };
+    const row = values({ documents: [filed] });
+    expect(row["Docs Received"]).toBe("Y");
+    expect(row["Docs Detail"]).toContain("Budget.pdf (filed in CRM; receipt date not recorded)");
+    expect(row["Docs First Received Date"]).toBeNull();
+    // Auto-naming can replace the last writer; availability does not rely on a staff-ID pattern.
+    expect(values({ documents: [{ ...filed, lastWriteBy: "document-namer" }] })["Docs Received"]).toBe("Y");
+    for (const change of [
+      { ocrStatus: "PENDING" }, { s3Key: "pending" }, { s3Key: "generated/Budget.pdf" },
+      { quoteId: "q" }, { policyId: "p" }, { category: "QUOTE_DOC" }, { category: "POLICY_DOC" },
+      { category: "ACORD_FORM" }, { category: "OTHER" }, { sourceCommunicationId: "unverified" },
+      { createdAt: "2026-10-01T12:00:00Z" },
+    ]) expect(values({ documents: [{ ...filed, ...change }] })["Docs Received"], JSON.stringify(change)).toBe("Not recorded");
+    const outgoing = comm("out", "OUTBOUND", "2026-09-03T12:00:00Z");
+    expect(values({ documents: [{ ...filed, sourceCommunicationId: "out" }], communications: [outgoing] })["Docs Received"]).toBe("Not recorded");
+  });
+
+  it("indexes each source once and keeps account evidence isolated as the population grows", () => {
+    let keyReads = 0;
+    const accounts = Array.from({ length: 80 }, (_, i) => ({ id: `a${i}`, name: `Account ${i}`, stage: "LEAD" }));
+    const quotes: ReportRecord[] = accounts.map(account => ({
+      id: `q${account.id}`, get accountId() { keyReads++; return account.id; }, status: "PRESENTED", premium: Number(account.id.slice(1)) + 100,
+    }));
+    const report = buildMarketingLeadReport(snapshot({ accounts, quotes }), now);
+    expect(report.rows).toHaveLength(80);
+    for (const row of report.rows) expect(row[33]).toBe(Number(String(row[0]).slice(1)) + 100);
+    // Bound operation-count assertion avoids a flaky machine-speed benchmark.
+    expect(keyReads).toBeLessThanOrEqual(quotes.length * 3);
   });
 
   it("reports the newest email failure without counting it as human contact or inferring no contact route", () => {

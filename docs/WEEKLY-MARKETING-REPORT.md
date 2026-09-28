@@ -23,6 +23,8 @@ Each scheduled edition is reserved once for its Eastern Friday date. Manual requ
 
 If delivery needs review, inspect the original SES send and recipient inbox before sending another copy. A failed collection or workbook generation sends no partial report. Lambda errors feed the existing communications operations alert topic. The alert topic's existing confirmed subscriptions determine who receives operational alerts.
 
+The weekly email export is bounded: collection must complete within 180 seconds, 2,000 pages, 100,000 selected source records, and 48 MiB of projected data; the attachment must fit within 7 MiB. These checks fail the run before sending rather than truncate it. This is suitable for the current CRM population. A substantially larger archive would need a checkpointed export and a delivery method beyond an email attachment.
+
 ## Environments and activation
 
 New deployments default to weekly delivery off and no recipient. Only production can enable the weekly schedule. Non-production manual sending is restricted to the approved test recipients already configured for communications.
