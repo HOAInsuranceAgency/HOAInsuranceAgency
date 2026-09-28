@@ -5,7 +5,7 @@ import { SnsAction } from "aws-cdk-lib/aws-cloudwatch-actions";
 import { Topic } from "aws-cdk-lib/aws-sns";
 import { defineBackend } from "@aws-amplify/backend";
 import { CfnWebACL, CfnWebACLAssociation } from "aws-cdk-lib/aws-wafv2";
-import { Duration, Names, Stack, TimeZone } from "aws-cdk-lib";
+import { ArnFormat, Duration, Names, Stack, TimeZone } from "aws-cdk-lib";
 import { Schedule, ScheduleExpression, ScheduleTargetInput, ContextAttribute } from "aws-cdk-lib/aws-scheduler";
 import { LambdaInvoke } from "aws-cdk-lib/aws-scheduler-targets";
 import { PolicyStatement } from "aws-cdk-lib/aws-iam";
@@ -463,20 +463,26 @@ for (const model of ["Account", "Contact", "Quote", "Policy", "PriorCarrier", "C
 }
 backend.marketingReportWorker.addEnvironment("MARKETING_REPORT_FROM", internalMailbox);
 backend.marketingReportWorker.resources.lambda.addToRolePolicy(new PolicyStatement({ actions: ["ses:SendEmail", "ses:SendRawEmail"], resources: ["*"] }));
-backend.marketingReportWorker.resources.lambda.grantInvoke(backend.marketingReportApi.resources.lambda);
-backend.marketingReportApi.addEnvironment("MARKETING_REPORT_WORKER", backend.marketingReportWorker.resources.lambda.functionName);
+// Only the worker depends on the data stack. An exact, deterministic name lets
+// the API invoke it without a reverse CloudFormation reference (and a cycle).
+const marketingReportStack = Stack.of(backend.marketingReportWorker.resources.lambda);
+const marketingWorkerName = `marketing-report-${Names.uniqueId(backend.stack).slice(-40)}`;
+(backend.marketingReportWorker.resources.lambda.node.defaultChild as CfnFunction).functionName = marketingWorkerName;
+const marketingWorkerArn = Stack.of(backend.marketingReportApi.resources.lambda).formatArn({ service: "lambda", resource: "function", resourceName: marketingWorkerName, arnFormat: ArnFormat.COLON_RESOURCE_NAME });
+backend.marketingReportApi.resources.lambda.addToRolePolicy(new PolicyStatement({ actions: ["lambda:InvokeFunction"], resources: [marketingWorkerArn] }));
+backend.marketingReportApi.addEnvironment("MARKETING_REPORT_WORKER", marketingWorkerName);
 (backend.marketingReportWorker.resources.lambda.node.defaultChild as CfnFunction).reservedConcurrentExecutions = 1;
 backend.marketingReportWorker.resources.lambda.configureAsyncInvoke({ retryAttempts: 0, maxEventAge: Duration.minutes(5) });
 const marketingScheduleName = `marketing-report-${Names.uniqueId(backend.data.resources.graphqlApi).slice(-40)}`;
 const marketingScheduleArn = Stack.of(backend.data.resources.graphqlApi).formatArn({ service: "scheduler", resource: "schedule", resourceName: `default/${marketingScheduleName}` });
 backend.marketingReportWorker.addEnvironment("MARKETING_REPORT_SCHEDULE_ARN", marketingScheduleArn);
-new Schedule(backend.data.resources.graphqlApi, "WeeklyMarketingReportSchedule", {
+new Schedule(marketingReportStack, "WeeklyMarketingReportSchedule", {
   scheduleName: marketingScheduleName, enabled: branch === "main",
   description: "Weekly marketing lead spreadsheet, Fridays at 8 AM Eastern",
   schedule: ScheduleExpression.cron({ minute: "0", hour: "8", weekDay: "FRI", timeZone: TimeZone.AMERICA_NEW_YORK }),
   target: new LambdaInvoke(backend.marketingReportWorker.resources.lambda, { retryAttempts: 2, maxEventAge: Duration.hours(1), input: ScheduleTargetInput.fromObject({ trigger: "scheduled", scheduleArn: ContextAttribute.scheduleArn, scheduledAt: ContextAttribute.scheduledTime }) }),
 });
-const marketingReportErrors = new Alarm(backend.data.resources.graphqlApi, "MarketingReportErrors", {
+const marketingReportErrors = new Alarm(marketingReportStack, "MarketingReportErrors", {
   metric: backend.marketingReportWorker.resources.lambda.metricErrors({ period: Duration.minutes(5), statistic: "Sum" }),
   threshold: 1, evaluationPeriods: 1, treatMissingData: TreatMissingData.NOT_BREACHING,
   alarmDescription: "The weekly marketing report failed or its email acceptance is uncertain. Check Settings delivery history before requesting another send.",
