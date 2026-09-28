@@ -114,11 +114,12 @@ assertNoEscapingImports();
 // `defineBackend` reads these three from CDK context. The pipeline supplies
 // them; a local run has to. The values only name the assembly — nothing is
 // contacted and nothing is deployed, so they need to be well-formed rather
-// than real.
+// than real. Use the pipeline identity when available so generated template
+// sizes match deployment; longer names consume more of the template limit.
 const outdir = mkdtempSync(join(tmpdir(), "amplify-synth-"));
 process.env.CDK_CONTEXT_JSON = JSON.stringify({
-  "amplify-backend-namespace": "synth-check",
-  "amplify-backend-name": "local",
+  "amplify-backend-namespace": process.env.AWS_APP_ID ?? "synth-check",
+  "amplify-backend-name": process.env.AWS_BRANCH ?? "local",
   "amplify-backend-type": "branch",
 });
 process.env.CDK_OUTDIR = outdir;
