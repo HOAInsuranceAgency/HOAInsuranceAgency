@@ -128,7 +128,6 @@ export const handler = async (event?: Partial<DynamoDBStreamEvent>) => {
   const c = await config();
   try {
     await (await import("./ownershipMigration")).migrateSalespersonOwnership();
-    await (await import("./assignmentIndex")).migrateAssignmentIndex();
     await (await import("./routing")).resolveIssue("salesperson-ownership");
   } catch (error) {
     lagging = true;

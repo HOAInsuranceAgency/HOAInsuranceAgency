@@ -40,6 +40,79 @@ async function allPages(model: string, sub = "alice", filter?: RecordData) {
   throw new Error("Pagination did not terminate");
 }
 describe("assignment-scoped listings", () => {
+  it("finds documents beyond the first five assigned accounts within one response", async () => {
+    for (let i = 0; i < 12; i++) account(`a${String(i).padStart(2, "0")}`, "alice");
+    put("Document", "later", { id: "later", entityType: "ACCOUNT", entityId: "a11", name: "Needle" });
+    const result = await listAssigned(access(), "Document", { filter: { name: { contains: "Needle" } } });
+    expect(result.items).toMatchObject([{ id: "later" }]); expect(result.nextToken).toBeNull();
+  });
+  it("bounds sparse traversal and resumes without losing pending accounts", async () => {
+    for (let i = 0; i < 120; i++) account(`a${String(i).padStart(3, "0")}`, "alice");
+    put("Document", "last", { id: "last", entityType: "ACCOUNT", entityId: "a119" });
+    const first = await listAssigned(access(), "Document", {});
+    expect(first.items).toEqual([]); expect(first.nextToken).toBeTruthy();
+    expect(h.db.mock.calls.filter(([c]) => c.input.IndexName).length).toBeLessThanOrEqual(80);
+    const found: RecordData[] = []; let nextToken = first.nextToken;
+    for (let i = 0; nextToken && i < 20; i++) {
+      const page = await listAssigned(access(), "Document", { nextToken }); found.push(...page.items); nextToken = page.nextToken;
+    }
+    expect(nextToken).toBeNull(); expect(found.map(r => r.id)).toEqual(["last"]);
+  });
+  it.each(["Quote", "Policy", "Certificate"])("skips a stale %s parent and resumes the next parent after a partial child page", async parentModel => {
+    put(parentModel, "p1", { id: "p1", accountId: "a" }); put(parentModel, "p2", { id: "p2", accountId: "a" });
+    for (const key of ["d1", "d2"]) put("Document", key, { id: key, entityType: parentModel.toUpperCase(), entityId: "p1" });
+    put("Document", "good", { id: "good", entityType: parentModel.toUpperCase(), entityId: "p2" });
+    const first = await listAssigned(access(), "Document", { limit: 1 }); expect(first.items).toMatchObject([{ id: "d1" }]);
+    const cursor = first.nextToken;
+    for (const accountId of ["b", "a2", undefined]) {
+      account("a2", "alice");
+      if (accountId) put(parentModel, "p1", { id: "p1", accountId }); else h.records.delete(`${parentModel}:p1`);
+      const next = await listAssigned(access(), "Document", { limit: 1, nextToken: cursor });
+      expect(next.items).toMatchObject([{ id: "good" }]);
+    }
+    const normal = h.db.getMockImplementation()!;
+    h.db.mockImplementation(command => command.input.TableName === parentModel && command.input.Key?.id === "p1" ? Promise.reject(new Error("database unavailable")) : normal(command));
+    await expect(listAssigned(access(), "Document", { nextToken: cursor })).rejects.toThrow("database unavailable");
+  });
+  it("pushes search to the index and consistently reads only matching candidates", async () => {
+    const normal = h.db.getMockImplementation()!;
+    put("Document", "match", { id: "match", entityType: "ACCOUNT", entityId: "a", name: "Needle" });
+    put("Document", "irrelevant", { id: "irrelevant", entityType: "ACCOUNT", entityId: "a", name: "Other" });
+    h.db.mockImplementation(command => {
+      if (command.input.TableName === "Document" && command.input.IndexName) {
+        expect(command.input.FilterExpression).toContain("contains(");
+        expect(Object.values(command.input.ExpressionAttributeNames)).toContain("name");
+        expect(Object.values(command.input.ExpressionAttributeValues)).toContain("Needle");
+        return { Items: [h.records.get("Document:match")], ScannedCount: 2 };
+      }
+      return normal(command);
+    });
+    const filter = { entityId: { eq: "a" }, entityType: { eq: "ACCOUNT" }, name: { contains: "Needle" } };
+    expect((await listAssigned(access(), "Document", { filter })).items).toMatchObject([{ id: "match" }]);
+    expect(h.db.mock.calls.flatMap(([c]) => c.input.RequestItems?.Document?.Keys ?? [])).toEqual([{ id: "match" }]);
+    // A projection matched, but the current document changed before the read.
+    put("Document", "match", { id: "match", entityType: "ACCOUNT", entityId: "a", name: "Changed" });
+    expect((await listAssigned(access(), "Document", { filter })).items).toEqual([]);
+  });
+  it("continues filtered index pages and retains a cursor when the read budget is spent", async () => {
+    const normal = h.db.getMockImplementation()!;
+    let queries = 0;
+    h.db.mockImplementation(command => {
+      if (command.input.TableName === "Contact" && command.input.IndexName) {
+        queries++;
+        if (queries <= 10) return { Items: [], ScannedCount: 100, LastEvaluatedKey: { id: `skip-${queries}`, accountId: "a" } };
+        expect(command.input.ExclusiveStartKey.id).toBe("skip-10");
+        return { Items: [{ id: "match", accountId: "a" }], ScannedCount: 1 };
+      }
+      return normal(command);
+    });
+    put("Contact", "match", { id: "match", accountId: "a", name: "Needle" });
+    const filter = { accountId: { eq: "a" }, name: { contains: "Needle" } };
+    const first = await listAssigned(access(), "Contact", { filter });
+    expect(first.items).toEqual([]); expect(first.nextToken).toBeTruthy(); expect(queries).toBe(10);
+    const second = await listAssigned(access(), "Contact", { filter, nextToken: first.nextToken });
+    expect(second.items).toMatchObject([{ id: "match" }]); expect(second.nextToken).toBeNull();
+  });
   it("uses assignment queries and batched reads regardless of unrelated account count", async () => {
     for (let i = 0; i < 1000; i++) account(`unrelated-${i}`, "bob");
     account("a2", "alice");
@@ -56,12 +129,10 @@ describe("assignment-scoped listings", () => {
     account("manager-account", "manager"); account("a2", "alice");
     expect((await allPages("Account", "manager")).map(r => r.id)).toEqual(["a", "a2", "manager-account"]);
   });
-  it("returns a cursor for an empty filtered page and preserves later results", async () => {
+  it("fills a filtered page from later accounts", async () => {
     account("a2", "alice");
     const first = await listAssigned(access(), "Account", { limit: 1, filter: { name: { eq: "a2" } } });
-    expect(first.items).toEqual([]); expect(first.nextToken).toBeTruthy();
-    const second = await listAssigned(access(), "Account", { limit: 1, filter: { name: { eq: "a2" } }, nextToken: first.nextToken });
-    expect(second.items).toMatchObject([{ id: "a2" }]); expect(second.nextToken).toBeNull();
+    expect(first.items).toMatchObject([{ id: "a2" }]); expect(first.nextToken).toBeNull();
   });
   it("rejects stale GSI assignments and retired accounts", async () => {
     put("Communication", "workflow:a", { id: "workflow:a", accountId: "a", assignedSalespersonId: "alice", data: { salespersonId: "bob" } });
@@ -125,7 +196,7 @@ describe("assignment-scoped listings", () => {
     account("a2", "alice"); const first = await listAssigned(access(), "Account", { limit: 1 });
     for (const [sub, model, filter] of [["bob", "Account", {}], ["alice", "Contact", {}], ["alice", "Account", { stage: { eq: "CLIENT" } }]] as const) await expect(listAssigned(access(sub), model, { nextToken: first.nextToken, filter })).rejects.toThrow("Refresh");
     const forged = JSON.parse(Buffer.from(first.nextToken!, "base64url").toString()); forged.account = "b";
-    expect((await listAssigned(access(), "Account", { nextToken: Buffer.from(JSON.stringify(forged)).toString("base64url") })).items).toEqual([]);
+    expect((await listAssigned(access(), "Account", { nextToken: Buffer.from(JSON.stringify(forged)).toString("base64url") })).items).toMatchObject([{ id: "a2" }]);
   });
 });
 it("retains search, date, numeric, boolean, and nested filter behavior", () => {

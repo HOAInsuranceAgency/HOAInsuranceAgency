@@ -8,3 +8,7 @@ export const communicationReports = defineFunction({ name: "communication-report
   schedule: { cron: "0-14 9 ? * 2-6 *", timezone: "America/New_York", description: "Morning team editions and delivery confirmation" } });
 export const communicationMonitor = defineFunction({ name: "communication-monitor", entry: "./monitor.ts", timeoutSeconds: 30, resourceGroupName: "data",
   schedule: { cron: "0/5 * * * ? *", timezone: "America/New_York", description: "Independent communication and report coverage monitor" } });
+
+// Backfill is independent of provider configuration and the delivery worker.
+export const assignmentIndexWorker = defineFunction({ name: "assignment-index-worker", entry: "./assignmentIndex.ts", timeoutSeconds: 60, memoryMB: 512, resourceGroupName: "data",
+  schedule: { cron: "* * * * ? *", timezone: "America/New_York", description: "Drain assignment index backfill with restartable checkpoints" } });

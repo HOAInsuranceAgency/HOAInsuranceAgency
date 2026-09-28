@@ -2137,21 +2137,52 @@ it("notifies the new salesperson and manager without waiting for the old owner's
 });
 
 describe("assignment listing index rollout", () => {
+  it("retries an interrupted page without publishing a partial index", async () => {
+    const original = await lead(); delete record(original.id).assignedSalespersonId;
+    const { migrateAssignmentIndex } = await import("../../amplify/functions/communications/assignmentIndex");
+    h.failAt = h.transactions.length;
+    await expect(migrateAssignmentIndex()).rejects.toThrow("Interrupted");
+    expect(record("migration:assignment-index:v1")).toBeUndefined();
+    await migrateAssignmentIndex();
+    expect(record(original.id).assignedSalespersonId).toBe(original.data.salespersonId);
+    expect(record("migration:assignment-index:v1").data.complete).toBe(true);
+  });
+  it("yields at the time budget and never overwrites a concurrent reassignment", async () => {
+    const original = await lead(); delete record(original.id).assignedSalespersonId;
+    const { migrateAssignmentIndex } = await import("../../amplify/functions/communications/assignmentIndex");
+    await migrateAssignmentIndex({ budgetMs: 0 });
+    expect(record("migration:assignment-index:v1")).toBeUndefined();
+    expect(record(original.id).assignedSalespersonId).toBeUndefined();
+    const store = await import("../../amplify/functions/communications/store"), read = store.get;
+    let moved = false;
+    const spy = vi.spyOn(store, "get").mockImplementation(async key => {
+      const current = await read(key);
+      if (key === original.id && !moved) {
+        moved = true;
+        h.records.set(`comms:${key}`, row("WORKFLOW", key, { ...original.data, salespersonId: "new-owner" }, { previous: original, accountId: "a1", dueAt: "2026-10-01T13:00:00.000Z" }));
+      }
+      return current;
+    });
+    try { await migrateAssignmentIndex(); } finally { spy.mockRestore(); }
+    expect(record(original.id)).toMatchObject({ assignedSalespersonId: "new-owner", data: { salespersonId: "new-owner" }, dueAt: "2026-10-01T13:00:00.000Z" });
+    expect(record("migration:assignment-index:v1").data.complete).toBe(true);
+  });
   it("backfills bounded pages without changing account ownership or deadlines", async () => {
     const base = await lead();
     h.records.delete("comms:workflow:a1");
-    for (let i = 0; i < 52; i++) {
+    for (let i = 0; i < 252; i++) {
       const accountId = `indexed-${String(i).padStart(2, "0")}`;
       const legacy = row("WORKFLOW", `workflow:${accountId}`, { ...base.data, accountId }, { accountId, dueAt: "2026-09-30T13:00:00.000Z" });
       delete legacy.assignedSalespersonId;
       h.records.set(`comms:${legacy.id}`, legacy);
     }
     const { migrateAssignmentIndex } = await import("../../amplify/functions/communications/assignmentIndex");
+    await migrateAssignmentIndex({ maxPages: 1 });
+    expect(record("migration:assignment-index:v1").data).toMatchObject({ complete: false, processed: 100 });
+    expect(entries("WORKFLOW").filter(w => w.assignedSalespersonId)).toHaveLength(100);
     await migrateAssignmentIndex();
-    expect(record("migration:assignment-index:v1").data).toMatchObject({ complete: false });
-    expect(entries("WORKFLOW").filter(w => w.assignedSalespersonId)).toHaveLength(50);
-    await migrateAssignmentIndex();
-    expect(record("migration:assignment-index:v1").data).toMatchObject({ complete: true });
+    expect(record("migration:assignment-index:v1").data).toMatchObject({ complete: true, processed: 252 });
+    expect(h.maxInFlight).toBeGreaterThan(1); expect(h.maxInFlight).toBeLessThanOrEqual(25);
     for (const w of entries("WORKFLOW")) {
       expect(w.assignedSalespersonId).toBe(base.data.salespersonId);
       expect(w.data.salespersonId).toBe(base.data.salespersonId);

@@ -3,85 +3,65 @@ import { QueryCommand } from "@aws-sdk/lib-dynamodb";
 import { AccountAccess, db, tableName } from "./access";
 import { ACCOUNT_MODELS, LIST_PARENTS, AccessDenied, id, listPartition, object, type RecordData } from "./policy";
 
-/** DynamoDB model filters are evaluated only inside an authorized partition.
- * Keeping the predicate here also supports filters on the partition key itself,
- * which DynamoDB rejects in a Query FilterExpression. */
-export function matchesFilter(record: RecordData, filter: RecordData): boolean {
-  return Object.entries(filter).every(([field, condition]) => {
-    if (condition == null) return true;
-    if (field === "and" || field === "or") {
-      if (!Array.isArray(condition)) throw new Error("Invalid list filter");
-      return field === "and" ? condition.every(f => matchesFilter(record, object(f))) : condition.some(f => matchesFilter(record, object(f)));
-    }
-    if (field === "not") return !matchesFilter(record, object(condition));
-    return Object.entries(object(condition)).every(([op, expected]) => {
-      const value = record[field];
-      const contains = () => typeof value === "string" && typeof expected === "string" ? value.includes(expected) : Array.isArray(value) && value.includes(expected);
-      const compare = (bound: unknown) => typeof value === "string" && typeof bound === "string" || typeof value === "number" && typeof bound === "number"
-        ? value === bound ? 0 : (value as string | number) < (bound as string | number) ? -1 : 1 : undefined;
-      switch (op) {
-        case "eq": return (value ?? null) === expected;
-        case "ne": return (value ?? null) !== expected;
-        case "lt": return compare(expected) === -1;
-        case "le": return compare(expected) === -1 || compare(expected) === 0;
-        case "gt": return compare(expected) === 1;
-        case "ge": return compare(expected) === 1 || compare(expected) === 0;
-        case "between": return Array.isArray(expected) && [0, 1].includes(compare(expected[0]) ?? -2) && [-1, 0].includes(compare(expected[1]) ?? -2);
-        case "contains": return contains();
-        case "notContains": return value != null && !contains();
-        case "beginsWith": return typeof value === "string" && typeof expected === "string" && value.startsWith(expected);
-        case "attributeExists": return (value !== undefined) === expected;
-        case "attributeType": return ({ S: typeof value === "string", N: typeof value === "number", BOOL: typeof value === "boolean", NULL: value === null, L: Array.isArray(value), M: value != null && typeof value === "object" && !Array.isArray(value) } as Record<string, boolean>)[String(expected)] === true;
-        case "size": return value != null && (typeof value === "string" || Array.isArray(value)) && matchesFilter({ size: typeof value === "string" ? Buffer.byteLength(value) : value.length }, { size: expected });
-        default: throw new Error("Unsupported list filter");
-      }
-    });
-  });
-}
+import { queryFilter, matchesFilter } from "./filters";
+export { matchesFilter } from "./filters";
 
 type Key = Record<string, unknown>;
-type Cursor = { scope: string; owner: number; assignment?: Key; account?: string; part: number; parent?: string; parents?: Key; records?: Key; shared: number };
+type Cursor = { scope: string; owner: number; assignment?: Key; accounts?: string[]; account?: string; part: number; parent?: string; parents?: Key; records?: Key; shared: number };
 const sharedDocuments = ["CARRIER", "LICENSE", "USER_PROFILE"];
 const documentParents = ["Account", "Quote", "Policy", "Certificate"];
 const naturalKey = (model: string) => ["GlApplication", "DoApplication"].includes(model);
-async function query(model: string, field: string, key: string, limit: number, cursor?: Key) {
+async function query(model: string, field: string, key: string, limit: number, cursor?: Key, filter: RecordData = {}) {
   const indexes = JSON.parse(process.env.ACCESS_INDEXES ?? "{}") as Record<string, string>;
   const index = model === "Communication" ? "assignment" : indexes[`${model}.${field}`];
   if (!index) throw new Error(`Missing list index for ${model}.${field}`);
+  const pushed = queryFilter(filter, field);
   const page = await db.send(new QueryCommand({ TableName: tableName(model), IndexName: index,
-    KeyConditionExpression: "#scope = :scope", ExpressionAttributeNames: { "#scope": field }, ExpressionAttributeValues: { ":scope": key },
+    KeyConditionExpression: "#scope = :scope", ...pushed,
+    ExpressionAttributeNames: { "#scope": field, ...pushed.ExpressionAttributeNames },
+    ExpressionAttributeValues: { ":scope": key, ...pushed.ExpressionAttributeValues },
     Limit: limit, ...(cursor ? { ExclusiveStartKey: cursor } : {}) }));
-  return { items: page.Items ?? [], cursor: page.LastEvaluatedKey };
+  return { items: page.Items ?? [], cursor: page.LastEvaluatedKey, evaluated: page.ScannedCount ?? page.Items?.length ?? 0 };
 }
 function decode(token: unknown, scope: string): Cursor {
   if (token == null) return { scope, owner: 0, part: 0, shared: 0 };
   if (typeof token !== "string" || token.length > 16384) throw new AccessDenied();
   try {
     const c = JSON.parse(Buffer.from(token, "base64url").toString()) as Cursor;
-    if (c.scope !== scope || ![c.owner, c.part, c.shared].every(n => Number.isSafeInteger(n) && n >= 0)) throw new Error();
+    if (c.scope !== scope || ![c.owner, c.part, c.shared].every(n => Number.isSafeInteger(n) && n >= 0)
+      || c.accounts && (!Array.isArray(c.accounts) || c.accounts.length > 25 || c.accounts.some(key => !id(key)))) throw new Error();
     return c;
   } catch { throw new Error("This list changed. Refresh it to continue."); }
 }
 
-/** One bounded page, using only assignment and parent indexes. No scan, including
- * for empty/filtered pages. Cursors never grant access: current ownership is
- * checked again before reading a partition and before returning its records. */
+/** Fill a page across authorized partitions. Bound sparse searches by time,
+ * query count and evaluated records, retaining every unfinished partition in
+ * the cursor. Cursors are traversal hints, never proof of current access. */
 export async function listAssigned(access: AccountAccess, model: string, args: RecordData) {
   if (!(ACCOUNT_MODELS as readonly string[]).includes(model) || access.admin) throw new AccessDenied();
   const filter = object(args.filter), owners = [...await access.salespeople()].sort();
   const scope = createHash("sha256").update(JSON.stringify([access.actor, owners, model, filter])).digest("hex");
-  const c = decode(args.nextToken, scope), limit = Math.min(100, Math.max(1, Number(args.limit) || 100));
-  let items: RecordData[] = [], done = false;
-  const finish = async () => {
-    // GSI projections can lag a record move/edit. Re-read only the candidate
-    // keys in a batch so stale parent fields never authorize a fresh response.
-    const keys = items.map(item => id(naturalKey(model) ? item.accountId : item.id)).filter(Boolean);
-    await access.prefetch(model, keys);
-    items = (await Promise.all(keys.map(key => access.get(model, key)))).filter((r): r is RecordData => !!r);
-    const permitted = await Promise.all(items.map(async item => matchesFilter(item, filter) && await access.canRecord(model, item) ? item : undefined));
-    return { items: permitted.filter(Boolean), nextToken: done ? null : Buffer.from(JSON.stringify(c)).toString("base64url") };
+  const c = decode(args.nextToken, scope), limit = Math.min(100, Math.max(1, Math.floor(Number(args.limit) || 100)));
+  const items: RecordData[] = [], seen = new Set<string>(), deadline = Date.now() + 8_000;
+  let queries = 0, evaluated = 0, steps = 0, done = false;
+  const withinBudget = () => items.length < limit && queries < 80 && evaluated < 1000 && steps++ < 250 && Date.now() < deadline;
+  const readPage = async (name: string, field: string, key: string, count: number, cursor?: Key, predicate?: RecordData) => {
+    queries++;
+    const page = await query(name, field, key, Math.min(count, Math.max(1, 1000 - evaluated)), cursor, predicate);
+    evaluated += page.evaluated;
+    return page;
   };
-  // A list already anchored to a parent needs no assignment enumeration.
+  const append = async (candidates: RecordData[]) => {
+    // GSI projections can lag moves/edits. Only filter-matching candidate keys
+    // are fetched consistently, then their current ownership and filter checked.
+    const keys = candidates.map(item => id(naturalKey(model) ? item.accountId : item.id)).filter(Boolean);
+    await access.prefetch(model, keys);
+    for (const key of keys) {
+      const current = await access.get(model, key);
+      if (!seen.has(key) && current && matchesFilter(current, filter) && await access.canRecord(model, current)) { items.push(current); seen.add(key); }
+    }
+  };
+  const finish = () => ({ items, nextToken: done ? null : Buffer.from(JSON.stringify(c)).toString("base64url") });
   const field = model === "Account" ? "id" : listPartition(model);
   const exact = id(object(filter[field]).eq);
   if (exact && (model !== "Document" || id(object(filter.entityType).eq))) {
@@ -93,65 +73,74 @@ export async function listAssigned(access: AccountAccess, model: string, args: R
     } else if (LIST_PARENTS[model]) await access.requireRecord(LIST_PARENTS[model].model, exact);
     else await access.requireAccount(exact);
     if (model === "Account" || naturalKey(model)) {
-      const record = await access.get(model, exact); items = record ? [record] : []; done = true;
-    } else {
-      const page = await query(model, field, exact, limit, c.records); items = page.items; c.records = page.cursor; done = !page.cursor;
+      const record = await access.get(model, exact); await append(record ? [record] : []); done = true;
+    } else while (withinBudget()) {
+      const page = await readPage(model, field, exact, limit - items.length, c.records, filter);
+      c.records = page.cursor; await append(page.items);
+      if (!page.cursor) { done = true; break; }
     }
     return finish();
   }
   const migration = await access.get("Communication", "migration:assignment-index:v1");
   if (object(migration?.data).complete !== true) throw new Error("Account access is being prepared. Please try again shortly.");
-  if (!c.account && c.owner < owners.length) {
-    const page = await query("Communication", "assignedSalespersonId", owners[c.owner], model === "Account" ? Math.min(limit, 25) : 1, c.assignment);
-    c.assignment = page.cursor;
-    if (!page.cursor) c.owner++;
-    const accountIds = page.items.map(item => id(item.accountId)).filter(Boolean);
-    await access.prefetchAccounts(accountIds);
-    if (model === "Account") {
-      const permitted = (await Promise.all(accountIds.map(async key => await access.canAccount(key) ? key : ""))).filter(Boolean);
-      await access.prefetch("Account", permitted);
-      items = (await Promise.all(permitted.map(key => access.get("Account", key)))).filter((r): r is RecordData => !!r);
-      done = c.owner >= owners.length; return finish();
-    }
-    c.account = accountIds[0];
-  }
   const advanceAccount = () => { delete c.account; delete c.parents; delete c.parent; delete c.records; c.part = 0; };
-  if (c.account) {
-    // A stale GSI entry after reassignment is skipped, never trusted.
-    if (!await access.canAccount(c.account)) advanceAccount();
-    else if (naturalKey(model)) {
-      const record = await access.get(model, c.account); items = record ? [record] : []; advanceAccount();
-    } else {
-      const parentModel = model === "Document" ? documentParents[c.part] : LIST_PARENTS[model]?.model;
-      if (model === "Document" && !parentModel) throw new AccessDenied();
-      if (parentModel && parentModel !== "Account" && !c.parent) {
-        const page = await query(parentModel, "accountId", c.account, 1, c.parents);
-        c.parents = page.cursor; c.parent = id(page.items[0]?.id) || undefined;
-        if (!c.parent && !c.parents) {
-          if (model === "Document" && c.part < documentParents.length - 1) c.part++;
-          else advanceAccount();
+  const advanceParent = () => {
+    delete c.parent; delete c.records;
+    if (!c.parents) {
+      if (model === "Document" && c.part < documentParents.length - 1) c.part++;
+      else advanceAccount();
+    }
+  };
+  const finished = () => !c.account && !c.accounts?.length && c.owner >= owners.length && (model !== "Document" || c.shared >= sharedDocuments.length);
+  while (withinBudget() && !finished()) {
+    if (!c.account) {
+      if (c.accounts?.length) { c.account = c.accounts.shift(); continue; }
+      if (c.owner < owners.length) {
+        const page = await readPage("Communication", "assignedSalespersonId", owners[c.owner], Math.min(limit - items.length, 25), c.assignment);
+        c.assignment = page.cursor;
+        if (!page.cursor) c.owner++;
+        c.accounts = page.items.map(item => id(item.accountId)).filter(Boolean);
+        await access.prefetchAccounts(c.accounts);
+        if (model === "Account") {
+          const permitted = (await Promise.all(c.accounts.map(async key => await access.canAccount(key) ? { id: key } : undefined))).filter((r): r is { id: string } => !!r);
+          await append(permitted); c.accounts = [];
         }
+        continue;
       }
-      if (c.account && (!parentModel || parentModel === "Account" || c.parent)) {
-        const partition = c.parent ?? c.account;
-        if (c.parent) {
-          const parent = await access.requireRecord(parentModel!, c.parent);
-          if (await access.root(parentModel!, parent) !== c.account) throw new AccessDenied();
-        }
-        const page = await query(model, field, partition, limit, c.records); items = page.items; c.records = page.cursor;
-        if (!page.cursor) {
-          delete c.parent;
-          if (!c.parents) {
-            if (model === "Document" && c.part < documentParents.length - 1) c.part++;
-            else advanceAccount();
-          }
-        }
+      if (model === "Document" && c.shared < sharedDocuments.length) {
+        const page = await readPage(model, "entityType", sharedDocuments[c.shared], limit - items.length, c.records, filter);
+        c.records = page.cursor; if (!page.cursor) c.shared++;
+        await append(page.items);
+      }
+      continue;
+    }
+    if (!await access.canAccount(c.account)) { advanceAccount(); continue; }
+    if (model === "Account" || naturalKey(model)) {
+      const record = await access.get(model, c.account); await append(record ? [record] : []); advanceAccount(); continue;
+    }
+    const parentModel = model === "Document" ? documentParents[c.part] : LIST_PARENTS[model]?.model;
+    if (model === "Document" && !parentModel) throw new AccessDenied();
+    if (parentModel && parentModel !== "Account" && !c.parent) {
+      const page = await readPage(parentModel, "accountId", c.account, 1, c.parents);
+      c.parents = page.cursor; c.parent = id(page.items[0]?.id) || undefined;
+      if (!c.parent && !c.parents) advanceParent();
+      continue;
+    }
+    if (c.parent) {
+      try {
+        const parent = await access.requireRecord(parentModel!, c.parent);
+        if (await access.root(parentModel!, parent) !== c.account) throw new AccessDenied();
+      } catch (error) {
+        if (!(error instanceof AccessDenied)) throw error;
+        // Deleted, reassigned or moved parent from a lagging GSI/cursor. Skip
+        // its remaining children but preserve the next parent/account position.
+        advanceParent(); continue;
       }
     }
-  } else if (c.owner >= owners.length && model === "Document" && c.shared < sharedDocuments.length) {
-    const page = await query(model, "entityType", sharedDocuments[c.shared], limit, c.records);
-    items = page.items; c.records = page.cursor; if (!page.cursor) c.shared++;
+    const page = await readPage(model, field, c.parent ?? c.account, limit - items.length, c.records, filter);
+    c.records = page.cursor; if (!page.cursor) advanceParent();
+    await append(page.items);
   }
-  done = !c.account && c.owner >= owners.length && (model !== "Document" || c.shared >= sharedDocuments.length);
+  done = finished();
   return finish();
 }
