@@ -10,6 +10,7 @@ import { useFormState } from "../../lib/useFormState";
 import { SaveStatus, useSaveStatus } from "../SaveStatus";
 import { inputValue, num, str } from "../../lib/formCodec";
 import { IntegerInput, PercentInput } from "../inputs";
+import { PROPERTY_TYPES, PROPERTY_TYPE_LABELS, normalizePropertyType } from "../../../../shared/propertyType";
 
 export default function DetailsCard({
   account,
@@ -32,6 +33,7 @@ export default function DetailsCard({
     incorporated:
       account.incorporated === true ? "yes" : account.incorporated === false ? "no" : "",
     unitCount: inputValue(account.unitCount),
+    propertyType: normalizePropertyType(account.propertyType) ?? "",
     rentalPct: inputValue(account.rentalPct),
     firewallsVerified: account.firewallsVerified ?? false,
     coastal: account.coastal ?? false,
@@ -70,6 +72,7 @@ export default function DetailsCard({
               incorporated:
                 form.incorporated === "yes" ? true : form.incorporated === "no" ? false : null,
               unitCount: num(form.unitCount),
+              propertyType: normalizePropertyType(form.propertyType),
               rentalPct: num(form.rentalPct),
               firewallsVerified: form.firewallsVerified,
               coastal: form.coastal,
@@ -88,6 +91,14 @@ export default function DetailsCard({
     <div className="card">
       <h2>Property</h2>
       <div className="form-grid">
+        <div className="field">
+          <label htmlFor="account-property-type">Property type</label>
+          <select id="account-property-type" value={form.propertyType} onChange={e => setF("propertyType", e.target.value)}>
+            <option value="">Use existing information</option>
+            {PROPERTY_TYPES.map(value => <option key={value} value={value}>{PROPERTY_TYPE_LABELS[value]}</option>)}
+          </select>
+          <span className="muted small">Existing information uses the initial inquiry or account type. Choose Not recorded to leave the report unclassified.</span>
+        </div>
         <div className="field full">
           <label>Street address</label>
           <AddressAutocomplete

@@ -1,4 +1,5 @@
 import { LEAD_SOURCES, LEAD_SOURCE_LABELS } from "../../../shared/leadSource";
+import { PROPERTY_TYPES, PROPERTY_TYPE_LABELS, normalizePropertyType } from "../../../shared/propertyType";
 import { communicationRequest, type TeamEligibility } from "../lib/communications";
 import { ResponsibilitySelect } from "../components/LeadWorkflowPanel";
 import { useAsyncResource } from "../lib/useAsyncResource";
@@ -46,6 +47,7 @@ export default function NewLead() {
   const [createdId, setCreatedId] = useState<string | null>(null);
   const { form, setF, patch } = useFormState({
     type: DEFAULT_ACCOUNT_TYPE as string,
+    propertyType: "",
     name: "",
     contactName: "",
     contactType: "",
@@ -84,6 +86,7 @@ export default function NewLead() {
         fields: {
       stage: "LEAD",
       type: form.type as AccountType,
+      propertyType: normalizePropertyType(form.propertyType) ?? undefined,
       name: form.name.trim(),
       address: form.address.trim() || undefined,
       city: form.city.trim() || undefined,
@@ -198,13 +201,21 @@ export default function NewLead() {
         <div className="form-grid">
           <div className="field">
             <label>Account type</label>
-            <select value={form.type} onChange={(e) => setF("type", e.target.value)}>
+            <select value={form.type} onChange={(e) => patch(f => ({ ...f, type: e.target.value, propertyType: e.target.value === "PERSONAL" ? "INDIVIDUAL_UNIT_OWNER" : "" }))}>
               {ACCOUNT_TYPE_OPTIONS.map((o) => (
                 <option key={o.value} value={o.value}>
                   {o.label}
                 </option>
               ))}
             </select>
+          </div>
+          <div className="field">
+            <label htmlFor="new-lead-property-type">Property type</label>
+            <select id="new-lead-property-type" value={form.propertyType} onChange={e => setF("propertyType", e.target.value)}>
+              <option value="">Choose property type</option>
+              {PROPERTY_TYPES.map(value => <option key={value} value={value}>{PROPERTY_TYPE_LABELS[value]}</option>)}
+            </select>
+            <span className="muted small">Choose only when the property group is confirmed.</span>
           </div>
           <div className="field">
             <label>Name (association / insured) *</label>

@@ -1388,6 +1388,26 @@ it("returns the committed teammate version so the next edit does not depend on a
 
 
 describe("creation-only lead acquisition", () => {
+  it("persists a selected property group on manual creation and rejects unknown values", async () => {
+    const { handler } = await import("../../amplify/functions/communications/handler");
+    const create = (propertyType: unknown, requestId: string) => handler({ arguments: { operation: "createLead", input: { requestId, fields: { name: "Property group test", type: "ASSOCIATION", leadSource: "PHONE", propertyType } } }, identity: { sub: "brian", groups: ["ADMIN"] } as never });
+    expect(await create("apartment", "manual-property-bad-123456789")).toMatchObject({ ok: false, error: "Choose a valid property type" });
+    const classified = await create("CONDO", "manual-property-good-123456789") as { id: string };
+    expect(h.records.get(`Account:${classified.id}`)).toMatchObject({ propertyType: "CONDO" });
+    const unknown = await create(undefined, "manual-property-unknown-123456789") as { id: string };
+    expect(h.records.get(`Account:${unknown.id}`)?.propertyType).toBeUndefined();
+  });
+  it.each([
+    ["ASSOCIATION", "condominium", "CONDO"],
+    ["ASSOCIATION", "other", "HOA_POA_POND_TOWNHOME"],
+    ["ASSOCIATION", "unknown", undefined],
+    ["PERSONAL", undefined, "INDIVIDUAL_UNIT_OWNER"],
+  ])("preserves confirmed website property type %s / %s", async (type, propertyKind, expected) => {
+    const result = await capture({ arguments: { name: "Condominium in a name is not evidence", type, propertyKind, unitCount: type === "PERSONAL" ? undefined : "24", source: "website-quote" } } as never, {} as never, () => {}) as { id: string };
+    const stored = h.records.get(`Account:${result.id}`)!;
+    expect(stored.propertyType).toBe(expected);
+    expect(stored.unitCount).toBe(type === "PERSONAL" ? undefined : 24);
+  });
   it("requires one of the six choices and ignores a free-text source", async () => {
     const { handler } = await import("../../amplify/functions/communications/handler");
     const create = (fields: Record<string, unknown>, requestId = "manual-source-test-123456789") => handler({ arguments: { operation: "createLead", input: { requestId, fields: { name: "Source test HOA", ...fields } } }, identity: { sub: "brian", groups: ["ADMIN"] } as never });

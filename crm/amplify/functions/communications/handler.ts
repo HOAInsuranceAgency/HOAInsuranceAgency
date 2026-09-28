@@ -1,6 +1,7 @@
 import { salespersonTask, salespersonWorkflow } from "../../../../shared/salespersonOwnership";
 import { taskWakeAt } from "../../../../shared/leadWorkflow";
 import { isLeadSource } from "../../../../shared/leadSource";
+import { accountPropertyType, normalizePropertyType } from "../../../../shared/propertyType";
 import { historyStopped, restartHistory, type HistoryJob } from "./history";
 import { reviewOperation, recordCallOutcome, linkActivity } from "./review";
 import { archiveAllowed } from "./cleanup";
@@ -386,6 +387,7 @@ export const handler = async (event: { arguments: { operation?: string; readOper
       const key = `manual:${actor}:${requestId}`, existing = await get<{ accountId: string }>(key);
       if (existing) return { ok: true, id: existing.data.accountId };
       if (!isLeadSource(fields.leadSource)) throw new Error("Choose a lead source before creating the lead");
+      if (fields.propertyType != null && fields.propertyType !== "" && !normalizePropertyType(fields.propertyType)) throw new Error("Choose a valid property type");
       const id = randomUUID(), wf = await defaultWorkflow(id, name);
       if (input.salespersonId || !admin) {
         const salespersonId = text(input, "salespersonId") || actor;
@@ -393,6 +395,8 @@ export const handler = async (event: { arguments: { operation?: string; readOper
         Object.assign(wf, { salespersonId, assignmentIssue: undefined });
       }
       const account: Input = { name, leadSource: fields.leadSource, stage: "LEAD", type: ["ASSOCIATION", "PERSONAL", "COMMERCIAL_OTHER"].includes(String(fields.type)) ? fields.type : "ASSOCIATION", lastWriteBy: actor };
+      const propertyType = accountPropertyType({ type: account.type, propertyType: fields.propertyType });
+      if (propertyType) account.propertyType = propertyType;
       for (const field of ["address", "city", "state", "zip", "currentAgent", "currentPolicyExpiration", "notes"]) if (fields[field]) account[field] = text(fields, field, field === "notes" ? 10000 : 500);
       for (const field of ["unitCount", "totalInsuredValue"]) if (fields[field] != null && fields[field] !== "") {
         const value = Number(fields[field]); if (!Number.isFinite(value) || value < 0 || field === "unitCount" && !Number.isInteger(value)) throw new Error("Enter valid units and insured value"); account[field] = value;

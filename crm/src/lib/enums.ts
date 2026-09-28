@@ -34,6 +34,7 @@
  */
 import type { Schema } from "../../amplify/data/resource";
 import { ACCOUNT_TYPES, type AccountType } from "../../../shared/accountType";
+import { PROPERTY_TYPES, PROPERTY_TYPE_LABELS, type PropertyType } from "../../../shared/propertyType";
 
 // ── Derived enum types ───────────────────────────────────────────────────────
 
@@ -80,8 +81,12 @@ type SharedCoversSchema = [SchemaAccountType] extends [AccountType] ? true : nev
 type SchemaCoversShared = [AccountType] extends [SchemaAccountType] ? true : never;
 const _sharedMatchesSchema: [SharedCoversSchema, SchemaCoversShared] = [true, true];
 void _sharedMatchesSchema;
+type SchemaPropertyType = Schema["PropertyType"]["type"];
+const _sharedPropertyTypeMatches: [[SchemaPropertyType] extends [PropertyType] ? true : never, [PropertyType] extends [SchemaPropertyType] ? true : never] = [true, true];
+void _sharedPropertyTypeMatches;
 
 export { ACCOUNT_TYPES, type AccountType };
+export { PROPERTY_TYPES, PROPERTY_TYPE_LABELS, type PropertyType };
 
 // ── Option lists ─────────────────────────────────────────────────────────────
 

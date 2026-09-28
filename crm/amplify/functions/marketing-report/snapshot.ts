@@ -28,7 +28,7 @@ export async function scanComplete(input: Omit<ScanCommandInput, "ExclusiveStart
 }
 const sources = { accounts: "ACCOUNT_TABLE", quotes: "QUOTE_TABLE", policies: "POLICY_TABLE", priorCarriers: "PRIOR_CARRIER_TABLE", carriers: "CARRIER_TABLE", documents: "DOCUMENT_TABLE", activities: "ACTIVITY_TABLE" } as const;
 const modelFields: Record<keyof typeof sources, string[]> = {
-  accounts: ["name", "state", "type", "stage", "leadSource", "source", "leadAttribution", "priorCarrierName", "priorPremium", "priorTermEffective", "priorTermExpiration", "currentPolicyExpiration", "convertedAt", "notes"],
+  accounts: ["name", "state", "type", "propertyType", "unitCount", "stage", "leadSource", "source", "leadAttribution", "priorCarrierName", "priorPremium", "priorTermEffective", "priorTermExpiration", "currentPolicyExpiration", "convertedAt", "notes"],
   quotes: ["accountId", "renewalPolicyId", "presentedAt", "status", "carrierId", "premium", "lines"],
   policies: ["accountId", "datePolicyBound", "quoteId", "status", "carrierId", "carrierName", "premium", "lines", "lineOfBusiness", "effectiveDate", "expirationDate"],
   priorCarriers: ["accountId", "carrierName", "premium", "lines", "lineOfBusiness", "effectiveDate", "expirationDate", "status"],
@@ -68,11 +68,17 @@ export async function reportSnapshot(): Promise<ReportSnapshot> {
     result[key as keyof typeof sources] = await scanComplete({ TableName, ...projection(["id", "createdAt", ...modelFields[key as keyof typeof sources]]) }, budget);
   }
   const fields = ["id", "accountId", "conversationId", "createdAt", "channel", "direction", "at", "endedAt", "status", "classification", "purpose", "domain", "context", "frontDraft", "internalReport", "outcome", "actorId", "text", "attachments", "summary", "subject", "seenAt", "disposition", "deferredUntil", "kind", "dueAt", "title", "blocker"];
-  const selected = projection(["id", "kind", "accountId", ...fields.map(field => `data.${field}`)]);
-  const records = await scanComplete({ TableName: table(), ...selected, FilterExpression: "#kind IN (:workflow, :communication, :task, :link)", ExpressionAttributeNames: { ...selected.ExpressionAttributeNames, "#kind": "kind" }, ExpressionAttributeValues: { ":workflow": "WORKFLOW", ":communication": "COMMUNICATION", ":task": "TASK", ":link": "LINK" } }, budget);
+  // Read only classification evidence from intake; full snapshots contain
+  // contact details and token-bearing values that do not belong in reports.
+  const selected = projection(["id", "kind", "accountId", ...fields.map(field => `data.${field}`), "data.receivedAt", "data.snapshot.propertyKind", "data.snapshot.answers.Property type"]);
+  const records = await scanComplete({ TableName: table(), ...selected, FilterExpression: "#kind IN (:workflow, :communication, :task, :link, :submission)", ExpressionAttributeNames: { ...selected.ExpressionAttributeNames, "#kind": "kind" }, ExpressionAttributeValues: { ":workflow": "WORKFLOW", ":communication": "COMMUNICATION", ":task": "TASK", ":link": "LINK", ":submission": "SUBMISSION" } }, budget);
   const select = (kind: string) => records.filter(record => record.kind === kind).map(record => record.data as ReportRecord);
   result.workflows = select("WORKFLOW");
   result.communications = linkedCommunications(records);
   result.tasks = select("TASK");
+  result.submissions = select("SUBMISSION").map(data => {
+    const snapshot = data.snapshot as { propertyKind?: unknown; answers?: Record<string, unknown> } | undefined;
+    return { accountId: data.accountId, createdAt: data.receivedAt, propertyKind: snapshot?.propertyKind, answerPropertyKind: snapshot?.answers?.["Property type"] };
+  });
   return result;
 }
