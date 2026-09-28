@@ -14,6 +14,7 @@ export async function handler(event: Event) {
     if (access.admin || event.previous == null) return event.previous;
     const connection = object(event.previous);
     if (Array.isArray(connection.items)) {
+      await access.prefetchRecordAccess(id(event.model), connection.items.map(object));
       const items = await Promise.all(connection.items.map(async row => await access.canRecord(id(event.model), object(row)) ? row : null));
       return { ...connection, items: items.filter(Boolean) };
     }

@@ -1,6 +1,6 @@
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, GetCommand, BatchGetCommand } from "@aws-sdk/lib-dynamodb";
-import { ACCOUNT_MODELS, ACCOUNT_REFERENCES, SHARED_MODELS, AccessDenied, id, object, type Identity, type RecordData } from "./policy";
+import { ACCOUNT_MODELS, ACCOUNT_REFERENCES, LIST_PARENTS, SHARED_MODELS, AccessDenied, id, object, type Identity, type RecordData } from "./policy";
 export const db = DynamoDBDocumentClient.from(new DynamoDBClient());
 export function tableName(model: string) {
   const tables = JSON.parse(process.env.ACCESS_TABLES ?? "{}") as Record<string, string>;
@@ -13,6 +13,18 @@ export type Reader = (model: string, key: string) => Promise<RecordData | undefi
 const read: Reader = async (model, key) => {
   return (await db.send(new GetCommand({ TableName: tableName(model), Key: { [primaryKey(model)]: key }, ConsistentRead: true }))).Item;
 };
+/** Share the canonical parent mapping between single-record and batched checks.
+ * Writable accountId mirrors on indirect records are never authoritative. */
+function recordParent(model: string, value: RecordData) {
+  if (model === "Document") {
+    const parent = ({ ACCOUNT: "Account", QUOTE: "Quote", POLICY: "Policy", CERTIFICATE: "Certificate", CARRIER: "Carrier", LICENSE: "License", USER_PROFILE: "UserProfile" } as Record<string, string>)[id(value.entityType)];
+    const key = id(value.entityId);
+    if (!parent || !key) throw new AccessDenied();
+    return { model: parent, key };
+  }
+  const parent = LIST_PARENTS[model];
+  return parent ? { model: parent.model, key: id(value[parent.field]) } : undefined;
+}
 /** Cache only within one request: reassignments and manager edits apply on the next request. */
 export class AccountAccess {
   readonly actor: string;
@@ -31,6 +43,7 @@ export class AccountAccess {
   }
   async prefetch(model: string, keys: string[]) {
     const missing = [...new Set(keys)].filter(key => key && !this.records.has(`${model}:${key}`));
+    if (!missing.length) return;
     if (this.reader !== read) { await Promise.all(missing.map(key => this.get(model, key))); return; }
     const name = tableName(model), keyField = primaryKey(model);
     for (let offset = 0; offset < missing.length; offset += 100) {
@@ -48,7 +61,29 @@ export class AccountAccess {
     }
   }
   async prefetchAccounts(keys: string[]) {
-    await this.prefetch("Communication", keys.flatMap(key => [`workflow:${key}`, `deleted-account:${key}`]));
+    if (this.admin) return;
+    await this.prefetch("Communication", keys.filter(Boolean).flatMap(key => [`workflow:${key}`, `deleted-account:${key}`]));
+  }
+  async prefetchRecordAccess(model: string, values: RecordData[]) {
+    if (this.admin) return;
+    const parents = new Map<string, string[]>();
+    for (const value of values) {
+      try {
+        const parent = recordParent(model, value);
+        if (parent) {
+          const keys = parents.get(parent.model) ?? [];
+          keys.push(parent.key); parents.set(parent.model, keys);
+        }
+      } catch (error) { if (!(error instanceof AccessDenied)) throw error; }
+    }
+    // Every supported canonical parent has a direct account/shared root. Load
+    // each parent model in batches before resolving roots from the local cache.
+    await Promise.all([...parents].map(([parentModel, keys]) => this.prefetch(parentModel, keys)));
+    const roots = await Promise.all(values.map(async value => {
+      try { return await this.root(model, value); }
+      catch (error) { if (error instanceof AccessDenied) return null; throw error; }
+    }));
+    await this.prefetchAccounts(roots.filter((root): root is string => !!root));
   }
   async team() {
     const saved = await this.get("Communication", "team-routing");
@@ -77,18 +112,10 @@ export class AccountAccess {
     if (!(ACCOUNT_MODELS as readonly string[]).includes(model)) throw new AccessDenied();
     if (model === "Account") return id(value.id);
     if (model === "Activity") return id(value.entityId);
-    if (model === "Document") {
-      const type = id(value.entityType), key = id(value.entityId);
-      const parent = ({ ACCOUNT: "Account", QUOTE: "Quote", POLICY: "Policy", CERTIFICATE: "Certificate", CARRIER: "Carrier", LICENSE: "License", USER_PROFILE: "UserProfile" } as Record<string, string>)[type];
-      if (!parent || !key) throw new AccessDenied();
-      const target = await this.get(parent, key); if (!target) throw new AccessDenied();
-      return this.root(parent, target, depth + 1);
-    }
-    // Derive indirect roots from their authoritative parent, not a writable mirror.
-    const parent = model === "InvoiceLine" ? ["Invoice", id(value.invoiceId)] : ["PfLoanPayment", "PfNotice"].includes(model) ? ["PfLoan", id(value.loanId)] : model === "PfOverride" ? ["Policy", id(value.policyId)] : undefined;
+    const parent = recordParent(model, value);
     if (parent) {
-      const target = await this.get(parent[0], parent[1]); if (!target) throw new AccessDenied();
-      return this.root(parent[0], target, depth + 1);
+      const target = await this.get(parent.model, parent.key); if (!target) throw new AccessDenied();
+      return this.root(parent.model, target, depth + 1);
     }
     return id(value.accountId);
   }

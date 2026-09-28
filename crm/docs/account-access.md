@@ -14,10 +14,10 @@ Contacts, quotes, submissions, policies, billing/finance records, activity, docu
 
 `amplify/account-access.ts` adds an authorization function to Amplify's generated AppSync pipelines while preserving native model authorization:
 
-- Reads, secondary indexes, and relationships filter results before GraphQL sends them to the browser. Filtered pages preserve their pagination cursor, including empty pages.
+- Reads, secondary indexes, and relationships filter results before GraphQL sends them to the browser. Connection pages batch canonical parents by model, then batch the distinct accounts' workflow and deletion records before filtering. Filtered pages preserve their pagination cursor, including empty pages.
 - Non-admin model lists replace the generated global scan, after native authorization, with assignment-index queries and account/parent-index queries. Account reads and ownership checks are batched. Search, dashboards, and account tables use this same path without needing separate frontend APIs. Filtering is bounded to authorized partitions; unrelated accounts are never scanned. Administrators and server IAM retain native listing behavior.
 - Mutations check the stored record, proposed record, and related record IDs before writing. Moving a record to an accessible parent cannot claim someone else's record.
-- Custom account operations check stored IDs before invoking the business handler; communication work/report responses are filtered too.
+- Custom account operations check stored IDs before invoking the business handler; communication work/report responses and bulk account checks batch ownership reads too. Duplicate account IDs share the same request-local read; unprocessed keys retry, and storage failures propagate instead of returning incomplete results.
 - Server IAM calls retain their existing native permissions. Cognito identity-pool calls cannot bypass the account guard by selecting IAM authentication.
 - Account model subscriptions are disabled to prevent broadcasts after reassignment. Documents use authorized paginated reads, polling, and explicit refresh after changes.
 

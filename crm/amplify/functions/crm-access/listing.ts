@@ -56,6 +56,8 @@ export async function listAssigned(access: AccountAccess, model: string, args: R
     // are fetched consistently, then their current ownership and filter checked.
     const keys = candidates.map(item => id(naturalKey(model) ? item.accountId : item.id)).filter(Boolean);
     await access.prefetch(model, keys);
+    const currentRecords = (await Promise.all(keys.map(key => access.get(model, key)))).filter((item): item is RecordData => !!item);
+    await access.prefetchRecordAccess(model, currentRecords);
     for (const key of keys) {
       const current = await access.get(model, key);
       if (!seen.has(key) && current && matchesFilter(current, filter) && await access.canRecord(model, current)) { items.push(current); seen.add(key); }

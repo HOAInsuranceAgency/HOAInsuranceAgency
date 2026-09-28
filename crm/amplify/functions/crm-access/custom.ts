@@ -3,6 +3,12 @@ import { AccessDenied, id, object, type RecordData } from "./policy";
 const adminCommunication = new Set(["settings", "reportDelivery", "prepareLeadDeletion", "recoverReport", "saveTeamRouting", "saveEligibility", "saveSettings", "restartReconciliation", "restartConversationHistory", "validateConnection", "activate", "reviewOperation", "backfill"]);
 const accountOperations = new Set(["context", "accountSummary", "nextYearPreview", "saveCommercial", "prepareBusinessDraft", "nextYear", "initializeLead", "setResponsibilities", "reopenLead", "setLeadDisposition", "cancelAi", "linkConversation", "linkActivity", "archive", "addNote", "mergeTasks"]);
 const taskOperations = new Set(["deliveryOptions", "updateBlocker", "takeResponse", "delegateService", "requestProspectInformation"]);
+async function filterAccountItems(access: AccountAccess, input: unknown) {
+  const items = Array.isArray(input) ? input : [];
+  await access.prefetchAccounts(items.map(value => id(object(value).accountId)));
+  const permitted = await Promise.all(items.map(async value => await access.canAccount(id(object(value).accountId)) ? value : undefined));
+  return permitted.filter(Boolean);
+}
 async function communicationAccount(access: AccountAccess, key: string, expected?: string) {
   const record = await access.get("Communication", key);
   const accountId = id(record?.accountId) || id(object(record?.data).accountId);
@@ -40,10 +46,12 @@ export async function authorizeCustom(access: AccountAccess, field: string, args
   }
   if (op === "commercialTable") {
     if (!Array.isArray(input.accountIds) || input.accountIds.length > 25) throw new AccessDenied();
+    await access.prefetchAccounts(input.accountIds.map(id));
     await Promise.all(input.accountIds.map(key => access.requireAccount(id(key)))); return;
   }
   if (op === "lastContacts") {
     if (!Array.isArray(input.accounts) || input.accounts.length > 10) throw new AccessDenied();
+    await access.prefetchAccounts(input.accounts.map(entry => id(object(entry).accountId)));
     await Promise.all(input.accounts.map(entry => access.requireAccount(id(object(entry).accountId)))); return;
   }
   if (op === "createLead") {
@@ -95,8 +103,7 @@ export async function filterCustom(access: AccountAccess, field: string, args: R
   const result = object(original), op = id(args.readOperation);
   if (access.admin) return op === "team" ? { ...result, actorId: access.actor } : original;
   if (op === "work") {
-    const permitted = await Promise.all((Array.isArray(result.items) ? result.items : []).map(async value => await access.canAccount(id(object(value).accountId)) ? value : undefined));
-    return { ...result, items: permitted.filter(Boolean) };
+    return { ...result, items: await filterAccountItems(access, result.items) };
   }
   if (op === "team" || op === "context") {
     const allowed = await access.salespeople();
@@ -110,8 +117,7 @@ export async function filterCustom(access: AccountAccess, field: string, args: R
   }
   if (op === "myReport") {
     const report = object(result.report);
-    const permitted = await Promise.all((Array.isArray(report.items) ? report.items : []).map(async value => await access.canAccount(id(object(value).accountId)) ? value : undefined));
-    const items = permitted.filter(Boolean);
+    const items = await filterAccountItems(access, report.items);
     return { ...result, report: { ...report, items, accountCount: new Set(items.map(i => object(i).accountId)).size } };
   }
   return original;
