@@ -8,7 +8,9 @@
 
 The authoritative assignment is `workflow:<accountId>.data.salespersonId` in the server-only communication table. Manager relationships come from the administrator-managed `team-routing` record. A manager must have `salesManager: true`; a teammate's `salesManagerId` alone does not confer management privileges. Self-editable `UserProfile.role`, legacy champion fields, old reminders, temporary coverage, and service-task assignments do not grant account access.
 
-Contacts, quotes, submissions, policies, billing/finance records, activity, documents, and certificates inherit the account's access. Search, dashboard summaries, and exports use those same scoped reads. Shared agency resources—carriers, templates, licensing, profiles, agency settings—retain their existing permissions. The unassigned/unlinked intake tools are administrator-only. Non-admin lead creation defaults to the creator; managers can select an eligible direct report.
+Contacts, quotes, submissions, policies, billing/finance records, activity, documents, and certificates inherit the account's access. Search and exports use those same scoped reads. The Dashboard navigation and route require the `ADMIN` Cognito group; other users opening the root URL are redirected to Leads before the Dashboard mounts. Shared agency resources—carriers, templates, licensing, profiles, agency settings—retain their existing permissions. The unassigned/unlinked intake tools are administrator-only. Non-admin lead creation defaults to the creator; managers can select an eligible direct report.
+
+Settings → Team combines member details, lead-text preferences, salesperson eligibility, and Front/Dialpad connections in one roster. Eligibility changes assignment choices, while access remains governed by the rules above. Invited users remain visible before their first sign-in.
 
 ## Enforcement
 

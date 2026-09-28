@@ -17,6 +17,7 @@ import {
   fetchUserGroups,
   isAdminGroup,
   roleFromGroups,
+  useIsAdmin,
 } from "./lib/auth";
 import MagicLinkSignIn from "./components/MagicLinkSignIn";
 import Dashboard from "./pages/Dashboard";
@@ -148,12 +149,13 @@ function ProfileGate({ user, signOut }: { user: AuthUser; signOut: () => void })
 }
 
 function NotFound() {
+  const isAdmin = useIsAdmin();
   return (
     <div className="card" style={{ maxWidth: 480, textAlign: "center", marginTop: 40 }}>
       <h2>Page not found</h2>
       <p className="muted small">That page doesn't exist (or moved).</p>
-      <NavLink to="/">
-        <button className="primary">Back to dashboard</button>
+      <NavLink to={isAdmin ? "/" : "/leads"}>
+        <button className="primary">Back to {isAdmin ? "dashboard" : "leads"}</button>
       </NavLink>
     </div>
   );
@@ -309,6 +311,8 @@ function AgencyIdentifiers() {
 
 function Shell({ profile, signOut }: { profile: UserProfile; signOut: () => void }) {
   const location = useLocation();
+  const isAdmin = useIsAdmin();
+  const homePath = isAdmin ? "/" : "/leads";
   const [menuOpen, setMenuOpen] = useState(false);
   /**
    * Financing sits between Documents' old slot and Settings for everyone:
@@ -320,7 +324,7 @@ function Shell({ profile, signOut }: { profile: UserProfile; signOut: () => void
     { to: "/lead-work", label: "Lead follow-up", icon: <IconCheck /> },
     { to: "/financing", label: "Financing", icon: <IconCoin /> } as const,
     ...NAV_ITEMS.slice(5),
-  ];
+  ].filter((item) => item.to !== "/" || isAdmin);
 
   if (/^\/front-sidebar\/?$/.test(location.pathname)) return <FrontSidebar />;
 
@@ -328,7 +332,7 @@ function Shell({ profile, signOut }: { profile: UserProfile; signOut: () => void
     <div className="shell">
       <aside className={`sidebar${menuOpen ? " sidebar--open" : ""}`}>
         <div className="sidebar-top">
-          <NavLink to="/" className="brand" onClick={() => setMenuOpen(false)}>
+          <NavLink to={homePath} className="brand" onClick={() => setMenuOpen(false)}>
             <img src="/logo.png" alt="HOA Insurance Agency" />
           </NavLink>
           <button
@@ -361,7 +365,10 @@ function Shell({ profile, signOut }: { profile: UserProfile; signOut: () => void
       <main className="main">
         <UniversalSearch />
         <Routes>
-          <Route path="/" element={<Dashboard />} />
+          <Route
+            path="/"
+            element={isAdmin ? <Dashboard /> : <Navigate to="/leads" replace />}
+          />
           <Route path="/leads" element={<AccountsList stage="LEAD" />} />
           <Route path="/leads/new" element={<NewLead />} />
           <Route path="/lead-work" element={<LeadWork profile={profile} />} />
