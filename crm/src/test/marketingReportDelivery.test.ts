@@ -98,6 +98,16 @@ describe("weekly worker and durable send ledger", () => {
 });
 describe("complete bounded data reads", () => {
   const budget = () => ({ deadline: Date.now() + 5000, rows: 0, bytes: 0, pages: 0 });
+  it("collects the report without reading the unused contact table", async () => {
+    const sourceEnvs = ["ACCOUNT_TABLE", "QUOTE_TABLE", "POLICY_TABLE", "PRIOR_CARRIER_TABLE", "CARRIER_TABLE", "DOCUMENT_TABLE", "ACTIVITY_TABLE"];
+    for (const env of sourceEnvs) vi.stubEnv(env, env);
+    vi.stubEnv("CONTACT_TABLE", undefined);
+    h.send.mockReset().mockResolvedValue({ Items: [] });
+    const actual = await vi.importActual<typeof import("../../amplify/functions/marketing-report/snapshot")>("../../amplify/functions/marketing-report/snapshot");
+    const snapshot = await actual.reportSnapshot();
+    expect(h.send.mock.calls.map(([command]) => command.input.TableName)).toEqual([...sourceEnvs, "communications"]);
+    expect(snapshot).not.toHaveProperty("contacts");
+  });
   it("follows pages even when a filtered page is empty", async () => {
     h.send.mockReset().mockResolvedValueOnce({ Items: [{ id: "one" }], LastEvaluatedKey: { id: "one" } }).mockResolvedValueOnce({ Items: [], LastEvaluatedKey: { id: "two" } }).mockResolvedValueOnce({ Items: [{ id: "three" }] }); expect(await scanComplete({ TableName: "source" }, budget())).toEqual([{ id: "one" }, { id: "three" }]); expect(h.send.mock.calls[2][0].input.ExclusiveStartKey).toEqual({ id: "two" }); expect(h.send.mock.calls[0][0].input.ConsistentRead).toBe(true);
   });
