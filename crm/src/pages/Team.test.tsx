@@ -236,4 +236,40 @@ describe("combined team and assignment settings", () => {
     expect(checkbox).not.toBeChecked();
     expect(checkbox).toBeEnabled();
   });
+
+  it("refreshes the invited roster without letting a late assignment read overwrite an in-flight save", async () => {
+    combinedSetup();
+    let finishSave!: (result: unknown) => void;
+    let finishStaleRead: ((result: unknown) => void) | undefined;
+    let reads = 0, saves = 0;
+    communicationRequest.mockImplementation((operation: string, input: TeamEligibility) => {
+      if (operation === "team") {
+        if (++reads === 1) return Promise.resolve({ team: [{ ...eligibility }] });
+        return new Promise(resolve => { finishStaleRead = resolve; });
+      }
+      if (++saves === 1) return new Promise(resolve => { finishSave = resolve; });
+      return Promise.resolve({ member: { ...input, version: (input.version ?? 0) + 1 } });
+    });
+    inviteUser.mockResolvedValue({ data: { ok: true } });
+    renderPage();
+    const checkbox = await screen.findByRole("checkbox", { name: "Salesperson eligibility for Casey Staff" });
+    fireEvent.click(checkbox);
+    expect(checkbox).toBeDisabled();
+
+    const inviteCard = screen.getByRole("button", { name: "Send invite" }).closest(".card")!;
+    fireEvent.change(within(inviteCard as HTMLElement).getByRole("textbox"), { target: { value: "new@example.com" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send invite" }));
+    await waitFor(() => expect(listTeamUsers).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(UserProfile.list).toHaveBeenCalledTimes(2));
+
+    await act(async () => finishSave({ member: { ...eligibility, salesperson: true, version: 4 } }));
+    // Before the guard, the invite starts a stale read which can settle after
+    // the successful save. Deliver it last to exercise that exact ordering.
+    if (finishStaleRead) await act(async () => finishStaleRead!({ team: [{ ...eligibility }] }));
+    expect(checkbox).toBeChecked();
+    expect(checkbox).toBeEnabled();
+    expect(reads).toBe(1);
+    fireEvent.click(checkbox);
+    await waitFor(() => expect(communicationRequest).toHaveBeenLastCalledWith("saveEligibility", { ...eligibility, salesperson: false, version: 4 }, true));
+  });
 });

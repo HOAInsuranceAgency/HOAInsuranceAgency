@@ -26,7 +26,12 @@ export function useLeadEligibilitySettings() {
   function closeEditor() { if (!inFlight.current) { setEditing(null); setError(""); } }
   const disabled = busy || resource.loading || !!editing;
   function editMember(member: TeamEligibility) { setEditing(member); setError(""); setMessage(""); }
-  function refresh() { setError(""); void resource.refetch(); }
+  function refresh() {
+    // Inviting another user refreshes the roster independently. Do not start a
+    // read here that could replace this save's committed member/version later.
+    if (inFlight.current) return;
+    setError(""); void resource.refetch();
+  }
   return { resource, busy, error, message, editing, disabled, save, closeEditor, editMember, refresh, setEditing };
 }
 type EligibilitySettings = ReturnType<typeof useLeadEligibilitySettings>;
