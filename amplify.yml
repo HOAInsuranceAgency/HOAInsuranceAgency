@@ -40,6 +40,9 @@ applications:
             # pipeline-deploy so a type error stops the deploy rather than
             # being reported after it.
             - npm run typecheck:backend
+            # Validate generated IAM policy sizes and CloudFormation structure
+            # before applying any backend changes.
+            - npm run synth:check
             - npx ampx pipeline-deploy --branch $AWS_BRANCH --app-id $AWS_APP_ID
     frontend:
       phases:

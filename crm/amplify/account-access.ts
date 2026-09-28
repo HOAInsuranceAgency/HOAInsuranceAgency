@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { Asset } from "aws-cdk-lib/aws-s3-assets";
 import { Stack, CfnResource, AssetStaging } from "aws-cdk-lib";
 import { CfnFunctionConfiguration, type CfnResolver } from "aws-cdk-lib/aws-appsync";
-import { PolicyStatement } from "aws-cdk-lib/aws-iam";
+import { grantAccountTableReads } from "./account-access-policies";
 import type { Table } from "aws-cdk-lib/aws-dynamodb";
 import type { backend as Backend } from "./backend";
 import { ACCOUNT_MODELS, SHARED_MODELS, PUBLIC_OPERATIONS, ADMIN_OPERATIONS, CUSTOM_OPERATIONS, listPartition } from "./functions/crm-access/policy";
@@ -52,7 +52,7 @@ export function installAccountAccess(backend: typeof Backend, communicationTable
   guard.addEnvironment("COMMUNICATION_TABLE", communicationTable.tableName);
   communicationTable.grantReadData(guard.resources.lambda);
   const tableArns = Object.values(tables).map(tableName => Stack.of(api).formatArn({ service: "dynamodb", resource: "table", resourceName: tableName }));
-  guard.resources.lambda.addToRolePolicy(new PolicyStatement({ actions: ["dynamodb:GetItem", "dynamodb:BatchGetItem", "dynamodb:Query"], resources: [...tableArns, ...tableArns.map(arn => `${arn}/index/*`)] }));
+  grantAccountTableReads(guard.resources.lambda, guard.resources.lambda.role!, tableArns);
   const bucket = backend.storage.resources.bucket;
   guard.addEnvironment("STORAGE_BUCKET", bucket.bucketName);
   bucket.grantReadWrite(guard.resources.lambda);
