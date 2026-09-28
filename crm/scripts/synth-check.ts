@@ -48,11 +48,12 @@
  * handler rather than passing it down from here. `assertNoEscapingImports`
  * below enforces that, because a note in a comment would not have.
  */
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { Stack, type App } from "aws-cdk-lib";
-import type { CfnFunction } from "aws-cdk-lib/aws-lambda";
+import type { CfnFunction, CfnEventInvokeConfig } from "aws-cdk-lib/aws-lambda";
+import type { CfnSchedule } from "aws-cdk-lib/aws-scheduler";
 
 const AMPLIFY = resolve(process.cwd(), "amplify");
 
@@ -113,12 +114,19 @@ assertNoEscapingImports();
 // `defineBackend` reads these three from CDK context. The pipeline supplies
 // them; a local run has to. The values only name the assembly — nothing is
 // contacted and nothing is deployed, so they need to be well-formed rather
-// than real.
+// than real. Use the pipeline identity when available so generated template
+// sizes match deployment; longer names consume more of the template limit.
 const outdir = mkdtempSync(join(tmpdir(), "amplify-synth-"));
 process.env.CDK_CONTEXT_JSON = JSON.stringify({
-  "amplify-backend-namespace": "synth-check",
-  "amplify-backend-name": "local",
+  "amplify-backend-namespace": process.env.AWS_APP_ID ?? "synth-check",
+  "amplify-backend-name": process.env.AWS_BRANCH ?? "local",
   "amplify-backend-type": "branch",
+  // Toolkit.fromAssemblyBuilder supplies these defaults during pipeline-deploy.
+  // Include its resource metadata so this byte-size gate measures the same output.
+  "aws:cdk:enable-path-metadata": true,
+  "aws:cdk:enable-asset-metadata": true,
+  "aws:cdk:version-reporting": true,
+  "aws:cdk:bundling-stacks": ["**"],
 });
 process.env.CDK_OUTDIR = outdir;
 
@@ -130,7 +138,7 @@ try {
   // Then the assembly itself, which is the half an import alone would miss.
   const app = backend.stack.node.root as App;
   const assembly = app.synth();
-  for (const fn of [backend.communicationWorker, backend.leadReply, backend.portalSweep]) {
+  for (const fn of [backend.communicationWorker, backend.leadReply, backend.portalSweep, backend.marketingReportWorker]) {
     const resource = fn.resources.lambda.node.defaultChild as CfnFunction;
     if (Stack.of(resource).resolve(resource.reservedConcurrentExecutions) !== 1) throw new Error(`${resource.node.path} must retain reserved concurrency 1`);
   }
@@ -146,6 +154,28 @@ try {
   }
   const { checkAccountAccess } = await import("./check-account-access");
   checkAccountAccess(backend, outdir);
+  const marketingWorker = backend.marketingReportWorker.resources.lambda;
+  const marketingEnv = Stack.of(marketingWorker).resolve((marketingWorker.node.defaultChild as CfnFunction).environment);
+  if (Stack.of(marketingWorker) === Stack.of(backend.marketingReportApi.resources.lambda)) throw new Error("Marketing worker infrastructure must stay outside the crowded data stack");
+  const apiEnv = Stack.of(backend.marketingReportApi.resources.lambda).resolve((backend.marketingReportApi.resources.lambda.node.defaultChild as CfnFunction).environment);
+  const workerName = (marketingWorker.node.defaultChild as CfnFunction).functionName;
+  if (typeof workerName !== "string" || workerName.length > 64 || apiEnv.variables.MARKETING_REPORT_WORKER !== workerName) throw new Error("Marketing API must invoke the exact named worker without a cross-stack reference");
+  const marketingSchedule = Stack.of(marketingWorker).node.findChild("WeeklyMarketingReportSchedule").node.defaultChild as CfnSchedule;
+  const scheduleStack = Stack.of(marketingSchedule);
+  if (scheduleStack.resolve(marketingSchedule.scheduleExpression) !== "cron(0 8 ? * FRI *)" || scheduleStack.resolve(marketingSchedule.scheduleExpressionTimezone) !== "America/New_York") throw new Error("Marketing report must run Friday at 08:00 America/New_York, including DST");
+  if (scheduleStack.resolve(marketingSchedule.state) !== (process.env.AWS_BRANCH === "main" ? "ENABLED" : "DISABLED")) throw new Error("Marketing schedule must be enabled only in production");
+  const expectedArn = scheduleStack.resolve(scheduleStack.formatArn({ service: "scheduler", resource: "schedule", resourceName: `default/${marketingSchedule.name}` }));
+  if (JSON.stringify(marketingEnv.variables.MARKETING_REPORT_SCHEDULE_ARN) !== JSON.stringify(expectedArn)) throw new Error("Worker must verify the actual marketing schedule ARN");
+  const scheduleInput = JSON.parse(scheduleStack.resolve(marketingSchedule.target).input);
+  if (scheduleInput.trigger !== "scheduled" || scheduleInput.scheduleArn !== "<aws.scheduler.schedule-arn>" || scheduleInput.scheduledAt !== "<aws.scheduler.scheduled-time>") throw new Error("Marketing schedule must provide its trusted ARN and scheduled timestamp");
+  const asyncConfig = marketingWorker.node.findAll().find(node => (node as CfnEventInvokeConfig).cfnResourceType === "AWS::Lambda::EventInvokeConfig") as CfnEventInvokeConfig | undefined;
+  if (!asyncConfig || asyncConfig.maximumRetryAttempts !== 0 || asyncConfig.maximumEventAgeInSeconds !== 300) throw new Error("Marketing sends must not be retried automatically after uncertain delivery");
+  // CloudFormation rejects an S3 template above 1,000,000 bytes even when CDK
+  // can synthesize it. Check the actual files, including every nested stack.
+  const templates = (readdirSync(outdir, { recursive: true }) as string[]).filter(name => name.endsWith(".template.json"))
+    .map(name => ({ name, bytes: readFileSync(join(outdir, name)).byteLength })).sort((a, b) => b.bytes - a.bytes);
+  for (const template of templates) if (template.bytes > 1_000_000) throw new Error(`CloudFormation template exceeds 1,000,000 bytes: ${template.name} (${template.bytes})`);
+  console.log(`Largest CloudFormation template: ${templates[0]?.bytes ?? 0} bytes (${templates[0]?.name ?? "none"}).`);
   const stacks = assembly.stacks.length;
 
   console.log(`✔ Backend synthesised — ${stacks} stack${stacks === 1 ? "" : "s"}.`);
