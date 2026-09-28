@@ -52,7 +52,8 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { Stack, type App } from "aws-cdk-lib";
-import type { CfnFunction } from "aws-cdk-lib/aws-lambda";
+import type { CfnFunction, CfnEventInvokeConfig } from "aws-cdk-lib/aws-lambda";
+import type { CfnSchedule } from "aws-cdk-lib/aws-scheduler";
 
 const AMPLIFY = resolve(process.cwd(), "amplify");
 
@@ -130,7 +131,7 @@ try {
   // Then the assembly itself, which is the half an import alone would miss.
   const app = backend.stack.node.root as App;
   const assembly = app.synth();
-  for (const fn of [backend.communicationWorker, backend.leadReply, backend.portalSweep]) {
+  for (const fn of [backend.communicationWorker, backend.leadReply, backend.portalSweep, backend.marketingReportWorker]) {
     const resource = fn.resources.lambda.node.defaultChild as CfnFunction;
     if (Stack.of(resource).resolve(resource.reservedConcurrentExecutions) !== 1) throw new Error(`${resource.node.path} must retain reserved concurrency 1`);
   }
@@ -146,6 +147,18 @@ try {
   }
   const { checkAccountAccess } = await import("./check-account-access");
   checkAccountAccess(backend, outdir);
+  const marketingWorker = backend.marketingReportWorker.resources.lambda;
+  const marketingEnv = Stack.of(marketingWorker).resolve((marketingWorker.node.defaultChild as CfnFunction).environment);
+  const marketingSchedule = backend.data.resources.graphqlApi.node.findChild("WeeklyMarketingReportSchedule").node.defaultChild as CfnSchedule;
+  const scheduleStack = Stack.of(marketingSchedule);
+  if (scheduleStack.resolve(marketingSchedule.scheduleExpression) !== "cron(0 8 ? * FRI *)" || scheduleStack.resolve(marketingSchedule.scheduleExpressionTimezone) !== "America/New_York") throw new Error("Marketing report must run Friday at 08:00 America/New_York, including DST");
+  if (scheduleStack.resolve(marketingSchedule.state) !== (process.env.AWS_BRANCH === "main" ? "ENABLED" : "DISABLED")) throw new Error("Marketing schedule must be enabled only in production");
+  const expectedArn = scheduleStack.resolve(scheduleStack.formatArn({ service: "scheduler", resource: "schedule", resourceName: `default/${marketingSchedule.name}` }));
+  if (JSON.stringify(marketingEnv.variables.MARKETING_REPORT_SCHEDULE_ARN) !== JSON.stringify(expectedArn)) throw new Error("Worker must verify the actual marketing schedule ARN");
+  const scheduleInput = JSON.parse(scheduleStack.resolve(marketingSchedule.target).input);
+  if (scheduleInput.trigger !== "scheduled" || scheduleInput.scheduleArn !== "<aws.scheduler.schedule-arn>" || scheduleInput.scheduledAt !== "<aws.scheduler.scheduled-time>") throw new Error("Marketing schedule must provide its trusted ARN and scheduled timestamp");
+  const asyncConfig = marketingWorker.node.findAll().find(node => (node as CfnEventInvokeConfig).cfnResourceType === "AWS::Lambda::EventInvokeConfig") as CfnEventInvokeConfig | undefined;
+  if (!asyncConfig || asyncConfig.maximumRetryAttempts !== 0 || asyncConfig.maximumEventAgeInSeconds !== 300) throw new Error("Marketing sends must not be retried automatically after uncertain delivery");
   const stacks = assembly.stacks.length;
 
   console.log(`✔ Backend synthesised — ${stacks} stack${stacks === 1 ? "" : "s"}.`);

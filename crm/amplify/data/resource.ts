@@ -27,6 +27,7 @@ import { portalSweep } from "../functions/portal-sweep/resource";
 import { leadReply } from "../functions/lead-reply/resource";
 import { activityLog } from "../functions/activity-log/resource";
 import { communications, communicationWorker, communicationReports } from "../functions/communications/resource";
+import { marketingReportApi } from "../functions/marketing-report/resource";
 
 /**
  * HOA CRM data model.
@@ -2017,6 +2018,13 @@ const schema = a
       .arguments({ operation: a.string().required(), path: a.string().required(), contentType: a.string(), nextToken: a.string(), sizeBytes: a.integer() })
       .returns(a.json()).authorization(allow => [allow.authenticated()])
       .handler(a.handler.function(crmAccess)),
+    marketingReportSettings: a.query()
+      .returns(a.json()).authorization(allow => [allow.groups(["ADMIN"])])
+      .handler(a.handler.function(marketingReportApi)),
+    marketingReportAction: a.mutation()
+      .arguments({ operation: a.string().required(), input: a.json() })
+      .returns(a.json()).authorization(allow => [allow.groups(["ADMIN"])])
+      .handler(a.handler.function(marketingReportApi)),
 
     communicationRead: a.query()
       .arguments({ readOperation: a.string().required(), input: a.json() })
