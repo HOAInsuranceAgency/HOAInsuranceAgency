@@ -3,7 +3,9 @@ import { SnsAction } from "aws-cdk-lib/aws-cloudwatch-actions";
 import { Topic } from "aws-cdk-lib/aws-sns";
 import { defineBackend } from "@aws-amplify/backend";
 import { CfnWebACL, CfnWebACLAssociation } from "aws-cdk-lib/aws-wafv2";
-import { Duration } from "aws-cdk-lib";
+import { Duration, Names, Stack, TimeZone } from "aws-cdk-lib";
+import { Schedule, ScheduleExpression, ScheduleTargetInput, ContextAttribute } from "aws-cdk-lib/aws-scheduler";
+import { LambdaInvoke } from "aws-cdk-lib/aws-scheduler-targets";
 import { PolicyStatement } from "aws-cdk-lib/aws-iam";
 import { Secret } from "aws-cdk-lib/aws-secretsmanager";
 import {
@@ -51,6 +53,7 @@ import { pfAutopay } from "./functions/pf-autopay/resource";
 import { resolveMailbox } from "./functions/mailbox";
 import { activityLog } from "./functions/activity-log/resource";
 import { communications, communicationWorker, communicationWebhook, communicationReports, communicationMonitor } from "./functions/communications/resource";
+import { marketingReportApi, marketingReportWorker } from "./functions/marketing-report/resource";
 import {
   magicLinkDefine,
   magicLinkCreate,
@@ -99,6 +102,8 @@ export const backend = defineBackend({
   communicationReports,
   communicationMonitor,
   communicationWebhook,
+  marketingReportApi,
+  marketingReportWorker,
   magicLinkDefine,
   magicLinkCreate,
   magicLinkVerify,
@@ -435,6 +440,41 @@ const communicationAlerts = new Topic(backend.data.resources.graphqlApi, "Commun
 backend.communications.addEnvironment("COMMUNICATION_ALERT_TOPIC", communicationAlerts.topicArn);
 backend.communications.resources.lambda.addToRolePolicy(new PolicyStatement({ actions: ["sns:ListSubscriptionsByTopic"], resources: [communicationAlerts.topicArn] }));
 backend.addOutput({ custom: { communicationAlertTopicArn: communicationAlerts.topicArn } });
+
+// Marketing exports use direct, read-only model access. They have no broad
+// allow.resource grant to the GraphQL schema and no provider credentials.
+for (const fn of [backend.marketingReportApi, backend.marketingReportWorker]) {
+  communicationTable.grantReadWriteData(fn.resources.lambda);
+  fn.addEnvironment("COMMUNICATION_TABLE", communicationTable.tableName);
+  fn.addEnvironment("MARKETING_REPORT_ENV", branch ?? "local");
+}
+for (const model of ["Account", "Contact", "Quote", "Policy", "PriorCarrier", "Carrier", "Document", "Activity"] as const) {
+  const source = backend.data.resources.tables[model];
+  source.grantReadData(backend.marketingReportWorker.resources.lambda);
+  backend.marketingReportWorker.addEnvironment(`${model.replace(/([a-z])([A-Z])/g, "$1_$2").toUpperCase()}_TABLE`, source.tableName);
+}
+backend.marketingReportWorker.addEnvironment("MARKETING_REPORT_FROM", internalMailbox);
+backend.marketingReportWorker.resources.lambda.addToRolePolicy(new PolicyStatement({ actions: ["ses:SendEmail", "ses:SendRawEmail"], resources: ["*"] }));
+backend.marketingReportWorker.resources.lambda.grantInvoke(backend.marketingReportApi.resources.lambda);
+backend.marketingReportApi.addEnvironment("MARKETING_REPORT_WORKER", backend.marketingReportWorker.resources.lambda.functionName);
+(backend.marketingReportWorker.resources.lambda.node.defaultChild as CfnFunction).reservedConcurrentExecutions = 1;
+backend.marketingReportWorker.resources.lambda.configureAsyncInvoke({ retryAttempts: 0, maxEventAge: Duration.minutes(5) });
+const marketingScheduleName = `marketing-report-${Names.uniqueId(backend.data.resources.graphqlApi).slice(-40)}`;
+const marketingScheduleArn = Stack.of(backend.data.resources.graphqlApi).formatArn({ service: "scheduler", resource: "schedule", resourceName: `default/${marketingScheduleName}` });
+backend.marketingReportWorker.addEnvironment("MARKETING_REPORT_SCHEDULE_ARN", marketingScheduleArn);
+new Schedule(backend.data.resources.graphqlApi, "WeeklyMarketingReportSchedule", {
+  scheduleName: marketingScheduleName, enabled: branch === "main",
+  description: "Weekly marketing lead spreadsheet, Fridays at 8 AM Eastern",
+  schedule: ScheduleExpression.cron({ minute: "0", hour: "8", weekDay: "FRI", timeZone: TimeZone.AMERICA_NEW_YORK }),
+  target: new LambdaInvoke(backend.marketingReportWorker.resources.lambda, { retryAttempts: 2, maxEventAge: Duration.hours(1), input: ScheduleTargetInput.fromObject({ trigger: "scheduled", scheduleArn: ContextAttribute.scheduleArn, scheduledAt: ContextAttribute.scheduledTime }) }),
+});
+const marketingReportErrors = new Alarm(backend.data.resources.graphqlApi, "MarketingReportErrors", {
+  metric: backend.marketingReportWorker.resources.lambda.metricErrors({ period: Duration.minutes(5), statistic: "Sum" }),
+  threshold: 1, evaluationPeriods: 1, treatMissingData: TreatMissingData.NOT_BREACHING,
+  alarmDescription: "The weekly marketing report failed or its email acceptance is uncertain. Check Settings delivery history before requesting another send.",
+});
+marketingReportErrors.addAlarmAction(new SnsAction(communicationAlerts));
+
 for (const [name, metricName, threshold, comparisonOperator] of [
   ["CommunicationCoverageAlarm", "Errors", 1, ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD],
   ["CommunicationMonitorStopped", "Invocations", 1, ComparisonOperator.LESS_THAN_THRESHOLD],
