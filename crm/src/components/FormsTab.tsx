@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { uploadData } from "aws-amplify/storage";
+import { uploadData } from "../lib/scopedStorage";
 import {
   client,
   fmtDateTime,

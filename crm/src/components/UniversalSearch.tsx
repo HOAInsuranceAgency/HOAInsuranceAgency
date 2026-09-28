@@ -42,7 +42,7 @@ interface RenderGroup {
  * Two lanes with different physics, one dropdown: accounts, contacts,
  * policies, invoices, certificates and carriers are answered per keystroke
  * from an in-memory index (six narrow scans, fetched lazily on first focus
- * and kept for the session), while documents — whose text lives server-side
+ * and refreshed on focus), while documents — whose text lives server-side
  * and weighs megabytes — are a debounced `contains` query that fills its
  * section in when it lands. Enter with nothing chosen goes to /search, the
  * full results page, which keeps the old page's snippets, previews and
@@ -60,8 +60,8 @@ export default function UniversalSearch() {
   const inputRef = useRef<HTMLInputElement>(null);
   const docTicket = useRef(0);
 
-  // The index is per-session and lazy: nothing is fetched until someone
-  // first puts focus in the box. A failed build retries on the next focus.
+  // Recheck assignments when search is opened; do not keep a session-long
+  // index after an account has been reassigned.
   const index = useAsyncResource(fetchSearchIndexRows, [], {
     manual: true,
     initialData: [],
@@ -277,10 +277,9 @@ export default function UniversalSearch() {
           }}
           onFocus={() => {
             setOpen(true);
-            // The retry half of "a failed build retries on the next focus":
-            // `loaded` settles true on failure too, so the error is what
-            // re-arms the gate.
-            if (!index.loading && (!index.loaded || index.error)) {
+            if (!index.loading) {
+              index.setData([]);
+              setDocHits([]);
               void index.refetch();
             }
           }}

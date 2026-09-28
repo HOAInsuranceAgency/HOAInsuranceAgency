@@ -2,7 +2,7 @@ import { client, listAllPages } from "./client";
 import { buildSearchRows, type SearchRow } from "./universalSearch";
 
 /**
- * The universal search bar's index read: six full-table scans, each with a
+ * The universal search bar's index read: six paginated lists, each with a
  * selectionSet cut to exactly the fields `buildSearchRows` indexes.
  *
  * The selectionSets are the first in this codebase, and they are here for
@@ -13,9 +13,9 @@ import { buildSearchRows, type SearchRow } from "./universalSearch";
  *    narrow read makes "no token, payment link, or tax id ever transits
  *    here" a property of the query, not a promise of the mapping code.
  *
- * One read per session (the bar fetches lazily on first focus); at agency
- * scale these six tables are the same scans the dashboard already runs per
- * tab, minus most of the bytes.
+ * Account-related lists are assignment-scoped on the backend for non-admins;
+ * carriers remain shared. The bar refreshes on focus so reassigned accounts
+ * leave the local search index. No unrelated account tables are scanned.
  */
 export async function fetchSearchIndexRows(): Promise<SearchRow[]> {
   const [accounts, contacts, policies, invoices, certificates, carriers] =

@@ -387,8 +387,8 @@ export const handler = async (event: { arguments: { operation?: string; readOper
       if (existing) return { ok: true, id: existing.data.accountId };
       if (!isLeadSource(fields.leadSource)) throw new Error("Choose a lead source before creating the lead");
       const id = randomUUID(), wf = await defaultWorkflow(id, name);
-      if (input.salespersonId) {
-        const salespersonId = text(input, "salespersonId");
+      if (input.salespersonId || !admin) {
+        const salespersonId = text(input, "salespersonId") || actor;
         await validRole(salespersonId, "SALESPERSON");
         Object.assign(wf, { salespersonId, assignmentIssue: undefined });
       }

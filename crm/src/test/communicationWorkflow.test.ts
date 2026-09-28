@@ -1401,6 +1401,13 @@ describe("creation-only lead acquisition", () => {
     expect(await create({ leadSource: "EMAIL" })).toMatchObject({ id: result.id });
     expect(h.records.get(`Account:${result.id}`)?.leadSource).toBe("PHONE");
   });
+  it("assigns a salesperson's new lead to its creator instead of the agency default", async () => {
+    await save(row("ELIGIBILITY", "eligibility:sally", { userId: "sally", name: "Sally", enabled: true, salesperson: true }));
+    const { handler } = await import("../../amplify/functions/communications/handler");
+    const result = await handler({ arguments: { operation: "createLead", input: { requestId: "manual-own-lead-123456789", fields: { name: "Sally's lead", leadSource: "PHONE" } } }, identity: { sub: "sally", groups: ["PRODUCER"] } as never }) as { ok: boolean; id: string };
+    expect(result.ok).toBe(true);
+    expect(record(`workflow:${result.id}`).data.salespersonId).toBe("sally");
+  });
   it.each([["gclid", "GOOGLE_AD_WEBSITE"], ["wbraid", "GOOGLE_AD_WEBSITE"], ["", "ORGANIC_WEBSITE"]])("classifies website creation from %s", async (key, expected) => {
     const { handler: capture } = await import("../../amplify/functions/lead-intake/handler");
     const result = await capture({ arguments: { name: "Campaign test", attribution: JSON.stringify(key ? { [key]: "test-click" } : {}), source: "website-quote" } } as never, {} as never, () => {}) as { id: string };
@@ -2127,4 +2134,68 @@ it("notifies the new salesperson and manager without waiting for the old owner's
   expect(entries("NOTIFICATION").map(n => n.data.recipient).sort()).toEqual(["brian", "sally"]);
   expect(record(task.id).data).toMatchObject({ dueAt: task.dueAt, escalationAt: task.escalationAt, ownerEscalationAt: task.ownerEscalationAt });
   expect(entries("OPERATION")).toHaveLength(0);
+});
+
+describe("assignment listing index rollout", () => {
+  it("retries an interrupted page without publishing a partial index", async () => {
+    const original = await lead(); delete record(original.id).assignedSalespersonId;
+    const { migrateAssignmentIndex } = await import("../../amplify/functions/communications/assignmentIndex");
+    h.failAt = h.transactions.length;
+    await expect(migrateAssignmentIndex()).rejects.toThrow("Interrupted");
+    expect(record("migration:assignment-index:v1")).toBeUndefined();
+    await migrateAssignmentIndex();
+    expect(record(original.id).assignedSalespersonId).toBe(original.data.salespersonId);
+    expect(record("migration:assignment-index:v1").data.complete).toBe(true);
+  });
+  it("yields at the time budget and never overwrites a concurrent reassignment", async () => {
+    const original = await lead(); delete record(original.id).assignedSalespersonId;
+    const { migrateAssignmentIndex } = await import("../../amplify/functions/communications/assignmentIndex");
+    await migrateAssignmentIndex({ budgetMs: 0 });
+    expect(record("migration:assignment-index:v1")).toBeUndefined();
+    expect(record(original.id).assignedSalespersonId).toBeUndefined();
+    const store = await import("../../amplify/functions/communications/store"), read = store.get;
+    let moved = false;
+    const spy = vi.spyOn(store, "get").mockImplementation(async key => {
+      const current = await read(key);
+      if (key === original.id && !moved) {
+        moved = true;
+        h.records.set(`comms:${key}`, row("WORKFLOW", key, { ...original.data, salespersonId: "new-owner" }, { previous: original, accountId: "a1", dueAt: "2026-10-01T13:00:00.000Z" }));
+      }
+      return current;
+    });
+    try { await migrateAssignmentIndex(); } finally { spy.mockRestore(); }
+    expect(record(original.id)).toMatchObject({ assignedSalespersonId: "new-owner", data: { salespersonId: "new-owner" }, dueAt: "2026-10-01T13:00:00.000Z" });
+    expect(record("migration:assignment-index:v1").data.complete).toBe(true);
+  });
+  it("backfills bounded pages without changing account ownership or deadlines", async () => {
+    const base = await lead();
+    h.records.delete("comms:workflow:a1");
+    for (let i = 0; i < 252; i++) {
+      const accountId = `indexed-${String(i).padStart(2, "0")}`;
+      const legacy = row("WORKFLOW", `workflow:${accountId}`, { ...base.data, accountId }, { accountId, dueAt: "2026-09-30T13:00:00.000Z" });
+      delete legacy.assignedSalespersonId;
+      h.records.set(`comms:${legacy.id}`, legacy);
+    }
+    const { migrateAssignmentIndex } = await import("../../amplify/functions/communications/assignmentIndex");
+    await migrateAssignmentIndex({ maxPages: 1 });
+    expect(record("migration:assignment-index:v1").data).toMatchObject({ complete: false, processed: 100 });
+    expect(entries("WORKFLOW").filter(w => w.assignedSalespersonId)).toHaveLength(100);
+    await migrateAssignmentIndex();
+    expect(record("migration:assignment-index:v1").data).toMatchObject({ complete: true, processed: 252 });
+    expect(h.maxInFlight).toBeGreaterThan(1); expect(h.maxInFlight).toBeLessThanOrEqual(25);
+    for (const w of entries("WORKFLOW")) {
+      expect(w.assignedSalespersonId).toBe(base.data.salespersonId);
+      expect(w.data.salespersonId).toBe(base.data.salespersonId);
+      expect(w.dueAt).toBe("2026-09-30T13:00:00.000Z");
+    }
+    const before = structuredClone(entries("WORKFLOW"));
+    await migrateAssignmentIndex(); expect(entries("WORKFLOW")).toEqual(before);
+  });
+  it("updates the listing index in the same write as assignment changes", async () => {
+    const original = await lead();
+    expect(original.assignedSalespersonId).toBe(original.data.salespersonId);
+    const reassigned = row("WORKFLOW", original.id, { ...original.data, salespersonId: "another" }, { previous: original, accountId: "a1" });
+    expect(reassigned.assignedSalespersonId).toBe("another");
+    expect(row("WORKFLOW", original.id, { ...original.data, salespersonId: undefined }, { previous: reassigned, accountId: "a1" }).assignedSalespersonId).toBeUndefined();
+  });
 });

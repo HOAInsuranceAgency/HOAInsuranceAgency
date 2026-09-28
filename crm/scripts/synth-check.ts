@@ -144,6 +144,8 @@ try {
     if (env.variables.HONEYCOMB_ENABLED !== String(staging)) throw new Error("Submissions must only run on staging");
     if (!staging && JSON.stringify(env).includes("HONEYCOMB_API_SECRET_KEY")) throw new Error("Non-staging submissions must not resolve secrets");
   }
+  const { checkAccountAccess } = await import("./check-account-access");
+  checkAccountAccess(backend, outdir);
   const stacks = assembly.stacks.length;
 
   console.log(`✔ Backend synthesised — ${stacks} stack${stacks === 1 ? "" : "s"}.`);

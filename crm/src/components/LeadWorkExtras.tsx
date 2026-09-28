@@ -1,3 +1,4 @@
+import { useIsAdmin } from "../lib/auth";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { ActivityReview, ReviewAction } from "./CommunicationReview";
@@ -10,8 +11,10 @@ export function WorkPagination({ work }: { work: ReturnType<typeof useWorkItems>
   </>;
 }
 export function SharedLeadAttention({ onChanged }: { onChanged: () => void }) {
+  const admin = useIsAdmin();
+  if (!admin) return null;
   return <section className="lead-work-shared" aria-label="Shared team items">
-    <h2>Help the team get started</h2><p className="muted small">Unassigned leads and unlinked activity are shared team items, including when My leads is selected.</p>
+    <h2>Help the team get started</h2><p className="muted small">Review unassigned leads and unlinked activity, then assign them to a salesperson.</p>
     <div className="lead-work-shared-grid"><SharedItems kind="WORKFLOW" onChanged={onChanged} /><SharedItems kind="TRIAGE" onChanged={onChanged} /></div>
   </section>;
 }

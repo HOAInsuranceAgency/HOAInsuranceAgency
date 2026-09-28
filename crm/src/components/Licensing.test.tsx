@@ -8,7 +8,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const models = vi.hoisted(() => ({
   License: { list: vi.fn(), update: vi.fn(), create: vi.fn(), delete: vi.fn() },
   UserProfile: { list: vi.fn() },
-  Document: { list: vi.fn(), observeQuery: vi.fn() },
+  Document: { list: vi.fn(), listDocumentByEntityId: vi.fn() },
 }));
 vi.mock("aws-amplify/data", () => ({ generateClient: () => ({ models }) }));
 
@@ -73,10 +73,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   models.License.list.mockResolvedValue({ data: LICENSES });
   models.UserProfile.list.mockResolvedValue({ data: profiles });
-  // DocumentsPanel subscribes when a row's Files panel opens.
-  models.Document.observeQuery.mockReturnValue({
-    subscribe: () => ({ unsubscribe: () => {} }),
-  });
+  models.Document.list.mockResolvedValue({ data: [] });
+  models.Document.listDocumentByEntityId.mockResolvedValue({ data: [] });
 });
 
 describe("one view at a time", () => {

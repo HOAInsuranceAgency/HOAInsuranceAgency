@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { uploadData, getUrl, remove } from "aws-amplify/storage";
+import { uploadData, getUrl, remove } from "../lib/scopedStorage";
 import { client, friendlyError, type UserProfile } from "../lib/client";
 import FileButton from "./FileButton";
 import SignaturePad from "./SignaturePad";

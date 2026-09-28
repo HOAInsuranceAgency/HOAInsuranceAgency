@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { uploadData, getUrl, remove } from "aws-amplify/storage";
+import { uploadData, getUrl, remove } from "../../lib/scopedStorage";
 import {
   client,
   friendlyError,

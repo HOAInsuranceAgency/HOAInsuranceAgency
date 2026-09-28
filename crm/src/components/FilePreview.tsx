@@ -1,4 +1,4 @@
-import { getUrl } from "aws-amplify/storage";
+import { getUrl } from "../lib/scopedStorage";
 import { useAsyncResource } from "../lib/useAsyncResource";
 import Modal from "./Modal";
 

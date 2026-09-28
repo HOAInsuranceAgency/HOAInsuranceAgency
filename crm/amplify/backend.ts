@@ -1,3 +1,5 @@
+import { installAccountAccess } from "./account-access";
+import { crmAccess } from "./functions/crm-access/resource";
 import { Alarm, TreatMissingData, Metric, ComparisonOperator } from "aws-cdk-lib/aws-cloudwatch";
 import { SnsAction } from "aws-cdk-lib/aws-cloudwatch-actions";
 import { Topic } from "aws-cdk-lib/aws-sns";
@@ -50,7 +52,7 @@ import { pfElection } from "./functions/pf-election/resource";
 import { pfAutopay } from "./functions/pf-autopay/resource";
 import { resolveMailbox } from "./functions/mailbox";
 import { activityLog } from "./functions/activity-log/resource";
-import { communications, communicationWorker, communicationWebhook, communicationReports, communicationMonitor } from "./functions/communications/resource";
+import { assignmentIndexWorker, communications, communicationWorker, communicationWebhook, communicationReports, communicationMonitor } from "./functions/communications/resource";
 import {
   magicLinkDefine,
   magicLinkCreate,
@@ -62,6 +64,8 @@ import {
 // effects, as it always has.
 export const backend = defineBackend({
   auth,
+  crmAccess,
+  assignmentIndexWorker,
   data,
   storage,
   processDocument,
@@ -375,6 +379,10 @@ communicationTable.addGlobalSecondaryIndex({ indexName: "kind", partitionKey: { 
 communicationTable.addGlobalSecondaryIndex({ indexName: "work", partitionKey: { name: "workKind", type: AttributeType.STRING }, sortKey: { name: "workAt", type: AttributeType.STRING } });
 communicationTable.addGlobalSecondaryIndex({ indexName: "account", partitionKey: { name: "accountId", type: AttributeType.STRING }, sortKey: { name: "accountSort", type: AttributeType.STRING } });
 communicationTable.addGlobalSecondaryIndex({ indexName: "due", partitionKey: { name: "dueGroup", type: AttributeType.STRING }, sortKey: { name: "dueAt", type: AttributeType.STRING } });
+communicationTable.addGlobalSecondaryIndex({ indexName: "assignment", partitionKey: { name: "assignedSalespersonId", type: AttributeType.STRING }, sortKey: { name: "id", type: AttributeType.STRING } });
+communicationTable.grantReadWriteData(backend.assignmentIndexWorker.resources.lambda);
+backend.assignmentIndexWorker.addEnvironment("COMMUNICATION_TABLE", communicationTable.tableName);
+(backend.assignmentIndexWorker.resources.lambda.node.defaultChild as CfnFunction).reservedConcurrentExecutions = 1;
 for (const fn of [backend.taskDigest, backend.opsRollup]) {
   communicationTable.grantReadData(fn.resources.lambda);
   fn.addEnvironment("COMMUNICATION_TABLE", communicationTable.tableName);
@@ -976,3 +984,5 @@ backend.leadReply.addEnvironment(
 backend.extractLead.resources.lambda.grantInvoke(
   backend.leadReply.resources.lambda
 );
+
+installAccountAccess(backend, communicationTable);

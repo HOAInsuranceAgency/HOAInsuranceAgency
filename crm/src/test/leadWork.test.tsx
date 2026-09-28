@@ -1,3 +1,4 @@
+import { AdminContext } from "../lib/auth";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -9,7 +10,7 @@ import LeadWork from "../pages/LeadWork";
 import CommunicationDiagnostics from "../components/CommunicationDiagnostics";
 import type { UserProfile } from "../lib/client";
 const future = { id: "future", accountId: "a1", name: "Willow HOA", title: "Follow up with prospect", kind: "FOLLOW_UP", dueAt: "2099-09-14T13:00:00Z", role: "SALESPERSON", status: "OPEN", version: 1 };
-function page() { render(<MemoryRouter><LeadWork profile={{} as UserProfile} /></MemoryRouter>); }
+function page(admin = false) { render(<AdminContext.Provider value={admin}><MemoryRouter><LeadWork profile={{} as UserProfile} /></MemoryRouter></AdminContext.Provider>); }
 beforeEach(() => {
   vi.clearAllMocks();
   h.request.mockImplementation(async (_op: string, input: { kind: string }) => ({ items: input.kind === "TASK" ? [future] : [] }));
@@ -26,9 +27,9 @@ describe("staff follow-up", () => {
     fireEvent.click(screen.getByText("My reminders"));
     await waitFor(() => expect(h.request).toHaveBeenCalledWith("work", expect.objectContaining({ kind: "NOTIFICATION" })));
   });
-  it("filters task requests while leaving unassigned and unlinked work shared", async () => {
+  it("lets administrators review unassigned and unlinked work", async () => {
     h.request.mockImplementation(async (_op: string, input: { kind: string }) => ({ items: input.kind === "WORKFLOW" ? [{ id: "wf", accountId: "missing", name: "Oak HOA", version: 1 }] : input.kind === "TRIAGE" ? [{ id: "triage", communicationId: "comm", phone: "+16175550123", version: 1 }] : [future] }));
-    page(); await screen.findByText("Oak HOA");
+    page(true); await screen.findByText("Oak HOA");
     expect(screen.getByLabelText("My work")).toBeChecked();
     fireEvent.click(screen.getByLabelText("My work"));
     await waitFor(() => expect(h.request).toHaveBeenCalledWith("work", { kind: "TASK", view: "Needs attention", mine: false }));
@@ -37,6 +38,11 @@ describe("staff follow-up", () => {
     fireEvent.change(screen.getByRole("combobox", { name: "View" }), { target: { value: "Upcoming" } });
     await waitFor(() => expect(h.request).toHaveBeenCalledWith("work", { kind: "TASK", view: "Upcoming", mine: false }));
     expect(screen.queryByRole("region", { name: "Shared team items" })).toBeNull();
+  });
+  it("hides unassigned lead and unlinked activity tools from salespeople", async () => {
+    page(); await screen.findByText("Willow HOA");
+    expect(screen.queryByRole("region", { name: "Shared team items" })).toBeNull();
+    expect(h.request.mock.calls.some(([, input]) => ["WORKFLOW", "TRIAGE"].includes(input.kind))).toBe(false);
   });
   it("does not turn a failed read or an incomplete search into an empty-work claim", async () => {
     h.request.mockImplementation(async (_op: string, input: { kind: string; nextToken?: string }) => input.kind === "TASK" ? input.nextToken ? { items: [future] } : { items: [], nextToken: "next-page" } : { items: [] });
