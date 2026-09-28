@@ -1,0 +1,165 @@
+import { describe, expect, it } from "vitest";
+import { buildMarketingLeadReport, MARKETING_REPORT_HEADERS, type ReportRecord, type ReportSnapshot } from "../../../shared/marketingLeadReport";
+
+const now = "2026-09-28T12:00:00.000Z";
+function snapshot(overrides: Partial<ReportSnapshot> = {}): ReportSnapshot {
+  return { accounts: [{ id: "a", name: "Test association", stage: "LEAD", type: "ASSOCIATION", createdAt: "2026-09-01T12:00:00Z" }], contacts: [], quotes: [], policies: [], priorCarriers: [], carriers: [], documents: [], activities: [], workflows: [], communications: [], tasks: [], ...overrides };
+}
+function values(input: Partial<ReportSnapshot>, asOf = now) {
+  const report = buildMarketingLeadReport(snapshot(input), asOf);
+  return Object.fromEntries(report.headers.map((h, i) => [h, report.rows[0][i]]));
+}
+function comm(id: string, direction: string, at: string, overrides: ReportRecord = {}): ReportRecord {
+  return { id, accountId: "a", channel: "EMAIL", purpose: "PROSPECT", direction, at, conversationId: "conversation-a", classification: "SUBSTANTIVE", status: direction === "INBOUND" ? "RECEIVED" : "SENT", text: "A human message", ...overrides };
+}
+const date = (day: string) => new Date(`${day}T00:00:00Z`);
+
+describe("weekly marketing report truth and template contract", () => {
+  it("preserves 52 headings, stable IDs and bound clients without importing historical template rows", () => {
+    const result = buildMarketingLeadReport(snapshot({ accounts: [
+      { id: "client", name: "Converted", stage: "CLIENT" }, { id: "lead", name: "Open", stage: "LEAD" },
+      { id: "future", name: "Future", stage: "LEAD", createdAt: "2026-10-01T12:00:00Z" },
+    ] }), now);
+    expect(result.headers).toHaveLength(52);
+    expect(result.headers.slice(17, 27)).toEqual(["Inquiry Date", "First Agency Contact Date", "First Client Reply Date", "Docs First Received Date", "Quote Issued Date", "Bound Date", "Lost Date", "Last Client Response Date", "Last Client Response Note", "Last Agency Outbound Date"]);
+    expect(result.headers.slice(46)).toEqual(["Lead Age (Days)", "Days to Last Client Response", "Days Since Last Client Response", "Days Since Last Agency Outbound", "Stalled", "Notes"]);
+    expect(result.rows).toHaveLength(2);
+    expect(result.rows.every(r => r.length === 52)).toBe(true);
+    expect(result.rows[0][0]).toBe("client");
+    expect(result.rows[0][4]).toBe("BOUND");
+  });
+
+  it("leaves absent judgments, dates and amounts unknown, including zero outreach", () => {
+    const row = values({});
+    for (const column of ["Quote Amount ($)", "Premium on Record ($)", "First Agency Contact Date", "First Client Reply Date", "Quote Issued Date", "Days Since Last Agency Outbound"]) expect(row[column]).toBeNull();
+    for (const column of ["Excluded", "Quote Lead", "In Incumbent Average", "Docs Received", "Stalled", "Attribution Confidence"]) expect(row[column]).toBe("Not recorded");
+    expect(row["Lead Age (Days)"]).toBe(27);
+  });
+
+  it("does not turn the untagged organic-website default into verified organic search", () => {
+    const row = values({ accounts: [{ id: "a", stage: "LEAD", leadSource: "ORGANIC_WEBSITE", source: "website-quote" }] });
+    expect(row.Channel).toBe("Not recorded");
+    expect(row["Paid Source"]).toBe("Not recorded");
+    expect(row["Attribution Confidence"]).toBe("Low");
+    const tagged = values({ accounts: [{ id: "a", stage: "LEAD", source: "website-quote", leadAttribution: JSON.stringify({ gclid: "recorded-click" }) }] });
+    expect(tagged.Channel).toBe("Paid Search");
+    expect(tagged["Paid Source"]).toBe("Y");
+  });
+
+  it("separates the initial inquiry from a later reply and ignores nonhuman, failed, wrong-number, carrier and future activity", () => {
+    const row = values({ communications: [
+      comm("inquiry", "INBOUND", "2026-09-01T12:01:00Z"),
+      comm("welcome", "OUTBOUND", "2026-09-01T12:02:00Z", { actorId: "crm:initial-ai" }),
+      comm("carrier", "OUTBOUND", "2026-09-01T13:00:00Z", { purpose: "CARRIER" }),
+      comm("draft", "OUTBOUND", "2026-09-02T12:00:00Z", { frontDraft: true }),
+      comm("failed", "OUTBOUND", "2026-09-03T12:00:00Z", { status: "FAILED" }),
+      comm("wrong", "OUTBOUND", "2026-09-03T13:00:00Z", { outcome: "WRONG_NUMBER" }),
+      comm("first", "OUTBOUND", "2026-09-04T12:00:00Z"),
+      comm("reply", "INBOUND", "2026-09-05T12:00:00Z", { summary: "Please see https://portal.example/?token=secret for documents" }),
+      comm("auto", "INBOUND", "2026-09-06T12:00:00Z", { classification: "AUTOMATIC" }),
+      comm("report", "OUTBOUND", "2026-09-07T12:00:00Z", { internalReport: true }),
+      comm("future", "INBOUND", "2026-10-01T12:00:00Z"),
+    ] });
+    expect(row["Inquiry Date"]).toEqual(date("2026-09-01"));
+    expect(row["First Agency Contact Date"]).toEqual(date("2026-09-04"));
+    expect(row["First Client Reply Date"]).toEqual(date("2026-09-05"));
+    expect(row["Last Client Response Date"]).toEqual(date("2026-09-05"));
+    expect(row["Days to Last Client Response"]).toBe(4);
+    expect(row["Last Client Response Note"]).not.toContain("secret");
+  });
+
+  it("requires two unanswered contacts and seven full days for dropped off while leaving the separate editorial Stalled field unknown", () => {
+    const communications = [comm("first", "OUTBOUND", "2026-09-02T12:00:00Z"), comm("reply", "INBOUND", "2026-09-03T12:00:00Z"), comm("f1", "OUTBOUND", "2026-09-20T12:00:00Z"), comm("f2", "OUTBOUND", "2026-09-21T12:00:00Z")];
+    expect(values({ communications }, "2026-09-28T11:59:59Z").Status).not.toBe("DROPPED OFF");
+    expect(values({ communications }).Stalled).toBe("Not recorded");
+    expect(values({ communications }).Status).toBe("DROPPED OFF");
+    expect(values({ communications: [...communications, comm("answered", "INBOUND", "2026-09-25T12:00:00Z")] }).Stalled).toBe("Not recorded");
+    expect(values({ communications: communications.map(c => c.id === "f2" ? { ...c, conversationId: "other" } : c) }).Stalled).toBe("Not recorded");
+    expect(values({ communications: communications.filter(c => c.id !== "reply") }).Status).toBe("NO RESPONSE");
+  });
+
+  it("selects one latest presented quote for date, carrier and premium; carrier-ready quotes are not issued", () => {
+    const quotes = [
+      { id: "old", accountId: "a", status: "PRESENTED", presentedAt: "2026-09-10T12:00:00Z", premium: 100, carrierId: "old", lines: ["Commercial Property"] },
+      { id: "new", accountId: "a", status: "PRESENTED", presentedAt: "2026-09-20T12:00:00Z", premium: 0, carrierId: "new", lines: ["General Liability"] },
+      { id: "ready", accountId: "a", status: "QUOTED", readyAt: "2026-09-25T12:00:00Z", premium: 500, carrierId: "ready" },
+      { id: "future", accountId: "a", status: "PRESENTED", presentedAt: "2026-10-01T12:00:00Z", premium: 1000 },
+    ];
+    const row = values({ quotes, carriers: [{ id: "new", name: "New carrier" }] });
+    expect(row["Quote Issued"]).toBe("Y");
+    expect(row["Quote Issued Date"]).toEqual(date("2026-09-20"));
+    expect(row["Quote Carrier"]).toBe("New carrier");
+    expect(row["Quote Amount ($)"]).toBe(0);
+    expect(row["Premium Category"]).toBe("Agency Quote");
+    expect(row["Coverage Requested"]).toBe("Not recorded");
+    expect(row["Coverage Segment"]).not.toContain("only");
+    expect(values({ quotes: [quotes[2]] })["Quote Issued"]).toBe("Not recorded");
+  });
+
+  it("retains issued truth when its date is missing without guessing which undated quote is latest", () => {
+    const quotes = [{ id: "one", accountId: "a", status: "PRESENTED", premium: 100 }];
+    expect(values({ quotes })["Quote Issued"]).toBe("Y");
+    expect(values({ quotes })["Quote Issued Date"]).toBeNull();
+    expect(values({ quotes })["Quote Amount ($)"]).toBe(100);
+    const ambiguous = values({ quotes: [...quotes, { id: "two", accountId: "a", status: "PRESENTED", premium: 200, presentedAt: "2026-09-20T12:00:00Z" }] });
+    expect(ambiguous["Quote Amount ($)"]).toBeNull();
+    expect(ambiguous.Notes).toContain("selection needs review");
+  });
+
+  it("keeps incumbent, agency and bound premiums separate and never guesses incumbent-average eligibility", () => {
+    const priorCarriers = [{ accountId: "a", carrierName: "Incumbent", premium: 1000, lineOfBusiness: "Commercial Property", effectiveDate: "2026-01-01", expirationDate: "2027-01-01" }];
+    const prior = values({ priorCarriers });
+    expect(prior["Premium on Record ($)"]).toBe(1000);
+    expect(prior["Premium Category"]).toBe("Prior policy; status unverified");
+    expect(prior["In Incumbent Average"]).toBe("Not recorded");
+    const bound = values({ accounts: [{ id: "a", stage: "CLIENT" }], priorCarriers, policies: [{ accountId: "a", status: "ACTIVE", premium: 800, effectiveDate: "2026-07-01", expirationDate: "2027-07-01", datePolicyBound: "2026-06-29" }], quotes: [{ id: "q", accountId: "a", status: "BOUND", premium: 900 }] });
+    expect(bound["Premium on Record ($)"]).toBe(800);
+    expect(bound["Premium Category"]).toBe("Bound Policy");
+    expect(bound["Quote Amount ($)"]).toBe(900);
+    expect(bound["Other Premium on Record"]).toContain("1000.00");
+    expect(bound["Bound Date"]).toEqual(date("2026-06-29"));
+    expect(bound["Policy Expiration Date"]).toEqual(date("2027-07-01"));
+    const expired = values({ priorCarriers: [{ ...priorCarriers[0], expirationDate: "2026-01-01" }] });
+    expect(expired["Premium on Record ($)"]).toBeNull();
+    expect(expired["Policy Expiration Date"]).toBeNull();
+  });
+
+  it("counts received prospect documents without counting generated agency quotes or signature images", () => {
+    const row = values({ documents: [
+      { entityId: "a", entityType: "ACCOUNT", name: "Bylaws.pdf", s3Key: "uploaded", lastWriteBy: "upload-portal", createdAt: "2026-09-04T12:00:00Z" },
+      { entityId: "a", entityType: "ACCOUNT", name: "Agency quote.pdf", s3Key: "generated", category: "QUOTE_DOC", quoteId: "q", createdAt: "2026-09-01T12:00:00Z" },
+      { entityId: "a", entityType: "ACCOUNT", name: "Unverified.pdf", s3Key: "staff-upload", category: "PRIOR_POLICY", createdAt: "2026-09-01T12:00:00Z" },
+    ], communications: [comm("in", "INBOUND", "2026-09-02T12:00:00Z", { attachments: [{ filename: "signature.png" }] })] });
+    expect(row["Docs Received"]).toBe("Y");
+    expect(row["Docs Detail"]).toBe("Bylaws.pdf");
+    expect(row["Docs First Received Date"]).toEqual(date("2026-09-04"));
+  });
+
+  it("reports the newest email failure without counting it as human contact or inferring no contact route", () => {
+    const row = values({ communications: [comm("sent", "OUTBOUND", "2026-09-02T12:00:00Z", { seenAt: "2026-09-03T12:00:00Z" }), comm("failed", "OUTBOUND", "2026-09-26T12:00:00Z", { status: "FAILED" })] });
+    expect(row["Email Tracking Status"]).toBe("Delivery failed");
+    expect(row["Last Agency Outbound Date"]).toEqual(date("2026-09-02"));
+    expect(row.Status).not.toBe("CONTACT BLOCKED");
+  });
+
+  it("does not guess competitor loss, licensing disqualification or client-driven pause", () => {
+    expect(values({ workflows: [{ accountId: "a", disposition: "LOST" }] }).Status).toBe("LOST - REASON NOT RECORDED");
+    expect(values({ workflows: [{ accountId: "a", disposition: "DISQUALIFIED" }] }).Status).toBe("DISQUALIFIED");
+    expect(values({ workflows: [{ accountId: "a", disposition: "ACTIVE", deferredUntil: "2026-10-01" }] }).Status).toBe("ACTIVE - DEFERRED");
+  });
+
+  it("uses Eastern calendar days across DST and rejects an invalid report time", () => {
+    const row = values({ accounts: [{ id: "a", stage: "LEAD", createdAt: "2026-03-08T04:30:00Z" }] }, "2026-03-09T03:30:00Z");
+    expect(row["Inquiry Date"]).toEqual(date("2026-03-07"));
+    expect(row["Lead Age (Days)"]).toBe(1);
+    expect(() => buildMarketingLeadReport(snapshot(), "invalid")).toThrow("timestamp");
+    expect(() => buildMarketingLeadReport(snapshot(), "2026-02-30T12:00:00Z")).toThrow("timestamp");
+    expect(MARKETING_REPORT_HEADERS.at(-1)).toBe("Notes");
+  });
+
+  it("labels long CRM notes as excerpts and keeps the report readable", () => {
+    const row = values({ accounts: [{ id: "a", stage: "LEAD", notes: "Long source notes. ".repeat(100) }] });
+    expect(String(row.Notes).length).toBeLessThan(340);
+    expect(row.Notes).toContain("Excerpt; full details in CRM");
+  });
+});
