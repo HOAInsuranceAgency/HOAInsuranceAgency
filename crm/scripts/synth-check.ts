@@ -121,6 +121,12 @@ process.env.CDK_CONTEXT_JSON = JSON.stringify({
   "amplify-backend-namespace": process.env.AWS_APP_ID ?? "synth-check",
   "amplify-backend-name": process.env.AWS_BRANCH ?? "local",
   "amplify-backend-type": "branch",
+  // Toolkit.fromAssemblyBuilder supplies these defaults during pipeline-deploy.
+  // Include its resource metadata so this byte-size gate measures the same output.
+  "aws:cdk:enable-path-metadata": true,
+  "aws:cdk:enable-asset-metadata": true,
+  "aws:cdk:version-reporting": true,
+  "aws:cdk:bundling-stacks": ["**"],
 });
 process.env.CDK_OUTDIR = outdir;
 
