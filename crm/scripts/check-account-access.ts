@@ -1,12 +1,26 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { Stack } from "aws-cdk-lib";
-import { CfnPolicy } from "aws-cdk-lib/aws-iam";
+import { CfnManagedPolicy, CfnPolicy, CfnRole } from "aws-cdk-lib/aws-iam";
+import { crmPolicySize } from "./iam-policy-size";
 import { CfnFunctionConfiguration, type CfnResolver } from "aws-cdk-lib/aws-appsync";
 import { ACCOUNT_MODELS, PUBLIC_OPERATIONS, ADMIN_OPERATIONS, SHARED_MODELS } from "../amplify/functions/crm-access/policy";
 import type { backend as Backend } from "../amplify/backend";
 
 export function checkAccountAccess(backend: typeof Backend, outdir: string) {
+  let inlineSize = 0;
+  for (const node of backend.crmAccess.resources.lambda.node.findAll()) {
+    if (node instanceof CfnManagedPolicy || node instanceof CfnPolicy) {
+      const size = crmPolicySize(Stack.of(node).resolve(node.policyDocument));
+      if (node instanceof CfnManagedPolicy && size > 6144) throw new Error(`CRM managed policy exceeds 6,144 characters: ${node.node.path} (${size})`);
+      if (node instanceof CfnPolicy) inlineSize += size;
+    }
+    if (node instanceof CfnRole) {
+      const policies = Stack.of(node).resolve(node.policies ?? []) as { policyDocument: unknown }[];
+      inlineSize += policies.reduce((total, policy) => total + crmPolicySize(policy.policyDocument), 0);
+    }
+  }
+  if (inlineSize > 10240) throw new Error(`CRM inline policies exceed the aggregate 10,240-character limit (${inlineSize})`);
   const functions = backend.data.resources.graphqlApi.node.findAll().filter((node): node is CfnFunctionConfiguration => node instanceof CfnFunctionConfiguration && node.name.startsWith("access_"));
   if (!functions.length) throw new Error("Assignment guards are missing");
   const ids = new Set(functions.map(fn => fn.attrFunctionId));
