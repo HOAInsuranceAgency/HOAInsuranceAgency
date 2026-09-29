@@ -270,6 +270,26 @@ describe("custom API operations", () => {
     const team = await filterCustom(user(), "communicationRead", { readOperation: "context" }, { team: [{ userId: "alice", salesperson: true }, { userId: "bob", salesperson: true }] });
     expect(team).toMatchObject({ actorId: "alice", team: [{ userId: "alice", salesperson: true }, { userId: "bob", salesperson: false }] });
   });
+  it("preserves redacted operational alerts for the recipient without adding account access or inflating counts", async () => {
+    const alert = { id: "issue:assignment:b", redacted: true, account: "Shared activity", title: "An account has a setup or assignment issue requiring administrator review.", stage: "EXCEPTION", section: "Setup and data", group: "Setup and data", url: "/lead-work" };
+    const own = { id: "task:a", accountId: "a", stage: "DUE" };
+    const report = { recipientId: "alice", items: [alert, own, { id: "task:b", accountId: "b" }], accountCount: 2 };
+    expect(await filterCustom(user(), "communicationRead", { readOperation: "myReport" }, { report })).toEqual({ report: { ...report, items: [alert, own], accountCount: 1 } });
+    expect(await user().canAccount("b")).toBe(false);
+    await expect(call("context", { accountId: "b" })).rejects.toThrow(AccessDenied);
+    const onlyAlert = { ...report, items: [alert] };
+    for (const recipient of [user(), admin()]) expect(await filterCustom(recipient, "communicationRead", { readOperation: "myReport" }, { report: onlyAlert })).toMatchObject({ report: { items: [alert], accountCount: 0 } });
+    expect(await filterCustom(user("manager"), "communicationRead", { readOperation: "myReport" }, { report: onlyAlert })).toMatchObject({ report: { items: [], accountCount: 0 } });
+  });
+  it("does not exempt unmarked or account-bearing rows from report access checks", async () => {
+    const alert = { id: "issue:assignment:b", redacted: true, stage: "EXCEPTION", section: "Setup and data", group: "Setup and data", url: "/lead-work" };
+    const items = [
+      { ...alert, redacted: undefined }, { ...alert, redacted: "true" }, { ...alert, accountId: "b" },
+      { ...alert, stage: "DUE" }, { ...alert, group: "Sales" }, { ...alert, section: "Your accounts today" },
+      { ...alert, url: "/accounts/b" }, { ...alert, stage: "MANAGER" }, { id: "unlinked-task" },
+    ];
+    expect(await filterCustom(user(), "communicationRead", { readOperation: "myReport" }, { report: { recipientId: "alice", items } })).toEqual({ report: { recipientId: "alice", items: [], accountCount: 0 } });
+  });
   it("removes retired management summaries, sections and takeover flags from legacy daily reports", async () => {
     records["Communication:workflow:owned"] = { data: { salespersonId: "manager" } };
     const own = { id: "own", accountId: "owned", stage: "DUE", section: "Your accounts today" };

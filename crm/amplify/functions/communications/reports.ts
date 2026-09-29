@@ -3,7 +3,7 @@ import { leadActionGuidance } from "../../../../shared/leadActionGuidance";
 import { reminderWindow, type LeadTask, type LeadWorkflow, type Communication } from "../../../../shared/leadWorkflow";
 import { contactAt, contactProgress } from "../../../../shared/contactProgress";
 import { taskDomain, taskContext, validateCompleteRouting } from "../../../../shared/workRouting";
-import { get, query, row, put, save, commit, check, issue, conflict, hash, type Row } from "./store";
+import { get, batchGet, query, row, put, save, commit, check, issue, conflict, hash, type Row } from "./store";
 import { routing, resolveIssue } from "./routing";
 import { team, enabledUser, accountRows } from "./workflow";
 import { config } from "./config";
@@ -44,7 +44,7 @@ export async function reportFor(recipientId: string, snapshot?: Awaited<ReturnTy
     if (!report.sections.includes(section)) report.sections.push(section);
     const restricted = !!item.accountId && !ownAccount;
     report.items.push({ id: item.id, accountId: restricted ? undefined : item.accountId, account: restricted ? "Shared activity" : wf?.name ?? "Shared activity", title: restricted ? "An account has a setup or assignment issue requiring administrator review." : String(item.data.message ?? "Link this incoming activity to its account"), why: business ? "Confirm the source information so the next business step can be tracked accurately." : "Repair this tracking or assignment issue; it is separate from client outreach.", next: restricted ? "Ask a CRM administrator to review the setup exceptions." : "Open the record and correct the source information.", responsible: report.name, section, group: business ? "Client and carrier" : "Setup and data", stage: "EXCEPTION", dueAt: !restricted && typeof item.data.dueAt === "string" ? item.data.dueAt : undefined,
-      url: !restricted && item.accountId ? `/accounts/${item.accountId}?tab=overview#lead-workspace` : "/lead-work", linkLabel: business ? "Review account facts" : "Review setup issue" });
+      url: !restricted && item.accountId ? `/accounts/${item.accountId}?tab=overview#lead-workspace` : "/lead-work", linkLabel: business ? "Review account facts" : "Review setup issue", ...(restricted ? { redacted: true as const } : {}) });
   }
   for (const accountId of includeHistory ? new Set(report.items.flatMap(i => i.accountId ? [i.accountId] : [])) : []) {
     const activity = (await accountRows<Communication>(accountId, "COMMUNICATION")).map(r => r.data);
@@ -126,23 +126,24 @@ export const handler = async () => {
       const body = `${content.html}<!-- hoa-report:${hash(id)} -->`;
       const data: Edition = { recipientId: member.userId, day, state: "LEASED", email, channelId: snapshot.settings.reportChannelId, subject: `${content.title} — ${day}`, leaseUntil: new Date(Date.now() + 180_000).toISOString() };
       const next = row("REPORT_EDITION", id, data, { previous: edition });
-      const currentMember = await get(`eligibility:${member.userId}`);
+      const selected = selectReportItems(report);
+      const accountIds = [...new Set(selected.flatMap(item => item.accountId ? [item.accountId] : []))];
+      // The bounded report contains at most 20 items. Read its authorization and
+      // source rows together, then fence every returned version in the lease.
+      const current = await batchGet([`eligibility:${member.userId}`, ...accountIds.map(accountId => `workflow:${accountId}`), ...selected.map(item => item.id)]);
+      const currentMember = current.get(`eligibility:${member.userId}`);
       if (!currentMember?.data.enabled) throw new Error("Report recipient is no longer enabled; refresh before sending");
-      const checks = [];
-      const accountIds = new Set<string>();
-      for (const item of selectReportItems(report)) {
-        if (item.accountId && !accountIds.has(item.accountId)) {
-          if (!currentMember.data.salesperson) throw new Error("Report recipient is no longer eligible for account work; refresh before sending");
-          const workflow = await get<LeadWorkflow>(`workflow:${item.accountId}`);
-          if (!workflow || workflow.data.salespersonId !== member.userId) throw new Error("Account assignment changed; refresh the morning edition before sending");
-          checks.push(check(workflow)); accountIds.add(item.accountId);
-        }
-        const source = await get(item.id);
+      for (const accountId of accountIds) {
+        if (!currentMember.data.salesperson) throw new Error("Report recipient is no longer eligible for account work; refresh before sending");
+        const workflow = current.get(`workflow:${accountId}`);
+        if (!workflow || workflow.data.salespersonId !== member.userId) throw new Error("Account assignment changed; refresh the morning edition before sending");
+      }
+      for (const item of selected) {
+        const source = current.get(item.id);
         if (item.taskVersion != null && (!source || source.version !== item.taskVersion)) throw new Error("Work changed; refresh the morning edition before sending");
         if (source?.kind === "TASK" && source.data.status !== "OPEN" || source?.data.resolved) throw new Error("Work changed; refresh the morning edition before sending");
-        if (source) checks.push(check(source));
       }
-      await commit([put(next, edition), check(settings), ...(currentMember ? [check(currentMember)] : []), ...checks]); edition = next;
+      await commit([put(next, edition), check(settings), ...[...current.values()].map(check)]); edition = next;
       posted = true;
       const result = await front<{ message_uid?: string }>(`/channels/${snapshot.settings.reportChannelId}/messages`, "POST", { to: [email], cc: [], bcc: [], sender_name: "HOA CRM", subject: data.subject, body, text: content.text, should_add_default_signature: false, signature_id: null, options: { archive: true } });
       acceptedUid = result.message_uid;

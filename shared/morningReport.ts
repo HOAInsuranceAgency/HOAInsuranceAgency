@@ -9,6 +9,8 @@ export interface ReportItem {
   lastOutreach?: string; lastOutreachKind?: string; url?: string;
   kind?: LeadTask["kind"]; term?: string; role?: string; linkLabel?: string;
   group?: "Sales" | "Client and carrier" | "Setup and data";
+  /** Server-redacted operational alert, with no account details or account link. */
+  redacted?: true;
   blockerOwner?: string; blockerReviewAt?: string;
 }
 export interface MorningReport {

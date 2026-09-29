@@ -109,9 +109,15 @@ export async function filterCustom(access: AccountAccess, field: string, args: R
     const candidates = (Array.isArray(report.items) ? report.items : []).map(object)
       .filter(item => !["MANAGER", "OWNER"].includes(id(item.stage)) && !retiredSections.has(id(item.section)))
       .map(({ canTakeResponse: _retiredTakeover, verifiedEscalation: _retiredEscalation, ...item }) => item);
-    const items = access.admin ? candidates : await filterAccountItems(access, candidates);
+    const permitted = new Set(access.admin ? candidates : await filterAccountItems(access, candidates));
+    // reportFor selects operational contacts and removes foreign-account details.
+    // Keep only its explicitly redacted alerts for this report's recipient; an
+    // arbitrary account-free task or an alert with an account link stays hidden.
+    const items = candidates.filter(item => permitted.has(item) || id(report.recipientId) === access.actor
+      && item.redacted === true && !id(item.accountId) && item.stage === "EXCEPTION"
+      && item.group === "Setup and data" && item.section === "Setup and data" && item.url === "/lead-work");
     const sections = Array.isArray(report.sections) ? report.sections.filter(section => !retiredSections.has(id(section))) : undefined;
-    return { ...result, report: { ...report, ...(sections ? { sections } : {}), items, accountCount: new Set(items.map(i => object(i).accountId)).size } };
+    return { ...result, report: { ...report, ...(sections ? { sections } : {}), items, accountCount: new Set(items.flatMap(item => id(item.accountId) ? [id(item.accountId)] : [])).size } };
   }
   if (access.admin) return op === "team" ? { ...result, actorId: access.actor } : original;
   if (op === "work") {
