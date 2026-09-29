@@ -14,15 +14,16 @@ export function salespersonSettings(input: IntegrationConfig): IntegrationConfig
   return settings;
 }
 export function salespersonRouting(input: TeamRouting): TeamRouting {
-  const { marketingManagerId: _retired, ...routing } = input;
-  return { ...routing, members: routing.members.map(({ marketingManager: _removed, ...member }) => member) };
+  const { version, ownerId, intakeOwnerId, integrationOwnerId, reportChannelId } = input;
+  return { version, ownerId, intakeOwnerId, integrationOwnerId, reportChannelId, members: [] };
 }
 export function salespersonTask(input: LeadTask): LeadTask {
   // Infer the old carrier domain before removing its role. Preserve IDs, dates,
   // context and evidence so existing follow-ups cannot turn into client chases.
   const task = { ...input, domain: input.domain ?? (input.kind === "CARRIER" || input.role === "CHAMPION" && input.kind === "FOLLOW_UP" ? "CARRIER" : "CLIENT"), role: "SALESPERSON", accountableRole: "SALESPERSON" } as LeadTask;
-  if (task.helperReason === "SALES_ASSIST") {
-    delete task.helperId; delete task.helperRequestedBy; delete task.helperReason;
-  }
+  delete task.helperId; delete task.helperRequestedBy; delete task.helperReason;
+  delete task.escalationAt; delete task.ownerEscalationAt;
+  delete task.escalatedAt; delete task.escalatedRecipientId; delete task.ownerNotifiedAt;
+  delete task.managerRecipientId; delete task.ownerRecipientId;
   return task;
 }

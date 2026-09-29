@@ -80,7 +80,7 @@ export async function reconcileAccountWork(account: Account, workflow?: Row<Lead
     // touch follows actual progress. The original response task retains its SLA.
     const latestProgress = contacts.filter(c => sources.some(source => c.id !== source.id && c.at > source.at && c.conversationId === source.conversationId && c.direction === "OUTBOUND")).sort((a,b) => b.at.localeCompare(a.at))[0];
     if (!delivered && task.data.kind === "SERVICE" && !task.data.businessDueAt && latestProgress && latestProgress.at > (task.data.serviceProgressAt ?? "")) {
-      const next = scheduleReminders({ ...task.data, dueAt: followUpDeadline(latestProgress.at, 2, c.holidays), serviceProgressAt: latestProgress.at, nextReminderAt: undefined, notifiedAt: undefined, escalatedAt: undefined, ownerNotifiedAt: undefined, lastReminderAt: undefined }, c.holidays);
+      const next = scheduleReminders({ ...task.data, dueAt: followUpDeadline(latestProgress.at, 2, c.holidays), serviceProgressAt: latestProgress.at, nextReminderAt: undefined, notifiedAt: undefined, lastReminderAt: undefined }, c.holidays);
       await writes(task, next);
     }
     if (delivered) await writes(task, { ...task.data, status: "COMPLETE", reason: "Requested service delivered through the actual work" });
@@ -161,7 +161,7 @@ export async function reconcileAccountWork(account: Account, workflow?: Row<Lead
       if (current?.data.status === "OPEN") await writes(current, { ...current.data, status: "CANCELLED", reason: "The underlying quote or coverage cycle is no longer current" });
     }
   }
-  const probe = await makeTask({ accountId: account.id, title: "Verify team coverage", kind: "FIRST_CONTACT", context: wf.data.disposition === "BOUND" ? "SERVICE" : "LEAD" });
+  const probe = await makeTask({ accountId: account.id, title: "Verify salesperson assignment", kind: "FIRST_CONTACT", context: wf.data.disposition === "BOUND" ? "SERVICE" : "LEAD" });
   const route = await resolveTaskRoute(probe, wf.data);
   if (route.gaps.length || wf.data.assignmentIssue) await issue(`coverage:${account.id}`, wf.data.assignmentIssue ?? route.gaps.join(". "), account.id); else await resolveIssue(`coverage:${account.id}`);
   if (!terminal && !deferred && wf.data.disposition === "ACTIVE" && !validCalendarDate(account.currentPolicyExpiration)) await issue(`incumbent-date:${account.id}`, "Record the incumbent expiration to protect marketing and next-year follow-up", account.id); else await resolveIssue(`incumbent-date:${account.id}`);

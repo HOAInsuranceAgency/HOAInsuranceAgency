@@ -25,7 +25,7 @@ function recordParent(model: string, value: RecordData) {
   const parent = LIST_PARENTS[model];
   return parent ? { model: parent.model, key: id(value[parent.field]) } : undefined;
 }
-/** Cache only within one request: reassignments and manager edits apply on the next request. */
+/** Cache only within one request: reassignments apply on the next request. */
 export class AccountAccess {
   readonly actor: string;
   readonly admin: boolean;
@@ -85,26 +85,21 @@ export class AccountAccess {
     }));
     await this.prefetchAccounts(roots.filter((root): root is string => !!root));
   }
-  async team() {
-    const saved = await this.get("Communication", "team-routing");
-    const members = object(saved?.data).members;
-    return Array.isArray(members) ? members.map(object) : [];
-  }
   async salespeople() {
-    const members = await this.team();
-    const manager = members.some(m => m.userId === this.actor && m.salesManager === true);
-    return new Set([this.actor, ...(manager ? members.filter(m => m.salesManagerId === this.actor).map(m => id(m.userId)).filter(Boolean) : [])]);
+    // Legacy routing/manager/coverage settings never grant record access.
+    // Administrators bypass assignment checks; everyone else sees only self.
+    return new Set([this.actor]);
   }
   async canAccount(accountId: string) {
     if (!accountId) return false;
     if (this.admin) return true;
     if (await this.get("Communication", `deleted-account:${accountId}`)) return false;
     const workflow = object((await this.get("Communication", `workflow:${accountId}`))?.data);
-    return (await this.salespeople()).has(id(workflow.salespersonId));
+    return id(workflow.salespersonId) === this.actor;
   }
   async requireAccount(accountId: string) { if (!await this.canAccount(accountId)) throw new AccessDenied(); }
   async requireSalesperson(salespersonId: string) {
-    if (!this.admin && !(await this.salespeople()).has(salespersonId)) throw new AccessDenied();
+    if (!this.admin && salespersonId !== this.actor) throw new AccessDenied();
   }
   async root(model: string, value: RecordData, depth = 0): Promise<string | null> {
     if (depth > 5) throw new AccessDenied();

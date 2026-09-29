@@ -1,5 +1,7 @@
 # Front, Dialpad and CRM rollout
 
+**Current team model (September 29, 2026):** one combined Team members table controls salesperson eligibility and connections. Manager/coverage configuration and escalation are retired; reminders use the direct assignee. Setup requires report-delivery contacts and a reporting channel, without manager assignments. See [the current ownership model](specs/salesperson-account-ownership.md); dated rollout records below retain historical behavior.
+
 Implementation is deployed to staging. Front and Dialpad credentials and channels are configured, the replacement email channel is verified, and CRM connection checks pass. Controlled provider acceptance and activation remain pending, as recorded below. Production is not deployed or activated. Do not confuse passing repository checks with a connected production integration.
 
 For hands-on acceptance, use the [step-by-step staging test walkthrough](FRONT-DIALPAD-TEST-WALKTHROUGH.md) or its [interactive checklist](FRONT-DIALPAD-TEST-WALKTHROUGH.html). Each test has actions, expected results, and an explicit setup requirement where another teammate or administrator is needed.

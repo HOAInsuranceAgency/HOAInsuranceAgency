@@ -3,7 +3,7 @@ import { leadActionGuidance } from "../../../../shared/leadActionGuidance";
 import { reminderWindow, type LeadTask, type LeadWorkflow, type Communication } from "../../../../shared/leadWorkflow";
 import { contactAt, contactProgress } from "../../../../shared/contactProgress";
 import { taskDomain, taskContext, validateCompleteRouting } from "../../../../shared/workRouting";
-import { get, query, row, put, save, commit, check, issue, conflict, hash, type Row } from "./store";
+import { get, batchGet, query, row, put, save, commit, check, issue, conflict, hash, type Row } from "./store";
 import { routing, resolveIssue } from "./routing";
 import { team, enabledUser, accountRows } from "./workflow";
 import { config } from "./config";
@@ -21,7 +21,7 @@ export async function reportSnapshot() {
   ]);
   const warnings: string[] = [];
   try { validateCompleteRouting(settings, members); }
-  catch { warnings.push("Managers and daily reporting are not fully configured. Check Team settings before relying on escalation coverage."); }
+  catch { warnings.push("Daily reporting is not fully configured. Check the internal channel and operational contacts in Team settings."); }
   if (!health || health.data.lagging || Date.now() - Date.parse(String(health.data.at)) > 300_000) warnings.push("Recent communication processing could not be confirmed.");
   if (!census?.data.completedAt || Date.now() - Date.parse(String(census.data.completedAt)) > 24 * 3600_000) warnings.push("The full account coverage check has not completed recently.");
   if (issues.some(i => ["issue:sync-gap", "issue:reconcile", "issue:provider-auth", "issue:coverage-census"].includes(i.id))) warnings.push("An integration issue needs repair; the work list may be incomplete.");
@@ -36,13 +36,15 @@ export async function reportFor(recipientId: string, snapshot?: Awaited<ReturnTy
     const wf = item.accountId ? byId.get(item.accountId) : undefined;
     const business = /incumbent-date|renewal-facts|renewal-context|expired-risk|policy-handoff|placement|bind-authorization/.test(item.id);
     const assignment = /coverage:|assignment:/.test(item.id);
-    const visible = business ? wf?.salespersonId === recipientId || recipientId === s.settings.ownerId || !!wf?.salespersonId && s.settings.members.some(m => m.userId === wf.salespersonId && m.salesManagerId === recipientId)
+    const ownAccount = wf?.salespersonId === recipientId;
+    const visible = business ? ownAccount
       : assignment ? recipientId === s.settings.ownerId : item.kind === "TRIAGE" || /Link this|Unlinked/.test(String(item.data.message)) ? isIntake : isIntegration;
     if (!visible || item.data.resolved) continue;
     const section = business ? "Your client and carrier work today" : "Setup and data";
     if (!report.sections.includes(section)) report.sections.push(section);
-    report.items.push({ id: item.id, accountId: item.accountId, account: wf?.name ?? "Shared activity", title: String(item.data.message ?? "Link this incoming activity to its account"), why: business ? "Confirm the source information so the next business step can be tracked accurately." : "Repair this tracking or assignment issue; it is separate from client outreach.", next: "Open the record and correct the source information.", responsible: report.name, section, group: business ? "Client and carrier" : "Setup and data", stage: "EXCEPTION", dueAt: typeof item.data.dueAt === "string" ? item.data.dueAt : undefined,
-      url: item.accountId ? `/accounts/${item.accountId}?tab=overview#lead-workspace` : "/lead-work", linkLabel: business ? "Review account facts" : "Review setup issue" });
+    const restricted = !!item.accountId && !ownAccount;
+    report.items.push({ id: item.id, accountId: restricted ? undefined : item.accountId, account: restricted ? "Shared activity" : wf?.name ?? "Shared activity", title: restricted ? "An account has a setup or assignment issue requiring administrator review." : String(item.data.message ?? "Link this incoming activity to its account"), why: business ? "Confirm the source information so the next business step can be tracked accurately." : "Repair this tracking or assignment issue; it is separate from client outreach.", next: restricted ? "Ask a CRM administrator to review the setup exceptions." : "Open the record and correct the source information.", responsible: report.name, section, group: business ? "Client and carrier" : "Setup and data", stage: "EXCEPTION", dueAt: !restricted && typeof item.data.dueAt === "string" ? item.data.dueAt : undefined,
+      url: !restricted && item.accountId ? `/accounts/${item.accountId}?tab=overview#lead-workspace` : "/lead-work", linkLabel: business ? "Review account facts" : "Review setup issue", ...(restricted ? { redacted: true as const } : {}) });
   }
   for (const accountId of includeHistory ? new Set(report.items.flatMap(i => i.accountId ? [i.accountId] : [])) : []) {
     const activity = (await accountRows<Communication>(accountId, "COMMUNICATION")).map(r => r.data);
@@ -59,7 +61,7 @@ export async function reportFor(recipientId: string, snapshot?: Awaited<ReturnTy
   return report;
 }
 
-interface Edition { recipientId: string; day: string; state: "READY" | "LEASED" | "ACCEPTED" | "SENT" | "UNKNOWN"; uid?: string; messageId?: string; email?: string; subject?: string; channelId?: string; leaseUntil?: string; error?: string; sentAt?: string }
+interface Edition { recipientId: string; day: string; state: "READY" | "LEASED" | "ACCEPTED" | "SENT" | "UNKNOWN" | "SUPPRESSED"; uid?: string; messageId?: string; email?: string; subject?: string; channelId?: string; leaseUntil?: string; error?: string; sentAt?: string }
 /** Resolve against Cognito, never a self-editable profile address or client input. */
 async function verifiedRecipient(userId: string) {
   const user = await enabledUser(userId);
@@ -94,12 +96,12 @@ export const handler = async () => {
   }
   const priorHealth = await get<{ day: string; recipients?: string[]; incomplete?: boolean }>("health:reports");
   if (priorHealth?.data.day === reportDay(now) && priorHealth.data.recipients) {
-    const incomplete = (await Promise.all(priorHealth.data.recipients.map(id => get<Edition>(`report:${c.environment}:${reportDay(now)}:${id}`)))).some(r => r?.data.state !== "SENT");
+    const incomplete = (await Promise.all(priorHealth.data.recipients.map(id => get<Edition>(`report:${c.environment}:${reportDay(now)}:${id}`)))).some(r => !["SENT", "SUPPRESSED"].includes(r?.data.state ?? ""));
     if (incomplete !== priorHealth.data.incomplete) await save(row("HEALTH", "health:reports", { ...priorHealth.data, incomplete, at: now }, { previous: priorHealth }), priorHealth);
   }
   if (!reminderWindow(now, c.holidays) || c.paused || !c.activatedAt) return;
   const snapshot = await reportSnapshot(), settings = await get("team-routing");
-  if (!settings || !snapshot.settings.reportChannelId) { await issue("report-setup", "Choose the internal report channel and team managers before morning delivery"); return; }
+  if (!settings || !snapshot.settings.reportChannelId) { await issue("report-setup", "Choose the internal report channel before morning delivery"); return; }
   const start = Date.now();
   for (const member of snapshot.members.filter(m => m.enabled)) {
     if (Date.now() - start > 90_000 || !reminderWindow(new Date().toISOString(), c.holidays)) break;
@@ -114,22 +116,34 @@ export const handler = async () => {
     let posted = false, acceptedUid: string | undefined;
     try {
       const report = await reportFor(member.userId, snapshot);
-      if (!report.daily && !report.items.length && !(member.userId === snapshot.settings.ownerId && report.health.length)) continue;
+      if (!report.daily && !report.items.length && !(member.userId === snapshot.settings.ownerId && report.health.length)) {
+        if (edition?.data.state === "READY") await save(row("REPORT_EDITION", id, { ...edition.data, state: "SUPPRESSED", error: "This teammate no longer has a report to receive" }, { previous: edition }), edition);
+        continue;
+      }
       const email = await verifiedRecipient(member.userId);
       await verifyReportChannel(snapshot.settings.reportChannelId);
       const content = renderMorningReport(report, process.env.CRM_BASE_URL!);
       const body = `${content.html}<!-- hoa-report:${hash(id)} -->`;
       const data: Edition = { recipientId: member.userId, day, state: "LEASED", email, channelId: snapshot.settings.reportChannelId, subject: `${content.title} — ${day}`, leaseUntil: new Date(Date.now() + 180_000).toISOString() };
       const next = row("REPORT_EDITION", id, data, { previous: edition });
-      const currentMember = await get(`eligibility:${member.userId}`);
-      const checks = [];
-      for (const item of selectReportItems(report)) {
-        const source = await get(item.id);
+      const selected = selectReportItems(report);
+      const accountIds = [...new Set(selected.flatMap(item => item.accountId ? [item.accountId] : []))];
+      // The bounded report contains at most 20 items. Read its authorization and
+      // source rows together, then fence every returned version in the lease.
+      const current = await batchGet([`eligibility:${member.userId}`, ...accountIds.map(accountId => `workflow:${accountId}`), ...selected.map(item => item.id)]);
+      const currentMember = current.get(`eligibility:${member.userId}`);
+      if (!currentMember?.data.enabled) throw new Error("Report recipient is no longer enabled; refresh before sending");
+      for (const accountId of accountIds) {
+        if (!currentMember.data.salesperson) throw new Error("Report recipient is no longer eligible for account work; refresh before sending");
+        const workflow = current.get(`workflow:${accountId}`);
+        if (!workflow || workflow.data.salespersonId !== member.userId) throw new Error("Account assignment changed; refresh the morning edition before sending");
+      }
+      for (const item of selected) {
+        const source = current.get(item.id);
         if (item.taskVersion != null && (!source || source.version !== item.taskVersion)) throw new Error("Work changed; refresh the morning edition before sending");
         if (source?.kind === "TASK" && source.data.status !== "OPEN" || source?.data.resolved) throw new Error("Work changed; refresh the morning edition before sending");
-        if (source) checks.push(check(source));
       }
-      await commit([put(next, edition), check(settings), ...(currentMember ? [check(currentMember)] : []), ...checks]); edition = next;
+      await commit([put(next, edition), check(settings), ...[...current.values()].map(check)]); edition = next;
       posted = true;
       const result = await front<{ message_uid?: string }>(`/channels/${snapshot.settings.reportChannelId}/messages`, "POST", { to: [email], cc: [], bcc: [], sender_name: "HOA CRM", subject: data.subject, body, text: content.text, should_add_default_signature: false, signature_id: null, options: { archive: true } });
       acceptedUid = result.message_uid;
@@ -147,7 +161,8 @@ export const handler = async () => {
   const expected: string[] = [];
   for (const member of snapshot.members.filter(m => m.enabled)) {
     const r = await reportFor(member.userId, snapshot, false);
-    if (r.daily || r.items.length || member.userId === snapshot.settings.ownerId && r.health.length || await get(`report:${c.environment}:${reportDay(now)}:${member.userId}`)) expected.push(member.userId);
+    const edition = await get<Edition>(`report:${c.environment}:${reportDay(now)}:${member.userId}`);
+    if (r.daily || r.items.length || member.userId === snapshot.settings.ownerId && r.health.length || edition && edition.data.state !== "SUPPRESSED") expected.push(member.userId);
   }
   const incomplete = (await Promise.all(expected.map(id => get<Edition>(`report:${c.environment}:${reportDay(now)}:${id}`)))).some(r => r?.data.state !== "SENT");
   const health = await get("health:reports");

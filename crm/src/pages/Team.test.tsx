@@ -18,7 +18,7 @@ vi.mock("aws-amplify/data", () => ({
 }));
 vi.mock("../lib/communications", () => ({ communicationRequest }));
 // Routing is a separate settings section; these exercise the combined member table.
-vi.mock("../components/TeamWorkflowSettings", () => ({ default: () => null }));
+vi.mock("../components/ReportDeliverySettings", () => ({ default: () => null }));
 
 // SignatureManager (rendered once per roster row) imports these at module
 // scope. Only getUrl can fire, and only for a profile that has a signatureKey —

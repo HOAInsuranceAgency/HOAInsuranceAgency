@@ -1,5 +1,7 @@
 # Road-selling readiness: sales ownership and carrier ownership
 
+**September 29, 2026 update:** manager hierarchies, temporary coverage, team summaries, and manager/owner escalation are retired. The current behavior is documented in [Salesperson account ownership](specs/salesperson-account-ownership.md). The historical release and verification details below describe the earlier design.
+
 Assessment updated September 10, 2026 after the owner's responsibility clarification. **Specification only; no implementation or deployment in this assessment.**
 
 The earlier recommendation that champions take over routine prospect contact was incorrect. **Salespeople own lead relationships, sales managers oversee their salespeople, and deal champions own carrier work and become the client's main contact after binding.** A champion helps a prospect only when the salesperson asks. Both sales and marketing managers escalate unhandled work to the owner.

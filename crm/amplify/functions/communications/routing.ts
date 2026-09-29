@@ -15,7 +15,7 @@ export async function resolveTaskRoute(task: LeadTask, workflow: LeadWorkflow) {
   for (let attempt = 0; attempt < members.length + 1; attempt++) {
     const route = taskRoute(task, workflow, settings, members);
     let changed = false;
-    for (const id of new Set([route.recipientId, route.managerId, route.ownerId].filter((s): s is string => !!s))) {
+    for (const id of new Set([route.recipientId].filter((s): s is string => !!s))) {
       if ((availability.get(id) ?? 0) > Date.now()) continue;
       try { await enabledUser(id); availability.set(id, Date.now() + 30_000); }
       catch(e) {
@@ -39,16 +39,16 @@ export async function saveRouting(input: TeamRouting, actor: string, roster?: Te
   const configuration = await get<IntegrationConfig>("config");
   const c = configuration?.data ?? await (await import("./config")).config();
   if (c.activatedAt && !c.paused) validateCompleteRouting(input, members);
-  const ids = new Set([input.ownerId, input.intakeOwnerId, input.integrationOwnerId, ...input.members.flatMap(m => [m.userId, m.salesManagerId, m.coverId])].filter((id): id is string => !!id));
+  const ids = new Set([input.ownerId, input.intakeOwnerId, input.integrationOwnerId].filter((id): id is string => !!id));
   for (const id of ids) await enabledUser(id);
   if (input.reportChannelId) await (await import("./reports")).verifyReportChannel(input.reportChannelId);
-  // Manager-only teammates need a server-owned directory entry, with no producer eligibility added.
+  // Operational contacts need a directory entry without salesperson eligibility.
   for (const id of ids) if (!await get(`eligibility:${id}`)) {
     const member = members.find(m => m.userId === id)!;
     await save(row("ELIGIBILITY", `eligibility:${id}`, { ...member, salesperson: false, enabled: true }));
   }
   const next = row("TEAM_ROUTING", "team-routing", { ...input, version: (old?.version ?? 0) + 1 }, { previous: old });
-  await commit([put(next, old), configuration ? check(configuration) : { ConditionCheck: { TableName: process.env.COMMUNICATION_TABLE!, Key: { id: "config" }, ConditionExpression: "attribute_not_exists(id)" } }, audit("TEAM", actor, "Managers and coverage updated", input)]);
+  await commit([put(next, old), configuration ? check(configuration) : { ConditionCheck: { TableName: process.env.COMMUNICATION_TABLE!, Key: { id: "config" }, ConditionExpression: "attribute_not_exists(id)" } }, audit("TEAM", actor, "Report delivery settings updated", input)]);
   return next.data;
 }
 export async function resolveIssue(id: string) {

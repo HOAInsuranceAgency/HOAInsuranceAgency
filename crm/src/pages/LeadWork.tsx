@@ -25,7 +25,7 @@ export default function LeadWork(_props: { profile: UserProfile }) {
   async function refresh() { setRevision(n => n + 1); await work.refresh(); }
   return <div className="lead-work-page">
     <h1>Work follow-up</h1><p className="sub">Know what needs attention and what happens next.</p>
-    <div className="tabs"><button className={!showReport ? "active" : ""} onClick={() => setShowReport(false)}>My work list</button><button className={showReport ? "active" : ""} onClick={() => setShowReport(true)}>Daily report &amp; my team</button></div>
+    <div className="tabs"><button className={!showReport ? "active" : ""} onClick={() => setShowReport(false)}>My work list</button><button className={showReport ? "active" : ""} onClick={() => setShowReport(true)}>My daily report</button></div>
     {showReport && <MorningWorkReport />}
     <div hidden={showReport}><div className="toolbar lead-work-filters">
       <label className="field">View<select value={view} onChange={e => setView(e.target.value as LeadWorkView)}>{LEAD_WORK_VIEWS.map(label => <option key={label}>{label}</option>)}</select></label>
@@ -48,7 +48,7 @@ export default function LeadWork(_props: { profile: UserProfile }) {
               {(['salespersonId'] as const).map(role => <td key={role}>{assignments.loading ? 'Loading…' : assignments.error ? 'Unavailable' : teammateName(assignments.data.entries[item.accountId ?? '']?.[role], assignments.data.team)}</td>)}
               <td>{!item.accountId ? "—" : contacts.loading ? "Loading…" : contacts.error ? "Unavailable" : contacts.contacts[item.accountId]?.at ? fmtDateTime(contacts.contacts[item.accountId]!.at) : "No contact recorded"}</td>
               <td>{fmtDateTime(item.dueAt)}</td>
-              <td><span className={`badge ${late ? "red" : today ? "amber" : "gray"}`}>{late ? "Overdue" : today ? "Due today" : item.dueAt ? "Upcoming" : "Check due date"}</span>{item.escalatedAt && <small className="lead-work-escalation">Manager escalation</small>}</td>
+              <td><span className={`badge ${late ? "red" : today ? "amber" : "gray"}`}>{late ? "Overdue" : today ? "Due today" : item.dueAt ? "Upcoming" : "Check due date"}</span></td>
             </tr>;
           })}</tbody></table></div>}
       <WorkPagination work={work} />

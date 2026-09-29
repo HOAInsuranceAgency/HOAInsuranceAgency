@@ -5,20 +5,21 @@ import { runOperation, type Operation } from "./operations";
 import { processEvent, dialpadEvent, ingestFrontMessage, type EventRecord } from "./events";
 import { ensureWorkflow, recordInbound, enabledUser, accountRows } from "./workflow";
 import { front, dialpad, ProviderError, providerTimestamp, type FrontMessage } from "./providers";
-import type { LeadTask, Communication } from "../../../../shared/leadWorkflow";
+import type { LeadTask, Communication, TeamEligibility } from "../../../../shared/leadWorkflow";
 import { scheduleReminders, taskWakeAt, followUpDeadline, reminderWindow, nextReminderMorning } from "../../../../shared/leadWorkflow";
 import { leadActionGuidance } from "../../../../shared/leadActionGuidance";
 import { migrateReminderSchedules } from "./reminders";
 import { dataClient } from "./data";
 import { callRoot, syncCall } from "./calls";
+import { salespersonTask } from "../../../../shared/salespersonOwnership";
 
 export async function dispatchTask(candidate: Row<LeadTask>) {
   let task = await get<LeadTask>(candidate.id);
   if (!task || task.data.status !== "OPEN") return;
   if (await get(`deleted-account:${task.data.accountId}`)) { await save(row('TASK', task.id, { ...task.data, status: 'CANCELLED', reason: 'Lead deleted', version: task.version + 1 }, { accountId: task.accountId, previous: task }), task); return; }
   const c = await config(), now = new Date().toISOString();
-  const scheduled = scheduleReminders(task.data, c.holidays);
-  if (scheduled.reminderAt !== task.data.reminderAt || scheduled.escalationAt !== task.data.escalationAt) {
+  const scheduled = scheduleReminders(salespersonTask(task.data), c.holidays);
+  if (JSON.stringify(scheduled) !== JSON.stringify(task.data)) {
     scheduled.version = task.version + 1;
     task = await save(row("TASK", task.id, scheduled, { accountId: task.accountId, previous: task, dueAt: taskWakeAt(scheduled) }), task);
   }
@@ -40,21 +41,19 @@ export async function dispatchTask(candidate: Row<LeadTask>) {
   const { resolveTaskRoute } = await import("./routing");
   const routingRecord = await get("team-routing");
   const route = await resolveTaskRoute(task.data, wf.data);
-  const manager = task.data.escalationAt <= now && route.managerId !== route.accountableId, owner = !!task.data.ownerEscalationAt && task.data.ownerEscalationAt <= now && route.ownerId !== route.accountableId;
-  const recipient = owner ? route.ownerId : manager ? route.managerId : route.recipientId;
-  if (!recipient) { await issue(task.id, "Choose an available manager or owner for this work", task.accountId); throw new Error("Responsible team coverage is missing"); }
+  const recipient = route.recipientId;
+  if (!recipient) { await issue(task.id, "Choose an enabled salesperson for this work", task.accountId); throw new Error("The assigned teammate is unavailable"); }
+  const member = await get<TeamEligibility>(`eligibility:${recipient}`);
+  if (!member?.data.enabled || !member.data.salesperson) throw new Error("The assigned salesperson is no longer eligible");
   await enabledUser(recipient);
   const sources = await Promise.all((task.data.sourceIds ?? []).map(id => get<Communication>(id)));
-  const guidance = leadActionGuidance(task.data, sources.flatMap(r => r && r.accountId === task!.accountId ? [r.data] : []), manager);
-  const stage = owner ? "OWNER" : manager ? "MANAGER" : "DUE";
+  const guidance = leadActionGuidance(task.data, sources.flatMap(r => r && r.accountId === task!.accountId ? [r.data] : []));
   const next: LeadTask = { ...task.data, notifiedAt: task.data.notifiedAt ?? now, notifiedRecipientId: route.recipientId,
-    ...(manager ? { escalatedAt: task.data.escalatedAt ?? now, escalatedRecipientId: route.managerId } : {}),
-    ...(owner ? { ownerNotifiedAt: task.data.ownerNotifiedAt ?? now, ownerRecipientId: route.ownerId } : {}),
     lastReminderAt: now, nextReminderAt: followUpDeadline(now, 1, c.holidays), version: task.version + 1 };
-  const writes = [check(wf), ...(routingRecord ? [check(routingRecord)] : []), put(row("TASK", task.id, { ...next, attempts: 0, error: undefined, firstFailureAt: undefined }, { accountId: task.accountId, previous: task, dueAt: taskWakeAt(next) }), task)];
-  for (const target of new Set([route.recipientId, ...(manager ? [route.managerId] : []), ...(owner ? [route.ownerId] : [])].filter((id): id is string => !!id))) {
+  const writes = [check(wf), check(member), ...(routingRecord ? [check(routingRecord)] : []), put(row("TASK", task.id, { ...next, attempts: 0, error: undefined, firstFailureAt: undefined }, { accountId: task.accountId, previous: task, dueAt: taskWakeAt(next) }), task)];
+  for (const target of [recipient]) {
     const id = `notice:${task.id}:${target}`, old = await get(id);
-    writes.push(put(row("NOTIFICATION", id, { recipient: target, accountId: task.accountId, taskId: task.id, title: guidance.action, why: guidance.why, instruction: guidance.after, dueAt: task.data.dueAt, urgency: stage, at: now }, { accountId: task.accountId, previous: old }), old));
+    writes.push(put(row("NOTIFICATION", id, { recipient: target, accountId: task.accountId, taskId: task.id, title: guidance.action, why: guidance.why, instruction: guidance.after, dueAt: task.data.dueAt, urgency: "DUE", at: now }, { accountId: task.accountId, previous: old }), old));
   }
   // Scheduled work stays in CRM notifications and reports. Neither reopen nor
   // comment on Front conversations here: comments can also bump archived threads.

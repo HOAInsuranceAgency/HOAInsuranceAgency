@@ -17,7 +17,7 @@ type SettingsSnapshot = {
 
 const checkLabels: Record<string, [string, string]> = {
   "Default responsibilities": ["Lead ownership", "Choose an eligible default salesperson."],
-  "Team reports": ["Managers and daily reports", "Complete manager assignments and the internal reporting connection in Team settings."],
+  "Team reports": ["Individual work reports", "Complete the report delivery contacts and internal reporting connection in Team settings."],
   "Independent alerts": ["Operations alerts", "Connect and confirm the operations alert recipient in AWS before starting delivery."],
   "Front company": ["Front access", "Review the Front connection in Edit settings."],
   "Front sales channel": ["Email sending", "Connect and verify the sending mailbox in Front."],

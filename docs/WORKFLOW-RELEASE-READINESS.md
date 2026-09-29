@@ -1,5 +1,7 @@
 # Sales/carrier workflow release candidate
 
+**September 29, 2026 update:** manager hierarchies, temporary coverage, team summaries, and manager/owner escalation are retired. The current behavior is documented in [Salesperson account ownership](specs/salesperson-account-ownership.md). The historical release and verification details below describe the earlier design.
+
 This revision implements the approved role split, morning reminders and daily editions. The UX review starts with `WORKFLOW-UX-TEST-WORKSPACE.html`; the complete acceptance matrix and blank result sheet are beside it.
 
 ## Implemented behavior
