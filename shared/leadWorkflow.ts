@@ -4,11 +4,12 @@ export type Responsibility = "SALESPERSON" | "CHAMPION";
 export type TaskKind = "FOLLOW_UP" | "RESPONSE" | "CALLBACK" | "CARRIER" | "DOCUMENTS" | "CORRECTION" | "TRIAGE" | "FIRST_CONTACT" | "ANNUAL_RETURN" | "PROSPECT_UPDATE" | "RENEWAL_START" | "SUBMISSION" | "QUOTE_TARGET" | "QUOTE_PRESENTATION" | "BIND" | "SERVICE";
 export type WorkDomain = "CLIENT" | "CARRIER";
 export type BusinessContext = "LEAD" | "RENEWAL" | "SERVICE";
-/** Server-only, admin-managed reporting relationships also define manager account access. */
+/** Operational delivery contacts; legacy relationships never grant access or route work. */
 export interface TeamRouting {
   version: number; ownerId?: string; /** @deprecated Legacy storage only. */ marketingManagerId?: string; intakeOwnerId?: string; integrationOwnerId?: string;
   reportChannelId?: string;
-  members: { userId: string; salesManager?: boolean; /** @deprecated Legacy storage only. */ marketingManager?: boolean; salesManagerId?: string; coverId?: string; away?: boolean; coverFrom?: string; coverThrough?: string }[];
+  /** @deprecated Legacy storage only. Sanitized to an empty array on read/write. */
+  members: { userId: string; salesManager?: boolean; marketingManager?: boolean; salesManagerId?: string; coverId?: string; away?: boolean; coverFrom?: string; coverThrough?: string }[];
 }
 export interface TeamEligibility {
   userId: string; name: string; email: string; enabled: boolean;
@@ -27,7 +28,9 @@ export interface LeadWorkflow {
 }
 export interface LeadTask {
   id: string; accountId: string; title: string; kind: TaskKind; role: Responsibility;
-  dueAt: string; escalationAt: string; status: "OPEN" | "COMPLETE" | "CANCELLED";
+  dueAt: string; status: "OPEN" | "COMPLETE" | "CANCELLED";
+  /** @deprecated Legacy clocks are ignored; reminders stay with the assigned person. */
+  escalationAt?: string;
   /** Morning reminder is separate from the team's actual commitment. */
   reminderAt?: string;
   episode?: string; conversationId?: string; sourceAt?: string; custom?: boolean;
@@ -38,7 +41,9 @@ export interface LeadTask {
   domain?: WorkDomain; context?: BusinessContext; policyId?: string; quoteId?: string; marketingTaskId?: string;
   term?: string; lines?: string[]; carrierId?: string;
   /** Milestones require business records; outreach alone cannot close them. */
-  milestone?: boolean; helperId?: string; helperRequestedBy?: string; helperReason?: "SALES_ASSIST" | "MANAGER_COVER"; specialistId?: string;
+  milestone?: boolean; specialistId?: string;
+  /** @deprecated Legacy helper assignments are ignored and removed on normalization. */
+  helperId?: string; helperRequestedBy?: string; helperReason?: "SALES_ASSIST" | "MANAGER_COVER";
   accountableRole?: Responsibility; waitingOn?: "PROSPECT" | "CARRIER" | "CLIENT";
   followUpCount?: number; attemptAt?: string; requirementSourceIds?: string[];
   nextReminderAt?: string; lastReminderAt?: string; ownerEscalationAt?: string; ownerNotifiedAt?: string;
@@ -161,20 +166,23 @@ export function nextReminderMorning(now: string, holidays: readonly string[] = [
     ? new Date(localHour(p.day, 9)).toISOString() : followUpDeadline(now, 1, holidays);
 }
 export function scheduleReminders<T extends LeadTask>(task: T, holidays: readonly string[] = []): T {
-  const escalationAt = followUpDeadline(task.dueAt, 1, holidays);
-  return { ...task, reminderAt: morningReminderAt(task.dueAt, holidays), escalationAt, ownerEscalationAt: followUpDeadline(escalationAt, 1, holidays) };
+  const scheduled = { ...task, reminderAt: morningReminderAt(task.dueAt, holidays) };
+  delete scheduled.escalationAt; delete scheduled.ownerEscalationAt;
+  delete scheduled.escalatedAt; delete scheduled.escalatedRecipientId; delete scheduled.ownerNotifiedAt;
+  delete scheduled.managerRecipientId; delete scheduled.ownerRecipientId;
+  return scheduled;
 }
 export function taskWakeAt(task: LeadTask): string | undefined {
   if (task.status !== "OPEN") return undefined;
-  const wake = task.nextReminderAt ?? (task.escalatedAt ? task.ownerEscalationAt ?? followUpDeadline(task.escalationAt, 1) : task.notifiedAt ? task.escalationAt : task.reminderAt ?? morningReminderAt(task.dueAt));
+  const lastReminder = task.lastReminderAt ?? task.notifiedAt;
+  const wake = task.nextReminderAt ?? (lastReminder ? followUpDeadline(lastReminder, 1) : task.reminderAt ?? morningReminderAt(task.dueAt));
   return task.blocker && task.blocker.reviewAt > (task.lastReminderAt ?? "") && task.blocker.reviewAt < wake ? task.blocker.reviewAt : wake;
 }
 
 export function mergeInboundDeadline(existing: LeadTask | undefined, incoming: LeadTask): LeadTask {
   if (!existing || existing.status !== "OPEN") return incoming;
   if (existing.custom) return existing;
-  return { ...existing, dueAt: existing.dueAt < incoming.dueAt ? existing.dueAt : incoming.dueAt,
-    escalationAt: existing.escalationAt < incoming.escalationAt ? existing.escalationAt : incoming.escalationAt };
+  return { ...existing, dueAt: existing.dueAt < incoming.dueAt ? existing.dueAt : incoming.dueAt };
 }
 export function canArchive(workflow: LeadWorkflow, tasks: LeadTask[], unresolved: boolean, unhealthy: boolean): boolean {
   if (!workflow.salespersonId || workflow.assignmentIssue || unresolved || unhealthy) return false;

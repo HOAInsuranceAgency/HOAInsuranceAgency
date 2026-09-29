@@ -16,6 +16,20 @@ beforeEach(() => {
   h.request.mockImplementation(async (_op: string, input: { kind: string }) => ({ items: input.kind === "TASK" ? [future] : [] }));
 });
 describe("staff follow-up", () => {
+  it("shows an individual daily report without legacy team summaries or takeover controls", async () => {
+    h.request.mockImplementation(async (op: string, input?: { kind: string }) => op === "myReport" ? { report: {
+      asOf: "2026-09-29T13:00:00Z", complete: true, health: [], accountCount: 1,
+      teamCounts: [{ name: "Former direct report", due: 5, overdue: 3 }],
+      items: [{ id: "task", accountId: "a1", account: "Willow HOA", title: "Call the prospect", section: "Sales follow-up", role: "SALESPERSON", responsible: "Assigned salesperson", stage: "MANAGER", canTakeResponse: true, taskVersion: 1, why: "A reply is due", next: "Contact the prospect" }],
+    } } : { items: input?.kind === "TASK" ? [{ ...future, escalatedAt: "2026-09-28T13:00:00Z" }] : [] });
+    page(); await screen.findByText("Willow HOA");
+    expect(screen.queryByText("Manager escalation")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "My daily report" }));
+    expect(await screen.findByText("Call the prospect")).toBeVisible();
+    expect(screen.queryByText("Former direct report")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Handle this response" })).not.toBeInTheDocument();
+    expect(screen.queryByText("My sales team")).not.toBeInTheDocument();
+  });
   it("has three work views and last contact without a redundant responsibility filter", async () => {
     page(); await screen.findByText("Willow HOA");
     expect(within(screen.getByRole("combobox", { name: "View" })).getAllByRole("option").map(o => o.textContent)).toEqual(["Needs attention", "Upcoming", "All open"]);

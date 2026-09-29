@@ -45,6 +45,7 @@ const schema = a
     // ── Lifecycle enums ────────────────────────────────────────────────
     AccountStage: a.enum(["LEAD", "CLIENT"]),
     AccountType: a.enum(["ASSOCIATION", "PERSONAL", "COMMERCIAL_OTHER"]),
+    PropertyType: a.enum(["HOA_POA_POND_TOWNHOME", "CONDO", "INDIVIDUAL_UNIT_OWNER", "NOT_RECORDED"]),
     QuoteStatus: a.enum([
       "DRAFT",
       "SUBMITTED",
@@ -289,6 +290,8 @@ const schema = a
       .model({
         stage: a.ref("AccountStage").required(),
         type: a.ref("AccountType").required(),
+        // Confirmed reporting group; existing associations remain unknown.
+        propertyType: a.ref("PropertyType"),
         name: a.string().required(), // association / insured name (display)
         // Full legal entity name as it must appear on carrier submissions,
         // e.g. "Freedom Village at the Villages of the Americas Condominium
@@ -2015,9 +2018,10 @@ const schema = a
     crmAccess: a.query().returns(a.json()).authorization(allow => [allow.authenticated()])
       .handler(a.handler.function(crmAccess)),
     crmFile: a.mutation()
-      .arguments({ operation: a.string().required(), path: a.string().required(), contentType: a.string(), nextToken: a.string(), sizeBytes: a.integer() })
+      .arguments({ operation: a.string().required(), path: a.string().required(), contentType: a.string(), nextToken: a.string(), sizeBytes: a.integer(), downloadAs: a.string(), validateObjectExistence: a.boolean() })
       .returns(a.json()).authorization(allow => [allow.authenticated()])
       .handler(a.handler.function(crmAccess)),
+
     marketingReportSettings: a.query()
       .returns(a.json()).authorization(allow => [allow.groups(["ADMIN"])])
       .handler(a.handler.function(marketingReportApi)),

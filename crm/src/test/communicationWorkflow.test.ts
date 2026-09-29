@@ -1,12 +1,13 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import type { Communication, IntegrationConfig, LeadTask } from "../../../shared/leadWorkflow";
 const h = vi.hoisted(() => ({ records: new Map<string, Record<string, any>>(), transactions: [] as any[][], inFlight: 0, maxInFlight: 0, fail: false, failAt: undefined as number | undefined, writeError: undefined as Error | undefined, accountError: false, userEnabled: true,
-  front: vi.fn(), dialpad: vi.fn(), update: vi.fn(), accountList: vi.fn(), c: {} as IntegrationConfig }));
+  reads: [] as string[], batch: vi.fn(), front: vi.fn(), dialpad: vi.fn(), update: vi.fn(), accountList: vi.fn(), c: {} as IntegrationConfig }));
 vi.mock("@aws-sdk/lib-dynamodb", async importOriginal => {
   const actual = await importOriginal<typeof import("@aws-sdk/lib-dynamodb")>();
   return { ...actual, DynamoDBDocumentClient: { from: () => ({ send: async (command: any) => {
     const p = command.input;
-    if (command.constructor.name === "GetCommand") return { Item: h.records.get(`${p.TableName}:${p.Key.id}`) };
+    if (command.constructor.name === "GetCommand") { h.reads.push(p.Key.id); return { Item: h.records.get(`${p.TableName}:${p.Key.id}`) }; }
+    if (command.constructor.name === "BatchGetCommand") return h.batch(p);
     if (command.constructor.name === "QueryCommand") {
       const v = p.ExpressionAttributeValues;
       let items = [...h.records.entries()].filter(([k,r]) => k.startsWith(`${p.TableName}:`) && r[p.ExpressionAttributeNames["#k"]] === v[":k"] && (!v[":prefix"] || r.accountSort?.startsWith(v[":prefix"])) && (!v[":now"] || r.dueAt <= v[":now"])).map(([,r]) => r);
@@ -96,6 +97,12 @@ async function seedLegacyPromise(input: any, actor: string) {
 }
 beforeEach(async () => {
   vi.useFakeTimers(); vi.setSystemTime(NOW); h.records.clear(); h.transactions.length = 0; h.inFlight = 0; h.maxInFlight = 0; h.fail = false; h.failAt = undefined; h.accountError = false; h.userEnabled = true; h.writeError = undefined; vi.clearAllMocks();
+  h.reads.length = 0;
+  h.batch.mockReset().mockImplementation((p: { RequestItems: Record<string, { Keys: { id: string }[] }> }) => ({
+    Responses: Object.fromEntries(Object.entries(p.RequestItems).map(([name, request]) => [name,
+      request.Keys.map(key => h.records.get(`${name}:${key.id}`)).filter(Boolean).map(item => structuredClone(item)).reverse(),
+    ])),
+  }));
   Object.assign(process.env, { COMMUNICATION_TABLE: "comms", ACTIVITY_TABLE: "Activity", ACCOUNT_TABLE: "Account", CONTACT_TABLE: "Contact", PRIOR_CARRIER_TABLE: "PriorCarrier", LEAD_REPLY_TABLE: "LeadReply", USER_POOL_ID: "pool", CRM_BASE_URL: "https://crm.example.test", QUOTE_TABLE: "Quote", CERTIFICATE_TABLE: "Certificate", DOCUMENT_TABLE: "Document" });
   h.c = { frontCompanyId: "cmp_a", environment: "main", defaultUserId: "brian", frontSender: "sales@protectmyhoa.com", frontInboxId: "inb_a", frontChannelId: "cha_a", holidays: [], paused: false, activatedAt: "2026-09-01T00:00:00Z", allowedInboxIds: [], testRecipients: [], dialpadNumbers: ["+15082332261", "+16175550123"], sharedSmsNumber: "+15082332261", version: 1 };
   await save(row("ELIGIBILITY", "eligibility:brian", { userId: "brian", name: "Brian Cole", email: "brian@example.com", salesperson: true, champion: true, enabled: true }));
@@ -667,9 +674,9 @@ describe("cleanup and combined requests", () => {
     const selected = entries("TASK"); await mergeTasks({ accountId: "a1", tasks: selected.map(t => ({ id: t.id, version: t.version })), reason: "Same insurance enquiry" }, "brian");
     const open = entries("TASK").filter(t => t.data.status === "OPEN"); expect(open).toHaveLength(1); expect(open[0].data.dueAt).toBe("2026-09-09T14:00:00.000Z"); expect(open[0].data.sourceIds).toHaveLength(2);
   });
-  it("escalates a default 9am follow-up at 9am on the next business date", async () => {
+  it("schedules a default follow-up without manager escalation clocks", async () => {
     const t = await makeTask({ accountId: "a1", title: "Follow up", kind: "FOLLOW_UP", sourceAt: "2026-09-10T14:00:00Z" });
-    expect(t.dueAt).toBe("2026-09-14T13:00:00.000Z"); expect(t.escalationAt).toBe("2026-09-15T13:00:00.000Z");
+    expect(t.dueAt).toBe("2026-09-14T13:00:00.000Z"); expect(t.escalationAt).toBeUndefined(); expect(t.reminderAt).toBe(t.dueAt);
   });
   it("reserves API capacity for sends and honors the longest retry window", async () => {
     await rememberBudget("front", new Response("", { status: 200, headers: { "x-ratelimit-remaining": "4", "x-ratelimit-reset": String(Date.now() / 1000 + 30) } }));
@@ -861,7 +868,7 @@ describe("review regressions: deadline delivery and recovery", () => {
     await expect(dispatchTask(task)).rejects.toThrow("commitment remains open");
     expect(record(task.id).data.status).toBe("OPEN"); expect(record(task.id).dueAt).toBe(task.dueAt);
   });
-  it("delivers the morning notice, then escalates the next business morning without changing the deadline", async () => {
+  it("keeps reminding only the salesperson on later mornings despite legacy manager settings", async () => {
     const task = await dueTask();
     await save(row("ELIGIBILITY", "eligibility:champ", { userId: "champ", enabled: true, champion: true }));
     for (const id of ["manager", "owner"]) await save(row("ELIGIBILITY", `eligibility:${id}`, { userId: id, enabled: true, name: id }));
@@ -870,13 +877,14 @@ describe("review regressions: deadline delivery and recovery", () => {
     const wf = (await get<any>("workflow:a1"))!; await save(row("WORKFLOW", wf.id, { ...wf.data, championId: "champ" }, { accountId: "a1", previous: wf }), wf);
     const { handler } = await import("../../amplify/functions/communications/worker"); h.c.paused = true;
     await handler(); expect(entries("NOTIFICATION")).toHaveLength(1); expect(entries("NOTIFICATION")[0].data.recipient).toBe("brian");
-    expect(record(task.id).dueAt).toBe(task.data.escalationAt);
-    vi.setSystemTime(new Date(Date.parse(task.data.escalationAt) + 1)); await handler();
-    expect(entries("NOTIFICATION")).toHaveLength(2); expect(entries("NOTIFICATION").find(r => r.data.recipient === "manager")?.data.urgency).toBe("MANAGER");
-    expect(record(task.id).data.dueAt).toBe(task.data.dueAt); expect(record(task.id).data.escalatedAt).toBeTruthy();
+    const nextMorning = record(task.id).dueAt;
+    vi.setSystemTime(new Date(Date.parse(nextMorning) + 1)); await handler();
+    expect(entries("NOTIFICATION").map(r => r.data.recipient)).toEqual(["brian"]);
+    expect(entries("NOTIFICATION")[0].data.urgency).toBe("DUE");
+    expect(record(task.id).data.dueAt).toBe(task.data.dueAt); expect(record(task.id).data.escalatedAt).toBeUndefined();
   });
   it("keeps owner-producer work persistent without escalating to the same person", async () => {
-    const task = await dueTask(); vi.setSystemTime(new Date(Date.parse(task.data.escalationAt) + 1));
+    const task = await dueTask(); vi.setSystemTime("2026-09-10T13:00:00.001Z");
     const { dispatchTask } = await import("../../amplify/functions/communications/worker"); await dispatchTask(task);
     expect(entries("NOTIFICATION")).toHaveLength(1); expect(entries("NOTIFICATION")[0].data.urgency).toBe("DUE"); expect(record(task.id).dueAt).toBe("2026-09-11T13:00:00.000Z");
   });
@@ -1388,6 +1396,26 @@ it("returns the committed teammate version so the next edit does not depend on a
 
 
 describe("creation-only lead acquisition", () => {
+  it("persists a selected property group on manual creation and rejects unknown values", async () => {
+    const { handler } = await import("../../amplify/functions/communications/handler");
+    const create = (propertyType: unknown, requestId: string) => handler({ arguments: { operation: "createLead", input: { requestId, fields: { name: "Property group test", type: "ASSOCIATION", leadSource: "PHONE", propertyType } } }, identity: { sub: "brian", groups: ["ADMIN"] } as never });
+    expect(await create("apartment", "manual-property-bad-123456789")).toMatchObject({ ok: false, error: "Choose a valid property type" });
+    const classified = await create("CONDO", "manual-property-good-123456789") as { id: string };
+    expect(h.records.get(`Account:${classified.id}`)).toMatchObject({ propertyType: "CONDO" });
+    const unknown = await create(undefined, "manual-property-unknown-123456789") as { id: string };
+    expect(h.records.get(`Account:${unknown.id}`)?.propertyType).toBeUndefined();
+  });
+  it.each([
+    ["ASSOCIATION", "condominium", "CONDO"],
+    ["ASSOCIATION", "other", "HOA_POA_POND_TOWNHOME"],
+    ["ASSOCIATION", "unknown", undefined],
+    ["PERSONAL", undefined, "INDIVIDUAL_UNIT_OWNER"],
+  ])("preserves confirmed website property type %s / %s", async (type, propertyKind, expected) => {
+    const result = await capture({ arguments: { name: "Condominium in a name is not evidence", type, propertyKind, unitCount: type === "PERSONAL" ? undefined : "24", source: "website-quote" } } as never, {} as never, () => {}) as { id: string };
+    const stored = h.records.get(`Account:${result.id}`)!;
+    expect(stored.propertyType).toBe(expected);
+    expect(stored.unitCount).toBe(type === "PERSONAL" ? undefined : 24);
+  });
   it("requires one of the six choices and ignores a free-text source", async () => {
     const { handler } = await import("../../amplify/functions/communications/handler");
     const create = (fields: Record<string, unknown>, requestId = "manual-source-test-123456789") => handler({ arguments: { operation: "createLead", input: { requestId, fields: { name: "Source test HOA", ...fields } } }, identity: { sub: "brian", groups: ["ADMIN"] } as never });
@@ -1535,7 +1563,7 @@ describe("9am reminders with a clear next step", () => {
   });
   it("notifies at 9am, preserves the 5pm promise, and does not notify again at 5pm", async () => {
     const task = await textRequest();
-    expect(task.data).toMatchObject({ dueAt: "2026-09-10T21:00:00.000Z", reminderAt: "2026-09-10T13:00:00.000Z", escalationAt: "2026-09-11T13:00:00.000Z" });
+    expect(task.data).toMatchObject({ dueAt: "2026-09-10T21:00:00.000Z", reminderAt: "2026-09-10T13:00:00.000Z" });
     const { dispatchTask } = await import("../../amplify/functions/communications/worker");
     vi.setSystemTime("2026-09-10T12:59:00.000Z"); await dispatchTask(task); expect(entries("NOTIFICATION")).toHaveLength(0);
     vi.setSystemTime("2026-09-10T13:00:00.000Z"); await dispatchTask(task);
@@ -1636,7 +1664,7 @@ describe("9am reminders with a clear next step", () => {
     const { migrateReminderSchedules } = await import("../../amplify/functions/communications/reminders");
     await migrateReminderSchedules(); await migrateReminderSchedules();
     expect(entries("TASK")).toHaveLength(32);
-    for (const task of entries("TASK")) expect(task.data).toMatchObject({ reminderAt: "2026-09-10T13:00:00.000Z", dueAt: "2026-09-10T21:00:00.000Z", escalationAt: "2026-09-11T13:00:00.000Z" });
+    for (const task of entries("TASK")) expect(task.data).toMatchObject({ reminderAt: "2026-09-10T13:00:00.000Z", dueAt: "2026-09-10T21:00:00.000Z" });
     expect(record("task:old:0").data.notifiedAt).toBe(NOW);
     const before = structuredClone(entries("TASK")); await migrateReminderSchedules(); expect(entries("TASK")).toEqual(before);
     const late = { ...record("task:old:1").data, id: "task:late", reminderAt: undefined, escalationAt: "2026-09-11T21:00:00.000Z" };
@@ -1729,7 +1757,7 @@ describe("consolidated morning work", () => {
     await expect(updateBlocker({ taskId: carrier.id, version: carrier.version, action: "SET", reason: "Licensing pending" }, "unrelated")).rejects.toThrow("responsible");
     await updateBlocker({ taskId: carrier.id, version: carrier.version, action: "SET", reason: "Licensing pending" }, "brian");
     const blocked = record(carrier.id);
-    expect(blocked.data).toMatchObject({ dueAt: carrier.data.dueAt, escalationAt: carrier.data.escalationAt, status: "OPEN", blocker: { ownerId: "brian", reviewAt: "2026-09-15T13:00:00.000Z" } });
+    expect(blocked.data).toMatchObject({ dueAt: carrier.data.dueAt, status: "OPEN", blocker: { ownerId: "brian", reviewAt: "2026-09-15T13:00:00.000Z" } });
     expect(record(update.id)).toEqual(update);
     await updateBlocker({ taskId: carrier.id, version: blocked.version, action: "CLEAR" }, "brian");
     expect(record(carrier.id).data).toMatchObject({ status: "OPEN", dueAt: carrier.data.dueAt });
@@ -1738,7 +1766,7 @@ describe("consolidated morning work", () => {
   it("rejects the response takeover API for carrier submission milestones", async () => {
     await lead(); const t = await seed("SUBMISSION", "Submit", { milestone: true });
     const { handler } = await import("../../amplify/functions/communications/handler");
-    expect(await handler({ arguments: { operation: "takeResponse", input: { taskId: t.id, version: t.version } }, identity: { sub: "brian", groups: ["ADMIN"] } as never })).toMatchObject({ ok: false, error: "Open the business record to handle this work" });
+    expect(await handler({ arguments: { operation: "takeResponse", input: { taskId: t.id, version: t.version } }, identity: { sub: "brian", groups: ["ADMIN"] } as never })).toMatchObject({ ok: false, error: expect.stringContaining("takeover has been removed") });
     expect(record(t.id).data.helperId).toBeUndefined();
   });
   it("restores the real reminder date after an early blocker is resolved", async () => {
@@ -1785,15 +1813,18 @@ describe("approved sales and carrier revision: integration evidence", () => {
     await expect(nextYear({ accountId: "a1", version: wf.version, expiration: "2026-12-01", requestId: "repeatable-request-1234567890" }, "brian")).rejects.toThrow("date changed");
     expect(entries("ANNUAL_RETURN")).toHaveLength(0); expect(entries("TASK")).toHaveLength(0);
   });
-  it("delivers sales escalation to the salesperson's manager, then keeps owner escalation alive", async () => {
+  it("ignores legacy managers, owner escalation clocks, and temporary cover throughout reminder delivery", async () => {
     await routingSetup(); const wf = await lead();
     await save(row("WORKFLOW", wf.id, { ...wf.data, championId: "champion" }, { accountId: "a1", previous: wf }), wf);
     await recordInbound(await inbound()); const task = entries("TASK")[0];
     const { dispatchTask } = await import("../../amplify/functions/communications/worker");
-    vi.setSystemTime(task.data.escalationAt); await dispatchTask(task as any);
-    expect(entries("NOTIFICATION").map(n => n.data.recipient).sort()).toEqual(["brian", "manager"]);
-    vi.setSystemTime(task.data.ownerEscalationAt); await dispatchTask(record(task.id) as any);
-    expect(entries("NOTIFICATION").map(n => n.data.recipient)).toContain("owner");
+    Object.assign(record(task.id).data, { escalationAt: "2026-09-10T13:00:00Z", ownerEscalationAt: "2026-09-11T13:00:00Z", helperId: "manager", helperReason: "MANAGER_COVER" });
+    record("team-routing").data.members[0] = { userId: "brian", salesManagerId: "manager", away: true, coverId: "champion", coverFrom: "2026-09-01", coverThrough: "2026-10-01" };
+    vi.setSystemTime("2026-09-10T13:00:00Z"); await dispatchTask(task as any);
+    expect(entries("NOTIFICATION").map(n => n.data.recipient)).toEqual(["brian"]);
+    vi.setSystemTime("2026-09-11T13:00:00Z"); await dispatchTask(record(task.id) as any);
+    expect(entries("NOTIFICATION").map(n => n.data.recipient)).toEqual(["brian"]);
+    expect(record(task.id).data).not.toHaveProperty("helperId"); expect(record(task.id).data).not.toHaveProperty("ownerEscalationAt");
     const originalDue = task.data.dueAt, next = record(task.id).dueAt;
     vi.setSystemTime(next); await dispatchTask(record(task.id) as any);
     expect(record(task.id).data.dueAt).toBe(originalDue); expect(record(task.id).dueAt > next).toBe(true);
@@ -1828,11 +1859,11 @@ describe("approved sales and carrier revision: integration evidence", () => {
     for (const [id, data] of [["health:worker", { at: new Date().toISOString(), lagging: false }], ["coverage:census", { completedAt: new Date().toISOString() }]] as const) await save(row("HEALTH", id, data));
     h.front.mockImplementation(async (path: string, method?: string) => path.startsWith("/channels/") && method !== "POST" ? { id: "cha_reports", is_valid: true, type: "gmail", _links: { related: { inbox: "https://api2.frontapp.com/inboxes/inb_reports" } } } : method === "POST" ? { message_uid: `uid-${h.front.mock.calls.length}` } : { id: "msg_report", is_draft: false, is_inbound: false, conversation: { id: "cnv_report" } });
   }
-  it("requires complete manager routing while active, but allows a paused setup draft", async () => {
+  it("requires operational report delivery settings while active, but allows a paused setup draft", async () => {
     await reportSetup();
     const { saveRouting } = await import("../../amplify/functions/communications/routing");
     const current = record("team-routing"), input = { ...current.data, ownerId: undefined, version: current.version };
-    await expect(saveRouting(input as any, "owner")).rejects.toThrow("Choose the owner");
+    await expect(saveRouting(input as any, "owner")).rejects.toThrow("Choose the report issues contact");
     expect(record("team-routing").version).toBe(current.version);
     h.c.paused = true;
     await expect(saveRouting(input as any, "owner")).resolves.toMatchObject({ ownerId: undefined });
@@ -1849,14 +1880,13 @@ describe("approved sales and carrier revision: integration evidence", () => {
     await expect(saveRouting(input as any, "owner")).rejects.toThrow("Conflict");
     expect(record("team-routing").version).toBe(current.version);
   });
-  it("independently alerts on lost manager coverage even when processing and the census are healthy", async () => {
+  it("does not require manager coverage when operational reporting and processing are healthy", async () => {
     await reportSetup(); const current = (await get<import("../../../shared/leadWorkflow").TeamRouting>("team-routing"))!;
     await save(row("TEAM_ROUTING", current.id, { ...current.data, members: current.data.members.map(member => member.userId === "brian" ? { ...member, salesManagerId: undefined } : member) }, { previous: current }), current);
     const { handler } = await import("../../amplify/functions/communications/monitor");
-    await expect(handler()).rejects.toThrow("requires intervention");
-    expect(record("issue:independent-monitor").data.message).toContain("Manager or owner coverage is incomplete");
+    await expect(handler()).resolves.toEqual({ errors: [] });
     const { reportSnapshot } = await import("../../amplify/functions/communications/reports");
-    expect((await reportSnapshot()).warnings.join(" ")).toContain("not fully configured");
+    expect((await reportSnapshot()).warnings).toEqual([]);
     expect(h.front).not.toHaveBeenCalled();
   });
   it.each([
@@ -1882,12 +1912,12 @@ describe("approved sales and carrier revision: integration evidence", () => {
     }
     expect(h.front).not.toHaveBeenCalled();
   });
-  it("sends one healthy daily edition per salesperson and manager, with provider confirmation", async () => {
+  it("sends one healthy daily edition per salesperson without manager or owner copies", async () => {
     await reportSetup(); const { handler } = await import("../../amplify/functions/communications/reports");
-    await handler(); expect(h.front.mock.calls.filter(([,m]) => m === "POST")).toHaveLength(2);
+    await handler(); expect(h.front.mock.calls.filter(([,m]) => m === "POST")).toHaveLength(1);
     expect(entries("REPORT_EDITION").every(r => r.data.state === "ACCEPTED")).toBe(true);
     await handler(); await handler();
-    expect(h.front.mock.calls.filter(([,m]) => m === "POST")).toHaveLength(2);
+    expect(h.front.mock.calls.filter(([,m]) => m === "POST")).toHaveLength(1);
     expect(entries("REPORT_EDITION").every(r => r.data.state === "SENT")).toBe(true);
     expect(record("health:reports").data.incomplete).toBe(false);
     expect(record("report-conversation:cnv_report")).toBeTruthy();
@@ -1906,7 +1936,167 @@ describe("approved sales and carrier revision: integration evidence", () => {
     expect(entries("REPORT_EDITION").every(r => r.data.state === "UNKNOWN")).toBe(true);
     const recipients = h.front.mock.calls.filter(([,m]) => m === "POST").map(([, , b]) => b.to[0]); expect(new Set(recipients).size).toBe(recipients.length);
   });
-  it("a normal staff member cannot edit manager routing", async () => {
+  it("discards stale manager and cover settings while preserving operational contacts", async () => {
+    await reportSetup();
+    const { saveRouting, routing } = await import("../../amplify/functions/communications/routing");
+    const current = record("team-routing");
+    const saved = await saveRouting({ ...current.data, version: current.version, intakeOwnerId: "owner", integrationOwnerId: "owner", marketingManagerId: "missing-user", members: [{ userId: "brian", salesManagerId: "missing-user", coverId: "missing-user", away: true }] } as any, "owner");
+    expect(saved).toMatchObject({ ownerId: "owner", intakeOwnerId: "owner", integrationOwnerId: "owner", reportChannelId: "cha_reports", members: [] });
+    expect(saved).not.toHaveProperty("marketingManagerId");
+    expect(await routing()).toEqual(saved);
+    expect(record("eligibility:missing-user")).toBeUndefined();
+  });
+  it("suppresses a pending former-manager edition and never reuses stored summary content", async () => {
+    await reportSetup();
+    const id = "report:main:2026-09-09:manager";
+    await save(row("REPORT_EDITION", id, { recipientId: "manager", day: "2026-09-09", state: "READY", html: "PRIVATE OLD MANAGER SUMMARY", text: "PRIVATE OLD MANAGER SUMMARY", email: "manager@example.com" }));
+    const { handler } = await import("../../amplify/functions/communications/reports"); await handler();
+    expect(record(id).data.state).toBe("SUPPRESSED"); expect(record(id).workKind).toBeUndefined();
+    const sends = h.front.mock.calls.filter(([, method]) => method === "POST");
+    expect(sends.map(([, , body]) => body.to)).toEqual([["brian@example.com"]]);
+    expect(JSON.stringify(sends)).not.toContain("PRIVATE OLD MANAGER SUMMARY");
+    expect(record("health:reports").data.recipients).not.toContain("manager");
+  });
+  it("checks current account ownership before sending a report built from an older snapshot", async () => {
+    await reportSetup(); const workflow = await lead();
+    const task = await makeTask({ accountId: "a1", kind: "RESPONSE", title: "PRIVATE pending response", dueAt: "2026-09-09T21:00:00Z" });
+    await save(row("TASK", task.id, task, { accountId: "a1", dueAt: taskWakeAt(task) }));
+    h.front.mockImplementation(async (path: string) => {
+      if (path.startsWith("/channels/")) {
+        record(workflow.id).data.salespersonId = "specialist"; record(workflow.id).version++;
+        return { is_valid: true, type: "gmail", _links: { related: { inbox: "https://api2.frontapp.com/inboxes/inb_reports" } } };
+      }
+      return {};
+    });
+    const { handler } = await import("../../amplify/functions/communications/reports"); await handler();
+    expect(h.front.mock.calls.filter(([, method]) => method === "POST")).toHaveLength(0);
+    expect(record("report:main:2026-09-09:brian").data).toMatchObject({ state: "READY", error: expect.stringContaining("Account assignment changed") });
+  });
+  it("batch reads final report authorization and work together, deduplicating accounts and fencing every version", async () => {
+    await reportSetup(); const first = await lead();
+    await save(row("WORKFLOW", "workflow:a2", { ...first.data, accountId: "a2", name: "Second HOA" }, { accountId: "a2" }));
+    const taskIds: string[] = [];
+    for (const [accountId, kind] of [["a1", "RESPONSE"], ["a1", "CALLBACK"], ["a2", "RESPONSE"]] as const) {
+      const task = await makeTask({ accountId, kind, title: `Pending ${kind}`, dueAt: "2026-09-09T21:00:00Z" });
+      await save(row("TASK", task.id, task, { accountId, dueAt: taskWakeAt(task) })); taskIds.push(task.id);
+    }
+    h.reads.length = 0;
+    const { handler } = await import("../../amplify/functions/communications/reports"); await handler();
+    expect(h.batch).toHaveBeenCalledTimes(1);
+    const request = h.batch.mock.calls[0][0].RequestItems.comms;
+    const expected = ["eligibility:brian", "workflow:a1", "workflow:a2", ...taskIds];
+    expect(request.ConsistentRead).toBe(true);
+    expect(request.Keys.map((key: { id: string }) => key.id).sort()).toEqual(expected.sort());
+    expect(h.reads.filter(id => expected.includes(id))).toEqual([]);
+    const lease = h.transactions.find(writes => writes.some(w => w.Put?.Item.id === "report:main:2026-09-09:brian" && w.Put.Item.data.state === "LEASED"))!;
+    const conditions = lease.flatMap(w => w.ConditionCheck ? [w.ConditionCheck] : []);
+    expect(conditions.map(check => check.Key.id).sort()).toEqual(["team-routing", ...expected].sort());
+    for (const condition of conditions) expect(condition.ExpressionAttributeValues[":v"]).toBe(record(condition.Key.id).version);
+    expect(h.front.mock.calls.filter(([, method]) => method === "POST")).toHaveLength(1);
+  });
+  it("waits for unprocessed authorization rows and retries only those keys with strong consistency", async () => {
+    await reportSetup(); await lead();
+    const task = await makeTask({ accountId: "a1", kind: "RESPONSE", title: "Pending response", dueAt: "2026-09-09T21:00:00Z" });
+    await save(row("TASK", task.id, task, { accountId: "a1", dueAt: taskWakeAt(task) }));
+    const read = h.batch.getMockImplementation()!;
+    h.batch.mockImplementationOnce(input => {
+      const result = read(input);
+      return { Responses: { comms: result.Responses.comms.filter((item: { id: string }) => item.id !== "workflow:a1") },
+        UnprocessedKeys: { comms: { Keys: [{ id: "workflow:a1" }] } } };
+    }).mockImplementationOnce(input => {
+      expect(h.front.mock.calls.filter(([, method]) => method === "POST")).toEqual([]);
+      expect(record("report:main:2026-09-09:brian")).toBeUndefined();
+      return read(input);
+    });
+    const { handler } = await import("../../amplify/functions/communications/reports");
+    const delivery = handler(); await vi.runAllTimersAsync(); await delivery;
+    expect(h.batch.mock.calls.map(([input]) => input.RequestItems.comms.Keys)).toEqual([
+      [{ id: "eligibility:brian" }, { id: "workflow:a1" }, { id: task.id }], [{ id: "workflow:a1" }],
+    ]);
+    expect(h.batch.mock.calls.every(([input]) => input.RequestItems.comms.ConsistentRead === true)).toBe(true);
+    expect(h.front.mock.calls.filter(([, method]) => method === "POST")).toHaveLength(1);
+  });
+  it("fails closed after bounded incomplete batch reads without leasing or sending", async () => {
+    await reportSetup(); await lead();
+    const task = await makeTask({ accountId: "a1", kind: "RESPONSE", title: "Pending response", dueAt: "2026-09-09T21:00:00Z" });
+    await save(row("TASK", task.id, task, { accountId: "a1", dueAt: taskWakeAt(task) }));
+    h.batch.mockImplementation(input => ({ UnprocessedKeys: input.RequestItems }));
+    const { handler } = await import("../../amplify/functions/communications/reports");
+    const delivery = handler(); await vi.runAllTimersAsync(); await delivery;
+    expect(h.batch).toHaveBeenCalledTimes(4);
+    expect(h.front.mock.calls.filter(([, method]) => method === "POST")).toEqual([]);
+    expect(record("report:main:2026-09-09:brian").data).toMatchObject({ state: "READY", error: expect.stringContaining("batch read remains incomplete") });
+    expect(h.transactions.flat().some(write => write.Put?.Item.kind === "REPORT_EDITION" && write.Put.Item.data.state === "LEASED")).toBe(false);
+  });
+  it.each(["workflow", "task"])("does not send when the final batch cannot find the selected %s", async missing => {
+    await reportSetup(); await lead();
+    const task = await makeTask({ accountId: "a1", kind: "RESPONSE", title: "Pending response", dueAt: "2026-09-09T21:00:00Z" });
+    await save(row("TASK", task.id, task, { accountId: "a1", dueAt: taskWakeAt(task) }));
+    const read = h.batch.getMockImplementation()!;
+    h.batch.mockImplementationOnce(input => {
+      h.records.delete(`comms:${missing === "workflow" ? "workflow:a1" : task.id}`);
+      return read(input);
+    });
+    const { handler } = await import("../../amplify/functions/communications/reports"); await handler();
+    expect(h.front.mock.calls.filter(([, method]) => method === "POST")).toEqual([]);
+    expect(record("report:main:2026-09-09:brian").data).toMatchObject({ state: "READY", error: expect.stringContaining(missing === "workflow" ? "Account assignment changed" : "Work changed") });
+  });
+  it.each(["workflow", "task", "eligibility"])("fences a %s change between the final batch and delivery lease", async changed => {
+    await reportSetup(); await lead();
+    const task = await makeTask({ accountId: "a1", kind: "RESPONSE", title: "Pending response", dueAt: "2026-09-09T21:00:00Z" });
+    await save(row("TASK", task.id, task, { accountId: "a1", dueAt: taskWakeAt(task) }));
+    const read = h.batch.getMockImplementation()!;
+    h.batch.mockImplementationOnce(input => {
+      const result = read(input);
+      const current = record(changed === "workflow" ? "workflow:a1" : changed === "task" ? task.id : "eligibility:brian");
+      if (changed === "workflow") current.data.salespersonId = "specialist";
+      else if (changed === "task") current.data.status = "DONE";
+      else current.data.enabled = false;
+      current.version++;
+      return result;
+    });
+    const { handler } = await import("../../amplify/functions/communications/reports"); await handler();
+    expect(h.front.mock.calls.filter(([, method]) => method === "POST")).toEqual([]);
+    expect(record("report:main:2026-09-09:brian")).toBeUndefined();
+    expect(h.transactions.flat().some(write => write.Put?.Item.kind === "REPORT_EDITION" && write.Put.Item.data.state === "LEASED")).toBe(false);
+  });
+  it.each(["enabled", "salesperson"])("does not send account reports after the recipient's %s permission is revoked", async field => {
+    await reportSetup(); await lead();
+    const task = await makeTask({ accountId: "a1", kind: "RESPONSE", title: "Private response", dueAt: "2026-09-09T21:00:00Z" });
+    await save(row("TASK", task.id, task, { accountId: "a1", dueAt: taskWakeAt(task) }));
+    h.front.mockImplementation(async (path: string) => {
+      if (path.startsWith("/channels/")) {
+        record("eligibility:brian").data[field] = false; record("eligibility:brian").version++;
+        return { is_valid: true, type: "gmail", _links: { related: { inbox: "https://api2.frontapp.com/inboxes/inb_reports" } } };
+      }
+      return {};
+    });
+    const { handler } = await import("../../amplify/functions/communications/reports"); await handler();
+    expect(h.front.mock.calls.filter(([, method]) => method === "POST")).toHaveLength(0);
+    expect(record("report:main:2026-09-09:brian").data).toMatchObject({ state: "READY", error: expect.stringContaining("no longer") });
+  });
+  it("keeps business exceptions private and redacts account facts from operational-contact reports", async () => {
+    await reportSetup(); await lead();
+    await save(row("ISSUE", "issue:expired-risk:a1", { message: "PRIVATE placement problem", resolved: false }, { accountId: "a1" }));
+    await save(row("ISSUE", "issue:assignment:a1", { message: "PRIVATE account assignment detail", resolved: false }, { accountId: "a1" }));
+    const { reportFor } = await import("../../amplify/functions/communications/reports");
+    expect((await reportFor("brian")).items.some(i => i.title === "PRIVATE placement problem")).toBe(true);
+    expect((await reportFor("manager")).items).toEqual([]);
+    const owner = await reportFor("owner");
+    expect(owner.items).toHaveLength(1); expect(owner.items[0].accountId).toBeUndefined();
+    expect(JSON.stringify(owner)).not.toContain("PRIVATE"); expect(JSON.stringify(owner)).not.toContain("Willow HOA");
+    expect(owner.items[0]).toMatchObject({ url: "/lead-work", redacted: true });
+    const { AccountAccess } = await import("../../amplify/functions/crm-access/access");
+    const { filterCustom } = await import("../../amplify/functions/crm-access/custom");
+    const access = (sub: string) => new AccountAccess({ sub }, async (model, id) => h.records.get(`${model === "Communication" ? "comms" : model}:${id}`));
+    const filtered = await filterCustom(access("owner"), "communicationRead", { readOperation: "myReport" }, { report: owner }) as { report: typeof owner };
+    expect(filtered.report.items).toEqual(owner.items); expect(filtered.report.accountCount).toBe(0);
+    expect(JSON.stringify(filtered)).not.toContain("PRIVATE"); expect(JSON.stringify(filtered)).not.toContain("Willow HOA");
+    expect(filtered.report.items[0].accountId).toBeUndefined();
+    const foreign = await filterCustom(access("manager"), "communicationRead", { readOperation: "myReport" }, { report: owner }) as { report: typeof owner };
+    expect(foreign.report.items).toEqual([]);
+  });
+  it("a normal staff member cannot edit report delivery settings", async () => {
     const { handler } = await import("../../amplify/functions/communications/handler");
     expect(await handler({ arguments: { operation: "saveTeamRouting", input: { ownerId: "brian", version: 1, members: [] } }, identity: { sub: "brian", groups: [] } as never })).toMatchObject({ ok: false, error: expect.stringContaining("admin") });
   });
@@ -1959,7 +2149,7 @@ describe('routing repair and underlying business requirements', () => {
     await save(row('LINK','front-link:cnv_a',{accountId:'a1',conversationId:'cnv_a',purpose:'CARRIER',context:'RENEWAL',policyId:'p1'},{accountId:'a1'}));
     const { repairConversationContexts } = await import('../../amplify/functions/communications/conversationContext');
     await repairConversationContexts('a1'); await repairConversationContexts('a1');
-    expect(record(task.id).data).toMatchObject({role:'SALESPERSON',domain:'CARRIER',context:'RENEWAL',kind:'CARRIER',policyId:'p1',dueAt:task.dueAt,escalationAt:task.escalationAt});
+    expect(record(task.id).data).toMatchObject({role:'SALESPERSON',domain:'CARRIER',context:'RENEWAL',kind:'CARRIER',policyId:'p1',dueAt:task.dueAt});
     expect(record(message.id).data).toMatchObject({resolved:true,context:'RENEWAL',policyId:'p1'});
   });
   it('keeps the two-day information chase after the initial request was sent while carriers are working', async () => {
@@ -2018,8 +2208,8 @@ describe("single salesperson ownership migration", () => {
   }
   async function migrateAll() {
     const { migrateSalespersonOwnership } = await import("../../amplify/functions/communications/ownershipMigration");
-    for (let n = 0; n < 30 && !record("migration:salesperson-ownership:v1")?.data.complete; n++) await migrateSalespersonOwnership();
-    expect(record("migration:salesperson-ownership:v1").data.complete).toBe(true);
+    for (let n = 0; n < 30 && !record("migration:salesperson-ownership:v2")?.data.complete; n++) await migrateSalespersonOwnership();
+    expect(record("migration:salesperson-ownership:v2").data.complete).toBe(true);
     const { syncResponsibilities } = await import("../../amplify/functions/communications/workflow");
     for (let n = 0; n < 80; n++) {
       const next = entries("ROLE_SYNC").find(r => r.dueAt); if (!next) break;
@@ -2027,6 +2217,21 @@ describe("single salesperson ownership migration", () => {
     }
     expect(entries("ROLE_SYNC").some(r => r.dueAt)).toBe(false);
   }
+  it("revisits accounts whose earlier migration completed and removes takeover metadata and old notices", async () => {
+    const wf = await lead();
+    await save(row("MIGRATION", "migration:salesperson-ownership:v1", { complete: true }));
+    await save(row("ROLE_SYNC", "role-sync:ownership:a1", { accountId: "a1", phase: "NOTIFICATION" }, { accountId: "a1" }));
+    const task = await makeTask({ accountId: "a1", kind: "RESPONSE", title: "Reply", dueAt: "2026-09-10T21:00:00Z" });
+    await save(row("TASK", task.id, { ...task, helperId: "manager", helperReason: "MANAGER_COVER", escalationAt: NOW, ownerEscalationAt: NOW, escalatedAt: NOW, escalatedRecipientId: "manager" }, { accountId: "a1", dueAt: NOW }));
+    await save(row("NOTIFICATION", "notice:old-manager", { taskId: task.id, recipient: "manager", urgency: "MANAGER", at: NOW }, { accountId: "a1" }));
+    await save(row("NOTIFICATION", "notice:old-escalated", { taskId: task.id, recipient: "brian", urgency: "ESCALATED", at: NOW }, { accountId: "a1" }));
+    await migrateAll();
+    expect(record(wf.id).data.salespersonId).toBe("brian");
+    for (const field of ["helperId", "helperReason", "escalationAt", "ownerEscalationAt", "escalatedAt", "escalatedRecipientId"]) expect(record(task.id).data).not.toHaveProperty(field);
+    expect(record(task.id).data.dueAt).toBe(task.dueAt);
+    expect(entries("NOTIFICATION").every(n => n.data.resolved)).toBe(true);
+    expect(record("role-sync:ownership:a1").data.routingVersion).toBe(2);
+  });
   it("moves legacy work in bounded pages, preserves commitments and retires former owners' notices", async () => {
     await legacyAccount();
     const brian = (await get<any>("eligibility:brian"))!;
@@ -2049,11 +2254,11 @@ describe("single salesperson ownership migration", () => {
     expect(record("workflow:a1").data).not.toHaveProperty("championId");
     expect(record("config").data).not.toHaveProperty("defaultChampionId");
     expect(record("team-routing").data).not.toHaveProperty("marketingManagerId");
-    expect(record("team-routing").data.members[0]).not.toHaveProperty("marketingManager");
+    expect(record("team-routing").data.members).toEqual([]);
     expect(record("eligibility:former-champ").data).toMatchObject({ salesperson: false });
     expect(record("eligibility:former-champ").data).not.toHaveProperty("champion");
     for (const task of entries("TASK").filter(t => t.data.status === "OPEN")) {
-      expect(task.data).toMatchObject({ id: task.id, role: "SALESPERSON", accountableRole: "SALESPERSON", domain: "CARRIER", context: "RENEWAL", policyId: "policy-1", custom: true, dueAt: deadline, escalationAt, sourceIds: ["comm:original"] });
+      expect(task.data).toMatchObject({ id: task.id, role: "SALESPERSON", accountableRole: "SALESPERSON", domain: "CARRIER", context: "RENEWAL", policyId: "policy-1", custom: true, dueAt: deadline, sourceIds: ["comm:original"] });
       expect(task.data.notifiedAt).toBeUndefined();
     }
     expect(record(closed.id)).toEqual(closed);
@@ -2119,7 +2324,7 @@ describe("single salesperson ownership migration", () => {
   });
 });
 
-it("notifies the new salesperson and manager without waiting for the old owner's escalation date", async () => {
+it("notifies only the new salesperson without waiting for old escalation clocks", async () => {
   vi.setSystemTime("2026-09-11T13:00:00Z");
   const wf = await lead();
   await save(row("ELIGIBILITY", "eligibility:sally", { userId: "sally", name: "Sally", salesperson: true, enabled: true }));
@@ -2131,8 +2336,9 @@ it("notifies the new salesperson and manager without waiting for the old owner's
   await setResponsibilities("a1", "sally", wf.version, "brian");
   const { dispatchTask } = await import("../../amplify/functions/communications/worker");
   await dispatchTask((await get<LeadTask>(task.id))!);
-  expect(entries("NOTIFICATION").map(n => n.data.recipient).sort()).toEqual(["brian", "sally"]);
-  expect(record(task.id).data).toMatchObject({ dueAt: task.dueAt, escalationAt: task.escalationAt, ownerEscalationAt: task.ownerEscalationAt });
+  expect(entries("NOTIFICATION").map(n => n.data.recipient).sort()).toEqual(["sally"]);
+  expect(record(task.id).data.dueAt).toBe(task.dueAt);
+  expect(record(task.id).data).not.toHaveProperty("escalationAt"); expect(record(task.id).data).not.toHaveProperty("ownerEscalationAt");
   expect(entries("OPERATION")).toHaveLength(0);
 });
 
@@ -2153,18 +2359,16 @@ describe("assignment listing index rollout", () => {
     await migrateAssignmentIndex({ budgetMs: 0 });
     expect(record("migration:assignment-index:v1")).toBeUndefined();
     expect(record(original.id).assignedSalespersonId).toBeUndefined();
-    const store = await import("../../amplify/functions/communications/store"), read = store.get;
-    let moved = false;
-    const spy = vi.spyOn(store, "get").mockImplementation(async key => {
-      const current = await read(key);
-      if (key === original.id && !moved) {
-        moved = true;
-        h.records.set(`comms:${key}`, row("WORKFLOW", key, { ...original.data, salespersonId: "new-owner" }, { previous: original, accountId: "a1", dueAt: "2026-10-01T13:00:00.000Z" }));
-      }
+    const read = h.batch.getMockImplementation()!;
+    h.batch.mockImplementationOnce(input => {
+      const current = read(input);
+      h.records.set(`comms:${original.id}`, row("WORKFLOW", original.id, { ...original.data, salespersonId: "new-owner" }, { previous: original, accountId: "a1", dueAt: "2026-10-01T13:00:00.000Z" }));
       return current;
     });
-    try { await migrateAssignmentIndex(); } finally { spy.mockRestore(); }
+    h.reads.length = 0;
+    await migrateAssignmentIndex();
     expect(record(original.id)).toMatchObject({ assignedSalespersonId: "new-owner", data: { salespersonId: "new-owner" }, dueAt: "2026-10-01T13:00:00.000Z" });
+    expect(h.reads.filter(id => id.startsWith("workflow:"))).toEqual([original.id]);
     expect(record("migration:assignment-index:v1").data.complete).toBe(true);
   });
   it("backfills bounded pages without changing account ownership or deadlines", async () => {
@@ -2177,11 +2381,15 @@ describe("assignment listing index rollout", () => {
       h.records.set(`comms:${legacy.id}`, legacy);
     }
     const { migrateAssignmentIndex } = await import("../../amplify/functions/communications/assignmentIndex");
+    h.reads.length = 0;
     await migrateAssignmentIndex({ maxPages: 1 });
     expect(record("migration:assignment-index:v1").data).toMatchObject({ complete: false, processed: 100 });
     expect(entries("WORKFLOW").filter(w => w.assignedSalespersonId)).toHaveLength(100);
     await migrateAssignmentIndex();
     expect(record("migration:assignment-index:v1").data).toMatchObject({ complete: true, processed: 252 });
+    expect(h.batch.mock.calls.map(([input]) => input.RequestItems.comms.Keys.length)).toEqual([100, 100, 52]);
+    expect(h.batch.mock.calls.every(([input]) => input.RequestItems.comms.ConsistentRead === true)).toBe(true);
+    expect(h.reads.filter(id => id.startsWith("workflow:"))).toEqual([]);
     expect(h.maxInFlight).toBeGreaterThan(1); expect(h.maxInFlight).toBeLessThanOrEqual(25);
     for (const w of entries("WORKFLOW")) {
       expect(w.assignedSalespersonId).toBe(base.data.salespersonId);
@@ -2191,11 +2399,129 @@ describe("assignment listing index rollout", () => {
     const before = structuredClone(entries("WORKFLOW"));
     await migrateAssignmentIndex(); expect(entries("WORKFLOW")).toEqual(before);
   });
+  it("retries only unprocessed rows and handles unordered or deleted batch results", async () => {
+    const original = await lead(); delete record(original.id).assignedSalespersonId;
+    const other = row("WORKFLOW", "workflow:a2", { ...original.data, accountId: "a2", salespersonId: "other-owner" }, { accountId: "a2", dueAt: "2026-10-02T13:00:00.000Z" });
+    delete other.assignedSalespersonId;
+    h.records.set(`comms:${other.id}`, other);
+    h.records.set("comms:workflow:deleted", { ...other, id: "workflow:deleted" });
+    const read = h.batch.getMockImplementation()!;
+    h.batch.mockImplementationOnce(input => {
+      h.records.delete("comms:workflow:deleted");
+      const result = read(input);
+      return { Responses: { comms: result.Responses.comms.filter((item: { id: string }) => item.id !== original.id) },
+        UnprocessedKeys: { comms: { Keys: [{ id: original.id }] } } };
+    }).mockImplementationOnce(input => {
+      expect(record("migration:assignment-index:v1")).toBeUndefined();
+      expect(record(other.id).assignedSalespersonId).toBeUndefined();
+      return read(input);
+    });
+    const { migrateAssignmentIndex } = await import("../../amplify/functions/communications/assignmentIndex");
+    const migration = migrateAssignmentIndex();
+    await vi.runAllTimersAsync(); await migration;
+    expect(h.batch.mock.calls.map(([input]) => input.RequestItems.comms.Keys)).toEqual([
+      [{ id: original.id }, { id: other.id }, { id: "workflow:deleted" }], [{ id: original.id }],
+    ]);
+    expect(h.batch.mock.calls.every(([input]) => input.RequestItems.comms.ConsistentRead === true)).toBe(true);
+    expect(record(original.id).assignedSalespersonId).toBe(original.data.salespersonId);
+    expect(record(other.id)).toMatchObject({ assignedSalespersonId: "other-owner", dueAt: "2026-10-02T13:00:00.000Z" });
+    expect(record("workflow:deleted")).toBeUndefined();
+    expect(record("migration:assignment-index:v1").data).toMatchObject({ complete: true, processed: 3 });
+  });
+  it("bounds unprocessed-key retries and resumes the incomplete page on the next run", async () => {
+    const original = await lead(); delete record(original.id).assignedSalespersonId;
+    const read = h.batch.getMockImplementation()!;
+    h.batch.mockImplementation(input => ({ UnprocessedKeys: input.RequestItems }));
+    const { migrateAssignmentIndex } = await import("../../amplify/functions/communications/assignmentIndex");
+    const failure = expect(migrateAssignmentIndex()).rejects.toThrow("batch read remains incomplete");
+    await vi.runAllTimersAsync(); await failure;
+    expect(h.batch).toHaveBeenCalledTimes(4);
+    expect(record("migration:assignment-index:v1")).toBeUndefined();
+    expect(record(original.id).assignedSalespersonId).toBeUndefined();
+    h.batch.mockImplementation(read);
+    await migrateAssignmentIndex();
+    expect(record(original.id).assignedSalespersonId).toBe(original.data.salespersonId);
+    expect(record("migration:assignment-index:v1").data).toMatchObject({ complete: true, processed: 1 });
+  });
+  it("yields without writes or a checkpoint when retrying a batch would exceed the time budget", async () => {
+    const original = await lead(); delete record(original.id).assignedSalespersonId;
+    h.batch.mockImplementationOnce(input => ({ UnprocessedKeys: input.RequestItems }));
+    const { migrateAssignmentIndex } = await import("../../amplify/functions/communications/assignmentIndex");
+    await migrateAssignmentIndex({ budgetMs: 20 });
+    expect(h.batch).toHaveBeenCalledTimes(1);
+    expect(record("migration:assignment-index:v1")).toBeUndefined();
+    expect(record(original.id).assignedSalespersonId).toBeUndefined();
+    await migrateAssignmentIndex();
+    expect(record(original.id).assignedSalespersonId).toBe(original.data.salespersonId);
+    expect(record("migration:assignment-index:v1").data).toMatchObject({ complete: true, processed: 1 });
+  });
   it("updates the listing index in the same write as assignment changes", async () => {
     const original = await lead();
     expect(original.assignedSalespersonId).toBe(original.data.salespersonId);
     const reassigned = row("WORKFLOW", original.id, { ...original.data, salespersonId: "another" }, { previous: original, accountId: "a1" });
     expect(reassigned.assignedSalespersonId).toBe("another");
     expect(row("WORKFLOW", original.id, { ...original.data, salespersonId: undefined }, { previous: reassigned, accountId: "a1" }).assignedSalespersonId).toBeUndefined();
+  });
+});
+
+
+describe("retired hierarchy API and notifications", () => {
+  async function setupTask(kind: LeadTask["kind"] = "SERVICE") {
+    await lead();
+    for (const id of ["manager", "owner", "specialist"]) await save(row("ELIGIBILITY", `eligibility:${id}`, { userId: id, enabled: true, salesperson: false }));
+    const settings = (await get("team-routing"))!;
+    await save(row("TEAM_ROUTING", settings.id, { ownerId: "owner", members: [{ userId: "brian", salesManagerId: "manager", coverId: "manager", away: true }] }, { previous: settings }), settings);
+    const task = await makeTask({ accountId: "a1", kind, title: "Assigned work", context: "SERVICE", dueAt: "2026-09-10T21:00:00Z" });
+    return save(row("TASK", task.id, task, { accountId: "a1", dueAt: taskWakeAt(task) }));
+  }
+  it.each(["manager", "owner", "brian"])("rejects stale takeover calls from %s without changing work", async actor => {
+    const task = await setupTask("RESPONSE"), before = h.transactions.length;
+    const { handler } = await import("../../amplify/functions/communications/handler");
+    const result = await handler({ arguments: { operation: "takeResponse", input: { taskId: task.id, version: task.version } }, identity: { sub: actor, groups: ["ADMIN"] } as never });
+    expect(result).toMatchObject({ ok: false, error: expect.stringContaining("takeover has been removed") });
+    expect(record(task.id)).toEqual(task); expect(h.transactions).toHaveLength(before);
+  });
+  it("allows explicit specialist metadata while keeping delivery with the salesperson", async () => {
+    const task = await setupTask();
+    const { handler } = await import("../../amplify/functions/communications/handler");
+    const args = { operation: "delegateService", input: { taskId: task.id, version: task.version, specialistId: "specialist" } };
+    for (const actor of ["manager", "owner"]) expect(await handler({ arguments: args, identity: { sub: actor, groups: [] } as never })).toMatchObject({ ok: false, error: expect.stringContaining("assigned salesperson") });
+    expect(await handler({ arguments: args, identity: { sub: "brian", groups: [] } as never })).toMatchObject({ ok: true });
+    const { resolveTaskRoute } = await import("../../amplify/functions/communications/routing");
+    expect(await resolveTaskRoute(record(task.id).data as any, record("workflow:a1").data as any)).toMatchObject({ assigneeId: "specialist", recipientId: "brian", accountableId: "brian" });
+  });
+  it("keeps an explicit blocker owner but rejects automatic manager control", async () => {
+    const task = await setupTask("CARRIER"), { updateBlocker } = await import("../../amplify/functions/communications/blockers");
+    const input = { taskId: task.id, version: task.version, action: "SET", reason: "Carrier access needed", ownerId: "specialist" };
+    for (const actor of ["manager", "owner"]) await expect(updateBlocker(input, actor)).rejects.toThrow("assigned salesperson");
+    await updateBlocker(input, "brian");
+    expect(record(task.id).data.blocker.ownerId).toBe("specialist");
+    const { resolveTaskRoute } = await import("../../amplify/functions/communications/routing");
+    expect((await resolveTaskRoute(record(task.id).data as any, record("workflow:a1").data as any)).recipientId).toBe("brian");
+  });
+  it.each([["manager", "DUE"], ["owner", "OWNER"], ["brian", "MANAGER"], ["brian", "ESCALATED"]])("retires the stale %s %s notice before returning work", async (actor, urgency) => {
+    const task = await setupTask("RESPONSE");
+    Object.assign(record(task.id).data, { lastReminderAt: NOW, notifiedAt: NOW, escalatedAt: NOW, ownerNotifiedAt: NOW });
+    await save(row("NOTIFICATION", "notice:legacy", { taskId: task.id, recipient: actor, urgency, at: NOW }, { accountId: "a1" }));
+    const { handler } = await import("../../amplify/functions/communications/handler");
+    const result = await handler({ arguments: { readOperation: "work", input: { kind: "NOTIFICATION" } }, identity: { sub: actor, groups: [] } as never });
+    expect(result).toMatchObject({ ok: true, items: [] }); expect(record("notice:legacy").data.resolved).toBe(true);
+  });
+  it("never notifies or emails a former manager named in legacy specialist or blocker metadata", async () => {
+    const task = await setupTask("CARRIER");
+    Object.assign(record(task.id).data, { specialistId: "manager", blocker: { ownerId: "owner", reason: "Carrier access needed", recordedAt: NOW, recordedBy: "brian", reviewAt: "2026-09-10T13:00:00Z" } });
+    vi.setSystemTime("2026-09-10T13:00:00Z");
+    const { dispatchTask } = await import("../../amplify/functions/communications/worker"); await dispatchTask(task);
+    expect(entries("NOTIFICATION").map(n => n.data.recipient)).toEqual(["brian"]);
+    const { reportFor } = await import("../../amplify/functions/communications/reports");
+    for (const actor of ["manager", "owner"]) expect((await reportFor(actor)).items.filter(i => i.accountId === "a1")).toEqual([]);
+    expect(record(task.id).data).toMatchObject({ specialistId: "manager", blocker: { ownerId: "owner" } });
+  });
+  it("does not fall back to a manager or owner when the salesperson is disabled", async () => {
+    const task = await setupTask("RESPONSE"); record("eligibility:brian").data.enabled = false;
+    vi.setSystemTime("2026-09-10T13:00:00Z");
+    const { dispatchTask } = await import("../../amplify/functions/communications/worker");
+    await expect(dispatchTask(task)).rejects.toThrow("assigned teammate is unavailable");
+    expect(entries("NOTIFICATION")).toEqual([]); expect(record(task.id).data.status).toBe("OPEN");
   });
 });

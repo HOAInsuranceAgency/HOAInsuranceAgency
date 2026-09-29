@@ -1,6 +1,6 @@
-import TeamWorkflowSettings from "../components/TeamWorkflowSettings";
+import ReportDeliverySettings from "../components/ReportDeliverySettings";
 import { useState } from "react";
-import LeadEligibilitySettings from "../components/LeadEligibilitySettings";
+import { LeadEligibilityCells, LeadEligibilityEditor, LeadEligibilityFeedback, useLeadEligibilitySettings } from "../components/LeadEligibilitySettings";
 import { client, fmtDate, type UserProfile } from "../lib/client";
 import { toE164 } from "../../amplify/functions/lead-intake/sms";
 import { Badge, flagBadge } from "../lib/badges";
@@ -88,6 +88,7 @@ const NO_USERS: TeamUser[] = [];
  * so there's no check of its own here.
  */
 export default function Team({ profile }: { profile: UserProfile }) {
+  const eligibility = useLeadEligibilitySettings();
   // The invite confirmation used to be a `notice` string nothing ever
   // cleared — it sat over the form while you typed the next invitee's
   // address. `markDirty` in `onEdit` is what retires it now.
@@ -142,6 +143,7 @@ export default function Team({ profile }: { profile: UserProfile }) {
   function reload() {
     void team.refetch();
     void profileRes.refetch();
+    eligibility.refresh();
   }
 
   async function invite() {
@@ -218,8 +220,6 @@ export default function Team({ profile }: { profile: UserProfile }) {
 
   return (
     <>
-      <LeadEligibilitySettings />
-      <TeamWorkflowSettings />
       <div className="card">
         <h2>Team — invite someone</h2>
         <p className="muted small">
@@ -265,14 +265,14 @@ export default function Team({ profile }: { profile: UserProfile }) {
         </p>
       </div>
 
-      <div className="card">
+      <section className="card team-eligibility" aria-labelledby="team-members-title">
         <div className="toolbar" style={{ marginTop: 0, alignItems: "flex-start" }}>
           <div>
-            <h2 style={{ margin: 0 }}>Team members</h2>
+            <h2 id="team-members-title" style={{ margin: 0 }}>Team members</h2>
             <p className="muted small" style={{ margin: "4px 0 0" }}>
-              Lead texts go out the moment a website enquiry lands. Both the
-              switch and a mobile number are needed — a switch on its own
-              sends nothing.
+              View roles and manage salesperson eligibility, lead texts and connections in one place.
+              Salesperson eligibility controls assignment choices and does not change access.
+              Lead texts need both the switch and a mobile number.
             </p>
           </div>
           <div className="grow" />
@@ -280,6 +280,7 @@ export default function Team({ profile }: { profile: UserProfile }) {
               the card's one status line. */}
           <SaveStatus {...alertStatus.status} />
         </div>
+        <LeadEligibilityFeedback settings={eligibility} />
         {!team.loaded ? (
           <p className="muted small">Loading…</p>
         ) : team.error ? (
@@ -291,30 +292,31 @@ export default function Team({ profile }: { profile: UserProfile }) {
             <table>
               <thead>
                 <tr>
-                  <SortTh label="Email" colKey="email" sortKey={sortKey} dir={dir} onToggle={toggle} />
-                  <SortTh label="Name" colKey="name" sortKey={sortKey} dir={dir} onToggle={toggle} />
+                  <SortTh label="Team member" colKey="email" sortKey={sortKey} dir={dir} onToggle={toggle} />
                   <SortTh label="Role" colKey="role" sortKey={sortKey} dir={dir} onToggle={toggle} />
                   <SortTh label="Onboarded" colKey="onboarded" sortKey={sortKey} dir={dir} onToggle={toggle} />
                   <th>Signature</th>
                   <SortTh label="Lead texts" colKey="leadTexts" sortKey={sortKey} dir={dir} onToggle={toggle} />
+                  <th scope="col">Salesperson</th>
+                  <th scope="col">Connections</th>
                   <SortTh label="Invited" colKey="invited" sortKey={sortKey} dir={dir} onToggle={toggle} />
                 </tr>
               </thead>
               <tbody>
                 {sorted.map((u) => {
                   const p = profileFor(u);
+                  const member = eligibility.resource.data.team.find(item => item.userId === u.userId);
+                  const name = p ? `${p.firstName} ${p.lastName}` : member?.name;
                   return (
                     <tr key={u.userId}>
                       <td>
-                        {u.email}
+                        <div>{name || u.email}</div>
+                        {name && <div className="muted small">{u.email}</div>}
                         {u.email === profile.email && (
                           <span className="badge blue" style={{ marginLeft: 6 }}>
                             you
                           </span>
                         )}
-                      </td>
-                      <td>
-                        {p ? `${p.firstName} ${p.lastName}` : <span className="muted">—</span>}
                       </td>
                       <td>
                         <span className="badge gray">
@@ -352,6 +354,7 @@ export default function Team({ profile }: { profile: UserProfile }) {
                           <span className="muted small">—</span>
                         )}
                       </td>
+                      <LeadEligibilityCells member={member} settings={eligibility} />
                       <td className="small">
                         {fmtDate(u.createdAt?.slice(0, 10))}
                       </td>
@@ -362,7 +365,9 @@ export default function Team({ profile }: { profile: UserProfile }) {
             </table>
           </div>
         )}
-      </div>
+        <LeadEligibilityEditor settings={eligibility} />
+      </section>
+      <ReportDeliverySettings />
     </>
   );
 }

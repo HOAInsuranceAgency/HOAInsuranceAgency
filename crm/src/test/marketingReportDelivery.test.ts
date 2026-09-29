@@ -108,6 +108,21 @@ describe("complete bounded data reads", () => {
     expect(h.send.mock.calls.map(([command]) => command.input.TableName)).toEqual([...sourceEnvs, "communications"]);
     expect(snapshot).not.toHaveProperty("contacts");
   });
+  it("collects property classification evidence without reading full intake snapshots or secret fields", async () => {
+    const sourceEnvs = ["ACCOUNT_TABLE", "QUOTE_TABLE", "POLICY_TABLE", "PRIOR_CARRIER_TABLE", "CARRIER_TABLE", "DOCUMENT_TABLE", "ACTIVITY_TABLE"];
+    for (const env of sourceEnvs) vi.stubEnv(env, env);
+    h.send.mockReset().mockImplementation(async command => ({ Items: command.input.TableName === "communications" ? [{
+      id: "submission:example", kind: "SUBMISSION", data: { accountId: "a", receivedAt: now, snapshot: { propertyKind: "condominium", answers: { "Property type": "condominium" } } },
+    }] : [] }));
+    const actual = await vi.importActual<typeof import("../../amplify/functions/marketing-report/snapshot")>("../../amplify/functions/marketing-report/snapshot");
+    const snapshot = await actual.reportSnapshot();
+    expect(snapshot.submissions).toEqual([{ accountId: "a", createdAt: now, propertyKind: "condominium", answerPropertyKind: "condominium" }]);
+    const paths = (input: { ProjectionExpression: string; ExpressionAttributeNames: Record<string, string> }) => input.ProjectionExpression.split(", ").map(path => path.split(".").map(key => input.ExpressionAttributeNames[key]).join("."));
+    expect(paths(h.send.mock.calls[0][0].input)).toEqual(expect.arrayContaining(["propertyType", "unitCount"]));
+    const selected = paths(h.send.mock.calls.at(-1)![0].input);
+    expect(selected).toEqual(expect.arrayContaining(["data.accountId", "data.receivedAt", "data.snapshot.propertyKind", "data.snapshot.answers.Property type"]));
+    for (const secret of ["data.snapshot", "data.snapshot.answers", "data.proofHash", "data.uploadToken", "data.estimateToken"]) expect(selected).not.toContain(secret);
+  });
   it("follows pages even when a filtered page is empty", async () => {
     h.send.mockReset().mockResolvedValueOnce({ Items: [{ id: "one" }], LastEvaluatedKey: { id: "one" } }).mockResolvedValueOnce({ Items: [], LastEvaluatedKey: { id: "two" } }).mockResolvedValueOnce({ Items: [{ id: "three" }] }); expect(await scanComplete({ TableName: "source" }, budget())).toEqual([{ id: "one" }, { id: "three" }]); expect(h.send.mock.calls[2][0].input.ExclusiveStartKey).toEqual({ id: "two" }); expect(h.send.mock.calls[0][0].input.ConsistentRead).toBe(true);
   });

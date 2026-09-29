@@ -48,7 +48,7 @@ export function LeadReminders() {
     {work.loading ? <p>Loading reminders…</p> : !work.error && !work.data.items.length && <p className="muted">{work.data.nextToken ? "More reminders remain to be checked." : "You're up to date."}</p>}
     {!work.loading && !work.error && work.data.items.map(item => <div className="lead-work-shared-item" key={item.id}>
       {item.accountId && <Link to={`/accounts/${item.accountId}`}>{item.name || "Open lead"}</Link>}
-      <p>{item.title}</p>{item.why && <p className="small">{item.why}</p>}{item.instruction && <p className="small muted">{item.instruction}</p>}<p className="small muted">{item.urgency === "ESCALATED" ? "Escalated to you" : "Morning reminder"} · {fmtDateTime(item.at)}</p>
+      <p>{item.title}</p>{item.why && <p className="small">{item.why}</p>}{item.instruction && <p className="small muted">{item.instruction}</p>}<p className="small muted">Morning reminder · {fmtDateTime(item.at)}</p>
       <ReviewAction id={item.id} version={item.version} onSaved={() => void work.refresh()} />
     </div>)}
     <WorkPagination work={work} />

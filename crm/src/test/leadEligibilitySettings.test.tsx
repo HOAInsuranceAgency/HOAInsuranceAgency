@@ -3,7 +3,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const h = vi.hoisted(() => ({ request: vi.fn() }));
 vi.mock("../lib/communications", () => ({ communicationRequest: h.request }));
 vi.mock("../lib/client", () => ({ friendlyError: (error: Error) => error.message }));
-import LeadEligibilitySettings from "../components/LeadEligibilitySettings";
+import { LeadEligibilityCells, LeadEligibilityEditor, LeadEligibilityFeedback, useLeadEligibilitySettings } from "../components/LeadEligibilitySettings";
+function LeadEligibilitySettings() {
+  const settings = useLeadEligibilitySettings();
+  return <><LeadEligibilityFeedback settings={settings} /><table><tbody>{settings.resource.data.team.map(member => <tr key={member.userId}><td>{member.name}</td><LeadEligibilityCells member={member} settings={settings} /></tr>)}</tbody></table><LeadEligibilityEditor settings={settings} /></>;
+}
 import type { TeamEligibility } from "../lib/communications";
 const member: TeamEligibility = { userId: "jake", name: "Jake Greasley", email: "jake@example.com", enabled: true, salesperson: true, frontId: "tea_ci3mi", dialpadId: "5655281245659136", version: 3 };
 beforeEach(() => {

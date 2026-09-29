@@ -66,7 +66,7 @@ export default function MarketingReportSettings() {
   return <div>
     <section className="card" aria-labelledby="marketing-report-title">
       <h2 id="marketing-report-title">Weekly marketing report</h2>
-      <p>A lead update using the 52-column spreadsheet layout. Each file includes the current CRM leads and converted clients, with missing information clearly identified.</p>
+      <p>A lead update with property types and unit counts. Each spreadsheet includes the current CRM leads and converted clients, with missing information clearly identified.</p>
       <p><strong>Every Friday at 8:00 a.m. Eastern</strong> · Adjusts automatically for daylight saving time.</p>
       {snapshot.environment !== "main" && <p className="muted small">Test environment: automatic delivery is off. Manual sends are limited to approved test recipients.</p>}
       {(error || readError) && <p role="alert" className="error-text">{error || readError}</p>}

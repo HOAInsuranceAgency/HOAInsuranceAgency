@@ -1,18 +1,19 @@
 import { acquisitionLabel, cleanAttribution, isLeadSource } from "./leadSource";
+import { accountPropertyType, propertyTypeLabel, webLeadPropertyType } from "./propertyType";
 
 /** A read-only snapshot. Workers unwrap communication-store rows before calling. */
 export type ReportRecord = { id?: string | null; [key: string]: unknown };
 export interface ReportSnapshot {
   accounts: ReportRecord[]; quotes: ReportRecord[]; policies: ReportRecord[];
   priorCarriers: ReportRecord[]; carriers: ReportRecord[]; documents: ReportRecord[]; activities: ReportRecord[];
-  workflows: ReportRecord[]; communications: ReportRecord[]; tasks: ReportRecord[];
+  workflows: ReportRecord[]; communications: ReportRecord[]; tasks: ReportRecord[]; submissions: ReportRecord[];
 }
 export type ReportCell = string | number | Date | null;
 export interface MarketingLeadReport { headers: readonly string[]; rows: ReportCell[][]; asOf: string; warnings: string[] }
 export const MARKETING_REPORT_TIMEZONE = "America/New_York";
-/** Labels and order from HOA_LEAD_UPDATE.xlsx. No template customer data is embedded. */
+/** Template layout with marketing's property classification and unit-count update. */
 export const MARKETING_REPORT_HEADERS = [
-  "Lead ID", "Lead Name", "State", "Prospect Type", "Status", "Status Group", "Status Definition", "Source",
+  "Lead ID", "Lead Name", "State", "Property Type", "Property Units", "Status", "Status Group", "Status Definition", "Source",
   "Source Channel Group", "Channel", "Paid Source", "Attribution Confidence", "Coverage Segment", "Coverage Family",
   "Line of Business", "Coverage Requested", "Stated Carrier", "Inquiry Date", "First Agency Contact Date",
   "First Client Reply Date", "Docs First Received Date", "Quote Issued Date", "Bound Date", "Lost Date",
@@ -123,6 +124,7 @@ export function buildMarketingLeadReport(snapshot: ReportSnapshot, asOf: string)
   const warnings = [
     "Cumulative CRM snapshot: one row per lead or client account. Stable CRM IDs are used; spreadsheet-only historical IDs and manual annotations are not imported.",
     "Not recorded means the CRM has no verified value; blank numeric and date cells are unknown, not zero. Missing records are not negative answers.",
+    "Property type uses the recorded CRM classification, Personal (HO-6) account type, or explicit website property-type answers. An association name alone does not establish its type. Conflicting intake answers require review. Property units uses the recorded account unit count; unknown counts are blank and individual owners are not assumed to have one unit.",
     "Inquiry date uses the earliest known inquiry or account creation. Contact dates use verified human prospect activity only; first client reply follows agency contact. Imported and untracked history may be incomplete.",
     "Quote issued means presented to the client, not merely received from a carrier. Quote date, carrier and amount refer to one selected quote; missing presentation dates remain blank.",
     "Premiums retain their origin and are never added across policies or coverage types. Incumbent average membership requires manual validation and is not inferred.",
@@ -137,10 +139,22 @@ export function buildMarketingLeadReport(snapshot: ReportSnapshot, asOf: string)
     priorCarriers: byAccount(snapshot.priorCarriers, "accountId", cutoff), documents: byAccount(snapshot.documents, "entityId", cutoff),
     activities: byAccount(snapshot.activities, "entityId", cutoff), workflows: byAccount(snapshot.workflows, "accountId", cutoff),
     communications: byAccount(snapshot.communications, "accountId", cutoff), tasks: byAccount(snapshot.tasks, "accountId", cutoff),
+    submissions: byAccount(snapshot.submissions, "accountId", cutoff),
   };
   const rows = snapshot.accounts.filter(a => ["LEAD", "CLIENT"].includes(text(a, "stage")) && presentBy(a, cutoff))
     .sort((a, b) => text(a, "name").localeCompare(text(b, "name")) || text(a, "id").localeCompare(text(b, "id"))).map(account => {
       const id = text(account, "id"), notes: string[] = [];
+      let propertyType = accountPropertyType(account);
+      if (!propertyType && !text(account, "propertyType") && text(account, "type") === "ASSOCIATION") {
+        const intakeTypes = new Set((index.submissions.get(id) ?? []).filter(s => known(s.createdAt, cutoff))
+          .flatMap(s => [s.propertyKind, s.answerPropertyKind].map(propertyKind => webLeadPropertyType({ type: account.type, propertyKind })).filter(t => t !== null)));
+        if (intakeTypes.size === 1) {
+          propertyType = [...intakeTypes][0];
+          notes.push("Property type from the recorded website response.");
+        } else if (intakeTypes.size > 1) notes.push("Conflicting website property types; record the confirmed property type in the CRM.");
+      }
+      const recordedUnits = number(account, "unitCount");
+      const propertyUnits = Number.isSafeInteger(recordedUnits) ? recordedUnits : null;
       const activities = index.activities.get(id) ?? [];
       const quotes = (index.quotes.get(id) ?? []).filter(q => !text(q, "renewalPolicyId"));
       const policies = index.policies.get(id) ?? [];
@@ -228,7 +242,7 @@ export function buildMarketingLeadReport(snapshot: ReportSnapshot, asOf: string)
       if (text(account, "notes")) notes.push(`CRM note: ${safeNote(text(account, "notes"))}`);
       const row: ReportCell[] = [
         id || missing, text(account, "name") || missing, text(account, "state") || missing,
-        ({ ASSOCIATION: "Association", PERSONAL: "Personal", COMMERCIAL_OTHER: "Other commercial" } as Record<string, string>)[text(account, "type")] || missing,
+        propertyTypeLabel(propertyType), propertyUnits,
         status, group, definition, ...attribution(account), ...coverage(lines), missing,
         unique(prior.map(p => text(p, "carrierName"))).join("; ") || missing,
         dateCell(inquiry), dateCell(firstOut?.at), dateCell(firstReply?.at), dateCell(firstDocAt), dateCell(selected?.at), dateCell(boundAt), dateCell(lostAt),
