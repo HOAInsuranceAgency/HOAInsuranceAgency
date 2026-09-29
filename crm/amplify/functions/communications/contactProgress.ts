@@ -1,11 +1,8 @@
-import { interimResponse } from "../../../../shared/serviceEvidence";
-import { taskDomain } from "../../../../shared/workRouting";
-import { automaticContactTask, contactAt, contactProgress, sameContact, type ContactPair } from "../../../../shared/contactProgress";
-import { followUpDeadline, taskWakeAt, normalizePhone, type Communication, type LeadTask } from "../../../../shared/leadWorkflow";
-import { accountRows, ensureWorkflow, makeTask } from "./workflow";
-import { get, row, put, commit, check, query, save, conflict, type Row } from "./store";
+import { contactAt, contactProgress, sameContact, type ContactPair } from "../../../../shared/contactProgress";
+import { type Communication } from "../../../../shared/leadWorkflow";
+import { accountRows, ensureWorkflow } from "./workflow";
+import { get, row, put, commit, check, save, conflict } from "./store";
 import { operationRow } from "./outbox";
-import { config } from "./config";
 import { dataClient } from "./data";
 import type { Operation } from "./operations";
 
@@ -45,65 +42,10 @@ export async function applyContactProgress(input: Communication, repair = false)
   let changed = false;
   const accountId = projection.accountId, at = contactAt(comm), wf = await ensureWorkflow(accountId);
   if (["LOST", "DISQUALIFIED"].includes(wf.data.disposition)) return;
-  const context = comm.context ?? (wf.data.disposition === "BOUND" && !wf.data.openLeadQuoteIds?.length ? "SERVICE" : "LEAD"), domain = comm.purpose === "CARRIER" ? "CARRIER" : "CLIENT";
   const fence = await contactFence(accountId);
   const contactPairs = await accountContactPairs(accountId);
-  const explicitLink = comm.conversationId ? await get<{ purpose?: string }>(`front-link:${comm.conversationId}`) : undefined;
-  const linkedProspect = explicitLink?.accountId === accountId && explicitLink.data.purpose === "PROSPECT";
-  const role = "SALESPERSON";
   const activity = new Map((await accountRows<Communication>(accountId, "COMMUNICATION")).map(r => [r.id, r]));
   activity.set(projection.id, projection);
-  const candidates = new Map((await accountRows<LeadTask>(accountId, "TASK")).map(t => [t.id, t]));
-  // Known keys close the normal event/index visibility gap.
-  for (const key of [comm.conversationId, comm.providerId].filter(Boolean)) {
-    for (const prefix of ["response", "carrier", "wait"]) {
-      const t = await get<LeadTask>(`task:${prefix}:${accountId}:${key}`);
-      if (t?.accountId === accountId) candidates.set(t.id, t);
-    }
-  }
-  for (const key of [`task:first:${accountId}`, ...(wf.data.deferredExpiration ? [`task:annual:${accountId}:${wf.data.deferredExpiration}`] : [])]) {
-    const t = await get<LeadTask>(key); if (t) candidates.set(t.id, t);
-  }
-  let returnedMissedCall = false, annualReturned = false;
-  let followUpCount = 0;
-  const satisfiedSourceIds = new Set<string>();
-  for (const candidate of candidates.values()) {
-    const t = await get<LeadTask>(candidate.id);
-    if (t?.data.completedByCommunicationId === comm.id) {
-      returnedMissedCall ||= t.data.kind === "CALLBACK";
-    annualReturned ||= t.data.kind === "ANNUAL_RETURN";
-      followUpCount = Math.max(followUpCount, (t.data.followUpCount ?? 0) + (t.data.kind === "FOLLOW_UP" && t.data.dueAt <= at ? 1 : 0));
-      for (const id of t.data.sourceIds ?? []) satisfiedSourceIds.add(id);
-    }
-    if (!t || t.accountId !== accountId || t.data.status !== "OPEN" || taskDomain(t.data) !== domain || !automaticContactTask(t.data)) continue;
-    if ((t.data.context ?? "LEAD") !== context || t.data.policyId && t.data.policyId !== comm.policyId || t.data.quoteId && t.data.quoteId !== comm.quoteId) continue;
-    if (t.data.kind === "ANNUAL_RETURN" && at < t.data.dueAt) continue;
-    if (t.data.sourceIds?.includes(comm.id) && (t.data.sourceAt ?? t.createdAt) >= at) continue;
-    const ids = t.data.sourceIds ?? (t.data.episode ? [t.data.episode] : []);
-    const sources: Row<Communication>[] = [];
-    for (const id of ids) {
-      let source = await get<Communication & { canonicalId?: string }>(id);
-      const visited = new Set<string>();
-      while (source?.kind === "CALL_REDIRECT" && source.data.canonicalId && !visited.has(source.id) && visited.size < 64) {
-        visited.add(source.id); source = await get<Communication & { canonicalId?: string }>(source.data.canonicalId);
-      }
-      if (source?.kind === "COMMUNICATION" && source.accountId === accountId) { sources.push({ ...source, id }); activity.set(source.id, source); }
-    }
-    const matched: string[] = [];
-    for (const source of sources) if (source.data.at <= at && sameContact(comm, await purpose(source.data), contactPairs)) matched.push(source.id);
-    const knownContact = contactPairs.some(p => [p.email?.toLowerCase(), p.phone ? normalizePhone(p.phone) : undefined].some(handle => handle && (comm.to ?? [comm.from]).some(to => to && (to.toLowerCase() === handle || normalizePhone(to) === handle))));
-    const fallback = !ids.length && (t.data.conversationId && t.data.conversationId === comm.conversationId || t.data.kind === "FIRST_CONTACT" && linkedProspect || (["FIRST_CONTACT", "ANNUAL_RETURN"].includes(t.data.kind) || t.data.kind === "DOCUMENTS" && t.data.parentTaskId) && knownContact) && (t.data.sourceAt ?? t.createdAt) <= at;
-    if (!matched.length && !fallback) continue;
-    returnedMissedCall ||= t.data.kind === "CALLBACK";
-    annualReturned ||= t.data.kind === "ANNUAL_RETURN";
-    followUpCount = Math.max(followUpCount, (t.data.followUpCount ?? 0) + (t.data.kind === "FOLLOW_UP" && t.data.dueAt <= at ? 1 : 0));
-    for (const source of matched) satisfiedSourceIds.add(source);
-    const remaining = ids.filter(id => !matched.includes(id));
-    const data: LeadTask = remaining.length ? { ...t.data, sourceIds: remaining, version: t.version + 1 }
-      : { ...t.data, status: "COMPLETE", completedByCommunicationId: comm.id, attemptAt: at, reason: progress === "ATTEMPT" ? "Outbound attempt recorded; request remains open with a next retry" : "Contact recorded automatically", version: t.version + 1 };
-    await commit([check(wf), check(fence), check(projection), ...(explicitLink ? [check(explicitLink)] : []), put(row("TASK", t.id, data, { accountId, previous: t, dueAt: taskWakeAt(data) }), t)]);
-    changed = true;
-  }
   const scoped: Communication[] = [];
   for (const candidate of activity.values()) scoped.push(await purpose(candidate.data));
   {
@@ -117,33 +59,7 @@ export async function applyContactProgress(input: Communication, repair = false)
       if (writes.length > 3) { await commit(writes); changed = true; }
     }
   }
-  const laterInbound = scoped.some(c => c.direction === "INBOUND" && c.id !== comm.id && c.at > at && c.classification !== "AUTOMATIC" && sameContact(comm, c, contactPairs));
-  const laterContact = scoped.some(c => c.id !== comm.id && !!contactProgress(c) && contactAt(c) > at && sameContact(comm, c, contactPairs));
-  const custom = [...candidates.values()].some(t => t.data.status === "OPEN" && t.data.custom && !automaticContactTask(t.data) && taskDomain(t.data) === domain && (t.data.context ?? "LEAD") === context);
-  const marketing = await get<{ waitingOnCarrier?: boolean }>(`marketing-context:${accountId}`);
-  // The outreach task closes when the salesperson asks for information. Its
-  // underlying underwriting requirement remains open until the information
-  // is actually supplied, so that request keeps the two-day follow-up cadence.
-  const prospectOwes = [...candidates.values()].some(t => t.data.status === "OPEN" && t.data.kind === "DOCUMENTS" && (taskDomain(t.data) === "CLIENT" || t.data.milestone && t.data.parentTaskId));
-  const weekly = context === "LEAD" && domain === "CLIENT" && marketing?.data.waitingOnCarrier && !prospectOwes;
-  const deferred = context === "LEAD" && wf.data.deferredUntil && at < wf.data.deferredUntil;
-  const routineWaiting = (context !== "SERVICE" || interimResponse(comm)) && (!deferred || returnedMissedCall || satisfiedSourceIds.size > 0);
-
-  // Retain the legacy suffix as a durable idempotency key; it no longer selects a role.
-  const id = `task:wait:${accountId}:${comm.conversationId ?? (comm.direction === "INBOUND" ? comm.from : comm.to?.[0]) ?? comm.providerId}${domain === "CARRIER" || context !== "LEAD" ? ":champion" : ""}`;
-  const previous = await get<LeadTask>(id);
-  const writes = [annualReturned ? put(row("WORKFLOW", wf.id, { ...wf.data, deferredUntil: undefined, version: wf.version + 1 }, { accountId, previous: wf }), wf) : check(wf), put(row("CONTACT_FENCE", fence.id, {}, { previous: fence }), fence)];
-  // Newer inbound work supersedes waiting; old/replayed sends cannot move its date.
-  if (!laterInbound && !laterContact && !custom && (routineWaiting || progress === "ATTEMPT") && (!previous?.data.sourceAt || previous.data.sourceAt < at || previous.data.status === "CANCELLED" && previous.data.reason === "The email has not been sent" && previous.data.sourceIds?.includes(comm.id) || projection.data.contactAppliedKind === "ATTEMPT" && progress === "CONTACT")) {
-    followUpCount = Math.max(followUpCount, previous?.data.followUpCount ?? 0);
-    const task = await makeTask({ id, accountId, role, domain, context, policyId: comm.policyId, kind: weekly ? "PROSPECT_UPDATE" : "FOLLOW_UP",
-      title: progress === "ATTEMPT" ? "Try again" : domain === "CARRIER" ? "Follow up with carrier" : weekly ? "Keep the prospect informed" : context !== "LEAD" ? (context === "SERVICE" ? "Follow up on the service request" : "Follow up on renewal information") : "Follow up with prospect",
-      sourceAt: at, conversationId: comm.conversationId,
-      dueAt: followUpDeadline(at, progress === "ATTEMPT" && returnedMissedCall ? 1 : weekly || context === "LEAD" && domain === "CLIENT" && followUpCount >= 2 ? 5 : 2, (await config()).holidays) });
-    task.sourceIds = [comm.id]; task.followUpCount = followUpCount; task.requirementSourceIds = progress === "ATTEMPT" ? [...satisfiedSourceIds] : undefined; task.waitingOn = weekly ? "CARRIER" : domain === "CARRIER" ? "CARRIER" : context === "LEAD" ? "PROSPECT" : "CLIENT"; task.version = (previous?.version ?? 0) + 1;
-    writes.push(put(row("TASK", id, task, { accountId, previous, dueAt: taskWakeAt(task) }), previous));
-    changed = true;
-  }
+  const writes = [check(wf), put(row("CONTACT_FENCE", fence.id, {}, { previous: fence }), fence)];
   if (!changed && projection.data.contactAppliedKind === progress) return;
   writes.push(put(row("COMMUNICATION", comm.id, { ...projection.data, contactApplied: true, contactAppliedKind: progress, workflowApplied: true,
     ...(comm.channel === "CALL" ? { outcome: progress === "CONTACT" ? "CONNECTED" : "NO_ANSWER", outcomeAt: at, resolved: true } : {}) }, { accountId, previous: projection, dueAt: comm.channel === "CALL" ? undefined : projection.dueAt }), projection));
@@ -173,15 +89,10 @@ export async function repairContactWork(accountId: string, target?: Communicatio
     const scoped = await purpose(request);
     for (const c of contacts) if (contactAt(c.data) >= request.at && sameContact(await purpose(c.data), scoped, contactPairs)) { selected.set(c.id, c.data); break; }
   }
-  // Also create waiting work for recent outbound contact with no inbound episode.
+  // Preserve contact evidence for recent outbound correspondence too.
   if (!target) for (const c of contacts.slice(0, 10)) selected.set(c.id, c.data);
   for (const c of selected.values()) await applyContactProgress(c, true);
 }
 
-export async function migrateContactProgress() {
-  const key = "migration:automatic-contact-progress:v3", old = await get<{ cursor?: string; complete?: boolean }>(key);
-  if (old?.data.complete && Date.now() - Date.parse(old.updatedAt) < 3600_000) return;
-  const page = await query<LeadTask>("work", "TASK", old?.data.complete ? undefined : old?.data.cursor, 5);
-  for (const accountId of new Set(page.items.map(t => t.accountId).filter((s): s is string => !!s))) await repairContactWork(accountId);
-  await save(row("MIGRATION", key, { cursor: page.nextToken, complete: !page.nextToken }, { previous: old }), old);
-}
+/** The task-based repair sweep is retired; actual provider events still reconcile evidence. */
+export async function migrateContactProgress() { return { retired: true }; }

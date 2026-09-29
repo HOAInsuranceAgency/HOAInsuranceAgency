@@ -1,4 +1,3 @@
-import LeadWork from "./pages/LeadWork";
 import FrontSidebar from "./pages/FrontSidebar";
 import { useEffect, useState } from "react";
 import { Navigate, NavLink, Route, Routes, useLocation } from "react-router-dom";
@@ -17,6 +16,7 @@ import {
   fetchUserGroups,
   isAdminGroup,
   roleFromGroups,
+  useIsAdmin,
 } from "./lib/auth";
 import MagicLinkSignIn from "./components/MagicLinkSignIn";
 import Dashboard from "./pages/Dashboard";
@@ -32,7 +32,6 @@ import SearchResults from "./pages/SearchResults";
 import UniversalSearch from "./components/UniversalSearch";
 import QuotesList from "./pages/QuotesList";
 import PoliciesList from "./pages/PoliciesList";
-import { AllMarketingTasks } from "./components/MarketingTasks";
 
 export default function App() {
   return (
@@ -148,12 +147,13 @@ function ProfileGate({ user, signOut }: { user: AuthUser; signOut: () => void })
 }
 
 function NotFound() {
+  const isAdmin = useIsAdmin();
   return (
     <div className="card" style={{ maxWidth: 480, textAlign: "center", marginTop: 40 }}>
       <h2>Page not found</h2>
       <p className="muted small">That page doesn't exist (or moved).</p>
-      <NavLink to="/">
-        <button className="primary">Back to dashboard</button>
+      <NavLink to={isAdmin ? "/" : "/leads"}>
+        <button className="primary">Back to {isAdmin ? "dashboard" : "leads"}</button>
       </NavLink>
     </div>
   );
@@ -181,14 +181,7 @@ function IconGrid() {
     </svg>
   );
 }
-function IconCheck() {
-  return (
-    <svg {...iconProps}>
-      <path d="M9 11l3 3L22 4" />
-      <path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" />
-    </svg>
-  );
-}
+
 function IconFunnel() {
   return (
     <svg {...iconProps}>
@@ -254,7 +247,6 @@ const NAV_ITEMS = [
   { to: "/", end: true, label: "Dashboard", icon: <IconGrid /> },
   { to: "/leads", label: "Leads", icon: <IconFunnel /> },
   { to: "/clients", label: "Clients", icon: <IconUsers /> },
-  { to: "/tasks", label: "Tasks", icon: <IconCheck /> },
   { to: "/carriers", label: "Carriers", icon: <IconBuilding /> },
   { to: "/settings", label: "Settings", icon: <IconGear /> },
 ];
@@ -309,6 +301,8 @@ function AgencyIdentifiers() {
 
 function Shell({ profile, signOut }: { profile: UserProfile; signOut: () => void }) {
   const location = useLocation();
+  const isAdmin = useIsAdmin();
+  const homePath = isAdmin ? "/" : "/leads";
   const [menuOpen, setMenuOpen] = useState(false);
   /**
    * Financing sits between Documents' old slot and Settings for everyone:
@@ -316,11 +310,10 @@ function Shell({ profile, signOut }: { profile: UserProfile; signOut: () => void
    * has nothing to say.
    */
   const navItems = [
-    ...NAV_ITEMS.slice(0, 5),
-    { to: "/lead-work", label: "Lead follow-up", icon: <IconCheck /> },
+    ...NAV_ITEMS.slice(0, 4),
     { to: "/financing", label: "Financing", icon: <IconCoin /> } as const,
-    ...NAV_ITEMS.slice(5),
-  ];
+    ...NAV_ITEMS.slice(4),
+  ].filter((item) => item.to !== "/" || isAdmin);
 
   if (/^\/front-sidebar\/?$/.test(location.pathname)) return <FrontSidebar />;
 
@@ -328,7 +321,7 @@ function Shell({ profile, signOut }: { profile: UserProfile; signOut: () => void
     <div className="shell">
       <aside className={`sidebar${menuOpen ? " sidebar--open" : ""}`}>
         <div className="sidebar-top">
-          <NavLink to="/" className="brand" onClick={() => setMenuOpen(false)}>
+          <NavLink to={homePath} className="brand" onClick={() => setMenuOpen(false)}>
             <img src="/logo.png" alt="HOA Insurance Agency" />
           </NavLink>
           <button
@@ -361,22 +354,18 @@ function Shell({ profile, signOut }: { profile: UserProfile; signOut: () => void
       <main className="main">
         <UniversalSearch />
         <Routes>
-          <Route path="/" element={<Dashboard />} />
+          <Route
+            path="/"
+            element={isAdmin ? <Dashboard /> : <Navigate to="/leads" replace />}
+          />
           <Route path="/leads" element={<AccountsList stage="LEAD" />} />
           <Route path="/leads/new" element={<NewLead />} />
-          <Route path="/lead-work" element={<LeadWork profile={profile} />} />
+          <Route path="/lead-work" element={<Navigate to="/leads" replace />} />
           <Route path="/clients" element={<AccountsList stage="CLIENT" />} />
           <Route path="/accounts/:id" element={<AccountDetail profile={profile} />} />
           <Route path="/carriers" element={<Carriers />} />
           <Route path="/carriers/:id" element={<CarrierDetail />} />
-          <Route
-            path="/tasks"
-            element={
-              <AllMarketingTasks
-                completedByName={`${profile.firstName} ${profile.lastName}`}
-              />
-            }
-          />
+          <Route path="/tasks" element={<Navigate to="/leads" replace />} />
           <Route path="/quotes" element={<QuotesList />} />
           <Route path="/policies" element={<PoliciesList />} />
           <Route path="/search" element={<SearchResults />} />

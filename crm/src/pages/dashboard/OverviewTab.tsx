@@ -20,7 +20,6 @@ import type { Schema } from "../../../amplify/data/resource";
 
 type InvoiceRow = Schema["Invoice"]["type"];
 type PfLoanRow = Schema["PfLoan"]["type"];
-type TaskRow = Schema["MarketingTask"]["type"];
 type DocumentRow = Schema["Document"]["type"];
 type LicenseRow = Schema["License"]["type"];
 
@@ -38,7 +37,6 @@ interface OverviewData {
    * ones too; the tile derives its open count client-side. */
   quotes: Quote[];
   policies: Policy[];
-  tasks: TaskRow[];
   openInvoices: InvoiceRow[];
   pfLoans: PfLoanRow[];
   failedDocs: DocumentRow[];
@@ -50,7 +48,6 @@ const EMPTY: OverviewData = {
   clients: [],
   quotes: [],
   policies: [],
-  tasks: [],
   openInvoices: [],
   pfLoans: [],
   failedDocs: [],
@@ -67,7 +64,6 @@ export default function OverviewTab() {
         clients,
         quotes,
         policies,
-        tasks,
         openInvoices,
         pfLoans,
         failedDocs,
@@ -88,9 +84,6 @@ export default function OverviewTab() {
         listAllPages((nextToken) => client.models.Quote.list({ nextToken })),
         listAllPages((nextToken) => client.models.Policy.list({ nextToken })),
         listAllPages((nextToken) =>
-          client.models.MarketingTask.list({ limit: 500, nextToken })
-        ),
-        listAllPages((nextToken) =>
           client.models.Invoice.list({
             filter: { or: [{ status: { eq: "SENT" } }, { status: { eq: "PROCESSING" } }] },
             nextToken,
@@ -110,7 +103,6 @@ export default function OverviewTab() {
         clients,
         quotes,
         policies,
-        tasks: tasks as TaskRow[],
         openInvoices: openInvoices as InvoiceRow[],
         pfLoans: pfLoans as PfLoanRow[],
         failedDocs: failedDocs as DocumentRow[],
@@ -145,7 +137,6 @@ export default function OverviewTab() {
         invoices: d.openInvoices,
         loans: d.pfLoans,
         renewals: buildRenewalRows(d.leads, d.clients, d.policies, daysUntil),
-        tasks: d.tasks,
         failedDocs: d.failedDocs,
         accountsWithFailedExtraction: [...d.leads, ...d.clients].filter(
           (a) => a.extractionStatus === "FAILED"
@@ -273,20 +264,12 @@ function present(item: AttentionItem): {
       return {
         strong:
           item.days < 0
-            ? `Renewal ${-item.days}d overdue, marketing never started`
-            : `Renewal in ${item.days}d, marketing not started`,
+            ? `Renewal ${-item.days}d overdue, no usable quote recorded`
+            : `Renewal in ${item.days}d, no usable quote recorded`,
         rest: ` — ${item.accountName}${
           item.premium != null ? ` · ${fmtMoney(item.premium)} expiring` : ""
         }`,
-        detail: "No marketing tasks or quotes found for this expiration",
-        target: "/?tab=renewals",
-        label: "Renewals →",
-      };
-    case "task-window-missed":
-      return {
-        strong: `Submission window missed ${item.daysPast}d ago`,
-        rest: ` — ${item.accountName} / ${item.carrierName}`,
-        detail: "Marketing task open past its submit-by",
+        detail: "No usable quote found for this renewal term",
         target: "/?tab=renewals",
         label: "Renewals →",
       };

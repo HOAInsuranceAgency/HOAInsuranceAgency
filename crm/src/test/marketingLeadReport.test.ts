@@ -3,7 +3,7 @@ import { buildMarketingLeadReport, MARKETING_REPORT_HEADERS, type ReportRecord, 
 
 const now = "2026-09-28T12:00:00.000Z";
 function snapshot(overrides: Partial<ReportSnapshot> = {}): ReportSnapshot {
-  return { accounts: [{ id: "a", name: "Test association", stage: "LEAD", type: "ASSOCIATION", createdAt: "2026-09-01T12:00:00Z" }], quotes: [], policies: [], priorCarriers: [], carriers: [], documents: [], activities: [], workflows: [], communications: [], tasks: [], ...overrides };
+  return { accounts: [{ id: "a", name: "Test association", stage: "LEAD", type: "ASSOCIATION", createdAt: "2026-09-01T12:00:00Z" }], quotes: [], policies: [], priorCarriers: [], carriers: [], documents: [], activities: [], workflows: [], communications: [], tasks: [], submissions: [], ...overrides };
 }
 function values(input: Partial<ReportSnapshot>, asOf = now) {
   const report = buildMarketingLeadReport(snapshot(input), asOf);
@@ -15,18 +15,64 @@ function comm(id: string, direction: string, at: string, overrides: ReportRecord
 const date = (day: string) => new Date(`${day}T00:00:00Z`);
 
 describe("weekly marketing report truth and template contract", () => {
-  it("preserves 52 headings, stable IDs and bound clients without importing historical template rows", () => {
+  it("preserves the updated 53-column layout, stable IDs and bound clients without importing historical template rows", () => {
     const result = buildMarketingLeadReport(snapshot({ accounts: [
       { id: "client", name: "Converted", stage: "CLIENT" }, { id: "lead", name: "Open", stage: "LEAD" },
       { id: "future", name: "Future", stage: "LEAD", createdAt: "2026-10-01T12:00:00Z" },
     ] }), now);
-    expect(result.headers).toHaveLength(52);
-    expect(result.headers.slice(17, 27)).toEqual(["Inquiry Date", "First Agency Contact Date", "First Client Reply Date", "Docs First Received Date", "Quote Issued Date", "Bound Date", "Lost Date", "Last Client Response Date", "Last Client Response Note", "Last Agency Outbound Date"]);
-    expect(result.headers.slice(46)).toEqual(["Lead Age (Days)", "Days to Last Client Response", "Days Since Last Client Response", "Days Since Last Agency Outbound", "Stalled", "Notes"]);
+    expect(result.headers).toHaveLength(53);
+    expect(result.headers.slice(0, 6)).toEqual(["Lead ID", "Lead Name", "State", "Property Type", "Property Units", "Status"]);
+    expect(result.headers.slice(18, 28)).toEqual(["Inquiry Date", "First Agency Contact Date", "First Client Reply Date", "Docs First Received Date", "Quote Issued Date", "Bound Date", "Lost Date", "Last Client Response Date", "Last Client Response Note", "Last Agency Outbound Date"]);
+    expect(result.headers.slice(47)).toEqual(["Lead Age (Days)", "Days to Last Client Response", "Days Since Last Client Response", "Days Since Last Agency Outbound", "Stalled", "Notes"]);
     expect(result.rows).toHaveLength(2);
-    expect(result.rows.every(r => r.length === 52)).toBe(true);
+    expect(result.rows.every(r => r.length === 53)).toBe(true);
     expect(result.rows[0][0]).toBe("client");
-    expect(result.rows[0][4]).toBe("BOUND");
+    expect(result.rows[0][5]).toBe("BOUND");
+  });
+
+  it("reports recorded property categories and unit counts for leads and converted clients", () => {
+    const accounts = [
+      { id: "hoa", name: "A", stage: "LEAD", type: "ASSOCIATION", propertyType: "HOA_POA_POND_TOWNHOME", unitCount: 48 },
+      { id: "condo", name: "B", stage: "CLIENT", type: "ASSOCIATION", propertyType: "CONDO", unitCount: 12 },
+      { id: "owner", name: "C", stage: "LEAD", type: "PERSONAL" },
+    ];
+    const report = buildMarketingLeadReport(snapshot({ accounts }), now);
+    expect(report.rows.map(row => row.slice(3, 5))).toEqual([
+      ["HOA / POA / pond / townhome HOA", 48], ["CONDO", 12], ["Individual unit owner", null],
+    ]);
+  });
+
+  it("uses explicit historical intake answers without guessing from names or unrelated accounts", () => {
+    const accounts = [{ id: "a", name: "Pond View Townhome Condominium", stage: "LEAD", type: "ASSOCIATION" }];
+    expect(values({ accounts })["Property Type"]).toBe("Not recorded");
+    for (const propertyKind of ["unknown", "", "townhouse", undefined]) {
+      expect(values({ accounts, submissions: [{ accountId: "a", createdAt: "2026-09-01", propertyKind }] })["Property Type"]).toBe("Not recorded");
+    }
+    const intake = { accountId: "a", createdAt: "2026-09-01", propertyKind: "condominium" };
+    expect(values({ accounts, submissions: [intake] })["Property Type"]).toBe("CONDO");
+    expect(values({ accounts, submissions: [{ ...intake, propertyKind: undefined, answerPropertyKind: "other" }] })["Property Type"]).toBe("HOA / POA / pond / townhome HOA");
+    for (const patch of [{ accountId: "other" }, { createdAt: "2026-10-01" }, { createdAt: undefined }]) {
+      expect(values({ accounts, submissions: [{ ...intake, ...patch }] })["Property Type"]).toBe("Not recorded");
+    }
+    const conflict = values({ accounts, submissions: [intake, { ...intake, propertyKind: "other" }] });
+    expect(conflict["Property Type"]).toBe("Not recorded");
+    expect(conflict.Notes).toContain("Conflicting website property types");
+    expect(values({ accounts, submissions: [{ ...intake, answerPropertyKind: "other" }] })["Property Type"]).toBe("Not recorded");
+    expect(values({ accounts: [{ ...accounts[0], propertyType: "HOA_POA_POND_TOWNHOME" }], submissions: [intake] })["Property Type"]).toBe("HOA / POA / pond / townhome HOA");
+  });
+
+  it("honors an explicit Not recorded choice over historical intake and personal-account fallback", () => {
+    for (const type of ["ASSOCIATION", "PERSONAL"]) {
+      const row = values({ accounts: [{ id: "a", stage: "LEAD", type, propertyType: "NOT_RECORDED" }], submissions: [{ accountId: "a", createdAt: "2026-09-01", propertyKind: "condominium" }] });
+      expect(row["Property Type"]).toBe("Not recorded");
+    }
+  });
+
+  it("keeps missing or invalid unit counts blank and retains recorded zero without inferring one for owners", () => {
+    for (const unitCount of [undefined, null, "12", -1, 1.5, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
+      expect(values({ accounts: [{ id: "a", stage: "LEAD", type: "PERSONAL", unitNumber: "12", unitCount }] })["Property Units"]).toBeNull();
+    }
+    expect(values({ accounts: [{ id: "a", stage: "LEAD", unitCount: 0 }] })["Property Units"]).toBe(0);
   });
 
   it("leaves absent judgments, dates and amounts unknown, including zero outreach", () => {
@@ -34,6 +80,18 @@ describe("weekly marketing report truth and template contract", () => {
     for (const column of ["Quote Amount ($)", "Premium on Record ($)", "First Agency Contact Date", "First Client Reply Date", "Quote Issued Date", "Days Since Last Agency Outbound"]) expect(row[column]).toBeNull();
     for (const column of ["Excluded", "Quote Lead", "In Incumbent Average", "Docs Received", "Stalled", "Attribution Confidence"]) expect(row[column]).toBe("Not recorded");
     expect(row["Lead Age (Days)"]).toBe(27);
+  });
+
+  it("ignores retired tasks when reporting current status, holds and outstanding documents", () => {
+    const current = { communications: [comm("reply", "INBOUND", "2026-09-25T12:00:00Z")] };
+    const withoutTasks = values(current);
+    const withTasks = values({ ...current, tasks: [
+      { id: "held", accountId: "a", status: "OPEN", kind: "DOCUMENTS", title: "Missing documents", createdAt: "2026-09-01", dueAt: "2026-09-02", blocker: { state: "BLOCKED", reason: "Old blocker" } },
+      { id: "overdue", accountId: "a", status: "OPEN", kind: "FIRST_CONTACT", createdAt: "2026-09-01", dueAt: "2026-09-02" },
+    ] });
+    expect(withTasks).toEqual(withoutTasks);
+    expect(withTasks["Docs Outstanding"]).toBe("Not recorded");
+    expect(withTasks["Hold Reason"]).toBe("Not recorded");
   });
 
   it("does not turn the untagged organic-website default into verified organic search", () => {
@@ -161,7 +219,7 @@ describe("weekly marketing report truth and template contract", () => {
     }));
     const report = buildMarketingLeadReport(snapshot({ accounts, quotes }), now);
     expect(report.rows).toHaveLength(80);
-    for (const row of report.rows) expect(row[33]).toBe(Number(String(row[0]).slice(1)) + 100);
+    for (const row of report.rows) expect(row[34]).toBe(Number(String(row[0]).slice(1)) + 100);
     // Bound operation-count assertion avoids a flaky machine-speed benchmark.
     expect(keyReads).toBeLessThanOrEqual(quotes.length * 3);
   });

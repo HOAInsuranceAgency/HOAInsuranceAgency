@@ -90,6 +90,7 @@ export default function Settings({ profile }: { profile: UserProfile }) {
 }
 
 function TemplatesPanel() {
+  const isAdmin = useIsAdmin();
   const [busy, setBusy] = useState<string | null>(null);
   const [fields, setFields] = useState<Record<string, string[]>>({});
   const [error, setError] = useState("");
@@ -120,7 +121,7 @@ function TemplatesPanel() {
   const setUploaded = uploadedRes.setData;
 
   async function upload(tpl: TemplateDef, file: File | undefined) {
-    if (!file) return;
+    if (!isAdmin || !file) return;
     setBusy(tpl.path);
     setError("");
     try {
@@ -193,6 +194,7 @@ function TemplatesPanel() {
                 // `null` until the S3 listing settles — the badge would
                 // otherwise read "Missing" for every form on first paint.
                 isUploaded={uploadedRes.loaded ? !!uploaded[tpl.path] : null}
+                canUpload={isAdmin}
                 busy={busy === tpl.path}
                 fieldNames={fields[tpl.path]}
                 onUpload={(f) => upload(tpl, f)}
@@ -214,6 +216,7 @@ function TemplatesPanel() {
 function TemplateRow({
   tpl,
   isUploaded,
+  canUpload,
   busy,
   fieldNames,
   onUpload,
@@ -223,6 +226,7 @@ function TemplateRow({
   tpl: TemplateDef;
   /** `null` while the S3 listing is still in flight — presence is unknown. */
   isUploaded: boolean | null;
+  canUpload: boolean;
   busy: boolean;
   fieldNames: string[] | undefined;
   onUpload: (file: File | undefined) => void;
@@ -258,12 +262,12 @@ function TemplateRow({
         </td>
         <td style={{ whiteSpace: "nowrap" }}>
           <div className="toolbar" style={{ margin: 0 }}>
-            <FileButton
+            {canUpload && <FileButton
               label={isUploaded ? "Replace PDF…" : "Upload PDF…"}
               accept="application/pdf"
               busy={busy}
               onFiles={(files) => onUpload(files?.[0])}
-            />
+            />}
             {isUploaded && (
               <button className="secondary" disabled={busy} onClick={onInspect}>
                 {busy ? "Reading…" : "Inspect fields"}

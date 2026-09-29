@@ -1,7 +1,7 @@
 import { client } from "./client";
-type FileInput = { path: string; options?: { contentType?: string; expiresIn?: number; validateObjectExistence?: boolean; onProgress?: (progress: { transferredBytes: number; totalBytes: number }) => void } };
+type FileInput = { path: string; options?: { contentType?: string; expiresIn?: number; validateObjectExistence?: boolean; contentDisposition?: { type: "attachment"; filename: string }; onProgress?: (progress: { transferredBytes: number; totalBytes: number }) => void } };
 type FileResult = { url: string; expiresAt: string; items?: { path: string; size?: number; lastModified?: string }[]; nextToken?: string };
-async function request(operation: string, path: string, extra: { contentType?: string; sizeBytes?: number; nextToken?: string } = {}): Promise<FileResult> {
+async function request(operation: string, path: string, extra: { contentType?: string; sizeBytes?: number; nextToken?: string; downloadAs?: string; validateObjectExistence?: boolean } = {}): Promise<FileResult> {
   const response = await client.mutations.crmFile({ operation, path, ...extra });
   if (response.errors?.length) throw new Error(response.errors[0].message);
   const value = typeof response.data === "string" ? JSON.parse(response.data) : response.data;
@@ -10,7 +10,10 @@ async function request(operation: string, path: string, extra: { contentType?: s
 }
 /** Familiar storage primitives, backed by current account assignment checks. */
 export async function getUrl(input: FileInput) {
-  const result = await request("read", input.path);
+  const result = await request("read", input.path, {
+    ...(input.options?.contentDisposition ? { downloadAs: input.options.contentDisposition.filename } : {}),
+    ...(input.options?.validateObjectExistence !== undefined ? { validateObjectExistence: input.options.validateObjectExistence } : {}),
+  });
   return { url: new URL(result.url), expiresAt: new Date(result.expiresAt) };
 }
 export function uploadData(input: FileInput & { data: Blob | ArrayBuffer | ArrayBufferView | string }) {

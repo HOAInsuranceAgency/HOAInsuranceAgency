@@ -17,7 +17,6 @@ type SettingsSnapshot = {
 
 const checkLabels: Record<string, [string, string]> = {
   "Default responsibilities": ["Lead ownership", "Choose an eligible default salesperson."],
-  "Team reports": ["Managers and daily reports", "Complete manager assignments and the internal reporting connection in Team settings."],
   "Independent alerts": ["Operations alerts", "Connect and confirm the operations alert recipient in AWS before starting delivery."],
   "Front company": ["Front access", "Review the Front connection in Edit settings."],
   "Front sales channel": ["Email sending", "Connect and verify the sending mailbox in Front."],
@@ -86,12 +85,12 @@ export default function CommunicationSettings() {
   return <div className="communication-settings">
     <section className="card communication-overview" aria-labelledby="communication-title">
       <div className="communication-heading">
-        <div><h2 id="communication-title">Front and Dialpad</h2><p className="muted">Email, calls, and lead follow-up in one place.</p></div>
+        <div><h2 id="communication-title">Front and Dialpad</h2><p className="muted">Email, calls, and account communication history in one place.</p></div>
         <span className="badge gray">{saved.environment === "main" ? "Production" : saved.environment === "staging" ? "Staging" : "Test environment"}</span>
       </div>
       <div className="communication-status">
         <span className={`badge ${saved.activatedAt && !saved.paused ? "green" : "amber"}`}>{status}</span>
-        <span>{!saved.activatedAt ? "Complete setup and controlled tests before starting delivery." : saved.paused ? "Queued messages will wait until delivery resumes." : "The CRM keeps track of the team’s commitments."}</span>
+        <span>{!saved.activatedAt ? "Complete setup and controlled tests before starting delivery." : saved.paused ? "Queued messages will wait until delivery resumes." : "Linked emails, calls, and texts are recorded in the CRM."}</span>
       </div>
       {(error || message || resource.error) && <p role={error || resource.error ? "alert" : "status"} className={error || resource.error ? "error-text" : "communication-success"}>{error || resource.error || message}</p>}
       <dl className="communication-summary">
@@ -101,7 +100,6 @@ export default function CommunicationSettings() {
         <div><dt>Default salesperson</dt><dd>{owner?.name || ((saved.defaultSalespersonId ?? saved.defaultUserId) ? (members.loading ? "Checking teammate…" : "Teammate unavailable") : "Not set")}</dd>
           <small>{(saved.defaultSalespersonId ?? saved.defaultUserId) ? "Default assignments apply to new leads." : "Choose eligible default teammates in Team settings."}</small>
           {members.error && <span className="error-text small">{members.error} <button type="button" className="secondary" disabled={members.loading} onClick={() => void members.refetch()}>Retry teammates</button></span>}</div>
-        <div><dt>Inbox cleanup</dt><dd>Automatic</dd><small>Conversations with a future follow-up are tidied when no work needs attention. CRM deadlines stay in place.</small></div>
       </dl>
       <div className="communication-actions">
         <button type="button" className="secondary" disabled={disabled} onClick={() => void run("check", async () => {

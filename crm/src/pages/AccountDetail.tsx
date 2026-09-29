@@ -12,7 +12,6 @@ import {
 import { Badge, statusBadge, ACCOUNT_STAGE_BADGE } from "../lib/badges";
 import DocumentsPanel from "../components/DocumentsPanel";
 import QuotesPanel from "../components/QuotesPanel";
-import AccountMarketingTasks from "../components/MarketingTasks";
 import PropertyPanel from "../components/PropertyPanel";
 import ContactsCard from "../components/ContactsCard";
 import FormsTab from "../components/FormsTab";
@@ -258,14 +257,11 @@ export default function AccountDetail({ profile }: { profile: UserProfile }) {
       {activeTab === "submissions" && <SubmissionsPanel key={account.id} account={account} initialEstimateId={searchParams.get("estimate") ?? undefined} />}
       {activeTab === "quotes" && (
         <>
-          <div className="card">
+          <div className="card" id="carrier-work">
             <HoneycombEstimates accountId={account.id} />
             <QuotesPanel account={account} onAccountChange={setAccount} />
           </div>
-          <div id="carrier-work"><AccountMarketingTasks
-            accountId={account.id}
-            completedByName={`${profile.firstName} ${profile.lastName}`}
-          /></div>
+
         </>
       )}
       {activeTab === "priorcarrier" && <PriorCarrierTab accountId={account.id} />}

@@ -5,7 +5,8 @@ import Modal from "./Modal";
 
 type ConnectionIds = Pick<TeamEligibility, "frontId" | "dialpadId">;
 
-export default function LeadEligibilitySettings() {
+/** Assignment and connection editing within the unified team roster. */
+export function useLeadEligibilitySettings() {
   const resource = useAsyncResource(() => request<{ team: TeamEligibility[] }>("team"), [], { initialData: { team: [] }, errorMessage: "Could not load assignment settings" });
   const [busy, setBusy] = useState(false), [error, setError] = useState(""), [message, setMessage] = useState("");
   const [editing, setEditing] = useState<TeamEligibility | null>(null);
@@ -24,23 +25,41 @@ export default function LeadEligibilitySettings() {
   }
   function closeEditor() { if (!inFlight.current) { setEditing(null); setError(""); } }
   const disabled = busy || resource.loading || !!editing;
-  return <section className="card team-eligibility" aria-labelledby="lead-eligibility-title">
-    <h2 id="lead-eligibility-title">Salesperson assignment eligibility</h2>
-    <p className="muted small">These choices control who appears in the salesperson dropdown. They do not change access or permissions.</p>
-    {!editing && (error || resource.error) && <div role="alert"><p className="error-text">{error || resource.error}</p><button type="button" className="secondary" disabled={disabled} onClick={() => { setError(""); void resource.refetch(); }}>Refresh teammates</button></div>}
-    <p className="small muted" role="status">{busy ? "Saving teammate settings…" : resource.loading ? "Loading teammates…" : message}</p>
-    <div className="table-wrap"><table><thead><tr><th scope="col">Teammate</th><th scope="col">Salesperson</th><th scope="col">Front</th><th scope="col">Dialpad</th><th scope="col">Actions</th></tr></thead><tbody>
-      {resource.data.team.map(member => <tr key={member.userId}>
-        <td>{member.name}<div className="muted small">{member.email}</div></td>
-        <td><input aria-label={`Salesperson eligibility for ${member.name}`} type="checkbox" checked={member.salesperson} disabled={disabled} onChange={event => void save(member, { salesperson: event.target.checked })} /></td>
-        <td>{member.frontId ? <code className="team-connection-id">{member.frontId}</code> : <span className="muted small">Not linked</span>}</td>
-        <td>{member.dialpadId ? <code className="team-connection-id">{member.dialpadId}</code> : <span className="muted small">Not linked</span>}</td>
-        <td><button type="button" className="secondary" disabled={disabled} aria-label={`Edit connections for ${member.name}`} onClick={() => { setEditing(member); setError(""); setMessage(""); }}>Edit connections</button></td>
-      </tr>)}
-    </tbody></table></div>
-    {resource.loaded && !resource.error && !resource.data.team.length && <p className="muted small">No teammates are available yet.</p>}
-    {editing && <ConnectionEditor member={editing} busy={busy} error={error} onClose={closeEditor} onSave={async ids => { if (await save(editing, ids)) setEditing(null); }} />}
-  </section>;
+  function editMember(member: TeamEligibility) { setEditing(member); setError(""); setMessage(""); }
+  function refresh() {
+    // Inviting another user refreshes the roster independently. Do not start a
+    // read here that could replace this save's committed member/version later.
+    if (inFlight.current) return;
+    setError(""); void resource.refetch();
+  }
+  return { resource, busy, error, message, editing, disabled, save, closeEditor, editMember, refresh, setEditing };
+}
+type EligibilitySettings = ReturnType<typeof useLeadEligibilitySettings>;
+
+export function LeadEligibilityFeedback({ settings }: { settings: EligibilitySettings }) {
+  const { editing, error, resource, disabled, refresh, busy, message } = settings;
+  return <>
+    {!editing && (error || resource.error) && <div role="alert"><p className="error-text">{error || resource.error}</p><button type="button" className="secondary" disabled={disabled} onClick={refresh}>Refresh assignment settings</button></div>}
+    <p className="small muted" role="status">{busy ? "Saving teammate settings…" : resource.loading ? "Loading assignment settings…" : message}</p>
+  </>;
+}
+
+export function LeadEligibilityCells({ member, settings }: { member?: TeamEligibility; settings: EligibilitySettings }) {
+  const { disabled, save, editMember, resource } = settings;
+  if (!member) return <td colSpan={2} className="muted small">{resource.loading ? "Loading assignment settings…" : resource.error ? "Assignment settings unavailable" : "Available after first sign-in"}</td>;
+  return <>
+    <td><input aria-label={`Salesperson eligibility for ${member.name}`} type="checkbox" checked={member.salesperson} disabled={disabled} onChange={event => void save(member, { salesperson: event.target.checked })} /></td>
+    <td>
+      <div className="small">Front: {member.frontId ? <code className="team-connection-id">{member.frontId}</code> : <span className="muted">Not linked</span>}</div>
+      <div className="small">Dialpad: {member.dialpadId ? <code className="team-connection-id">{member.dialpadId}</code> : <span className="muted">Not linked</span>}</div>
+      <button type="button" className="secondary" disabled={disabled} aria-label={`Edit connections for ${member.name}`} onClick={() => editMember(member)}>Edit connections</button>
+    </td>
+  </>;
+}
+
+export function LeadEligibilityEditor({ settings }: { settings: EligibilitySettings }) {
+  const { editing, busy, error, closeEditor, save, setEditing } = settings;
+  return editing && <ConnectionEditor member={editing} busy={busy} error={error} onClose={closeEditor} onSave={async ids => { if (await save(editing, ids)) setEditing(null); }} />;
 }
 
 function ConnectionEditor({ member, busy, error, onClose, onSave }: {

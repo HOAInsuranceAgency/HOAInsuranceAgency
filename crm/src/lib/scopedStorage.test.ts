@@ -2,6 +2,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 const h = vi.hoisted(() => ({ crmFile: vi.fn(), fetch: vi.fn() }));
 vi.mock("./client", () => ({ client: { mutations: { crmFile: h.crmFile } } }));
 import { getUrl, uploadData, remove, list } from "./scopedStorage";
+import { getFileUrl } from "./storage";
 beforeEach(() => {
   vi.clearAllMocks(); vi.stubGlobal("fetch", h.fetch);
   h.crmFile.mockResolvedValue({ data: JSON.stringify({ url: "https://files.example.test/authorized", expiresAt: "2026-09-25T12:00:00Z" }) });
@@ -13,6 +14,18 @@ it("obtains a fresh authorization for every download", async () => {
   await getUrl({ path: "generated/a/form.pdf" });
   expect(h.crmFile).toHaveBeenCalledTimes(2);
   expect(h.crmFile).toHaveBeenCalledWith({ operation: "read", path: "generated/a/form.pdf" });
+});
+it("preserves download filenames and existence validation through the real getFileUrl wrapper", async () => {
+  expect(await getFileUrl("generated/a/form.pdf", { validate: true, downloadAs: "2026 budget.pdf" })).toBe("https://files.example.test/authorized");
+  expect(h.crmFile).toHaveBeenCalledWith({ operation: "read", path: "generated/a/form.pdf", downloadAs: "2026 budget.pdf", validateObjectExistence: true });
+});
+it("keeps previews inline and skips optional existence checks by default", async () => {
+  await getFileUrl("generated/a/form.pdf");
+  expect(h.crmFile).toHaveBeenCalledWith({ operation: "read", path: "generated/a/form.pdf", validateObjectExistence: false });
+});
+it("surfaces missing-file errors instead of returning a signed URL", async () => {
+  h.crmFile.mockResolvedValue({ errors: [{ message: "The file was not found" }] });
+  await expect(getFileUrl("generated/a/missing.pdf", { validate: true, downloadAs: "Missing.pdf" })).rejects.toThrow("not found");
 });
 it("does not upload when the backend denies access", async () => {
   h.crmFile.mockResolvedValue({ errors: [{ message: "Access denied" }] });

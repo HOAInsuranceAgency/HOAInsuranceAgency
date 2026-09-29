@@ -105,8 +105,9 @@ expires after 365 days and must be rotated.
 ## Front and Dialpad integration
 
 Website intake now uses durable CRM capture and queued Front import/reply delivery.
-The account panel, Lead follow-up views and `/front-sidebar` share responsibilities,
-commitments, communication history and recovery controls. Dialpad events add calls
+The account panel and `/front-sidebar` share salesperson assignment,
+communication history and recovery controls. Tasks, Lead Follow-up and daily staff
+emails are retired; see [the current retirement behavior](../docs/CRM-TASK-RETIREMENT.md). Dialpad events add calls
 and texts; native Front remains the human shared-line SMS sender.
 
 Start with the [setup and rollout runbook](../docs/COMMUNICATIONS-RUNBOOK.md).

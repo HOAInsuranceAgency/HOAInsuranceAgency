@@ -1,18 +1,21 @@
 import { acquisitionLabel, cleanAttribution, isLeadSource } from "./leadSource";
+import { accountPropertyType, propertyTypeLabel, webLeadPropertyType } from "./propertyType";
 
 /** A read-only snapshot. Workers unwrap communication-store rows before calling. */
 export type ReportRecord = { id?: string | null; [key: string]: unknown };
 export interface ReportSnapshot {
   accounts: ReportRecord[]; quotes: ReportRecord[]; policies: ReportRecord[];
   priorCarriers: ReportRecord[]; carriers: ReportRecord[]; documents: ReportRecord[]; activities: ReportRecord[];
-  workflows: ReportRecord[]; communications: ReportRecord[]; tasks: ReportRecord[];
+  workflows: ReportRecord[]; communications: ReportRecord[]; submissions: ReportRecord[];
+  /** Retired historical input is accepted but never used as current status evidence. */
+  tasks?: ReportRecord[];
 }
 export type ReportCell = string | number | Date | null;
 export interface MarketingLeadReport { headers: readonly string[]; rows: ReportCell[][]; asOf: string; warnings: string[] }
 export const MARKETING_REPORT_TIMEZONE = "America/New_York";
-/** Labels and order from HOA_LEAD_UPDATE.xlsx. No template customer data is embedded. */
+/** Template layout with marketing's property classification and unit-count update. */
 export const MARKETING_REPORT_HEADERS = [
-  "Lead ID", "Lead Name", "State", "Prospect Type", "Status", "Status Group", "Status Definition", "Source",
+  "Lead ID", "Lead Name", "State", "Property Type", "Property Units", "Status", "Status Group", "Status Definition", "Source",
   "Source Channel Group", "Channel", "Paid Source", "Attribution Confidence", "Coverage Segment", "Coverage Family",
   "Line of Business", "Coverage Requested", "Stated Carrier", "Inquiry Date", "First Agency Contact Date",
   "First Client Reply Date", "Docs First Received Date", "Quote Issued Date", "Bound Date", "Lost Date",
@@ -123,6 +126,7 @@ export function buildMarketingLeadReport(snapshot: ReportSnapshot, asOf: string)
   const warnings = [
     "Cumulative CRM snapshot: one row per lead or client account. Stable CRM IDs are used; spreadsheet-only historical IDs and manual annotations are not imported.",
     "Not recorded means the CRM has no verified value; blank numeric and date cells are unknown, not zero. Missing records are not negative answers.",
+    "Property type uses the recorded CRM classification, Personal (HO-6) account type, or explicit website property-type answers. An association name alone does not establish its type. Conflicting intake answers require review. Property units uses the recorded account unit count; unknown counts are blank and individual owners are not assumed to have one unit.",
     "Inquiry date uses the earliest known inquiry or account creation. Contact dates use verified human prospect activity only; first client reply follows agency contact. Imported and untracked history may be incomplete.",
     "Quote issued means presented to the client, not merely received from a carrier. Quote date, carrier and amount refer to one selected quote; missing presentation dates remain blank.",
     "Premiums retain their origin and are never added across policies or coverage types. Incumbent average membership requires manual validation and is not inferred.",
@@ -136,16 +140,27 @@ export function buildMarketingLeadReport(snapshot: ReportSnapshot, asOf: string)
     quotes: byAccount(snapshot.quotes, "accountId", cutoff), policies: byAccount(snapshot.policies, "accountId", cutoff),
     priorCarriers: byAccount(snapshot.priorCarriers, "accountId", cutoff), documents: byAccount(snapshot.documents, "entityId", cutoff),
     activities: byAccount(snapshot.activities, "entityId", cutoff), workflows: byAccount(snapshot.workflows, "accountId", cutoff),
-    communications: byAccount(snapshot.communications, "accountId", cutoff), tasks: byAccount(snapshot.tasks, "accountId", cutoff),
+    communications: byAccount(snapshot.communications, "accountId", cutoff),
+    submissions: byAccount(snapshot.submissions, "accountId", cutoff),
   };
   const rows = snapshot.accounts.filter(a => ["LEAD", "CLIENT"].includes(text(a, "stage")) && presentBy(a, cutoff))
     .sort((a, b) => text(a, "name").localeCompare(text(b, "name")) || text(a, "id").localeCompare(text(b, "id"))).map(account => {
       const id = text(account, "id"), notes: string[] = [];
+      let propertyType = accountPropertyType(account);
+      if (!propertyType && !text(account, "propertyType") && text(account, "type") === "ASSOCIATION") {
+        const intakeTypes = new Set((index.submissions.get(id) ?? []).filter(s => known(s.createdAt, cutoff))
+          .flatMap(s => [s.propertyKind, s.answerPropertyKind].map(propertyKind => webLeadPropertyType({ type: account.type, propertyKind })).filter(t => t !== null)));
+        if (intakeTypes.size === 1) {
+          propertyType = [...intakeTypes][0];
+          notes.push("Property type from the recorded website response.");
+        } else if (intakeTypes.size > 1) notes.push("Conflicting website property types; record the confirmed property type in the CRM.");
+      }
+      const recordedUnits = number(account, "unitCount");
+      const propertyUnits = Number.isSafeInteger(recordedUnits) ? recordedUnits : null;
       const activities = index.activities.get(id) ?? [];
       const quotes = (index.quotes.get(id) ?? []).filter(q => !text(q, "renewalPolicyId"));
       const policies = index.policies.get(id) ?? [];
       const workflow = index.workflows.get(id)?.[0];
-      const tasks = (index.tasks.get(id) ?? []).filter(t => text(t, "status") === "OPEN" && text(t, "domain") !== "CARRIER" && !["SERVICE", "RENEWAL"].includes(text(t, "context")));
       const communications = index.communications.get(id) ?? [];
       const contacts = communications.map(c => humanContact(c, cutoff)).filter((c): c is NonNullable<typeof c> => !!c).sort(byTime);
       const inbound = contacts.filter(c => text(c.row, "direction") === "INBOUND"), outbound = contacts.filter(c => text(c.row, "direction") === "OUTBOUND");
@@ -169,18 +184,14 @@ export function buildMarketingLeadReport(snapshot: ReportSnapshot, asOf: string)
       if (presented.length && !selected?.at) notes.push("Presentation date not recorded.");
       const bound = text(account, "stage") === "CLIENT" || text(workflow, "disposition") === "BOUND" || quotes.some(q => text(q, "status") === "BOUND") || policies.some(p => ["ACTIVE", "BOUND"].includes(text(p, "status")));
       const lost = !bound && text(workflow, "disposition") === "LOST";
-      const blockers = tasks.map(t => object(t.blocker)).filter(b => text(b, "reason") && (!text(b, "recordedAt") || known(b.recordedAt, cutoff)));
-      const hold = unique(blockers.map(b => [text(b, "reason"), text(b, "detail")].filter(Boolean).join(": "))).join("; ");
       const deferred = instant(workflow?.deferredUntil) !== null && Date.parse(text(workflow, "deferredUntil")) > cutoff;
       let status = missing, group = missing, definition = "No verified report status recorded.";
       if (bound) { status = "BOUND"; group = "Bound"; definition = "The CRM records a bound account or policy."; }
       else if (lost) { status = "LOST - REASON NOT RECORDED"; group = "Lost"; definition = "CRM workflow is lost; no competitor outcome is inferred."; }
       else if (text(workflow, "disposition") === "DISQUALIFIED") { status = "DISQUALIFIED"; group = "Unable to work"; definition = "CRM workflow is disqualified; the reason requires review."; }
-      else if (hold) { status = "ACTIVE - HOLD"; group = "Active"; definition = "An open CRM task has a recorded blocker."; }
       else if (deferred) { status = "ACTIVE - DEFERRED"; group = "Active"; definition = "CRM workflow is deferred until a recorded future date; a client-requested pause is not inferred."; }
       else if (presented.length) { status = "ACTIVE - QUOTED"; group = "Active"; definition = "Agency quote has been presented to the client."; }
       else if (stalled) { status = "DROPPED OFF"; group = "Dropped off"; definition = "Engaged, then two unanswered personal contacts and seven full days after the second."; }
-      else if (tasks.some(t => known(t.dueAt, cutoff))) { status = "ACTIVE - AGENCY ACTION"; group = "Active"; definition = "Agency action is overdue on this lead."; }
       else if (firstOut && !lastReply && inquiry) { status = "NO RESPONSE"; group = "No response"; definition = "No verified reply after the initial inquiry and agency outreach."; }
       else if (text(workflow, "disposition") === "ACTIVE") { status = "ACTIVE"; group = "Active"; definition = "CRM workflow is active; current engagement may be incomplete."; }
       const prior = [...(index.priorCarriers.get(id) ?? [])];
@@ -222,22 +233,21 @@ export function buildMarketingLeadReport(snapshot: ReportSnapshot, asOf: string)
       const lostAt = lost ? transition(activities, id, "disposition", "LOST", cutoff, true) : null;
       const lastEmail = communications.filter(c => text(c, "channel") === "EMAIL" && text(c, "direction") === "OUTBOUND" && known(c.at, cutoff) && !c.internalReport && text(c, "purpose") !== "CARRIER" && text(c, "domain") !== "CARRIER" && (text(c, "purpose") === "PROSPECT" || text(c, "domain") === "CLIENT") && !["SERVICE", "RENEWAL"].includes(text(c, "context"))).sort((a, b) => Date.parse(text(a, "at")) - Date.parse(text(b, "at"))).at(-1);
       const emailTracking = !lastEmail ? missing : lastEmail.frontDraft || text(lastEmail, "status") === "DRAFT" ? "Draft only; not sent" : ["FAILED", "REJECTED", "UNDELIVERED"].includes(text(lastEmail, "status")) ? "Delivery failed" : known(lastEmail.seenAt, cutoff) ? text(lastEmail, "actorId").startsWith("crm:") || text(lastEmail, "classification") === "AUTOMATIC" ? "Seen - automated email" : "Seen" : "Read confirmation not recorded";
-      const docOutstanding = unique(tasks.filter(t => text(t, "kind") === "DOCUMENTS").map(t => text(t, "title"))).join("; ");
       if (currentPolicies.length > 1 && bound) notes.push("Multiple current bound policies; premium and expiration require policy-level review.");
       if (currentPrior.length > 1) notes.push("Multiple prior policy terms overlap the report date; premiums are listed separately and coverage status is unverified.");
       if (text(account, "notes")) notes.push(`CRM note: ${safeNote(text(account, "notes"))}`);
       const row: ReportCell[] = [
         id || missing, text(account, "name") || missing, text(account, "state") || missing,
-        ({ ASSOCIATION: "Association", PERSONAL: "Personal", COMMERCIAL_OTHER: "Other commercial" } as Record<string, string>)[text(account, "type")] || missing,
+        propertyTypeLabel(propertyType), propertyUnits,
         status, group, definition, ...attribution(account), ...coverage(lines), missing,
         unique(prior.map(p => text(p, "carrierName"))).join("; ") || missing,
         dateCell(inquiry), dateCell(firstOut?.at), dateCell(firstReply?.at), dateCell(firstDocAt), dateCell(selected?.at), dateCell(boundAt), dateCell(lostAt),
         dateCell(lastReply?.at), lastReply ? safeNote(text(lastReply.row, "summary") || text(lastReply.row, "subject")) || "Verified human client reply" : missing,
         dateCell(lastOut?.at), emailTracking,
-        docNames.length ? "Y" : missing, safeNote(docNames.join("; "), 400) || missing, safeNote(docOutstanding, 400) || missing, presented.length ? "Y" : missing,
+        docNames.length ? "Y" : missing, safeNote(docNames.join("; "), 400) || missing, missing, presented.length ? "Y" : missing,
         quote ? carriers.get(text(quote, "carrierId")) || missing : missing, number(quote, "premium"), premium, category,
         category === "Agency Quote" || category === "Bound Policy" ? "N" : missing, premium === null ? missing : [premiumName, ...premiumLines].join("; "), premiumNote, safeNote(otherPremiums, 400) || missing,
-        expiryValid ? dateCell(expiration) : null, expiryConfidence, hold || (deferred ? `Deferred until ${text(workflow, "deferredUntil")}` : missing),
+        expiryValid ? dateCell(expiration) : null, expiryConfidence, (deferred ? `Deferred until ${text(workflow, "deferredUntil")}` : missing),
         quotes.length || bound ? "Y" : missing, missing, missing, days(inquiry, asOf), days(inquiry, lastReply?.at), days(lastReply?.at, asOf), days(lastOut?.at, asOf),
         missing, notes.join("\n") || missing,
       ];

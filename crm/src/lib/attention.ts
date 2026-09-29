@@ -1,21 +1,5 @@
 import type { QuoteEvidence } from "../../../shared/renewalPolicy";
-/**
- * The Overview tab's "Needs attention" queue — every signal in the data that
- * means someone should act today, ranked in one list.
- *
- * Each of these already exists somewhere: overdue invoices in the Invoice
- * rows, defaulted loans in PfLoan, missed submission windows in
- * MarketingTask, failed extractions on Document/Account, expiring licenses
- * in License. What none of them had was a shared surface — they reached a
- * human as outbound email (task digest, license ladder) or not at all. This
- * module is selection and ranking only; the words and navigation live in the
- * component, which is also why items carry raw fields rather than composed
- * strings.
- *
- * Pure and clock-free, like the rest of the dashboard's figures: `now` and
- * `daysUntil` are parameters, so every rule below is assertable without a
- * data client or a real calendar.
- */
+/** Dashboard alerts derived from current invoices, loans, renewals, documents and licenses. */
 
 import { quotedWithinWindow } from "./dashboardStats";
 
@@ -60,12 +44,6 @@ export type AttentionItem =
       premium: number | null;
     })
   | (BaseItem & {
-      kind: "task-window-missed";
-      accountName: string;
-      carrierName: string;
-      daysPast: number;
-    })
-  | (BaseItem & {
       kind: "extraction-failed";
       /** Which pipeline failed: a document's Textract OCR, or the
        * account-level AI extraction. Different failures, different words. */
@@ -88,9 +66,7 @@ export type AttentionItem =
 
 export interface AttentionInputs {
   accountNames: ReadonlyMap<string, string>;
-  /** Every quote, all statuses — the unmarketed rule needs them because the
-   * sweep skips task creation for already-quoted carriers (see
-   * quotedWithinWindow), so missing tasks alone prove nothing. */
+  /** Usable quote evidence determines renewal readiness. */
   quotes: readonly (Partial<QuoteEvidence> & { accountId: string; createdAt?: string | null })[];
   invoices: readonly {
     accountId: string;
@@ -120,14 +96,6 @@ export interface AttentionInputs {
     premium: number | null;
     policyId?: string;
     lines?: string[] | null;
-  }[];
-  tasks: readonly {
-    accountId: string;
-    carrierName?: string | null;
-    accountName?: string | null;
-    expirationDate?: string | null;
-    submitBy?: string | null;
-    status?: string | null;
   }[];
   failedDocs: readonly {
     entityType?: string | null;
@@ -231,15 +199,7 @@ export function buildAttentionQueue(
     }
   }
 
-  // Renewals inside the horizon with no marketing started. "Started" is
-  // tasks OR quotes: the sweep never creates a task for a carrier already
-  // quoted, so a missing task row alone proves nothing. Silence on both
-  // means no appointed carrier matched or the sweep hasn't caught up —
-  // either way a human should look, and one already past its date is red:
-  // the client is (as far as this system knows) uninsured.
-  const taskKeys = new Set(
-    inputs.tasks.map((t) => `${t.accountId}:${t.expirationDate ?? ""}`)
-  );
+  // Flag near renewals without usable quotes for their actual term and coverage.
   const quotesByAccount = new Map<string, AttentionInputs["quotes"][number][]>();
   for (const q of inputs.quotes) {
     const list = quotesByAccount.get(q.accountId);
@@ -249,7 +209,6 @@ export function buildAttentionQueue(
   for (const r of inputs.renewals) {
     if (r.days < -UNMARKETED_HORIZON_DAYS || r.days > UNMARKETED_HORIZON_DAYS)
       continue;
-    if (taskKeys.has(`${r.accountId}:${r.date}`)) continue;
     if (
       quotedWithinWindow(quotesByAccount.get(r.accountId) ?? [], r.date, daysUntil, { accountId: r.accountId, policyId: r.policyId, lines: r.lines ?? [] })
     )
@@ -263,22 +222,6 @@ export function buildAttentionQueue(
       days: r.days,
       date: r.date,
       premium: r.premium,
-    });
-  }
-
-  // Open marketing tasks whose submission window has already closed.
-  for (const t of inputs.tasks) {
-    if (t.status !== "OPEN" || !t.submitBy) continue;
-    const days = daysUntil(t.submitBy);
-    if (days == null || days >= 0) continue;
-    items.push({
-      kind: "task-window-missed",
-      severity: "amber",
-      sortKey: days,
-      accountId: t.accountId,
-      accountName: t.accountName ?? name(t.accountId),
-      carrierName: t.carrierName ?? "Unknown carrier",
-      daysPast: -days,
     });
   }
 

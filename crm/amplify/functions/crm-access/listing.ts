@@ -1,13 +1,14 @@
 import { createHash } from "node:crypto";
 import { QueryCommand } from "@aws-sdk/lib-dynamodb";
 import { AccountAccess, db, tableName } from "./access";
-import { ACCOUNT_MODELS, LIST_PARENTS, AccessDenied, id, listPartition, object, type RecordData } from "./policy";
+import { ACCOUNT_MODELS, RETIRED_MODELS, LIST_PARENTS, AccessDenied, id, listPartition, object, type RecordData } from "./policy";
 
 import { queryFilter, matchesFilter } from "./filters";
 export { matchesFilter } from "./filters";
 
 type Key = Record<string, unknown>;
-type Cursor = { scope: string; owner: number; assignment?: Key; accounts?: string[]; account?: string; part: number; parent?: string; parents?: Key; records?: Key; shared: number };
+type Cursor = { scope: string; owner: number; assignment?: Key; accounts?: string[]; account?: string; part: number; parent?: string; parentIds?: string[]; parents?: Key; records?: Key; shared: number };
+const parentPageSize = 25;
 const sharedDocuments = ["CARRIER", "LICENSE", "USER_PROFILE"];
 const documentParents = ["Account", "Quote", "Policy", "Certificate"];
 const naturalKey = (model: string) => ["GlApplication", "DoApplication"].includes(model);
@@ -29,7 +30,8 @@ function decode(token: unknown, scope: string): Cursor {
   try {
     const c = JSON.parse(Buffer.from(token, "base64url").toString()) as Cursor;
     if (c.scope !== scope || ![c.owner, c.part, c.shared].every(n => Number.isSafeInteger(n) && n >= 0)
-      || c.accounts && (!Array.isArray(c.accounts) || c.accounts.length > 25 || c.accounts.some(key => !id(key)))) throw new Error();
+      || c.accounts && (!Array.isArray(c.accounts) || c.accounts.length > 25 || c.accounts.some(key => !id(key)))
+      || c.parentIds !== undefined && (!Array.isArray(c.parentIds) || c.parentIds.length > parentPageSize || c.parentIds.some(key => !id(key)))) throw new Error();
     return c;
   } catch { throw new Error("This list changed. Refresh it to continue."); }
 }
@@ -38,7 +40,7 @@ function decode(token: unknown, scope: string): Cursor {
  * query count and evaluated records, retaining every unfinished partition in
  * the cursor. Cursors are traversal hints, never proof of current access. */
 export async function listAssigned(access: AccountAccess, model: string, args: RecordData) {
-  if (!(ACCOUNT_MODELS as readonly string[]).includes(model) || access.admin) throw new AccessDenied();
+  if (RETIRED_MODELS.includes(model) || !(ACCOUNT_MODELS as readonly string[]).includes(model) || access.admin) throw new AccessDenied();
   const filter = object(args.filter), owners = [...await access.salespeople()].sort();
   const scope = createHash("sha256").update(JSON.stringify([access.actor, owners, model, filter])).digest("hex");
   const c = decode(args.nextToken, scope), limit = Math.min(100, Math.max(1, Math.floor(Number(args.limit) || 100)));
@@ -85,10 +87,11 @@ export async function listAssigned(access: AccountAccess, model: string, args: R
   }
   const migration = await access.get("Communication", "migration:assignment-index:v1");
   if (object(migration?.data).complete !== true) throw new Error("Account access is being prepared. Please try again shortly.");
-  const advanceAccount = () => { delete c.account; delete c.parents; delete c.parent; delete c.records; c.part = 0; };
+  const advanceAccount = () => { delete c.account; delete c.parents; delete c.parent; delete c.parentIds; delete c.records; c.part = 0; };
   const advanceParent = () => {
     delete c.parent; delete c.records;
-    if (!c.parents) {
+    if (!c.parents && !c.parentIds?.length) {
+      delete c.parentIds;
       if (model === "Document" && c.part < documentParents.length - 1) c.part++;
       else advanceAccount();
     }
@@ -123,12 +126,21 @@ export async function listAssigned(access: AccountAccess, model: string, args: R
     const parentModel = model === "Document" ? documentParents[c.part] : LIST_PARENTS[model]?.model;
     if (model === "Document" && !parentModel) throw new AccessDenied();
     if (parentModel && parentModel !== "Account" && !c.parent) {
-      const page = await readPage(parentModel, "accountId", c.account, 1, c.parents);
-      c.parents = page.cursor; c.parent = id(page.items[0]?.id) || undefined;
+      // Keep every unvisited parent when the child page or traversal budget
+      // ends. The GSI cursor has already advanced past this whole parent page.
+      if (!c.parentIds?.length) {
+        const page = await readPage(parentModel, "accountId", c.account, parentPageSize, c.parents);
+        c.parents = page.cursor; c.parentIds = page.items.map(item => id(item.id)).filter(Boolean);
+      }
+      c.parent = c.parentIds.shift();
       if (!c.parent && !c.parents) advanceParent();
       continue;
     }
     if (c.parent) {
+      // Cursor IDs and GSI projections are hints only. Batch current parents,
+      // then retain the same authorization/root checks. Cap read-ahead by the
+      // remaining output slots so small pages do not reread the whole queue.
+      await access.prefetch(parentModel!, [c.parent, ...(c.parentIds ?? [])].slice(0, limit - items.length));
       try {
         const parent = await access.requireRecord(parentModel!, c.parent);
         if (await access.root(parentModel!, parent) !== c.account) throw new AccessDenied();

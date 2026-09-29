@@ -1,4 +1,5 @@
 import { LEAD_SOURCES, LEAD_SOURCE_LABELS } from "../../../shared/leadSource";
+import { PROPERTY_TYPES, PROPERTY_TYPE_LABELS, normalizePropertyType } from "../../../shared/propertyType";
 import { communicationRequest, type TeamEligibility } from "../lib/communications";
 import { ResponsibilitySelect } from "../components/LeadWorkflowPanel";
 import { useAsyncResource } from "../lib/useAsyncResource";
@@ -46,6 +47,7 @@ export default function NewLead() {
   const [createdId, setCreatedId] = useState<string | null>(null);
   const { form, setF, patch } = useFormState({
     type: DEFAULT_ACCOUNT_TYPE as string,
+    propertyType: "",
     name: "",
     contactName: "",
     contactType: "",
@@ -84,6 +86,7 @@ export default function NewLead() {
         fields: {
       stage: "LEAD",
       type: form.type as AccountType,
+      propertyType: normalizePropertyType(form.propertyType) ?? undefined,
       name: form.name.trim(),
       address: form.address.trim() || undefined,
       city: form.city.trim() || undefined,
@@ -197,8 +200,8 @@ export default function NewLead() {
       <div className="card">
         <div className="form-grid">
           <div className="field">
-            <label>Account type</label>
-            <select value={form.type} onChange={(e) => setF("type", e.target.value)}>
+            <label htmlFor="new-lead-account-type">Account type</label>
+            <select id="new-lead-account-type" value={form.type} onChange={(e) => setF("type", e.target.value)}>
               {ACCOUNT_TYPE_OPTIONS.map((o) => (
                 <option key={o.value} value={o.value}>
                   {o.label}
@@ -207,8 +210,16 @@ export default function NewLead() {
             </select>
           </div>
           <div className="field">
-            <label>Name (association / insured) *</label>
-            <input value={form.name} onChange={(e) => setF("name", e.target.value)} />
+            <label htmlFor="new-lead-property-type">Property type</label>
+            <select id="new-lead-property-type" value={form.propertyType} onChange={e => setF("propertyType", e.target.value)}>
+              <option value="">Choose property type</option>
+              {PROPERTY_TYPES.map(value => <option key={value} value={value}>{PROPERTY_TYPE_LABELS[value]}</option>)}
+            </select>
+            <span className="muted small">{isPersonal ? "Personal (HO-6) accounts use Individual unit owner unless you choose another property type." : "Choose only when the property group is confirmed."}</span>
+          </div>
+          <div className="field">
+            <label htmlFor="new-lead-name">Name (association / insured) *</label>
+            <input id="new-lead-name" value={form.name} onChange={(e) => setF("name", e.target.value)} />
           </div>
           <div className="field">
             <label htmlFor="new-lead-source">Lead source *</label>

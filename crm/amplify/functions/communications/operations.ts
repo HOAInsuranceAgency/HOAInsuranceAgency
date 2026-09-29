@@ -1,3 +1,4 @@
+import { retiredReminderOperation } from "./retiredTasks";
 import { archiveAllowed } from "./cleanup";
 import { config } from "./config";
 import { get, row, save, issue, commit, put, conflict, retryableStorage, check, absent, type Row } from "./store";
@@ -46,11 +47,9 @@ export async function runOperation(candidate: Row<Operation>) {
   // Retire reminders queued by earlier deployments, including retries and old
   // per-task formats. This must run before pause, routing, or provider checks.
   // Keep new inbound activity and ordinary team comments on their existing paths.
-  const retiredReminder = ["COMMENT", "REOPEN"].includes(op.data.type) && (op.data.reminderGroup || op.data.reminder ||
-    /^op:(morning-summary|morning-reopen|reminder-comment|reopen:notice):/.test(op.id));
-  if (retiredReminder) {
+  if (retiredReminderOperation(op.id, op.data)) {
     if (op.data.state === "LEASED" && op.data.leaseUntil! > new Date().toISOString()) return;
-    await transition(op, { state: "SUPPRESSED", leaseUntil: undefined, error: "Scheduled Front reminders have been removed; work remains tracked in the CRM" });
+    await transition(op, { state: "SUPPRESSED", leaseUntil: undefined, error: "Scheduled task reminders have been removed from the CRM" });
     return;
   }
   if (!['LEASED', 'ACCEPTED'].includes(op.data.state) && await get(`deleted-account:${op.data.accountId}`)) { await transition(op, { state: 'SUPPRESSED', error: 'Lead deleted' }); return; }

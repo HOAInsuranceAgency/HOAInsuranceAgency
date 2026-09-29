@@ -138,6 +138,23 @@ try {
   // Then the assembly itself, which is the half an import alone would miss.
   const app = backend.stack.node.root as App;
   const assembly = app.synth();
+  // Retirement must remove both deployment registration and scheduled delivery.
+  // Historical tables remain available, but no old daily mail job is deployed.
+  const retiredJobs = ["taskDigest", "opsRollup", "licenseAlerts", "communicationReports", "renewalTasks"];
+  if (retiredJobs.some(name => name in backend)) throw new Error("Retired task and daily staff email jobs must not be registered");
+  const retiredPaths = retiredJobs.map(name => name.toLowerCase());
+  for (const node of app.node.findAll()) {
+    const type = (node as { cfnResourceType?: string }).cfnResourceType;
+    if (!["AWS::Lambda::Function", "AWS::Events::Rule", "AWS::Scheduler::Schedule"].includes(type ?? "")) continue;
+    const path = node.node.path.toLowerCase().replace(/[^a-z]/g, "");
+    if (retiredPaths.some(name => path.includes(name))) throw new Error(`Retired job still has deployed infrastructure: ${node.node.path}`);
+  }
+  const defaultSweepEnv = Stack.of(backend.pfDefaultSweep.resources.lambda).resolve((backend.pfDefaultSweep.resources.lambda.node.defaultChild as CfnFunction).environment);
+  if (defaultSweepEnv.variables.ACCOUNTING_MAILBOX || defaultSweepEnv.variables.AGENCY_MAILBOX) throw new Error("Default detection must not configure daily staff email recipients");
+  for (const node of backend.pfDefaultSweep.resources.lambda.role!.node.findAll()) {
+    const resource = node as unknown as { cfnResourceType?: string; policyDocument?: unknown };
+    if (resource.cfnResourceType === "AWS::IAM::Policy" && JSON.stringify(Stack.of(node).resolve(resource.policyDocument)).includes("ses:Send")) throw new Error("Default detection must not retain staff-email send permissions");
+  }
   for (const fn of [backend.communicationWorker, backend.leadReply, backend.portalSweep, backend.marketingReportWorker]) {
     const resource = fn.resources.lambda.node.defaultChild as CfnFunction;
     if (Stack.of(resource).resolve(resource.reservedConcurrentExecutions) !== 1) throw new Error(`${resource.node.path} must retain reserved concurrency 1`);

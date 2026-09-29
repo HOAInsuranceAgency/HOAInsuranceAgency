@@ -30,10 +30,11 @@ beforeEach(() => {
     return { Items: items, ...(start + items.length < all.length ? { LastEvaluatedKey: { id: items.at(-1)!.id, [field]: key } } : {}) };
   });
 });
-async function allPages(model: string, sub = "alice", filter?: RecordData) {
+async function allPages(model: string, sub = "alice", filter?: RecordData, limit = 1) {
   const items: RecordData[] = []; let nextToken: string | null | undefined;
   for (let count = 0; count < 100; count++) {
-    const page = await listAssigned(access(sub), model, { limit: 1, filter, nextToken });
+    const page = await listAssigned(access(sub), model, { limit, filter, nextToken });
+    expect(page.items.length).toBeLessThanOrEqual(limit);
     items.push(...page.items as RecordData[]); nextToken = page.nextToken;
     if (!nextToken) return items;
   }
@@ -71,8 +72,106 @@ describe("assignment-scoped listings", () => {
       expect(next.items).toMatchObject([{ id: "good" }]);
     }
     const normal = h.db.getMockImplementation()!;
-    h.db.mockImplementation(command => command.input.TableName === parentModel && command.input.Key?.id === "p1" ? Promise.reject(new Error("database unavailable")) : normal(command));
+    h.db.mockImplementation(command => command.input.RequestItems?.[parentModel]?.Keys.some((key: RecordData) => key.id === "p1") ? Promise.reject(new Error("database unavailable")) : normal(command));
     await expect(listAssigned(access(), "Document", { nextToken: cursor })).rejects.toThrow("database unavailable");
+  });
+  it("batches indirect parents and preserves all child pages across parent pages and accounts", async () => {
+    account("a2", "alice");
+    const expected: string[] = [];
+    for (const [accountId, count] of [["a", 60], ["a2", 3]] as const) {
+      for (let i = 0; i < count; i++) {
+        const invoiceId = `${accountId}-invoice-${String(i).padStart(2, "0")}`;
+        put("Invoice", invoiceId, { id: invoiceId, accountId });
+        for (let child = 0; child < 2; child++) {
+          const key = `${invoiceId}-line-${child}`; expected.push(key);
+          put("InvoiceLine", key, { id: key, invoiceId });
+        }
+      }
+    }
+    expect((await allPages("InvoiceLine", "alice", undefined, 7)).map(r => r.id)).toEqual(expected);
+    const parentQueries = h.db.mock.calls.map(([c]) => c.input).filter(input => input.TableName === "Invoice" && input.IndexName);
+    expect(parentQueries).toHaveLength(4); // Three 25-parent pages for a, one for a2.
+    expect(parentQueries.every(input => input.Limit === 25)).toBe(true);
+    expect(h.db.mock.calls.some(([c]) => c.input.RequestItems?.Invoice?.Keys.length > 1)).toBe(true);
+    expect(h.db.mock.calls.some(([c]) => c.input.TableName === "Invoice" && c.input.Key)).toBe(false);
+  });
+  it("drains queued document parents before changing parent types or accounts", async () => {
+    account("a2", "alice");
+    const expected: string[] = [];
+    for (const accountId of ["a", "a2"]) {
+      const direct = `${accountId}-direct`; expected.push(direct);
+      put("Document", direct, { id: direct, entityType: "ACCOUNT", entityId: accountId });
+      for (const parentModel of ["Quote", "Policy", "Certificate"]) {
+        for (let i = 0; i < (parentModel === "Quote" ? 27 : 2); i++) {
+          const parentId = `${accountId}-${parentModel}-${String(i).padStart(2, "0")}`, key = `doc-${parentId}`;
+          put(parentModel, parentId, { id: parentId, accountId });
+          put("Document", key, { id: key, entityType: parentModel.toUpperCase(), entityId: parentId }); expected.push(key);
+        }
+      }
+    }
+    put("Carrier", "carrier", { id: "carrier" });
+    process.env.ACCESS_TABLES = JSON.stringify({ ...JSON.parse(process.env.ACCESS_TABLES!), Carrier: "Carrier" });
+    put("Document", "shared", { id: "shared", entityType: "CARRIER", entityId: "carrier" }); expected.push("shared");
+    expect((await allPages("Document", "alice", undefined, 3)).map(r => r.id)).toEqual(expected);
+    for (const [model, count] of [["Quote", 4], ["Policy", 2], ["Certificate", 2]] as const) {
+      expect(h.db.mock.calls.filter(([c]) => c.input.TableName === model && c.input.IndexName)).toHaveLength(count);
+    }
+  });
+  it("does not repeatedly read the entire parent queue for one-record output pages", async () => {
+    for (let i = 1; i <= 3; i++) {
+      put("Invoice", `p${i}`, { id: `p${i}`, accountId: "a" });
+      put("InvoiceLine", `line-${i}`, { id: `line-${i}`, invoiceId: `p${i}` });
+    }
+    expect((await allPages("InvoiceLine")).map(r => r.id)).toEqual(["line-1", "line-2", "line-3"]);
+    expect(h.db.mock.calls.filter(([c]) => c.input.TableName === "Invoice" && c.input.IndexName)).toHaveLength(1);
+    expect(h.db.mock.calls.flatMap(([c]) => c.input.RequestItems?.Invoice?.Keys ?? [])).toEqual([{ id: "p1" }, { id: "p2" }, { id: "p3" }]);
+  });
+  it("rechecks queued parents after moves and deletion and rejects injected foreign parents", async () => {
+    for (let i = 1; i <= 5; i++) {
+      put("Invoice", `p${i}`, { id: `p${i}`, accountId: "a" });
+      put("InvoiceLine", `line-${i}`, { id: `line-${i}`, invoiceId: `p${i}` });
+    }
+    const first = await listAssigned(access(), "InvoiceLine", { limit: 1 });
+    expect(first.items.map(r => r.id)).toEqual(["line-1"]);
+    const cursor = JSON.parse(Buffer.from(first.nextToken!, "base64url").toString());
+    expect(cursor.parentIds).toEqual(["p2", "p3", "p4", "p5"]);
+    account("a2", "alice");
+    put("Invoice", "p2", { id: "p2", accountId: "b" });
+    put("Invoice", "p3", { id: "p3", accountId: "a2" });
+    h.records.delete("Invoice:p4");
+    put("Invoice", "foreign", { id: "foreign", accountId: "b" });
+    put("InvoiceLine", "private", { id: "private", invoiceId: "foreign" });
+    cursor.parentIds.unshift("foreign");
+    const next = await listAssigned(access(), "InvoiceLine", { limit: 1, nextToken: Buffer.from(JSON.stringify(cursor)).toString("base64url") });
+    expect(next.items.map(r => r.id)).toEqual(["line-5"]);
+    expect(next.nextToken).toBeNull();
+    const childQueries = h.db.mock.calls.map(([c]) => c.input).filter(input => input.TableName === "InvoiceLine" && input.IndexName);
+    expect(childQueries.map(input => input.ExpressionAttributeValues[":scope"])).toEqual(["p1", "p5"]);
+  });
+  it("retains unvisited parents when sparse child searches exhaust the query budget", async () => {
+    for (let i = 0; i < 95; i++) {
+      const key = `p${String(i).padStart(3, "0")}`;
+      put("Invoice", key, { id: key, accountId: "a" });
+    }
+    put("InvoiceLine", "last", { id: "last", invoiceId: "p094" });
+    const first = await listAssigned(access(), "InvoiceLine", {});
+    expect(first.items).toEqual([]); expect(first.nextToken).toBeTruthy();
+    expect(h.db.mock.calls.filter(([c]) => c.input.IndexName)).toHaveLength(80);
+    const pending = JSON.parse(Buffer.from(first.nextToken!, "base64url").toString());
+    expect(pending.parentIds.length).toBeGreaterThan(0);
+    const next = await listAssigned(access(), "InvoiceLine", { nextToken: first.nextToken });
+    expect(next.items.map(r => r.id)).toEqual(["last"]); expect(next.nextToken).toBeNull();
+    expect(h.db.mock.calls.filter(([c]) => c.input.TableName === "Invoice" && c.input.IndexName)).toHaveLength(4);
+  });
+  it("rejects malformed and oversized pending-parent queues", async () => {
+    put("Invoice", "p1", { id: "p1", accountId: "a" }); put("Invoice", "p2", { id: "p2", accountId: "a" });
+    put("InvoiceLine", "line", { id: "line", invoiceId: "p1" });
+    const first = await listAssigned(access(), "InvoiceLine", { limit: 1 });
+    const cursor = JSON.parse(Buffer.from(first.nextToken!, "base64url").toString());
+    for (const parentIds of [null, false, 0, "", "p2", {}, [null], [42], [""], ["x".repeat(501)], Array(26).fill("p2")]) {
+      const token = Buffer.from(JSON.stringify({ ...cursor, parentIds })).toString("base64url");
+      await expect(listAssigned(access(), "InvoiceLine", { nextToken: token })).rejects.toThrow("Refresh");
+    }
   });
   it("pushes search to the index and consistently reads only matching candidates", async () => {
     const normal = h.db.getMockImplementation()!;
@@ -122,12 +221,27 @@ describe("assignment-scoped listings", () => {
     const queries = h.db.mock.calls.map(([c]) => c).filter(c => c.input.IndexName);
     expect(queries).toHaveLength(1);
     expect(queries[0].input).toMatchObject({ IndexName: "assignment", ExpressionAttributeValues: { ":scope": "alice" } });
-    expect(h.db.mock.calls).toHaveLength(5); // team, migration, assignment query, ownership batch, account batch
+    expect(h.db.mock.calls).toHaveLength(4); // migration, assignment query, ownership batch, account batch
     expect(h.db.mock.calls.filter(([c]) => c.input.RequestItems)).toHaveLength(2);
   });
-  it("paginates manager-owned accounts and direct reports without other teams", async () => {
-    account("manager-account", "manager"); account("a2", "alice");
-    expect((await allPages("Account", "manager")).map(r => r.id)).toEqual(["a", "a2", "manager-account"]);
+  it("paginates former managers' own accounts without reading former direct reports", async () => {
+    account("manager-account", "manager"); account("manager-account-2", "manager"); account("a2", "alice");
+    expect((await allPages("Account", "manager")).map(r => r.id)).toEqual(["manager-account", "manager-account-2"]);
+    const queries = h.db.mock.calls.map(([c]) => c.input).filter(input => input.IndexName === "assignment");
+    expect(queries.every(input => input.ExpressionAttributeValues[":scope"] === "manager")).toBe(true);
+    expect(h.db.mock.calls.some(([c]) => c.input.Key?.id === "team-routing")).toBe(false);
+  });
+  it("revokes cursors issued under the retired manager scope and denies injected prior-report account IDs", async () => {
+    account("manager-account", "manager"); account("manager-account-2", "manager");
+    const first = await listAssigned(access("manager"), "Account", { limit: 1 });
+    const cursor = JSON.parse(Buffer.from(first.nextToken!, "base64url").toString());
+    const { createHash } = await import("node:crypto");
+    const oldScope = createHash("sha256").update(JSON.stringify(["manager", ["alice", "manager"], "Account", {}])).digest("hex");
+    await expect(listAssigned(access("manager"), "Account", { nextToken: Buffer.from(JSON.stringify({ ...cursor, scope: oldScope })).toString("base64url") })).rejects.toThrow("Refresh");
+    cursor.account = "a"; cursor.accounts = ["a2"];
+    account("a2", "alice");
+    const continued = await listAssigned(access("manager"), "Account", { nextToken: Buffer.from(JSON.stringify(cursor)).toString("base64url") });
+    expect(continued.items.map(item => item.id)).toEqual(["manager-account-2"]);
   });
   it("fills a filtered page from later accounts", async () => {
     account("a2", "alice");
@@ -190,7 +304,7 @@ describe("assignment-scoped listings", () => {
     for (const [key, type, parent] of [["da", "ACCOUNT", "a"], ["db", "ACCOUNT", "b"], ["dp", "POLICY", "pa"], ["dc", "CARRIER", "shared"]]) put("Document", key, { id: key, entityType: type, entityId: parent });
     expect((await allPages("Document")).map(r => r.id)).toEqual(["da", "dp", "dc"]);
   });
-  it("handles singleton applications and binds cursors to actor, team, model, and filter", async () => {
+  it("handles singleton applications and binds cursors to actor, assignment scope, model, and filter", async () => {
     put("GlApplication", "a", { accountId: "a" });
     expect(await allPages("GlApplication")).toEqual([{ accountId: "a" }]);
     account("a2", "alice"); const first = await listAssigned(access(), "Account", { limit: 1 });

@@ -1,10 +1,11 @@
 import { beforeEach, expect, it, vi } from "vitest";
+import { HeadObjectCommand, ListObjectsV2Command } from "@aws-sdk/client-s3";
 const h = vi.hoisted(() => ({ records: new Map<string, Record<string, unknown>>(), db: vi.fn(), s3: vi.fn(), sign: vi.fn() }));
 vi.mock("@aws-sdk/lib-dynamodb", async load => ({ ...(await load<typeof import("@aws-sdk/lib-dynamodb")>()), DynamoDBDocumentClient: { from: () => ({ send: h.db }) } }));
 vi.mock("@aws-sdk/client-s3", async load => ({ ...(await load<typeof import("@aws-sdk/client-s3")>()), S3Client: class { send = h.s3; } }));
 vi.mock("@aws-sdk/s3-request-presigner", () => ({ getSignedUrl: h.sign }));
 import { handler } from "../../amplify/functions/crm-access/handler";
-import { ACCOUNT_MODELS, LIST_PARENTS, type RecordData } from "../../amplify/functions/crm-access/policy";
+import { ACCOUNT_MODELS, RETIRED_MODELS, LIST_PARENTS, type RecordData } from "../../amplify/functions/crm-access/policy";
 const identity = { sub: "alice" };
 beforeEach(() => {
   vi.clearAllMocks(); h.records.clear();
@@ -33,7 +34,7 @@ it("filters raw list/relationship responses without dropping the pagination curs
   expect(result).toEqual({ items: [{ id: "a", name: "Visible" }], nextToken: "cursor" });
   expect(h.db.mock.calls.every(([command]) => command.input.ConsistentRead || Object.values(command.input.RequestItems ?? {}).every(request => (request as { ConsistentRead?: boolean }).ConsistentRead))).toBe(true);
 });
-it.each(ACCOUNT_MODELS)("batches permission reads for a large %s connection", async model => {
+it.each(ACCOUNT_MODELS.filter(model => !RETIRED_MODELS.includes(model)))("batches permission reads for a large %s connection", async model => {
   const tables = JSON.parse(process.env.ACCESS_TABLES!);
   const items = Array.from({ length: 120 }, (_, i) => {
     const accountId = `account-${i}`, parentId = `parent-${i}`;
@@ -58,28 +59,28 @@ it.each(ACCOUNT_MODELS)("batches permission reads for a large %s connection", as
   const result = await handler({ mode: "read", model, identity, previous: { items, nextToken: "later", startedAt: 123 } });
   expect(result).toEqual({ items: items.filter((_, i) => i % 2 === 0 && i !== 4), nextToken: "later", startedAt: 123 });
   const commands = h.db.mock.calls.map(([command]) => command.input);
-  // Only the one shared team record needs GetItem; all row-specific reads are
-  // consistent batches, including parents and workflow/deletion records.
-  expect(commands.filter(input => input.Key).map(input => input.Key)).toEqual([{ id: "team-routing" }]);
+  // Every row-specific read is a consistent batch. Retired team-routing
+  // configuration is not read for account authorization.
+  expect(commands.filter(input => input.Key)).toEqual([]);
   const batches = commands.filter(input => input.RequestItems).flatMap(input => Object.values(input.RequestItems)) as { Keys: RecordData[]; ConsistentRead: boolean }[];
   expect(batches.length).toBeLessThanOrEqual(7);
   expect(batches.every(batch => batch.Keys.length <= 100 && batch.ConsistentRead)).toBe(true);
   expect(batches.flatMap(batch => batch.Keys).some(key => String(key.id).includes("wrong-mirror"))).toBe(false);
 });
-it.each(["work", "myReport"])("batches %s ownership reads, deduplicates accounts, and applies fresh manager access", async readOperation => {
+it.each(["work"])("batches %s ownership reads and limits former managers to current personal assignments", async readOperation => {
   h.records.set("communications:team-routing", { data: { members: [{ userId: "manager", salesManager: true }, { userId: "alice", salesManagerId: "manager" }] } });
   const rows = Array.from({ length: 60 }, (_, i) => {
     const accountId = `work-${i}`;
-    h.records.set(`communications:workflow:${accountId}`, { data: { salespersonId: i % 2 === 0 ? "alice" : "bob" } });
+    h.records.set(`communications:workflow:${accountId}`, { data: { salespersonId: i % 3 === 0 ? "manager" : i % 3 === 1 ? "alice" : "bob" } });
     return { id: `task-${i}`, accountId };
   });
-  h.records.set("communications:deleted-account:work-4", {});
+  h.records.set("communications:deleted-account:work-3", {});
   const items = [...rows, rows[0], { id: "unlinked" }];
   const previous = readOperation === "work" ? { ok: true, items, nextToken: "later" } : { ok: true, report: { items, accountCount: 60, createdAt: "today" } };
-  const event = { mode: "custom-post" as const, field: "communicationRead", identity: { sub: "manager" }, arguments: { readOperation }, previous };
-  const permitted = [...rows.filter((_, i) => i % 2 === 0 && i !== 4), rows[0]];
-  expect(await handler(event)).toEqual(readOperation === "work" ? { ...previous, items: permitted } : { ok: true, report: { items: permitted, accountCount: 29, createdAt: "today" } });
-  expect(h.db.mock.calls).toHaveLength(3); // Two ownership batches and one team read.
+  const event = { mode: "custom-post" as const, field: "communicationRead", identity: { sub: "manager" }, arguments: { readOperation, input: { kind: "WORKFLOW" } }, previous };
+  const permitted = [...rows.filter((_, i) => i % 3 === 0 && i !== 3), rows[0]];
+  expect(await handler(event)).toEqual(readOperation === "work" ? { ...previous, items: permitted } : { ok: true, report: { items: permitted, accountCount: 19, createdAt: "today" } });
+  expect(h.db.mock.calls).toHaveLength(2); // Two ownership batches, no routing read.
   const ownershipKeys = h.db.mock.calls.flatMap(([command]) => command.input.RequestItems?.communications?.Keys ?? []);
   expect(ownershipKeys).toHaveLength(120); expect(new Set(ownershipKeys.map(key => key.id)).size).toBe(120);
   h.records.set("communications:workflow:work-0", { data: { salespersonId: "bob" } });
@@ -93,7 +94,7 @@ it("batches mixed document parents while rejecting missing or invalid parents an
   const visible = { id: "visible", entityType: "ACCOUNT", entityId: "a" }, shared = { id: "shared", entityType: "CARRIER", entityId: "shared" };
   const items = [visible, shared, { id: "moved", entityType: "POLICY", entityId: "moved", accountId: "a" }, { id: "missing", entityType: "QUOTE", entityId: "gone", accountId: "a" }, { id: "invalid", entityType: "UNKNOWN", entityId: "a" }, null];
   expect(await handler({ mode: "read", model: "Document", identity, previous: { items, nextToken: "later" } })).toEqual({ items: [visible, shared], nextToken: "later" });
-  expect(h.db.mock.calls.filter(([command]) => command.input.Key).map(([command]) => command.input.Key)).toEqual([{ id: "team-routing" }]);
+  expect(h.db.mock.calls.filter(([command]) => command.input.Key)).toEqual([]);
 });
 it.each(["parent", "ownership"])("propagates a failed %s batch instead of returning an incomplete page", async failure => {
   const normal = h.db.getMockImplementation()!;
@@ -115,6 +116,17 @@ it("denies guessed IDs and preserves a missing record response", async () => {
   await expect(handler({ mode: "read", model: "Account", identity, previous: { id: "b" } })).rejects.toThrow("not available");
   expect(await handler({ mode: "read", model: "Account", identity, previous: null })).toBeNull();
 });
+it("denies copied account and file URLs to former managers before any file side effect", async () => {
+  h.records.set("communications:team-routing", { data: { ownerId: "manager", members: [{ userId: "manager", salesManager: true }, { userId: "alice", salesManagerId: "manager", coverId: "manager", away: true }] } });
+  const formerManager = { sub: "manager", groups: ["STAFF"] };
+  await expect(handler({ mode: "read", model: "Account", identity: formerManager, previous: { id: "a" } })).rejects.toThrow("not available");
+  await expect(handler({ fieldName: "crmAccess", identity: formerManager })).resolves.toEqual({ actorId: "manager", admin: false, salespersonIds: ["manager"] });
+  for (const operation of ["read", "write", "delete"]) {
+    await expect(handler({ fieldName: "crmFile", identity: formerManager, arguments: { operation, path: "documents/ACCOUNT/a/doc/file.pdf", sizeBytes: 10, validateObjectExistence: true } })).rejects.toThrow("not available");
+  }
+  expect(h.sign).not.toHaveBeenCalled(); expect(h.s3).not.toHaveBeenCalled();
+  expect(h.db.mock.calls.some(([command]) => command.input.Key?.id === "team-routing")).toBe(false);
+});
 it("keeps administrators unfiltered but requires a signed-in identity", async () => {
   const previous = { items: [{ id: "a" }, { id: "b" }] };
   expect(await handler({ mode: "read", model: "Account", identity: { sub: "admin", groups: ["ADMIN"] }, previous })).toEqual(previous);
@@ -126,7 +138,7 @@ it("uses accountId for models with a natural key and returns the preceding pipel
   expect(h.db.mock.calls.some(([command]) => command.input.TableName === "gl" && command.input.Key.accountId === "a")).toBe(true);
 });
 it("blocks direct file calls for another account before signing or deleting anything", async () => {
-  for (const operation of ["read", "write", "delete"]) await expect(handler({ info: { fieldName: "crmFile" }, identity, arguments: { operation, path: "generated/b/form.pdf", sizeBytes: 10 } })).rejects.toThrow("not available");
+  for (const operation of ["read", "write", "delete"]) await expect(handler({ fieldName: "crmFile", identity, arguments: { operation, path: "generated/b/form.pdf", sizeBytes: 10, validateObjectExistence: true, downloadAs: "private.pdf" } })).rejects.toThrow("not available");
   expect(h.sign).not.toHaveBeenCalled(); expect(h.s3).not.toHaveBeenCalled();
 });
 it("signs permitted uploads with a bounded lifetime and exact content length", async () => {
@@ -146,12 +158,65 @@ it("never signs or deletes another person's signature or a protected finance agr
   for (const operation of ["write", "delete"]) await expect(handler({ info: { fieldName: "crmFile" }, identity, arguments: { operation, path: "generated/pf/loan/premium-finance-agreement.pdf", sizeBytes: 10 } })).rejects.toThrow("not available");
   expect(h.sign).not.toHaveBeenCalled(); expect(h.s3).not.toHaveBeenCalled();
 });
-it("reserves raw bucket listings for administrator templates", async () => {
-  await expect(handler({ info: { fieldName: "crmFile" }, identity, arguments: { operation: "list", path: "templates/" } })).rejects.toThrow("not available");
-  await expect(handler({ info: { fieldName: "crmFile" }, identity: { sub: "admin", groups: ["ADMIN"] }, arguments: { operation: "list", path: "documents/" } })).rejects.toThrow("not available");
+it("accepts the top-level field name emitted by Amplify for access and file operations", async () => {
+  await expect(handler({ fieldName: "crmAccess", identity })).resolves.toEqual({ actorId: "alice", admin: false, salespersonIds: ["alice"] });
+  await handler({ fieldName: "crmFile", identity, arguments: { operation: "read", path: "templates/acord25.pdf" } });
+  expect(h.sign.mock.calls[0][1].input).toEqual({ Bucket: "bucket", Key: "templates/acord25.pdf", ResponseContentDisposition: undefined });
   expect(h.s3).not.toHaveBeenCalled();
+});
+it("allows signed-in staff to list template pages without granting other bucket listings", async () => {
+  h.s3.mockResolvedValue({ Contents: [{ Key: "templates/acord25.pdf", Size: 123, LastModified: new Date("2026-09-28T00:00:00Z") }], NextContinuationToken: "next-page" });
+  await expect(handler({ fieldName: "crmFile", identity, arguments: { operation: "list", path: "templates/", nextToken: "first-page" } })).resolves.toEqual({ items: [{ path: "templates/acord25.pdf", size: 123, lastModified: "2026-09-28T00:00:00.000Z" }], nextToken: "next-page" });
+  expect(h.s3.mock.calls[0][0]).toBeInstanceOf(ListObjectsV2Command);
+  expect(h.s3.mock.calls[0][0].input).toEqual({ Bucket: "bucket", Prefix: "templates/", ContinuationToken: "first-page", MaxKeys: 100 });
+});
+it("rejects anonymous template listings and other prefixes for both staff and administrators", async () => {
+  await expect(handler({ fieldName: "crmFile", arguments: { operation: "list", path: "templates/" } })).rejects.toThrow("not available");
+  for (const user of [identity, { sub: "admin", groups: ["ADMIN"] }]) {
+    for (const path of ["", "documents/", "generated/a/", "templates/../", "templates"]) {
+      await expect(handler({ fieldName: "crmFile", identity: user, arguments: { operation: "list", path } })).rejects.toThrow("not available");
+    }
+  }
+  expect(h.s3).not.toHaveBeenCalled();
+});
+it("keeps template uploads and deletion administrator-only", async () => {
+  for (const operation of ["write", "delete"]) await expect(handler({ fieldName: "crmFile", identity, arguments: { operation, path: "templates/acord25.pdf", sizeBytes: 10 } })).rejects.toThrow("not available");
+  expect(h.s3).not.toHaveBeenCalled(); expect(h.sign).not.toHaveBeenCalled();
+  await handler({ fieldName: "crmFile", identity: { sub: "admin", groups: ["ADMIN"] }, arguments: { operation: "write", path: "templates/acord25.pdf", sizeBytes: 10 } });
+  expect(h.sign).toHaveBeenCalledOnce();
+  await handler({ fieldName: "crmFile", identity: { sub: "admin", groups: ["ADMIN"] }, arguments: { operation: "delete", path: "templates/acord25.pdf" } });
+  expect(h.s3).toHaveBeenCalledOnce();
+});
+it("checks an authorized object's existence before signing its sanitized download response", async () => {
+  h.s3.mockImplementation(async command => {
+    expect(command).toBeInstanceOf(HeadObjectCommand);
+    expect(command.input).toEqual({ Bucket: "bucket", Key: "documents/ACCOUNT/a/doc/file.pdf" });
+    expect(h.sign).not.toHaveBeenCalled();
+    return {};
+  });
+  await handler({ fieldName: "crmFile", identity, arguments: { operation: "read", path: "documents/ACCOUNT/a/doc/file.pdf", validateObjectExistence: true, downloadAs: 'budget"\r\n/2026\\.pdf' } });
+  expect(h.s3).toHaveBeenCalledOnce();
+  expect(h.sign.mock.calls[0][1].input).toEqual({ Bucket: "bucket", Key: "documents/ACCOUNT/a/doc/file.pdf", ResponseContentDisposition: 'attachment; filename="budget_2026.pdf"' });
+  expect(h.sign.mock.calls[0][2].expiresIn).toBe(60);
+});
+it.each(["NotFound", "ServiceUnavailable"])("does not return a signed download when the existence check fails with %s", async name => {
+  h.s3.mockRejectedValue(Object.assign(new Error(name), { name }));
+  await expect(handler({ fieldName: "crmFile", identity, arguments: { operation: "read", path: "generated/a/missing.pdf", validateObjectExistence: true } })).rejects.toThrow(name);
+  expect(h.s3).toHaveBeenCalledOnce(); expect(h.sign).not.toHaveBeenCalled();
+});
+it("skips HEAD and disposition overrides for normal previews", async () => {
+  await handler({ fieldName: "crmFile", identity, arguments: { operation: "read", path: "generated/a/form.pdf", validateObjectExistence: false } });
+  expect(h.s3).not.toHaveBeenCalled();
+  expect(h.sign.mock.calls[0][1].input.ResponseContentDisposition).toBeUndefined();
 });
 it("applies custom before/after guards to the real handler event shape", async () => {
   await expect(handler({ mode: "custom-pre", field: "startHoneycombSubmission", identity, arguments: { accountId: "b" } })).rejects.toThrow("not available");
-  expect(await handler({ mode: "custom-post", field: "communicationRead", identity, arguments: { readOperation: "work" }, previous: JSON.stringify({ ok: true, items: [{ accountId: "b" }], nextToken: "next" }) })).toEqual({ ok: true, items: [], nextToken: "next" });
+  expect(await handler({ mode: "custom-post", field: "communicationRead", identity, arguments: { readOperation: "work", input: { kind: "WORKFLOW" } }, previous: JSON.stringify({ ok: true, items: [{ accountId: "b" }], nextToken: "next" }) })).toEqual({ ok: true, items: [], nextToken: "next" });
+});
+
+it("rejects retired task model access before touching storage for every signed-in role", async () => {
+  for (const groups of [[], ["ADMIN"]]) for (const mode of ["list", "read", "write"] as const) {
+    await expect(handler({ mode, model: "MarketingTask", identity: { sub: "alice", groups }, operation: "create", arguments: { input: { accountId: "a" } }, previous: { items: [{ accountId: "a" }] } })).rejects.toThrow("not available");
+  }
+  expect(h.db).not.toHaveBeenCalled();
 });

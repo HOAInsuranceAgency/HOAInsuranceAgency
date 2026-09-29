@@ -2,14 +2,18 @@
 
 Settings → Marketing reports lets an administrator choose the recipient, enable Friday delivery, and send a current report manually. The schedule is Friday at 8:00 a.m. in `America/New_York`, including daylight saving changes. Pausing weekly delivery does not prevent an intentional manual send.
 
-The attachment is an Excel workbook with the 52 columns from `HOA_LEAD_UPDATE.xlsx`, in the original order, on `PMH Leads - Final`. `Report Notes` records the snapshot time and interpretation rules. No customer records from the supplied example are committed to the application.
+The attachment is an Excel workbook on `PMH Leads - Final`, based on `HOA_LEAD_UPDATE.xlsx`. The updated layout has 53 columns: `Prospect Type` is now `Property Type`, with `Property Units` immediately after it; the remaining columns retain their relative order. `Report notes` records the snapshot time and interpretation rules. No customer records from the supplied example are committed to the application.
 
 ## What the report contains
 
 - One row for every CRM account at LEAD or CLIENT stage, including lost/disqualified leads. Converted clients remain visible. This is a cumulative snapshot, not only the previous week's new leads.
 - Stable CRM account IDs. The example workbook's manually assigned PMH numbers are not substituted for CRM identities.
 - Recorded acquisition source, workflow outcome, verified prospect communication, received documents, presented quotes, and separately identified premium information.
+- Property Type uses `HOA / POA / pond / townhome HOA`, `CONDO`, or `Individual unit owner`. It first uses the account's recorded classification; Personal (HO-6) accounts identify individual unit owners. For older association records, explicit website `propertyKind` answers may supply the type. Missing or conflicting evidence remains `Not recorded`; names and broad Association account types are not treated as subtype evidence. Set or correct the classification in the account's Property details, or when creating a lead. New website enquiries preserve confirmed type answers on the account.
+- Property Units uses the account's nonnegative integer `unitCount`. Missing/invalid counts are blank, recorded zero remains zero, and personal accounts are not assumed to have one unit. Unit numbers are identifiers, not counts.
 - Blank numeric/date cells and `Not recorded` labels when evidence is missing. Missing information is never reported as zero or a negative answer.
+
+In Property details, `Use existing information` allows the account-type/intake fallback. An explicit `Not recorded` selection suppresses that fallback, so a historical answer can be marked unknown until confirmed.
 
 The example contains historical research and editorial judgments that cannot be recovered from structured CRM fields alone. These include exclusions, detailed association classifications, unverified policy terms, competitor-loss reasons, and eligibility for an incumbent-premium average. The scheduled report does not silently copy those old judgments into current data. Its notes describe these limitations.
 

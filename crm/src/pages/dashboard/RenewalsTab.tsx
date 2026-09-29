@@ -30,24 +30,12 @@ import {
   type RenewalMarketing,
   type RenewalRowBase,
 } from "../../lib/dashboardStats";
-import { localToday, TabFrame } from "./common";
-import type { Schema } from "../../../amplify/data/resource";
-
-type TaskRow = Schema["MarketingTask"]["type"];
-
-// ── The renewal workspace: what expires, what it's worth, is it being
-// worked. Expiring policies (and lead incumbent expirations) joined with
-// the nightly sweep's MarketingTask rows — two datasets that both existed
-// and never met on screen. ──────────────────────────────────────────────
-
+import { TabFrame } from "./common";
 interface RenewalsData {
   leads: Account[];
   clients: Account[];
   policies: Policy[];
   carriers: Carrier[];
-  tasks: TaskRow[];
-  /** All statuses — the marketing column treats a quote in the window as
-   * "started" even when the sweep left no task trail for it. */
   quotes: Quote[];
 }
 
@@ -56,7 +44,6 @@ const EMPTY: RenewalsData = {
   clients: [],
   policies: [],
   carriers: [],
-  tasks: [],
   quotes: [],
 };
 
@@ -79,7 +66,7 @@ export default function RenewalsTab() {
 
   const res = useAsyncResource<RenewalsData>(
     async () => {
-      const [leads, clients, policies, carriers, tasks, quotes] = await Promise.all([
+      const [leads, clients, policies, carriers, quotes] = await Promise.all([
         listAllPages((nextToken) =>
           client.models.Account.list({
             filter: { stage: { eq: "LEAD" } },
@@ -94,9 +81,6 @@ export default function RenewalsTab() {
         ),
         listAllPages((nextToken) => client.models.Policy.list({ nextToken })),
         listAllPages((nextToken) => client.models.Carrier.list({ nextToken })),
-        listAllPages((nextToken) =>
-          client.models.MarketingTask.list({ limit: 500, nextToken })
-        ),
         listAllPages((nextToken) => client.models.Quote.list({ nextToken })),
       ]);
       return {
@@ -104,14 +88,13 @@ export default function RenewalsTab() {
         clients,
         policies,
         carriers,
-        tasks: tasks as TaskRow[],
         quotes,
       };
     },
     [],
     { initialData: EMPTY, errorMessage: "Failed to load renewals" }
   );
-  const { leads, clients, policies, carriers, tasks, quotes } = res.data;
+  const { leads, clients, policies, carriers, quotes } = res.data;
 
   const carrierName = useMemo(
     () => new Map(carriers.map((c) => [c.id, c.name])),
@@ -122,28 +105,16 @@ export default function RenewalsTab() {
   // horizon filtering happens at render, so the chip counts stay statements
   // about all of it rather than about whichever horizon is selected.
   const rows = useMemo<WorkRow[]>(() => {
-    const tasksByRenewal = new Map<string, TaskRow[]>();
-    for (const t of tasks) {
-      const key = `${t.accountId}:${t.expirationDate ?? ""}`;
-      const list = tasksByRenewal.get(key);
-      if (list) list.push(t);
-      else tasksByRenewal.set(key, [t]);
-    }
     const quotesByAccount = new Map<string, Quote[]>();
     for (const q of quotes) {
       const list = quotesByAccount.get(q.accountId);
       if (list) list.push(q);
       else quotesByAccount.set(q.accountId, [q]);
     }
-    const today = localToday();
     return buildRenewalRows(leads, clients, policies, daysUntil).map((base) => ({
       ...base,
       carrierName: base.carrierId ? carrierName.get(base.carrierId) ?? null : null,
       marketing: renewalMarketing(
-        tasksByRenewal.get(`${base.accountId}:${base.date}`) ?? [],
-        today,
-        // The sweep skips task creation for already-quoted carriers, so a
-        // quote in the marketing window counts as started with no task row.
         quotedWithinWindow(
           quotesByAccount.get(base.accountId) ?? [],
           base.date,
@@ -153,7 +124,7 @@ export default function RenewalsTab() {
         )
       ),
     }));
-  }, [leads, clients, policies, tasks, quotes, carrierName]);
+  }, [leads, clients, policies, quotes, carrierName]);
 
   const counts = useMemo(() => renewalChipCounts(rows), [rows]);
 
@@ -171,7 +142,7 @@ export default function RenewalsTab() {
     const premium = visible.reduce((s, r) => s + (r.premium ?? 0), 0);
     const accounts = new Set(visible.map((r) => r.accountId)).size;
     const unmarketed = visible.filter(
-      (r) => r.marketing.kind === "none" || r.marketing.kind === "missed"
+      (r) => r.marketing.kind === "none"
     ).length;
     return { premium, accounts, unmarketed };
   }, [visible]);
@@ -186,10 +157,6 @@ export default function RenewalsTab() {
       days: (r) => r.days,
       premium: (r) => r.premium,
       marketing: (r) => renewalMarketingRank(r.marketing),
-      submitBy: (r) =>
-        r.marketing.kind === "missed" || r.marketing.kind === "open"
-          ? r.marketing.submitBy
-          : null,
     },
     "days"
   );
@@ -200,7 +167,7 @@ export default function RenewalsTab() {
         <div className="toolbar" style={{ marginBottom: 8 }}>
           <h2 style={{ margin: 0 }}>Upcoming renewals</h2>
           <div className="grow" />
-          <ReportDownload report={{ title: "Upcoming renewals", filters: `${horizon === "overdue" ? "Overdue only" : `Next ${horizon} days, including overdue`} · sorted by ${sortKey} (${dir}) · ${hero.accounts} accounts · ${hero.unmarketed} not yet marketed`, sections: [{ title: "Renewals", columns: ["Account", "Stage", "Carrier", "Lines", "Expires", "Days", "Premium (USD)", "Marketing", "Submit by"], rows: sorted.map(r => [r.name, r.kind, r.carrierName ?? (r.kind === "LEAD" ? "Incumbent" : "—"), r.lines?.join(", "), r.date, r.days, r.premium, r.marketing.kind, r.marketing.kind === "missed" || r.marketing.kind === "open" ? r.marketing.submitBy : null]) }] }} />
+          <ReportDownload report={{ title: "Upcoming renewals", filters: `${horizon === "overdue" ? "Overdue only" : `Next ${horizon} days, including overdue`} · sorted by ${sortKey} (${dir}) · ${hero.accounts} accounts · ${hero.unmarketed} without usable quotes`, sections: [{ title: "Renewals", columns: ["Account", "Stage", "Carrier", "Lines", "Expires", "Days", "Premium (USD)", "Renewal quote"], rows: sorted.map(r => [r.name, r.kind, r.carrierName ?? (r.kind === "LEAD" ? "Incumbent" : "—"), r.lines?.join(", "), r.date, r.days, r.premium, r.marketing.kind === "quoted" ? "Usable quote recorded" : "No usable quote recorded"]) }] }} />
           <div className="chip-row">
             <button
               className={horizon === "overdue" ? "on" : ""}
@@ -233,7 +200,7 @@ export default function RenewalsTab() {
               <span className="l">
                 {horizon === "overdue"
                   ? `premium past its renewal date · ${hero.accounts} ${hero.accounts === 1 ? "account" : "accounts"}`
-                  : `premium expiring in the next ${horizon} days · ${hero.accounts} ${hero.accounts === 1 ? "account" : "accounts"} · ${hero.unmarketed} not yet marketed`}
+                  : `premium expiring in the next ${horizon} days · ${hero.accounts} ${hero.accounts === 1 ? "account" : "accounts"} · ${hero.unmarketed} without usable quotes`}
               </span>
             </div>
             <div className="table-wrap">
@@ -247,8 +214,7 @@ export default function RenewalsTab() {
                     <SortTh label="Expires" colKey="renewal" sortKey={sortKey} dir={dir} onToggle={toggle} />
                     <SortTh label="Days" colKey="days" sortKey={sortKey} dir={dir} onToggle={toggle} />
                     <SortTh label="Premium" colKey="premium" sortKey={sortKey} dir={dir} onToggle={toggle} />
-                    <SortTh label="Marketing" colKey="marketing" sortKey={sortKey} dir={dir} onToggle={toggle} />
-                    <SortTh label="Submit by" colKey="submitBy" sortKey={sortKey} dir={dir} onToggle={toggle} />
+                    <SortTh label="Renewal quote" colKey="marketing" sortKey={sortKey} dir={dir} onToggle={toggle} />
                   </tr>
                 </thead>
                 <tbody>
@@ -282,13 +248,6 @@ export default function RenewalsTab() {
                       <td>
                         <MarketingBadge m={r.marketing} />
                       </td>
-                      <td>
-                        {r.marketing.kind === "missed"
-                          ? fmtDate(r.marketing.submitBy)
-                          : r.marketing.kind === "open" && r.marketing.submitBy
-                            ? fmtDate(r.marketing.submitBy)
-                            : "—"}
-                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -301,22 +260,6 @@ export default function RenewalsTab() {
   );
 }
 
-/** The Marketing column's pill. "Passed" (tasks all settled without a
- * quote — deliberate) is not "Not started" (nothing ever raised), even
- * though both are grey. */
 function MarketingBadge({ m }: { m: RenewalMarketing }) {
-  switch (m.kind) {
-    case "quoted":
-      return <Badge cls="green" label="Quoted ✓" />;
-    case "missed":
-      return <Badge cls="red" label="Window missed" />;
-    case "open":
-      return (
-        <Badge cls="blue" label={`${m.count} ${m.count === 1 ? "task" : "tasks"} open`} />
-      );
-    case "passed":
-      return <Badge cls="gray" label="Passed" />;
-    case "none":
-      return <Badge cls="gray" label="Not started" />;
-  }
+  return m.kind === "quoted" ? <Badge cls="green" label="Usable quote recorded" /> : <Badge cls="gray" label="No usable quote" />;
 }

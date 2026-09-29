@@ -120,6 +120,11 @@ export async function retireAccountPage(
       )
         continue;
     }
+    if (["TASK", "NOTIFICATION"].includes(kind)) {
+      const { dueAt: _dueAt, dueGroup: _dueGroup, workAt: _workAt, workKind: _workKind, ...historical } = old;
+      await save({ ...historical, version: old.version + 1, updatedAt: new Date().toISOString() }, old);
+      continue;
+    }
     const data =
       kind === 'TASK'
         ? {

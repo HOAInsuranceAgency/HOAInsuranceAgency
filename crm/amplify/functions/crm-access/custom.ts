@@ -1,8 +1,8 @@
 import { AccountAccess } from "./access";
 import { AccessDenied, id, object, type RecordData } from "./policy";
-const adminCommunication = new Set(["settings", "reportDelivery", "prepareLeadDeletion", "recoverReport", "saveTeamRouting", "saveEligibility", "saveSettings", "restartReconciliation", "restartConversationHistory", "validateConnection", "activate", "reviewOperation", "backfill"]);
-const accountOperations = new Set(["context", "accountSummary", "nextYearPreview", "saveCommercial", "prepareBusinessDraft", "nextYear", "initializeLead", "setResponsibilities", "reopenLead", "setLeadDisposition", "cancelAi", "linkConversation", "linkActivity", "archive", "addNote", "mergeTasks"]);
-const taskOperations = new Set(["deliveryOptions", "updateBlocker", "takeResponse", "delegateService", "requestProspectInformation"]);
+import { retiredTaskOperation } from "../../../../shared/retiredTaskOperations";
+const adminCommunication = new Set(["settings", "prepareLeadDeletion", "saveEligibility", "saveSettings", "restartReconciliation", "restartConversationHistory", "validateConnection", "activate", "reviewOperation", "backfill"]);
+const accountOperations = new Set(["context", "accountSummary", "saveCommercial", "prepareBusinessDraft", "initializeLead", "setResponsibilities", "reopenLead", "setLeadDisposition", "cancelAi", "linkConversation", "linkActivity", "archive", "addNote"]);
 async function filterAccountItems(access: AccountAccess, input: unknown) {
   const items = Array.isArray(input) ? input : [];
   await access.prefetchAccounts(items.map(value => id(object(value).accountId)));
@@ -17,6 +17,7 @@ async function communicationAccount(access: AccountAccess, key: string, expected
   return accountId;
 }
 export async function authorizeCustom(access: AccountAccess, field: string, args: RecordData) {
+  if (["communicationRead", "communicationWrite"].includes(field) && retiredTaskOperation(id(args.readOperation ?? args.operation), object(args.input))) throw new AccessDenied();
   if (access.admin) return;
   if (["crmAccess", "crmFile", "honeycombSubmissionSettings", "reserveCertificateNumber", "reserveInvoiceNumber"].includes(field)) return;
   if (["startLeadExtraction", "suggestFormFields", "startHoneycombSubmission"].includes(field)) {
@@ -39,9 +40,9 @@ export async function authorizeCustom(access: AccountAccess, field: string, args
   if (!["communicationRead", "communicationWrite"].includes(field)) throw new AccessDenied();
   const op = id(args.readOperation ?? args.operation), input = object(args.input);
   if (adminCommunication.has(op)) throw new AccessDenied();
-  if (["team", "teamRouting", "smsComposer", "myReport"].includes(op) && field === "communicationRead") return;
+  if (["team", "smsComposer"].includes(op) && field === "communicationRead") return;
   if (op === "work" && field === "communicationRead") {
-    if (!["TASK", "WORKFLOW", "NOTIFICATION", "TRIAGE"].includes(id(input.kind) || "TASK")) throw new AccessDenied();
+    if (!["WORKFLOW", "TRIAGE"].includes(id(input.kind))) throw new AccessDenied();
     return; // Returned pages are filtered by current assignment below.
   }
   if (op === "commercialTable") {
@@ -65,14 +66,6 @@ export async function authorizeCustom(access: AccountAccess, field: string, args
   if (input.conversationId) accountId ||= await communicationAccount(access, `front-link:${id(input.conversationId)}`);
   if (input.conversationId) await communicationAccount(access, `front-link:${id(input.conversationId)}`, accountId);
   if (op === "context" || op === "routeConversation") { if (!accountId) throw new AccessDenied(); return; }
-  if (taskOperations.has(op)) {
-    const account = await communicationAccount(access, id(input.taskId), accountId);
-    if (op === "delegateService") {
-      const recipient = new AccountAccess({ sub: id(input.specialistId) }, (model, key) => access.get(model, key));
-      await recipient.requireAccount(account);
-    }
-    return;
-  }
   if (op === "reviewIssue") { await communicationAccount(access, id(input.id), accountId); return; }
   if (["activity", "refreshSeen", "recordCallOutcome", "linkActivity"].includes(op)) {
     await communicationAccount(access, id(input.id), accountId);
@@ -93,14 +86,11 @@ export async function authorizeCustom(access: AccountAccess, field: string, args
     const record = await access.requireRecord(target, id(input.recordId));
     if (await access.root(target, record) !== accountId) throw new AccessDenied();
   }
-  if (op === "mergeTasks") {
-    if (!Array.isArray(input.tasks) || input.tasks.length > 10) throw new AccessDenied();
-    await Promise.all(input.tasks.map(task => communicationAccount(access, id(object(task).id), accountId)));
-  }
 }
 export async function filterCustom(access: AccountAccess, field: string, args: RecordData, original: unknown) {
   if (field !== "communicationRead") return original;
   const result = object(original), op = id(args.readOperation);
+  if (retiredTaskOperation(op, object(args.input))) throw new AccessDenied();
   if (access.admin) return op === "team" ? { ...result, actorId: access.actor } : original;
   if (op === "work") {
     return { ...result, items: await filterAccountItems(access, result.items) };
@@ -114,11 +104,6 @@ export async function filterCustom(access: AccountAccess, field: string, args: R
         ...(accountId ? { canAccessAccount: await new AccountAccess({ sub: userId }, (model, key) => access.get(model, key)).canAccount(accountId) } : {}) };
     }));
     return { ...result, actorId: access.actor, team };
-  }
-  if (op === "myReport") {
-    const report = object(result.report);
-    const items = await filterAccountItems(access, report.items);
-    return { ...result, report: { ...report, items, accountCount: new Set(items.map(i => object(i).accountId)).size } };
   }
   return original;
 }

@@ -1,3 +1,4 @@
+import { useIsAdmin } from "../lib/auth";
 import { useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
@@ -22,6 +23,7 @@ import { agencyDay } from '../../../shared/leadActionGuidance';
 import type { Quote } from '../lib/client';
 
 export default function AccountsList({ stage }: { stage: "LEAD" | "CLIENT" }) {
+  const isAdmin = useIsAdmin();
   const [search, setSearch] = useState("");
   const [salesperson, setSalesperson] = useState('');
   const navigate = useNavigate();
@@ -96,7 +98,7 @@ export default function AccountsList({ stage }: { stage: "LEAD" | "CLIENT" }) {
 
   const q = search.trim().toLowerCase();
   const visible = accounts.filter(a => (a.stage === stage || stage === 'LEAD' && a.stage === 'CLIENT' && forecastOf(a)?.unfinished)
-    && (!salesperson || commercial.data.entries[a.id]?.salespersonId === salesperson));
+    && (!isAdmin || !salesperson || commercial.data.entries[a.id]?.salespersonId === salesperson));
   const filtered = q
     ? visible.filter((a) =>
         [
@@ -157,8 +159,8 @@ export default function AccountsList({ stage }: { stage: "LEAD" | "CLIENT" }) {
             onChange={(e) => setSearch(e.target.value)}
           />
         </div>
-        <label className="field">Salesperson<select value={salesperson} onChange={e => setSalesperson(e.target.value)}><option value="">All salespeople</option>{commercial.data.team.map(t => <option key={t.userId} value={t.userId}>{t.name}</option>)}</select></label>
-        <ReportDownload disabled={loading || !!error || commercial.loading || !!commercial.error || stage === 'LEAD' && (quoteResource.loading || !!quoteResource.error)} report={{ title: label, filters: `Search: ${search || 'All'} · Salesperson: ${commercial.data.team.find(t => t.userId === salesperson)?.name ?? 'All'}`, sections: [{ title: label, columns: ['Name', 'Type', 'Contact', 'City', 'State', 'Salesperson', ...(stage === 'LEAD' ? [ 'Lead source', 'Website form', 'Estimated opportunity (USD)', 'Pending commission (USD)', 'Commission basis', 'Entered'] : []), 'Units', 'TIV (USD)', stage === 'LEAD' ? 'Incumbent expires' : 'Renewal'], rows: sorted.map(a => { const f = forecastOf(a), estimate = commercial.data.entries[a.id]?.plan.estimatedCents; return [a.name, a.type, contactOf(a)?.name, a.city, a.state, assignee(a, 'salespersonId'), ...(stage === 'LEAD' ? [ acquisitionLabel(a.leadSource, a.source), websiteFormLabel(a.source), estimate == null ? null : estimate / 100, f?.cents == null ? null : f.cents / 100, f?.label, a.createdAt?.slice(0,10)] : []), a.unitCount, a.totalInsuredValue, renewalOf(a)]; }) }] }} />
+        {isAdmin && <label className="field">Salesperson<select value={salesperson} onChange={e => setSalesperson(e.target.value)}><option value="">All salespeople</option>{commercial.data.team.map(t => <option key={t.userId} value={t.userId}>{t.name}</option>)}</select></label>}
+        <ReportDownload disabled={loading || !!error || commercial.loading || !!commercial.error || stage === 'LEAD' && (quoteResource.loading || !!quoteResource.error)} report={{ title: label, filters: `Search: ${search || 'All'}${isAdmin ? ` · Salesperson: ${commercial.data.team.find(t => t.userId === salesperson)?.name ?? 'All'}` : ''}`, sections: [{ title: label, columns: ['Name', 'Type', 'Contact', 'City', 'State', ...(isAdmin ? ['Salesperson'] : []), ...(stage === 'LEAD' ? [ 'Lead source', 'Website form', 'Estimated opportunity (USD)', 'Pending commission (USD)', 'Commission basis', 'Entered'] : []), 'Units', 'TIV (USD)', stage === 'LEAD' ? 'Incumbent expires' : 'Renewal'], rows: sorted.map(a => { const f = forecastOf(a), estimate = commercial.data.entries[a.id]?.plan.estimatedCents; return [a.name, a.type, contactOf(a)?.name, a.city, a.state, ...(isAdmin ? [assignee(a, 'salespersonId')] : []), ...(stage === 'LEAD' ? [ acquisitionLabel(a.leadSource, a.source), websiteFormLabel(a.source), estimate == null ? null : estimate / 100, f?.cents == null ? null : f.cents / 100, f?.label, a.createdAt?.slice(0,10)] : []), a.unitCount, a.totalInsuredValue, renewalOf(a)]; }) }] }} />
         {stage === "LEAD" && (
           <Link to="/leads/new">
             <button className="primary">+ New lead</button>
@@ -186,7 +188,7 @@ export default function AccountsList({ stage }: { stage: "LEAD" | "CLIENT" }) {
                   <SortTh label="Contact" colKey="contact" sortKey={sortKey} dir={dir} onToggle={toggle} />
                   <SortTh label="City" colKey="city" sortKey={sortKey} dir={dir} onToggle={toggle} />
                   <SortTh label="State" colKey="state" sortKey={sortKey} dir={dir} onToggle={toggle} />
-                  <SortTh label="Salesperson" colKey="salesperson" sortKey={sortKey} dir={dir} onToggle={toggle} />
+                  {isAdmin && <SortTh label="Salesperson" colKey="salesperson" sortKey={sortKey} dir={dir} onToggle={toggle} />}
                   {stage === 'LEAD' && <>{[['Lead source','source'],['Website form','form'],['Estimated opportunity','estimate'],['Pending commission','pending']].map(([label,key]) => <SortTh key={key} label={label} colKey={key} sortKey={sortKey} dir={dir} onToggle={toggle} />)}</>}
                   <SortTh label="Units" colKey="units" sortKey={sortKey} dir={dir} onToggle={toggle} />
                   <SortTh label="TIV" colKey="tiv" sortKey={sortKey} dir={dir} onToggle={toggle} />
@@ -226,7 +228,7 @@ export default function AccountsList({ stage }: { stage: "LEAD" | "CLIENT" }) {
                         )}
                       </td>
                       <td>{a.city || '—'}</td><td>{a.state || '—'}</td>
-                      <td>{commercial.loading ? 'Loading…' : commercial.error ? 'Unavailable' : assignee(a, 'salespersonId')}</td>
+                      {isAdmin && <td>{commercial.loading ? 'Loading…' : commercial.error ? 'Unavailable' : assignee(a, 'salespersonId')}</td>}
                       {stage === 'LEAD' && <><td>{acquisitionLabel(a.leadSource, a.source)}</td><td>{websiteFormLabel(a.source)}</td><td>{commercial.data.entries[a.id] && !commercial.error ? <OpportunityEstimate plan={commercial.data.entries[a.id].plan} onSaved={plan => commercial.setData(data => ({ ...data, entries: { ...data.entries, [a.id]: { ...data.entries[a.id], plan } } }))} /> : commercial.error ? 'Unavailable' : 'Loading…'}</td><td>{commercial.loading || quoteResource.loading ? 'Loading…' : commercial.error || quoteResource.error ? 'Unavailable' : <><strong>{forecastOf(a)?.cents == null ? '—' : formatCommission(forecastOf(a)!.cents!)}</strong><div className="muted small">{forecastOf(a)?.label}</div></>}</td></>}
                       <td>{fmtNum(a.unitCount)}</td>
                       <td>{fmtMoney(a.totalInsuredValue)}</td>
