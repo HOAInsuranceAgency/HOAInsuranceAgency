@@ -200,8 +200,8 @@ export default function NewLead() {
       <div className="card">
         <div className="form-grid">
           <div className="field">
-            <label>Account type</label>
-            <select value={form.type} onChange={(e) => patch(f => ({ ...f, type: e.target.value, propertyType: e.target.value === "PERSONAL" ? "INDIVIDUAL_UNIT_OWNER" : "" }))}>
+            <label htmlFor="new-lead-account-type">Account type</label>
+            <select id="new-lead-account-type" value={form.type} onChange={(e) => setF("type", e.target.value)}>
               {ACCOUNT_TYPE_OPTIONS.map((o) => (
                 <option key={o.value} value={o.value}>
                   {o.label}
@@ -215,11 +215,11 @@ export default function NewLead() {
               <option value="">Choose property type</option>
               {PROPERTY_TYPES.map(value => <option key={value} value={value}>{PROPERTY_TYPE_LABELS[value]}</option>)}
             </select>
-            <span className="muted small">Choose only when the property group is confirmed.</span>
+            <span className="muted small">{isPersonal ? "Personal (HO-6) accounts use Individual unit owner unless you choose another property type." : "Choose only when the property group is confirmed."}</span>
           </div>
           <div className="field">
-            <label>Name (association / insured) *</label>
-            <input value={form.name} onChange={(e) => setF("name", e.target.value)} />
+            <label htmlFor="new-lead-name">Name (association / insured) *</label>
+            <input id="new-lead-name" value={form.name} onChange={(e) => setF("name", e.target.value)} />
           </div>
           <div className="field">
             <label htmlFor="new-lead-source">Lead source *</label>

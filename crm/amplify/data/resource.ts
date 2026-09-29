@@ -2018,7 +2018,7 @@ const schema = a
     crmAccess: a.query().returns(a.json()).authorization(allow => [allow.authenticated()])
       .handler(a.handler.function(crmAccess)),
     crmFile: a.mutation()
-      .arguments({ operation: a.string().required(), path: a.string().required(), contentType: a.string(), nextToken: a.string(), sizeBytes: a.integer() })
+      .arguments({ operation: a.string().required(), path: a.string().required(), contentType: a.string(), nextToken: a.string(), sizeBytes: a.integer(), downloadAs: a.string(), validateObjectExistence: a.boolean() })
       .returns(a.json()).authorization(allow => [allow.authenticated()])
       .handler(a.handler.function(crmAccess)),
 

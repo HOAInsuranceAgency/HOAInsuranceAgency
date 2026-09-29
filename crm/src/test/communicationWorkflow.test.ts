@@ -1,12 +1,13 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import type { Communication, IntegrationConfig, LeadTask } from "../../../shared/leadWorkflow";
 const h = vi.hoisted(() => ({ records: new Map<string, Record<string, any>>(), transactions: [] as any[][], inFlight: 0, maxInFlight: 0, fail: false, failAt: undefined as number | undefined, writeError: undefined as Error | undefined, accountError: false, userEnabled: true,
-  front: vi.fn(), dialpad: vi.fn(), update: vi.fn(), accountList: vi.fn(), c: {} as IntegrationConfig }));
+  reads: [] as string[], batch: vi.fn(), front: vi.fn(), dialpad: vi.fn(), update: vi.fn(), accountList: vi.fn(), c: {} as IntegrationConfig }));
 vi.mock("@aws-sdk/lib-dynamodb", async importOriginal => {
   const actual = await importOriginal<typeof import("@aws-sdk/lib-dynamodb")>();
   return { ...actual, DynamoDBDocumentClient: { from: () => ({ send: async (command: any) => {
     const p = command.input;
-    if (command.constructor.name === "GetCommand") return { Item: h.records.get(`${p.TableName}:${p.Key.id}`) };
+    if (command.constructor.name === "GetCommand") { h.reads.push(p.Key.id); return { Item: h.records.get(`${p.TableName}:${p.Key.id}`) }; }
+    if (command.constructor.name === "BatchGetCommand") return h.batch(p);
     if (command.constructor.name === "QueryCommand") {
       const v = p.ExpressionAttributeValues;
       let items = [...h.records.entries()].filter(([k,r]) => k.startsWith(`${p.TableName}:`) && r[p.ExpressionAttributeNames["#k"]] === v[":k"] && (!v[":prefix"] || r.accountSort?.startsWith(v[":prefix"])) && (!v[":now"] || r.dueAt <= v[":now"])).map(([,r]) => r);
@@ -96,6 +97,12 @@ async function seedLegacyPromise(input: any, actor: string) {
 }
 beforeEach(async () => {
   vi.useFakeTimers(); vi.setSystemTime(NOW); h.records.clear(); h.transactions.length = 0; h.inFlight = 0; h.maxInFlight = 0; h.fail = false; h.failAt = undefined; h.accountError = false; h.userEnabled = true; h.writeError = undefined; vi.clearAllMocks();
+  h.reads.length = 0;
+  h.batch.mockReset().mockImplementation((p: { RequestItems: Record<string, { Keys: { id: string }[] }> }) => ({
+    Responses: Object.fromEntries(Object.entries(p.RequestItems).map(([name, request]) => [name,
+      request.Keys.map(key => h.records.get(`${name}:${key.id}`)).filter(Boolean).map(item => structuredClone(item)).reverse(),
+    ])),
+  }));
   Object.assign(process.env, { COMMUNICATION_TABLE: "comms", ACTIVITY_TABLE: "Activity", ACCOUNT_TABLE: "Account", CONTACT_TABLE: "Contact", PRIOR_CARRIER_TABLE: "PriorCarrier", LEAD_REPLY_TABLE: "LeadReply", USER_POOL_ID: "pool", CRM_BASE_URL: "https://crm.example.test", QUOTE_TABLE: "Quote", CERTIFICATE_TABLE: "Certificate", DOCUMENT_TABLE: "Document" });
   h.c = { frontCompanyId: "cmp_a", environment: "main", defaultUserId: "brian", frontSender: "sales@protectmyhoa.com", frontInboxId: "inb_a", frontChannelId: "cha_a", holidays: [], paused: false, activatedAt: "2026-09-01T00:00:00Z", allowedInboxIds: [], testRecipients: [], dialpadNumbers: ["+15082332261", "+16175550123"], sharedSmsNumber: "+15082332261", version: 1 };
   await save(row("ELIGIBILITY", "eligibility:brian", { userId: "brian", name: "Brian Cole", email: "brian@example.com", salesperson: true, champion: true, enabled: true }));
@@ -2173,18 +2180,16 @@ describe("assignment listing index rollout", () => {
     await migrateAssignmentIndex({ budgetMs: 0 });
     expect(record("migration:assignment-index:v1")).toBeUndefined();
     expect(record(original.id).assignedSalespersonId).toBeUndefined();
-    const store = await import("../../amplify/functions/communications/store"), read = store.get;
-    let moved = false;
-    const spy = vi.spyOn(store, "get").mockImplementation(async key => {
-      const current = await read(key);
-      if (key === original.id && !moved) {
-        moved = true;
-        h.records.set(`comms:${key}`, row("WORKFLOW", key, { ...original.data, salespersonId: "new-owner" }, { previous: original, accountId: "a1", dueAt: "2026-10-01T13:00:00.000Z" }));
-      }
+    const read = h.batch.getMockImplementation()!;
+    h.batch.mockImplementationOnce(input => {
+      const current = read(input);
+      h.records.set(`comms:${original.id}`, row("WORKFLOW", original.id, { ...original.data, salespersonId: "new-owner" }, { previous: original, accountId: "a1", dueAt: "2026-10-01T13:00:00.000Z" }));
       return current;
     });
-    try { await migrateAssignmentIndex(); } finally { spy.mockRestore(); }
+    h.reads.length = 0;
+    await migrateAssignmentIndex();
     expect(record(original.id)).toMatchObject({ assignedSalespersonId: "new-owner", data: { salespersonId: "new-owner" }, dueAt: "2026-10-01T13:00:00.000Z" });
+    expect(h.reads.filter(id => id.startsWith("workflow:"))).toEqual([original.id]);
     expect(record("migration:assignment-index:v1").data.complete).toBe(true);
   });
   it("backfills bounded pages without changing account ownership or deadlines", async () => {
@@ -2197,11 +2202,15 @@ describe("assignment listing index rollout", () => {
       h.records.set(`comms:${legacy.id}`, legacy);
     }
     const { migrateAssignmentIndex } = await import("../../amplify/functions/communications/assignmentIndex");
+    h.reads.length = 0;
     await migrateAssignmentIndex({ maxPages: 1 });
     expect(record("migration:assignment-index:v1").data).toMatchObject({ complete: false, processed: 100 });
     expect(entries("WORKFLOW").filter(w => w.assignedSalespersonId)).toHaveLength(100);
     await migrateAssignmentIndex();
     expect(record("migration:assignment-index:v1").data).toMatchObject({ complete: true, processed: 252 });
+    expect(h.batch.mock.calls.map(([input]) => input.RequestItems.comms.Keys.length)).toEqual([100, 100, 52]);
+    expect(h.batch.mock.calls.every(([input]) => input.RequestItems.comms.ConsistentRead === true)).toBe(true);
+    expect(h.reads.filter(id => id.startsWith("workflow:"))).toEqual([]);
     expect(h.maxInFlight).toBeGreaterThan(1); expect(h.maxInFlight).toBeLessThanOrEqual(25);
     for (const w of entries("WORKFLOW")) {
       expect(w.assignedSalespersonId).toBe(base.data.salespersonId);
@@ -2210,6 +2219,62 @@ describe("assignment listing index rollout", () => {
     }
     const before = structuredClone(entries("WORKFLOW"));
     await migrateAssignmentIndex(); expect(entries("WORKFLOW")).toEqual(before);
+  });
+  it("retries only unprocessed rows and handles unordered or deleted batch results", async () => {
+    const original = await lead(); delete record(original.id).assignedSalespersonId;
+    const other = row("WORKFLOW", "workflow:a2", { ...original.data, accountId: "a2", salespersonId: "other-owner" }, { accountId: "a2", dueAt: "2026-10-02T13:00:00.000Z" });
+    delete other.assignedSalespersonId;
+    h.records.set(`comms:${other.id}`, other);
+    h.records.set("comms:workflow:deleted", { ...other, id: "workflow:deleted" });
+    const read = h.batch.getMockImplementation()!;
+    h.batch.mockImplementationOnce(input => {
+      h.records.delete("comms:workflow:deleted");
+      const result = read(input);
+      return { Responses: { comms: result.Responses.comms.filter((item: { id: string }) => item.id !== original.id) },
+        UnprocessedKeys: { comms: { Keys: [{ id: original.id }] } } };
+    }).mockImplementationOnce(input => {
+      expect(record("migration:assignment-index:v1")).toBeUndefined();
+      expect(record(other.id).assignedSalespersonId).toBeUndefined();
+      return read(input);
+    });
+    const { migrateAssignmentIndex } = await import("../../amplify/functions/communications/assignmentIndex");
+    const migration = migrateAssignmentIndex();
+    await vi.runAllTimersAsync(); await migration;
+    expect(h.batch.mock.calls.map(([input]) => input.RequestItems.comms.Keys)).toEqual([
+      [{ id: original.id }, { id: other.id }, { id: "workflow:deleted" }], [{ id: original.id }],
+    ]);
+    expect(h.batch.mock.calls.every(([input]) => input.RequestItems.comms.ConsistentRead === true)).toBe(true);
+    expect(record(original.id).assignedSalespersonId).toBe(original.data.salespersonId);
+    expect(record(other.id)).toMatchObject({ assignedSalespersonId: "other-owner", dueAt: "2026-10-02T13:00:00.000Z" });
+    expect(record("workflow:deleted")).toBeUndefined();
+    expect(record("migration:assignment-index:v1").data).toMatchObject({ complete: true, processed: 3 });
+  });
+  it("bounds unprocessed-key retries and resumes the incomplete page on the next run", async () => {
+    const original = await lead(); delete record(original.id).assignedSalespersonId;
+    const read = h.batch.getMockImplementation()!;
+    h.batch.mockImplementation(input => ({ UnprocessedKeys: input.RequestItems }));
+    const { migrateAssignmentIndex } = await import("../../amplify/functions/communications/assignmentIndex");
+    const failure = expect(migrateAssignmentIndex()).rejects.toThrow("batch read remains incomplete");
+    await vi.runAllTimersAsync(); await failure;
+    expect(h.batch).toHaveBeenCalledTimes(4);
+    expect(record("migration:assignment-index:v1")).toBeUndefined();
+    expect(record(original.id).assignedSalespersonId).toBeUndefined();
+    h.batch.mockImplementation(read);
+    await migrateAssignmentIndex();
+    expect(record(original.id).assignedSalespersonId).toBe(original.data.salespersonId);
+    expect(record("migration:assignment-index:v1").data).toMatchObject({ complete: true, processed: 1 });
+  });
+  it("yields without writes or a checkpoint when retrying a batch would exceed the time budget", async () => {
+    const original = await lead(); delete record(original.id).assignedSalespersonId;
+    h.batch.mockImplementationOnce(input => ({ UnprocessedKeys: input.RequestItems }));
+    const { migrateAssignmentIndex } = await import("../../amplify/functions/communications/assignmentIndex");
+    await migrateAssignmentIndex({ budgetMs: 20 });
+    expect(h.batch).toHaveBeenCalledTimes(1);
+    expect(record("migration:assignment-index:v1")).toBeUndefined();
+    expect(record(original.id).assignedSalespersonId).toBeUndefined();
+    await migrateAssignmentIndex();
+    expect(record(original.id).assignedSalespersonId).toBe(original.data.salespersonId);
+    expect(record("migration:assignment-index:v1").data).toMatchObject({ complete: true, processed: 1 });
   });
   it("updates the listing index in the same write as assignment changes", async () => {
     const original = await lead();

@@ -1,4 +1,5 @@
 import { beforeEach, expect, it, vi } from "vitest";
+import { HeadObjectCommand, ListObjectsV2Command } from "@aws-sdk/client-s3";
 const h = vi.hoisted(() => ({ records: new Map<string, Record<string, unknown>>(), db: vi.fn(), s3: vi.fn(), sign: vi.fn() }));
 vi.mock("@aws-sdk/lib-dynamodb", async load => ({ ...(await load<typeof import("@aws-sdk/lib-dynamodb")>()), DynamoDBDocumentClient: { from: () => ({ send: h.db }) } }));
 vi.mock("@aws-sdk/client-s3", async load => ({ ...(await load<typeof import("@aws-sdk/client-s3")>()), S3Client: class { send = h.s3; } }));
@@ -126,7 +127,7 @@ it("uses accountId for models with a natural key and returns the preceding pipel
   expect(h.db.mock.calls.some(([command]) => command.input.TableName === "gl" && command.input.Key.accountId === "a")).toBe(true);
 });
 it("blocks direct file calls for another account before signing or deleting anything", async () => {
-  for (const operation of ["read", "write", "delete"]) await expect(handler({ info: { fieldName: "crmFile" }, identity, arguments: { operation, path: "generated/b/form.pdf", sizeBytes: 10 } })).rejects.toThrow("not available");
+  for (const operation of ["read", "write", "delete"]) await expect(handler({ fieldName: "crmFile", identity, arguments: { operation, path: "generated/b/form.pdf", sizeBytes: 10, validateObjectExistence: true, downloadAs: "private.pdf" } })).rejects.toThrow("not available");
   expect(h.sign).not.toHaveBeenCalled(); expect(h.s3).not.toHaveBeenCalled();
 });
 it("signs permitted uploads with a bounded lifetime and exact content length", async () => {
@@ -146,10 +147,56 @@ it("never signs or deletes another person's signature or a protected finance agr
   for (const operation of ["write", "delete"]) await expect(handler({ info: { fieldName: "crmFile" }, identity, arguments: { operation, path: "generated/pf/loan/premium-finance-agreement.pdf", sizeBytes: 10 } })).rejects.toThrow("not available");
   expect(h.sign).not.toHaveBeenCalled(); expect(h.s3).not.toHaveBeenCalled();
 });
-it("reserves raw bucket listings for administrator templates", async () => {
-  await expect(handler({ info: { fieldName: "crmFile" }, identity, arguments: { operation: "list", path: "templates/" } })).rejects.toThrow("not available");
-  await expect(handler({ info: { fieldName: "crmFile" }, identity: { sub: "admin", groups: ["ADMIN"] }, arguments: { operation: "list", path: "documents/" } })).rejects.toThrow("not available");
+it("accepts the top-level field name emitted by Amplify for access and file operations", async () => {
+  await expect(handler({ fieldName: "crmAccess", identity })).resolves.toEqual({ actorId: "alice", admin: false, salespersonIds: ["alice"] });
+  await handler({ fieldName: "crmFile", identity, arguments: { operation: "read", path: "templates/acord25.pdf" } });
+  expect(h.sign.mock.calls[0][1].input).toEqual({ Bucket: "bucket", Key: "templates/acord25.pdf", ResponseContentDisposition: undefined });
   expect(h.s3).not.toHaveBeenCalled();
+});
+it("allows signed-in staff to list template pages without granting other bucket listings", async () => {
+  h.s3.mockResolvedValue({ Contents: [{ Key: "templates/acord25.pdf", Size: 123, LastModified: new Date("2026-09-28T00:00:00Z") }], NextContinuationToken: "next-page" });
+  await expect(handler({ fieldName: "crmFile", identity, arguments: { operation: "list", path: "templates/", nextToken: "first-page" } })).resolves.toEqual({ items: [{ path: "templates/acord25.pdf", size: 123, lastModified: "2026-09-28T00:00:00.000Z" }], nextToken: "next-page" });
+  expect(h.s3.mock.calls[0][0]).toBeInstanceOf(ListObjectsV2Command);
+  expect(h.s3.mock.calls[0][0].input).toEqual({ Bucket: "bucket", Prefix: "templates/", ContinuationToken: "first-page", MaxKeys: 100 });
+});
+it("rejects anonymous template listings and other prefixes for both staff and administrators", async () => {
+  await expect(handler({ fieldName: "crmFile", arguments: { operation: "list", path: "templates/" } })).rejects.toThrow("not available");
+  for (const user of [identity, { sub: "admin", groups: ["ADMIN"] }]) {
+    for (const path of ["", "documents/", "generated/a/", "templates/../", "templates"]) {
+      await expect(handler({ fieldName: "crmFile", identity: user, arguments: { operation: "list", path } })).rejects.toThrow("not available");
+    }
+  }
+  expect(h.s3).not.toHaveBeenCalled();
+});
+it("keeps template uploads and deletion administrator-only", async () => {
+  for (const operation of ["write", "delete"]) await expect(handler({ fieldName: "crmFile", identity, arguments: { operation, path: "templates/acord25.pdf", sizeBytes: 10 } })).rejects.toThrow("not available");
+  expect(h.s3).not.toHaveBeenCalled(); expect(h.sign).not.toHaveBeenCalled();
+  await handler({ fieldName: "crmFile", identity: { sub: "admin", groups: ["ADMIN"] }, arguments: { operation: "write", path: "templates/acord25.pdf", sizeBytes: 10 } });
+  expect(h.sign).toHaveBeenCalledOnce();
+  await handler({ fieldName: "crmFile", identity: { sub: "admin", groups: ["ADMIN"] }, arguments: { operation: "delete", path: "templates/acord25.pdf" } });
+  expect(h.s3).toHaveBeenCalledOnce();
+});
+it("checks an authorized object's existence before signing its sanitized download response", async () => {
+  h.s3.mockImplementation(async command => {
+    expect(command).toBeInstanceOf(HeadObjectCommand);
+    expect(command.input).toEqual({ Bucket: "bucket", Key: "documents/ACCOUNT/a/doc/file.pdf" });
+    expect(h.sign).not.toHaveBeenCalled();
+    return {};
+  });
+  await handler({ fieldName: "crmFile", identity, arguments: { operation: "read", path: "documents/ACCOUNT/a/doc/file.pdf", validateObjectExistence: true, downloadAs: 'budget"\r\n/2026\\.pdf' } });
+  expect(h.s3).toHaveBeenCalledOnce();
+  expect(h.sign.mock.calls[0][1].input).toEqual({ Bucket: "bucket", Key: "documents/ACCOUNT/a/doc/file.pdf", ResponseContentDisposition: 'attachment; filename="budget_2026.pdf"' });
+  expect(h.sign.mock.calls[0][2].expiresIn).toBe(60);
+});
+it.each(["NotFound", "ServiceUnavailable"])("does not return a signed download when the existence check fails with %s", async name => {
+  h.s3.mockRejectedValue(Object.assign(new Error(name), { name }));
+  await expect(handler({ fieldName: "crmFile", identity, arguments: { operation: "read", path: "generated/a/missing.pdf", validateObjectExistence: true } })).rejects.toThrow(name);
+  expect(h.s3).toHaveBeenCalledOnce(); expect(h.sign).not.toHaveBeenCalled();
+});
+it("skips HEAD and disposition overrides for normal previews", async () => {
+  await handler({ fieldName: "crmFile", identity, arguments: { operation: "read", path: "generated/a/form.pdf", validateObjectExistence: false } });
+  expect(h.s3).not.toHaveBeenCalled();
+  expect(h.sign.mock.calls[0][1].input.ResponseContentDisposition).toBeUndefined();
 });
 it("applies custom before/after guards to the real handler event shape", async () => {
   await expect(handler({ mode: "custom-pre", field: "startHoneycombSubmission", identity, arguments: { accountId: "b" } })).rejects.toThrow("not available");
