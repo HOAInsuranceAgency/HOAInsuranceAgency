@@ -1475,3 +1475,81 @@ describe("CRM task retirement", () => {
     await expect(handler()).rejects.toThrow("Communication processing");
   });
 });
+
+
+describe("batched issue-source visibility", () => {
+  const sourceBatches = () => h.batch.mock.calls.map(([input]) => input.RequestItems.comms);
+  it("deduplicates sources within each diagnostics page and preserves pagination", async () => {
+    await save(row("COMMUNICATION", "shared-source", { status: "FAILED" }));
+    for (let i = 0; i < 60; i++) await save(row("ISSUE", `issue:delivery-${i}`, { sourceId: "shared-source" }, { accountId: "a1" }));
+    h.reads.length = 0; h.batch.mockClear();
+    const { workPage } = await import("../../amplify/functions/communications/work");
+    const first = await workPage({ kind: "ISSUE", actor: "brian" });
+    expect(first.items).toHaveLength(50); expect(first.nextToken).toBeTruthy();
+    const second = await workPage({ kind: "ISSUE", actor: "brian", nextToken: first.nextToken });
+    expect(second.items).toHaveLength(10); expect(second.nextToken).toBeUndefined();
+    expect(new Set([...first.items, ...second.items].map(r => r.id)).size).toBe(60);
+    expect(sourceBatches().map(batch => batch.Keys)).toEqual([[{ id: "shared-source" }], [{ id: "shared-source" }]]);
+    expect(sourceBatches().every(batch => batch.ConsistentRead === true)).toBe(true);
+    expect(h.reads).not.toContain("shared-source");
+  });
+  it.each(["context", "archive"])("chunks more than 100 unique sources for account %s without individual reads", async view => {
+    await lead(); await save(row("HEALTH", "health:worker", { at: NOW, lagging: false }));
+    const ids = Array.from({ length: 125 }, (_, i) => `historical-source-${i}`);
+    for (const id of ids) {
+      await seedLegacyPromise({ id, accountId: "a1", dueAt: NOW }, "brian");
+      await save(row("ISSUE", `issue:${id}`, { sourceId: id }, { accountId: "a1" }));
+    }
+    await save(row("ISSUE", "issue:duplicate", { sourceId: ids[0] }, { accountId: "a1" }));
+    await save(row("ISSUE", "issue:resolved", { sourceId: "unneeded-resolved", resolved: true }, { accountId: "a1" }));
+    await save(row("ISSUE", "issue:task:retired", { sourceId: "unneeded-retired" }, { accountId: "a1" }));
+    h.reads.length = 0; h.batch.mockClear();
+    if (view === "archive") expect(await archiveAllowed("a1", "cnv_a")).toBe(true);
+    else {
+      const { handler } = await import("../../amplify/functions/communications/handler");
+      const context = await handler({ arguments: { readOperation: "context", input: { accountId: "a1" } }, identity: { sub: "brian", groups: [] } as never });
+      expect(context).toMatchObject({ ok: true, issues: [] });
+    }
+    expect(sourceBatches().map(batch => batch.Keys.length)).toEqual([100, 25]);
+    expect(new Set(sourceBatches().flatMap(batch => batch.Keys.map((key: { id: string }) => key.id)))).toEqual(new Set(ids));
+    expect(sourceBatches().every(batch => batch.ConsistentRead === true)).toBe(true);
+    expect(h.reads.some(id => ids.includes(id) || id.startsWith("unneeded-"))).toBe(false);
+  });
+  it("keeps missing sources and real delivery warnings visible without aliasing absent IDs", async () => {
+    const { currentCommunicationIssues } = await import("../../amplify/functions/communications/retiredTasks");
+    const { batchGet } = await import("../../amplify/functions/communications/store");
+    for (const [id, kind, data] of [
+      ["undefined", "TASK", {}], ["notice", "NOTIFICATION", {}], ["edition", "REPORT_EDITION", {}],
+      ["old-operation", "OPERATION", { type: "COMMENT", reminder: { taskId: "old" } }],
+      ["real-operation", "OPERATION", { type: "COMMENT", state: "UNKNOWN" }],
+      ["real-message", "COMMUNICATION", { status: "FAILED" }],
+    ] as const) h.records.set(`comms:${id}`, row(kind, id, data));
+    const sources = [undefined, null, 7, "", "missing", "undefined", "notice", "edition", "old-operation", "real-operation", "real-message"];
+    const items = sources.map((sourceId, i) => ({ id: `issue:source-${i}`, data: { sourceId } }));
+    expect(await currentCommunicationIssues(items, batchGet)).toEqual([true, true, true, true, true, false, false, false, false, true, true]);
+    expect(sourceBatches().map(batch => batch.Keys.length)).toEqual([7]);
+    h.batch.mockClear();
+    expect(await currentCommunicationIssues([{ id: "issue:task:old", data: { sourceId: "old" } }, { id: "issue:resolved", data: { resolved: true, sourceId: "source" } }], batchGet)).toEqual([false, false]);
+    expect(h.batch).not.toHaveBeenCalled();
+  });
+  it("retries unprocessed sources before deciding which warnings to show", async () => {
+    const { workPage } = await import("../../amplify/functions/communications/work");
+    await seedLegacyPromise({ id: "historical-source", accountId: "a1", dueAt: NOW }, "brian");
+    await save(row("ISSUE", "issue:custom", { sourceId: "historical-source" }, { accountId: "a1" }));
+    h.batch.mockImplementationOnce(input => ({ UnprocessedKeys: input.RequestItems }));
+    const assertion = expect(workPage({ kind: "ISSUE", actor: "brian" })).resolves.toMatchObject({ items: [], nextToken: undefined });
+    await vi.runAllTimersAsync(); await assertion;
+    expect(sourceBatches().map(batch => batch.Keys)).toEqual([[{ id: "historical-source" }], [{ id: "historical-source" }]]);
+    expect(sourceBatches().every(batch => batch.ConsistentRead === true)).toBe(true);
+  });
+  it.each(["outage", "incomplete"])("does not authorize archive when a source batch is %s", async failure => {
+    await lead(); await save(row("HEALTH", "health:worker", { at: NOW, lagging: false }));
+    await save(row("ISSUE", "issue:delivery", { sourceId: "uncertain-delivery" }, { accountId: "a1" }));
+    if (failure === "outage") h.batch.mockRejectedValue(new Error("Database unavailable"));
+    else h.batch.mockImplementation(input => ({ UnprocessedKeys: input.RequestItems }));
+    const assertion = expect(archiveAllowed("a1", "cnv_a")).rejects.toThrow(failure === "outage" ? "Database unavailable" : "batch read remains incomplete");
+    await vi.runAllTimersAsync(); await assertion;
+    expect(h.front).not.toHaveBeenCalled();
+    expect(sourceBatches()).toHaveLength(failure === "outage" ? 1 : 4);
+  });
+});

@@ -1,6 +1,6 @@
 import { salespersonWorkflow } from "../../../../shared/salespersonOwnership";
 import { retiredTaskOperation } from "../../../../shared/retiredTaskOperations";
-import { tasksRemoved, currentCommunicationIssue } from "./retiredTasks";
+import { tasksRemoved, currentCommunicationIssues } from "./retiredTasks";
 import { isLeadSource } from "../../../../shared/leadSource";
 import { accountPropertyType, normalizePropertyType } from "../../../../shared/propertyType";
 import { historyStopped, restartHistory, type HistoryJob } from "./history";
@@ -10,7 +10,7 @@ import { randomUUID } from "node:crypto";
 import type { AppSyncIdentityCognito } from "aws-lambda";
 import type { Communication, IntegrationConfig, LeadWorkflow, TeamEligibility } from "../../../../shared/leadWorkflow";
 import { normalizePhone } from "../../../../shared/leadWorkflow";
-import { get, row, query, save, put, commit, audit, conflict, check, hash } from "./store";
+import { batchGet, get, row, query, save, put, commit, audit, conflict, check, hash } from "./store";
 import { authorizedQuoteTerms } from "../../../../shared/quoteAuthorization";
 import { validCalendarDate } from "../../../../shared/renewalPolicy";
 import { config, credentials, saveCredentials, saveConfig, type Credentials } from "./config";
@@ -100,7 +100,7 @@ export const handler = async (event: { arguments: { operation?: string; readOper
           const age = typeof value === "string" ? Date.now() - Date.parse(value) : NaN;
           return age >= 0 && age <= maxAge;
         };
-        const issueVisibility = await Promise.all(issues.map(r => currentCommunicationIssue(r, get)));
+        const issueVisibility = await currentCommunicationIssues(issues, batchGet);
         const trackingHealthy = !!settings.activatedAt && !settings.paused
           && health?.data.lagging === false && recent(health.data.at, 300_000)
           && Array.isArray(monitor?.data.errors) && monitor.data.errors.length === 0 && recent(monitor.data.at, 600_000)

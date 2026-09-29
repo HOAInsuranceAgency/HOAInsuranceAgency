@@ -1,5 +1,5 @@
-import { tasksRemoved, currentCommunicationIssue, retiredReminderOperation } from "./retiredTasks";
-import { get, query, type Row } from "./store";
+import { tasksRemoved, currentCommunicationIssues, retiredReminderOperation } from "./retiredTasks";
+import { batchGet, get, query, type Row } from "./store";
 import type { LeadWorkflow } from "../../../../shared/leadWorkflow";
 
 /** Fill a page of matching work, not one page of arbitrary global records. */
@@ -13,7 +13,7 @@ export async function workPage(input: { kind: string; view?: string; responsibil
   for (let pageNumber = 0; pageNumber < 8; pageNumber++) {
     const page = await query("work", input.kind, nextToken, 50 - items.length);
     if (input.mine) await Promise.all([...new Set(page.items.flatMap(r => r.accountId && !owners.has(r.accountId) ? [r.accountId] : []))].map(async id => owners.set(id, (await get<LeadWorkflow>(`workflow:${id}`))?.data)));
-    const issueVisibility = input.kind === "ISSUE" ? await Promise.all(page.items.map(r => currentCommunicationIssue(r, get))) : undefined;
+    const issueVisibility = input.kind === "ISSUE" ? await currentCommunicationIssues(page.items, batchGet) : undefined;
     for (const [index, r] of page.items.entries()) {
       if (issueVisibility && !issueVisibility[index]) continue;
       const t = r.data;

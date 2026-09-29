@@ -1,6 +1,6 @@
-import { currentCommunicationIssue, retiredReminderOperation } from "./retiredTasks";
+import { currentCommunicationIssues, retiredReminderOperation } from "./retiredTasks";
 import { type Communication } from "../../../../shared/leadWorkflow";
-import { get } from "./store";
+import { batchGet, get } from "./store";
 import { config } from "./config";
 import { accountRows, ensureWorkflow, enabledUser } from "./workflow";
 import { front, permittedConversation, type FrontMessage } from "./providers";
@@ -15,7 +15,7 @@ export async function archiveAllowed(accountId: string, conversationId: string) 
   const pending = await accountRows<{ state: string; type: string }>(accountId, "OPERATION");
   const sendUncertain = pending.some(o => !retiredReminderOperation(o.id, o.data) && ["EMAIL", "IMPORT", "COMMENT"].includes(o.data.type) && !["CONFIRMED", "SUPPRESSED"].includes(o.data.state));
   const syncGap = await get<{ resolved?: boolean }>("issue:sync-gap");
-  const relevantIssues = await Promise.all(issues.map(item => currentCommunicationIssue(item, get)));
+  const relevantIssues = await currentCommunicationIssues(issues, batchGet);
   const unhealthy = sendUncertain || !!(syncGap && !syncGap.data.resolved) || !health || health.data.lagging || Date.now() - Date.parse(health.data.at) > 300_000 || relevantIssues.some(Boolean);
   const unresolved = activity.some(r => !r.data.resolved && (r.data.direction === "INBOUND" && r.data.classification !== "AUTOMATIC" || r.data.channel === "CALL" && !r.data.outcome));
   if (!wf.data.salespersonId || wf.data.assignmentIssue || unresolved || unhealthy) return false;
