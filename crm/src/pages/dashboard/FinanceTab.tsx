@@ -14,57 +14,57 @@ import { useSort, SortTh } from "../../lib/useSort";
 import { useAsyncResource } from "../../lib/useAsyncResource";
 import {
   invoiceAging,
-  pfInstallmentsDue,
-  receivables,
-  sumInWindow,
   type AgingBucket,
 } from "../../lib/dashboardStats";
 import { localToday, TabFrame, Tile } from "./common";
+import { loadCommercial, type CommercialData } from "../../lib/commercial";
+import { salespersonKey, salespersonSeries } from "../../lib/dashboardPeople";
+import { interestIncomeBySalesperson, hasFinancingReceivable, nonBilledReceivables, outstandingPrincipal } from "../../lib/dashboardFinance";
+import { StackedBars } from "../../components/StackedBars";
 import type { Schema } from "../../../amplify/data/resource";
 
 type InvoiceRow = Schema["Invoice"]["type"];
 type PfLoanRow = Schema["PfLoan"]["type"];
-type PfNoticeRow = Schema["PfNotice"]["type"];
+type PfPaymentRow = Schema["PfLoanPayment"]["type"];
+type PolicyRow = Schema["Policy"]["type"];
+type InvoiceLineRow = Schema["InvoiceLine"]["type"];
 
-/**
- * Where the money is right now. Top half is invoicing — aging by due date,
- * then the open bills themselves. Bottom half is the premium-finance
- * portfolio and everything in motion around it. Invoices are read once,
- * unfiltered, and split client-side: open for A/R, PAID for collected,
- * DRAFT for the unsent pile — three filtered reads of one table would cost
- * more than the table.
- */
 interface FinanceData {
   invoices: InvoiceRow[];
   pfLoans: PfLoanRow[];
   accounts: Account[];
-  notices: PfNoticeRow[];
+  payments: PfPaymentRow[];
+  policies: PolicyRow[];
+  invoiceLines: InvoiceLineRow[];
+  commercial: CommercialData;
+  asOf: Date;
 }
 
-const EMPTY: FinanceData = { invoices: [], pfLoans: [], accounts: [], notices: [] };
+const EMPTY: FinanceData = {
+  invoices: [], pfLoans: [], accounts: [], payments: [], policies: [], invoiceLines: [],
+  commercial: { entries: {}, team: [] }, asOf: new Date(),
+};
 
 export default function FinanceTab() {
   const navigate = useNavigate();
 
   const res = useAsyncResource<FinanceData>(
     async () => {
-      const [invoices, pfLoans, accounts, notices] = await Promise.all([
+      const [invoices, pfLoans, accounts, payments, policies, invoiceLines] = await Promise.all([
         listAllPages((nextToken) => client.models.Invoice.list({ nextToken })),
         listAllPages((nextToken) => client.models.PfLoan.list({ nextToken })),
         listAllPages((nextToken) => client.models.Account.list({ nextToken })),
-        listAllPages((nextToken) => client.models.PfNotice.list({ nextToken })),
+        listAllPages((nextToken) => client.models.PfLoanPayment.list({ nextToken })),
+        listAllPages((nextToken) => client.models.Policy.list({ nextToken })),
+        listAllPages((nextToken) => client.models.InvoiceLine.list({ nextToken })),
       ]);
-      return {
-        invoices: invoices as InvoiceRow[],
-        pfLoans: pfLoans as PfLoanRow[],
-        accounts,
-        notices: notices as PfNoticeRow[],
-      };
+      const commercial = await loadCommercial(accounts.map(account => account.id));
+      return { invoices, pfLoans, accounts, payments, policies, invoiceLines, commercial, asOf: new Date() };
     },
     [],
     { initialData: EMPTY, errorMessage: "Failed to load the finance view" }
   );
-  const { invoices, pfLoans, accounts, notices } = res.data;
+  const { invoices, pfLoans, accounts, payments, policies, invoiceLines, commercial, asOf } = res.data;
 
   const accountName = useMemo(
     () => new Map(accounts.map((a) => [a.id, a.name])),
@@ -74,21 +74,22 @@ export default function FinanceTab() {
     () => invoices.filter((i) => i.status === "SENT" || i.status === "PROCESSING"),
     [invoices]
   );
-  const r = useMemo(() => receivables(open, pfLoans), [open, pfLoans]);
+  const nonBilled = useMemo(() => nonBilledReceivables(pfLoans, invoices, policies, invoiceLines), [pfLoans, invoices, policies, invoiceLines]);
   const aging = useMemo(() => invoiceAging(open, daysUntil), [open]);
-
+  const billed = aging.current.total + aging.d1to30.total + aging.d31to60.total + aging.d60plus.total;
+  const series = useMemo(() => salespersonSeries(commercial), [commercial]);
+  const interest = useMemo(() => interestIncomeBySalesperson(payments, commercial.entries, series, asOf), [payments, commercial, series, asOf]);
+  const salespersonNames = useMemo(() => new Map(series.map(person => [person.key, person.label])), [series]);
+  const salespersonName = (accountId: string) => salespersonNames.get(salespersonKey(accountId, commercial.entries)) ?? "Unassigned";
   const today = localToday();
-  const collected = useMemo(
-    () =>
-      sumInWindow(
-        invoices.filter((i) => i.status === "PAID"),
-        (i) => i.paidAt,
-        (i) => (i.stripeLinkAmountCents ?? 0) / 100,
-        `${today.slice(0, 8)}01`,
-        today
-      ),
-    [invoices, today]
-  );
+  const overlapLoans = new Set(nonBilled.overlaps.map(overlap => overlap.loanId));
+  const nonBilledIncomplete = nonBilled.unknown > 0 || nonBilled.overlaps.length > 0;
+  const overlapPrincipal = pfLoans.filter(loan => overlapLoans.has(loan.id)).reduce((sum, loan) => sum + (outstandingPrincipal(loan) ?? 0), 0);
+  const overlapUnknown = pfLoans.filter(loan => overlapLoans.has(loan.id) && outstandingPrincipal(loan) == null).length;
+  const nonBilledNote = "Remaining financed principal with no open invoice, including cancelled coverage awaiting refund reconciliation. Installments are collected directly on the loan schedule. Future interest is excluded.";
+  const gapNote = nonBilledIncomplete
+    ? `Non-billed total is incomplete: ${nonBilled.overlaps.length} financing records (${fmtMoney(overlapPrincipal)} in known principal${overlapUnknown ? `; ${overlapUnknown} without a known balance` : ""}) share open billing and are excluded until reconciled; ${nonBilled.unknown} other financing records have no reliable balance.`
+    : "";
 
   // Open invoices, most overdue first.
   const openRows = useMemo(
@@ -122,33 +123,30 @@ export default function FinanceTab() {
 
   return (
     <TabFrame res={res}>
-      <div className="report-actions"><ReportDownload report={{ title: "Finance summary", filters: `Snapshot as of ${today}; collected from ${today.slice(0,8)}01 through ${today}`, sections: [{ title: "Finance summary", columns: ["Measure", "Amount (USD)", "Count"], rows: [["Total receivable", r.invoiceTotal + r.loanTotal, r.invoiceCount + r.loanCount], ["Billed and uncollected", r.invoiceTotal, r.invoiceCount], ["Overdue", aging.overdueTotal, aging.overdueCount], ["Financed outstanding", r.loanTotal, r.loanCount], ["Collected this month", collected.total, collected.count]] }] }} /></div>
+      <div className="report-actions"><ReportDownload report={{ title: "Finance summary", filters: `Snapshot as of ${today}. ${nonBilledNote} ${gapNote}`, sections: [{ title: "Finance summary", columns: ["Measure", "Amount (USD)", "Count"], rows: [
+        [nonBilledIncomplete ? "Known non-billed principal (incomplete)" : "Total non-billed principal", nonBilled.total, nonBilled.count],
+        ["Total billed and uncollected", billed, open.length],
+        ["Billed invoices without stored amounts", null, aging.unpriced],
+        ["Overdue billed invoices", aging.overdueTotal, aging.overdueCount],
+        ["Financing overlapping open billing (excluded)", overlapPrincipal, nonBilled.overlaps.length],
+        ["Financing without reliable balances (excluded)", null, nonBilled.unknown + overlapUnknown],
+      ] }] }} /></div>
       <div className="stat-row">
-        <Tile n={fmtMoney(r.invoiceTotal + r.loanTotal)} label="Total receivable" />
-        <Tile
-          n={fmtMoney(r.invoiceTotal)}
-          label={`Billed & uncollected · ${r.invoiceCount} ${r.invoiceCount === 1 ? "invoice" : "invoices"}`}
-        />
-        <Tile
-          n={fmtMoney(aging.overdueTotal)}
-          label={`Overdue · ${aging.overdueCount} ${aging.overdueCount === 1 ? "invoice" : "invoices"}`}
-          hot={aging.overdueCount > 0}
-        />
-        <Tile
-          n={fmtMoney(r.loanTotal)}
-          label={`Financed outstanding · ${r.loanCount} ${r.loanCount === 1 ? "loan" : "loans"}`}
-        />
-        <Tile n={fmtMoney(collected.total)} label="Collected this month" />
+        <Tile n={fmtMoney(nonBilled.total)} label={nonBilledIncomplete ? "A/R · Known non-billed (incomplete)" : "A/R · Total non-billed"} />
+        <Tile n={fmtMoney(billed)} label={`A/R · ${aging.unpriced ? "Known billed" : "Total billed"} · ${open.length} ${open.length === 1 ? "invoice" : "invoices"}`} />
+        <Tile n={fmtMoney(aging.overdueTotal)} label={`Overdue · ${aging.overdueCount} ${aging.overdueCount === 1 ? "invoice" : "invoices"}`} hot={aging.overdueCount > 0} />
       </div>
+      <p className="muted small">{nonBilledNote}</p>
+      {gapNote && <p className="error-text small" role="status">{gapNote}</p>}
 
       <div className="card">
         <div className="card-head">
-          <h2>Invoice aging</h2>
-          <ReportDownload report={{ title: "Invoice aging", filters: `Open invoices only · sorted by ${sortKey} (${dir}) · ${aging.unpriced} without stored amounts`, sections: [
-            { title: "Aging totals", columns: ["Age", "Amount (USD)", "Invoice count"], rows: [["Current", aging.current.total, aging.current.count], ["1–30 days", aging.d1to30.total, aging.d1to30.count], ["31–60 days", aging.d31to60.total, aging.d31to60.count], ["Over 60 days", aging.d60plus.total, aging.d60plus.count]] },
+          <h2>A/R aging</h2>
+          <ReportDownload report={{ title: "A/R aging", filters: `Open invoices only · sorted by ${sortKey} (${dir}) · ${aging.unpriced} without stored amounts`, sections: [
+            { title: "Aging totals", columns: ["Age", "Amount (USD)", "Invoice count"], rows: [["Total billed and uncollected", billed, open.length], ["Current", aging.current.total, aging.current.count], ["1–30 days", aging.d1to30.total, aging.d1to30.count], ["31–60 days", aging.d31to60.total, aging.d31to60.count], ["Over 60 days", aging.d60plus.total, aging.d60plus.count]] },
             { title: "Open invoices", columns: ["Invoice", "Account", "Amount (USD)", "Due", "Days until due", "Status"], rows: sorted.map(row => [row.number, row.account, row.amount, row.dueAt, row.days, row.status]) }
           ] }} />
-          <span className="muted small">by due date, open invoices only</span>
+          <span className="muted small">{aging.unpriced ? "Known billed" : "Total billed"}: {fmtMoney(billed)} · outstanding invoices by due date</span>
         </div>
         {open.length === 0 ? (
           <p className="muted small">No open invoices — nothing billed is waiting.</p>
@@ -213,76 +211,84 @@ export default function FinanceTab() {
         )}
       </div>
 
-      <div className="cols">
-        <PortfolioCard loans={pfLoans} accountName={accountName} />
-        <InMotionCard
-          loans={pfLoans}
-          notices={notices}
-          invoices={invoices}
-          accountName={accountName}
-        />
+      <div className="card">
+        <div className="card-head">
+          <h2>Interest income by salesperson</h2>
+          <ReportDownload report={{ title: "Interest income by salesperson", filters: `Posted receipts in the 30 days through ${asOf.toISOString()}; current salesperson assignment; ${interest.unknown} receipts without an interest amount`, sections: [{ title: "Interest income", columns: ["Salesperson", "Interest income (USD)"], rows: interest.rows.map(row => [row.label, row.values[row.key] ?? 0]) }] }} />
+          <span className="muted small">Last 30 days · received interest · {fmtMoney(interest.total)}</span>
+        </div>
+        <StackedBars label="Interest income by salesperson" rows={interest.rows} series={series} formatValue={fmtMoney} />
+        <p className="muted small">Based on posted financing payments and each account’s current salesperson assignment.</p>
+        {interest.unknown > 0 && <p className="error-text small">{interest.unknown} receipts have no interest amount and are excluded from this total.</p>}
       </div>
+      <PortfolioCard loans={pfLoans} accountName={accountName} salespersonName={salespersonName} overlapLoans={overlapLoans} />
     </TabFrame>
   );
 }
 
-/** The stacked aging bar: oldest money reddest, labels inside segments. */
+/** Labels stay outside segments so small balances remain readable on phones. */
 function AgingBar({ aging }: { aging: Record<string, AgingBucket> }) {
   const classes = ["a0", "a1", "a2", "a3"];
   const entries = Object.entries(aging);
   if (entries.every(([, b]) => b.count === 0)) return null;
   return (
-    <div className="aging">
+    <>
+    <div className="aging" aria-hidden="true">
       {entries.map(([label, b], i) =>
-        b.count === 0 ? null : (
-          <div key={label} className={classes[i]} style={{ flex: Math.max(b.total, 1) }}>
-            {label} · {fmtMoney(b.total)}
-          </div>
+        b.total <= 0 ? null : (
+          <div key={label} className={classes[i]} style={{ flex: b.total }} title={`${label}: ${fmtMoney(b.total)}`} />
         )
       )}
     </div>
+    <dl className="aging-legend">{entries.map(([label, bucket]) => <div key={label}><dt>{label}</dt><dd>{fmtMoney(bucket.total)} <span className="muted small">· {bucket.count} {bucket.count === 1 ? 'invoice' : 'invoices'}</span></dd></div>)}</dl>
+    </>
   );
 }
-
-const LIVE_LOAN_STATUSES: readonly string[] = ["ACCEPTED", "ACTIVE", "DEFAULTED"];
 
 function PortfolioCard({
   loans,
   accountName,
+  salespersonName,
+  overlapLoans,
 }: {
   loans: PfLoanRow[];
   accountName: ReadonlyMap<string, string>;
+  salespersonName: (accountId: string) => string;
+  overlapLoans: ReadonlySet<string>;
 }) {
   const navigate = useNavigate();
   const count = (s: string) => loans.filter((l) => l.status === s).length;
 
   const rows = loans
-    .filter((l) => LIVE_LOAN_STATUSES.includes(l.status))
+    .filter((l) => hasFinancingReceivable(l) && (l.status !== "CANCELLED" || outstandingPrincipal(l) !== 0))
     .sort((a, b) => (a.nextDueAt ?? "9999").localeCompare(b.nextDueAt ?? "9999"));
 
   return (
     <div className="card">
       <div className="card-head"><h2>Premium finance portfolio</h2>
-      <ReportDownload report={{ title: "Premium finance portfolio", filters: "Live loans sorted by next due date", sections: [
-        { title: "Loan counts", columns: ["Status", "Count"], rows: ["ACTIVE", "ACCEPTED", "DEFAULTED", "QUOTED"].map(status => [status, count(status)]) },
-        { title: "Live loans", columns: ["Account", "Balance (USD)", "Next due", "Status", "Autopay"], rows: rows.map(l => [accountName.get(l.accountId) ?? "—", l.balance ?? l.amountFinanced, l.nextDueAt, l.status, l.autopayFailedInstallment != null ? `Failed · #${l.autopayFailedInstallment}` : l.autopayPendingIntentId ? "Clearing" : l.stripePaymentMethodId ? "On" : "Off"]) }
+      <ReportDownload report={{ title: "Premium finance portfolio", filters: "Outstanding financing, including funded cancellations awaiting reconciliation; sorted by next due date", sections: [
+        { title: "Loan counts", columns: ["Status", "Count"], rows: [...(["ACTIVE", "ACCEPTED", "DEFAULTED", "QUOTED"].map(status => [status, count(status)])), ["Awaiting refund/reconciliation", rows.filter(loan => loan.status === "CANCELLED").length]] },
+        { title: "Outstanding financing", columns: ["Account", "Salesperson", "Balance (USD)", "Next due / expected refund", "Status", "Open billing overlap", "Autopay"], rows: rows.map(l => [accountName.get(l.accountId) ?? "—", salespersonName(l.accountId), outstandingPrincipal(l), l.status === "CANCELLED" ? l.expectedCarrierRefundAt : l.nextDueAt, l.status === "CANCELLED" ? "Awaiting refund/reconciliation" : l.status, overlapLoans.has(l.id) ? "Review needed; excluded from non-billed A/R" : "None", l.status === "CANCELLED" ? "Stopped" : l.autopayFailedInstallment != null ? `Failed · #${l.autopayFailedInstallment}` : l.autopayPendingIntentId ? "Clearing" : l.stripePaymentMethodId ? "On" : "Off"]) }
       ] }} /></div>
       <div className="chip-row" style={{ marginBottom: 10, flexWrap: "wrap" }}>
         <Badge cls="green" label={`Active · ${count("ACTIVE")}`} />
         <Badge cls="gray" label={`Accepted · ${count("ACCEPTED")}`} />
         <Badge cls="red" label={`Defaulted · ${count("DEFAULTED")}`} />
         <Badge cls="blue" label={`Quoted · ${count("QUOTED")}`} />
+        {rows.some(loan => loan.status === "CANCELLED") && <Badge cls="amber" label={`Awaiting reconciliation · ${rows.filter(loan => loan.status === "CANCELLED").length}`} />}
       </div>
       {rows.length === 0 ? (
-        <p className="muted small">No live loans.</p>
+        <p className="muted small">No outstanding financing.</p>
       ) : (
         <div className="table-wrap">
           <table>
             <thead>
               <tr>
                 <th>Account</th>
+                <th>Salesperson</th>
                 <th>Balance</th>
-                <th>Next due</th>
+                <th>Next due / refund</th>
+                <th>Status</th>
                 <th>Autopay</th>
               </tr>
             </thead>
@@ -296,8 +302,12 @@ function PortfolioCard({
                   <td>
                     <strong>{accountName.get(l.accountId) ?? "—"}</strong>
                   </td>
-                  <td>{fmtMoney(l.balance ?? l.amountFinanced)}</td>
-                  <td>{fmtDate(l.nextDueAt ?? undefined)}</td>
+                  <td>{salespersonName(l.accountId)}</td>
+                  <td>{outstandingPrincipal(l) == null ? "—" : fmtMoney(outstandingPrincipal(l)!)}
+                    {overlapLoans.has(l.id) && <div><Badge cls="amber" label="Open bill · review needed" /></div>}
+                  </td>
+                  <td>{fmtDate((l.status === "CANCELLED" ? l.expectedCarrierRefundAt : l.nextDueAt) ?? undefined)}</td>
+                  <td>{l.status === "CANCELLED" ? "Awaiting refund / reconciliation" : l.status.toLowerCase()}</td>
                   <td>
                     <AutopayBadge loan={l} />
                   </td>
@@ -314,193 +324,11 @@ function PortfolioCard({
 /** Autopay health, worst news first: a failed debit outranks one clearing,
  * which outranks the mandate merely existing. */
 function AutopayBadge({ loan }: { loan: PfLoanRow }) {
+  if (loan.status === "CANCELLED") return <Badge cls="gray" label="Stopped" />;
   if (loan.autopayFailedInstallment != null) {
     return <Badge cls="red" label={`Failed · #${loan.autopayFailedInstallment}`} />;
   }
   if (loan.autopayPendingIntentId) return <Badge cls="amber" label="Clearing" />;
   if (loan.stripePaymentMethodId) return <Badge cls="green" label="On" />;
   return <Badge cls="gray" label="Off" />;
-}
-
-/**
- * Everything mid-flight around the portfolio: offers out, cancellation
- * clocks running, cash expected in, refunds owed back, and bills drafted
- * but never sent. Rendered even when a row is empty — "None outstanding"
- * is an answer, and a row that vanishes when quiet makes the card's shape
- * unreadable.
- */
-function InMotionCard({
-  loans,
-  notices,
-  invoices,
-  accountName,
-}: {
-  loans: PfLoanRow[];
-  notices: PfNoticeRow[];
-  invoices: InvoiceRow[];
-  accountName: ReadonlyMap<string, string>;
-}) {
-  const now = Date.now();
-  const DAY = 86_400_000;
-
-  const elections = loans.filter(
-    (l) =>
-      l.status === "QUOTED" &&
-      l.electionToken &&
-      !l.electedAt &&
-      (!l.electionTokenExpiresAt || Date.parse(l.electionTokenExpiresAt) > now)
-  );
-  const oldestElectionDays = elections.length
-    ? Math.max(
-        ...elections.map((l) => Math.floor((now - Date.parse(l.quotedAt)) / DAY))
-      )
-    : null;
-
-  const requested = new Set(
-    notices.filter((n) => n.type === "CANCELLATION_REQUEST").map((n) => n.loanId)
-  );
-  // Episode-scoped, mirroring pf-servicing's own rule: a cure sets the loan
-  // back to ACTIVE and clears defaultedAt, but the intent notice row is
-  // immutable — its clock keeps "running" on paper. A clock only counts
-  // while its loan is still DEFAULTED and the intent belongs to the
-  // current default (occurredAt at or after defaultedAt), so a paid-up
-  // loan stops showing a red countdown it has already escaped.
-  const loanById = new Map(loans.map((l) => [l.id, l]));
-  const clocks = notices
-    .filter((n) => {
-      if (n.type !== "INTENT_TO_CANCEL" || !n.clockExpiresAt) return false;
-      if (Date.parse(n.clockExpiresAt) <= now || requested.has(n.loanId)) return false;
-      const loan = loanById.get(n.loanId);
-      return (
-        loan?.status === "DEFAULTED" &&
-        loan.defaultedAt != null &&
-        n.occurredAt >= loan.defaultedAt
-      );
-    })
-    .sort((a, b) => (a.clockExpiresAt ?? "").localeCompare(b.clockExpiresAt ?? ""));
-  const soonestClockDays = clocks.length
-    ? Math.ceil((Date.parse(clocks[0].clockExpiresAt as string) - now) / DAY)
-    : null;
-
-  const installments = pfInstallmentsDue(loans, daysUntil);
-
-  const refunds = loans
-    .filter((l) => {
-      if (!l.expectedCarrierRefundAt) return false;
-      const days = daysUntil(l.expectedCarrierRefundAt);
-      return days != null && days >= 0;
-    })
-    .sort((a, b) =>
-      (a.expectedCarrierRefundAt ?? "").localeCompare(b.expectedCarrierRefundAt ?? "")
-    );
-
-  const drafts = invoices.filter((i) => i.status === "DRAFT");
-  const oldestDraftDays = drafts.length
-    ? Math.max(
-        ...drafts.map((i) => {
-          const at = i.issuedAt ?? i.createdAt?.slice(0, 10);
-          const days = at ? daysUntil(at) : null;
-          return days == null ? 0 : Math.max(0, -days);
-        })
-      )
-    : null;
-
-  return (
-    <div className="card">
-      <div className="card-head"><h2>In motion</h2>
-      <ReportDownload report={{ title: "Finance in motion", sections: [{ title: "In motion", columns: ["Item", "Count", "Details"], rows: [["Pending elections", elections.length, oldestElectionDays == null ? "None outstanding" : `Oldest ${oldestElectionDays} days`], ["Cancellation clocks", clocks.length, soonestClockDays == null ? "None running" : `${accountName.get(clocks[0].accountId) ?? "—"} · soonest in ${soonestClockDays} days`], ["Expected installments · 30 days", installments.count, fmtMoney(installments.total)], ["Carrier refunds expected", refunds.length, refunds[0]?.expectedCarrierRefundAt], ["Draft invoices unsent", drafts.length, oldestDraftDays == null ? "None" : `Oldest ${oldestDraftDays} days`]] }] }} /></div>
-      <div className="table-wrap">
-        <table>
-          <tbody>
-            <tr>
-              <td>
-                <strong>Pending elections</strong>
-              </td>
-              <td>
-                {elections.length
-                  ? `${elections.length} ${elections.length === 1 ? "offer" : "offers"} out`
-                  : "None outstanding"}
-              </td>
-              <td>
-                {oldestElectionDays != null ? (
-                  <Badge cls="blue" label={`oldest ${oldestElectionDays}d`} />
-                ) : (
-                  <Badge cls="gray" label="—" />
-                )}
-              </td>
-            </tr>
-            <tr>
-              <td>
-                <strong>Cancellation clock</strong>
-              </td>
-              <td>
-                {clocks.length
-                  ? `${accountName.get(clocks[0].accountId) ?? "—"}${
-                      clocks.length > 1 ? ` +${clocks.length - 1} more` : ""
-                    }`
-                  : "None running"}
-              </td>
-              <td>
-                {soonestClockDays != null ? (
-                  <Badge cls="red" label={`${soonestClockDays}d left`} />
-                ) : (
-                  <Badge cls="gray" label="—" />
-                )}
-              </td>
-            </tr>
-            <tr>
-              <td>
-                <strong>Expected installments · 30d</strong>
-              </td>
-              <td>
-                {installments.count
-                  ? `${installments.count} ${installments.count === 1 ? "debit" : "debits"}`
-                  : "None due"}
-              </td>
-              <td>
-                {installments.count ? (
-                  <Badge cls="green" label={fmtMoney(installments.total)} />
-                ) : (
-                  <Badge cls="gray" label="—" />
-                )}
-              </td>
-            </tr>
-            <tr>
-              <td>
-                <strong>Carrier refund expected</strong>
-              </td>
-              <td>
-                {refunds.length
-                  ? `${refunds.length} ${refunds.length === 1 ? "loan" : "loans"}`
-                  : "None expected"}
-              </td>
-              <td>
-                {refunds.length ? (
-                  <Badge
-                    cls="gray"
-                    label={`by ${fmtDate(refunds[0].expectedCarrierRefundAt ?? undefined)}`}
-                  />
-                ) : (
-                  <Badge cls="gray" label="—" />
-                )}
-              </td>
-            </tr>
-            <tr>
-              <td>
-                <strong>Draft invoices unsent</strong>
-              </td>
-              <td>{drafts.length ? `${drafts.length} ${drafts.length === 1 ? "draft" : "drafts"}` : "None"}</td>
-              <td>
-                {oldestDraftDays != null ? (
-                  <Badge cls="amber" label={`oldest ${oldestDraftDays}d`} />
-                ) : (
-                  <Badge cls="gray" label="—" />
-                )}
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
 }

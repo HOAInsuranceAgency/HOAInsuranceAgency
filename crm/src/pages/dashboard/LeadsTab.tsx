@@ -1,6 +1,9 @@
 import { ReportDownload } from "../../components/ReportDownload";
 import { acquisitionLabel, websiteFormLabel } from "../../../../shared/leadSource";
-import { useCommercial, teammateName } from '../../lib/commercial';
+import { loadCommercial, teammateName, type CommercialData } from '../../lib/commercial';
+import { salespersonKey, salespersonSeries } from '../../lib/dashboardPeople';
+import { activeLeadQuotes, isOpenLead, leadPersonMetrics, PIPELINE_SERIES } from '../../lib/dashboardLeads';
+import { StackedBars, type ChartRow, type ChartSeries } from '../../components/StackedBars';
 import { OpportunityEstimate } from '../../components/OpportunityEstimate';
 import { formatCommission, pendingCommission } from '../../../../shared/quotePackages';
 import { agencyDay } from '../../../../shared/leadActionGuidance';
@@ -16,6 +19,7 @@ import {
   listAllPages,
   type Account,
   type Quote,
+  type Policy,
 } from "../../lib/client";
 import {
   Badge,
@@ -24,25 +28,25 @@ import {
   QUOTE_STATUS_BADGE,
   RENEWAL_HORIZON_SCALE,
 } from "../../lib/badges";
-import { isOpenQuoteStatus } from "../../lib/quoteStatus";
 import { useSort, SortTh } from "../../lib/useSort";
 import { useAsyncResource } from "../../lib/useAsyncResource";
 import {
-  leadFunnel,
   leadQuoteStanding,
-  leadStats,
   quoteStandingRank,
   type QuoteStanding,
 } from "../../lib/dashboardStats";
-import { TabFrame, Tile } from "./common";
+import { TabFrame } from "./common";
 
 interface LeadsData {
   leads: Account[];
   clients: Account[];
   quotes: Quote[];
+  policies: Policy[];
+  commercial: CommercialData;
+  asOf: string;
 }
 
-const EMPTY: LeadsData = { leads: [], clients: [], quotes: [] };
+const EMPTY: LeadsData = { leads: [], clients: [], quotes: [], policies: [], commercial: { entries: {}, team: [] }, asOf: '' };
 
 interface LeadRow {
   id: string;
@@ -74,7 +78,7 @@ export default function LeadsTab() {
       // bearer tokens behind the public upload mutations, and
       // uploadQuota.test.ts pins that no UI depends on reading them —
       // surfacing that activity needs a tokenless aggregate query first.
-      const [leads, clients, quotes] = await Promise.all([
+      const [leads, clients, quotes, policies] = await Promise.all([
         listAllPages((nextToken) =>
           client.models.Account.list({
             filter: { stage: { eq: "LEAD" } },
@@ -88,26 +92,19 @@ export default function LeadsTab() {
           })
         ),
         listAllPages((nextToken) => client.models.Quote.list({ nextToken })),
+        listAllPages((nextToken) => client.models.Policy.list({ nextToken })),
       ]);
-      return { leads, clients, quotes };
+      const commercial = await loadCommercial([...leads, ...clients].map(account => account.id));
+      return { leads, clients, quotes, policies, commercial, asOf: new Date().toISOString() };
     },
     [],
     { initialData: EMPTY, errorMessage: "Failed to load the lead pipeline" }
   );
-  const { leads, clients, quotes } = res.data;
-  const commercial = useCommercial([...leads, ...clients].map(l => l.id), res.data);
-  const today = agencyDay(new Date().toISOString());
-  const activeLeads = useMemo(() => [...leads, ...clients.filter(l => { const plan = commercial.data.entries[l.id]?.plan; return plan && pendingCommission(plan, quotes.filter(q => q.accountId === l.id), today).unfinished; })], [leads, clients, quotes, commercial.data, today]);
-  const contactHistory = useLastContacts(activeLeads.map(l => l.id), res.data);
-
-  const stats = useMemo(
-    () => leadStats(leads, clients, new Date()),
-    [leads, clients]
-  );
-  const openQuoteCount = useMemo(
-    () => quotes.filter((q) => isOpenQuoteStatus(q.status)).length,
-    [quotes]
-  );
+  const { leads, clients, quotes, policies, commercial, asOf } = res.data;
+  const now = useMemo(() => new Date(asOf || Date.now()), [asOf]);
+  const today = agencyDay(now.toISOString());
+  const people = useMemo(() => salespersonSeries(commercial), [commercial]);
+  const salespersonSelection = people.some(person => person.key === salespersonFilter) ? salespersonFilter : '';
 
   const quotesByLead = useMemo(() => {
     const m = new Map<string, Quote[]>();
@@ -119,15 +116,26 @@ export default function LeadsTab() {
     return m;
   }, [quotes]);
 
-  const funnel = useMemo(
-    () => leadFunnel(leads, quotesByLead, clients, new Date()),
-    [leads, quotesByLead, clients]
-  );
+  const activeLeads = useMemo(() => [
+    ...leads.filter(account => isOpenLead(account, commercial.entries)),
+    ...clients.filter(account => {
+      const plan = commercial.entries[account.id]?.plan;
+      return plan && pendingCommission(plan, quotesByLead.get(account.id) ?? [], today).unfinished;
+    }),
+  ], [leads, clients, commercial, quotesByLead, today]);
+  const selectedLeads = useMemo(() => salespersonSelection
+    ? activeLeads.filter(account => salespersonKey(account.id, commercial.entries) === salespersonSelection)
+    : [], [activeLeads, commercial, salespersonSelection]);
+  const contactHistory = useLastContacts(selectedLeads.map(account => account.id), res.data);
+  const metrics = useMemo(() => leadPersonMetrics({
+    accounts: [...leads, ...clients], quotes, policies, pipelineAccounts: activeLeads,
+    entries: commercial.entries, series: people, now,
+  }), [leads, clients, quotes, policies, activeLeads, commercial, people, now]);
 
   const rows = useMemo<LeadRow[]>(
     () =>
-      activeLeads.map((l) => {
-        const entry = commercial.data.entries[l.id], forecast = entry ? pendingCommission(entry.plan, quotesByLead.get(l.id) ?? [], today) : null;
+      selectedLeads.map((l) => {
+        const entry = commercial.entries[l.id], forecast = entry ? pendingCommission(entry.plan, quotesByLead.get(l.id) ?? [], today) : null;
         return ({
         id: l.id,
         name: l.name,
@@ -136,14 +144,14 @@ export default function LeadsTab() {
         entered: l.createdAt ?? null,
         expires: l.currentPolicyExpiration ?? null,
         days: l.currentPolicyExpiration ? daysUntil(l.currentPolicyExpiration) : null,
-        standing: leadQuoteStanding(quotesByLead.get(l.id) ?? []),
+        standing: leadQuoteStanding(activeLeadQuotes(quotesByLead.get(l.id) ?? [], commercial.entries)),
         tiv: l.totalInsuredValue ?? null,
         city: l.city ?? null, state: l.state ?? null, form: websiteFormLabel(l.source),
         salespersonId: entry?.salespersonId,
-        salesperson: teammateName(entry?.salespersonId, commercial.data.team),
+        salesperson: teammateName(entry?.salespersonId, commercial.team),
         estimate: entry?.plan.estimatedCents ?? null, pending: forecast?.cents ?? null, basis: forecast?.label ?? 'No package options', partiallyBound: l.stage === 'CLIENT',
-      }); }).filter(r => (!salespersonFilter || r.salespersonId === salespersonFilter)),
-    [activeLeads, quotesByLead, contactHistory.contacts, commercial.data, today, salespersonFilter]
+      }); }),
+    [selectedLeads, quotesByLead, contactHistory.contacts, commercial, today]
   );
 
   // Soonest incumbent expiration first: the lead about to renew with someone
@@ -166,73 +174,28 @@ export default function LeadsTab() {
     "expires"
   );
 
-  const stageMax = Math.max(
-    1,
-    funnel.unworked,
-    funnel.marketing,
-    funnel.presented,
-    funnel.bound30d
-  );
-  const stages: [string, number][] = [
-    ["Unworked · no quotes", funnel.unworked],
-    ["Marketing · draft/submitted", funnel.marketing],
-    ["Presented", funnel.presented],
-    ["Bound · last 30d", funnel.bound30d],
-  ];
-
   return (
     <TabFrame res={res}>
-      <div className="report-actions"><ReportDownload report={{ title: "Lead summary", sections: [{ title: "Lead summary", columns: ["Measure", "Value"], rows: [["New this week", stats.newThisWeek], ["Open leads", leads.length], ["Quotes in flight", openQuoteCount], ["Converted this quarter", stats.convertedThisQuarter], ["Median days to convert", stats.medianDaysToConvert]] }] }} /></div>
-      <div className="stat-row">
-        <Tile n={stats.newThisWeek} label="New this week" />
-        <Tile n={leads.length} label="Open leads" onClick={() => navigate("/leads")} />
-        <Tile
-          n={openQuoteCount}
-          label="Quotes in flight"
-          onClick={() => navigate("/quotes")}
-        />
-        <Tile n={stats.convertedThisQuarter} label="Converted this quarter" />
-        <Tile
-          n={stats.medianDaysToConvert == null ? "—" : `${stats.medianDaysToConvert}d`}
-          label="Median days to convert"
-        />
+      <p className="muted small">Figures use each account's current salesperson. The last 30 days end at this refresh.</p>
+      <div className="dashboard-chart-grid">
+        <LeadChart title="Open leads per person" rows={metrics.open} series={people} note="Current leads, excluding lost, disqualified and bound accounts." />
+        <LeadChart title="Quotes in flight per person" rows={metrics.quotes} series={people} note="Draft, submitted, quoted and presented quotes; excludes unselected package alternatives and lost or disqualified accounts." />
+        <LeadChart title="New leads per person · last 30 days" rows={metrics.created} series={people} note="Based on account creation; includes current leads and clients with a recorded conversion." />
+        <LeadChart title="Policies bound per person · last 30 days" rows={metrics.binds} series={people} note="Based on the recorded bind date. Policies without a bind date are excluded." />
       </div>
-
-      <div className="card">
-        <div className="card-head">
-          <h2>Pipeline</h2>
-          <ReportDownload report={{ title: "Lead pipeline", filters: "Stage inferred from quotes; bound in the last 30 days", sections: [{ title: "Pipeline", columns: ["Stage", "Leads"], rows: stages }] }} />
-          <span className="muted small">stage inferred from each lead's quotes</span>
-        </div>
-        <div className="funnel">
-          {stages.map(([label, n]) => (
-            <div className="stage" key={label}>
-              <div className="n">{n}</div>
-              <div className="l">{label}</div>
-              <span
-                className="fill"
-                style={{ width: `${Math.max(4, (n / stageMax) * 100)}%` }}
-              />
-            </div>
-          ))}
-        </div>
-      </div>
+      <LeadChart title="Pipeline per person" rows={metrics.pipeline} series={PIPELINE_SERIES} note="Open leads and packages being bound, grouped by their most advanced open quote. Closed quotes remain visible until the lead is closed." />
 
       <div className="card">
         <div className="card-head">
           <h2>Lead work list</h2>
-          <ReportDownload disabled={contactHistory.loading || !!contactHistory.error || commercial.loading || !!commercial.error} report={{ title: "Lead work list", filters: `Open leads and packages being bound · sorted by ${sortKey} (${dir}) · Salesperson: ${commercial.data.team.find(t => t.userId === salespersonFilter)?.name ?? 'All'}`, sections: [{ title: "Leads", columns: ["Lead", "Salesperson", "City", "State", "Lead source", "Website form", "Estimated opportunity (USD)", "Pending commission (USD)", "Commission basis", "Last contact (local)", "Entered", "Incumbent expires", "Pipeline", "Quote count", "TIV (USD)"], rows: sorted.map(r => [r.name, r.salesperson, r.city, r.state, r.source, r.form, r.estimate == null ? null : r.estimate / 100, r.pending == null ? null : r.pending / 100, r.basis, r.lastContact ? fmtDateTime(r.lastContact) : "No contact recorded", r.entered?.slice(0, 10), r.expires, r.standing?.status ?? "Unworked", r.standing?.count ?? 0, r.tiv]) }] }} />
+          <ReportDownload disabled={!salespersonSelection || contactHistory.loading || !!contactHistory.error} report={{ title: "Lead work list", filters: `Open leads and packages being bound · sorted by ${sortKey} (${dir}) · Salesperson: ${people.find(person => person.key === salespersonSelection)?.label ?? 'Choose a salesperson'}`, sections: [{ title: "Leads", columns: ["Lead", "Salesperson", "City", "State", "Lead source", "Website form", "Estimated opportunity (USD)", "Pending commission (USD)", "Commission basis", "Last contact (local)", "Entered", "Incumbent expires", "Pipeline", "Quote count", "TIV (USD)"], rows: sorted.map(r => [r.name, r.salesperson, r.city, r.state, r.source, r.form, r.estimate == null ? null : r.estimate / 100, r.pending == null ? null : r.pending / 100, r.basis, r.lastContact ? fmtDateTime(r.lastContact) : "No contact recorded", r.entered?.slice(0, 10), r.expires, r.standing?.status ?? "Unworked", r.standing?.count ?? 0, r.tiv]) }] }} />
           <span className="muted small">sorted by incumbent expiration</span>
         </div>
         <p className="muted small">Last contact includes prospect emails, calls and texts in either direction. Times are shown in your local time zone.</p>
-        <div className="toolbar"><label className="field">Salesperson<select value={salespersonFilter} onChange={e => setSalespersonFilter(e.target.value)}><option value="">All salespeople</option>{commercial.data.team.map(t => <option key={t.userId} value={t.userId}>{t.name}</option>)}</select></label></div>
-        {commercial.error && <p className="error-text" role="alert">{commercial.error} <button onClick={() => void commercial.refetch()}>Retry</button></p>}
+        <div className="toolbar"><label className="field">Salesperson<select required value={salespersonSelection} onChange={e => setSalespersonFilter(e.target.value)}><option value="">Choose a salesperson</option>{people.map(person => <option key={person.key} value={person.key}>{person.label}</option>)}</select></label></div>
         {contactHistory.error && <p className="error-text">{contactHistory.error}</p>}
-        {rows.length === 0 ? (
-          <p className="muted small">
-            No open leads. New leads land here from the website form or New
-            lead.
-          </p>
+        {!salespersonSelection ? <p className="muted">Choose a salesperson to view their lead work list.</p> : rows.length === 0 ? (
+          <p className="muted small">No open leads or packages being bound for this salesperson.</p>
         ) : (
           <div className="table-wrap">
             <table>
@@ -260,9 +223,9 @@ export default function LeadsTab() {
                       <strong>{r.name}</strong>
                       {r.partiallyBound && <div><span className="badge amber">Binding in progress</span></div>}
                     </td>
-                    <td>{commercial.loading ? 'Loading…' : commercial.error ? 'Unavailable' : r.salesperson}</td><td>{r.city || '—'}</td><td>{r.state || '—'}</td><td>{r.form}</td>
-                    <td>{commercial.data.entries[r.id] && !commercial.error ? <OpportunityEstimate plan={commercial.data.entries[r.id].plan} onSaved={plan => commercial.setData(data => ({ ...data, entries: { ...data.entries, [r.id]: { ...data.entries[r.id], plan } } }))} /> : commercial.error ? 'Unavailable' : 'Loading…'}</td>
-                    <td>{commercial.loading ? 'Loading…' : commercial.error ? 'Unavailable' : <><strong>{r.pending == null ? '—' : formatCommission(r.pending)}</strong><div className="muted small">{r.basis}</div></>}</td>
+                    <td>{r.salesperson}</td><td>{r.city || '—'}</td><td>{r.state || '—'}</td><td>{r.form}</td>
+                    <td>{commercial.entries[r.id] ? <OpportunityEstimate plan={commercial.entries[r.id].plan} onSaved={plan => res.setData(data => ({ ...data, commercial: { ...data.commercial, entries: { ...data.commercial.entries, [r.id]: { ...data.commercial.entries[r.id], plan } } } }))} /> : 'Unavailable'}</td>
+                    <td><strong>{r.pending == null ? '—' : formatCommission(r.pending)}</strong><div className="muted small">{r.basis}</div></td>
                     <td>{r.source || "—"}</td>
                     <td>{contactHistory.loading ? "Loading…" : contactHistory.error ? "Unavailable" : r.lastContact ? fmtDateTime(r.lastContact) : "No contact recorded"}</td>
                     <td>{fmtDate(r.entered?.slice(0, 10))}</td>
@@ -299,4 +262,12 @@ function StandingBadge({ standing }: { standing: QuoteStanding | null }) {
       label={standing.count > 1 ? `${standing.count} × ${spec.label}` : spec.label}
     />
   );
+}
+
+function LeadChart({ title, rows, series, note }: { title: string; rows: ChartRow[]; series: ChartSeries[]; note: string }) {
+  return <section className="card">
+    <div className="card-head"><h2>{title}</h2><ReportDownload report={{ title, filters: note, sections: [{ title, columns: ['Salesperson', ...series.map(person => person.label)], rows: rows.map(row => [row.label, ...series.map(person => row.values[person.key] ?? 0)]) }] }} /></div>
+    <p className="muted small">{note}</p>
+    <StackedBars label={title} rows={rows} series={series} formatValue={value => value.toLocaleString()} />
+  </section>;
 }
