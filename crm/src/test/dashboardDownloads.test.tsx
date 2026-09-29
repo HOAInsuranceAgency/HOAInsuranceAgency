@@ -35,7 +35,7 @@ describe("dashboard report controls", () => {
     expect(value("Lead source")).toBe("Google Ad Website");
     expect(value("Last contact (local)")).not.toBe("No contact recorded");
     expect(value("Salesperson")).toBe("Avery Brooks");
-    expect(value("Deal champion")).toBe("Morgan Lee");
+    expect(section.columns).not.toContain("Deal champion");
     expect(value("City")).toBe("Worcester");
     expect(value("State")).toBe("MA");
     expect(value("Website form")).toBe("Quote form");

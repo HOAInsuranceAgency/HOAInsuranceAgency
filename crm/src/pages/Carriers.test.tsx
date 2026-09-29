@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -152,6 +152,49 @@ const results = () => {
 };
 
 describe("the carrier list", () => {
+  it("includes carriers and appetite guides from later pages, including after an empty page", async () => {
+    models.Carrier.list
+      .mockResolvedValueOnce({ data: [CARRIERS[0]], nextToken: "carrier-page-2" })
+      .mockResolvedValueOnce({ data: [], nextToken: "carrier-page-3" })
+      .mockResolvedValueOnce({ data: CARRIERS.slice(1), nextToken: null });
+    models.AppetiteGuide.list
+      .mockResolvedValueOnce({ data: [GUIDES[0]], nextToken: "guide-page-2" })
+      .mockResolvedValueOnce({ data: GUIDES.slice(1), nextToken: null });
+
+    await renderPage();
+    expect(models.Carrier.list).toHaveBeenNthCalledWith(2, { nextToken: "carrier-page-2" });
+    expect(models.Carrier.list).toHaveBeenNthCalledWith(3, { nextToken: "carrier-page-3" });
+    expect(models.AppetiteGuide.list).toHaveBeenNthCalledWith(2, { nextToken: "guide-page-2" });
+    const beacon = screen.getByText("Beacon Specialty").closest("tr")!;
+    expect(within(beacon).getByText("E&S")).toBeInTheDocument();
+    await userEvent.selectOptions(field("Coastal?"), "yes");
+    expect(results().getByText("Beacon Specialty")).toBeInTheDocument();
+    expect(results().queryByText("Atlantic Mutual")).not.toBeInTheDocument();
+  });
+
+  it("waits for the last guide page before offering an appetite verdict", async () => {
+    let finish!: (page: { data: typeof GUIDES; nextToken: null }) => void;
+    const lastPage = new Promise<{ data: typeof GUIDES; nextToken: null }>((resolve) => { finish = resolve; });
+    models.AppetiteGuide.list
+      .mockResolvedValueOnce({ data: [GUIDES[0]], nextToken: "guide-page-2" })
+      .mockReturnValueOnce(lastPage);
+    render(<MemoryRouter><Carriers /></MemoryRouter>);
+    await waitFor(() => expect(models.AppetiteGuide.list).toHaveBeenCalledTimes(2));
+    expect(screen.queryByText("Appetite finder")).not.toBeInTheDocument();
+    await act(async () => { finish({ data: GUIDES.slice(1), nextToken: null }); });
+    expect(await screen.findByText("Appetite finder")).toBeInTheDocument();
+  });
+
+  it.each(["Carrier", "AppetiteGuide"] as const)("withholds appetite results when a later %s page fails", async (model) => {
+    models[model].list
+      .mockResolvedValueOnce({ data: model === "Carrier" ? [CARRIERS[0]] : [GUIDES[0]], nextToken: "next-page" })
+      .mockResolvedValueOnce({ data: [], nextToken: null, errors: [{ message: "Later page unavailable" }] });
+    render(<MemoryRouter><Carriers /></MemoryRouter>);
+    expect(await screen.findByText("Later page unavailable")).toBeInTheDocument();
+    expect(screen.queryByText("Appetite finder")).not.toBeInTheDocument();
+    expect(screen.queryByText(/No appointed carrier has appetite/)).not.toBeInTheDocument();
+  });
+
   it("shows the market type, and derives paper from the guides", async () => {
     await renderPage();
     const row = screen.getByText("Atlantic Mutual").closest("tr")!;

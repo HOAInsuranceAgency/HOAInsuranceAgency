@@ -1,6 +1,7 @@
 import { estimateInput, PUBLIC_WINDOW_MS } from "../honeycomb/contract";
 import { taskWakeAt } from "../../../../shared/leadWorkflow";
 import { cleanAttribution, websiteLeadSource } from "../../../../shared/leadSource";
+import { webLeadPropertyType } from "../../../../shared/propertyType";
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import type { Schema } from "../../data/resource";
 import { DEFAULT_ACCOUNT_TYPE, DEFAULT_CONTACT_TYPE, isAccountType } from "../../../src/lib/enums";
@@ -58,7 +59,8 @@ export const handler: Schema["submitWebLead"]["functionHandler"] = async event =
     expiration === null && args.currentPolicyExpiration && `Program expiry (unparsed): ${clean(args.currentPolicyExpiration)}`].filter(Boolean).join("\n");
   const workflow = await defaultWorkflow(id, name);
   const attribution = cleanAttribution(args.attribution);
-  const account = { leadSource: websiteLeadSource(attribution), leadAttribution: JSON.stringify(attribution), stage: "LEAD", type: isAccountType(args.type) ? args.type : DEFAULT_ACCOUNT_TYPE, name,
+  const accountType = isAccountType(args.type) ? args.type : DEFAULT_ACCOUNT_TYPE;
+  const account = { leadSource: websiteLeadSource(attribution), leadAttribution: JSON.stringify(attribution), stage: "LEAD", type: accountType, propertyType: webLeadPropertyType({ type: accountType, propertyKind: args.propertyKind }) ?? undefined, name,
     address: clean(args.address, 500), city: clean(args.city, 100), state: clean(args.state, 2)?.toUpperCase(), zip: clean(args.zip, 10),
     unitCount: unitCount ?? undefined, currentPolicyExpiration: expiration ?? undefined, buildiumId: clean(args.buildiumId, 50), source: clean(args.source, 100) ?? "website", notes, lastWriteBy: "lead-intake" };
   const token = validEmail ? randomBytes(32).toString("base64url") : null;

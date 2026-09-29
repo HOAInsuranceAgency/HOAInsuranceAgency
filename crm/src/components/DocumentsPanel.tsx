@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { uploadData, remove } from "aws-amplify/storage";
+import { uploadData, remove } from "../lib/scopedStorage";
 import {
   client,
   friendlyError,
@@ -45,7 +45,7 @@ const CATEGORIES = DOCUMENT_CATEGORY_OPTIONS;
 /**
  * Attach-to-anything documents panel: uploads to
  * documents/{entityType}/{entityId}/{documentId}/{filename}, which the
- * Textract Lambda watches. observeQuery keeps OCR status live in the UI.
+ * Textract Lambda watches. Polling rechecks access while keeping OCR status live.
  *
  * Names are editable. `name` is only ever a display string — it is captured
  * from the file at upload and is not the S3 key — so renaming is a plain
@@ -76,15 +76,9 @@ export default function DocumentsPanel({
   sourceCommunicationId?: string;
 }) {
   const [docs, setDocs] = useState<CrmDocument[]>([]);
-  /**
-   * False until observeQuery's first COMPLETE snapshot. The initial sync
-   * arrives in pages, and painting each page as it lands makes the table
-   * assemble itself in front of the reader — worse, before any page lands
-   * the panel claims "No documents attached." about an account it hasn't
-   * finished reading. One flag holds the panel to: say nothing until you
-   * know, then stay live.
-   */
+  // Hold the table until all authorized pages have loaded.
   const [docsSynced, setDocsSynced] = useState(false);
+  const [loadError, setLoadError] = useState("");
   const [category, setCategory] = useState<Category>(DEFAULT_DOCUMENT_CATEGORY);
   const [view, setView] = useState(
     initialLink && /^(policy|quote):.+$/.test(initialLink) ? initialLink : ""
@@ -148,28 +142,35 @@ export default function DocumentsPanel({
   const [matchCount, setMatchCount] = useState(0);
   const viewerRef = useRef<HTMLDivElement>(null);
 
+  const reloadDocuments = useRef<() => Promise<void>>(async () => {});
   useEffect(() => {
-    // A different entity is a different resource: back to pristine, so the
-    // gate re-arms instead of leaving the previous mount's rows (or its
-    // empty state) under the new one's heading.
+    let active = true, generation = 0;
     setDocs([]);
     setDocsSynced(false);
-    const sub = client.models.Document.observeQuery({
-      filter: { entityId: { eq: entityId } },
-    }).subscribe({
-      next: ({ items, isSynced }) => {
-        // Snapshots before isSynced are partial pages of the initial read —
-        // held back, the table appears once, complete. After sync, every
-        // snapshot is a real change (an upload landing, an OCR status
-        // flipping) and applies immediately; that liveness is the whole
-        // reason this is a subscription and not a fetch.
-        if (!isSynced) return;
-        setDocs([...items]);
-        setDocsSynced(true);
-      },
-    });
-    return () => sub.unsubscribe();
-  }, [entityId]);
+    setLoadError("");
+    const refresh = async () => {
+      const request = ++generation;
+      try {
+        const items = await listAllPages(async nextToken => {
+          const page = await client.models.Document.listDocumentByEntityId({ entityId }, { filter: { entityType: { eq: entityType } }, nextToken });
+          if (page.errors?.length) throw new Error(page.errors[0].message);
+          return page;
+        });
+        if (active && request === generation) {
+          setDocs(items); setDocsSynced(true); setLoadError("");
+          setPreviewDoc(current => current && items.some(item => item.id === current.id) ? current : null);
+        }
+      } catch (err) {
+        if (active && request === generation) { setDocs([]); setDocsSynced(false); setPreviewDoc(null); setLoadError(friendlyError(err, "Could not load documents.")); }
+      }
+    };
+    reloadDocuments.current = refresh;
+    void refresh();
+    const timer = window.setInterval(() => { if (document.visibilityState === "visible") void refresh(); }, 15_000);
+    const focused = () => { void refresh(); };
+    window.addEventListener("focus", focused);
+    return () => { active = false; window.clearInterval(timer); window.removeEventListener("focus", focused); };
+  }, [entityId, entityType]);
 
   async function handleUpload(files: File[] | null) {
     if (!files?.length) return;
@@ -213,6 +214,7 @@ export default function DocumentsPanel({
       }
     }
     setUploading(false);
+    await reloadDocuments.current();
   }
 
   async function download(doc: CrmDocument) {
@@ -256,6 +258,7 @@ export default function DocumentsPanel({
           name,
         });
         if (errors?.length) throw new Error(errors[0].message);
+        await reloadDocuments.current();
       },
       {
         savedMessage: `Renamed to "${name}".`,
@@ -270,10 +273,10 @@ export default function DocumentsPanel({
         if (doc.s3Key && doc.s3Key !== "pending") {
           await remove({ path: doc.s3Key }).catch(() => {});
         }
-        // `errors` used to be dropped: the observeQuery subscription simply
-        // kept the row, which reads as "the Confirm delete button missed".
+        // Amplify reports write errors in the response instead of throwing.
         const { errors } = await client.models.Document.delete({ id: doc.id });
         if (errors?.length) throw new Error(errors[0].message);
+        await reloadDocuments.current();
       },
       {
         savedMessage: `"${doc.name}" deleted.`,
@@ -293,6 +296,7 @@ export default function DocumentsPanel({
           ...linkFields(key),
         });
         if (errors?.length) throw new Error(errors[0].message);
+        await reloadDocuments.current();
       },
       {
         savedMessage: key
@@ -400,13 +404,13 @@ export default function DocumentsPanel({
             onFiles={handleUpload}
           />
         </div>
-        {error && <span className="error-text">{error}</span>}
+        {error && <span role="alert" className="error-text">{error}</span>}
         {/* Renames and deletes are per-row with no per-row place to report;
             this is the panel's one status line. */}
         <SaveStatus {...rowStatus.status} />
       </div>
 
-      {!docsSynced ? (
+      {loadError ? <p role="alert" className="error-text">{loadError} <button className="link" onClick={() => void reloadDocuments.current()}>Retry</button></p> : !docsSynced ? (
         <p className="muted small">Loading…</p>
       ) : visible.length === 0 ? (
         <p className="muted small">

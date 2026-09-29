@@ -5,7 +5,6 @@ export interface CommercialEntry {
   accountId: string;
   plan: CommercialPlan;
   salespersonId?: string;
-  championId?: string;
 }
 export function useCommercial(ids: string[], revision?: unknown) {
   const key = [...new Set(ids)].sort().join(',');

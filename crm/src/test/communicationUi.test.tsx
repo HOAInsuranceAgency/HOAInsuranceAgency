@@ -10,8 +10,8 @@ import { CallOutcome } from "../components/CommunicationReview";
 import CommunicationSettings from "../components/CommunicationSettings";
 const context = { workflow: null, tasks: [], communications: [], team: [], issues: [] };
 function linkedLead() {
-  const linked = { ...context, workflow: { accountId: "a", name: "Willow HOA", salespersonId: "jake", championId: "jake", version: 4, disposition: "ACTIVE", updatedAt: "2026-09-10T12:00:00Z", conversationId: "cnv_a" },
-    team: ["jake", "brian"].map(userId => ({ userId, name: userId === "jake" ? "Jake Greasley" : "Brian Cole", email: `${userId}@example.com`, enabled: true, salesperson: true, champion: true })),
+  const linked = { ...context, workflow: { accountId: "a", name: "Willow HOA", salespersonId: "jake", version: 4, disposition: "ACTIVE", updatedAt: "2026-09-10T12:00:00Z", conversationId: "cnv_a" },
+    team: ["jake", "brian"].map(userId => ({ userId, name: userId === "jake" ? "Jake Greasley" : "Brian Cole", email: `${userId}@example.com`, enabled: true, salesperson: true })),
     tasks: [{ id: "task", accountId: "a", kind: "FOLLOW_UP", role: "SALESPERSON", title: "Follow up with prospect", status: "OPEN", dueAt: "2026-09-14T13:00:00Z", escalationAt: "2026-09-15T13:00:00Z", version: 2 }],
   };
   h.request.mockImplementation(async (op: string) => op === "context" ? linked : op === "accountSummary" ? { summary: { name: "Willow HOA", source: "website-ho6:willow-condominium", contacts: [{ id: "c", name: "Willow HOA", email: "jake@example.com", phone: "6178959530" }], quotes: [], documents: [], more: true, url: "https://staging.example.com/accounts/a" } } : op === "work" ? { items: [] } : { ok: true });
@@ -26,19 +26,19 @@ describe("communication UI boundaries", () => {
     expect(screen.queryByText(/website-ho6:/)).toBeNull(); expect(screen.queryByText(/Documents \(0\+/)).toBeNull();
     expect(screen.queryByRole("combobox", { name: "Salesperson" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Open in Front" })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Edit team" }));
+    fireEvent.click(screen.getByRole("button", { name: "Edit salesperson" }));
     fireEvent.change(screen.getByRole("combobox", { name: "Salesperson" }), { target: { value: "brian" } });
-    fireEvent.click(within(screen.getByRole("region", { name: "Lead team" })).getByRole("button", { name: "Cancel" }));
-    fireEvent.click(screen.getByRole("button", { name: "Edit team" }));
+    fireEvent.click(within(screen.getByRole("region", { name: "Account owner" })).getByRole("button", { name: "Cancel" }));
+    fireEvent.click(screen.getByRole("button", { name: "Edit salesperson" }));
     expect(screen.getByRole("combobox", { name: "Salesperson" })).toHaveValue("jake");
     expect(h.request.mock.calls.some(([op]) => op === "setResponsibilities")).toBe(false);
   });
-  it("saves both chosen roles with the existing workflow version", async () => {
+  it("saves the sole salesperson with the existing workflow version", async () => {
     linkedLead(); render(<FrontSidebar />); act(() => h.listener?.({ conversation: { id: "cnv_a" } }));
-    fireEvent.click(await screen.findByRole("button", { name: "Edit team" }));
-    fireEvent.change(screen.getByRole("combobox", { name: "Deal champion" }), { target: { value: "brian" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save responsibilities" }));
-    await waitFor(() => expect(h.request).toHaveBeenCalledWith("setResponsibilities", { accountId: "a", salespersonId: "jake", championId: "brian", version: 4 }, true));
+    fireEvent.click(await screen.findByRole("button", { name: "Edit salesperson" }));
+    fireEvent.change(screen.getByRole("combobox", { name: "Salesperson" }), { target: { value: "brian" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save salesperson" }));
+    await waitFor(() => expect(h.request).toHaveBeenCalledWith("setResponsibilities", { accountId: "a", salespersonId: "brian", version: 4 }, true));
     await waitFor(() => expect(screen.queryByRole("combobox", { name: "Deal champion" })).toBeNull());
   });
   it("shows automatic follow-up without routine task editors", async () => {
@@ -62,7 +62,7 @@ describe("communication UI boundaries", () => {
     if (reason !== "open action") data.tasks = [];
     if (reason === "unknown tracking") Object.assign(data, { trackingHealthy: undefined });
     if (reason === "unhealthy tracking") Object.assign(data, { trackingHealthy: false });
-    if (reason === "assignment") data.workflow.championId = "missing";
+    if (reason === "assignment") data.workflow.salespersonId = "missing";
     if (reason === "unresolved message") Object.assign(data, { communications: [{ id: "new", channel: "EMAIL", direction: "INBOUND", status: "RECEIVED", at: "2026-09-10T12:00:00Z", resolved: false }] });
     if (reason === "new lead") Object.assign(data, { communications: [] });
     render(<FrontSidebar />); act(() => h.listener?.({ conversation: { id: "cnv_a" } }));
@@ -71,10 +71,10 @@ describe("communication UI boundaries", () => {
   });
   it("clears a team edit when Front switches to another conversation", async () => {
     linkedLead(); render(<FrontSidebar />); act(() => h.listener?.({ conversation: { id: "cnv_a" } }));
-    fireEvent.click(await screen.findByRole("button", { name: "Edit team" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Edit salesperson" }));
     fireEvent.change(screen.getByRole("combobox", { name: "Salesperson" }), { target: { value: "brian" } });
     act(() => h.listener?.({ conversation: { id: "cnv_b" } }));
-    await screen.findByRole("button", { name: "Edit team" });
+    await screen.findByRole("button", { name: "Edit salesperson" });
     expect(screen.queryByRole("combobox", { name: "Salesperson" })).toBeNull();
   });
   it("explains that staging CRM acceptance follows controlled activation", async () => {
@@ -111,7 +111,7 @@ describe("communication UI boundaries", () => {
   });
   it("filters assignment choices without treating eligibility as an access permission", () => {
     render(<ResponsibilitySelect label="Salesperson" value="" kind="salesperson" team={[
-      { userId: "b", name: "Brian Cole", email: "b@e.com", enabled: true, salesperson: true, champion: true },
+      { userId: "b", name: "Brian Cole", email: "b@e.com", enabled: true, salesperson: true },
       { userId: "c", name: "Carrier specialist", email: "c@e.com", enabled: true, salesperson: false, champion: true },
     ]} onChange={() => {}} />);
     expect(screen.getByRole("option", { name: "Brian Cole" })).toBeTruthy(); expect(screen.queryByRole("option", { name: "Carrier specialist" })).toBeNull();

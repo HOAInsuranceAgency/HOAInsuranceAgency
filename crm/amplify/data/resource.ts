@@ -1,3 +1,4 @@
+import { crmAccess } from "../functions/crm-access/resource";
 import { type ClientSchema, a, defineData } from "@aws-amplify/backend";
 import { processDocument } from "../functions/process-document/resource";
 import { honeycombStatus, honeycombSubmissions } from "../functions/honeycomb/resource";
@@ -44,6 +45,7 @@ const schema = a
     // ── Lifecycle enums ────────────────────────────────────────────────
     AccountStage: a.enum(["LEAD", "CLIENT"]),
     AccountType: a.enum(["ASSOCIATION", "PERSONAL", "COMMERCIAL_OTHER"]),
+    PropertyType: a.enum(["HOA_POA_POND_TOWNHOME", "CONDO", "INDIVIDUAL_UNIT_OWNER", "NOT_RECORDED"]),
     QuoteStatus: a.enum([
       "DRAFT",
       "SUBMITTED",
@@ -288,6 +290,8 @@ const schema = a
       .model({
         stage: a.ref("AccountStage").required(),
         type: a.ref("AccountType").required(),
+        // Confirmed reporting group; existing associations remain unknown.
+        propertyType: a.ref("PropertyType"),
         name: a.string().required(), // association / insured name (display)
         // Full legal entity name as it must appear on carrier submissions,
         // e.g. "Freedom Village at the Villages of the Americas Condominium
@@ -414,7 +418,7 @@ const schema = a
         policies: a.hasMany("Policy", "accountId"),
         invoices: a.hasMany("Invoice", "accountId"),
         certificates: a.hasMany("Certificate", "accountId"),
-      })
+      }).disableOperations(["subscriptions"])
       .secondaryIndexes((index) => [index("stage").sortKeys(["name"])])
       .authorization((allow) => [
         allow.authenticated().to(["read", "update"]),
@@ -459,7 +463,7 @@ const schema = a
       // a second copy of the same person. Also what makes the backfill
       // idempotent. See W9.
       extractionSourceKey: a.string(),
-    }),
+    }).disableOperations(["subscriptions"]),
 
     // ── Prior coverage: one row per line, per term ─────────────────────
     //
@@ -493,7 +497,7 @@ const schema = a
       effectiveDate: a.date(),
       expirationDate: a.date(),
       extractionSourceKey: a.string(),
-    }),
+    }).disableOperations(["subscriptions"]),
 
     // ── Activity: what changed on an account, and who changed it ───────
     //
@@ -523,7 +527,7 @@ const schema = a
         changes: a.json(), // [{ field, from, to }]
         summary: a.string(), // one human sentence
         occurredAt: a.datetime().required(),
-      })
+      }).disableOperations(["subscriptions"])
       .secondaryIndexes((index) => [index("entityId").sortKeys(["occurredAt"])])
       .authorization((allow) => [
         allow.authenticated().to(["read"]),
@@ -558,7 +562,7 @@ const schema = a
       amountOfLoss: a.float(),
       typeOfLoss: a.string(),
       extractionSourceKey: a.string(),
-    }),
+    }).disableOperations(["subscriptions"]),
 
     // ── Blanket coverages ──────────────────────────────────────────────
     //
@@ -582,7 +586,7 @@ const schema = a
       amount: a.float(),
       type: a.string(),
       extractionSourceKey: a.string(),
-    }),
+    }).disableOperations(["subscriptions"]),
 
     // ── General liability application ──────────────────────────────────
     //
@@ -640,7 +644,7 @@ const schema = a
       workSubcontractedPct: a.float(),
       fullTimeEmployees: a.integer(),
       partTimeEmployees: a.integer(),
-    }).identifier(["accountId"]),
+    }).disableOperations(["subscriptions"]).identifier(["accountId"]),
 
     // Class codes are a list, so they are rows rather than columns.
     GlClassCode: a.model({
@@ -656,7 +660,7 @@ const schema = a
       premiumBasis: a.ref("GlPremiumBasis"),
       exposure: a.float(),
       description: a.string(),
-    }),
+    }).disableOperations(["subscriptions"]),
 
     // ── Directors & Officers ───────────────────────────────────────────
     //
@@ -677,7 +681,7 @@ const schema = a
       aggregateLimit: a.float(),
       perClaimRetention: a.float(),
       aggregateRetention: a.float(),
-    }),
+    }).disableOperations(["subscriptions"]),
 
     // Keyed on the account for the same reason as GlApplication above.
     DoApplication: a.model({
@@ -692,7 +696,7 @@ const schema = a
       defenseLimit: a.float(),
       defenseLimitPosition: a.ref("DefenseLimitPosition"),
       pendingPriorLitigationDate: a.date(),
-    }).identifier(["accountId"]),
+    }).disableOperations(["subscriptions"]).identifier(["accountId"]),
 
     // ── Buildings: the ACORD 140's unit of description ─────────────────
     //
@@ -754,7 +758,7 @@ const schema = a
       mineSubsidenceCoverage: a.boolean(),
       remarks: a.string(), // ACORD 101 overflow
       extractionSourceKey: a.string(),
-    }),
+    }).disableOperations(["subscriptions"]),
 
     // ── Quotes: tied to an account; binding creates a Policy ───────────
     //
@@ -819,7 +823,7 @@ const schema = a
       policy: a.hasOne("Policy", "quoteId"),
       /** W8: pre-bind billing anchors here; see Invoice.quoteId. */
       invoices: a.hasMany("Invoice", "quoteId"),
-    })
+    }).disableOperations(["subscriptions"])
       .authorization((allow) => [
         allow.authenticated().to(["read", "create", "update"]),
         allow.groups(["ADMIN"]),
@@ -904,7 +908,7 @@ const schema = a
       notes: a.string(),
       invoices: a.hasMany("Invoice", "policyId"),
       invoiceLines: a.hasMany("InvoiceLine", "policyId"),
-    })
+    }).disableOperations(["subscriptions"])
       .authorization((allow) => [
         allow.authenticated().to(["read", "create", "update"]),
         allow.groups(["ADMIN"]),
@@ -1025,7 +1029,7 @@ const schema = a
       // Streamed. Money changing hands is the clearest case in the schema for
       // "who did this, and when" — see STREAMED_MODELS in backend.ts.
       lastWriteBy: a.string(),
-    })
+    }).disableOperations(["subscriptions"])
       .secondaryIndexes((index) => [index("accountId").sortKeys(["status"])])
       .authorization((allow) => [
         allow.authenticated().to(["read", "create", "update"]),
@@ -1072,7 +1076,7 @@ const schema = a
       /** Display order, so a reordered invoice does not depend on ids. */
       sortOrder: a.integer(),
       updatedBy: a.string(),
-    })
+    }).disableOperations(["subscriptions"])
       .authorization((allow) => [
         allow.authenticated().to(["read", "create", "update", "delete"]),
         allow.groups(["ADMIN"]),
@@ -1115,7 +1119,7 @@ const schema = a
          */
         configSha256: a.string(),
         occurredAt: a.datetime().required(),
-      })
+      }).disableOperations(["subscriptions"])
       .secondaryIndexes((index) => [index("accountId").sortKeys(["occurredAt"])])
       .authorization((allow) => [allow.authenticated().to(["read"])]),
 
@@ -1239,7 +1243,7 @@ const schema = a
         agreementSignedName: a.string(),
         agreementSignedRole: a.string(),
         agreementSignedIp: a.string(),
-      })
+      }).disableOperations(["subscriptions"])
       .secondaryIndexes((index) => [
         index("accountId").sortKeys(["quotedAt"]),
         index("electionToken"),
@@ -1274,7 +1278,7 @@ const schema = a
         postedByName: a.string(),
         /** Set when the posting came off an autopay debit. */
         stripePaymentIntentId: a.string(),
-      })
+      }).disableOperations(["subscriptions"])
       .secondaryIndexes((index) => [index("loanId").sortKeys(["postedAt"])])
       .authorization((allow) => [allow.authenticated().to(["read"])]),
 
@@ -1305,7 +1309,7 @@ const schema = a
         certDocumentId: a.string(),
         createdBy: a.string(),
         createdByName: a.string(),
-      })
+      }).disableOperations(["subscriptions"])
       .secondaryIndexes((index) => [index("loanId").sortKeys(["occurredAt"])])
       .authorization((allow) => [allow.authenticated().to(["read"])]),
 
@@ -1359,7 +1363,7 @@ const schema = a
         actor: a.string(),
         actorName: a.string(),
         occurredAt: a.datetime().required(),
-      })
+      }).disableOperations(["subscriptions"])
       .secondaryIndexes((index) => [index("policyId")])
       .authorization((allow) => [
         // Read-only for everyone since the screens retired: a new override
@@ -1486,7 +1490,7 @@ const schema = a
         ocrError: a.string(),
         // Who made this write — see the Contact model's note.
         lastWriteBy: a.string(),
-      })
+      }).disableOperations(["subscriptions"])
       .secondaryIndexes((index) => [index("entityId")]),
 
     /**
@@ -1530,7 +1534,7 @@ const schema = a
       completedAt: a.datetime(),
       completedBy: a.string(),
       notes: a.string(),
-    }).secondaryIndexes((index) => [index("accountId")]),
+    }).disableOperations(["subscriptions"]).secondaryIndexes((index) => [index("accountId")]),
 
     // ── Certificates (ACORD 25 issuance history) ───────────────────────
     //
@@ -1554,7 +1558,7 @@ const schema = a
       s3Key: a.string(), // generated PDF
       issuedBy: a.string(),
       issuedAt: a.datetime(),
-    })
+    }).disableOperations(["subscriptions"])
       .authorization((allow) => [
         allow.authenticated().to(["read", "create", "update"]),
         allow.groups(["ADMIN"]),
@@ -1821,7 +1825,7 @@ const schema = a
         sentBody: a.string(),
         /** Why the reply did not go, or went without document context. */
         note: a.string(),
-      })
+      }).disableOperations(["subscriptions"])
       .secondaryIndexes((index) => [index("uploadToken"), index("status").sortKeys(["dueAt"]).queryField("leadRepliesByStatusAndDueAt")])
       /**
        * ADMIN only, and nothing in the app reads this model at all.
@@ -1894,7 +1898,7 @@ const schema = a
          * once, and streaming the portal row as well would log it twice.
          */
         updatedBy: a.string(),
-      })
+      }).disableOperations(["subscriptions"])
       .secondaryIndexes((index) => [index("token")])
       // Same reasoning as LeadReply, and this one was authenticated-*writable*:
       // any signed-in user could revoke or extend another account's portal.
@@ -1937,7 +1941,7 @@ const schema = a
       accountId: a.id().required(), status: a.string().required(),
       input: a.string(), result: a.string(), issue: a.string(),
       price: a.float(), estimationId: a.string(), expiresAt: a.integer().required(),
-    }).secondaryIndexes(index => [index("accountId")])
+    }).disableOperations(["subscriptions"]).secondaryIndexes(index => [index("accountId")])
       .authorization(allow => [allow.authenticated().to(["read"])]),
     HoneycombSubmission: a.model({
       accountId: a.id().required(), effectiveDate: a.date().required(), status: a.string().required(),
@@ -1946,7 +1950,7 @@ const schema = a
       requestedAt: a.datetime().required(), history: a.string(),
       submissionId: a.string(), readableSubmissionId: a.string(), submissionStatus: a.string(),
       portalUrl: a.string(), result: a.string(), issue: a.string(), resolvedBy: a.string(), resolutionNote: a.string(),
-    }).secondaryIndexes(index => [index("accountId")])
+    }).disableOperations(["subscriptions"]).secondaryIndexes(index => [index("accountId")])
       .authorization(allow => [allow.authenticated().to(["read"])]),
     honeycombSubmissionSettings: a.query().returns(a.json()).authorization(allow => [allow.authenticated()])
       .handler(a.handler.function(honeycombSubmissions)),
@@ -2009,6 +2013,14 @@ const schema = a
       .returns(a.json())
       .authorization((allow) => [allow.publicApiKey()])
       .handler(a.handler.function(leadIntake)),
+
+    // All file access is signed after checking the current account assignment.
+    crmAccess: a.query().returns(a.json()).authorization(allow => [allow.authenticated()])
+      .handler(a.handler.function(crmAccess)),
+    crmFile: a.mutation()
+      .arguments({ operation: a.string().required(), path: a.string().required(), contentType: a.string(), nextToken: a.string(), sizeBytes: a.integer(), downloadAs: a.string(), validateObjectExistence: a.boolean() })
+      .returns(a.json()).authorization(allow => [allow.authenticated()])
+      .handler(a.handler.function(crmAccess)),
 
     marketingReportSettings: a.query()
       .returns(a.json()).authorization(allow => [allow.groups(["ADMIN"])])

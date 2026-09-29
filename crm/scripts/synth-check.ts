@@ -152,6 +152,8 @@ try {
     if (env.variables.HONEYCOMB_ENABLED !== String(staging)) throw new Error("Submissions must only run on staging");
     if (!staging && JSON.stringify(env).includes("HONEYCOMB_API_SECRET_KEY")) throw new Error("Non-staging submissions must not resolve secrets");
   }
+  const { checkAccountAccess } = await import("./check-account-access");
+  checkAccountAccess(backend, outdir);
   const marketingWorker = backend.marketingReportWorker.resources.lambda;
   const marketingEnv = Stack.of(marketingWorker).resolve((marketingWorker.node.defaultChild as CfnFunction).environment);
   if (Stack.of(marketingWorker) === Stack.of(backend.marketingReportApi.resources.lambda)) throw new Error("Marketing worker infrastructure must stay outside the crowded data stack");

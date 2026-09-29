@@ -50,7 +50,7 @@ export async function applyContactProgress(input: Communication, repair = false)
   const contactPairs = await accountContactPairs(accountId);
   const explicitLink = comm.conversationId ? await get<{ purpose?: string }>(`front-link:${comm.conversationId}`) : undefined;
   const linkedProspect = explicitLink?.accountId === accountId && explicitLink.data.purpose === "PROSPECT";
-  const role = domain === "CARRIER" || context !== "LEAD" ? "CHAMPION" : "SALESPERSON";
+  const role = "SALESPERSON";
   const activity = new Map((await accountRows<Communication>(accountId, "COMMUNICATION")).map(r => [r.id, r]));
   activity.set(projection.id, projection);
   const candidates = new Map((await accountRows<LeadTask>(accountId, "TASK")).map(t => [t.id, t]));
@@ -119,7 +119,7 @@ export async function applyContactProgress(input: Communication, repair = false)
   }
   const laterInbound = scoped.some(c => c.direction === "INBOUND" && c.id !== comm.id && c.at > at && c.classification !== "AUTOMATIC" && sameContact(comm, c, contactPairs));
   const laterContact = scoped.some(c => c.id !== comm.id && !!contactProgress(c) && contactAt(c) > at && sameContact(comm, c, contactPairs));
-  const custom = [...candidates.values()].some(t => t.data.status === "OPEN" && t.data.custom && !automaticContactTask(t.data) && t.data.role === role);
+  const custom = [...candidates.values()].some(t => t.data.status === "OPEN" && t.data.custom && !automaticContactTask(t.data) && taskDomain(t.data) === domain && (t.data.context ?? "LEAD") === context);
   const marketing = await get<{ waitingOnCarrier?: boolean }>(`marketing-context:${accountId}`);
   // The outreach task closes when the salesperson asks for information. Its
   // underlying underwriting requirement remains open until the information
@@ -129,7 +129,8 @@ export async function applyContactProgress(input: Communication, repair = false)
   const deferred = context === "LEAD" && wf.data.deferredUntil && at < wf.data.deferredUntil;
   const routineWaiting = (context !== "SERVICE" || interimResponse(comm)) && (!deferred || returnedMissedCall || satisfiedSourceIds.size > 0);
 
-  const id = `task:wait:${accountId}:${comm.conversationId ?? (comm.direction === "INBOUND" ? comm.from : comm.to?.[0]) ?? comm.providerId}${role === "CHAMPION" ? ":champion" : ""}`;
+  // Retain the legacy suffix as a durable idempotency key; it no longer selects a role.
+  const id = `task:wait:${accountId}:${comm.conversationId ?? (comm.direction === "INBOUND" ? comm.from : comm.to?.[0]) ?? comm.providerId}${domain === "CARRIER" || context !== "LEAD" ? ":champion" : ""}`;
   const previous = await get<LeadTask>(id);
   const writes = [annualReturned ? put(row("WORKFLOW", wf.id, { ...wf.data, deferredUntil: undefined, version: wf.version + 1 }, { accountId, previous: wf }), wf) : check(wf), put(row("CONTACT_FENCE", fence.id, {}, { previous: fence }), fence)];
   // Newer inbound work supersedes waiting; old/replayed sends cannot move its date.

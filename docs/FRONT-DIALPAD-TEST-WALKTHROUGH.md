@@ -1,5 +1,7 @@
 # Front, Dialpad & CRM: staging test walkthrough
 
+**Current ownership model:** [Salesperson account ownership](specs/salesperson-account-ownership.md). One salesperson handles submissions and remains responsible after binding. There is no deal-champion role.
+
 Use this guide in order. Each numbered test includes what to do and what should happen. Mark it **Pass**, **Fail**, or **Blocked** and record the test lead and time. An expected result is a test target, not a claim that the live feature has already passed.
 
 **Setup snapshot September 9, 2026 (historical):** the new Front email channel is connected and all CRM connection checks pass. Jake is the default salesperson and deal champion. Delivery is paused, automatic cleanup is off, and all five call and five text event subscriptions in Dialpad are disabled. There is no verified Dialpad event receipt yet. This guide does not activate anything.
@@ -46,7 +48,7 @@ Plan for a first session of roughly **60–90 minutes**, additional time with th
 
 ### 04 — Confirm team selection and protected connection values
 
-1. In **Settings → Team**, confirm Jake has both **Salesperson** and **Deal champion** checked.
+1. In **Settings → Team**, confirm Jake has **Salesperson** checked.
 2. Verify Front and Dialpad IDs display as reference text, not editable table fields. Click **Edit connections**.
 3. Check that the dialog contains the current values and Save is disabled until a change is made. Enter an invalid sample value, such as `not-an-id`, and verify validation blocks saving. Click **Cancel**.
 4. Reopen the dialog and verify the original values remain. Close it without saving.
@@ -146,7 +148,7 @@ Submit once through each row below, with a distinct test identity or address. Re
 ### 14 — Use the CRM inside Front
 
 1. Select TEST Oak's email conversation in Front and open the **HOA CRM — Staging** sidebar app. Sign in with your existing staging CRM identity if prompted. If the panel feels cramped, drag its left edge to the left to give it more room.
-2. Verify the correct lead name, contact, source, documents, quote context, salesperson, champion and next actions. Use **Open CRM account**, then expand **Account details** for **View all documents** and **View quotes & bind**. Expand **Recent activity** for the message history. Try **Lead team → Edit team → Cancel** and confirm both saved names stay unchanged.
+2. Verify the correct lead name, contact, source, documents, quote context, salesperson and next actions. Use **Open CRM account**, then expand **Account details** for **View all documents** and **View quotes & bind**. Expand **Recent activity** for the message history. Try **Account owner → Edit salesperson → Cancel** and confirm the saved owner stays unchanged.
 3. Start an unsaved note or edit, then select TEST Pine's conversation. Verify the sidebar changes to Pine and does not apply Oak's unsaved content.
 4. For a fresh unlinked test email, expand **Find or link a lead**, search its association/contact, select **Prospect**, and choose the correct result.
 
@@ -178,17 +180,17 @@ Submit once through each row below, with a distinct test identity or address. Re
 3. Create a separate test conversation, link it to the same lead with purpose **Carrier**, and send a controlled incoming question from your test mailbox.
 4. Reply to that carrier conversation in Front.
 
-**Expected:** the carrier response closes automatically and the next carrier follow-up belongs to the deal champion. Prospect and carrier work stay separate. Existing deliberately dated promises remain intact until handled; staff do not choose routine dates.
+**Expected:** the carrier response closes automatically and the next carrier follow-up belongs to the account salesperson. Prospect and carrier work stay separate. Existing deliberately dated promises remain intact until handled; staff do not choose routine dates.
 
 ### 18 — Test the 9 a.m. reminder
 
 1. Send a controlled incoming prospect request after business hours. Verify its response deadline is 5 p.m. on the next business day.
 2. Archive or snooze the linked Front conversation beyond that date without changing the CRM deadline.
 3. At 9 a.m. Eastern on that business day, allow a few processing cycles. Check **My reminders** and Front.
-4. Read **Why this is back**, the original request, the next step, responsible teammate, and deadline. No completion form should be required.
+4. In the CRM, read the reason, next step, responsible teammate, and deadline. Verify Front stays archived or snoozed and receives no scheduled reminder comment. No completion form should be required.
 5. Leave this test request unanswered through 5 p.m. It may become overdue, but there should be no new scheduled reminder at 5 p.m.
 
-**Expected:** the morning reminder explains why the conversation returned. Reply, call, or text through the connected tools to handle it; the communication supplies the record and the next follow-up is automatic. Unanswered work escalates at 9 a.m. on the next business date. Do not change the computer clock or manipulate live dates to accelerate this test.
+**Expected:** the morning CRM reminder explains what needs attention without reopening or unsnoozing the Front conversation. Reply, call, or text through the connected tools to handle it; the communication supplies the record and the next follow-up is automatic. Unanswered work escalates at 9 a.m. on the next business date. Do not change the computer clock or manipulate live dates to accelerate this test.
 
 ### 19 — Verify the real business-day schedule and escalation
 
@@ -197,7 +199,7 @@ Submit once through each row below, with a distinct test identity or address. Re
 3. Separately, receive a substantive email or missed call during working hours and record the original time. Verify its deadline uses **eight staffed hours**, 9 a.m.–5 p.m. Eastern, Monday–Friday, excluding configured holidays. The reminder is at 9 a.m. on the due date; escalation is at 9 a.m. on the next business date after the deadline.
 4. Because Jake holds both roles, check that the reminder escalates without producing duplicate notifications to the same person. The task should show **Escalated**.
 
-| Example, with no agency holiday | Expected due | Expected champion escalation |
+| Example, with no agency holiday | Expected due | Expected sales-manager escalation |
 | --- | --- | --- |
 | AI email sent Wednesday, September 9 | Friday, September 11, 9 a.m. | Monday, September 14, 9 a.m. |
 | Prospect reply Thursday, September 10, 2 p.m. | Friday, September 11, 2 p.m. | Monday, September 14, 9 a.m. |
@@ -212,12 +214,12 @@ Submit once through each row below, with a distinct test identity or address. Re
 2. In Front, mark the conversation read, snooze it, and archive it. Check the personal inbox view and shared inbox view separately.
 3. Refresh the CRM after each action. Then wait for its 9 a.m. reminder, as in test 18.
 
-**Expected:** the CRM owners, task and deadline remain unchanged. Due work stays visible to the team and its linked conversation reopens while delivery runs. Do not judge success solely by whether every personal inbox copy disappears; record personal and shared behavior separately.
+**Expected:** the CRM owners, task and deadline remain unchanged. Due work stays visible to the team in the CRM and daily reports. Scheduled reminders leave the linked Front conversation archived or snoozed and do not add comments. Do not judge success solely by whether every personal inbox copy disappears; record personal and shared behavior separately.
 
 ### 21 — Separate ownership, Front handling and CRM permissions
 
-1. With Jake in both roles, use **Use deal champion as Front handler**, then **Use salesperson as Front handler** in the lead/sidebar. Verify the mapped Front teammate and unchanged CRM deadlines.
-2. With a second authorized staging teammate available, change only the deal champion and click **Save responsibilities**. Verify the salesperson and task dates stay unchanged.
+1. With Jake assigned as salesperson, use **Use salesperson as Front handler** in the lead/sidebar. Verify the mapped Front teammate and unchanged CRM deadlines.
+2. With a second authorized staging salesperson available, change the salesperson and click **Save salesperson**. Verify both client and carrier work follow the new owner and task dates stay unchanged.
 3. Change a conversation's handler manually in Front. Verify that this does not replace either CRM owner. Use the role-routing buttons to deliberately return it to role-based handling.
 4. As an admin, enable only one eligibility role for the second test teammate and verify they appear only in that role's dropdown. Restore the intended setting afterward. Their CRM access should not change.
 
@@ -227,7 +229,7 @@ Submit once through each row below, with a distinct test identity or address. Re
 
 1. Keep an unanswered prospect task open on a test lead.
 2. Send a separate controlled email representing a carrier question. In the Front sidebar, link that conversation to the test lead with **Conversation purpose → Carrier**.
-3. Verify **Respond to carrier** appears for the deal champion and in **Responsibility → Deal champion**.
+3. Verify **Respond to carrier** appears in the account salesperson's **My work** list.
 4. Complete the carrier task with a recorded outcome. Recheck the prospect task.
 
 **Expected:** carrier work does not satisfy or postpone prospect response work. Both can exist on the same account with their own deadlines. Merely changing a Front handler is not the same as classifying a conversation as carrier work.
@@ -310,7 +312,7 @@ Make a fresh controlled inbound and outbound call for each row. Capture the time
 2. Use a clean test lead with both owners, confirmed delivery, no unresolved inbound request or communication issue, and a future follow-up. Choose **Clean up inbox when ready** in the CRM, or **Conversation tools → Tidy this conversation** in Front.
 3. Verify the conversation archives while the CRM lead and dated commitment remain. Use a fresh outbound test with no open response/callback/custom task to check automatic cleanup after a new waiting follow-up is created.
 4. On another lead with an unresolved reply or missed call, try the same cleanup action. Then test a due/overdue action.
-5. Let the archived lead's commitment become due and verify it reopens. Compare the personal and shared Front views.
+5. Let the archived lead's commitment become due and verify its CRM reminder appears while Front stays archived. Repeat with a conversation snoozed beyond the next two business mornings. Check both mornings for CRM reminders and no reminder comments or reopen activity in Front; compare personal and shared views.
 
 **Expected:** only eligible conversations archive. Unanswered requests, overdue work, missing owners, uncertain delivery or sync problems block cleanup. No CRM commitment is completed or postponed. A successful linked reply or completed call requests cleanup automatically. Existing unrelated work and sync checks still apply.
 
@@ -329,7 +331,7 @@ Make a fresh controlled inbound and outbound call for each row. Capture the time
 3. Review the queued lead, recheck connections, confirm the test checkbox, and choose **Resume delivery**, with the intended cleanup setting.
 4. Wait for delivery and verify one initial email in the correct conversation.
 
-**Expected:** pause holds queued CRM delivery, not lead capture. Resume processes the saved enquiry without a second form submission. Existing CRM commitments keep their original deadlines. Native Front/Dialpad messages and internal new-lead alerts are separate; pausing the CRM does not stop those. Queued reminders may reopen conversations after resume.
+**Expected:** pause holds queued CRM delivery, not lead capture. Resume processes the saved enquiry without a second form submission. Existing CRM commitments keep their original deadlines. Native Front/Dialpad messages and internal new-lead alerts are separate; pausing the CRM does not stop those. Queued Front reminder comments and reopens from the retired daily feature are suppressed after resume. A genuine new inbound message can still reopen a conversation normally.
 
 ### 33 — Check every work view and the activity record
 
@@ -341,7 +343,7 @@ Make a fresh controlled inbound and outbound call for each row. Capture the time
 | Needs attention | Replies, callbacks, carrier responses, delivery corrections, and work due today or overdue |
 | Upcoming | Scheduled work due after today that does not already need a response |
 | All open | Every open task |
-| Responsibility filter | Choose salesperson or deal champion independently of the view; with My leads, show your selected responsibility |
+| Single ownership | No responsibility selector or champion column; My work includes the salesperson's client and carrier tasks |
 | Waiting on prospect label | Shown beside automatic no-reply follow-ups; it is not a separate view |
 | Shared team items | Assign a teammate and Link a call or text remain visible in Needs attention and All open, even with My leads selected |
 | My reminders | Expand the separate section for current reminders addressed to you |

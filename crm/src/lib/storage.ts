@@ -23,7 +23,7 @@
  * Nothing here swallows an error. `deleteFile` is the one function that does
  * not throw, and it still returns the failure and logs it — see its doc.
  */
-import { getUrl, remove, uploadData } from "aws-amplify/storage";
+import { getUrl, remove, uploadData } from "./scopedStorage";
 import { client, type CrmDocument } from "./client";
 // Re-exported: `safeSegment` lives dependency-free in storageKeys.ts so the
 // lead-upload Lambda can build the same keys without importing this module.
@@ -41,13 +41,8 @@ type DocumentCategory = NonNullable<Schema["DocumentCategory"]["type"]>;
 export const PENDING_KEY = "pending";
 
 /**
- * The prefixes `amplify/storage/resource.ts` actually grants. A path outside
- * these can only ever 403, so we refuse it before the network call.
- *
- * Deliberately no `signaturePath(profileId)` helper: `signatures/` has a known
- * open-overwrite gap (documented in resource.ts) and a convenience builder
- * would make writing to someone else's signature key a one-liner. Callers that
- * legitimately write there spell the key out themselves.
+ * Prefixes supported by the assignment-aware crmFile API. Unknown paths
+ * are rejected before the network call.
  */
 export const GRANTED_PREFIXES = [
   "certificates/",

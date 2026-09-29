@@ -1,7 +1,6 @@
 import type { DynamoDBStreamEvent } from "aws-lambda";
-import { get, query, row, save, put, commit, issue, conflict, check, hash, type Row } from "./store";
+import { get, query, row, save, put, commit, issue, conflict, check, type Row } from "./store";
 import { config } from "./config";
-import { operationRow } from "./outbox";
 import { runOperation, type Operation } from "./operations";
 import { processEvent, dialpadEvent, ingestFrontMessage, type EventRecord } from "./events";
 import { ensureWorkflow, recordInbound, enabledUser, accountRows } from "./workflow";
@@ -12,8 +11,6 @@ import { leadActionGuidance } from "../../../../shared/leadActionGuidance";
 import { migrateReminderSchedules } from "./reminders";
 import { dataClient } from "./data";
 import { callRoot, syncCall } from "./calls";
-import { agencyDay } from "../../../../shared/leadActionGuidance";
-import { accountableRole } from "../../../../shared/workRouting";
 
 export async function dispatchTask(candidate: Row<LeadTask>) {
   let task = await get<LeadTask>(candidate.id);
@@ -59,14 +56,8 @@ export async function dispatchTask(candidate: Row<LeadTask>) {
     const id = `notice:${task.id}:${target}`, old = await get(id);
     writes.push(put(row("NOTIFICATION", id, { recipient: target, accountId: task.accountId, taskId: task.id, title: guidance.action, why: guidance.why, instruction: guidance.after, dueAt: task.data.dueAt, urgency: stage, at: now }, { accountId: task.accountId, previous: old }), old));
   }
-  const cnv = task.data.conversationId ?? wf.data.conversationId;
-  if (cnv) {
-    const group = { day: agencyDay(now), role: accountableRole(task.data), recipientId: recipient, accountableId: route.accountableId, anchorTaskId: task.id };
-    const key = hash(`${task.data.accountId}:${cnv}:${group.day}:${group.role}:${recipient}:${route.accountableId}`).slice(0, 32);
-    const commentId = `op:morning-summary:${key}`, reopenId = `op:morning-reopen:${key}`;
-    if (!await get(commentId)) writes.push(put(operationRow(commentId, { type: "COMMENT", accountId: task.data.accountId, conversationId: cnv, reminderGroup: group })));
-    if (!await get(reopenId)) writes.push(put(operationRow(reopenId, { type: "REOPEN", accountId: task.data.accountId, conversationId: cnv, reminderGroup: group, afterOperationId: commentId })));
-  }
+  // Scheduled work stays in CRM notifications and reports. Neither reopen nor
+  // comment on Front conversations here: comments can also bump archived threads.
   await commit(writes);
 }
 export async function refreshCommunication(candidate: Row<Communication>) {
@@ -135,6 +126,13 @@ export const handler = async (event?: Partial<DynamoDBStreamEvent>) => {
   const start = Date.now(), counters = { handled: 0, failed: 0 };
   let cursor: string | undefined, lagging = false, callChecks = 0;
   const c = await config();
+  try {
+    await (await import("./ownershipMigration")).migrateSalespersonOwnership();
+    await (await import("./routing")).resolveIssue("salesperson-ownership");
+  } catch (error) {
+    lagging = true;
+    await issue("salesperson-ownership", error instanceof Error ? error.message : "Account assignment migration will retry");
+  }
   await migrateReminderSchedules();
   try { await (await import("./coverage")).coverageSweep(); await (await import("./routing")).resolveIssue("coverage-census"); }
   catch (error) { lagging = true; await issue("coverage-census", error instanceof Error ? error.message : "Work coverage needs attention"); }

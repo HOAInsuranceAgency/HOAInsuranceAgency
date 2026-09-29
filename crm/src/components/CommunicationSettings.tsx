@@ -16,7 +16,7 @@ type SettingsSnapshot = {
 };
 
 const checkLabels: Record<string, [string, string]> = {
-  "Default responsibilities": ["Lead ownership", "Choose eligible default sales and champion owners."],
+  "Default responsibilities": ["Lead ownership", "Choose an eligible default salesperson."],
   "Team reports": ["Managers and daily reports", "Complete manager assignments and the internal reporting connection in Team settings."],
   "Independent alerts": ["Operations alerts", "Connect and confirm the operations alert recipient in AWS before starting delivery."],
   "Front company": ["Front access", "Review the Front connection in Edit settings."],
@@ -101,7 +101,6 @@ export default function CommunicationSettings() {
         <div><dt>Default salesperson</dt><dd>{owner?.name || ((saved.defaultSalespersonId ?? saved.defaultUserId) ? (members.loading ? "Checking teammate…" : "Teammate unavailable") : "Not set")}</dd>
           <small>{(saved.defaultSalespersonId ?? saved.defaultUserId) ? "Default assignments apply to new leads." : "Choose eligible default teammates in Team settings."}</small>
           {members.error && <span className="error-text small">{members.error} <button type="button" className="secondary" disabled={members.loading} onClick={() => void members.refetch()}>Retry teammates</button></span>}</div>
-        <div><dt>Default deal champion</dt><dd>{members.data.team.find(m => m.userId === (saved.defaultChampionId ?? saved.defaultUserId))?.name ?? "Not set"}</dd></div>
         <div><dt>Inbox cleanup</dt><dd>Automatic</dd><small>Conversations with a future follow-up are tidied when no work needs attention. CRM deadlines stay in place.</small></div>
       </dl>
       <div className="communication-actions">
@@ -169,7 +168,7 @@ export default function CommunicationSettings() {
             setMessage("Conversation history is queued for another check.");
           })}>Retry conversation history</button>
           <h3>Existing lead assignments</h3><p className="muted small">Fill missing responsibilities with the selected default teammate. Existing assignments and deadlines stay in place; historical emails are not resent.</p>
-          <button type="button" className="secondary" disabled={!(saved.defaultSalespersonId ?? saved.defaultUserId) || !(saved.defaultChampionId ?? saved.defaultUserId) || migrationCursor === null} onClick={() => void run("backfill", async () => {
+          <button type="button" className="secondary" disabled={!(saved.defaultSalespersonId ?? saved.defaultUserId) || migrationCursor === null} onClick={() => void run("backfill", async () => {
             const result = await request<{ assigned: number; exceptions: number; nextToken?: string }>("backfill", { nextToken: migrationCursor }, true);
             setMigrationCursor(result.nextToken ?? null); setMessage(`${result.assigned} assignments updated; ${result.exceptions} need attention.${result.nextToken ? " Continue with the next batch." : " All batches reviewed."}`);
           })}>{migrationCursor === null ? "Backfill complete" : migrationCursor ? "Review next lead batch" : "Fill missing lead responsibilities"}</button>

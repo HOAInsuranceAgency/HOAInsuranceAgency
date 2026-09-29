@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // Same stubbing as ExtractionPanel.test.tsx: replace generateClient rather
 // than ./client, so the actor proxy that stamps `lastWriteBy` stays real.
 const models = vi.hoisted(() => ({
-  Document: { observeQuery: vi.fn(), update: vi.fn(), delete: vi.fn() },
+  Document: { listDocumentByEntityId: vi.fn(), update: vi.fn(), delete: vi.fn() },
 }));
 vi.mock("aws-amplify/data", () => ({
   generateClient: () => ({ models, mutations: {} }),
@@ -13,7 +13,7 @@ vi.mock("aws-amplify/data", () => ({
 vi.mock("aws-amplify/auth", () => ({
   getCurrentUser: vi.fn(async () => ({ userId: "u1" })),
 }));
-vi.mock("aws-amplify/storage", () => ({
+vi.mock("../lib/scopedStorage", () => ({
   uploadData: vi.fn(),
   getUrl: vi.fn(),
   remove: vi.fn(),
@@ -47,23 +47,14 @@ const DOC = {
 const renameCall = () =>
   models.Document.update.mock.calls.find(([arg]) => "name" in arg)?.[0];
 
-type Snapshot = { items: unknown[]; isSynced: boolean };
-
 function renderPanel(doc: Record<string, unknown> = DOC) {
-  models.Document.observeQuery.mockReturnValue({
-    subscribe: ({ next }: { next: (v: Snapshot) => void }) => {
-      // The real subscription's shape: the panel holds partial pre-sync
-      // snapshots, so the mock must say it is synced or nothing renders.
-      next({ items: [doc], isSynced: true });
-      return { unsubscribe: vi.fn() };
-    },
-  });
+  models.Document.listDocumentByEntityId.mockResolvedValue({ data: [doc] });
   render(<DocumentsPanel entityType="ACCOUNT" entityId="acct-1" />);
 }
 
 /** Click Rename, replace the box's contents with `text`. */
 async function typeName(user: ReturnType<typeof userEvent.setup>, text: string) {
-  await user.click(screen.getByRole("button", { name: "Rename" }));
+  await user.click(await screen.findByRole("button", { name: "Rename" }));
   const box = screen.getByRole("textbox", { name: "Document name" });
   await user.clear(box);
   if (text) await user.type(box, text);
@@ -152,7 +143,7 @@ describe("DocumentsPanel rename", () => {
     const user = userEvent.setup();
     renderPanel();
 
-    await user.click(screen.getByRole("button", { name: "Rename" }));
+    await user.click(await screen.findByRole("button", { name: "Rename" }));
     await user.click(screen.getByRole("button", { name: "Save name" }));
 
     expect(models.Document.update).not.toHaveBeenCalled();
@@ -180,55 +171,40 @@ describe("DocumentsPanel rename", () => {
     const user = userEvent.setup();
     renderPanel();
 
-    const row = screen.getByRole("row", { name: /scan_0043/ });
+    const row = await screen.findByRole("row", { name: /scan_0043/ });
     expect(within(row).getByRole("button", { name: "Download" })).toBeTruthy();
 
-    await user.click(screen.getByRole("button", { name: "Rename" }));
+    await user.click(await screen.findByRole("button", { name: "Rename" }));
 
     // A Download click mid-edit would discard the typing without saying so.
     expect(screen.queryByRole("button", { name: "Download" })).toBeNull();
   });
 });
 
-describe("DocumentsPanel initial sync", () => {
-  it("holds the table until the first complete snapshot — no trickle, no false empty state", () => {
-    let emit!: (v: Snapshot) => void;
-    models.Document.observeQuery.mockReturnValue({
-      subscribe: ({ next }: { next: (v: Snapshot) => void }) => {
-        emit = next;
-        return { unsubscribe: vi.fn() };
-      },
-    });
+describe("DocumentsPanel authorized reads", () => {
+  it("holds the table until every authorized page has loaded", async () => {
+    let finish!: (value: unknown) => void;
+    models.Document.listDocumentByEntityId.mockResolvedValueOnce({ data: [DOC], nextToken: "page2" })
+      .mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
     render(<DocumentsPanel entityType="ACCOUNT" entityId="acct-1" />);
-
-    // Nothing has arrived: the panel must say it is loading, not that no
-    // documents are attached.
-    expect(screen.getByText("Loading…")).toBeTruthy();
-    expect(screen.queryByText("No documents attached.")).toBeNull();
-
-    // A partial pre-sync page changes nothing on screen.
-    act(() => emit({ items: [DOC], isSynced: false }));
+    await waitFor(() => expect(models.Document.listDocumentByEntityId).toHaveBeenCalledTimes(2));
     expect(screen.getByText("Loading…")).toBeTruthy();
     expect(screen.queryByText("scan_0043.pdf")).toBeNull();
-
-    // The complete snapshot lands once, whole.
-    act(() =>
-      emit({ items: [DOC, { ...DOC, id: "doc-2", name: "bylaws.pdf" }], isSynced: true })
-    );
+    await act(async () => finish({ data: [{ ...DOC, id: "doc-2", name: "bylaws.pdf" }] }));
     expect(screen.getByText("scan_0043.pdf")).toBeTruthy();
     expect(screen.getByText("bylaws.pdf")).toBeTruthy();
   });
-
-  it("a genuinely empty synced result says so — the empty state waits for proof", () => {
-    let emit!: (v: Snapshot) => void;
-    models.Document.observeQuery.mockReturnValue({
-      subscribe: ({ next }: { next: (v: Snapshot) => void }) => {
-        emit = next;
-        return { unsubscribe: vi.fn() };
-      },
-    });
+  it("shows an empty state only after an authorized read completes", async () => {
+    models.Document.listDocumentByEntityId.mockResolvedValue({ data: [] });
     render(<DocumentsPanel entityType="ACCOUNT" entityId="acct-1" />);
-    act(() => emit({ items: [], isSynced: true }));
-    expect(screen.getByText("No documents attached.")).toBeTruthy();
+    expect(await screen.findByText("No documents attached.")).toBeTruthy();
+  });
+  it("clears cached documents when a later read loses access", async () => {
+    renderPanel();
+    await screen.findByText("scan_0043.pdf");
+    models.Document.listDocumentByEntityId.mockResolvedValue({ data: null, errors: [{ message: "Not authorized" }] });
+    await act(async () => window.dispatchEvent(new Event("focus")));
+    await waitFor(() => expect(screen.queryByText("scan_0043.pdf")).toBeNull());
+    expect(screen.getByRole("alert")).toBeTruthy();
   });
 });

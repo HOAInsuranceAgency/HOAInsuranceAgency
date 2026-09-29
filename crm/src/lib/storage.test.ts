@@ -6,7 +6,7 @@ const s3 = vi.hoisted(() => ({
   getUrl: vi.fn(),
   remove: vi.fn(),
 }));
-vi.mock("aws-amplify/storage", () => s3);
+vi.mock("./scopedStorage", () => s3);
 
 // ./client calls generateClient() at module scope, so importing anything from
 // it would blow up on an unconfigured Amplify. Stubbing generateClient rather

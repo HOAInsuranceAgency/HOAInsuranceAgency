@@ -97,8 +97,8 @@ describe("communication settings edit sessions", () => {
 
 
 describe("default teammate eligibility", () => {
-  it("lets Jake select himself when both roles are enabled", async () => {
-    const jake = { userId: "jake", name: "Jake Greasley", email: "jake@example.com", enabled: true, salesperson: true, champion: true };
+  it("lets Jake select himself with salesperson eligibility alone", async () => {
+    const jake = { userId: "jake", name: "Jake Greasley", email: "jake@example.com", enabled: true, salesperson: true };
     h.request.mockImplementation(async (op: string, input: { config: IntegrationConfig }) => {
       if (op === "settings") return { ...settings(), config: { ...config, defaultUserId: undefined } };
       if (op === "team") return { team: [jake] };
@@ -106,28 +106,27 @@ describe("default teammate eligibility", () => {
     });
     render(<CommunicationSettings />); await editSettings();
     const select = screen.getByRole("combobox", { name: "Default salesperson" });
-    const champion = screen.getByRole("combobox", { name: "Default deal champion" });
-    expect(screen.getAllByRole("option", { name: "Jake Greasley" })).toHaveLength(2);
+    expect(screen.queryByRole("combobox", { name: "Default deal champion" })).not.toBeInTheDocument();
+    expect(screen.getAllByRole("option", { name: "Jake Greasley" })).toHaveLength(1);
     fireEvent.change(select, { target: { value: "jake" } });
-    fireEvent.change(champion, { target: { value: "jake" } });
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
-    await waitFor(() => expect(h.request).toHaveBeenCalledWith("saveSettings", { config: { ...config, defaultUserId: undefined, defaultSalespersonId: "jake", defaultChampionId: "jake" }, credentials: {} }, true));
-    expect(await screen.findAllByText("Jake Greasley")).toHaveLength(2);
+    await waitFor(() => expect(h.request).toHaveBeenCalledWith("saveSettings", { config: { ...config, defaultUserId: undefined, defaultSalespersonId: "jake" }, credentials: {} }, true));
+    expect(await screen.findAllByText("Jake Greasley")).toHaveLength(1);
   });
-  it("offers each role independently and preserves unavailable saved choices", async () => {
+  it("offers only eligible salespeople and preserves unavailable saved choices", async () => {
     h.request.mockImplementation(async (op: string) => op === "settings" ? settings() : { team: [
-      { ...team[0], champion: false },
+      { ...team[0], salesperson: false },
       { ...team[0], userId: "jake", name: "Jake Greasley" },
       { ...team[0], userId: "sales", name: "Sales only", champion: false },
       { ...team[0], userId: "champ", name: "Champion only", salesperson: false },
       { ...team[0], userId: "disabled", name: "Disabled teammate", enabled: false },
     ] });
     render(<CommunicationSettings />); await editSettings();
-    expect(screen.getAllByRole("option", { name: "Jake Greasley" })).toHaveLength(2);
+    expect(screen.getAllByRole("option", { name: "Jake Greasley" })).toHaveLength(1);
     expect(within(screen.getByRole("combobox", { name: "Default salesperson" })).getByRole("option", { name: "Sales only" })).toBeEnabled();
-    expect(within(screen.getByRole("combobox", { name: "Default deal champion" })).getByRole("option", { name: "Champion only" })).toBeEnabled();
+    expect(screen.queryByRole("option", { name: "Champion only" })).not.toBeInTheDocument();
     expect(screen.queryByRole("option", { name: "Disabled teammate" })).toBeNull();
     expect(screen.getByRole("option", { name: "Brian Cole (unavailable)" })).toBeDisabled();
-    expect(screen.getByRole("combobox", { name: "Default deal champion" })).toHaveValue("brian");
+    expect(screen.getByRole("combobox", { name: "Default salesperson" })).toHaveValue("brian");
   });
 });

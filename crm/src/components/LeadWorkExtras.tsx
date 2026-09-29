@@ -1,3 +1,4 @@
+import { useIsAdmin } from "../lib/auth";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { ActivityReview, ReviewAction } from "./CommunicationReview";
@@ -10,8 +11,10 @@ export function WorkPagination({ work }: { work: ReturnType<typeof useWorkItems>
   </>;
 }
 export function SharedLeadAttention({ onChanged }: { onChanged: () => void }) {
+  const admin = useIsAdmin();
+  if (!admin) return null;
   return <section className="lead-work-shared" aria-label="Shared team items">
-    <h2>Help the team get started</h2><p className="muted small">Unassigned leads and unlinked activity are shared team items, including when My leads is selected.</p>
+    <h2>Help the team get started</h2><p className="muted small">Review unassigned leads and unlinked activity, then assign them to a salesperson.</p>
     <div className="lead-work-shared-grid"><SharedItems kind="WORKFLOW" onChanged={onChanged} /><SharedItems kind="TRIAGE" onChanged={onChanged} /></div>
   </section>;
 }
@@ -24,7 +27,7 @@ function SharedItems({ kind, onChanged }: { kind: "WORKFLOW" | "TRIAGE"; onChang
     {work.loading ? <p className="muted">Checking…</p> : work.error ? null : !work.data.items.length && <p className="muted small">{work.data.nextToken ? "More items remain to be checked." : kind === "WORKFLOW" ? "No leads need assignment." : "No activity needs linking."}</p>}
     {!work.loading && !work.error && work.data.items.map(item => <div key={item.id} className="lead-work-shared-item">
       {kind === "WORKFLOW" ? <>
-        <strong>{item.name || "Lead needs assignment"}</strong><p className="small muted">Choose {item.salespersonId && !item.assignmentIssue ? "a deal champion" : item.championId && !item.assignmentIssue ? "a salesperson" : "a salesperson and deal champion"}.</p>
+        <strong>{item.name || "Lead needs assignment"}</strong><p className="small muted">Choose an available salesperson.</p>
         {item.accountId && <Link to={`/accounts/${item.accountId}`}>Open lead to assign</Link>}
       </> : <>
         <strong>{item.phone ? fmtProviderPhone(item.phone) : "Unknown contact"}</strong><p className="small muted">{fmtDateTime(item.at)} · Choose the right lead for this activity.</p>

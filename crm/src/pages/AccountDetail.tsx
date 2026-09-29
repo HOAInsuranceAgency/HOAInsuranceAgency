@@ -175,7 +175,9 @@ export default function AccountDetail({ profile }: { profile: UserProfile }) {
   const res = useAsyncResource(
     async () => {
       if (!id) return null;
-      return (await client.models.Account.get({ id })).data;
+      const response = await client.models.Account.get({ id });
+      if (response.errors?.length) throw new Error(response.errors[0].message);
+      return response.data;
     },
     [id],
     { initialData: null as Account | null, errorMessage: "Failed to load account" }
@@ -204,7 +206,7 @@ export default function AccountDetail({ profile }: { profile: UserProfile }) {
   const notFound = res.loaded && !res.error && account === null;
 
   if (!res.loaded) return <p className="muted">Loading…</p>;
-  if (res.error) return <p className="error-text">{res.error}</p>;
+  if (res.error) return <p role="alert" className="error-text">{res.error}</p>;
   if (notFound) return <p>Account not found.</p>;
   if (!account) return <p className="muted">Loading…</p>;
 

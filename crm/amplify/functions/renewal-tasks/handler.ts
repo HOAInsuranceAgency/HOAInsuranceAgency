@@ -178,7 +178,7 @@ export const handler = async () => {
     const wf = await get<{ disposition?: string; deferredUntil?: string }>(`workflow:${risk.accountId}`);
     if (risk.sourceType === "LEAD" && (wf?.data.disposition && wf.data.disposition !== "ACTIVE" || wf?.data.deferredUntil && wf.data.deferredUntil > new Date().toISOString())) continue;
     // Lapsed and unmatched risks remain owned placement exceptions.
-    if (risk.expirationDate < today) await issue(`expired-marketing:${risk.sourceId}:${risk.expirationDate}`, "The marketing term has expired. Review replacement coverage with the champion.", risk.accountId);
+    if (risk.expirationDate < today) await issue(`expired-marketing:${risk.sourceId}:${risk.expirationDate}`, "The marketing term has expired. Review replacement coverage with the salesperson.", risk.accountId);
 
     const facts = riskFacts(risk);
     if (!facts) { await issue(`marketing-facts:${risk.sourceId}`, "Underwriting facts need review before placement", risk.accountId); continue; }
@@ -236,7 +236,7 @@ export const handler = async () => {
         throw new Error(errors[0].message);
       }
     }
-    if (!matches && today >= addDays(risk.expirationDate, -90)) await issue(`placement:${risk.sourceId}:${risk.expirationDate}`, "No appointed carrier currently matches this risk. The champion must review placement.", risk.accountId);
+    if (!matches && today >= addDays(risk.expirationDate, -90)) await issue(`placement:${risk.sourceId}:${risk.expirationDate}`, "No appointed carrier currently matches this risk. The salesperson must review placement.", risk.accountId);
     else await resolveIssue(`placement:${risk.sourceId}:${risk.expirationDate}`);
   }
 
