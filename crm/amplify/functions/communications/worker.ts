@@ -1,63 +1,20 @@
 import type { DynamoDBStreamEvent } from "aws-lambda";
-import { get, query, row, save, put, commit, issue, conflict, check, type Row } from "./store";
+import { get, query, row, save, issue, conflict, type Row } from "./store";
 import { config } from "./config";
 import { runOperation, type Operation } from "./operations";
-import { processEvent, dialpadEvent, ingestFrontMessage, type EventRecord } from "./events";
-import { ensureWorkflow, recordInbound, enabledUser, accountRows } from "./workflow";
-import { front, dialpad, ProviderError, providerTimestamp, type FrontMessage } from "./providers";
-import type { LeadTask, Communication, TeamEligibility } from "../../../../shared/leadWorkflow";
-import { scheduleReminders, taskWakeAt, followUpDeadline, reminderWindow, nextReminderMorning } from "../../../../shared/leadWorkflow";
-import { leadActionGuidance } from "../../../../shared/leadActionGuidance";
-import { migrateReminderSchedules } from "./reminders";
-import { dataClient } from "./data";
+import { processEvent, dialpadEvent, type EventRecord } from "./events";
+import { ensureWorkflow, accountRows, recordInbound } from "./workflow";
+import { front, dialpad, ProviderError, providerTimestamp } from "./providers";
+import type { LeadTask, Communication } from "../../../../shared/leadWorkflow";
 import { callRoot, syncCall } from "./calls";
-import { salespersonTask } from "../../../../shared/salespersonOwnership";
 
+/** Drain only old queue indexes; retain each historical task and its evidence unchanged. */
 export async function dispatchTask(candidate: Row<LeadTask>) {
-  let task = await get<LeadTask>(candidate.id);
-  if (!task || task.data.status !== "OPEN") return;
-  if (await get(`deleted-account:${task.data.accountId}`)) { await save(row('TASK', task.id, { ...task.data, status: 'CANCELLED', reason: 'Lead deleted', version: task.version + 1 }, { accountId: task.accountId, previous: task }), task); return; }
-  const c = await config(), now = new Date().toISOString();
-  const scheduled = scheduleReminders(salespersonTask(task.data), c.holidays);
-  if (JSON.stringify(scheduled) !== JSON.stringify(task.data)) {
-    scheduled.version = task.version + 1;
-    task = await save(row("TASK", task.id, scheduled, { accountId: task.accountId, previous: task, dueAt: taskWakeAt(scheduled) }), task);
-  }
-  const wake = taskWakeAt(task.data);
-  if (!wake) return;
-  if (wake > now || !reminderWindow(now, c.holidays)) {
-    const dueAt = wake > now ? wake : nextReminderMorning(now, c.holidays);
-    if (task.dueAt !== dueAt) await save(row("TASK", task.id, task.data, { accountId: task.accountId, previous: task, dueAt }), task);
-    return;
-  }
-  if (task.data.kind === "FOLLOW_UP" && !task.data.custom && task.data.conversationId) {
-    const latest = await front<{ _results: FrontMessage[] }>(`/conversations/${task.data.conversationId}/messages?limit=1`);
-    for (const message of latest._results) await ingestFrontMessage(message, task.data.conversationId);
-    if ((await get<LeadTask>(task.id))?.version !== task.version) return;
-  }
-  const wf = await ensureWorkflow(task.data.accountId);
-  const account = await (await dataClient()).models.Account.get({ id: task.data.accountId });
-  if (account.errors?.length || !account.data) throw new Error("Could not verify the account; its commitment remains open");
-  const { resolveTaskRoute } = await import("./routing");
-  const routingRecord = await get("team-routing");
-  const route = await resolveTaskRoute(task.data, wf.data);
-  const recipient = route.recipientId;
-  if (!recipient) { await issue(task.id, "Choose an enabled salesperson for this work", task.accountId); throw new Error("The assigned teammate is unavailable"); }
-  const member = await get<TeamEligibility>(`eligibility:${recipient}`);
-  if (!member?.data.enabled || !member.data.salesperson) throw new Error("The assigned salesperson is no longer eligible");
-  await enabledUser(recipient);
-  const sources = await Promise.all((task.data.sourceIds ?? []).map(id => get<Communication>(id)));
-  const guidance = leadActionGuidance(task.data, sources.flatMap(r => r && r.accountId === task!.accountId ? [r.data] : []));
-  const next: LeadTask = { ...task.data, notifiedAt: task.data.notifiedAt ?? now, notifiedRecipientId: route.recipientId,
-    lastReminderAt: now, nextReminderAt: followUpDeadline(now, 1, c.holidays), version: task.version + 1 };
-  const writes = [check(wf), check(member), ...(routingRecord ? [check(routingRecord)] : []), put(row("TASK", task.id, { ...next, attempts: 0, error: undefined, firstFailureAt: undefined }, { accountId: task.accountId, previous: task, dueAt: taskWakeAt(next) }), task)];
-  for (const target of [recipient]) {
-    const id = `notice:${task.id}:${target}`, old = await get(id);
-    writes.push(put(row("NOTIFICATION", id, { recipient: target, accountId: task.accountId, taskId: task.id, title: guidance.action, why: guidance.why, instruction: guidance.after, dueAt: task.data.dueAt, urgency: "DUE", at: now }, { accountId: task.accountId, previous: old }), old));
-  }
-  // Scheduled work stays in CRM notifications and reports. Neither reopen nor
-  // comment on Front conversations here: comments can also bump archived threads.
-  await commit(writes);
+  const current = await get(candidate.id);
+  if (!current || !["TASK", "NOTIFICATION"].includes(current.kind)) return;
+  if (!current.dueAt && !current.workKind) return;
+  const { dueAt: _dueAt, dueGroup: _dueGroup, workAt: _workAt, workKind: _workKind, ...historical } = current;
+  await save({ ...historical, version: current.version + 1, updatedAt: new Date().toISOString() }, current);
 }
 export async function refreshCommunication(candidate: Row<Communication>) {
   let comm = await get<Communication>(candidate.id);
@@ -72,12 +29,12 @@ export async function refreshCommunication(candidate: Row<Communication>) {
         await dialpadEvent({ ...operator, call_id: call.operator_call_id, entry_point_call_id: comm.data.providerId, state: "hangup" });
       }
       } catch (e) {
-        // Missing enrichment must not prevent a known missed call's deadline.
+        // Preserve a missed call even when provider enrichment is unavailable.
         comm = (await get<Communication>(`comm:dialpad:call:${await callRoot(comm.data.providerId)}`))!;
         if (comm.data.status === "MISSED" && comm.data.accountId && !comm.data.resolved) await recordInbound(comm.data, "CALLBACK");
         const current = (await get<Communication>(comm.id))!;
         await save(row("COMMUNICATION", current.id, { ...current.data, refreshError: e instanceof Error ? e.message : "Call verification unavailable" }, { accountId: current.accountId, previous: current, dueAt: new Date(Date.now() + 300_000).toISOString() }), current);
-        await issue(`call-refresh:${comm.id}`, "Call verification needs attention. The callback deadline remains in effect.", comm.accountId);
+        await issue(`call-refresh:${comm.id}`, "Call verification needs attention. The original call remains in communication history.", comm.accountId);
         return;
       }
       comm = (await get<Communication>(`comm:dialpad:call:${await callRoot(comm.data.providerId)}`))!;
@@ -132,20 +89,6 @@ export const handler = async (event?: Partial<DynamoDBStreamEvent>) => {
     lagging = true;
     await issue("salesperson-ownership", error instanceof Error ? error.message : "Account assignment migration will retry");
   }
-  await migrateReminderSchedules();
-  try { await (await import("./coverage")).coverageSweep(); await (await import("./routing")).resolveIssue("coverage-census"); }
-  catch (error) { lagging = true; await issue("coverage-census", error instanceof Error ? error.message : "Work coverage needs attention"); }
-  if (c.activatedAt) {
-    const { migrateContactProgress } = await import("./contactProgress");
-    try {
-      await migrateContactProgress();
-      const warning = await get("issue:contact-progress-repair");
-      if (warning && !warning.data.resolved) await save(row("ISSUE", warning.id, { ...warning.data, resolved: true }, { previous: warning }), warning);
-    } catch (error) {
-      lagging = true;
-      await issue("contact-progress-repair", error instanceof Error ? error.message : "Contact history repair will retry");
-    }
-  }
   // Reserve reconciliation a turn even while due work is backlogged. Each
   // provider captures one independent page; a failure cannot starve the other.
   if (c.activatedAt && !c.paused) {
@@ -164,7 +107,7 @@ export const handler = async (event?: Partial<DynamoDBStreamEvent>) => {
         if (candidate.kind === 'ACCOUNT_DELETE') { const { retireAccountPage } = await import('./deletion'); await retireAccountPage(candidate as unknown as Parameters<typeof retireAccountPage>[0]); }
         else if (candidate.kind === "OPERATION") await runOperation(candidate as unknown as Row<Operation>);
         else if (candidate.kind === "EVENT") await processEvent(candidate as unknown as Row<EventRecord>);
-        else if (candidate.kind === "TASK") await dispatchTask(candidate as unknown as Row<LeadTask>);
+        else if (["TASK", "NOTIFICATION"].includes(candidate.kind)) await dispatchTask(candidate as unknown as Row<LeadTask>);
         else if (candidate.kind === "ROLE_SYNC") { const { syncResponsibilities } = await import("./workflow"); await syncResponsibilities(candidate as unknown as Parameters<typeof syncResponsibilities>[0]); }
         else if (candidate.kind === "CALL_SYNC") await syncCall(candidate as unknown as Parameters<typeof syncCall>[0]);
         else if (candidate.kind === "CONVERSATION_BACKFILL") { const { backfillConversation } = await import("./events"); await backfillConversation(candidate as unknown as Parameters<typeof backfillConversation>[0]); }
@@ -182,15 +125,15 @@ export const handler = async (event?: Partial<DynamoDBStreamEvent>) => {
         if (conflict(e)) continue;
         counters.failed++;
         const current = await get(candidate.id);
-        if (!current || current.version !== candidate.version) continue;
+        if (!current || current.version !== candidate.version || ["TASK", "NOTIFICATION"].includes(current.kind)) continue;
         const rateLimited = e instanceof ProviderError && e.status === 429;
         const attempts = Number(current.data.attempts ?? 0) + (rateLimited ? 0 : 1);
         const error = e instanceof Error ? e.message : "Communication processing failed";
         const delay = e instanceof ProviderError ? e.retryAfter : Math.min(900, 30 * 2 ** Math.min(attempts, 5));
         const firstFailureAt = String(current.data.firstFailureAt ?? new Date().toISOString());
         await save(row(current.kind, current.id, { ...current.data, attempts, error, firstFailureAt, ...(current.kind === "COMMUNICATION" && current.data.channel === "EMAIL" ? { seenError: error } : {}) }, { accountId: current.accountId, previous: current,
-          // Team commitments never expire out of the dispatcher on an API error.
-          dueAt: !["TASK", "LIFECYCLE", "ROLE_SYNC", "CALL_SYNC", "TRIAGE"].includes(current.kind) && attempts >= 12 && !rateLimited ? undefined : new Date(Date.now() + delay * 1000).toISOString() }), current);
+          // Provider reconciliation and lifecycle repairs remain retryable.
+          dueAt: !["LIFECYCLE", "ROLE_SYNC", "CALL_SYNC", "TRIAGE"].includes(current.kind) && attempts >= 12 && !rateLimited ? undefined : new Date(Date.now() + delay * 1000).toISOString() }), current);
         if (!rateLimited || Date.now() - Date.parse(firstFailureAt) >= 300_000) await issue(current.id, error, current.accountId);
       }
     }

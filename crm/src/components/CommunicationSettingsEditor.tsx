@@ -30,10 +30,6 @@ export default function CommunicationSettingsEditor({ config, team, teamError, c
           {([['defaultSalespersonId', 'Default salesperson', 'salesperson']] as const).map(([key, label, role]) => <label className="field" key={key}>{label}<select value={draft[key] ?? draft.defaultUserId ?? ""} onChange={event => edit(key, event.target.value || undefined)}><option value="">Choose teammate</option>{(draft[key] ?? draft.defaultUserId) && !team.some(m => m.userId === (draft[key] ?? draft.defaultUserId) && m.enabled && m[role]) && <option disabled value={draft[key] ?? draft.defaultUserId}>{team.find(m => m.userId === (draft[key] ?? draft.defaultUserId))?.name ?? "Saved teammate"} (unavailable)</option>}{team.filter(m => m.enabled && m[role]).map(m => <option key={m.userId} value={m.userId}>{m.name}</option>)}</select>{teamError && <span className="error-text small">{teamError}</span>}</label>)}
         </div>
         {config.environment !== "main" && listInput("testRecipients", "Test email recipients", "Only these addresses can receive staging emails. Enter one per line.")}
-        <details className="communication-edit-section"><summary>Business hours and holidays</summary>
-          <p className="muted small">Monday–Friday, 9 a.m.–5 p.m. Eastern. Holidays below are excluded from follow-up and callback deadlines.</p>
-          {listInput("holidays", "Agency holidays", "Enter one date per line, for example 2026-12-25.")}
-        </details>
         <details className="communication-edit-section"><summary>Connection setup</summary>
           <p className="muted small">These identifiers are normally set once when Front and Dialpad are connected.</p>
           <div className="communication-fields">

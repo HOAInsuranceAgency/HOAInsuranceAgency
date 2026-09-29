@@ -2,13 +2,14 @@ import { GetObjectCommand, HeadObjectCommand, PutObjectCommand, DeleteObjectComm
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { AccountAccess } from "./access";
 import { authorizeCustom, filterCustom } from "./custom";
-import { AccessDenied, id, object, type Identity, type RecordData } from "./policy";
+import { AccessDenied, id, object, RETIRED_MODELS, type Identity, type RecordData } from "./policy";
 import { downloadContentDisposition, fileClient, fileSigningOptions } from "./file-signing";
 import { listAssigned } from "./listing";
 const s3 = fileClient();
 type Event = { identity?: Identity; fieldName?: string; info?: { fieldName?: string }; arguments?: RecordData; mode?: "read" | "write" | "list" | "custom-pre" | "custom-post"; model?: string; field?: string; operation?: string; previous?: unknown };
 export async function handler(event: Event) {
   const access = new AccountAccess(event.identity), args = object(event.arguments);
+  if (RETIRED_MODELS.includes(id(event.model))) throw new AccessDenied();
   if (event.mode === "list") return listAssigned(access, id(event.model), args);
   if (event.mode === "read") {
     if (access.admin || event.previous == null) return event.previous;

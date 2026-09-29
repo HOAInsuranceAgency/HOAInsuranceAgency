@@ -27,7 +27,7 @@ export async function migrateSalespersonOwnership() {
         // Revisit accounts already migrated by the former manager-based model.
         const jobId = `role-sync:ownership:${accountId}`;
         const job = await get<{ phase: string; accountId: string; routingVersion?: number }>(jobId);
-        if (job?.data.routingVersion !== 2) await save(row("ROLE_SYNC", jobId, { phase: "TASK", accountId, routingVersion: 2 }, { accountId, previous: job, dueAt: new Date().toISOString() }), job);
+        if (job?.data.routingVersion !== 2) await save(row("ROLE_SYNC", jobId, { phase: "LINK", accountId, routingVersion: 2 }, { accountId, previous: job, dueAt: new Date().toISOString() }), job);
       }
     }
     else {

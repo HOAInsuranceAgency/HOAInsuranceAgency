@@ -17,16 +17,12 @@ import { pfServicing } from "../functions/pf-servicing/resource";
 import { pfDefaultSweep } from "../functions/pf-default-sweep/resource";
 import { pfElection } from "../functions/pf-election/resource";
 import { pfAutopay } from "../functions/pf-autopay/resource";
-import { renewalTasks } from "../functions/renewal-tasks/resource";
-import { licenseAlerts } from "../functions/license-alerts/resource";
-import { taskDigest } from "../functions/task-digest/resource";
-import { opsRollup } from "../functions/ops-rollup/resource";
 import { leadUpload } from "../functions/lead-upload/resource";
 import { uploadPortal } from "../functions/upload-portal/resource";
 import { portalSweep } from "../functions/portal-sweep/resource";
 import { leadReply } from "../functions/lead-reply/resource";
 import { activityLog } from "../functions/activity-log/resource";
-import { communications, communicationWorker, communicationReports } from "../functions/communications/resource";
+import { communications, communicationWorker } from "../functions/communications/resource";
 import { marketingReportApi } from "../functions/marketing-report/resource";
 
 /**
@@ -1493,24 +1489,7 @@ const schema = a
       }).disableOperations(["subscriptions"])
       .secondaryIndexes((index) => [index("entityId")]),
 
-    /**
-     * Renewal marketing task: "submit this expiring risk to this carrier".
-     *
-     * Created by the scheduled renewal-tasks function once a risk enters its
-     * submission window (carrier lead time + 14 days before expiration), one
-     * per appetite-matched appointed carrier.
-     *
-     * Closes one of two ways: a quote gets created for that carrier, which
-     * the sweep and the UI both detect rather than anyone clicking (QUOTED),
-     * or a person closes it by hand and says why — the carrier wouldn't want
-     * it, the agency didn't want to place it there, or the submission window
-     * was missed. The last of those is the one worth counting later, which is
-     * why it is a resolution and not a note.
-     *
-     * All foreign keys are plain fields, not belongsTo — relationships make
-     * them GSI keys, and policyId is legitimately empty for lead-sourced
-     * tasks. The UI joins client-side.
-     */
+    // Retained historical storage only. Task screens, mutations and jobs are retired.
     MarketingTask: a.model({
       accountId: a.id().required(),
       carrierId: a.id().required(),
@@ -1534,7 +1513,8 @@ const schema = a
       completedAt: a.datetime(),
       completedBy: a.string(),
       notes: a.string(),
-    }).disableOperations(["subscriptions"]).secondaryIndexes((index) => [index("accountId")]),
+    }).authorization(allow => [allow.groups(["ADMIN"]).to(["read"])])
+      .disableOperations(["subscriptions"]).secondaryIndexes((index) => [index("accountId")]),
 
     // ── Certificates (ACORD 25 issuance history) ───────────────────────
     //
@@ -2360,28 +2340,12 @@ const schema = a
     allow.resource(leadIntake),
     allow.resource(communications),
     allow.resource(communicationWorker),
-    allow.resource(communicationReports),
     // The AI extraction function reads Documents and updates Accounts.
     allow.resource(extractLead),
     // The form filler reads an account and everything under it. It writes
     // nothing — the grant above is API-wide (see the block at the top of
     // this list), so that is a property of the handler, not of the schema.
     allow.resource(formFiller),
-    // The daily sweep reads policies/carriers/quotes and writes MarketingTasks.
-    allow.resource(renewalTasks),
-    // The licence-expiry sweep reads Licenses and writes LicenseReminders.
-    // Note what the block above says: this is API-wide, so "reads Licenses"
-    // is a property of the handler, not something the schema enforces —
-    // License's own rules gate a signed-in user, not an IAM principal.
-    allow.resource(licenseAlerts),
-    // The weekday digest reads open MarketingTasks and writes nothing at all.
-    // As with the two above, the grant is API-wide, so read-only is a property
-    // of the handler rather than something the schema holds it to.
-    allow.resource(taskDigest),
-    // The daily operations rollup reads across most models and writes nothing
-    // at all. Like the digests above the grant is API-wide, so read-only is a
-    // property of the handler rather than something the schema holds it to.
-    allow.resource(opsRollup),
     // Public lead uploads: reads the LeadReply the token names, creates a
     // Document and moves the window's deadline. Writes nothing else.
     allow.resource(leadUpload),

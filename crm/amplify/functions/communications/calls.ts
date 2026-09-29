@@ -1,8 +1,5 @@
-import { salespersonTask } from "../../../../shared/salespersonOwnership";
-import { taskWakeAt } from "../../../../shared/leadWorkflow";
-import type { Communication, LeadTask } from "../../../../shared/leadWorkflow";
-import { get, row, save, put, commit, check, issue, type Row } from "./store";
-import { accountRows, ensureWorkflow } from "./workflow";
+import type { Communication } from "../../../../shared/leadWorkflow";
+import { get, row, save, put, commit, issue, type Row } from "./store";
 
 export type Call = Communication & { legs?: Record<string, { connected: boolean; ended: boolean }>; relatedIds?: string[]; relatedConversationIds?: string[] };
 const commId = (id: string) => `comm:dialpad:call:${id}`;
@@ -75,28 +72,7 @@ export async function uniteCalls(ids: string[]) {
  * keep their dates; only duplicate automatic callbacks for this call collapse. */
 export async function syncCall(candidate: Row<{ providerId: string }>) {
   const job = await get<typeof candidate.data>(candidate.id); if (!job?.dueAt) return;
-  const root = await callRoot(job.data.providerId), comm = await get<Call>(commId(root));
-  if (comm?.accountId) {
-    const ids = new Set([comm.id, ...(comm.data.relatedIds ?? []).map(commId)]);
-    // The account index may lag a callback transaction. Known automatic task
-    // keys are read strongly so a late answered leg cannot leave one behind.
-    const knownKeys = [...new Set([root, ...(comm.data.relatedIds ?? []), ...Object.keys(comm.data.legs ?? {}), comm.data.conversationId, ...(comm.data.relatedConversationIds ?? [])].filter(Boolean))];
-    const direct = await Promise.all(knownKeys.map(key => get<LeadTask>(`task:response:${comm.accountId}:${key}`)));
-    const all = new Map((await accountRows<LeadTask>(comm.accountId, "TASK")).map(t => [t.id, t]));
-    for (const task of direct) if (task) all.set(task.id, task);
-    const tasks = [...all.values()].filter(t => t.data.status === "OPEN" && t.data.sourceIds?.some(id => ids.has(id)));
-    const automatic = tasks.filter(t => t.data.kind === "CALLBACK" && !t.data.custom && t.data.sourceIds?.every(id => ids.has(id))).sort((a,b) => a.data.dueAt.localeCompare(b.data.dueAt) || a.id.localeCompare(b.id));
-    const survivor = comm.data.status === "CONNECTED" || comm.data.resolved ? undefined : automatic[0];
-    const edits = automatic.filter(t => t.id !== survivor?.id).slice(0, 25);
-    const wf = await ensureWorkflow(comm.accountId), writes = [check(wf), check(comm)];
-    if (survivor && edits.length) {
-      const data = { ...salespersonTask(survivor.data), sourceIds: [comm.id], version: survivor.version + 1 };
-      writes.push(put(row("TASK", survivor.id, data, { accountId: comm.accountId, previous: survivor, dueAt: taskWakeAt(data) }), survivor));
-    }
-    for (const task of edits) writes.push(put(row("TASK", task.id, { ...task.data, status: "CANCELLED", reason: survivor ? `Same Dialpad call as ${survivor.id}` : "A related call leg was answered or handled", version: task.version + 1 }, { accountId: comm.accountId, previous: task }), task));
-    writes.push(put(row("CALL_SYNC", job.id, job.data, { previous: job, dueAt: automatic.length - (survivor ? 1 : 0) > edits.length ? new Date().toISOString() : undefined }), job));
-    await commit(writes);
-  } else await save(row("CALL_SYNC", job.id, job.data, { previous: job }), job);
+  await save(row("CALL_SYNC", job.id, job.data, { previous: job }), job);
 }
 export async function queueCallSync(providerId: string) {
   const id = `call-sync:${providerId}`, old = await get(id);

@@ -5,7 +5,7 @@ vi.mock("@aws-sdk/lib-dynamodb", async load => ({ ...(await load<typeof import("
 vi.mock("@aws-sdk/client-s3", async load => ({ ...(await load<typeof import("@aws-sdk/client-s3")>()), S3Client: class { send = h.s3; } }));
 vi.mock("@aws-sdk/s3-request-presigner", () => ({ getSignedUrl: h.sign }));
 import { handler } from "../../amplify/functions/crm-access/handler";
-import { ACCOUNT_MODELS, LIST_PARENTS, type RecordData } from "../../amplify/functions/crm-access/policy";
+import { ACCOUNT_MODELS, RETIRED_MODELS, LIST_PARENTS, type RecordData } from "../../amplify/functions/crm-access/policy";
 const identity = { sub: "alice" };
 beforeEach(() => {
   vi.clearAllMocks(); h.records.clear();
@@ -34,7 +34,7 @@ it("filters raw list/relationship responses without dropping the pagination curs
   expect(result).toEqual({ items: [{ id: "a", name: "Visible" }], nextToken: "cursor" });
   expect(h.db.mock.calls.every(([command]) => command.input.ConsistentRead || Object.values(command.input.RequestItems ?? {}).every(request => (request as { ConsistentRead?: boolean }).ConsistentRead))).toBe(true);
 });
-it.each(ACCOUNT_MODELS)("batches permission reads for a large %s connection", async model => {
+it.each(ACCOUNT_MODELS.filter(model => !RETIRED_MODELS.includes(model)))("batches permission reads for a large %s connection", async model => {
   const tables = JSON.parse(process.env.ACCESS_TABLES!);
   const items = Array.from({ length: 120 }, (_, i) => {
     const accountId = `account-${i}`, parentId = `parent-${i}`;
@@ -67,7 +67,7 @@ it.each(ACCOUNT_MODELS)("batches permission reads for a large %s connection", as
   expect(batches.every(batch => batch.Keys.length <= 100 && batch.ConsistentRead)).toBe(true);
   expect(batches.flatMap(batch => batch.Keys).some(key => String(key.id).includes("wrong-mirror"))).toBe(false);
 });
-it.each(["work", "myReport"])("batches %s ownership reads and limits former managers to current personal assignments", async readOperation => {
+it.each(["work"])("batches %s ownership reads and limits former managers to current personal assignments", async readOperation => {
   h.records.set("communications:team-routing", { data: { members: [{ userId: "manager", salesManager: true }, { userId: "alice", salesManagerId: "manager" }] } });
   const rows = Array.from({ length: 60 }, (_, i) => {
     const accountId = `work-${i}`;
@@ -77,7 +77,7 @@ it.each(["work", "myReport"])("batches %s ownership reads and limits former mana
   h.records.set("communications:deleted-account:work-3", {});
   const items = [...rows, rows[0], { id: "unlinked" }];
   const previous = readOperation === "work" ? { ok: true, items, nextToken: "later" } : { ok: true, report: { items, accountCount: 60, createdAt: "today" } };
-  const event = { mode: "custom-post" as const, field: "communicationRead", identity: { sub: "manager" }, arguments: { readOperation }, previous };
+  const event = { mode: "custom-post" as const, field: "communicationRead", identity: { sub: "manager" }, arguments: { readOperation, input: { kind: "WORKFLOW" } }, previous };
   const permitted = [...rows.filter((_, i) => i % 3 === 0 && i !== 3), rows[0]];
   expect(await handler(event)).toEqual(readOperation === "work" ? { ...previous, items: permitted } : { ok: true, report: { items: permitted, accountCount: 19, createdAt: "today" } });
   expect(h.db.mock.calls).toHaveLength(2); // Two ownership batches, no routing read.
@@ -211,5 +211,12 @@ it("skips HEAD and disposition overrides for normal previews", async () => {
 });
 it("applies custom before/after guards to the real handler event shape", async () => {
   await expect(handler({ mode: "custom-pre", field: "startHoneycombSubmission", identity, arguments: { accountId: "b" } })).rejects.toThrow("not available");
-  expect(await handler({ mode: "custom-post", field: "communicationRead", identity, arguments: { readOperation: "work" }, previous: JSON.stringify({ ok: true, items: [{ accountId: "b" }], nextToken: "next" }) })).toEqual({ ok: true, items: [], nextToken: "next" });
+  expect(await handler({ mode: "custom-post", field: "communicationRead", identity, arguments: { readOperation: "work", input: { kind: "WORKFLOW" } }, previous: JSON.stringify({ ok: true, items: [{ accountId: "b" }], nextToken: "next" }) })).toEqual({ ok: true, items: [], nextToken: "next" });
+});
+
+it("rejects retired task model access before touching storage for every signed-in role", async () => {
+  for (const groups of [[], ["ADMIN"]]) for (const mode of ["list", "read", "write"] as const) {
+    await expect(handler({ mode, model: "MarketingTask", identity: { sub: "alice", groups }, operation: "create", arguments: { input: { accountId: "a" } }, previous: { items: [{ accountId: "a" }] } })).rejects.toThrow("not available");
+  }
+  expect(h.db).not.toHaveBeenCalled();
 });

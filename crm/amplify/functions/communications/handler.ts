@@ -1,5 +1,6 @@
-import { salespersonTask, salespersonWorkflow } from "../../../../shared/salespersonOwnership";
-import { taskWakeAt } from "../../../../shared/leadWorkflow";
+import { salespersonWorkflow } from "../../../../shared/salespersonOwnership";
+import { retiredTaskOperation } from "../../../../shared/retiredTaskOperations";
+import { tasksRemoved, currentCommunicationIssue } from "./retiredTasks";
 import { isLeadSource } from "../../../../shared/leadSource";
 import { accountPropertyType, normalizePropertyType } from "../../../../shared/propertyType";
 import { historyStopped, restartHistory, type HistoryJob } from "./history";
@@ -7,14 +8,14 @@ import { reviewOperation, recordCallOutcome, linkActivity } from "./review";
 import { archiveAllowed } from "./cleanup";
 import { randomUUID } from "node:crypto";
 import type { AppSyncIdentityCognito } from "aws-lambda";
-import type { Communication, IntegrationConfig, LeadTask, LeadWorkflow, TeamEligibility } from "../../../../shared/leadWorkflow";
+import type { Communication, IntegrationConfig, LeadWorkflow, TeamEligibility } from "../../../../shared/leadWorkflow";
 import { normalizePhone } from "../../../../shared/leadWorkflow";
-import { get, row, query, save, put, commit, audit, conflict, retryableStorage, check, hash } from "./store";
+import { get, row, query, save, put, commit, audit, conflict, check, hash } from "./store";
 import { authorizedQuoteTerms } from "../../../../shared/quoteAuthorization";
 import { validCalendarDate } from "../../../../shared/renewalPolicy";
 import { config, credentials, saveCredentials, saveConfig, type Credentials } from "./config";
 import { dataClient } from "./data";
-import { accountRows, defaultWorkflow, ensureWorkflow, expected, validRole, setResponsibilities, saveTask, completeTask, mergeTasks, team, enabledUser } from "./workflow";
+import { accountRows, defaultWorkflow, ensureWorkflow, expected, validRole, setResponsibilities, team, enabledUser } from "./workflow";
 import { permittedConversation, verifySmsChannel } from "./providers";
 import { operationRow } from "./outbox";
 import { connectionChecks, activationChecks } from "./setup";
@@ -46,19 +47,10 @@ export const handler = async (event: { arguments: { operation?: string; readOper
     if (!actor) throw new Error("Sign in to the CRM to continue");
     const admin = event.identity?.groups?.includes("ADMIN") || (event.identity?.claims?.["cognito:groups"] as string[] | undefined)?.includes("ADMIN");
     const input = object(event.arguments.input), op = event.arguments.readOperation ?? event.arguments.operation;
+    if (retiredTaskOperation(op ?? "", input)) tasksRemoved();
     const requireAdmin = () => { if (!admin) throw new Error("Only an admin can change integration or team settings"); };
     if (event.arguments.readOperation) {
       if (op === "commercialTable") return { ok: true, items: await (await import("./commercial")).commercialTable(input.accountIds) };
-      if (op === "nextYearPreview") {
-        const account = await (await dataClient()).models.Account.get({ id: text(input, "accountId") });
-        if (account.errors?.length || !account.data?.currentPolicyExpiration) throw new Error("Record the incumbent expiration in the account first");
-        const result = (await import("../../../../shared/renewalPolicy")).annualReturn(account.data.currentPolicyExpiration, (await config()).holidays, new Date().toISOString());
-        return { ok: true, current: account.data.currentPolicyExpiration, next: result.expiration, returnAt: result.returnAt };
-      }
-      if (op === "reportDelivery") {
-        requireAdmin(); const page = await query<{ recipientId: string; day: string; state: string; error?: string }>("work", "REPORT_EDITION", text(input, "nextToken") || undefined, 50), members = await roster();
-        return { ok: true, items: page.items.map(r => ({ id: r.id, recipient: members.find(m => m.userId === r.data.recipientId)?.name ?? "Unavailable teammate", day: r.data.day, state: r.data.state, error: r.data.error })), nextToken: page.nextToken };
-      }
       if (op === "lastContacts") {
         const accounts = input.accounts;
         if (!Array.isArray(accounts) || accounts.length > 10) throw new Error("Choose up to 10 leads at a time");
@@ -81,18 +73,8 @@ export const handler = async (event: { arguments: { operation?: string; readOper
           contacts: contacts.data.map(c => ({ id: c.id, name: c.name, email: c.email, phone: c.phone })), quotes: quotes.data.map(q => ({ id: q.id, status: q.status, lines: q.lines })), documents: documents.data.map(d => ({ id: d.id, name: d.name, status: d.ocrStatus })),
           more: !!(contacts.nextToken || quotes.nextToken || documents.nextToken), url: `${process.env.CRM_BASE_URL}/accounts/${id}` } };
       }
-      if (op === "deliveryOptions") {
-        const task = await get<LeadTask>(text(input, "taskId")); if (!task || task.data.status !== "OPEN") throw new Error("Choose an open service request");
-        const client = await dataClient(), options: { id: string; kind: string; name: string }[] = [];
-        let nextToken: string | undefined;
-        if (task.data.serviceType === "CERTIFICATE") do { const p = await client.models.Certificate.list({ filter: { accountId: { eq: task.data.accountId } }, nextToken, limit: 100 }); if (p.errors?.length) throw new Error("Could not load certificates"); options.push(...p.data.filter(d => d.s3Key && task.data.sourceIds?.includes(d.sourceCommunicationId ?? "")).map(d => ({ id: d.id, kind: "CERTIFICATE", name: `${d.certificateNumber ?? "Certificate"} · ${d.holderName}` }))); nextToken = p.nextToken ?? undefined; } while (nextToken);
-        else do { const p = await client.models.Document.listDocumentByEntityId({ entityId: task.data.accountId }, { nextToken, limit: 100 }); if (p.errors?.length) throw new Error("Could not load documents"); options.push(...p.data.filter(d => d.s3Key && d.s3Key !== "pending" && task.data.sourceIds?.includes(d.sourceCommunicationId ?? "")).map(d => ({ id: d.id, kind: "DOCUMENT", name: d.name }))); nextToken = p.nextToken ?? undefined; } while (nextToken);
-        return { ok: true, options };
-      }
       if (op === "activity") { const r = await get<Communication>(text(input, "id")); if (!r || r.kind !== "COMMUNICATION") throw new Error("Communication not found"); return { ok: true, communication: safeCommunication({ ...r.data, version: r.version }) }; }
       if (op === "smsComposer") { const c = await config(); if (!c.frontSmsChannelId || !c.activatedAt || c.paused) throw new Error("Activate the shared-line text channel first"); await verifySmsChannel(); return { ok: true, channelId: c.frontSmsChannelId, sender: c.sharedSmsNumber }; }
-      if (op === "myReport") return { ok: true, report: await (await import("./reports")).reportFor(actor) };
-      if (op === "teamRouting") return { ok: true, routing: await (await import("./routing")).routing() };
       if (op === "team") return { ok: true, team: await roster() };
       if (op === "settings") {
         requireAdmin(); const keys = await credentials();
@@ -108,46 +90,34 @@ export const handler = async (event: { arguments: { operation?: string; readOper
         const conversationId = text(input, "conversationId");
         if (conversationId) { const conversation = await permittedConversation(conversationId); const link = await get<ConversationLink>(`front-link:${conversation.id}`); accountId = link?.data.accountId ?? ""; frontContext = { conversationId: conversation.id, assigneeId: conversation.assignee?.id, routing: link?.data.routing, purpose: link?.data.purpose, context: link?.data.context, policyId: link?.data.policyId }; }
         if (!accountId) return { ok: true, workflow: null, tasks: [], communications: [], issues: [], team: await roster() };
-        const [wf, tasks, communications, issues, members, settings, health, monitor, census, syncGap] = await Promise.all([
-          get<LeadWorkflow>(`workflow:${accountId}`), accountRows<LeadTask>(accountId, "TASK"),
+        const [wf, communications, issues, members, settings, health, monitor, syncGap] = await Promise.all([
+          get<LeadWorkflow>(`workflow:${accountId}`),
           query<Communication>("account", accountId, text(input, "nextToken") || undefined, 50, "COMMUNICATION#"),
-          accountRows<{ message: string; at: string }>(accountId, "ISSUE"), roster(), config(),
-          get("health:worker"), get("health:monitor"), get("coverage:census"), get("issue:sync-gap"),
+          accountRows<{ message: string; at: string; resolved?: boolean; sourceId?: string }>(accountId, "ISSUE"), roster(), config(),
+          get("health:worker"), get("health:monitor"), get("issue:sync-gap"),
         ]);
         const recent = (value: unknown, maxAge: number) => {
           const age = typeof value === "string" ? Date.now() - Date.parse(value) : NaN;
           return age >= 0 && age <= maxAge;
         };
+        const issueVisibility = await Promise.all(issues.map(r => currentCommunicationIssue(r, get)));
         const trackingHealthy = !!settings.activatedAt && !settings.paused
           && health?.data.lagging === false && recent(health.data.at, 300_000)
           && Array.isArray(monitor?.data.errors) && monitor.data.errors.length === 0 && recent(monitor.data.at, 600_000)
-          && recent(census?.data.completedAt, 24 * 3600_000) && (!syncGap || syncGap.data.resolved === true);
+          && (!syncGap || syncGap.data.resolved === true);
         return { ok: true, actorId: actor, trackingHealthy, frontContext, workflow: wf ? { ...salespersonWorkflow(wf.data), version: wf.version } : null,
-          tasks: tasks.map(t => ({ ...salespersonTask(t.data), version: t.version })), communications: communications.items.filter(r => r.data.status !== "DRAFT").map(r => safeCommunication({ ...r.data, version: r.version })),
-          communicationNextToken: communications.nextToken, issues: issues.filter(r => !(r.data as { resolved?: boolean }).resolved).map(r => ({ id: r.id, ...r.data })), team: members };
+          tasks: [], communications: communications.items.filter(r => r.data.status !== "DRAFT").map(r => safeCommunication({ ...r.data, version: r.version })),
+          communicationNextToken: communications.nextToken, issues: issues.filter((_, i) => issueVisibility[i]).map(r => ({ id: r.id, ...r.data })), team: members };
       }
       if (op === "work") {
         const kind = text(input, "kind") || "TASK";
-        if (!["TASK", "WORKFLOW", "ISSUE", "TRIAGE", "NOTIFICATION", "OPERATION", "EVENT"].includes(kind)) throw new Error("Unknown work view");
+        if (!["WORKFLOW", "ISSUE", "TRIAGE", "OPERATION", "EVENT"].includes(kind)) throw new Error("Unknown work view");
         if (["ISSUE", "OPERATION", "EVENT"].includes(kind)) requireAdmin();
         const responsibility = text(input, "responsibility");
         if (responsibility && responsibility !== "SALESPERSON") throw new Error("Choose a valid responsibility");
         const { workPage } = await import("./work");
         const p = await workPage({ kind, view: text(input, "view"), responsibility, mine: input.mine === true, actor, nextToken: text(input, "nextToken", 4000) || undefined });
-        if (kind === "NOTIFICATION") {
-          const current = [];
-          for (const notice of p.items.filter(r => r.data.recipient === actor)) {
-            const [task, wf] = await Promise.all([get<LeadTask>(String(notice.data.taskId)), get<LeadWorkflow>(`workflow:${notice.accountId}`)]);
-            const route = task && wf ? await (await import("./routing")).resolveTaskRoute(task.data, wf.data) : undefined;
-            const allowed = route?.recipientId === actor && !["MANAGER", "OWNER", "ESCALATED"].includes(String(notice.data.urgency));
-            if (task?.data.status === "OPEN" && allowed && [task.data.lastReminderAt, task.data.notifiedAt].includes(String(notice.data.at))) { current.push(notice); continue; }
-            // A cancelled episode, changed owner or edited promise retires its old reminder.
-            try { await commit([put(row("NOTIFICATION", notice.id, { ...notice.data, resolved: true }, { accountId: notice.accountId, previous: notice }), notice), ...(task ? [check(task)] : []), ...(wf ? [check(wf)] : [])]); }
-            catch (e) { if (!conflict(e) && !retryableStorage(e)) throw e; }
-          }
-          p.items = current;
-        }
-        const items = p.items.filter(r => kind !== "NOTIFICATION" || r.data.recipient === actor).map(r => kind === "EVENT" ? { id: r.id, version: r.version, provider: r.data.provider, error: r.data.error, attempts: r.data.attempts, processedAt: r.data.processedAt, dueAt: r.dueAt } : kind === "OPERATION" ? { id: r.id, accountId: r.accountId, version: r.version, type: r.data.type, state: r.data.state, error: r.data.error, uid: r.data.uid, messageId: r.data.messageId, conversationId: r.data.conversationId } : { ...r.data, id: r.id, version: r.version, accountId: r.accountId });
+        const items = p.items.map(r => kind === "EVENT" ? { id: r.id, version: r.version, provider: r.data.provider, error: r.data.error, attempts: r.data.attempts, processedAt: r.data.processedAt, dueAt: r.dueAt } : kind === "OPERATION" ? { id: r.id, accountId: r.accountId, version: r.version, type: r.data.type, state: r.data.state, error: r.data.error, uid: r.data.uid, messageId: r.data.messageId, conversationId: r.data.conversationId } : { ...r.data, id: r.id, version: r.version, accountId: r.accountId });
         const workflows = new Map((await Promise.all([...new Set(p.items.map(r => r.accountId).filter((id): id is string => !!id))].map(id => get<LeadWorkflow>(`workflow:${id}`)))).filter((w): w is NonNullable<typeof w> => !!w).map(w => [w.data.accountId, w.data]));
         return { ok: true, items: items.map(item => { const wf = workflows.get((item as { accountId?: string }).accountId ?? ""); return { ...item, ...(wf ? { name: wf.name, salespersonId: wf.salespersonId } : {}) }; }), nextToken: p.nextToken };
       }
@@ -176,34 +146,6 @@ export const handler = async (event: { arguments: { operation?: string; readOper
         put(row("LIFECYCLE", `lifecycle:bind-authorization:${q.data.id}:${hash(`${terms}:${q.data.updatedAt}`).slice(0,16)}`, { accountId: q.data.accountId }, { accountId: q.data.accountId, dueAt: now })), audit(q.data.accountId, actor, "Client authorized binding of quoted terms", { quoteId: q.data.id })]);
       return { ok: true };
     }
-    if (op === "recoverReport") { requireAdmin(); await (await import("./reports")).recoverEdition(text(input, "editionId"), text(input, "messageId")); return { ok: true }; }
-    if (op === "saveTeamRouting") { requireAdmin(); return { ok: true, routing: await (await import("./routing")).saveRouting(input as unknown as import("../../../../shared/leadWorkflow").TeamRouting, actor, await roster()) }; }
-    if (op === "nextYear") return { ok: true, result: await (await import("./annualReturn")).nextYear(input as unknown as Parameters<typeof import("./annualReturn").nextYear>[0], actor) };
-    if (op === "updateBlocker") return await (await import("./blockers")).updateBlocker(input as unknown as Parameters<typeof import("./blockers").updateBlocker>[0], actor);
-    if (op === "takeResponse") throw new Error("Manager takeover has been removed. The assigned salesperson handles this work.");
-    if (op === "delegateService" || op === "requestProspectInformation") {
-      const task = await get<LeadTask>(text(input, "taskId")); if (!task || task.data.status !== "OPEN") throw new Error("Choose an open request"); expected(task, version(input));
-      const wf = await ensureWorkflow(task.data.accountId);
-      if (actor !== wf.data.salespersonId) throw new Error("The assigned salesperson coordinates this request");
-      if (op === "delegateService") {
-        if ((task.data.context ?? "LEAD") === "LEAD") throw new Error("Use the lead's salesperson for client work");
-        const specialist = text(input, "specialistId"); await enabledUser(specialist);
-        await commit([check(wf), put(row("TASK", task.id, { ...salespersonTask(task.data), specialistId: specialist, accountableRole: "SALESPERSON", version: task.version + 1 }, { accountId: task.accountId, previous: task, dueAt: task.dueAt }), task), audit(task.data.accountId, actor, "Specialist assigned to client request", { taskId: task.id, specialist })]);
-      } else {
-        if (task.data.kind !== "CARRIER" || (task.data.context ?? "LEAD") !== "LEAD") throw new Error("Choose the carrier's new-business information request");
-        const key = `task:client-information:${task.id}`;
-        if (!await get(key)) {
-          const { makeTask } = await import("./workflow");
-          const child = await makeTask({ accountId: task.data.accountId, id: key, kind: "DOCUMENTS", title: "Obtain the information requested by underwriting", role: "SALESPERSON", domain: "CLIENT", context: "LEAD", sourceAt: new Date().toISOString(), conversationId: wf.data.conversationId });
-          child.parentTaskId = task.id; child.sourceIds = []; child.requirementSourceIds = task.data.sourceIds; child.waitingOn = "PROSPECT";
-          const requirementId = `task:requirement:${task.id}`, oldRequirement = await get(requirementId);
-          const requirement = { ...task.data, id: requirementId, kind: "DOCUMENTS" as const, title: "Supply the information requested by underwriting", milestone: true, serviceType: "GENERAL" as const, parentTaskId: task.id, version: 1 };
-          await commit([check(wf), check(task), ...(!oldRequirement ? [put(row("TASK", requirementId, requirement, { accountId: task.accountId, dueAt: taskWakeAt(requirement) }))] : []), put(row("TASK", key, child, { accountId: task.accountId, dueAt: taskWakeAt(child) })), audit(task.data.accountId, actor, "Client information request recorded", { taskId: task.id })]);
-        }
-      }
-      return { ok: true };
-    }
-    if (op === "requestChampionHelp") throw new Error("The account salesperson now handles client and carrier work. Refresh the CRM to continue.");
     if (op === "refreshSeen") {
       const comm = await get<Communication>(text(input, "id"));
       if (!comm?.accountId || comm.kind !== "COMMUNICATION" || comm.data.provider !== "front" || comm.data.channel !== "EMAIL" || comm.data.direction !== "OUTBOUND" || comm.data.status === "DRAFT") throw new Error("Choose a sent Front email");
@@ -225,14 +167,9 @@ export const handler = async (event: { arguments: { operation?: string; readOper
       const accountId = text(input, "accountId"), wf = await ensureWorkflow(accountId); expected(wf, version(input));
       if (!["LOST", "DISQUALIFIED"].includes(wf.data.disposition)) throw new Error("Only lost or disqualified leads can be reopened here");
       const reason = text(input, "reason"); if (!reason) throw new Error("Record the reopening reason");
-      const { makeTask } = await import("./workflow");
-      const task = await makeTask({ accountId, title: text(input, "title"), dueAt: text(input, "dueAt"), kind: "FOLLOW_UP", custom: true });
-      await commit([put(row("WORKFLOW", wf.id, { ...wf.data, disposition: "ACTIVE", humanTakeover: true, version: wf.version + 1 }, { accountId, previous: wf }), wf), put(row("TASK", task.id, task, { accountId, dueAt: taskWakeAt(task) })), audit(accountId, actor, "Lead reopened with next action", { reason, task })]);
+      await commit([put(row("WORKFLOW", wf.id, { ...wf.data, disposition: "ACTIVE", humanTakeover: true, version: wf.version + 1 }, { accountId, previous: wf }), wf), audit(accountId, actor, "Lead reopened", { reason })]);
       return { ok: true };
     }
-    if (op === "saveTask") return { ok: true, task: await saveTask(input as unknown as Parameters<typeof saveTask>[0], actor) };
-    if (op === "mergeTasks") { await mergeTasks(input as unknown as Parameters<typeof mergeTasks>[0], actor); return { ok: true }; }
-    if (op === "completeTask") { await completeTask(input as unknown as Parameters<typeof completeTask>[0], actor); return { ok: true }; }
     if (op === "setLeadDisposition") { const { setLeadDisposition } = await import("./workflow"); await setLeadDisposition(text(input, "accountId"), text(input, "disposition"), Number(input.version), actor); return { ok: true }; }
     if (op === "saveEligibility") {
       requireAdmin(); const userId = text(input, "userId"); await enabledUser(userId);
@@ -297,12 +234,11 @@ export const handler = async (event: { arguments: { operation?: string; readOper
     if (op === "activate") {
       requireAdmin();
       if (input.nativeChecksConfirmed !== true) throw new Error("Verify the connected numbers and shared-line text sender before activation");
-      const c = await config(), teamRouting = await get("team-routing");
+      const c = await config();
       const checks = await activationChecks();
       if (checks.some(c => !c.ok)) return { ok: false, error: checks.filter(c => !c.ok).map(c => `${c.name}: ${c.detail}`).join("; ") };
-      if (!teamRouting) throw new Error("Complete report delivery settings before starting delivery");
       const at = c.activatedAt ?? new Date().toISOString();
-      const saved = await saveConfig({ ...c, activatedAt: at, paused: false }, true, [check(teamRouting), audit("SETTINGS", actor, "Integration activated after connection checks", { at })]);
+      const saved = await saveConfig({ ...c, activatedAt: at, paused: false }, true, [audit("SETTINGS", actor, "Integration activated after connection checks", { at })]);
       return { ok: true, config: saved };
     }
     if (op === "cancelAi") {
@@ -354,7 +290,7 @@ export const handler = async (event: { arguments: { operation?: string; readOper
     if (op === "archive") {
       const accountId = text(input, "accountId"), wf = await ensureWorkflow(accountId); expected(wf, version(input));
       const cnv = text(input, "conversationId") || wf.data.conversationId;
-      if (!cnv || !await archiveAllowed(accountId, cnv)) throw new Error("Keep this conversation open until responsibilities, next actions, unresolved communication and sync health are clear");
+      if (!cnv || !await archiveAllowed(accountId, cnv)) throw new Error("Keep this conversation open until assignment, unresolved communication and sync health are clear");
       await enqueueOperation(`op:manual-cleanup:${accountId}:${randomUUID()}`, { type: "ARCHIVE", accountId, conversationId: cnv }); return { ok: true };
     }
     if (op === "routeConversation") {
@@ -394,8 +330,7 @@ export const handler = async (event: { arguments: { operation?: string; readOper
       for (const field of ["unitCount", "totalInsuredValue"]) if (fields[field] != null && fields[field] !== "") {
         const value = Number(fields[field]); if (!Number.isFinite(value) || value < 0 || field === "unitCount" && !Number.isInteger(value)) throw new Error("Enter valid units and insured value"); account[field] = value;
       }
-      const first = await (await import("./workflow")).makeTask({ id: `task:first:${id}`, accountId: id, kind: "FIRST_CONTACT", title: "Make first contact" });
-      try { await commit([put(row("TASK", first.id, first, { accountId: id, dueAt: taskWakeAt(first) })), modelPut("Account", id, account), put(row("WORKFLOW", `workflow:${id}`, wf, { accountId: id })), put(row("MANUAL_REQUEST", key, { accountId: id })), audit(id, actor, "Lead created", { name })]); }
+      try { await commit([modelPut("Account", id, account), put(row("WORKFLOW", `workflow:${id}`, wf, { accountId: id })), put(row("MANUAL_REQUEST", key, { accountId: id })), audit(id, actor, "Lead created", { name })]); }
       catch(e) { if (conflict(e)) { const winner = await get<{ accountId: string }>(key); if (winner) return { ok: true, id: winner.data.accountId }; } throw e; }
       return { ok: true, id };
     }

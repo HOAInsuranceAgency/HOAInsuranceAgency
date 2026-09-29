@@ -35,7 +35,7 @@ export function DeliveryReview({ item, onSaved }: { item: { id: string; version:
 /** Dialpad activity is the record; no second outcome form or note is required. */
 export function CallOutcome({ communication: c }: { communication: Communication }) {
   return <p className="muted small">{c.status === "CONNECTED" ? c.endedAt ? "Completed call · logged automatically" : "Call in progress"
-    : c.status === "MISSED" ? c.direction === "OUTBOUND" ? "No answer · callback stays tracked automatically" : "Missed call · callback tracked automatically"
+    : c.status === "MISSED" ? c.direction === "OUTBOUND" ? "No answer · logged automatically" : "Missed call · logged automatically"
     : "Call activity is recorded automatically"}</p>;
 }
 

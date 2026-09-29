@@ -326,59 +326,9 @@ describe("buildRenewalRows", () => {
 });
 
 describe("renewalMarketing", () => {
-  const TODAY = "2026-08-24";
-
-  it("a quoted carrier does not erase another missed carrier deadline", () => {
-    expect(
-      renewalMarketing(
-        [
-          { status: "COMPLETE", resolution: "QUOTED" },
-          { status: "OPEN", submitBy: "2026-08-01" },
-        ],
-        TODAY
-      )
-    ).toEqual({ kind: "missed", submitBy: "2026-08-01" });
-  });
-
-  it("an open task past submit-by is missed, reporting the earliest blown deadline", () => {
-    expect(
-      renewalMarketing(
-        [
-          { status: "OPEN", submitBy: "2026-08-21" },
-          { status: "OPEN", submitBy: "2026-08-15" },
-          { status: "OPEN", submitBy: "2026-09-05" },
-        ],
-        TODAY
-      )
-    ).toEqual({ kind: "missed", submitBy: "2026-08-15" });
-  });
-
-  it("open tasks in window report the count and the next deadline", () => {
-    expect(
-      renewalMarketing(
-        [
-          { status: "OPEN", submitBy: "2026-09-05" },
-          { status: "OPEN", submitBy: "2026-08-28" },
-        ],
-        TODAY
-      )
-    ).toEqual({ kind: "open", count: 2, submitBy: "2026-08-28" });
-  });
-
-  it("all-settled-without-a-quote is a pass, not 'not started'", () => {
-    expect(
-      renewalMarketing([{ status: "COMPLETE", resolution: "OUT_OF_APPETITE" }], TODAY)
-    ).toEqual({ kind: "passed" });
-    expect(renewalMarketing([], TODAY)).toEqual({ kind: "none" });
-  });
-
-  it("a quote found on the account settles it even with no task trail", () => {
-    // The sweep never creates a task for an already-quoted carrier, so a
-    // renewal quoted before the first sweep has quotes but no tasks.
-    expect(renewalMarketing([], TODAY, true)).toEqual({ kind: "quoted" });
-    expect(
-      renewalMarketing([{ status: "OPEN", submitBy: "2026-08-01" }], TODAY, true)
-    ).toEqual({ kind: "missed", submitBy: "2026-08-01" });
+  it("reports quote readiness only from usable quote evidence", () => {
+    expect(renewalMarketing(true)).toEqual({ kind: "quoted" });
+    expect(renewalMarketing(false)).toEqual({ kind: "none" });
   });
 });
 

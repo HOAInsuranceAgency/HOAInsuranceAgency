@@ -1,3 +1,4 @@
+import { tasksRemoved } from "./retiredTasks";
 import { createHash, randomUUID } from "node:crypto";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, GetCommand, BatchGetCommand, QueryCommand, TransactWriteCommand, type TransactWriteCommandInput } from "@aws-sdk/lib-dynamodb";
@@ -15,7 +16,7 @@ export function canonical(value: unknown): string {
 export function row<T>(kind: string, id: string, data: T, opts: { accountId?: string; dueAt?: string; previous?: Row<unknown> } = {}): Row<T> {
   const now = new Date().toISOString();
   const values = data as { status?: string; state?: string; resolved?: boolean; processedAt?: string; disposition?: string; salespersonId?: string; assignmentIssue?: string; dueAt?: string; at?: string };
-  const actionable = kind === "TASK" ? values.status === "OPEN"
+  const actionable = kind === "TASK" || kind === "NOTIFICATION" ? false
     : kind === "WORKFLOW" ? ["ACTIVE", "BOUND"].includes(values.disposition ?? "") && (!values.salespersonId || !!values.assignmentIssue)
     : kind === "OPERATION" ? !["CONFIRMED", "SUPPRESSED"].includes(values.state ?? "")
     : kind === "REPORT_EDITION" ? !["SENT", "SUPPRESSED"].includes(values.state ?? "")
@@ -24,7 +25,7 @@ export function row<T>(kind: string, id: string, data: T, opts: { accountId?: st
   return { id, kind, data, ...(actionable ? { workKind: kind, workAt: values.dueAt ?? values.at ?? opts.previous?.createdAt ?? now } : {}), version: (opts.previous?.version ?? 0) + 1, createdAt: opts.previous?.createdAt ?? now, updatedAt: now,
     ...(kind === "WORKFLOW" && values.salespersonId ? { assignedSalespersonId: values.salespersonId } : {}),
     ...(opts.accountId ? { accountId: opts.accountId, accountSort: opts.previous?.accountSort ?? `${kind}#${(data as { at?: string }).at ?? now}#${id}` } : {}),
-    ...(opts.dueAt ? { dueGroup: "DUE", dueAt: opts.dueAt } : {}) };
+    ...(opts.dueAt && !["TASK", "NOTIFICATION"].includes(kind) ? { dueGroup: "DUE", dueAt: opts.dueAt } : {}) };
 }
 export async function get<T = Record<string, unknown>>(id: string): Promise<Row<T> | undefined> {
   return (await db.send(new GetCommand({ TableName: table(), Key: { id }, ConsistentRead: true }))).Item as Row<T> | undefined;
@@ -46,6 +47,7 @@ export async function batchGet<T = Record<string, unknown>>(ids: string[]): Prom
   return found;
 }
 export function put(record: Row<unknown>, previous?: Row<unknown>): Write {
+  if (["TASK", "NOTIFICATION"].includes(record.kind) && (!previous || previous.kind !== record.kind || canonical(record.data) !== canonical(previous.data) || record.dueAt || record.dueGroup || record.workKind || record.workAt)) tasksRemoved();
   return { Put: { TableName: table(), Item: record, ConditionExpression: previous ? "#v = :v" : "attribute_not_exists(id)",
     ...(previous ? { ExpressionAttributeNames: { "#v": "version" }, ExpressionAttributeValues: { ":v": previous.version } } : {}) } };
 }

@@ -1,6 +1,6 @@
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, GetCommand, BatchGetCommand } from "@aws-sdk/lib-dynamodb";
-import { ACCOUNT_MODELS, ACCOUNT_REFERENCES, LIST_PARENTS, SHARED_MODELS, AccessDenied, id, object, type Identity, type RecordData } from "./policy";
+import { ACCOUNT_MODELS, ACCOUNT_REFERENCES, LIST_PARENTS, SHARED_MODELS, RETIRED_MODELS, AccessDenied, id, object, type Identity, type RecordData } from "./policy";
 export const db = DynamoDBDocumentClient.from(new DynamoDBClient());
 export function tableName(model: string) {
   const tables = JSON.parse(process.env.ACCESS_TABLES ?? "{}") as Record<string, string>;
@@ -115,6 +115,7 @@ export class AccountAccess {
     return id(value.accountId);
   }
   async canRecord(model: string, value: RecordData) {
+    if (RETIRED_MODELS.includes(model)) return false;
     if (this.admin) return true;
     try { const root = await this.root(model, value); return root === null || await this.canAccount(root); }
     catch (error) { if (error instanceof AccessDenied) return false; throw error; }
@@ -125,6 +126,7 @@ export class AccountAccess {
     return value;
   }
   async write(model: string, operation: string, input: RecordData) {
+    if (RETIRED_MODELS.includes(model)) throw new AccessDenied();
     if (this.admin) return;
     const key = id(["GlApplication", "DoApplication"].includes(model) ? input.accountId : input.id);
     const old = key ? await this.get(model, key) : undefined;

@@ -1,5 +1,4 @@
 import { estimateInput, PUBLIC_WINDOW_MS } from "../honeycomb/contract";
-import { taskWakeAt } from "../../../../shared/leadWorkflow";
 import { cleanAttribution, websiteLeadSource } from "../../../../shared/leadSource";
 import { webLeadPropertyType } from "../../../../shared/propertyType";
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
@@ -9,7 +8,7 @@ import { contactKey, priorCarrierKey } from "../../../src/lib/extractionKeys";
 import { NO_UPLOAD_WINDOW_MINUTES } from "../../../../shared/leadUpload";
 import { parsePolicyExpiration, parseUnitCount } from "./fields";
 import { canonical, hash, get, row, put, commit, conflict, type Write } from "../communications/store";
-import { defaultWorkflow, makeTask } from "../communications/workflow";
+import { defaultWorkflow } from "../communications/workflow";
 
 export interface Submission {
   fingerprint: string; proofHash: string; accountId: string; uploadToken: string | null;
@@ -71,8 +70,7 @@ export const handler: Schema["submitWebLead"]["functionHandler"] = async event =
   const carrierInput = estimateInput({ ...args, type: account.type, address: account.address, city: account.city, state: account.state });
   const estimateToken = estimationEnabled && carrierInput ? randomBytes(32).toString("base64url") : undefined;
   const submission: Submission = { fingerprint, proofHash: hash(proof), accountId: id, uploadToken: token, estimateToken, snapshot, receivedAt: at };
-  const first = await makeTask({ id: `task:first:${id}`, accountId: id, title: "Ensure the enquiry receives a response", kind: "FIRST_CONTACT", sourceAt: at });
-  const writes: Write[] = [put(row("TASK", first.id, first, { accountId: id, dueAt: taskWakeAt(first) })), put(row("SUBMISSION", key, submission)), modelPut("Account", id, account),
+  const writes: Write[] = [put(row("SUBMISSION", key, submission)), modelPut("Account", id, account),
     put(row("WORKFLOW", `workflow:${id}`, workflow, { accountId: id })),
     put(row("OPERATION", `op:intake:${submissionId}`, { type: "IMPORT", state: "READY", submissionId, accountId: id, attempts: 0 }, { accountId: id, dueAt: at })),
     put(row("OPERATION", `op:sms-alert:${submissionId}`, { type: "SMS_ALERT", state: "READY", accountId: id, attempts: 0,

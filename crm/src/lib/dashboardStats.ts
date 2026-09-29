@@ -464,64 +464,13 @@ export function quotedWithinWindow(
   return quoteCoverage(complete, { ...risk, term: expiration }, new Date().toISOString()).complete;
 }
 
-/**
- * Where a renewal's marketing stands, from its MarketingTask rows.
- *
- * Priority is outcome-first: a quote anywhere settles it ("quoted") —
- * whether recorded as a task resolution or found on the account directly
- * (`hasQuote`, see quotedWithinWindow); an open task past its submit-by is
- * a problem no other open task excuses ("missed"); open tasks are work in
- * flight ("open"); tasks that all closed without a quote were deliberate
- * passes ("passed"), which is not the same claim as "none" — nothing was
- * ever raised — even though both render grey.
- */
-export type RenewalMarketing =
-  | { kind: "quoted" }
-  | { kind: "missed"; submitBy: string }
-  | { kind: "open"; count: number; submitBy: string | null }
-  | { kind: "passed" }
-  | { kind: "none" };
-
-export function renewalMarketing(
-  tasks: readonly {
-    status?: string | null;
-    resolution?: string | null;
-    submitBy?: string | null;
-  }[],
-  today: string,
-  hasQuote = false
-): RenewalMarketing {
-  const open = tasks.filter((t) => t.status === "OPEN");
-  const missed = open
-    .filter((t) => t.submitBy && t.submitBy < today)
-    .map((t) => t.submitBy as string)
-    .sort();
-  if (missed.length > 0) return { kind: "missed", submitBy: missed[0] };
-  if (hasQuote) return { kind: "quoted" };
-  if (open.length > 0) {
-    const submitBys = open
-      .filter((t) => t.submitBy)
-      .map((t) => t.submitBy as string)
-      .sort();
-    return { kind: "open", count: open.length, submitBy: submitBys[0] ?? null };
-  }
-  return tasks.length > 0 ? { kind: "passed" } : { kind: "none" };
+/** Renewal quote readiness uses business records only. */
+export type RenewalMarketing = { kind: "quoted" } | { kind: "none" };
+export function renewalMarketing(hasQuote: boolean): RenewalMarketing {
+  return { kind: hasQuote ? "quoted" : "none" };
 }
-
-/** Sort rank for the Marketing column — trouble first. */
 export function renewalMarketingRank(m: RenewalMarketing): number {
-  switch (m.kind) {
-    case "missed":
-      return 0;
-    case "none":
-      return 1;
-    case "open":
-      return 2;
-    case "passed":
-      return 3;
-    case "quoted":
-      return 4;
-  }
+  return m.kind === "none" ? 0 : 1;
 }
 
 // ── Invoice aging ────────────────────────────────────────────────────

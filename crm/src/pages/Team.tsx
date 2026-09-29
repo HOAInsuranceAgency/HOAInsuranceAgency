@@ -1,4 +1,3 @@
-import ReportDeliverySettings from "../components/ReportDeliverySettings";
 import { useState } from "react";
 import { LeadEligibilityCells, LeadEligibilityEditor, LeadEligibilityFeedback, useLeadEligibilitySettings } from "../components/LeadEligibilitySettings";
 import { client, fmtDate, type UserProfile } from "../lib/client";
@@ -367,7 +366,6 @@ export default function Team({ profile }: { profile: UserProfile }) {
         )}
         <LeadEligibilityEditor settings={eligibility} />
       </section>
-      <ReportDeliverySettings />
     </>
   );
 }

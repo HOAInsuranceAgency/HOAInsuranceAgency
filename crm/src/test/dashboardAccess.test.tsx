@@ -47,7 +47,6 @@ vi.mock("../pages/AccountsList", () => ({
   default: ({ stage }: { stage: string }) => <h1>{stage === "LEAD" ? "Leads content" : "Clients content"}</h1>,
 }));
 // Keep route authorization tests independent of each destination's data reads.
-vi.mock("../pages/LeadWork", () => ({ default: () => null }));
 vi.mock("../pages/FrontSidebar", () => ({ default: () => null }));
 vi.mock("../pages/AccountDetail", () => ({ default: () => null }));
 vi.mock("../pages/NewLead", () => ({ default: () => null }));
@@ -61,7 +60,6 @@ vi.mock("../pages/QuotesList", () => ({ default: () => null }));
 vi.mock("../pages/PoliciesList", () => ({ default: () => null }));
 vi.mock("../components/UniversalSearch", () => ({ default: () => null }));
 vi.mock("../components/MagicLinkSignIn", () => ({ default: () => null }));
-vi.mock("../components/MarketingTasks", () => ({ AllMarketingTasks: () => null }));
 
 import App from "../App";
 
@@ -137,4 +135,18 @@ describe("Dashboard access", () => {
     expect(await screen.findByRole("heading", { name: heading })).toBeInTheDocument();
     expect(screen.getByLabelText("Current location")).toHaveTextContent(destination);
   });
+  it.each([
+    { groups: ['ADMIN'], path: '/tasks' }, { groups: ['STAFF'], path: '/tasks' },
+    { groups: ['ADMIN'], path: '/lead-work?report=mine' }, { groups: ['PRODUCER'], path: '/lead-work?report=mine' },
+  ])('redirects retired $path bookmarks without task navigation for $groups', async ({ groups, path }) => {
+    h.session.mockResolvedValue(session(groups));
+    renderApp(path);
+    expect(await screen.findByRole('heading', { name: 'Leads content' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Current location')).toHaveTextContent(/^\/leads$/);
+    expect(screen.queryByRole('link', { name: 'Tasks' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Lead follow-up' })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Clients' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Settings' })).toBeInTheDocument();
+  });
+
 });

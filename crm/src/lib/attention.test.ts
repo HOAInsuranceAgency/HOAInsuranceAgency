@@ -15,7 +15,6 @@ const EMPTY: AttentionInputs = {
   invoices: [],
   loans: [],
   renewals: [],
-  tasks: [],
   failedDocs: [],
   accountsWithFailedExtraction: [],
   licenses: [],
@@ -64,20 +63,17 @@ describe("buildAttentionQueue", () => {
     expect(items[1]).toMatchObject({ severity: "blue", pendingDays: 6, expiresInDays: 8 });
   });
 
-  it("a near renewal with neither tasks nor quotes is flagged; either one clears it", () => {
+  it("a near renewal without a usable quote is flagged", () => {
     const items = queue({
       renewals: [
         { accountId: "a1", name: "Willow Creek", date: "2026-09-11", days: 18, premium: 42800 },
-        { accountId: "a2", name: "Tasked HOA", date: "2026-09-11", days: 18, premium: 10000 },
+        { accountId: "a2", name: "Unquoted HOA", date: "2026-09-11", days: 18, premium: 10000 },
         { accountId: "a3", name: "Far Off HOA", date: "2026-11-24", days: 92, premium: 5000 },
-        // The sweep never creates a task for an already-quoted carrier, so
-        // a quote in the window must count as marketing started.
         { accountId: "a4", name: "Quoted Early HOA", date: "2026-09-11", days: 18, premium: 7000, lines: ["Property"] },
       ],
-      tasks: [{ accountId: "a2", expirationDate: "2026-09-11", status: "COMPLETE" }],
       quotes: [{ accountId: "a4", carrierId: "c1", status: "QUOTED", premium: 7000, effectiveDate: "2026-09-11", expirationDate: "2027-09-11", lines: ["Property"], createdAt: "2026-08-01T09:00:00Z" }],
     });
-    expect(items).toHaveLength(1);
+    expect(items).toHaveLength(2);
     expect(items[0]).toMatchObject({ kind: "renewal-unmarketed", accountName: "Willow Creek", days: 18 });
   });
 
@@ -90,18 +86,6 @@ describe("buildAttentionQueue", () => {
     });
     expect(items).toHaveLength(1);
     expect(items[0]).toMatchObject({ kind: "renewal-unmarketed", severity: "red", days: -4 });
-  });
-
-  it("an open task past submit-by is flagged with the denormalized names", () => {
-    const items = queue({
-      tasks: [
-        { accountId: "a1", accountName: "Bayview", carrierName: "Meridian", submitBy: "2026-08-21", status: "OPEN" },
-        { accountId: "a1", accountName: "Bayview", carrierName: "Lakeshore", submitBy: "2026-09-05", status: "OPEN" },
-        { accountId: "a1", accountName: "Bayview", carrierName: "Old", submitBy: "2026-08-01", status: "COMPLETE" },
-      ],
-    });
-    expect(items).toHaveLength(1);
-    expect(items[0]).toMatchObject({ kind: "task-window-missed", carrierName: "Meridian", daysPast: 3 });
   });
 
   it("OCR and AI-extraction failures are separate items — one pipeline must not hide the other", () => {

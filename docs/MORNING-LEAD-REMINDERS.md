@@ -1,5 +1,7 @@
 # Morning lead reminders — September 10, 2026
 
+**Historical design:** tasks, Lead Follow-up and daily staff reports are retired in the current implementation, pending staging review. See [CRM task retirement](CRM-TASK-RETIREMENT.md) for current behavior.
+
 **September 29, 2026 update:** manager hierarchies, temporary coverage, team summaries, and manager/owner escalation are retired. The current behavior is documented in [Salesperson account ownership](specs/salesperson-account-ownership.md). The historical release and verification details below describe the earlier design.
 
 **Later September 10 update:** the manual Record outcome flow described in this historical verification has been replaced by [automatic contact-driven follow-up](AUTOMATIC-LEAD-FOLLOW-UP.md). The 9 a.m. schedule remains; ordinary replies and completed calls supply the record and choose the next follow-up automatically.
