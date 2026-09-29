@@ -113,20 +113,18 @@ export async function syncResponsibilities(candidate: Row<{ phase: string; accou
     const normalized = salespersonTask(task.data);
     const route = await (await import("./routing")).resolveTaskRoute(normalized, wf.data);
     const directChanged = !!task.data.notifiedAt && task.data.notifiedRecipientId !== route.recipientId;
-    const escalationChanged = !!task.data.escalatedAt && task.data.escalatedRecipientId !== route.managerId;
-    if (!directChanged && !escalationChanged && JSON.stringify(normalized) === JSON.stringify(task.data)) continue;
-    // Notify the new route at the original reminder opportunity. Old manager
-    // receipts must not postpone the new salesperson until owner escalation.
-    const nextReminderAt = taskWakeAt({ ...normalized, notifiedAt: undefined, escalatedAt: undefined, nextReminderAt: undefined, lastReminderAt: undefined });
-    const data = { ...normalized, ...(directChanged || escalationChanged ? { notifiedAt: directChanged ? undefined : task.data.notifiedAt, nextReminderAt, lastReminderAt: undefined } : {}), version: task.version + 1 };
-    writes.push(put(row("TASK", task.id, data, { accountId, previous: task, dueAt: directChanged || escalationChanged ? taskWakeAt(data) : task.dueAt }), task));
+    if (!directChanged && JSON.stringify(normalized) === JSON.stringify(task.data)) continue;
+    // A former recipient's receipt must not postpone the newly assigned person.
+    const nextReminderAt = taskWakeAt({ ...normalized, notifiedAt: undefined, nextReminderAt: undefined, lastReminderAt: undefined });
+    const data = { ...normalized, ...(directChanged ? { notifiedAt: undefined, nextReminderAt, lastReminderAt: undefined } : {}), version: task.version + 1 };
+    writes.push(put(row("TASK", task.id, data, { accountId, previous: task, dueAt: taskWakeAt(data) }), task));
   }
   const checkedTaskIds = new Set<string>();
   if (phase === "NOTIFICATION") for (const notice of page.items) {
     if (notice.data.resolved) continue;
     const task = await get<LeadTask>(String(notice.data.taskId));
     const route = task ? await (await import("./routing")).resolveTaskRoute(task.data, wf.data) : undefined;
-    if (!task || task.data.status !== "OPEN" || ![route?.recipientId, route?.managerId, route?.ownerId].includes(String(notice.data.recipient))) {
+    if (!task || task.data.status !== "OPEN" || route?.recipientId !== notice.data.recipient || ["MANAGER", "OWNER", "ESCALATED"].includes(String(notice.data.urgency))) {
       writes.push(put(row("NOTIFICATION", notice.id, { ...notice.data, resolved: true }, { accountId, previous: notice }), notice));
       if (task && !checkedTaskIds.has(task.id)) { writes.push(check(task)); checkedTaskIds.add(task.id); }
     }
@@ -143,7 +141,7 @@ export async function makeTask(input: { accountId: string; title: string; kind: 
   if (!Number.isFinite(Date.parse(dueAt))) throw new Error("Choose a valid due date");
   if (input.custom && Date.parse(dueAt) <= Date.now()) throw new Error("Choose a future date for a new promise");
   return scheduleReminders({ ...input, id: input.id ?? `task:${randomUUID()}`, domain: input.domain ?? (input.kind === "CARRIER" || input.role === "CHAMPION" && input.kind === "FOLLOW_UP" ? "CARRIER" : "CLIENT"), context: input.context ?? "LEAD", role: "SALESPERSON", dueAt: new Date(dueAt).toISOString(),
-    escalationAt: followUpDeadline(dueAt, 1, holidays), sourceAt, status: "OPEN", version: 1 }, holidays);
+    sourceAt, status: "OPEN", version: 1 }, holidays);
 }
 export async function saveTask(input: { accountId: string; id?: string; title: string; kind: TaskKind; role: Responsibility; dueAt: string; version?: number; reason: string }, actor: string) {
   void input; void actor;
@@ -201,8 +199,8 @@ export async function recordInbound(comm: Communication, kind: TaskKind = "RESPO
   newTask.sourceIds = Array.from(new Set([...(old?.data.status === "OPEN" ? old.data.sourceIds ?? [] : []), comm.id]));
   // Keep transaction size bounded without silently discarding source activity.
   if (newTask.sourceIds.length > 80) throw new Error("This unanswered conversation needs review before more messages can be grouped");
-  const incomingDue = newTask.dueAt, incomingEscalation = newTask.escalationAt;
-  if (old?.data.status === "OPEN") { Object.assign(newTask, { ...salespersonTask(old.data), sourceIds: newTask.sourceIds }); newTask.dueAt = old.data.custom || old.data.dueAt < incomingDue ? old.data.dueAt : incomingDue; newTask.escalationAt = old.data.custom || old.data.escalationAt < incomingEscalation ? old.data.escalationAt : incomingEscalation; newTask.notifiedAt = old.data.notifiedAt; newTask.escalatedAt = old.data.escalatedAt; }
+  const incomingDue = newTask.dueAt;
+  if (old?.data.status === "OPEN") { Object.assign(newTask, { ...salespersonTask(old.data), sourceIds: newTask.sourceIds }); newTask.dueAt = old.data.custom || old.data.dueAt < incomingDue ? old.data.dueAt : incomingDue; newTask.notifiedAt = old.data.notifiedAt; }
   if (old?.data.sourceAt && old.data.sourceAt < newTask.sourceAt!) newTask.sourceAt = old.data.sourceAt;
   else if (comm.at < newTask.sourceAt!) newTask.sourceAt = comm.at;
   Object.assign(newTask, scheduleReminders(newTask, (await config()).holidays));
@@ -267,10 +265,10 @@ export async function mergeTasks(input: { accountId: string; tasks: { id: string
   }
   const [target, ...others] = selected, sourceIds = [...new Set(selected.flatMap(t => t.data.sourceIds ?? []))];
   if (sourceIds.length > 80) throw new Error("Resolve some activity before combining more requests");
-  const dueAt = selected.map(t => t.data.dueAt).sort()[0], escalationAt = selected.map(t => t.data.escalationAt).sort()[0];
-  const data = { ...target.data, sourceIds, dueAt, escalationAt, sourceAt: selected.map(t => t.data.sourceAt ?? t.createdAt).sort()[0], version: target.version + 1,
+  const dueAt = selected.map(t => t.data.dueAt).sort()[0];
+  const data = { ...salespersonTask(target.data), sourceIds, dueAt, sourceAt: selected.map(t => t.data.sourceAt ?? t.createdAt).sort()[0], version: target.version + 1,
     title: "Respond to prospect / return call", kind: selected.some(t => t.data.kind === "CALLBACK") ? "CALLBACK" as const : "RESPONSE" as const,
-    custom: selected.some(t => t.data.custom), notifiedAt: selected.map(t => t.data.notifiedAt).filter(Boolean).sort()[0], escalatedAt: selected.map(t => t.data.escalatedAt).filter(Boolean).sort()[0] };
+    custom: selected.some(t => t.data.custom), notifiedAt: selected.map(t => t.data.notifiedAt).filter(Boolean).sort()[0] };
   Object.assign(data, scheduleReminders(data, (await config()).holidays));
   const writes = [check(wf), put(row("TASK", target.id, data, { accountId: input.accountId, previous: target, dueAt: taskWakeAt(data) }), target), audit(input.accountId, actor, "Requests combined; earliest commitment preserved", input)];
   for (const old of others) {

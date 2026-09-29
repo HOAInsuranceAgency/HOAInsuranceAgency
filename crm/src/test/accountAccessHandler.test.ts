@@ -59,28 +59,28 @@ it.each(ACCOUNT_MODELS)("batches permission reads for a large %s connection", as
   const result = await handler({ mode: "read", model, identity, previous: { items, nextToken: "later", startedAt: 123 } });
   expect(result).toEqual({ items: items.filter((_, i) => i % 2 === 0 && i !== 4), nextToken: "later", startedAt: 123 });
   const commands = h.db.mock.calls.map(([command]) => command.input);
-  // Only the one shared team record needs GetItem; all row-specific reads are
-  // consistent batches, including parents and workflow/deletion records.
-  expect(commands.filter(input => input.Key).map(input => input.Key)).toEqual([{ id: "team-routing" }]);
+  // Every row-specific read is a consistent batch. Retired team-routing
+  // configuration is not read for account authorization.
+  expect(commands.filter(input => input.Key)).toEqual([]);
   const batches = commands.filter(input => input.RequestItems).flatMap(input => Object.values(input.RequestItems)) as { Keys: RecordData[]; ConsistentRead: boolean }[];
   expect(batches.length).toBeLessThanOrEqual(7);
   expect(batches.every(batch => batch.Keys.length <= 100 && batch.ConsistentRead)).toBe(true);
   expect(batches.flatMap(batch => batch.Keys).some(key => String(key.id).includes("wrong-mirror"))).toBe(false);
 });
-it.each(["work", "myReport"])("batches %s ownership reads, deduplicates accounts, and applies fresh manager access", async readOperation => {
+it.each(["work", "myReport"])("batches %s ownership reads and limits former managers to current personal assignments", async readOperation => {
   h.records.set("communications:team-routing", { data: { members: [{ userId: "manager", salesManager: true }, { userId: "alice", salesManagerId: "manager" }] } });
   const rows = Array.from({ length: 60 }, (_, i) => {
     const accountId = `work-${i}`;
-    h.records.set(`communications:workflow:${accountId}`, { data: { salespersonId: i % 2 === 0 ? "alice" : "bob" } });
+    h.records.set(`communications:workflow:${accountId}`, { data: { salespersonId: i % 3 === 0 ? "manager" : i % 3 === 1 ? "alice" : "bob" } });
     return { id: `task-${i}`, accountId };
   });
-  h.records.set("communications:deleted-account:work-4", {});
+  h.records.set("communications:deleted-account:work-3", {});
   const items = [...rows, rows[0], { id: "unlinked" }];
   const previous = readOperation === "work" ? { ok: true, items, nextToken: "later" } : { ok: true, report: { items, accountCount: 60, createdAt: "today" } };
   const event = { mode: "custom-post" as const, field: "communicationRead", identity: { sub: "manager" }, arguments: { readOperation }, previous };
-  const permitted = [...rows.filter((_, i) => i % 2 === 0 && i !== 4), rows[0]];
-  expect(await handler(event)).toEqual(readOperation === "work" ? { ...previous, items: permitted } : { ok: true, report: { items: permitted, accountCount: 29, createdAt: "today" } });
-  expect(h.db.mock.calls).toHaveLength(3); // Two ownership batches and one team read.
+  const permitted = [...rows.filter((_, i) => i % 3 === 0 && i !== 3), rows[0]];
+  expect(await handler(event)).toEqual(readOperation === "work" ? { ...previous, items: permitted } : { ok: true, report: { items: permitted, accountCount: 19, createdAt: "today" } });
+  expect(h.db.mock.calls).toHaveLength(2); // Two ownership batches, no routing read.
   const ownershipKeys = h.db.mock.calls.flatMap(([command]) => command.input.RequestItems?.communications?.Keys ?? []);
   expect(ownershipKeys).toHaveLength(120); expect(new Set(ownershipKeys.map(key => key.id)).size).toBe(120);
   h.records.set("communications:workflow:work-0", { data: { salespersonId: "bob" } });
@@ -94,7 +94,7 @@ it("batches mixed document parents while rejecting missing or invalid parents an
   const visible = { id: "visible", entityType: "ACCOUNT", entityId: "a" }, shared = { id: "shared", entityType: "CARRIER", entityId: "shared" };
   const items = [visible, shared, { id: "moved", entityType: "POLICY", entityId: "moved", accountId: "a" }, { id: "missing", entityType: "QUOTE", entityId: "gone", accountId: "a" }, { id: "invalid", entityType: "UNKNOWN", entityId: "a" }, null];
   expect(await handler({ mode: "read", model: "Document", identity, previous: { items, nextToken: "later" } })).toEqual({ items: [visible, shared], nextToken: "later" });
-  expect(h.db.mock.calls.filter(([command]) => command.input.Key).map(([command]) => command.input.Key)).toEqual([{ id: "team-routing" }]);
+  expect(h.db.mock.calls.filter(([command]) => command.input.Key)).toEqual([]);
 });
 it.each(["parent", "ownership"])("propagates a failed %s batch instead of returning an incomplete page", async failure => {
   const normal = h.db.getMockImplementation()!;
@@ -115,6 +115,17 @@ it("retries unprocessed parent and ownership keys before filtering", async () =>
 it("denies guessed IDs and preserves a missing record response", async () => {
   await expect(handler({ mode: "read", model: "Account", identity, previous: { id: "b" } })).rejects.toThrow("not available");
   expect(await handler({ mode: "read", model: "Account", identity, previous: null })).toBeNull();
+});
+it("denies copied account and file URLs to former managers before any file side effect", async () => {
+  h.records.set("communications:team-routing", { data: { ownerId: "manager", members: [{ userId: "manager", salesManager: true }, { userId: "alice", salesManagerId: "manager", coverId: "manager", away: true }] } });
+  const formerManager = { sub: "manager", groups: ["STAFF"] };
+  await expect(handler({ mode: "read", model: "Account", identity: formerManager, previous: { id: "a" } })).rejects.toThrow("not available");
+  await expect(handler({ fieldName: "crmAccess", identity: formerManager })).resolves.toEqual({ actorId: "manager", admin: false, salespersonIds: ["manager"] });
+  for (const operation of ["read", "write", "delete"]) {
+    await expect(handler({ fieldName: "crmFile", identity: formerManager, arguments: { operation, path: "documents/ACCOUNT/a/doc/file.pdf", sizeBytes: 10, validateObjectExistence: true } })).rejects.toThrow("not available");
+  }
+  expect(h.sign).not.toHaveBeenCalled(); expect(h.s3).not.toHaveBeenCalled();
+  expect(h.db.mock.calls.some(([command]) => command.input.Key?.id === "team-routing")).toBe(false);
 });
 it("keeps administrators unfiltered but requires a signed-in identity", async () => {
   const previous = { items: [{ id: "a" }, { id: "b" }] };

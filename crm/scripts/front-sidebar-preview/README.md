@@ -1,6 +1,6 @@
 # Workflow visual review
 
-This preview uses the actual Front sidebar, daily-report, team-routing and email-rendering components with fictional fixtures. It has no CRM credentials, provider connection or ability to send messages. Links are intercepted. Data resets on reload.
+This preview uses the actual Front sidebar, daily-report, report-delivery and email-rendering components with fictional fixtures. It has no CRM credentials, provider connection or ability to send messages. Links are intercepted. Data resets on reload.
 
 Open `docs/WORKFLOW-UX-TEST-WORKSPACE.html` directly in a browser, or run from `crm`:
 
@@ -16,4 +16,4 @@ Rebuild the shareable HTML after component changes:
 node scripts/build-workflow-ux-preview.mjs
 ```
 
-Follow `docs/WORKFLOW-UX-ACCEPTANCE.md` for visual and connected staging tests. Do not claim a preview pass proves email delivery, call ingestion or scheduled escalation.
+Follow `docs/WORKFLOW-UX-ACCEPTANCE.md` for visual and connected staging tests. Do not claim a preview pass proves email delivery, call ingestion or scheduled reminders.

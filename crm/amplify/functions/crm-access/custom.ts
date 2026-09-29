@@ -2,7 +2,7 @@ import { AccountAccess } from "./access";
 import { AccessDenied, id, object, type RecordData } from "./policy";
 const adminCommunication = new Set(["settings", "reportDelivery", "prepareLeadDeletion", "recoverReport", "saveTeamRouting", "saveEligibility", "saveSettings", "restartReconciliation", "restartConversationHistory", "validateConnection", "activate", "reviewOperation", "backfill"]);
 const accountOperations = new Set(["context", "accountSummary", "nextYearPreview", "saveCommercial", "prepareBusinessDraft", "nextYear", "initializeLead", "setResponsibilities", "reopenLead", "setLeadDisposition", "cancelAi", "linkConversation", "linkActivity", "archive", "addNote", "mergeTasks"]);
-const taskOperations = new Set(["deliveryOptions", "updateBlocker", "takeResponse", "delegateService", "requestProspectInformation"]);
+const taskOperations = new Set(["deliveryOptions", "updateBlocker", "delegateService", "requestProspectInformation"]);
 async function filterAccountItems(access: AccountAccess, input: unknown) {
   const items = Array.isArray(input) ? input : [];
   await access.prefetchAccounts(items.map(value => id(object(value).accountId)));
@@ -101,6 +101,18 @@ export async function authorizeCustom(access: AccountAccess, field: string, args
 export async function filterCustom(access: AccountAccess, field: string, args: RecordData, original: unknown) {
   if (field !== "communicationRead") return original;
   const result = object(original), op = id(args.readOperation);
+  if (op === "myReport") {
+    // Old report payloads may still carry management sections and summaries.
+    // They confer no current visibility or takeover authority, even for admins.
+    const { teamCounts: _retiredTeamCounts, ...report } = object(result.report);
+    const retiredSections = new Set(["Your sales team today", "Needs your attention"]);
+    const candidates = (Array.isArray(report.items) ? report.items : []).map(object)
+      .filter(item => !["MANAGER", "OWNER"].includes(id(item.stage)) && !retiredSections.has(id(item.section)))
+      .map(({ canTakeResponse: _retiredTakeover, verifiedEscalation: _retiredEscalation, ...item }) => item);
+    const items = access.admin ? candidates : await filterAccountItems(access, candidates);
+    const sections = Array.isArray(report.sections) ? report.sections.filter(section => !retiredSections.has(id(section))) : undefined;
+    return { ...result, report: { ...report, ...(sections ? { sections } : {}), items, accountCount: new Set(items.map(i => object(i).accountId)).size } };
+  }
   if (access.admin) return op === "team" ? { ...result, actorId: access.actor } : original;
   if (op === "work") {
     return { ...result, items: await filterAccountItems(access, result.items) };
@@ -114,11 +126,6 @@ export async function filterCustom(access: AccountAccess, field: string, args: R
         ...(accountId ? { canAccessAccount: await new AccountAccess({ sub: userId }, (model, key) => access.get(model, key)).canAccount(accountId) } : {}) };
     }));
     return { ...result, actorId: access.actor, team };
-  }
-  if (op === "myReport") {
-    const report = object(result.report);
-    const items = await filterAccountItems(access, report.items);
-    return { ...result, report: { ...report, items, accountCount: new Set(items.map(i => object(i).accountId)).size } };
   }
   return original;
 }

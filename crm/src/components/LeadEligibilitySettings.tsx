@@ -5,7 +5,7 @@ import Modal from "./Modal";
 
 type ConnectionIds = Pick<TeamEligibility, "frontId" | "dialpadId">;
 
-/** Shared state for the team roster and the standalone assignment controls. */
+/** Assignment and connection editing within the unified team roster. */
 export function useLeadEligibilitySettings() {
   const resource = useAsyncResource(() => request<{ team: TeamEligibility[] }>("team"), [], { initialData: { team: [] }, errorMessage: "Could not load assignment settings" });
   const [busy, setBusy] = useState(false), [error, setError] = useState(""), [message, setMessage] = useState("");
@@ -60,24 +60,6 @@ export function LeadEligibilityCells({ member, settings }: { member?: TeamEligib
 export function LeadEligibilityEditor({ settings }: { settings: EligibilitySettings }) {
   const { editing, busy, error, closeEditor, save, setEditing } = settings;
   return editing && <ConnectionEditor member={editing} busy={busy} error={error} onClose={closeEditor} onSave={async ids => { if (await save(editing, ids)) setEditing(null); }} />;
-}
-
-export default function LeadEligibilitySettings() {
-  const settings = useLeadEligibilitySettings();
-  const { resource } = settings;
-  return <section className="card team-eligibility" aria-labelledby="lead-eligibility-title">
-    <h2 id="lead-eligibility-title">Salesperson assignment eligibility</h2>
-    <p className="muted small">These choices control who appears in the salesperson dropdown. They do not change access or permissions.</p>
-    <LeadEligibilityFeedback settings={settings} />
-    <div className="table-wrap"><table><thead><tr><th scope="col">Teammate</th><th scope="col">Salesperson</th><th scope="col">Connections</th></tr></thead><tbody>
-      {resource.data.team.map(member => <tr key={member.userId}>
-        <td>{member.name}<div className="muted small">{member.email}</div></td>
-        <LeadEligibilityCells member={member} settings={settings} />
-      </tr>)}
-    </tbody></table></div>
-    {resource.loaded && !resource.error && !resource.data.team.length && <p className="muted small">No teammates are available yet.</p>}
-    <LeadEligibilityEditor settings={settings} />
-  </section>;
 }
 
 function ConnectionEditor({ member, busy, error, onClose, onSave }: {

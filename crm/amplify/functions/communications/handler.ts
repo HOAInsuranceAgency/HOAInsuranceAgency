@@ -139,9 +139,8 @@ export const handler = async (event: { arguments: { operation?: string; readOper
           for (const notice of p.items.filter(r => r.data.recipient === actor)) {
             const [task, wf] = await Promise.all([get<LeadTask>(String(notice.data.taskId)), get<LeadWorkflow>(`workflow:${notice.accountId}`)]);
             const route = task && wf ? await (await import("./routing")).resolveTaskRoute(task.data, wf.data) : undefined;
-            const now = new Date().toISOString();
-            const allowed = route && task && (route.recipientId === actor || task.data.escalationAt <= now && route.managerId === actor || task.data.ownerEscalationAt && task.data.ownerEscalationAt <= now && route.ownerId === actor);
-            if (task?.data.status === "OPEN" && allowed && [task.data.lastReminderAt, task.data.notifiedAt, task.data.escalatedAt, task.data.ownerNotifiedAt].includes(String(notice.data.at))) { current.push(notice); continue; }
+            const allowed = route?.recipientId === actor && !["MANAGER", "OWNER", "ESCALATED"].includes(String(notice.data.urgency));
+            if (task?.data.status === "OPEN" && allowed && [task.data.lastReminderAt, task.data.notifiedAt].includes(String(notice.data.at))) { current.push(notice); continue; }
             // A cancelled episode, changed owner or edited promise retires its old reminder.
             try { await commit([put(row("NOTIFICATION", notice.id, { ...notice.data, resolved: true }, { accountId: notice.accountId, previous: notice }), notice), ...(task ? [check(task)] : []), ...(wf ? [check(wf)] : [])]); }
             catch (e) { if (!conflict(e) && !retryableStorage(e)) throw e; }
@@ -181,31 +180,25 @@ export const handler = async (event: { arguments: { operation?: string; readOper
     if (op === "saveTeamRouting") { requireAdmin(); return { ok: true, routing: await (await import("./routing")).saveRouting(input as unknown as import("../../../../shared/leadWorkflow").TeamRouting, actor, await roster()) }; }
     if (op === "nextYear") return { ok: true, result: await (await import("./annualReturn")).nextYear(input as unknown as Parameters<typeof import("./annualReturn").nextYear>[0], actor) };
     if (op === "updateBlocker") return await (await import("./blockers")).updateBlocker(input as unknown as Parameters<typeof import("./blockers").updateBlocker>[0], actor);
-    if (op === "takeResponse" || op === "delegateService" || op === "requestProspectInformation") {
+    if (op === "takeResponse") throw new Error("Manager takeover has been removed. The assigned salesperson handles this work.");
+    if (op === "delegateService" || op === "requestProspectInformation") {
       const task = await get<LeadTask>(text(input, "taskId")); if (!task || task.data.status !== "OPEN") throw new Error("Choose an open request"); expected(task, version(input));
-      const wf = await ensureWorkflow(task.data.accountId), routingRecord = await get("team-routing");
-      const route = await (await import("./routing")).resolveTaskRoute(task.data, wf.data);
-      if (op === "takeResponse") {
-        if (!(await import("../../../../shared/leadActionGuidance")).canTakeResponse(task.data) || task.data.blocker) throw new Error("Open the business record to handle this work");
-        if (actor !== route.managerId && actor !== route.ownerId) throw new Error("Only the responsible manager or owner can take this response");
-        await commit([check(wf), ...(routingRecord ? [check(routingRecord)] : []), put(row("TASK", task.id, { ...task.data, helperId: actor, helperRequestedBy: actor, helperReason: "MANAGER_COVER", version: task.version + 1 }, { accountId: task.accountId, previous: task, dueAt: task.dueAt }), task)]);
+      const wf = await ensureWorkflow(task.data.accountId);
+      if (actor !== wf.data.salespersonId) throw new Error("The assigned salesperson coordinates this request");
+      if (op === "delegateService") {
+        if ((task.data.context ?? "LEAD") === "LEAD") throw new Error("Use the lead's salesperson for client work");
+        const specialist = text(input, "specialistId"); await enabledUser(specialist);
+        await commit([check(wf), put(row("TASK", task.id, { ...salespersonTask(task.data), specialistId: specialist, accountableRole: "SALESPERSON", version: task.version + 1 }, { accountId: task.accountId, previous: task, dueAt: task.dueAt }), task), audit(task.data.accountId, actor, "Specialist assigned to client request", { taskId: task.id, specialist })]);
       } else {
-        if (actor !== wf.data.salespersonId && actor !== route.managerId && actor !== route.ownerId) throw new Error("The salesperson or responsible manager coordinates this request");
-        if (op === "delegateService") {
-          if ((task.data.context ?? "LEAD") === "LEAD") throw new Error("Use the lead's salesperson for client work");
-          const specialist = text(input, "specialistId"); await enabledUser(specialist);
-          await commit([check(wf), put(row("TASK", task.id, { ...task.data, specialistId: specialist, accountableRole: "SALESPERSON", version: task.version + 1 }, { accountId: task.accountId, previous: task, dueAt: task.dueAt }), task), audit(task.data.accountId, actor, "Specialist assigned to client request", { taskId: task.id, specialist })]);
-        } else {
-          if (task.data.kind !== "CARRIER" || (task.data.context ?? "LEAD") !== "LEAD") throw new Error("Choose the carrier's new-business information request");
-          const key = `task:client-information:${task.id}`;
-          if (!await get(key)) {
-            const { makeTask } = await import("./workflow");
-            const child = await makeTask({ accountId: task.data.accountId, id: key, kind: "DOCUMENTS", title: "Obtain the information requested by underwriting", role: "SALESPERSON", domain: "CLIENT", context: "LEAD", sourceAt: new Date().toISOString(), conversationId: wf.data.conversationId });
-            child.parentTaskId = task.id; child.sourceIds = []; child.requirementSourceIds = task.data.sourceIds; child.waitingOn = "PROSPECT";
-            const requirementId = `task:requirement:${task.id}`, oldRequirement = await get(requirementId);
-            const requirement = { ...task.data, id: requirementId, kind: "DOCUMENTS" as const, title: "Supply the information requested by underwriting", milestone: true, serviceType: "GENERAL" as const, parentTaskId: task.id, version: 1 };
-            await commit([check(wf), check(task), ...(!oldRequirement ? [put(row("TASK", requirementId, requirement, { accountId: task.accountId, dueAt: taskWakeAt(requirement) }))] : []), put(row("TASK", key, child, { accountId: task.accountId, dueAt: taskWakeAt(child) })), audit(task.data.accountId, actor, "Client information request recorded", { taskId: task.id })]);
-          }
+        if (task.data.kind !== "CARRIER" || (task.data.context ?? "LEAD") !== "LEAD") throw new Error("Choose the carrier's new-business information request");
+        const key = `task:client-information:${task.id}`;
+        if (!await get(key)) {
+          const { makeTask } = await import("./workflow");
+          const child = await makeTask({ accountId: task.data.accountId, id: key, kind: "DOCUMENTS", title: "Obtain the information requested by underwriting", role: "SALESPERSON", domain: "CLIENT", context: "LEAD", sourceAt: new Date().toISOString(), conversationId: wf.data.conversationId });
+          child.parentTaskId = task.id; child.sourceIds = []; child.requirementSourceIds = task.data.sourceIds; child.waitingOn = "PROSPECT";
+          const requirementId = `task:requirement:${task.id}`, oldRequirement = await get(requirementId);
+          const requirement = { ...task.data, id: requirementId, kind: "DOCUMENTS" as const, title: "Supply the information requested by underwriting", milestone: true, serviceType: "GENERAL" as const, parentTaskId: task.id, version: 1 };
+          await commit([check(wf), check(task), ...(!oldRequirement ? [put(row("TASK", requirementId, requirement, { accountId: task.accountId, dueAt: taskWakeAt(requirement) }))] : []), put(row("TASK", key, child, { accountId: task.accountId, dueAt: taskWakeAt(child) })), audit(task.data.accountId, actor, "Client information request recorded", { taskId: task.id })]);
         }
       }
       return { ok: true };
@@ -307,7 +300,7 @@ export const handler = async (event: { arguments: { operation?: string; readOper
       const c = await config(), teamRouting = await get("team-routing");
       const checks = await activationChecks();
       if (checks.some(c => !c.ok)) return { ok: false, error: checks.filter(c => !c.ok).map(c => `${c.name}: ${c.detail}`).join("; ") };
-      if (!teamRouting) throw new Error("Complete manager routing before starting delivery");
+      if (!teamRouting) throw new Error("Complete report delivery settings before starting delivery");
       const at = c.activatedAt ?? new Date().toISOString();
       const saved = await saveConfig({ ...c, activatedAt: at, paused: false }, true, [check(teamRouting), audit("SETTINGS", actor, "Integration activated after connection checks", { at })]);
       return { ok: true, config: saved };

@@ -75,7 +75,7 @@ export default function LeadWorkflowPanel({ accountId, conversationId, onOpen }:
     {openTasks.sort((a,b) => a.dueAt.localeCompare(b.dueAt)).map(t => {
       const guidance = leadActionGuidance(t, communications);
       return <article key={t.id} className={`workflow-task${t.dueAt < new Date().toISOString() ? " is-overdue" : ""}`}>
-        <p className="workflow-why"><span>{t.escalatedAt ? "Why this was escalated" : t.notifiedAt ? "Why this is back" : "Why this needs attention"}</span>{guidance.why}</p>
+        <p className="workflow-why"><span>{t.notifiedAt ? "Why this is back" : "Why this needs attention"}</span>{guidance.why}</p>
         {guidance.preview && <blockquote className="workflow-request"><span>Original request</span>{guidance.preview}</blockquote>}
         <strong className="workflow-task-title">{guidance.action}</strong>
         <div className="small workflow-task-meta">{t.specialistId ? `Specialist: ${teamName(t.specialistId)}` : t.helperId ? `Helping: ${teamName(t.helperId)}` : "Salesperson"} · Due {compact ? compactDateTime(t.dueAt) : fmtDateTime(t.dueAt)}{t.dueAt < new Date().toISOString() ? " · Overdue" : ""}</div>

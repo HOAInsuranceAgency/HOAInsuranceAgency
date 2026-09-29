@@ -1,5 +1,7 @@
 # Morning lead reminders — September 10, 2026
 
+**September 29, 2026 update:** manager hierarchies, temporary coverage, team summaries, and manager/owner escalation are retired. The current behavior is documented in [Salesperson account ownership](specs/salesperson-account-ownership.md). The historical release and verification details below describe the earlier design.
+
 **Later September 10 update:** the manual Record outcome flow described in this historical verification has been replaced by [automatic contact-driven follow-up](AUTOMATIC-LEAD-FOLLOW-UP.md). The 9 a.m. schedule remains; ordinary replies and completed calls supply the record and choose the next follow-up automatically.
 
 The user confirmed that scheduled reminders should arrive at 9 a.m. and clearly explain why a conversation has returned and what the agent or deal champion should do.

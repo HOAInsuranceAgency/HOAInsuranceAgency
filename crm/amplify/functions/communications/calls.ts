@@ -1,3 +1,4 @@
+import { salespersonTask } from "../../../../shared/salespersonOwnership";
 import { taskWakeAt } from "../../../../shared/leadWorkflow";
 import type { Communication, LeadTask } from "../../../../shared/leadWorkflow";
 import { get, row, save, put, commit, check, issue, type Row } from "./store";
@@ -89,7 +90,7 @@ export async function syncCall(candidate: Row<{ providerId: string }>) {
     const edits = automatic.filter(t => t.id !== survivor?.id).slice(0, 25);
     const wf = await ensureWorkflow(comm.accountId), writes = [check(wf), check(comm)];
     if (survivor && edits.length) {
-      const data = { ...survivor.data, sourceIds: [comm.id], escalationAt: automatic.map(t => t.data.escalationAt).sort()[0], version: survivor.version + 1 };
+      const data = { ...salespersonTask(survivor.data), sourceIds: [comm.id], version: survivor.version + 1 };
       writes.push(put(row("TASK", survivor.id, data, { accountId: comm.accountId, previous: survivor, dueAt: taskWakeAt(data) }), survivor));
     }
     for (const task of edits) writes.push(put(row("TASK", task.id, { ...task.data, status: "CANCELLED", reason: survivor ? `Same Dialpad call as ${survivor.id}` : "A related call leg was answered or handled", version: task.version + 1 }, { accountId: comm.accountId, previous: task }), task));

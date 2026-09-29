@@ -221,12 +221,27 @@ describe("assignment-scoped listings", () => {
     const queries = h.db.mock.calls.map(([c]) => c).filter(c => c.input.IndexName);
     expect(queries).toHaveLength(1);
     expect(queries[0].input).toMatchObject({ IndexName: "assignment", ExpressionAttributeValues: { ":scope": "alice" } });
-    expect(h.db.mock.calls).toHaveLength(5); // team, migration, assignment query, ownership batch, account batch
+    expect(h.db.mock.calls).toHaveLength(4); // migration, assignment query, ownership batch, account batch
     expect(h.db.mock.calls.filter(([c]) => c.input.RequestItems)).toHaveLength(2);
   });
-  it("paginates manager-owned accounts and direct reports without other teams", async () => {
-    account("manager-account", "manager"); account("a2", "alice");
-    expect((await allPages("Account", "manager")).map(r => r.id)).toEqual(["a", "a2", "manager-account"]);
+  it("paginates former managers' own accounts without reading former direct reports", async () => {
+    account("manager-account", "manager"); account("manager-account-2", "manager"); account("a2", "alice");
+    expect((await allPages("Account", "manager")).map(r => r.id)).toEqual(["manager-account", "manager-account-2"]);
+    const queries = h.db.mock.calls.map(([c]) => c.input).filter(input => input.IndexName === "assignment");
+    expect(queries.every(input => input.ExpressionAttributeValues[":scope"] === "manager")).toBe(true);
+    expect(h.db.mock.calls.some(([c]) => c.input.Key?.id === "team-routing")).toBe(false);
+  });
+  it("revokes cursors issued under the retired manager scope and denies injected prior-report account IDs", async () => {
+    account("manager-account", "manager"); account("manager-account-2", "manager");
+    const first = await listAssigned(access("manager"), "Account", { limit: 1 });
+    const cursor = JSON.parse(Buffer.from(first.nextToken!, "base64url").toString());
+    const { createHash } = await import("node:crypto");
+    const oldScope = createHash("sha256").update(JSON.stringify(["manager", ["alice", "manager"], "Account", {}])).digest("hex");
+    await expect(listAssigned(access("manager"), "Account", { nextToken: Buffer.from(JSON.stringify({ ...cursor, scope: oldScope })).toString("base64url") })).rejects.toThrow("Refresh");
+    cursor.account = "a"; cursor.accounts = ["a2"];
+    account("a2", "alice");
+    const continued = await listAssigned(access("manager"), "Account", { nextToken: Buffer.from(JSON.stringify(cursor)).toString("base64url") });
+    expect(continued.items.map(item => item.id)).toEqual(["manager-account-2"]);
   });
   it("fills a filtered page from later accounts", async () => {
     account("a2", "alice");
@@ -289,7 +304,7 @@ describe("assignment-scoped listings", () => {
     for (const [key, type, parent] of [["da", "ACCOUNT", "a"], ["db", "ACCOUNT", "b"], ["dp", "POLICY", "pa"], ["dc", "CARRIER", "shared"]]) put("Document", key, { id: key, entityType: type, entityId: parent });
     expect((await allPages("Document")).map(r => r.id)).toEqual(["da", "dp", "dc"]);
   });
-  it("handles singleton applications and binds cursors to actor, team, model, and filter", async () => {
+  it("handles singleton applications and binds cursors to actor, assignment scope, model, and filter", async () => {
     put("GlApplication", "a", { accountId: "a" });
     expect(await allPages("GlApplication")).toEqual([{ accountId: "a" }]);
     account("a2", "alice"); const first = await listAssigned(access(), "Account", { limit: 1 });

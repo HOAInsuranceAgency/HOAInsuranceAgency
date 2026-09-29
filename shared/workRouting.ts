@@ -8,64 +8,27 @@ export function accountableRole(task: LeadTask): Responsibility {
   void task;
   return "SALESPERSON";
 }
-export function taskRoute(task: LeadTask, workflow: LeadWorkflow, routing: TeamRouting, team: TeamEligibility[], now = new Date().toISOString()) {
-  const role = accountableRole(task);
-  const accountableId = workflow.salespersonId;
-  const active = (id?: string) => !!id && team.some(m => m.userId === id && m.enabled);
-  const cover = (id?: string, visited = new Set<string>()): string | undefined => {
-    if (!id) return;
-    if (visited.has(id)) return;
-    visited.add(id);
-    const settings = routing.members.find(m => m.userId === id);
-    const day = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(now));
-    const scheduledAway = settings?.coverFrom && settings.coverThrough && settings.coverFrom <= day && day <= settings.coverThrough;
-    if (settings?.away || scheduledAway || !active(id)) return cover(settings?.coverId, visited);
-    return id;
-  };
-  const eligibleSalesperson = team.some(m => m.userId === accountableId && m.salesperson) ? accountableId : undefined;
-  const assigneeId = task.blocker?.ownerId ?? task.specialistId ?? (task.helperReason === "SALES_ASSIST" ? undefined : task.helperId) ?? eligibleSalesperson;
-  const configuredManager = routing.members.find(m => m.userId === accountableId)?.salesManagerId;
-  const ownerId = cover(routing.ownerId);
-  const managerCover = configuredManager === accountableId ? routing.members.find(m => m.userId === configuredManager)?.coverId : undefined;
-  const managerId = configuredManager === accountableId ? cover(managerCover) ?? ownerId : cover(configuredManager) ?? ownerId;
-  const recipientId = cover(assigneeId) ?? managerId ?? ownerId;
-  const gaps = [!cover(assigneeId) && "Arrange coverage for the responsible teammate", !cover(configuredManager) && accountableId !== routing.ownerId && "Choose an available manager", !ownerId && "Choose an available agency owner"].filter((s): s is string => !!s);
-  return { accountableId, assigneeId, recipientId, managerId, ownerId, role, gaps };
+export function taskRoute(task: LeadTask, workflow: LeadWorkflow, _routing: TeamRouting, team: TeamEligibility[], _now?: string) {
+  const role = accountableRole(task), accountableId = workflow.salespersonId;
+  const eligibleSalesperson = team.some(m => m.userId === accountableId && m.salesperson && m.enabled) ? accountableId : undefined;
+  const assigneeId = task.blocker?.ownerId ?? task.specialistId ?? eligibleSalesperson;
+  // Specialist/blocker metadata preserves business context, never account access.
+  const recipientId = eligibleSalesperson;
+  const gaps = recipientId ? [] : ["Assign an enabled salesperson to this account"];
+  return { accountableId, assigneeId, recipientId, role, gaps };
 }
 
-/** Validate the entire graph together, so concurrent edits cannot create cycles. */
+/** Only operational delivery contacts are configurable. Legacy relationships are ignored. */
 export function validateRouting(routing: TeamRouting, team: TeamEligibility[]) {
-  if (!Array.isArray(routing.members) || routing.members.length > 500) throw new Error("Choose valid team relationships");
-  if (new Set(routing.members.map(m => m.userId)).size !== routing.members.length) throw new Error("A teammate can appear only once");
   const members = new Map(team.map(m => [m.userId, m]));
-  const requireMember = (id?: string) => { if (id && !members.get(id)?.enabled) throw new Error("Choose an enabled CRM teammate"); };
-  for (const id of [routing.ownerId, routing.intakeOwnerId, routing.integrationOwnerId]) requireMember(id);
-  for (const m of routing.members) {
-    requireMember(m.userId); requireMember(m.salesManagerId); requireMember(m.coverId);
-    if (m.salesManagerId === m.userId || m.coverId === m.userId) throw new Error("Choose another person as manager or cover");
-    if (m.salesManagerId && !routing.members.some(r => r.userId === m.salesManagerId && r.salesManager)) throw new Error("Choose an eligible sales manager");
-    if (m.coverFrom || m.coverThrough) {
-      const valid = (v?: string) => !!v && /^\d{4}-\d{2}-\d{2}$/.test(v) && Number.isFinite(Date.parse(v)) && new Date(v).toISOString().slice(0,10) === v;
-      if (!valid(m.coverFrom) || !valid(m.coverThrough) || m.coverFrom! > m.coverThrough! || !m.coverId) throw new Error("Choose a cover and valid start/end dates");
-    }
-    if (m.coverId) {
-      const source = members.get(m.userId)!, target = members.get(m.coverId)!;
-      if (source.salesperson && !target.salesperson) throw new Error("Cover must be eligible for the teammate's responsibilities");
-      const targetRole = routing.members.find(r => r.userId === m.coverId);
-      if (m.salesManager && !targetRole?.salesManager) throw new Error("Manager cover must be eligible for the same management role");
-      if (targetRole?.away) throw new Error("Cover must be available");
-    }
-    for (const field of ["salesManagerId", "coverId"] as const) {
-      const visited = new Set([m.userId]); let id = m[field];
-      while (id) { if (visited.has(id)) throw new Error("Team relationships cannot form a loop"); visited.add(id); id = routing.members.find(r => r.userId === id)?.[field]; }
-    }
+  for (const id of [routing.ownerId, routing.intakeOwnerId, routing.integrationOwnerId]) {
+    if (id && !members.get(id)?.enabled) throw new Error("Choose an enabled CRM teammate");
   }
   if (routing.reportChannelId && !/^cha_[a-z0-9]+$/.test(routing.reportChannelId)) throw new Error("Choose a valid internal reporting channel");
 }
 
-/** Incomplete drafts are allowed during setup; active delivery needs the full chain. */
+/** Incomplete drafts are allowed during setup; active delivery needs a report issues contact. */
 export function validateCompleteRouting(routing: TeamRouting, team: TeamEligibility[]) {
-  if (!routing.ownerId || !routing.reportChannelId) throw new Error("Choose the owner and internal report channel in Team settings");
+  if (!routing.ownerId || !routing.reportChannelId) throw new Error("Choose the report issues contact and internal report channel in Team settings");
   validateRouting(routing, team);
-  if (team.some(m => m.enabled && m.salesperson && m.userId !== routing.ownerId && !routing.members.find(t => t.userId === m.userId)?.salesManagerId)) throw new Error("Choose a manager for every salesperson");
 }

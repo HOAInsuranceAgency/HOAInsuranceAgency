@@ -12,7 +12,7 @@ export async function updateBlocker(input: { taskId: string; version: number; ac
   if (!task || task.kind !== "TASK" || task.data.status !== "OPEN" || !canRecordBlocker(task.data)) throw new Error("Choose open carrier, document or placement work");
   if (input.version !== task.version) throw new Error("This work changed. Refresh before saving.");
   const wf = await ensureWorkflow(task.data.accountId), settings = await get("team-routing"), route = await resolveTaskRoute(task.data, wf.data);
-  if (![route.accountableId, route.recipientId, route.managerId, route.ownerId].includes(actor)) throw new Error("Only the responsible teammate, manager or owner can update this blocker");
+  if (![route.accountableId, route.recipientId].includes(actor)) throw new Error("Only the assigned salesperson or responsible teammate can update this blocker");
   if (!["SET", "REVIEW", "CLEAR"].includes(input.action)) throw new Error("Choose a blocker action");
   if (input.action !== "SET" && !task.data.blocker) throw new Error("This work has no blocker to review");
   const now = new Date().toISOString(), c = await config();
@@ -20,7 +20,7 @@ export async function updateBlocker(input: { taskId: string; version: number; ac
   if (input.action === "SET") {
     if (!BLOCKER_REASONS.includes(input.reason as typeof BLOCKER_REASONS[number])) throw new Error("Choose a listed business blocker");
     if (input.detail && input.detail.length > 500) throw new Error("Keep the blocker detail under 500 characters");
-    const ownerId = input.ownerId || route.managerId || route.ownerId;
+    const ownerId = input.ownerId || route.recipientId;
     if (!ownerId || !(await team()).some(m => m.userId === ownerId && m.enabled)) throw new Error("Choose an enabled teammate to own the blocker");
     await enabledUser(ownerId);
     blocker = { reason: input.reason!, detail: input.detail?.trim() || undefined, ownerId, recordedAt: now, recordedBy: actor, reviewAt: followUpDeadline(now, 1, c.holidays) };

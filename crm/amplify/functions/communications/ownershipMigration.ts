@@ -8,7 +8,7 @@ import { ensureWorkflow } from "./workflow";
  * Existing salespeople, deadlines, historical records and manual Front routing
  * are preserved; missing/disabled owners remain visible assignment exceptions. */
 export async function migrateSalespersonOwnership() {
-  const key = "migration:salesperson-ownership:v1";
+  const key = "migration:salesperson-ownership:v2";
   const old = await get<{ phase: "ELIGIBILITY" | "WORKFLOW"; cursor?: string; complete?: boolean }>(key);
   if (old?.data.complete) return;
   if (!old) {
@@ -22,7 +22,13 @@ export async function migrateSalespersonOwnership() {
   for (const candidate of page.items) {
     if (phase === "WORKFLOW") {
       const accountId = (candidate.data as LeadWorkflow).accountId;
-      if (!await get(`deleted-account:${accountId}`)) await ensureWorkflow(accountId);
+      if (!await get(`deleted-account:${accountId}`)) {
+        await ensureWorkflow(accountId);
+        // Revisit accounts already migrated by the former manager-based model.
+        const jobId = `role-sync:ownership:${accountId}`;
+        const job = await get<{ phase: string; accountId: string; routingVersion?: number }>(jobId);
+        if (job?.data.routingVersion !== 2) await save(row("ROLE_SYNC", jobId, { phase: "TASK", accountId, routingVersion: 2 }, { accountId, previous: job, dueAt: new Date().toISOString() }), job);
+      }
     }
     else {
       const member = await get<TeamEligibility>(candidate.id);

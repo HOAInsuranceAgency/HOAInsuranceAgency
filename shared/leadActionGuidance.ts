@@ -3,7 +3,6 @@ import { taskDomain, taskContext } from "./workRouting";
 import { currentMessage } from "./serviceEvidence";
 
 export const agencyDay = (at: string) => new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(at));
-export const canTakeResponse = (task: Pick<LeadTask, "kind" | "milestone">) => !task.milestone && ["RESPONSE", "CALLBACK", "CARRIER"].includes(task.kind);
 export function workLink(task: LeadTask): { path: string; label: string } {
   const account = `/accounts/${encodeURIComponent(task.accountId)}`;
   if (task.blocker) return { path: `${account}?tab=overview#lead-workspace`, label: "Review blocker" };
@@ -17,7 +16,7 @@ export function workLink(task: LeadTask): { path: string; label: string } {
 }
 
 /** The same actionable explanation in the work list, Front and morning report. */
-export function leadActionGuidance(task: LeadTask, communications: Communication[] = [], escalated = !!task.escalatedAt, now = new Date().toISOString()) {
+export function leadActionGuidance(task: LeadTask, communications: Communication[] = [], _legacyEscalated = false, now = new Date().toISOString()) {
   const sources = communications.filter(c => task.sourceIds ? task.sourceIds.includes(c.id) : task.episode === c.id);
   const request = currentMessage(sources.find(c => c.direction === "INBOUND" && c.text)?.text).split(/\n\s*(?:Sent from my (?:iPhone|iPad)|Get Outlook for|On .{3,200}wrote:)/i)[0].replace(/\s+/g, " ").trim();
   const preview = request ? request.length > 180 ? `${request.slice(0, 177)}…` : request : undefined;
@@ -46,10 +45,8 @@ export function leadActionGuidance(task: LeadTask, communications: Communication
     else if (task.term === agencyDay(now)) why = `Coverage is needed today. Confirm placement and any outstanding carrier requirements.`;
   }
   if (task.shortTimeline && task.businessDueAt) why += ` The original target was ${new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", month: "short", day: "numeric" }).format(new Date(task.businessDueAt))}.`;
-  if (escalated) why = `This required work is overdue. The responsible manager needs to help recover it. ${why}`;
-  if (task.helperId && task.helperReason === "MANAGER_COVER") why = `The manager is covering this response. ${why}`;
   if (task.blocker) { why = `${task.blocker.reason}${task.blocker.detail ? `: ${task.blocker.detail.replace(/[.!?]+$/, "")}` : ""}. The original commitment remains tracked.`; action = "Review the business blocker"; }
-  const after = task.blocker ? "The named owner reviews this at 9 a.m. Client updates and the original deadline remain in effect."
+  const after = task.blocker ? "Review this blocker with the named contact. Client updates and the original deadline remain in effect."
     : task.kind === "CORRECTION" ? "Verify the address or use the business phone. Do not repeat an email to an address that is still bouncing."
     : task.kind === "SUBMISSION" ? "Review the selected market and submit through the existing carrier workflow. Its submission record updates this reminder."
     : task.kind === "QUOTE_TARGET" ? "Review carrier responses and record usable quote terms in Quotes. An email alone cannot confirm a usable quote."
