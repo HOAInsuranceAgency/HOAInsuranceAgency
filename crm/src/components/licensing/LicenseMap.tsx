@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import {
   fmtDate,
   licenseHealth,
@@ -10,6 +10,7 @@ import { Badge } from "../../lib/badges";
 import { useSort, SortTh } from "../../lib/useSort";
 import { US_MAP_VIEWBOX, US_STATE_NAMES, US_STATE_PATHS } from "../../lib/usMap";
 import { holderLabel } from "./holder";
+import DocumentsPanel from "../DocumentsPanel";
 
 /**
  * Where we can write, as a map.
@@ -69,6 +70,12 @@ export default function LicenseMap({
   onEdit: (l: License) => void;
 }) {
   const [selected, setSelected] = useState<string | null>(null);
+  const [openDocsFor, setOpenDocsFor] = useState<string | null>(null);
+
+  function selectState(code: string | null) {
+    setSelected((current) => current === code ? null : code);
+    setOpenDocsFor(null);
+  }
 
   const codes = useMemo(() => Object.keys(US_STATE_PATHS).sort(), []);
 
@@ -154,11 +161,11 @@ export default function LicenseMap({
                 // fill colour is not available to one.
                 aria-label={`${name} — ${gapLabel(cov)}`}
                 aria-pressed={selected === c}
-                onClick={() => setSelected((s) => (s === c ? null : c))}
+                onClick={() => selectState(c)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" || e.key === " ") {
                     e.preventDefault();
-                    setSelected((s) => (s === c ? null : c));
+                    selectState(c);
                   }
                 }}
               >
@@ -184,7 +191,7 @@ export default function LicenseMap({
               </p>
             </div>
             <div className="grow" />
-            <button className="link" onClick={() => setSelected(null)}>
+            <button className="link" onClick={() => selectState(null)}>
               Close
             </button>
           </div>
@@ -204,53 +211,77 @@ export default function LicenseMap({
                     <th>Lines of authority</th>
                     <SortTh label="Expires" colKey="expires" sortKey={sortKey} dir={dir} onToggle={toggle} />
                     <th>Status</th>
+                    <th>Files</th>
                     {canEdit && <th></th>}
                   </tr>
                 </thead>
                 <tbody>
                   {sorted.map((l) => (
-                    <tr key={l.id}>
-                      <td>
-                        {l.holderType === "FIRM" ? (
-                          <strong>Firm</strong>
-                        ) : (
-                          holderLabel(l, profiles)
-                        )}
-                        {l.residency === "RESIDENT" && (
-                          <span className="badge blue" style={{ marginLeft: 6 }}>
-                            Resident
-                          </span>
-                        )}
-                      </td>
-                      <td style={{ fontVariantNumeric: "tabular-nums" }}>
-                        {l.licenseNumber}
-                      </td>
-                      <td className="small">
-                        {l.licenseClass
-                          ? LICENSE_CLASS_LABELS[l.licenseClass] ?? l.licenseClass
-                          : "—"}
-                      </td>
-                      <td className="small">
-                        {(l.linesOfAuthority ?? []).filter(Boolean).join(", ") || "—"}
-                      </td>
-                      <td className="small" style={{ whiteSpace: "nowrap" }}>
-                        {fmtDate(l.expirationDate)}
-                      </td>
-                      <td>
-                        <Badge {...licenseHealth(l)} />
-                      </td>
-                      {canEdit && (
-                        <td style={{ whiteSpace: "nowrap" }}>
-                          {/* Edit but not delete. Finding a wrong expiry from
-                              the map and having to go hunt for it in the
-                              tables is silly; deleting a licence from a view
-                              built for skimming is not a trade worth making. */}
-                          <button className="link" onClick={() => onEdit(l)}>
-                            Edit
+                    <Fragment key={l.id}>
+                      <tr>
+                        <td>
+                          {l.holderType === "FIRM" ? (
+                            <strong>Firm</strong>
+                          ) : (
+                            holderLabel(l, profiles)
+                          )}
+                          {l.residency === "RESIDENT" && (
+                            <span className="badge blue" style={{ marginLeft: 6 }}>
+                              Resident
+                            </span>
+                          )}
+                        </td>
+                        <td style={{ fontVariantNumeric: "tabular-nums" }}>
+                          {l.licenseNumber}
+                        </td>
+                        <td className="small">
+                          {l.licenseClass
+                            ? LICENSE_CLASS_LABELS[l.licenseClass] ?? l.licenseClass
+                            : "—"}
+                        </td>
+                        <td className="small">
+                          {(l.linesOfAuthority ?? []).filter(Boolean).join(", ") || "—"}
+                        </td>
+                        <td className="small" style={{ whiteSpace: "nowrap" }}>
+                          {fmtDate(l.expirationDate)}
+                        </td>
+                        <td>
+                          <Badge {...licenseHealth(l)} />
+                        </td>
+                        <td>
+                          <button
+                            type="button"
+                            className="link"
+                            aria-expanded={openDocsFor === l.id}
+                            onClick={() => setOpenDocsFor((current) => current === l.id ? null : l.id)}
+                          >
+                            {openDocsFor === l.id ? "Hide files" : "Files"}
                           </button>
                         </td>
+                        {canEdit && (
+                          <td style={{ whiteSpace: "nowrap" }}>
+                            {/* Edit but not delete. Finding a wrong expiry from
+                                the map and having to go hunt for it in the
+                                tables is silly; deleting a licence from a view
+                                built for skimming is not a trade worth making. */}
+                            <button className="link" onClick={() => onEdit(l)}>
+                              Edit
+                            </button>
+                          </td>
+                        )}
+                      </tr>
+                      {openDocsFor === l.id && (
+                        <tr>
+                          <td colSpan={7 + (canEdit ? 1 : 0)} style={{ background: "#f8fafc" }}>
+                            <p className="muted small" style={{ marginTop: 0 }}>
+                              License PDF, renewal receipts, CE certificates for {l.state}{" "}
+                              {l.licenseNumber}.
+                            </p>
+                            <DocumentsPanel entityType="LICENSE" entityId={l.id} />
+                          </td>
+                        </tr>
                       )}
-                    </tr>
+                    </Fragment>
                   ))}
                 </tbody>
               </table>
