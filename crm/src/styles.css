@@ -112,7 +112,6 @@ a:hover { text-decoration: underline; }
 }
 .sidebar .user button:hover { background: rgba(255,255,255,0.1); }
 .role-switcher { display: grid; gap: 5px; margin: 8px 0; }
-.role-switcher label { font-size: 11px; color: #c4d2e6; }
 .role-switcher select {
   width: 100%;
   min-height: 36px;

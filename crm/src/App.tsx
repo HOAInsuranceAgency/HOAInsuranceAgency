@@ -396,11 +396,9 @@ function Shell({ profile, signOut, activeRole, roles, onRoleChange }: {
           </div>
           {roles.length > 1 ? (
             <div className="role-switcher">
-              <label htmlFor="active-role">Active role</label>
-              <select id="active-role" value={activeRole} onChange={event => onRoleChange(event.target.value as Role)}>
+              <select id="active-role" aria-label="Active role" value={activeRole} onChange={event => onRoleChange(event.target.value as Role)}>
                 {roles.map(role => <option key={role} value={role}>{role}</option>)}
               </select>
-              <span className="small">{activeRole === "ADMIN" ? "All agency accounts" : "Your assigned accounts"}</span>
             </div>
           ) : <div className="muted small">{activeRole}</div>}
           <button onClick={signOut}>Sign out</button>
