@@ -54,7 +54,6 @@ const rows = () => [
 
 const pending = () => new Promise<never>(() => {});
 const renderCard = () => render(<ContactsCard accountId="a1" />);
-const toolbar = () => within(document.querySelector(".toolbar") as HTMLElement);
 
 beforeEach(() => {
   Contact.list.mockReset();
@@ -67,22 +66,32 @@ describe("read states", () => {
   it("shows a loader while the read is in flight", () => {
     Contact.list.mockReturnValue(pending());
     renderCard();
-    expect(screen.getByText("Loading…")).toBeInTheDocument();
+    expect(screen.getByText("Loading contacts…")).toBeInTheDocument();
   });
 
   it("shows the error — not the empty message, and not a stuck loader", async () => {
     Contact.list.mockRejectedValue(new Error("network is down"));
     renderCard();
     expect(await screen.findByText(/network is down/)).toBeInTheDocument();
-    expect(screen.queryByText("Loading…")).not.toBeInTheDocument();
+    expect(screen.queryByText("Loading contacts…")).not.toBeInTheDocument();
     expect(screen.queryByText("No contacts yet.")).not.toBeInTheDocument();
   });
 
-  it("shows the empty message with the add form still available", async () => {
+  it("keeps the add fields collapsed until the user opens them", async () => {
+    const user = userEvent.setup();
     Contact.list.mockResolvedValue({ data: [], nextToken: null });
     renderCard();
     expect(await screen.findByText("No contacts yet.")).toBeInTheDocument();
-    expect(screen.getByText("+ Add contact")).toBeInTheDocument();
+    const disclosure = screen.getByText("Add contact");
+    expect(disclosure.closest("details")).not.toHaveAttribute("open");
+    expect(screen.getByRole("textbox", { name: "Name" })).not.toBeVisible();
+    await user.click(disclosure);
+    expect(disclosure.closest("details")).toHaveAttribute("open");
+    expect(screen.getByRole("textbox", { name: "Name" })).toBeVisible();
+    expect(screen.getByRole("combobox", { name: "Role" })).toBeVisible();
+    expect(screen.getByRole("textbox", { name: "Email" })).toBeVisible();
+    expect(screen.getByRole("textbox", { name: "Phone" })).toBeVisible();
+    expect(screen.getByRole("textbox", { name: "Notes" })).toBeVisible();
   });
 
   it("renders rows with the role label and a formatted phone", async () => {
@@ -104,13 +113,21 @@ describe("add", () => {
     const user = userEvent.setup();
     Contact.list.mockResolvedValue({ data: [], nextToken: null });
     Contact.create.mockResolvedValue({
-      data: { ...rows()[0], id: "c9", name: "Sam Ito", email: null, phone: null, type: null },
+      data: {
+        ...rows()[0],
+        id: "c9",
+        name: "Sam Ito",
+        email: null,
+        phone: null,
+        type: null,
+      },
     });
     renderCard();
     await screen.findByText("No contacts yet.");
+    await user.click(screen.getByText("Add contact"));
 
-    await user.type(toolbar().getByPlaceholderText("Pat Alvarez"), "Sam Ito");
-    await user.click(screen.getByText("+ Add contact"));
+    await user.type(screen.getByRole("textbox", { name: "Name" }), "Sam Ito");
+    await user.click(screen.getByRole("button", { name: "Save contact" }));
 
     expect(Contact.create).toHaveBeenCalledWith({
       accountId: "a1",
@@ -129,15 +146,18 @@ describe("add", () => {
   it("does not make a later contact primary", async () => {
     const user = userEvent.setup();
     Contact.list.mockResolvedValue({ data: rows(), nextToken: null });
-    Contact.create.mockResolvedValue({ data: { ...rows()[1], id: "c9", name: "Sam Ito" } });
+    Contact.create.mockResolvedValue({
+      data: { ...rows()[1], id: "c9", name: "Sam Ito" },
+    });
     renderCard();
     await screen.findByText("Pat Alvarez");
+    await user.click(screen.getByText("Add contact"));
 
-    await user.type(toolbar().getByPlaceholderText("Pat Alvarez"), "Sam Ito");
-    await user.click(screen.getByText("+ Add contact"));
+    await user.type(screen.getByRole("textbox", { name: "Name" }), "Sam Ito");
+    await user.click(screen.getByRole("button", { name: "Save contact" }));
 
     expect(Contact.create).toHaveBeenCalledWith(
-      expect.objectContaining({ isPrimary: false })
+      expect.objectContaining({ isPrimary: false }),
     );
   });
 
@@ -147,15 +167,24 @@ describe("add", () => {
     Contact.create.mockResolvedValue({ data: rows()[0] });
     renderCard();
     await screen.findByText("No contacts yet.");
+    await user.click(screen.getByText("Add contact"));
 
-    await user.type(toolbar().getByPlaceholderText("Pat Alvarez"), "Pat Alvarez");
-    await user.type(toolbar().getAllByRole("textbox")[1], "PAT@MapleHOA.org");
-    await user.click(screen.getByText("+ Add contact"));
+    await user.type(
+      screen.getByRole("textbox", { name: "Name" }),
+      "Pat Alvarez",
+    );
+    await user.type(
+      screen.getByRole("textbox", { name: "Email" }),
+      "PAT@MapleHOA.org",
+    );
+    await user.click(screen.getByRole("button", { name: "Save contact" }));
 
     // Lower-cased, and the email wins over the name: it is the only field on
     // a contact meant to be unique to one human.
     expect(Contact.create).toHaveBeenCalledWith(
-      expect.objectContaining({ extractionSourceKey: "email:pat@maplehoa.org" })
+      expect.objectContaining({
+        extractionSourceKey: "email:pat@maplehoa.org",
+      }),
     );
   });
 
@@ -164,15 +193,18 @@ describe("add", () => {
     Contact.list.mockResolvedValue({ data: [], nextToken: null });
     renderCard();
     await screen.findByText("No contacts yet.");
+    await user.click(screen.getByText("Add contact"));
 
-    await user.click(screen.getByText("+ Add contact"));
-    expect(await screen.findByText(/Contact name is required\./)).toBeInTheDocument();
-
-    await user.type(toolbar().getByPlaceholderText("Pat Alvarez"), "Sam Ito");
-    await user.type(toolbar().getAllByRole("textbox")[1], "sam@ito");
-    await user.click(screen.getByText("+ Add contact"));
+    await user.click(screen.getByRole("button", { name: "Save contact" }));
     expect(
-      await screen.findByText(/doesn't look like a valid address/)
+      await screen.findByText(/Contact name is required\./),
+    ).toBeInTheDocument();
+
+    await user.type(screen.getByRole("textbox", { name: "Name" }), "Sam Ito");
+    await user.type(screen.getByRole("textbox", { name: "Email" }), "sam@ito");
+    await user.click(screen.getByRole("button", { name: "Save contact" }));
+    expect(
+      await screen.findByText(/doesn't look like a valid address/),
     ).toBeInTheDocument();
 
     expect(Contact.create).not.toHaveBeenCalled();
@@ -180,6 +212,29 @@ describe("add", () => {
 });
 
 describe("edit", () => {
+  it("keeps failed-save feedback in the editor and shows one confirmation after retry", async () => {
+    const user = userEvent.setup();
+    Contact.list.mockResolvedValue({ data: rows(), nextToken: null });
+    Contact.update
+      .mockResolvedValueOnce({ data: null, errors: [{ message: "Contact save unavailable" }] })
+      .mockResolvedValueOnce({ data: rows()[0] });
+    renderCard();
+    await screen.findByText("Pat Alvarez");
+
+    await user.click(screen.getByRole("button", { name: "Edit Pat Alvarez" }));
+    const editor = within(screen.getByRole("dialog", { name: "Editing Pat Alvarez" }));
+    await user.click(editor.getByRole("button", { name: "Save" }));
+    expect(await editor.findByText("Contact save unavailable")).toBeInTheDocument();
+    expect(screen.getAllByText("Contact save unavailable")).toHaveLength(1);
+    expect(editor.getByRole("textbox", { name: "Name" })).toHaveValue("Pat Alvarez");
+
+    await user.click(editor.getByRole("button", { name: "Save" }));
+    expect(await screen.findByText("Pat Alvarez saved.")).toBeInTheDocument();
+    expect(screen.getAllByText("Pat Alvarez saved.")).toHaveLength(1);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.queryByText("Contact save unavailable")).not.toBeInTheDocument();
+  });
+
   it("leaves the extraction key alone when the email changes", async () => {
     const user = userEvent.setup();
     Contact.list.mockResolvedValue({ data: rows(), nextToken: null });
@@ -190,7 +245,11 @@ describe("edit", () => {
     await screen.findByText("Pat Alvarez");
 
     await user.click(screen.getAllByText("Edit")[0]);
-    const email = screen.getByDisplayValue("pat@maplehoa.org");
+    const editor = within(
+      screen.getByRole("dialog", { name: "Editing Pat Alvarez" }),
+    );
+    const email = editor.getByRole("textbox", { name: "Email" });
+    expect(email).toHaveValue("pat@maplehoa.org");
     await user.clear(email);
     await user.type(email, "p.alvarez@maplehoa.org");
     await user.click(screen.getByText("Save"));
@@ -203,10 +262,10 @@ describe("edit", () => {
     // is what this person was called when the row was written. A packet filed
     // before the correction still names the old address.
     expect(Contact.update).toHaveBeenCalledWith(
-      expect.objectContaining({ id: "c1", email: "p.alvarez@maplehoa.org" })
+      expect.objectContaining({ id: "c1", email: "p.alvarez@maplehoa.org" }),
     );
     expect(Contact.update.mock.calls[0][0]).not.toHaveProperty(
-      "extractionSourceKey"
+      "extractionSourceKey",
     );
   });
 
@@ -221,7 +280,7 @@ describe("edit", () => {
     await user.click(screen.getByText("Save"));
 
     expect(Contact.update).toHaveBeenCalledWith(
-      expect.not.objectContaining({ isPrimary: expect.anything() })
+      expect.not.objectContaining({ isPrimary: expect.anything() }),
     );
   });
 });
@@ -237,23 +296,35 @@ describe("the primary contact radio", () => {
     await screen.findByText("Robin Chen");
 
     await user.click(
-      screen.getByRole("radio", { name: "Make Robin Chen the primary contact" })
+      screen.getByRole("radio", {
+        name: "Make Robin Chen the primary contact",
+      }),
     );
 
     expect(Contact.update).toHaveBeenCalledTimes(2);
     // Promotion first: a half-applied batch that leaves two primaries is
     // recoverable, and one that leaves none blanks a carrier submission.
-    expect(Contact.update.mock.calls[0][0]).toEqual({ id: "c2", isPrimary: true });
-    expect(Contact.update.mock.calls[1][0]).toEqual({ id: "c1", isPrimary: false });
+    expect(Contact.update.mock.calls[0][0]).toEqual({
+      id: "c2",
+      isPrimary: true,
+    });
+    expect(Contact.update.mock.calls[1][0]).toEqual({
+      id: "c1",
+      isPrimary: false,
+    });
     expect(
-      await screen.findByText("Robin Chen is now the primary contact.")
+      await screen.findByText("Robin Chen is now the primary contact."),
     ).toBeInTheDocument();
 
     expect(
-      screen.getByRole("radio", { name: "Make Robin Chen the primary contact" })
+      screen.getByRole("radio", {
+        name: "Make Robin Chen the primary contact",
+      }),
     ).toBeChecked();
     expect(
-      screen.getByRole("radio", { name: "Make Pat Alvarez the primary contact" })
+      screen.getByRole("radio", {
+        name: "Make Pat Alvarez the primary contact",
+      }),
     ).not.toBeChecked();
   });
 
@@ -264,7 +335,9 @@ describe("the primary contact radio", () => {
     await screen.findByText("Pat Alvarez");
 
     await user.click(
-      screen.getByRole("radio", { name: "Make Pat Alvarez the primary contact" })
+      screen.getByRole("radio", {
+        name: "Make Pat Alvarez the primary contact",
+      }),
     );
     expect(Contact.update).not.toHaveBeenCalled();
   });
@@ -280,14 +353,18 @@ describe("the primary contact radio", () => {
     await screen.findByText("Robin Chen");
 
     await user.click(
-      screen.getByRole("radio", { name: "Make Robin Chen the primary contact" })
+      screen.getByRole("radio", {
+        name: "Make Robin Chen the primary contact",
+      }),
     );
 
     expect(
-      await screen.findByText("You don't have permission to do that.")
+      await screen.findByText("You don't have permission to do that."),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("radio", { name: "Make Pat Alvarez the primary contact" })
+      screen.getByRole("radio", {
+        name: "Make Pat Alvarez the primary contact",
+      }),
     ).toBeChecked();
   });
 });

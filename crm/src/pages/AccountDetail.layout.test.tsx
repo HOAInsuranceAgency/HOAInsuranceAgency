@@ -14,7 +14,9 @@ vi.mock("aws-amplify/data", () => ({
 vi.mock("./account/OverviewTab", () => ({
   OverviewTab: () => <h2>Overview information</h2>,
 }));
-vi.mock("../components/ContactsCard", () => ({ default: () => <h2>Contacts</h2> }));
+vi.mock("../components/ContactsCard", () => ({
+  default: ({ accountId }: { accountId: string }) => <EditableCard heading="Contacts" accountId={accountId} />,
+}));
 vi.mock("../components/LeadWorkflowPanel", () => ({
   default: ({ accountId }: { accountId: string }) => <EditableCard heading="Account communications" accountId={accountId} />,
 }));
@@ -88,6 +90,7 @@ describe("account underwriting layout", () => {
 
   it.each([
     ["overview", "Property basics draft"],
+    ["overview", "Contacts draft"],
     ["property", "Buildings draft"],
     ["activity", "Account communications draft"],
   ])("clears account-specific drafts when navigating from the %s tab to another account", async (tab, label) => {

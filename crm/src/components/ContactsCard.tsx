@@ -1,3 +1,4 @@
+import { useId } from "react";
 import {
   EMAIL_RE,
   client,
@@ -13,6 +14,7 @@ import { CONTACT_TYPE_LABELS, CONTACT_TYPE_OPTIONS } from "../lib/enums";
 import ChildRowsCard from "./ChildRowsCard";
 import { SaveStatus, useSaveStatus } from "./SaveStatus";
 import { PhoneInput } from "./inputs";
+import "./ContactsCard.css";
 
 /**
  * The people at an association.
@@ -48,7 +50,13 @@ interface ContactForm {
   notes: string;
 }
 
-const BLANK: ContactForm = { name: "", type: "", email: "", phone: "", notes: "" };
+const BLANK: ContactForm = {
+  name: "",
+  type: "",
+  email: "",
+  phone: "",
+  notes: "",
+};
 
 export default function ContactsCard({ accountId }: { accountId: string }) {
   const child = useChildRows<Contact, ContactForm>(client.models.Contact, {
@@ -108,12 +116,17 @@ export default function ContactsCard({ accountId }: { accountId: string }) {
         // two primaries is recoverable and one with none is a blank field on
         // a carrier submission.
         const promoted = unwrap(
-          await client.models.Contact.update({ id, isPrimary: true })
+          await client.models.Contact.update({ id, isPrimary: true }),
         );
         const demoted = await Promise.all(
           demote.map(async (c) =>
-            unwrap(await client.models.Contact.update({ id: c.id, isPrimary: false }))
-          )
+            unwrap(
+              await client.models.Contact.update({
+                id: c.id,
+                isPrimary: false,
+              }),
+            ),
+          ),
         );
         const byId = new Map([promoted, ...demoted].map((c) => [c.id, c]));
         child.setRows((rows) => rows.map((c) => byId.get(c.id) ?? c));
@@ -121,61 +134,85 @@ export default function ContactsCard({ accountId }: { accountId: string }) {
       {
         savedMessage: `${target.name} is now the primary contact.`,
         errorMessage: "Couldn't change the primary contact.",
-      }
+      },
     );
   }
 
   return (
-    <>
-      <ChildRowsCard
-        title="Contacts"
-        child={child}
-        addLabel="+ Add contact"
-        emptyMessage="No contacts yet."
-        summary={`— ${child.rows.length} total`}
-        defaultSort="name"
-        columns={[
-          {
-            key: "primary",
-            label: "Primary",
-            cell: (c) => (
-              <input
-                type="radio"
-                name={`primary-contact-${accountId}`}
-                checked={c.isPrimary === true}
-                disabled={primaryStatus.busy}
-                onChange={() => makePrimary(c.id)}
-                aria-label={`Make ${c.name} the primary contact`}
-              />
-            ),
-          },
-          { key: "name", label: "Name", sort: (c) => c.name, cell: (c) => c.name },
-          {
-            key: "type",
-            label: "Role",
-            sort: (c) => (c.type ? CONTACT_TYPE_LABELS[c.type] : null),
-            cell: (c) => (c.type ? CONTACT_TYPE_LABELS[c.type] ?? c.type : "—"),
-          },
-          {
-            key: "email",
-            label: "Email",
-            sort: (c) => c.email,
-            cell: (c) => c.email ?? "—",
-          },
-          {
-            key: "phone",
-            label: "Phone",
-            sort: (c) => c.phone,
-            cell: (c) => fmtPhone(c.phone),
-          },
-        ]}
-        editTitle={(c) => `Editing ${c.name}`}
-        removeMessage={(c) => `Remove ${c.name}?`}
-        addFields={<ContactFields form={child.addForm} onEnter={child.add} />}
-        editFields={<ContactFields form={child.editForm} />}
-      />
-      <SaveStatus {...primaryStatus.status} />
-    </>
+    <ChildRowsCard
+      title="Contacts"
+      className="contacts-card"
+      description="Select a primary contact for applications and certificates."
+      child={child}
+      summary={<span className="contacts-count">{child.rows.length}</span>}
+      loadingMessage="Loading contacts…"
+      addDisclosure="Add contact"
+      addLabel="Save contact"
+      addFields={<ContactFields form={child.addForm} onEnter={child.add} />}
+      editFields={<ContactFields form={child.editForm} />}
+      editIn="modal"
+      editTitle={(contact) => `Editing ${contact.name}`}
+      editButtonLabel={(contact) => `Edit ${contact.name}`}
+      removeMessage={(contact) => `Remove ${contact.name}?`}
+      extraFeedback={<SaveStatus {...primaryStatus.status} />}
+      emptyMessage={
+        <>
+          <strong>No contacts yet.</strong>
+          <p>
+            Add the people involved with this account. The first contact becomes
+            primary.
+          </p>
+        </>
+      }
+      tableLabel="Account contacts"
+      defaultSort="name"
+      columns={[
+        {
+          key: "primary",
+          label: "Primary",
+          cell: (contact) => (
+            <input
+              type="radio"
+              name={`primary-contact-${accountId}`}
+              checked={contact.isPrimary === true}
+              disabled={primaryStatus.busy}
+              onChange={() => makePrimary(contact.id)}
+              aria-label={`Make ${contact.name} the primary contact`}
+            />
+          ),
+        },
+        {
+          key: "name",
+          label: "Name",
+          sort: (contact) => contact.name,
+          cell: (contact) => (
+            <span className="contacts-name">{contact.name}</span>
+          ),
+        },
+        {
+          key: "type",
+          label: "Role",
+          sort: (contact) =>
+            contact.type ? CONTACT_TYPE_LABELS[contact.type] : null,
+          cell: (contact) =>
+            contact.type
+              ? (CONTACT_TYPE_LABELS[contact.type] ?? contact.type)
+              : "—",
+        },
+        {
+          key: "email",
+          label: "Email",
+          sort: (contact) => contact.email,
+          cell: (contact) => contact.email ?? "—",
+        },
+        {
+          key: "phone",
+          label: "Phone",
+          sort: (contact) => contact.phone,
+          cell: (contact) => fmtPhone(contact.phone),
+        },
+      ]}
+    />
   );
 }
 
@@ -203,7 +240,7 @@ function validate(form: ContactForm): string[] {
   return problems;
 }
 
-/** The same five fields in the add toolbar and the edit form. */
+/** The same five fields in the add disclosure and the edit dialog. */
 function ContactFields({
   form,
   onEnter,
@@ -211,6 +248,7 @@ function ContactFields({
   form: FormState<ContactForm>;
   onEnter?: () => void;
 }) {
+  const id = useId();
   const enter = onEnter
     ? (e: { key: string }) => {
         if (e.key === "Enter") onEnter();
@@ -219,8 +257,9 @@ function ContactFields({
   return (
     <>
       <div className="field">
-        <label>Name</label>
+        <label htmlFor={`${id}-name`}>Name</label>
         <input
+          id={`${id}-name`}
           placeholder="Pat Alvarez"
           value={form.form.name}
           onChange={(e) => form.setF("name", e.target.value)}
@@ -228,8 +267,9 @@ function ContactFields({
         />
       </div>
       <div className="field">
-        <label>Role</label>
+        <label htmlFor={`${id}-type`}>Role</label>
         <select
+          id={`${id}-type`}
           value={form.form.type}
           onChange={(e) => form.setF("type", e.target.value)}
         >
@@ -242,8 +282,9 @@ function ContactFields({
         </select>
       </div>
       <div className="field">
-        <label>Email</label>
+        <label htmlFor={`${id}-email`}>Email</label>
         <input
+          id={`${id}-email`}
           type="email"
           value={form.form.email}
           onChange={(e) => form.setF("email", e.target.value)}
@@ -251,16 +292,18 @@ function ContactFields({
         />
       </div>
       <div className="field">
-        <label>Phone</label>
+        <label htmlFor={`${id}-phone`}>Phone</label>
         <PhoneInput
+          id={`${id}-phone`}
           value={form.form.phone}
           onChange={(v) => form.setF("phone", v)}
           onKeyDown={enter}
         />
       </div>
-      <div className="field" style={{ flex: "1 1 220px" }}>
-        <label>Notes</label>
+      <div className="field contacts-notes-field">
+        <label htmlFor={`${id}-notes`}>Notes</label>
         <input
+          id={`${id}-notes`}
           placeholder="Best reached mornings"
           value={form.form.notes}
           onChange={(e) => form.setF("notes", e.target.value)}
