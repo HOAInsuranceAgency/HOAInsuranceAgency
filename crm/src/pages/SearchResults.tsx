@@ -16,12 +16,53 @@ import {
   MIN_QUERY_LENGTH,
   ocrSnippet,
   searchRows,
+  type SearchGroup,
 } from "../lib/universalSearch";
 import { fetchSearchIndexRows } from "../lib/searchIndexData";
 
 // Stable identity for "no search run yet", so the sort memo isn't rebuilt
 // on every render before the first result.
 const NO_RESULTS: CrmDocument[] = [];
+const RECORD_PAGE_SIZE = 50;
+
+/** The index is already complete; progressively render each group's matches
+ * without losing the records beyond the typeahead's small result cap. */
+function RecordResults({ group }: { group: SearchGroup }) {
+  const navigate = useNavigate();
+  const [visibleCount, setVisibleCount] = useState(RECORD_PAGE_SIZE);
+  const visible = group.hits.slice(0, visibleCount);
+  const remaining = group.hits.length - visible.length;
+  const label = HIT_TYPE_LABEL[group.type];
+
+  return (
+    <section className="card" aria-labelledby={`search-${group.type}`}>
+      <h2 id={`search-${group.type}`}>{label}</h2>
+      <p className="muted small" aria-live="polite">
+        Showing {visible.length} of {group.hits.length}
+      </p>
+      <div className="table-wrap">
+        <table aria-label={label}>
+          <tbody>
+            {visible.map((h) => (
+              <tr key={h.id} className="clickable" onClick={() => navigate(h.target)}>
+                <td><strong>{h.label}</strong></td>
+                <td className="small muted">{h.sub}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {remaining > 0 && (
+        <button
+          style={{ marginTop: 12 }}
+          onClick={() => setVisibleCount(count => count + RECORD_PAGE_SIZE)}
+        >
+          Show more {label.toLowerCase()}
+        </button>
+      )}
+    </section>
+  );
+}
 
 /**
  * The full results page behind the top bar — Enter with nothing selected
@@ -32,7 +73,6 @@ const NO_RESULTS: CrmDocument[] = [];
  */
 export default function SearchResults() {
   const [searchParams] = useSearchParams();
-  const navigate = useNavigate();
   const q = (searchParams.get("q") ?? "").trim();
   const runnable = q.length >= MIN_QUERY_LENGTH;
 
@@ -46,7 +86,7 @@ export default function SearchResults() {
     errorMessage: "Couldn't load records to search",
   });
   const groups = useMemo(
-    () => (runnable ? searchRows(index.data, q, 50) : []),
+    () => (runnable ? searchRows(index.data, q, Infinity) : []),
     [index.data, q, runnable]
   );
 
@@ -119,33 +159,8 @@ export default function SearchResults() {
           {index.loaded && !index.error && groups.length === 0 && (
             <p className="muted small">No accounts, contacts, or paper match.</p>
           )}
-          {groups.map((g) => (
-            <div className="card" key={g.type}>
-              <h2>
-                {HIT_TYPE_LABEL[g.type]}
-                {g.more > 0 && (
-                  <span className="muted small"> · first 50 of {g.hits.length + g.more}</span>
-                )}
-              </h2>
-              <div className="table-wrap">
-                <table>
-                  <tbody>
-                    {g.hits.map((h) => (
-                      <tr
-                        key={h.id}
-                        className="clickable"
-                        onClick={() => navigate(h.target)}
-                      >
-                        <td>
-                          <strong>{h.label}</strong>
-                        </td>
-                        <td className="small muted">{h.sub}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
+          {groups.map(group => (
+            <RecordResults key={`${q}:${group.type}`} group={group} />
           ))}
 
           {downloadError && <p className="error-text">{downloadError}</p>}
