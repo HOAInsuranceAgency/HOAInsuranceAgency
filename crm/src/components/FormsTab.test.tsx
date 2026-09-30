@@ -33,7 +33,7 @@ const profile = { id: "profile" } as UserProfile;
 const document = { id: "doc", name: "acord125-Willow_Court.pdf", s3Key: "generated/account/form.pdf", createdAt: "2026-09-30T12:00:00Z" };
 
 beforeEach(() => {
-  vi.clearAllMocks();
+  vi.resetAllMocks();
   h.documents.mockResolvedValue({ data: [], nextToken: null });
   h.children.mockResolvedValue({ data: [], nextToken: null });
   h.create.mockResolvedValue({ data: document });
@@ -65,20 +65,56 @@ describe("carrier forms", () => {
     expect(screen.queryByText(/Mapping not built|field mapping/)).toBeNull();
   });
 
-  it("shows API failures and keeps retry loading until generated forms are known", async () => {
+  it("waits for every history page before allowing generation", async () => {
+    let finish!: (value: { data: typeof document[] }) => void;
+    h.documents.mockResolvedValueOnce({ data: [document], nextToken: "page-2" })
+      .mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    render(<FormsTab account={account} profile={profile} />);
+    await waitFor(() => expect(h.documents).toHaveBeenCalledTimes(2));
+    const buttons = screen.getAllByRole("button", { name: /^Generate ACORD/ });
+    for (const button of buttons) {
+      expect(button).toBeDisabled();
+      fireEvent.click(button);
+    }
+    expect(h.fill).not.toHaveBeenCalled();
+    expect(h.upload).not.toHaveBeenCalled();
+    expect(h.create).not.toHaveBeenCalled();
+    await act(async () => finish({ data: [] }));
+    expect(screen.getByRole("table", { name: "Generated carrier forms" })).toBeVisible();
+    for (const button of buttons) expect(button).toBeEnabled();
+  });
+
+  it.each([false, true])("blocks generation after a failed read and until retry succeeds (existing forms: %s)", async hasForms => {
     let finish!: (value: { data: typeof document[] }) => void;
     h.documents.mockResolvedValueOnce({ data: [], errors: [{ message: "History unavailable" }] })
       .mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
     render(<FormsTab account={account} profile={profile} />);
     expect(await screen.findByRole("alert")).toHaveTextContent("History unavailable");
     expect(screen.queryByText("No generated forms yet")).toBeNull();
+    const buttons = screen.getAllByRole("button", { name: /^Generate ACORD/ });
+    for (const button of buttons) {
+      expect(button).toBeDisabled();
+      fireEvent.click(button);
+    }
     fireEvent.click(screen.getByRole("button", { name: "Retry generated forms" }));
     expect(screen.getByRole("status")).toHaveTextContent("Loading generated forms…");
     expect(screen.queryByText("No generated forms yet")).toBeNull();
-    await act(async () => finish({ data: [document] }));
-    expect(await screen.findByRole("table", { name: "Generated carrier forms" })).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: `Preview ${document.name}` }));
-    expect(screen.getByRole("dialog", { name: document.name })).toHaveTextContent(document.s3Key);
+    for (const button of buttons) {
+      expect(button).toBeDisabled();
+      fireEvent.click(button);
+    }
+    expect(h.fill).not.toHaveBeenCalled();
+    expect(h.upload).not.toHaveBeenCalled();
+    expect(h.create).not.toHaveBeenCalled();
+    await act(async () => finish({ data: hasForms ? [document] : [] }));
+    for (const button of buttons) expect(button).toBeEnabled();
+    if (hasForms) {
+      expect(screen.getByRole("table", { name: "Generated carrier forms" })).toBeVisible();
+      fireEvent.click(screen.getByRole("button", { name: `Preview ${document.name}` }));
+      expect(screen.getByRole("dialog", { name: document.name })).toHaveTextContent(document.s3Key);
+    } else {
+      expect(screen.getByText("No generated forms yet")).toBeVisible();
+    }
   });
 
   it("preserves generation progress, unsigned warnings, and AI review details", async () => {

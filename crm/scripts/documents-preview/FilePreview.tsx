@@ -3,7 +3,7 @@ import Modal from '../../src/components/Modal';
 export function canPreview(name: string) { return /\.(pdf|txt|png|jpe?g|gif|webp|svg|bmp)$/i.test(name); }
 
 /** The actual modal shell, with a local placeholder instead of a signed CRM file. */
-export default function FilePreview({ name, onClose }: { name: string; s3Key: string; onClose: () => void }) {
+export default function FilePreview({ name, onClose }: { name: string; onClose: () => void }) {
   return <Modal title={name} onClose={onClose}>
     <div style={{ padding: 32, minHeight: 320, background: '#f7f9fb' }}>
       <p className="small muted">Fictional document preview</p>

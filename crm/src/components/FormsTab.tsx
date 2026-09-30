@@ -72,6 +72,9 @@ export default function FormsTab({
   // Which row's button reads "Generating…" — per-row, so it stays. The
   // outcome is panel-level and belongs to the status machine.
   const [busyKey, setBusyKey] = useState<string | null>(null);
+  // Wait for a complete, successful history read so existing forms are visible
+  // before another PDF is created, including while a failed read is retried.
+  const canGenerate = busyKey === null && genRes.loaded && !genRes.loading && !genRes.error;
   // Was an amber `note` for every outcome plus a separate red `error`; the
   // note is now `run`'s warning arm and a clean generation is green.
   const genStatus = useSaveStatus();
@@ -96,6 +99,7 @@ export default function FormsTab({
   );
 
   async function generate(form: AcordFormDef) {
+    if (!canGenerate) return;
     setBusyKey(form.key);
     setAiFilled([]);
     await genStatus.run(
@@ -337,7 +341,7 @@ export default function FormsTab({
               <h3>{form.label.split(" — ").slice(1).join(" — ") || form.label}</h3>
               <button
                 className="secondary"
-                disabled={busyKey !== null}
+                disabled={!canGenerate}
                 aria-label={`Generate ${form.label}`}
                 onClick={() => generate(form)}
               >

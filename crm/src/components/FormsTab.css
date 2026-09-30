@@ -75,6 +75,11 @@
   margin-top: auto;
 }
 
+.carrier-form-choice button:disabled {
+  opacity: .55;
+  cursor: default;
+}
+
 .carrier-forms-other {
   margin-top: 16px;
   padding-top: 14px;
