@@ -2,19 +2,21 @@ import type { AppSyncResolverEvent } from "aws-lambda";
 import {
   CognitoIdentityProviderClient,
   AdminCreateUserCommand,
+  AdminDeleteUserCommand,
+  AdminDisableUserCommand,
   AdminAddUserToGroupCommand,
   AdminRemoveUserFromGroupCommand,
   AdminGetUserCommand,
   AdminListGroupsForUserCommand,
-  ListUsersCommand,
   UsernameExistsException,
 } from "@aws-sdk/client-cognito-identity-provider";
 import { SESv2Client, SendEmailCommand } from "@aws-sdk/client-sesv2";
 // Role names are the schema's `UserRole` and the Cognito group names both —
 // see the note on `isUserRole`. enums.ts pulls in no runtime dependency, the
 // way pagination.ts does not.
-import { DEFAULT_USER_ROLE, isUserRole, type UserRole } from "../../../src/lib/enums";
+import { isUserRole, type UserRole } from "../../../src/lib/enums";
 import { isActiveAdmin } from "../crm-access/active-role";
+import { listTeamUsers, type TeamRosterArgs } from "./roster";
 
 /**
  * Team administration behind ADMIN-group-only mutations.
@@ -31,7 +33,7 @@ const POOL_ID = process.env.USER_POOL_ID!;
 const PORTAL_URL = process.env.PORTAL_URL ?? "";
 const INVITE_FROM = process.env.INVITE_FROM ?? "";
 
-type InviteArgs = { email?: string | null; role?: string | null; roles?: unknown };
+type InviteArgs = { email?: string | null; roles: unknown };
 type UpdateRolesArgs = { userId?: string | null; roles?: unknown };
 
 /** Reject malformed assignments before creating a user or changing any groups. */
@@ -64,12 +66,12 @@ async function inviteUser(args: InviteArgs, invitedBy: string) {
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     return { ok: false, error: "A valid email is required." };
   }
-  const roles = assignedRoles(args.roles ?? [args.role ?? DEFAULT_USER_ROLE]);
+  const roles = assignedRoles(args.roles);
   if (!roles) return { ok: false, error: ROLE_ERROR };
-  const role = roles[0];
+  let username: string;
 
   try {
-    await cognito.send(
+    const created = await cognito.send(
       new AdminCreateUserCommand({
         UserPoolId: POOL_ID,
         Username: email,
@@ -82,6 +84,7 @@ async function inviteUser(args: InviteArgs, invitedBy: string) {
         ],
       })
     );
+    username = created.User?.Username ?? email;
   } catch (err) {
     if (err instanceof UsernameExistsException) {
       return { ok: false, error: "That email is already on the team." };
@@ -89,25 +92,26 @@ async function inviteUser(args: InviteArgs, invitedBy: string) {
     throw err;
   }
 
-  for (const group of roles) {
-    await cognito.send(new AdminAddUserToGroupCommand({
-      UserPoolId: POOL_ID, Username: email, GroupName: group,
-    }));
-  }
+  try {
+    for (const group of roles) {
+      await cognito.send(new AdminAddUserToGroupCommand({
+        UserPoolId: POOL_ID, Username: username, GroupName: group,
+      }));
+    }
 
-  await ses.send(
-    new SendEmailCommand({
-      FromEmailAddress: INVITE_FROM,
-      Destination: { ToAddresses: [email] },
-      Content: {
-        Simple: {
-          Subject: { Data: "You're invited to the HOA Insurance CRM" },
-          Body: {
-            Text: {
-              Data: `You've been invited to the HOA Insurance Agency CRM.\n\nSign in at ${PORTAL_URL} using this email address — we'll email you a sign-in link each time. No password needed.`,
-            },
-            Html: {
-              Data: `
+    await ses.send(
+      new SendEmailCommand({
+        FromEmailAddress: INVITE_FROM,
+        Destination: { ToAddresses: [email] },
+        Content: {
+          Simple: {
+            Subject: { Data: "You're invited to the HOA Insurance CRM" },
+            Body: {
+              Text: {
+                Data: `You've been invited to the HOA Insurance Agency CRM.\n\nSign in at ${PORTAL_URL} using this email address — we'll email you a sign-in link each time. No password needed.`,
+              },
+              Html: {
+                Data: `
 <div style="font-family:system-ui,sans-serif;max-width:480px;margin:0 auto;padding:24px">
   <h2 style="color:#142a4c">HOA Insurance Agency CRM</h2>
   <p>You've been invited to the agency CRM (roles: <strong>${roles.join(" and ")}</strong>).</p>
@@ -116,15 +120,33 @@ async function inviteUser(args: InviteArgs, invitedBy: string) {
   </p>
   <p style="color:#64748b;font-size:13px">Sign in with this email address — a sign-in link is emailed to you each time. No password needed.</p>
 </div>`,
+              },
             },
           },
         },
-      },
-    })
-  );
+      })
+    );
+  } catch (error) {
+    // Only a successful creation enters this block. Existing team members
+    // are never removed by a failed or repeated invitation.
+    try {
+      await cognito.send(new AdminDeleteUserCommand({ UserPoolId: POOL_ID, Username: username }));
+    } catch (cleanupError) {
+      console.error("Could not remove a failed invitation", { username, error, cleanupError });
+      try {
+        await cognito.send(new AdminDisableUserCommand({ UserPoolId: POOL_ID, Username: username }));
+        return { ok: false, error: "The invitation failed. The incomplete account was disabled; contact an administrator to remove it before sending a new invitation." };
+      } catch (disableError) {
+        console.error("Could not disable the incomplete invited account", { username, disableError });
+        return { ok: false, error: "The invitation failed and the incomplete account could not be removed or disabled. Review this member's access immediately before trying again." };
+      }
+    }
+    console.error("Invitation rolled back", { username, error });
+    return { ok: false, error: "The invitation could not be completed. The new account was removed; please try again." };
+  }
 
   console.log(`Invited ${email} as ${roles.join(", ")} (by ${invitedBy})`);
-  return { ok: true, email, role, roles };
+  return { ok: true, email, roles };
 }
 
 async function updateUserRoles(args: UpdateRolesArgs, actor: { username: string; sub?: string }) {
@@ -170,40 +192,11 @@ async function updateUserRoles(args: UpdateRolesArgs, actor: { username: string;
     throw error;
   }
   console.log(`Updated roles for ${username} to ${roles.join(", ")} (by ${actor.username})`);
-  return { ok: true, userId: sub ?? userId, role: roles[0], roles };
-}
-
-async function listTeamUsers() {
-  const allUsers = [];
-  let token: string | undefined;
-  do {
-    const result = await cognito.send(new ListUsersCommand({ UserPoolId: POOL_ID, Limit: 60, PaginationToken: token }));
-    allUsers.push(...(result.Users ?? []));
-    token = result.PaginationToken;
-  } while (token);
-
-  const users = await Promise.all(
-    allUsers.map(async (u) => {
-      const attrs = Object.fromEntries(
-        (u.Attributes ?? []).map((a) => [a.Name, a.Value])
-      );
-      const groups = await groupsFor(u.Username!);
-      return {
-        userId: attrs.sub ?? u.Username,
-        email: attrs.email ?? u.Username,
-        status: u.UserStatus,
-        enabled: u.Enabled ?? true,
-        createdAt: u.UserCreateDate?.toISOString() ?? null,
-        groups,
-      };
-    })
-  );
-
-  return { ok: true, users };
+  return { ok: true, userId: sub ?? userId, roles };
 }
 
 export const handler = async (
-  event: AppSyncResolverEvent<InviteArgs | UpdateRolesArgs | Record<string, never>>
+  event: AppSyncResolverEvent<InviteArgs | UpdateRolesArgs | TeamRosterArgs>
 ) => {
   if (!isActiveAdmin(event.identity, event.request)) return { ok: false, error: "Admin access is required." };
   const invokedBy =
@@ -211,7 +204,7 @@ export const handler = async (
     "unknown";
 
   // The invocation payload doesn't always carry `info` — fall back to the
-  // argument shape to tell the two operations apart.
+  // argument shape to tell the operations apart.
   const field =
     event.info?.fieldName ??
     ("userId" in (event.arguments ?? {}) ? "updateUserRoles" : "email" in (event.arguments ?? {}) ? "inviteUser" : "listTeamUsers");
@@ -225,7 +218,7 @@ export const handler = async (
         sub: event.identity && "sub" in event.identity ? event.identity.sub : undefined,
       });
     case "listTeamUsers":
-      return listTeamUsers();
+      return listTeamUsers(cognito, POOL_ID, event.arguments as TeamRosterArgs, groupsFor);
     default:
       return { ok: false, error: `Unknown field ${field}` };
   }

@@ -21,9 +21,11 @@ Internal agency management system replacing EzLynx for the commercial
   accounts assigned to them. The active view is remembered per user in the
   current browser tab and enforced on server requests; changing it clears
   the previous view's data. Updated role assignments appear on reload, and
-  saving your own roles refreshes them immediately. First login runs an onboarding flow
-  ([src/pages/Onboarding.tsx](src/pages/Onboarding.tsx)); producers must
-  supply an NPN and at least one state license.
+  saving your own roles refreshes them immediately. The team roster loads
+  twenty members at a time; use **Load more** to reach additional teammates.
+  First login runs an onboarding flow ([src/pages/Onboarding.tsx](src/pages/Onboarding.tsx)).
+  Producers must supply an NPN and at least one state license, including
+  existing users who gain Producer later and have missing licensing details.
 - **Lead texts** — a website enquiry texts every team member who turned the
   switch on in Settings → Team and saved a mobile number
   ([amplify/functions/lead-intake](amplify/functions/lead-intake)). Sent with

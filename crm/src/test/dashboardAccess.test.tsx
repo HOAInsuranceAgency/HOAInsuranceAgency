@@ -12,6 +12,7 @@ const h = vi.hoisted(() => ({
     firstName: "Test",
     lastName: "User",
     role: "ADMIN",
+    npn: "12345678",
     onboardingComplete: true,
   },
 }));
@@ -29,6 +30,11 @@ vi.mock("../lib/client", () => ({
   client: {
     models: {
       UserProfile: { list: async () => ({ data: [h.profile] }) },
+      License: { list: async () => ({ data: [{
+        id: "license-1", userProfileId: "profile-1", holderType: "PRODUCER",
+        state: "FL", licenseNumber: "FL123456",
+      }] }) },
+      ProducerLicense: { list: async () => ({ data: [] }) },
       AgencySettings: {
         observeQuery: () => ({ subscribe: () => ({ unsubscribe: vi.fn() }) }),
       },
@@ -77,6 +83,7 @@ function renderApp(path: string) {
 }
 
 beforeEach(() => {
+  sessionStorage.clear();
   h.session.mockReset();
   h.dashboard.mockClear();
   h.profile.role = "ADMIN";

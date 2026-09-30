@@ -10,6 +10,8 @@ const auth = vi.hoisted(() => ({
 }));
 const fetchUserGroups = vi.hoisted(() => vi.fn());
 const listProfiles = vi.hoisted(() => vi.fn());
+const listLicenses = vi.hoisted(() => vi.fn());
+const listLegacyLicenses = vi.hoisted(() => vi.fn());
 
 vi.mock("@aws-amplify/ui-react", () => ({
   Authenticator: { Provider: ({ children }: { children: ReactNode }) => children },
@@ -23,6 +25,8 @@ vi.mock("./lib/client", () => ({
   client: {
     models: {
       UserProfile: { list: listProfiles },
+      License: { list: listLicenses },
+      ProducerLicense: { list: listLegacyLicenses },
       AgencySettings: {
         observeQuery: () => ({ subscribe: () => ({ unsubscribe: vi.fn() }) }),
       },
@@ -55,7 +59,17 @@ vi.mock("./pages/AccountDetail", () => ({ default: () => null }));
 vi.mock("./pages/NewLead", () => ({ default: () => null }));
 vi.mock("./pages/Carriers", () => ({ default: () => null }));
 vi.mock("./pages/CarrierDetail", () => ({ default: () => null }));
-vi.mock("./pages/Onboarding", () => ({ default: () => null }));
+vi.mock("./pages/Onboarding", () => ({
+  default: ({ existing, existingLicenses, onComplete }: {
+    existing: Record<string, unknown>;
+    existingLicenses: unknown[];
+    onComplete: (profile: unknown, licenses: unknown[]) => void;
+  }) => <section>
+    <h1>Producer setup</h1>
+    <p>{existingLicenses.length} saved licenses</p>
+    <button onClick={() => onComplete({ ...existing, npn: "12345678", onboardingComplete: true }, [savedLicense])}>Finish setup</button>
+  </section>,
+}));
 vi.mock("./pages/Settings", () => ({ default: () => null }));
 vi.mock("./pages/Financing", () => ({ default: () => null }));
 vi.mock("./pages/SearchResults", () => ({ default: () => null }));
@@ -68,6 +82,11 @@ import App from "./App";
 import { useIsAdmin } from "./lib/auth";
 import { activeRoleHeaders } from "./lib/activeRole";
 
+const savedLicense = {
+  id: "license-one", userProfileId: "profile-one", holderType: "PRODUCER",
+  state: "FL", licenseNumber: "P123456",
+};
+
 const renderApp = (path = "/") =>
   render(<MemoryRouter initialEntries={[path]}><App /></MemoryRouter>);
 
@@ -78,11 +97,13 @@ function deferred<T>() {
 }
 
 beforeEach(() => {
-  vi.clearAllMocks();
+  vi.resetAllMocks();
   sessionStorage.clear();
   auth.authStatus = "authenticated";
   auth.user = { userId: "user-one", username: "admin@example.com" };
   fetchUserGroups.mockResolvedValue(["ADMIN", "PRODUCER"]);
+  listLicenses.mockResolvedValue({ data: [savedLicense] });
+  listLegacyLicenses.mockResolvedValue({ data: [] });
   listProfiles.mockResolvedValue({
     data: [{
       id: "profile-one",
@@ -90,6 +111,7 @@ beforeEach(() => {
       firstName: "Alex",
       lastName: "Agent",
       role: "ADMIN",
+      npn: "12345678",
       onboardingComplete: true,
     }],
   });
@@ -277,5 +299,89 @@ describe("assigned role switching", () => {
     expect(await activeRoleHeaders()).toEqual({ "x-crm-role": "PRODUCER" });
     expect(sessionStorage.getItem("hoa-crm:active-role:user-one")).toBeNull();
     expect(sessionStorage.getItem("hoa-crm:active-role:user-two")).toBe("PRODUCER");
+  });
+});
+
+
+describe("producer onboarding gate", () => {
+  it.each(["ADMIN", "STAFF"])("reopens setup for an onboarded %s assigned PRODUCER without an NPN", async (role) => {
+    fetchUserGroups.mockResolvedValue([role, "PRODUCER"]);
+    listProfiles.mockResolvedValue({ data: [{
+      id: "profile-one", userId: "user-one", firstName: "Alex", lastName: "Agent",
+      role, npn: "  ", onboardingComplete: true,
+    }] });
+    renderApp();
+
+    expect(await screen.findByRole("heading", { name: "Producer setup" })).toBeInTheDocument();
+    expect(screen.getByText("1 saved licenses")).toBeInTheDocument();
+    expect(screen.queryByRole("complementary")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Finish setup" }));
+    expect(await screen.findByRole("complementary")).toBeInTheDocument();
+  });
+
+  it("requires a persisted license even when the NPN and completed flag already exist", async () => {
+    listLicenses.mockResolvedValue({ data: [] });
+    renderApp();
+
+    expect(await screen.findByRole("heading", { name: "Producer setup" })).toBeInTheDocument();
+    expect(screen.getByText("0 saved licenses")).toBeInTheDocument();
+    expect(screen.queryByRole("complementary")).not.toBeInTheDocument();
+  });
+
+  it("accepts a previously saved legacy producer license", async () => {
+    listLicenses.mockResolvedValue({ data: [] });
+    listLegacyLicenses.mockResolvedValue({ data: [{ ...savedLicense, holderType: undefined }] });
+    renderApp();
+
+    expect(await screen.findByRole("heading", { name: "Agency dashboard" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Producer setup" })).not.toBeInTheDocument();
+  });
+
+  it("does not count firm licenses, another producer's license, or incomplete rows", async () => {
+    listLicenses.mockResolvedValue({ data: [
+      { ...savedLicense, holderType: "FIRM" },
+      { ...savedLicense, userProfileId: "another-profile" },
+      { ...savedLicense, state: " " },
+      { ...savedLicense, licenseNumber: " " },
+    ] });
+    renderApp();
+
+    expect(await screen.findByRole("heading", { name: "Producer setup" })).toBeInTheDocument();
+    expect(screen.getByText("0 saved licenses")).toBeInTheDocument();
+  });
+
+  it("keeps the shell closed while producer licenses are loading", async () => {
+    const pending = deferred<{ data: typeof savedLicense[] }>();
+    listLicenses.mockReturnValueOnce(pending.promise);
+    renderApp();
+    await act(async () => {});
+
+    expect(screen.getByText("Loading…")).toBeInTheDocument();
+    expect(screen.queryByRole("complementary")).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Producer setup" })).not.toBeInTheDocument();
+    await act(async () => { pending.resolve({ data: [savedLicense] }); });
+    expect(await screen.findByRole("heading", { name: "Agency dashboard" })).toBeInTheDocument();
+  });
+
+  it.each(["current", "legacy"])("keeps failed %s license reads closed and recovers on retry", async (source) => {
+    const read = source === "current" ? listLicenses : listLegacyLicenses;
+    read.mockResolvedValueOnce({ data: [], errors: [{ message: "Cannot read producer licenses" }] });
+    renderApp();
+
+    expect(await screen.findByText("Cannot read producer licenses")).toBeInTheDocument();
+    expect(screen.queryByRole("complementary")).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Producer setup" })).not.toBeInTheDocument();
+    expect(await activeRoleHeaders()).toEqual({});
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByRole("heading", { name: "Agency dashboard" })).toBeInTheDocument();
+  });
+
+  it("does not request producer licenses for a staff/admin without the producer role", async () => {
+    fetchUserGroups.mockResolvedValue(["ADMIN", "STAFF"]);
+    renderApp();
+
+    expect(await screen.findByRole("heading", { name: "Agency dashboard" })).toBeInTheDocument();
+    expect(listLicenses).not.toHaveBeenCalled();
+    expect(listLegacyLicenses).not.toHaveBeenCalled();
   });
 });

@@ -2152,8 +2152,7 @@ const schema = a
       .mutation()
       .arguments({
         email: a.string().required(),
-        role: a.string(), // Legacy single-role clients; defaults to STAFF.
-        roles: a.string().array(), // One or two assigned Cognito role groups.
+        roles: a.string().array().required(), // One or two assigned Cognito role groups.
       })
       .returns(a.json())
       .authorization((allow) => [allow.groups(["ADMIN"])])
@@ -2171,6 +2170,7 @@ const schema = a
 
     listTeamUsers: a
       .query()
+      .arguments({ nextToken: a.string() })
       .returns(a.json())
       .authorization((allow) => [allow.groups(["ADMIN"])])
       .handler(a.handler.function(teamAdmin)),

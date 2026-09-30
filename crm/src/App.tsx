@@ -5,6 +5,7 @@ import { Authenticator, useAuthenticator } from "@aws-amplify/ui-react";
 import type { AuthUser } from "aws-amplify/auth";
 import { client, listAllPages, type UserProfile } from "./lib/client";
 import { useAsyncResource } from "./lib/useAsyncResource";
+import { loadProducerLicenses, type SavedProducerLicense } from "./lib/producerOnboarding";
 import CopyValue from "./components/CopyValue";
 import {
   AGENCY_SETTINGS_ID,
@@ -96,18 +97,24 @@ function ProfileGate({ user, signOut }: { user: AuthUser; signOut: () => void })
         ),
         fetchUserGroups(true),
       ]);
+      const profile = rows[0] ?? null;
+      // Adding PRODUCER to an already onboarded staff/admin profile still
+      // requires producer details, including a license saved in the database.
+      const producerLicenses = profile && gs.includes("PRODUCER")
+        ? await loadProducerLicenses(profile.id)
+        : [];
       const activeRole = version === roleSessionVersion.current
         ? restoreActiveRole(user.userId, gs)
         : roleFromGroups(gs);
-      return { profile: rows[0] ?? null, groups: gs, activeRole };
+      return { profile, groups: gs, activeRole, producerLicenses };
     },
     [user.userId],
     {
-      initialData: { profile: null as UserProfile | null, groups: [] as string[], activeRole: "STAFF" as Role },
+      initialData: { profile: null as UserProfile | null, groups: [] as string[], activeRole: "STAFF" as Role, producerLicenses: [] as SavedProducerLicense[] },
       errorMessage: "Couldn't load your profile.",
     }
   );
-  const { profile, groups, activeRole } = data;
+  const { profile, groups, activeRole, producerLicenses } = data;
   useEffect(() => {
     const refreshRoles = () => { void refetch(); };
     window.addEventListener("team-roles-changed", refreshRoles);
@@ -155,14 +162,17 @@ function ProfileGate({ user, signOut }: { user: AuthUser; signOut: () => void })
 
   if (loading) return <div className="main">Loading…</div>;
 
-  if (!profile || !profile.onboardingComplete) {
+  const missingProducerDetails = groups.includes("PRODUCER") &&
+    (!profile?.npn?.trim() || producerLicenses.length === 0);
+  if (!profile || !profile.onboardingComplete || missingProducerDetails) {
     return (
       <Onboarding
         user={user}
         existing={profile}
+        existingLicenses={producerLicenses}
         role={roleFromGroups(groups)}
         roles={rolesFromGroups(groups)}
-        onComplete={(p) => setData((d) => ({ ...d, profile: p }))}
+        onComplete={(p, licenses) => setData((d) => ({ ...d, profile: p, producerLicenses: licenses }))}
       />
     );
   }

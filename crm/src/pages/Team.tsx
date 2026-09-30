@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { LeadEligibilityCells, LeadEligibilityEditor, LeadEligibilityFeedback, useLeadEligibilitySettings } from "../components/LeadEligibilitySettings";
-import { client, fmtDate, type UserProfile } from "../lib/client";
+import { client, fmtDate, friendlyError, type UserProfile } from "../lib/client";
 import { toE164 } from "../../amplify/functions/lead-intake/sms";
 import { Badge, flagBadge } from "../lib/badges";
 import SignatureManager from "../components/SignatureManager";
@@ -132,6 +132,35 @@ function LeadTextCell({
 // Stable identity for "not loaded yet" (and for a failed read), so the sort
 // memo isn't rebuilt on every render while the team list is still in flight.
 const NO_USERS: TeamUser[] = [];
+const EMPTY_TEAM = { users: NO_USERS, profiles: [] as UserProfile[], nextToken: null as string | null };
+
+function parse(raw: unknown): Record<string, unknown> {
+  if (typeof raw === "string") {
+    try { return JSON.parse(raw); } catch { return {}; }
+  }
+  return (raw as Record<string, unknown>) ?? {};
+}
+
+async function fetchTeamPage(nextToken?: string) {
+  const { data, errors } = await client.queries.listTeamUsers({ nextToken });
+  if (errors?.length) throw new Error(errors[0].message);
+  const body = parse(data);
+  if (body.ok === false) throw new Error(String(body.error ?? "Failed to load team"));
+  const users = (body.users as TeamUser[] | undefined) ?? NO_USERS;
+  const profiles: UserProfile[] = [];
+  // Only decorate this roster page. The userId index avoids scanning the
+  // profile table and also works for members beyond its first DynamoDB page.
+  // Profile failures must not prevent an admin from managing Cognito roles.
+  for (let start = 0; start < users.length; start += 4) {
+    const results = await Promise.allSettled(users.slice(start, start + 4).map(async user => {
+      const result = await client.models.UserProfile.listUserProfileByUserId({ userId: user.userId }, { limit: 1 });
+      if (result.errors?.length) throw new Error(result.errors[0].message);
+      return result.data;
+    }));
+    for (const result of results) if (result.status === "fulfilled") profiles.push(...result.value);
+  }
+  return { users, profiles, nextToken: typeof body.nextToken === "string" && body.nextToken ? body.nextToken : null };
+}
 
 /**
  * ADMIN-only. Rendered only for the Cognito ADMIN group (Settings gates the
@@ -154,50 +183,62 @@ export default function Team({ profile }: { profile: UserProfile }) {
     { onEdit: inviteStatus.markDirty }
   );
 
-  const parse = (raw: unknown): Record<string, unknown> => {
-    if (typeof raw === "string") {
-      try {
-        return JSON.parse(raw);
-      } catch {
-        return {};
-      }
-    }
-    return (raw as Record<string, unknown>) ?? {};
-  };
+  const [moreLoading, setMoreLoading] = useState(false);
+  const [moreError, setMoreError] = useState("");
+  const morePending = useRef(false);
+  const pageVersion = useRef(0);
+  useEffect(() => () => { pageVersion.current++; }, []);
 
   // `client.queries.*` reports failure by *resolving* with an `errors` array,
   // so the unwrap has to stay inside the fetcher — nothing above it would see
   // a rejection otherwise.
   const team = useAsyncResource(
     async () => {
-      const { data, errors } = await client.queries.listTeamUsers();
-      if (errors?.length) throw new Error(errors[0].message);
-      const body = parse(data);
-      if (body.ok === false) throw new Error(String(body.error ?? "Failed to load team"));
-      return (body.users as TeamUser[] | undefined) ?? NO_USERS;
+      // Refresh starts a new sequence. An older Load more response cannot
+      // append stale rows or replace the refreshed continuation token.
+      pageVersion.current++;
+      morePending.current = false;
+      setMoreLoading(false);
+      setMoreError("");
+      return fetchTeamPage();
     },
     [],
-    { initialData: NO_USERS, errorMessage: "Failed to load team" }
+    { initialData: EMPTY_TEAM, errorMessage: "Failed to load team" }
   );
-  const users = team.data;
+  const { users, profiles } = team.data;
+  const setProfiles = (update: (profiles: UserProfile[]) => UserProfile[]) =>
+    team.setData(previous => ({ ...previous, profiles: update(previous.profiles) }));
 
-  // Profiles decorate the roster (name, onboarding, signature) — the roster
-  // itself renders without them, so this read's failure is deliberately not
-  // surfaced, exactly as the bare `.then()` it replaces did not surface it.
-  // The hook still catches it, which is the part that was missing.
-  const profileRes = useAsyncResource(
-    async () => (await client.models.UserProfile.list()).data,
-    [],
-    { initialData: [] as UserProfile[] }
-  );
-  const profiles = profileRes.data;
-  const setProfiles = profileRes.setData;
+  async function loadMore() {
+    const nextToken = team.data.nextToken;
+    if (!nextToken || team.loading || morePending.current) return;
+    const version = pageVersion.current;
+    morePending.current = true;
+    setMoreLoading(true);
+    setMoreError("");
+    try {
+      const page = await fetchTeamPage(nextToken);
+      if (version !== pageVersion.current) return;
+      // Cognito pagination can repeat a member if the pool changes between
+      // reads. Keep existing rows (and any edits) instead of duplicating them.
+      team.setData(previous => ({
+        users: [...previous.users, ...page.users.filter(user => !previous.users.some(existing => existing.userId === user.userId))],
+        profiles: [...previous.profiles, ...page.profiles.filter(p => !previous.profiles.some(existing => existing.id === p.id))],
+        nextToken: page.nextToken,
+      }));
+    } catch (error) {
+      if (version === pageVersion.current) setMoreError(friendlyError(error, "Couldn't load more team members."));
+    } finally {
+      if (version === pageVersion.current) {
+        morePending.current = false;
+        setMoreLoading(false);
+      }
+    }
+  }
 
-  // An invite adds a Cognito user, so both reads are re-run — same as the
-  // single `load()` that used to do both.
+  // An invite adds a Cognito user, so restart the roster and its decorations.
   function reload() {
     void team.refetch();
-    void profileRes.refetch();
     eligibility.refresh();
   }
 
@@ -212,7 +253,12 @@ export default function Team({ profile }: { profile: UserProfile }) {
         });
         if (errors?.length) throw new Error(errors[0].message);
         const body = parse(data);
-        if (!body.ok) throw new Error(String(body.error ?? "Invite failed"));
+        if (!body.ok) {
+          // Failed cleanup can leave a real member behind. Refresh access
+          // details while keeping the invitation failure beside the form.
+          reload();
+          throw new Error(String(body.error ?? "Invite failed"));
+        }
         // Not `reset()`: the baseline would put the role back to STAFF too, and
         // inviting a second person to the same role is the common case. Its
         // `onEdit` fires while the status is still "saving", which markDirty
@@ -238,9 +284,9 @@ export default function Team({ profile }: { profile: UserProfile }) {
       void team.refetch();
       throw new Error(String(body.error ?? "Couldn't save roles."));
     }
-    team.setData(previous => previous.map(member => member.userId === user.userId
+    team.setData(previous => ({ ...previous, users: previous.users.map(member => member.userId === user.userId
       ? { ...member, groups: [...member.groups.filter(group => !isUserRole(group)), ...roles] }
-      : member));
+      : member) }));
     roleStatus.markSaved(`Roles updated for ${user.email}.`);
     if (user.userId === profile.userId) window.dispatchEvent(new Event("team-roles-changed"));
   }
@@ -339,6 +385,9 @@ export default function Team({ profile }: { profile: UserProfile }) {
             </p>
           </div>
           <div className="grow" />
+          <button type="button" className="secondary" disabled={team.loading || moreLoading || !!editingRoles} onClick={reload}>
+            Refresh team
+          </button>
           {/* Toggles are per-row with no per-row place to report; this is
               the card's one status line. */}
           <SaveStatus {...alertStatus.status} />
@@ -347,10 +396,8 @@ export default function Team({ profile }: { profile: UserProfile }) {
         <LeadEligibilityFeedback settings={eligibility} />
         {!team.loaded ? (
           <p className="muted small">Loading…</p>
-        ) : team.error ? (
-          <p className="error-text">{team.error}</p>
         ) : users.length === 0 ? (
-          <p className="muted small">No users found.</p>
+          !team.error && <p className="muted small">No users found.</p>
         ) : (
           <div className="table-wrap">
             <table>
@@ -432,6 +479,16 @@ export default function Team({ profile }: { profile: UserProfile }) {
             </table>
           </div>
         )}
+        {team.error && <div role="alert">
+          <p className="error-text">{team.error}</p>
+          <button type="button" className="secondary" disabled={team.loading} onClick={() => void team.refetch()}>Retry team</button>
+        </div>}
+        {moreError && <p className="error-text" role="alert">{moreError}</p>}
+        {team.data.nextToken && <div className="form-actions">
+          <button type="button" className="secondary" disabled={team.loading || moreLoading} onClick={() => void loadMore()}>
+            {moreLoading ? "Loading more…" : moreError ? "Retry loading more" : "Load more team members"}
+          </button>
+        </div>}
         <LeadEligibilityEditor settings={eligibility} />
         {editingRoles && <RoleEditor user={editingRoles}
           name={(() => { const p = profileFor(editingRoles); return p ? `${p.firstName} ${p.lastName}` : editingRoles.email; })()}
