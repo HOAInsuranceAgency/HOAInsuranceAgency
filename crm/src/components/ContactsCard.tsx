@@ -11,9 +11,7 @@ import { contactKey } from "../lib/extractionKeys";
 import { useChildRows } from "../lib/useChildRows";
 import type { FormState } from "../lib/useFormState";
 import { CONTACT_TYPE_LABELS, CONTACT_TYPE_OPTIONS } from "../lib/enums";
-import { SortTh, useSort } from "../lib/useSort";
-import ConfirmButton from "./ConfirmButton";
-import Modal from "./Modal";
+import ChildRowsCard from "./ChildRowsCard";
 import { SaveStatus, useSaveStatus } from "./SaveStatus";
 import { PhoneInput } from "./inputs";
 import "./ContactsCard.css";
@@ -140,182 +138,81 @@ export default function ContactsCard({ accountId }: { accountId: string }) {
     );
   }
 
-  const { sorted, sortKey, dir, toggle } = useSort<Contact>(
-    child.rows,
-    {
-      name: (c) => c.name,
-      type: (c) => (c.type ? CONTACT_TYPE_LABELS[c.type] : null),
-      email: (c) => c.email,
-      phone: (c) => c.phone,
-    },
-    "name",
-  );
-  const editingContact = child.rows.find((c) => c.id === child.editingId);
-
   return (
-    <section className="card contacts-card" aria-label="Contacts">
-      <div className="contacts-heading">
-        <h2>
-          Contacts
-          {child.loaded && !child.error ? (
-            <span className="contacts-count">{child.rows.length}</span>
-          ) : null}
-        </h2>
-        <p>Select a primary contact for applications and certificates.</p>
-      </div>
-
-      {!child.loaded ? (
-        <p className="contacts-state" role="status">
-          Loading contacts…
-        </p>
-      ) : child.error ? (
-        <p className="contacts-state error-text" role="alert">
-          {child.error}
-        </p>
-      ) : (
+    <ChildRowsCard
+      title="Contacts"
+      className="contacts-card"
+      description="Select a primary contact for applications and certificates."
+      child={child}
+      summary={<span className="contacts-count">{child.rows.length}</span>}
+      loadingMessage="Loading contacts…"
+      addDisclosure="Add contact"
+      addLabel="Save contact"
+      addFields={<ContactFields form={child.addForm} onEnter={child.add} />}
+      editFields={<ContactFields form={child.editForm} />}
+      editIn="modal"
+      editTitle={(contact) => `Editing ${contact.name}`}
+      editButtonLabel={(contact) => `Edit ${contact.name}`}
+      removeMessage={(contact) => `Remove ${contact.name}?`}
+      extraFeedback={<SaveStatus {...primaryStatus.status} />}
+      emptyMessage={
         <>
-          <details className="contacts-add">
-            <summary>Add contact</summary>
-            <div className="contacts-add-body">
-              <div className="contacts-fields">
-                <ContactFields form={child.addForm} onEnter={child.add} />
-              </div>
-              <div className="contacts-form-actions">
-                <button
-                  className="primary"
-                  disabled={child.addStatus.busy}
-                  onClick={child.add}
-                >
-                  {child.addStatus.busy ? "Adding…" : "Save contact"}
-                </button>
-              </div>
-            </div>
-          </details>
-          <div className="contacts-feedback">
-            <SaveStatus {...child.addStatus.status} />
-            <SaveStatus {...child.delStatus.status} />
-            {child.editingId === null ? (
-              <SaveStatus {...child.editStatus.status} />
-            ) : null}
-            <SaveStatus {...primaryStatus.status} />
-          </div>
-
-          {child.rows.length === 0 ? (
-            <div className="contacts-state contacts-empty">
-              <strong>No contacts yet.</strong>
-              <p>
-                Add the people involved with this account. The first contact
-                becomes primary.
-              </p>
-            </div>
-          ) : (
-            <div className="table-wrap contacts-table-wrap">
-              <table className="contacts-table" aria-label="Account contacts">
-                <colgroup>
-                  <col className="contacts-primary-col" />
-                  <col className="contacts-name-col" />
-                  <col className="contacts-role-col" />
-                  <col className="contacts-email-col" />
-                  <col className="contacts-phone-col" />
-                  <col className="contacts-actions-col" />
-                </colgroup>
-                <thead>
-                  <tr>
-                    <th>Primary</th>
-                    {[
-                      { key: "name", label: "Name" },
-                      { key: "type", label: "Role" },
-                      { key: "email", label: "Email" },
-                      { key: "phone", label: "Phone" },
-                    ].map((column) => (
-                      <SortTh
-                        key={column.key}
-                        label={column.label}
-                        colKey={column.key}
-                        sortKey={sortKey}
-                        dir={dir}
-                        onToggle={toggle}
-                      />
-                    ))}
-                    <th>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {sorted.map((contact) => (
-                    <tr key={contact.id}>
-                      <td className="contacts-primary">
-                        <input
-                          type="radio"
-                          name={`primary-contact-${accountId}`}
-                          checked={contact.isPrimary === true}
-                          disabled={primaryStatus.busy}
-                          onChange={() => makePrimary(contact.id)}
-                          aria-label={`Make ${contact.name} the primary contact`}
-                        />
-                      </td>
-                      <td>
-                        <span className="contacts-name">{contact.name}</span>
-                      </td>
-                      <td>
-                        {contact.type
-                          ? (CONTACT_TYPE_LABELS[contact.type] ?? contact.type)
-                          : "—"}
-                      </td>
-                      <td>{contact.email ?? "—"}</td>
-                      <td className="contacts-phone">
-                        {fmtPhone(contact.phone)}
-                      </td>
-                      <td>
-                        <div className="contacts-row-actions">
-                          <button
-                            className="secondary"
-                            aria-label={`Edit ${contact.name}`}
-                            onClick={() => child.startEdit(contact)}
-                          >
-                            Edit
-                          </button>
-                          <ConfirmButton
-                            label="Remove"
-                            busyLabel="Removing…"
-                            message={`Remove ${contact.name}?`}
-                            onConfirm={() => child.remove(contact.id)}
-                          />
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-
-          {editingContact ? (
-            <Modal
-              title={`Editing ${editingContact.name}`}
-              onClose={child.cancelEdit}
-              className="modal-form contacts-editor"
-            >
-              <div className="contacts-fields">
-                <ContactFields form={child.editForm} />
-              </div>
-              <div className="contacts-form-actions">
-                <button
-                  className="primary"
-                  disabled={child.editStatus.busy}
-                  onClick={child.saveEdit}
-                >
-                  {child.editStatus.busy ? "Saving…" : "Save"}
-                </button>
-                <button className="secondary" onClick={child.cancelEdit}>
-                  Cancel
-                </button>
-              </div>
-              <SaveStatus {...child.editStatus.status} />
-            </Modal>
-          ) : null}
+          <strong>No contacts yet.</strong>
+          <p>
+            Add the people involved with this account. The first contact becomes
+            primary.
+          </p>
         </>
-      )}
-    </section>
+      }
+      tableLabel="Account contacts"
+      defaultSort="name"
+      columns={[
+        {
+          key: "primary",
+          label: "Primary",
+          cell: (contact) => (
+            <input
+              type="radio"
+              name={`primary-contact-${accountId}`}
+              checked={contact.isPrimary === true}
+              disabled={primaryStatus.busy}
+              onChange={() => makePrimary(contact.id)}
+              aria-label={`Make ${contact.name} the primary contact`}
+            />
+          ),
+        },
+        {
+          key: "name",
+          label: "Name",
+          sort: (contact) => contact.name,
+          cell: (contact) => (
+            <span className="contacts-name">{contact.name}</span>
+          ),
+        },
+        {
+          key: "type",
+          label: "Role",
+          sort: (contact) =>
+            contact.type ? CONTACT_TYPE_LABELS[contact.type] : null,
+          cell: (contact) =>
+            contact.type
+              ? (CONTACT_TYPE_LABELS[contact.type] ?? contact.type)
+              : "—",
+        },
+        {
+          key: "email",
+          label: "Email",
+          sort: (contact) => contact.email,
+          cell: (contact) => contact.email ?? "—",
+        },
+        {
+          key: "phone",
+          label: "Phone",
+          sort: (contact) => contact.phone,
+          cell: (contact) => fmtPhone(contact.phone),
+        },
+      ]}
+    />
   );
 }
 

@@ -212,6 +212,29 @@ describe("add", () => {
 });
 
 describe("edit", () => {
+  it("keeps failed-save feedback in the editor and shows one confirmation after retry", async () => {
+    const user = userEvent.setup();
+    Contact.list.mockResolvedValue({ data: rows(), nextToken: null });
+    Contact.update
+      .mockResolvedValueOnce({ data: null, errors: [{ message: "Contact save unavailable" }] })
+      .mockResolvedValueOnce({ data: rows()[0] });
+    renderCard();
+    await screen.findByText("Pat Alvarez");
+
+    await user.click(screen.getByRole("button", { name: "Edit Pat Alvarez" }));
+    const editor = within(screen.getByRole("dialog", { name: "Editing Pat Alvarez" }));
+    await user.click(editor.getByRole("button", { name: "Save" }));
+    expect(await editor.findByText("Contact save unavailable")).toBeInTheDocument();
+    expect(screen.getAllByText("Contact save unavailable")).toHaveLength(1);
+    expect(editor.getByRole("textbox", { name: "Name" })).toHaveValue("Pat Alvarez");
+
+    await user.click(editor.getByRole("button", { name: "Save" }));
+    expect(await screen.findByText("Pat Alvarez saved.")).toBeInTheDocument();
+    expect(screen.getAllByText("Pat Alvarez saved.")).toHaveLength(1);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.queryByText("Contact save unavailable")).not.toBeInTheDocument();
+  });
+
   it("leaves the extraction key alone when the email changes", async () => {
     const user = userEvent.setup();
     Contact.list.mockResolvedValue({ data: rows(), nextToken: null });
