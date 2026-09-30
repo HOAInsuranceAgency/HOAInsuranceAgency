@@ -222,6 +222,21 @@ try {
       return attached && props?.PolicyDocument ? [props.PolicyDocument] : [];
     }),
   ];
+  for (const model of ["Policy", "Invoice"]) {
+    const table = app.node.findAll().find((node): node is CfnResource => node instanceof CfnResource && node.cfnResourceType === "Custom::AmplifyDynamoDBTable" && node.node.path.endsWith(`/${model}/${model}Table/Default/Default`));
+    if (!table) throw new Error(`Missing ${model} table for lead deletion`);
+    const template = Stack.of(table).resolve(table._toCloudFormation());
+    const props = Object.values(template.Resources as Record<string, { Properties: typeof paymentProperties }>)[0].Properties;
+    const indexName = reportEnv.variables[`LEAD_DELETION_${model.toUpperCase()}_INDEX`];
+    const index = props.globalSecondaryIndexes.find(item => item.indexName === indexName);
+    if (!index || index.keySchema.length !== 1 || index.keySchema[0].attributeName !== "accountId" || index.keySchema[0].keyType !== "HASH" || index.projection.projectionType !== "ALL") throw new Error(`Lead deletion must use the existing ${model} account relation index`);
+    const expectedTable = reportRoleStack.resolve(`${model}-${backend.data.resources.graphqlApi.apiId}-NONE`);
+    if (JSON.stringify(reportEnv.variables[`LEAD_DELETION_${model.toUpperCase()}_TABLE`]) !== JSON.stringify(expectedTable)) throw new Error(`Lead deletion must use the configured ${model} table`);
+    const queryResources = reportDocuments.flatMap(document => document.Statement ?? [])
+      .filter(statement => statement.Effect === "Allow" && [statement.Action].flat().includes("dynamodb:Query"))
+      .flatMap(statement => [statement.Resource].flat()).map(resource => JSON.stringify(resource));
+    if (!queryResources.some(resource => resource?.includes(`table/${model}-`) && resource.includes(`/index/${indexName}`) && !resource.includes("*"))) throw new Error(`Lead deletion needs an exact Query grant on the ${model} account relation index`);
+  }
   const reportDenyResources = reportDocuments.flatMap(document => document.Statement ?? []).filter(statement =>
     statement.Effect === "Deny" && [statement.Action].flat().includes("dynamodb:PartiQLSelect") &&
     [statement.Condition?.Bool?.["dynamodb:FullTableScan"]].flat().some(value => String(value) === "true")

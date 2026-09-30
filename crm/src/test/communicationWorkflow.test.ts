@@ -1,7 +1,7 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import type { Communication, IntegrationConfig, LeadWorkflow } from "../../../shared/leadWorkflow";
 const h = vi.hoisted(() => ({ records: new Map<string, Record<string, any>>(), transactions: [] as any[][], inFlight: 0, maxInFlight: 0, fail: false, failAt: undefined as number | undefined, writeError: undefined as Error | undefined, writeErrors: [] as Error[], accountError: false, userEnabled: true, disabledUsers: new Set<string>(),
-  reads: [] as string[], readFailureId: undefined as string | undefined, userReads: [] as string[], userError: undefined as Error | undefined, queries: [] as any[], queryError: undefined as Error | undefined, batch: vi.fn(), front: vi.fn(), dialpad: vi.fn(), update: vi.fn(), accountList: vi.fn(), c: {} as IntegrationConfig }));
+  reads: [] as string[], readFailureId: undefined as string | undefined, userReads: [] as string[], userError: undefined as Error | undefined, queries: [] as any[], queryError: undefined as Error | undefined, deletionQuery: vi.fn(), batch: vi.fn(), front: vi.fn(), dialpad: vi.fn(), update: vi.fn(), accountList: vi.fn(), c: {} as IntegrationConfig }));
 vi.mock("@aws-sdk/lib-dynamodb", async importOriginal => {
   const actual = await importOriginal<typeof import("@aws-sdk/lib-dynamodb")>();
   return { ...actual, DynamoDBDocumentClient: { from: () => ({ send: async (command: any) => {
@@ -10,6 +10,12 @@ vi.mock("@aws-sdk/lib-dynamodb", async importOriginal => {
     if (command.constructor.name === "BatchGetCommand") return h.batch(p);
     if (command.constructor.name === "QueryCommand") {
       h.queries.push(p);
+      if (p.Select === 'COUNT') {
+        const override = await h.deletionQuery(p);
+        if (override !== undefined) return override;
+        const matches = [...h.records.entries()].filter(([key, value]) => key.startsWith(`${p.TableName}:`) && value.accountId === p.ExpressionAttributeValues[':accountId']);
+        return { Count: Math.min(matches.length, p.Limit) };
+      }
       if (p.IndexName === "website-producers" && h.queryError) throw h.queryError;
       const v = p.ExpressionAttributeValues;
       let items = [...h.records.entries()].filter(([k,r]) => k.startsWith(`${p.TableName}:`) && r[p.ExpressionAttributeNames["#k"] ?? p.ExpressionAttributeNames["#group"]] === (v[":k"] ?? v[":group"]) && (!v[":after"] || r.id > v[":after"]) && (!v[":through"] || r.id <= v[":through"]) && (!v[":prefix"] || r.accountSort?.startsWith(v[":prefix"])) && (!v[":now"] || r.dueAt <= v[":now"])).map(([,r]) => r);
@@ -102,12 +108,13 @@ beforeEach(async () => {
   h.disabledUsers.clear();
   h.writeErrors.length = 0;
   h.reads.length = 0; h.readFailureId = undefined; h.userReads.length = 0; h.queries.length = 0; h.userError = undefined; h.queryError = undefined;
+  h.deletionQuery.mockReset();
   h.batch.mockReset().mockImplementation((p: { RequestItems: Record<string, { Keys: { id: string }[] }> }) => ({
     Responses: Object.fromEntries(Object.entries(p.RequestItems).map(([name, request]) => [name,
       request.Keys.map(key => h.records.get(`${name}:${key.id}`)).filter(Boolean).map(item => structuredClone(item)).reverse(),
     ])),
   }));
-  Object.assign(process.env, { COMMUNICATION_TABLE: "comms", ACTIVITY_TABLE: "Activity", ACCOUNT_TABLE: "Account", CONTACT_TABLE: "Contact", PRIOR_CARRIER_TABLE: "PriorCarrier", LEAD_REPLY_TABLE: "LeadReply", USER_POOL_ID: "pool", CRM_BASE_URL: "https://crm.example.test", QUOTE_TABLE: "Quote", CERTIFICATE_TABLE: "Certificate", DOCUMENT_TABLE: "Document" });
+  Object.assign(process.env, { COMMUNICATION_TABLE: "comms", ACTIVITY_TABLE: "Activity", ACCOUNT_TABLE: "Account", CONTACT_TABLE: "Contact", PRIOR_CARRIER_TABLE: "PriorCarrier", LEAD_REPLY_TABLE: "LeadReply", USER_POOL_ID: "pool", CRM_BASE_URL: "https://crm.example.test", QUOTE_TABLE: "Quote", CERTIFICATE_TABLE: "Certificate", DOCUMENT_TABLE: "Document", LEAD_DELETION_POLICY_TABLE: 'Policy', LEAD_DELETION_POLICY_INDEX: 'gsi-Account.policies', LEAD_DELETION_INVOICE_TABLE: 'Invoice', LEAD_DELETION_INVOICE_INDEX: 'gsi-Account.invoices' });
   h.c = { frontCompanyId: "cmp_a", environment: "main", defaultUserId: "brian", frontSender: "sales@protectmyhoa.com", frontInboxId: "inb_a", frontChannelId: "cha_a", holidays: [], paused: false, activatedAt: "2026-09-01T00:00:00Z", allowedInboxIds: [], testRecipients: [], dialpadNumbers: ["+15082332261", "+16175550123"], sharedSmsNumber: "+15082332261", version: 1 };
   await save(row("ELIGIBILITY", "eligibility:brian", { userId: "brian", name: "Brian Cole", email: "brian@example.com", salesperson: true, champion: true, enabled: true }));
   await save(row("TEAM_ROUTING", "team-routing", { ownerId: "brian", members: [] }));
@@ -222,6 +229,80 @@ describe('deleted lead cleanup', () => {
   it.each(['Policy','Invoice'])('preserves accounts with %s records', async model => {
     await lead(); h.records.set(`${model}:real`, { id: 'real', accountId: 'a1' });
     await expect((await import('../../amplify/functions/communications/deletion')).prepareLeadDeletion('a1', 'Willow HOA', 'admin')).rejects.toThrow(/cannot be deleted/);
+    expect(record('deleted-account:a1')).toBeUndefined();
+  });
+  it('permits a lead with no policies or invoices despite unrelated table history and empty lazy-relation pages', async () => {
+    const policies = vi.fn().mockResolvedValue({ data: [], nextToken: 'unrelated-policy-page' });
+    const invoices = vi.fn().mockResolvedValue({ data: [], nextToken: 'unrelated-invoice-page' });
+    h.records.set('Account:a1', { id: 'a1', policies, invoices });
+    for (let i = 0; i < 25; i++) {
+      h.records.set(`Policy:unrelated-${i}`, { id: `unrelated-${i}`, accountId: 'another-account' });
+      h.records.set(`Invoice:unrelated-${i}`, { id: `unrelated-${i}`, accountId: 'another-account' });
+    }
+    await (await import('../../amplify/functions/communications/deletion')).prepareLeadDeletion('a1', 'Willow HOA', 'admin');
+    expect(record('deleted-account:a1')?.data).toMatchObject({ accountId: 'a1', actor: 'admin' });
+    expect(policies).not.toHaveBeenCalled();
+    expect(invoices).not.toHaveBeenCalled();
+    expect(h.queries.filter(query => query.Select === 'COUNT')).toEqual(['Policy', 'Invoice'].map(model => ({
+      TableName: model,
+      IndexName: `gsi-Account.${model === 'Policy' ? 'policies' : 'invoices'}`,
+      KeyConditionExpression: '#accountId = :accountId',
+      ExpressionAttributeNames: { '#accountId': 'accountId' },
+      ExpressionAttributeValues: { ':accountId': 'a1' },
+      Select: 'COUNT',
+      Limit: 1,
+    })));
+  });
+  it.each(['ACTIVE', 'CANCELLED', 'EXPIRED'])('preserves a lead with a real %s policy', async status => {
+    h.records.set('Policy:real', { id: 'real', accountId: 'a1', status });
+    await expect((await import('../../amplify/functions/communications/deletion')).prepareLeadDeletion('a1', 'Willow HOA', 'admin')).rejects.toThrow('An account with policies cannot be deleted as a lead');
+    expect(record('deleted-account:a1')).toBeUndefined();
+  });
+  it.each(['Policy', 'Invoice'])('follows empty %s index pages before deciding that no records exist', async model => {
+    const cursor = { id: 'continuation', accountId: 'a1' };
+    let reads = 0;
+    h.deletionQuery.mockImplementation((input: any) => input.TableName === model
+      ? reads++ === 0 ? { Count: 0, LastEvaluatedKey: cursor } : { Count: 0, LastEvaluatedKey: {} }
+      : undefined);
+    await (await import('../../amplify/functions/communications/deletion')).prepareLeadDeletion('a1', 'Willow HOA', 'admin');
+    expect(record('deleted-account:a1')).toBeDefined();
+    const queries = h.queries.filter(query => query.TableName === model);
+    expect(queries).toHaveLength(2);
+    expect(queries[0].ExclusiveStartKey).toBeUndefined();
+    expect(queries[1].ExclusiveStartKey).toEqual(cursor);
+  });
+  it.each(['Policy', 'Invoice'])('preserves a lead when a later %s index page contains a matching record', async model => {
+    let reads = 0;
+    h.deletionQuery.mockImplementation((input: any) => input.TableName === model
+      ? reads++ === 0 ? { Count: 0, LastEvaluatedKey: { id: 'continuation', accountId: 'a1' } } : { Count: 1 }
+      : undefined);
+    await expect((await import('../../amplify/functions/communications/deletion')).prepareLeadDeletion('a1', 'Willow HOA', 'admin')).rejects.toThrow(/cannot be deleted/);
+    expect(h.queries.filter(query => query.TableName === model)).toHaveLength(2);
+    expect(record('deleted-account:a1')).toBeUndefined();
+  });
+  it.each(['Policy', 'Invoice'])('blocks deletion when the %s index cannot be read', async model => {
+    h.deletionQuery.mockImplementation((input: any) => {
+      if (input.TableName === model) throw new Error('Access denied');
+    });
+    await expect((await import('../../amplify/functions/communications/deletion')).prepareLeadDeletion('a1', 'Willow HOA', 'admin')).rejects.toThrow(new RegExp(`Could not verify this lead.s ${model === 'Policy' ? 'policies' : 'billing records'}`));
+    expect(record('deleted-account:a1')).toBeUndefined();
+  });
+  it.each(['LEAD_DELETION_POLICY_TABLE', 'LEAD_DELETION_POLICY_INDEX', 'LEAD_DELETION_INVOICE_TABLE', 'LEAD_DELETION_INVOICE_INDEX'])('blocks deletion if %s is not configured', async setting => {
+    delete process.env[setting];
+    await expect((await import('../../amplify/functions/communications/deletion')).prepareLeadDeletion('a1', 'Willow HOA', 'admin')).rejects.toThrow(/Could not verify this lead.s/);
+    expect(record('deleted-account:a1')).toBeUndefined();
+  });
+  it.each([undefined, null, '0', -1, 0.5, Number.NaN])('blocks deletion for an invalid policy count %s', async Count => {
+    h.deletionQuery.mockResolvedValueOnce({ Count });
+    await expect((await import('../../amplify/functions/communications/deletion')).prepareLeadDeletion('a1', 'Willow HOA', 'admin')).rejects.toThrow(/Could not verify this lead.s policies/);
+    expect(record('deleted-account:a1')).toBeUndefined();
+  });
+  it.each(['Policy', 'Invoice'])('blocks deletion when a %s index continuation repeats', async model => {
+    h.deletionQuery.mockImplementation((input: any) => input.TableName === model
+      ? { Count: 0, LastEvaluatedKey: { id: 'repeated', accountId: 'a1' } }
+      : undefined);
+    await expect((await import('../../amplify/functions/communications/deletion')).prepareLeadDeletion('a1', 'Willow HOA', 'admin')).rejects.toThrow(new RegExp(`Could not verify this lead.s ${model === 'Policy' ? 'policies' : 'billing records'}`));
+    expect(h.queries.filter(query => query.TableName === model)).toHaveLength(2);
     expect(record('deleted-account:a1')).toBeUndefined();
   });
   it('fences a deletion that occurs during send preparation', async () => {
