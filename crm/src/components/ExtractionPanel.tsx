@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import {
   client,
   fmtDate,
@@ -30,6 +30,7 @@ import {
 } from "../lib/extractionMatch";
 import { useAsyncResource } from "../lib/useAsyncResource";
 import { SaveStatus, useSaveStatus } from "./SaveStatus";
+import "./ExtractionPanel.css";
 
 /**
  * AI document extraction: kick off the Claude extraction over the account's
@@ -345,19 +346,20 @@ function CandidateRow<E>({
   const identical = match.verdict === "identical";
   const bits = detail.filter(Boolean) as string[];
   return (
-    <tr style={identical ? { opacity: 0.55 } : undefined}>
-      <td>
+    <tr className={identical ? "extraction-row-unchanged" : checked ? "extraction-row-selected" : undefined}>
+      <td className="extraction-selection">
         <input
           type="checkbox"
+          aria-label={`Select ${kind.toLowerCase()}: ${title}`}
           checked={checked && !identical}
           disabled={identical}
           title={identical ? "Already on the record — nothing to write" : undefined}
           onChange={(e) => onToggle(e.target.checked)}
         />
       </td>
-      <td>{kind}</td>
-      <td className="small muted">{current || "—"}</td>
-      <td>
+      <th scope="row">{kind}</th>
+      <td className="extraction-current">{current || "—"}</td>
+      <td className="extraction-value">
         <strong>{title}</strong>
         {bits.length ? <div className="small muted">{bits.join(" · ")}</div> : null}
       </td>
@@ -366,22 +368,23 @@ function CandidateRow<E>({
           {VERDICT_LABEL[match.verdict]}
         </span>
       </td>
-      <td className="small muted" style={{ maxWidth: 320 }}>
+      <td className="extraction-evidence">
         {match.verdict === "new" ? (
           `Creates a ${kind} record`
         ) : identical ? (
           "Already matches the record — nothing will be written"
         ) : (
-          <>
-            Updates the matching {kind.toLowerCase()}:
-            <ul style={{ margin: "2px 0 0", paddingLeft: 16 }}>
+          <details className="extraction-disclosure">
+            <summary>View changes</summary>
+            <p>Updates the matching {kind.toLowerCase()}:</p>
+            <ul>
               {match.changes.map((c) => (
                 <li key={c.field}>
                   {fieldLabel(c.field)}: {shownValue(c.from)} → {shownValue(c.to)}
                 </li>
               ))}
             </ul>
-          </>
+          </details>
         )}
       </td>
     </tr>
@@ -416,6 +419,7 @@ export default function ExtractionPanel({
   account: Account;
   onChange: (a: Account) => void;
 }) {
+  const reviewId = useId();
   const [starting, setStarting] = useState(false);
   // `error` now belongs to `start()` alone; `apply()`'s whole lifecycle —
   // in-flight, applied, failed — is the one state machine below.
@@ -797,18 +801,25 @@ export default function ExtractionPanel({
     );
   }
 
-  return (
-    <div className="card">
-      <h2>AI data extraction</h2>
-      <p className="muted small">
-        Reads every OCR'd document on this account and extracts the datapoints
-        the CRM tracks — with evidence, so you can verify before anything is
-        written to the record.
-      </p>
+  const extractedFields = result ? fieldDefsFor(account).filter(def => {
+    const field = result[def.key] as ExtractedField | undefined;
+    return field && !isEmpty(field.value);
+  }) : [];
+  const reviewCount = extractedFields.length + contactCandidates.length + lossCandidates.length + buildingCandidates.length;
+  const selectedCount = extractedFields.filter(def => selected[def.key]).length
+    + contactCandidates.filter(c => selectedContacts[c.i] && c.match.verdict !== "identical").length
+    + lossCandidates.filter(l => selectedLosses[l.i] && l.match.verdict !== "identical").length
+    + buildingCandidates.filter(b => selectedBuildings[b.i] && b.match.verdict !== "identical").length;
 
-      <div className="toolbar">
+  return (
+    <section className="card extraction-panel" aria-label="Extracted data">
+      <div className="extraction-heading">
+        <div>
+          <h2>Extracted data</h2>
+          <p>Review values from your documents before applying them to this account.</p>
+        </div>
         <button
-          className="primary"
+          className={result ? "secondary" : "primary"}
           disabled={starting || status === "PENDING" || status === "PROCESSING"}
           onClick={start}
         >
@@ -818,74 +829,84 @@ export default function ExtractionPanel({
               ? "Starting…"
               : result
                 ? "Re-run extraction"
-                : "Extract data from documents"}
+                : "Extract data"}
         </button>
-        {status === "FAILED" && (
-          <span className="error-text">
-            {account.extractionError ?? "Extraction failed"}
-          </span>
-        )}
-        {error && <span className="error-text">{error}</span>}
       </div>
+      {status === "FAILED" && <p className="error-text extraction-feedback" role="alert">{account.extractionError ?? "Extraction failed"}</p>}
+      {error && <p className="error-text extraction-feedback" role="alert">{error}</p>}
 
       {result && status === "COMPLETE" && (
         <>
           {result.summary && (
-            <p className="small" style={{ background: "#f0f7fb", padding: "10px 12px", borderRadius: 6 }}>
-              {result.summary}
-            </p>
+            <details className="extraction-summary extraction-disclosure">
+              <summary>Extraction summary</summary>
+              <p>{result.summary}</p>
+            </details>
           )}
 
+          <div className="extraction-review-heading">
+            <div className="extraction-review-counts">
+              <strong>{reviewCount} item{reviewCount === 1 ? "" : "s"} to review</strong>
+              <span aria-live="polite">{selectedCount} selected</span>
+              {alreadyApplied && <span className="badge gray">Previously applied</span>}
+            </div>
           <button
             className="secondary"
-            style={{ marginBottom: showReview ? 10 : 0 }}
+            aria-expanded={showReview}
+            aria-controls={reviewId}
             onClick={() => setShowReview((s) => !s)}
           >
-            {showReview ? "▾ Hide extracted data" : "▸ Review & apply extracted data"}
+            {showReview ? "Hide review" : "Review extracted data"}
           </button>
+          </div>
 
           {showReview && (
-          <>
-          <div className="table-wrap">
-            <table>
+          <div id={reviewId}>
+          {reviewCount === 0 ? <p className="extraction-empty">No values found to review. Add another document or re-run extraction.</p> : <div className="table-wrap extraction-table-wrap">
+            <table className="extraction-table" aria-label="Extracted values to review">
+              <colgroup><col className="extraction-col-select" /><col className="extraction-col-field" /><col className="extraction-col-current" /><col className="extraction-col-value" /><col className="extraction-col-review" /><col className="extraction-col-evidence" /></colgroup>
               <thead>
                 <tr>
-                  <th></th>
+                  <th scope="col"><span className="extraction-sr-only">Select</span></th>
                   <th>Field</th>
                   <th>Current</th>
                   <th>Extracted</th>
-                  <th>Confidence</th>
-                  <th>Evidence</th>
+                  <th>Review</th>
+                  <th>Source / changes</th>
                 </tr>
               </thead>
               <tbody>
-                {fieldDefsFor(account).map((def) => {
+                {extractedFields.map((def) => {
                   const f = result[def.key] as ExtractedField | undefined;
                   if (!f || isEmpty(f.value)) return null;
                   const cur = def.current(account);
                   const extracted = def.display ? def.display(f.value) : fmtVal(f.value);
                   return (
-                    <tr key={def.key}>
-                      <td>
+                    <tr key={def.key} className={selected[def.key] ? "extraction-row-selected" : undefined}>
+                      <td className="extraction-selection">
                         <input
                           type="checkbox"
+                          aria-label={`Select ${def.label.toLowerCase()}`}
                           checked={!!selected[def.key]}
                           onChange={(e) =>
                             setSelected((s) => ({ ...s, [def.key]: e.target.checked }))
                           }
                         />
                       </td>
-                      <td>{def.label}</td>
-                      <td className="small muted">{cur || "—"}</td>
-                      <td>
+                      <th scope="row">{def.label}</th>
+                      <td className="extraction-current">{cur || "—"}</td>
+                      <td className="extraction-value">
                         <strong>{extracted}</strong>
                       </td>
                       <td>
                         <Badge {...statusBadge(CONFIDENCE_BADGE, f.confidence)} />
                       </td>
-                      <td className="small muted" style={{ maxWidth: 320 }}>
-                        {f.evidence ?? "—"}
-                        {f.source && <div>({f.source})</div>}
+                      <td className="extraction-evidence">
+                        {f.evidence || f.source ? <details className="extraction-disclosure">
+                          <summary>View evidence</summary>
+                          {f.evidence && <p>{f.evidence}</p>}
+                          {f.source && <p className="extraction-source"><strong>Source</strong>{f.source}</p>}
+                        </details> : "—"}
                       </td>
                     </tr>
                   );
@@ -991,9 +1012,9 @@ export default function ExtractionPanel({
                 })}
               </tbody>
             </table>
-          </div>
+          </div>}
 
-          <div className="form-actions">
+          <div className="form-actions extraction-actions">
             <button
               className="primary"
               disabled={applyStatus.busy}
@@ -1018,10 +1039,10 @@ export default function ExtractionPanel({
             )}
             <SaveStatus {...applyStatus.status} />
           </div>
-          </>
+          </div>
           )}
         </>
       )}
-    </div>
+    </section>
   );
 }

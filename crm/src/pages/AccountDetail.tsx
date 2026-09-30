@@ -273,7 +273,7 @@ export default function AccountDetail({ profile }: { profile: UserProfile }) {
       {activeTab === "invoices" && <InvoicesTab accountId={account.id} />}
       {activeTab === "financing" && <FinancingTab account={account} />}
       {activeTab === "documents" && (
-        <>
+        <div className="account-documents">
           <div className="card">
             <DocumentsPanel
               entityType="ACCOUNT"
@@ -285,7 +285,7 @@ export default function AccountDetail({ profile }: { profile: UserProfile }) {
           </div>
           <ExtractionPanel account={account} onChange={setAccount} />
           <FormsTab account={account} profile={profile} />
-        </>
+        </div>
       )}
       {activeTab === "certificates" && (
         <CertificatesTab account={account} profile={profile} sourceCommunicationId={searchParams.get("request") ?? undefined} />
