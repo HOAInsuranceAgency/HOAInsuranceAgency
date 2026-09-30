@@ -24,6 +24,31 @@ describe('dashboard attribution', () => {
     expect(new Set(series.map(person => person.color)).size).toBe(series.length);
     expect(salespersonSeries({ team: [...team].reverse(), entries: {} })).toEqual(series);
   });
+  it('keeps colors and duplicate-name labels stable when scoped former owners appear or disappear', () => {
+    // a and m hash to the same original palette slot. A non-salesperson must
+    // reserve that slot consistently, even when they have no rows in a tab.
+    const team = [
+      { userId: 'a', name: 'Alex', salesperson: false, enabled: false },
+      { userId: 'm', name: 'Alex', salesperson: true, enabled: true },
+      { userId: 'other', name: 'Other', salesperson: true, enabled: true },
+    ] as TeamEligibility[];
+    const narrow = salespersonSeries({ team, entries: {} });
+    const broad = salespersonSeries({ team, entries: { former: { accountId: 'former', salespersonId: 'a', plan: emptyCommercialPlan('former') } } });
+    expect(narrow.find(person => person.key === 'm')).toEqual(broad.find(person => person.key === 'm'));
+    expect(narrow.find(person => person.key === 'm')?.label).toBe('Alex (m)');
+    expect(new Set(broad.map(person => person.color)).size).toBe(broad.length);
+  });
+  it('does not let unavailable owners shift roster colors or each other when report subsets change', () => {
+    const team = [{ userId: 'm', name: 'Morgan', salesperson: true }] as TeamEligibility[];
+    const entry = (salespersonId: string) => ({ accountId: salespersonId, salespersonId, plan: emptyCommercialPlan(salespersonId) });
+    const base = salespersonSeries({ team, entries: {} });
+    const first = salespersonSeries({ team, entries: { a: entry('a') } });
+    const second = salespersonSeries({ team, entries: { a: entry('a'), z: entry('z') } });
+    expect(first.find(person => person.key === 'm')).toEqual(base.find(person => person.key === 'm'));
+    expect(second.find(person => person.key === 'm')).toEqual(base.find(person => person.key === 'm'));
+    expect(second.find(person => person.key === 'a')).toEqual(first.find(person => person.key === 'a'));
+    expect(new Set(second.map(person => person.color)).size).toBe(second.length);
+  });
   it('bounds recent activity by a fixed snapshot, including cutoff and excluding future events', () => {
     const now = new Date('2026-09-29T12:00:00Z');
     expect(isInLast30Days('2026-08-30T12:00:00Z', now)).toBe(true);

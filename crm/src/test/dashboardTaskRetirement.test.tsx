@@ -5,10 +5,16 @@ const h = vi.hoisted(() => ({ list: vi.fn(), retiredTasks: vi.fn() }));
 vi.mock('../lib/client', async original => ({
   ...await original<typeof import('../lib/client')>(),
   client: { models: Object.fromEntries([
-    ...['Account', 'Quote', 'Policy', 'Carrier', 'Invoice', 'PfLoan', 'InvoiceLine', 'PfLoanPayment'].map(name => [name, { list: h.list }]),
+    ...['Account', 'Quote', 'Policy', 'Carrier', 'Invoice', 'PfLoan', 'InvoiceLine', 'PfLoanPayment'].map(name => [name, { list: h.list, listAccountByStageAndName: h.list }]),
     ['MarketingTask', { list: h.retiredTasks }],
   ]) },
 }));
+vi.mock('../lib/communications', () => ({ communicationRequest: async (operation: string) => {
+  if (operation === 'team') return { team: [] };
+  if (operation === 'dashboardInterestPage' || operation === 'dashboardLeadPlansPage') return { items: [] };
+  if (operation === 'dashboardAssignments') return { items: [], accounts: [] };
+  throw new Error(`Unexpected dashboard operation: ${operation}`);
+} }));
 import PerformanceTab from '../pages/dashboard/PerformanceTab';
 import LeadsTab from '../pages/dashboard/LeadsTab';
 import FinanceTab from '../pages/dashboard/FinanceTab';

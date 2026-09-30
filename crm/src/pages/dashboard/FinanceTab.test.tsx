@@ -3,18 +3,21 @@ import { fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 
 const h = vi.hoisted(() => ({
-  rows: {} as Record<string, unknown[]>,
-  loadCommercial: vi.fn(),
+  rows: {} as Record<string, Record<string, unknown>[]>,
+  loadAssignments: vi.fn(),
   saveReport: vi.fn(),
 }));
 vi.mock('../../lib/client', async original => ({
   ...await original<typeof import('../../lib/client')>(),
   client: { models: Object.fromEntries(['Account', 'Invoice', 'InvoiceLine', 'PfLoan', 'Policy', 'PfLoanPayment']
-    .map(model => [model, { list: vi.fn(async () => ({ data: h.rows[model] ?? [] })) }])) },
+    .map(model => [model, { list: vi.fn(async () => ({ data: (h.rows[model] ?? []).map(row => model === 'Invoice' ? { ...row, lines: async () => ({ data: [] }) } : row) })) }])) },
 }));
-vi.mock('../../lib/commercial', async original => ({
-  ...await original<typeof import('../../lib/commercial')>(), loadCommercial: h.loadCommercial,
-}));
+vi.mock('../../lib/dashboardAssignments', () => ({ loadAssignments: h.loadAssignments }));
+vi.mock('../../lib/communications', () => ({ communicationRequest: async (operation: string, input: { policyIds?: string[] }) => {
+  if (operation === 'dashboardInterestPage') return { items: h.rows.PfLoanPayment ?? [] };
+  if (operation === 'dashboardPolicyAnchors') return { items: [], missingIds: input.policyIds ?? [] };
+  throw new Error(`Unexpected read: ${operation}`);
+} }));
 vi.mock('../../lib/reportDownload', async original => ({
   ...await original<typeof import('../../lib/reportDownload')>(), saveReport: h.saveReport,
 }));
@@ -27,7 +30,8 @@ beforeEach(() => {
     PfLoan: [{ id: 'l', accountId: 'a', policyId: 'p', status: 'ACTIVE', balance: 800, amountFinanced: 800, paidThrough: 0 }],
     PfLoanPayment: [{ id: 'payment', accountId: 'a', postedAt: new Date().toISOString(), interest: 12.34 }],
   };
-  h.loadCommercial.mockReset().mockResolvedValue({
+  h.loadAssignments.mockReset().mockResolvedValue({
+    accounts: h.rows.Account,
     entries: { a: { accountId: 'a', salespersonId: 'sam' } },
     team: [{ userId: 'sam', name: 'Sam Rivera', salesperson: true }],
   });
@@ -55,7 +59,7 @@ it('shows incomplete overlapping A/R and exports the portfolio salesperson', asy
 });
 
 it('does not show or export a misleading unassigned report if attribution fails', async () => {
-  h.loadCommercial.mockRejectedValue(new Error('Assignments unavailable'));
+  h.loadAssignments.mockRejectedValue(new Error('Assignments unavailable'));
   render(<MemoryRouter><FinanceTab /></MemoryRouter>);
   expect(await screen.findByText('Assignments unavailable')).toBeInTheDocument();
   expect(screen.queryByRole('heading', { name: 'Premium finance portfolio' })).not.toBeInTheDocument();

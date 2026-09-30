@@ -376,20 +376,6 @@ a:hover { text-decoration: underline; }
 /* A tile whose number is itself the alarm (overdue money, attention count). */
 .stat.hot .n { color: var(--red); }
 
-/* The Overview attention queue: severity stripe, what, where the work is. */
-.attn { list-style: none; margin: 0; padding: 0; }
-.attn li { display: flex; gap: 12px; align-items: center; padding: 9px 6px; border-bottom: 1px solid var(--border); cursor: pointer; }
-.attn li:last-child { border-bottom: 0; }
-.attn li:hover { background: var(--blue-bg); }
-.attn li:focus-visible { background: var(--blue-bg); outline: 2px solid var(--accent); outline-offset: -2px; }
-.attn .stripe { width: 4px; height: 30px; border-radius: 2px; flex: none; }
-.attn .stripe.red { background: var(--red); }
-.attn .stripe.amber { background: #dd9a33; }
-.attn .stripe.blue { background: var(--accent); }
-.attn .what { flex: 1; min-width: 0; }
-.attn .what .d { color: var(--muted); font-size: 12.5px; }
-.attn .go { color: var(--accent-dark); font-size: 12.5px; white-space: nowrap; }
-
 /* Lead pipeline funnel: stage boxes with a proportional underline. */
 .funnel { display: flex; gap: 8px; }
 .funnel .stage { flex: 1; background: var(--bg); border: 1px solid var(--border); border-radius: 7px; padding: 8px 10px; position: relative; overflow: hidden; }

@@ -1,6 +1,8 @@
 import { ReportDownload } from "../../components/ReportDownload";
 import { acquisitionLabel, websiteFormLabel } from "../../../../shared/leadSource";
 import { loadCommercial, teammateName, type CommercialData } from '../../lib/commercial';
+import { EMPTY_LEADS_DATA, loadLeadsDashboard } from '../../lib/dashboardLeadData';
+import { unfinishedSelectedPackage } from '../../../../shared/dashboardLeadSelection';
 import { salespersonKey, salespersonSeries } from '../../lib/dashboardPeople';
 import { activeLeadQuotes, isOpenLead, leadPersonMetrics, PIPELINE_SERIES } from '../../lib/dashboardLeads';
 import { StackedBars, type ChartRow, type ChartSeries } from '../../components/StackedBars';
@@ -11,15 +13,11 @@ import { useLastContacts } from "../../lib/lastContact";
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
-  client,
   daysUntil,
   fmtDate,
   fmtDateTime,
   fmtMoney,
-  listAllPages,
-  type Account,
   type Quote,
-  type Policy,
 } from "../../lib/client";
 import {
   Badge,
@@ -36,17 +34,6 @@ import {
   type QuoteStanding,
 } from "../../lib/dashboardStats";
 import { TabFrame } from "./common";
-
-interface LeadsData {
-  leads: Account[];
-  clients: Account[];
-  quotes: Quote[];
-  policies: Policy[];
-  commercial: CommercialData;
-  asOf: string;
-}
-
-const EMPTY: LeadsData = { leads: [], clients: [], quotes: [], policies: [], commercial: { entries: {}, team: [] }, asOf: '' };
 
 interface LeadRow {
   id: string;
@@ -69,38 +56,10 @@ export default function LeadsTab() {
   const navigate = useNavigate();
   const [salespersonFilter, setSalespersonFilter] = useState('');
 
-  const res = useAsyncResource<LeadsData>(
-    async () => {
-      // Quotes are read unfiltered, not just the open set: the standing
-      // column must tell a declined-everywhere lead apart from an untouched
-      // one, and DECLINED/LOST are exactly the rows an open-only filter drops.
-      // No web-funnel reads here: LeadReply and UploadPortal rows carry the
-      // bearer tokens behind the public upload mutations, and
-      // uploadQuota.test.ts pins that no UI depends on reading them —
-      // surfacing that activity needs a tokenless aggregate query first.
-      const [leads, clients, quotes, policies] = await Promise.all([
-        listAllPages((nextToken) =>
-          client.models.Account.list({
-            filter: { stage: { eq: "LEAD" } },
-            nextToken,
-          })
-        ),
-        listAllPages((nextToken) =>
-          client.models.Account.list({
-            filter: { stage: { eq: "CLIENT" } },
-            nextToken,
-          })
-        ),
-        listAllPages((nextToken) => client.models.Quote.list({ nextToken })),
-        listAllPages((nextToken) => client.models.Policy.list({ nextToken })),
-      ]);
-      const commercial = await loadCommercial([...leads, ...clients].map(account => account.id));
-      return { leads, clients, quotes, policies, commercial, asOf: new Date().toISOString() };
-    },
-    [],
-    { initialData: EMPTY, errorMessage: "Failed to load the lead pipeline" }
-  );
-  const { leads, clients, quotes, policies, commercial, asOf } = res.data;
+  const res = useAsyncResource(loadLeadsDashboard, [], {
+    initialData: EMPTY_LEADS_DATA, errorMessage: "Failed to load the lead pipeline",
+  });
+  const { leads, clients, quotes, policies, commercial, selections, asOf } = res.data;
   const now = useMemo(() => new Date(asOf || Date.now()), [asOf]);
   const today = agencyDay(now.toISOString());
   const people = useMemo(() => salespersonSeries(commercial), [commercial]);
@@ -118,24 +77,31 @@ export default function LeadsTab() {
 
   const activeLeads = useMemo(() => [
     ...leads.filter(account => isOpenLead(account, commercial.entries)),
-    ...clients.filter(account => {
-      const plan = commercial.entries[account.id]?.plan;
-      return plan && pendingCommission(plan, quotesByLead.get(account.id) ?? [], today).unfinished;
-    }),
-  ], [leads, clients, commercial, quotesByLead, today]);
+    ...clients.filter(account => unfinishedSelectedPackage(selections[account.id], quotesByLead.get(account.id) ?? [])),
+  ], [leads, clients, commercial, selections, quotesByLead]);
   const selectedLeads = useMemo(() => salespersonSelection
     ? activeLeads.filter(account => salespersonKey(account.id, commercial.entries) === salespersonSelection)
     : [], [activeLeads, commercial, salespersonSelection]);
-  const contactHistory = useLastContacts(selectedLeads.map(account => account.id), res.data);
+  const worklistKey = `${asOf}:${salespersonSelection}:${selectedLeads.map(account => account.id).sort().join(',')}`;
+  const worklist = useAsyncResource<{ key: string; snapshot: typeof res.data | null; commercial: CommercialData }>(async () => ({
+    key: worklistKey,
+    snapshot: res.data,
+    commercial: salespersonSelection ? await loadCommercial(selectedLeads.map(account => account.id)) : { entries: {}, team: [] },
+  }), [worklistKey, res.data], { initialData: { key: '', snapshot: null, commercial: { entries: {}, team: [] } }, errorMessage: 'Could not load lead work details' });
+  const worklistReady = worklist.loaded && worklist.data.key === worklistKey && worklist.data.snapshot === res.data && !worklist.error;
+  const worklistLeads = useMemo(() => worklistReady ? selectedLeads.filter(account =>
+    salespersonKey(account.id, worklist.data.commercial.entries) === salespersonSelection
+  ) : [], [worklistReady, selectedLeads, worklist.data, salespersonSelection]);
+  const contactHistory = useLastContacts(worklistLeads.map(account => account.id), res.data);
   const metrics = useMemo(() => leadPersonMetrics({
     accounts: [...leads, ...clients], quotes, policies, pipelineAccounts: activeLeads,
-    entries: commercial.entries, series: people, now,
-  }), [leads, clients, quotes, policies, activeLeads, commercial, people, now]);
+    entries: commercial.entries, series: people, now, selections,
+  }), [leads, clients, quotes, policies, activeLeads, commercial, people, now, selections]);
 
   const rows = useMemo<LeadRow[]>(
     () =>
-      selectedLeads.map((l) => {
-        const entry = commercial.entries[l.id], forecast = entry ? pendingCommission(entry.plan, quotesByLead.get(l.id) ?? [], today) : null;
+      worklistLeads.map((l) => {
+        const entry = worklist.data.commercial.entries[l.id], forecast = entry ? pendingCommission(entry.plan, quotesByLead.get(l.id) ?? [], today) : null;
         return ({
         id: l.id,
         name: l.name,
@@ -144,14 +110,14 @@ export default function LeadsTab() {
         entered: l.createdAt ?? null,
         expires: l.currentPolicyExpiration ?? null,
         days: l.currentPolicyExpiration ? daysUntil(l.currentPolicyExpiration) : null,
-        standing: leadQuoteStanding(activeLeadQuotes(quotesByLead.get(l.id) ?? [], commercial.entries)),
+        standing: leadQuoteStanding(activeLeadQuotes(quotesByLead.get(l.id) ?? [], worklist.data.commercial.entries)),
         tiv: l.totalInsuredValue ?? null,
         city: l.city ?? null, state: l.state ?? null, form: websiteFormLabel(l.source),
         salespersonId: entry?.salespersonId,
-        salesperson: teammateName(entry?.salespersonId, commercial.team),
+        salesperson: teammateName(entry?.salespersonId, worklist.data.commercial.team),
         estimate: entry?.plan.estimatedCents ?? null, pending: forecast?.cents ?? null, basis: forecast?.label ?? 'No package options', partiallyBound: l.stage === 'CLIENT',
       }); }),
-    [selectedLeads, quotesByLead, contactHistory.contacts, commercial, today]
+    [worklistLeads, quotesByLead, contactHistory.contacts, worklist.data, today]
   );
 
   // Soonest incumbent expiration first: the lead about to renew with someone
@@ -188,13 +154,14 @@ export default function LeadsTab() {
       <div className="card">
         <div className="card-head">
           <h2>Lead work list</h2>
-          <ReportDownload disabled={!salespersonSelection || contactHistory.loading || !!contactHistory.error} report={{ title: "Lead work list", filters: `Open leads and packages being bound · sorted by ${sortKey} (${dir}) · Salesperson: ${people.find(person => person.key === salespersonSelection)?.label ?? 'Choose a salesperson'}`, sections: [{ title: "Leads", columns: ["Lead", "Salesperson", "City", "State", "Lead source", "Website form", "Estimated opportunity (USD)", "Pending commission (USD)", "Commission basis", "Last contact (local)", "Entered", "Incumbent expires", "Pipeline", "Quote count", "TIV (USD)"], rows: sorted.map(r => [r.name, r.salesperson, r.city, r.state, r.source, r.form, r.estimate == null ? null : r.estimate / 100, r.pending == null ? null : r.pending / 100, r.basis, r.lastContact ? fmtDateTime(r.lastContact) : "No contact recorded", r.entered?.slice(0, 10), r.expires, r.standing?.status ?? "Unworked", r.standing?.count ?? 0, r.tiv]) }] }} />
+          <ReportDownload disabled={!salespersonSelection || !worklistReady || worklist.loading || contactHistory.loading || !!contactHistory.error} report={{ title: "Lead work list", filters: `Open leads and packages being bound · sorted by ${sortKey} (${dir}) · Salesperson: ${people.find(person => person.key === salespersonSelection)?.label ?? 'Choose a salesperson'}`, sections: [{ title: "Leads", columns: ["Lead", "Salesperson", "City", "State", "Lead source", "Website form", "Estimated opportunity (USD)", "Pending commission (USD)", "Commission basis", "Last contact (local)", "Entered", "Incumbent expires", "Pipeline", "Quote count", "TIV (USD)"], rows: sorted.map(r => [r.name, r.salesperson, r.city, r.state, r.source, r.form, r.estimate == null ? null : r.estimate / 100, r.pending == null ? null : r.pending / 100, r.basis, r.lastContact ? fmtDateTime(r.lastContact) : "No contact recorded", r.entered?.slice(0, 10), r.expires, r.standing?.status ?? "Unworked", r.standing?.count ?? 0, r.tiv]) }] }} />
           <span className="muted small">sorted by incumbent expiration</span>
         </div>
         <p className="muted small">Last contact includes prospect emails, calls and texts in either direction. Times are shown in your local time zone.</p>
         <div className="toolbar"><label className="field">Salesperson<select required value={salespersonSelection} onChange={e => setSalespersonFilter(e.target.value)}><option value="">Choose a salesperson</option>{people.map(person => <option key={person.key} value={person.key}>{person.label}</option>)}</select></label></div>
+        {salespersonSelection && worklist.error && <p className="error-text" role="alert">{worklist.error} <button onClick={() => void worklist.refetch()}>Retry lead details</button></p>}
         {contactHistory.error && <p className="error-text">{contactHistory.error}</p>}
-        {!salespersonSelection ? <p className="muted">Choose a salesperson to view their lead work list.</p> : rows.length === 0 ? (
+        {!salespersonSelection ? <p className="muted">Choose a salesperson to view their lead work list.</p> : !worklistReady ? <p className="muted small">{worklist.error ? "Lead details are unavailable." : "Loading lead details…"}</p> : rows.length === 0 ? (
           <p className="muted small">No open leads or packages being bound for this salesperson.</p>
         ) : (
           <div className="table-wrap">
@@ -224,7 +191,7 @@ export default function LeadsTab() {
                       {r.partiallyBound && <div><span className="badge amber">Binding in progress</span></div>}
                     </td>
                     <td>{r.salesperson}</td><td>{r.city || '—'}</td><td>{r.state || '—'}</td><td>{r.form}</td>
-                    <td>{commercial.entries[r.id] ? <OpportunityEstimate plan={commercial.entries[r.id].plan} onSaved={plan => res.setData(data => ({ ...data, commercial: { ...data.commercial, entries: { ...data.commercial.entries, [r.id]: { ...data.commercial.entries[r.id], plan } } } }))} /> : 'Unavailable'}</td>
+                    <td>{worklist.data.commercial.entries[r.id] ? <OpportunityEstimate plan={worklist.data.commercial.entries[r.id].plan} onSaved={plan => worklist.setData(data => ({ ...data, commercial: { ...data.commercial, entries: { ...data.commercial.entries, [r.id]: { ...data.commercial.entries[r.id], plan } } } }))} /> : 'Unavailable'}</td>
                     <td><strong>{r.pending == null ? '—' : formatCommission(r.pending)}</strong><div className="muted small">{r.basis}</div></td>
                     <td>{r.source || "—"}</td>
                     <td>{contactHistory.loading ? "Loading…" : contactHistory.error ? "Unavailable" : r.lastContact ? fmtDateTime(r.lastContact) : "No contact recorded"}</td>

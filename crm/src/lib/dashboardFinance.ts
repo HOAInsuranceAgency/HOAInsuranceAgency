@@ -62,8 +62,32 @@ export function nonBilledReceivables(
     }
     return result;
   };
-  const billed = invoices.filter(invoice => invoice.status === 'SENT' || invoice.status === 'PROCESSING')
-    .map(invoice => ({ invoice, anchors: anchors(invoice, linePolicies.get(invoice.id)) }));
+  // Match once-indexed account/anchor buckets, not every loan against the
+  // entire invoice book. Keep a separate account-wide bucket for the legacy
+  // unanchored case: that ambiguity still overlaps every bill on its account.
+  interface BilledAccount {
+    all: Map<string, number>;
+    unanchored: Map<string, number>;
+    byAnchor: Map<string, Map<string, number>>;
+  }
+  const billedByAccount = new Map<string, BilledAccount>();
+  invoices.forEach((invoice, position) => {
+    if (invoice.status !== 'SENT' && invoice.status !== 'PROCESSING') return;
+    const invoiceId = invoice.id, accountId = invoice.accountId;
+    let billed = billedByAccount.get(accountId);
+    if (!billed) {
+      billed = { all: new Map(), unanchored: new Map(), byAnchor: new Map() };
+      billedByAccount.set(accountId, billed);
+    }
+    billed.all.set(invoiceId, position);
+    const invoiceAnchors = anchors(invoice, linePolicies.get(invoiceId));
+    if (!invoiceAnchors.size) billed.unanchored.set(invoiceId, position);
+    for (const key of invoiceAnchors) {
+      let bucket = billed.byAnchor.get(key);
+      if (!bucket) { bucket = new Map(); billed.byAnchor.set(key, bucket); }
+      bucket.set(invoiceId, position);
+    }
+  });
   let totalCents = 0, count = 0, unknown = 0;
   const overlaps: { loanId: string; invoiceIds: string[] }[] = [];
   for (const loan of loans) {
@@ -71,11 +95,23 @@ export function nonBilledReceivables(
     const principal = outstandingPrincipal(loan);
     if (principal === 0) continue;
     const loanAnchors = anchors(loan);
-    const matching = billed.filter(row => row.invoice.accountId === loan.accountId &&
-      // An unanchored legacy bill/loan cannot establish separate debt safely.
-      (!loanAnchors.size || !row.anchors.size || [...loanAnchors].some(key => row.anchors.has(key))));
-    if (matching.length) {
-      overlaps.push({ loanId: loan.id, invoiceIds: matching.map(row => row.invoice.id) });
+    const billed = billedByAccount.get(loan.accountId);
+    const matching = new Map<string, number>();
+    if (billed) {
+      if (!loanAnchors.size) {
+        for (const [id, position] of billed.all) matching.set(id, position);
+      } else {
+        for (const [id, position] of billed.unanchored) matching.set(id, position);
+        for (const key of loanAnchors) {
+          for (const [id, position] of billed.byAnchor.get(key) ?? []) matching.set(id, position);
+        }
+      }
+    }
+    if (matching.size) {
+      // Multiple anchors can name the same invoice. Deduplicate it and retain
+      // input order so the reconciliation list stays stable after indexing.
+      const invoiceIds = [...matching].sort((a, b) => a[1] - b[1]).map(([id]) => id);
+      overlaps.push({ loanId: loan.id, invoiceIds });
       continue;
     }
     if (principal == null) { unknown += 1; continue; }

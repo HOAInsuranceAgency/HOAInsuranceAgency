@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { CommercialEntry } from './commercial';
 import { interestIncomeBySalesperson, nonBilledReceivables, outstandingPrincipal, type FinanceLoan } from './dashboardFinance';
 
@@ -66,6 +66,55 @@ describe('non-billed financed receivables', () => {
   it('flags unanchored legacy billing instead of assuming it is separate debt', () => {
     expect(nonBilledReceivables([loan()], [{ id: 'legacy', accountId: 'account-1', status: 'SENT' }]).overlaps)
       .toEqual([{ loanId: 'loan-1', invoiceIds: ['legacy'] }]);
+  });
+
+  it('keeps legacy account-wide overlaps and deduplicates invoices reached through several anchors', () => {
+    const invoices = [
+      { id: 'both-anchors', accountId: 'account-1', policyId: 'policy-1', quoteId: 'quote-1', status: 'SENT' },
+      { id: 'legacy', accountId: 'account-1', status: 'PROCESSING' },
+      { id: 'other-policy', accountId: 'account-1', policyId: 'policy-2', status: 'SENT' },
+      { id: 'other-account', accountId: 'account-2', status: 'SENT' },
+    ];
+    const result = nonBilledReceivables([
+      loan({ quoteId: 'quote-1' }),
+      loan({ id: 'unanchored', policyId: null }),
+    ], invoices, [{ id: 'policy-1', accountId: 'account-1', quoteId: 'quote-1' }], [
+      { invoiceId: 'both-anchors', policyId: 'policy-1' },
+    ]);
+    expect(result.overlaps).toEqual([
+      { loanId: 'loan-1', invoiceIds: ['both-anchors', 'legacy'] },
+      { loanId: 'unanchored', invoiceIds: ['both-anchors', 'legacy', 'other-policy'] },
+    ]);
+  });
+
+  it('matches a large book by account and anchor without whole-book comparisons', () => {
+    const size = 2000;
+    let accountReads = 0;
+    // Include many policies on one account: an account-only grouping still
+    // degenerates into a quadratic anchor scan for a large association.
+    const loans = Array.from({ length: size }, (_, n) => loan({
+      id: `loan-${n}`, accountId: `account-${n % 2}`, policyId: `policy-${n}`,
+    }));
+    const invoices = Array.from({ length: size }, (_, n) => ({
+      id: `invoice-${n}`, status: 'SENT', policyId: `policy-${n}`,
+      get accountId() { accountReads += 1; return `account-${n % 2}`; },
+    }));
+    const anchorChecks = vi.spyOn(Set.prototype, 'has');
+    let checks = 0;
+    try {
+      const result = nonBilledReceivables(loans, invoices);
+      checks = anchorChecks.mock.calls.length;
+      expect(result.total).toBe(0);
+      expect(result.overlaps).toHaveLength(size);
+      expect(result.overlaps[0]).toEqual({ loanId: 'loan-0', invoiceIds: ['invoice-0'] });
+      expect(result.overlaps.at(-1)).toEqual({ loanId: `loan-${size - 1}`, invoiceIds: [`invoice-${size - 1}`] });
+    } finally {
+      anchorChecks.mockRestore();
+    }
+    // Count comparisons instead of elapsed time so this regression remains
+    // reliable on slow CI hosts while rejecting a loans × invoices walk.
+    expect(accountReads).toBeLessThan(size * 10);
+    expect(checks).toBeLessThan(size * 10);
   });
 
   it('falls back to original principal only before payments, and counts unknown balances', () => {

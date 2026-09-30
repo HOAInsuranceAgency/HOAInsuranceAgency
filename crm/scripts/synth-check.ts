@@ -51,7 +51,7 @@
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
-import { Stack, type App } from "aws-cdk-lib";
+import { CfnResource, Stack, type App } from "aws-cdk-lib";
 import type { CfnFunction, CfnEventInvokeConfig } from "aws-cdk-lib/aws-lambda";
 import type { CfnSchedule } from "aws-cdk-lib/aws-scheduler";
 
@@ -171,6 +171,20 @@ try {
   }
   const { checkAccountAccess } = await import("./check-account-access");
   checkAccountAccess(backend, outdir);
+  // Dashboard interest must use a backfilled time index without dropping the
+  // loan relation or account-access indexes already on the payment table.
+  const paymentTable = app.node.findAll().find((node): node is CfnResource =>
+    node instanceof CfnResource && node.cfnResourceType === "Custom::AmplifyDynamoDBTable" &&
+    node.node.path.endsWith("/PfLoanPayment/PfLoanPaymentTable/Default/Default"));
+  if (!paymentTable) throw new Error("Missing dashboard payment table");
+  const paymentTemplate = Stack.of(paymentTable).resolve(paymentTable._toCloudFormation());
+  const paymentProperties = Object.values(paymentTemplate.Resources as Record<string, { Properties: { globalSecondaryIndexes: { indexName: string; keySchema: { attributeName: string; keyType: string }[]; projection: { projectionType: string; nonKeyAttributes?: string[] } }[] } }>)[0].Properties;
+  const paymentIndexes = paymentProperties.globalSecondaryIndexes;
+  const receiptIndex = paymentIndexes.find(index => index.indexName === "dashboardPaymentsByDate");
+  if (!receiptIndex || JSON.stringify(receiptIndex.keySchema) !== JSON.stringify([{ attributeName: "__typename", keyType: "HASH" }, { attributeName: "postedAt", keyType: "RANGE" }]) || receiptIndex.projection.projectionType !== "INCLUDE" || !["accountId", "interest"].every(field => receiptIndex.projection.nonKeyAttributes?.includes(field))) throw new Error("Dashboard receipts must have a projected date index");
+  if (!paymentIndexes.some(index => index.indexName === "crmBy_loanId") || !paymentIndexes.some(index => index.indexName !== "crmBy_loanId" && index.keySchema.some(key => key.attributeName === "loanId"))) throw new Error("Dashboard index must preserve existing payment relation and access indexes");
+  const reportEnv = Stack.of(backend.communications.resources.lambda).resolve((backend.communications.resources.lambda.node.defaultChild as CfnFunction).environment);
+  if (reportEnv.variables.DASHBOARD_PAYMENT_INDEX !== "dashboardPaymentsByDate" || !reportEnv.variables.DASHBOARD_PAYMENT_TABLE || !reportEnv.variables.DASHBOARD_POLICY_TABLE) throw new Error("Dashboard reads must use the configured payment index and policy table");
   const marketingWorker = backend.marketingReportWorker.resources.lambda;
   const marketingEnv = Stack.of(marketingWorker).resolve((marketingWorker.node.defaultChild as CfnFunction).environment);
   if (Stack.of(marketingWorker) === Stack.of(backend.marketingReportApi.resources.lambda)) throw new Error("Marketing worker infrastructure must stay outside the crowded data stack");

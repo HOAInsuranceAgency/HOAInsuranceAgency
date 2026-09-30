@@ -1,50 +1,32 @@
 import { useMemo, useState } from "react";
 import { ReportDownload } from "../../components/ReportDownload";
 import { StackedBars, type ChartRow, type ChartSeries } from "../../components/StackedBars";
-import { client, fmtMoney, listAllPages, type Account, type Carrier, type Policy, type Quote } from "../../lib/client";
-import { loadCommercial } from "../../lib/commercial";
+import { client, fmtMoney, listAllPages, type Carrier, type Policy, type Quote } from "../../lib/client";
+import { loadAssignments, type AssignmentData } from "../../lib/dashboardAssignments";
 import { salespersonSeries } from "../../lib/dashboardPeople";
-import { performanceBySalesperson, type PerformanceMoneyRow } from "../../lib/dashboardPerformance";
+import { effectiveInWindow, performanceBySalesperson, type PerformanceMoneyRow } from "../../lib/dashboardPerformance";
 import { useAsyncResource } from "../../lib/useAsyncResource";
 import { localToday, TabFrame } from "./common";
 
+type PerformancePolicy = Pick<Policy, "id" | "accountId" | "carrierId" | "effectiveDate" | "premium" | "commissionPct" | "status">;
+type PerformanceQuote = Pick<Quote, "id" | "accountId" | "effectiveDate" | "status">;
 interface PerformanceData {
-  policies: Policy[];
-  carriers: Carrier[];
-  accounts: Account[];
-  quotes: Quote[];
-  commercial: Awaited<ReturnType<typeof loadCommercial>>;
+  policies: PerformancePolicy[];
+  carriers: Pick<Carrier, "id" | "name">[];
+  accounts: AssignmentData["accounts"];
+  quotes: PerformanceQuote[];
+  commercial: AssignmentData;
 }
-const EMPTY: PerformanceData = { policies: [], carriers: [], accounts: [], quotes: [], commercial: { entries: {}, team: [] } };
+const EMPTY: PerformanceData = { policies: [], carriers: [], accounts: [], quotes: [], commercial: { entries: {}, team: [], accounts: [] } };
 type Preset = "all" | "ytd" | "12mo" | "custom";
+const DECIDED_STATUSES = ["BOUND", "LOST", "DECLINED"] as const;
 
 export default function PerformanceTab() {
-  const res = useAsyncResource<PerformanceData>(async () => {
-    const [policies, carriers, accounts, quotes] = await Promise.all([
-      listAllPages(nextToken => client.models.Policy.list({ nextToken })),
-      listAllPages(nextToken => client.models.Carrier.list({ nextToken })),
-      listAllPages(nextToken => client.models.Account.list({ nextToken })),
-      listAllPages(nextToken => client.models.Quote.list({ nextToken })),
-    ]);
-    const commercial = await loadCommercial(accounts.map(account => account.id));
-    return { policies, carriers, accounts, quotes, commercial };
-  }, [], { initialData: EMPTY, errorMessage: "Failed to load dashboard" });
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [preset, setPreset] = useState<Preset>("all");
   const [excludeCancelled, setExcludeCancelled] = useState(true);
-  const series = useMemo(() => salespersonSeries(res.data.commercial), [res.data.commercial]);
-  const result = useMemo(() => performanceBySalesperson({
-    ...res.data, entries: res.data.commercial.entries, series, from, to, excludeCancelled,
-  }), [res.data, series, from, to, excludeCancelled]);
   const invalidRange = Boolean(from && to && from > to);
-  const exportFilters = `${from || "Beginning"} through ${to || "all dates"} · policy/quote effective dates · current account salesperson · cancelled policies ${excludeCancelled ? "excluded" : "included"} · ${result.missingCommissionPct} policies missing commission %`;
-  const commissionRows: ChartRow[] = result.people.map(person => ({ key: person.key, label: person.label, values: { [person.key]: person.commission } }));
-  const decidedPeople = result.people.filter(person => person.winRate != null);
-  const noDecisions = result.people.filter(person => person.winRate == null);
-  const winRateRows: ChartRow[] = decidedPeople.map(person => ({
-    key: person.key, label: `${person.label} · ${person.bound} / ${person.decided} won`, values: { [person.key]: person.winRate! * 100 },
-  }));
 
   function applyPreset(value: Exclude<Preset, "custom">) {
     setPreset(value);
@@ -61,7 +43,7 @@ export default function PerformanceTab() {
     }
   }
 
-  return <TabFrame res={res}>
+  return <>
     <div className="chip-row" style={{ marginBottom: 12, flexWrap: "wrap" }}>
       {([["all", "All time"], ["ytd", "YTD"], ["12mo", "Last 12 mo"]] as const).map(([value, label]) => <button key={value} className={preset === value ? "on" : ""} onClick={() => applyPreset(value)}>{label}</button>)}
       <button className={preset === "custom" ? "on" : ""} onClick={() => setPreset("custom")}>Custom…</button>
@@ -72,7 +54,49 @@ export default function PerformanceTab() {
       <div className="field"><label htmlFor="dashboard-effective-from">Effective from</label><input id="dashboard-effective-from" type="date" value={from} onChange={event => setFrom(event.target.value)} /></div>
       <div className="field"><label htmlFor="dashboard-effective-to">Effective to</label><input id="dashboard-effective-to" type="date" value={to} onChange={event => setTo(event.target.value)} /></div>
     </div></div>}
-    {invalidRange ? <p className="error-text" role="alert">The start date must be on or before the end date.</p> : <>
+    {invalidRange ? <p className="error-text" role="alert">The start date must be on or before the end date.</p> :
+      <PerformanceSnapshot key={`${from}|${to}|${excludeCancelled}`} from={from} to={to} excludeCancelled={excludeCancelled} />}
+  </>;
+}
+
+/** A new filter mounts a new snapshot, so old amounts can never be exported
+ * beneath the new window's labels while the scoped reads are in flight. */
+function PerformanceSnapshot({ from, to, excludeCancelled }: { from: string; to: string; excludeCancelled: boolean }) {
+  const res = useAsyncResource<PerformanceData>(async () => {
+    const dateFilter = from || to ? { effectiveDate: { ...(from ? { ge: from } : {}), ...(to ? { le: to } : {}) } } : {};
+    const [rawPolicies, carriers, rawQuotes] = await Promise.all([
+      listAllPages(nextToken => client.models.Policy.list({
+        nextToken,
+        ...(from || to || excludeCancelled ? { filter: { ...dateFilter, ...(excludeCancelled ? { status: { ne: "CANCELLED" as const } } : {}) } } : {}),
+        selectionSet: ["id", "accountId", "carrierId", "effectiveDate", "premium", "commissionPct", "status"],
+      })),
+      listAllPages(nextToken => client.models.Carrier.list({ nextToken, selectionSet: ["id", "name"] })),
+      listAllPages(nextToken => client.models.Quote.list({
+        nextToken,
+        filter: { ...dateFilter, or: DECIDED_STATUSES.map(status => ({ status: { eq: status } })) },
+        selectionSet: ["id", "accountId", "effectiveDate", "status"],
+      })),
+    ]);
+    // Scope account/workflow reads to rows that actually contribute. This also
+    // preserves undated all-time production without requesting every CRM account.
+    const policies = rawPolicies.filter(policy => (!excludeCancelled || policy.status !== "CANCELLED") && effectiveInWindow(policy.effectiveDate, from, to));
+    const quotes = rawQuotes.filter(quote => DECIDED_STATUSES.some(status => status === quote.status) && effectiveInWindow(quote.effectiveDate, from, to));
+    const commercial = await loadAssignments([...new Set([...policies, ...quotes].map(row => row.accountId))]);
+    return { policies, carriers, quotes, accounts: commercial.accounts, commercial };
+  }, [from, to, excludeCancelled], { initialData: EMPTY, errorMessage: "Failed to load dashboard" });
+  const series = useMemo(() => salespersonSeries(res.data.commercial), [res.data.commercial]);
+  const result = useMemo(() => performanceBySalesperson({
+    ...res.data, entries: res.data.commercial.entries, series, from, to, excludeCancelled,
+  }), [res.data, series, from, to, excludeCancelled]);
+  const exportFilters = `${from || "Beginning"} through ${to || "all dates"} · policy/quote effective dates · current account salesperson · cancelled policies ${excludeCancelled ? "excluded" : "included"} · ${result.missingCommissionPct} policies missing commission %`;
+  const commissionRows: ChartRow[] = result.people.map(person => ({ key: person.key, label: person.label, values: { [person.key]: person.commission } }));
+  const decidedPeople = result.people.filter(person => person.winRate != null);
+  const noDecisions = result.people.filter(person => person.winRate == null);
+  const winRateRows: ChartRow[] = decidedPeople.map(person => ({
+    key: person.key, label: `${person.label} · ${person.bound} / ${person.decided} won`, values: { [person.key]: person.winRate! * 100 },
+  }));
+
+  return <TabFrame res={res}>
       <div className="dashboard-chart-grid">
         <div className="card">
           <div className="card-head"><h2>Est. commission per person</h2><ReportDownload report={{ title: "Estimated commission per person", filters: exportFilters, sections: [{ title: "Estimated commission", columns: ["Salesperson", "Estimated commission (USD)", "Policy count", "Policies missing commission %"], rows: result.people.map(person => [person.label, person.commission, person.policies, person.missingCommissionPct]) }] }} /></div>
@@ -93,7 +117,6 @@ export default function PerformanceTab() {
         <MoneyCard title="Commission by lead source" category="Lead source" rows={result.commissionSources} series={series} filters={exportFilters} />
       </div>
       <MoneyCard title="Commission by carrier" category="Carrier" rows={result.commissionCarriers} series={series} filters={exportFilters} />
-    </>}
   </TabFrame>;
 }
 

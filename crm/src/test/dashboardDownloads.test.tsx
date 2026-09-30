@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 const h = vi.hoisted(() => ({ data: {} as Record<string, unknown>, save: vi.fn() }));
-vi.mock("../lib/useAsyncResource", () => ({ useAsyncResource: () => ({ data: h.data, loading: false, loaded: true, error: "", refetch: async () => {} }) }));
+vi.mock("../lib/useAsyncResource", () => ({ useAsyncResource: (_fetcher: unknown, deps: unknown[]) => ({ data: deps.length === 2 && typeof deps[0] === "string" ? { key: deps[0], snapshot: h.data, commercial: h.data.commercial } : h.data, loading: false, loaded: true, error: "", refetch: async () => {} }) }));
 
 vi.mock("../lib/lastContact", () => ({ useLastContacts: () => ({ contacts: { a1: { at: "2026-09-10T14:00:00.000Z", channel: "EMAIL", direction: "INBOUND" } }, loading: false, error: "" }) }));
 vi.mock("../lib/reportDownload", async original => ({ ...await original<typeof import("../lib/reportDownload")>(), saveReport: h.save }));
@@ -10,7 +10,7 @@ import LeadsTab from "../pages/dashboard/LeadsTab";
 import FinanceTab from "../pages/dashboard/FinanceTab";
 import PerformanceTab from "../pages/dashboard/PerformanceTab";
 const lead = { id: "a1", name: "Elm HOA", stage: "LEAD", type: "ASSOCIATION", createdAt: "2026-09-01T14:00:00Z", city: "Worcester", state: "MA", source: "website-quote", leadSource: "GOOGLE_AD_WEBSITE" };
-beforeEach(() => { h.save.mockClear(); h.data = { leads: [lead], clients: [], accounts: [lead], quotes: [], policies: [], carriers: [], invoices: [], pfLoans: [], payments: [], invoiceLines: [], asOf: new Date(), commercial: { entries: { a1: { accountId: "a1", salespersonId: "sales", disposition: "ACTIVE", plan: { accountId: "a1", version: 1, estimatedCents: 123456, requiredLines: [], options: [], selectedOptionId: null } } }, team: [{ userId: "sales", name: "Avery Brooks", salesperson: true }] } }; });
+beforeEach(() => { h.save.mockClear(); h.data = { selections: {}, leads: [lead], clients: [], accounts: [lead], quotes: [], policies: [], carriers: [], invoices: [], pfLoans: [], payments: [], invoiceLines: [], asOf: new Date(), commercial: { entries: { a1: { accountId: "a1", salespersonId: "sales", disposition: "ACTIVE", plan: { accountId: "a1", version: 1, estimatedCents: 123456, requiredLines: [], options: [], selectedOptionId: null } } }, team: [{ userId: "sales", name: "Avery Brooks", salesperson: true }] } }; });
 describe("dashboard report controls", () => {
   it.each([[LeadsTab, 6], [FinanceTab, 4], [PerformanceTab, 6]] as const)("provides a working export for every report in %s", (Tab, count) => {
     render(<MemoryRouter><Tab /></MemoryRouter>);

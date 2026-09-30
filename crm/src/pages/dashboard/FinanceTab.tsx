@@ -2,12 +2,9 @@ import { ReportDownload } from "../../components/ReportDownload";
 import { useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import {
-  client,
   daysUntil,
   fmtDate,
   fmtMoney,
-  listAllPages,
-  type Account,
 } from "../../lib/client";
 import { Badge, statusBadge, INVOICE_STATUS_BADGE } from "../../lib/badges";
 import { useSort, SortTh } from "../../lib/useSort";
@@ -17,7 +14,9 @@ import {
   type AgingBucket,
 } from "../../lib/dashboardStats";
 import { localToday, TabFrame, Tile } from "./common";
-import { loadCommercial, type CommercialData } from "../../lib/commercial";
+import type { CommercialData } from "../../lib/commercial";
+import type { ReportAccount } from "../../lib/dashboardAssignments";
+import { loadFinanceDashboard, type FinancePaymentReceipt, type FinancePolicyAnchor, type FinanceLineAnchor } from "../../lib/dashboardFinanceLoad";
 import { salespersonKey, salespersonSeries } from "../../lib/dashboardPeople";
 import { interestIncomeBySalesperson, hasFinancingReceivable, nonBilledReceivables, outstandingPrincipal } from "../../lib/dashboardFinance";
 import { StackedBars } from "../../components/StackedBars";
@@ -25,17 +24,14 @@ import type { Schema } from "../../../amplify/data/resource";
 
 type InvoiceRow = Schema["Invoice"]["type"];
 type PfLoanRow = Schema["PfLoan"]["type"];
-type PfPaymentRow = Schema["PfLoanPayment"]["type"];
-type PolicyRow = Schema["Policy"]["type"];
-type InvoiceLineRow = Schema["InvoiceLine"]["type"];
 
 interface FinanceData {
   invoices: InvoiceRow[];
   pfLoans: PfLoanRow[];
-  accounts: Account[];
-  payments: PfPaymentRow[];
-  policies: PolicyRow[];
-  invoiceLines: InvoiceLineRow[];
+  accounts: ReportAccount[];
+  payments: FinancePaymentReceipt[];
+  policies: FinancePolicyAnchor[];
+  invoiceLines: FinanceLineAnchor[];
   commercial: CommercialData;
   asOf: Date;
 }
@@ -49,18 +45,7 @@ export default function FinanceTab() {
   const navigate = useNavigate();
 
   const res = useAsyncResource<FinanceData>(
-    async () => {
-      const [invoices, pfLoans, accounts, payments, policies, invoiceLines] = await Promise.all([
-        listAllPages((nextToken) => client.models.Invoice.list({ nextToken })),
-        listAllPages((nextToken) => client.models.PfLoan.list({ nextToken })),
-        listAllPages((nextToken) => client.models.Account.list({ nextToken })),
-        listAllPages((nextToken) => client.models.PfLoanPayment.list({ nextToken })),
-        listAllPages((nextToken) => client.models.Policy.list({ nextToken })),
-        listAllPages((nextToken) => client.models.InvoiceLine.list({ nextToken })),
-      ]);
-      const commercial = await loadCommercial(accounts.map(account => account.id));
-      return { invoices, pfLoans, accounts, payments, policies, invoiceLines, commercial, asOf: new Date() };
-    },
+    loadFinanceDashboard,
     [],
     { initialData: EMPTY, errorMessage: "Failed to load the finance view" }
   );

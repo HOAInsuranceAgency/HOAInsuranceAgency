@@ -1,6 +1,6 @@
 # Lead sources, last contact, and report downloads
 
-Lead-source implementation: September 10, 2026. Dashboard documentation updated September 29, 2026; the historical deployment record below describes the earlier release.
+Lead-source implementation: September 10, 2026. Dashboard documentation updated September 30, 2026; the historical deployment record below describes the earlier release.
 
 ## Lead source
 
@@ -53,6 +53,18 @@ Finance separates billed, uncollected SENT/PROCESSING invoices from remaining no
 CSV spreadsheet downloads include all displayed report rows, their ordering, filter descriptions, snapshot time, time zone, and numeric amounts in USD. Multi-section reports contain a labelled table for each section. Empty results are explicit. Untrusted text is escaped for CSV and protected against spreadsheet formula execution.
 
 Print / save PDF opens a separate, branded report with the same data. Click its Print / save PDF button and choose Save as PDF. The layout repeats table headers, paginates, and preserves Unicode names. Exports are disabled while refreshing, after a failed refresh, or for a reversed reporting date range.
+
+## Dashboard read scope and deployment
+
+All report-specific read operations require ADMIN in both the custom API access check and the communications handler. Attribution requests contain only account IDs contributing to the selected report. They return projected workflow ownership/disposition and account labels in batches of at most 500 IDs, with at most four client requests at a time. DynamoDB batches contain at most 100 keys and retry unprocessed keys; exhausted retries fail the snapshot rather than inventing Unassigned rows. The team roster is still loaded when the report has no records.
+
+Leads query Account's stage index and read compact selected-quote membership from paginated COMMERCIAL_PLAN index results. Full package details are loaded only for the chosen salesperson's work list. Missing selected quotes continue to count as unfinished work. The work-list download waits for package details and contact history. The Dashboard's date controls scope policy/quote results and ownership joins; switching filters replaces the displayed snapshot immediately so the previous window cannot be downloaded under new labels.
+
+Finance queries `dashboardPaymentsByDate` for the fixed 30-day interval, up to 500 receipts per page. The additional GSI uses existing `__typename` and `postedAt` attributes, so DynamoDB backfills historical payments without rewriting financial records. Existing payment indexes are preserved. The index must finish deployment before the report can load; an unavailable index produces a retryable error, never a full-history scan fallback. Only open invoices on accounts with outstanding financing load their invoice-line relations. Policy lookups are limited to those loans and bills; overlap matching indexes account and policy/quote anchors rather than comparing the whole loan and invoice books.
+
+These changes remove full commercial hydration per account and full-history payment/line reads. They do not make every dashboard query constant-cost: generated Policy, Quote, Invoice and PfLoan list operations still scan their tables even when filtering projected results. All-time production and Leads' selected-plan/quote enumeration still grow with the source book. A million-record deployment would need indexed source projections or maintained report aggregates before promising interactive full-book charts. Current regression fixtures verify bounded owner batches, no hydration for 1,500 dormant clients, selected-person detail loading, and non-quadratic matching across 2,000 unrelated loan/invoice accounts.
+
+Overview/Renewals retirement is intentional; the obsolete attention helpers and styles are removed. Renewal account work remains in Clients. Weekly marketing report delivery is unchanged.
 
 ## Staging acceptance walkthrough
 

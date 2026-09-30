@@ -4,6 +4,7 @@ import { isInLast30Days, salespersonKey } from './dashboardPeople';
 import { leadQuoteStanding } from './dashboardStats';
 import { isOpenQuoteStatus } from './quoteStatus';
 import { alternativeQuoteIds } from '../../../shared/quotePackages';
+import type { DashboardLeadSelection } from '../../../shared/dashboardLeadSelection';
 
 interface LeadAccount {
   id: string;
@@ -30,16 +31,16 @@ export function isOpenLead(account: LeadAccount, entries: Record<string, Commerc
 
 /** Selecting a package retires its alternative quotes from current work.
  * Bound quotes remain historical facts, matching the account-work workflow. */
-export function activeLeadQuotes<T extends LeadQuote>(quotes: readonly T[], entries: Record<string, CommercialEntry>): T[] {
+export function activeLeadQuotes<T extends LeadQuote>(quotes: readonly T[], entries: Record<string, CommercialEntry>, selections?: Readonly<Record<string, DashboardLeadSelection>>): T[] {
   const alternatives = new Map<string, Set<string>>();
   return quotes.filter(quote => {
-    if (!alternatives.has(quote.accountId)) alternatives.set(quote.accountId, new Set(alternativeQuoteIds(entries[quote.accountId]?.plan)));
+    if (!alternatives.has(quote.accountId)) alternatives.set(quote.accountId, new Set(selections ? selections[quote.accountId]?.alternativeQuoteIds ?? [] : alternativeQuoteIds(entries[quote.accountId]?.plan)));
     return quote.status === 'BOUND' || !alternatives.get(quote.accountId)!.has(quote.id ?? '');
   });
 }
 
 /** Current account assignment is used for every series, even for past events. */
-export function leadPersonMetrics({ accounts, quotes, policies, pipelineAccounts, entries, series, now }: {
+export function leadPersonMetrics({ accounts, quotes, policies, pipelineAccounts, entries, series, now, selections }: {
   accounts: readonly LeadAccount[];
   quotes: readonly LeadQuote[];
   policies: readonly BoundPolicy[];
@@ -47,6 +48,7 @@ export function leadPersonMetrics({ accounts, quotes, policies, pipelineAccounts
   entries: Record<string, CommercialEntry>;
   series: ChartSeries[];
   now: Date;
+  selections?: Readonly<Record<string, DashboardLeadSelection>>;
 }) {
   const counters = new Map(series.map(person => [person.key, { open: 0, quotes: 0, created: 0, binds: 0 }]));
   const increment = (accountId: string, metric: 'open' | 'quotes' | 'created' | 'binds') => {
@@ -60,7 +62,7 @@ export function leadPersonMetrics({ accounts, quotes, policies, pipelineAccounts
     // this metric so a successful bind does not erase their lead arrival.
     if ((account.stage === 'LEAD' || account.convertedAt) && isInLast30Days(account.createdAt, now)) increment(account.id, 'created');
   }
-  const activeQuotes = activeLeadQuotes(quotes, entries);
+  const activeQuotes = activeLeadQuotes(quotes, entries, selections);
   for (const quote of activeQuotes) {
     if (isOpenQuoteStatus(quote.status) && !['LOST', 'DISQUALIFIED'].includes(entries[quote.accountId]?.disposition ?? '')) increment(quote.accountId, 'quotes');
   }
