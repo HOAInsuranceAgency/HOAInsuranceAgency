@@ -1,5 +1,6 @@
 import { useState } from "react";
 import QuotePackages from "./QuotePackages";
+import "./QuotesPanel.css";
 import { packageTerms, type CommercialPlan } from '../../../shared/quotePackages';
 import {
   client,
@@ -148,134 +149,291 @@ export default function QuotesPanel({
   );
 
   return (
-    <div>
-      <QuotePackages accountId={account.id} quotes={quotes} carriers={carrierRows} />
-      <div id="quote-list" />
-      <div className="toolbar">
-        {/* Per-row status changes have no per-row place to report; this is
-            the panel's one status line. */}
-        <SaveStatus {...statusSave.status} />
-        <div className="grow" />
-        <button
-          className="primary"
-          onClick={() => {
-            setEditing(null);
-            setShowForm(!showForm);
-          }}
-        >
-          {showForm ? "Cancel" : "+ New quote"}
-        </button>
-      </div>
+    <div className="quotes-workspace">
+      <QuotePackages
+        accountId={account.id}
+        quotes={quotes}
+        carriers={carrierRows}
+      />
+      <section className="card quotes-card" id="quote-list" aria-label="Quotes">
+        <div className="quotes-heading">
+          <div>
+            <h2>Quotes</h2>
+            <p>Manage carrier quotes and confirmed bindings.</p>
+          </div>
+          <button
+            className={showForm ? "secondary" : "primary"}
+            onClick={() => {
+              setEditing(null);
+              setShowForm(!showForm);
+            }}
+          >
+            {showForm ? "Cancel" : "+ New quote"}
+          </button>
+        </div>
 
-      {(showForm || editing) && (
-        <CoverageForm
-          key={editing?.id ?? "new"}
-          kind="quote"
-          accountId={account.id}
-          carriers={carriers}
-          existing={editing}
-          onSaved={() => {
-            setShowForm(false);
-            setEditing(null);
-            refresh();
-          }}
-          onCancel={() => {
-            setShowForm(false);
-            setEditing(null);
-          }}
-        />
-      )}
+        <div className="quotes-save-status">
+          {/* Per-row status changes share one status line. */}
+          <SaveStatus {...statusSave.status} />
+        </div>
 
-      {/* Surfaced rather than ignored: without carriers every row's first
+        {(showForm || editing) && (
+          <div className="quotes-editor">
+            <CoverageForm
+              key={editing?.id ?? "new"}
+              kind="quote"
+              accountId={account.id}
+              carriers={carriers}
+              existing={editing}
+              onSaved={() => {
+                setShowForm(false);
+                setEditing(null);
+                refresh();
+              }}
+              onCancel={() => {
+                setShowForm(false);
+                setEditing(null);
+              }}
+            />
+          </div>
+        )}
+
+        {/* Surfaced rather than ignored: without carriers every row's first
           column reads "—", which is indistinguishable from quotes genuinely
           having no carrier set. */}
-      {carrierRes.error && <p className="error-text">{carrierRes.error}</p>}
+        {carrierRes.error && (
+          <p className="error-text quotes-feedback" role="alert">
+            {carrierRes.error}
+          </p>
+        )}
 
-      {quoteRes.error ? (
-        <p className="error-text">{quoteRes.error}</p>
-      ) : quotes.length === 0 ? (
-        <p className="muted small">No quotes yet.</p>
-      ) : (
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <SortTh label="Carrier" colKey="carrier" sortKey={sortKey} dir={dir} onToggle={toggle} />
-                <SortTh label="Lines" colKey="lines" sortKey={sortKey} dir={dir} onToggle={toggle} />
-                <SortTh label="Premium" colKey="premium" sortKey={sortKey} dir={dir} onToggle={toggle} />
-                <SortTh label="Commission" colKey="commission" sortKey={sortKey} dir={dir} onToggle={toggle} />
-                <th>Terms</th>
-                <SortTh label="Effective" colKey="effective" sortKey={sortKey} dir={dir} onToggle={toggle} />
-                <SortTh label="Status" colKey="status" sortKey={sortKey} dir={dir} onToggle={toggle} />
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {sorted.map((qt) => (
-                <tr key={qt.id}>
-                  <td>{carrierName(qt.carrierId)}</td>
-                  <td className="small">{(qt.lines ?? []).filter(Boolean).join(", ") || "—"}</td>
-                  <td>{fmtMoney(qt.premium)}</td>
-                  <td className="small">{commissionCell(qt)}</td>
-                  <td className="small">{termsSummary(qt)}</td>
-                  <td>{fmtDate(qt.effectiveDate)}</td>
-                  <td>
-                    <Badge {...statusBadge(QUOTE_STATUS_BADGE, qt.status)} />
-                  </td>
-                  <td style={{ whiteSpace: "nowrap" }}>
-                    <button
-                      className="link"
-                      onClick={() => {
-                        setShowForm(false);
-                        setEditing(qt);
-                      }}
-                    >
-                      Edit
-                    </button>
-                    {isOpenQuoteStatus(qt.status) && (
-                      <>
-                        <select
-                          className="small"
-                          value={qt.status}
-                          onChange={(e) =>
-                            setStatus(qt, e.target.value as Quote["status"])
-                          }
-                        >
-                          {[...SELECTABLE_QUOTE_STATUSES]
-                            .sort((a, b) => a.localeCompare(b))
-                            .map((s) => (
-                              <option key={s}>{s}</option>
-                            ))}
-                        </select>{" "}
-                        <button className="link" onClick={() => setBinding(qt)}>
-                          Bind
-                        </button>
-                        {["QUOTED", "PRESENTED"].includes(qt.status) && (!qt.bindAuthorizedAt || qt.bindAuthorizedTerms !== authorizedQuoteTerms(qt)) && <button className="link" onClick={() => { setAuthorization(qt); setClientAuthorized(false); }}>Request binding</button>}
-                        {qt.bindAuthorizedAt && <span className="small muted">Carrier confirmation pending</span>}
-                      </>
-                    )}
-                  </td>
+        {!quoteRes.loaded ? (
+          <div className="quotes-state" role="status">
+            Loading quotes…
+          </div>
+        ) : quoteRes.error ? (
+          <div className="quotes-state quotes-state--error" role="alert">
+            <p>{quoteRes.error}</p>
+            <button className="secondary" onClick={() => void refresh()}>
+              Retry quotes
+            </button>
+          </div>
+        ) : quotes.length === 0 ? (
+          !showForm && !editing && (
+            <div className="quotes-state quotes-state--empty">
+              <strong>No quotes yet</strong>
+              <p>Add a carrier quote to record pricing, coverage, and terms.</p>
+            </div>
+          )
+        ) : (
+          <div className="table-wrap quotes-table" aria-busy={quoteRes.loading}>
+            <table aria-label="Carrier quotes">
+              <thead>
+                <tr>
+                  <SortTh
+                    label="Carrier"
+                    colKey="carrier"
+                    sortKey={sortKey}
+                    dir={dir}
+                    onToggle={toggle}
+                  />
+                  <SortTh
+                    label="Lines"
+                    colKey="lines"
+                    sortKey={sortKey}
+                    dir={dir}
+                    onToggle={toggle}
+                  />
+                  <SortTh
+                    label="Premium"
+                    colKey="premium"
+                    sortKey={sortKey}
+                    dir={dir}
+                    onToggle={toggle}
+                  />
+                  <SortTh
+                    label="Commission"
+                    colKey="commission"
+                    sortKey={sortKey}
+                    dir={dir}
+                    onToggle={toggle}
+                  />
+                  <th>Terms</th>
+                  <SortTh
+                    label="Effective"
+                    colKey="effective"
+                    sortKey={sortKey}
+                    dir={dir}
+                    onToggle={toggle}
+                  />
+                  <SortTh
+                    label="Status"
+                    colKey="status"
+                    sortKey={sortKey}
+                    dir={dir}
+                    onToggle={toggle}
+                  />
+                  <th></th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+              </thead>
+              <tbody>
+                {sorted.map((qt) => (
+                  <tr key={qt.id}>
+                    <td>{carrierName(qt.carrierId)}</td>
+                    <td className="small">
+                      {(qt.lines ?? []).filter(Boolean).join(", ") || "—"}
+                    </td>
+                    <td>{fmtMoney(qt.premium)}</td>
+                    <td className="small">{commissionCell(qt)}</td>
+                    <td className="small">{termsSummary(qt)}</td>
+                    <td>{fmtDate(qt.effectiveDate)}</td>
+                    <td>
+                      <Badge {...statusBadge(QUOTE_STATUS_BADGE, qt.status)} />
+                    </td>
+                    <td>
+                      <div className="quotes-row-actions">
+                        <button
+                          className="link quote-action"
+                          onClick={() => {
+                            setShowForm(false);
+                            setEditing(qt);
+                          }}
+                        >
+                          Edit
+                        </button>
+                        {isOpenQuoteStatus(qt.status) && (
+                          <>
+                            <select
+                              className="quote-status-select"
+                              aria-label="Quote status"
+                              value={qt.status}
+                              onChange={(e) =>
+                                setStatus(qt, e.target.value as Quote["status"])
+                              }
+                            >
+                              {[...SELECTABLE_QUOTE_STATUSES]
+                                .sort((a, b) => a.localeCompare(b))
+                                .map((s) => (
+                                  <option key={s}>{s}</option>
+                                ))}
+                            </select>{" "}
+                            <button
+                              className="link quote-action"
+                              onClick={() => setBinding(qt)}
+                            >
+                              Bind
+                            </button>
+                            {["QUOTED", "PRESENTED"].includes(qt.status) &&
+                              (!qt.bindAuthorizedAt ||
+                                qt.bindAuthorizedTerms !==
+                                  authorizedQuoteTerms(qt)) && (
+                                <button
+                                  className="link quote-action"
+                                  onClick={() => {
+                                    setAuthorization(qt);
+                                    setClientAuthorized(false);
+                                  }}
+                                >
+                                  Request binding
+                                </button>
+                              )}
+                            {qt.bindAuthorizedAt && (
+                              <span className="small muted quote-confirmation">
+                                Carrier confirmation pending
+                              </span>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
 
-      {authorization && <section className="card" aria-label="Client bind authorization"><h3>Request binding</h3><p>{carrierName(authorization.carrierId)} · {fmtMoney(authorization.premium)} · Effective {fmtDate(authorization.effectiveDate)}</p><p>This records the client's approval of these quoted terms. Carrier confirmation is still required before recording coverage as bound.</p><label><input type="checkbox" checked={clientAuthorized} onChange={e => setClientAuthorized(e.target.checked)} /> The client has authorized binding these terms.</label><div className="form-actions"><button className="primary" disabled={!clientAuthorized || authorizing} onClick={async () => { setAuthorizing(true); setBindError(""); try { await communicationRequest("authorizeBind", { quoteId: authorization.id, updatedAt: authorization.updatedAt, clientAuthorized }, true); setAuthorization(null); await refresh(); } catch(e) { setBindError(friendlyError(e, "Could not record authorization")); } finally { setAuthorizing(false); } }}>Record binding authorization</button><button className="secondary" disabled={authorizing} onClick={() => setAuthorization(null)}>Cancel</button></div></section>}
-      {binding && (
-        <BindForm
-          quote={binding}
-          account={account}
-          onDone={(updated) => {
-            setBinding(null);
-            refresh();
-            if (updated) onAccountChange(updated);
-          }}
-          onError={setBindError}
-        />
-      )}
-      {bindError && <p className="error-text">{bindError}</p>}
+        {authorization && (
+          <section
+            className="quote-flow-panel"
+            aria-label="Client bind authorization"
+          >
+            <h3>Request binding</h3>
+            <p className="quote-flow-summary">
+              {carrierName(authorization.carrierId)} ·{" "}
+              {fmtMoney(authorization.premium)} · Effective{" "}
+              {fmtDate(authorization.effectiveDate)}
+            </p>
+            <p className="muted small">
+              This records the client's approval of these quoted terms. Carrier
+              confirmation is still required before recording coverage as bound.
+            </p>
+            <label className="quote-authorization-check">
+              <input
+                type="checkbox"
+                checked={clientAuthorized}
+                onChange={(e) => setClientAuthorized(e.target.checked)}
+              />{" "}
+              The client has authorized binding these terms.
+            </label>
+            <div className="form-actions quote-flow-actions">
+              <button
+                className="primary"
+                disabled={!clientAuthorized || authorizing}
+                onClick={async () => {
+                  setAuthorizing(true);
+                  setBindError("");
+                  try {
+                    await communicationRequest(
+                      "authorizeBind",
+                      {
+                        quoteId: authorization.id,
+                        updatedAt: authorization.updatedAt,
+                        clientAuthorized,
+                      },
+                      true,
+                    );
+                    setAuthorization(null);
+                    await refresh();
+                  } catch (e) {
+                    setBindError(
+                      friendlyError(e, "Could not record authorization"),
+                    );
+                  } finally {
+                    setAuthorizing(false);
+                  }
+                }}
+              >
+                Record binding authorization
+              </button>
+              <button
+                className="secondary"
+                disabled={authorizing}
+                onClick={() => setAuthorization(null)}
+              >
+                Cancel
+              </button>
+            </div>
+          </section>
+        )}
+        {binding && (
+          <BindForm
+            quote={binding}
+            account={account}
+            onDone={(updated) => {
+              setBinding(null);
+              refresh();
+              if (updated) onAccountChange(updated);
+            }}
+            onError={setBindError}
+          />
+        )}
+        {bindError && (
+          <p className="error-text quotes-feedback" role="alert">
+            {bindError}
+          </p>
+        )}
+      </section>
     </div>
   );
 }
@@ -497,18 +655,22 @@ function BindForm({
   }
 
   return (
-    <div className="card" style={{ background: "#f0f7ef", marginTop: 14 }}>
-      <h3 style={{ marginTop: 0 }}>Bind quote</h3>
+    <section
+      className="quote-flow-panel quote-flow-panel--bind"
+      aria-label="Bind quote"
+    >
+      <h3>Bind quote</h3>
       <p className="small muted">
-        Creates a policy{account.stage === "LEAD" ? " and converts this lead to a client" : ""}.
+        Creates a policy
+        {account.stage === "LEAD" ? " and converts this lead to a client" : ""}.
       </p>
       {blockers.length > 0 ? (
         <>
           <p className="error-text">
-            This quote can't be bound yet — it needs {blockers.join(", ")}.
-            Edit the quote details first.
+            This quote can't be bound yet — it needs {blockers.join(", ")}. Edit
+            the quote details first.
           </p>
-          <div className="form-actions">
+          <div className="form-actions quote-flow-actions">
             <button className="secondary" onClick={() => onDone(null)}>
               Close
             </button>
@@ -549,8 +711,12 @@ function BindForm({
               afterwards, so there is nothing to invoice from here.
             </p>
           )}
-          <div className="form-actions">
-            <button className="primary" disabled={saving || !billType} onClick={bind}>
+          <div className="form-actions quote-flow-actions">
+            <button
+              className="primary"
+              disabled={saving || !billType}
+              onClick={bind}
+            >
               {saving ? "Binding…" : "Confirm bind"}
             </button>
             <button className="secondary" onClick={() => onDone(null)}>
@@ -559,6 +725,6 @@ function BindForm({
           </div>
         </>
       )}
-    </div>
+    </section>
   );
 }

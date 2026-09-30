@@ -262,13 +262,10 @@ export default function AccountDetail({ profile }: { profile: UserProfile }) {
       {activeTab === "property" && <PropertyCoveragePanel key={account.id} accountId={account.id} />}
       {activeTab === "submissions" && <SubmissionsPanel key={account.id} account={account} initialEstimateId={searchParams.get("estimate") ?? undefined} />}
       {activeTab === "quotes" && (
-        <>
-          <div className="card" id="carrier-work">
-            <HoneycombEstimates accountId={account.id} />
-            <QuotesPanel account={account} onAccountChange={setAccount} />
-          </div>
-
-        </>
+        <div id="carrier-work">
+          <HoneycombEstimates accountId={account.id} />
+          <QuotesPanel account={account} onAccountChange={setAccount} />
+        </div>
       )}
       {activeTab === "priorcarrier" && <PriorCarrierTab accountId={account.id} />}
       {activeTab === "losses" && <LossesTab accountId={account.id} />}
