@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
+import "./DocumentsPanel.css";
 import { uploadData, remove } from "../lib/scopedStorage";
 import {
   client,
@@ -75,6 +76,7 @@ export default function DocumentsPanel({
   initialLink?: string;
   sourceCommunicationId?: string;
 }) {
+  const controlId = useId();
   const [docs, setDocs] = useState<CrmDocument[]>([]);
   // Hold the table until all authorized pages have loaded.
   const [docsSynced, setDocsSynced] = useState(false);
@@ -364,15 +366,24 @@ export default function DocumentsPanel({
   }
 
   return (
-    <div>
-      <div className="toolbar">
+    <div className={linkAccountId ? "documents-panel documents-panel--account" : "documents-panel"}>
+      {linkAccountId && (
+        <div className="documents-heading">
+          <div>
+            <h2>Files {docsSynced && !loadError && <span className="documents-count">{docs.length}</span>}</h2>
+            <p>Keep account documents, quotes, and policy files together.</p>
+          </div>
+          <span className="documents-helper">PDFs and images are read automatically.</span>
+        </div>
+      )}
+      <div className="toolbar documents-toolbar">
         {linkAccountId && (
           <div className="field">
-            <label>Linked to</label>
+            <label htmlFor={`${controlId}-link`}>Linked to</label>
             {/* One control, two jobs on purpose: it filters the table AND
                 targets uploads — "you are looking at this policy's
                 documents; files you attach here belong to it". */}
-            <select value={view} onChange={(e) => setView(e.target.value)}>
+            <select id={`${controlId}-link`} value={view} onChange={(e) => setView(e.target.value)}>
               <option value="">Everything</option>
               {linkOptions.map((o) => (
                 <option key={o.key} value={o.key}>
@@ -383,8 +394,9 @@ export default function DocumentsPanel({
           </div>
         )}
         <div className="field">
-          <label>Category</label>
+          <label htmlFor={`${controlId}-category`}>{linkAccountId ? "Upload category" : "Category"}</label>
           <select
+            id={`${controlId}-category`}
             value={category}
             onChange={(e) => setCategory(e.target.value as Category)}
           >
@@ -395,32 +407,35 @@ export default function DocumentsPanel({
             ))}
           </select>
         </div>
-        <div className="field">
-          <label>Attach files (PDF/images are OCR'd automatically)</label>
+        <div className="field documents-upload">
+          {!linkAccountId && <label>Attach files (PDF/images are OCR'd automatically)</label>}
           <FileButton
-            label="Choose files…"
+            label={linkAccountId ? "Upload files" : "Choose files…"}
             multiple
             busy={uploading}
             onFiles={handleUpload}
           />
         </div>
-        {error && <span role="alert" className="error-text">{error}</span>}
+      </div>
+      {linkAccountId && view && <p className="documents-filter-note">Showing files for {linkLabel(view)}. New uploads will be linked here.</p>}
+      <div className="documents-feedback">
+        {error && <p role="alert" className="error-text">{error}</p>}
         {/* Renames and deletes are per-row with no per-row place to report;
             this is the panel's one status line. */}
         <SaveStatus {...rowStatus.status} />
       </div>
 
-      {loadError ? <p role="alert" className="error-text">{loadError} <button className="link" onClick={() => void reloadDocuments.current()}>Retry</button></p> : !docsSynced ? (
-        <p className="muted small">Loading…</p>
+      {loadError ? <div role="alert" className="documents-state documents-state--error"><p>{loadError}</p><button className="secondary" onClick={() => void reloadDocuments.current()}>Retry</button></div> : !docsSynced ? (
+        <p className="documents-state" role="status">Loading…</p>
       ) : visible.length === 0 ? (
-        <p className="muted small">
+        <p className="documents-state">
           {view
             ? `Nothing linked to ${linkLabel(view)} yet — files attached while it's selected will be.`
             : "No documents attached."}
         </p>
       ) : (
-        <div className="table-wrap">
-          <table>
+        <div className="table-wrap documents-table-wrap">
+          <table className="documents-table" aria-label="Documents">
             <thead>
               <tr>
                 <SortTh label="Name" colKey="name" sortKey={sortKey} dir={dir} onToggle={toggle} />
@@ -430,7 +445,7 @@ export default function DocumentsPanel({
                 )}
                 <SortTh label="OCR" colKey="ocr" sortKey={sortKey} dir={dir} onToggle={toggle} />
                 <SortTh label="Size" colKey="size" sortKey={sortKey} dir={dir} onToggle={toggle} />
-                <th></th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -446,7 +461,7 @@ export default function DocumentsPanel({
                 const renaming = renameId === d.id;
                 return (
                   <tr key={d.id}>
-                    <td>
+                    <td className="document-name">
                       {renaming ? (
                         <div className="field">
                           <input
@@ -461,7 +476,7 @@ export default function DocumentsPanel({
                           />
                         </div>
                       ) : (
-                        d.name
+                        <span>{d.name}</span>
                       )}
                     </td>
                     <td>
@@ -502,7 +517,8 @@ export default function DocumentsPanel({
                     <td className="muted small">
                       {d.sizeBytes ? `${Math.max(1, Math.round(d.sizeBytes / 1024))} KB` : "—"}
                     </td>
-                    <td style={{ whiteSpace: "nowrap" }}>
+                    <td>
+                      <div className="document-actions">
                       {/* While a row is being renamed its other actions are
                           hidden rather than disabled: Preview and Download
                           would still work, but leaving them there invites a
@@ -510,7 +526,7 @@ export default function DocumentsPanel({
                       {renaming ? (
                         <>
                           <button
-                            className="link"
+                            className="secondary"
                             onClick={() => void saveRename(d)}
                           >
                             Save name
@@ -524,12 +540,6 @@ export default function DocumentsPanel({
                         </>
                       ) : (
                         <>
-                          <button
-                            className="link"
-                            onClick={() => startRename(d)}
-                          >
-                            Rename
-                          </button>
                           {d.s3Key !== "pending" && canPreview(d.name) && (
                             <button
                               className="link"
@@ -540,6 +550,12 @@ export default function DocumentsPanel({
                           )}
                           <button className="link" onClick={() => download(d)}>
                             Download
+                          </button>
+                          <button
+                            className="link"
+                            onClick={() => startRename(d)}
+                          >
+                            Rename
                           </button>
                           {d.ocrStatus === "COMPLETE" && d.ocrText && (
                             <button
@@ -558,6 +574,7 @@ export default function DocumentsPanel({
                           />
                         </>
                       )}
+                      </div>
                     </td>
                   </tr>
                 );
@@ -576,11 +593,12 @@ export default function DocumentsPanel({
       )}
 
       {openDoc?.ocrText && (
-        <div style={{ marginTop: 14 }} ref={viewerRef}>
+        <div className="document-text-viewer" ref={viewerRef}>
           <h3>Extracted text — {openDoc.name}</h3>
           <div className="ocr-search field">
             <div className="ocr-find">
               <input
+                aria-label="Find in extracted text"
                 placeholder="Find in text…"
                 value={ocrSearch}
                 onChange={(e) => {

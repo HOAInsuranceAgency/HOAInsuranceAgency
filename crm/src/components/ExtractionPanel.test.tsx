@@ -99,6 +99,55 @@ beforeEach(() => {
   models.Building.update.mockImplementation(async () => ({ data: {}, errors: null }));
 });
 
+describe("extraction review layout", () => {
+  it("keeps the complete summary and source evidence available behind disclosures", async () => {
+    const user = userEvent.setup();
+    const summary = "The documents describe two buildings and the associated property schedule. ".repeat(12).trim();
+    const evidence = "The location schedule identifies the insured property as 12 Maple Ridge Way. ".repeat(10).trim();
+    const source = "Maple-Ridge-2026-property-schedule-and-endorsements.pdf, page 12";
+    renderPanel(account({ aiExtraction: JSON.stringify({
+      address: { value: "12 Maple Ridge Way", confidence: "high", evidence, source },
+      summary,
+      extractedAt: EXTRACTED_AT,
+    }) }));
+
+    expect(screen.getByRole("heading", { name: "Extracted data" })).toBeVisible();
+    const summaryText = screen.getByText(summary);
+    const evidenceText = screen.getByText(evidence);
+    expect(summaryText).not.toBeVisible();
+    expect(evidenceText).not.toBeVisible();
+    await user.click(screen.getByText("Extraction summary"));
+    expect(summaryText).toBeVisible();
+    expect(summaryText.textContent).toBe(summary);
+    await user.click(screen.getByText("View evidence"));
+    expect(evidenceText).toBeVisible();
+    expect(evidenceText.textContent).toBe(evidence);
+    expect(screen.getByText(source)).toBeVisible();
+    expect(models.Account.update).not.toHaveBeenCalled();
+  });
+
+  it("labels selections and preserves them when review is hidden and reopened", async () => {
+    const user = userEvent.setup();
+    renderPanel();
+    const toggle = screen.getByRole("button", { name: "Hide review" });
+    const table = screen.getByRole("table", { name: "Extracted values to review" });
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(document.getElementById(toggle.getAttribute("aria-controls")!)).toContainElement(table);
+    expect(screen.getByText("3 selected")).toBeVisible();
+    await user.click(screen.getByRole("checkbox", { name: "Select street address" }));
+    expect(screen.getByText("2 selected")).toBeVisible();
+    expect(screen.getByRole("checkbox", { name: "Select building: Clubhouse · 4,200 sq ft" })).toBeChecked();
+
+    await user.click(toggle);
+    expect(screen.getByRole("button", { name: "Review extracted data" })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("table", { name: "Extracted values to review" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Review extracted data" }));
+    expect(screen.getByRole("checkbox", { name: "Select street address" })).not.toBeChecked();
+    expect(screen.getByText("2 selected")).toBeVisible();
+    expect(models.Account.update).not.toHaveBeenCalled();
+  });
+});
+
 describe("verdicts", () => {
   it("offers a building the account does not have as an add", async () => {
     renderPanel();
@@ -133,7 +182,10 @@ describe("verdicts", () => {
     renderPanel();
     const row = (await screen.findByText("Clubhouse · 4,200 sq ft")).closest("tr")!;
     await waitFor(() => expect(within(row).getByText("update")).toBeInTheDocument());
-    expect(within(row).getByText(/Sqft: 3000 → 4200/)).toBeInTheDocument();
+    const changes = within(row).getByText(/Sqft: 3000 → 4200/);
+    expect(changes).not.toBeVisible();
+    await userEvent.setup().click(within(row).getByText("View changes"));
+    expect(changes).toBeVisible();
   });
 });
 

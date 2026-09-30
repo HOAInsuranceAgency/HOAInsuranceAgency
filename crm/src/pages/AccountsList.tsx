@@ -127,12 +127,7 @@ export default function AccountsList({ stage }: { stage: "LEAD" | "CLIENT" }) {
 
   return (
     <>
-      <h1>{label}</h1>
-      <p className="sub">
-        {stage === "LEAD"
-          ? "Prospects — converted to clients when a quote is bound"
-          : "Bound accounts (created automatically from leads)"}
-      </p>
+      <h1 style={{ marginBottom: 20 }}>{label}</h1>
 
       <div className="toolbar">
         {isAdmin && <label className="field">Salesperson<select value={salesperson} onChange={e => setSalesperson(e.target.value)}><option value="">All salespeople</option>{commercial.data.team.map(t => <option key={t.userId} value={t.userId}>{t.name}</option>)}</select></label>}

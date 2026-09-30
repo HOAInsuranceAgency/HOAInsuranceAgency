@@ -25,8 +25,11 @@ import { useAsyncResource } from "../lib/useAsyncResource";
 import AiFilledList from "./AiFilledList";
 import FilePreviewModal from "./FilePreview";
 import { SaveStatus, useSaveStatus } from "./SaveStatus";
+import "./FormsTab.css";
 
 const APP_FORMS = ACORD_FORMS.filter((f) => f.key !== "acord25");
+const AVAILABLE_FORMS = APP_FORMS.filter((form) => MAPPED_APP_FORM_KEYS.has(form.key));
+const OTHER_FORMS = APP_FORMS.filter((form) => !MAPPED_APP_FORM_KEYS.has(form.key));
 
 /**
  * Carrier-submission forms: fill an uploaded ACORD template (125/126/140/…)
@@ -42,15 +45,18 @@ export default function FormsTab({
 }) {
   const genRes = useAsyncResource(
     () =>
-      listAllPages((nextToken) =>
-        client.models.Document.list({
+      listAllPages(async (nextToken) => {
+        const page = await client.models.Document.list({
           filter: {
             entityId: { eq: account.id },
             category: { eq: "ACORD_FORM" },
           },
           nextToken,
-        })
-      ),
+        });
+        if (page.errors?.length) throw new Error(page.errors[0].message);
+        if (!page.data) throw new Error("Failed to load generated forms");
+        return page;
+      }),
     [account.id],
     {
       initialData: [] as CrmDocument[],
@@ -61,6 +67,7 @@ export default function FormsTab({
     }
   );
   const generated = genRes.data;
+  const waitingForGenerated = !genRes.loaded || (genRes.loading && generated.length === 0);
   const setGenerated = genRes.setData;
   // Which row's button reads "Generating…" — per-row, so it stays. The
   // outcome is panel-level and belongs to the status machine.
@@ -315,85 +322,82 @@ export default function FormsTab({
 
   return (
     <>
-      <div className="card">
-        <h2>Generate carrier-submission forms</h2>
-        <p className="muted small">
-          Fills the uploaded ACORD template with this account's details
-          (contacts, address, construction, buildings). The PDF stays editable
-          for anything the CRM doesn't track yet.
-        </p>
-        <div className="table-wrap">
-          <table>
-            <tbody>
-              {APP_FORMS.map((f) => {
-                const mapped = MAPPED_APP_FORM_KEYS.has(f.key);
-                return (
-                  <tr key={f.key}>
-                    <td>
-                      <strong>{f.label}</strong>
-                    </td>
-                    <td style={{ width: 160 }}>
-                      <button
-                        className="secondary"
-                        disabled={!mapped || busyKey !== null}
-                        title={
-                          mapped
-                            ? undefined
-                            : "This form has no field mapping yet — it would come out with only the producer and insured header filled in."
-                        }
-                        onClick={() => generate(f)}
-                      >
-                        {busyKey === f.key ? "Generating…" : "Generate"}
-                      </button>
-                      {!mapped && (
-                        <div className="muted small">Mapping not built yet</div>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+      <section className="card carrier-forms" aria-label="Carrier forms">
+        <div className="carrier-forms-heading">
+          <div>
+            <h2>Carrier forms</h2>
+            <p>Prepare editable ACORD PDFs from this account. Review each form before sending.</p>
+          </div>
+          <span className="carrier-forms-available">{AVAILABLE_FORMS.length} available</span>
         </div>
+        <div className="carrier-forms-grid">
+          {AVAILABLE_FORMS.map((form) => (
+            <article className="carrier-form-choice" key={form.key} aria-label={form.label}>
+              <span className="carrier-form-number">{form.label.split(" — ")[0]}</span>
+              <h3>{form.label.split(" — ").slice(1).join(" — ") || form.label}</h3>
+              <button
+                className="secondary"
+                disabled={busyKey !== null}
+                aria-label={`Generate ${form.label}`}
+                onClick={() => generate(form)}
+              >
+                {busyKey === form.key ? "Generating…" : "Generate"}
+              </button>
+            </article>
+          ))}
+        </div>
+        {OTHER_FORMS.length > 0 && (
+          <details className="carrier-forms-other">
+            <summary>Other forms <span>{OTHER_FORMS.length}</span></summary>
+            <p>Automatic preparation isn't available for these forms yet.</p>
+            <ul>{OTHER_FORMS.map(form => <li key={form.key}>{form.label}</li>)}</ul>
+          </details>
+        )}
         {genStatus.status.state !== "idle" && (
-          <p style={{ margin: "10px 0 0" }}>
-            <SaveStatus {...genStatus.status} />
-          </p>
+          <p className="carrier-forms-status"><SaveStatus {...genStatus.status} /></p>
         )}
         {aiFilled.map((r) => (
           <AiFilledList key={r.page} fields={r.fields} page={r.page || undefined} />
         ))}
-      </div>
+      </section>
 
-      <div className="card">
-        <h2>Generated forms</h2>
-        {!genRes.loaded ? (
-          <p className="muted small">Loading…</p>
+      <section className="card generated-forms" aria-label="Generated forms">
+        <div className="generated-forms-heading">
+          <div>
+            <h2>Generated forms {!waitingForGenerated && !genRes.error && <span className="generated-forms-count">{generated.length}</span>}</h2>
+            <p>Review and preview the forms prepared for this account.</p>
+          </div>
+        </div>
+        {waitingForGenerated ? (
+          <p className="generated-forms-state" role="status">Loading generated forms…</p>
         ) : genRes.error ? (
-          <p className="error-text">{genRes.error}</p>
+          <div className="generated-forms-state generated-forms-state--error" role="alert">
+            <p>{genRes.error}</p>
+            <button className="secondary" disabled={genRes.loading} onClick={() => void genRes.refetch()}>Retry generated forms</button>
+          </div>
         ) : generated.length === 0 ? (
-          <p className="muted small">Nothing generated yet.</p>
+          <div className="generated-forms-state">
+            <strong>No generated forms yet</strong>
+            <p>Choose a carrier form above to prepare the first PDF.</p>
+          </div>
         ) : (
-          <div className="table-wrap">
-            <table>
+          <div className="table-wrap generated-forms-table-wrap" aria-busy={genRes.loading}>
+            <table className="generated-forms-table" aria-label="Generated carrier forms">
+              <colgroup><col /><col className="generated-forms-date-column" /><col className="generated-forms-action-column" /></colgroup>
               <thead>
                 <tr>
                   <SortTh label="File" colKey="file" sortKey={sortKey} dir={dir} onToggle={toggle} />
                   <SortTh label="Generated" colKey="generated" sortKey={sortKey} dir={dir} onToggle={toggle} />
-                  <th></th>
+                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {sorted.map((d) => (
                   <tr key={d.id}>
-                    <td>{d.name}</td>
-                    <td className="small">
-                      {fmtDateTime(d.createdAt)}
-                    </td>
-                    <td style={{ whiteSpace: "nowrap" }}>
-                      <button className="link" onClick={() => setPreview(d)}>
-                        Preview
-                      </button>
+                    <td className="generated-forms-name">{d.name}</td>
+                    <td className="generated-forms-date">{fmtDateTime(d.createdAt)}</td>
+                    <td className="generated-forms-actions">
+                      <button className="secondary" aria-label={`Preview ${d.name}`} onClick={() => setPreview(d)}>Preview</button>
                     </td>
                   </tr>
                 ))}
@@ -401,7 +405,7 @@ export default function FormsTab({
             </table>
           </div>
         )}
-      </div>
+      </section>
 
       {preview && (
         <FilePreviewModal
