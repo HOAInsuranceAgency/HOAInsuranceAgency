@@ -512,6 +512,8 @@ backend.teamAdmin.resources.lambda.addToRolePolicy(
     actions: [
       "cognito-idp:AdminCreateUser",
       "cognito-idp:AdminAddUserToGroup",
+      "cognito-idp:AdminRemoveUserFromGroup",
+      "cognito-idp:AdminGetUser",
       "cognito-idp:AdminListGroupsForUser",
       "cognito-idp:ListUsers",
     ],

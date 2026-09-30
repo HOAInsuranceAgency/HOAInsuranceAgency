@@ -4,7 +4,15 @@ export const ACCOUNT_MODELS = ["Account", "Contact", "PriorCarrier", "Activity",
 export const RETIRED_MODELS: readonly string[] = ["MarketingTask"];
 export const SHARED_MODELS = ["Carrier", "AppetiteGuide", "PfCounselOpinion", "UserProfile", "ProducerLicense", "License", "AgencySettings", "LicenseReminder"] as const;
 export const PUBLIC_OPERATIONS = ["webLeadEstimate", "leadIntakeReady", "submitWebLead", "requestLeadUpload", "closeLeadUploadWindow", "uploadPortalStatus", "requestPortalUpload", "financeElectionTerms", "acceptFinanceElection"];
-export const ADMIN_OPERATIONS = ["inviteUser", "listTeamUsers", "setPremiumFinanceEnabled", "marketingReportSettings", "marketingReportAction"];
+export const ADMIN_OPERATIONS = ["inviteUser", "updateUserRoles", "listTeamUsers", "setPremiumFinanceEnabled", "marketingReportSettings", "marketingReportAction"];
+/** Native group authorization still sees every assigned Cognito group. These
+ * ADMIN-only model actions also require the ADMIN view to be selected. */
+export const ADMIN_MODEL_OPERATIONS: Record<string, readonly string[]> = {
+  Account: ["delete"], Activity: ["create", "update", "delete"],
+  Quote: ["delete"], Policy: ["delete"], Invoice: ["delete"], Certificate: ["delete"],
+  UserProfile: ["delete"], PfCounselOpinion: ["create"], License: ["update", "delete"],
+  AgencySettings: ["create", "update", "delete"], LeadReply: ["read"], UploadPortal: ["read", "update"],
+};
 export const CUSTOM_OPERATIONS = ["communicationRead", "communicationWrite", "honeycombSubmissionSettings", "startHoneycombSubmission", "resolveHoneycombSubmission", "startLeadExtraction", "suggestFormFields", "reserveCertificateNumber", "reserveInvoiceNumber", "sendInvoice", "voidInvoice", "issueFinanceQuote", "generatePfAgreement", "servicePfLoan", "crmAccess", "crmFile"];
 export const ACCOUNT_REFERENCES: Record<string, Record<string, string>> = {
   Quote: { renewalPolicyId: "Policy" }, Policy: { quoteId: "Quote" }, Invoice: { policyId: "Policy", quoteId: "Quote" },

@@ -8,12 +8,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const listTeamUsers = vi.hoisted(() => vi.fn());
 const UserProfile = vi.hoisted(() => ({ list: vi.fn(), update: vi.fn() }));
 const inviteUser = vi.hoisted(() => vi.fn());
+const updateUserRoles = vi.hoisted(() => vi.fn());
 const communicationRequest = vi.hoisted(() => vi.fn());
 vi.mock("aws-amplify/data", () => ({
   generateClient: () => ({
     models: { UserProfile },
     queries: { listTeamUsers },
-    mutations: { inviteUser },
+    mutations: { inviteUser, updateUserRoles },
   }),
 }));
 vi.mock("../lib/communications", () => ({ communicationRequest }));
@@ -269,5 +270,65 @@ describe("combined team and assignment settings", () => {
     expect(reads).toBe(1);
     fireEvent.click(checkbox);
     await waitFor(() => expect(communicationRequest).toHaveBeenLastCalledWith("saveEligibility", { ...eligibility, salesperson: false, version: 4 }, true));
+  });
+});
+
+
+describe("assigning up to two roles", () => {
+  it("invites with both selected roles and prevents selecting a third", async () => {
+    combinedSetup(); inviteUser.mockResolvedValue({ data: { ok: true } }); renderPage();
+    const card = screen.getByRole("button", { name: "Send invite" }).closest(".card")! as HTMLElement;
+    const admin = within(card).getByRole("checkbox", { name: "Admin" });
+    const staff = within(card).getByRole("checkbox", { name: "Staff" });
+    const producer = within(card).getByRole("checkbox", { name: "Producer" });
+    expect(staff).toBeChecked(); expect(staff).toBeDisabled();
+    fireEvent.click(admin);
+    expect(producer).toBeDisabled();
+    fireEvent.click(staff); fireEvent.click(producer);
+    fireEvent.change(within(card).getByRole("textbox", { name: "Email" }), { target: { value: "dual@example.com" } });
+    fireEvent.click(within(card).getByRole("button", { name: "Send invite" }));
+    await waitFor(() => expect(inviteUser).toHaveBeenCalledWith({ email: "dual@example.com", roles: ["ADMIN", "PRODUCER"] }));
+  });
+
+  it("saves both memberships for an existing user and shows both badges", async () => {
+    combinedSetup(); updateUserRoles.mockResolvedValue({ data: { ok: true } }); renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "Edit roles for Casey Staff" }));
+    const modal = screen.getByRole("dialog", { name: "Roles for Casey Staff" });
+    fireEvent.click(within(modal).getByRole("checkbox", { name: "Producer" }));
+    fireEvent.click(within(modal).getByRole("button", { name: "Save roles" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(updateUserRoles).toHaveBeenCalledWith({ userId: "u-1", roles: ["STAFF", "PRODUCER"] });
+    const row = screen.getByText(teammate.email).closest("tr")!;
+    expect(within(row).getByText("STAFF")).toBeVisible();
+    expect(within(row).getByText("PRODUCER")).toBeVisible();
+    expect(UserProfile.update).not.toHaveBeenCalled();
+  });
+
+  it("keeps failed changes in the editor, leaving the saved roster unchanged", async () => {
+    combinedSetup(); updateUserRoles.mockResolvedValue({ errors: [{ message: "Role change unavailable" }] }); renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "Edit roles for Casey Staff" }));
+    const modal = screen.getByRole("dialog");
+    fireEvent.click(within(modal).getByRole("checkbox", { name: "Producer" }));
+    fireEvent.click(within(modal).getByRole("button", { name: "Save roles" }));
+    expect(await within(modal).findByText("Role change unavailable")).toBeVisible();
+    expect(within(modal).getByRole("checkbox", { name: "Producer" })).toBeChecked();
+    expect(screen.queryByText("PRODUCER")).toBeNull();
+    expect(within(modal).getByRole("button", { name: "Save roles" })).toBeEnabled();
+  });
+
+  it("lets the current admin add Producer and asks the app to refresh roles immediately", async () => {
+    listTeamUsers.mockResolvedValue({ data: { users: [{ userId: profile.userId, email: profile.email, groups: ["ADMIN"] }] } });
+    UserProfile.list.mockResolvedValue({ data: [profile] });
+    updateUserRoles.mockResolvedValue({ data: { ok: true } });
+    const refreshed = vi.fn(); window.addEventListener("team-roles-changed", refreshed);
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "Edit roles for Ada Admin" }));
+    const modal = screen.getByRole("dialog");
+    fireEvent.click(within(modal).getByRole("checkbox", { name: "Producer" }));
+    expect(within(modal).getByRole("checkbox", { name: "Admin" })).toBeDisabled();
+    fireEvent.click(within(modal).getByRole("button", { name: "Save roles" }));
+    await waitFor(() => expect(refreshed).toHaveBeenCalledTimes(1));
+    expect(updateUserRoles).toHaveBeenCalledWith({ userId: profile.userId, roles: ["ADMIN", "PRODUCER"] });
+    window.removeEventListener("team-roles-changed", refreshed);
   });
 });

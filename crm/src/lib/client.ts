@@ -3,6 +3,7 @@ import { getCurrentUser } from "aws-amplify/auth";
 import type { Schema } from "../../amplify/data/resource";
 import { urgencyBadge, LICENSE_EXPIRY_SCALE, type BadgeClass } from "./badges";
 import { LICENSE_STATUS_LABELS } from "./enums";
+import { activeRoleHeaders } from "./activeRole";
 
 /**
  * Models that carry `lastWriteBy`, and therefore get an actor stamped on
@@ -104,7 +105,7 @@ function withActor<T extends object>(raw: T): T {
   }) as T;
 }
 
-export const client = withActor(generateClient<Schema>());
+export const client = withActor(generateClient<Schema>({ headers: activeRoleHeaders }));
 
 export type Account = Schema["Account"]["type"];
 export type Building = Schema["Building"]["type"];

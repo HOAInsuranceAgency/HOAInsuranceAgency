@@ -35,11 +35,13 @@ export default function Onboarding({
   user,
   existing,
   role,
+  roles = [role],
   onComplete,
 }: {
   user: AuthUser;
   existing: UserProfile | null;
   role: Role;
+  roles?: Role[];
   onComplete: (p: UserProfile) => void;
 }) {
   const { form, setF } = useFormState({
@@ -51,7 +53,7 @@ export default function Onboarding({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
-  const isProducer = role === "PRODUCER";
+  const isProducer = roles.includes("PRODUCER");
   const validLicenses = form.licenses.filter(
     (l) => l.state && l.licenseNumber.trim()
   );
@@ -132,8 +134,8 @@ export default function Onboarding({
             <input value={form.lastName} onChange={(e) => setF("lastName", e.target.value)} />
           </div>
           <div className="field">
-            <label>Role</label>
-            <input value={USER_ROLE_LABELS[role]} disabled />
+            <label>Assigned roles</label>
+            <input value={(roles.length ? roles : [role]).map(value => USER_ROLE_LABELS[value]).join(" + ")} disabled />
             <span className="muted small">
               Set by whoever invited you — ask an admin to change it.
             </span>

@@ -133,6 +133,29 @@ it("keeps administrators unfiltered but requires a signed-in identity", async ()
   expect(h.db).not.toHaveBeenCalled();
   await expect(handler({ mode: "read", model: "Account", previous })).rejects.toThrow("not available");
 });
+it.each(["PRODUCER", "STAFF"])("uses a dual-role administrator's selected %s scope across records, custom operations, and files", async role => {
+  const event = { identity: { sub: "alice", groups: ["ADMIN", role] }, request: { headers: { "x-crm-role": role } } };
+  await expect(handler({ ...event, fieldName: "crmAccess" })).resolves.toEqual({ actorId: "alice", admin: false, salespersonIds: ["alice"] });
+  await expect(handler({ ...event, mode: "read", model: "Account", previous: { items: [{ id: "a" }, { id: "b" }], nextToken: "later" } })).resolves.toEqual({ items: [{ id: "a" }], nextToken: "later" });
+  await expect(handler({ ...event, mode: "read", model: "Account", previous: { id: "b" } })).rejects.toThrow("not available");
+  await expect(handler({ ...event, mode: "write", model: "Account", operation: "update", arguments: { input: { id: "b", name: "Changed" } } })).rejects.toThrow("not available");
+  await expect(handler({ ...event, mode: "custom-pre", field: "sendInvoice", arguments: { invoiceId: "foreign" } })).rejects.toThrow("not available");
+  await expect(handler({ ...event, mode: "custom-post", field: "communicationRead", arguments: { readOperation: "work", input: { kind: "WORKFLOW" } }, previous: { items: [{ accountId: "a" }, { accountId: "b" }] } })).resolves.toEqual({ items: [{ accountId: "a" }] });
+  await expect(handler({ ...event, fieldName: "crmFile", arguments: { operation: "read", path: "generated/b/form.pdf" } })).rejects.toThrow("not available");
+  await expect(handler({ ...event, mode: "admin" })).rejects.toThrow("not available");
+  expect(h.sign).not.toHaveBeenCalled(); expect(h.s3).not.toHaveBeenCalled();
+  await expect(handler({ ...event, request: { headers: { "x-crm-role": "ADMIN" } }, mode: "read", model: "Account", previous: { items: [{ id: "a" }, { id: "b" }] } })).resolves.toEqual({ items: [{ id: "a" }, { id: "b" }] });
+  await expect(handler({ ...event, request: { headers: { "x-crm-role": "ADMIN" } }, mode: "admin", previous: "authorized" })).resolves.toBe("authorized");
+});
+it.each(["ADMIN", "UNKNOWN", "", ["PRODUCER"], null])("rejects unassigned or malformed role selection %j before reading data", async selected => {
+  await expect(handler({ identity: { sub: "alice", groups: ["PRODUCER"] }, request: { headers: { "x-crm-role": selected } }, fieldName: "crmAccess" })).rejects.toThrow("not available");
+  expect(h.db).not.toHaveBeenCalled(); expect(h.s3).not.toHaveBeenCalled();
+});
+it("validates mixed-case role headers and the signed JWT claims fallback", async () => {
+  const identity = { sub: "alice", claims: { "cognito:groups": ["ADMIN", "PRODUCER"] } };
+  await expect(handler({ identity, request: { headers: { "X-CRM-Role": "PRODUCER" } }, fieldName: "crmAccess" })).resolves.toMatchObject({ admin: false });
+  await expect(handler({ identity, request: { headers: { "x-crm-role": "PRODUCER", "X-CRM-Role": "ADMIN" } }, fieldName: "crmAccess" })).rejects.toThrow("not available");
+});
 it("uses accountId for models with a natural key and returns the preceding pipeline value", async () => {
   expect(await handler({ mode: "write", model: "GlApplication", operation: "update", arguments: { input: { accountId: "a", description: "Updated" } }, identity, previous: {} })).toEqual({});
   expect(h.db.mock.calls.some(([command]) => command.input.TableName === "gl" && command.input.Key.accountId === "a")).toBe(true);

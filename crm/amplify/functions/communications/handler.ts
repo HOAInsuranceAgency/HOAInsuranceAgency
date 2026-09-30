@@ -22,6 +22,7 @@ import { connectionChecks, activationChecks } from "./setup";
 import { enqueueOperation } from "./operations";
 import { modelPut } from "../lead-intake/handler";
 import type { ConversationLink } from "./events";
+import { isActiveAdmin, type RoleRequest } from "../crm-access/active-role";
 
 type Input = Record<string, unknown>;
 function object(value: unknown): Input {
@@ -41,11 +42,11 @@ async function roster() {
 function safeCommunication(data: Communication): Communication {
   return { ...data, text: data.text?.replace(/([?&](?:t|token|uploadToken)=)[^\s&<>]+/gi, "$1[protected]") };
 }
-export const handler = async (event: { arguments: { operation?: string; readOperation?: string; input?: unknown }; identity?: AppSyncIdentityCognito }) => {
+export const handler = async (event: { arguments: { operation?: string; readOperation?: string; input?: unknown }; identity?: AppSyncIdentityCognito; request?: RoleRequest }) => {
   try {
     const actor = event.identity?.sub;
     if (!actor) throw new Error("Sign in to the CRM to continue");
-    const admin = event.identity?.groups?.includes("ADMIN") || (event.identity?.claims?.["cognito:groups"] as string[] | undefined)?.includes("ADMIN");
+    const admin = isActiveAdmin(event.identity, event.request);
     const input = object(event.arguments.input), op = event.arguments.readOperation ?? event.arguments.operation;
     if (retiredTaskOperation(op ?? "", input)) tasksRemoved();
     const requireAdmin = () => { if (!admin) throw new Error("Only an admin can change integration or team settings"); };

@@ -4,17 +4,69 @@ import { client, fmtDate, type UserProfile } from "../lib/client";
 import { toE164 } from "../../amplify/functions/lead-intake/sms";
 import { Badge, flagBadge } from "../lib/badges";
 import SignatureManager from "../components/SignatureManager";
+import Modal from "../components/Modal";
 import { SaveStatus, useSaveStatus } from "../components/SaveStatus";
 import { useAsyncResource } from "../lib/useAsyncResource";
 import { useSort, SortTh } from "../lib/useSort";
 import { useFormState } from "../lib/useFormState";
-import { DEFAULT_USER_ROLE, USER_ROLE_OPTIONS } from "../lib/enums";
+import { DEFAULT_USER_ROLE, isUserRole, USER_ROLE_OPTIONS, type UserRole } from "../lib/enums";
 
 interface TeamUser {
   userId: string;
   email: string;
   createdAt: string | null;
   groups: string[];
+}
+
+function RoleChoices({ roles, onChange, disabled = false, keepAdmin = false }: {
+  roles: UserRole[];
+  onChange: (roles: UserRole[]) => void;
+  disabled?: boolean;
+  keepAdmin?: boolean;
+}) {
+  return <fieldset disabled={disabled} style={{ border: 0, padding: 0, margin: 0 }}>
+    <legend>Assigned roles</legend>
+    <p className="muted small" style={{ margin: "4px 0 10px" }}>Choose one or two roles.</p>
+    <div style={{ display: "flex", flexWrap: "wrap", gap: 16 }}>
+      {USER_ROLE_OPTIONS.map(option => {
+        const checked = roles.includes(option.value);
+        return <label key={option.value} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <input type="checkbox" checked={checked}
+            disabled={checked ? roles.length === 1 || (keepAdmin && option.value === "ADMIN") : roles.length >= 2}
+            onChange={() => onChange(checked ? roles.filter(role => role !== option.value) : [...roles, option.value])} />
+          {option.label}
+        </label>;
+      })}
+    </div>
+    {keepAdmin && <p className="muted small">Keep your Admin role to manage team access.</p>}
+  </fieldset>;
+}
+
+function RoleEditor({ user, name, currentUser, onSave, onClose }: {
+  user: TeamUser;
+  name: string;
+  currentUser: boolean;
+  onSave: (roles: UserRole[]) => Promise<void>;
+  onClose: () => void;
+}) {
+  const initialRoles = user.groups.filter(isUserRole);
+  const [roles, setRoles] = useState<UserRole[]>(initialRoles);
+  const status = useSaveStatus();
+  const dirty = roles.length !== initialRoles.length || roles.some(role => !initialRoles.includes(role));
+  const close = () => { if (!status.busy) onClose(); };
+  return <Modal title={`Roles for ${name}`} className="modal-form team-connection-modal" onClose={close}>
+    <p className="muted small">The team member can switch between assigned roles at the bottom of the side menu.</p>
+    <RoleChoices roles={roles} disabled={status.busy} keepAdmin={currentUser && initialRoles.includes("ADMIN")}
+      onChange={next => { setRoles(next); status.markDirty(); }} />
+    <div className="form-actions">
+      <button className="primary" disabled={status.busy || !dirty || roles.length < 1 || roles.length > 2}
+        onClick={() => void status.run(async () => { await onSave(roles); onClose(); }, { errorMessage: "Couldn't save roles." })}>
+        {status.busy ? "Saving…" : "Save roles"}
+      </button>
+      <button className="secondary" disabled={status.busy} onClick={close}>Cancel</button>
+      <SaveStatus {...status.status} />
+    </div>
+  </Modal>;
 }
 
 /**
@@ -95,8 +147,10 @@ export default function Team({ profile }: { profile: UserProfile }) {
   // Auto-clearing: these are per-row edits with no form to go dirty and
   // retire the message, so nothing else would ever clear it.
   const alertStatus = useSaveStatus({ autoClearMs: 4000 });
+  const [editingRoles, setEditingRoles] = useState<TeamUser | null>(null);
+  const roleStatus = useSaveStatus({ autoClearMs: 4000 });
   const { form, setF } = useFormState(
-    { email: "", role: DEFAULT_USER_ROLE as string },
+    { email: "", roles: [DEFAULT_USER_ROLE] as UserRole[] },
     { onEdit: inviteStatus.markDirty }
   );
 
@@ -118,7 +172,9 @@ export default function Team({ profile }: { profile: UserProfile }) {
     async () => {
       const { data, errors } = await client.queries.listTeamUsers();
       if (errors?.length) throw new Error(errors[0].message);
-      return (parse(data).users as TeamUser[] | undefined) ?? NO_USERS;
+      const body = parse(data);
+      if (body.ok === false) throw new Error(String(body.error ?? "Failed to load team"));
+      return (body.users as TeamUser[] | undefined) ?? NO_USERS;
     },
     [],
     { initialData: NO_USERS, errorMessage: "Failed to load team" }
@@ -152,7 +208,7 @@ export default function Team({ profile }: { profile: UserProfile }) {
       async () => {
         const { data, errors } = await client.mutations.inviteUser({
           email,
-          role: form.role,
+          roles: form.roles,
         });
         if (errors?.length) throw new Error(errors[0].message);
         const body = parse(data);
@@ -165,7 +221,7 @@ export default function Team({ profile }: { profile: UserProfile }) {
         reload();
       },
       {
-        savedMessage: `Invited ${email} as ${form.role}. They'll get an email with the portal link — they sign in with a magic link, no password.`,
+        savedMessage: `Invited ${email} as ${form.roles.join(" and ")}. They'll get an email with the portal link — they sign in with a magic link, no password.`,
         errorMessage: "Invite failed",
       }
     );
@@ -173,6 +229,21 @@ export default function Team({ profile }: { profile: UserProfile }) {
 
   const profileFor = (u: TeamUser) =>
     profiles.find((p) => p.userId === u.userId || p.email === u.email);
+
+  async function saveRoles(user: TeamUser, roles: UserRole[]) {
+    const { data, errors } = await client.mutations.updateUserRoles({ userId: user.userId, roles });
+    if (errors?.length) throw new Error(errors[0].message);
+    const body = parse(data);
+    if (!body.ok) {
+      void team.refetch();
+      throw new Error(String(body.error ?? "Couldn't save roles."));
+    }
+    team.setData(previous => previous.map(member => member.userId === user.userId
+      ? { ...member, groups: [...member.groups.filter(group => !isUserRole(group)), ...roles] }
+      : member));
+    roleStatus.markSaved(`Roles updated for ${user.email}.`);
+    if (user.userId === profile.userId) window.dispatchEvent(new Event("team-roles-changed"));
+  }
 
   /**
    * Save a lead-alert change straight away — there is no Save button on this
@@ -209,7 +280,7 @@ export default function Team({ profile }: { profile: UserProfile }) {
         const p = profileFor(u);
         return p ? `${p.firstName} ${p.lastName}` : null;
       },
-      role: (u) => u.groups[0] ?? profileFor(u)?.role,
+      role: (u) => u.groups.filter(isUserRole).join(", ") || profileFor(u)?.role,
       onboarded: (u) => (profileFor(u)?.onboardingComplete ? "Yes" : "Invited"),
       leadTexts: (u) => (profileFor(u)?.leadTextAlerts ? "On" : "Off"),
       invited: (u) => u.createdAt,
@@ -227,8 +298,9 @@ export default function Team({ profile }: { profile: UserProfile }) {
         </p>
         <div className="form-grid" style={{ maxWidth: 640 }}>
           <div className="field">
-            <label>Email</label>
+            <label htmlFor="team-invite-email">Email</label>
             <input
+              id="team-invite-email"
               type="email"
               value={form.email}
               onChange={(e) => setF("email", e.target.value)}
@@ -236,14 +308,7 @@ export default function Team({ profile }: { profile: UserProfile }) {
             />
           </div>
           <div className="field">
-            <label>Role</label>
-            <select value={form.role} onChange={(e) => setF("role", e.target.value)}>
-              {USER_ROLE_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
+            <RoleChoices roles={form.roles} disabled={inviteStatus.busy} onChange={roles => setF("roles", roles)} />
           </div>
         </div>
         <div className="form-actions">
@@ -258,9 +323,8 @@ export default function Team({ profile }: { profile: UserProfile }) {
         </div>
         <p className="muted small" style={{ marginBottom: 0 }}>
           Producers complete their licensing details during first sign-in.
-          The role you pick here is the user's Cognito group, and it's what
-          admin-only screens and the team mutations check — so it does
-          restrict access.
+          Assign up to two roles. Team members switch roles at the bottom of
+          the side menu; Producer shows only their assigned accounts and work.
         </p>
       </div>
 
@@ -269,7 +333,7 @@ export default function Team({ profile }: { profile: UserProfile }) {
           <div>
             <h2 id="team-members-title" style={{ margin: 0 }}>Team members</h2>
             <p className="muted small" style={{ margin: "4px 0 0" }}>
-              View roles and manage salesperson eligibility, lead texts and connections in one place.
+              Assign roles and manage salesperson eligibility, lead texts and connections in one place.
               Salesperson eligibility controls assignment choices and does not change access.
               Lead texts need both the switch and a mobile number.
             </p>
@@ -278,6 +342,7 @@ export default function Team({ profile }: { profile: UserProfile }) {
           {/* Toggles are per-row with no per-row place to report; this is
               the card's one status line. */}
           <SaveStatus {...alertStatus.status} />
+          <SaveStatus {...roleStatus.status} />
         </div>
         <LeadEligibilityFeedback settings={eligibility} />
         {!team.loaded ? (
@@ -292,7 +357,7 @@ export default function Team({ profile }: { profile: UserProfile }) {
               <thead>
                 <tr>
                   <SortTh label="Team member" colKey="email" sortKey={sortKey} dir={dir} onToggle={toggle} />
-                  <SortTh label="Role" colKey="role" sortKey={sortKey} dir={dir} onToggle={toggle} />
+                  <SortTh label="Roles" colKey="role" sortKey={sortKey} dir={dir} onToggle={toggle} />
                   <SortTh label="Onboarded" colKey="onboarded" sortKey={sortKey} dir={dir} onToggle={toggle} />
                   <th>Signature</th>
                   <SortTh label="Lead texts" colKey="leadTexts" sortKey={sortKey} dir={dir} onToggle={toggle} />
@@ -318,9 +383,12 @@ export default function Team({ profile }: { profile: UserProfile }) {
                         )}
                       </td>
                       <td>
-                        <span className="badge gray">
-                          {u.groups[0] ?? p?.role ?? "—"}
-                        </span>
+                        <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginBottom: 6 }}>
+                          {(u.groups.filter(isUserRole).length ? u.groups.filter(isUserRole) : [p?.role ?? "—"]).map(role =>
+                            <span key={role} className="badge gray">{role}</span>)}
+                        </div>
+                        <button type="button" className="secondary" disabled={team.loading || !!editingRoles} aria-label={`Edit roles for ${name || u.email}`}
+                          onClick={() => { roleStatus.markDirty(); setEditingRoles(u); }}>Edit roles</button>
                       </td>
                       <td>
                         {/* One-off pair — onboarding state is badged here and
@@ -365,6 +433,10 @@ export default function Team({ profile }: { profile: UserProfile }) {
           </div>
         )}
         <LeadEligibilityEditor settings={eligibility} />
+        {editingRoles && <RoleEditor user={editingRoles}
+          name={(() => { const p = profileFor(editingRoles); return p ? `${p.firstName} ${p.lastName}` : editingRoles.email; })()}
+          currentUser={editingRoles.userId === profile.userId}
+          onSave={roles => saveRoles(editingRoles, roles)} onClose={() => setEditingRoles(null)} />}
       </section>
     </>
   );

@@ -41,6 +41,14 @@ async function allPages(model: string, sub = "alice", filter?: RecordData, limit
   throw new Error("Pagination did not terminate");
 }
 describe("assignment-scoped listings", () => {
+  it("restricts a dual-role administrator's producer list and search to personal assignments", async () => {
+    const selected = () => new AccountAccess({ sub: "alice", groups: ["ADMIN", "PRODUCER"] }, undefined, { headers: { "x-crm-role": "PRODUCER" } });
+    expect((await listAssigned(selected(), "Account", {})).items).toEqual([{ id: "a", name: "a", stage: "LEAD" }]);
+    expect((await listAssigned(selected(), "Account", { filter: { name: { contains: "b" } } })).items).toEqual([]);
+    const queries = h.db.mock.calls.map(([command]) => command.input).filter(input => input.IndexName === "assignment");
+    expect(queries.length).toBeGreaterThan(0);
+    expect(queries.every(query => query.ExpressionAttributeValues[":scope"] === "alice")).toBe(true);
+  });
   it("finds documents beyond the first five assigned accounts within one response", async () => {
     for (let i = 0; i < 12; i++) account(`a${String(i).padStart(2, "0")}`, "alice");
     put("Document", "later", { id: "later", entityType: "ACCOUNT", entityId: "a11", name: "Needle" });

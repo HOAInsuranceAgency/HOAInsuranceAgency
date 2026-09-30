@@ -2152,7 +2152,18 @@ const schema = a
       .mutation()
       .arguments({
         email: a.string().required(),
-        role: a.string(), // ADMIN | STAFF | PRODUCER (default STAFF)
+        role: a.string(), // Legacy single-role clients; defaults to STAFF.
+        roles: a.string().array(), // One or two assigned Cognito role groups.
+      })
+      .returns(a.json())
+      .authorization((allow) => [allow.groups(["ADMIN"])])
+      .handler(a.handler.function(teamAdmin)),
+
+    updateUserRoles: a
+      .mutation()
+      .arguments({
+        userId: a.string().required(),
+        roles: a.string().array().required(),
       })
       .returns(a.json())
       .authorization((allow) => [allow.groups(["ADMIN"])])
