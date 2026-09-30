@@ -32,8 +32,12 @@ Internal agency management system replacing EzLynx for the commercial
   frontend is released. It preserves existing license records and leaves the
   old table read-only as a backup. A failed copy blocks deployment and can be
   retried safely; the app no longer reads or imports legacy licenses.
-- **Lead texts** — a website enquiry texts every team member who turned the
-  switch on in Settings → Team and saved a mobile number
+- **Website assignment and lead texts** — website enquiries rotate among
+  active teammates with salesperson eligibility in Settings → Team. The
+  lead and its pending assignment are saved together. A durable worker
+  advances the rotation with the assigned owner, so retries do not consume
+  another turn and bursts never compete for the cursor during capture.
+  Only the assigned salesperson receives the Front conversation and text alert, with texts requiring the switch and a saved mobile number
   ([amplify/functions/lead-intake](amplify/functions/lead-intake)). Sent with
   Amazon SNS, so there is **no code to configure** — but there is account
   setup, and without it `Publish` succeeds and the message is silently
@@ -44,8 +48,13 @@ Internal agency management system replacing EzLynx for the commercial
      brand + campaign for a long code, or a toll-free number with verified
      use case. This takes days, not minutes.
   3. Check the SMS **monthly spend limit**; the default is $1.
-  Delivery failures land in CloudWatch under the `lead-intake` log group.
+  Delivery failures land in CloudWatch under the communication worker log group.
   Texting is deliberately non-fatal: an SNS outage still captures the lead.
+  The worker reads a bounded eligible-producer index, automatically retries
+  missing or temporarily unavailable assignments, and holds Front import and
+  texts until an owner is verified. Missing Front connections surface as
+  repair issues; alerts never go to the rest of the team. The scheduled index
+  worker backfills existing producer eligibility before assignment begins.
 - **Data** — AppSync + DynamoDB, schema in
   [amplify/data/resource.ts](amplify/data/resource.ts).
 - **Documents** — S3 ([amplify/storage/resource.ts](amplify/storage/resource.ts)).

@@ -105,6 +105,7 @@ export const handler = async (event?: Partial<DynamoDBStreamEvent>) => {
       if (Date.now() - start > 75_000) { lagging = true; break dueWork; }
       try {
         if (candidate.kind === 'ACCOUNT_DELETE') { const { retireAccountPage } = await import('./deletion'); await retireAccountPage(candidate as unknown as Parameters<typeof retireAccountPage>[0]); }
+        else if (candidate.kind === "WEB_LEAD_ASSIGNMENT") { const { runWebLeadAssignment } = await import("../lead-intake/assignment"); await runWebLeadAssignment(candidate as unknown as Parameters<typeof runWebLeadAssignment>[0]); }
         else if (candidate.kind === "OPERATION") await runOperation(candidate as unknown as Row<Operation>);
         else if (candidate.kind === "EVENT") await processEvent(candidate as unknown as Row<EventRecord>);
         else if (["TASK", "NOTIFICATION"].includes(candidate.kind)) await dispatchTask(candidate as unknown as Row<LeadTask>);
@@ -133,7 +134,7 @@ export const handler = async (event?: Partial<DynamoDBStreamEvent>) => {
         const firstFailureAt = String(current.data.firstFailureAt ?? new Date().toISOString());
         await save(row(current.kind, current.id, { ...current.data, attempts, error, firstFailureAt, ...(current.kind === "COMMUNICATION" && current.data.channel === "EMAIL" ? { seenError: error } : {}) }, { accountId: current.accountId, previous: current,
           // Provider reconciliation and lifecycle repairs remain retryable.
-          dueAt: !["LIFECYCLE", "ROLE_SYNC", "CALL_SYNC", "TRIAGE"].includes(current.kind) && attempts >= 12 && !rateLimited ? undefined : new Date(Date.now() + delay * 1000).toISOString() }), current);
+          dueAt: !["LIFECYCLE", "ROLE_SYNC", "CALL_SYNC", "TRIAGE", "WEB_LEAD_ASSIGNMENT"].includes(current.kind) && attempts >= 12 && !rateLimited ? undefined : new Date(Date.now() + delay * 1000).toISOString() }), current);
         if (!rateLimited || Date.now() - Date.parse(firstFailureAt) >= 300_000) await issue(current.id, error, current.accountId);
       }
     }

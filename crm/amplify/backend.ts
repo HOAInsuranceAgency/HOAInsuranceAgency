@@ -1,5 +1,6 @@
 import { installAccountAccess } from "./account-access";
 import { modelIndex } from "./model-index";
+import { installDashboardReads } from "./dashboard-reports";
 import { crmAccess } from "./functions/crm-access/resource";
 import { Alarm, TreatMissingData, Metric, ComparisonOperator } from "aws-cdk-lib/aws-cloudwatch";
 import { SnsAction } from "aws-cdk-lib/aws-cloudwatch-actions";
@@ -380,6 +381,7 @@ communicationTable.addGlobalSecondaryIndex({ indexName: "work", partitionKey: { 
 communicationTable.addGlobalSecondaryIndex({ indexName: "account", partitionKey: { name: "accountId", type: AttributeType.STRING }, sortKey: { name: "accountSort", type: AttributeType.STRING } });
 communicationTable.addGlobalSecondaryIndex({ indexName: "due", partitionKey: { name: "dueGroup", type: AttributeType.STRING }, sortKey: { name: "dueAt", type: AttributeType.STRING } });
 communicationTable.addGlobalSecondaryIndex({ indexName: "assignment", partitionKey: { name: "assignedSalespersonId", type: AttributeType.STRING }, sortKey: { name: "id", type: AttributeType.STRING } });
+communicationTable.addGlobalSecondaryIndex({ indexName: "website-producers", partitionKey: { name: "producerGroup", type: AttributeType.STRING }, sortKey: { name: "id", type: AttributeType.STRING } });
 communicationTable.grantReadWriteData(backend.assignmentIndexWorker.resources.lambda);
 backend.assignmentIndexWorker.addEnvironment("COMMUNICATION_TABLE", communicationTable.tableName);
 (backend.assignmentIndexWorker.resources.lambda.node.defaultChild as CfnFunction).reservedConcurrentExecutions = 1;
@@ -994,3 +996,4 @@ backend.extractLead.resources.lambda.grantInvoke(
 );
 
 installAccountAccess(backend, communicationTable);
+installDashboardReads(backend);

@@ -7,22 +7,32 @@ type DataClient = ReturnType<typeof generateClient<Schema>>;
 const sns = new SNSClient();
 export async function textLeadAlerts(
   client: DataClient,
-  lead: LeadSummary
+  lead: LeadSummary,
+  salespersonId: string
 ): Promise<{ attempted: number; sent: number; failed: number }> {
   try {
+    // Assignment is required. A missing owner must never become a broadcast.
+    if (!salespersonId?.trim()) return { attempted: 0, sent: 0, failed: 0 };
+
     const baseUrl = process.env.CRM_BASE_URL;
     if (!baseUrl) {
       console.error("CRM_BASE_URL unset — skipping lead texts");
       return { attempted: 0, sent: 0, failed: 1 };
     }
 
-    const profiles = await listAllPages((nextToken) =>
-      client.models.UserProfile.list({ nextToken, limit: 200 })
-    );
+    const profiles = (await listAllPages(async (nextToken) => {
+      const result = await client.models.UserProfile.listUserProfileByUserId(
+        { userId: salespersonId },
+        { nextToken, limit: 200 }
+      );
+      if (result.errors?.length) throw new Error("Unable to load assigned producer's text preferences");
+      return result;
+    })).filter((profile) => profile.userId === salespersonId);
 
     // Opted in with nothing to send to. Logged rather than dropped: the
     // switch is on, so this person believes they are covered.
-    for (const p of unreachableOptIns(profiles)) {
+    const unreachable = unreachableOptIns(profiles);
+    for (const p of unreachable) {
       console.error(
         `${profileName(p)} has lead texts on but no usable mobile number`
       );
@@ -30,6 +40,13 @@ export async function textLeadAlerts(
 
     const recipients = textRecipients(profiles);
     if (recipients.length === 0) return { attempted: 0, sent: 0, failed: 0 };
+
+    // Duplicate rows may agree on the same normalized phone. If preferences
+    // conflict, do not guess which number or opt-in belongs to this producer.
+    if (recipients.length !== 1 || unreachable.length > 0 || profiles.some((p) => !p.leadTextAlerts)) {
+      console.error(`Conflicting text preferences for assigned producer ${salespersonId}`);
+      return { attempted: 0, sent: 0, failed: 1 };
+    }
 
     const Message = leadText(lead, baseUrl);
     const results = await Promise.allSettled(

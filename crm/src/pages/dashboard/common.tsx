@@ -133,7 +133,7 @@ export function TabFrame({
  * is the honest answer to "when are these numbers from". Wall-clock, set
  * when a fetch settles; it exists for a human judging freshness, not for
  * tests, which is why it isn't threaded through as a parameter the way
- * `leadStats` takes `now`.
+ * `leadPersonMetrics` takes `now`.
  */
 function RefreshStamp({ res }: { res: TabResource }) {
   const [stamp, setStamp] = useState<Date | null>(null);

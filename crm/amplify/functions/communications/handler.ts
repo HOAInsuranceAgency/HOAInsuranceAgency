@@ -51,6 +51,15 @@ export const handler = async (event: { arguments: { operation?: string; readOper
     if (retiredTaskOperation(op ?? "", input)) tasksRemoved();
     const requireAdmin = () => { if (!admin) throw new Error("Only an admin can change integration or team settings"); };
     if (event.arguments.readOperation) {
+      if (op === 'dashboardOpenQuotesPage') { requireAdmin(); return { ok: true, ...await (await import('./dashboardLeadQueries')).dashboardOpenQuotesPage(input) }; }
+      if (op === 'dashboardBoundPoliciesPage') { requireAdmin(); return { ok: true, ...await (await import('./dashboardLeadQueries')).dashboardBoundPoliciesPage(input) }; }
+      if (op === 'dashboardQuotesPage') { requireAdmin(); return { ok: true, ...await (await import('./dashboardLeadQueries')).dashboardQuotesPage(input) }; }
+      if (op === 'dashboardQuoteStates') { requireAdmin(); return { ok: true, ...await (await import('./dashboardLeadQueries')).dashboardQuoteStates(input) }; }
+      if (op === 'dashboardInvoiceAnchors') { requireAdmin(); return { ok: true, ...await (await import('./dashboardFinanceRead')).dashboardInvoiceAnchors(input) }; }
+      if (op === 'dashboardAssignments') { requireAdmin(); return { ok: true, ...await (await import('./dashboardAssignments')).dashboardAssignments(input) }; }
+      if (op === 'dashboardInterestPage') { requireAdmin(); return { ok: true, ...await (await import('./dashboardFinanceRead')).dashboardInterestPage(input) }; }
+      if (op === 'dashboardPolicyAnchors') { requireAdmin(); return { ok: true, ...await (await import('./dashboardFinanceRead')).dashboardPolicyAnchors(input) }; }
+      if (op === 'dashboardLeadPlansPage') { requireAdmin(); return { ok: true, ...await (await import('./dashboardLeadRead')).dashboardLeadPlansPage(input) }; }
       if (op === "commercialTable") return { ok: true, items: await (await import("./commercial")).commercialTable(input.accountIds) };
       if (op === "lastContacts") {
         const accounts = input.accounts;

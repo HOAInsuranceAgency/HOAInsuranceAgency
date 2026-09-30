@@ -3,13 +3,25 @@ import { archiveAllowed } from "./cleanup";
 import { config } from "./config";
 import { get, row, save, issue, commit, put, conflict, retryableStorage, check, absent, type Row } from "./store";
 import { front, ProviderError, assertRecipient, messageConversation, permittedConversation, type FrontMessage, verifyEmailChannel } from "./providers";
-import { ensureWorkflow, recordOutbound } from "./workflow";
+import { ensureWorkflow, recordOutbound, enabledUser } from "./workflow";
 import { dataClient } from "./data";
 import { textLeadAlerts } from "../lead-intake/alerts";
 import type { LeadSummary } from "../lead-intake/sms";
 import type { Submission } from "../lead-intake/handler";
 import { renderIntakeBrief } from "../lead-intake/brief";
-import type { Communication, Responsibility, TeamEligibility } from "../../../../shared/leadWorkflow";
+import type { Communication, LeadWorkflow, Responsibility, TeamEligibility } from "../../../../shared/leadWorkflow";
+
+class AssignmentError extends ProviderError {
+  constructor(message: string) { super(message, 0, false); }
+}
+async function assignedSalesperson(userId: string | undefined) {
+  if (!userId || !/^[a-zA-Z0-9_-]{1,128}$/.test(userId)) throw new AssignmentError("Assign an active salesperson to this lead before delivering its alert or Front assignment");
+  const member = await get<TeamEligibility>(`eligibility:${userId}`);
+  if (!member?.data.enabled || !member.data.salesperson) throw new AssignmentError("The assigned salesperson is no longer eligible. Choose an active salesperson for this lead in the CRM");
+  try { await enabledUser(userId); }
+  catch { throw new AssignmentError("The assigned salesperson could not be verified as active. Check their user access or reassign this lead in the CRM"); }
+  return member;
+}
 
 export interface Operation {
   type: "ATTACHMENT" | "IMPORT" | "EMAIL" | "COMMENT" | "SMS_ALERT" | "ARCHIVE" | "REOPEN" | "ASSIGN";
@@ -72,7 +84,12 @@ export async function runOperation(candidate: Row<Operation>) {
       op = leased;
       await importAttachment(op.data); await transition(op, { state: "CONFIRMED" }); return;
     }
-    const wf = await ensureWorkflow(op.data.accountId);
+    // Delivery follows a durable assignment. It must never manufacture a
+    // default owner when an intake workflow has not been assigned yet.
+    const wf = ["IMPORT", "SMS_ALERT", "ASSIGN"].includes(op.data.type)
+      ? await get<LeadWorkflow>(`workflow:${op.data.accountId}`) : await ensureWorkflow(op.data.accountId);
+    if (!wf) throw new AssignmentError("Assign an active salesperson to this lead before delivering its alert or Front assignment");
+    let assignee: Row<TeamEligibility> | undefined;
     let inboundSource: Row<Communication> | undefined;
     if (op.data.type === "REOPEN" && op.id.startsWith("op:inbound:")) {
       inboundSource = await get<Communication>(op.id.slice("op:inbound:".length));
@@ -82,7 +99,11 @@ export async function runOperation(candidate: Row<Operation>) {
     }
     if (op.data.type === "EMAIL" && (wf.data.humanTakeover || wf.data.disposition !== "ACTIVE")) { await transition(op, { state: "SUPPRESSED" }); await updateReply(op.data, "SUPPRESSED", "Handled by the team"); return; }
     let path = "", body: unknown, method = "POST";
-    if (op.data.type === "IMPORT") {
+    if (op.data.type === "SMS_ALERT") {
+      if (!op.data.lead) throw new ProviderError("The lead text alert is missing its lead details; review the intake record", 400, false);
+      assignee = await assignedSalesperson(wf.data.salespersonId);
+    } else if (op.data.type === "IMPORT") {
+      assignee = await assignedSalesperson(wf.data.salespersonId);
       if (!c.frontInboxId || !c.frontChannelId) throw new ProviderError("Connect the Front sales inbox and email channel", 0, false);
       const submission = await get<Submission>(`submission:${op.data.submissionId}`);
       if (!submission) throw new Error("Submission record is missing");
@@ -120,20 +141,18 @@ export async function runOperation(candidate: Row<Operation>) {
       if (op.data.type === "ASSIGN") {
         const link = await get<{ routing?: string }>(`front-link:${cnv}`);
         if (link?.data.routing === "MANUAL") { await transition(op, { state: "SUPPRESSED", error: "A teammate changed the conversation handler" }); return; }
-        const member = await get<TeamEligibility>(`eligibility:${wf.data.salespersonId}`);
-        if (!member?.data.enabled || !member.data.salesperson || !member.data.frontId) throw new ProviderError("Choose an eligible salesperson with a mapped Front identity", 0, false);
-        body = { assignee_id: member.data.frontId };
+        assignee = await assignedSalesperson(wf.data.salespersonId);
+        if (!assignee.data.frontId) throw new AssignmentError("Map the assigned salesperson's Front identity in Team settings to assign this lead's email");
+        body = { assignee_id: assignee.data.frontId };
       }
     }
-    const leased = row("OPERATION", op.id, { ...op.data, state: "LEASED" as const, attempts: op.data.attempts + 1, leaseUntil: new Date(Date.now() + 180_000).toISOString() }, { accountId: op.accountId, previous: op, dueAt: new Date(Date.now() + 180_000).toISOString() });
-    await commit([put(leased, op), absent(`deleted-account:${op.data.accountId}`), ...(["EMAIL", "ASSIGN"].includes(op.data.type) ? [check(wf)] : []), ...(inboundSource ? [check(inboundSource)] : [])]);
+    const leased = row("OPERATION", op.id, { ...op.data, ...(op.data.type === "ASSIGN" ? { assigneeId: assignee!.data.frontId } : {}), state: "LEASED" as const, attempts: op.data.attempts + 1, leaseUntil: new Date(Date.now() + 180_000).toISOString() }, { accountId: op.accountId, previous: op, dueAt: new Date(Date.now() + 180_000).toISOString() });
+    await commit([put(leased, op), absent(`deleted-account:${op.data.accountId}`), ...(["IMPORT", "EMAIL", "ASSIGN", "SMS_ALERT"].includes(op.data.type) ? [check(wf)] : []), ...(assignee ? [check(assignee)] : []), ...(inboundSource ? [check(inboundSource)] : [])]);
     op = leased;
     posted = true;
     if (op.data.type === "SMS_ALERT") {
-      if (op.data.lead) {
-        const result = await textLeadAlerts(await dataClient(), op.data.lead);
-        if (result.failed) throw new ProviderError("One or more team lead alerts failed; review before retrying", 400, false);
-      }
+      const result = await textLeadAlerts(await dataClient(), op.data.lead!, wf.data.salespersonId!);
+      if (result.failed) throw new ProviderError("The assigned salesperson's lead text alert failed; review before retrying", 400, false);
       await transition(op, { state: "CONFIRMED" }); return;
     }
     const result = await front<{ message_uid?: string; id?: string }>(path, method, body);
@@ -161,7 +180,7 @@ export async function runOperation(candidate: Row<Operation>) {
     await transition(current, { state, error: message, failures }, retryable ? delay : undefined);
     if (state === "FAILED") await updateReply(current.data, "FAILED", message);
     if (authFailure) await issue("provider-auth", "Provider authorization needs repair. Queued deliveries are held and will retry after credentials are restored.");
-    if (uncertain || !retryable || Date.now() - Date.parse(current.createdAt) > 300_000) await issue(current.id, message, current.accountId);
+    if (error instanceof AssignmentError || uncertain || !retryable || Date.now() - Date.parse(current.createdAt) > 300_000) await issue(current.id, message, current.accountId);
   }
 }
 async function updateReply(op: Operation, status: "SENT" | "SUPPRESSED" | "FAILED", note?: string, sentAt?: string) {
@@ -189,8 +208,9 @@ async function resolveAccepted(op: Row<Operation>) {
     const writes = [put(row("WORKFLOW", wf.id, { ...wf.data, conversationId, version: wf.version + 1 }, { accountId: wf.accountId, previous: wf }), wf)];
     if (!existingLink) writes.push(put(row("LINK", `front-link:${conversationId}`, { accountId: op.accountId, conversationId, purpose: "PROSPECT", routing: "SALESPERSON" }, { accountId: op.accountId })));
     await commit(writes);
-    const assignee = wf.data.salespersonId ? await get<{ frontId?: string }>(`eligibility:${wf.data.salespersonId}`) : undefined;
-    if (assignee?.data.frontId) await enqueueOperation(`op:assign:${conversationId}`, { type: "ASSIGN", accountId: op.data.accountId, conversationId, assigneeId: assignee.data.frontId });
+    // Queue even when the owner or Front mapping needs repair. The assignment
+    // operation holds visibly and retries using the current persisted owner.
+    await enqueueOperation(`op:assign:${conversationId}`, { type: "ASSIGN", accountId: op.data.accountId, conversationId });
   } else {
     if (message.is_inbound || conversationId !== linkedConversationId) throw new Error("The outbound message does not match the linked conversation");
     if (wf.data.conversationId !== conversationId) await save(row("WORKFLOW", wf.id, { ...wf.data, conversationId, version: wf.version + 1 }, { accountId: wf.accountId, previous: wf }), wf);
