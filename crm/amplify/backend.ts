@@ -376,6 +376,7 @@ communicationTable.addGlobalSecondaryIndex({ indexName: "work", partitionKey: { 
 communicationTable.addGlobalSecondaryIndex({ indexName: "account", partitionKey: { name: "accountId", type: AttributeType.STRING }, sortKey: { name: "accountSort", type: AttributeType.STRING } });
 communicationTable.addGlobalSecondaryIndex({ indexName: "due", partitionKey: { name: "dueGroup", type: AttributeType.STRING }, sortKey: { name: "dueAt", type: AttributeType.STRING } });
 communicationTable.addGlobalSecondaryIndex({ indexName: "assignment", partitionKey: { name: "assignedSalespersonId", type: AttributeType.STRING }, sortKey: { name: "id", type: AttributeType.STRING } });
+communicationTable.addGlobalSecondaryIndex({ indexName: "website-producers", partitionKey: { name: "producerGroup", type: AttributeType.STRING }, sortKey: { name: "id", type: AttributeType.STRING } });
 communicationTable.grantReadWriteData(backend.assignmentIndexWorker.resources.lambda);
 backend.assignmentIndexWorker.addEnvironment("COMMUNICATION_TABLE", communicationTable.tableName);
 (backend.assignmentIndexWorker.resources.lambda.node.defaultChild as CfnFunction).reservedConcurrentExecutions = 1;

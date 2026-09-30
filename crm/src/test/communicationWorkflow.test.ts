@@ -1,16 +1,18 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
-import type { Communication, IntegrationConfig } from "../../../shared/leadWorkflow";
-const h = vi.hoisted(() => ({ records: new Map<string, Record<string, any>>(), transactions: [] as any[][], inFlight: 0, maxInFlight: 0, fail: false, failAt: undefined as number | undefined, writeError: undefined as Error | undefined, accountError: false, userEnabled: true,
-  reads: [] as string[], batch: vi.fn(), front: vi.fn(), dialpad: vi.fn(), update: vi.fn(), accountList: vi.fn(), c: {} as IntegrationConfig }));
+import type { Communication, IntegrationConfig, LeadWorkflow } from "../../../shared/leadWorkflow";
+const h = vi.hoisted(() => ({ records: new Map<string, Record<string, any>>(), transactions: [] as any[][], inFlight: 0, maxInFlight: 0, fail: false, failAt: undefined as number | undefined, writeError: undefined as Error | undefined, writeErrors: [] as Error[], accountError: false, userEnabled: true, disabledUsers: new Set<string>(),
+  reads: [] as string[], readFailureId: undefined as string | undefined, userReads: [] as string[], userError: undefined as Error | undefined, queries: [] as any[], queryError: undefined as Error | undefined, batch: vi.fn(), front: vi.fn(), dialpad: vi.fn(), update: vi.fn(), accountList: vi.fn(), c: {} as IntegrationConfig }));
 vi.mock("@aws-sdk/lib-dynamodb", async importOriginal => {
   const actual = await importOriginal<typeof import("@aws-sdk/lib-dynamodb")>();
   return { ...actual, DynamoDBDocumentClient: { from: () => ({ send: async (command: any) => {
     const p = command.input;
-    if (command.constructor.name === "GetCommand") { h.reads.push(p.Key.id); return { Item: h.records.get(`${p.TableName}:${p.Key.id}`) }; }
+    if (command.constructor.name === "GetCommand") { h.reads.push(p.Key.id); if (h.readFailureId === p.Key.id) { h.readFailureId = undefined; throw new Error("Temporary read failure"); } return { Item: h.records.get(`${p.TableName}:${p.Key.id}`) }; }
     if (command.constructor.name === "BatchGetCommand") return h.batch(p);
     if (command.constructor.name === "QueryCommand") {
+      h.queries.push(p);
+      if (p.IndexName === "website-producers" && h.queryError) throw h.queryError;
       const v = p.ExpressionAttributeValues;
-      let items = [...h.records.entries()].filter(([k,r]) => k.startsWith(`${p.TableName}:`) && r[p.ExpressionAttributeNames["#k"]] === v[":k"] && (!v[":prefix"] || r.accountSort?.startsWith(v[":prefix"])) && (!v[":now"] || r.dueAt <= v[":now"])).map(([,r]) => r);
+      let items = [...h.records.entries()].filter(([k,r]) => k.startsWith(`${p.TableName}:`) && r[p.ExpressionAttributeNames["#k"] ?? p.ExpressionAttributeNames["#group"]] === (v[":k"] ?? v[":group"]) && (!v[":after"] || r.id > v[":after"]) && (!v[":through"] || r.id <= v[":through"]) && (!v[":prefix"] || r.accountSort?.startsWith(v[":prefix"])) && (!v[":now"] || r.dueAt <= v[":now"])).map(([,r]) => r);
       const sort = p.IndexName === "account" ? "accountSort" : p.IndexName === "due" ? "dueAt" : p.IndexName === "work" ? "workAt" : "id";
       items.sort((a,b) => String(a[sort]).localeCompare(String(b[sort])) * (p.ScanIndexForward === false ? -1 : 1));
       if (p.ExclusiveStartKey) items = items.slice(items.findIndex(r => r.id === p.ExclusiveStartKey.id) + 1);
@@ -23,6 +25,7 @@ vi.mock("@aws-sdk/lib-dynamodb", async importOriginal => {
       if (h.fail) throw new Error("Simulated storage outage");
       if (h.failAt === h.transactions.length) { h.failAt = undefined; throw new Error("Interrupted contact progress"); }
       if (h.writeError) { const error = h.writeError; h.writeError = undefined; throw error; }
+      if (h.writeErrors.length) throw h.writeErrors.shift();
       const writes = p.TransactItems;
       for (const entry of writes) {
         const w = entry.Put ?? entry.ConditionCheck ?? entry.Update;
@@ -53,7 +56,7 @@ vi.mock("@aws-sdk/lib-dynamodb", async importOriginal => {
     throw new Error(`Unexpected storage command ${command.constructor.name}`);
   } }) } };
 });
-vi.mock("@aws-sdk/client-cognito-identity-provider", () => ({ CognitoIdentityProviderClient: class { send = async (command: any) => { const id = /"([^"]+)"/.exec(command.input.Filter)?.[1] ?? "brian"; return { Users: [{ Enabled: h.userEnabled, Attributes: [{ Name: "email", Value: `${id}@example.com` }, { Name: "email_verified", Value: "true" }] }] }; }; }, ListUsersCommand: class { constructor(public input: unknown) {} } }));
+vi.mock("@aws-sdk/client-cognito-identity-provider", () => ({ CognitoIdentityProviderClient: class { send = async (command: any) => { const id = /"([^"]+)"/.exec(command.input.Filter)?.[1] ?? "brian"; h.userReads.push(id); if (h.userError) throw h.userError; return { Users: [{ Enabled: h.userEnabled && !h.disabledUsers.has(id), Attributes: [{ Name: "email", Value: `${id}@example.com` }, { Name: "email_verified", Value: "true" }] }] }; }; }, ListUsersCommand: class { constructor(public input: unknown) {} } }));
 vi.mock("../../amplify/functions/communications/config", async importOriginal => ({ ...(await importOriginal<typeof import("../../amplify/functions/communications/config")>()), saveCredentials: vi.fn(), config: async () => h.c, credentials: async () => ({ frontSigningKey: "test-signing-key", dialpadSigningKey: "test-dialpad-signing-key" }) }));
 vi.mock("../../amplify/functions/communications/data", () => ({ dataClient: async () => ({ models: {
   Account: { list: h.accountList, get: async ({ id }: { id: string }) => (h.accountError ? { data: null, errors: [{ message: "Simulated account read failure" }] } : { data: { id, name: "Willow HOA", stage: "LEAD", createdAt: "2026-09-08T14:00:00.000Z", updatedAt: "2026-09-08T14:00:00.000Z", ...Object.fromEntries([["quotes", "Quote"], ["policies", "Policy"], ["priorCarriers", "PriorCarrier"], ["certificates", "Certificate"], ["invoices", "Invoice"]].map(([name, model]) => [name, async () => ({ data: [...h.records.entries()].filter(([key, r]) => key.startsWith(`${model}:`) && r.accountId === id).map(([, r]) => r) })])), contacts: async () => ({ data: [...h.records.entries()].filter(([key, c]) => key.startsWith("Contact:") && c.accountId === id).map(([,c]) => c) }), ...h.records.get(`Account:${id}`) } }) },
@@ -73,6 +76,7 @@ vi.mock("../../amplify/functions/communications/providers", async importOriginal
 });
 import { get, row, save, type Row } from "../../amplify/functions/communications/store";
 import { handler as capture } from "../../amplify/functions/lead-intake/handler";
+import { runWebLeadAssignment } from "../../amplify/functions/lead-intake/assignment";
 import { defaultWorkflow, makeTask, saveTask as retiredSaveTask, recordInbound, recordOutbound, completeTask, setResponsibilities, mergeTasks } from "../../amplify/functions/communications/workflow";
 import { archiveAllowed } from "../../amplify/functions/communications/cleanup";
 import { remainingDelay, rememberBudget } from "../../amplify/functions/communications/budget";
@@ -95,7 +99,9 @@ async function seedLegacyPromise(input: any, actor: string) {
 }
 beforeEach(async () => {
   vi.useFakeTimers(); vi.setSystemTime(NOW); h.records.clear(); h.transactions.length = 0; h.inFlight = 0; h.maxInFlight = 0; h.fail = false; h.failAt = undefined; h.accountError = false; h.userEnabled = true; h.writeError = undefined; vi.clearAllMocks();
-  h.reads.length = 0;
+  h.disabledUsers.clear();
+  h.writeErrors.length = 0;
+  h.reads.length = 0; h.readFailureId = undefined; h.userReads.length = 0; h.queries.length = 0; h.userError = undefined; h.queryError = undefined;
   h.batch.mockReset().mockImplementation((p: { RequestItems: Record<string, { Keys: { id: string }[] }> }) => ({
     Responses: Object.fromEntries(Object.entries(p.RequestItems).map(([name, request]) => [name,
       request.Keys.map(key => h.records.get(`${name}:${key.id}`)).filter(Boolean).map(item => structuredClone(item)).reverse(),
@@ -105,6 +111,7 @@ beforeEach(async () => {
   h.c = { frontCompanyId: "cmp_a", environment: "main", defaultUserId: "brian", frontSender: "sales@protectmyhoa.com", frontInboxId: "inb_a", frontChannelId: "cha_a", holidays: [], paused: false, activatedAt: "2026-09-01T00:00:00Z", allowedInboxIds: [], testRecipients: [], dialpadNumbers: ["+15082332261", "+16175550123"], sharedSmsNumber: "+15082332261", version: 1 };
   await save(row("ELIGIBILITY", "eligibility:brian", { userId: "brian", name: "Brian Cole", email: "brian@example.com", salesperson: true, champion: true, enabled: true }));
   await save(row("TEAM_ROUTING", "team-routing", { ownerId: "brian", members: [] }));
+  h.records.set("comms:migration:website-producers:v1", row("MIGRATION", "migration:website-producers:v1", { complete: true }));
   h.update.mockResolvedValue({ data: {} });
   h.accountList.mockReset().mockResolvedValue({ data: [] });
   h.front.mockImplementation(async (path: string) => path.includes("/messages") && path.includes("/conversations") ? { _results: [] } : {});
@@ -368,7 +375,10 @@ describe("durable public capture", () => {
   });
   it("captures one lead, intake and AI reply across concurrent browser retries", async () => {
     const [a,b] = await Promise.all([submit(), submit()]); expect(a).toMatchObject({ ok: true }); expect(b).toMatchObject({ ok: true }); expect((a as any).id).toBe((b as any).id);
-    expect([...h.records.keys()].filter(k => k.startsWith("Account:"))).toHaveLength(1); expect(entries("OPERATION").filter(o => o.data.type === "IMPORT")).toHaveLength(1); expect(entries("WORKFLOW")[0].data).toMatchObject({ salespersonId: "brian" });
+    expect([...h.records.keys()].filter(k => k.startsWith("Account:"))).toHaveLength(1); expect(entries("OPERATION").filter(o => o.data.type === "IMPORT")).toHaveLength(1); expect(entries("WORKFLOW")[0].data).toMatchObject({ assignmentIssue: "Website lead assignment is pending." });
+    expect(entries("WEB_LEAD_ASSIGNMENT")).toHaveLength(1);
+    await runWebLeadAssignment(entries("WEB_LEAD_ASSIGNMENT")[0] as never);
+    expect(entries("WORKFLOW")[0].data).toMatchObject({ salespersonId: "brian" });
     expect(h.front).not.toHaveBeenCalled();
   });
   it("does not return a bearer upload token to a guessed identity or changed payload", async () => {
@@ -376,6 +386,295 @@ describe("durable public capture", () => {
   });
   it("does not claim success or leave partial lead records when storage fails", async () => {
     h.fail = true; expect(await submit()).toMatchObject({ ok: false }); expect(entries("SUBMISSION")).toHaveLength(0); expect([...h.records.keys()].filter(k => k.startsWith("Account:"))).toHaveLength(0);
+  });
+});
+describe("website producer rotation", () => {
+  const submissionId = (index: number) => `rotation-submission-${String(index).padStart(20, "0")}`;
+  const submit = (index: number, overrides = {}) => capture({ arguments: { submissionId: submissionId(index), retryProof: "r".repeat(64), name: `Association ${index}`, contactEmail: "prospect@example.com", ...overrides } } as never, {} as never, () => {});
+  const assignedTo = (result: any) => {
+    expect(result).toMatchObject({ ok: true });
+    return record(`workflow:${result.id}`).data.salespersonId;
+  };
+  const jobFor = (result: any) => record(`web-assignment:${result.id}`);
+  async function runJob(result: any) {
+    const job = jobFor(result);
+    if (job.dueAt && Date.parse(job.dueAt) > Date.now()) vi.setSystemTime(job.dueAt);
+    await runWebLeadAssignment(job as never);
+  }
+  async function completeJob(result: any) {
+    let attempts = 0;
+    while (jobFor(result).dueAt && attempts++ < 10) await runJob(result);
+    expect(jobFor(result).data.state).toBe("COMPLETE");
+  }
+  async function assign(index: number) { const result = await submit(index); await completeJob(result); return result; }
+  async function roster(users: { userId: string; enabled?: boolean; salesperson?: boolean }[]) {
+    for (const [key, value] of h.records) if (value.kind === "ELIGIBILITY") h.records.delete(key);
+    for (const user of users) await save(row("ELIGIBILITY", `eligibility:${user.userId}`, { name: user.userId, email: `${user.userId}@example.com`, salesperson: true, enabled: true, ...user }));
+  }
+  it("durably captures the unassigned lead and delivery jobs before a separate atomic producer assignment", async () => {
+    await roster([{ userId: "charlie" }, { userId: "alice" }, { userId: "bravo" }]);
+    h.c.defaultSalespersonId = "charlie";
+    const results = [];
+    for (let i = 0; i < 4; i++) {
+      const result = await submit(i) as any;
+      expect(assignedTo(result)).toBeUndefined();
+      expect(record(`workflow:${result.id}`).data.assignmentIssue).toBe("Website lead assignment is pending.");
+      const captureWrites = h.transactions.find(items => items.some(write => write.Put?.TableName === "Account" && write.Put.Item.id === result.id))!;
+      expect(captureWrites.some(write => write.Put?.Item.id === "rotation:web-leads")).toBe(false);
+      expect(captureWrites.some(write => write.Put?.Item.id === `workflow:${result.id}`)).toBe(true);
+      expect(captureWrites.some(write => write.Put?.Item.id === `web-assignment:${result.id}`)).toBe(true);
+      expect(captureWrites.filter(write => write.Put?.Item.kind === "OPERATION").map(write => write.Put.Item.data.type).sort()).toEqual(["IMPORT", "SMS_ALERT"]);
+      await completeJob(result); results.push(result);
+      const assignmentWrites = h.transactions.find(items => items.some(write => write.Put?.Item.id === `web-assignment:${result.id}` && write.Put.Item.data.state === "COMPLETE"))!;
+      expect(assignmentWrites.some(write => write.Put?.Item.id === "rotation:web-leads")).toBe(true);
+      expect(assignmentWrites.some(write => write.ConditionCheck?.Key.id === `eligibility:${assignedTo(result)}`)).toBe(true);
+      expect(assignmentWrites.some(write => write.Put?.Item.id === `workflow:${result.id}`)).toBe(true);
+      expect(record(`workflow:${result.id}`).data.assignmentIssue).toBeUndefined();
+      expect(jobFor(result).dueAt).toBeUndefined();
+    }
+    expect(results.map(assignedTo)).toEqual(["alice", "bravo", "charlie", "alice"]);
+    expect(record("rotation:web-leads")).toMatchObject({ version: 4, data: { lastUserId: "alice" } });
+    expect(h.front).not.toHaveBeenCalled(); expect(h.dialpad).not.toHaveBeenCalled();
+  });
+  it("assigns captured leads through the scheduled worker while provider delivery is paused", async () => {
+    h.c.paused = true;
+    const result = await submit(0) as any;
+    const { handler: tick } = await import("../../amplify/functions/communications/worker");
+    expect(await tick()).toMatchObject({ failed: 0 });
+    expect(assignedTo(result)).toBe("brian"); expect(jobFor(result).data.state).toBe("COMPLETE");
+    expect(jobFor(result).dueAt).toBeUndefined(); expect(entries("TASK")).toHaveLength(0);
+    expect(h.front).not.toHaveBeenCalled(); expect(h.dialpad).not.toHaveBeenCalled();
+  });
+  it("keeps the scheduled assignment retryable after twelve failures even if the queue record read fails", async () => {
+    h.c.paused = true;
+    const result = await submit(0) as any, job = (await get<any>(jobFor(result).id))!;
+    await save(row("WEB_LEAD_ASSIGNMENT", job.id, { ...job.data, attempts: 12 }, { accountId: result.id, previous: job, dueAt: NOW }), job);
+    h.readFailureId = job.id;
+    const { handler: tick } = await import("../../amplify/functions/communications/worker");
+    expect(await tick()).toMatchObject({ failed: 1 });
+    expect(jobFor(result)).toMatchObject({ data: { state: "READY", attempts: 13 }, dueAt: expect.any(String) });
+    expect(assignedTo(result)).toBeUndefined(); expect(record("rotation:web-leads")).toBeUndefined();
+    vi.setSystemTime(jobFor(result).dueAt);
+    await tick();
+    expect(assignedTo(result)).toBe("brian"); expect(jobFor(result).data.state).toBe("COMPLETE");
+  });
+  it("excludes disabled accounts and teammates who are not eligible producers", async () => {
+    await roster([{ userId: "alice", enabled: false }, { userId: "bravo" }, { userId: "charlie", salesperson: false }, { userId: "delta" }, { userId: "echo" }]);
+    h.disabledUsers.add("bravo");
+    const results = [];
+    for (let i = 0; i < 4; i++) results.push(await assign(i));
+    expect(results.map(assignedTo)).toEqual(["delta", "echo", "delta", "echo"]);
+    expect(h.userReads).not.toContain("alice"); expect(h.userReads).not.toContain("charlie");
+  });
+  it("retries an unavailable roster until a producer recovers without another website submission", async () => {
+    await roster([{ userId: "alice" }]);
+    expect(assignedTo(await assign(0))).toBe("alice");
+    const cursor = structuredClone(record("rotation:web-leads"));
+    h.disabledUsers.add("alice");
+    const result = await submit(1) as any;
+    for (let attempt = 0; attempt < 12; attempt++) await runJob(result);
+    expect(assignedTo(result)).toBeUndefined();
+    expect(record(`workflow:${result.id}`).data.assignmentIssue).toEqual(expect.any(String));
+    expect(entries("ISSUE").some(issue => issue.accountId === result.id && !issue.data.resolved)).toBe(true);
+    expect(jobFor(result)).toMatchObject({ data: { state: "READY" }, dueAt: expect.any(String) });
+    expect(record("rotation:web-leads")).toEqual(cursor);
+    h.disabledUsers.delete("alice");
+    for (let attempt = 0; jobFor(result).dueAt && attempt < 4; attempt++) await runJob(result);
+    expect(assignedTo(result)).toBe("alice");
+    expect(jobFor(result)).toMatchObject({ data: { state: "COMPLETE" } });
+    expect(record(`workflow:${result.id}`).data.assignmentIssue).toBeUndefined();
+    expect(entries("SUBMISSION")).toHaveLength(2);
+  });
+  it("accepts 24 simultaneous distinct leads before any roster lookup or cursor update, then assigns fairly", async () => {
+    await roster([{ userId: "alice" }, { userId: "bravo" }, { userId: "charlie" }]);
+    const results = await Promise.all(Array.from({ length: 24 }, (_, index) => submit(index)));
+    expect(results.every(result => (result as any).ok)).toBe(true);
+    expect(new Set((results as { id: string }[]).map(result => result.id)).size).toBe(24);
+    expect(entries("SUBMISSION")).toHaveLength(24); expect(entries("WEB_LEAD_ASSIGNMENT")).toHaveLength(24);
+    expect(record("rotation:web-leads")).toBeUndefined(); expect(h.userReads).toEqual([]); expect(h.queries).toEqual([]);
+    expect(results.map(assignedTo)).toEqual(Array(24).fill(undefined));
+    for (const result of results) await completeJob(result);
+    expect(results.map(assignedTo)).toEqual(Array.from({ length: 24 }, (_, index) => ["alice", "bravo", "charlie"][index % 3]));
+    expect(record("rotation:web-leads").version).toBe(24);
+    expect(h.maxInFlight).toBeGreaterThan(1);
+  });
+  it("keeps assignment contention in the durable queue and eventually balances concurrent workers", async () => {
+    await roster([{ userId: "alice" }, { userId: "bravo" }, { userId: "charlie" }]);
+    const results = await Promise.all(Array.from({ length: 24 }, (_, index) => submit(index)));
+    let passes = 0;
+    while (results.some(result => jobFor(result).dueAt) && passes++ < 50) {
+      await Promise.all(results.filter(result => jobFor(result).dueAt).map(runJob));
+    }
+    expect(passes).toBeLessThan(50);
+    expect(results.map(assignedTo).sort()).toEqual([...Array(8).fill("alice"), ...Array(8).fill("bravo"), ...Array(8).fill("charlie")]);
+    expect(record("rotation:web-leads").version).toBe(24);
+    expect(entries("SUBMISSION")).toHaveLength(24);
+    expect(entries("WEB_LEAD_ASSIGNMENT").every(job => job.data.state === "COMPLETE" && !job.dueAt)).toBe(true);
+  });
+  it.each(["directory", "producer index"])("captures successfully through a transient %s failure and assigns after recovery", async failure => {
+    await roster([{ userId: "alice" }]);
+    const unavailable = Object.assign(new Error("Temporary service outage"), { name: "ServiceUnavailable" });
+    if (failure === "directory") h.userError = unavailable; else h.queryError = unavailable;
+    const result = await submit(0) as any;
+    expect(result.ok).toBe(true); expect(h.userReads).toEqual([]); expect(h.queries).toEqual([]);
+    await runJob(result);
+    expect(assignedTo(result)).toBeUndefined(); expect(record("rotation:web-leads")).toBeUndefined();
+    expect(jobFor(result)).toMatchObject({ data: { state: "READY" }, dueAt: expect.any(String) });
+    h.userError = undefined; h.queryError = undefined;
+    await runJob(result);
+    expect(assignedTo(result)).toBe("alice"); expect(jobFor(result).data.state).toBe("COMPLETE");
+    expect(entries("SUBMISSION")).toHaveLength(1);
+  });
+  it("keeps retrying after more than twelve transient failures without asking the prospect to submit again", async () => {
+    const result = await submit(0) as any;
+    h.userError = Object.assign(new Error("Directory temporarily unavailable"), { name: "ServiceUnavailable" });
+    for (let attempt = 0; attempt < 14; attempt++) await runJob(result);
+    expect(jobFor(result)).toMatchObject({ data: { state: "READY", attempts: 14 }, dueAt: expect.any(String) });
+    expect(assignedTo(result)).toBeUndefined(); expect(record("rotation:web-leads")).toBeUndefined();
+    h.userError = undefined;
+    await completeJob(result);
+    expect(assignedTo(result)).toBe("brian"); expect(entries("SUBMISSION")).toHaveLength(1);
+    expect(record(`issue:web-assignment:${result.id}`).data.resolved).toBe(true);
+  });
+  it("preserves an unrelated invalid-email issue after assignment recovers", async () => {
+    const result = await submit(0, { contactEmail: "not-an-email" }) as any;
+    h.userError = new Error("Directory temporarily unavailable");
+    await runJob(result);
+    h.userError = undefined;
+    await completeJob(result);
+    expect(assignedTo(result)).toBe("brian");
+    expect(record(`issue:intake:${result.id}`).data).toMatchObject({ message: "Correct the prospect email before sending" });
+    expect(record(`issue:intake:${result.id}`).data.resolved).not.toBe(true);
+    expect(record(`issue:web-assignment:${result.id}`).data.resolved).toBe(true);
+  });
+  it("waits durably for the producer index migration and resumes the captured lead once ready", async () => {
+    h.records.delete("comms:migration:website-producers:v1");
+    const result = await submit(0) as any;
+    await runJob(result);
+    expect(assignedTo(result)).toBeUndefined(); expect(jobFor(result).dueAt).toBeTruthy();
+    expect(h.userReads).toEqual([]); expect(h.queries).toEqual([]);
+    h.records.set("comms:migration:website-producers:v1", row("MIGRATION", "migration:website-producers:v1", { complete: true }));
+    await runJob(result);
+    expect(assignedTo(result)).toBe("brian"); expect(entries("SUBMISSION")).toHaveLength(1);
+  });
+  it.each(["TransactionConflictException", "TransactionCanceledException", "ConditionalCheckFailedException"])("retries queued assignment after %s without a partial assignment or lost producer turn", async name => {
+    await roster([{ userId: "alice" }, { userId: "bravo" }]);
+    expect(assignedTo(await assign(0))).toBe("alice");
+    const cursor = structuredClone(record("rotation:web-leads"));
+    const result = await submit(1) as any;
+    h.writeError = Object.assign(new Error("Another transaction is in progress"), { name,
+      ...(name === "TransactionCanceledException" ? { CancellationReasons: [{ Code: "TransactionConflict" }] } : {}),
+    });
+    await runJob(result);
+    expect(assignedTo(result)).toBeUndefined(); expect(record("rotation:web-leads")).toEqual(cursor);
+    expect(jobFor(result)).toMatchObject({ data: { state: "READY" }, dueAt: expect.any(String) });
+    expect(entries("SUBMISSION")).toHaveLength(2); expect(entries("OPERATION")).toHaveLength(4);
+    await runJob(result);
+    expect(assignedTo(result)).toBe("bravo"); expect(record("rotation:web-leads").version).toBe(2);
+  });
+  it("consumes one turn for concurrent browser retries and none for receipt or completed job replay", async () => {
+    await roster([{ userId: "alice" }, { userId: "bravo" }]);
+    const results = await Promise.all([submit(0), submit(0), submit(0)]) as any[];
+    expect(new Set(results.map(result => result.id)).size).toBe(1); expect(entries("WEB_LEAD_ASSIGNMENT")).toHaveLength(1);
+    await Promise.all(results.map(runJob));
+    expect(results.map(assignedTo)).toEqual(["alice", "alice", "alice"]);
+    expect(record("rotation:web-leads").version).toBe(1);
+    expect(await submit(0)).toMatchObject({ ok: true, duplicate: true, id: results[0].id });
+    await runJob(results[0]); expect(record("rotation:web-leads").version).toBe(1);
+    expect(assignedTo(await assign(1))).toBe("bravo");
+  });
+  it("does not consume a turn or create an assignment job when durable capture fails", async () => {
+    await roster([{ userId: "alice" }, { userId: "bravo" }]);
+    expect(assignedTo(await assign(0))).toBe("alice");
+    const cursor = structuredClone(record("rotation:web-leads"));
+    h.fail = true;
+    expect(await submit(1)).toMatchObject({ ok: false });
+    expect(record("rotation:web-leads")).toEqual(cursor); expect(entries("SUBMISSION")).toHaveLength(1);
+    expect([...h.records.keys()].filter(key => key.startsWith("Account:"))).toHaveLength(1);
+    expect(entries("WEB_LEAD_ASSIGNMENT")).toHaveLength(1);
+    h.fail = false;
+    expect(assignedTo(await assign(1))).toBe("bravo"); expect(record("rotation:web-leads").version).toBe(2);
+  });
+  it("continues with the next producer when the previously selected producer leaves the roster", async () => {
+    await roster([{ userId: "alice" }, { userId: "bravo" }, { userId: "charlie" }]);
+    expect(assignedTo(await assign(0))).toBe("alice"); expect(assignedTo(await assign(1))).toBe("bravo");
+    h.records.delete("comms:eligibility:bravo");
+    expect(assignedTo(await assign(2))).toBe("charlie"); expect(assignedTo(await assign(3))).toBe("alice");
+  });
+  it("bounds each worker pass while reaching an active producer beyond the first directory page", async () => {
+    const unavailable = Array.from({ length: 19 }, (_, index) => ({ userId: `producer-${String(index).padStart(3, "0")}` }));
+    await roster([...unavailable, { userId: "zeta" }]);
+    for (const user of unavailable) h.disabledUsers.add(user.userId);
+    const result = await submit(0) as any;
+    let passes = 0;
+    while (jobFor(result).dueAt && passes++ < 6) {
+      const readsBefore = h.userReads.length, queriesBefore = h.queries.length;
+      await runJob(result);
+      expect(h.userReads.length - readsBefore).toBeLessThanOrEqual(8);
+      expect(h.queries.length - queriesBefore).toBeLessThanOrEqual(1);
+    }
+    expect(passes).toBe(3); expect(assignedTo(result)).toBe("zeta");
+    expect(h.queries.every(query => query.IndexName === "website-producers" && query.Limit === 8)).toBe(true);
+    expect(h.batch).toHaveBeenCalledTimes(3);
+  });
+  it("restarts a partial roster page after another worker advances the rotation", async () => {
+    const disabled = Array.from({ length: 9 }, (_, index) => ({ userId: `producer-${index}` }));
+    await roster([...disabled, { userId: "yankee" }, { userId: "zeta" }]);
+    for (const user of disabled) h.disabledUsers.add(user.userId);
+    const result = await submit(0) as any;
+    await runJob(result);
+    expect(jobFor(result).data.nextToken).toEqual(expect.any(String)); expect(assignedTo(result)).toBeUndefined();
+    await save(row("CURSOR", "rotation:web-leads", { lastUserId: "yankee" }));
+    await runJob(result);
+    expect(assignedTo(result)).toBe("zeta");
+    expect(h.queries.at(-1)).toMatchObject({ ExpressionAttributeValues: { ":after": "eligibility:yankee" } });
+    expect(h.queries.at(-1).ExclusiveStartKey).toBeUndefined();
+  });
+  it("keeps a manual assignment and completes its waiting job without advancing the rotation", async () => {
+    await roster([{ userId: "alice" }, { userId: "bravo" }]);
+    expect(assignedTo(await assign(0))).toBe("alice");
+    const cursor = structuredClone(record("rotation:web-leads"));
+    const result = await submit(1) as any;
+    const old = record(`workflow:${result.id}`) as Row<LeadWorkflow>;
+    await save(row("WORKFLOW", old.id, { ...old.data, salespersonId: "alice", assignmentIssue: undefined, version: old.version + 1 }, { accountId: result.id, previous: old }), old);
+    await runJob(result);
+    expect(assignedTo(result)).toBe("alice"); expect(jobFor(result).data.state).toBe("COMPLETE");
+    expect(record("rotation:web-leads")).toEqual(cursor); expect(assignedTo(await assign(2))).toBe("bravo");
+  });
+  it.each(["manual assignment", "deletion"])("fences %s between producer selection and assignment commit", async change => {
+    await roster([{ userId: "alice" }, { userId: "bravo" }]);
+    expect(assignedTo(await assign(0))).toBe("alice");
+    const cursor = structuredClone(record("rotation:web-leads")), result = await submit(1) as any;
+    h.batch.mockImplementationOnce((p: { RequestItems: Record<string, { Keys: { id: string }[] }> }) => {
+      if (change === "deletion") h.records.set(`comms:deleted-account:${result.id}`, row("DELETED_ACCOUNT", `deleted-account:${result.id}`, { accountId: result.id }));
+      else {
+        const old = record(`workflow:${result.id}`) as Row<LeadWorkflow>;
+        h.records.set(`comms:${old.id}`, row("WORKFLOW", old.id, { ...old.data, salespersonId: "alice", assignmentIssue: undefined, version: old.version + 1 }, { accountId: result.id, previous: old }));
+      }
+      return { Responses: Object.fromEntries(Object.entries(p.RequestItems).map(([name, request]) => [name,
+        request.Keys.map(key => h.records.get(`${name}:${key.id}`)).filter(Boolean).map(item => structuredClone(item)),
+      ])) };
+    });
+    await runJob(result);
+    expect(record("rotation:web-leads")).toEqual(cursor);
+    expect(assignedTo(result)).toBe(change === "deletion" ? undefined : "alice");
+    await runJob(result);
+    expect(jobFor(result).data.state).toBe(change === "deletion" ? "SUPPRESSED" : "COMPLETE");
+    expect(record("rotation:web-leads")).toEqual(cursor);
+  });
+  it("preserves a closed lead's disposition while completing its pending producer assignment", async () => {
+    const result = await submit(0) as any, old = record(`workflow:${result.id}`) as Row<LeadWorkflow>;
+    await save(row("WORKFLOW", old.id, { ...old.data, disposition: "LOST", version: old.version + 1 }, { accountId: result.id, previous: old }), old);
+    await completeJob(result);
+    expect(record(`workflow:${result.id}`).data).toMatchObject({ disposition: "LOST", salespersonId: "brian" });
+  });
+  it("suppresses assignment for a deleted lead without taking a producer's turn", async () => {
+    const result = await submit(0) as any;
+    await save(row("DELETED_ACCOUNT", `deleted-account:${result.id}`, { accountId: result.id }));
+    await runJob(result);
+    expect(assignedTo(result)).toBeUndefined(); expect(jobFor(result).data.state).toBe("SUPPRESSED");
+    expect(jobFor(result).dueAt).toBeUndefined(); expect(record("rotation:web-leads")).toBeUndefined();
+    expect(h.userReads).toEqual([]);
   });
 });
 describe("Front durable delivery", () => {
@@ -1022,7 +1321,7 @@ describe("approved sales and carrier revision: integration evidence", () => {
     }
     const prior = structuredClone([...h.records.entries()]);
     const writes = h.transactions.length;
-    h.reads.length = 0;
+    h.reads.length = 0; h.readFailureId = undefined; h.userReads.length = 0; h.queries.length = 0; h.userError = undefined; h.queryError = undefined;
     const { handler } = await import("../../amplify/functions/communications/reports");
     await expect(handler({ source: "aws.events", detail: { retry: true } })).resolves.toEqual({ retired: true, sent: false });
     await expect(handler()).resolves.toEqual({ retired: true, sent: false });
@@ -1175,7 +1474,7 @@ describe("assignment listing index rollout", () => {
       h.records.set(`comms:${original.id}`, row("WORKFLOW", original.id, { ...original.data, salespersonId: "new-owner" }, { previous: original, accountId: "a1", dueAt: "2026-10-01T13:00:00.000Z" }));
       return current;
     });
-    h.reads.length = 0;
+    h.reads.length = 0; h.readFailureId = undefined; h.userReads.length = 0; h.queries.length = 0; h.userError = undefined; h.queryError = undefined;
     await migrateAssignmentIndex();
     expect(record(original.id)).toMatchObject({ assignedSalespersonId: "new-owner", data: { salespersonId: "new-owner" }, dueAt: "2026-10-01T13:00:00.000Z" });
     expect(h.reads.filter(id => id.startsWith("workflow:"))).toEqual([original.id]);
@@ -1191,7 +1490,7 @@ describe("assignment listing index rollout", () => {
       h.records.set(`comms:${legacy.id}`, legacy);
     }
     const { migrateAssignmentIndex } = await import("../../amplify/functions/communications/assignmentIndex");
-    h.reads.length = 0;
+    h.reads.length = 0; h.readFailureId = undefined; h.userReads.length = 0; h.queries.length = 0; h.userError = undefined; h.queryError = undefined;
     await migrateAssignmentIndex({ maxPages: 1 });
     expect(record("migration:assignment-index:v1").data).toMatchObject({ complete: false, processed: 100 });
     expect(entries("WORKFLOW").filter(w => w.assignedSalespersonId)).toHaveLength(100);
@@ -1424,7 +1723,7 @@ describe("CRM task retirement", () => {
       expect(await activate()).toMatchObject({ ok: false, error: "Front company: Wrong company" });
       expect(h.transactions).toHaveLength(writes); expect(record("config").data.paused).toBe(true);
       checks.mockResolvedValue([{ name: "Front company", ok: true, detail: "Verified" }]);
-      h.reads.length = 0;
+      h.reads.length = 0; h.readFailureId = undefined; h.userReads.length = 0; h.queries.length = 0; h.userError = undefined; h.queryError = undefined;
       expect(await activate()).toMatchObject({ ok: true, config: { activatedAt: NOW, paused: false } });
       expect(h.reads).not.toContain("team-routing");
       expect(record("config").data).toMatchObject({ paused: false, activatedAt: NOW });
@@ -1482,7 +1781,7 @@ describe("batched issue-source visibility", () => {
   it("deduplicates sources within each diagnostics page and preserves pagination", async () => {
     await save(row("COMMUNICATION", "shared-source", { status: "FAILED" }));
     for (let i = 0; i < 60; i++) await save(row("ISSUE", `issue:delivery-${i}`, { sourceId: "shared-source" }, { accountId: "a1" }));
-    h.reads.length = 0; h.batch.mockClear();
+    h.reads.length = 0; h.readFailureId = undefined; h.userReads.length = 0; h.queries.length = 0; h.userError = undefined; h.queryError = undefined; h.batch.mockClear();
     const { workPage } = await import("../../amplify/functions/communications/work");
     const first = await workPage({ kind: "ISSUE", actor: "brian" });
     expect(first.items).toHaveLength(50); expect(first.nextToken).toBeTruthy();
@@ -1503,7 +1802,7 @@ describe("batched issue-source visibility", () => {
     await save(row("ISSUE", "issue:duplicate", { sourceId: ids[0] }, { accountId: "a1" }));
     await save(row("ISSUE", "issue:resolved", { sourceId: "unneeded-resolved", resolved: true }, { accountId: "a1" }));
     await save(row("ISSUE", "issue:task:retired", { sourceId: "unneeded-retired" }, { accountId: "a1" }));
-    h.reads.length = 0; h.batch.mockClear();
+    h.reads.length = 0; h.readFailureId = undefined; h.userReads.length = 0; h.queries.length = 0; h.userError = undefined; h.queryError = undefined; h.batch.mockClear();
     if (view === "archive") expect(await archiveAllowed("a1", "cnv_a")).toBe(true);
     else {
       const { handler } = await import("../../amplify/functions/communications/handler");
