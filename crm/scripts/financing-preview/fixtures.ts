@@ -15,6 +15,11 @@ const opinions: Opinion[] = params.get('scenario') === 'current'
   })) : [];
 
 export const client = { models: { PfCounselOpinion: {
+  async list({ limit = 100, nextToken }: { limit?: number; nextToken?: string } = {}) {
+    if (params.get('scenario') === 'error') throw new Error("Couldn't load opinion history.");
+    const offset = Number(nextToken ?? 0);
+    return { data: opinions.slice(offset, offset + limit), nextToken: offset + limit < opinions.length ? String(offset + limit) : null };
+  },
   async listPfCounselOpinionByJurisdictionAndEffectiveAt(input: { jurisdiction: string }) {
     if (params.get('scenario') === 'error') throw new Error("Couldn't check all states. Please try again.");
     return { data: opinions.filter(opinion => opinion.jurisdiction === input.jurisdiction), nextToken: null };

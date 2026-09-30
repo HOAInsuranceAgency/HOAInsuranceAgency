@@ -112,7 +112,7 @@ describe("Financing state finder", () => {
 });
 
 describe("conditional financing availability", () => {
-  it("waits for all opinion pages, including empty pages, before making a state available", async () => {
+  it("follows empty opinion pages until finding a current opinion", async () => {
     const lastPage = deferred<OpinionPage>();
     mocks.opinionIndex.mockImplementation(({ jurisdiction }: { jurisdiction: string }, options: { nextToken?: string }) => {
       if (jurisdiction !== "VA") return Promise.resolve(page());
@@ -122,7 +122,7 @@ describe("conditional financing availability", () => {
     });
     render(<Financing />);
     await waitFor(() => expect(mocks.opinionIndex).toHaveBeenCalledWith(
-      { jurisdiction: "VA" }, expect.objectContaining({ nextToken: "va-third" }),
+      expect.objectContaining({ jurisdiction: "VA" }), expect.objectContaining({ nextToken: "va-third" }),
     ));
     expect(state("Virginia", "Checking…")).toBeInTheDocument();
     expect(list().queryByRole("listitem", { name: "Virginia: Available" })).not.toBeInTheDocument();
@@ -140,15 +140,17 @@ describe("conditional financing availability", () => {
     expect(state("Virginia", "Unavailable")).toBeInTheDocument();
   });
 
-  it("does not advertise a partial successful read when a later page fails, and can retry", async () => {
+  it("keeps failed checks unknown without masking successful states, and can retry", async () => {
     mocks.opinionIndex.mockImplementation(({ jurisdiction }: { jurisdiction: string }, options: { nextToken?: string }) => Promise.resolve(
-      jurisdiction !== "VA" ? page() : options.nextToken
+      jurisdiction !== "VA" ? page(jurisdiction === "OH" ? [opinion("OH")] : []) : options.nextToken
         ? { data: null, errors: [{ message: "Page unavailable" }] }
-        : page([opinion()], "va-second"),
+        : page([], "va-second"),
     ));
     render(<Financing />);
     expect(await screen.findByRole("listitem", { name: "Virginia: Retry check" })).toBeInTheDocument();
     expect(list().queryByRole("listitem", { name: "Virginia: Available" })).not.toBeInTheDocument();
+    expect(state("Ohio", "Available")).toBeInTheDocument();
+    expect(state("Utah", "Unavailable")).toBeInTheDocument();
     // Fixed, non-conditional decisions still work if the live check fails.
     expect(state("Alaska", "Available")).toBeInTheDocument();
     expect(state("California", "Unavailable")).toBeInTheDocument();
@@ -160,11 +162,39 @@ describe("conditional financing availability", () => {
 
   it("stops repeated pagination tokens and leaves live availability unknown", async () => {
     mocks.opinionIndex.mockImplementation(({ jurisdiction }: { jurisdiction: string }) => Promise.resolve(
-      jurisdiction === "VA" ? page([opinion()], "repeated") : page(),
+      jurisdiction === "VA" ? page([], "repeated") : page(),
     ));
     render(<Financing />);
     expect(await screen.findByRole("listitem", { name: "Virginia: Retry check" })).toBeInTheDocument();
     expect(mocks.opinionIndex.mock.calls.filter(([input]) => input.jurisdiction === "VA")).toHaveLength(2);
+  });
+
+  it("queries only potentially current opinions and stops after the first valid match", async () => {
+    mocks.opinionIndex.mockImplementation(({ jurisdiction }: { jurisdiction: string }) => Promise.resolve(
+      jurisdiction === "VA" ? page([opinion()], "unneeded-history") : page(),
+    ));
+    render(<Financing />);
+    expect(await screen.findByRole("listitem", { name: "Virginia: Available" })).toBeInTheDocument();
+    const calls = mocks.opinionIndex.mock.calls.filter(([input]) => input.jurisdiction === "VA");
+    expect(calls).toHaveLength(1);
+    const today = new Date().toISOString().slice(0, 10);
+    expect(calls[0]).toEqual([
+      { jurisdiction: "VA", effectiveAt: { le: today } },
+      expect.objectContaining({ sortDirection: "DESC", filter: { reviewBy: { ge: today } }, limit: 100 }),
+    ]);
+  });
+
+  it("bounds long histories and leaves only an incomplete state unknown", async () => {
+    let pageNumber = 0;
+    mocks.opinionIndex.mockImplementation(({ jurisdiction }: { jurisdiction: string }) => Promise.resolve(
+      jurisdiction === "VA" ? page([], `va-${++pageNumber}`) : page(jurisdiction === "OH" ? [opinion("OH")] : []),
+    ));
+    render(<Financing />);
+    expect(await screen.findByRole("listitem", { name: "Virginia: Retry check" })).toBeInTheDocument();
+    expect(pageNumber).toBe(10);
+    expect(state("Ohio", "Available")).toBeInTheDocument();
+    expect(state("Utah", "Unavailable")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
   });
 
   it("withholds an old available decision while refreshing, including after a failed refresh", async () => {

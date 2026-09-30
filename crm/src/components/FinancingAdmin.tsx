@@ -1,6 +1,6 @@
-import { useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import type { Schema } from "../../amplify/data/resource";
-import { client, listAllPages } from "../lib/client";
+import { client, friendlyError } from "../lib/client";
 import { Badge } from "../lib/badges";
 import { defaultReviewBy, isOpinionCurrent } from "../lib/premiumFinance/gate";
 import { PF_CONFIG_SHA256, PF_JURISDICTIONS } from "../lib/premiumFinance/jurisdictions";
@@ -10,24 +10,14 @@ import { SaveStatus, useSaveStatus } from "./SaveStatus";
 type Opinion = Schema["PfCounselOpinion"]["type"];
 const CONDITIONAL = PF_JURISDICTIONS.filter(jurisdiction => jurisdiction.status === "conditional");
 
-async function loadOpinionHistory(): Promise<Opinion[]> {
-  const histories = await Promise.all(CONDITIONAL.map(async jurisdiction => {
-    const seenTokens = new Set<string>();
-    return listAllPages(async nextToken => {
-      const page = await client.models.PfCounselOpinion.listPfCounselOpinionByJurisdictionAndEffectiveAt(
-        { jurisdiction: jurisdiction.code },
-        { sortDirection: "DESC", limit: 100, nextToken }
-      );
-      if (page.errors?.length) throw new Error(page.errors[0].message);
-      if (!page.data) throw new Error("Couldn't load counsel opinions.");
-      if (page.nextToken && seenTokens.has(page.nextToken)) throw new Error("Couldn't finish loading counsel opinions. Try again.");
-      if (page.nextToken) seenTokens.add(page.nextToken);
-      return page;
-    });
-  }));
-  return histories.flat().sort((a, b) =>
-    a.jurisdiction.localeCompare(b.jurisdiction) || b.effectiveAt.localeCompare(a.effectiveAt)
-  );
+type OpinionPage = { items: Opinion[]; nextToken?: string };
+
+async function loadOpinionHistory(nextToken?: string): Promise<OpinionPage> {
+  // History includes states that no longer require an opinion under current rules.
+  const page = await client.models.PfCounselOpinion.list({ limit: 100, nextToken });
+  if (page.errors?.length) throw new Error(page.errors[0].message);
+  if (!page.data) throw new Error("Couldn't load counsel opinions.");
+  return { items: page.data, nextToken: page.nextToken ?? undefined };
 }
 
 /** Mounted only inside the administrator's disclosure on the Financing page. */
@@ -37,12 +27,57 @@ export function FinancingAdmin({ onChanged }: { onChanged: () => Promise<void> }
   const [code, setCode] = useState("");
   const [effectiveAt, setEffectiveAt] = useState("");
   const [reviewBy, setReviewBy] = useState("");
+  const [reviewByEdited, setReviewByEdited] = useState(false);
   const [notes, setNotes] = useState("");
-  const rows = useAsyncResource(loadOpinionHistory, [], {
-    initialData: [] as Opinion[],
+  const generation = useRef(0), paging = useRef(false), seenTokens = useRef(new Set<string>());
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [pageError, setPageError] = useState("");
+  const rows = useAsyncResource(() => loadOpinionHistory(), [], {
+    initialData: { items: [] } as OpinionPage,
     errorMessage: "Couldn't load counsel opinions.",
   });
   const today = new Date().toISOString().slice(0, 10);
+  const history = [...rows.data.items].sort((a, b) =>
+    a.jurisdiction.localeCompare(b.jurisdiction) || b.effectiveAt.localeCompare(a.effectiveAt)
+  );
+  useEffect(() => () => { generation.current++; }, []);
+
+  async function refreshHistory() {
+    generation.current++;
+    paging.current = false;
+    seenTokens.current.clear();
+    setLoadingMore(false);
+    setPageError("");
+    await rows.refetch();
+  }
+
+  async function loadMore() {
+    const cursor = rows.data.nextToken;
+    if (!cursor || rows.loading || paging.current || status.busy) return;
+    const ticket = generation.current;
+    paging.current = true;
+    setLoadingMore(true);
+    setPageError("");
+    try {
+      const page = await loadOpinionHistory(cursor);
+      if (ticket !== generation.current) return;
+      if (page.nextToken && (page.nextToken === cursor || seenTokens.current.has(page.nextToken))) {
+        throw new Error("Couldn't finish loading counsel opinions. Retry history.");
+      }
+      seenTokens.current.add(cursor);
+      rows.setData(previous => ({
+        ...page,
+        items: [...new Map([...previous.items, ...page.items].map(item => [item.id, item])).values()],
+      }));
+    } catch (error) {
+      if (ticket === generation.current) setPageError(friendlyError(error, "Couldn't load more counsel opinions."));
+    } finally {
+      if (ticket === generation.current) {
+        paging.current = false;
+        setLoadingMore(false);
+      }
+    }
+  }
 
   async function add() {
     if (!code || !effectiveAt || status.busy) return;
@@ -59,13 +94,10 @@ export function FinancingAdmin({ onChanged }: { onChanged: () => Promise<void> }
       setCode("");
       setEffectiveAt("");
       setReviewBy("");
+      setReviewByEdited(false);
       setNotes("");
-      await rows.refetch();
-      try {
-        await onChanged();
-      } catch {
-        return "Opinion recorded. Refresh the page to update financing availability.";
-      }
+      await refreshHistory();
+      await onChanged();
     }, { savedMessage: "Opinion recorded.", errorMessage: "Couldn't record the opinion." });
   }
 
@@ -77,19 +109,19 @@ export function FinancingAdmin({ onChanged }: { onChanged: () => Promise<void> }
       </div>
       <p className="muted small">Record a signed opinion to approve a conditional state through its review date.</p>
       {rows.loading && <p role="status" className="muted small">Loading opinion history…</p>}
-      {rows.error && (
+      {(rows.error || pageError) && (
         <div className="inline-actions">
-          <p role="alert" className="error-text">{rows.error}</p>
-          <button type="button" className="secondary" disabled={rows.loading} onClick={() => void rows.refetch()}>Retry history</button>
+          <p role="alert" className="error-text">{rows.error || pageError}</p>
+          <button type="button" className="secondary" disabled={rows.loading || status.busy} onClick={() => void refreshHistory()}>Retry history</button>
         </div>
       )}
-      {!rows.loading && !rows.error && rows.data.length === 0 && <p className="muted small">No opinions recorded.</p>}
-      {rows.data.length > 0 && (
-        <div className="table-wrap" aria-busy={rows.loading}>
+      {!rows.loading && !rows.error && history.length === 0 && <p className="muted small">{rows.data.nextToken ? "More opinion history is available." : "No opinions recorded."}</p>}
+      {history.length > 0 && (
+        <div className="table-wrap" aria-busy={rows.loading || loadingMore}>
           <table aria-label="Counsel opinion history">
             <thead><tr><th>State</th><th>Effective</th><th>Review by</th><th>Status</th><th>Notes</th></tr></thead>
             <tbody>
-              {rows.data.map(opinion => (
+              {history.map(opinion => (
                 <tr key={opinion.id}>
                   <td>{PF_JURISDICTIONS.find(jurisdiction => jurisdiction.code === opinion.jurisdiction)?.name ?? opinion.jurisdiction}</td>
                   <td>{opinion.effectiveAt}</td>
@@ -102,6 +134,13 @@ export function FinancingAdmin({ onChanged }: { onChanged: () => Promise<void> }
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+      {rows.data.nextToken && !rows.error && (
+        <div className="inline-actions">
+          <button type="button" className="secondary" disabled={rows.loading || loadingMore || status.busy} onClick={() => void loadMore()}>
+            {loadingMore ? "Loading more history…" : "Load more history"}
+          </button>
         </div>
       )}
       <form onSubmit={event => { event.preventDefault(); void add(); }}>
@@ -117,13 +156,13 @@ export function FinancingAdmin({ onChanged }: { onChanged: () => Promise<void> }
             <label htmlFor={`${id}-effective`}>Effective date</label>
             <input id={`${id}-effective`} type="date" value={effectiveAt} disabled={status.busy} required onChange={event => {
               setEffectiveAt(event.target.value);
-              if (event.target.value && !reviewBy) setReviewBy(defaultReviewBy(event.target.value));
+              if (!reviewByEdited) setReviewBy(event.target.value ? defaultReviewBy(event.target.value) : "");
               status.markDirty();
             }} />
           </div>
           <div className="field">
             <label htmlFor={`${id}-review`}>Review by</label>
-            <input id={`${id}-review`} type="date" value={reviewBy} min={effectiveAt || undefined} disabled={status.busy} onChange={event => { setReviewBy(event.target.value); status.markDirty(); }} />
+            <input id={`${id}-review`} type="date" value={reviewBy} min={effectiveAt || undefined} disabled={status.busy} onChange={event => { setReviewBy(event.target.value); setReviewByEdited(Boolean(event.target.value)); status.markDirty(); }} />
           </div>
           <div className="field">
             <label htmlFor={`${id}-notes`}>Notes</label>
