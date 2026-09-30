@@ -97,6 +97,7 @@ function AccountChanges({ accountId }: { accountId: string }) {
   const [actorFilter, setActorFilter] = useState("");
 
   const rows = res.data;
+  const waitingForRows = !res.loaded || (res.loading && rows.length === 0);
   // Resolve old communication rows without changing their immutable audit data.
   // A profile lookup failure must not hide the account's activity.
   const unresolvedActors = useMemo(
@@ -137,13 +138,13 @@ function AccountChanges({ accountId }: { accountId: string }) {
     <section className="card account-changes" aria-label="Account changes">
       <div className="account-changes-heading">
         <div>
-          <h2>Account changes {res.loaded && !res.error && <span className="account-changes-count">{rows.length}</span>}</h2>
+          <h2>Account changes {!waitingForRows && !res.error && <span className="account-changes-count">{rows.length}</span>}</h2>
           <p>Updates to this account and its related records.</p>
         </div>
         <span className="account-changes-order">Newest first</span>
       </div>
 
-      {!res.loaded ? (
+      {waitingForRows ? (
         <p className="account-changes-state" role="status">Loading account changes…</p>
       ) : res.error ? (
         <div className="account-changes-state account-changes-state--error" role="alert">
@@ -217,25 +218,7 @@ function AccountChanges({ accountId }: { accountId: string }) {
                           {r.subjectLabel && <span className="account-change-record">{r.subjectLabel}</span>}
                         </td>
                         <td>
-                          <details className="account-change-details">
-                            <summary>
-                              <span className="account-change-summary">{r.summary}</span>
-                              <span className="account-change-expand">{changes.length ? `${changes.length} field change${changes.length === 1 ? "" : "s"}` : "View details"}</span>
-                            </summary>
-                            {changes.length ? (
-                              <dl className="account-change-fields">
-                                {changes.map((c, index) => (
-                                  <div className="account-change-field" key={`${c.field}-${index}`}>
-                                    <dt>{fieldLabel(c.field)}</dt>
-                                    <dd>
-                                      <div><span className="account-change-value-label">Before</span><span className="account-change-value">{renderValue(c.field, c.from)}</span></div>
-                                      <div><span className="account-change-value-label">After</span><span className="account-change-value">{renderValue(c.field, c.to)}</span></div>
-                                    </dd>
-                                  </div>
-                                ))}
-                              </dl>
-                            ) : <p className="account-change-no-details">No field-level details recorded.</p>}
-                          </details>
+                          <ChangeDetails summary={r.summary} changes={changes} />
                         </td>
                       </tr>
                     );
@@ -247,5 +230,31 @@ function AccountChanges({ accountId }: { accountId: string }) {
         </>
       )}
     </section>
+  );
+}
+
+/** Keep large before/after values out of the DOM until their row is opened. */
+function ChangeDetails({ summary, changes }: { summary: Activity["summary"]; changes: ChangeRow[] }) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <details className="account-change-details" onToggle={event => setExpanded(event.currentTarget.open)}>
+      <summary>
+        <span className="account-change-summary">{summary}</span>
+        <span className="account-change-expand">{changes.length ? `${changes.length} field change${changes.length === 1 ? "" : "s"}` : "View details"}</span>
+      </summary>
+      {expanded && (changes.length ? (
+        <dl className="account-change-fields">
+          {changes.map((c, index) => (
+            <div className="account-change-field" key={`${c.field}-${index}`}>
+              <dt>{fieldLabel(c.field)}</dt>
+              <dd>
+                <div><span className="account-change-value-label">Before</span><span className="account-change-value">{renderValue(c.field, c.from)}</span></div>
+                <div><span className="account-change-value-label">After</span><span className="account-change-value">{renderValue(c.field, c.to)}</span></div>
+              </dd>
+            </div>
+          ))}
+        </dl>
+      ) : <p className="account-change-no-details">No field-level details recorded.</p>)}
+    </details>
   );
 }

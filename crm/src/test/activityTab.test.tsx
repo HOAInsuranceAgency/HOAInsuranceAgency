@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { listAllPages } from "../lib/pagination";
 
@@ -63,7 +63,30 @@ describe("Activity teammate attribution", () => {
     expect(h.profiles).toHaveBeenLastCalledWith({ userId: jake }, { nextToken: "next" });
   });
 
-  it("keeps even a single field change collapsed until the reader opens its summary", async () => {
+  it.each(["empty", "populated"])("keeps a retry loading until the %s history response arrives", async outcome => {
+    let finishRetry!: (value: { data: ReturnType<typeof row>[] }) => void;
+    h.activity.mockRejectedValueOnce(new Error("Temporary failure"))
+      .mockImplementationOnce(() => new Promise(resolve => { finishRetry = resolve; }));
+    render(<ActivityTab accountId="a" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Retry account changes" }));
+    expect(screen.getByRole("status")).toHaveTextContent("Loading account changes…");
+    expect(screen.queryByText("No account changes yet")).toBeNull();
+    expect(screen.getByRole("heading", { name: "Account changes" })).toBeVisible();
+    expect(screen.queryByRole("alert")).toBeNull();
+
+    await act(async () => finishRetry({ data: outcome === "empty" ? [] : [row("retried", "system", "System")] }));
+    expect(screen.queryByText("Loading account changes…")).toBeNull();
+    if (outcome === "empty") {
+      expect(screen.getByText("No account changes yet")).toBeVisible();
+      expect(screen.getByRole("heading", { name: "Account changes 0" })).toBeVisible();
+    } else {
+      expect(screen.getByText("Change retried")).toBeVisible();
+      expect(screen.queryByText("No account changes yet")).toBeNull();
+      expect(screen.getByRole("heading", { name: "Account changes 1" })).toBeVisible();
+    }
+  });
+
+  it("mounts field values only while a change is expanded", async () => {
     h.activity.mockResolvedValue({ data: [{
       ...row("premium", jake, "Jake Greasley"),
       changes: JSON.stringify([{ field: "premium", from: 100, to: 250 }]),
@@ -72,16 +95,21 @@ describe("Activity teammate attribution", () => {
     const summary = await screen.findByText("Change premium");
     const disclosure = summary.closest("details")!;
     expect(disclosure).not.toHaveAttribute("open");
-    expect(within(disclosure).getByText("250")).not.toBeVisible();
+    expect(within(disclosure).queryByText("250")).toBeNull();
     fireEvent.click(within(disclosure).getByText("1 field change"));
     expect(disclosure).toHaveAttribute("open");
-    expect(within(disclosure).getByText("Premium")).toBeVisible();
+    expect(await within(disclosure).findByText("Premium")).toBeVisible();
     expect(within(disclosure).getByText("Before")).toBeVisible();
     expect(within(disclosure).getByText("100")).toBeVisible();
     expect(within(disclosure).getByText("After")).toBeVisible();
     expect(within(disclosure).getByText("250")).toBeVisible();
     fireEvent.click(summary);
     expect(disclosure).not.toHaveAttribute("open");
+    await waitFor(() => expect(within(disclosure).queryByText("250")).toBeNull());
+    expect(within(disclosure).queryByText("Before")).toBeNull();
+    expect(within(disclosure).getByText("1 field change")).toBeVisible();
+    fireEvent.click(summary);
+    expect(await within(disclosure).findByText("250")).toBeVisible();
   });
 
   it("retains complete long and structured audit values inside expandable details", async () => {
@@ -97,9 +125,9 @@ describe("Activity teammate attribution", () => {
     render(<ActivityTab accountId="a" />);
     const summary = await screen.findByText("Change technical");
     const disclosure = summary.closest("details")!;
-    expect(within(disclosure).getByText(reference)).not.toBeVisible();
+    expect(within(disclosure).queryByText(reference)).toBeNull();
     fireEvent.click(summary);
-    expect(within(disclosure).getByText(reference)).toBeVisible();
+    expect(await within(disclosure).findByText(reference)).toBeVisible();
     expect(within(disclosure).getByText(reference).textContent).toBe(reference);
     expect(within(disclosure).getByText(/"request": "test-request"/)).toBeVisible();
     expect(within(disclosure).getByText(/"role": "salesperson"/)).toHaveTextContent('"assigned": true');
