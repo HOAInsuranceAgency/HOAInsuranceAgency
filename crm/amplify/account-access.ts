@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { Asset } from "aws-cdk-lib/aws-s3-assets";
 import { Stack, CfnResource, AssetStaging } from "aws-cdk-lib";
 import { CfnFunctionConfiguration, type CfnResolver } from "aws-cdk-lib/aws-appsync";
+import { PolicyStatement } from "aws-cdk-lib/aws-iam";
 import { grantAccountTableReads } from "./account-access-policies";
 import type { Table } from "aws-cdk-lib/aws-dynamodb";
 import type { backend as Backend } from "./backend";
@@ -47,6 +48,18 @@ export function installAccountAccess(backend: typeof Backend, communicationTable
       if (added) { resource.addPropertyOverride("globalSecondaryIndexes", all); resource.addPropertyOverride("attributeDefinitions", definitions); }
     }
   }
+  // Lead deletion checks must query the account partition, rather than mistake
+  // an empty filtered scan page's continuation token for a related record.
+  const deletionIndexes = ["Policy", "Invoice"].map(model => {
+    const table = tables[model], index = indexes[`${model}.accountId`];
+    if (!table || !index) throw new Error(`Missing ${model}.accountId index for lead deletion`);
+    backend.communications.addEnvironment(`LEAD_DELETION_${model.toUpperCase()}_TABLE`, table);
+    backend.communications.addEnvironment(`LEAD_DELETION_${model.toUpperCase()}_INDEX`, index);
+    return `${Stack.of(api).formatArn({ service: "dynamodb", resource: "table", resourceName: table })}/index/${index}`;
+  });
+  backend.communications.resources.lambda.addToRolePolicy(new PolicyStatement({
+    actions: ["dynamodb:Query"], resources: deletionIndexes,
+  }));
   guard.addEnvironment("ACCESS_API_ID", api.apiId);
   guard.addEnvironment("ACCESS_INDEXES", JSON.stringify(indexes));
   guard.addEnvironment("COMMUNICATION_TABLE", communicationTable.tableName);
