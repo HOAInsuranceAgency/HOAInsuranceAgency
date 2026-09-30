@@ -1,6 +1,6 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import type { Communication, IntegrationConfig } from "../../../shared/leadWorkflow";
-const h = vi.hoisted(() => ({ records: new Map<string, Record<string, any>>(), transactions: [] as any[][], inFlight: 0, maxInFlight: 0, fail: false, failAt: undefined as number | undefined, writeError: undefined as Error | undefined, accountError: false, userEnabled: true,
+const h = vi.hoisted(() => ({ records: new Map<string, Record<string, any>>(), transactions: [] as any[][], inFlight: 0, maxInFlight: 0, fail: false, failAt: undefined as number | undefined, writeError: undefined as Error | undefined, writeErrors: [] as Error[], accountError: false, userEnabled: true, disabledUsers: new Set<string>(),
   reads: [] as string[], batch: vi.fn(), front: vi.fn(), dialpad: vi.fn(), update: vi.fn(), accountList: vi.fn(), c: {} as IntegrationConfig }));
 vi.mock("@aws-sdk/lib-dynamodb", async importOriginal => {
   const actual = await importOriginal<typeof import("@aws-sdk/lib-dynamodb")>();
@@ -23,6 +23,7 @@ vi.mock("@aws-sdk/lib-dynamodb", async importOriginal => {
       if (h.fail) throw new Error("Simulated storage outage");
       if (h.failAt === h.transactions.length) { h.failAt = undefined; throw new Error("Interrupted contact progress"); }
       if (h.writeError) { const error = h.writeError; h.writeError = undefined; throw error; }
+      if (h.writeErrors.length) throw h.writeErrors.shift();
       const writes = p.TransactItems;
       for (const entry of writes) {
         const w = entry.Put ?? entry.ConditionCheck ?? entry.Update;
@@ -53,7 +54,7 @@ vi.mock("@aws-sdk/lib-dynamodb", async importOriginal => {
     throw new Error(`Unexpected storage command ${command.constructor.name}`);
   } }) } };
 });
-vi.mock("@aws-sdk/client-cognito-identity-provider", () => ({ CognitoIdentityProviderClient: class { send = async (command: any) => { const id = /"([^"]+)"/.exec(command.input.Filter)?.[1] ?? "brian"; return { Users: [{ Enabled: h.userEnabled, Attributes: [{ Name: "email", Value: `${id}@example.com` }, { Name: "email_verified", Value: "true" }] }] }; }; }, ListUsersCommand: class { constructor(public input: unknown) {} } }));
+vi.mock("@aws-sdk/client-cognito-identity-provider", () => ({ CognitoIdentityProviderClient: class { send = async (command: any) => { const id = /"([^"]+)"/.exec(command.input.Filter)?.[1] ?? "brian"; return { Users: [{ Enabled: h.userEnabled && !h.disabledUsers.has(id), Attributes: [{ Name: "email", Value: `${id}@example.com` }, { Name: "email_verified", Value: "true" }] }] }; }; }, ListUsersCommand: class { constructor(public input: unknown) {} } }));
 vi.mock("../../amplify/functions/communications/config", async importOriginal => ({ ...(await importOriginal<typeof import("../../amplify/functions/communications/config")>()), saveCredentials: vi.fn(), config: async () => h.c, credentials: async () => ({ frontSigningKey: "test-signing-key", dialpadSigningKey: "test-dialpad-signing-key" }) }));
 vi.mock("../../amplify/functions/communications/data", () => ({ dataClient: async () => ({ models: {
   Account: { list: h.accountList, get: async ({ id }: { id: string }) => (h.accountError ? { data: null, errors: [{ message: "Simulated account read failure" }] } : { data: { id, name: "Willow HOA", stage: "LEAD", createdAt: "2026-09-08T14:00:00.000Z", updatedAt: "2026-09-08T14:00:00.000Z", ...Object.fromEntries([["quotes", "Quote"], ["policies", "Policy"], ["priorCarriers", "PriorCarrier"], ["certificates", "Certificate"], ["invoices", "Invoice"]].map(([name, model]) => [name, async () => ({ data: [...h.records.entries()].filter(([key, r]) => key.startsWith(`${model}:`) && r.accountId === id).map(([, r]) => r) })])), contacts: async () => ({ data: [...h.records.entries()].filter(([key, c]) => key.startsWith("Contact:") && c.accountId === id).map(([,c]) => c) }), ...h.records.get(`Account:${id}`) } }) },
@@ -95,6 +96,8 @@ async function seedLegacyPromise(input: any, actor: string) {
 }
 beforeEach(async () => {
   vi.useFakeTimers(); vi.setSystemTime(NOW); h.records.clear(); h.transactions.length = 0; h.inFlight = 0; h.maxInFlight = 0; h.fail = false; h.failAt = undefined; h.accountError = false; h.userEnabled = true; h.writeError = undefined; vi.clearAllMocks();
+  h.disabledUsers.clear();
+  h.writeErrors.length = 0;
   h.reads.length = 0;
   h.batch.mockReset().mockImplementation((p: { RequestItems: Record<string, { Keys: { id: string }[] }> }) => ({
     Responses: Object.fromEntries(Object.entries(p.RequestItems).map(([name, request]) => [name,
@@ -376,6 +379,129 @@ describe("durable public capture", () => {
   });
   it("does not claim success or leave partial lead records when storage fails", async () => {
     h.fail = true; expect(await submit()).toMatchObject({ ok: false }); expect(entries("SUBMISSION")).toHaveLength(0); expect([...h.records.keys()].filter(k => k.startsWith("Account:"))).toHaveLength(0);
+  });
+});
+describe("website producer rotation", () => {
+  const submissionId = (index: number) => `rotation-submission-${String(index).padStart(20, "0")}`;
+  const submit = (index: number) => capture({ arguments: { submissionId: submissionId(index), retryProof: "r".repeat(64), name: `Association ${index}`, contactEmail: "prospect@example.com" } } as never, {} as never, () => {});
+  const assignedTo = (result: any) => {
+    expect(result).toMatchObject({ ok: true });
+    return record(`workflow:${result.id}`).data.salespersonId;
+  };
+  async function roster(users: { userId: string; enabled?: boolean; salesperson?: boolean }[]) {
+    for (const [key, value] of h.records) if (value.kind === "ELIGIBILITY") h.records.delete(key);
+    for (const user of users) await save(row("ELIGIBILITY", `eligibility:${user.userId}`, { name: user.userId, email: `${user.userId}@example.com`, salesperson: true, enabled: true, ...user }));
+  }
+  it("cycles active producers independently of the configured default and commits each turn with the lead", async () => {
+    await roster([{ userId: "charlie" }, { userId: "alice" }, { userId: "bravo" }]);
+    h.c.defaultSalespersonId = "charlie";
+    const results = [];
+    for (let i = 0; i < 4; i++) results.push(await submit(i));
+    expect(results.map(assignedTo)).toEqual(["alice", "bravo", "charlie", "alice"]);
+    expect(record("rotation:web-leads")).toMatchObject({ version: 4, data: { lastUserId: "alice" } });
+    for (const result of results as { id: string }[]) {
+      const writes = h.transactions.find(items => items.some(write => write.Put?.TableName === "Account" && write.Put.Item.id === result.id))!;
+      expect(writes.some(write => write.Put?.Item.id === "rotation:web-leads")).toBe(true);
+      expect(writes.some(write => write.ConditionCheck?.Key.id === `eligibility:${assignedTo(result)}`)).toBe(true);
+      expect(writes.some(write => write.Put?.Item.id === `workflow:${result.id}`)).toBe(true);
+      expect(writes.filter(write => write.Put?.Item.kind === "OPERATION").map(write => write.Put.Item.data.type).sort()).toEqual(["IMPORT", "SMS_ALERT"]);
+    }
+    expect(h.front).not.toHaveBeenCalled();
+    expect(h.dialpad).not.toHaveBeenCalled();
+  });
+  it("excludes disabled accounts and teammates who are not eligible producers", async () => {
+    await roster([{ userId: "alice", enabled: false }, { userId: "bravo" }, { userId: "charlie", salesperson: false }, { userId: "delta" }, { userId: "echo" }]);
+    h.disabledUsers.add("bravo");
+    const results = [];
+    for (let i = 0; i < 4; i++) results.push(await submit(i));
+    expect(results.map(assignedTo)).toEqual(["delta", "echo", "delta", "echo"]);
+  });
+  it("retains an unassigned lead and a visible issue without advancing a turn when no producer is available", async () => {
+    await roster([{ userId: "alice" }]);
+    expect(assignedTo(await submit(0))).toBe("alice");
+    const cursor = structuredClone(record("rotation:web-leads"));
+    h.disabledUsers.add("alice");
+    const result = await submit(1) as any;
+    expect(assignedTo(result)).toBeUndefined();
+    expect(record(`workflow:${result.id}`).data.assignmentIssue).toEqual(expect.any(String));
+    expect(entries("ISSUE").find(issue => issue.accountId === result.id)?.data.message).toBe(record(`workflow:${result.id}`).data.assignmentIssue);
+    expect(record("rotation:web-leads")).toEqual(cursor);
+    expect(entries("SUBMISSION")).toHaveLength(2);
+  });
+  it("balances simultaneous distinct submissions by retrying rotation conflicts", async () => {
+    await roster([{ userId: "alice" }, { userId: "bravo" }, { userId: "charlie" }]);
+    const results = await Promise.all([0, 1, 2, 3].map(submit));
+    expect(results.map(assignedTo).sort()).toEqual(["alice", "alice", "bravo", "charlie"]);
+    expect(new Set((results as { id: string }[]).map(result => result.id)).size).toBe(4);
+    expect(record("rotation:web-leads").version).toBe(4);
+    expect(entries("SUBMISSION")).toHaveLength(4);
+    expect(h.maxInFlight).toBeGreaterThan(1);
+  });
+  it.each(["TransactionConflictException", "TransactionCanceledException"])("retries an in-progress transaction reported as %s without consuming another turn", async name => {
+    await roster([{ userId: "alice" }, { userId: "bravo" }]);
+    h.writeError = Object.assign(new Error("Another transaction is in progress"), { name,
+      ...(name === "TransactionCanceledException" ? { CancellationReasons: [{ Code: "TransactionConflict" }] } : {}),
+    });
+    const saving = submit(0);
+    await vi.runAllTimersAsync();
+    const result = await saving as any;
+    expect(assignedTo(result)).toBe("alice");
+    expect(record("rotation:web-leads")).toMatchObject({ version: 1, data: { lastUserId: "alice" } });
+    expect(entries("SUBMISSION")).toHaveLength(1);
+    expect([...h.records.keys()].filter(key => key.startsWith("Account:"))).toHaveLength(1);
+    expect(entries("OPERATION").filter(operation => operation.data.type === "IMPORT")).toHaveLength(1);
+    expect(await submit(0)).toMatchObject({ ok: true, duplicate: true, id: result.id });
+    expect(assignedTo(await submit(1))).toBe("bravo");
+  });
+  it("preserves the producer's turn and leaves no partial lead when transaction contention exhausts retries", async () => {
+    await roster([{ userId: "alice" }, { userId: "bravo" }]);
+    expect(assignedTo(await submit(0))).toBe("alice");
+    const cursor = structuredClone(record("rotation:web-leads"));
+    h.writeErrors.push(...Array.from({ length: 5 }, () => Object.assign(new Error("Another transaction is in progress"), { name: "TransactionCanceledException", CancellationReasons: [{ Code: "TransactionConflict" }] })));
+    const saving = submit(1);
+    await vi.runAllTimersAsync();
+    expect(await saving).toMatchObject({ ok: false });
+    expect(h.writeErrors).toHaveLength(0);
+    expect(record("rotation:web-leads")).toEqual(cursor);
+    expect(entries("SUBMISSION")).toHaveLength(1);
+    expect([...h.records.keys()].filter(key => key.startsWith("Account:"))).toHaveLength(1);
+    expect(entries("OPERATION")).toHaveLength(2);
+    expect(assignedTo(await submit(1))).toBe("bravo");
+  });
+  it("consumes one turn for concurrent retries and none for a later receipt replay", async () => {
+    await roster([{ userId: "alice" }, { userId: "bravo" }]);
+    const results = await Promise.all([submit(0), submit(0), submit(0)]) as any[];
+    expect(results.map(assignedTo)).toEqual(["alice", "alice", "alice"]);
+    expect(new Set(results.map(result => result.id)).size).toBe(1);
+    expect(record("rotation:web-leads").version).toBe(1);
+    expect(await submit(0)).toMatchObject({ ok: true, duplicate: true, id: results[0].id });
+    expect(record("rotation:web-leads").version).toBe(1);
+    expect(assignedTo(await submit(1))).toBe("bravo");
+  });
+  it("does not consume a producer's turn when the lead transaction fails", async () => {
+    await roster([{ userId: "alice" }, { userId: "bravo" }]);
+    expect(assignedTo(await submit(0))).toBe("alice");
+    const cursor = structuredClone(record("rotation:web-leads"));
+    h.fail = true;
+    expect(await submit(1)).toMatchObject({ ok: false });
+    expect(record("rotation:web-leads")).toEqual(cursor);
+    expect(entries("SUBMISSION")).toHaveLength(1);
+    expect([...h.records.keys()].filter(key => key.startsWith("Account:"))).toHaveLength(1);
+    h.fail = false;
+    expect(assignedTo(await submit(1))).toBe("bravo");
+    expect(record("rotation:web-leads").version).toBe(2);
+  });
+  it("continues with the next producer when the previously selected producer leaves the roster", async () => {
+    await roster([{ userId: "alice" }, { userId: "bravo" }, { userId: "charlie" }]);
+    expect(assignedTo(await submit(0))).toBe("alice");
+    expect(assignedTo(await submit(1))).toBe("bravo");
+    h.records.delete("comms:eligibility:bravo");
+    expect(assignedTo(await submit(2))).toBe("charlie");
+    expect(assignedTo(await submit(3))).toBe("alice");
+  });
+  it("includes eligible producers beyond the first page of team records", async () => {
+    await roster([...Array.from({ length: 101 }, (_, index) => ({ userId: `admin-${String(index).padStart(3, "0")}`, salesperson: false })), { userId: "zeta" }]);
+    expect(assignedTo(await submit(0))).toBe("zeta");
   });
 });
 describe("Front durable delivery", () => {

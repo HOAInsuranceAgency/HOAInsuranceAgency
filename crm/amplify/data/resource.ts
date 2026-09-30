@@ -1587,7 +1587,7 @@ const schema = a
          */
         mobilePhone: a.string(),
         /**
-         * Text me when a web lead arrives. Off unless someone turns it on:
+         * Text me when a web lead is assigned to me. Off unless turned on:
          * an alert nobody asked for is how a phone number ends up blocked.
          *
          * Only inbound leads — the `submitWebLead` mutation. A lead a

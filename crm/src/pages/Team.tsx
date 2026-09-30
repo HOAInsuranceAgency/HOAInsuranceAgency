@@ -271,6 +271,7 @@ export default function Team({ profile }: { profile: UserProfile }) {
             <p className="muted small" style={{ margin: "4px 0 0" }}>
               View roles and manage salesperson eligibility, lead texts and connections in one place.
               Salesperson eligibility controls assignment choices and does not change access.
+              Website leads rotate among active eligible salespeople. Only the assigned salesperson gets the Front conversation and lead text.
               Lead texts need both the switch and a mobile number.
             </p>
           </div>

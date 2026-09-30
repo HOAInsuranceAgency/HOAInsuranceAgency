@@ -98,7 +98,7 @@ export default function CommunicationSettings() {
           {saved.environment !== "main" && <small>Test recipients: {saved.testRecipients.join(", ") || "Not set"}</small>}</div>
         <div><dt>Shared text number</dt><dd>{phoneLabel(saved.sharedSmsNumber)}</dd><small>{saved.dialpadNumbers.length} business {saved.dialpadNumbers.length === 1 ? "number" : "numbers"} configured</small></div>
         <div><dt>Default salesperson</dt><dd>{owner?.name || ((saved.defaultSalespersonId ?? saved.defaultUserId) ? (members.loading ? "Checking teammate…" : "Teammate unavailable") : "Not set")}</dd>
-          <small>{(saved.defaultSalespersonId ?? saved.defaultUserId) ? "Default assignments apply to new leads." : "Choose eligible default teammates in Team settings."}</small>
+          <small>Website leads rotate among active eligible salespeople. Other new accounts use this default.</small>
           {members.error && <span className="error-text small">{members.error} <button type="button" className="secondary" disabled={members.loading} onClick={() => void members.refetch()}>Retry teammates</button></span>}</div>
       </dl>
       <div className="communication-actions">
