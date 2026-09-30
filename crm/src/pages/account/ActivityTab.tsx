@@ -8,10 +8,8 @@ import {
 } from "../../lib/client";
 import { useAsyncResource } from "../../lib/useAsyncResource";
 import LeadWorkflowPanel from "../../components/LeadWorkflowPanel";
-import {
-  fieldLabel,
-  type FieldChange,
-} from "../../../amplify/functions/activity-log/diff";
+import { fieldLabel } from "../../../amplify/functions/activity-log/diff";
+import "./ActivityTab.css";
 
 /**
  * Account-change history, newest first, below the communication workspace.
@@ -27,9 +25,7 @@ import {
  * including one made by a Lambda, the backfill script, or somebody with the
  * console open. Attribution is not: it rides on `lastWriteBy`, which the
  * actor proxy stamps on creates and updates. A **delete** carries only an id,
- * so it has nowhere to put an actor and is recorded as System. That is stated
- * on the screen rather than left for someone to infer from a suspiciously
- * busy robot.
+ * so it has nowhere to put an actor and is recorded as System.
  */
 
 interface ChangeRow {
@@ -63,8 +59,7 @@ const MONEY_FIELD = /(amount|premium|limit|value|deductible|retention|revenue|pa
 function renderValue(field: string, v: unknown): string {
   if (v == null || v === "") return "—";
   if (typeof v === "boolean") return v ? "Yes" : "No";
-  if (Array.isArray(v)) return v.length ? v.join(", ") : "—";
-  if (typeof v === "object") return "(changed)";
+  if (typeof v === "object") return JSON.stringify(v, null, 2);
   if (typeof v === "number" && MONEY_FIELD.test(field)) return fmtMoney(v);
   return String(v);
 }
@@ -102,6 +97,7 @@ function AccountChanges({ accountId }: { accountId: string }) {
   const [actorFilter, setActorFilter] = useState("");
 
   const rows = res.data;
+  const waitingForRows = !res.loaded || (res.loading && rows.length === 0);
   // Resolve old communication rows without changing their immutable audit data.
   // A profile lookup failure must not hide the account's activity.
   const unresolvedActors = useMemo(
@@ -139,31 +135,31 @@ function AccountChanges({ accountId }: { accountId: string }) {
   );
 
   return (
-    <div className="card">
-      <h2>
-        Account changes{" "}
-        {res.loaded && !res.error && (
-          <span className="muted small" style={{ fontWeight: 400 }}>
-            — {rows.length} change{rows.length === 1 ? "" : "s"}
-          </span>
-        )}
-      </h2>
-      <p className="muted small">
-        Changes to this account and its related records.
-      </p>
+    <section className="card account-changes" aria-label="Account changes">
+      <div className="account-changes-heading">
+        <div>
+          <h2>Account changes {!waitingForRows && !res.error && <span className="account-changes-count">{rows.length}</span>}</h2>
+          <p>Updates to this account and its related records.</p>
+        </div>
+        <span className="account-changes-order">Newest first</span>
+      </div>
 
-      {!res.loaded ? (
-        <p className="muted small">Loading…</p>
+      {waitingForRows ? (
+        <p className="account-changes-state" role="status">Loading account changes…</p>
       ) : res.error ? (
-        <p className="error-text">{res.error}</p>
+        <div className="account-changes-state account-changes-state--error" role="alert">
+          <p>{res.error}</p>
+          <button className="secondary" onClick={() => void res.refetch()}>Retry account changes</button>
+        </div>
       ) : rows.length === 0 ? (
-        <p className="muted small">
-          Nothing recorded yet. Changes made from here on will appear.
-        </p>
+        <div className="account-changes-state">
+          <strong>No account changes yet</strong>
+          <p>Changes to this account will appear here.</p>
+        </div>
       ) : (
         <>
-          {names.error && <p className="muted small">Activity is available, but some teammate names could not be loaded. <button className="btn secondary small" onClick={() => void names.refetch()}>Retry names</button></p>}
-          <div className="toolbar">
+          {names.error && <p className="account-changes-notice">Activity is available, but some teammate names could not be loaded. <button className="btn secondary small" onClick={() => void names.refetch()}>Retry names</button></p>}
+          <div className="account-changes-filters">
             <div className="field">
               <label htmlFor="activity-subject">Subject</label>
               <select
@@ -190,18 +186,20 @@ function AccountChanges({ accountId }: { accountId: string }) {
                 ))}
               </select>
             </div>
+            <span className="account-changes-results" role="status">{filtered.length} of {rows.length} changes</span>
           </div>
 
           {filtered.length === 0 ? (
-            <p className="muted small">Nothing matches those filters.</p>
+            <p className="account-changes-state">Nothing matches those filters.</p>
           ) : (
-            <div className="table-wrap">
-              <table>
+            <div className="table-wrap account-changes-table-wrap">
+              <table className="account-changes-table" aria-label="Account change history">
+                <colgroup><col className="account-change-when" /><col className="account-change-who" /><col className="account-change-what" /><col /></colgroup>
                 <thead>
                   <tr>
                     <th>When</th>
                     <th>Who</th>
-                    <th>What</th>
+                    <th>Record</th>
                     <th>Change</th>
                   </tr>
                 </thead>
@@ -210,29 +208,17 @@ function AccountChanges({ accountId }: { accountId: string }) {
                     const changes = readChanges(r.changes);
                     return (
                       <tr key={r.id}>
-                        <td style={{ whiteSpace: "nowrap" }}>
-                          {fmtDateTime(r.occurredAt)}
-                        </td>
-                        <td>{actorLabel(r)}</td>
+                        <td className="account-change-date">{fmtDateTime(r.occurredAt)}</td>
+                        <td className="account-change-actor">{actorLabel(r)}</td>
                         <td>
-                          <span className="badge gray">{r.action}</span>{" "}
-                          {[r.subjectType, r.subjectLabel].filter(Boolean).join(" ")}
+                          <div className="account-change-type">
+                            <span className="account-change-subject">{r.subjectType}</span>
+                            <span className="badge gray account-change-action">{({ CREATE: "Added", UPDATE: "Updated", DELETE: "Deleted" } as Record<string, string>)[r.action] ?? r.action}</span>
+                          </div>
+                          {r.subjectLabel && <span className="account-change-record">{r.subjectLabel}</span>}
                         </td>
-                        <td className="small">
-                          {r.summary}
-                          {/* The sentence is the row; the field list is the
-                              detail behind it, and only worth showing when it
-                              says more than the sentence already did. */}
-                          {changes.length > 2 && (
-                            <ul style={{ margin: "4px 0 0", paddingLeft: 16 }}>
-                              {changes.map((c: FieldChange) => (
-                                <li key={c.field} className="muted">
-                                  {fieldLabel(c.field)}: {renderValue(c.field, c.from)}{" "}
-                                  → {renderValue(c.field, c.to)}
-                                </li>
-                              ))}
-                            </ul>
-                          )}
+                        <td>
+                          <ChangeDetails summary={r.summary} changes={changes} />
                         </td>
                       </tr>
                     );
@@ -243,6 +229,32 @@ function AccountChanges({ accountId }: { accountId: string }) {
           )}
         </>
       )}
-    </div>
+    </section>
+  );
+}
+
+/** Keep large before/after values out of the DOM until their row is opened. */
+function ChangeDetails({ summary, changes }: { summary: Activity["summary"]; changes: ChangeRow[] }) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <details className="account-change-details" onToggle={event => setExpanded(event.currentTarget.open)}>
+      <summary>
+        <span className="account-change-summary">{summary}</span>
+        <span className="account-change-expand">{changes.length ? `${changes.length} field change${changes.length === 1 ? "" : "s"}` : "View details"}</span>
+      </summary>
+      {expanded && (changes.length ? (
+        <dl className="account-change-fields">
+          {changes.map((c, index) => (
+            <div className="account-change-field" key={`${c.field}-${index}`}>
+              <dt>{fieldLabel(c.field)}</dt>
+              <dd>
+                <div><span className="account-change-value-label">Before</span><span className="account-change-value">{renderValue(c.field, c.from)}</span></div>
+                <div><span className="account-change-value-label">After</span><span className="account-change-value">{renderValue(c.field, c.to)}</span></div>
+              </dd>
+            </div>
+          ))}
+        </dl>
+      ) : <p className="account-change-no-details">No field-level details recorded.</p>)}
+    </details>
   );
 }

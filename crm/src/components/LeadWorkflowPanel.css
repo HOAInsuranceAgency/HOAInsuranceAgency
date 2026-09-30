@@ -1,0 +1,77 @@
+/* Full CRM activity workspace; the compact Front panel keeps its own layout. */
+.activity-workspace { min-width: 0; }
+.activity-workspace .workflow-heading { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; margin-bottom: 20px; }
+.activity-workspace .workflow-heading > .grow { display: none; }
+.activity-workspace .workflow-heading h2 { margin: 0 0 6px; }
+.activity-workspace .workflow-heading p { margin: 0; line-height: 1.5; }
+.activity-workspace .workflow-heading > button { flex-shrink: 0; }
+.activity-workspace .workflow-notice { padding: 12px 14px; border: 1px solid var(--border); border-radius: 7px; background: var(--bg); font-size: 13px; line-height: 1.5; }
+.activity-workspace .workflow-notice[role=status] { background: var(--green-bg); color: var(--green); }
+.activity-workspace .activity-attention { margin: 0 0 20px; padding: 14px 16px; background: #fffbf1; border-color: #ecd9a9; border-radius: 8px; }
+.activity-workspace .activity-attention p { color: var(--amber); margin: 10px 0 0; line-height: 1.5; }
+.activity-workspace .activity-attention .front-count { background: #f6e8c6; color: var(--amber); }
+.activity-workspace-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 330px); gap: 24px; align-items: start; }
+.activity-workspace .activity-content, .activity-workspace .activity-controls { min-width: 0; }
+.activity-workspace .activity-history-heading { justify-content: space-between; align-items: center; margin: 0 0 14px; gap: 12px; }
+.activity-workspace .activity-history-heading h3 { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.activity-workspace .activity-history-count { color: var(--muted); background: var(--bg); border: 1px solid var(--border); border-radius: 5px; padding: 2px 6px; font-size: 11px; font-weight: 500; }
+.activity-workspace .activity-history-heading select { width: auto; min-width: 132px; font-size: 13px; }
+.activity-workspace .activity-empty { border: 1px dashed var(--border); border-radius: 8px; padding: 24px; background: #fafbfd; font-size: 13px; color: var(--muted); line-height: 1.5; }
+.activity-workspace .activity-empty strong { color: var(--text); font-size: 14px; }
+.activity-workspace .activity-empty p { margin: 6px 0 0; }
+.activity-workspace .workflow-task { border: 1px solid var(--border); border-radius: 7px; padding: 0; margin-bottom: 10px; background: #fff; }
+.activity-workspace .workflow-task > summary { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 16px; padding: 14px 36px 14px 16px; align-items: baseline; }
+.activity-workspace .workflow-activity-title { min-width: 0; font-size: 13px; font-weight: 600; line-height: 1.5; overflow-wrap: anywhere; }
+.activity-workspace .workflow-activity-meta { margin: 0; font-size: 12px; line-height: 1.5; white-space: nowrap; }
+.activity-workspace .activity-message-body { padding: 0 16px 16px; border-top: 1px solid var(--border); overflow-wrap: anywhere; font-size: 13px; line-height: 1.55; }
+.activity-workspace .activity-message-body > p { margin: 12px 0; }
+.activity-workspace .activity-message-body > p:not(.small) { max-width: 95ch; }
+.activity-workspace .activity-load-more { margin-top: 4px; }
+.activity-workspace .activity-note-editor { margin-top: 20px; padding: 18px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); }
+.activity-workspace .activity-note-editor h3 { margin: 0 0 12px; }
+.activity-workspace .activity-note-editor textarea { min-height: 100px; resize: vertical; line-height: 1.5; }
+.activity-workspace .activity-note-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; }
+.activity-workspace .activity-note-actions .toolbar { margin: 0; }
+.activity-workspace .workflow-note-publish { display: flex; align-items: flex-start; gap: 8px; font-size: 12px; color: var(--muted); line-height: 1.5; }
+.activity-workspace .workflow-note-publish input { margin: 1px 0 0; width: 16px; height: 16px; flex: 0 0 16px; accent-color: var(--accent); }
+.activity-workspace .activity-controls { display: grid; gap: 16px; }
+.activity-workspace .activity-owner, .activity-workspace .activity-tools { border: 1px solid var(--border); border-radius: 8px; padding: 16px; background: #fafbfd; }
+.activity-workspace .activity-owner .toolbar, .activity-workspace .activity-tools > .toolbar { margin: 0 0 12px; gap: 8px; }
+.activity-workspace .activity-controls h3 { margin: 0; }
+.activity-workspace .activity-owner .form-grid { grid-template-columns: minmax(0, 1fr); margin-bottom: 12px; }
+.activity-workspace .activity-owner .form-grid + .toolbar { margin-bottom: 0; }
+.activity-workspace .activity-owner .front-team-list { margin: 0; }
+.activity-workspace .activity-owner .front-team-list > div { display: block; }
+.activity-workspace .activity-owner dt { font-size: 12px; color: var(--muted); margin: 0 0 6px; }
+.activity-workspace .activity-owner dd { font-size: 14px; overflow-wrap: anywhere; }
+.activity-workspace .activity-owner .front-handler { margin: 14px 0 0; padding-top: 12px; border-top: 1px solid var(--border); line-height: 1.5; }
+.activity-workspace .activity-tools > .toolbar { justify-content: space-between; }
+.activity-workspace .activity-tools .front-disclosure { padding: 12px; margin: 0 0 10px; border-radius: 6px; }
+.activity-workspace .activity-tools .front-tool-action { margin: 14px 0 0; }
+.activity-workspace .activity-tools .front-tool-action > button { width: 100%; text-align: left; line-height: 1.5; }
+.activity-workspace .activity-tools > .toolbar:last-child { margin-top: 10px; margin-bottom: 0; }
+.activity-workspace .activity-tools .field { margin: 12px 0; min-width: 0; }
+.activity-workspace label.field { color: var(--muted); font-size: 12px; font-weight: 600; }
+.activity-workspace .field select { width: 100%; min-width: 0; }
+.activity-workspace details > summary { cursor: pointer; list-style: none; position: relative; font-size: 13px; font-weight: 600; padding-right: 22px; }
+.activity-workspace details > summary::-webkit-details-marker { display: none; }
+.activity-workspace details > summary::after { content: ""; position: absolute; top: 5px; right: 3px; width: 6px; height: 6px; border-right: 1.5px solid var(--muted); border-bottom: 1.5px solid var(--muted); transform: rotate(-45deg); }
+.activity-workspace details[open] > summary::after { transform: rotate(45deg); }
+.activity-workspace .workflow-task > summary { padding-right: 36px; }
+.activity-workspace .workflow-task > summary::after { top: 21px; right: 16px; }
+.activity-workspace :is(button, summary, a):focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.activity-workspace button:disabled { opacity: .55; cursor: default; }
+.activity-workspace .activity-controls button { max-width: 100%; }
+
+@media (max-width: 1100px) {
+  .activity-workspace-grid { grid-template-columns: minmax(0, 1fr); gap: 20px; }
+  .activity-workspace .activity-controls { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
+}
+@media (max-width: 650px) {
+  .activity-workspace .activity-controls { grid-template-columns: minmax(0, 1fr); }
+  .activity-workspace .workflow-task > summary { grid-template-columns: minmax(0, 1fr); gap: 5px; }
+  .activity-workspace .workflow-activity-meta { white-space: normal; }
+  .activity-workspace .activity-note-editor { padding: 14px; }
+  .activity-workspace .activity-empty { padding: 18px; }
+  .activity-workspace .activity-note-actions { align-items: flex-start; flex-direction: column; }
+}

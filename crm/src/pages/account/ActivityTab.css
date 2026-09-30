@@ -1,0 +1,285 @@
+.account-changes {
+  min-width: 0;
+}
+
+.account-changes .account-changes-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.account-changes .account-changes-heading h2 {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 0 0 6px;
+}
+
+.account-changes-heading p,
+.account-changes-order,
+.account-changes-results {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.account-changes-count {
+  padding: 2px 8px;
+  border-radius: 5px;
+  background: var(--bg);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.account-changes-order {
+  padding-top: 3px;
+}
+
+.account-changes-filters {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding-bottom: 18px;
+}
+
+.account-changes-filters .field {
+  flex: 0 1 200px;
+  min-width: 0;
+}
+
+.account-changes-results {
+  margin: 0 0 9px auto;
+}
+
+.account-changes-state {
+  padding: 24px 18px;
+  margin: 0;
+  border: 1px dashed var(--border);
+  border-radius: 7px;
+  background: var(--bg);
+  color: var(--muted);
+  text-align: center;
+  font-size: 13px;
+}
+
+.account-changes-state strong {
+  color: var(--text);
+}
+
+.account-changes-state p {
+  margin: 6px 0 0;
+}
+
+.account-changes-state--error {
+  border-style: solid;
+  color: var(--red);
+  background: var(--red-bg);
+}
+
+.account-changes-state--error button {
+  margin-top: 12px;
+}
+
+.account-changes-notice {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.account-changes-table-wrap {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.account-changes-table {
+  table-layout: fixed;
+  min-width: 730px;
+  font-size: 13px;
+}
+
+.account-changes-table .account-change-when {
+  width: 150px;
+}
+
+.account-changes-table .account-change-who {
+  width: 140px;
+}
+
+.account-changes-table .account-change-what {
+  width: 170px;
+}
+
+.account-changes-table td {
+  padding: 14px 10px;
+  overflow-wrap: anywhere;
+  vertical-align: top;
+  line-height: 1.5;
+}
+
+.account-changes-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.account-change-date {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.account-change-actor,
+.account-change-subject {
+  font-weight: 600;
+}
+
+.account-change-type {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+}
+
+.account-change-record {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 4px;
+}
+
+.account-changes-table tr:has(.account-change-details[open]) .account-change-record {
+  display: block;
+}
+
+.account-change-action {
+  font-size: 10px;
+  padding: 1px 7px;
+}
+
+.account-change-details summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+.account-change-details summary::-webkit-details-marker {
+  display: none;
+}
+
+.account-change-details summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 3px;
+}
+
+.account-change-summary {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  color: var(--text);
+}
+
+.account-change-details[open] .account-change-summary {
+  display: block;
+  white-space: pre-wrap;
+}
+
+.account-change-expand {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--accent-dark);
+  font-size: 12px;
+  font-weight: 600;
+  margin-top: 6px;
+}
+
+.account-change-expand::before {
+  content: "›";
+  font-size: 16px;
+  line-height: 1;
+  transition: transform 120ms ease;
+}
+
+.account-change-details[open] .account-change-expand::before {
+  transform: rotate(90deg);
+}
+
+.account-change-fields {
+  margin: 14px 0 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  overflow: hidden;
+}
+
+.account-change-field + .account-change-field {
+  border-top: 1px solid var(--border);
+}
+
+.account-change-field {
+  padding: 12px;
+}
+
+.account-change-field dt {
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.account-change-field dd {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin: 0;
+}
+
+.account-change-field dd > div {
+  min-width: 0;
+}
+
+.account-change-value-label,
+.account-change-value {
+  display: block;
+}
+
+.account-change-value-label {
+  margin-bottom: 4px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.account-change-value {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+
+.account-change-no-details {
+  margin: 12px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+@media (max-width: 700px) {
+  .account-changes-filters .field {
+    flex: 1 1 130px;
+  }
+
+  .account-changes-results {
+    flex-basis: 100%;
+    margin: 0;
+  }
+
+  .account-change-field dd {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
