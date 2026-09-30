@@ -300,6 +300,19 @@ describe("FeinInput", () => {
 });
 
 describe("DateInput", () => {
+  it("connects its visible label to the native date field", async () => {
+    const user = userEvent.setup();
+    render(<>
+      <label htmlFor="policy-expiration">Current policy expiration</label>
+      <DateInput id="policy-expiration" value="2026-11-01" onChange={vi.fn()} />
+    </>);
+    const input = screen.getByLabelText("Current policy expiration");
+    expect(input).toHaveAttribute("type", "date");
+    expect(input).toHaveValue("2026-11-01");
+    await user.click(screen.getByText("Current policy expiration"));
+    expect(input).toHaveFocus();
+  });
+
   it("passes an ISO day straight through", async () => {
     const user = userEvent.setup();
     const { container } = render(<Harness Component={DateInput} />);

@@ -1,275 +1,138 @@
 import { useState } from "react";
 import { useIsAdmin } from "../lib/auth";
 import { client } from "../lib/client";
-import { SaveStatus, useSaveStatus } from "../components/SaveStatus";
-import {
-  PF_CONFIG_SHA256,
-  PF_JURISDICTIONS,
-} from "../lib/premiumFinance/jurisdictions";
-import { defaultReviewBy, isOpinionCurrent, originationGate } from "../lib/premiumFinance/gate";
+import { PF_JURISDICTIONS } from "../lib/premiumFinance/jurisdictions";
+import { isOpinionCurrent, originationGate } from "../lib/premiumFinance/gate";
 import { useAsyncResource } from "../lib/useAsyncResource";
-import type { Schema } from "../../amplify/data/resource";
+import { FinancingAdmin } from "../components/FinancingAdmin";
+import "./Financing.css";
 
-type PfCounselOpinion = Schema["PfCounselOpinion"]["type"];
-import { Badge, type BadgeSpec } from "../lib/badges";
+type Opinion = { jurisdiction: string; effectiveAt: string; reviewBy: string };
+type OpinionChecks = Record<string, { opinion: Opinion | null; failed: boolean }>;
+type Availability = "available" | "unavailable" | "unknown";
+type Filter = "all" | "available" | "unavailable";
 
-/**
- * The premium-finance module's home: the jurisdiction table as the running
- * code actually loaded it, and the kill switch.
- *
- * The table is rendered from the same generated module every gate reads — not
- * re-fetched, not re-parsed — so what this page shows IS what the gate does.
- * The SHA at the top is the hash of the signed YAML the module was generated
- * from: compare it to the signed file's hash and you know what production is
- * running without diffing anything.
- */
-
-const STATUS_BADGE: Record<string, BadgeSpec> = {
-  open: { cls: "green", label: "OPEN" },
-  conditional: { cls: "amber", label: "CONDITIONAL" },
-  closed: { cls: "gray", label: "CLOSED" },
-};
-
-/**
- * Counsel opinions unlock conditional jurisdictions — and expire. Rows are
- * permanent: superseding is a new row, and past `reviewBy` the jurisdiction
- * reverts to blocked with "opinion past review" (decision D).
- */
-function CounselOpinionsCard() {
-  const status = useSaveStatus({ autoClearMs: 4000 });
-  const conditional = PF_JURISDICTIONS.filter((j) => j.status === "conditional");
-  const [code, setCode] = useState("");
-  const [effectiveAt, setEffectiveAt] = useState("");
-  const [reviewBy, setReviewBy] = useState("");
-  const [notes, setNotes] = useState("");
-  const rows = useAsyncResource(
-    async () => {
-      const { data } = await client.models.PfCounselOpinion.list({ limit: 200 });
-      return data as PfCounselOpinion[];
-    },
-    [],
-    { initialData: [] as PfCounselOpinion[] }
-  );
-  const today = new Date().toISOString().slice(0, 10);
-
-  async function add() {
-    await status.run(
-      async () => {
-        const { errors } = await client.models.PfCounselOpinion.create({
-          jurisdiction: code,
-          effectiveAt,
-          reviewBy: reviewBy || defaultReviewBy(effectiveAt),
-          notes: notes.trim() || null,
-          occurredAt: new Date().toISOString(),
-        });
-        if (errors?.length) throw new Error(errors[0].message);
-        setCode("");
-        setEffectiveAt("");
-        setReviewBy("");
-        setNotes("");
-        await rows.refetch();
-        return "Opinion recorded.";
-      },
-      { errorMessage: "Couldn't record the opinion." }
+/** Only a current opinion matters to a producer. Search newest-first and stop
+ * at the first valid match. A bounded incomplete read is unknown, never closed. */
+async function checkCurrentOpinion(jurisdiction: string, today: string): Promise<Opinion | null> {
+  const seen = new Set<string>();
+  let nextToken: string | undefined;
+  for (let pageNumber = 0; pageNumber < 10; pageNumber++) {
+    const page = await client.models.PfCounselOpinion.listPfCounselOpinionByJurisdictionAndEffectiveAt(
+      { jurisdiction, effectiveAt: { le: today } },
+      { nextToken, sortDirection: "DESC", filter: { reviewBy: { ge: today } }, limit: 100,
+        selectionSet: ["id", "jurisdiction", "effectiveAt", "reviewBy"] },
     );
+    if (page.errors?.length || !Array.isArray(page.data)) throw new Error("Couldn't check this state.");
+    const current = page.data.find(opinion => opinion.jurisdiction === jurisdiction && isOpinionCurrent(opinion, today));
+    if (current) return current;
+    if (!page.nextToken) return null;
+    if (seen.has(page.nextToken)) throw new Error("Couldn't finish checking this state.");
+    seen.add(page.nextToken);
+    nextToken = page.nextToken;
   }
-
-  return (
-    <div className="card">
-      <div className="card-head">
-        <h2>Counsel opinions</h2>
-        <SaveStatus {...status.status} />
-      </div>
-      <p className="muted small">
-        A conditional jurisdiction stays blocked until a signed opinion is on
-        file and within its review date. Upload the signed PDF to the
-        account-independent Documents area and record it here; the default
-        review horizon is 24 months.
-      </p>
-      {rows.data.length > 0 && (
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Jurisdiction</th>
-                <th>Effective</th>
-                <th>Review by</th>
-                <th>Status</th>
-                <th>Notes</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.data.map((o) => (
-                <tr key={o.id}>
-                  <td>{o.jurisdiction}</td>
-                  <td>{o.effectiveAt}</td>
-                  <td>{o.reviewBy}</td>
-                  <td>
-                    {isOpinionCurrent(
-                      { effectiveAt: o.effectiveAt, reviewBy: o.reviewBy },
-                      today
-                    ) ? (
-                      <span className="badge green">CURRENT</span>
-                    ) : (
-                      <span className="badge amber">PAST REVIEW</span>
-                    )}
-                  </td>
-                  <td className="small muted">{o.notes}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-      <div className="form-grid">
-        <div className="field">
-          <label>Jurisdiction</label>
-          <select value={code} onChange={(e) => setCode(e.target.value)}>
-            <option value="">Choose…</option>
-            {conditional.map((j) => (
-              <option key={j.code} value={j.code}>
-                {j.name}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="field">
-          <label>Effective</label>
-          <input
-            type="date"
-            value={effectiveAt}
-            onChange={(e) => {
-              setEffectiveAt(e.target.value);
-              if (e.target.value && !reviewBy) setReviewBy(defaultReviewBy(e.target.value));
-            }}
-          />
-        </div>
-        <div className="field">
-          <label>Review by</label>
-          <input type="date" value={reviewBy} onChange={(e) => setReviewBy(e.target.value)} />
-        </div>
-        <div className="field">
-          <label>Notes</label>
-          <input value={notes} onChange={(e) => setNotes(e.target.value)} />
-        </div>
-      </div>
-      <div className="inline-actions">
-        <button
-          type="button"
-          className="secondary"
-          disabled={!code || !effectiveAt || status.busy}
-          onClick={() => void add()}
-        >
-          Record opinion
-        </button>
-      </div>
-    </div>
-  );
+  throw new Error("This state's availability check is incomplete.");
 }
 
-/**
- * The premium-finance module's own page: what the signed jurisdiction file
- * says, and the counsel opinions that unlock conditional states.
- *
- * The enable/disable tile is gone (2026-08-25): the module is always on, so
- * nothing in this app can turn it off. The stored module flag still exists
- * and the Lambdas still check it — three of them as DynamoDB condition
- * expressions on the loan write itself — so the interlock survives the
- * button; it simply has no switch on this screen any more.
- */
+/** State availability uses the same gate as origination. Deal-specific checks
+ * still run on the invoice; legal notes and configuration belong to admins. */
 export default function Financing() {
   const isAdmin = useIsAdmin();
+  const [search, setSearch] = useState("");
+  const [filter, setFilter] = useState<Filter>("all");
+  const [administrationOpen, setAdministrationOpen] = useState(false);
+  const opinions = useAsyncResource(async () => {
+    const conditional = PF_JURISDICTIONS.filter(j => j.status === "conditional");
+    const today = new Date().toISOString().slice(0, 10);
+    const checks = await Promise.allSettled(conditional.map(j => checkCurrentOpinion(j.code, today)));
+    return Object.fromEntries(checks.map((check, index) => [conditional[index].code,
+      check.status === "fulfilled" ? { opinion: check.value, failed: false } : { opinion: null, failed: true }])) as OpinionChecks;
+  }, [], { initialData: {} as OpinionChecks, errorMessage: "Couldn't check all states. Please try again." });
+
+  const today = new Date().toISOString().slice(0, 10);
+  const rows = PF_JURISDICTIONS.map(j => {
+    const check = opinions.data[j.code];
+    const pending = j.status === "conditional" && (opinions.loading || !opinions.loaded || !!opinions.error || !check || check.failed);
+    const gate = originationGate(j.code, {
+      hasCurrentCounselOpinion: !pending && !!check?.opinion && isOpinionCurrent(check.opinion, today),
+    });
+    const availability: Availability = pending ? "unknown" : gate.open ? "available" : "unavailable";
+    return { ...j, availability, label: availability === "unknown" ? opinions.loading ? "Checking…" : "Retry check" : availability === "available" ? "Available" : "Unavailable" };
+  });
+  const checkFailed = !!opinions.error || !opinions.loading && Object.values(opinions.data).some(check => check.failed);
+  const query = search.trim().toLocaleLowerCase();
+  const exactCode = rows.find(j => j.code.toLocaleLowerCase() === query)?.code;
+  const visible = rows.filter(j =>
+    (filter === "all" || j.availability === filter) &&
+    (!query || (exactCode ? j.code === exactCode : j.name.toLocaleLowerCase().includes(query))),
+  );
+  const filters: { key: Filter; label: string; count: number }[] = [
+    { key: "all", label: "All states", count: rows.length },
+    { key: "available", label: "Available", count: rows.filter(j => j.availability === "available").length },
+    { key: "unavailable", label: "Unavailable", count: rows.filter(j => j.availability === "unavailable").length },
+  ];
+  const reset = () => { setSearch(""); setFilter("all"); };
 
   return (
-    <>
-      <h1>Financing</h1>
-      <p className="sub">
-        In-house premium finance. Eligibility is decided by the signed
-        jurisdiction file — the table below is that file, as loaded.
-      </p>
-
-      {/* The lending-account card lived here until decision 5 was revised
-          (2026-08-23): receipts settle to the premium trust on the one
-          Stripe rail, and the split is a ledger fact — the remittance email
-          and PfLoanPayment's interest/principal fields — not a bank account.
-          AgencySettings.pfLendingAccountName remains in the schema, unused,
-          per the additive-only rule. */}
-      {isAdmin && <CounselOpinionsCard />}
-
-      <div className="card">
-        <div className="card-head">
-          <h2>Jurisdictions</h2>
-          <p className="muted small">
-            Signed file SHA-256: <code>{PF_CONFIG_SHA256.slice(0, 16)}…</code>
-          </p>
+    <section className="financing-page">
+      <header className="financing-page-header">
+        <h1>Financing</h1>
+        <p className="sub">Find out where we can finance commercial policies.</p>
+      </header>
+      <div className="card financing-lookup">
+        <div className="financing-lookup-heading">
+          <div><h2>Can we finance here?</h2><p>Check the property's state.</p></div>
+          <button type="button" className="secondary" disabled={opinions.loading} onClick={() => void opinions.refetch()}>
+            {opinions.loading ? "Checking…" : "Refresh availability"}
+          </button>
         </div>
-        <p className="muted small">
-          Status comes from the signed compliance file, not from this app's
-          code. An unverified rate ceiling behaves as closed whatever the
-          status column says.
-        </p>
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Jurisdiction</th>
-                <th>Status</th>
-                <th>In effect</th>
-                <th className="num">Max APR</th>
-                <th className="num">Min principal</th>
-                <th>Note</th>
-              </tr>
-            </thead>
-            <tbody>
-              {PF_JURISDICTIONS.map((j) => {
-                const gate = originationGate(j.code);
-                // Explicitly false only: closed rows carry null ("not
-                // applicable"), which is not the alarm state.
-                const unverified = j.maxAprVerified === false;
-                return (
-                  <tr key={j.code}>
-                    <td>
-                      {j.name} <span className="muted small">{j.code}</span>
-                    </td>
-                    <td>
-                      <Badge {...(STATUS_BADGE[j.status] ?? STATUS_BADGE.closed)} />
-                    </td>
-                    <td>
-                      {unverified ? (
-                        // The row that must not be glanced past: status says
-                        // open, behavior is closed, and the difference is an
-                        // unread statute. A badge, not the `.warn-inline`
-                        // callout it used to be — that class is a block
-                        // element, and inside a table cell it wrapped into
-                        // two half-painted boxes with the border stripe on
-                        // only the first line. Amber against the row's green
-                        // OPEN is the contradiction, stated in the table's
-                        // own vocabulary.
-                        <Badge cls="amber" label="blocked — ceiling unverified" />
-                      ) : gate.open ? (
-                        <span className="small">open</span>
-                      ) : (
-                        <span className="muted small">blocked</span>
-                      )}
-                    </td>
-                    <td className="num">
-                      {j.maxApr === null ? <span className="muted">none</span> : `${j.maxApr}%`}
-                    </td>
-                    <td className="num">
-                      {j.minPrincipal === null ? (
-                        <span className="muted">—</span>
-                      ) : (
-                        `$${j.minPrincipal.toLocaleString("en-US")}`
-                      )}
-                    </td>
-                    <td className="small muted">{j.note}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+        <div className="financing-search">
+          <label htmlFor="financing-state-search">Find a state</label>
+          <div className="financing-search-input">
+            <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><circle cx="10.5" cy="10.5" r="6.5" /><path d="m16 16 4.5 4.5" /></svg>
+            <input id="financing-state-search" type="search" autoComplete="off" value={search} onChange={e => setSearch(e.target.value)} placeholder="State name or abbreviation" />
+          </div>
         </div>
+        <div className="financing-filter-bar">
+          <div className="financing-filters" role="group" aria-label="Filter by availability">
+            {filters.map(item => (
+              <button key={item.key} type="button" aria-label={item.label} aria-pressed={filter === item.key} onClick={() => setFilter(item.key)}>
+                {item.label} <span>{item.count}</span>
+              </button>
+            ))}
+          </div>
+          <span className="financing-result-count" role="status">{visible.length} {visible.length === 1 ? "result" : "results"}</span>
+        </div>
+        {checkFailed && <div className="financing-check-error" role="alert">Some states couldn't be checked. <button type="button" className="link" onClick={() => void opinions.refetch()}>Try again</button></div>}
+        {visible.length ? (
+          <ul className="financing-state-grid" aria-label="State availability">
+            {visible.map(j => (
+              <li key={j.code} className={`financing-state financing-state--${j.availability}`} aria-label={`${j.name}: ${j.label}`}>
+                <span className="financing-state-code" aria-hidden="true">{j.code}</span>
+                <div className="financing-state-name">
+                  <strong>{j.name}</strong>
+                  {j.availability === "available" && j.minPrincipal != null && <small>${j.minPrincipal.toLocaleString("en-US")}+ financed</small>}
+                  {j.availability === "available" && j.requiresIncorporatedBorrower && <small>Incorporated associations</small>}
+                </div>
+                <span className="financing-state-status"><span aria-hidden="true">{j.availability === "available" ? "✓" : j.availability === "unavailable" ? "−" : "…"}</span>{j.label}</span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <div className="financing-empty">
+            <strong>{search.trim() ? `No states found for “${search.trim()}”` : "No states in this view"}</strong>
+            <p>Try a state name or two-letter abbreviation.</p>
+            <button type="button" className="secondary" onClick={reset}>Reset filters</button>
+          </div>
+        )}
       </div>
-    </>
+      <p className="financing-invoice-hint">Financing for a specific policy is confirmed on its invoice.</p>
+      {isAdmin && (
+        <details className="financing-administration" open={administrationOpen} onToggle={e => setAdministrationOpen(e.currentTarget.open)}>
+          <summary>Administration</summary>
+          {administrationOpen && <FinancingAdmin onChanged={opinions.refetch} />}
+        </details>
+      )}
+    </section>
   );
 }

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { AccountAccess, type Reader } from "../../amplify/functions/crm-access/access";
 import { authorizeCustom, filterCustom } from "../../amplify/functions/crm-access/custom";
-import { ACCOUNT_MODELS, AccessDenied, type RecordData } from "../../amplify/functions/crm-access/policy";
+import { ACCOUNT_MODELS, RETIRED_MODELS, AccessDenied, type RecordData } from "../../amplify/functions/crm-access/policy";
 let records: Record<string, RecordData>;
 const reader: Reader = async (model, key) => records[`${model}:${key}`];
 const user = (sub = "alice") => new AccountAccess({ sub }, reader);
@@ -89,7 +89,7 @@ describe("all related models", () => {
     if (model === "PfOverride") return { policyId: `p${suffix}` };
     return { accountId: suffix };
   };
-  it.each(ACCOUNT_MODELS)("checks %s through its authoritative account", async model => {
+  it.each(ACCOUNT_MODELS.filter(model => !RETIRED_MODELS.includes(model)))("checks %s through its authoritative account", async model => {
     expect(await user().canRecord(model, record(model, "a"))).toBe(true);
     expect(await user().canRecord(model, record(model, "b"))).toBe(false);
     expect(await user("manager").canRecord(model, record(model, "a"))).toBe(false);
@@ -212,14 +212,13 @@ describe("custom API operations", () => {
     await expect(call("createLead", { salespersonId: "alice" }, admin())).resolves.toBeUndefined();
     await expect(call("setResponsibilities", { accountId: "owned", salespersonId: "alice" }, admin())).resolves.toBeUndefined();
   });
-  it("denies former managers account, billing, task and conversation operations for prior reports", async () => {
+  it("denies former managers account, billing and conversation operations for prior reports", async () => {
     for (const [field, args] of [
       ["startLeadExtraction", { accountId: "a" }],
       ["sendInvoice", { invoiceId: "ia" }],
       ["servicePfLoan", { loanId: "la" }],
       ["communicationRead", { readOperation: "context", input: { accountId: "a" } }],
       ["communicationRead", { readOperation: "context", input: { conversationId: "cnv_a" } }],
-      ["communicationWrite", { operation: "updateBlocker", input: { taskId: "task:a" } }],
     ] as const) {
       await expect(authorizeCustom(user("manager"), field, args)).rejects.toThrow(AccessDenied);
       await expect(authorizeCustom(admin(), field, args)).resolves.toBeUndefined();
@@ -241,10 +240,10 @@ describe("custom API operations", () => {
     await expect(call("recordCallOutcome", { id: "task:a", taskId: "task:b" })).rejects.toThrow(AccessDenied);
     await expect(call("mergeTasks", { accountId: "a", tasks: [{ id: "task:b" }] })).rejects.toThrow(AccessDenied);
   });
-  it("does not delegate work to someone who cannot view the account", async () => {
+  it("retires delegation for every account", async () => {
     await expect(call("delegateService", { taskId: "task:a", specialistId: "bob" })).rejects.toThrow(AccessDenied);
     await expect(call("delegateService", { taskId: "task:a", specialistId: "manager" })).rejects.toThrow(AccessDenied);
-    await expect(call("delegateService", { taskId: "task:a", specialistId: "alice" })).resolves.toBeUndefined();
+    await expect(call("delegateService", { taskId: "task:a", specialistId: "alice" })).rejects.toThrow(AccessDenied);
   });
   it("does not grant account, blocker or report access through a legacy specialist assignment", async () => {
     records["Communication:task:a"].data = { accountId: "a", specialistId: "bob", blocker: { ownerId: "bob" } };
@@ -252,8 +251,8 @@ describe("custom API operations", () => {
     expect(await specialist.canAccount("a")).toBe(false);
     await expect(authorizeCustom(specialist, "communicationWrite", { operation: "updateBlocker", input: { taskId: "task:a" } })).rejects.toThrow(AccessDenied);
     const notice = { id: "notice:task:a:bob", accountId: "a", recipient: "bob" };
-    expect(await filterCustom(specialist, "communicationRead", { readOperation: "work", input: { kind: "NOTIFICATION" } }, { items: [notice] })).toEqual({ items: [] });
-    expect(await filterCustom(specialist, "communicationRead", { readOperation: "myReport" }, { report: { items: [{ id: "task:a", accountId: "a", stage: "DUE", role: "Specialist" }] } })).toEqual({ report: { items: [], accountCount: 0 } });
+    await expect(filterCustom(specialist, "communicationRead", { readOperation: "work", input: { kind: "NOTIFICATION" } }, { items: [notice] })).rejects.toThrow(AccessDenied);
+    await expect(filterCustom(specialist, "communicationRead", { readOperation: "myReport" }, { report: { items: [{ id: "task:a", accountId: "a", stage: "DUE", role: "Specialist" }] } })).rejects.toThrow(AccessDenied);
   });
   it("rejects administrative and unknown operations", async () => {
     for (const op of ["settings", "saveTeamRouting", "saveEligibility", "backfill", "unknown"]) await expect(call(op)).rejects.toThrow(AccessDenied);
@@ -261,51 +260,12 @@ describe("custom API operations", () => {
     await expect(authorizeCustom(user(), "futureEndpoint", {})).rejects.toThrow(AccessDenied);
   });
   it("filters work pages and preserves cursors even when a page is empty", async () => {
-    const result = await filterCustom(user(), "communicationRead", { readOperation: "work" }, { ok: true, items: [{ id: "b", accountId: "b" }, { id: "unlinked" }], nextToken: "cursor" });
+    const result = await filterCustom(user(), "communicationRead", { readOperation: "work", input: { kind: "WORKFLOW" } }, { ok: true, items: [{ id: "b", accountId: "b" }, { id: "unlinked" }], nextToken: "cursor" });
     expect(result).toEqual({ ok: true, items: [], nextToken: "cursor" });
   });
-  it("filters stale daily reports and limits assignment choices", async () => {
-    const result = await filterCustom(user(), "communicationRead", { readOperation: "myReport" }, { ok: true, report: { items: [{ accountId: "a" }, { accountId: "b" }], accountCount: 2 } });
-    expect(result).toEqual({ ok: true, report: { items: [{ accountId: "a" }], accountCount: 1 } });
+  it("limits assignment choices", async () => {
     const team = await filterCustom(user(), "communicationRead", { readOperation: "context" }, { team: [{ userId: "alice", salesperson: true }, { userId: "bob", salesperson: true }] });
     expect(team).toMatchObject({ actorId: "alice", team: [{ userId: "alice", salesperson: true }, { userId: "bob", salesperson: false }] });
-  });
-  it("preserves redacted operational alerts for the recipient without adding account access or inflating counts", async () => {
-    const alert = { id: "issue:assignment:b", redacted: true, account: "Shared activity", title: "An account has a setup or assignment issue requiring administrator review.", stage: "EXCEPTION", section: "Setup and data", group: "Setup and data", url: "/lead-work" };
-    const own = { id: "task:a", accountId: "a", stage: "DUE" };
-    const report = { recipientId: "alice", items: [alert, own, { id: "task:b", accountId: "b" }], accountCount: 2 };
-    expect(await filterCustom(user(), "communicationRead", { readOperation: "myReport" }, { report })).toEqual({ report: { ...report, items: [alert, own], accountCount: 1 } });
-    expect(await user().canAccount("b")).toBe(false);
-    await expect(call("context", { accountId: "b" })).rejects.toThrow(AccessDenied);
-    const onlyAlert = { ...report, items: [alert] };
-    for (const recipient of [user(), admin()]) expect(await filterCustom(recipient, "communicationRead", { readOperation: "myReport" }, { report: onlyAlert })).toMatchObject({ report: { items: [alert], accountCount: 0 } });
-    expect(await filterCustom(user("manager"), "communicationRead", { readOperation: "myReport" }, { report: onlyAlert })).toMatchObject({ report: { items: [], accountCount: 0 } });
-  });
-  it("does not exempt unmarked or account-bearing rows from report access checks", async () => {
-    const alert = { id: "issue:assignment:b", redacted: true, stage: "EXCEPTION", section: "Setup and data", group: "Setup and data", url: "/lead-work" };
-    const items = [
-      { ...alert, redacted: undefined }, { ...alert, redacted: "true" }, { ...alert, accountId: "b" },
-      { ...alert, stage: "DUE" }, { ...alert, group: "Sales" }, { ...alert, section: "Your accounts today" },
-      { ...alert, url: "/accounts/b" }, { ...alert, stage: "MANAGER" }, { id: "unlinked-task" },
-    ];
-    expect(await filterCustom(user(), "communicationRead", { readOperation: "myReport" }, { report: { recipientId: "alice", items } })).toEqual({ report: { recipientId: "alice", items: [], accountCount: 0 } });
-  });
-  it("removes retired management summaries, sections and takeover flags from legacy daily reports", async () => {
-    records["Communication:workflow:owned"] = { data: { salespersonId: "manager" } };
-    const own = { id: "own", accountId: "owned", stage: "DUE", section: "Your accounts today" };
-    const foreign = { id: "foreign", accountId: "a", stage: "DUE", section: "Your accounts today" };
-    const oldReport = {
-      recipientId: "manager", sections: ["Your accounts today", "Your sales team today", "Needs your attention"],
-      teamCounts: [{ name: "Alice", due: 10, overdue: 5 }], accountCount: 99,
-      items: [{ ...own, canTakeResponse: true, verifiedEscalation: true }, foreign,
-        { id: "old-manager", accountId: "owned", stage: "MANAGER", section: "Your sales team today" },
-        { id: "old-owner", accountId: "owned", stage: "OWNER", section: "Needs your attention" },
-        { id: "old-section", accountId: "owned", section: "Your sales team today" }],
-    };
-    const filtered = await filterCustom(user("manager"), "communicationRead", { readOperation: "myReport" }, { ok: true, report: oldReport });
-    expect(filtered).toEqual({ ok: true, report: { recipientId: "manager", sections: ["Your accounts today"], items: [own], accountCount: 1 } });
-    const adminReport = await filterCustom(admin(), "communicationRead", { readOperation: "myReport" }, { report: oldReport });
-    expect(adminReport).toEqual({ report: { recipientId: "manager", sections: ["Your accounts today"], items: [own, foreign], accountCount: 2 } });
   });
   it("limits former managers' team assignment choices and account visibility to themselves", async () => {
     records["Communication:workflow:owned"] = { data: { salespersonId: "manager" } };
@@ -313,5 +273,31 @@ describe("custom API operations", () => {
       workflow: { accountId: "owned" }, team: [{ userId: "manager", salesperson: true }, { userId: "alice", salesperson: true }],
     });
     expect(result).toMatchObject({ actorId: "manager", team: [{ userId: "manager", salesperson: true, canAccessAccount: true }, { userId: "alice", salesperson: false, canAccessAccount: false }] });
+  });
+});
+
+
+describe("retired tasks and daily staff reports", () => {
+  it("denies historical task model reads and writes to staff and administrators", async () => {
+    for (const actor of [user(), admin()]) {
+      expect(await actor.canRecord("MarketingTask", { id: "task", accountId: "a" })).toBe(false);
+      for (const operation of ["create", "update", "delete"]) await expect(actor.write("MarketingTask", operation, { id: "task", accountId: "a" })).rejects.toThrow(AccessDenied);
+    }
+  });
+  it("rejects cached task and daily-report requests before any data access for every role", async () => {
+    const { RETIRED_TASK_OPERATIONS } = await import("../../../shared/retiredTaskOperations");
+    for (const groups of [[], ["ADMIN"]]) {
+      const actor = new AccountAccess({ sub: "alice", groups }, async () => { throw new Error("Unexpected data read"); });
+      for (const operation of RETIRED_TASK_OPERATIONS) {
+        await expect(authorizeCustom(actor, "communicationWrite", { operation, input: '{}' })).rejects.toThrow(AccessDenied);
+        await expect(authorizeCustom(actor, "communicationRead", { readOperation: operation })).rejects.toThrow(AccessDenied);
+        await expect(filterCustom(actor, "communicationRead", { readOperation: operation }, { report: { items: [{ accountId: "a" }] } })).rejects.toThrow(AccessDenied);
+      }
+      for (const kind of [undefined, null, "", " ", " TASK ", "TASK", "NOTIFICATION"]) {
+        await expect(authorizeCustom(actor, "communicationRead", { readOperation: "work", input: { kind } })).rejects.toThrow(AccessDenied);
+        await expect(filterCustom(actor, "communicationRead", { readOperation: "work", input: { kind } }, { items: [] })).rejects.toThrow(AccessDenied);
+      }
+      await expect(authorizeCustom(actor, "communicationWrite", { operation: "recordCallOutcome", input: { id: "call", taskId: "task" } })).rejects.toThrow(AccessDenied);
+    }
   });
 });

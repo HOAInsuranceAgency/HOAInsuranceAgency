@@ -1,21 +1,72 @@
-import ReportDeliverySettings from "../components/ReportDeliverySettings";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { LeadEligibilityCells, LeadEligibilityEditor, LeadEligibilityFeedback, useLeadEligibilitySettings } from "../components/LeadEligibilitySettings";
-import { client, fmtDate, type UserProfile } from "../lib/client";
+import { client, fmtDate, friendlyError, type UserProfile } from "../lib/client";
 import { toE164 } from "../../amplify/functions/lead-intake/sms";
 import { Badge, flagBadge } from "../lib/badges";
 import SignatureManager from "../components/SignatureManager";
+import Modal from "../components/Modal";
 import { SaveStatus, useSaveStatus } from "../components/SaveStatus";
 import { useAsyncResource } from "../lib/useAsyncResource";
 import { useSort, SortTh } from "../lib/useSort";
 import { useFormState } from "../lib/useFormState";
-import { DEFAULT_USER_ROLE, USER_ROLE_OPTIONS } from "../lib/enums";
+import { DEFAULT_USER_ROLE, isUserRole, USER_ROLE_OPTIONS, type UserRole } from "../lib/enums";
 
 interface TeamUser {
   userId: string;
   email: string;
   createdAt: string | null;
   groups: string[];
+}
+
+function RoleChoices({ roles, onChange, disabled = false, keepAdmin = false }: {
+  roles: UserRole[];
+  onChange: (roles: UserRole[]) => void;
+  disabled?: boolean;
+  keepAdmin?: boolean;
+}) {
+  return <fieldset disabled={disabled} style={{ border: 0, padding: 0, margin: 0 }}>
+    <legend>Assigned roles</legend>
+    <p className="muted small" style={{ margin: "4px 0 10px" }}>Choose one or two roles.</p>
+    <div style={{ display: "flex", flexWrap: "wrap", gap: 16 }}>
+      {USER_ROLE_OPTIONS.map(option => {
+        const checked = roles.includes(option.value);
+        return <label key={option.value} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <input type="checkbox" checked={checked}
+            disabled={checked ? roles.length === 1 || (keepAdmin && option.value === "ADMIN") : roles.length >= 2}
+            onChange={() => onChange(checked ? roles.filter(role => role !== option.value) : [...roles, option.value])} />
+          {option.label}
+        </label>;
+      })}
+    </div>
+    {keepAdmin && <p className="muted small">Keep your Admin role to manage team access.</p>}
+  </fieldset>;
+}
+
+function RoleEditor({ user, name, currentUser, onSave, onClose }: {
+  user: TeamUser;
+  name: string;
+  currentUser: boolean;
+  onSave: (roles: UserRole[]) => Promise<void>;
+  onClose: () => void;
+}) {
+  const initialRoles = user.groups.filter(isUserRole);
+  const [roles, setRoles] = useState<UserRole[]>(initialRoles);
+  const status = useSaveStatus();
+  const dirty = roles.length !== initialRoles.length || roles.some(role => !initialRoles.includes(role));
+  const close = () => { if (!status.busy) onClose(); };
+  return <Modal title={`Roles for ${name}`} className="modal-form team-connection-modal" onClose={close}>
+    <p className="muted small">The team member can switch between assigned roles at the bottom of the side menu.</p>
+    <RoleChoices roles={roles} disabled={status.busy} keepAdmin={currentUser && initialRoles.includes("ADMIN")}
+      onChange={next => { setRoles(next); status.markDirty(); }} />
+    <div className="form-actions">
+      <button className="primary" disabled={status.busy || !dirty || roles.length < 1 || roles.length > 2}
+        onClick={() => void status.run(async () => { await onSave(roles); onClose(); }, { errorMessage: "Couldn't save roles." })}>
+        {status.busy ? "Saving…" : "Save roles"}
+      </button>
+      <button className="secondary" disabled={status.busy} onClick={close}>Cancel</button>
+      <SaveStatus {...status.status} />
+    </div>
+  </Modal>;
 }
 
 /**
@@ -81,6 +132,26 @@ function LeadTextCell({
 // Stable identity for "not loaded yet" (and for a failed read), so the sort
 // memo isn't rebuilt on every render while the team list is still in flight.
 const NO_USERS: TeamUser[] = [];
+const EMPTY_TEAM = { users: NO_USERS, profiles: [] as UserProfile[], nextToken: null as string | null };
+
+function parse(raw: unknown): Record<string, unknown> {
+  if (typeof raw === "string") {
+    try { return JSON.parse(raw); } catch { return {}; }
+  }
+  return (raw as Record<string, unknown>) ?? {};
+}
+
+async function fetchTeamPage(nextToken?: string) {
+  const { data, errors } = await client.queries.listTeamUsers({ nextToken });
+  if (errors?.length) throw new Error(errors[0].message);
+  const body = parse(data);
+  if (body.ok === false) throw new Error(String(body.error ?? "Failed to load team"));
+  const users = (body.users as TeamUser[] | undefined) ?? NO_USERS;
+  // The bounded server response includes profile decorations, so opening a
+  // roster page requires one browser request regardless of its member count.
+  const profiles = (body.profiles as UserProfile[] | undefined) ?? [];
+  return { users, profiles, nextToken: typeof body.nextToken === "string" && body.nextToken ? body.nextToken : null };
+}
 
 /**
  * ADMIN-only. Rendered only for the Cognito ADMIN group (Settings gates the
@@ -96,53 +167,69 @@ export default function Team({ profile }: { profile: UserProfile }) {
   // Auto-clearing: these are per-row edits with no form to go dirty and
   // retire the message, so nothing else would ever clear it.
   const alertStatus = useSaveStatus({ autoClearMs: 4000 });
+  const [editingRoles, setEditingRoles] = useState<TeamUser | null>(null);
+  const roleStatus = useSaveStatus({ autoClearMs: 4000 });
   const { form, setF } = useFormState(
-    { email: "", role: DEFAULT_USER_ROLE as string },
+    { email: "", roles: [DEFAULT_USER_ROLE] as UserRole[] },
     { onEdit: inviteStatus.markDirty }
   );
 
-  const parse = (raw: unknown): Record<string, unknown> => {
-    if (typeof raw === "string") {
-      try {
-        return JSON.parse(raw);
-      } catch {
-        return {};
-      }
-    }
-    return (raw as Record<string, unknown>) ?? {};
-  };
+  const [moreLoading, setMoreLoading] = useState(false);
+  const [moreError, setMoreError] = useState("");
+  const morePending = useRef(false);
+  const pageVersion = useRef(0);
+  useEffect(() => () => { pageVersion.current++; }, []);
 
   // `client.queries.*` reports failure by *resolving* with an `errors` array,
   // so the unwrap has to stay inside the fetcher — nothing above it would see
   // a rejection otherwise.
   const team = useAsyncResource(
     async () => {
-      const { data, errors } = await client.queries.listTeamUsers();
-      if (errors?.length) throw new Error(errors[0].message);
-      return (parse(data).users as TeamUser[] | undefined) ?? NO_USERS;
+      // Refresh starts a new sequence. An older Load more response cannot
+      // append stale rows or replace the refreshed continuation token.
+      pageVersion.current++;
+      morePending.current = false;
+      setMoreLoading(false);
+      setMoreError("");
+      return fetchTeamPage();
     },
     [],
-    { initialData: NO_USERS, errorMessage: "Failed to load team" }
+    { initialData: EMPTY_TEAM, errorMessage: "Failed to load team" }
   );
-  const users = team.data;
+  const { users, profiles } = team.data;
+  const setProfiles = (update: (profiles: UserProfile[]) => UserProfile[]) =>
+    team.setData(previous => ({ ...previous, profiles: update(previous.profiles) }));
 
-  // Profiles decorate the roster (name, onboarding, signature) — the roster
-  // itself renders without them, so this read's failure is deliberately not
-  // surfaced, exactly as the bare `.then()` it replaces did not surface it.
-  // The hook still catches it, which is the part that was missing.
-  const profileRes = useAsyncResource(
-    async () => (await client.models.UserProfile.list()).data,
-    [],
-    { initialData: [] as UserProfile[] }
-  );
-  const profiles = profileRes.data;
-  const setProfiles = profileRes.setData;
+  async function loadMore() {
+    const nextToken = team.data.nextToken;
+    if (!nextToken || team.loading || morePending.current) return;
+    const version = pageVersion.current;
+    morePending.current = true;
+    setMoreLoading(true);
+    setMoreError("");
+    try {
+      const page = await fetchTeamPage(nextToken);
+      if (version !== pageVersion.current) return;
+      // Cognito pagination can repeat a member if the pool changes between
+      // reads. Keep existing rows (and any edits) instead of duplicating them.
+      team.setData(previous => ({
+        users: [...previous.users, ...page.users.filter(user => !previous.users.some(existing => existing.userId === user.userId))],
+        profiles: [...previous.profiles, ...page.profiles.filter(p => !previous.profiles.some(existing => existing.id === p.id))],
+        nextToken: page.nextToken,
+      }));
+    } catch (error) {
+      if (version === pageVersion.current) setMoreError(friendlyError(error, "Couldn't load more team members."));
+    } finally {
+      if (version === pageVersion.current) {
+        morePending.current = false;
+        setMoreLoading(false);
+      }
+    }
+  }
 
-  // An invite adds a Cognito user, so both reads are re-run — same as the
-  // single `load()` that used to do both.
+  // An invite adds a Cognito user, so restart the roster and its decorations.
   function reload() {
     void team.refetch();
-    void profileRes.refetch();
     eligibility.refresh();
   }
 
@@ -153,11 +240,16 @@ export default function Team({ profile }: { profile: UserProfile }) {
       async () => {
         const { data, errors } = await client.mutations.inviteUser({
           email,
-          role: form.role,
+          roles: form.roles,
         });
         if (errors?.length) throw new Error(errors[0].message);
         const body = parse(data);
-        if (!body.ok) throw new Error(String(body.error ?? "Invite failed"));
+        if (!body.ok) {
+          // Failed cleanup can leave a real member behind. Refresh access
+          // details while keeping the invitation failure beside the form.
+          reload();
+          throw new Error(String(body.error ?? "Invite failed"));
+        }
         // Not `reset()`: the baseline would put the role back to STAFF too, and
         // inviting a second person to the same role is the common case. Its
         // `onEdit` fires while the status is still "saving", which markDirty
@@ -166,7 +258,7 @@ export default function Team({ profile }: { profile: UserProfile }) {
         reload();
       },
       {
-        savedMessage: `Invited ${email} as ${form.role}. They'll get an email with the portal link — they sign in with a magic link, no password.`,
+        savedMessage: `Invited ${email} as ${form.roles.join(" and ")}. They'll get an email with the portal link — they sign in with a magic link, no password.`,
         errorMessage: "Invite failed",
       }
     );
@@ -174,6 +266,21 @@ export default function Team({ profile }: { profile: UserProfile }) {
 
   const profileFor = (u: TeamUser) =>
     profiles.find((p) => p.userId === u.userId || p.email === u.email);
+
+  async function saveRoles(user: TeamUser, roles: UserRole[]) {
+    const { data, errors } = await client.mutations.updateUserRoles({ userId: user.userId, roles });
+    if (errors?.length) throw new Error(errors[0].message);
+    const body = parse(data);
+    if (!body.ok) {
+      void team.refetch();
+      throw new Error(String(body.error ?? "Couldn't save roles."));
+    }
+    team.setData(previous => ({ ...previous, users: previous.users.map(member => member.userId === user.userId
+      ? { ...member, groups: [...member.groups.filter(group => !isUserRole(group)), ...roles] }
+      : member) }));
+    roleStatus.markSaved(`Roles updated for ${user.email}.`);
+    if (user.userId === profile.userId) window.dispatchEvent(new Event("team-roles-changed"));
+  }
 
   /**
    * Save a lead-alert change straight away — there is no Save button on this
@@ -210,7 +317,7 @@ export default function Team({ profile }: { profile: UserProfile }) {
         const p = profileFor(u);
         return p ? `${p.firstName} ${p.lastName}` : null;
       },
-      role: (u) => u.groups[0] ?? profileFor(u)?.role,
+      role: (u) => u.groups.filter(isUserRole).join(", ") || profileFor(u)?.role,
       onboarded: (u) => (profileFor(u)?.onboardingComplete ? "Yes" : "Invited"),
       leadTexts: (u) => (profileFor(u)?.leadTextAlerts ? "On" : "Off"),
       invited: (u) => u.createdAt,
@@ -228,8 +335,9 @@ export default function Team({ profile }: { profile: UserProfile }) {
         </p>
         <div className="form-grid" style={{ maxWidth: 640 }}>
           <div className="field">
-            <label>Email</label>
+            <label htmlFor="team-invite-email">Email</label>
             <input
+              id="team-invite-email"
               type="email"
               value={form.email}
               onChange={(e) => setF("email", e.target.value)}
@@ -237,14 +345,7 @@ export default function Team({ profile }: { profile: UserProfile }) {
             />
           </div>
           <div className="field">
-            <label>Role</label>
-            <select value={form.role} onChange={(e) => setF("role", e.target.value)}>
-              {USER_ROLE_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
+            <RoleChoices roles={form.roles} disabled={inviteStatus.busy} onChange={roles => setF("roles", roles)} />
           </div>
         </div>
         <div className="form-actions">
@@ -259,9 +360,8 @@ export default function Team({ profile }: { profile: UserProfile }) {
         </div>
         <p className="muted small" style={{ marginBottom: 0 }}>
           Producers complete their licensing details during first sign-in.
-          The role you pick here is the user's Cognito group, and it's what
-          admin-only screens and the team mutations check — so it does
-          restrict access.
+          Assign up to two roles. Team members switch roles at the bottom of
+          the side menu; Producer shows only their assigned accounts and work.
         </p>
       </div>
 
@@ -270,30 +370,33 @@ export default function Team({ profile }: { profile: UserProfile }) {
           <div>
             <h2 id="team-members-title" style={{ margin: 0 }}>Team members</h2>
             <p className="muted small" style={{ margin: "4px 0 0" }}>
-              View roles and manage salesperson eligibility, lead texts and connections in one place.
+              Assign roles and manage salesperson eligibility, lead texts and connections in one place.
               Salesperson eligibility controls assignment choices and does not change access.
+              Website leads rotate among active eligible salespeople. Only the assigned salesperson gets the Front conversation and lead text.
               Lead texts need both the switch and a mobile number.
             </p>
           </div>
           <div className="grow" />
+          <button type="button" className="secondary" disabled={team.loading || moreLoading || !!editingRoles} onClick={reload}>
+            Refresh team
+          </button>
           {/* Toggles are per-row with no per-row place to report; this is
               the card's one status line. */}
           <SaveStatus {...alertStatus.status} />
+          <SaveStatus {...roleStatus.status} />
         </div>
         <LeadEligibilityFeedback settings={eligibility} />
         {!team.loaded ? (
           <p className="muted small">Loading…</p>
-        ) : team.error ? (
-          <p className="error-text">{team.error}</p>
         ) : users.length === 0 ? (
-          <p className="muted small">No users found.</p>
+          !team.error && <p className="muted small">No users found.</p>
         ) : (
           <div className="table-wrap">
             <table>
               <thead>
                 <tr>
                   <SortTh label="Team member" colKey="email" sortKey={sortKey} dir={dir} onToggle={toggle} />
-                  <SortTh label="Role" colKey="role" sortKey={sortKey} dir={dir} onToggle={toggle} />
+                  <SortTh label="Roles" colKey="role" sortKey={sortKey} dir={dir} onToggle={toggle} />
                   <SortTh label="Onboarded" colKey="onboarded" sortKey={sortKey} dir={dir} onToggle={toggle} />
                   <th>Signature</th>
                   <SortTh label="Lead texts" colKey="leadTexts" sortKey={sortKey} dir={dir} onToggle={toggle} />
@@ -319,9 +422,12 @@ export default function Team({ profile }: { profile: UserProfile }) {
                         )}
                       </td>
                       <td>
-                        <span className="badge gray">
-                          {u.groups[0] ?? p?.role ?? "—"}
-                        </span>
+                        <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginBottom: 6 }}>
+                          {(u.groups.filter(isUserRole).length ? u.groups.filter(isUserRole) : [p?.role ?? "—"]).map(role =>
+                            <span key={role} className="badge gray">{role}</span>)}
+                        </div>
+                        <button type="button" className="secondary" disabled={team.loading || !!editingRoles} aria-label={`Edit roles for ${name || u.email}`}
+                          onClick={() => { roleStatus.markDirty(); setEditingRoles(u); }}>Edit roles</button>
                       </td>
                       <td>
                         {/* One-off pair — onboarding state is badged here and
@@ -365,9 +471,22 @@ export default function Team({ profile }: { profile: UserProfile }) {
             </table>
           </div>
         )}
+        {team.error && <div role="alert">
+          <p className="error-text">{team.error}</p>
+          <button type="button" className="secondary" disabled={team.loading} onClick={() => void team.refetch()}>Retry team</button>
+        </div>}
+        {moreError && <p className="error-text" role="alert">{moreError}</p>}
+        {team.data.nextToken && <div className="form-actions">
+          <button type="button" className="secondary" disabled={team.loading || moreLoading} onClick={() => void loadMore()}>
+            {moreLoading ? "Loading more…" : moreError ? "Retry loading more" : "Load more team members"}
+          </button>
+        </div>}
         <LeadEligibilityEditor settings={eligibility} />
+        {editingRoles && <RoleEditor user={editingRoles}
+          name={(() => { const p = profileFor(editingRoles); return p ? `${p.firstName} ${p.lastName}` : editingRoles.email; })()}
+          currentUser={editingRoles.userId === profile.userId}
+          onSave={roles => saveRoles(editingRoles, roles)} onClose={() => setEditingRoles(null)} />}
       </section>
-      <ReportDeliverySettings />
     </>
   );
 }

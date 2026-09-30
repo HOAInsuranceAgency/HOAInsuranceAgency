@@ -41,33 +41,19 @@ describe("communication UI boundaries", () => {
     await waitFor(() => expect(h.request).toHaveBeenCalledWith("setResponsibilities", { accountId: "a", salespersonId: "brian", version: 4 }, true));
     await waitFor(() => expect(screen.queryByRole("combobox", { name: "Deal champion" })).toBeNull());
   });
-  it("shows automatic follow-up without routine task editors", async () => {
-    linkedLead(); render(<FrontSidebar />); act(() => h.listener?.({ conversation: { id: "cnv_a" } }));
-    await screen.findByText("Follow up with the prospect");
-    expect(screen.queryByRole("button", { name: "Edit action" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Record outcome" })).toBeNull();
-    expect(h.request.mock.calls.some(([op]) => op === "saveTask")).toBe(false);
-  });
-  it("reassures a caught-up lead without inventing another action", async () => {
+  it("ignores legacy tasks while keeping account assignment and communication history", async () => {
     const data = linkedLead();
-    Object.assign(data, { tasks: [], trackingHealthy: true, communications: [{ id: "reply", channel: "EMAIL", direction: "INBOUND", status: "RECEIVED", at: "2026-09-10T12:00:00Z", resolved: true }] });
-    render(<FrontSidebar />); act(() => h.listener?.({ conversation: { id: "cnv_a" } }));
-    await screen.findByText("All caught up");
-    expect(screen.getByRole("status")).toHaveTextContent("Nothing needs your attention. Follow-up is tracked automatically.");
-    expect(screen.queryByRole("region", { name: "Next actions" })).toBeNull();
-  });
-  it.each(["unknown tracking", "unhealthy tracking", "open action", "assignment", "unresolved message", "new lead"])("does not show all caught up with %s", async reason => {
-    const data = linkedLead();
-    Object.assign(data, { trackingHealthy: true, communications: [{ id: "reply", channel: "EMAIL", direction: "INBOUND", status: "RECEIVED", at: "2026-09-10T12:00:00Z", resolved: true }] });
-    if (reason !== "open action") data.tasks = [];
-    if (reason === "unknown tracking") Object.assign(data, { trackingHealthy: undefined });
-    if (reason === "unhealthy tracking") Object.assign(data, { trackingHealthy: false });
-    if (reason === "assignment") data.workflow.salespersonId = "missing";
-    if (reason === "unresolved message") Object.assign(data, { communications: [{ id: "new", channel: "EMAIL", direction: "INBOUND", status: "RECEIVED", at: "2026-09-10T12:00:00Z", resolved: false }] });
-    if (reason === "new lead") Object.assign(data, { communications: [] });
+    Object.assign(data, { trackingHealthy: true, communications: [{ id: "reply", channel: "EMAIL", direction: "INBOUND", subject: "Updated insurance documents", text: "The revised forms are attached.", status: "RECEIVED", at: "2026-09-10T12:00:00Z", resolved: true }] });
     render(<FrontSidebar />); act(() => h.listener?.({ conversation: { id: "cnv_a" } }));
     await screen.findByRole("heading", { name: "Willow HOA" });
+    expect(screen.getByRole("button", { name: "Edit salesperson" })).toBeTruthy();
+    expect(screen.getByText("Updated insurance documents")).toBeTruthy();
+    expect(screen.getByText("The revised forms are attached.")).toBeTruthy();
+    expect(screen.queryByRole("region", { name: "Next actions" })).toBeNull();
+    expect(screen.queryByText(/Follow up with (the )?prospect/)).toBeNull();
     expect(screen.queryByText("All caught up")).toBeNull();
+    for (const label of [/Combine/, /Record blocker/, /Coordinate with a specialist/, /Tidy this conversation/, /next year/i]) expect(screen.queryByText(label)).toBeNull();
+    expect(h.request.mock.calls.some(([op]) => ['saveTask', 'mergeTasks', 'myReport', 'nextYearPreview', 'reportDelivery'].includes(op))).toBe(false);
   });
   it("clears a team edit when Front switches to another conversation", async () => {
     linkedLead(); render(<FrontSidebar />); act(() => h.listener?.({ conversation: { id: "cnv_a" } }));
@@ -85,12 +71,13 @@ describe("communication UI boundaries", () => {
     expect(screen.getByText(/Start delivery to test the automated email/)).toBeTruthy();
     expect(screen.getByRole("button", { name: "Start delivery" })).toBeDisabled();
   });
-  it("resumes with automatic cleanup and no toggle even when an older response says cleanup is off", async () => {
+  it("resumes communication delivery without task cleanup or report settings", async () => {
     const config = { environment: "main", version: 1, activatedAt: "2026-09-08T14:00:00Z", paused: true, cleanupEnabled: false, frontSender: "sales@protectmyhoa.com", allowedInboxIds: [], dialpadNumbers: [], holidays: [], testRecipients: [] };
     h.request.mockImplementation(async (op: string) => op === "settings" || op === "activate" ? { config, credentialStatus: {} } : { team: [] });
     render(<CommunicationSettings />);
     fireEvent.click(await screen.findByText("Delivery"));
-    expect(screen.getByText("Automatic")).toBeVisible();
+    expect(screen.queryByText("Inbox cleanup")).toBeNull();
+    expect(screen.queryByText("Morning report delivery")).toBeNull();
     expect(screen.queryByLabelText(/Automatically tidy/)).toBeNull();
     expect(screen.queryByText("Off")).toBeNull();
     fireEvent.click(screen.getByLabelText(/I verified email, calls/)); fireEvent.click(screen.getByRole("button", { name: "Resume delivery" }));
@@ -174,29 +161,8 @@ describe("communication UI boundaries", () => {
   });
   it("shows an unanswered call without a duplicate documentation form", () => {
     render(<CallOutcome communication={{ id: "c", accountId: "a", channel: "CALL", provider: "dialpad", providerId: "1", direction: "OUTBOUND", status: "MISSED", at: "2026-09-08T14:00Z", version: 3 }} />);
-    expect(screen.getByText("No answer · callback stays tracked automatically")).toBeTruthy();
+    expect(screen.getByText("No answer · logged automatically")).toBeTruthy();
     expect(screen.queryByRole("textbox")).toBeNull();
     expect(screen.queryByRole("button")).toBeNull();
-  });
-});
-
-
-describe("clear reminder actions", () => {
-  it("explains the request without a completion form or due-date picker", async () => {
-    const data = linkedLead(); data.tasks[0].kind = "RESPONSE";
-    Object.assign(data.tasks[0], { sourceIds: ["sms-request"] });
-    Object.assign(data, { communications: [{ id: "sms-request", channel: "SMS", direction: "INBOUND", text: "Please call me about the documents.", at: "2026-09-09T22:00:00Z", status: "RECEIVED" }] });
-    render(<FrontSidebar />); act(() => h.listener?.({ conversation: { id: "cnv_a" } }));
-    await screen.findByText("Respond to the prospect");
-    expect(screen.getByText("A prospect's message needs a response.")).toBeTruthy();
-    expect(screen.getByRole("blockquote")).toHaveTextContent("Please call me about the documents.");
-    expect(screen.queryByLabelText(/Combine/)).toBeNull();
-    expect(screen.queryByRole("button", { name: "Record outcome" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Edit action" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Add action" })).toBeNull();
-    expect(screen.queryByLabelText("What happened?")).toBeNull();
-    expect(screen.queryByLabelText("Due")).toBeNull();
-    expect(screen.getByText(/Your activity and the next follow-up are tracked automatically/)).toBeTruthy();
-
   });
 });

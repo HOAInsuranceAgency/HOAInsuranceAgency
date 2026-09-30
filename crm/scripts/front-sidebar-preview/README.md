@@ -1,19 +1,13 @@
-# Workflow visual review
+# Front sidebar visual review
 
-This preview uses the actual Front sidebar, daily-report, report-delivery and email-rendering components with fictional fixtures. It has no CRM credentials, provider connection or ability to send messages. Links are intercepted. Data resets on reload.
+This preview renders the actual account communication sidebar with fictional fixtures. It has no CRM credentials or ability to send messages. Data resets on reload.
 
-Open `docs/WORKFLOW-UX-TEST-WORKSPACE.html` directly in a browser, or run from `crm`:
+Run from `crm`:
 
 ```sh
 npx vite --config scripts/front-sidebar-preview/vite.config.ts
 ```
 
-Use http://127.0.0.1:8767. Choose a role, situation and panel width. Dates in report fixtures are frozen at September 14, 2026, 9 a.m. Eastern; the surrounding component's live overdue labels use the browser clock. Scenarios show what the screen looks like; they do not simulate provider delivery or a full database lifecycle.
+Open http://127.0.0.1:8767. Choose an account situation and panel width to review assignment, communication history, notes, and conversation tools. Task screens, daily reports, and reminder emails are retired.
 
-Rebuild the shareable HTML after component changes:
-
-```sh
-node scripts/build-workflow-ux-preview.mjs
-```
-
-Follow `docs/WORKFLOW-UX-ACCEPTANCE.md` for visual and connected staging tests. Do not claim a preview pass proves email delivery, call ingestion or scheduled reminders.
+Rebuild the standalone HTML with `node scripts/build-workflow-ux-preview.mjs`. A preview does not verify provider ingestion or live delivery.

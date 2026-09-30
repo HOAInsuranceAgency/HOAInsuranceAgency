@@ -4,7 +4,6 @@ import { generateClient } from "aws-amplify/data";
 import { getAmplifyDataClientConfig } from "@aws-amplify/backend/function/runtime";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, PutCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
-import { SESv2Client, SendEmailCommand } from "@aws-sdk/client-sesv2";
 import type { Schema } from "../../data/resource";
 import { listAllPages } from "../../../src/lib/pagination";
 import { PF_CONFIG_SHA256 } from "../../../src/lib/premiumFinance/jurisdictions";
@@ -25,7 +24,6 @@ async function getDataClient() {
 }
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient());
-const ses = new SESv2Client();
 
 export const handler = async () => {
   const client = await getDataClient();
@@ -66,9 +64,9 @@ export const handler = async () => {
 
   /**
    * The alarm for a marker nothing has cleared in ten days: the webhook
-   * missed the outcome, or the debit is genuinely lost. A compliance row and
-   * the accounting mailbox — the channels a person actually reads — once per
-   * sweep until someone reconciles it.
+   * missed the outcome, or the debit is genuinely lost. Keep the compliance
+   * row and server log for reconciliation. Daily staff email alerts are
+   * retired; loan state and pending-payment safeguards remain.
    */
   for (const l of stale) {
     console.error(
@@ -105,40 +103,6 @@ export const handler = async () => {
       } catch (err) {
         console.error("pf-default-sweep: stale-marker log write failed", err);
       }
-    }
-    const to = process.env.ACCOUNTING_MAILBOX;
-    const from = process.env.AGENCY_MAILBOX;
-    if (to && from) {
-      try {
-        await ses.send(
-          new SendEmailCommand({
-            FromEmailAddress: from,
-            Destination: { ToAddresses: [to] },
-            Content: {
-              Simple: {
-                Subject: {
-                  Data: `Autopay debit stuck ${STALE_PENDING_DAYS}+ days — reconcile loan ${l.id}`,
-                },
-                Body: {
-                  Text: {
-                    Data: [
-                      `Debit ${l.autopayPendingIntentId} for installment ${l.autopayPendingInstallment ?? "?"}`,
-                      `was started ${l.autopayAttemptedAt ?? "(unknown)"} and no outcome ever arrived.`,
-                      `Until it is reconciled the loan cannot be debited, hand-posted, or defaulted.`,
-                      ``,
-                      `Check the payment in the Stripe dashboard, then reconcile the loan.`,
-                    ].join("\n"),
-                  },
-                },
-              },
-            },
-          })
-        );
-      } catch (err) {
-        console.error("pf-default-sweep: stale-marker alert failed", err);
-      }
-    } else {
-      console.warn("pf-default-sweep: accounting mailbox unset; stale-marker alert not sent");
     }
   }
 

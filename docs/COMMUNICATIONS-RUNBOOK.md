@@ -1,6 +1,6 @@
 # Front, Dialpad and CRM rollout
 
-**Current team model (September 29, 2026):** one combined Team members table controls salesperson eligibility and connections. Manager/coverage configuration and escalation are retired; reminders use the direct assignee. Setup requires report-delivery contacts and a reporting channel, without manager assignments. See [the current ownership model](specs/salesperson-account-ownership.md); dated rollout records below retain historical behavior.
+**Current implementation (September 29, 2026; pending staging review):** the combined Team members table controls salesperson eligibility and connections. Tasks, Lead Follow-up, daily staff emails, manager hierarchies and coverage are retired. Integration activation no longer requires daily report contacts or a reporting channel. Account assignment, Front/Dialpad communication capture, business deliveries and the weekly marketing report remain. See [task retirement](CRM-TASK-RETIREMENT.md) and [account ownership](specs/salesperson-account-ownership.md). Dated rollout records below describe earlier behavior.
 
 Implementation is deployed to staging. Front and Dialpad credentials and channels are configured, the replacement email channel is verified, and CRM connection checks pass. Controlled provider acceptance and activation remain pending, as recorded below. Production is not deployed or activated. Do not confuse passing repository checks with a connected production integration.
 

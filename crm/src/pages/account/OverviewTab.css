@@ -1,0 +1,116 @@
+.account-overview,
+.overview-details {
+  min-width: 0;
+}
+
+.overview-details-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.overview-details .overview-details-heading h2 {
+  margin: 0;
+}
+
+.overview-source {
+  max-width: 380px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  line-height: 1.5;
+}
+
+.overview-source dt {
+  margin-bottom: 3px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.overview-source dd {
+  margin: 0;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.overview-details-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 18px 16px;
+}
+
+.overview-details-grid .field {
+  min-width: 0;
+  gap: 6px;
+}
+
+.overview-details-grid :is(input, select, textarea) {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.overview-details-grid :is(input, select) {
+  min-height: 38px;
+}
+
+.overview-details-grid textarea {
+  resize: vertical;
+  min-height: 82px;
+  line-height: 1.5;
+}
+
+.overview-details-grid select {
+  padding-right: 30px;
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5 6 6.5 11 1.5' fill='none' stroke='%2364748b' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+}
+
+.overview-field-wide {
+  grid-column: span 2;
+}
+
+.overview-field-full {
+  grid-column: 1 / -1;
+}
+
+.overview-details .overview-details-actions {
+  flex-wrap: wrap;
+  padding-top: 18px;
+  margin-top: 20px;
+  border-top: 1px solid var(--border);
+  gap: 10px 14px;
+}
+
+@media (max-width: 1000px) {
+  .overview-details-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 550px) {
+  .overview-details-heading {
+    display: grid;
+    gap: 14px;
+  }
+
+  .overview-source {
+    max-width: none;
+  }
+
+  .overview-details-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 14px;
+  }
+
+  .overview-field-wide {
+    grid-column: auto;
+  }
+}

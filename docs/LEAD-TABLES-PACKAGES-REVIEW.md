@@ -52,6 +52,8 @@ Identifiable production cleanup candidates are retained privately. This implemen
 
 The updated deletion flow checks for policies, billing, and delivery uncertainty before removing a lead. It deletes the lead's contacts with its quotes/documents, retires queued work in resumable batches, and prevents future sends from acquiring a lease for a deleted account. A send already accepted by a provider cannot be recalled; its delivery result is preserved for review. Deleting a CRM lead does not delete its historical Front conversations.
 
+Policy and invoice checks query the existing account relationship indexes, reading at most one matching record per request. They do not scan unrelated accounts or treat a continuation token as proof that a policy or bill exists. Any matching record still blocks deletion regardless of status. Unavailable or incomplete lookups stop deletion with a retry message before any records or queued work change.
+
 ## Verification and rollout
 
 - 2,245 tests passed across 112 files, including package calculation, selection, scope changes, partial binding, withdrawn offers, deletion cleanup over multiple pages, and a deletion during send preparation.

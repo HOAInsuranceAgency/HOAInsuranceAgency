@@ -47,18 +47,32 @@ export interface ChildColumn<T> {
   sort?: (row: T) => string | number | null | undefined;
 }
 
-export interface ChildRowsCardProps<T extends { id: string }, F extends object> {
+export interface ChildRowsCardProps<
+  T extends { id: string },
+  F extends object,
+> {
   title: string;
+  /** Optional scoped styling and supporting copy for this card. */
+  className?: string;
+  description?: ReactNode;
   /** Everything {@link useChildRows} returned. */
   child: ChildRows<T, F>;
   columns: ChildColumn<T>[];
-  /** Add-form fields, bound to `child.addForm`. Rendered in a `.toolbar`. */
+  /** Add-form fields, bound to `child.addForm`. */
   addFields: ReactNode;
   /** Edit-form fields, bound to `child.editForm`. */
   editFields: ReactNode;
   editIn?: "inline" | "modal";
+  /** Opt into a collapsed add form; the value labels its native disclosure. */
+  addDisclosure?: string;
+  loadingMessage?: string;
+  tableLabel?: string;
+  /** Feedback for a caller-owned action, alongside the shared CRUD statuses. */
+  extraFeedback?: ReactNode;
+  /** Accessible name for each row's Edit button. */
+  editButtonLabel?: (row: T) => string;
   /** Shown in place of the table when there are no rows. */
-  emptyMessage: string;
+  emptyMessage: ReactNode;
   /** Add-button label. */
   addLabel: string;
   /** Rendered next to the heading, and only once the read has settled. */
@@ -72,13 +86,23 @@ export interface ChildRowsCardProps<T extends { id: string }, F extends object> 
   removeMessage?: (row: T) => string;
 }
 
-export default function ChildRowsCard<T extends { id: string }, F extends object>({
+export default function ChildRowsCard<
+  T extends { id: string },
+  F extends object,
+>({
   title,
+  className,
+  description,
   child,
   columns,
   addFields,
   editFields,
   editIn = "inline",
+  addDisclosure,
+  loadingMessage = "Loading…",
+  tableLabel,
+  extraFeedback,
+  editButtonLabel,
   emptyMessage,
   addLabel,
   summary,
@@ -88,13 +112,15 @@ export default function ChildRowsCard<T extends { id: string }, F extends object
   removeMessage,
 }: ChildRowsCardProps<T, F>) {
   const sortable = columns.filter((c) => c.sort);
-  const accessors: Record<string, (row: T) => string | number | null | undefined> =
-    Object.fromEntries(sortable.map((c) => [c.key, c.sort!]));
+  const accessors: Record<
+    string,
+    (row: T) => string | number | null | undefined
+  > = Object.fromEntries(sortable.map((c) => [c.key, c.sort!]));
   const { sorted, sortKey, dir, toggle } = useSort(
     child.rows,
     accessors,
     defaultSort ?? sortable[0]?.key ?? "",
-    defaultDir
+    defaultDir,
   );
 
   const editingRow = child.rows.find((r) => r.id === child.editingId) ?? null;
@@ -115,53 +141,95 @@ export default function ChildRowsCard<T extends { id: string }, F extends object
     </>
   );
 
+  const addButton = (
+    <button
+      className={addDisclosure ? "primary" : "secondary"}
+      disabled={child.addStatus.busy}
+      onClick={child.add}
+    >
+      {addDisclosure && child.addStatus.busy ? "Adding…" : addLabel}
+    </button>
+  );
+  const EmptyTag = typeof emptyMessage === "string" ? "p" : "div";
+
   return (
-    <div className="card">
-      <h2>
-        {title}
-        {child.loaded && !child.error && summary ? (
-          <span className="muted small" style={{ fontWeight: 400 }}>
-            {" "}
-            {summary}
-          </span>
-        ) : null}
-      </h2>
+    <section
+      className={`card child-rows-card${className ? ` ${className}` : ""}`}
+      aria-label={title}
+    >
+      <div className="child-rows-heading">
+        <h2>
+          {title}
+          {child.loaded && !child.error && summary ? (
+            <span
+              className="muted small child-rows-summary"
+              style={{ fontWeight: 400 }}
+            >
+              {" "}
+              {summary}
+            </span>
+          ) : null}
+        </h2>
+        {description ? <p>{description}</p> : null}
+      </div>
 
       {!child.loaded ? (
-        <p className="muted small">Loading…</p>
+        <p className="muted small child-rows-state" role="status">
+          {loadingMessage}
+        </p>
       ) : child.error ? (
-        <p className="error-text">{child.error}</p>
+        <p className="error-text child-rows-state" role="alert">
+          {child.error}
+        </p>
       ) : (
         <>
-          <div className="toolbar">
-            {addFields}
-            <button
-              className="secondary"
-              disabled={child.addStatus.busy}
-              onClick={child.add}
-            >
-              {addLabel}
-            </button>
-            <SaveStatus {...child.addStatus.status} />
-          </div>
-          {/* Outside the toolbar: a delete confirmation names a row that is no
+          {addDisclosure ? (
+            <details className="child-rows-add">
+              <summary>{addDisclosure}</summary>
+              <div className="child-rows-add-body">
+                <div className="form-grid child-rows-fields">{addFields}</div>
+                <div className="form-actions child-rows-form-actions">
+                  {addButton}
+                </div>
+              </div>
+            </details>
+          ) : (
+            <div className="toolbar">
+              {addFields}
+              {addButton}
+              <SaveStatus {...child.addStatus.status} />
+            </div>
+          )}
+          <div className="child-rows-feedback">
+            {addDisclosure ? <SaveStatus {...child.addStatus.status} /> : null}
+            {/* Outside the toolbar: a delete confirmation names a row that is no
               longer in the table, so it has nowhere better to live. */}
-          <SaveStatus {...child.delStatus.status} />
-          {/* The editor carries its own copy of this while it is open, so a
+            <SaveStatus {...child.delStatus.status} />
+            {/* The editor carries its own copy of this while it is open, so a
               validation error appears beside the fields that caused it. But
               the editor closes on success, which would take the confirmation
               with it and make an edit the one write in the app that reports
               nothing — so once it is closed the message surfaces here instead.
               Exactly one of the two renders at a time. */}
-          {child.editingId === null ? (
-            <SaveStatus {...child.editStatus.status} />
-          ) : null}
+            {child.editingId === null ? (
+              <SaveStatus {...child.editStatus.status} />
+            ) : null}
+            {extraFeedback}
+          </div>
 
           {child.rows.length === 0 ? (
-            <p className="muted small">{emptyMessage}</p>
+            <EmptyTag className="muted small child-rows-state child-rows-empty">
+              {emptyMessage}
+            </EmptyTag>
           ) : (
-            <div className="table-wrap">
-              <table>
+            <div className="table-wrap child-rows-table-wrap">
+              <table className="child-rows-table" aria-label={tableLabel}>
+                <colgroup>
+                  {columns.map((column) => (
+                    <col key={column.key} />
+                  ))}
+                  <col />
+                </colgroup>
                 <thead>
                   <tr>
                     {columns.map((c) =>
@@ -176,9 +244,9 @@ export default function ChildRowsCard<T extends { id: string }, F extends object
                         />
                       ) : (
                         <th key={c.key}>{c.label}</th>
-                      )
+                      ),
                     )}
-                    <th></th>
+                    <th>{tableLabel ? "Actions" : null}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -191,8 +259,12 @@ export default function ChildRowsCard<T extends { id: string }, F extends object
                               <strong>{editTitle(row)}</strong>
                             </p>
                           ) : null}
-                          <div className="form-grid">{editFields}</div>
-                          <div className="form-actions">{editActions}</div>
+                          <div className="form-grid child-rows-fields">
+                            {editFields}
+                          </div>
+                          <div className="form-actions child-rows-form-actions">
+                            {editActions}
+                          </div>
                         </td>
                       </tr>
                     ) : (
@@ -201,21 +273,24 @@ export default function ChildRowsCard<T extends { id: string }, F extends object
                           <td key={c.key}>{c.cell(row)}</td>
                         ))}
                         <td>
-                          <button
-                            className="secondary"
-                            onClick={() => child.startEdit(row)}
-                          >
-                            Edit
-                          </button>{" "}
-                          <ConfirmButton
-                            label="Remove"
-                            busyLabel="Removing…"
-                            message={removeMessage?.(row)}
-                            onConfirm={() => child.remove(row.id)}
-                          />
+                          <div className="child-rows-row-actions">
+                            <button
+                              className="secondary"
+                              aria-label={editButtonLabel?.(row)}
+                              onClick={() => child.startEdit(row)}
+                            >
+                              Edit
+                            </button>{" "}
+                            <ConfirmButton
+                              label="Remove"
+                              busyLabel="Removing…"
+                              message={removeMessage?.(row)}
+                              onConfirm={() => child.remove(row.id)}
+                            />
+                          </div>
                         </td>
                       </tr>
-                    )
+                    ),
                   )}
                 </tbody>
               </table>
@@ -229,14 +304,16 @@ export default function ChildRowsCard<T extends { id: string }, F extends object
               // The `.preview-*` shell defaults to a fixed box that centres one
               // object in it — right for the file preview it grew out of, and
               // unusable for a form, which has to start at the top and grow.
-              className="modal-form"
+              className="modal-form child-rows-editor"
             >
-              <div className="form-grid">{editFields}</div>
-              <div className="form-actions">{editActions}</div>
+              <div className="form-grid child-rows-fields">{editFields}</div>
+              <div className="form-actions child-rows-form-actions">
+                {editActions}
+              </div>
             </Modal>
           ) : null}
         </>
       )}
-    </div>
+    </section>
   );
 }

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { QueryCommand } from "@aws-sdk/lib-dynamodb";
 import { AccountAccess, db, tableName } from "./access";
-import { ACCOUNT_MODELS, LIST_PARENTS, AccessDenied, id, listPartition, object, type RecordData } from "./policy";
+import { ACCOUNT_MODELS, RETIRED_MODELS, LIST_PARENTS, AccessDenied, id, listPartition, object, type RecordData } from "./policy";
 
 import { queryFilter, matchesFilter } from "./filters";
 export { matchesFilter } from "./filters";
@@ -40,7 +40,7 @@ function decode(token: unknown, scope: string): Cursor {
  * query count and evaluated records, retaining every unfinished partition in
  * the cursor. Cursors are traversal hints, never proof of current access. */
 export async function listAssigned(access: AccountAccess, model: string, args: RecordData) {
-  if (!(ACCOUNT_MODELS as readonly string[]).includes(model) || access.admin) throw new AccessDenied();
+  if (RETIRED_MODELS.includes(model) || !(ACCOUNT_MODELS as readonly string[]).includes(model) || access.admin) throw new AccessDenied();
   const filter = object(args.filter), owners = [...await access.salespeople()].sort();
   const scope = createHash("sha256").update(JSON.stringify([access.actor, owners, model, filter])).digest("hex");
   const c = decode(args.nextToken, scope), limit = Math.min(100, Math.max(1, Math.floor(Number(args.limit) || 100)));

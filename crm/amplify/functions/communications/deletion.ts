@@ -1,8 +1,45 @@
 import type { LeadWorkflow } from '../../../../shared/leadWorkflow';
+import { QueryCommand } from '@aws-sdk/lib-dynamodb';
 import { dataClient } from './data';
 import { accountRows } from './workflow';
-import { audit, commit, get, put, query, row, save, type Row } from './store';
+import { audit, canonical, commit, db, get, put, query, row, save, type Row } from './store';
 import type { Operation } from './operations';
+
+/** Amplify's lazy hasMany methods use filtered table lists: an empty page can
+ * still have a cursor for unrelated accounts. Query this account's existing
+ * relation index instead, stopping at the first actual matching record. */
+async function hasAccountRecords(accountId: string, model: 'POLICY' | 'INVOICE') {
+  const label = model === 'POLICY' ? 'policies' : 'billing records';
+  try {
+    const table = process.env[`LEAD_DELETION_${model}_TABLE`];
+    const index = process.env[`LEAD_DELETION_${model}_INDEX`];
+    if (!table || !index) throw new Error('Missing deletion lookup configuration');
+    let cursor: Record<string, unknown> | undefined;
+    const seen = new Set<string>();
+    do {
+      const page = await db.send(new QueryCommand({
+        TableName: table, IndexName: index,
+        KeyConditionExpression: '#accountId = :accountId',
+        ExpressionAttributeNames: { '#accountId': 'accountId' },
+        ExpressionAttributeValues: { ':accountId': accountId },
+        Select: 'COUNT', Limit: 1,
+        ...(cursor ? { ExclusiveStartKey: cursor } : {}),
+      }));
+      if (typeof page.Count !== 'number' || !Number.isInteger(page.Count) || page.Count < 0 || page.Count > 1) throw new Error('Incomplete deletion lookup');
+      if (page.Count > 0) return true;
+      cursor = page.LastEvaluatedKey && Object.keys(page.LastEvaluatedKey).length ? page.LastEvaluatedKey : undefined;
+      if (cursor) {
+        const token = canonical(cursor);
+        if (seen.has(token)) throw new Error('Deletion lookup did not advance');
+        seen.add(token);
+      }
+    } while (cursor);
+    return false;
+  } catch {
+    throw new Error(`Could not verify this lead's ${label}. Refresh and try again.`);
+  }
+}
+
 const phases = [
   'TASK',
   'OPERATION',
@@ -27,11 +64,9 @@ export async function prepareLeadDeletion(
     account.data.name !== name
   )
     throw new Error('Refresh and confirm the lead before deleting');
-  const policies = await account.data.policies({ limit: 1 });
-  if (policies.errors?.length || policies.data.length || policies.nextToken)
+  if (await hasAccountRecords(accountId, 'POLICY'))
     throw new Error('An account with policies cannot be deleted as a lead');
-  const invoices = await account.data.invoices({ limit: 1 });
-  if (invoices.errors?.length || invoices.data.length || invoices.nextToken)
+  if (await hasAccountRecords(accountId, 'INVOICE'))
     throw new Error(
       'An account with billing records cannot be deleted as a test lead',
     );
@@ -119,6 +154,11 @@ export async function retireAccountPage(
         ['LEASED', 'ACCEPTED', 'UNKNOWN'].includes(op.data.state)
       )
         continue;
+    }
+    if (["TASK", "NOTIFICATION"].includes(kind)) {
+      const { dueAt: _dueAt, dueGroup: _dueGroup, workAt: _workAt, workKind: _workKind, ...historical } = old;
+      await save({ ...historical, version: old.version + 1, updatedAt: new Date().toISOString() }, old);
+      continue;
     }
     const data =
       kind === 'TASK'

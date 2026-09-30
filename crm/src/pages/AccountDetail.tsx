@@ -1,8 +1,7 @@
 import SubmissionsPanel from "../components/SubmissionsPanel";
 import HoneycombEstimates from "../components/HoneycombEstimates";
-import LeadWorkflowPanel from "../components/LeadWorkflowPanel";
 import { useEffect, useRef, useState } from "react";
-import { useLocation, useParams, useSearchParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   client,
   fmtDate,
@@ -12,8 +11,8 @@ import {
 import { Badge, statusBadge, ACCOUNT_STAGE_BADGE } from "../lib/badges";
 import DocumentsPanel from "../components/DocumentsPanel";
 import QuotesPanel from "../components/QuotesPanel";
-import AccountMarketingTasks from "../components/MarketingTasks";
 import PropertyPanel from "../components/PropertyPanel";
+import PropertyCoveragePanel from "../components/PropertyCoveragePanel";
 import ContactsCard from "../components/ContactsCard";
 import FormsTab from "../components/FormsTab";
 import ExtractionPanel from "../components/ExtractionPanel";
@@ -31,6 +30,7 @@ import { CertificatesTab } from "./account/CertificatesTab";
 
 type Tab =
   | "overview"
+  | "property"
   | "priorcarrier"
   | "losses"
   | "submissions"
@@ -44,6 +44,7 @@ type Tab =
 
 const VALID_TABS: Tab[] = [
   "overview",
+  "property",
   "priorcarrier",
   "losses",
   "submissions",
@@ -98,6 +99,7 @@ export function tabsFor(stage: string | null | undefined): [Tab, string][] {
   const isLead = stage !== "CLIENT";
   return [
     ["overview", "Overview"],
+    ["property", "Property & coverage"],
     ...(isLead ? ([["priorcarrier", "Prior coverage"]] as [Tab, string][]) : []),
     // Not lead-only: loss history follows the account, and a renewal
     // submission declares the same losses a new-business one did.
@@ -144,7 +146,8 @@ export function resolveTab(
 
 export default function AccountDetail({ profile }: { profile: UserProfile }) {
   const { id } = useParams<{ id: string }>();
-  const [searchParams, setSearchParams] = useSearchParams();
+  const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
   const { hash } = useLocation();
 
   /**
@@ -156,8 +159,10 @@ export default function AccountDetail({ profile }: { profile: UserProfile }) {
    * stored tab would render account A's panel under account B's URL.
    */
   const requested = searchParams.get("tab") as Tab | null;
+  // Saved workspace links still open communications after their move out of Overview.
+  const legacyWorkspace = hash === "#lead-workspace" && (!requested || requested === "overview");
   const tab: Tab =
-    requested && VALID_TABS.includes(requested) ? requested : "overview";
+    legacyWorkspace ? "activity" : requested && VALID_TABS.includes(requested) ? requested : "overview";
 
   /**
    * Clicking a tab puts it in the URL — which, with `tab` derived above, is
@@ -167,7 +172,7 @@ export default function AccountDetail({ profile }: { profile: UserProfile }) {
   function selectTab(t: Tab) {
     const next = new URLSearchParams(searchParams);
     next.set("tab", t);
-    setSearchParams(next, { replace: true });
+    navigate({ search: `?${next.toString()}`, hash: "" }, { replace: true });
   }
   const [celebrate, setCelebrate] = useState(false);
   const prevStage = useRef<string | null>(null);
@@ -247,26 +252,20 @@ export default function AccountDetail({ profile }: { profile: UserProfile }) {
       </div>
 
       {activeTab === "overview" && (
-        <>
-          <OverviewTab account={account} onChange={setAccount} />
-          <div id="contacts"><ContactsCard accountId={account.id} /></div>
-          <div id="lead-workspace"><LeadWorkflowPanel key={account.id} accountId={account.id} /></div>
-          <PropertyPanel account={account} onChange={setAccount} />
+        <div className="account-overview">
+          <OverviewTab key={account.id} account={account} onChange={setAccount} />
+          <div id="contacts"><ContactsCard key={account.id} accountId={account.id} /></div>
+          <PropertyPanel key={account.id} account={account} onChange={setAccount} />
           {account.stage === "LEAD" && <DeleteLeadZone account={account} />}
-        </>
+        </div>
       )}
+      {activeTab === "property" && <PropertyCoveragePanel key={account.id} accountId={account.id} />}
       {activeTab === "submissions" && <SubmissionsPanel key={account.id} account={account} initialEstimateId={searchParams.get("estimate") ?? undefined} />}
       {activeTab === "quotes" && (
-        <>
-          <div className="card">
-            <HoneycombEstimates accountId={account.id} />
-            <QuotesPanel account={account} onAccountChange={setAccount} />
-          </div>
-          <div id="carrier-work"><AccountMarketingTasks
-            accountId={account.id}
-            completedByName={`${profile.firstName} ${profile.lastName}`}
-          /></div>
-        </>
+        <div id="carrier-work">
+          <HoneycombEstimates accountId={account.id} />
+          <QuotesPanel account={account} onAccountChange={setAccount} />
+        </div>
       )}
       {activeTab === "priorcarrier" && <PriorCarrierTab accountId={account.id} />}
       {activeTab === "losses" && <LossesTab accountId={account.id} />}
@@ -274,7 +273,7 @@ export default function AccountDetail({ profile }: { profile: UserProfile }) {
       {activeTab === "invoices" && <InvoicesTab accountId={account.id} />}
       {activeTab === "financing" && <FinancingTab account={account} />}
       {activeTab === "documents" && (
-        <>
+        <div className="account-documents">
           <div className="card">
             <DocumentsPanel
               entityType="ACCOUNT"
@@ -286,12 +285,12 @@ export default function AccountDetail({ profile }: { profile: UserProfile }) {
           </div>
           <ExtractionPanel account={account} onChange={setAccount} />
           <FormsTab account={account} profile={profile} />
-        </>
+        </div>
       )}
       {activeTab === "certificates" && (
         <CertificatesTab account={account} profile={profile} sourceCommunicationId={searchParams.get("request") ?? undefined} />
       )}
-      {activeTab === "activity" && <ActivityTab accountId={account.id} />}
+      {activeTab === "activity" && <ActivityTab key={account.id} accountId={account.id} />}
     </>
   );
 }

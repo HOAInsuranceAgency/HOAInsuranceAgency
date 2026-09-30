@@ -317,9 +317,11 @@ export function DateInput({
   disabled,
   placeholder,
   onKeyDown,
+  id,
 }: FormattedInputProps) {
   return (
     <input
+      id={id}
       type="date"
       disabled={disabled}
       placeholder={placeholder}

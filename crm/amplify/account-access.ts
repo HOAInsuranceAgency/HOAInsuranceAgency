@@ -2,10 +2,11 @@ import { readFileSync } from "node:fs";
 import { Asset } from "aws-cdk-lib/aws-s3-assets";
 import { Stack, CfnResource, AssetStaging } from "aws-cdk-lib";
 import { CfnFunctionConfiguration, type CfnResolver } from "aws-cdk-lib/aws-appsync";
+import { PolicyStatement } from "aws-cdk-lib/aws-iam";
 import { grantAccountTableReads } from "./account-access-policies";
 import type { Table } from "aws-cdk-lib/aws-dynamodb";
 import type { backend as Backend } from "./backend";
-import { ACCOUNT_MODELS, SHARED_MODELS, PUBLIC_OPERATIONS, ADMIN_OPERATIONS, CUSTOM_OPERATIONS, listPartition } from "./functions/crm-access/policy";
+import { ACCOUNT_MODELS, SHARED_MODELS, PUBLIC_OPERATIONS, ADMIN_OPERATIONS, ADMIN_MODEL_OPERATIONS, CUSTOM_OPERATIONS, listPartition } from "./functions/crm-access/policy";
 
 /** Retain Amplify's native authorization and add current-assignment checks to
  * every generated entry point, including secondary indexes and relationships.
@@ -47,6 +48,18 @@ export function installAccountAccess(backend: typeof Backend, communicationTable
       if (added) { resource.addPropertyOverride("globalSecondaryIndexes", all); resource.addPropertyOverride("attributeDefinitions", definitions); }
     }
   }
+  // Lead deletion checks must query the account partition, rather than mistake
+  // an empty filtered scan page's continuation token for a related record.
+  const deletionIndexes = ["Policy", "Invoice"].map(model => {
+    const table = tables[model], index = indexes[`${model}.accountId`];
+    if (!table || !index) throw new Error(`Missing ${model}.accountId index for lead deletion`);
+    backend.communications.addEnvironment(`LEAD_DELETION_${model.toUpperCase()}_TABLE`, table);
+    backend.communications.addEnvironment(`LEAD_DELETION_${model.toUpperCase()}_INDEX`, index);
+    return `${Stack.of(api).formatArn({ service: "dynamodb", resource: "table", resourceName: table })}/index/${index}`;
+  });
+  backend.communications.resources.lambda.addToRolePolicy(new PolicyStatement({
+    actions: ["dynamodb:Query"], resources: deletionIndexes,
+  }));
   guard.addEnvironment("ACCESS_API_ID", api.apiId);
   guard.addEnvironment("ACCESS_INDEXES", JSON.stringify(indexes));
   guard.addEnvironment("COMMUNICATION_TABLE", communicationTable.tableName);
@@ -62,9 +75,12 @@ export function installAccountAccess(backend: typeof Backend, communicationTable
   const makeGuard = (mode: string, model: string, field = "", operation = "") => {
     const key = `${mode}_${model}_${field}_${operation}`.replace(/-/g, "_");
     const cached = guards.get(key); if (cached) return cached.attrFunctionId;
+    const listAdminBypass = '#set($assignmentGroups = $util.defaultIfNull($ctx.identity.groups, $util.defaultIfNull($ctx.identity.claims.get("cognito:groups"), [])))\n'
+      + '#set($assignmentRole = "")\n#set($assignmentRoleCount = 0)\n#foreach($header in $ctx.request.headers.entrySet())\n#if($header.key.toLowerCase() == "x-crm-role")\n#set($assignmentRole = $header.value)\n#set($assignmentRoleCount = $assignmentRoleCount + 1)\n#end\n#end\n'
+      + '#if($assignmentGroups.contains("ADMIN") && ($assignmentRoleCount == 0 || ($assignmentRoleCount == 1 && $assignmentRole == "ADMIN")))\n#return($ctx.prev.result)\n#end\n';
     const fn = new CfnFunctionConfiguration(api, `Access_${key}`, {
       apiId: api.apiId, name: `access_${key}`, dataSourceName: source.name, functionVersion: "2018-05-29",
-      requestMappingTemplate: `#if($util.authType() == "IAM Authorization")\n#if(!$util.isNull($ctx.identity.cognitoIdentityId))\n$util.unauthorized()\n#end\n#return($ctx.prev.result)\n#end\n${mode === "list" ? '#set($assignmentGroups = $util.defaultIfNull($ctx.identity.groups, $util.defaultIfNull($ctx.identity.claims.get("cognito:groups"), [])))\n#if($assignmentGroups.contains("ADMIN"))\n#return($ctx.prev.result)\n#end\n' : mode === "read" ? '#if(!$util.isNull($ctx.stash.assignmentList))\n#return($ctx.prev.result)\n#end\n' : ''}{"version":"2018-05-29","operation":"Invoke","payload":{"mode":"${mode}","model":"${model}","field":"${field}","operation":"${operation}","identity":$util.toJson($ctx.identity),"arguments":$util.toJson($ctx.arguments),"previous":$util.toJson($ctx.prev.result)}}`,
+      requestMappingTemplate: `#if($util.authType() == "IAM Authorization")\n#if(!$util.isNull($ctx.identity.cognitoIdentityId))\n$util.unauthorized()\n#end\n#return($ctx.prev.result)\n#end\n${mode === "list" ? listAdminBypass : mode === "read" ? '#if(!$util.isNull($ctx.stash.assignmentList))\n#return($ctx.prev.result)\n#end\n' : ''}{"version":"2018-05-29","operation":"Invoke","payload":{"mode":"${mode}","model":"${model}","field":"${field}","operation":"${operation}","identity":$util.toJson($ctx.identity),"request":$util.toJson($ctx.request),"arguments":$util.toJson($ctx.arguments),"previous":$util.toJson($ctx.prev.result)}}`,
       responseMappingTemplate: `#if($ctx.error)\n$util.error($ctx.error.message, $ctx.error.type)\n#end\n${mode === "list" ? '$util.qr($ctx.stash.put("assignmentList", $ctx.result))\n' : ''}$util.toJson($ctx.result)`,
     });
     fn.addResourceDependency(source.node.defaultChild as import("aws-cdk-lib/aws-appsync").CfnDataSource);
@@ -85,8 +101,10 @@ export function installAccountAccess(backend: typeof Backend, communicationTable
       if (type === "Mutation") {
         const operation = /^(create|update|delete)/.exec(field)?.[1];
         if (!operation) throw new Error(`Unclassified model mutation: ${field}`);
+        if (ADMIN_MODEL_OPERATIONS[model]?.includes(operation)) extend(resolver, [makeGuard("admin", "")], []);
         if (scoped || model === "UserProfile") extend(resolver, [makeGuard("write", model, "", operation)], []);
       } else if (scoped) {
+        if (ADMIN_MODEL_OPERATIONS[model]?.includes("read")) extend(resolver, [makeGuard("admin", "")], []);
         const pipeline = resolver.pipelineConfig as CfnResolver.PipelineConfigProperty;
         const data = Object.values(resources.cfnFunctionConfigurations).find(fn => pipeline.functions?.includes(fn.attrFunctionId) && fn.name === `${type}${field[0].toUpperCase()}${field.slice(1)}DataResolverFn`);
         let template = data?.requestMappingTemplate;
@@ -112,7 +130,11 @@ export function installAccountAccess(backend: typeof Backend, communicationTable
       if (!(SHARED_MODELS as readonly string[]).includes(target)) throw new Error(`Unsafe account subscription: ${field}`);
       continue;
     }
-    if (PUBLIC_OPERATIONS.includes(field) || ADMIN_OPERATIONS.includes(field)) continue;
+    if (PUBLIC_OPERATIONS.includes(field)) continue;
+    if (ADMIN_OPERATIONS.includes(field)) {
+      extend(resolver, [makeGuard("admin", "")], []);
+      continue;
+    }
     if (CUSTOM_OPERATIONS.includes(field)) {
       if (!["crmAccess", "crmFile"].includes(field)) extend(resolver, [makeGuard("custom-pre", "", field)], field === "communicationRead" ? [makeGuard("custom-post", "", field)] : []);
       continue;
