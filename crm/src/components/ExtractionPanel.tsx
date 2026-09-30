@@ -768,14 +768,14 @@ export default function ExtractionPanel({
         // than a throw, and it names where to finish the job by hand.
         const unfinished = [
           buildingFailures &&
-            `${buildingFailures} building${buildingFailures === 1 ? "" : "s"} under Property`,
+            `${buildingFailures} building${buildingFailures === 1 ? "" : "s"} on the Property & coverage tab`,
           contactFailures &&
             `${contactFailures} contact${contactFailures === 1 ? "" : "s"} on the Contacts card`,
           lossFailures &&
             `${lossFailures} loss${lossFailures === 1 ? "" : "es"} on the Losses tab`,
         ].filter(Boolean);
         if (unfinished.length) {
-          return `Fields applied — review the Overview tab. Couldn't save ${unfinished.join(
+          return `Fields applied. Couldn't save ${unfinished.join(
             " and "
           )}; add ${
             buildingFailures + contactFailures + lossFailures === 1 ? "it" : "them"
@@ -785,13 +785,13 @@ export default function ExtractionPanel({
         // loud. A reviewer who ticked eight rows and got a bare "Applied"
         // has no way to tell that six of them were already on the record.
         return unchanged
-          ? `Applied — review the Overview tab. ${unchanged} selected row${
+          ? `Applied. ${unchanged} selected row${
               unchanged === 1 ? " was" : "s were"
             } already on the record and left alone.`
           : "";
       },
       {
-        savedMessage: "Applied — review the Overview tab.",
+        savedMessage: "Applied to the account.",
         errorMessage: "Apply failed",
       }
     );

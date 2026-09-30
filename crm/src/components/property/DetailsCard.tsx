@@ -97,7 +97,6 @@ export default function DetailsCard({
             <option value="">Use existing information</option>
             {PROPERTY_TYPES.map(value => <option key={value} value={value}>{PROPERTY_TYPE_LABELS[value]}</option>)}
           </select>
-          <span className="muted small">Existing information uses the initial inquiry or account type. Choose Not recorded to leave the report unclassified.</span>
         </div>
         <div className="field full">
           <label>Street address</label>

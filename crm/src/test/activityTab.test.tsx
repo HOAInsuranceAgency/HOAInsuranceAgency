@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { listAllPages } from "../lib/pagination";
 
 const h = vi.hoisted(() => ({ activity: vi.fn(), profiles: vi.fn() }));
+vi.mock("../components/LeadWorkflowPanel", () => ({ default: () => null }));
 vi.mock("../lib/client", () => ({
   client: { models: {
     Activity: { listActivityByEntityIdAndOccurredAt: h.activity },

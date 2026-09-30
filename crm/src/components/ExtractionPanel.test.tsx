@@ -286,7 +286,7 @@ describe("applying", () => {
     await screen.findByText("Clubhouse · 4,200 sq ft");
     await apply(user);
 
-    const status = await screen.findByText(/Couldn't save 2 buildings under Property/);
+    const status = await screen.findByText(/Couldn't save 2 buildings on the Property & coverage tab/);
     expect(status).toHaveAttribute("data-save-state", "warning");
   });
 });

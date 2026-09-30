@@ -24,8 +24,7 @@ export function OverviewTab({
   // answering "is the confirmation still true" is the bug this replaces.
   const saveStatus = useSaveStatus();
   const { form, setF } = useFormState({
-    name: account.name,
-    legalName: inputValue(account.legalName),
+    name: account.legalName?.trim() || account.name,
     fein: inputValue(account.fein),
     sicCode: inputValue(account.sicCode),
     naicsCode: inputValue(account.naicsCode),
@@ -38,6 +37,11 @@ export function OverviewTab({
   }, { onEdit: saveStatus.markDirty });
 
   async function save() {
+    const name = str(form.name);
+    if (!name) {
+      saveStatus.markError("Enter a name.");
+      return;
+    }
     const problems = validateAccountFields(form);
     if (problems.length) {
       saveStatus.markError(problems.join(" "));
@@ -49,8 +53,8 @@ export function OverviewTab({
           unwrap(
             await client.models.Account.update({
               id: account.id,
-              name: str(form.name) ?? account.name,
-              legalName: str(form.legalName),
+              name,
+              legalName: name,
               fein: str(form.fein),
               sicCode: str(form.sicCode),
               naicsCode: str(form.naicsCode),
@@ -70,21 +74,17 @@ export function OverviewTab({
     );
   }
 
+  const websiteForm = websiteFormLabel(account.source);
+  const leadSource = [acquisitionLabel(account.leadSource, account.source),
+    ...(websiteForm === "Not recorded" ? [] : [websiteForm])].join(" · ");
+
   return (
     <div className="card">
       <h2>Details</h2>
       <div className="form-grid">
         <div className="field">
-          <label>Name</label>
-          <input value={form.name} onChange={(e) => setF("name", e.target.value)} />
-        </div>
-        <div className="field">
-          <label>Full legal name (carrier submissions)</label>
-          <input
-            placeholder={account.name}
-            value={form.legalName}
-            onChange={(e) => setF("legalName", e.target.value)}
-          />
+          <label htmlFor="account-name">Name</label>
+          <input id="account-name" value={form.name} onChange={(e) => setF("name", e.target.value)} />
         </div>
         <div className="field">
           <label>FEIN</label>
@@ -152,10 +152,8 @@ export function OverviewTab({
         )}
         <div className="field">
           <label>Lead source</label>
-          <div>{acquisitionLabel(account.leadSource, account.source)}</div>
-          <span className="muted small">Set at creation. This value cannot be changed.</span>
+          <div>{leadSource}</div>
         </div>
-        <div className="field"><label>Website form</label><div>{websiteFormLabel(account.source)}</div></div>
         <div className="field full">
           <label>Notes</label>
           <textarea rows={4} value={form.notes} onChange={(e) => setF("notes", e.target.value)} />
