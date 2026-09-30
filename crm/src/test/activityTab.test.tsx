@@ -62,4 +62,48 @@ describe("Activity teammate attribution", () => {
     expect(screen.getAllByText("Jake Greasley").length).toBeGreaterThan(0);
     expect(h.profiles).toHaveBeenLastCalledWith({ userId: jake }, { nextToken: "next" });
   });
+
+  it("keeps even a single field change collapsed until the reader opens its summary", async () => {
+    h.activity.mockResolvedValue({ data: [{
+      ...row("premium", jake, "Jake Greasley"),
+      changes: JSON.stringify([{ field: "premium", from: 100, to: 250 }]),
+    }] });
+    render(<ActivityTab accountId="a" />);
+    const summary = await screen.findByText("Change premium");
+    const disclosure = summary.closest("details")!;
+    expect(disclosure).not.toHaveAttribute("open");
+    expect(within(disclosure).getByText("250")).not.toBeVisible();
+    fireEvent.click(within(disclosure).getByText("1 field change"));
+    expect(disclosure).toHaveAttribute("open");
+    expect(within(disclosure).getByText("Premium")).toBeVisible();
+    expect(within(disclosure).getByText("Before")).toBeVisible();
+    expect(within(disclosure).getByText("100")).toBeVisible();
+    expect(within(disclosure).getByText("After")).toBeVisible();
+    expect(within(disclosure).getByText("250")).toBeVisible();
+    fireEvent.click(summary);
+    expect(disclosure).not.toHaveAttribute("open");
+  });
+
+  it("retains complete long and structured audit values inside expandable details", async () => {
+    const reference = `provider-reference-${"abc123".repeat(80)}`;
+    h.activity.mockResolvedValue({ data: [{
+      ...row("technical", "system", "System"),
+      changes: [
+        { field: "externalReference", from: null, to: reference },
+        { field: "providerMetadata", from: { status: "before" }, to: { status: "after", nested: { request: "test-request" } } },
+        { field: "routing", from: [], to: [{ role: "salesperson", assigned: true }] },
+      ],
+    }] });
+    render(<ActivityTab accountId="a" />);
+    const summary = await screen.findByText("Change technical");
+    const disclosure = summary.closest("details")!;
+    expect(within(disclosure).getByText(reference)).not.toBeVisible();
+    fireEvent.click(summary);
+    expect(within(disclosure).getByText(reference)).toBeVisible();
+    expect(within(disclosure).getByText(reference).textContent).toBe(reference);
+    expect(within(disclosure).getByText(/"request": "test-request"/)).toBeVisible();
+    expect(within(disclosure).getByText(/"role": "salesperson"/)).toHaveTextContent('"assigned": true');
+    expect(within(disclosure).queryByText("(changed)")).toBeNull();
+  });
+
 });
