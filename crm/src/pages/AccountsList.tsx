@@ -24,7 +24,6 @@ import type { Quote } from '../lib/client';
 
 export default function AccountsList({ stage }: { stage: "LEAD" | "CLIENT" }) {
   const isAdmin = useIsAdmin();
-  const [search, setSearch] = useState("");
   const [salesperson, setSalesperson] = useState('');
   const navigate = useNavigate();
 
@@ -96,29 +95,13 @@ export default function AccountsList({ stage }: { stage: "LEAD" | "CLIENT" }) {
       ? renewalByAccount.get(a.id) ?? null
       : a.currentPolicyExpiration ?? null;
 
-  const q = search.trim().toLowerCase();
   const visible = accounts.filter(a => (a.stage === stage || stage === 'LEAD' && a.stage === 'CLIENT' && forecastOf(a)?.unfinished)
     && (!isAdmin || !salesperson || commercial.data.entries[a.id]?.salespersonId === salesperson));
-  const filtered = q
-    ? visible.filter((a) =>
-        [
-          a.name,
-          a.city,
-          a.state,
-          // Every contact, not just the primary one: searching for the board
-          // president used to find nothing unless they happened to be the one
-          // person the Account columns could hold.
-          ...(contactsByAccount.get(a.id) ?? []).flatMap((c) => [c.name, c.email]),
-        ]
-          .filter(Boolean)
-          .some((v) => String(v).toLowerCase().includes(q))
-      )
-    : visible;
 
   // Default: policy end date ascending — next up / expired at the top,
   // accounts without a date after, alphabetically.
   const { sorted, sortKey, dir, toggle } = useSort(
-    filtered,
+    visible,
     {
       name: (a) => a.name,
       type: (a) => a.type,
@@ -152,15 +135,8 @@ export default function AccountsList({ stage }: { stage: "LEAD" | "CLIENT" }) {
       </p>
 
       <div className="toolbar">
-        <div className="field grow" style={{ maxWidth: 360 }}>
-          <input
-            placeholder={`Search ${label.toLowerCase()}…`}
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
-        </div>
         {isAdmin && <label className="field">Salesperson<select value={salesperson} onChange={e => setSalesperson(e.target.value)}><option value="">All salespeople</option>{commercial.data.team.map(t => <option key={t.userId} value={t.userId}>{t.name}</option>)}</select></label>}
-        <ReportDownload disabled={loading || !!error || commercial.loading || !!commercial.error || stage === 'LEAD' && (quoteResource.loading || !!quoteResource.error)} report={{ title: label, filters: `Search: ${search || 'All'}${isAdmin ? ` · Salesperson: ${commercial.data.team.find(t => t.userId === salesperson)?.name ?? 'All'}` : ''}`, sections: [{ title: label, columns: ['Name', 'Type', 'Contact', 'City', 'State', ...(isAdmin ? ['Salesperson'] : []), ...(stage === 'LEAD' ? [ 'Lead source', 'Website form', 'Estimated opportunity (USD)', 'Pending commission (USD)', 'Commission basis', 'Entered'] : []), 'Units', 'TIV (USD)', stage === 'LEAD' ? 'Incumbent expires' : 'Renewal'], rows: sorted.map(a => { const f = forecastOf(a), estimate = commercial.data.entries[a.id]?.plan.estimatedCents; return [a.name, a.type, contactOf(a)?.name, a.city, a.state, ...(isAdmin ? [assignee(a, 'salespersonId')] : []), ...(stage === 'LEAD' ? [ acquisitionLabel(a.leadSource, a.source), websiteFormLabel(a.source), estimate == null ? null : estimate / 100, f?.cents == null ? null : f.cents / 100, f?.label, a.createdAt?.slice(0,10)] : []), a.unitCount, a.totalInsuredValue, renewalOf(a)]; }) }] }} />
+        <ReportDownload disabled={loading || !!error || commercial.loading || !!commercial.error || stage === 'LEAD' && (quoteResource.loading || !!quoteResource.error)} report={{ title: label, filters: isAdmin ? `Salesperson: ${commercial.data.team.find(t => t.userId === salesperson)?.name ?? 'All'}` : 'All displayed data', sections: [{ title: label, columns: ['Name', 'Type', 'Contact', 'City', 'State', ...(isAdmin ? ['Salesperson'] : []), ...(stage === 'LEAD' ? [ 'Lead source', 'Website form', 'Estimated opportunity (USD)', 'Pending commission (USD)', 'Commission basis', 'Entered'] : []), 'Units', 'TIV (USD)', stage === 'LEAD' ? 'Incumbent expires' : 'Renewal'], rows: sorted.map(a => { const f = forecastOf(a), estimate = commercial.data.entries[a.id]?.plan.estimatedCents; return [a.name, a.type, contactOf(a)?.name, a.city, a.state, ...(isAdmin ? [assignee(a, 'salespersonId')] : []), ...(stage === 'LEAD' ? [ acquisitionLabel(a.leadSource, a.source), websiteFormLabel(a.source), estimate == null ? null : estimate / 100, f?.cents == null ? null : f.cents / 100, f?.label, a.createdAt?.slice(0,10)] : []), a.unitCount, a.totalInsuredValue, renewalOf(a)]; }) }] }} />
         {stage === "LEAD" && (
           <Link to="/leads/new">
             <button className="primary">+ New lead</button>
