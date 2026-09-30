@@ -207,7 +207,7 @@ export default function QuotesPanel({
           </p>
         )}
 
-        {!quoteRes.loaded ? (
+        {!quoteRes.loaded || (quoteRes.loading && quotes.length === 0) ? (
           <div className="quotes-state" role="status">
             Loading quotes…
           </div>
