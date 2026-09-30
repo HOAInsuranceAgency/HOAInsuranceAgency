@@ -11,6 +11,7 @@ import { SaveStatus, useSaveStatus } from "../SaveStatus";
 import { inputValue, num, str } from "../../lib/formCodec";
 import { IntegerInput, PercentInput } from "../inputs";
 import { PROPERTY_TYPES, PROPERTY_TYPE_LABELS, normalizePropertyType } from "../../../../shared/propertyType";
+import "./DetailsCard.css";
 
 export default function DetailsCard({
   account,
@@ -88,151 +89,114 @@ export default function DetailsCard({
   }
 
   return (
-    <div className="card">
-      <h2>Property</h2>
-      <div className="form-grid">
-        <div className="field">
-          <label htmlFor="account-property-type">Property type</label>
-          <select id="account-property-type" value={form.propertyType} onChange={e => setF("propertyType", e.target.value)}>
-            <option value="">Use existing information</option>
-            {PROPERTY_TYPES.map(value => <option key={value} value={value}>{PROPERTY_TYPE_LABELS[value]}</option>)}
-          </select>
-        </div>
-        <div className="field full">
-          <label>Street address</label>
-          <AddressAutocomplete
-            value={form.address}
-            onChange={(v) => setF("address", v)}
-            onPlace={(p) =>
-              patch((f) => ({
-                address: p.address || f.address,
-                city: p.city || f.city,
-                state: p.state || f.state,
-                zip: p.zip || f.zip,
-              }))
-            }
-          />
-        </div>
-        <div className="field">
-          <label>County</label>
-          <input
-            placeholder="Middlesex"
-            value={form.county}
-            onChange={(e) => setF("county", e.target.value)}
-          />
-        </div>
-        <div className="field">
-          <label>City</label>
-          <input value={form.city} onChange={(e) => setF("city", e.target.value)} />
-        </div>
-        <div className="field">
-          <label>State</label>
-          <select value={form.state} onChange={(e) => setF("state", e.target.value)}>
-            <option value="">—</option>
-            {US_STATES.map((s) => (
-              <option key={s}>{s}</option>
-            ))}
-          </select>
-        </div>
-        <div className="field">
-          <label>ZIP</label>
-          <input value={form.zip} onChange={(e) => setF("zip", e.target.value)} />
-        </div>
-        <div className="field">
-          <label>Incorporated association</label>
-          <select
-            value={form.incorporated}
-            onChange={(e) => setF("incorporated", e.target.value)}
-          >
-            <option value="">—</option>
-            <option value="yes">Yes — incorporated</option>
-            <option value="no">No — unincorporated</option>
-          </select>
-        </div>
-        <div className="field">
-          <label>Unit count</label>
-          <IntegerInput
-            value={form.unitCount}
-            onChange={(v) => setF("unitCount", v)}
-          />
-        </div>
-        <div className="field">
-          <label>Rented units (%)</label>
-          {/* Read by every appetite guide carrying a rental cap. Blank is
-              "nobody has asked", which never excludes a carrier — so a guide
-              capping rentals at 25% still surfaces for an account whose
-              owner-occupancy nobody has recorded. */}
-          <PercentInput
-            value={form.rentalPct}
-            onChange={(v) => setF("rentalPct", v)}
-          />
-        </div>
-        <div className="field">
-          <label>Fire district</label>
-          <input
-            placeholder="Middlesex FD #3"
-            value={form.fireDistrict}
-            onChange={(e) => setF("fireDistrict", e.target.value)}
-          />
-        </div>
-        <div className="field">
-          <label>Firewalls verified?</label>
-          <label className="small" style={{ display: "flex", gap: 6, alignItems: "center", padding: "8px 0" }}>
-            <input
-              type="checkbox"
-              checked={form.firewallsVerified}
-              onChange={(e) => setF("firewallsVerified", e.target.checked)}
+    <section className="card property-details" aria-label="Property">
+      <div className="property-details-heading">
+        <h2>Property</h2>
+      </div>
+      <div className="property-details-section">
+        <h3>Location</h3>
+        <div className="property-details-grid">
+          <label className="field property-details-wide">
+            <span>Street address</span>
+            <AddressAutocomplete
+              value={form.address}
+              onChange={(v) => setF("address", v)}
+              onPlace={(p) =>
+                patch((f) => ({
+                  address: p.address || f.address,
+                  city: p.city || f.city,
+                  state: p.state || f.state,
+                  zip: p.zip || f.zip,
+                }))
+              }
             />
-            Verified
+          </label>
+          <label className="field">
+            <span>City</span>
+            <input value={form.city} onChange={(e) => setF("city", e.target.value)} />
+          </label>
+          <label className="field">
+            <span>County</span>
+            <input placeholder="Middlesex" value={form.county} onChange={(e) => setF("county", e.target.value)} />
+          </label>
+          <label className="field">
+            <span>State</span>
+            <select value={form.state} onChange={(e) => setF("state", e.target.value)}>
+              <option value="">—</option>
+              {US_STATES.map((s) => <option key={s}>{s}</option>)}
+            </select>
+          </label>
+          <label className="field">
+            <span>ZIP</span>
+            <input value={form.zip} onChange={(e) => setF("zip", e.target.value)} />
+          </label>
+          <label className="field property-details-wide">
+            <span>Fire district</span>
+            <input placeholder="Middlesex FD #3" value={form.fireDistrict} onChange={(e) => setF("fireDistrict", e.target.value)} />
           </label>
         </div>
-        <div className="field">
-          <label>Coastal?</label>
-          <label className="small" style={{ display: "flex", gap: 6, alignItems: "center", padding: "8px 0" }}>
-            <input
-              type="checkbox"
-              checked={form.coastal}
-              onChange={(e) => setF("coastal", e.target.checked)}
-            />
-            Coastal exposure
-          </label>
-        </div>
-        <div className="field full">
-          <label>Other updates</label>
-          <textarea
-            rows={2}
-            placeholder="Elevators 2019, windows 2021…"
-            value={form.otherUpdates}
-            onChange={(e) => setF("otherUpdates", e.target.value)}
-          />
-        </div>
-        {form.coastal && (
-          <div className="field">
-            <label>Miles to coast</label>
-            {/* Left as a native number input: a distance under 100 miles gains
-                nothing from thousands separators, and none of the six
-                formatted inputs is a fractional non-money quantity. */}
-            <input
-              type="number"
-              min={0}
-              step="0.1"
-              value={form.milesToCoast}
-              onChange={(e) => setF("milesToCoast", e.target.value)}
-            />
-          </div>
-        )}
       </div>
 
-      {/* The "System updates (year completed)" section is gone: the roof,
-          HVAC, electrical and plumbing years are properties of a building,
-          not of a site, and live on each Building now. `otherUpdates` stays
-          here — it is a site-level note — and has moved into the grid above. */}
-      <div className="form-actions">
+      <div className="property-details-section">
+        <h3>Property facts</h3>
+        <div className="property-details-grid">
+          <label className="field">
+            <span>Property type</span>
+            <select id="account-property-type" value={form.propertyType} onChange={e => setF("propertyType", e.target.value)}>
+              <option value="">Use existing information</option>
+              {PROPERTY_TYPES.map(value => <option key={value} value={value}>{PROPERTY_TYPE_LABELS[value]}</option>)}
+            </select>
+          </label>
+          <label className="field">
+            <span>Incorporated association</span>
+            <select value={form.incorporated} onChange={(e) => setF("incorporated", e.target.value)}>
+              <option value="">—</option>
+              <option value="yes">Yes — incorporated</option>
+              <option value="no">No — unincorporated</option>
+            </select>
+          </label>
+          <label className="field">
+            <span>Unit count</span>
+            <IntegerInput value={form.unitCount} onChange={(v) => setF("unitCount", v)} />
+          </label>
+          <label className="field">
+            <span>Rented units (%)</span>
+            {/* Blank remains unknown; appetite guides must not treat it as zero. */}
+            <PercentInput value={form.rentalPct} onChange={(v) => setF("rentalPct", v)} />
+          </label>
+        </div>
+        <div className="property-details-exposures">
+          <div className="property-details-toggle-card">
+            <label className="property-details-toggle">
+              <input type="checkbox" checked={form.firewallsVerified} onChange={(e) => setF("firewallsVerified", e.target.checked)} />
+              <span>Firewalls verified</span>
+            </label>
+          </div>
+          <div className="property-details-toggle-card property-details-coastal">
+            <label className="property-details-toggle">
+              <input type="checkbox" checked={form.coastal} onChange={(e) => setF("coastal", e.target.checked)} />
+              <span>Coastal exposure</span>
+            </label>
+            {form.coastal && (
+              <label className="field property-details-distance">
+                <span>Miles to coast</span>
+                <input type="number" min={0} step="0.1" value={form.milesToCoast} onChange={(e) => setF("milesToCoast", e.target.value)} />
+              </label>
+            )}
+          </div>
+        </div>
+        <label className="field property-details-notes">
+          <span>Other updates</span>
+          <textarea rows={2} placeholder="Elevators 2019, windows 2021…" value={form.otherUpdates} onChange={(e) => setF("otherUpdates", e.target.value)} />
+        </label>
+      </div>
+
+      <div className="form-actions property-details-actions">
         <button className="primary" disabled={saveStatus.busy} onClick={save}>
           {saveStatus.busy ? "Saving…" : "Save property"}
         </button>
         <SaveStatus {...saveStatus.status} />
       </div>
-    </div>
+    </section>
   );
 }

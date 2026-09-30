@@ -252,12 +252,12 @@ export default function AccountDetail({ profile }: { profile: UserProfile }) {
       </div>
 
       {activeTab === "overview" && (
-        <>
+        <div className="account-overview">
           <OverviewTab key={account.id} account={account} onChange={setAccount} />
-          <div id="contacts"><ContactsCard accountId={account.id} /></div>
+          <div id="contacts"><ContactsCard key={account.id} accountId={account.id} /></div>
           <PropertyPanel key={account.id} account={account} onChange={setAccount} />
           {account.stage === "LEAD" && <DeleteLeadZone account={account} />}
-        </>
+        </div>
       )}
       {activeTab === "property" && <PropertyCoveragePanel key={account.id} accountId={account.id} />}
       {activeTab === "submissions" && <SubmissionsPanel key={account.id} account={account} initialEstimateId={searchParams.get("estimate") ?? undefined} />}

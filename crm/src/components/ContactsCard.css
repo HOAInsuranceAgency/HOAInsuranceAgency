@@ -1,0 +1,250 @@
+.contacts-card {
+  min-width: 0;
+}
+
+.contacts-heading h2 {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 5px;
+}
+
+.contacts-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 25px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.contacts-heading p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.contacts-add {
+  margin: 14px 0;
+}
+
+.contacts-add > summary {
+  width: fit-content;
+  max-width: 100%;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--accent-dark);
+  background: var(--card);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.contacts-add > summary:hover {
+  border-color: var(--accent);
+  background: var(--blue-bg);
+}
+
+.contacts-add > summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.contacts-add-body {
+  margin-top: 12px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+}
+
+.contacts-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px 16px;
+}
+
+.contacts-fields .field,
+.contacts-fields input,
+.contacts-fields select {
+  min-width: 0;
+}
+
+.contacts-fields input,
+.contacts-fields select {
+  width: 100%;
+  min-height: 38px;
+}
+
+.contacts-fields .field select {
+  padding-right: 30px;
+  background: #fff
+    url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5 6 6.5 11 1.5' fill='none' stroke='%2364748b' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")
+    no-repeat right 10px center;
+}
+
+.contacts-notes-field {
+  grid-column: 1 / -1;
+}
+
+.contacts-form-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 16px;
+}
+
+.contacts-state {
+  margin: 14px 0 0;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--muted);
+  background: var(--bg);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.contacts-feedback {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  line-height: 1.5;
+}
+
+.contacts-feedback:not(:empty) {
+  margin: 0 0 14px;
+}
+
+.contacts-state.error-text {
+  color: var(--red);
+  background: var(--red-bg);
+}
+
+.contacts-empty strong {
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.contacts-empty p {
+  margin: 4px 0 0;
+}
+
+.contacts-table-wrap {
+  max-width: 100%;
+}
+
+.contacts-table {
+  min-width: 900px;
+  table-layout: fixed;
+}
+
+.contacts-primary-col {
+  width: 82px;
+}
+
+.contacts-name-col {
+  width: 22%;
+}
+
+.contacts-role-col {
+  width: 16%;
+}
+
+.contacts-email-col {
+  width: 25%;
+}
+
+.contacts-phone-col {
+  width: 144px;
+}
+
+.contacts-actions-col {
+  width: 150px;
+}
+
+.contacts-table th {
+  background: var(--bg);
+}
+
+.contacts-table td {
+  vertical-align: middle;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.contacts-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.contacts-name {
+  font-weight: 600;
+}
+
+.contacts-primary input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.contacts-phone {
+  white-space: nowrap;
+}
+
+.contacts-row-actions,
+.contacts-row-actions .confirm-button {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.contacts-row-actions .confirm-button .small {
+  flex-basis: 100%;
+  font-size: 12px;
+}
+
+.contacts-row-actions button {
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--card);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.contacts-row-actions button:hover {
+  border-color: var(--accent);
+  background: var(--blue-bg);
+}
+
+.contacts-row-actions button.danger:hover {
+  border-color: var(--red);
+  background: var(--red-bg);
+}
+
+.preview-modal.contacts-editor {
+  width: min(620px, 96vw);
+}
+
+@media (max-width: 600px) {
+  .contacts-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .contacts-add-body {
+    padding: 14px;
+  }
+}
