@@ -2,6 +2,7 @@
 import type { Account, Contact } from '../../src/lib/client';
 export type { Account, Contact } from '../../src/lib/client';
 export { listAllPages } from '../../src/lib/pagination';
+export { validateAccountFields } from '../../src/lib/accountValidation';
 
 export const scenario = new URLSearchParams(location.search).get('scenario') || 'populated';
 export const isClient = scenario === 'client';
@@ -83,18 +84,6 @@ export function assertNoErrors(result: { errors?: { message: string }[] }) {
 export function unwrap<T>(result: { data: T | null; errors?: { message: string }[] }): T {
   assertNoErrors(result); if (result.data == null) throw new Error('The server accepted that but returned nothing.'); return result.data;
 }
-/** Mirrored client.ts helper: importing that runtime module would create the live client. */
-export function validateAccountFields(form: { contactEmail?: string; zip?: string; unitCount?: string; totalInsuredValue?: string }): string[] {
-  const problems: string[] = [];
-  const email = form.contactEmail?.trim();
-  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) problems.push("Contact email doesn't look like a valid address.");
-  const zip = form.zip?.trim();
-  if (zip && !/^\d{5}(-\d{4})?$/.test(zip)) problems.push('ZIP should be 5 digits (or ZIP+4).');
-  if (form.unitCount) { const count = Number(form.unitCount); if (!Number.isInteger(count) || count < 0 || count > 100000) problems.push('Unit count should be a whole number of at least 0.'); }
-  if (form.totalInsuredValue) { const value = Number(form.totalInsuredValue); if (!Number.isFinite(value) || value < 0) problems.push("Total insured value can't be negative."); }
-  return problems;
-}
-
 const imageUrl = (svg: string) => `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 const coverUrl = imageUrl('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 440"><rect fill="#dcebf1" width="800" height="440"/><rect y="300" width="800" height="140" fill="#a9bc9a"/><path d="M0 350h800v90H0z" fill="#cbd1cf"/><rect x="80" y="120" width="640" height="210" fill="#e9e0d2"/><path d="M45 120 180 45h455l120 75z" fill="#697888"/><rect x="375" y="215" width="60" height="115" fill="#586a78"/><g fill="#91b4c5"><path d="M110 155h65v55h-65zM215 155h65v55h-65zM320 155h65v55h-65zM425 155h65v55h-65zM530 155h65v55h-65zM635 155h55v55h-55zM110 240h65v55h-65zM215 240h65v55h-65zM530 240h65v55h-65zM635 240h55v55h-55z"/></g><g fill="#789b7e"><circle cx="40" cy="260" r="45"/><circle cx="755" cy="265" r="50"/></g><text x="28" y="412" font-family="Arial" font-size="19" fill="#445b66">Fictional site illustration</text></svg>');
 const aerialUrl = imageUrl('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 440"><rect fill="#b8c9a6" width="800" height="440"/><path d="M0 350h800v70H0zM360 0h70v440h-70z" fill="#d8d4ca"/><g fill="#6d8190" stroke="#eff1eb" stroke-width="8"><rect x="75" y="70" width="205" height="115"/><rect x="505" y="70" width="205" height="115"/><rect x="75" y="230" width="205" height="80"/><rect x="520" y="245" width="150" height="70"/></g><g fill="#759877"><circle cx="37" cy="56" r="29"/><circle cx="745" cy="225" r="28"/><circle cx="318" cy="263" r="28"/><circle cx="475" cy="40" r="24"/></g><g font-family="Arial" fill="#f5f7f7" font-size="25" text-anchor="middle"><text x="175" y="137">Building A</text><text x="605" y="137">Building B</text><text x="175" y="280">Building C</text><text x="595" y="288" font-size="20">Clubhouse</text></g><text x="28" y="401" font-family="Arial" font-size="19" fill="#445b66">Fictional aerial diagram</text></svg>');
