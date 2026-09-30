@@ -4,7 +4,7 @@ import { Stack } from "aws-cdk-lib";
 import { CfnManagedPolicy, CfnPolicy, CfnRole } from "aws-cdk-lib/aws-iam";
 import { crmPolicySize } from "./iam-policy-size";
 import { CfnFunctionConfiguration, type CfnResolver } from "aws-cdk-lib/aws-appsync";
-import { ACCOUNT_MODELS, PUBLIC_OPERATIONS, ADMIN_OPERATIONS, SHARED_MODELS } from "../amplify/functions/crm-access/policy";
+import { ACCOUNT_MODELS, PUBLIC_OPERATIONS, ADMIN_OPERATIONS, ADMIN_MODEL_OPERATIONS, SHARED_MODELS } from "../amplify/functions/crm-access/policy";
 import type { backend as Backend } from "../amplify/backend";
 
 export function checkAccountAccess(backend: typeof Backend, outdir: string) {
@@ -29,6 +29,9 @@ export function checkAccountAccess(backend: typeof Backend, outdir: string) {
     const target = Object.entries(backend.data.resources.tables).find(([, table]) => resolver.requestMappingTemplate?.includes(`"tableName", "${table.tableName}"`))?.[0];
     const pipeline = resolver.pipelineConfig as CfnResolver.PipelineConfigProperty;
     const guarded = pipeline?.functions?.some(fn => ids.has(fn));
+    const admin = functions.find(fn => fn.name === "access_admin___");
+    const operation = resolver.typeName === "Mutation" ? /^(create|update|delete)/.exec(resolver.fieldName)?.[1] ?? "" : "read";
+    if ((ADMIN_OPERATIONS.includes(resolver.fieldName) || target && ADMIN_MODEL_OPERATIONS[target]?.includes(operation)) && (!admin || !pipeline?.functions?.includes(admin.attrFunctionId))) throw new Error(`Active administrator guard missing: ${resolver.fieldName}`);
     if (target && (ACCOUNT_MODELS as readonly string[]).includes(target) && !guarded) throw new Error(`Assignment guard missing: ${resolver.typeName}.${resolver.fieldName}`);
     if (target && (ACCOUNT_MODELS as readonly string[]).includes(target) && resolver.typeName === "Query") {
       const data = Object.values(backend.data.resources.cfnResources.cfnFunctionConfigurations).find(fn => pipeline?.functions?.includes(fn.attrFunctionId) && fn.requestMappingTemplate?.includes('"Scan"'));
@@ -44,7 +47,9 @@ export function checkAccountAccess(backend: typeof Backend, outdir: string) {
   }
   for (const fn of functions) {
     if (!fn.requestMappingTemplate?.includes('$util.authType() == "IAM Authorization"') || !fn.responseMappingTemplate?.includes("$util.error")) throw new Error("Guard bypass or error handling changed");
+    if (!fn.requestMappingTemplate.includes('"request":$util.toJson($ctx.request)')) throw new Error("Assignment guards must receive the active-role header");
     if (fn.name.startsWith("access_list_") && !fn.requestMappingTemplate.includes('claims.get("cognito:groups")')) throw new Error("Scoped lists must recognize administrators from Cognito JWT claims");
+    if (fn.name.startsWith("access_list_") && (!fn.requestMappingTemplate.includes('"x-crm-role"') || !fn.requestMappingTemplate.includes('$assignmentRole == "ADMIN"'))) throw new Error("Scoped list bypass must require the active administrator role");
   }
   const roles = [backend.auth.resources.authenticatedUserIamRole, backend.auth.resources.unauthenticatedUserIamRole, ...Object.values(backend.auth.resources.groups).map(group => group.role)];
   // Group policies must not retain direct bucket grants that bypass crmFile.

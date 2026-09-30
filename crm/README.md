@@ -14,10 +14,24 @@ Internal agency management system replacing EzLynx for the commercial
   [amplify/backend.ts](amplify/backend.ts), currently
   `noreply@protectmyhoa.com` — also the sender for team invites and license
   alerts; branch URLs for the link live in `BRANCH_URLS` there too).
-  Groups `ADMIN` / `STAFF` / `PRODUCER` exist as placeholders; privileges
-  are not enforced yet. First login runs an onboarding flow
-  ([src/pages/Onboarding.tsx](src/pages/Onboarding.tsx)); producers must
-  supply an NPN and at least one state license.
+  Admins assign one or two Cognito roles (`ADMIN` / `STAFF` / `PRODUCER`)
+  in **Settings → Team**, when inviting someone or editing an existing user.
+  Users with two roles switch views using **Active role** at the bottom of
+  the sidebar. Admin sees all agency accounts; Producer and Staff see only
+  accounts assigned to them. The active view is remembered per user in the
+  current browser tab and enforced on server requests; changing it clears
+  the previous view's data. Updated role assignments appear on reload, and
+  saving your own roles refreshes them immediately. The team roster loads
+  twenty members at a time, including profile details in the same response;
+  use **Load more** to reach additional teammates.
+  First login runs an onboarding flow ([src/pages/Onboarding.tsx](src/pages/Onboarding.tsx)).
+  Producers must supply an NPN and at least one state license, including
+  existing users who gain Producer later and have missing licensing details.
+  Producer setup uses the `License` index for that profile. A deployment-only
+  migration copies original onboarding licenses into `License` before the
+  frontend is released. It preserves existing license records and leaves the
+  old table read-only as a backup. A failed copy blocks deployment and can be
+  retried safely; the app no longer reads or imports legacy licenses.
 - **Website assignment and lead texts** — website enquiries rotate among
   active teammates with salesperson eligibility in Settings → Team. The
   lead and its pending assignment are saved together. A durable worker

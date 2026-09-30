@@ -111,6 +111,21 @@ a:hover { text-decoration: underline; }
   cursor: pointer;
 }
 .sidebar .user button:hover { background: rgba(255,255,255,0.1); }
+.role-switcher { display: grid; gap: 5px; margin: 8px 0; }
+.role-switcher label { font-size: 11px; color: #c4d2e6; }
+.role-switcher select {
+  width: 100%;
+  min-height: 36px;
+  padding: 6px 10px;
+  border: 1px solid rgba(255,255,255,0.35);
+  border-radius: 6px;
+  background: var(--navy);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.role-switcher select:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
 
 /* ── Agency NPNs in the rail ───────────────────────────────────────── */
 /* Above the signed-in user, separated by a rule so the two blocks read as

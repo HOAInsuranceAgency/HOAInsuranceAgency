@@ -40,6 +40,12 @@ beforeEach(() => {
 });
 afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); });
 describe("administrator marketing report controls", () => {
+  it("requires the administrator view for a user also assigned the producer role", async () => {
+    const identity = { sub: "administrator", groups: ["ADMIN", "PRODUCER"] };
+    expect(await api({ identity, request: { headers: { "x-crm-role": "PRODUCER" } }, arguments: {} })).toMatchObject({ ok: false, error: expect.stringContaining("Administrator") });
+    expect(h.send).not.toHaveBeenCalled(); expect(h.invoke).not.toHaveBeenCalled();
+    expect(await api({ identity, request: { headers: { "x-crm-role": "ADMIN" } }, arguments: {} })).toMatchObject({ ok: true });
+  });
   it("returns safe defaults with the real Amplify event shape without info", async () => {
     expect(await api({ ...admin, arguments: {} })).toMatchObject({ ok: true, settings: { version: 0, enabled: false, recipient: "" }, schedule: { day: "Friday", time: "08:00", timeZone: "America/New_York" } }); expect(h.invoke).not.toHaveBeenCalled();
   });

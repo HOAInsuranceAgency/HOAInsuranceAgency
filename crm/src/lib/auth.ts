@@ -18,15 +18,18 @@ export type Role = "ADMIN" | "STAFF" | "PRODUCER";
  * The claim is omitted entirely — not sent as an empty array — when the user
  * belongs to no group, and its payload type is loose enough that it has to be
  * narrowed rather than trusted. An expired or missing session resolves to no
- * groups (so the caller degrades to "no privileges") instead of throwing.
+ * groups (so the caller degrades to "no privileges") instead of throwing,
+ * unless a refresh was required to open or update the signed-in role view.
  */
-export async function fetchUserGroups(): Promise<string[]> {
+export async function fetchUserGroups(forceRefresh = false): Promise<string[]> {
   try {
-    const { tokens } = await fetchAuthSession();
+    const { tokens } = await fetchAuthSession({ forceRefresh });
     const claim = tokens?.idToken?.payload["cognito:groups"];
     if (!Array.isArray(claim)) return [];
     return claim.filter((g): g is string => typeof g === "string");
   } catch (err) {
+    // Loading assigned roles must succeed before opening a scoped view.
+    if (forceRefresh) throw err;
     // Not admin — but a broken session shouldn't vanish from the console.
     console.error("Could not read Cognito groups:", err);
     return [];
@@ -35,6 +38,10 @@ export async function fetchUserGroups(): Promise<string[]> {
 
 export function isAdminGroup(groups: string[]): boolean {
   return groups.includes("ADMIN");
+}
+
+export function rolesFromGroups(groups: string[]): Role[] {
+  return (["ADMIN", "PRODUCER", "STAFF"] as const).filter(role => groups.includes(role));
 }
 
 /**
@@ -48,8 +55,8 @@ export function roleFromGroups(groups: string[]): Role {
 }
 
 /**
- * Admin status for the whole signed-in shell. Resolved once in ProfileGate,
- * alongside the profile fetch, so no screen renders before it's known.
+ * Admin status for the active view. Assigned groups determine available
+ * views; choosing Producer removes admin controls and scopes data to self.
  * Defaults to false: a consumer outside the provider is not an admin.
  */
 export const AdminContext = createContext(false);

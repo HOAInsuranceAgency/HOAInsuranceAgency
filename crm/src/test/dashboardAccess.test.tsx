@@ -12,6 +12,7 @@ const h = vi.hoisted(() => ({
     firstName: "Test",
     lastName: "User",
     role: "ADMIN",
+    npn: "12345678",
     onboardingComplete: true,
   },
 }));
@@ -28,7 +29,11 @@ vi.mock("aws-amplify/auth", () => ({ fetchAuthSession: h.session }));
 vi.mock("../lib/client", () => ({
   client: {
     models: {
-      UserProfile: { list: async () => ({ data: [h.profile] }) },
+      UserProfile: { listUserProfileByUserId: async () => ({ data: [h.profile] }) },
+      License: { listLicenseByUserProfileId: async () => ({ data: [{
+        id: "license-1", userProfileId: "profile-1", holderType: "PRODUCER",
+        state: "FL", licenseNumber: "FL123456",
+      }] }) },
       AgencySettings: {
         observeQuery: () => ({ subscribe: () => ({ unsubscribe: vi.fn() }) }),
       },
@@ -77,6 +82,7 @@ function renderApp(path: string) {
 }
 
 beforeEach(() => {
+  sessionStorage.clear();
   h.session.mockReset();
   h.dashboard.mockClear();
   h.profile.role = "ADMIN";

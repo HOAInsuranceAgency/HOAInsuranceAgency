@@ -1,4 +1,5 @@
 import { installAccountAccess } from "./account-access";
+import { modelIndex } from "./model-index";
 import { installDashboardReads } from "./dashboard-reports";
 import { crmAccess } from "./functions/crm-access/resource";
 import { Alarm, TreatMissingData, Metric, ComparisonOperator } from "aws-cdk-lib/aws-cloudwatch";
@@ -6,10 +7,11 @@ import { SnsAction } from "aws-cdk-lib/aws-cloudwatch-actions";
 import { Topic } from "aws-cdk-lib/aws-sns";
 import { defineBackend } from "@aws-amplify/backend";
 import { CfnWebACL, CfnWebACLAssociation } from "aws-cdk-lib/aws-wafv2";
-import { ArnFormat, Duration, Names, Stack, TimeZone } from "aws-cdk-lib";
+import { ArnFormat, CustomResource, Duration, Names, Stack, TimeZone } from "aws-cdk-lib";
+import { Provider } from "aws-cdk-lib/custom-resources";
 import { Schedule, ScheduleExpression, ScheduleTargetInput, ContextAttribute } from "aws-cdk-lib/aws-scheduler";
 import { LambdaInvoke } from "aws-cdk-lib/aws-scheduler-targets";
-import { PolicyStatement } from "aws-cdk-lib/aws-iam";
+import { Policy, PolicyStatement } from "aws-cdk-lib/aws-iam";
 import { Secret } from "aws-cdk-lib/aws-secretsmanager";
 import {
   AttributeType,
@@ -31,6 +33,7 @@ import { processDocument } from "./functions/process-document/resource";
 import { honeycombWorker, honeycombStatus, honeycombSubmissions, honeycombSubmissionWorker } from "./functions/honeycomb/resource";
 import { leadIntake } from "./functions/lead-intake/resource";
 import { teamAdmin } from "./functions/team-admin/resource";
+import { migrateProducerLicenses } from "./functions/migrate-producer-licenses/resource";
 import { extractLead } from "./functions/extract-lead/resource";
 import { formFiller } from "./functions/form-filler/resource";
 import { certNumber } from "./functions/cert-number/resource";
@@ -75,6 +78,7 @@ export const backend = defineBackend({
   honeycombSubmissions,
   honeycombSubmissionWorker,
   teamAdmin,
+  migrateProducerLicenses,
   extractLead,
   formFiller,
   certNumber,
@@ -509,11 +513,23 @@ backend.teamAdmin.addEnvironment(
 );
 backend.teamAdmin.addEnvironment("PORTAL_URL", magicLinkBaseUrl);
 backend.teamAdmin.addEnvironment("INVITE_FROM", magicLinkFrom);
+const userProfileTable = backend.data.resources.tables.UserProfile;
+const userProfileIndex = modelIndex(backend.stack, "UserProfile", "userId");
+backend.teamAdmin.addEnvironment("USER_PROFILE_TABLE_NAME", userProfileTable.tableName);
+backend.teamAdmin.addEnvironment("USER_PROFILE_USER_ID_INDEX_NAME", userProfileIndex.name);
+backend.teamAdmin.resources.lambda.addToRolePolicy(new PolicyStatement({
+  actions: ["dynamodb:Query"],
+  resources: [`${userProfileTable.tableArn}/index/${userProfileIndex.name}`],
+}));
 backend.teamAdmin.resources.lambda.addToRolePolicy(
   new PolicyStatement({
     actions: [
       "cognito-idp:AdminCreateUser",
+      "cognito-idp:AdminDeleteUser",
+      "cognito-idp:AdminDisableUser",
       "cognito-idp:AdminAddUserToGroup",
+      "cognito-idp:AdminRemoveUserFromGroup",
+      "cognito-idp:AdminGetUser",
       "cognito-idp:AdminListGroupsForUser",
       "cognito-idp:ListUsers",
     ],
@@ -526,6 +542,36 @@ backend.teamAdmin.resources.lambda.addToRolePolicy(
     resources: ["*"],
   })
 );
+
+// Complete the one-time copy before CloudFormation lets a new frontend ship.
+// The legacy table remains read-only as a backup; sign-in reads only License.
+const licenseTable = backend.data.resources.tables.License;
+const legacyLicenseTable = backend.data.resources.tables.ProducerLicense;
+const licenseProfileIndex = modelIndex(backend.stack, "License", "userProfileId");
+const licenseMigration = backend.migrateProducerLicenses;
+licenseMigration.addEnvironment("LEGACY_PRODUCER_LICENSE_TABLE", legacyLicenseTable.tableName);
+licenseMigration.addEnvironment("LICENSE_TABLE", licenseTable.tableName);
+licenseMigration.addEnvironment("USER_PROFILE_TABLE", userProfileTable.tableName);
+licenseMigration.addEnvironment("LICENSE_USER_PROFILE_INDEX", licenseProfileIndex.name);
+const licenseMigrationPolicy = new Policy(licenseMigration.resources.lambda, "MigrationDataAccess", {
+  statements: [
+    new PolicyStatement({ actions: ["dynamodb:Scan"], resources: [legacyLicenseTable.tableArn] }),
+    new PolicyStatement({ actions: ["dynamodb:GetItem", "dynamodb:BatchGetItem"], resources: [userProfileTable.tableArn] }),
+    new PolicyStatement({ actions: ["dynamodb:GetItem", "dynamodb:PutItem"], resources: [licenseTable.tableArn] }),
+    new PolicyStatement({ actions: ["dynamodb:Query"], resources: [`${licenseTable.tableArn}/index/${licenseProfileIndex.name}`] }),
+  ],
+});
+licenseMigrationPolicy.attachToRole(licenseMigration.resources.lambda.role!);
+const licenseMigrationStack = backend.createStack("ProducerLicenseMigration");
+const licenseMigrationProvider = new Provider(licenseMigrationStack, "Provider", {
+  onEventHandler: licenseMigration.resources.lambda,
+});
+const licenseMigrationResource = new CustomResource(licenseMigrationStack, "MigrateProducerLicenses", {
+  serviceToken: licenseMigrationProvider.serviceToken,
+  serviceTimeout: Duration.minutes(15),
+  properties: { Version: "1", SourceTable: legacyLicenseTable.tableName, TargetTable: licenseTable.tableName, ProfileIndex: licenseProfileIndex.name },
+});
+licenseMigrationResource.node.addDependency(licenseMigrationPolicy, licenseProfileIndex.resource);
 
 // ── Lead text alerts ─────────────────────────────────────────────────
 // The intake handler texts every UserProfile with leadTextAlerts on. The

@@ -1613,7 +1613,8 @@ const schema = a
     /**
      * DEPRECATED — superseded by the unified `License` model below, which
      * covers both firm and personal licenses with dates, files and status.
-     * Kept so existing onboarding rows aren't dropped; no new writes.
+     * Retained as a read-only backup. Deployment migrates these records to
+     * License before the frontend switches to its indexed producer lookup.
      */
     ProducerLicense: a.model({
       userProfileId: a.id().required(),
@@ -1622,7 +1623,7 @@ const schema = a
       licenseNumber: a.string().required(),
       expirationDate: a.date(),
       linesOfAuthority: a.string().array(),
-    }),
+    }).authorization((allow) => [allow.authenticated().to(["read"])]),
 
     /**
      * Unified licensing record — one row per (holder, state, license).
@@ -1641,20 +1642,17 @@ const schema = a
      * make the agency look licensed where it isn't — are ADMIN-only, which is
      * what the Licensing screen already gates its edit/delete controls on.
      * userProfileId is caller-supplied and unverified, so it can't anchor
-     * owner-scoping. One Lambda reads this model — the `license-alerts`
-     * expiry sweep — and writes nothing back to it; what it sent is recorded
-     * on `LicenseReminder` below rather than as a field here, so the daily
-     * job cannot touch a compliance record it has no business editing.
+     * owner-scoping. The deployment-only migration conditionally copies old
+     * onboarding records here; it never replaces an existing License.
      */
     License: a.model({
       holderType: a.ref("LicenseHolderType").required(),
       /**
        * Empty for FIRM licenses; set for PRODUCER licenses.
        *
-       * Deliberately a plain field rather than a belongsTo: a relationship
-       * makes this a GSI key, and DynamoDB rejects a null index key — which
-       * every firm license would need. The UI joins against UserProfile
-       * client-side instead (it already lists profiles for the picker).
+       * The sparse index supports producer onboarding without a table scan.
+       * Omit this field on firm licenses; DynamoDB rejects explicit null
+       * index keys. The UI joins profiles without a belongsTo relationship.
        */
       userProfileId: a.id(),
       // Denormalized so firm rows and orphaned rows still render a name.
@@ -1671,6 +1669,7 @@ const schema = a
       continuingEducationDueDate: a.date(),
       notes: a.string(),
     })
+      .secondaryIndexes((index) => [index("userProfileId")])
       .authorization((allow) => [
         allow.authenticated().to(["read", "create"]),
         allow.groups(["ADMIN"]),
@@ -2152,7 +2151,17 @@ const schema = a
       .mutation()
       .arguments({
         email: a.string().required(),
-        role: a.string(), // ADMIN | STAFF | PRODUCER (default STAFF)
+        roles: a.string().array().required(), // One or two assigned Cognito role groups.
+      })
+      .returns(a.json())
+      .authorization((allow) => [allow.groups(["ADMIN"])])
+      .handler(a.handler.function(teamAdmin)),
+
+    updateUserRoles: a
+      .mutation()
+      .arguments({
+        userId: a.string().required(),
+        roles: a.string().array().required(),
       })
       .returns(a.json())
       .authorization((allow) => [allow.groups(["ADMIN"])])
@@ -2160,6 +2169,7 @@ const schema = a
 
     listTeamUsers: a
       .query()
+      .arguments({ nextToken: a.string() })
       .returns(a.json())
       .authorization((allow) => [allow.groups(["ADMIN"])])
       .handler(a.handler.function(teamAdmin)),

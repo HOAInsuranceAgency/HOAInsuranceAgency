@@ -1,12 +1,12 @@
 import { InvokeCommand, LambdaClient } from "@aws-sdk/client-lambda";
 import { assertRecipient, manualRunId, readSettings, readRun, reserveRun, settingsSnapshot, saveSettings, updateRun, conflict } from "./store";
+import { isActiveAdmin, type RoleRequest } from "../crm-access/active-role";
 
 const lambda = new LambdaClient({ maxAttempts: 1 });
-interface Event { info?: { fieldName?: string }; arguments?: { operation?: string; input?: unknown }; identity?: { sub?: string; username?: string; groups?: unknown; claims?: Record<string, unknown> } }
+interface Event { info?: { fieldName?: string }; arguments?: { operation?: string; input?: unknown }; identity?: { sub?: string; username?: string; groups?: unknown; claims?: Record<string, unknown> }; request?: RoleRequest }
 export function requireAdmin(event: Event): string {
-  const groups = event.identity?.groups ?? event.identity?.claims?.["cognito:groups"];
   const actor = event.identity?.sub ?? event.identity?.claims?.sub;
-  if (!Array.isArray(groups) || !groups.includes("ADMIN") || typeof actor !== "string" || !actor) throw new Error("Administrator access is required.");
+  if (!isActiveAdmin(event.identity, event.request) || typeof actor !== "string" || !actor) throw new Error("Administrator access is required.");
   return actor;
 }
 function parseInput(value: unknown): Record<string, unknown> {

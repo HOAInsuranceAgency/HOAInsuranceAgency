@@ -1252,6 +1252,21 @@ describe("creation-only lead acquisition", () => {
     expect(result.ok).toBe(true);
     expect(record(`workflow:${result.id}`).data.salespersonId).toBe("sally");
   });
+  it("assigns a dual-role administrator's new lead to them while using the producer view", async () => {
+    await save(row("ELIGIBILITY", "eligibility:sally", { userId: "sally", name: "Sally", enabled: true, salesperson: true }));
+    const { handler } = await import("../../amplify/functions/communications/handler");
+    const result = await handler({ arguments: { operation: "createLead", input: { requestId: "dual-role-own-lead-123456789", fields: { name: "Sally's lead", leadSource: "PHONE" } } }, identity: { sub: "sally", groups: ["ADMIN", "PRODUCER"] } as never, request: { headers: { "x-crm-role": "PRODUCER" } } }) as { ok: boolean; id: string };
+    expect(result.ok).toBe(true);
+    expect(record(`workflow:${result.id}`).data.salespersonId).toBe("sally");
+  });
+  it("requires a dual-role user to select ADMIN before accessing integration settings", async () => {
+    const { handler } = await import("../../amplify/functions/communications/handler");
+    const identity = { sub: "brian", groups: ["ADMIN", "PRODUCER"] } as never;
+    const reads = h.reads.length;
+    expect(await handler({ arguments: { readOperation: "settings" }, identity, request: { headers: { "x-crm-role": "PRODUCER" } } })).toMatchObject({ ok: false, error: expect.stringContaining("admin") });
+    expect(h.reads).toHaveLength(reads);
+    expect(await handler({ arguments: { readOperation: "settings" }, identity, request: { headers: { "x-crm-role": "ADMIN" } } })).toMatchObject({ ok: true });
+  });
   it.each([["gclid", "GOOGLE_AD_WEBSITE"], ["wbraid", "GOOGLE_AD_WEBSITE"], ["", "ORGANIC_WEBSITE"]])("classifies website creation from %s", async (key, expected) => {
     const { handler: capture } = await import("../../amplify/functions/lead-intake/handler");
     const result = await capture({ arguments: { name: "Campaign test", attribution: JSON.stringify(key ? { [key]: "test-click" } : {}), source: "website-quote" } } as never, {} as never, () => {}) as { id: string };
