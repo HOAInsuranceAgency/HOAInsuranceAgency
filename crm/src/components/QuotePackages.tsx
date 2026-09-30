@@ -17,6 +17,7 @@ import {
   type PackageOption,
 } from '../../../shared/quotePackages';
 import { OpportunityEstimate } from './OpportunityEstimate';
+import './QuotePackages.css';
 
 export default function QuotePackages({
   accountId,
@@ -91,10 +92,25 @@ export default function QuotePackages({
       reviewed: false,
     });
   }
+  const selectableQuotes = quotes.filter(
+    (q) =>
+      !q.renewalPolicyId &&
+      (['QUOTED', 'PRESENTED', 'BOUND'].includes(q.status) ||
+        editor?.quoteIds.includes(q.id)),
+  );
   return (
-    <section className="card" aria-label="Quote packages" id="quote-packages">
-      <div className="card-head">
-        <h2>Package options</h2>
+    <section
+      className="card quote-packages"
+      aria-label="Quote packages"
+      id="quote-packages"
+    >
+      <div className="package-header">
+        <div>
+          <h2>Package options</h2>
+          <p className="muted small">
+            Group quotes into complete coverage options for the client.
+          </p>
+        </div>
         <button
           className="secondary"
           disabled={
@@ -108,27 +124,27 @@ export default function QuotePackages({
           + Package option
         </button>
       </div>
-      <p className="muted small">
-        Combine whole quotes into options you can present to the client. Each
-        option must cover the same insurance needs.
-      </p>
       {resource.loading ? (
-        <p role="status">Loading package options…</p>
+        <p className="package-empty" role="status">
+          Loading package options…
+        </p>
       ) : resource.error ? (
         <p className="error-text" role="alert">
           {resource.error}{' '}
-          <button onClick={() => void resource.refetch()}>Retry</button>
+          <button className="secondary" onClick={() => void resource.refetch()}>
+            Retry
+          </button>
         </p>
       ) : (
         <>
-          <div className="form-grid">
-            <div>
+          <div className="package-summary">
+            <div className="package-metric">
               <h3>Estimated opportunity</h3>
               <OpportunityEstimate plan={plan} onSaved={update} />
             </div>
-            <div>
+            <div className="package-metric">
               <h3>Pending commission</h3>
-              <strong>
+              <strong className="package-metric-value">
                 {forecast.cents == null
                   ? '—'
                   : formatCommission(forecast.cents)}
@@ -137,123 +153,137 @@ export default function QuotePackages({
             </div>
           </div>
           {!!plan.requiredLines.length && (
-            <p className="small">
-              Coverages needed: {plan.requiredLines.join(', ')}
-            </p>
+            <div className="package-coverages">
+              <span className="muted small">Coverages needed</span>
+              {plan.requiredLines.map((line) => (
+                <span className="package-chip" key={line}>
+                  {line}
+                </span>
+              ))}
+            </div>
           )}
-          {plan.options.map((option) => {
-            const assessment = packageAssessment(plan, option, quotes, today),
-              chosen = option.id === plan.selectedOptionId;
-            return (
-              <article
-                key={option.id}
-                style={{
-                  borderTop: '1px solid var(--border)',
-                  padding: '16px 0',
-                }}
-              >
-                <h3>
-                  {option.name}{' '}
-                  {chosen && (
-                    <span className="badge green">Client selected</span>
-                  )}
-                </h3>
-                {option.quoteIds.map((id) => {
-                  const q = quotes.find((q) => q.id === id);
-                  return (
-                    <p className="small" key={id}>
-                      {q
-                        ? `${carriers.find((c) => c.id === q.carrierId)?.name ?? 'Carrier not recorded'} · ${(q.lines ?? []).join(', ')} · ${q.status === 'BOUND' ? 'Bound' : q.status === 'PRESENTED' ? 'Presented' : q.status === 'QUOTED' ? 'Quoted' : 'Needs review'}`
-                        : 'Quote unavailable'}
+          <div className="package-options">
+            {plan.options.map((option) => {
+              const assessment = packageAssessment(plan, option, quotes, today),
+                chosen = option.id === plan.selectedOptionId;
+              return (
+                <article
+                  key={option.id}
+                  className={`package-option${chosen ? ' package-option-selected' : ''}`}
+                >
+                  <h3>
+                    {option.name}{' '}
+                    {chosen && (
+                      <span className="badge green">Client selected</span>
+                    )}
+                  </h3>
+                  {option.quoteIds.map((id) => {
+                    const q = quotes.find((q) => q.id === id);
+                    return (
+                      <p className="small" key={id}>
+                        {q
+                          ? `${carriers.find((c) => c.id === q.carrierId)?.name ?? 'Carrier not recorded'} · ${(q.lines ?? []).join(', ')} · ${q.status === 'BOUND' ? 'Bound' : q.status === 'PRESENTED' ? 'Presented' : q.status === 'QUOTED' ? 'Quoted' : 'Needs review'}`
+                          : 'Quote unavailable'}
+                      </p>
+                    );
+                  })}
+                  <dl className="package-totals">
+                    <div>
+                      <dt>Premium</dt>
+                      <dd>{fmtMoney(assessment.premiumCents / 100)}</dd>
+                    </div>
+                    <div>
+                      <dt>Commission</dt>
+                      <dd>
+                        {assessment.complete
+                          ? formatCommission(assessment.commissionCents)
+                          : '—'}
+                      </dd>
+                    </div>
+                  </dl>
+                  {assessment.problems.length ? (
+                    <p className="muted small">
+                      {assessment.problems.join('. ')}.
                     </p>
-                  );
-                })}
-                <p>
-                  Premium: {fmtMoney(assessment.premiumCents / 100)} ·
-                  Commission:{' '}
-                  {assessment.complete
-                    ? formatCommission(assessment.commissionCents)
-                    : '—'}
-                </p>
-                {assessment.problems.length ? (
-                  <p className="muted small">
-                    {assessment.problems.join('. ')}.
-                  </p>
-                ) : (
-                  <p className="small muted">
-                    {assessment.boundCount
-                      ? `${assessment.boundCount} of ${assessment.quoteCount} policies bound. Remaining commission: ${formatCommission(assessment.pendingCents)}.`
-                      : 'Reviewed package · complete coverage option'}
-                  </p>
-                )}
-                <div className="form-actions">
-                  {(!plan.selectedOptionId || chosen) && (
-                    <>
-                      <button
-                        className="secondary"
-                        disabled={saving}
-                        onClick={() => edit(option)}
-                      >
-                        {chosen ? 'Review / revise option' : 'Edit option'}
-                      </button>
-                      {(!chosen || forecast.cents == null) && (
-                        <button
-                          className="primary"
-                          disabled={saving || !assessment.complete}
-                          onClick={() =>
-                            void write({
-                              action: 'SELECT',
-                              optionId: option.id,
-                              clientSelected: true,
-                            })
-                          }
-                        >
-                          {chosen
-                            ? 'Client approved revised option'
-                            : 'Client chose this option'}
-                        </button>
-                      )}
-                      {!chosen && (
-                        <button
-                          className="link"
-                          disabled={saving}
-                          onClick={() =>
-                            void write({
-                              action: 'REMOVE_OPTION',
-                              optionId: option.id,
-                            })
-                          }
-                        >
-                          Remove option
-                        </button>
-                      )}
-                    </>
+                  ) : (
+                    <p className="small muted">
+                      {assessment.boundCount
+                        ? `${assessment.boundCount} of ${assessment.quoteCount} policies bound. Remaining commission: ${formatCommission(assessment.pendingCents)}.`
+                        : 'Reviewed package · complete coverage option'}
+                    </p>
                   )}
-                  {chosen && (
-                    <>
-                      <a href="#quote-list">Continue binding policies</a>
-                      {!assessment.boundCount && (
+                  <div className="form-actions">
+                    {(!plan.selectedOptionId || chosen) && (
+                      <>
                         <button
-                          className="link"
+                          className="secondary"
                           disabled={saving}
-                          onClick={() =>
-                            void write({ action: 'CLEAR_SELECTION' })
-                          }
+                          onClick={() => edit(option)}
                         >
-                          Clear client selection
+                          {chosen ? 'Review / revise option' : 'Edit option'}
                         </button>
-                      )}
-                    </>
-                  )}
-                </div>
-              </article>
-            );
-          })}
-          {!plan.options.length && (
-            <p className="muted">
-              Add a bundled quote as one option, or combine separate quotes into
-              a complete option.
-            </p>
+                        {(!chosen || forecast.cents == null) && (
+                          <button
+                            className="primary"
+                            disabled={saving || !assessment.complete}
+                            onClick={() =>
+                              void write({
+                                action: 'SELECT',
+                                optionId: option.id,
+                                clientSelected: true,
+                              })
+                            }
+                          >
+                            {chosen
+                              ? 'Client approved revised option'
+                              : 'Client chose this option'}
+                          </button>
+                        )}
+                        {!chosen && (
+                          <button
+                            className="link"
+                            disabled={saving}
+                            onClick={() =>
+                              void write({
+                                action: 'REMOVE_OPTION',
+                                optionId: option.id,
+                              })
+                            }
+                          >
+                            Remove option
+                          </button>
+                        )}
+                      </>
+                    )}
+                    {chosen && (
+                      <>
+                        <a href="#quote-list">Continue binding policies</a>
+                        {!assessment.boundCount && (
+                          <button
+                            className="link"
+                            disabled={saving}
+                            onClick={() =>
+                              void write({ action: 'CLEAR_SELECTION' })
+                            }
+                          >
+                            Clear client selection
+                          </button>
+                        )}
+                      </>
+                    )}
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+          {!plan.options.length && !editor && (
+            <div className="package-empty">
+              <strong>No package options yet</strong>
+              <p>
+                Add an option using one bundled quote or several quotes with
+                matching coverage needs.
+              </p>
+            </div>
           )}
           {editor && (
             <form
@@ -262,11 +292,15 @@ export default function QuotePackages({
                 e.preventDefault();
                 void write({ action: 'SAVE_OPTION', ...editor });
               }}
-              style={{ borderTop: '1px solid var(--border)', paddingTop: 16 }}
+              className="package-editor"
             >
-              <label className="field">
-                Option name
+              <h3>
+                {editor.optionId ? 'Edit package option' : 'New package option'}
+              </h3>
+              <div className="field package-name">
+                <label htmlFor="package-option-name">Option name</label>
                 <input
+                  id="package-option-name"
                   value={editor.name}
                   maxLength={100}
                   required
@@ -274,77 +308,87 @@ export default function QuotePackages({
                     setEditor({ ...editor, name: e.target.value })
                   }
                 />
-              </label>
-              <fieldset>
-                <legend>Coverages needed for this account</legend>
-                {[
-                  ...new Set([...LINES_OF_BUSINESS, ...editor.requiredLines]),
-                ].map((line) => (
-                  <label
-                    key={line}
-                    style={{
-                      display: 'inline-flex',
-                      gap: 6,
-                      margin: '8px 16px 8px 0',
-                    }}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={editor.requiredLines.includes(line)}
-                      onChange={(e) =>
-                        setEditor({
-                          ...editor,
-                          reviewed: false,
-                          requiredLines: e.target.checked
-                            ? [...editor.requiredLines, line]
-                            : editor.requiredLines.filter((l) => l !== line),
-                        })
-                      }
-                    />
-                    {line}
-                  </label>
-                ))}
-              </fieldset>
-              <fieldset>
-                <legend>Quotes in this option</legend>
-                {quotes
-                  .filter(
-                    (q) =>
-                      !q.renewalPolicyId &&
-                      (['QUOTED', 'PRESENTED', 'BOUND'].includes(q.status) ||
-                        editor.quoteIds.includes(q.id)),
-                  )
-                  .map((q) => (
-                    <label
-                      key={q.id}
-                      style={{ display: 'flex', gap: 10, padding: '10px 0' }}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={editor.quoteIds.includes(q.id)}
-                        onChange={(e) =>
-                          setEditor({
-                            ...editor,
-                            reviewed: false,
-                            quoteIds: e.target.checked
-                              ? [...editor.quoteIds, q.id]
-                              : editor.quoteIds.filter((id) => id !== q.id),
-                          })
-                        }
-                      />
-                      <span>
-                        {carriers.find((c) => c.id === q.carrierId)?.name ??
-                          'Carrier not recorded'}{' '}
-                        · {(q.lines ?? []).join(', ')}
-                        <small style={{ display: 'block' }}>
-                          {fmtMoney(q.premium)} premium ·{' '}
-                          {q.effectiveDate ?? 'No effective date'} to{' '}
-                          {q.expirationDate ?? 'No expiration date'}
-                        </small>
-                      </span>
-                    </label>
-                  ))}
-              </fieldset>
+              </div>
+              <div className="package-editor-grid">
+                <fieldset className="package-fieldset">
+                  <legend>Coverages needed for this account</legend>
+                  <div className="package-coverage-grid">
+                    {[
+                      ...new Set([
+                        ...LINES_OF_BUSINESS,
+                        ...editor.requiredLines,
+                      ]),
+                    ].map((line) => (
+                      <label
+                        key={line}
+                        className={`package-choice${editor.requiredLines.includes(line) ? ' is-selected' : ''}`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={editor.requiredLines.includes(line)}
+                          onChange={(e) =>
+                            setEditor({
+                              ...editor,
+                              reviewed: false,
+                              requiredLines: e.target.checked
+                                ? [...editor.requiredLines, line]
+                                : editor.requiredLines.filter(
+                                    (l) => l !== line,
+                                  ),
+                            })
+                          }
+                        />
+                        <span>{line}</span>
+                      </label>
+                    ))}
+                  </div>
+                </fieldset>
+                <fieldset className="package-fieldset">
+                  <legend>Quotes in this option</legend>
+                  <div className="package-quote-choices">
+                    {!selectableQuotes.length && (
+                      <div className="package-empty">
+                        <strong>No quotes available</strong>
+                        <p>
+                          Add a quote and mark it Quoted or Presented to include
+                          it in this option.
+                        </p>
+                        <a href="#quote-list">Go to quotes</a>
+                      </div>
+                    )}
+                    {selectableQuotes.map((q) => (
+                      <label
+                        key={q.id}
+                        className={`package-choice package-quote-choice${editor.quoteIds.includes(q.id) ? ' is-selected' : ''}`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={editor.quoteIds.includes(q.id)}
+                          onChange={(e) =>
+                            setEditor({
+                              ...editor,
+                              reviewed: false,
+                              quoteIds: e.target.checked
+                                ? [...editor.quoteIds, q.id]
+                                : editor.quoteIds.filter((id) => id !== q.id),
+                            })
+                          }
+                        />
+                        <span>
+                          {carriers.find((c) => c.id === q.carrierId)?.name ??
+                            'Carrier not recorded'}{' '}
+                          · {(q.lines ?? []).join(', ')}
+                          <small>
+                            {fmtMoney(q.premium)} premium ·{' '}
+                            {q.effectiveDate ?? 'No effective date'} to{' '}
+                            {q.expirationDate ?? 'No expiration date'}
+                          </small>
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                </fieldset>
+              </div>
               {!!packageAssessment(
                 { ...plan, requiredLines: editor.requiredLines },
                 { id: '', name: editor.name, quoteIds: editor.quoteIds },
@@ -352,12 +396,12 @@ export default function QuotePackages({
                 today,
                 false,
               ).overlaps.length && (
-                <p className="small">
+                <p className="package-notice small">
                   Some coverage lines overlap. Check limits, layers and carrier
                   requirements before marking this option reviewed.
                 </p>
               )}
-              <label style={{ display: 'flex', gap: 10, padding: '16px 0' }}>
+              <label className="package-review">
                 <input
                   type="checkbox"
                   checked={editor.reviewed}
@@ -365,8 +409,10 @@ export default function QuotePackages({
                     setEditor({ ...editor, reviewed: e.target.checked })
                   }
                 />
-                I reviewed these quotes together; their terms and carrier
-                requirements work as a complete package.
+                <span>
+                  I reviewed these quotes together; their terms and carrier
+                  requirements work as a complete package.
+                </span>
               </label>
               <div className="form-actions">
                 <button
@@ -386,10 +432,9 @@ export default function QuotePackages({
               </div>
             </form>
           )}
-          <p className="muted small">
-            Recording the client’s choice does not bind coverage. Continue the
-            existing authorization and carrier confirmation steps for each
-            selected policy.
+          <p className="package-footer muted small">
+            Client selection does not bind coverage. Record authorization and
+            carrier confirmation for each selected policy.
           </p>
         </>
       )}
