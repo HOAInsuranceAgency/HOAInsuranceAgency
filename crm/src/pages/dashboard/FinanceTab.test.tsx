@@ -15,6 +15,7 @@ vi.mock('../../lib/client', async original => ({
 vi.mock('../../lib/dashboardAssignments', () => ({ loadAssignments: h.loadAssignments }));
 vi.mock('../../lib/communications', () => ({ communicationRequest: async (operation: string, input: { policyIds?: string[] }) => {
   if (operation === 'dashboardInterestPage') return { items: h.rows.PfLoanPayment ?? [] };
+  if (operation === 'dashboardInvoiceAnchors') return { items: [] };
   if (operation === 'dashboardPolicyAnchors') return { items: [], missingIds: input.policyIds ?? [] };
   throw new Error(`Unexpected read: ${operation}`);
 } }));

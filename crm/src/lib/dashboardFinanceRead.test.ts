@@ -2,7 +2,7 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 const send = vi.hoisted(() => vi.fn());
 vi.mock('../../amplify/functions/communications/store', () => ({ db: { send } }));
-import { dashboardInterestPage, dashboardPolicyAnchors } from '../../amplify/functions/communications/dashboardFinanceRead';
+import { dashboardInterestPage, dashboardPolicyAnchors, dashboardInvoiceAnchors } from '../../amplify/functions/communications/dashboardFinanceRead';
 
 const from = '2026-08-31T16:00:00.000Z', to = '2026-09-30T16:00:00.000Z';
 beforeEach(() => {
@@ -10,6 +10,8 @@ beforeEach(() => {
   vi.stubEnv('DASHBOARD_PAYMENT_TABLE', 'payments');
   vi.stubEnv('DASHBOARD_PAYMENT_INDEX', 'payments-by-date');
   vi.stubEnv('DASHBOARD_POLICY_TABLE', 'policies');
+  vi.stubEnv('DASHBOARD_INVOICE_LINE_TABLE', 'invoice-lines');
+  vi.stubEnv('DASHBOARD_INVOICE_LINE_INDEX', 'crmBy_invoiceId');
 });
 
 it('queries the indexed recent window in bounded pages and binds its cursor to the same window', async () => {
@@ -17,12 +19,12 @@ it('queries the indexed recent window in bounded pages and binds its cursor to t
   send.mockResolvedValueOnce({ Items: [{ ...key, accountId: 'account-1', interest: 12.34, postedBy: 'private-user' }], LastEvaluatedKey: key });
   const first = await dashboardInterestPage({ from, to });
   expect(first.items).toEqual([{ id: 'receipt-1', accountId: 'account-1', postedAt: from, interest: 12.34 }]);
-  expect(send.mock.calls[0][0].input).toEqual(expect.objectContaining({
-    TableName: 'payments', IndexName: 'payments-by-date', Limit: 500,
-    KeyConditionExpression: '#type = :type AND #posted BETWEEN :from AND :to',
-    ExpressionAttributeValues: { ':type': 'PfLoanPayment', ':from': from, ':to': to },
-    ProjectionExpression: '#id, #account, #posted, #interest',
-  }));
+  const query = send.mock.calls[0][0].input;
+  expect(query).toEqual(expect.objectContaining({ TableName: 'payments', IndexName: 'payments-by-date', Limit: 500 }));
+  expect(Object.values(query.ExpressionAttributeNames)).toEqual(expect.arrayContaining(['__typename', 'postedAt', 'id', 'accountId', 'interest']));
+  expect(Object.values(query.ExpressionAttributeValues)).toEqual(expect.arrayContaining(['PfLoanPayment', from, to]));
+  expect(query.KeyConditionExpression).toContain(' BETWEEN ');
+  expect(query.FilterExpression).toBeUndefined();
   send.mockResolvedValueOnce({ Items: [{ id: 'receipt-2', accountId: 'account-2', postedAt: to, interest: 4 }] });
   await dashboardInterestPage({ from, to, nextToken: first.nextToken });
   expect(send.mock.calls[1][0].input.ExclusiveStartKey).toEqual(key);
@@ -68,4 +70,30 @@ it('bounds policy batches before accessing storage', async () => {
   await expect(dashboardPolicyAnchors({ policyIds: Array.from({ length: 101 }, (_, n) => `p-${n}`) })).rejects.toThrow('100');
   expect(await dashboardPolicyAnchors({ policyIds: [] })).toEqual({ items: [], missingIds: [] });
   expect(send).not.toHaveBeenCalled();
+});
+
+it('reads legacy and multi-policy line anchors for several invoices in one indexed call', async () => {
+  send.mockResolvedValue({ Items: [
+    { id: 'line-1', invoiceId: 'invoice-a', policyId: 'policy-a', retailAmount: 500 },
+    { id: 'line-2', invoiceId: 'invoice-a', policyId: 'policy-b' },
+    { id: 'line-3', invoiceId: 'invoice-b', policyId: null },
+  ] });
+  const result = await dashboardInvoiceAnchors({ invoiceIds: ['invoice-a', 'invoice-b'] });
+  expect(result.items).toEqual([
+    { id: 'line-1', invoiceId: 'invoice-a', policyId: 'policy-a' },
+    { id: 'line-2', invoiceId: 'invoice-a', policyId: 'policy-b' },
+    { id: 'line-3', invoiceId: 'invoice-b', policyId: null },
+  ]);
+  expect(send).toHaveBeenCalledTimes(1);
+  expect(send.mock.calls[0][0].input).toEqual({
+    Statement: 'SELECT "id", "invoiceId", "policyId" FROM "invoice-lines"."crmBy_invoiceId" WHERE "invoiceId" IN [?, ?]',
+    Parameters: ['invoice-a', 'invoice-b'], Limit: 500,
+  });
+});
+
+it('rejects invoice anchors outside the requested batch or with malformed policy references', async () => {
+  send.mockResolvedValueOnce({ Items: [{ id: 'line', invoiceId: 'other-invoice', policyId: 'policy' }] });
+  await expect(dashboardInvoiceAnchors({ invoiceIds: ['invoice-a'] })).rejects.toThrow('incomplete');
+  send.mockResolvedValueOnce({ Items: [{ id: 'line', invoiceId: 'invoice-a', policyId: { invalid: true } }] });
+  await expect(dashboardInvoiceAnchors({ invoiceIds: ['invoice-a'] })).rejects.toThrow('incomplete');
 });

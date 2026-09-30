@@ -11,7 +11,8 @@ vi.mock('../lib/client', async original => ({
 }));
 vi.mock('../lib/communications', () => ({ communicationRequest: async (operation: string) => {
   if (operation === 'team') return { team: [] };
-  if (operation === 'dashboardInterestPage' || operation === 'dashboardLeadPlansPage') return { items: [] };
+  if (['dashboardInterestPage', 'dashboardLeadPlansPage', 'dashboardOpenQuotesPage', 'dashboardBoundPoliciesPage', 'dashboardQuotesPage', 'dashboardInvoiceAnchors'].includes(operation)) return { items: [] };
+  if (operation === 'dashboardQuoteStates') return { items: [], missingIds: [] };
   if (operation === 'dashboardAssignments') return { items: [], accounts: [] };
   throw new Error(`Unexpected dashboard operation: ${operation}`);
 } }));

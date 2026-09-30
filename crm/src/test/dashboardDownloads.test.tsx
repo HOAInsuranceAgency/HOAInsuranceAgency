@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 const h = vi.hoisted(() => ({ data: {} as Record<string, unknown>, save: vi.fn() }));
-vi.mock("../lib/useAsyncResource", () => ({ useAsyncResource: (_fetcher: unknown, deps: unknown[]) => ({ data: deps.length === 2 && typeof deps[0] === "string" ? { key: deps[0], snapshot: h.data, commercial: h.data.commercial } : h.data, loading: false, loaded: true, error: "", refetch: async () => {} }) }));
+vi.mock("../lib/useAsyncResource", () => ({ useAsyncResource: (_fetcher: unknown, deps: unknown[]) => ({ data: deps.length === 2 && typeof deps[0] === "string" ? { key: deps[0], snapshot: h.data, commercial: h.data.commercial, quotes: h.data.quotes } : h.data, loading: false, loaded: true, error: "", refetch: async () => {} }) }));
 
 vi.mock("../lib/lastContact", () => ({ useLastContacts: () => ({ contacts: { a1: { at: "2026-09-10T14:00:00.000Z", channel: "EMAIL", direction: "INBOUND" } }, loading: false, error: "" }) }));
 vi.mock("../lib/reportDownload", async original => ({ ...await original<typeof import("../lib/reportDownload")>(), saveReport: h.save }));

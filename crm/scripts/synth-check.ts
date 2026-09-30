@@ -185,6 +185,54 @@ try {
   if (!paymentIndexes.some(index => index.indexName === "crmBy_loanId") || !paymentIndexes.some(index => index.indexName !== "crmBy_loanId" && index.keySchema.some(key => key.attributeName === "loanId"))) throw new Error("Dashboard index must preserve existing payment relation and access indexes");
   const reportEnv = Stack.of(backend.communications.resources.lambda).resolve((backend.communications.resources.lambda.node.defaultChild as CfnFunction).environment);
   if (reportEnv.variables.DASHBOARD_PAYMENT_INDEX !== "dashboardPaymentsByDate" || !reportEnv.variables.DASHBOARD_PAYMENT_TABLE || !reportEnv.variables.DASHBOARD_POLICY_TABLE) throw new Error("Dashboard reads must use the configured payment index and policy table");
+  for (const [model, expectedIndex, hash, range] of [["Quote", "dashboardQuotesByStatus", "status", ""], ["Policy", "dashboardPoliciesByBindDate", "__typename", "datePolicyBound"]]) {
+    const table = app.node.findAll().find((node): node is CfnResource => node instanceof CfnResource && node.cfnResourceType === "Custom::AmplifyDynamoDBTable" && node.node.path.endsWith(`/${model}/${model}Table/Default/Default`));
+    if (!table) throw new Error(`Missing dashboard ${model} table`);
+    const template = Stack.of(table).resolve(table._toCloudFormation());
+    const props = Object.values(template.Resources as Record<string, { Properties: typeof paymentProperties }>)[0].Properties;
+    const index = props.globalSecondaryIndexes.find(item => item.indexName === expectedIndex);
+    if (!index || index.keySchema[0]?.attributeName !== hash || (range && index.keySchema[1]?.attributeName !== range) || !index.projection.nonKeyAttributes?.includes("accountId")) throw new Error(`Missing scoped ${model} dashboard index`);
+    if (!props.globalSecondaryIndexes.some(item => item.keySchema[0]?.attributeName === "accountId" && item.projection.projectionType === "ALL")) throw new Error(`Dashboard must preserve ${model} account relation`);
+  }
+  if (!reportEnv.variables.DASHBOARD_QUOTE_ACCOUNT_INDEX || !reportEnv.variables.DASHBOARD_INVOICE_LINE_INDEX) throw new Error("Batched dashboard joins need configured relation indexes");
+  // Inspect what will deploy, scoped to the communications execution role.
+  // CDK can emit inline Role policies, AWS::IAM::Policy, or the newer
+  // AWS::IAM::RolePolicy. Inspecting only CfnPolicy constructs misses the
+  // latter even when its Deny is present in the synthesized template.
+  type IamStatement = { Effect?: string; Action?: string | string[]; Resource?: unknown | unknown[]; Condition?: { Bool?: Record<string, unknown> } };
+  type IamDocument = { Statement?: IamStatement[] };
+  type IamResource = { Type: string; Properties?: {
+    Policies?: { PolicyDocument?: IamDocument }[];
+    PolicyDocument?: IamDocument; Roles?: unknown[]; RoleName?: unknown;
+  } };
+  const reportRole = backend.communications.resources.lambda.role!.node.defaultChild as CfnResource;
+  const reportRoleStack = Stack.of(reportRole);
+  const reportRoleId = reportRoleStack.getLogicalId(reportRole);
+  const reportTemplate = JSON.parse(readFileSync(join(outdir, reportRoleStack.templateFile), "utf8")) as { Resources: Record<string, IamResource> };
+  const reportRoleResource = reportTemplate.Resources[reportRoleId];
+  if (reportRoleResource?.Type !== "AWS::IAM::Role") throw new Error("Missing synthesized communications execution role");
+  const referencesReportRole = (value: unknown) => JSON.stringify(value) === JSON.stringify({ Ref: reportRoleId });
+  const reportDocuments = [
+    ...(reportRoleResource.Properties?.Policies ?? []).flatMap(policy => policy.PolicyDocument ? [policy.PolicyDocument] : []),
+    ...Object.values(reportTemplate.Resources).flatMap(resource => {
+      const props = resource.Properties;
+      const attached = resource.Type === "AWS::IAM::RolePolicy"
+        ? referencesReportRole(props?.RoleName)
+        : ["AWS::IAM::Policy", "AWS::IAM::ManagedPolicy"].includes(resource.Type) && props?.Roles?.some(referencesReportRole);
+      return attached && props?.PolicyDocument ? [props.PolicyDocument] : [];
+    }),
+  ];
+  const reportDenyResources = reportDocuments.flatMap(document => document.Statement ?? []).filter(statement =>
+    statement.Effect === "Deny" && [statement.Action].flat().includes("dynamodb:PartiQLSelect") &&
+    [statement.Condition?.Bool?.["dynamodb:FullTableScan"]].flat().some(value => String(value) === "true")
+  ).flatMap(statement => [statement.Resource].flat()).map(resource => JSON.stringify(resource));
+  for (const [model, index] of [["Quote", reportEnv.variables.DASHBOARD_QUOTE_ACCOUNT_INDEX], ["InvoiceLine", reportEnv.variables.DASHBOARD_INVOICE_LINE_INDEX]]) {
+    for (const indexed of [false, true]) {
+      if (!reportDenyResources.some(resource => resource?.includes(`table/${model}-`) && (indexed ? resource.includes(`/index/${index}`) : !resource.includes("/index/")))) {
+        throw new Error(`Indexed report joins must deny PartiQL full scans on the communications role: ${model}${indexed ? `/${index}` : ""}`);
+      }
+    }
+  }
   const marketingWorker = backend.marketingReportWorker.resources.lambda;
   const marketingEnv = Stack.of(marketingWorker).resolve((marketingWorker.node.defaultChild as CfnFunction).environment);
   if (Stack.of(marketingWorker) === Stack.of(backend.marketingReportApi.resources.lambda)) throw new Error("Marketing worker infrastructure must stay outside the crowded data stack");

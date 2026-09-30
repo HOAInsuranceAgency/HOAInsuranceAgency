@@ -1,9 +1,9 @@
 import { beforeEach, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { emptyCommercialPlan } from '../../../../shared/quotePackages';
 
-const h = vi.hoisted(() => ({ accounts: vi.fn(), quotes: vi.fn(), policies: vi.fn(), commercial: vi.fn(), assignments: vi.fn(), request: vi.fn(), contacts: vi.fn() }));
+const h = vi.hoisted(() => ({ accounts: vi.fn(), quotes: vi.fn(), policies: vi.fn(), commercial: vi.fn(), assignments: vi.fn(), request: vi.fn(), contacts: vi.fn(), quoteRows: [] as { id: string; accountId: string; status: string }[], selections: [] as { accountId: string; selectedQuoteIds: string[]; alternativeQuoteIds: string[] }[] }));
 vi.mock('../../lib/client', async original => ({
   ...await original<typeof import('../../lib/client')>(),
   client: { models: { Account: { listAccountByStageAndName: h.accounts }, Quote: { list: h.quotes }, Policy: { list: h.policies } } },
@@ -16,7 +16,8 @@ vi.mock('../../components/OpportunityEstimate', () => ({ OpportunityEstimate: ()
 import LeadsTab from './LeadsTab';
 
 beforeEach(() => {
-  vi.clearAllMocks();
+  vi.resetAllMocks();
+  h.quoteRows = []; h.selections = [];
   h.accounts.mockImplementation(({ stage }: { stage: string }) => Promise.resolve({ data: stage === 'LEAD' ? [
     { id: 'alice-lead', name: 'Alice account', stage: 'LEAD', createdAt: '2026-09-20T12:00:00Z' },
     { id: 'bob-lead', name: 'Bob account', stage: 'LEAD', createdAt: '2026-09-20T12:00:00Z' },
@@ -32,7 +33,14 @@ beforeEach(() => {
   ] };
   h.commercial.mockResolvedValue(commercial);
   h.assignments.mockResolvedValue(commercial);
-  h.request.mockResolvedValue({ items: [] });
+  h.request.mockImplementation(async (operation, input) => {
+    if (operation === 'dashboardLeadPlansPage') return { items: h.selections };
+    if (operation === 'dashboardOpenQuotesPage') return { items: h.quoteRows.filter(quote => quote.status === input.status) };
+    if (operation === 'dashboardBoundPoliciesPage') return { items: [] };
+    if (operation === 'dashboardQuotesPage') return { items: h.quoteRows.filter(quote => input.accountIds.includes(quote.accountId)) };
+    if (operation === 'dashboardQuoteStates') return { items: h.quoteRows.filter(quote => input.quoteIds.includes(quote.id)), missingIds: input.quoteIds.filter((id: string) => !h.quoteRows.some(quote => quote.id === id)) };
+    throw new Error(`Unexpected report operation ${operation}`);
+  });
 });
 
 it('requires a salesperson before displaying or exporting the lead work list, including Unassigned', async () => {
@@ -46,6 +54,8 @@ it('requires a salesperson before displaying or exporting the lead work list, in
   expect(within(picker).queryByRole('option', { name: 'All salespeople' })).not.toBeInTheDocument();
   expect(h.contacts).toHaveBeenLastCalledWith([]);
   expect(h.commercial).not.toHaveBeenCalled();
+  expect(h.request.mock.calls.some(([, input]) => input.details)).toBe(false);
+  expect(h.quotes).not.toHaveBeenCalled(); expect(h.policies).not.toHaveBeenCalled();
 
   fireEvent.change(picker, { target: { value: 'alice' } });
   expect(await screen.findByText('Alice account')).toBeInTheDocument();
@@ -54,6 +64,7 @@ it('requires a salesperson before displaying or exporting the lead work list, in
   expect(download).toBeEnabled();
   expect(h.contacts).toHaveBeenLastCalledWith(['alice-lead']);
   expect(h.commercial).toHaveBeenCalledExactlyOnceWith(['alice-lead']);
+  expect(h.request).toHaveBeenCalledWith('dashboardQuotesPage', { accountIds: ['alice-lead'], details: true });
 
   fireEvent.change(picker, { target: { value: 'unassigned' } });
   expect(await screen.findByText('Unassigned account')).toBeInTheDocument();
@@ -99,7 +110,7 @@ it('work list standing excludes unselected package alternatives', async () => {
     } } },
     team: [{ userId: 'alice', name: 'Alice', salesperson: true }],
   });
-  h.quotes.mockResolvedValue({ data: [{ id: 'q1', accountId: 'alice-lead', status: 'DRAFT' }, { id: 'q2', accountId: 'alice-lead', status: 'PRESENTED' }] });
+  h.quoteRows = [{ id: 'q1', accountId: 'alice-lead', status: 'DRAFT' }, { id: 'q2', accountId: 'alice-lead', status: 'PRESENTED' }];
   render(<MemoryRouter><LeadsTab /></MemoryRouter>);
   fireEvent.change(await screen.findByRole('combobox', { name: 'Salesperson' }), { target: { value: 'alice' } });
   const row = (await screen.findByText('Alice account')).closest('tr')!;
@@ -120,8 +131,8 @@ it('keeps charts available when selected work-list package details fail', async 
 
 it('includes a partially bound client whose remaining selected quote is missing', async () => {
   h.accounts.mockImplementation(({ stage }) => Promise.resolve({ data: stage === 'CLIENT' ? [{ id: 'partial', name: 'Partially bound client', stage: 'CLIENT' }] : [] }));
-  h.quotes.mockResolvedValue({ data: [{ id: 'q1', accountId: 'partial', status: 'BOUND' }] });
-  h.request.mockResolvedValue({ items: [{ accountId: 'partial', selectedQuoteIds: ['q1', 'missing'], alternativeQuoteIds: [] }] });
+  h.quoteRows = [{ id: 'q1', accountId: 'partial', status: 'BOUND' }];
+  h.selections = [{ accountId: 'partial', selectedQuoteIds: ['q1', 'missing'], alternativeQuoteIds: [] }];
   const commercial = { entries: { partial: { accountId: 'partial', salespersonId: 'alice', disposition: 'BOUND', plan: {
     ...emptyCommercialPlan('partial'), selectedOptionId: 'chosen', options: [{ id: 'chosen', name: 'Chosen', quoteIds: ['q1', 'missing'] }],
   } } }, team: [{ userId: 'alice', name: 'Alice', salesperson: true }] };
@@ -131,4 +142,43 @@ it('includes a partially bound client whose remaining selected quote is missing'
   expect(await screen.findByText('Partially bound client')).toBeInTheDocument();
   expect(h.commercial).toHaveBeenCalledExactlyOnceWith(['partial']);
   expect(screen.getByText('Selected package needs review')).toBeInTheDocument();
+});
+
+it('requires both complete plans and quote details before displaying or exporting selected work', async () => {
+  const initial = h.request.getMockImplementation()!;
+  let finish!: (value: unknown) => void;
+  h.request.mockImplementation((operation, input) => input.details ? new Promise(resolve => { finish = resolve; }) : initial(operation, input));
+  render(<MemoryRouter><LeadsTab /></MemoryRouter>);
+  fireEvent.change(await screen.findByRole('combobox', { name: 'Salesperson' }), { target: { value: 'alice' } });
+  await waitFor(() => expect(h.commercial).toHaveBeenCalledWith(['alice-lead']));
+  expect(screen.queryByText('Alice account')).not.toBeInTheDocument();
+  expect(screen.getByRole('combobox', { name: 'Download Lead work list' })).toBeDisabled();
+  expect(screen.getByRole('combobox', { name: 'Download Open leads per person' })).toBeEnabled();
+  await act(async () => finish({ items: [{ id: 'q1', accountId: 'alice-lead', status: 'DECLINED' }] }));
+  expect(await screen.findByText('Alice account')).toBeInTheDocument();
+  expect(screen.getByRole('combobox', { name: 'Download Lead work list' })).toBeEnabled();
+  expect(screen.getByText('DECLINED')).toBeInTheDocument();
+});
+
+it('rejects stale quote details after switching salespeople and blocks failed detail exports', async () => {
+  const initial = h.request.getMockImplementation()!;
+  let finishAlice!: (value: unknown) => void;
+  h.request.mockImplementation((operation, input) => input.details && input.accountIds.includes('alice-lead')
+    ? new Promise(resolve => { finishAlice = resolve; }) : initial(operation, input));
+  render(<MemoryRouter><LeadsTab /></MemoryRouter>);
+  const picker = await screen.findByRole('combobox', { name: 'Salesperson' });
+  fireEvent.change(picker, { target: { value: 'alice' } });
+  await waitFor(() => expect(finishAlice).toBeTypeOf('function'));
+  fireEvent.change(picker, { target: { value: 'bob' } });
+  expect(await screen.findByText('Bob account')).toBeInTheDocument();
+  await act(async () => finishAlice({ items: [{ id: 'q1', accountId: 'alice-lead', status: 'PRESENTED' }] }));
+  expect(screen.queryByText('Alice account')).not.toBeInTheDocument();
+  expect(screen.getByText('Bob account')).toBeInTheDocument();
+  expect(h.contacts).toHaveBeenLastCalledWith(['bob-lead']);
+  h.request.mockImplementation((operation, input) => input.details ? Promise.reject(new Error('Quote details unavailable')) : initial(operation, input));
+  fireEvent.change(picker, { target: { value: 'alice' } });
+  expect(await screen.findByRole('alert')).toHaveTextContent('Quote details unavailable');
+  expect(screen.queryByText('Alice account')).not.toBeInTheDocument();
+  expect(screen.queryByText('Bob account')).not.toBeInTheDocument();
+  expect(screen.getByRole('combobox', { name: 'Download Lead work list' })).toBeDisabled();
 });

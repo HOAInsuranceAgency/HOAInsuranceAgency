@@ -1,7 +1,7 @@
 import { ReportDownload } from "../../components/ReportDownload";
 import { acquisitionLabel, websiteFormLabel } from "../../../../shared/leadSource";
 import { loadCommercial, teammateName, type CommercialData } from '../../lib/commercial';
-import { EMPTY_LEADS_DATA, loadLeadsDashboard } from '../../lib/dashboardLeadData';
+import { EMPTY_LEADS_DATA, loadDashboardAccountQuotes, loadLeadsDashboard, type CompactQuote } from '../../lib/dashboardLeadData';
 import { unfinishedSelectedPackage } from '../../../../shared/dashboardLeadSelection';
 import { salespersonKey, salespersonSeries } from '../../lib/dashboardPeople';
 import { activeLeadQuotes, isOpenLead, leadPersonMetrics, PIPELINE_SERIES } from '../../lib/dashboardLeads';
@@ -66,7 +66,7 @@ export default function LeadsTab() {
   const salespersonSelection = people.some(person => person.key === salespersonFilter) ? salespersonFilter : '';
 
   const quotesByLead = useMemo(() => {
-    const m = new Map<string, Quote[]>();
+    const m = new Map<string, CompactQuote[]>();
     for (const q of quotes) {
       const list = m.get(q.accountId);
       if (list) list.push(q);
@@ -83,15 +83,26 @@ export default function LeadsTab() {
     ? activeLeads.filter(account => salespersonKey(account.id, commercial.entries) === salespersonSelection)
     : [], [activeLeads, commercial, salespersonSelection]);
   const worklistKey = `${asOf}:${salespersonSelection}:${selectedLeads.map(account => account.id).sort().join(',')}`;
-  const worklist = useAsyncResource<{ key: string; snapshot: typeof res.data | null; commercial: CommercialData }>(async () => ({
-    key: worklistKey,
-    snapshot: res.data,
-    commercial: salespersonSelection ? await loadCommercial(selectedLeads.map(account => account.id)) : { entries: {}, team: [] },
-  }), [worklistKey, res.data], { initialData: { key: '', snapshot: null, commercial: { entries: {}, team: [] } }, errorMessage: 'Could not load lead work details' });
+  const worklist = useAsyncResource<{ key: string; snapshot: typeof res.data | null; commercial: CommercialData; quotes: Quote[] }>(async () => {
+    if (!salespersonSelection) return { key: worklistKey, snapshot: res.data, commercial: { entries: {}, team: [] }, quotes: [] };
+    const ids = selectedLeads.map(account => account.id);
+    const [commercial, quotes] = await Promise.all([
+      loadCommercial(ids), loadDashboardAccountQuotes(ids, true),
+    ]);
+    return { key: worklistKey, snapshot: res.data, commercial, quotes };
+  }, [worklistKey, res.data], { initialData: { key: '', snapshot: null, commercial: { entries: {}, team: [] }, quotes: [] }, errorMessage: 'Could not load lead work details' });
   const worklistReady = worklist.loaded && worklist.data.key === worklistKey && worklist.data.snapshot === res.data && !worklist.error;
   const worklistLeads = useMemo(() => worklistReady ? selectedLeads.filter(account =>
     salespersonKey(account.id, worklist.data.commercial.entries) === salespersonSelection
   ) : [], [worklistReady, selectedLeads, worklist.data, salespersonSelection]);
+  const worklistQuotes = useMemo(() => {
+    const byAccount = new Map<string, Quote[]>();
+    for (const quote of worklist.data.quotes) {
+      const current = byAccount.get(quote.accountId) ?? [];
+      current.push(quote); byAccount.set(quote.accountId, current);
+    }
+    return byAccount;
+  }, [worklist.data.quotes]);
   const contactHistory = useLastContacts(worklistLeads.map(account => account.id), res.data);
   const metrics = useMemo(() => leadPersonMetrics({
     accounts: [...leads, ...clients], quotes, policies, pipelineAccounts: activeLeads,
@@ -101,7 +112,7 @@ export default function LeadsTab() {
   const rows = useMemo<LeadRow[]>(
     () =>
       worklistLeads.map((l) => {
-        const entry = worklist.data.commercial.entries[l.id], forecast = entry ? pendingCommission(entry.plan, quotesByLead.get(l.id) ?? [], today) : null;
+        const entry = worklist.data.commercial.entries[l.id], forecast = entry ? pendingCommission(entry.plan, worklistQuotes.get(l.id) ?? [], today) : null;
         return ({
         id: l.id,
         name: l.name,
@@ -110,14 +121,14 @@ export default function LeadsTab() {
         entered: l.createdAt ?? null,
         expires: l.currentPolicyExpiration ?? null,
         days: l.currentPolicyExpiration ? daysUntil(l.currentPolicyExpiration) : null,
-        standing: leadQuoteStanding(activeLeadQuotes(quotesByLead.get(l.id) ?? [], worklist.data.commercial.entries)),
+        standing: leadQuoteStanding(activeLeadQuotes(worklistQuotes.get(l.id) ?? [], worklist.data.commercial.entries)),
         tiv: l.totalInsuredValue ?? null,
         city: l.city ?? null, state: l.state ?? null, form: websiteFormLabel(l.source),
         salespersonId: entry?.salespersonId,
         salesperson: teammateName(entry?.salespersonId, worklist.data.commercial.team),
         estimate: entry?.plan.estimatedCents ?? null, pending: forecast?.cents ?? null, basis: forecast?.label ?? 'No package options', partiallyBound: l.stage === 'CLIENT',
       }); }),
-    [worklistLeads, quotesByLead, contactHistory.contacts, worklist.data, today]
+    [worklistLeads, worklistQuotes, contactHistory.contacts, worklist.data, today]
   );
 
   // Soonest incumbent expiration first: the lead about to renew with someone

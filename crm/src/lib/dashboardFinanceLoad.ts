@@ -6,6 +6,7 @@ import { hasFinancingReceivable, outstandingPrincipal } from './dashboardFinance
 export interface FinancePaymentReceipt { id: string; accountId: string; postedAt: string; interest: number | null }
 export interface FinancePolicyAnchor { id: string; accountId: string; quoteId?: string | null }
 export interface FinanceLineAnchor { invoiceId: string; policyId?: string | null }
+interface FinanceLineReceipt extends FinanceLineAnchor { id: string }
 
 /** The read window is fixed before the first page. Refresh starts a new
  * snapshot; later pages cannot move its boundary or repeat its receipts. */
@@ -50,6 +51,34 @@ export async function loadFinancePolicyAnchors(ids: readonly string[]): Promise<
   return pages.flat();
 }
 
+/** Several invoice partitions travel in one indexed report request. Complete
+ * every page before using an absent line as evidence that debt is unbilled. */
+export async function loadFinanceInvoiceAnchors(ids: readonly string[]): Promise<FinanceLineAnchor[]> {
+  const unique = [...new Set(ids)].sort(), batches: string[][] = [];
+  for (let offset = 0; offset < unique.length; offset += 25) batches.push(unique.slice(offset, offset + 25));
+  const pages = await mapLimited(batches, async invoiceIds => {
+    const found = new Map<string, FinanceLineReceipt>(), tokens = new Set<string>(), requested = new Set(invoiceIds);
+    let nextToken: string | undefined;
+    do {
+      const page = await communicationRequest<{ items: FinanceLineReceipt[]; nextToken?: string }>(
+        'dashboardInvoiceAnchors', { invoiceIds, ...(nextToken ? { nextToken } : {}) },
+      );
+      if (!Array.isArray(page.items)) throw new Error('Invoice anchors are incomplete; refresh to try again');
+      for (const item of page.items) {
+        if (typeof item.id !== 'string' || !item.id || !requested.has(item.invoiceId)) throw new Error('Invoice anchors are incomplete; refresh to try again');
+        found.set(item.id, item);
+      }
+      nextToken = page.nextToken;
+      if (nextToken) {
+        if (tokens.has(nextToken)) throw new Error('Invoice anchor pages did not advance; refresh to try again');
+        tokens.add(nextToken);
+      }
+    } while (nextToken);
+    return [...found.values()].map(({ invoiceId, policyId }) => ({ invoiceId, policyId }));
+  });
+  return pages.flat();
+}
+
 /** Retain the existing invoice/loan snapshot, but read growing ledgers and
  * relations only for this report: recent receipts, open-bill line anchors,
  * referenced policies, and assignments for accounts represented here. */
@@ -67,9 +96,7 @@ export async function loadFinanceDashboard() {
   const overlapInvoices = invoices.filter(invoice =>
     (invoice.status === 'SENT' || invoice.status === 'PROCESSING') && loanAccounts.has(invoice.accountId));
   const [invoiceLines, commercial] = await Promise.all([
-    mapLimited(overlapInvoices, async invoice =>
-      (await listAllPages(nextToken => invoice.lines({ nextToken }))).map(line => ({ invoiceId: line.invoiceId, policyId: line.policyId })),
-    ).then(pages => pages.flat()),
+    loadFinanceInvoiceAnchors(overlapInvoices.map(invoice => invoice.id)),
     loadAssignments([...new Set([...invoices, ...outstanding, ...payments].map(record => record.accountId))]),
   ]);
   const overlapAccounts = new Set(overlapInvoices.map(invoice => invoice.accountId));

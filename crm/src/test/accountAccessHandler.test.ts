@@ -7,7 +7,7 @@ vi.mock("@aws-sdk/s3-request-presigner", () => ({ getSignedUrl: h.sign }));
 import { handler } from "../../amplify/functions/crm-access/handler";
 import { ACCOUNT_MODELS, RETIRED_MODELS, LIST_PARENTS, type RecordData } from "../../amplify/functions/crm-access/policy";
 const identity = { sub: "alice" };
-it.each(['dashboardAssignments', 'dashboardInterestPage', 'dashboardPolicyAnchors', 'dashboardLeadPlansPage'])('keeps %s admin-only at the custom resolver boundary', async readOperation => {
+it.each(['dashboardAssignments', 'dashboardInterestPage', 'dashboardPolicyAnchors', 'dashboardLeadPlansPage', 'dashboardOpenQuotesPage', 'dashboardBoundPoliciesPage', 'dashboardQuotesPage', 'dashboardQuoteStates', 'dashboardInvoiceAnchors'])('keeps %s admin-only at the custom resolver boundary', async readOperation => {
   await expect(handler({ mode: 'custom-pre', field: 'communicationRead', identity, arguments: { readOperation, input: '{}' } })).rejects.toThrow();
   await expect(handler({ mode: 'custom-pre', field: 'communicationRead', identity: { sub: 'admin', groups: ['ADMIN'] }, arguments: { readOperation, input: '{}' } })).resolves.toBeUndefined();
 });

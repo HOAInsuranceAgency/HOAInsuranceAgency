@@ -12,7 +12,7 @@ vi.mock('./client', async () => ({
 }));
 vi.mock('./communications', () => ({ communicationRequest: h.request }));
 vi.mock('./dashboardAssignments', () => ({ loadAssignments: h.assignments }));
-import { loadFinanceDashboard, loadFinancePolicyAnchors, loadRecentFinanceInterest } from './dashboardFinanceLoad';
+import { loadFinanceDashboard, loadFinancePolicyAnchors, loadFinanceInvoiceAnchors, loadRecentFinanceInterest } from './dashboardFinanceLoad';
 
 beforeEach(() => {
   for (const mock of Object.values(h)) mock.mockReset();
@@ -41,9 +41,8 @@ it('fails a broken/repeating page instead of showing partial income', async () =
   await expect(loadRecentFinanceInterest(new Date())).rejects.toThrow('Read failed');
 });
 
-it('reads line relations only for open invoices on outstanding-loan accounts and fetches referenced policy anchors', async () => {
-  const relatedLines = vi.fn().mockResolvedValueOnce({ data: [{ invoiceId: 'relevant', policyId: 'line-policy' }], nextToken: 'lines-2' })
-    .mockResolvedValueOnce({ data: [{ invoiceId: 'relevant', policyId: 'line-policy-2' }] });
+it('reads batched line anchors only for open invoices on outstanding-loan accounts and fetches referenced policy anchors', async () => {
+  const relatedLines = vi.fn().mockRejectedValue(new Error('Per-invoice relation reads are forbidden'));
   const unrelatedLines = vi.fn().mockRejectedValue(new Error('Unrelated lines must not load'));
   h.invoiceList.mockResolvedValue({ data: [
     { id: 'relevant', accountId: 'a', policyId: 'invoice-policy', status: 'SENT', lines: relatedLines },
@@ -54,12 +53,20 @@ it('reads line relations only for open invoices on outstanding-loan accounts and
     { id: 'live', accountId: 'a', policyId: 'loan-policy', status: 'ACTIVE', balance: 100 },
     { id: 'offer', accountId: 'c', policyId: 'offer-policy', status: 'QUOTED', balance: 100 },
   ] });
-  h.request.mockImplementation(async (operation, input) => operation === 'dashboardInterestPage'
-    ? { items: [{ id: 'orphan-receipt', accountId: 'd', interest: 7, postedAt: input.to }] }
-    : { items: input.policyIds.map((id: string) => ({ id, accountId: 'a', quoteId: `quote-${id}` })), missingIds: [] });
+  h.request.mockImplementation(async (operation, input) => {
+    if (operation === 'dashboardInterestPage') return { items: [{ id: 'orphan-receipt', accountId: 'd', interest: 7, postedAt: input.to }] };
+    if (operation === 'dashboardInvoiceAnchors') return input.nextToken
+      ? { items: [{ id: 'line-2', invoiceId: 'relevant', policyId: 'line-policy-2' }] }
+      : { items: [{ id: 'line-1', invoiceId: 'relevant', policyId: 'line-policy' }], nextToken: 'lines-2' };
+    return { items: input.policyIds.map((id: string) => ({ id, accountId: 'a', quoteId: `quote-${id}` })), missingIds: [] };
+  });
   h.assignments.mockResolvedValue({ entries: {}, team: [], accounts: [{ id: 'a', name: 'Account A' }] });
   const result = await loadFinanceDashboard();
-  expect(relatedLines.mock.calls).toEqual([[{ nextToken: undefined }], [{ nextToken: 'lines-2' }]]);
+  expect(relatedLines).not.toHaveBeenCalled();
+  expect(h.request.mock.calls.filter(([operation]) => operation === 'dashboardInvoiceAnchors')).toEqual([
+    ['dashboardInvoiceAnchors', { invoiceIds: ['relevant'] }],
+    ['dashboardInvoiceAnchors', { invoiceIds: ['relevant'], nextToken: 'lines-2' }],
+  ]);
   expect(unrelatedLines).not.toHaveBeenCalled();
   expect(h.request.mock.calls.find(([operation]) => operation === 'dashboardPolicyAnchors')?.[1].policyIds)
     .toEqual(['loan-policy', 'invoice-policy', 'line-policy', 'line-policy-2']);
@@ -80,4 +87,30 @@ it('deduplicates and bounds policy batches without dropping later pages', async 
   expect(h.request.mock.calls.map(([, input]) => input.policyIds.length)).toEqual([100, 100, 51]);
   h.request.mockResolvedValue({ items: [], missingIds: [] });
   await expect(loadFinancePolicyAnchors(['p'])).rejects.toThrow('incomplete');
+});
+
+it('loads a large invoice set in batches rather than one request per invoice', async () => {
+  h.request.mockImplementation(async (_operation, input) => ({
+    items: input.invoiceIds.map((invoiceId: string) => ({ id: `line-${invoiceId}`, invoiceId, policyId: `policy-${invoiceId}` })),
+  }));
+  const ids = Array.from({ length: 251 }, (_, n) => `invoice-${n}`);
+  const result = await loadFinanceInvoiceAnchors([...ids, ids[0]]);
+  expect(result).toHaveLength(251);
+  expect(new Set(result.map(line => line.invoiceId))).toEqual(new Set(ids));
+  expect(h.request).toHaveBeenCalledTimes(11);
+  expect(h.request.mock.calls.map(([, input]) => input.invoiceIds.length)).toEqual([...Array(10).fill(25), 1]);
+  expect(h.request.mock.calls.every(([operation]) => operation === 'dashboardInvoiceAnchors')).toBe(true);
+  expect(h.forbidden).not.toHaveBeenCalled();
+});
+
+it('requires every invoice-anchor page to complete before reporting absence', async () => {
+  const line = { id: 'line', invoiceId: 'invoice', policyId: 'policy' };
+  h.request.mockResolvedValueOnce({ items: [line], nextToken: 'page-2' }).mockRejectedValueOnce(new Error('Page unavailable'));
+  await expect(loadFinanceInvoiceAnchors(['invoice'])).rejects.toThrow('Page unavailable');
+  h.request.mockReset().mockResolvedValue({ items: [], nextToken: 'same-page' });
+  await expect(loadFinanceInvoiceAnchors(['invoice'])).rejects.toThrow('did not advance');
+  h.request.mockReset().mockResolvedValue({ items: [{ ...line, invoiceId: 'other-invoice' }] });
+  await expect(loadFinanceInvoiceAnchors(['invoice'])).rejects.toThrow('incomplete');
+  h.request.mockReset().mockResolvedValueOnce({ items: [line], nextToken: 'page-2' }).mockResolvedValueOnce({ items: [line] });
+  expect(await loadFinanceInvoiceAnchors(['invoice'])).toEqual([{ invoiceId: 'invoice', policyId: 'policy' }]);
 });
