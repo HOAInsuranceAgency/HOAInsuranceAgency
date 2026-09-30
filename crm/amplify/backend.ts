@@ -1,4 +1,5 @@
 import { installAccountAccess } from "./account-access";
+import { installDashboardReads } from "./dashboard-reports";
 import { crmAccess } from "./functions/crm-access/resource";
 import { Alarm, TreatMissingData, Metric, ComparisonOperator } from "aws-cdk-lib/aws-cloudwatch";
 import { SnsAction } from "aws-cdk-lib/aws-cloudwatch-actions";
@@ -949,3 +950,4 @@ backend.extractLead.resources.lambda.grantInvoke(
 );
 
 installAccountAccess(backend, communicationTable);
+installDashboardReads(backend);

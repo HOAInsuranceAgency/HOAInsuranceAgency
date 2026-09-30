@@ -4,25 +4,11 @@ import {
   resolveDashboardTab,
   type DashboardTab,
 } from "./dashboard/tabs";
-import OverviewTab from "./dashboard/OverviewTab";
 import LeadsTab from "./dashboard/LeadsTab";
 import FinanceTab from "./dashboard/FinanceTab";
-import RenewalsTab from "./dashboard/RenewalsTab";
-import ReportingTab from "./dashboard/ReportingTab";
+import PerformanceTab from "./dashboard/PerformanceTab";
 
-/**
- * The dashboard is a tab strip over five workspaces, each answering one
- * question: Overview "is anything wrong?", Leads "who's in the pipeline?",
- * Finance "where is the money?", Renewals "what expires and is it being
- * worked?", Reporting "how is the book doing?". Per-tab components live in
- * `pages/dashboard/`, the same convention as `pages/account/*Tab.tsx`.
- *
- * Each tab owns its own read. The single page this replaces pulled eight
- * tables in one fail-fast Promise.all, so one bad query blanked every number
- * on screen — the documented trade of that design. Splitting the read along
- * the tab seams dissolves it: a failure blanks one tab, the strip stays
- * navigable, and a visit fetches only the slices the open tab needs.
- */
+/** Each view loads its own snapshot; a failed read leaves navigation usable. */
 export default function Dashboard() {
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -30,7 +16,7 @@ export default function Dashboard() {
    * Derived from the URL, not stored. Seeding state from `?tab=` once (the
    * first draft here did) desyncs the moment the URL changes without a
    * remount — the sidebar's "Dashboard" link navigates to "/" while this
-   * route stays mounted, so the address bar would say Overview over a pane
+   * route stays mounted, so the address bar would say Dashboard over a pane
    * still showing Finance, and the copied link would lie. One source of
    * truth, no second copy to correct.
    */
@@ -51,17 +37,17 @@ export default function Dashboard() {
   return (
     <>
       <h1>Dashboard</h1>
-      <p className="sub">Agency command center</p>
+      <p className="sub">Sales performance, pipeline, and receivables</p>
 
       {/* One control, two renderings: the strip on desktop, a native select
-          on phones — five buttons wrap into a ragged two-row strip under
-          800px, and the OS picker beats any custom dropdown there. CSS does
+          on phones. CSS does
           the swap, so both stay wired to the same selectTab. */}
       <div className="tabs dash-tabs">
         {DASHBOARD_TABS.map(([t, label]) => (
           <button
             key={t}
             className={tab === t ? "active" : ""}
+            aria-pressed={tab === t}
             onClick={() => selectTab(t)}
           >
             {label}
@@ -82,11 +68,9 @@ export default function Dashboard() {
         </select>
       </div>
 
-      {tab === "overview" && <OverviewTab />}
+      {tab === "dashboard" && <PerformanceTab />}
       {tab === "leads" && <LeadsTab />}
       {tab === "finance" && <FinanceTab />}
-      {tab === "renewals" && <RenewalsTab />}
-      {tab === "reporting" && <ReportingTab />}
     </>
   );
 }
