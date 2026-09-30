@@ -34,6 +34,24 @@ corporate accounting receives their breakdown on settlement. An already-processi
 legacy debit is reconciled at its actual amount without adding a second debit or
 claiming an uncollected fee was received. Existing amortization remains unchanged.
 
+## Producer financing workspace
+
+The Financing page is a state availability lookup: search a state name or
+two-letter code, then filter Available or Unavailable. Labels reflect the
+origination gate and current counsel opinions, rather than the configured
+status alone. Opinion reads use the existing jurisdiction index, project only
+dates and identifiers for producers, and complete every page before confirming
+conditional availability. Pending or failed checks remain visibly unconfirmed
+and can be retried.
+
+Producers do not see regulatory explanations, legal notes, rate ceilings, or
+configuration hashes. Only deal requirements that affect availability remain
+visible, such as minimum financed amount and incorporated-association status.
+The invoice still confirms eligibility for the specific policy. Administrators
+can expand Administration to record opinions and inspect the regulatory
+reference; both sections start closed. Origination and servicing rules are
+unchanged.
+
 ## What this is
 
 HOA Insurance Agency LLC lends to its own clients so they can pay association
