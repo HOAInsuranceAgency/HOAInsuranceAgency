@@ -13,6 +13,7 @@ import { Badge, statusBadge, ACCOUNT_STAGE_BADGE } from "../lib/badges";
 import DocumentsPanel from "../components/DocumentsPanel";
 import QuotesPanel from "../components/QuotesPanel";
 import PropertyPanel from "../components/PropertyPanel";
+import PropertyCoveragePanel from "../components/PropertyCoveragePanel";
 import ContactsCard from "../components/ContactsCard";
 import FormsTab from "../components/FormsTab";
 import ExtractionPanel from "../components/ExtractionPanel";
@@ -30,6 +31,7 @@ import { CertificatesTab } from "./account/CertificatesTab";
 
 type Tab =
   | "overview"
+  | "property"
   | "priorcarrier"
   | "losses"
   | "submissions"
@@ -43,6 +45,7 @@ type Tab =
 
 const VALID_TABS: Tab[] = [
   "overview",
+  "property",
   "priorcarrier",
   "losses",
   "submissions",
@@ -97,6 +100,7 @@ export function tabsFor(stage: string | null | undefined): [Tab, string][] {
   const isLead = stage !== "CLIENT";
   return [
     ["overview", "Overview"],
+    ["property", "Property & coverage"],
     ...(isLead ? ([["priorcarrier", "Prior coverage"]] as [Tab, string][]) : []),
     // Not lead-only: loss history follows the account, and a renewal
     // submission declares the same losses a new-business one did.
@@ -247,13 +251,14 @@ export default function AccountDetail({ profile }: { profile: UserProfile }) {
 
       {activeTab === "overview" && (
         <>
-          <OverviewTab account={account} onChange={setAccount} />
+          <OverviewTab key={account.id} account={account} onChange={setAccount} />
           <div id="contacts"><ContactsCard accountId={account.id} /></div>
           <div id="lead-workspace"><LeadWorkflowPanel key={account.id} accountId={account.id} /></div>
-          <PropertyPanel account={account} onChange={setAccount} />
+          <PropertyPanel key={account.id} account={account} onChange={setAccount} />
           {account.stage === "LEAD" && <DeleteLeadZone account={account} />}
         </>
       )}
+      {activeTab === "property" && <PropertyCoveragePanel key={account.id} accountId={account.id} />}
       {activeTab === "submissions" && <SubmissionsPanel key={account.id} account={account} initialEstimateId={searchParams.get("estimate") ?? undefined} />}
       {activeTab === "quotes" && (
         <>

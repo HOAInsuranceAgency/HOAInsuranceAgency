@@ -23,6 +23,7 @@ describe("tabsFor", () => {
     // lead. Policies still wait for the bind that makes them true.
     expect(tabsFor("LEAD").map(([t]) => t)).toEqual([
       "overview",
+      "property",
       "priorcarrier",
       "losses",
       "submissions",
@@ -38,6 +39,7 @@ describe("tabsFor", () => {
   it("gives a client Policies and Invoices, and not Prior coverage", () => {
     expect(tabsFor("CLIENT").map(([t]) => t)).toEqual([
       "overview",
+      "property",
       "losses",
       "submissions",
       "quotes",
@@ -76,6 +78,17 @@ describe("tabsFor", () => {
     // bind — so the fallback only hides what cannot exist: policies.
     expect(tabsFor(null).map(([t]) => t)).toContain("invoices");
     expect(tabsFor(null).map(([t]) => t)).not.toContain("policies");
+  });
+});
+
+describe("the property and coverage tab", () => {
+  it("keeps underwriting schedules beside Overview for leads and clients", () => {
+    for (const stage of ["LEAD", "CLIENT", null]) {
+      expect(tabsFor(stage).slice(0, 2)).toEqual([
+        ["overview", "Overview"], ["property", "Property & coverage"],
+      ]);
+      expect(resolveTab("property", stage)).toBe("property");
+    }
   });
 });
 
@@ -147,6 +160,7 @@ describe("resolveTab", () => {
     for (const stage of ["LEAD", "CLIENT"]) {
       for (const t of [
         "overview",
+        "property",
         "losses",
         "submissions",
         "quotes",
