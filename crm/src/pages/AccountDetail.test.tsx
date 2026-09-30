@@ -211,7 +211,7 @@ describe("the tab in the URL", () => {
 
     // One writer, and it does write.
     expect(src).toMatch(/function selectTab\(/);
-    expect(src).toMatch(/setSearchParams\(/);
+    expect(src).toMatch(/navigate\(\{ search:.*hash: "" \}, \{ replace: true \}\)/);
     // The tab is DERIVED from searchParams now — there is no state setter at
     // all, which is the strongest form of the invariant: a tab change that
     // skips the URL has nothing left to call. (Stored state seeded from the

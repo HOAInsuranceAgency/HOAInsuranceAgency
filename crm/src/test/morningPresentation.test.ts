@@ -25,6 +25,20 @@ describe("simple, accurate morning guidance", () => {
     expect(workLink(task({ milestone: true })).path).toBe("/accounts/a?tab=quotes#carrier-work");
     expect(workLink(task({ kind: "DOCUMENTS" })).path).toBe("/accounts/a?tab=documents");
   });
+  it("opens generic account work and blockers in Activity while contact corrections stay on Overview", () => {
+    expect(workLink(task({ kind: "FIRST_CONTACT", accountId: "a/b" }))).toEqual({
+      path: "/accounts/a%2Fb?tab=activity#lead-workspace", label: "Open Activity",
+    });
+    expect(workLink(task({ blocker: { reason: "Need client approval", ownerId: "owner", reviewAt: now, recordedAt: now, recordedBy: "owner" } }))).toEqual({
+      path: "/accounts/a?tab=activity#lead-workspace", label: "Review blocker",
+    });
+    expect(workLink(task({ kind: "CORRECTION" }))).toEqual({
+      path: "/accounts/a?tab=overview#contacts", label: "Check contact details",
+    });
+    expect(workLink(task({ kind: "RESPONSE", conversationId: "cnv_123" }))).toEqual({
+      path: "https://app.frontapp.com/open/cnv_123", label: "Open conversation",
+    });
+  });
   it("ignores legacy manager assistance and escalation flags in guidance", () => {
     const old = { ...task({ kind: "RESPONSE" }), helperId: "old-manager", helperReason: "MANAGER_COVER" as const, escalatedAt: now };
     expect(leadActionGuidance(old, [], true, now)).toEqual(leadActionGuidance(task({ kind: "RESPONSE" }), [], false, now));

@@ -7,18 +7,19 @@ import {
   type Activity,
 } from "../../lib/client";
 import { useAsyncResource } from "../../lib/useAsyncResource";
+import LeadWorkflowPanel from "../../components/LeadWorkflowPanel";
 import {
   fieldLabel,
   type FieldChange,
 } from "../../../amplify/functions/activity-log/diff";
 
 /**
- * Every change made to this account, newest first.
+ * Account-change history, newest first, below the communication workspace.
  *
  * Read-only by construction, not by convention: the `Activity` model grants a
  * signed-in user `read` and nothing else, and the rows are written by the
- * stream handler as an IAM principal. There is no "add" here because there is
- * no client path that could write one.
+ * stream handler as an IAM principal. Notes added in the communication
+ * workspace are separate records; they do not write audit rows directly.
  *
  * ## What the timeline can and cannot tell you
  *
@@ -74,6 +75,15 @@ const needsName = (r: Activity) => !!r.actor && USER_ID.test(r.actor) &&
   (!r.actorName || r.actorName === r.actor || r.actorName === "Unknown user");
 
 export function ActivityTab({ accountId }: { accountId: string }) {
+  return (
+    <>
+      <div id="lead-workspace"><LeadWorkflowPanel key={accountId} accountId={accountId} /></div>
+      <AccountChanges key={accountId} accountId={accountId} />
+    </>
+  );
+}
+
+function AccountChanges({ accountId }: { accountId: string }) {
   const res = useAsyncResource(
     () =>
       listAllPages((nextToken) =>
@@ -131,7 +141,7 @@ export function ActivityTab({ accountId }: { accountId: string }) {
   return (
     <div className="card">
       <h2>
-        Activity{" "}
+        Account changes{" "}
         {res.loaded && !res.error && (
           <span className="muted small" style={{ fontWeight: 400 }}>
             — {rows.length} change{rows.length === 1 ? "" : "s"}
@@ -139,10 +149,7 @@ export function ActivityTab({ accountId }: { accountId: string }) {
         )}
       </h2>
       <p className="muted small">
-        Every write to this account and everything under it, captured from the
-        database rather than from the screens. Deletions are recorded as
-        System: a delete carries only an id, so there is nothing on it to say
-        who pressed the button.
+        Changes to this account and its related records.
       </p>
 
       {!res.loaded ? (
