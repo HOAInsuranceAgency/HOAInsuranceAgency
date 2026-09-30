@@ -82,6 +82,18 @@ describe("weekly marketing report truth and template contract", () => {
     expect(row["Lead Age (Days)"]).toBe(27);
   });
 
+  it("ignores retired tasks when reporting current status, holds and outstanding documents", () => {
+    const current = { communications: [comm("reply", "INBOUND", "2026-09-25T12:00:00Z")] };
+    const withoutTasks = values(current);
+    const withTasks = values({ ...current, tasks: [
+      { id: "held", accountId: "a", status: "OPEN", kind: "DOCUMENTS", title: "Missing documents", createdAt: "2026-09-01", dueAt: "2026-09-02", blocker: { state: "BLOCKED", reason: "Old blocker" } },
+      { id: "overdue", accountId: "a", status: "OPEN", kind: "FIRST_CONTACT", createdAt: "2026-09-01", dueAt: "2026-09-02" },
+    ] });
+    expect(withTasks).toEqual(withoutTasks);
+    expect(withTasks["Docs Outstanding"]).toBe("Not recorded");
+    expect(withTasks["Hold Reason"]).toBe("Not recorded");
+  });
+
   it("does not turn the untagged organic-website default into verified organic search", () => {
     const row = values({ accounts: [{ id: "a", stage: "LEAD", leadSource: "ORGANIC_WEBSITE", source: "website-quote" }] });
     expect(row.Channel).toBe("Not recorded");

@@ -52,7 +52,7 @@ export function AppetiteGuides({ carrierId }: { carrierId: string }) {
           <h2 style={{ margin: 0 }}>Appetite guides</h2>
           <p className="muted small" style={{ margin: "4px 0 0" }}>
             What this carrier will look at. Drives the Appetite Finder and the
-            daily renewal marketing sweep.
+            carrier submission workflow.
           </p>
         </div>
         <div className="grow" />

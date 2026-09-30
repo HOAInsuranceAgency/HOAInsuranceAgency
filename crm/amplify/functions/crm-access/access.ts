@@ -1,6 +1,7 @@
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, GetCommand, BatchGetCommand } from "@aws-sdk/lib-dynamodb";
-import { ACCOUNT_MODELS, ACCOUNT_REFERENCES, LIST_PARENTS, SHARED_MODELS, AccessDenied, id, object, type Identity, type RecordData } from "./policy";
+import { ACCOUNT_MODELS, ACCOUNT_REFERENCES, LIST_PARENTS, SHARED_MODELS, RETIRED_MODELS, AccessDenied, id, object, type Identity, type RecordData } from "./policy";
+import { isActiveAdmin, type RoleRequest } from "./active-role";
 export const db = DynamoDBDocumentClient.from(new DynamoDBClient());
 export function tableName(model: string) {
   const tables = JSON.parse(process.env.ACCESS_TABLES ?? "{}") as Record<string, string>;
@@ -30,10 +31,9 @@ export class AccountAccess {
   readonly actor: string;
   readonly admin: boolean;
   private readonly records = new Map<string, Promise<RecordData | undefined>>();
-  constructor(identity: Identity | undefined, private readonly reader: Reader = read) {
+  constructor(identity: Identity | undefined, private readonly reader: Reader = read, request?: RoleRequest) {
     this.actor = id(identity?.sub); if (!this.actor) throw new AccessDenied();
-    const groups = identity?.groups ?? identity?.claims?.["cognito:groups"];
-    this.admin = Array.isArray(groups) && groups.includes("ADMIN");
+    this.admin = isActiveAdmin(identity, request);
   }
   get(model: string, key: string) {
     if (!key) return Promise.resolve(undefined);
@@ -115,6 +115,7 @@ export class AccountAccess {
     return id(value.accountId);
   }
   async canRecord(model: string, value: RecordData) {
+    if (RETIRED_MODELS.includes(model)) return false;
     if (this.admin) return true;
     try { const root = await this.root(model, value); return root === null || await this.canAccount(root); }
     catch (error) { if (error instanceof AccessDenied) return false; throw error; }
@@ -125,6 +126,7 @@ export class AccountAccess {
     return value;
   }
   async write(model: string, operation: string, input: RecordData) {
+    if (RETIRED_MODELS.includes(model)) throw new AccessDenied();
     if (this.admin) return;
     const key = id(["GlApplication", "DoApplication"].includes(model) ? input.accountId : input.id);
     const old = key ? await this.get(model, key) : undefined;

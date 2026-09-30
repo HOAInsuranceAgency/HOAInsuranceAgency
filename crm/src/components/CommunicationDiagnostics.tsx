@@ -1,17 +1,16 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { DeliveryReview, ReviewAction } from "./CommunicationReview";
-import { WorkPagination } from "./LeadWorkExtras";
+import { WorkPagination } from "./WorkPagination";
 import { useWorkItems } from "../lib/communicationWork";
 import { fmtDateTime } from "../lib/client";
-import ReportDeliveryReview from "./ReportDeliveryReview";
 
 const queues = { ISSUE: "Connection issues", OPERATION: "Delivery queue", EVENT: "Event processing" };
 export default function CommunicationDiagnostics() {
   const [kind, setKind] = useState<keyof typeof queues>("ISSUE");
   const work = useWorkItems(kind);
   return <section aria-label="Communication troubleshooting">
-    <p className="muted small">Administrator tools for reviewing connection problems and queued activity. Lead follow-up stays on the staff work list.</p>
+    <p className="muted small">Administrator tools for reviewing connection problems and queued activity.</p>
     <div className="toolbar"><label className="field">Queue<select value={kind} onChange={e => setKind(e.target.value as keyof typeof queues)}>{Object.entries(queues).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
       <button className="secondary" disabled={work.loading} onClick={() => void work.refresh()}>Refresh queue</button></div>
     {work.error && <p role="alert" className="error-text">{work.error}</p>}
@@ -21,6 +20,5 @@ export default function CommunicationDiagnostics() {
       <td>{kind === "OPERATION" ? <DeliveryReview item={item} onSaved={() => void work.refresh()} /> : <ReviewAction id={item.id} version={item.version} event={kind === "EVENT"} onSaved={() => void work.refresh()} />}</td>
     </tr>)}</tbody></table></div>}
     <WorkPagination work={work} />
-    <details><summary>Morning report delivery</summary><ReportDeliveryReview /></details>
   </section>;
 }

@@ -1,5 +1,7 @@
 # Simplified lead follow-up
 
+**Historical design:** tasks, Lead Follow-up and daily staff reports are retired in the current implementation, pending staging review. See [CRM task retirement](CRM-TASK-RETIREMENT.md) for current behavior.
+
 September 10, 2026 · staging change `44c916a`.
 
 ## For staff

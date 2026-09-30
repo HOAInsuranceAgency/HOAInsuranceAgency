@@ -15,11 +15,6 @@ export async function connectionChecks() {
       if (!confirmed) throw new Error("Connect and confirm the operations recipient for the independent alert topic");
     }],
     ["Default responsibilities", async () => { const sales = c.defaultSalespersonId ?? c.defaultUserId; if (!sales) throw new Error("Choose a default salesperson"); await validRole(sales, "SALESPERSON"); }],
-    ["Team reports", async () => {
-      const r = await (await import("./routing")).routing(), members = await (await import("./workflow")).team();
-      (await import("../../../../shared/workRouting")).validateCompleteRouting(r, members);
-      await (await import("./reports")).verifyReportChannel(r.reportChannelId!);
-    }],
     ["Front company", async () => { if (!c.frontCompanyId) throw new Error("Enter the Front company ID"); const me = await front<{ id: string }>("/me"); if (me.id !== c.frontCompanyId) throw new Error("Front company does not match settings"); }],
     ["Front sales channel", async () => { await verifyEmailChannel(); }],
     ["Front inbox access", async () => { for (const id of [c.frontInboxId, ...c.allowedInboxIds]) { if (!id) throw new Error("Choose the sales inbox"); await front(`/inboxes/${id}`); } }],

@@ -1,14 +1,17 @@
 import { installAccountAccess } from "./account-access";
+import { modelIndex } from "./model-index";
+import { installDashboardReads } from "./dashboard-reports";
 import { crmAccess } from "./functions/crm-access/resource";
 import { Alarm, TreatMissingData, Metric, ComparisonOperator } from "aws-cdk-lib/aws-cloudwatch";
 import { SnsAction } from "aws-cdk-lib/aws-cloudwatch-actions";
 import { Topic } from "aws-cdk-lib/aws-sns";
 import { defineBackend } from "@aws-amplify/backend";
 import { CfnWebACL, CfnWebACLAssociation } from "aws-cdk-lib/aws-wafv2";
-import { ArnFormat, Duration, Names, Stack, TimeZone } from "aws-cdk-lib";
+import { ArnFormat, CustomResource, Duration, Names, Stack, TimeZone } from "aws-cdk-lib";
+import { Provider } from "aws-cdk-lib/custom-resources";
 import { Schedule, ScheduleExpression, ScheduleTargetInput, ContextAttribute } from "aws-cdk-lib/aws-scheduler";
 import { LambdaInvoke } from "aws-cdk-lib/aws-scheduler-targets";
-import { PolicyStatement } from "aws-cdk-lib/aws-iam";
+import { Policy, PolicyStatement } from "aws-cdk-lib/aws-iam";
 import { Secret } from "aws-cdk-lib/aws-secretsmanager";
 import {
   AttributeType,
@@ -30,14 +33,11 @@ import { processDocument } from "./functions/process-document/resource";
 import { honeycombWorker, honeycombStatus, honeycombSubmissions, honeycombSubmissionWorker } from "./functions/honeycomb/resource";
 import { leadIntake } from "./functions/lead-intake/resource";
 import { teamAdmin } from "./functions/team-admin/resource";
+import { migrateProducerLicenses } from "./functions/migrate-producer-licenses/resource";
 import { extractLead } from "./functions/extract-lead/resource";
 import { formFiller } from "./functions/form-filler/resource";
 import { certNumber } from "./functions/cert-number/resource";
 import { invoiceNumber } from "./functions/invoice-number/resource";
-import { renewalTasks } from "./functions/renewal-tasks/resource";
-import { licenseAlerts } from "./functions/license-alerts/resource";
-import { taskDigest } from "./functions/task-digest/resource";
-import { opsRollup } from "./functions/ops-rollup/resource";
 import { leadUpload } from "./functions/lead-upload/resource";
 import { leadReply } from "./functions/lead-reply/resource";
 import { uploadPortal } from "./functions/upload-portal/resource";
@@ -54,7 +54,7 @@ import { pfElection } from "./functions/pf-election/resource";
 import { pfAutopay } from "./functions/pf-autopay/resource";
 import { resolveMailbox } from "./functions/mailbox";
 import { activityLog } from "./functions/activity-log/resource";
-import { assignmentIndexWorker, communications, communicationWorker, communicationWebhook, communicationReports, communicationMonitor } from "./functions/communications/resource";
+import { assignmentIndexWorker, communications, communicationWorker, communicationWebhook, communicationMonitor } from "./functions/communications/resource";
 import { marketingReportApi, marketingReportWorker } from "./functions/marketing-report/resource";
 import {
   magicLinkDefine,
@@ -78,14 +78,11 @@ export const backend = defineBackend({
   honeycombSubmissions,
   honeycombSubmissionWorker,
   teamAdmin,
+  migrateProducerLicenses,
   extractLead,
   formFiller,
   certNumber,
   invoiceNumber,
-  renewalTasks,
-  licenseAlerts,
-  taskDigest,
-  opsRollup,
   leadUpload,
   leadReply,
   uploadPortal,
@@ -103,7 +100,6 @@ export const backend = defineBackend({
   activityLog,
   communications,
   communicationWorker,
-  communicationReports,
   communicationMonitor,
   communicationWebhook,
   marketingReportApi,
@@ -375,7 +371,7 @@ backend.honeycombSubmissionWorker.resources.lambda.addEventSource(new DynamoEven
 (backend.honeycombSubmissionWorker.resources.lambda.node.defaultChild as CfnFunction).reservedConcurrentExecutions = 2;
 
 // Workflow records are server-only. Custom resolvers enforce permissions and
-// transact duties, deadlines, audit records and delivery work atomically.
+// transact communication state, audit records and delivery work atomically.
 const communicationTable = new Table(backend.data.resources.graphqlApi, "CommunicationRecords", {
   partitionKey: { name: "id", type: AttributeType.STRING }, billingMode: BillingMode.PAY_PER_REQUEST,
   encryption: TableEncryption.AWS_MANAGED, pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true },
@@ -385,31 +381,26 @@ communicationTable.addGlobalSecondaryIndex({ indexName: "work", partitionKey: { 
 communicationTable.addGlobalSecondaryIndex({ indexName: "account", partitionKey: { name: "accountId", type: AttributeType.STRING }, sortKey: { name: "accountSort", type: AttributeType.STRING } });
 communicationTable.addGlobalSecondaryIndex({ indexName: "due", partitionKey: { name: "dueGroup", type: AttributeType.STRING }, sortKey: { name: "dueAt", type: AttributeType.STRING } });
 communicationTable.addGlobalSecondaryIndex({ indexName: "assignment", partitionKey: { name: "assignedSalespersonId", type: AttributeType.STRING }, sortKey: { name: "id", type: AttributeType.STRING } });
+communicationTable.addGlobalSecondaryIndex({ indexName: "website-producers", partitionKey: { name: "producerGroup", type: AttributeType.STRING }, sortKey: { name: "id", type: AttributeType.STRING } });
 communicationTable.grantReadWriteData(backend.assignmentIndexWorker.resources.lambda);
 backend.assignmentIndexWorker.addEnvironment("COMMUNICATION_TABLE", communicationTable.tableName);
 (backend.assignmentIndexWorker.resources.lambda.node.defaultChild as CfnFunction).reservedConcurrentExecutions = 1;
-for (const fn of [backend.taskDigest, backend.opsRollup]) {
-  communicationTable.grantReadData(fn.resources.lambda);
-  fn.addEnvironment("COMMUNICATION_TABLE", communicationTable.tableName);
-}
-communicationTable.grantReadWriteData(backend.renewalTasks.resources.lambda);
-backend.renewalTasks.addEnvironment("COMMUNICATION_TABLE", communicationTable.tableName);
 const communicationSecret = new Secret(backend.data.resources.graphqlApi, "CommunicationCredentials", {
   generateSecretString: { secretStringTemplate: "{}", generateStringKey: "installationKey", excludePunctuation: true },
 });
-for (const fn of [backend.communicationReports, backend.communicationMonitor, backend.communications, backend.communicationWorker, backend.communicationWebhook, backend.leadIntake, backend.leadReply, backend.portalSweep]) {
+for (const fn of [backend.communicationMonitor, backend.communications, backend.communicationWorker, backend.communicationWebhook, backend.leadIntake, backend.leadReply, backend.portalSweep]) {
   communicationTable.grantReadWriteData(fn.resources.lambda);
   fn.addEnvironment("COMMUNICATION_TABLE", communicationTable.tableName);
   fn.addEnvironment("COMMUNICATION_ENV", branch ?? "local");
   fn.addEnvironment("CRM_BASE_URL", magicLinkBaseUrl);
   fn.addEnvironment("AGENCY_MAILBOX", leadReplyMailbox);
 }
-for (const fn of [backend.communicationReports, backend.communicationMonitor, backend.communications, backend.communicationWorker, backend.communicationWebhook, backend.leadReply]) {
+for (const fn of [backend.communicationMonitor, backend.communications, backend.communicationWorker, backend.communicationWebhook, backend.leadReply]) {
   communicationSecret.grantRead(fn.resources.lambda);
   fn.addEnvironment("COMMUNICATION_SECRET", communicationSecret.secretArn);
 }
 communicationSecret.grantWrite(backend.communications.resources.lambda);
-for (const fn of [backend.communicationReports, backend.communications, backend.communicationWorker, backend.leadIntake, backend.leadReply]) {
+for (const fn of [backend.communications, backend.communicationWorker, backend.leadIntake, backend.leadReply]) {
   fn.addEnvironment("USER_POOL_ID", backend.auth.resources.userPool.userPoolId);
   fn.resources.lambda.addToRolePolicy(new PolicyStatement({ actions: ["cognito-idp:ListUsers"], resources: [backend.auth.resources.userPool.userPoolArn] }));
 }
@@ -425,7 +416,7 @@ for (const model of ["Quote", "Certificate", "Document"] as const) for (const fn
   fn.addEnvironment(`${model.toUpperCase()}_TABLE`, backend.data.resources.tables[model].tableName);
 }
 backend.storage.resources.bucket.grantRead(backend.communicationWorker.resources.lambda, "certificates/*");
-for (const fn of [backend.communicationReports, backend.communications, backend.communicationWorker, backend.leadIntake, backend.leadReply, backend.portalSweep]) {
+for (const fn of [backend.communications, backend.communicationWorker, backend.leadIntake, backend.leadReply, backend.portalSweep]) {
   backend.data.resources.tables.Activity.grantReadWriteData(fn.resources.lambda);
   fn.addEnvironment("ACTIVITY_TABLE", backend.data.resources.tables.Activity.tableName);
 }
@@ -438,10 +429,9 @@ backend.communicationWorker.resources.lambda.addToRolePolicy(new PolicyStatement
 // Keep one worker: call unions and workflow repair jobs rely on serial execution.
 // Increasing this requires cross-invocation fencing, including around provider sends.
 (backend.communicationWorker.resources.lambda.node.defaultChild as CfnFunction).reservedConcurrentExecutions = 1;
-for (const model of ["Account", "Quote", "Policy", "MarketingTask", "Certificate", "Document"] as const) backend.communicationWorker.resources.lambda.addEventSource(new DynamoEventSource(backend.data.resources.tables[model], {
+for (const model of ["Account", "Quote", "Policy", "Certificate", "Document"] as const) backend.communicationWorker.resources.lambda.addEventSource(new DynamoEventSource(backend.data.resources.tables[model], {
   startingPosition: StartingPosition.LATEST, batchSize: 1, retryAttempts: 3, reportBatchItemFailures: true,
 }));
-(backend.communicationReports.resources.lambda.node.defaultChild as CfnFunction).reservedConcurrentExecutions = 1;
 // A separate alert path still works when Front or either scheduled worker stops.
 // An administrator connects and confirms the intended operations recipient.
 const communicationAlerts = new Topic(backend.data.resources.graphqlApi, "CommunicationOperationsAlerts");
@@ -496,7 +486,7 @@ for (const [name, metricName, threshold, comparisonOperator] of [
   const alarm = new Alarm(backend.data.resources.graphqlApi, name, {
   metric: new Metric({ namespace: "AWS/Lambda", metricName, dimensionsMap: { FunctionName: backend.communicationMonitor.resources.lambda.functionName }, statistic: "Sum", period: Duration.minutes(5) }),
   threshold, comparisonOperator, evaluationPeriods: 2, treatMissingData: TreatMissingData.BREACHING,
-  alarmDescription: "Communication processing, account coverage or morning reports need attention. Missing monitor runs also breach.",
+  alarmDescription: "Communication processing or provider connections need attention. Missing monitor runs also breach.",
 });
   alarm.addAlarmAction(new SnsAction(communicationAlerts));
 }
@@ -523,11 +513,23 @@ backend.teamAdmin.addEnvironment(
 );
 backend.teamAdmin.addEnvironment("PORTAL_URL", magicLinkBaseUrl);
 backend.teamAdmin.addEnvironment("INVITE_FROM", magicLinkFrom);
+const userProfileTable = backend.data.resources.tables.UserProfile;
+const userProfileIndex = modelIndex(backend.stack, "UserProfile", "userId");
+backend.teamAdmin.addEnvironment("USER_PROFILE_TABLE_NAME", userProfileTable.tableName);
+backend.teamAdmin.addEnvironment("USER_PROFILE_USER_ID_INDEX_NAME", userProfileIndex.name);
+backend.teamAdmin.resources.lambda.addToRolePolicy(new PolicyStatement({
+  actions: ["dynamodb:Query"],
+  resources: [`${userProfileTable.tableArn}/index/${userProfileIndex.name}`],
+}));
 backend.teamAdmin.resources.lambda.addToRolePolicy(
   new PolicyStatement({
     actions: [
       "cognito-idp:AdminCreateUser",
+      "cognito-idp:AdminDeleteUser",
+      "cognito-idp:AdminDisableUser",
       "cognito-idp:AdminAddUserToGroup",
+      "cognito-idp:AdminRemoveUserFromGroup",
+      "cognito-idp:AdminGetUser",
       "cognito-idp:AdminListGroupsForUser",
       "cognito-idp:ListUsers",
     ],
@@ -541,18 +543,36 @@ backend.teamAdmin.resources.lambda.addToRolePolicy(
   })
 );
 
-// ── License expiry alerts ────────────────────────────────────────────
-// Same verified sender as everything else we send.
-//
-// The RECIPIENT is deliberately not here. It comes from `shared/agency.ts`,
-// and this file cannot import that: Amplify's CDK assembly builder loads
-// `backend.ts` through a TS loader scoped to `amplify/`, so a path reaching
-// outside resolves to a module with no exports and the deploy dies with
-// "does not provide an export named 'AGENCY'". Handlers are different — they
-// are bundled by esbuild, which is why `renewal-tasks/handler.ts` can import
-// `src/lib/pagination` — so the address is read there instead. `tsc` and
-// `npm run synth:check` both pass on the import that fails; only a real
-// pipeline deploy catches it.
+// Complete the one-time copy before CloudFormation lets a new frontend ship.
+// The legacy table remains read-only as a backup; sign-in reads only License.
+const licenseTable = backend.data.resources.tables.License;
+const legacyLicenseTable = backend.data.resources.tables.ProducerLicense;
+const licenseProfileIndex = modelIndex(backend.stack, "License", "userProfileId");
+const licenseMigration = backend.migrateProducerLicenses;
+licenseMigration.addEnvironment("LEGACY_PRODUCER_LICENSE_TABLE", legacyLicenseTable.tableName);
+licenseMigration.addEnvironment("LICENSE_TABLE", licenseTable.tableName);
+licenseMigration.addEnvironment("USER_PROFILE_TABLE", userProfileTable.tableName);
+licenseMigration.addEnvironment("LICENSE_USER_PROFILE_INDEX", licenseProfileIndex.name);
+const licenseMigrationPolicy = new Policy(licenseMigration.resources.lambda, "MigrationDataAccess", {
+  statements: [
+    new PolicyStatement({ actions: ["dynamodb:Scan"], resources: [legacyLicenseTable.tableArn] }),
+    new PolicyStatement({ actions: ["dynamodb:GetItem", "dynamodb:BatchGetItem"], resources: [userProfileTable.tableArn] }),
+    new PolicyStatement({ actions: ["dynamodb:GetItem", "dynamodb:PutItem"], resources: [licenseTable.tableArn] }),
+    new PolicyStatement({ actions: ["dynamodb:Query"], resources: [`${licenseTable.tableArn}/index/${licenseProfileIndex.name}`] }),
+  ],
+});
+licenseMigrationPolicy.attachToRole(licenseMigration.resources.lambda.role!);
+const licenseMigrationStack = backend.createStack("ProducerLicenseMigration");
+const licenseMigrationProvider = new Provider(licenseMigrationStack, "Provider", {
+  onEventHandler: licenseMigration.resources.lambda,
+});
+const licenseMigrationResource = new CustomResource(licenseMigrationStack, "MigrateProducerLicenses", {
+  serviceToken: licenseMigrationProvider.serviceToken,
+  serviceTimeout: Duration.minutes(15),
+  properties: { Version: "1", SourceTable: legacyLicenseTable.tableName, TargetTable: licenseTable.tableName, ProfileIndex: licenseProfileIndex.name },
+});
+licenseMigrationResource.node.addDependency(licenseMigrationPolicy, licenseProfileIndex.resource);
+
 // ── Lead text alerts ─────────────────────────────────────────────────
 // The intake handler texts every UserProfile with leadTextAlerts on. The
 // link in the message is this branch's portal, so it opens the lead the
@@ -573,38 +593,6 @@ backend.leadIntake.resources.lambda.addToRolePolicy(
     resources: ["*"],
   })
 );
-
-backend.licenseAlerts.addEnvironment("LICENSE_ALERT_FROM", magicLinkFrom);
-backend.licenseAlerts.addEnvironment("AGENCY_MAILBOX", internalMailbox);
-backend.licenseAlerts.resources.lambda.addToRolePolicy(
-  new PolicyStatement({
-    actions: ["ses:SendEmail"],
-    resources: ["*"],
-  })
-);
-
-// Same verified sender as every other outbound mail. `CRM_BASE_URL` is what
-// turns the digest into a worklist rather than a notification — without it
-// the rows still render, just without deep links into the CRM.
-backend.taskDigest.addEnvironment("TASK_DIGEST_FROM", magicLinkFrom);
-backend.taskDigest.addEnvironment("AGENCY_MAILBOX", internalMailbox);
-backend.taskDigest.addEnvironment("CRM_BASE_URL", magicLinkBaseUrl);
-
-/**
- * The owner's daily operations rollup.
- *
- * Same verified no-reply sender as everything else — a dedicated identity
- * would mean a new SES verified domain or address, visible in the console with
- * publicly resolvable DKIM records, which is more discoverable than sharing
- * the sender everything already uses.
- *
- * `owner` rather than `internal`: the recipient is one person, and `internal`
- * is the inbox the whole team works out of. There is deliberately NO fallback
- * inside the handler if this variable goes missing — see the note there.
- */
-backend.opsRollup.addEnvironment("OPS_ROLLUP_FROM", magicLinkFrom);
-backend.opsRollup.addEnvironment("OPS_ROLLUP_TO", resolveMailbox("owner", branch));
-backend.opsRollup.addEnvironment("CRM_BASE_URL", magicLinkBaseUrl);
 
 // Invoices come from the general mailbox rather than sales: a bill is not a
 // sales conversation, and a reply to one should land where the people who
@@ -894,36 +882,12 @@ backend.data.resources.tables.PfLoanPayment.grantReadWriteData(
   backend.pfAutopay.resources.lambda
 );
 
-/**
- * W7: the sweep's stale-marker alarm goes to the mailbox a person reads —
- * a debit nothing has cleared in ten days freezes its loan, and a console
- * line is not an alarm.
- */
-backend.pfDefaultSweep.addEnvironment("ACCOUNTING_MAILBOX", accountingMailbox);
-backend.pfDefaultSweep.addEnvironment("AGENCY_MAILBOX", internalMailbox);
-backend.pfDefaultSweep.resources.lambda.addToRolePolicy(
-  new PolicyStatement({ actions: ["ses:SendEmail"], resources: ["*"] })
-);
-
 const stripeWebhookUrl = backend.stripeWebhook.resources.lambda.addFunctionUrl({
   authType: FunctionUrlAuthType.NONE,
 });
 backend.addOutput({
   custom: { stripeWebhookUrl: stripeWebhookUrl.url },
 });
-backend.taskDigest.resources.lambda.addToRolePolicy(
-  new PolicyStatement({
-    actions: ["ses:SendEmail"],
-    resources: ["*"],
-  })
-);
-backend.opsRollup.resources.lambda.addToRolePolicy(
-  new PolicyStatement({
-    actions: ["ses:SendEmail"],
-    resources: ["*"],
-  })
-);
-
 // ── Website lead: public upload + auto-reply ─────────────────────────
 //
 // `lead-upload` presigns a PUT into the documents bucket with its own
@@ -1032,3 +996,4 @@ backend.extractLead.resources.lambda.grantInvoke(
 );
 
 installAccountAccess(backend, communicationTable);
+installDashboardReads(backend);

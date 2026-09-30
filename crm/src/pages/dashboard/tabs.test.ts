@@ -6,11 +6,13 @@ describe("resolveDashboardTab", () => {
     for (const [t] of DASHBOARD_TABS) expect(resolveDashboardTab(t)).toBe(t);
   });
 
-  it("anything else lands on Overview, never on a pane with no button", () => {
-    expect(resolveDashboardTab(null)).toBe("overview");
-    expect(resolveDashboardTab(undefined)).toBe("overview");
-    expect(resolveDashboardTab("")).toBe("overview");
-    expect(resolveDashboardTab("finance ")).toBe("overview");
-    expect(resolveDashboardTab("tasks")).toBe("overview");
+  it("retired and unknown bookmarks land on Dashboard", () => {
+    expect(resolveDashboardTab(null)).toBe("dashboard");
+    expect(resolveDashboardTab(undefined)).toBe("dashboard");
+    expect(resolveDashboardTab("")).toBe("dashboard");
+    expect(resolveDashboardTab("finance ")).toBe("dashboard");
+    expect(resolveDashboardTab("tasks")).toBe("dashboard");
+    for (const tab of ['overview', 'reporting', 'renewals']) expect(resolveDashboardTab(tab)).toBe('dashboard');
+    expect(DASHBOARD_TABS.map(([, label]) => label)).toEqual(['Dashboard', 'Leads', 'Finance']);
   });
 });

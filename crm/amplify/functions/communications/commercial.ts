@@ -47,6 +47,7 @@ export async function commercialTable(ids: unknown) {
           ? { ...plan.data, version: plan.version }
           : emptyCommercialPlan(id),
         salespersonId: workflow?.data.salespersonId,
+        disposition: workflow?.data.disposition,
       };
     }),
   );

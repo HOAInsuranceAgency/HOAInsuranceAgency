@@ -1,5 +1,4 @@
-import type { Communication, LeadTask } from "../../../../shared/leadWorkflow";
-import { taskWakeAt } from "../../../../shared/leadWorkflow";
+import type { Communication } from "../../../../shared/leadWorkflow";
 import { accountRows, recordInbound } from "./workflow";
 import { contactFence } from "./contactProgress";
 import { get, row, save, check, put, commit, type Row } from "./store";
@@ -16,16 +15,6 @@ export async function repairMisclassifiedDraft(candidate: Row<Communication>) {
     draft = next;
   }
   if (!accountId) return;
-  for (const candidate of await accountRows<LeadTask>(accountId, "TASK")) {
-    const task = await get<LeadTask>(candidate.id); if (!task) continue;
-    const falseFollowUp = !task.data.custom && task.data.kind === "FOLLOW_UP" && task.data.sourceIds?.length === 1 && task.data.sourceIds[0] === draft.id;
-    if (falseFollowUp && task.data.status === "OPEN") {
-      await commit([check(draft), put(row("TASK", task.id, { ...task.data, status: "CANCELLED", reason: "The email has not been sent", version: task.version + 1 }, { accountId, previous: task }), task)]);
-    } else if (task.data.status === "COMPLETE" && task.data.completedByCommunicationId === draft.id) {
-      const data: LeadTask = { ...task.data, status: "OPEN", completedByCommunicationId: undefined, reason: undefined, version: task.version + 1 };
-      await commit([check(draft), put(row("TASK", task.id, data, { accountId, previous: task, dueAt: taskWakeAt(data) }), task)]);
-    }
-  }
   for (const candidate of await accountRows<Communication>(accountId, "COMMUNICATION")) {
     let source = await get<Communication>(candidate.id);
     if (source?.data.resolvedByCommunicationId !== draft.id) continue;

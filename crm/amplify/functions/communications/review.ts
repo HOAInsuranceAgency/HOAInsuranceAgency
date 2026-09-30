@@ -1,10 +1,10 @@
-import { taskWakeAt } from "../../../../shared/leadWorkflow";
+import { tasksRemoved } from "./retiredTasks";
 import { randomUUID } from "node:crypto";
 import { get, put, row, commit, audit } from "./store";
-import { ensureWorkflow, expected, makeTask, recordInbound, recordOutbound } from "./workflow";
+import { ensureWorkflow, expected, recordInbound, recordOutbound } from "./workflow";
 import { permittedConversation, front, messageConversation, type FrontMessage } from "./providers";
 import type { Operation } from "./operations";
-import type { Communication, LeadTask } from "../../../../shared/leadWorkflow";
+import type { Communication } from "../../../../shared/leadWorkflow";
 
 export async function reviewOperation(input: { id: string; version: number; action: string; reason: string; uid?: string; verifiedNotSent?: boolean }, actor: string) {
   const old = await get<Operation>(input.id);
@@ -30,29 +30,13 @@ export async function reviewOperation(input: { id: string; version: number; acti
 }
 
 export async function recordCallOutcome(input: { id: string; version: number; outcome: string; note: string; nextAction?: { title: string; dueAt: string }; taskId?: string; taskVersion?: number }, actor: string) {
+  if (input.nextAction || input.taskId || input.taskVersion != null) tasksRemoved();
   const comm = await get<Communication>(input.id);
   if (!comm || comm.kind !== "COMMUNICATION" || comm.data.channel !== "CALL" || !comm.accountId) throw new Error("Link this call to its lead first");
   expected(comm, input.version);
   if (!["HANDLED", "FOLLOW_UP", "DOCUMENTS", "NO_ANSWER", "WRONG_NUMBER", "UNRELATED"].includes(input.outcome) || !input.note?.trim()) throw new Error("Choose a call outcome and add a note");
   const wf = await ensureWorkflow(comm.accountId), resolving = ["HANDLED", "FOLLOW_UP", "DOCUMENTS"].includes(input.outcome);
-  if (resolving && wf.data.disposition === "ACTIVE" && !input.nextAction) throw new Error("Record the next action or dated waiting commitment");
   const writes = [put(row("COMMUNICATION", comm.id, { ...comm.data, outcome: input.outcome, outcomeBy: actor, outcomeAt: new Date().toISOString(), resolved: resolving || input.outcome === "UNRELATED", version: comm.version + 1 }, { accountId: comm.accountId, previous: comm, dueAt: resolving || input.outcome === "UNRELATED" ? undefined : comm.dueAt }), comm), audit(comm.accountId, actor, "Call outcome recorded", input)];
-  if (input.nextAction) {
-    const task = await makeTask({ accountId: comm.accountId, ...input.nextAction, role: "SALESPERSON", kind: input.outcome === "DOCUMENTS" ? "DOCUMENTS" : "FOLLOW_UP", custom: true });
-    writes.push(put(row("TASK", task.id, task, { accountId: comm.accountId, dueAt: taskWakeAt(task) })));
-  }
-  if (input.taskId) {
-    if (!resolving) throw new Error("An unanswered attempt cannot complete prospect work");
-    const task = await get<LeadTask>(input.taskId);
-    if (!task || task.accountId !== comm.accountId || task.data.status !== "OPEN") throw new Error("Choose an open request from this lead");
-    expected(task, input.taskVersion);
-    writes.push(put(row("TASK", task.id, { ...task.data, status: "COMPLETE", reason: input.note, version: task.version + 1 }, { accountId: comm.accountId, previous: task }), task));
-    for (const id of task.data.sourceIds ?? []) {
-      if (id === comm.id) continue;
-      const source = await get<Communication>(id);
-      if (source?.accountId === comm.accountId) writes.push(put(row("COMMUNICATION", id, { ...source.data, resolved: true }, { accountId: comm.accountId, previous: source }), source));
-    }
-  }
   if (resolving && !wf.data.humanTakeover) writes.push(put(row("WORKFLOW", wf.id, { ...wf.data, humanTakeover: true, version: wf.version + 1 }, { accountId: comm.accountId, previous: wf }), wf));
   const noteId = `note:call:${randomUUID()}`;
   writes.push(put(row("COMMUNICATION", noteId, { id: noteId, provider: "crm", providerId: noteId, channel: "NOTE", direction: "INTERNAL", accountId: comm.accountId, at: new Date().toISOString(), text: input.note, actorId: actor, status: "SAVED", version: 1 }, { accountId: comm.accountId })));

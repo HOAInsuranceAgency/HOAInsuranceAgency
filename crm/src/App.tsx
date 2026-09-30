@@ -1,11 +1,11 @@
-import LeadWork from "./pages/LeadWork";
 import FrontSidebar from "./pages/FrontSidebar";
-import { useEffect, useState } from "react";
-import { Navigate, NavLink, Route, Routes, useLocation } from "react-router-dom";
+import { useEffect, useRef, useState } from "react";
+import { Navigate, NavLink, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { Authenticator, useAuthenticator } from "@aws-amplify/ui-react";
 import type { AuthUser } from "aws-amplify/auth";
 import { client, listAllPages, type UserProfile } from "./lib/client";
 import { useAsyncResource } from "./lib/useAsyncResource";
+import { loadProducerLicenses, type SavedProducerLicense } from "./lib/producerOnboarding";
 import CopyValue from "./components/CopyValue";
 import {
   AGENCY_SETTINGS_ID,
@@ -15,10 +15,12 @@ import {
 import {
   AdminContext,
   fetchUserGroups,
-  isAdminGroup,
   roleFromGroups,
+  rolesFromGroups,
+  type Role,
   useIsAdmin,
 } from "./lib/auth";
+import { clearActiveRole, restoreActiveRole, setActiveRole } from "./lib/activeRole";
 import MagicLinkSignIn from "./components/MagicLinkSignIn";
 import Dashboard from "./pages/Dashboard";
 import AccountsList from "./pages/AccountsList";
@@ -33,7 +35,6 @@ import SearchResults from "./pages/SearchResults";
 import UniversalSearch from "./components/UniversalSearch";
 import QuotesList from "./pages/QuotesList";
 import PoliciesList from "./pages/PoliciesList";
-import { AllMarketingTasks } from "./components/MarketingTasks";
 
 export default function App() {
   return (
@@ -55,7 +56,7 @@ function AuthGate() {
   ]);
 
   if (authStatus === "authenticated" && user) {
-    return <ProfileGate user={user} signOut={signOut} />;
+    return <ProfileGate key={user.userId} user={user} signOut={signOut} />;
   }
 
   // On reload, authStatus is "configuring" while Amplify restores the
@@ -77,30 +78,64 @@ function AuthGate() {
 }
 
 function ProfileGate({ user, signOut }: { user: AuthUser; signOut: () => void }) {
+  const navigate = useNavigate();
+  const roleSessionVersion = useRef(0);
   // Profile and Cognito groups resolve behind ONE loading gate: settling
   // admin status after first paint would flash the admin-only controls
   // into (or out of) a page that's already on screen. That is why this is a
   // single hook over a tuple rather than one hook per read.
   const { data, loading, error, refetch, setData } = useAsyncResource(
     async () => {
+      const version = ++roleSessionVersion.current;
+      clearActiveRole();
       const [rows, gs] = await Promise.all([
-        listAllPages((nextToken) =>
-          client.models.UserProfile.list({
-            filter: { userId: { eq: user.userId } },
-            nextToken,
-          })
-        ),
-        fetchUserGroups(),
+        listAllPages(async (nextToken) => {
+          const result = await client.models.UserProfile.listUserProfileByUserId(
+            { userId: user.userId }, { nextToken },
+          );
+          if (result.errors?.length) {
+            throw new Error(result.errors[0].message || "Couldn't load your profile.");
+          }
+          return result;
+        }),
+        fetchUserGroups(true),
       ]);
-      return { profile: rows[0] ?? null, groups: gs };
+      const profile = rows[0] ?? null;
+      // Adding PRODUCER to an already onboarded staff/admin profile still
+      // requires producer details, including a license saved in the database.
+      const producerLicenses = profile && gs.includes("PRODUCER")
+        ? await loadProducerLicenses(profile.id)
+        : [];
+      const activeRole = version === roleSessionVersion.current
+        ? restoreActiveRole(user.userId, gs)
+        : roleFromGroups(gs);
+      return { profile, groups: gs, activeRole, producerLicenses };
     },
     [user.userId],
     {
-      initialData: { profile: null as UserProfile | null, groups: [] as string[] },
+      initialData: { profile: null as UserProfile | null, groups: [] as string[], activeRole: "STAFF" as Role, producerLicenses: [] as SavedProducerLicense[] },
       errorMessage: "Couldn't load your profile.",
     }
   );
-  const { profile, groups } = data;
+  const { profile, groups, activeRole, producerLicenses } = data;
+  useEffect(() => {
+    const refreshRoles = () => { void refetch(); };
+    window.addEventListener("team-roles-changed", refreshRoles);
+    return () => {
+      roleSessionVersion.current++;
+      window.removeEventListener("team-roles-changed", refreshRoles);
+      clearActiveRole();
+    };
+  }, [refetch]);
+
+  function switchRole(role: Role) {
+    if (!groups.includes(role) || role === activeRole) return;
+    setActiveRole(user.userId, role, groups);
+    setData(current => ({ ...current, activeRole: role }));
+    // A record or settings page from the previous view may be inaccessible.
+    // Remounting the shell also discards its old results and subscriptions.
+    navigate(role === "ADMIN" ? "/" : "/leads", { replace: true });
+  }
 
   // This read used to have no catch at all: a failed profile/groups fetch
   // left "Loading…" on screen forever. It is the app's front door, so the
@@ -130,20 +165,24 @@ function ProfileGate({ user, signOut }: { user: AuthUser; signOut: () => void })
 
   if (loading) return <div className="main">Loading…</div>;
 
-  if (!profile || !profile.onboardingComplete) {
+  const missingProducerDetails = groups.includes("PRODUCER") &&
+    (!profile?.npn?.trim() || producerLicenses.length === 0);
+  if (!profile || !profile.onboardingComplete || missingProducerDetails) {
     return (
       <Onboarding
         user={user}
         existing={profile}
+        existingLicenses={producerLicenses}
         role={roleFromGroups(groups)}
-        onComplete={(p) => setData((d) => ({ ...d, profile: p }))}
+        roles={rolesFromGroups(groups)}
+        onComplete={(p, licenses) => setData((d) => ({ ...d, profile: p, producerLicenses: licenses }))}
       />
     );
   }
 
   return (
-    <AdminContext.Provider value={isAdminGroup(groups)}>
-      <Shell profile={profile} signOut={signOut} />
+    <AdminContext.Provider value={activeRole === "ADMIN" && groups.includes("ADMIN")}>
+      <Shell key={activeRole} profile={profile} signOut={signOut} activeRole={activeRole} roles={rolesFromGroups(groups)} onRoleChange={switchRole} />
     </AdminContext.Provider>
   );
 }
@@ -183,14 +222,7 @@ function IconGrid() {
     </svg>
   );
 }
-function IconCheck() {
-  return (
-    <svg {...iconProps}>
-      <path d="M9 11l3 3L22 4" />
-      <path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" />
-    </svg>
-  );
-}
+
 function IconFunnel() {
   return (
     <svg {...iconProps}>
@@ -256,7 +288,6 @@ const NAV_ITEMS = [
   { to: "/", end: true, label: "Dashboard", icon: <IconGrid /> },
   { to: "/leads", label: "Leads", icon: <IconFunnel /> },
   { to: "/clients", label: "Clients", icon: <IconUsers /> },
-  { to: "/tasks", label: "Tasks", icon: <IconCheck /> },
   { to: "/carriers", label: "Carriers", icon: <IconBuilding /> },
   { to: "/settings", label: "Settings", icon: <IconGear /> },
 ];
@@ -309,7 +340,13 @@ function AgencyIdentifiers() {
   );
 }
 
-function Shell({ profile, signOut }: { profile: UserProfile; signOut: () => void }) {
+function Shell({ profile, signOut, activeRole, roles, onRoleChange }: {
+  profile: UserProfile;
+  signOut: () => void;
+  activeRole: Role;
+  roles: Role[];
+  onRoleChange: (role: Role) => void;
+}) {
   const location = useLocation();
   const isAdmin = useIsAdmin();
   const homePath = isAdmin ? "/" : "/leads";
@@ -320,10 +357,9 @@ function Shell({ profile, signOut }: { profile: UserProfile; signOut: () => void
    * has nothing to say.
    */
   const navItems = [
-    ...NAV_ITEMS.slice(0, 5),
-    { to: "/lead-work", label: "Lead follow-up", icon: <IconCheck /> },
+    ...NAV_ITEMS.slice(0, 4),
     { to: "/financing", label: "Financing", icon: <IconCoin /> } as const,
-    ...NAV_ITEMS.slice(5),
+    ...NAV_ITEMS.slice(4),
   ].filter((item) => item.to !== "/" || isAdmin);
 
   if (/^\/front-sidebar\/?$/.test(location.pathname)) return <FrontSidebar />;
@@ -358,7 +394,13 @@ function Shell({ profile, signOut }: { profile: UserProfile; signOut: () => void
           <div>
             {profile.firstName} {profile.lastName}
           </div>
-          <div className="muted small">{profile.role}</div>
+          {roles.length > 1 ? (
+            <div className="role-switcher">
+              <select id="active-role" aria-label="Active role" value={activeRole} onChange={event => onRoleChange(event.target.value as Role)}>
+                {roles.map(role => <option key={role} value={role}>{role}</option>)}
+              </select>
+            </div>
+          ) : <div className="muted small">{activeRole}</div>}
           <button onClick={signOut}>Sign out</button>
         </div>
       </aside>
@@ -371,19 +413,12 @@ function Shell({ profile, signOut }: { profile: UserProfile; signOut: () => void
           />
           <Route path="/leads" element={<AccountsList stage="LEAD" />} />
           <Route path="/leads/new" element={<NewLead />} />
-          <Route path="/lead-work" element={<LeadWork profile={profile} />} />
+          <Route path="/lead-work" element={<Navigate to="/leads" replace />} />
           <Route path="/clients" element={<AccountsList stage="CLIENT" />} />
           <Route path="/accounts/:id" element={<AccountDetail profile={profile} />} />
           <Route path="/carriers" element={<Carriers />} />
           <Route path="/carriers/:id" element={<CarrierDetail />} />
-          <Route
-            path="/tasks"
-            element={
-              <AllMarketingTasks
-                completedByName={`${profile.firstName} ${profile.lastName}`}
-              />
-            }
-          />
+          <Route path="/tasks" element={<Navigate to="/leads" replace />} />
           <Route path="/quotes" element={<QuotesList />} />
           <Route path="/policies" element={<PoliciesList />} />
           <Route path="/search" element={<SearchResults />} />

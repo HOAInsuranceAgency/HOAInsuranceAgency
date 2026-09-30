@@ -14,12 +14,30 @@ Internal agency management system replacing EzLynx for the commercial
   [amplify/backend.ts](amplify/backend.ts), currently
   `noreply@protectmyhoa.com` — also the sender for team invites and license
   alerts; branch URLs for the link live in `BRANCH_URLS` there too).
-  Groups `ADMIN` / `STAFF` / `PRODUCER` exist as placeholders; privileges
-  are not enforced yet. First login runs an onboarding flow
-  ([src/pages/Onboarding.tsx](src/pages/Onboarding.tsx)); producers must
-  supply an NPN and at least one state license.
-- **Lead texts** — a website enquiry texts every team member who turned the
-  switch on in Settings → Team and saved a mobile number
+  Admins assign one or two Cognito roles (`ADMIN` / `STAFF` / `PRODUCER`)
+  in **Settings → Team**, when inviting someone or editing an existing user.
+  Users with two roles switch views using **Active role** at the bottom of
+  the sidebar. Admin sees all agency accounts; Producer and Staff see only
+  accounts assigned to them. The active view is remembered per user in the
+  current browser tab and enforced on server requests; changing it clears
+  the previous view's data. Updated role assignments appear on reload, and
+  saving your own roles refreshes them immediately. The team roster loads
+  twenty members at a time, including profile details in the same response;
+  use **Load more** to reach additional teammates.
+  First login runs an onboarding flow ([src/pages/Onboarding.tsx](src/pages/Onboarding.tsx)).
+  Producers must supply an NPN and at least one state license, including
+  existing users who gain Producer later and have missing licensing details.
+  Producer setup uses the `License` index for that profile. A deployment-only
+  migration copies original onboarding licenses into `License` before the
+  frontend is released. It preserves existing license records and leaves the
+  old table read-only as a backup. A failed copy blocks deployment and can be
+  retried safely; the app no longer reads or imports legacy licenses.
+- **Website assignment and lead texts** — website enquiries rotate among
+  active teammates with salesperson eligibility in Settings → Team. The
+  lead and its pending assignment are saved together. A durable worker
+  advances the rotation with the assigned owner, so retries do not consume
+  another turn and bursts never compete for the cursor during capture.
+  Only the assigned salesperson receives the Front conversation and text alert, with texts requiring the switch and a saved mobile number
   ([amplify/functions/lead-intake](amplify/functions/lead-intake)). Sent with
   Amazon SNS, so there is **no code to configure** — but there is account
   setup, and without it `Publish` succeeds and the message is silently
@@ -30,8 +48,13 @@ Internal agency management system replacing EzLynx for the commercial
      brand + campaign for a long code, or a toll-free number with verified
      use case. This takes days, not minutes.
   3. Check the SMS **monthly spend limit**; the default is $1.
-  Delivery failures land in CloudWatch under the `lead-intake` log group.
+  Delivery failures land in CloudWatch under the communication worker log group.
   Texting is deliberately non-fatal: an SNS outage still captures the lead.
+  The worker reads a bounded eligible-producer index, automatically retries
+  missing or temporarily unavailable assignments, and holds Front import and
+  texts until an owner is verified. Missing Front connections surface as
+  repair issues; alerts never go to the rest of the team. The scheduled index
+  worker backfills existing producer eligibility before assignment begins.
 - **Data** — AppSync + DynamoDB, schema in
   [amplify/data/resource.ts](amplify/data/resource.ts).
 - **Documents** — S3 ([amplify/storage/resource.ts](amplify/storage/resource.ts)).
@@ -105,8 +128,9 @@ expires after 365 days and must be rotated.
 ## Front and Dialpad integration
 
 Website intake now uses durable CRM capture and queued Front import/reply delivery.
-The account panel, Lead follow-up views and `/front-sidebar` share responsibilities,
-commitments, communication history and recovery controls. Dialpad events add calls
+The account panel and `/front-sidebar` share salesperson assignment,
+communication history and recovery controls. Tasks, Lead Follow-up and daily staff
+emails are retired; see [the current retirement behavior](../docs/CRM-TASK-RETIREMENT.md). Dialpad events add calls
 and texts; native Front remains the human shared-line SMS sender.
 
 Start with the [setup and rollout runbook](../docs/COMMUNICATIONS-RUNBOOK.md).

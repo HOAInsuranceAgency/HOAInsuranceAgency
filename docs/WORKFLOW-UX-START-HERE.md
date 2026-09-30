@@ -3,8 +3,8 @@
 Start with the fictional preview. It needs no sign-in, sends no messages, and does not change client records.
 
 1. Open **WORKFLOW-UX-TEST-WORKSPACE.html** in Chrome. In Finder, right-click the file and choose **Open With → Google Chrome**.
-2. Choose a **role** and **situation**. Explore the **Front workspace**, **Daily report**, and **Reminder email**. The owner also has **Team settings**.
-3. Follow **WORKFLOW-UX-ACCEPTANCE.md**. Begin with the first 12 usability cases. Each case gives the steps and expected outcome.
+2. Choose a **role** and **situation**. Explore the **Front workspace** and communication history. The preview has no task controls, daily report or reminder email.
+3. Use [CRM task retirement](CRM-TASK-RETIREMENT.md) for the current acceptance checks. **WORKFLOW-UX-ACCEPTANCE.md** records historical task and daily-report behavior.
 4. Open **WORKFLOW-UX-RESULTS.csv** in Excel or Numbers. Record Pass, Fail, Blocked, or Not run. For a problem, add the role, screen, steps, actual result, and a screenshot.
 
 The review covers 75 cases across sales, champions, managers, reminders, carrier work, renewals, binding, client service, and next-year prospect follow-up. The preview demonstrates the interface; it does not simulate every saved change or prove live delivery. Reload resets the fictional data.

@@ -1,5 +1,7 @@
 # The communication is the work record
 
+**Historical design:** tasks, Lead Follow-up and daily staff reports are retired in the current implementation, pending staging review. See [CRM task retirement](CRM-TASK-RETIREMENT.md) for current behavior.
+
 September 10, 2026. This replaces the earlier manual completion/outcome and routine due-date flow in the Front integration specifications.
 
 ## Staff experience

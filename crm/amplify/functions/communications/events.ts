@@ -1,11 +1,10 @@
-import { taskWakeAt } from "../../../../shared/leadWorkflow";
 import { config } from "./config";
 import type { HistoryJob } from "./history";
 import { uniteCalls, combineLegs, callStatus, queueCallSync, type Call } from "./calls";
 import { front, permittedConversation, messageConversation, FrontScopeError, type FrontMessage } from "./providers";
-import { row, save, get, issue, hash, canonical, check, put, commit, type Row } from "./store";
-import { recordInbound, recordOutbound, ensureWorkflow, accountRows, makeTask } from "./workflow";
-import { normalizePhone, businessDeadline, type Communication, type LeadTask } from "../../../../shared/leadWorkflow";
+import { row, save, get, issue, hash, canonical, type Row } from "./store";
+import { recordInbound, recordOutbound, ensureWorkflow, accountRows } from "./workflow";
+import { normalizePhone, businessDeadline, type Communication } from "../../../../shared/leadWorkflow";
 import { dialpadBusinessLine } from "./phoneScope";
 import { intakeReferenceFromHtml } from "../lead-intake/brief";
 
@@ -115,18 +114,11 @@ async function frontEvent(event: Json, type: string) {
   if (/delivery_failed|outbound_failed|bounce/.test(type)) {
     await issue(`delivery:${str(event.id) || cnv}`, "An outbound message failed. Check the recipient and arrange the next contact.", link?.accountId);
     if (link) {
-      const id = `task:correction:${cnv}`;
-      if (!await get(id)) { const task = await makeTask({ id, accountId: link.data.accountId, title: "Correct failed email delivery", kind: "CORRECTION", conversationId: cnv }); await save(row("TASK", id, task, { accountId: task.accountId, dueAt: taskWakeAt(task) })); }
       const messageId = str(object(target.data).id || object(event.message).id);
       const message = /^msg_/.test(messageId) ? await get<Communication>(`comm:front:${messageId}`) : undefined;
       if (message && message.accountId === link.data.accountId && message.data.direction === "OUTBOUND" && message.data.conversationId === cnv) {
-        const current = await save(row("COMMUNICATION", message.id, { ...message.data, status: "FAILED" }, { accountId: message.accountId, previous: message }), message);
-        for (const candidate of await accountRows<LeadTask>(link.data.accountId, "TASK")) {
-          const task = await get<LeadTask>(candidate.id);
-          if (task?.data.status === "OPEN" && !task.data.custom && task.data.kind === "FOLLOW_UP" && task.data.sourceIds?.length === 1 && task.data.sourceIds[0] === message.id) {
-            await commit([check(current), put(row("TASK", task.id, { ...task.data, status: "CANCELLED", reason: "Delivery failed; the correction task tracks the next contact", version: task.version + 1 }, { accountId: task.accountId, previous: task }), task)]);
-          }
-        }
+        await save(row("COMMUNICATION", message.id, { ...message.data, status: "FAILED" }, { accountId: message.accountId, previous: message }), message);
+
       }
     }
     return;
@@ -186,11 +178,7 @@ export async function dialpadEvent(p: Json) {
   if (accountId && (isCall || comm.direction === "OUTBOUND")) await recordOutbound(comm);
   if (accountId && !isCall && comm.direction === "OUTBOUND" && ["FAILED", "UNDELIVERED"].includes(comm.status)) {
     await issue(`sms-delivery:${id}`, "A text could not be delivered. Check the number and contact the prospect.", accountId);
-    const taskId = `task:correction:${id}`, previous = await get<import("../../../../shared/leadWorkflow").LeadTask>(taskId);
-    if (!previous || previous.data.status !== "OPEN") {
-      const task = await makeTask({ id: taskId, accountId, title: "Correct failed text delivery", kind: "CORRECTION", conversationId: comm.conversationId });
-      await save(row("TASK", taskId, task, { accountId, previous, dueAt: taskWakeAt(task) }), previous);
-    }
+
   }
   if (accountId && !isCall && !comm.workflowApplied && comm.direction === "INBOUND") {
     if (/^\s*(stop|unsubscribe|cancel|end|quit)\s*$/i.test(comm.text ?? "")) { await issue(`optout:${id}`, "Prospect opted out of texts; respect the Dialpad contact preference", accountId); return; }

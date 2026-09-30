@@ -6,7 +6,9 @@ export type ReportRecord = { id?: string | null; [key: string]: unknown };
 export interface ReportSnapshot {
   accounts: ReportRecord[]; quotes: ReportRecord[]; policies: ReportRecord[];
   priorCarriers: ReportRecord[]; carriers: ReportRecord[]; documents: ReportRecord[]; activities: ReportRecord[];
-  workflows: ReportRecord[]; communications: ReportRecord[]; tasks: ReportRecord[]; submissions: ReportRecord[];
+  workflows: ReportRecord[]; communications: ReportRecord[]; submissions: ReportRecord[];
+  /** Retired historical input is accepted but never used as current status evidence. */
+  tasks?: ReportRecord[];
 }
 export type ReportCell = string | number | Date | null;
 export interface MarketingLeadReport { headers: readonly string[]; rows: ReportCell[][]; asOf: string; warnings: string[] }
@@ -138,7 +140,7 @@ export function buildMarketingLeadReport(snapshot: ReportSnapshot, asOf: string)
     quotes: byAccount(snapshot.quotes, "accountId", cutoff), policies: byAccount(snapshot.policies, "accountId", cutoff),
     priorCarriers: byAccount(snapshot.priorCarriers, "accountId", cutoff), documents: byAccount(snapshot.documents, "entityId", cutoff),
     activities: byAccount(snapshot.activities, "entityId", cutoff), workflows: byAccount(snapshot.workflows, "accountId", cutoff),
-    communications: byAccount(snapshot.communications, "accountId", cutoff), tasks: byAccount(snapshot.tasks, "accountId", cutoff),
+    communications: byAccount(snapshot.communications, "accountId", cutoff),
     submissions: byAccount(snapshot.submissions, "accountId", cutoff),
   };
   const rows = snapshot.accounts.filter(a => ["LEAD", "CLIENT"].includes(text(a, "stage")) && presentBy(a, cutoff))
@@ -159,7 +161,6 @@ export function buildMarketingLeadReport(snapshot: ReportSnapshot, asOf: string)
       const quotes = (index.quotes.get(id) ?? []).filter(q => !text(q, "renewalPolicyId"));
       const policies = index.policies.get(id) ?? [];
       const workflow = index.workflows.get(id)?.[0];
-      const tasks = (index.tasks.get(id) ?? []).filter(t => text(t, "status") === "OPEN" && text(t, "domain") !== "CARRIER" && !["SERVICE", "RENEWAL"].includes(text(t, "context")));
       const communications = index.communications.get(id) ?? [];
       const contacts = communications.map(c => humanContact(c, cutoff)).filter((c): c is NonNullable<typeof c> => !!c).sort(byTime);
       const inbound = contacts.filter(c => text(c.row, "direction") === "INBOUND"), outbound = contacts.filter(c => text(c.row, "direction") === "OUTBOUND");
@@ -183,18 +184,14 @@ export function buildMarketingLeadReport(snapshot: ReportSnapshot, asOf: string)
       if (presented.length && !selected?.at) notes.push("Presentation date not recorded.");
       const bound = text(account, "stage") === "CLIENT" || text(workflow, "disposition") === "BOUND" || quotes.some(q => text(q, "status") === "BOUND") || policies.some(p => ["ACTIVE", "BOUND"].includes(text(p, "status")));
       const lost = !bound && text(workflow, "disposition") === "LOST";
-      const blockers = tasks.map(t => object(t.blocker)).filter(b => text(b, "reason") && (!text(b, "recordedAt") || known(b.recordedAt, cutoff)));
-      const hold = unique(blockers.map(b => [text(b, "reason"), text(b, "detail")].filter(Boolean).join(": "))).join("; ");
       const deferred = instant(workflow?.deferredUntil) !== null && Date.parse(text(workflow, "deferredUntil")) > cutoff;
       let status = missing, group = missing, definition = "No verified report status recorded.";
       if (bound) { status = "BOUND"; group = "Bound"; definition = "The CRM records a bound account or policy."; }
       else if (lost) { status = "LOST - REASON NOT RECORDED"; group = "Lost"; definition = "CRM workflow is lost; no competitor outcome is inferred."; }
       else if (text(workflow, "disposition") === "DISQUALIFIED") { status = "DISQUALIFIED"; group = "Unable to work"; definition = "CRM workflow is disqualified; the reason requires review."; }
-      else if (hold) { status = "ACTIVE - HOLD"; group = "Active"; definition = "An open CRM task has a recorded blocker."; }
       else if (deferred) { status = "ACTIVE - DEFERRED"; group = "Active"; definition = "CRM workflow is deferred until a recorded future date; a client-requested pause is not inferred."; }
       else if (presented.length) { status = "ACTIVE - QUOTED"; group = "Active"; definition = "Agency quote has been presented to the client."; }
       else if (stalled) { status = "DROPPED OFF"; group = "Dropped off"; definition = "Engaged, then two unanswered personal contacts and seven full days after the second."; }
-      else if (tasks.some(t => known(t.dueAt, cutoff))) { status = "ACTIVE - AGENCY ACTION"; group = "Active"; definition = "Agency action is overdue on this lead."; }
       else if (firstOut && !lastReply && inquiry) { status = "NO RESPONSE"; group = "No response"; definition = "No verified reply after the initial inquiry and agency outreach."; }
       else if (text(workflow, "disposition") === "ACTIVE") { status = "ACTIVE"; group = "Active"; definition = "CRM workflow is active; current engagement may be incomplete."; }
       const prior = [...(index.priorCarriers.get(id) ?? [])];
@@ -236,7 +233,6 @@ export function buildMarketingLeadReport(snapshot: ReportSnapshot, asOf: string)
       const lostAt = lost ? transition(activities, id, "disposition", "LOST", cutoff, true) : null;
       const lastEmail = communications.filter(c => text(c, "channel") === "EMAIL" && text(c, "direction") === "OUTBOUND" && known(c.at, cutoff) && !c.internalReport && text(c, "purpose") !== "CARRIER" && text(c, "domain") !== "CARRIER" && (text(c, "purpose") === "PROSPECT" || text(c, "domain") === "CLIENT") && !["SERVICE", "RENEWAL"].includes(text(c, "context"))).sort((a, b) => Date.parse(text(a, "at")) - Date.parse(text(b, "at"))).at(-1);
       const emailTracking = !lastEmail ? missing : lastEmail.frontDraft || text(lastEmail, "status") === "DRAFT" ? "Draft only; not sent" : ["FAILED", "REJECTED", "UNDELIVERED"].includes(text(lastEmail, "status")) ? "Delivery failed" : known(lastEmail.seenAt, cutoff) ? text(lastEmail, "actorId").startsWith("crm:") || text(lastEmail, "classification") === "AUTOMATIC" ? "Seen - automated email" : "Seen" : "Read confirmation not recorded";
-      const docOutstanding = unique(tasks.filter(t => text(t, "kind") === "DOCUMENTS").map(t => text(t, "title"))).join("; ");
       if (currentPolicies.length > 1 && bound) notes.push("Multiple current bound policies; premium and expiration require policy-level review.");
       if (currentPrior.length > 1) notes.push("Multiple prior policy terms overlap the report date; premiums are listed separately and coverage status is unverified.");
       if (text(account, "notes")) notes.push(`CRM note: ${safeNote(text(account, "notes"))}`);
@@ -248,10 +244,10 @@ export function buildMarketingLeadReport(snapshot: ReportSnapshot, asOf: string)
         dateCell(inquiry), dateCell(firstOut?.at), dateCell(firstReply?.at), dateCell(firstDocAt), dateCell(selected?.at), dateCell(boundAt), dateCell(lostAt),
         dateCell(lastReply?.at), lastReply ? safeNote(text(lastReply.row, "summary") || text(lastReply.row, "subject")) || "Verified human client reply" : missing,
         dateCell(lastOut?.at), emailTracking,
-        docNames.length ? "Y" : missing, safeNote(docNames.join("; "), 400) || missing, safeNote(docOutstanding, 400) || missing, presented.length ? "Y" : missing,
+        docNames.length ? "Y" : missing, safeNote(docNames.join("; "), 400) || missing, missing, presented.length ? "Y" : missing,
         quote ? carriers.get(text(quote, "carrierId")) || missing : missing, number(quote, "premium"), premium, category,
         category === "Agency Quote" || category === "Bound Policy" ? "N" : missing, premium === null ? missing : [premiumName, ...premiumLines].join("; "), premiumNote, safeNote(otherPremiums, 400) || missing,
-        expiryValid ? dateCell(expiration) : null, expiryConfidence, hold || (deferred ? `Deferred until ${text(workflow, "deferredUntil")}` : missing),
+        expiryValid ? dateCell(expiration) : null, expiryConfidence, (deferred ? `Deferred until ${text(workflow, "deferredUntil")}` : missing),
         quotes.length || bound ? "Y" : missing, missing, missing, days(inquiry, asOf), days(inquiry, lastReply?.at), days(lastReply?.at, asOf), days(lastOut?.at, asOf),
         missing, notes.join("\n") || missing,
       ];

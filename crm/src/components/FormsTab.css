@@ -1,0 +1,239 @@
+.carrier-forms,
+.generated-forms {
+  min-width: 0;
+}
+
+.carrier-forms-heading,
+.generated-forms-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.carrier-forms .carrier-forms-heading h2,
+.generated-forms .generated-forms-heading h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 6px;
+}
+
+.carrier-forms-heading p,
+.generated-forms-heading p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.carrier-forms-available,
+.generated-forms-count {
+  border-radius: 5px;
+  background: var(--bg);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+  padding: 3px 7px;
+  white-space: nowrap;
+}
+
+.carrier-forms-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.carrier-form-choice {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: #fafbfd;
+}
+
+.carrier-form-number {
+  color: var(--accent-dark);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.carrier-forms .carrier-form-choice h3 {
+  margin: 7px 0 18px;
+  font-size: 14px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.carrier-form-choice button {
+  margin-top: auto;
+}
+
+.carrier-form-choice button:disabled {
+  opacity: .55;
+  cursor: default;
+}
+
+.carrier-forms-other {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.carrier-forms-other summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.carrier-forms-other summary span {
+  margin-left: 5px;
+  font-weight: 400;
+}
+
+.carrier-forms-other summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+}
+
+.carrier-forms-other p {
+  margin: 12px 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.carrier-forms-other ul {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 24px;
+  margin: 0;
+  padding: 0 0 0 18px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.carrier-forms-other li {
+  overflow-wrap: anywhere;
+}
+
+.carrier-forms-status {
+  margin: 16px 0 0;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.generated-forms-state {
+  margin: 0;
+  padding: 22px 18px;
+  border: 1px dashed var(--border);
+  border-radius: 7px;
+  background: var(--bg);
+  color: var(--muted);
+  font-size: 13px;
+  text-align: center;
+}
+
+.generated-forms-state strong {
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.generated-forms-state p {
+  margin: 6px 0 0;
+  line-height: 1.5;
+}
+
+.generated-forms-state--error {
+  border-style: solid;
+  color: var(--red);
+  background: var(--red-bg);
+}
+
+.generated-forms-state--error button {
+  margin-top: 12px;
+}
+
+.generated-forms-table-wrap {
+  max-width: 100%;
+}
+
+.generated-forms-table {
+  table-layout: fixed;
+  min-width: 560px;
+}
+
+.generated-forms-date-column {
+  width: 180px;
+}
+
+.generated-forms-action-column {
+  width: 100px;
+}
+
+.generated-forms-table td {
+  padding-top: 13px;
+  padding-bottom: 13px;
+  vertical-align: middle;
+}
+
+.generated-forms-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.generated-forms-name {
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+
+.generated-forms-date {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.generated-forms-actions {
+  text-align: right;
+}
+
+@media (max-width: 700px) {
+  .carrier-forms-grid,
+  .carrier-forms-other ul {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .carrier-form-choice {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 5px 12px;
+    align-items: center;
+    padding: 14px;
+  }
+
+  .carrier-form-number {
+    grid-column: 1;
+  }
+
+  .carrier-forms .carrier-form-choice h3 {
+    grid-column: 1;
+    margin: 0;
+  }
+
+  .carrier-form-choice button {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    margin: 0;
+  }
+}
