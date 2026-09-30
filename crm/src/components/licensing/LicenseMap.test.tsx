@@ -6,6 +6,14 @@ import LicenseMap, { coverageOf } from "./LicenseMap";
 import { US_MAP_VIEWBOX, US_STATE_NAMES, US_STATE_PATHS } from "../../lib/usMap";
 import type { License, UserProfile } from "../../lib/client";
 
+// Exercise the map's document attachment wiring without invoking storage or
+// changing the shared DocumentsPanel's own separately tested behavior.
+vi.mock("../DocumentsPanel", () => ({
+  default: ({ entityType, entityId }: { entityType: string; entityId: string }) => (
+    <section aria-label="License documents">{entityType}: {entityId}</section>
+  ),
+}));
+
 /**
  * The coverage map.
  *
@@ -210,5 +218,84 @@ describe("clicking a state", () => {
     renderMap({ canEdit: false });
     await user.click(stateEl("Massachusetts"));
     expect(screen.queryByRole("button", { name: "Edit" })).not.toBeInTheDocument();
+  });
+});
+
+describe("documents in the selected state", () => {
+  const licenseRow = (number: string) => screen.getByText(number).closest("tr")!;
+  const filesButton = (number: string) =>
+    within(licenseRow(number)).getByRole("button", { name: /^Files\b/i });
+
+  it("makes the firm and producer's files available without license edit permission", async () => {
+    const user = userEvent.setup();
+    renderMap({ canEdit: false });
+
+    await user.click(stateEl("Massachusetts"));
+
+    expect(screen.getByRole("columnheader", { name: "Files" })).toBeInTheDocument();
+    expect(filesButton("F-MA")).toBeInTheDocument();
+    expect(filesButton("1234567")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Edit" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "License documents" })).not.toBeInTheDocument();
+
+    await user.click(filesButton("F-MA"));
+    expect(screen.getByRole("region", { name: "License documents" }))
+      .toHaveTextContent(`LICENSE: ${FIRM[0].id}`);
+
+    await user.click(filesButton("1234567"));
+    expect(screen.getAllByRole("region", { name: "License documents" })).toHaveLength(1);
+    expect(screen.getByRole("region", { name: "License documents" }))
+      .toHaveTextContent(`LICENSE: ${PERSONAL[0].id}`);
+
+    await user.click(within(licenseRow("1234567")).getByRole("button", { name: /^Hide files\b/i }));
+    expect(screen.queryByRole("region", { name: "License documents" })).not.toBeInTheDocument();
+    expect(filesButton("1234567")).toBeInTheDocument();
+  });
+
+  it.each([false, true])("spans the state table's columns when canEdit is %s", async canEdit => {
+    const user = userEvent.setup();
+    renderMap({ canEdit });
+
+    await user.click(stateEl("Massachusetts"));
+    await user.click(filesButton("F-MA"));
+
+    const panel = screen.getByRole("region", { name: "License documents" });
+    expect(panel.closest("td")).toHaveAttribute(
+      "colspan", String(screen.getAllByRole("columnheader").length),
+    );
+  });
+
+  it("closes files when switching states and does not reopen them on return", async () => {
+    const user = userEvent.setup();
+    renderMap();
+
+    await user.click(stateEl("Massachusetts"));
+    await user.click(filesButton("F-MA"));
+    await user.click(stateEl("Maine"));
+
+    expect(screen.queryByRole("region", { name: "License documents" })).not.toBeInTheDocument();
+    await user.click(filesButton("F-ME"));
+    expect(screen.getByRole("region", { name: "License documents" }))
+      .toHaveTextContent(`LICENSE: ${FIRM[1].id}`);
+
+    await user.click(stateEl("Massachusetts"));
+    expect(screen.queryByRole("region", { name: "License documents" })).not.toBeInTheDocument();
+    expect(filesButton("F-MA")).toBeInTheDocument();
+  });
+
+  it.each(["Close", "selected state"])("clears the open files when closing via %s", async closeWith => {
+    const user = userEvent.setup();
+    renderMap();
+
+    await user.click(stateEl("Massachusetts"));
+    await user.click(filesButton("F-MA"));
+    await user.click(closeWith === "Close"
+      ? screen.getByRole("button", { name: "Close" })
+      : stateEl("Massachusetts"));
+
+    expect(screen.queryByRole("region", { name: "License documents" })).not.toBeInTheDocument();
+    await user.click(stateEl("Massachusetts"));
+    expect(screen.queryByRole("region", { name: "License documents" })).not.toBeInTheDocument();
+    expect(filesButton("F-MA")).toBeInTheDocument();
   });
 });
