@@ -8,7 +8,7 @@ import { contactKey, priorCarrierKey } from "../../../src/lib/extractionKeys";
 import { NO_UPLOAD_WINDOW_MINUTES } from "../../../../shared/leadUpload";
 import { parsePolicyExpiration, parseUnitCount } from "./fields";
 import { canonical, hash, get, row, put, commit, conflict, retryableStorage, type Write } from "../communications/store";
-import { prepareWebLeadAssignment } from "./assignment";
+import { pendingWebLeadWorkflow, webLeadAssignmentRow } from "./assignment";
 
 export interface Submission {
   fingerprint: string; proofHash: string; accountId: string; uploadToken: string | null;
@@ -70,6 +70,7 @@ export const handler: Schema["submitWebLead"]["functionHandler"] = async event =
   const estimateToken = estimationEnabled && carrierInput ? randomBytes(32).toString("base64url") : undefined;
   const submission: Submission = { fingerprint, proofHash: hash(proof), accountId: id, uploadToken: token, estimateToken, snapshot, receivedAt: at };
   const writes: Write[] = [put(row("SUBMISSION", key, submission)), modelPut("Account", id, account),
+    put(row("WORKFLOW", `workflow:${id}`, pendingWebLeadWorkflow(id, name), { accountId: id })), put(webLeadAssignmentRow(id)),
     put(row("OPERATION", `op:intake:${submissionId}`, { type: "IMPORT", state: "READY", submissionId, accountId: id, attempts: 0 }, { accountId: id, dueAt: at })),
     put(row("OPERATION", `op:sms-alert:${submissionId}`, { type: "SMS_ALERT", state: "READY", accountId: id, attempts: 0,
       lead: { id, name, city: account.city, state: account.state, contactName, contactPhone: clean(args.contactPhone, 50), source: account.source } }, { accountId: id, dueAt: at })),
@@ -87,24 +88,21 @@ export const handler: Schema["submitWebLead"]["functionHandler"] = async event =
   if (carrierName) writes.push(modelPut("PriorCarrier", randomUUID(), { accountId: id, carrierName, expirationDate: expiration ?? undefined, lastWriteBy: "lead-intake", extractionSourceKey: priorCarrierKey({ carrierName, policyNumber: null, lineOfBusiness: null }) }));
   if (validEmail && token) writes.push(modelPut("LeadReply", `reply:${submissionId}`, { accountId: id, submissionId, contactEmail: validEmail, contactName, status: "WAITING", uploadToken: token,
     submittedAt: at, dueAt: new Date(Date.now() + NO_UPLOAD_WINDOW_MINUTES * 60_000).toISOString(), uploadCount: 0 }));
+  if (!validEmail) writes.push(put(row("ISSUE", `issue:intake:${id}`, { message: "Correct the prospect email before sending", at }, { accountId: id })));
   for (let attempt = 0; attempt < 5; attempt++) {
-    const assignment = await prepareWebLeadAssignment(id, name);
-    const { workflow } = assignment;
-    const captureWrites = [...writes, ...assignment.writes, put(row("WORKFLOW", `workflow:${id}`, workflow, { accountId: id }))];
-    if (workflow.assignmentIssue || !validEmail) captureWrites.push(put(row("ISSUE", `issue:intake:${id}`, { message: workflow.assignmentIssue ?? "Correct the prospect email before sending", at }, { accountId: id })));
     try {
-      await commit(captureWrites);
+      await commit(writes);
       return { ok: true, id, estimateToken, uploadToken: token, uploadWindowMinutes: token ? NO_UPLOAD_WINDOW_MINUTES : null };
     } catch (e) {
       if (conflict(e) || retryableStorage(e)) {
         const winner = await get<Submission>(key);
         if (winner) return replay(winner.data, fingerprint, proof);
-        // Another lead took this turn or team eligibility changed. Re-select
-        // from the committed cursor; a failed transaction consumes no turn.
+        // Rotation happens in durable work after capture. Distinct enquiries
+        // never contend for the cursor here; retries only recover storage.
         if (attempt < 4) {
           // DynamoDB also rejects overlapping transactions before it can
           // evaluate conditions. Give that writer time to commit first.
-          if (retryableStorage(e)) await new Promise(resolve => setTimeout(resolve, 25 * 2 ** attempt + Math.random() * 25));
+          await new Promise(resolve => setTimeout(resolve, 25 * 2 ** attempt + Math.random() * 25));
           continue;
         }
       }

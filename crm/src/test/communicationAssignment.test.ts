@@ -26,7 +26,7 @@ vi.mock("@aws-sdk/lib-dynamodb", async importOriginal => ({
   } }) },
 }));
 vi.mock("../../amplify/functions/communications/cleanup", () => ({ archiveAllowed: async () => true }));
-vi.mock("../../amplify/functions/communications/config", () => ({ config: async () => ({ paused: false, activatedAt: "2026-09-01", environment: "main" }) }));
+vi.mock("../../amplify/functions/communications/config", () => ({ config: async () => ({ paused: false, activatedAt: "2026-09-01", environment: "main", frontInboxId: "inb_sales", frontChannelId: "cha_sales", frontSender: "sales@example.com" }) }));
 vi.mock("../../amplify/functions/communications/workflow", () => ({ ensureWorkflow: h.ensureWorkflow, enabledUser: h.enabledUser, recordOutbound: vi.fn() }));
 vi.mock("../../amplify/functions/communications/data", () => ({ dataClient: async () => ({ models: {} }) }));
 vi.mock("../../amplify/functions/lead-intake/alerts", () => ({ textLeadAlerts: h.text }));
@@ -125,6 +125,65 @@ describe("single-producer website text alerts", () => {
 });
 
 describe("website Front assignment", () => {
+  async function intake() {
+    await save(row("SUBMISSION", "submission:s1", { snapshot: { contactEmail: "jane@example.com", contactFirstName: "Jane", contactLastName: "Doe" }, receivedAt: "2026-09-01T12:00:00.000Z" }, { accountId: "a1" }));
+    return enqueueOperation("op:intake:s1", { type: "IMPORT", accountId: "a1", submissionId: "s1" });
+  }
+
+  it.each(["missing workflow", "missing owner", "ineligible owner", "disabled eligibility", "disabled user"])("holds a Front import with %s until an active producer is assigned", async state => {
+    if (state === "missing workflow") h.records.delete("workflow:a1");
+    if (state === "missing owner") await workflow({ salespersonId: undefined });
+    if (state === "ineligible owner") await member("alice", { salesperson: false });
+    if (state === "disabled eligibility") await member("alice", { enabled: false });
+    if (state === "disabled user") h.enabledUser.mockRejectedValue(new Error("Disabled user"));
+    const op = await intake();
+    await runOperation(op);
+    expect(record(op.id).data).toMatchObject({ state: "RETRY_WAIT", attempts: 0 });
+    expect(record(`issue:${op.id}`).data.resolved).toBe(false);
+    expect(h.front).not.toHaveBeenCalled(); expect(h.ensureWorkflow).not.toHaveBeenCalled();
+    if (state === "missing workflow") expect(h.records.has("workflow:a1")).toBe(false);
+    if (state === "missing owner") expect(record("workflow:a1").data.salespersonId).toBeUndefined();
+  });
+
+  it("imports after the persisted producer is verified even when their Front mapping needs repair", async () => {
+    await member("bob", { frontId: undefined });
+    await workflow({ salespersonId: "bob" });
+    const op = await intake();
+    h.front.mockResolvedValueOnce({ message_uid: "uid_s1" });
+    await runOperation(op);
+    expect(h.enabledUser).toHaveBeenCalledExactlyOnceWith("bob");
+    expect(h.front).toHaveBeenCalledExactlyOnceWith("/inboxes/inb_sales/imported_messages", "POST", expect.objectContaining({ external_id: "hoa:main:s1" }));
+    expect(record(op.id).data).toMatchObject({ state: "ACCEPTED", attempts: 1, uid: "uid_s1" });
+    expect(h.ensureWorkflow).not.toHaveBeenCalled();
+  });
+
+  it("holds the import when ownership changes before its delivery lease", async () => {
+    const op = await intake();
+    h.beforeLease = () => {
+      const old = record("workflow:a1");
+      h.records.set(old.id, row("WORKFLOW", old.id, { ...old.data, salespersonId: "bob" }, { accountId: "a1", previous: old }));
+    };
+    await runOperation(op);
+    expect(h.front).not.toHaveBeenCalled(); expect(record(op.id).data.state).toBe("READY");
+    h.front.mockResolvedValueOnce({ message_uid: "uid_s1" });
+    await runOperation(op);
+    expect(h.enabledUser).toHaveBeenLastCalledWith("bob");
+    expect(h.front).toHaveBeenCalledTimes(1);
+    expect(record(op.id).data.state).toBe("ACCEPTED");
+  });
+
+  it("holds the import when producer eligibility changes before its delivery lease", async () => {
+    const op = await intake();
+    h.beforeLease = () => {
+      const old = record("eligibility:alice");
+      h.records.set(old.id, row("ELIGIBILITY", old.id, { ...old.data, enabled: false }, { previous: old }));
+    };
+    await runOperation(op); await runOperation(op);
+    expect(h.front).not.toHaveBeenCalled();
+    expect(record(op.id).data).toMatchObject({ state: "RETRY_WAIT", attempts: 0 });
+    expect(record(`issue:${op.id}`).data.resolved).toBe(false);
+  });
+
   it("keeps assignment queued when the selected producer has no Front mapping and recovers after repair", async () => {
     await member("alice", { frontId: undefined });
     const imported = await save(row<Operation>("OPERATION", "op:intake:s1", { type: "IMPORT", accountId: "a1", state: "ACCEPTED", attempts: 1, uid: "uid_s1" }, { accountId: "a1" }));

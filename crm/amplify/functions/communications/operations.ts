@@ -86,7 +86,7 @@ export async function runOperation(candidate: Row<Operation>) {
     }
     // Delivery follows a durable assignment. It must never manufacture a
     // default owner when an intake workflow has not been assigned yet.
-    const wf = ["SMS_ALERT", "ASSIGN"].includes(op.data.type)
+    const wf = ["IMPORT", "SMS_ALERT", "ASSIGN"].includes(op.data.type)
       ? await get<LeadWorkflow>(`workflow:${op.data.accountId}`) : await ensureWorkflow(op.data.accountId);
     if (!wf) throw new AssignmentError("Assign an active salesperson to this lead before delivering its alert or Front assignment");
     let assignee: Row<TeamEligibility> | undefined;
@@ -103,6 +103,7 @@ export async function runOperation(candidate: Row<Operation>) {
       if (!op.data.lead) throw new ProviderError("The lead text alert is missing its lead details; review the intake record", 400, false);
       assignee = await assignedSalesperson(wf.data.salespersonId);
     } else if (op.data.type === "IMPORT") {
+      assignee = await assignedSalesperson(wf.data.salespersonId);
       if (!c.frontInboxId || !c.frontChannelId) throw new ProviderError("Connect the Front sales inbox and email channel", 0, false);
       const submission = await get<Submission>(`submission:${op.data.submissionId}`);
       if (!submission) throw new Error("Submission record is missing");
@@ -146,7 +147,7 @@ export async function runOperation(candidate: Row<Operation>) {
       }
     }
     const leased = row("OPERATION", op.id, { ...op.data, ...(op.data.type === "ASSIGN" ? { assigneeId: assignee!.data.frontId } : {}), state: "LEASED" as const, attempts: op.data.attempts + 1, leaseUntil: new Date(Date.now() + 180_000).toISOString() }, { accountId: op.accountId, previous: op, dueAt: new Date(Date.now() + 180_000).toISOString() });
-    await commit([put(leased, op), absent(`deleted-account:${op.data.accountId}`), ...(["EMAIL", "ASSIGN", "SMS_ALERT"].includes(op.data.type) ? [check(wf)] : []), ...(assignee ? [check(assignee)] : []), ...(inboundSource ? [check(inboundSource)] : [])]);
+    await commit([put(leased, op), absent(`deleted-account:${op.data.accountId}`), ...(["IMPORT", "EMAIL", "ASSIGN", "SMS_ALERT"].includes(op.data.type) ? [check(wf)] : []), ...(assignee ? [check(assignee)] : []), ...(inboundSource ? [check(inboundSource)] : [])]);
     op = leased;
     posted = true;
     if (op.data.type === "SMS_ALERT") {

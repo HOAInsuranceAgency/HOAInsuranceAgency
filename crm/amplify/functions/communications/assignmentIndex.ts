@@ -1,6 +1,7 @@
 import { BatchGetCommand } from "@aws-sdk/lib-dynamodb";
 import type { LeadWorkflow } from "../../../../shared/leadWorkflow";
 import { conflict, db, get, query, row, save, table, type Row } from "./store";
+import { migrateProducerIndex } from "./producerIndex";
 
 /** GSI pages may be stale. Read their current rows together before attempting
  * conditional writes; an unprocessed key is never evidence of a deleted row. */
@@ -58,4 +59,10 @@ export async function migrateAssignmentIndex(options: { maxPages?: number; budge
   }
 }
 
-export const handler = async () => { await migrateAssignmentIndex(); };
+export const handler = async () => {
+  let producerFailure: unknown;
+  try { await migrateProducerIndex({ budgetMs: 10_000 }); }
+  catch (error) { producerFailure = error; }
+  await migrateAssignmentIndex();
+  if (producerFailure) throw producerFailure;
+};
