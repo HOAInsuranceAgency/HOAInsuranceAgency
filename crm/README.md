@@ -22,10 +22,16 @@ Internal agency management system replacing EzLynx for the commercial
   current browser tab and enforced on server requests; changing it clears
   the previous view's data. Updated role assignments appear on reload, and
   saving your own roles refreshes them immediately. The team roster loads
-  twenty members at a time; use **Load more** to reach additional teammates.
+  twenty members at a time, including profile details in the same response;
+  use **Load more** to reach additional teammates.
   First login runs an onboarding flow ([src/pages/Onboarding.tsx](src/pages/Onboarding.tsx)).
   Producers must supply an NPN and at least one state license, including
   existing users who gain Producer later and have missing licensing details.
+  Producer setup uses the `License` index for that profile. A deployment-only
+  migration copies original onboarding licenses into `License` before the
+  frontend is released. It preserves existing license records and leaves the
+  old table read-only as a backup. A failed copy blocks deployment and can be
+  retried safely; the app no longer reads or imports legacy licenses.
 - **Lead texts** — a website enquiry texts every team member who turned the
   switch on in Settings → Team and saved a mobile number
   ([amplify/functions/lead-intake](amplify/functions/lead-intake)). Sent with

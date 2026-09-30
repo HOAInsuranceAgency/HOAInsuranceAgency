@@ -89,12 +89,15 @@ function ProfileGate({ user, signOut }: { user: AuthUser; signOut: () => void })
       const version = ++roleSessionVersion.current;
       clearActiveRole();
       const [rows, gs] = await Promise.all([
-        listAllPages((nextToken) =>
-          client.models.UserProfile.list({
-            filter: { userId: { eq: user.userId } },
-            nextToken,
-          })
-        ),
+        listAllPages(async (nextToken) => {
+          const result = await client.models.UserProfile.listUserProfileByUserId(
+            { userId: user.userId }, { nextToken },
+          );
+          if (result.errors?.length) {
+            throw new Error(result.errors[0].message || "Couldn't load your profile.");
+          }
+          return result;
+        }),
         fetchUserGroups(true),
       ]);
       const profile = rows[0] ?? null;

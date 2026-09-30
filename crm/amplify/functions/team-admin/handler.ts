@@ -11,12 +11,14 @@ import {
   UsernameExistsException,
 } from "@aws-sdk/client-cognito-identity-provider";
 import { SESv2Client, SendEmailCommand } from "@aws-sdk/client-sesv2";
+import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
+import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 // Role names are the schema's `UserRole` and the Cognito group names both —
 // see the note on `isUserRole`. enums.ts pulls in no runtime dependency, the
 // way pagination.ts does not.
 import { isUserRole, type UserRole } from "../../../src/lib/enums";
 import { isActiveAdmin } from "../crm-access/active-role";
-import { listTeamUsers, type TeamRosterArgs } from "./roster";
+import { listTeamUsers, loadTeamProfile, type TeamRosterArgs } from "./roster";
 
 /**
  * Team administration behind ADMIN-group-only mutations.
@@ -28,6 +30,7 @@ import { listTeamUsers, type TeamRosterArgs } from "./roster";
 
 const cognito = new CognitoIdentityProviderClient();
 const ses = new SESv2Client();
+const db = DynamoDBDocumentClient.from(new DynamoDBClient());
 
 const POOL_ID = process.env.USER_POOL_ID!;
 const PORTAL_URL = process.env.PORTAL_URL ?? "";
@@ -218,7 +221,8 @@ export const handler = async (
         sub: event.identity && "sub" in event.identity ? event.identity.sub : undefined,
       });
     case "listTeamUsers":
-      return listTeamUsers(cognito, POOL_ID, event.arguments as TeamRosterArgs, groupsFor);
+      return listTeamUsers(cognito, POOL_ID, event.arguments as TeamRosterArgs, groupsFor,
+        userId => loadTeamProfile(db, process.env.USER_PROFILE_TABLE_NAME!, process.env.USER_PROFILE_USER_ID_INDEX_NAME!, userId));
     default:
       return { ok: false, error: `Unknown field ${field}` };
   }

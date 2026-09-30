@@ -2,10 +2,9 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const profileWrites = vi.hoisted(() => ({ create: vi.fn(), update: vi.fn(), get: vi.fn() }));
-const licenseModels = vi.hoisted(() => ({ create: vi.fn(), list: vi.fn() }));
-const listLegacyLicenses = vi.hoisted(() => vi.fn());
+const licenseModels = vi.hoisted(() => ({ create: vi.fn(), listLicenseByUserProfileId: vi.fn() }));
 vi.mock("../lib/client", async () => ({
-  client: { models: { UserProfile: profileWrites, License: licenseModels, ProducerLicense: { list: listLegacyLicenses } } },
+  client: { models: { UserProfile: profileWrites, License: licenseModels } },
   listAllPages: (await import("../lib/pagination")).listAllPages,
   US_STATES: ["FL", "NY"],
   friendlyError: (error: unknown, fallback: string) =>
@@ -50,8 +49,7 @@ beforeEach(() => {
     storedProfile = { ...existing, ...payload };
     return { data: storedProfile };
   });
-  licenseModels.list.mockImplementation(async () => ({ data: [...persisted] }));
-  listLegacyLicenses.mockResolvedValue({ data: [] });
+  licenseModels.listLicenseByUserProfileId.mockImplementation(async () => ({ data: [...persisted] }));
   licenseModels.create.mockImplementation(async (payload) => {
     persisted.push(payload);
     return { data: payload };
@@ -170,7 +168,7 @@ describe("onboarding assigned roles", () => {
     const onComplete = vi.fn();
     profileWrites.update.mockResolvedValueOnce({ data: null, errors: [{ message: "Could not finish setup" }] });
     // The new row has not reached the eventually consistent list yet.
-    licenseModels.list.mockResolvedValue({ data: [] });
+    licenseModels.listLicenseByUserProfileId.mockResolvedValue({ data: [] });
     render(<Onboarding user={user} existing={null} role="PRODUCER" onComplete={onComplete} />);
     fireEvent.change(field("First name *"), { target: { value: "Alex" } });
     fireEvent.change(field("Last name *"), { target: { value: "Agent" } });
@@ -214,7 +212,7 @@ describe("onboarding assigned roles", () => {
 
   it("keeps onboarding incomplete if existing license verification fails", async () => {
     const onComplete = vi.fn();
-    licenseModels.list.mockResolvedValueOnce({ data: [], errors: [{ message: "License read failed" }] });
+    licenseModels.listLicenseByUserProfileId.mockResolvedValueOnce({ data: [], errors: [{ message: "License read failed" }] });
     render(<Onboarding user={user} existing={{ ...existing, onboardingComplete: true, npn: "12345678" }}
       existingLicenses={[savedLicense]} role="PRODUCER" onComplete={onComplete} />);
     submit();

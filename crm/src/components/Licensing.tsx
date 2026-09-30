@@ -9,7 +9,6 @@ import { useAsyncResource } from "../lib/useAsyncResource";
 import { useIsAdmin } from "../lib/auth";
 import Modal from "./Modal";
 import { holderLabel, type HolderType } from "./licensing/holder";
-import LegacyBackfill from "./licensing/LegacyBackfill";
 import LicenseTable from "./licensing/LicenseTable";
 import LicenseForm from "./licensing/LicenseForm";
 import StateCoverage from "./licensing/StateCoverage";
@@ -176,14 +175,6 @@ export default function Licensing() {
   return (
     <>
       {error && <p className="error-text">{error}</p>}
-
-      {isAdmin && (
-        <LegacyBackfill
-          licenses={licenses}
-          profiles={profiles}
-          onMigrated={(created) => setLicenses((ls) => [...ls, ...created])}
-        />
-      )}
 
       <div className="card lic-bar">
         <div className="lic-stats">

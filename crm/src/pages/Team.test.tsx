@@ -70,14 +70,12 @@ beforeEach(() => {
 describe("Team roster read states", () => {
   it("shows a loader while the read is in flight", () => {
     listTeamUsers.mockReturnValue(pending());
-    UserProfile.listUserProfileByUserId.mockResolvedValue({ data: [] });
     renderPage();
     expect(screen.getByText("Loading…")).toBeInTheDocument();
   });
 
   it("shows the empty message when the read returns no users", async () => {
     listTeamUsers.mockResolvedValue({ data: { users: [] }, errors: undefined });
-    UserProfile.listUserProfileByUserId.mockResolvedValue({ data: [] });
     renderPage();
 
     expect(await screen.findByText("No users found.")).toBeInTheDocument();
@@ -92,7 +90,6 @@ describe("Team roster read states", () => {
       data: null,
       errors: [{ message: "listTeamUsers is unavailable" }],
     });
-    UserProfile.listUserProfileByUserId.mockResolvedValue({ data: [] });
     renderPage();
 
     expect(
@@ -109,7 +106,6 @@ describe("Team roster read states", () => {
       data: null,
       errors: [{ message: "listTeamUsers is unavailable" }],
     });
-    UserProfile.listUserProfileByUserId.mockResolvedValue({ data: [] });
     renderPage();
 
     const shown = await screen.findAllByText(/listTeamUsers is unavailable/);
@@ -138,7 +134,6 @@ describe("Team roster read states", () => {
       },
       errors: undefined,
     });
-    UserProfile.listUserProfileByUserId.mockResolvedValue({ data: [] });
     renderPage();
 
     expect(await screen.findByText("producer@getgim.com")).toBeInTheDocument();
@@ -152,8 +147,7 @@ const teammate = { userId: "u-1", email: "casey@example.com", createdAt: "2026-0
 const teammateProfile = { id: "p-1", userId: "u-1", email: teammate.email, firstName: "Casey", lastName: "Staff", onboardingComplete: true, leadTextAlerts: false, mobilePhone: "5085550100" } as UserProfileType;
 const eligibility: TeamEligibility = { userId: "u-1", name: "Casey Staff", email: teammate.email, enabled: true, salesperson: false, frontId: "tea_casey", dialpadId: "5655281245659136", version: 3 };
 function combinedSetup() {
-  listTeamUsers.mockResolvedValue({ data: { users: [teammate] } });
-  UserProfile.listUserProfileByUserId.mockResolvedValue({ data: [teammateProfile] });
+  listTeamUsers.mockResolvedValue({ data: { users: [teammate], profiles: [teammateProfile] } });
   communicationRequest.mockImplementation(async (operation: string, input: TeamEligibility) => operation === "team" ? { team: [{ ...eligibility }] } : { member: { ...input, version: (input.version ?? 0) + 1 } });
 }
 
@@ -161,29 +155,24 @@ describe("paged team roster", () => {
   const later = { userId: "u-later", email: "later@example.com", createdAt: null, groups: ["PRODUCER"] };
   const laterProfile = { ...teammateProfile, id: "p-later", userId: later.userId, email: later.email, firstName: "Later", lastName: "Member" };
 
-  it("loads the next roster page only on request, including profiles reached through the userId index", async () => {
-    listTeamUsers.mockResolvedValueOnce({ data: { users: [teammate], nextToken: "page-2" } })
-      .mockResolvedValueOnce({ data: JSON.stringify({ ok: true, users: [later], nextToken: null }) });
-    UserProfile.listUserProfileByUserId.mockImplementation(async ({ userId }: { userId: string }) => ({
-      data: [userId === teammate.userId ? teammateProfile : laterProfile],
-    }));
+  it("loads the next roster page only on request, with profile decorations in the same response", async () => {
+    listTeamUsers.mockResolvedValueOnce({ data: { users: [teammate], profiles: [teammateProfile], nextToken: "page-2" } })
+      .mockResolvedValueOnce({ data: JSON.stringify({ ok: true, users: [later], profiles: [laterProfile], nextToken: null }) });
     renderPage();
     expect(await screen.findByText("Casey Staff")).toBeVisible();
     expect(listTeamUsers).toHaveBeenCalledTimes(1);
-    expect(UserProfile.listUserProfileByUserId).toHaveBeenCalledTimes(1);
-    expect(UserProfile.listUserProfileByUserId).toHaveBeenCalledWith({ userId: teammate.userId }, { limit: 1 });
+    expect(UserProfile.listUserProfileByUserId).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Load more team members" }));
     expect(await screen.findByText("Later Member")).toBeVisible();
     expect(listTeamUsers).toHaveBeenLastCalledWith({ nextToken: "page-2" });
-    expect(UserProfile.listUserProfileByUserId).toHaveBeenLastCalledWith({ userId: later.userId }, { limit: 1 });
+    expect(UserProfile.listUserProfileByUserId).not.toHaveBeenCalled();
     expect(screen.getByText("Casey Staff")).toBeVisible();
     expect(screen.queryByRole("button", { name: "Load more team members" })).toBeNull();
   });
 
   it("retains loaded rows and local role edits across a failed later page and its retry", async () => {
-    listTeamUsers.mockResolvedValueOnce({ data: { users: [teammate], nextToken: "page-2" } })
+    listTeamUsers.mockResolvedValueOnce({ data: { users: [teammate], profiles: [teammateProfile], nextToken: "page-2" } })
       .mockResolvedValueOnce({ errors: [{ message: "Cognito throttled" }] });
-    UserProfile.listUserProfileByUserId.mockResolvedValue({ data: [teammateProfile] });
     updateUserRoles.mockResolvedValue({ data: { ok: true } });
     renderPage();
     fireEvent.click(await screen.findByRole("button", { name: "Edit roles for Casey Staff" }));
@@ -214,7 +203,6 @@ describe("paged team roster", () => {
   it("can retry an initial roster failure", async () => {
     listTeamUsers.mockRejectedValueOnce(new Error("Roster unavailable"))
       .mockResolvedValueOnce({ data: { users: [teammate] } });
-    UserProfile.listUserProfileByUserId.mockResolvedValue({ data: [] });
     renderPage();
     expect(await screen.findByText("Roster unavailable")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Retry team" }));
@@ -222,13 +210,12 @@ describe("paged team roster", () => {
     expect(screen.queryByText("Roster unavailable")).toBeNull();
   });
 
-  it("keeps role management available when a member's profile decoration fails", async () => {
+  it("keeps role management available when the response omits a member's optional profile", async () => {
     listTeamUsers.mockResolvedValue({ data: { users: [teammate] } });
-    UserProfile.listUserProfileByUserId.mockRejectedValue(new Error("Profile unavailable"));
     renderPage();
     expect(await screen.findByRole("button", { name: `Edit roles for ${teammate.email}` })).toBeEnabled();
     expect(screen.getByText("STAFF")).toBeVisible();
-    expect(screen.queryByText("Profile unavailable")).toBeNull();
+    expect(UserProfile.listUserProfileByUserId).not.toHaveBeenCalled();
   });
 });
 
@@ -283,7 +270,6 @@ describe("combined team and assignment settings", () => {
 
   it("keeps pending invites visible and refreshes assignment settings after an invite", async () => {
     listTeamUsers.mockResolvedValue({ data: { users: [teammate] } });
-    UserProfile.listUserProfileByUserId.mockResolvedValue({ data: [] });
     communicationRequest.mockResolvedValue({ team: [] });
     renderPage();
     expect(await screen.findByText("Available after first sign-in")).toBeVisible();
@@ -361,7 +347,7 @@ describe("combined team and assignment settings", () => {
     fireEvent.change(within(inviteCard as HTMLElement).getByRole("textbox"), { target: { value: "new@example.com" } });
     fireEvent.click(screen.getByRole("button", { name: "Send invite" }));
     await waitFor(() => expect(listTeamUsers).toHaveBeenCalledTimes(2));
-    await waitFor(() => expect(UserProfile.listUserProfileByUserId).toHaveBeenCalledTimes(2));
+    expect(UserProfile.listUserProfileByUserId).not.toHaveBeenCalled();
 
     await act(async () => finishSave({ member: { ...eligibility, salesperson: true, version: 4 } }));
     // Before the guard, the invite starts a stale read which can settle after
@@ -419,8 +405,7 @@ describe("assigning up to two roles", () => {
   });
 
   it("lets the current admin add Producer and asks the app to refresh roles immediately", async () => {
-    listTeamUsers.mockResolvedValue({ data: { users: [{ userId: profile.userId, email: profile.email, groups: ["ADMIN"] }] } });
-    UserProfile.listUserProfileByUserId.mockResolvedValue({ data: [profile] });
+    listTeamUsers.mockResolvedValue({ data: { users: [{ userId: profile.userId, email: profile.email, groups: ["ADMIN"] }], profiles: [profile] } });
     updateUserRoles.mockResolvedValue({ data: { ok: true } });
     const refreshed = vi.fn(); window.addEventListener("team-roles-changed", refreshed);
     renderPage();

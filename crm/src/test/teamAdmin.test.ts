@@ -1,12 +1,12 @@
 import type { AppSyncResolverEvent } from "aws-lambda";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   AdminAddUserToGroupCommand, AdminCreateUserCommand, AdminDeleteUserCommand, AdminDisableUserCommand, AdminGetUserCommand,
   AdminListGroupsForUserCommand, AdminRemoveUserFromGroupCommand, ListUsersCommand,
   UsernameExistsException,
 } from "@aws-sdk/client-cognito-identity-provider";
 
-const { cognitoSend, sesSend } = vi.hoisted(() => ({ cognitoSend: vi.fn(), sesSend: vi.fn() }));
+const { cognitoSend, sesSend, dbSend } = vi.hoisted(() => ({ cognitoSend: vi.fn(), sesSend: vi.fn(), dbSend: vi.fn() }));
 vi.mock("@aws-sdk/client-cognito-identity-provider", async importOriginal => ({
   ...await importOriginal<object>(),
   CognitoIdentityProviderClient: class { send = cognitoSend; },
@@ -14,6 +14,10 @@ vi.mock("@aws-sdk/client-cognito-identity-provider", async importOriginal => ({
 vi.mock("@aws-sdk/client-sesv2", async importOriginal => ({
   ...await importOriginal<object>(),
   SESv2Client: class { send = sesSend; },
+}));
+vi.mock("@aws-sdk/lib-dynamodb", async importOriginal => ({
+  ...await importOriginal<object>(),
+  DynamoDBDocumentClient: { from: () => ({ send: dbSend }) },
 }));
 import { handler } from "../../amplify/functions/team-admin/handler";
 
@@ -27,7 +31,10 @@ const changes = () => cognitoSend.mock.calls.map(([command]) => command).filter(
   command instanceof AdminAddUserToGroupCommand || command instanceof AdminRemoveUserFromGroupCommand);
 
 beforeEach(() => {
-  cognitoSend.mockReset(); sesSend.mockReset();
+  cognitoSend.mockReset(); sesSend.mockReset(); dbSend.mockReset();
+  vi.stubEnv("USER_PROFILE_TABLE_NAME", "profiles");
+  vi.stubEnv("USER_PROFILE_USER_ID_INDEX_NAME", "profiles-by-userId");
+  dbSend.mockResolvedValue({ Items: [] });
   sesSend.mockResolvedValue({});
   cognitoSend.mockImplementation(async command => {
     if (command instanceof AdminGetUserCommand) return { Username: "member-username", UserAttributes: [{ Name: "sub", Value: "member-sub" }] };
@@ -35,6 +42,7 @@ beforeEach(() => {
     return {};
   });
 });
+afterEach(() => vi.unstubAllEnvs());
 
 describe("team role assignments", () => {
   it("invites a user with two actual Cognito memberships and one invitation", async () => {
@@ -72,6 +80,7 @@ describe("team role assignments", () => {
       expect(await run(field, {}, ["ADMIN", "PRODUCER"], "PRODUCER")).toMatchObject({ ok: false });
     }
     expect(cognitoSend).not.toHaveBeenCalled();
+    expect(dbSend).not.toHaveBeenCalled();
   });
 
   it("adds Producer to an existing admin without removing Admin or unrelated groups", async () => {
@@ -114,6 +123,10 @@ describe("team role assignments", () => {
   });
 
   it("returns one roster page and loads all memberships for only that page", async () => {
+    dbSend.mockImplementation(async command => ({ Items: [{
+      id: `profile-${command.input.ExpressionAttributeValues[":userId"]}`,
+      userId: command.input.ExpressionAttributeValues[":userId"], firstName: "Casey", lastName: "Agent",
+    }] }));
     cognitoSend.mockImplementation(async command => {
       if (command instanceof ListUsersCommand) return command.input.PaginationToken
         ? { Users: [{ Username: "second" }] }
@@ -124,13 +137,16 @@ describe("team role assignments", () => {
       return {};
     });
     const result = await run("listTeamUsers", {});
-    expect(result).toMatchObject({ ok: true, nextToken: "more-users", users: [
+    expect(result).toMatchObject({ ok: true, nextToken: "more-users", profiles: [{ id: "profile-first", userId: "first", firstName: "Casey" }], users: [
       { userId: "first", groups: ["ADMIN", "PRODUCER"] },
     ] });
     expect(cognitoSend.mock.calls.filter(([command]) => command instanceof ListUsersCommand)).toHaveLength(1);
+    expect(dbSend).toHaveBeenCalledOnce();
+    expect(dbSend.mock.calls[0][0].input).toMatchObject({ TableName: "profiles", IndexName: "profiles-by-userId", Limit: 1 });
     expect(await run("listTeamUsers", { nextToken: "more-users" })).toMatchObject({ ok: true, nextToken: null, users: [
       { userId: "second", groups: ["ADMIN", "PRODUCER"] },
     ] });
+    expect(dbSend).toHaveBeenCalledTimes(2);
   });
 });
 

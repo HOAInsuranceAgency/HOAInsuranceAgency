@@ -127,7 +127,6 @@ export type Certificate = Schema["Certificate"]["type"];
 export type Invoice = Schema["Invoice"]["type"];
 export type InvoiceLine = Schema["InvoiceLine"]["type"];
 export type UserProfile = Schema["UserProfile"]["type"];
-export type ProducerLicense = Schema["ProducerLicense"]["type"];
 export type License = Schema["License"]["type"];
 export type AgencySettings = Schema["AgencySettings"]["type"];
 export type MarketingTask = Schema["MarketingTask"]["type"];

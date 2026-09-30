@@ -10,8 +10,8 @@ const auth = vi.hoisted(() => ({
 }));
 const fetchUserGroups = vi.hoisted(() => vi.fn());
 const listProfiles = vi.hoisted(() => vi.fn());
+const scanProfiles = vi.hoisted(() => vi.fn());
 const listLicenses = vi.hoisted(() => vi.fn());
-const listLegacyLicenses = vi.hoisted(() => vi.fn());
 
 vi.mock("@aws-amplify/ui-react", () => ({
   Authenticator: { Provider: ({ children }: { children: ReactNode }) => children },
@@ -21,18 +21,17 @@ vi.mock("./lib/auth", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./lib/auth")>()),
   fetchUserGroups,
 }));
-vi.mock("./lib/client", () => ({
+vi.mock("./lib/client", async () => ({
   client: {
     models: {
-      UserProfile: { list: listProfiles },
-      License: { list: listLicenses },
-      ProducerLicense: { list: listLegacyLicenses },
+      UserProfile: { listUserProfileByUserId: listProfiles, list: scanProfiles },
+      License: { listLicenseByUserProfileId: listLicenses },
       AgencySettings: {
         observeQuery: () => ({ subscribe: () => ({ unsubscribe: vi.fn() }) }),
       },
     },
   },
-  listAllPages: async (read: () => Promise<{ data: unknown[] }>) => (await read()).data,
+  listAllPages: (await import("./lib/pagination")).listAllPages,
   friendlyError: (error: unknown, fallback: string) =>
     error instanceof Error ? error.message : fallback,
 }));
@@ -102,8 +101,8 @@ beforeEach(() => {
   auth.authStatus = "authenticated";
   auth.user = { userId: "user-one", username: "admin@example.com" };
   fetchUserGroups.mockResolvedValue(["ADMIN", "PRODUCER"]);
+  scanProfiles.mockRejectedValue(new Error("Profile table scans are not allowed"));
   listLicenses.mockResolvedValue({ data: [savedLicense] });
-  listLegacyLicenses.mockResolvedValue({ data: [] });
   listProfiles.mockResolvedValue({
     data: [{
       id: "profile-one",
@@ -118,6 +117,28 @@ beforeEach(() => {
 });
 
 describe("assigned role switching", () => {
+  it("loads the signed-in profile through its paginated user index without scanning profiles", async () => {
+    listProfiles.mockResolvedValueOnce({ data: [], nextToken: "profile-page-two" });
+    renderApp();
+
+    expect(await screen.findByRole("heading", { name: "Agency dashboard" })).toBeInTheDocument();
+    expect(listProfiles).toHaveBeenNthCalledWith(1, { userId: "user-one" }, { nextToken: undefined });
+    expect(listProfiles).toHaveBeenNthCalledWith(2, { userId: "user-one" }, { nextToken: "profile-page-two" });
+    expect(listProfiles).toHaveBeenCalledTimes(2);
+    expect(scanProfiles).not.toHaveBeenCalled();
+  });
+
+  it("keeps a failed indexed profile read behind the error gate and recovers on retry", async () => {
+    listProfiles.mockResolvedValueOnce({ data: [], errors: [{ message: "Cannot read profile" }] });
+    renderApp();
+
+    expect(await screen.findByText("Cannot read profile")).toBeInTheDocument();
+    expect(screen.queryByRole("complementary")).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Producer setup" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByRole("heading", { name: "Agency dashboard" })).toBeInTheDocument();
+  });
+
   it("offers only assigned roles in the sidebar footer and refreshes group membership", async () => {
     fetchUserGroups.mockResolvedValue(["PRODUCER", "OTHER_GROUP", "ADMIN"]);
     renderApp();
@@ -328,9 +349,7 @@ describe("producer onboarding gate", () => {
     expect(screen.queryByRole("complementary")).not.toBeInTheDocument();
   });
 
-  it("accepts a previously saved legacy producer license", async () => {
-    listLicenses.mockResolvedValue({ data: [] });
-    listLegacyLicenses.mockResolvedValue({ data: [{ ...savedLicense, holderType: undefined }] });
+  it("accepts an existing license in the unified producer licensing model", async () => {
     renderApp();
 
     expect(await screen.findByRole("heading", { name: "Agency dashboard" })).toBeInTheDocument();
@@ -363,9 +382,8 @@ describe("producer onboarding gate", () => {
     expect(await screen.findByRole("heading", { name: "Agency dashboard" })).toBeInTheDocument();
   });
 
-  it.each(["current", "legacy"])("keeps failed %s license reads closed and recovers on retry", async (source) => {
-    const read = source === "current" ? listLicenses : listLegacyLicenses;
-    read.mockResolvedValueOnce({ data: [], errors: [{ message: "Cannot read producer licenses" }] });
+  it("keeps failed license reads closed and recovers on retry", async () => {
+    listLicenses.mockResolvedValueOnce({ data: [], errors: [{ message: "Cannot read producer licenses" }] });
     renderApp();
 
     expect(await screen.findByText("Cannot read producer licenses")).toBeInTheDocument();
@@ -382,6 +400,5 @@ describe("producer onboarding gate", () => {
 
     expect(await screen.findByRole("heading", { name: "Agency dashboard" })).toBeInTheDocument();
     expect(listLicenses).not.toHaveBeenCalled();
-    expect(listLegacyLicenses).not.toHaveBeenCalled();
   });
 });

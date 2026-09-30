@@ -147,18 +147,9 @@ async function fetchTeamPage(nextToken?: string) {
   const body = parse(data);
   if (body.ok === false) throw new Error(String(body.error ?? "Failed to load team"));
   const users = (body.users as TeamUser[] | undefined) ?? NO_USERS;
-  const profiles: UserProfile[] = [];
-  // Only decorate this roster page. The userId index avoids scanning the
-  // profile table and also works for members beyond its first DynamoDB page.
-  // Profile failures must not prevent an admin from managing Cognito roles.
-  for (let start = 0; start < users.length; start += 4) {
-    const results = await Promise.allSettled(users.slice(start, start + 4).map(async user => {
-      const result = await client.models.UserProfile.listUserProfileByUserId({ userId: user.userId }, { limit: 1 });
-      if (result.errors?.length) throw new Error(result.errors[0].message);
-      return result.data;
-    }));
-    for (const result of results) if (result.status === "fulfilled") profiles.push(...result.value);
-  }
+  // The bounded server response includes profile decorations, so opening a
+  // roster page requires one browser request regardless of its member count.
+  const profiles = (body.profiles as UserProfile[] | undefined) ?? [];
   return { users, profiles, nextToken: typeof body.nextToken === "string" && body.nextToken ? body.nextToken : null };
 }
 

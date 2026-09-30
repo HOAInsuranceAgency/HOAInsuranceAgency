@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { type CognitoIdentityProviderClient, ListUsersCommand } from "@aws-sdk/client-cognito-identity-provider";
-import { listTeamUsers } from "../../amplify/functions/team-admin/roster";
+import { QueryCommand, type DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
+import { listTeamUsers, loadTeamProfile } from "../../amplify/functions/team-admin/roster";
 
 function mockCognito(send: ReturnType<typeof vi.fn>) {
   return { send } as unknown as CognitoIdentityProviderClient;
@@ -40,6 +41,39 @@ describe("bounded team roster pages", () => {
     expect(result.users?.map(user => user.userId)).toEqual(Array.from({ length: 20 }, (_, index) => `sub-${index}`));
   });
 
+  it("includes only this page's profiles, with at most four profile reads at once", async () => {
+    const send = vi.fn().mockResolvedValue({ Users: Array.from({ length: 20 }, (_, index) => member(index)), PaginationToken: "later-page" });
+    let active = 0;
+    let maximum = 0;
+    const profileFor = vi.fn(async (userId: string) => {
+      maximum = Math.max(maximum, ++active);
+      await new Promise(resolve => setTimeout(resolve, 0));
+      active--;
+      return { id: `profile-${userId}`, userId, firstName: "Casey" };
+    });
+    const result = await listTeamUsers(mockCognito(send), "pool", {}, async () => ["STAFF"], profileFor);
+    expect(maximum).toBe(4);
+    expect(profileFor).toHaveBeenCalledTimes(20);
+    expect(profileFor.mock.calls.map(([userId]) => userId)).toEqual(Array.from({ length: 20 }, (_, index) => `sub-${index}`));
+    expect(result.profiles).toHaveLength(20);
+    expect(result.profiles?.[0]).toEqual({ id: "profile-sub-0", userId: "sub-0", firstName: "Casey" });
+    expect(result.nextToken).toBe("later-page");
+    expect(send).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the page and roles available when some optional profiles are missing or fail", async () => {
+    const send = vi.fn().mockResolvedValue({ Users: [member(1), member(2), member(3)] });
+    const profileFor = vi.fn(async (userId: string) => {
+      if (userId === "sub-1") throw new Error("Profile service unavailable");
+      return userId === "sub-2" ? null : { id: "profile-three", userId };
+    });
+    const result = await listTeamUsers(mockCognito(send), "pool", {}, async () => ["PRODUCER"], profileFor);
+    expect(result).toMatchObject({ ok: true, profiles: [{ id: "profile-three", userId: "sub-3" }], nextToken: null });
+    expect(result.users?.map(user => [user.userId, user.groups])).toEqual([
+      ["sub-1", ["PRODUCER"]], ["sub-2", ["PRODUCER"]], ["sub-3", ["PRODUCER"]],
+    ]);
+  });
+
   it("rejects a failed page only after pending group reads settle, without starting more work", async () => {
     const send = vi.fn().mockResolvedValue({ Users: Array.from({ length: 20 }, (_, index) => member(index)) });
     let settle!: () => void;
@@ -60,5 +94,31 @@ describe("bounded team roster pages", () => {
     expect(await listTeamUsers(mockCognito(send), "pool", { nextToken } as { nextToken: string }, vi.fn()))
       .toEqual({ ok: false, error: "Invalid team page token." });
     expect(send).not.toHaveBeenCalled();
+  });
+});
+
+describe("indexed team profile decorations", () => {
+  it("uses a bounded userId query and returns only roster profile fields", async () => {
+    const send = vi.fn().mockResolvedValue({ Items: [{
+      id: "random-profile-id", userId: "member-sub", firstName: "Casey", lastName: "Agent", signatureKey: "signatures/p.png",
+      leadTextAlerts: true, mobilePhone: "5085550100", onboardingComplete: true, internalMetadata: "not returned",
+    }] });
+    const result = await loadTeamProfile({ send } as unknown as DynamoDBDocumentClient, "profiles", "by-userId", "member-sub");
+    expect(send).toHaveBeenCalledOnce();
+    expect(send.mock.calls[0][0]).toBeInstanceOf(QueryCommand);
+    expect(send.mock.calls[0][0].input).toMatchObject({
+      TableName: "profiles", IndexName: "by-userId", KeyConditionExpression: "#userId = :userId",
+      ExpressionAttributeValues: { ":userId": "member-sub" }, Limit: 1,
+    });
+    expect(send.mock.calls[0][0].input.FilterExpression).toBeUndefined();
+    expect(result).toEqual({
+      id: "random-profile-id", userId: "member-sub", firstName: "Casey", lastName: "Agent", signatureKey: "signatures/p.png",
+      leadTextAlerts: true, mobilePhone: "5085550100", onboardingComplete: true,
+    });
+  });
+
+  it("does not attach a mismatched profile to a team member", async () => {
+    const send = vi.fn().mockResolvedValue({ Items: [{ id: "other-profile", userId: "other-sub" }] });
+    expect(await loadTeamProfile({ send } as unknown as DynamoDBDocumentClient, "profiles", "by-userId", "member-sub")).toBeNull();
   });
 });

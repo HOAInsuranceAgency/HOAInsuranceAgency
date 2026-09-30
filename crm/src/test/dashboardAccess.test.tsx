@@ -29,12 +29,11 @@ vi.mock("aws-amplify/auth", () => ({ fetchAuthSession: h.session }));
 vi.mock("../lib/client", () => ({
   client: {
     models: {
-      UserProfile: { list: async () => ({ data: [h.profile] }) },
-      License: { list: async () => ({ data: [{
+      UserProfile: { listUserProfileByUserId: async () => ({ data: [h.profile] }) },
+      License: { listLicenseByUserProfileId: async () => ({ data: [{
         id: "license-1", userProfileId: "profile-1", holderType: "PRODUCER",
         state: "FL", licenseNumber: "FL123456",
       }] }) },
-      ProducerLicense: { list: async () => ({ data: [] }) },
       AgencySettings: {
         observeQuery: () => ({ subscribe: () => ({ unsubscribe: vi.fn() }) }),
       },
