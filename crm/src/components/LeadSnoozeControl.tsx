@@ -4,13 +4,15 @@ import { fmtDate, friendlyError } from '../lib/client';
 import { addCalendarDays } from '../../../shared/renewalPolicy';
 import { leadSnoozeStatus, validateLeadSnooze, type LeadSnooze } from '../../../shared/leadSnooze';
 import './LeadSnoozeControl.css';
+import { useRowInteraction, type InteractionChange } from '../lib/useRefreshOnReturn';
 
-export function LeadSnoozeControl({ accountName, snooze, today, onSaved, onRefresh }: {
+export function LeadSnoozeControl({ accountName, snooze, today, onSaved, onRefresh, onInteractionChange }: {
   accountName: string;
   snooze: LeadSnooze;
   today: string;
   onSaved: (snooze: LeadSnooze) => void;
   onRefresh: () => Promise<void>;
+  onInteractionChange?: InteractionChange;
 }) {
   const [editing, setEditing] = useState(false);
   const [editingVersion, setEditingVersion] = useState(snooze.version);
@@ -20,6 +22,7 @@ export function LeadSnoozeControl({ accountName, snooze, today, onSaved, onRefre
   const [busy, setBusy] = useState(false);
   const saving = useRef(false);
   const status = leadSnoozeStatus(snooze, today);
+  useRowInteraction(`snooze:${snooze.accountId}`, editing || busy, onInteractionChange);
 
   async function save(date: string | null, nextNote: string, version = snooze.version) {
     if (saving.current) return;

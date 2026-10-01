@@ -20,6 +20,7 @@ import { ReportDownload } from '../components/ReportDownload';
 import { LeadSnoozeControl } from '../components/LeadSnoozeControl';
 import { leadSnoozeStatus, type LeadSnooze } from '../../../shared/leadSnooze';
 import { useAgencyDay } from '../lib/useAgencyDay';
+import { useRefreshOnReturn } from '../lib/useRefreshOnReturn';
 import { acquisitionLabel, websiteFormLabel } from '../../../shared/leadSource';
 import { formatCommission, pendingCommission } from '../../../shared/quotePackages';
 import type { Quote } from '../lib/client';
@@ -40,6 +41,7 @@ export default function AccountsList({ stage }: { stage: "LEAD" | "CLIENT" }) {
     data: accounts,
     loading,
     error,
+    refetch: refetchAccounts,
   } = useAsyncResource(
     () =>
       listAllPages((nextToken) =>
@@ -48,7 +50,10 @@ export default function AccountsList({ stage }: { stage: "LEAD" | "CLIENT" }) {
     [stage],
     { initialData: [] as Account[], errorMessage: "Failed to load accounts" }
   );
-  const commercial = useCommercial(accounts.map(a => a.id), accounts);
+  const commercial = useCommercial(accounts.map(a => a.id), accounts, stage === 'LEAD' ? accounts.filter(a => a.stage === 'LEAD').map(a => a.id) : []);
+  // Successful account reloads change the revision above and reload commercial
+  // data too, including current ownership, snoozes and newly visible accounts.
+  const onInteractionChange = useRefreshOnReturn(refetchAccounts, stage === 'LEAD', loading || commercial.loading);
   const quoteResource = useAsyncResource(() => stage === 'LEAD' ? listAllPages(nextToken => client.models.Quote.list({ nextToken })) : Promise.resolve([]), [stage], { initialData: [] as Quote[], errorMessage: 'Could not load quoted commissions' });
   const today = useAgencyDay();
   const snoozeOf = (a: Account) => {
@@ -180,7 +185,7 @@ export default function AccountsList({ stage }: { stage: "LEAD" | "CLIENT" }) {
         {loading || stage === 'LEAD' && commercial.loading ? (
           <p className="muted small">Loading…</p>
         ) : error ? (
-          <p className="error-text">{error}</p>
+          <p className="error-text" role="alert">{error} <button onClick={() => void refetchAccounts()}>Retry</button></p>
         ) : stage === 'LEAD' && commercial.error ? (
           <p className="muted small">Retry above to load your leads and follow-up dates.</p>
         ) : sorted.length === 0 ? (
@@ -238,11 +243,11 @@ export default function AccountsList({ stage }: { stage: "LEAD" | "CLIENT" }) {
                       </td>
                       <td>{a.city || '—'}</td><td>{a.state || '—'}</td>
                       {isAdmin && <td>{commercial.loading ? 'Loading…' : commercial.error ? 'Unavailable' : assignee(a, 'salespersonId')}</td>}
-                      {stage === 'LEAD' && <td>{a.stage === 'LEAD' && snooze ? <LeadSnoozeControl accountName={a.name} snooze={snooze} today={today} onRefresh={commercial.refetch} onSaved={saved => {
+                      {stage === 'LEAD' && <td>{a.stage === 'LEAD' && snooze ? <LeadSnoozeControl onInteractionChange={onInteractionChange} accountName={a.name} snooze={snooze} today={today} onRefresh={commercial.refetch} onSaved={saved => {
                         setSavedSnoozes(current => (current[a.id]?.version ?? -1) >= saved.version ? current : { ...current, [a.id]: saved });
                         setNotice(saved.followUpOn ? `${a.name} snoozed until ${fmtDate(saved.followUpOn)}.` : `${a.name} is back in Active.`);
                       }} /> : '—'}</td>}
-                      {stage === 'LEAD' && <><td>{acquisitionLabel(a.leadSource, a.source)}</td><td>{websiteFormLabel(a.source)}</td><td>{commercial.data.entries[a.id] && !commercial.error ? <OpportunityEstimate plan={commercial.data.entries[a.id].plan} onSaved={plan => commercial.setData(data => ({ ...data, entries: { ...data.entries, [a.id]: { ...data.entries[a.id], plan } } }))} /> : commercial.error ? 'Unavailable' : 'Loading…'}</td><td>{commercial.loading || quoteResource.loading ? 'Loading…' : commercial.error || quoteResource.error ? 'Unavailable' : <><strong>{forecastOf(a)?.cents == null ? '—' : formatCommission(forecastOf(a)!.cents!)}</strong><div className="muted small">{forecastOf(a)?.label}</div></>}</td></>}
+                      {stage === 'LEAD' && <><td>{acquisitionLabel(a.leadSource, a.source)}</td><td>{websiteFormLabel(a.source)}</td><td>{commercial.data.entries[a.id] && !commercial.error ? <OpportunityEstimate onInteractionChange={onInteractionChange} plan={commercial.data.entries[a.id].plan} onSaved={plan => commercial.setData(data => ({ ...data, entries: { ...data.entries, [a.id]: { ...data.entries[a.id], plan } } }))} /> : commercial.error ? 'Unavailable' : 'Loading…'}</td><td>{commercial.loading || quoteResource.loading ? 'Loading…' : commercial.error || quoteResource.error ? 'Unavailable' : <><strong>{forecastOf(a)?.cents == null ? '—' : formatCommission(forecastOf(a)!.cents!)}</strong><div className="muted small">{forecastOf(a)?.label}</div></>}</td></>}
                       <td>{fmtNum(a.unitCount)}</td>
                       <td>{fmtMoney(a.totalInsuredValue)}</td>
                       {stage === "LEAD" && (

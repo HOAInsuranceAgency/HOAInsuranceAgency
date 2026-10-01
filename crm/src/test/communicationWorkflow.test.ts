@@ -210,23 +210,25 @@ describe('producer lead snoozes', () => {
     const write = await setup();
     h.fail = true;
     await expect(write(input, 'brian', false)).rejects.toThrow('storage outage');
-    h.fail = false; h.readFailureId = 'lead-snooze:a1';
+    h.fail = false; h.batch.mockRejectedValueOnce(new Error('Temporary read failure'));
     const { commercialTable } = await import('../../amplify/functions/communications/commercial');
-    await expect(commercialTable(['a1'])).rejects.toThrow('Temporary read failure');
+    await expect(commercialTable(['a1'], ['a1'])).rejects.toThrow('Temporary read failure');
   });
   it('exposes source-row versions in table/context reads, including leads without a workflow', async () => {
     const { commercialTable } = await import('../../amplify/functions/communications/commercial');
     const { handler } = await import('../../amplify/functions/communications/handler');
     const identity = { sub: 'brian', groups: ['ADMIN'] } as never;
     const empty = { accountId: 'a1', version: 0, followUpOn: null, note: '' };
-    expect(await commercialTable(['a1'])).toMatchObject([{ snooze: empty }]);
+    expect(await commercialTable(['a1'], ['a1'])).toMatchObject([{ snooze: empty }]);
     expect(await handler({ arguments: { readOperation: 'context', input: { accountId: 'a1' } }, identity })).toMatchObject({ ok: true, workflow: null, snooze: empty });
     h.records.set('comms:lead-snooze:a1', { ...row('LEAD_SNOOZE', 'lead-snooze:a1', { ...input, version: 1 }), version: 4 });
-    expect(await commercialTable(['a1'])).toMatchObject([{ snooze: { ...input, version: 4 } }]);
+    expect(await commercialTable(['a1'], ['a1'])).toMatchObject([{ snooze: { ...input, version: 4 } }]);
     expect(await handler({ arguments: { readOperation: 'context', input: { accountId: 'a1' } }, identity })).toMatchObject({ ok: true, snooze: { ...input, version: 4 } });
     h.records.set('Account:a1', { id: 'a1', stage: 'CLIENT' });
+    h.reads.length = 0;
     const client = await handler({ arguments: { readOperation: 'context', input: { accountId: 'a1' } }, identity });
     expect(client).toMatchObject({ ok: true }); expect(client).not.toHaveProperty('snooze');
+    expect(h.reads).not.toContain('lead-snooze:a1');
   });
   it('routes writes through active-role ownership checks and returns the saved snooze', async () => {
     await setup();
@@ -235,6 +237,57 @@ describe('producer lead snoozes', () => {
     const event = { arguments: { operation: 'saveLeadSnooze', input }, identity };
     expect(await handler({ ...event, request: { headers: { 'x-crm-role': 'PRODUCER' } } })).toMatchObject({ ok: false, error: expect.stringContaining('assigned leads') });
     expect(await handler({ ...event, request: { headers: { 'x-crm-role': 'ADMIN' } } })).toMatchObject({ ok: true, snooze: { version: 1, followUpOn: input.followUpOn, updatedBy: 'other' } });
+  });
+});
+describe('commercial table batched reads', () => {
+  it('reads a full 25-account batch including requested follow-ups with one storage request', async () => {
+    const accounts = Array.from({ length: 25 }, (_, index) => `a${index}`);
+    h.records.set('comms:commercial:a1', { ...row('COMMERCIAL_PLAN', 'commercial:a1', { accountId: 'a1', estimatedCents: 10000 }), version: 7 });
+    h.records.set('comms:workflow:a1', row('WORKFLOW', 'workflow:a1', { accountId: 'a1', salespersonId: 'brian', disposition: 'ACTIVE' }));
+    h.records.set('comms:lead-snooze:a1', { ...row('LEAD_SNOOZE', 'lead-snooze:a1', { accountId: 'a1', followUpOn: '2026-09-10', note: 'Call back', version: 1 }), version: 3 });
+    const { commercialTable } = await import('../../amplify/functions/communications/commercial');
+    const results = await commercialTable(accounts, accounts);
+    expect(h.batch).toHaveBeenCalledTimes(1);
+    const request = h.batch.mock.calls[0][0].RequestItems.comms;
+    expect(request.ConsistentRead).toBe(true);
+    expect(request.Keys).toHaveLength(75);
+    expect(new Set(request.Keys.map((key: { id: string }) => key.id)).size).toBe(75);
+    expect(h.reads).toEqual([]);
+    expect(results.map(result => result.accountId)).toEqual(accounts);
+    expect(results[1]).toMatchObject({ accountId: 'a1', plan: { estimatedCents: 10000, version: 7 }, salespersonId: 'brian', disposition: 'ACTIVE', snooze: { version: 3, followUpOn: '2026-09-10', note: 'Call back' } });
+    expect(results[0]).toMatchObject({ snooze: { accountId: 'a0', version: 0, followUpOn: null, note: '' } });
+  });
+  it.each([undefined, []])('omits follow-up reads unless explicitly requested: %j', async requested => {
+    h.records.set('comms:lead-snooze:a1', row('LEAD_SNOOZE', 'lead-snooze:a1', { accountId: 'a1', followUpOn: '2026-09-10' }));
+    const { commercialTable } = await import('../../amplify/functions/communications/commercial');
+    const result = await commercialTable(['a1'], requested);
+    expect(result[0]).not.toHaveProperty('snooze');
+    expect(h.batch.mock.calls[0][0].RequestItems.comms.Keys).toEqual([{ id: 'commercial:a1' }, { id: 'workflow:a1' }]);
+    expect(h.reads).toEqual([]);
+  });
+  it('reads follow-ups only for the requested account subset through the API', async () => {
+    const { handler } = await import('../../amplify/functions/communications/handler');
+    const result = await handler({ arguments: { readOperation: 'commercialTable', input: { accountIds: ['lead', 'client'], snoozeAccountIds: ['lead'] } }, identity: { sub: 'admin', groups: ['ADMIN'] } as never });
+    expect(result).toMatchObject({ ok: true, items: [{ accountId: 'lead', snooze: { accountId: 'lead', version: 0 } }, { accountId: 'client' }] });
+    expect((result as { items: Record<string, unknown>[] }).items[1]).not.toHaveProperty('snooze');
+    const keys = h.batch.mock.calls[0][0].RequestItems.comms.Keys;
+    expect(keys).toHaveLength(5);
+    expect(keys).toContainEqual({ id: 'lead-snooze:lead' });
+    expect(keys).not.toContainEqual({ id: 'lead-snooze:client' });
+  });
+  it.each([null, 'a1', ['other-account'], ['a1', 'a1'], [1], Array.from({ length: 26 }, (_, index) => `a${index}`)])('rejects an invalid follow-up subset before storage access: %j', async requested => {
+    const { commercialTable } = await import('../../amplify/functions/communications/commercial');
+    await expect(commercialTable(['a1'], requested)).rejects.toThrow('requested accounts');
+    expect(h.batch).not.toHaveBeenCalled();
+    expect(h.reads).toEqual([]);
+  });
+  it('never treats repeatedly unprocessed follow-ups as an empty snooze', async () => {
+    h.batch.mockImplementation(input => ({ UnprocessedKeys: input.RequestItems }));
+    const { commercialTable } = await import('../../amplify/functions/communications/commercial');
+    const result = expect(commercialTable(['a1'], ['a1'])).rejects.toThrow('Communication batch read remains incomplete');
+    await vi.runAllTimersAsync();
+    await result;
+    expect(h.batch).toHaveBeenCalledTimes(4);
   });
 });
 describe('commercial package persistence', () => {

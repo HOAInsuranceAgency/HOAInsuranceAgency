@@ -1,7 +1,7 @@
 import ConversationContext from "./ConversationContext";
 import CommunicationAccountSummary from "./CommunicationAccountSummary";
 import { CallOutcome, SidebarActivityLinker } from "./CommunicationReview";
-import { useEffect, useState, useRef } from "react";
+import { useCallback, useEffect, useState, useRef } from "react";
 import { communicationRequest as request, type WorkflowContext, type TeamEligibility } from "../lib/communications";
 import { useAsyncResource } from "../lib/useAsyncResource";
 import { fmtDateTime, fmtProviderPhone, friendlyError } from "../lib/client";
@@ -29,6 +29,8 @@ export default function LeadWorkflowPanel({ accountId, conversationId, onOpen }:
   const [revision, setRevision] = useState(0), [error, setError] = useState(""), [busy, setBusy] = useState(false);
   const [salesperson, setSalesperson] = useState("");
   const [savedSnooze, setSavedSnooze] = useState<LeadSnooze>();
+  const [snoozeInteracting, setSnoozeInteracting] = useState(false);
+  const onSnoozeInteractionChange = useCallback((_key: string, active: boolean) => setSnoozeInteracting(active), []);
   const today = useAgencyDay();
   const [leadStatus, setLeadStatus] = useState("LOST");
   const noteId = useRef(crypto.randomUUID());
@@ -37,12 +39,12 @@ export default function LeadWorkflowPanel({ accountId, conversationId, onOpen }:
   const resource = useAsyncResource(() => request<WorkflowContext>("context", { accountId, conversationId }), [accountId, conversationId, revision], { initialData: EMPTY, errorMessage: "Could not load account communications" });
   const { workflow, communications, team, issues } = resource.data;
   useEffect(() => {
-    if (!compact || busy || editingTeam || note.trim() || resource.loading) return;
+    if (!compact || busy || editingTeam || note.trim() || resource.loading || snoozeInteracting) return;
     const refresh = () => { if (document.visibilityState === "visible") void resource.refetch(); };
     const timer = window.setInterval(refresh, 15_000);
     document.addEventListener("visibilitychange", refresh);
     return () => { window.clearInterval(timer); document.removeEventListener("visibilitychange", refresh); };
-  }, [compact, busy, editingTeam, note, resource.loading, resource.refetch]);
+  }, [compact, busy, editingTeam, note, resource.loading, resource.refetch, snoozeInteracting]);
   useEffect(() => { setSalesperson(workflow?.salespersonId ?? ""); }, [workflow?.salespersonId]);
   // The parent keys the panel by conversation/account, so unsaved edits never
   // become writes against the newly selected lead in Front.
@@ -56,13 +58,13 @@ export default function LeadWorkflowPanel({ accountId, conversationId, onOpen }:
   const fetchedSnooze = resource.data.snooze;
   const snooze = fetchedSnooze && savedSnooze?.accountId === fetchedSnooze.accountId && savedSnooze.version > fetchedSnooze.version ? savedSnooze : fetchedSnooze;
   const followUp = snooze && <section className="activity-follow-up" aria-label="Lead follow-up"><h3>Follow-up</h3>
-    <LeadSnoozeControl accountName={workflow?.name ?? 'this lead'} snooze={snooze} today={today} onRefresh={resource.refetch} onSaved={saved => {
+    <LeadSnoozeControl onInteractionChange={onSnoozeInteractionChange} accountName={workflow?.name ?? 'this lead'} snooze={snooze} today={today} onRefresh={resource.refetch} onSaved={saved => {
       setSavedSnooze(current => current && current.version >= saved.version ? current : saved);
       setNotice(saved.followUpOn ? 'Follow-up saved. This lead will return to Active on that date.' : 'Follow-up cleared. This lead is in Active.');
     }} />
   </section>;
   if (resource.loading && !workflow) return <div className="card" role="status" aria-busy="true">Loading account communications…</div>;
-  if (resource.error) return <div className="card"><p className="error-text" role="alert">{resource.error}</p><button className="secondary" onClick={() => void resource.refetch()}>Retry</button></div>;
+  if (resource.error && !workflow) return <div className="card"><p className="error-text" role="alert">{resource.error}</p><button className="secondary" onClick={() => void resource.refetch()}>Retry</button></div>;
   if (!workflow) return <div className="card"><h2>Account communications</h2><p>{accountId ? "Set up the account salesperson and linked communications." : "Link this conversation to its CRM account to see its salesperson and communication history."}</p>
     {accountId && <button className="primary" disabled={busy} onClick={() => void run("initializeLead", { accountId })}>Set up account communications</button>}{error && <p role="alert">{error}</p>}{followUp}</div>;
   const clientWork = workflow.disposition === "BOUND";
@@ -123,6 +125,7 @@ export default function LeadWorkflowPanel({ accountId, conversationId, onOpen }:
     <div className="toolbar workflow-heading"><div><h2>{clientWork ? "Client workspace" : "Account communications"}</h2>{!compact && <p className="muted small">Communication history, team notes, and account controls.</p>}</div><div className="grow" /><button className="secondary" disabled={resource.loading} onClick={() => void resource.refetch()}>{resource.loading ? "Refreshing…" : "Refresh"}</button></div>
     {onOpen && <CommunicationAccountSummary accountId={workflow.accountId} open={open} />}
     {notice && <p className="workflow-notice" role="status">{notice}</p>}
+    {resource.error && <p className="error-text workflow-notice" role="alert">{resource.error} <button className="link" onClick={() => void resource.refetch()}>Retry refresh</button></p>}
     {error && <p className="error-text workflow-notice" role="alert">{error}</p>}
     {workflow.assignmentIssue && <p className="error-text workflow-notice">{workflow.assignmentIssue}</p>}
     {issues.length > 0 && <details open className="front-disclosure activity-attention"><summary>Needs attention <span className="front-count">{issues.length}</span></summary>{issues.map(i => <div key={i.id}><p className="error-text small">{i.message}</p></div>)}</details>}
