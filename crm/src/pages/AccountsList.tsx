@@ -16,6 +16,7 @@ import { useAsyncResource } from "../lib/useAsyncResource";
 import { useSort, SortTh } from "../lib/useSort";
 import { useCommercial, teammateName } from '../lib/commercial';
 import { OpportunityEstimate } from '../components/OpportunityEstimate';
+import { LeadSalespersonSelect } from '../components/LeadSalespersonSelect';
 import { ReportDownload } from '../components/ReportDownload';
 import { acquisitionLabel, websiteFormLabel } from '../../../shared/leadSource';
 import { formatCommission, pendingCommission } from '../../../shared/quotePackages';
@@ -25,6 +26,7 @@ import type { Quote } from '../lib/client';
 export default function AccountsList({ stage }: { stage: "LEAD" | "CLIENT" }) {
   const isAdmin = useIsAdmin();
   const [salesperson, setSalesperson] = useState('');
+  const [savedAssignments, setSavedAssignments] = useState<Record<string, { salespersonId?: string; workflowVersion: number }>>({});
   const navigate = useNavigate();
 
   const {
@@ -43,7 +45,13 @@ export default function AccountsList({ stage }: { stage: "LEAD" | "CLIENT" }) {
   const quoteResource = useAsyncResource(() => stage === 'LEAD' ? listAllPages(nextToken => client.models.Quote.list({ nextToken })) : Promise.resolve([]), [stage], { initialData: [] as Quote[], errorMessage: 'Could not load quoted commissions' });
   const today = agencyDay(new Date().toISOString());
   const forecastOf = (a: Account) => { const plan = commercial.data.entries[a.id]?.plan; return plan ? pendingCommission(plan, quoteResource.data.filter(q => q.accountId === a.id), today) : null; };
-  const assignee = (a: Account, role: 'salespersonId') => teammateName(commercial.data.entries[a.id]?.[role], commercial.data.team);
+  // A refresh from another row may have started before an assignment saved.
+  // Keep the newest confirmed owner even when those responses arrive out of order.
+  const assignmentOf = (a: Account) => {
+    const entry = commercial.data.entries[a.id], saved = savedAssignments[a.id];
+    return saved && saved.workflowVersion > (entry?.workflowVersion ?? -1) ? saved : entry;
+  };
+  const assignee = (a: Account, role: 'salespersonId') => teammateName(assignmentOf(a)?.[role], commercial.data.team);
 
   // Renewal dates only. A failure here costs the "Renewal" column its dates
   // and nothing else, so it stays out of the page-level error — the accounts
@@ -96,7 +104,7 @@ export default function AccountsList({ stage }: { stage: "LEAD" | "CLIENT" }) {
       : a.currentPolicyExpiration ?? null;
 
   const visible = accounts.filter(a => (a.stage === stage || stage === 'LEAD' && a.stage === 'CLIENT' && forecastOf(a)?.unfinished)
-    && (!isAdmin || !salesperson || commercial.data.entries[a.id]?.salespersonId === salesperson));
+    && (!isAdmin || !salesperson || assignmentOf(a)?.salespersonId === salesperson));
 
   // Default: policy end date ascending — next up / expired at the top,
   // accounts without a date after, alphabetically.
@@ -179,6 +187,7 @@ export default function AccountsList({ stage }: { stage: "LEAD" | "CLIENT" }) {
                 {sorted.map((a) => {
                   const renewal = renewalOf(a);
                   const contact = contactOf(a);
+                  const assignment = assignmentOf(a);
                   return (
                     <tr
                       key={a.id}
@@ -199,7 +208,17 @@ export default function AccountsList({ stage }: { stage: "LEAD" | "CLIENT" }) {
                         )}
                       </td>
                       <td>{a.city || '—'}</td><td>{a.state || '—'}</td>
-                      {isAdmin && <td>{commercial.loading ? 'Loading…' : commercial.error ? 'Unavailable' : assignee(a, 'salespersonId')}</td>}
+                      {isAdmin && <td>{commercial.loading ? 'Loading…' : commercial.error ? 'Unavailable' : stage === 'LEAD' && assignment?.workflowVersion != null ? (
+                        <LeadSalespersonSelect
+                          accountId={a.id}
+                          accountName={a.name}
+                          salespersonId={assignment.salespersonId}
+                          workflowVersion={assignment.workflowVersion}
+                          team={commercial.data.team}
+                          onSaved={workflow => setSavedAssignments(current => (current[a.id]?.workflowVersion ?? -1) >= workflow.version ? current : { ...current, [a.id]: { salespersonId: workflow.salespersonId, workflowVersion: workflow.version } })}
+                          onRefresh={commercial.refetch}
+                        />
+                      ) : assignee(a, 'salespersonId')}</td>}
                       {stage === 'LEAD' && <><td>{acquisitionLabel(a.leadSource, a.source)}</td><td>{websiteFormLabel(a.source)}</td><td>{commercial.data.entries[a.id] && !commercial.error ? <OpportunityEstimate plan={commercial.data.entries[a.id].plan} onSaved={plan => commercial.setData(data => ({ ...data, entries: { ...data.entries, [a.id]: { ...data.entries[a.id], plan } } }))} /> : commercial.error ? 'Unavailable' : 'Loading…'}</td><td>{commercial.loading || quoteResource.loading ? 'Loading…' : commercial.error || quoteResource.error ? 'Unavailable' : <><strong>{forecastOf(a)?.cents == null ? '—' : formatCommission(forecastOf(a)!.cents!)}</strong><div className="muted small">{forecastOf(a)?.label}</div></>}</td></>}
                       <td>{fmtNum(a.unitCount)}</td>
                       <td>{fmtMoney(a.totalInsuredValue)}</td>

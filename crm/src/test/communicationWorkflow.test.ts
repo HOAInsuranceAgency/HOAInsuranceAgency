@@ -124,6 +124,93 @@ beforeEach(async () => {
   h.front.mockImplementation(async (path: string) => path.includes("/messages") && path.includes("/conversations") ? { _results: [] } : {});
 });
 afterEach(() => vi.useRealTimers());
+describe("inline salesperson assignment", () => {
+  async function eligible(userId = "chosen", overrides = {}) {
+    await save(row("ELIGIBILITY", `eligibility:${userId}`, { userId, name: userId, enabled: true, salesperson: true, ...overrides }));
+  }
+
+  it("returns the stored workflow version and zero for accounts without a workflow", async () => {
+    const workflow = row("WORKFLOW", "workflow:existing", { accountId: "existing", salespersonId: "brian", disposition: "ACTIVE", version: 2 });
+    h.records.set("comms:workflow:existing", { ...workflow, version: 7 });
+    const writes = h.transactions.length;
+    const { commercialTable } = await import("../../amplify/functions/communications/commercial");
+    expect(await commercialTable(["existing", "missing"])).toMatchObject([
+      { accountId: "existing", salespersonId: "brian", workflowVersion: 7 },
+      { accountId: "missing", workflowVersion: 0 },
+    ]);
+    expect(h.transactions).toHaveLength(writes);
+    expect(record("workflow:missing")).toBeUndefined();
+  });
+
+  it.each(["LEAD", "CLIENT"])("atomically initializes a %s with the selected salesperson, audit and sync job", async stage => {
+    await eligible();
+    h.c.defaultUserId = "missing-default";
+    h.records.set("Account:missing", { id: "missing", name: "Chosen Association", stage });
+    const before = h.transactions.length;
+    const workflow = await setResponsibilities("missing", "chosen", 0, "admin");
+    expect(workflow).toMatchObject({ accountId: "missing", name: "Chosen Association", salespersonId: "chosen", ownershipModel: "SALESPERSON", disposition: stage === "CLIENT" ? "BOUND" : "ACTIVE", version: 1 });
+    expect(record("workflow:missing")).toMatchObject({ version: 1, assignedSalespersonId: "chosen" });
+    const writes = h.transactions[before];
+    expect(writes.find(w => w.Put?.Item.kind === "WORKFLOW").Put).toMatchObject({ ConditionExpression: "attribute_not_exists(id)", Item: { data: { salespersonId: "chosen" } } });
+    expect(writes.some(w => w.Put?.Item.kind === "ROLE_SYNC")).toBe(true);
+    expect(writes.some(w => w.Put?.TableName === "Activity" && w.Put.Item.actor === "admin")).toBe(true);
+    expect(writes.some(w => w.ConditionCheck?.Key.id === "deleted-account:missing")).toBe(true);
+    expect(h.userReads).not.toContain("missing-default");
+    expect(entries("OPERATION")).toHaveLength(0);
+    expect(h.front).not.toHaveBeenCalled(); expect(h.dialpad).not.toHaveBeenCalled();
+  });
+
+  it("lets only one concurrent first assignment commit", async () => {
+    await eligible("first"); await eligible("second");
+    const results = await Promise.allSettled([
+      setResponsibilities("missing", "first", 0, "admin"),
+      setResponsibilities("missing", "second", 0, "admin"),
+    ]);
+    expect(results.filter(result => result.status === "fulfilled")).toHaveLength(1);
+    expect(results.filter(result => result.status === "rejected")).toHaveLength(1);
+    const winner = results.find(result => result.status === "fulfilled");
+    if (winner?.status !== "fulfilled") throw new Error("Missing winner");
+    expect(record("workflow:missing").data.salespersonId).toBe(winner.value.salespersonId);
+    expect(record("workflow:missing").version).toBe(1);
+    expect(entries("ROLE_SYNC")).toHaveLength(1);
+    expect([...h.records.keys()].filter(key => key.startsWith("Activity:"))).toHaveLength(1);
+  });
+
+  it("rejects stale existing or missing workflow versions without writes", async () => {
+    await eligible();
+    const original = await lead();
+    const writes = h.transactions.length;
+    await expect(setResponsibilities("a1", "chosen", 0, "admin")).rejects.toThrow("Refresh");
+    await expect(setResponsibilities("missing", "chosen", 1, "admin")).rejects.toThrow("Refresh");
+    expect(h.transactions).toHaveLength(writes);
+    expect(record(original.id)).toEqual(original);
+    expect(record("workflow:missing")).toBeUndefined();
+  });
+
+  it.each(["disabled eligibility", "ineligible", "disabled user"])("does not initialize a workflow for a %s salesperson", async reason => {
+    await eligible("chosen", { enabled: reason !== "disabled eligibility", salesperson: reason !== "ineligible" });
+    if (reason === "disabled user") h.disabledUsers.add("chosen");
+    const writes = h.transactions.length;
+    await expect(setResponsibilities("missing", "chosen", 0, "admin")).rejects.toThrow();
+    expect(h.transactions).toHaveLength(writes);
+    expect(record("workflow:missing")).toBeUndefined();
+  });
+
+  it("does not initialize a workflow if the account cannot be loaded or is being deleted", async () => {
+    await eligible();
+    let writes = h.transactions.length;
+    h.accountError = true;
+    await expect(setResponsibilities("missing", "chosen", 0, "admin")).rejects.toThrow("account could not be loaded");
+    expect(h.transactions).toHaveLength(writes);
+    h.accountError = false;
+    await save(row("DELETED_ACCOUNT", "deleted-account:missing", { accountId: "missing" }));
+    writes = h.transactions.length;
+    await expect(setResponsibilities("missing", "chosen", 0, "admin")).rejects.toThrow("being deleted");
+    expect(h.transactions).toHaveLength(writes);
+    expect(record("workflow:missing")).toBeUndefined();
+  });
+});
+
 describe('commercial package persistence', () => {
   async function seedPackages() {
     await lead(); h.records.set('Account:a1', { id: 'a1', stage: 'LEAD', name: 'Willow HOA', createdAt: NOW, updatedAt: NOW });
