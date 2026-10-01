@@ -79,6 +79,7 @@ export interface IntegrationConfig {
   activatedAt?: string; version: number;
 }
 export interface WorkflowContext {
+  snooze?: import('./leadSnooze').LeadSnooze;
   actorId?: string;
   /** Positive confirmation that automatic tracking is active and recently healthy. */
   trackingHealthy?: boolean;

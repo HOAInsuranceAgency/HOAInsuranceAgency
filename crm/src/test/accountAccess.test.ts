@@ -195,6 +195,20 @@ describe("files", () => {
 });
 describe("custom API operations", () => {
   const call = (op: string, input: RecordData = {}, actor = user()) => authorizeCustom(actor, "communicationWrite", { operation: op, input: JSON.stringify(input) });
+  it('limits follow-up changes to the current salesperson or an active administrator', async () => {
+    const input = { accountId: 'a', version: 0, followUpOn: '2026-10-10', note: '' };
+    await expect(call('saveLeadSnooze', input)).resolves.toBeUndefined();
+    await expect(call('saveLeadSnooze', { ...input, accountId: 'b' })).rejects.toThrow(AccessDenied);
+    await expect(call('saveLeadSnooze', input, user('manager'))).rejects.toThrow(AccessDenied);
+    await expect(call('saveLeadSnooze', input, admin())).resolves.toBeUndefined();
+    const narrowedAdmin = new AccountAccess({ sub: 'admin', groups: ['ADMIN', 'PRODUCER'] }, reader, { headers: { 'x-crm-role': 'PRODUCER' } });
+    await expect(call('saveLeadSnooze', input, narrowedAdmin)).rejects.toThrow(AccessDenied);
+    records['Communication:workflow:a'].data = { salespersonId: 'bob' };
+    await expect(call('saveLeadSnooze', input)).rejects.toThrow(AccessDenied);
+    await expect(call('saveLeadSnooze', input, user('bob'))).resolves.toBeUndefined();
+    records['Communication:deleted-account:a'] = { id: 'deleted-account:a' };
+    await expect(call('saveLeadSnooze', input, user('bob'))).rejects.toThrow(AccessDenied);
+  });
   it("cannot assign a foreign lead to yourself", async () => {
     await expect(call("setResponsibilities", { accountId: "b", salespersonId: "alice" })).rejects.toThrow(AccessDenied);
     await expect(call("setResponsibilities", { accountId: "a", salespersonId: "bob" })).rejects.toThrow(AccessDenied);

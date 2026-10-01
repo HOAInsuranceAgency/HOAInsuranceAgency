@@ -7,6 +7,9 @@ import { useAsyncResource } from "../lib/useAsyncResource";
 import { fmtDateTime, fmtProviderPhone, friendlyError } from "../lib/client";
 import { compactDateTime, communicationChannelLabels } from "../lib/communicationLabels";
 import "./LeadWorkflowPanel.css";
+import { LeadSnoozeControl } from './LeadSnoozeControl';
+import { useAgencyDay } from '../lib/useAgencyDay';
+import type { LeadSnooze } from '../../../shared/leadSnooze';
 
 const EMPTY: WorkflowContext = { workflow: null, tasks: [], communications: [], team: [], issues: [] };
 export function ResponsibilitySelect({ label, value, team, kind, onChange, disabled = false }: {
@@ -25,6 +28,8 @@ export default function LeadWorkflowPanel({ accountId, conversationId, onOpen }:
   const [notice, setNotice] = useState("");
   const [revision, setRevision] = useState(0), [error, setError] = useState(""), [busy, setBusy] = useState(false);
   const [salesperson, setSalesperson] = useState("");
+  const [savedSnooze, setSavedSnooze] = useState<LeadSnooze>();
+  const today = useAgencyDay();
   const [leadStatus, setLeadStatus] = useState("LOST");
   const noteId = useRef(crypto.randomUUID());
   const [channel, setChannel] = useState("ALL");
@@ -48,10 +53,18 @@ export default function LeadWorkflowPanel({ accountId, conversationId, onOpen }:
     finally { setBusy(false); }
   };
   function open(url: string) { if (onOpen) onOpen(url); else window.open(url, "_blank", "noopener,noreferrer"); }
+  const fetchedSnooze = resource.data.snooze;
+  const snooze = fetchedSnooze && savedSnooze?.accountId === fetchedSnooze.accountId && savedSnooze.version > fetchedSnooze.version ? savedSnooze : fetchedSnooze;
+  const followUp = snooze && <section className="activity-follow-up" aria-label="Lead follow-up"><h3>Follow-up</h3>
+    <LeadSnoozeControl accountName={workflow?.name ?? 'this lead'} snooze={snooze} today={today} onRefresh={resource.refetch} onSaved={saved => {
+      setSavedSnooze(current => current && current.version >= saved.version ? current : saved);
+      setNotice(saved.followUpOn ? 'Follow-up saved. This lead will return to Active on that date.' : 'Follow-up cleared. This lead is in Active.');
+    }} />
+  </section>;
   if (resource.loading && !workflow) return <div className="card" role="status" aria-busy="true">Loading account communications…</div>;
   if (resource.error) return <div className="card"><p className="error-text" role="alert">{resource.error}</p><button className="secondary" onClick={() => void resource.refetch()}>Retry</button></div>;
   if (!workflow) return <div className="card"><h2>Account communications</h2><p>{accountId ? "Set up the account salesperson and linked communications." : "Link this conversation to its CRM account to see its salesperson and communication history."}</p>
-    {accountId && <button className="primary" disabled={busy} onClick={() => void run("initializeLead", { accountId })}>Set up account communications</button>}{error && <p role="alert">{error}</p>}</div>;
+    {accountId && <button className="primary" disabled={busy} onClick={() => void run("initializeLead", { accountId })}>Set up account communications</button>}{error && <p role="alert">{error}</p>}{followUp}</div>;
   const clientWork = workflow.disposition === "BOUND";
   const teamName = (id?: string) => team.find(t => t.userId === id)?.name ?? "Needs assignment";
   const visibleCommunications = communications.filter(c => channel === "ALL" || c.channel === channel);
@@ -115,6 +128,7 @@ export default function LeadWorkflowPanel({ accountId, conversationId, onOpen }:
     {issues.length > 0 && <details open className="front-disclosure activity-attention"><summary>Needs attention <span className="front-count">{issues.length}</span></summary>{issues.map(i => <div key={i.id}><p className="error-text small">{i.message}</p></div>)}</details>}
     {compact ? <>
       {owner}
+      {followUp}
       <details className="front-disclosure"><summary>Recent activity <span className="front-count">{communications.length}{resource.data.communicationNextToken ? "+" : ""}</span></summary>{history}</details>
       <details className="front-disclosure"><summary>Add a note <span className="front-summary-hint">Internal to your team</span></summary>{noteEditor}</details>
       <details className="front-disclosure"><summary>Conversation tools <span className="front-summary-hint">Routing and linked activity</span></summary>{conversationTools}</details>
@@ -125,6 +139,7 @@ export default function LeadWorkflowPanel({ accountId, conversationId, onOpen }:
       </div>
       <aside className="activity-controls" aria-label="Account controls">
         {owner}
+        {followUp}
         <section className="activity-tools" aria-label="Account tools">
           <div className="toolbar"><h3>Account tools</h3>{workflow.conversationId && <button className="secondary" onClick={() => open(`https://app.frontapp.com/open/${workflow.conversationId}`)}>Open in Front</button>}</div>
           {conversationTools}

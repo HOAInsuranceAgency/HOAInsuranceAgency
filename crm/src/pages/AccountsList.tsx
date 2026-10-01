@@ -1,5 +1,5 @@
 import { useIsAdmin } from "../lib/auth";
-import { useMemo, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
   client,
@@ -17,14 +17,23 @@ import { useSort, SortTh } from "../lib/useSort";
 import { useCommercial, teammateName } from '../lib/commercial';
 import { OpportunityEstimate } from '../components/OpportunityEstimate';
 import { ReportDownload } from '../components/ReportDownload';
+import { LeadSnoozeControl } from '../components/LeadSnoozeControl';
+import { leadSnoozeStatus, type LeadSnooze } from '../../../shared/leadSnooze';
+import { useAgencyDay } from '../lib/useAgencyDay';
 import { acquisitionLabel, websiteFormLabel } from '../../../shared/leadSource';
 import { formatCommission, pendingCommission } from '../../../shared/quotePackages';
-import { agencyDay } from '../../../shared/leadActionGuidance';
 import type { Quote } from '../lib/client';
+
+const LEAD_VIEWS = ['Active', 'Snoozed', 'Follow-up due', 'All leads'] as const;
+type LeadView = typeof LEAD_VIEWS[number];
 
 export default function AccountsList({ stage }: { stage: "LEAD" | "CLIENT" }) {
   const isAdmin = useIsAdmin();
   const [salesperson, setSalesperson] = useState('');
+  const [leadView, setLeadView] = useState<LeadView>('Active');
+  const [savedSnoozes, setSavedSnoozes] = useState<Record<string, LeadSnooze>>({});
+  const [notice, setNotice] = useState('');
+  const viewId = useId();
   const navigate = useNavigate();
 
   const {
@@ -41,7 +50,12 @@ export default function AccountsList({ stage }: { stage: "LEAD" | "CLIENT" }) {
   );
   const commercial = useCommercial(accounts.map(a => a.id), accounts);
   const quoteResource = useAsyncResource(() => stage === 'LEAD' ? listAllPages(nextToken => client.models.Quote.list({ nextToken })) : Promise.resolve([]), [stage], { initialData: [] as Quote[], errorMessage: 'Could not load quoted commissions' });
-  const today = agencyDay(new Date().toISOString());
+  const today = useAgencyDay();
+  const snoozeOf = (a: Account) => {
+    const fetched = commercial.data.entries[a.id]?.snooze, saved = savedSnoozes[a.id];
+    return saved && saved.version > (fetched?.version ?? -1) ? saved : fetched;
+  };
+  const snoozeStatus = (a: Account) => a.stage === 'LEAD' ? leadSnoozeStatus(snoozeOf(a), today) : 'ACTIVE';
   const forecastOf = (a: Account) => { const plan = commercial.data.entries[a.id]?.plan; return plan ? pendingCommission(plan, quoteResource.data.filter(q => q.accountId === a.id), today) : null; };
   const assignee = (a: Account, role: 'salespersonId') => teammateName(commercial.data.entries[a.id]?.[role], commercial.data.team);
 
@@ -95,8 +109,11 @@ export default function AccountsList({ stage }: { stage: "LEAD" | "CLIENT" }) {
       ? renewalByAccount.get(a.id) ?? null
       : a.currentPolicyExpiration ?? null;
 
-  const visible = accounts.filter(a => (a.stage === stage || stage === 'LEAD' && a.stage === 'CLIENT' && forecastOf(a)?.unfinished)
+  const matching = accounts.filter(a => (a.stage === stage || stage === 'LEAD' && a.stage === 'CLIENT' && forecastOf(a)?.unfinished)
     && (!isAdmin || !salesperson || commercial.data.entries[a.id]?.salespersonId === salesperson));
+  const inView = (a: Account, view: LeadView) => view === 'All leads' || (view === 'Snoozed' ? snoozeStatus(a) === 'SNOOZED' : view === 'Follow-up due' ? snoozeStatus(a) === 'DUE' : snoozeStatus(a) !== 'SNOOZED');
+  const visible = stage === 'LEAD' ? matching.filter(a => inView(a, leadView)) : matching;
+  const dueCount = matching.filter(a => snoozeStatus(a) === 'DUE').length;
 
   // Default: policy end date ascending — next up / expired at the top,
   // accounts without a date after, alphabetically.
@@ -119,6 +136,7 @@ export default function AccountsList({ stage }: { stage: "LEAD" | "CLIENT" }) {
       // which every intake path (form, web lead) shares.
       entered: (a) => a.createdAt,
       renewal: (a) => renewalOf(a),
+      followUp: (a) => a.stage === 'LEAD' ? snoozeOf(a)?.followUpOn : null,
     },
     "renewal"
   );
@@ -129,9 +147,25 @@ export default function AccountsList({ stage }: { stage: "LEAD" | "CLIENT" }) {
     <>
       <h1 style={{ marginBottom: 20 }}>{label}</h1>
 
+      {stage === 'LEAD' && <div className="tabs" role="tablist" aria-label="Lead views">
+        {LEAD_VIEWS.map((view, index) => <button key={view} id={`${viewId}-${index}`} role="tab" aria-selected={leadView === view} aria-controls={`${viewId}-panel`} tabIndex={leadView === view ? 0 : -1} className={leadView === view ? 'active' : ''}
+          onClick={() => setLeadView(view)} onKeyDown={event => {
+            const next = event.key === 'ArrowRight' ? (index + 1) % LEAD_VIEWS.length : event.key === 'ArrowLeft' ? (index + LEAD_VIEWS.length - 1) % LEAD_VIEWS.length : event.key === 'Home' ? 0 : event.key === 'End' ? LEAD_VIEWS.length - 1 : -1;
+            if (next < 0) return;
+            event.preventDefault(); setLeadView(LEAD_VIEWS[next]);
+            event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next]?.focus();
+          }}>{view}{!loading && !commercial.loading && !commercial.error && <span aria-hidden="true"> ({matching.filter(a => inView(a, view)).length})</span>}</button>)}
+      </div>}
+
+      {stage === 'LEAD' && !commercial.loading && !commercial.error && dueCount > 0 && <div className="lead-follow-up-notice" role="status">
+        <p><strong>{dueCount} follow-up{dueCount === 1 ? '' : 's'} due</strong> — ready to contact again.</p>
+        {leadView !== 'Follow-up due' && <button className="link" onClick={() => setLeadView('Follow-up due')}>View due leads</button>}
+      </div>}
+      {stage === 'LEAD' && notice && <p className="muted small" role="status">{notice}</p>}
+
       <div className="toolbar">
         {isAdmin && <label className="field">Salesperson<select value={salesperson} onChange={e => setSalesperson(e.target.value)}><option value="">All salespeople</option>{commercial.data.team.map(t => <option key={t.userId} value={t.userId}>{t.name}</option>)}</select></label>}
-        <ReportDownload disabled={loading || !!error || commercial.loading || !!commercial.error || stage === 'LEAD' && (quoteResource.loading || !!quoteResource.error)} report={{ title: label, filters: isAdmin ? `Salesperson: ${commercial.data.team.find(t => t.userId === salesperson)?.name ?? 'All'}` : 'All displayed data', sections: [{ title: label, columns: ['Name', 'Type', 'Contact', 'City', 'State', ...(isAdmin ? ['Salesperson'] : []), ...(stage === 'LEAD' ? [ 'Lead source', 'Website form', 'Estimated opportunity (USD)', 'Pending commission (USD)', 'Commission basis', 'Entered'] : []), 'Units', 'TIV (USD)', stage === 'LEAD' ? 'Incumbent expires' : 'Renewal'], rows: sorted.map(a => { const f = forecastOf(a), estimate = commercial.data.entries[a.id]?.plan.estimatedCents; return [a.name, a.type, contactOf(a)?.name, a.city, a.state, ...(isAdmin ? [assignee(a, 'salespersonId')] : []), ...(stage === 'LEAD' ? [ acquisitionLabel(a.leadSource, a.source), websiteFormLabel(a.source), estimate == null ? null : estimate / 100, f?.cents == null ? null : f.cents / 100, f?.label, a.createdAt?.slice(0,10)] : []), a.unitCount, a.totalInsuredValue, renewalOf(a)]; }) }] }} />
+        <ReportDownload disabled={loading || !!error || commercial.loading || !!commercial.error || stage === 'LEAD' && (quoteResource.loading || !!quoteResource.error)} report={{ title: label, filters: [isAdmin ? `Salesperson: ${commercial.data.team.find(t => t.userId === salesperson)?.name ?? 'All'}` : 'All displayed data', ...(stage === 'LEAD' ? [`View: ${leadView}`] : [])].join(' · '), sections: [{ title: label, columns: ['Name', 'Type', 'Contact', 'City', 'State', ...(isAdmin ? ['Salesperson'] : []), ...(stage === 'LEAD' ? [ 'Lead source', 'Website form', 'Estimated opportunity (USD)', 'Pending commission (USD)', 'Commission basis', 'Entered', 'Follow-up date', 'Follow-up note'] : []), 'Units', 'TIV (USD)', stage === 'LEAD' ? 'Incumbent expires' : 'Renewal'], rows: sorted.map(a => { const f = forecastOf(a), estimate = commercial.data.entries[a.id]?.plan.estimatedCents; return [a.name, a.type, contactOf(a)?.name, a.city, a.state, ...(isAdmin ? [assignee(a, 'salespersonId')] : []), ...(stage === 'LEAD' ? [ acquisitionLabel(a.leadSource, a.source), websiteFormLabel(a.source), estimate == null ? null : estimate / 100, f?.cents == null ? null : f.cents / 100, f?.label, a.createdAt?.slice(0,10), a.stage === 'LEAD' ? snoozeOf(a)?.followUpOn : null, a.stage === 'LEAD' ? snoozeOf(a)?.note : null] : []), a.unitCount, a.totalInsuredValue, renewalOf(a)]; }) }] }} />
         {stage === "LEAD" && (
           <Link to="/leads/new">
             <button className="primary">+ New lead</button>
@@ -139,14 +173,16 @@ export default function AccountsList({ stage }: { stage: "LEAD" | "CLIENT" }) {
         )}
       </div>
 
-      <div className="card">
+      <div className="card" id={stage === 'LEAD' ? `${viewId}-panel` : undefined} role={stage === 'LEAD' ? 'tabpanel' : undefined} aria-labelledby={stage === 'LEAD' ? `${viewId}-${LEAD_VIEWS.indexOf(leadView)}` : undefined}>
         {commercial.error && <p className="error-text" role="alert">{commercial.error} <button onClick={() => void commercial.refetch()}>Retry</button></p>}
         {stage === 'LEAD' && quoteResource.error && <p className="error-text" role="alert">{quoteResource.error} <button onClick={() => void quoteResource.refetch()}>Retry</button></p>}
         {stage === 'LEAD' && <p className="muted small">Commission estimates are for the agency. Client accounts with a selected package still being bound remain here until the package is finished.</p>}
-        {loading ? (
+        {loading || stage === 'LEAD' && commercial.loading ? (
           <p className="muted small">Loading…</p>
         ) : error ? (
           <p className="error-text">{error}</p>
+        ) : stage === 'LEAD' && commercial.error ? (
+          <p className="muted small">Retry above to load your leads and follow-up dates.</p>
         ) : sorted.length === 0 ? (
           <p className="muted small">No {label.toLowerCase()} found.</p>
         ) : (
@@ -160,6 +196,7 @@ export default function AccountsList({ stage }: { stage: "LEAD" | "CLIENT" }) {
                   <SortTh label="City" colKey="city" sortKey={sortKey} dir={dir} onToggle={toggle} />
                   <SortTh label="State" colKey="state" sortKey={sortKey} dir={dir} onToggle={toggle} />
                   {isAdmin && <SortTh label="Salesperson" colKey="salesperson" sortKey={sortKey} dir={dir} onToggle={toggle} />}
+                  {stage === 'LEAD' && <SortTh label="Follow-up" colKey="followUp" sortKey={sortKey} dir={dir} onToggle={toggle} />}
                   {stage === 'LEAD' && <>{[['Lead source','source'],['Website form','form'],['Estimated opportunity','estimate'],['Pending commission','pending']].map(([label,key]) => <SortTh key={key} label={label} colKey={key} sortKey={sortKey} dir={dir} onToggle={toggle} />)}</>}
                   <SortTh label="Units" colKey="units" sortKey={sortKey} dir={dir} onToggle={toggle} />
                   <SortTh label="TIV" colKey="tiv" sortKey={sortKey} dir={dir} onToggle={toggle} />
@@ -179,6 +216,7 @@ export default function AccountsList({ stage }: { stage: "LEAD" | "CLIENT" }) {
                 {sorted.map((a) => {
                   const renewal = renewalOf(a);
                   const contact = contactOf(a);
+                  const snooze = snoozeOf(a);
                   return (
                     <tr
                       key={a.id}
@@ -200,6 +238,10 @@ export default function AccountsList({ stage }: { stage: "LEAD" | "CLIENT" }) {
                       </td>
                       <td>{a.city || '—'}</td><td>{a.state || '—'}</td>
                       {isAdmin && <td>{commercial.loading ? 'Loading…' : commercial.error ? 'Unavailable' : assignee(a, 'salespersonId')}</td>}
+                      {stage === 'LEAD' && <td>{a.stage === 'LEAD' && snooze ? <LeadSnoozeControl accountName={a.name} snooze={snooze} today={today} onRefresh={commercial.refetch} onSaved={saved => {
+                        setSavedSnoozes(current => (current[a.id]?.version ?? -1) >= saved.version ? current : { ...current, [a.id]: saved });
+                        setNotice(saved.followUpOn ? `${a.name} snoozed until ${fmtDate(saved.followUpOn)}.` : `${a.name} is back in Active.`);
+                      }} /> : '—'}</td>}
                       {stage === 'LEAD' && <><td>{acquisitionLabel(a.leadSource, a.source)}</td><td>{websiteFormLabel(a.source)}</td><td>{commercial.data.entries[a.id] && !commercial.error ? <OpportunityEstimate plan={commercial.data.entries[a.id].plan} onSaved={plan => commercial.setData(data => ({ ...data, entries: { ...data.entries, [a.id]: { ...data.entries[a.id], plan } } }))} /> : commercial.error ? 'Unavailable' : 'Loading…'}</td><td>{commercial.loading || quoteResource.loading ? 'Loading…' : commercial.error || quoteResource.error ? 'Unavailable' : <><strong>{forecastOf(a)?.cents == null ? '—' : formatCommission(forecastOf(a)!.cents!)}</strong><div className="muted small">{forecastOf(a)?.label}</div></>}</td></>}
                       <td>{fmtNum(a.unitCount)}</td>
                       <td>{fmtMoney(a.totalInsuredValue)}</td>

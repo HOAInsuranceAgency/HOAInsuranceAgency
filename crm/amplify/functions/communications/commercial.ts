@@ -21,6 +21,7 @@ import {
 } from './store';
 import type { LeadWorkflow } from '../../../../shared/leadWorkflow';
 import type { Schema } from '../../data/resource';
+import { readLeadSnooze } from './snooze';
 
 const idOf = (id: unknown) => {
   if (typeof id !== 'string' || !/^[a-zA-Z0-9_-]{1,100}$/.test(id))
@@ -37,9 +38,10 @@ export async function commercialTable(ids: unknown) {
   return Promise.all(
     ids.map(async (raw) => {
       const id = idOf(raw),
-        [plan, workflow] = await Promise.all([
+        [plan, workflow, snooze] = await Promise.all([
           get<CommercialPlan>(`commercial:${id}`),
           get<LeadWorkflow>(`workflow:${id}`),
+          readLeadSnooze(id),
         ]);
       return {
         accountId: id,
@@ -48,6 +50,7 @@ export async function commercialTable(ids: unknown) {
           : emptyCommercialPlan(id),
         salespersonId: workflow?.data.salespersonId,
         disposition: workflow?.data.disposition,
+        snooze,
       };
     }),
   );

@@ -1,0 +1,15 @@
+.lead-snooze-control { min-width: 160px; max-width: 340px; }
+.lead-snooze-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 8px; }
+.lead-snooze-summary time { color: var(--muted); font-size: 12px; white-space: nowrap; }
+.lead-snooze-summary p { flex-basis: 100%; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.lead-snooze-actions { display: flex; flex-wrap: wrap; gap: 6px 12px; }
+.lead-snooze-control form { min-width: 240px; display: grid; gap: 10px; }
+.lead-snooze-control .field { font-size: 12px; color: var(--muted); }
+.lead-snooze-control .field :is(input, textarea) { width: 100%; min-width: 0; box-sizing: border-box; }
+.lead-snooze-control .form-actions { margin-top: 0; flex-wrap: wrap; }
+.lead-follow-up-notice { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 16px; padding: 12px 16px; margin-bottom: 16px; border: 1px solid #e8c66a; border-radius: 8px; background: #fff8e5; }
+.lead-follow-up-notice p { margin: 0; }
+.activity-follow-up { border: 1px solid var(--border); border-radius: 8px; padding: 16px; background: #fafbfd; }
+.activity-follow-up > h3 { margin: 0 0 12px !important; }
+.activity-follow-up .lead-snooze-control { min-width: 0; max-width: none; }
+.activity-follow-up .lead-snooze-control form { min-width: 0; }

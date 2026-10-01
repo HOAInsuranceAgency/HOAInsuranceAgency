@@ -1,7 +1,7 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import type { Communication, IntegrationConfig, LeadWorkflow } from "../../../shared/leadWorkflow";
 const h = vi.hoisted(() => ({ records: new Map<string, Record<string, any>>(), transactions: [] as any[][], inFlight: 0, maxInFlight: 0, fail: false, failAt: undefined as number | undefined, writeError: undefined as Error | undefined, writeErrors: [] as Error[], accountError: false, userEnabled: true, disabledUsers: new Set<string>(),
-  reads: [] as string[], readFailureId: undefined as string | undefined, userReads: [] as string[], userError: undefined as Error | undefined, queries: [] as any[], queryError: undefined as Error | undefined, deletionQuery: vi.fn(), batch: vi.fn(), front: vi.fn(), dialpad: vi.fn(), update: vi.fn(), accountList: vi.fn(), c: {} as IntegrationConfig }));
+  reads: [] as string[], readFailureId: undefined as string | undefined, beforeWrite: undefined as (() => void) | undefined, userReads: [] as string[], userError: undefined as Error | undefined, queries: [] as any[], queryError: undefined as Error | undefined, deletionQuery: vi.fn(), batch: vi.fn(), front: vi.fn(), dialpad: vi.fn(), update: vi.fn(), accountList: vi.fn(), c: {} as IntegrationConfig }));
 vi.mock("@aws-sdk/lib-dynamodb", async importOriginal => {
   const actual = await importOriginal<typeof import("@aws-sdk/lib-dynamodb")>();
   return { ...actual, DynamoDBDocumentClient: { from: () => ({ send: async (command: any) => {
@@ -32,10 +32,15 @@ vi.mock("@aws-sdk/lib-dynamodb", async importOriginal => {
       if (h.failAt === h.transactions.length) { h.failAt = undefined; throw new Error("Interrupted contact progress"); }
       if (h.writeError) { const error = h.writeError; h.writeError = undefined; throw error; }
       if (h.writeErrors.length) throw h.writeErrors.shift();
+      const beforeWrite = h.beforeWrite; h.beforeWrite = undefined; beforeWrite?.();
       const writes = p.TransactItems;
       for (const entry of writes) {
         const w = entry.Put ?? entry.ConditionCheck ?? entry.Update;
         const old = h.records.get(`${w.TableName}:${w.Item?.id ?? w.Key?.id}`);
+        if (entry.ConditionCheck && w.ConditionExpression === '#stage = :lead') {
+          if (old?.stage !== w.ExpressionAttributeValues[':lead']) throw Object.assign(new Error('Lead stage changed'), { name: 'TransactionCanceledException', CancellationReasons: [{ Code: 'ConditionalCheckFailed' }] });
+          continue;
+        }
         if (entry.ConditionCheck && w.ConditionExpression === 'updatedAt = :at') {
           if (old?.updatedAt !== w.ExpressionAttributeValues[':at']) throw Object.assign(new Error('Source record changed'), { name: 'TransactionCanceledException', CancellationReasons: [{ Code: 'ConditionalCheckFailed' }] });
           continue;
@@ -107,7 +112,7 @@ beforeEach(async () => {
   vi.useFakeTimers(); vi.setSystemTime(NOW); h.records.clear(); h.transactions.length = 0; h.inFlight = 0; h.maxInFlight = 0; h.fail = false; h.failAt = undefined; h.accountError = false; h.userEnabled = true; h.writeError = undefined; vi.clearAllMocks();
   h.disabledUsers.clear();
   h.writeErrors.length = 0;
-  h.reads.length = 0; h.readFailureId = undefined; h.userReads.length = 0; h.queries.length = 0; h.userError = undefined; h.queryError = undefined;
+  h.reads.length = 0; h.readFailureId = undefined; h.beforeWrite = undefined; h.userReads.length = 0; h.queries.length = 0; h.userError = undefined; h.queryError = undefined;
   h.deletionQuery.mockReset();
   h.batch.mockReset().mockImplementation((p: { RequestItems: Record<string, { Keys: { id: string }[] }> }) => ({
     Responses: Object.fromEntries(Object.entries(p.RequestItems).map(([name, request]) => [name,
@@ -124,6 +129,114 @@ beforeEach(async () => {
   h.front.mockImplementation(async (path: string) => path.includes("/messages") && path.includes("/conversations") ? { _results: [] } : {});
 });
 afterEach(() => vi.useRealTimers());
+describe('producer lead snoozes', () => {
+  const input = { accountId: 'a1', version: 0, followUpOn: '2026-09-10', note: '  Call after the board meeting  ' };
+  async function setup() {
+    await lead();
+    h.records.set('Account:a1', { id: 'a1', stage: 'LEAD', name: 'Willow HOA', updatedAt: NOW });
+    return (await import('../../amplify/functions/communications/snooze')).saveLeadSnooze;
+  }
+  it('saves and audits a date without creating tasks, deliveries or queue work', async () => {
+    const write = await setup();
+    expect(await write(input, 'brian', false)).toEqual({ ...input, version: 1, note: 'Call after the board meeting', updatedAt: NOW, updatedBy: 'brian' });
+    expect(record('lead-snooze:a1')).toMatchObject({ kind: 'LEAD_SNOOZE', accountId: 'a1', version: 1, accountSort: expect.stringMatching(/^LEAD_SNOOZE#/) });
+    for (const field of ['dueAt', 'dueGroup', 'workKind', 'workAt']) expect(record('lead-snooze:a1')).not.toHaveProperty(field);
+    for (const kind of ['TASK', 'NOTIFICATION', 'OPERATION', 'LIFECYCLE']) expect(entries(kind)).toHaveLength(0);
+    expect([...h.records.values()].filter(r => r.__typename === 'Activity')).toMatchObject([{ actor: 'brian', summary: 'Lead snoozed until follow-up' }]);
+    expect(h.front).not.toHaveBeenCalled(); expect(h.dialpad).not.toHaveBeenCalled();
+  });
+  it('keeps a cleared row versioned and rejects stale changes without losing the clear', async () => {
+    const write = await setup();
+    await write(input, 'brian', false);
+    expect(await write({ ...input, version: 1, followUpOn: null }, 'brian', false)).toMatchObject({ version: 2, followUpOn: null, note: '' });
+    await expect(write(input, 'brian', false)).rejects.toThrow('Refresh before saving');
+    await expect(write({ ...input, version: 1 }, 'brian', false)).rejects.toThrow('Refresh before saving');
+    expect(record('lead-snooze:a1').data).toMatchObject({ version: 2, followUpOn: null });
+  });
+  it('allows one competing first save and tells the other editor to refresh', async () => {
+    const write = await setup();
+    const results = await Promise.allSettled([write(input, 'brian', false), write({ ...input, followUpOn: '2026-09-11' }, 'brian', false)]);
+    expect(results.filter(r => r.status === 'fulfilled')).toHaveLength(1);
+    expect(results.filter(r => r.status === 'rejected')).toMatchObject([{ reason: expect.objectContaining({ message: expect.stringContaining('Refresh before saving') }) }]);
+    expect(record('lead-snooze:a1').version).toBe(1);
+    expect([...h.records.values()].filter(r => r.__typename === 'Activity')).toHaveLength(1);
+  });
+  it.each(['assignment', 'binding', 'deletion', 'account removal'])('fences a concurrent %s before saving or auditing', async change => {
+    const write = await setup();
+    h.beforeWrite = () => {
+      if (change === 'assignment') h.records.set('comms:workflow:a1', { ...record('workflow:a1'), version: 2, data: { ...record('workflow:a1').data, salespersonId: 'other' } });
+      if (change === 'binding') h.records.get('Account:a1')!.stage = 'CLIENT';
+      if (change === 'deletion') h.records.set('comms:deleted-account:a1', row('DELETED_ACCOUNT', 'deleted-account:a1', {}));
+      if (change === 'account removal') h.records.delete('Account:a1');
+    };
+    await expect(write(input, 'brian', false)).rejects.toThrow('Refresh before saving');
+    expect(record('lead-snooze:a1')).toBeUndefined();
+    expect([...h.records.values()].filter(r => r.__typename === 'Activity')).toHaveLength(0);
+  });
+  it('rechecks ownership and permits an administrator to snooze a lead without initializing its workflow', async () => {
+    const write = await setup();
+    await expect(write(input, 'other', false)).rejects.toThrow('assigned leads');
+    h.records.delete('comms:workflow:a1');
+    await expect(write(input, 'brian', false)).rejects.toThrow('assigned leads');
+    expect(await write(input, 'admin', true)).toMatchObject({ version: 1, updatedBy: 'admin' });
+    expect(record('workflow:a1')).toBeUndefined();
+  });
+  it('requires a real, readable lead and rejects already deleted accounts', async () => {
+    const write = await setup();
+    h.accountError = true;
+    await expect(write(input, 'brian', false)).rejects.toThrow('Could not load this lead');
+    h.accountError = false; h.records.get('Account:a1')!.stage = 'CLIENT';
+    await expect(write(input, 'brian', false)).rejects.toThrow('only available for leads');
+    h.records.get('Account:a1')!.stage = 'LEAD';
+    h.records.set('comms:deleted-account:a1', row('DELETED_ACCOUNT', 'deleted-account:a1', {}));
+    await expect(write(input, 'admin', true)).rejects.toThrow('being deleted');
+    expect(record('lead-snooze:a1')).toBeUndefined();
+  });
+  it('validates dates against the Eastern calendar rather than the UTC day', async () => {
+    const write = await setup();
+    vi.setSystemTime('2026-09-09T02:00:00.000Z');
+    await expect(write({ ...input, followUpOn: '2026-09-08' }, 'brian', false)).rejects.toThrow('after today');
+    expect(await write({ ...input, followUpOn: '2026-09-09' }, 'brian', false)).toMatchObject({ followUpOn: '2026-09-09' });
+  });
+  it.each([
+    { followUpOn: '2026-09-31' }, { followUpOn: 'tomorrow' }, { followUpOn: undefined },
+    { note: 'x'.repeat(1001) }, { note: undefined }, { version: -1 }, { version: 0.5 }, { accountId: '../other' },
+  ])('rejects malformed input before storing a snooze: %j', async invalid => {
+    const write = await setup();
+    await expect(write({ ...input, ...invalid }, 'brian', false)).rejects.toThrow();
+    expect(record('lead-snooze:a1')).toBeUndefined();
+  });
+  it('preserves storage failures instead of reporting success or an empty read', async () => {
+    const write = await setup();
+    h.fail = true;
+    await expect(write(input, 'brian', false)).rejects.toThrow('storage outage');
+    h.fail = false; h.readFailureId = 'lead-snooze:a1';
+    const { commercialTable } = await import('../../amplify/functions/communications/commercial');
+    await expect(commercialTable(['a1'])).rejects.toThrow('Temporary read failure');
+  });
+  it('exposes source-row versions in table/context reads, including leads without a workflow', async () => {
+    const { commercialTable } = await import('../../amplify/functions/communications/commercial');
+    const { handler } = await import('../../amplify/functions/communications/handler');
+    const identity = { sub: 'brian', groups: ['ADMIN'] } as never;
+    const empty = { accountId: 'a1', version: 0, followUpOn: null, note: '' };
+    expect(await commercialTable(['a1'])).toMatchObject([{ snooze: empty }]);
+    expect(await handler({ arguments: { readOperation: 'context', input: { accountId: 'a1' } }, identity })).toMatchObject({ ok: true, workflow: null, snooze: empty });
+    h.records.set('comms:lead-snooze:a1', { ...row('LEAD_SNOOZE', 'lead-snooze:a1', { ...input, version: 1 }), version: 4 });
+    expect(await commercialTable(['a1'])).toMatchObject([{ snooze: { ...input, version: 4 } }]);
+    expect(await handler({ arguments: { readOperation: 'context', input: { accountId: 'a1' } }, identity })).toMatchObject({ ok: true, snooze: { ...input, version: 4 } });
+    h.records.set('Account:a1', { id: 'a1', stage: 'CLIENT' });
+    const client = await handler({ arguments: { readOperation: 'context', input: { accountId: 'a1' } }, identity });
+    expect(client).toMatchObject({ ok: true }); expect(client).not.toHaveProperty('snooze');
+  });
+  it('routes writes through active-role ownership checks and returns the saved snooze', async () => {
+    await setup();
+    const { handler } = await import('../../amplify/functions/communications/handler');
+    const identity = { sub: 'other', groups: ['ADMIN', 'PRODUCER'] } as never;
+    const event = { arguments: { operation: 'saveLeadSnooze', input }, identity };
+    expect(await handler({ ...event, request: { headers: { 'x-crm-role': 'PRODUCER' } } })).toMatchObject({ ok: false, error: expect.stringContaining('assigned leads') });
+    expect(await handler({ ...event, request: { headers: { 'x-crm-role': 'ADMIN' } } })).toMatchObject({ ok: true, snooze: { version: 1, followUpOn: input.followUpOn, updatedBy: 'other' } });
+  });
+});
 describe('commercial package persistence', () => {
   async function seedPackages() {
     await lead(); h.records.set('Account:a1', { id: 'a1', stage: 'LEAD', name: 'Willow HOA', createdAt: NOW, updatedAt: NOW });

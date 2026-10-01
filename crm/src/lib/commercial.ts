@@ -2,10 +2,12 @@ import { useAsyncResource } from './useAsyncResource';
 import { communicationRequest, type TeamEligibility } from './communications';
 import type { CommercialPlan } from '../../../shared/quotePackages';
 import type { LeadWorkflow } from '../../../shared/leadWorkflow';
+import type { LeadSnooze } from '../../../shared/leadSnooze';
 export interface CommercialEntry {
   accountId: string;
   plan: CommercialPlan;
   salespersonId?: string;
+  snooze?: LeadSnooze;
   disposition?: LeadWorkflow['disposition'];
 }
 export interface CommercialData {
