@@ -1,7 +1,7 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import type { Communication, IntegrationConfig, LeadWorkflow } from "../../../shared/leadWorkflow";
 const h = vi.hoisted(() => ({ records: new Map<string, Record<string, any>>(), transactions: [] as any[][], inFlight: 0, maxInFlight: 0, fail: false, failAt: undefined as number | undefined, writeError: undefined as Error | undefined, writeErrors: [] as Error[], accountError: false, userEnabled: true, disabledUsers: new Set<string>(),
-  reads: [] as string[], readFailureId: undefined as string | undefined, userReads: [] as string[], userError: undefined as Error | undefined, queries: [] as any[], queryError: undefined as Error | undefined, deletionQuery: vi.fn(), batch: vi.fn(), front: vi.fn(), dialpad: vi.fn(), update: vi.fn(), accountList: vi.fn(), c: {} as IntegrationConfig }));
+  reads: [] as string[], readFailureId: undefined as string | undefined, userReads: [] as string[], userError: undefined as Error | undefined, queries: [] as any[], queryError: undefined as Error | undefined, cognitoList: vi.fn(), deletionQuery: vi.fn(), batch: vi.fn(), front: vi.fn(), dialpad: vi.fn(), update: vi.fn(), accountList: vi.fn(), c: {} as IntegrationConfig }));
 vi.mock("@aws-sdk/lib-dynamodb", async importOriginal => {
   const actual = await importOriginal<typeof import("@aws-sdk/lib-dynamodb")>();
   return { ...actual, DynamoDBDocumentClient: { from: () => ({ send: async (command: any) => {
@@ -62,7 +62,7 @@ vi.mock("@aws-sdk/lib-dynamodb", async importOriginal => {
     throw new Error(`Unexpected storage command ${command.constructor.name}`);
   } }) } };
 });
-vi.mock("@aws-sdk/client-cognito-identity-provider", () => ({ CognitoIdentityProviderClient: class { send = async (command: any) => { const id = /"([^"]+)"/.exec(command.input.Filter)?.[1] ?? "brian"; h.userReads.push(id); if (h.userError) throw h.userError; return { Users: [{ Enabled: h.userEnabled && !h.disabledUsers.has(id), Attributes: [{ Name: "email", Value: `${id}@example.com` }, { Name: "email_verified", Value: "true" }] }] }; }; }, ListUsersCommand: class { constructor(public input: unknown) {} } }));
+vi.mock("@aws-sdk/client-cognito-identity-provider", () => ({ CognitoIdentityProviderClient: class { send = async (command: any) => { if (!command.input.Filter) return h.cognitoList(command.input); const id = /"([^"]+)"/.exec(command.input.Filter)?.[1] ?? "brian"; h.userReads.push(id); if (h.userError) throw h.userError; return { Users: [{ Enabled: h.userEnabled && !h.disabledUsers.has(id), Attributes: [{ Name: "email", Value: `${id}@example.com` }, { Name: "email_verified", Value: "true" }] }] }; }; }, ListUsersCommand: class { constructor(public input: unknown) {} } }));
 vi.mock("../../amplify/functions/communications/config", async importOriginal => ({ ...(await importOriginal<typeof import("../../amplify/functions/communications/config")>()), saveCredentials: vi.fn(), config: async () => h.c, credentials: async () => ({ frontSigningKey: "test-signing-key", dialpadSigningKey: "test-dialpad-signing-key" }) }));
 vi.mock("../../amplify/functions/communications/data", () => ({ dataClient: async () => ({ models: {
   Account: { list: h.accountList, get: async ({ id }: { id: string }) => (h.accountError ? { data: null, errors: [{ message: "Simulated account read failure" }] } : { data: { id, name: "Willow HOA", stage: "LEAD", createdAt: "2026-09-08T14:00:00.000Z", updatedAt: "2026-09-08T14:00:00.000Z", ...Object.fromEntries([["quotes", "Quote"], ["policies", "Policy"], ["priorCarriers", "PriorCarrier"], ["certificates", "Certificate"], ["invoices", "Invoice"]].map(([name, model]) => [name, async () => ({ data: [...h.records.entries()].filter(([key, r]) => key.startsWith(`${model}:`) && r.accountId === id).map(([, r]) => r) })])), contacts: async () => ({ data: [...h.records.entries()].filter(([key, c]) => key.startsWith("Contact:") && c.accountId === id).map(([,c]) => c) }), ...h.records.get(`Account:${id}`) } }) },
@@ -109,6 +109,7 @@ beforeEach(async () => {
   h.writeErrors.length = 0;
   h.reads.length = 0; h.readFailureId = undefined; h.userReads.length = 0; h.queries.length = 0; h.userError = undefined; h.queryError = undefined;
   h.deletionQuery.mockReset();
+  h.cognitoList.mockReset().mockImplementation(async () => ({ Users: [...h.records.entries()].filter(([key]) => key.startsWith('UserProfile:')).map(([, profile]) => ({ Enabled: h.userEnabled && !h.disabledUsers.has(profile.userId), Attributes: [{ Name: 'sub', Value: profile.userId }] })) }));
   h.batch.mockReset().mockImplementation((p: { RequestItems: Record<string, { Keys: { id: string }[] }> }) => ({
     Responses: Object.fromEntries(Object.entries(p.RequestItems).map(([name, request]) => [name,
       request.Keys.map(key => h.records.get(`${name}:${key.id}`)).filter(Boolean).map(item => structuredClone(item)).reverse(),
@@ -1322,6 +1323,33 @@ describe("round three: recoverable history capture", () => {
 });
 
 
+describe('shared team availability', () => {
+  it('decorates team/context with current availability while preserving saved eligibility and versions', async () => {
+    for (const id of ['active', 'disabled', 'deleted', 'staff', 'ineligible']) {
+      h.records.set(`UserProfile:${id}`, { userId: id, firstName: id, lastName: 'Member', email: `${id}@example.com` });
+      await save(row('ELIGIBILITY', `eligibility:${id}`, { userId: id, name: id, email: `${id}@example.com`, enabled: id !== 'ineligible', salesperson: id !== 'staff' }));
+    }
+    const before = structuredClone([...h.records]);
+    h.cognitoList.mockResolvedValue({ Users: ['active', 'disabled', 'staff', 'ineligible'].map(id => ({ Enabled: id !== 'disabled', Attributes: [{ Name: 'sub', Value: id }] })) });
+    const { handler } = await import('../../amplify/functions/communications/handler');
+    const identity = { sub: 'admin', groups: ['ADMIN'] } as never;
+    for (const readOperation of ['team', 'context']) {
+      const result = await handler({ arguments: { readOperation, input: { accountId: 'a1' } }, identity });
+      expect(result).toMatchObject({ ok: true, team: [
+        { userId: 'active', available: true, enabled: true, salesperson: true, version: 1 },
+        { userId: 'disabled', available: false, enabled: true, salesperson: true, version: 1 },
+        { userId: 'deleted', available: false, enabled: true, salesperson: true, version: 1 },
+        { userId: 'staff', available: true, enabled: true, salesperson: false, version: 1 },
+        { userId: 'ineligible', available: true, enabled: false, salesperson: true, version: 1 },
+      ] });
+    }
+    expect([...h.records]).toEqual(before);
+    expect(h.userReads).toHaveLength(0);
+    h.cognitoList.mockRejectedValue(new Error('Cognito temporarily unavailable'));
+    expect(await handler({ arguments: { readOperation: 'team' }, identity })).toMatchObject({ ok: false, error: 'Cognito temporarily unavailable' });
+  });
+});
+
 describe("configured default lead owner", () => {
   async function prepareJake(flags = { enabled: true, salesperson: true, champion: true }) {
     h.records.set("UserProfile:jake", { userId: "jake", firstName: "Jake", lastName: "Greasley", email: "jake@example.com" });
@@ -1372,10 +1400,12 @@ it("returns the committed teammate version so the next edit does not depend on a
   await save(row("ELIGIBILITY", "eligibility:jake", initial));
   const { handler } = await import("../../amplify/functions/communications/handler");
   const write = (input: Record<string, unknown>) => handler({ arguments: { operation: "saveEligibility", input }, identity: { sub: "admin", groups: ["ADMIN"] } as never });
-  const first = await write({ ...initial, version: 1, frontId: "tea_jake", dialpadId: "5655281245659136" });
-  expect(first).toMatchObject({ ok: true, member: { ...initial, frontId: "tea_jake", dialpadId: "5655281245659136", version: 2 } });
+  const first = await write({ ...initial, version: 1, available: false, frontId: "tea_jake", dialpadId: "5655281245659136" });
+  expect(first).toMatchObject({ ok: true, member: { ...initial, available: true, frontId: "tea_jake", dialpadId: "5655281245659136", version: 2 } });
+  expect(record('eligibility:jake').data).not.toHaveProperty('available');
   const committed = (first as { member: Record<string, unknown> }).member;
   expect(await write({ ...committed, salesperson: false })).toMatchObject({ ok: true, member: { version: 3, salesperson: false, frontId: "tea_jake", dialpadId: "5655281245659136" } });
+  expect(record('eligibility:jake').data).not.toHaveProperty('available');
 });
 
 

@@ -11,10 +11,12 @@ import { AdminContext } from '../lib/auth';
 import AccountsList from './AccountsList';
 
 const team = [
-  { userId: 'alice', name: 'Alice', enabled: true, salesperson: true },
-  { userId: 'bob', name: 'Bob', enabled: true, salesperson: true },
-  { userId: 'disabled', name: 'Disabled salesperson', enabled: false, salesperson: true },
-  { userId: 'staff', name: 'Office staff', enabled: true, salesperson: false },
+  { userId: 'alice', name: 'Alice', enabled: true, salesperson: true, available: true },
+  { userId: 'bob', name: 'Bob', enabled: true, salesperson: true, available: true },
+  { userId: 'disabled', name: 'Disabled salesperson', enabled: false, salesperson: true, available: true },
+  { userId: 'staff', name: 'Office staff', enabled: true, salesperson: false, available: true },
+  { userId: 'unavailable', name: 'Unavailable sign-in', enabled: true, salesperson: true, available: false },
+  { userId: 'unchecked', name: 'Unchecked availability', enabled: true, salesperson: true },
 ];
 let owner: string | undefined;
 let version: number;
@@ -43,6 +45,8 @@ it('saves inline without opening the lead and uses the returned version for the 
   expect(picker).toHaveValue('alice');
   expect(within(picker).queryByRole('option', { name: 'Disabled salesperson' })).not.toBeInTheDocument();
   expect(within(picker).queryByRole('option', { name: 'Office staff' })).not.toBeInTheDocument();
+  expect(within(picker).queryByRole('option', { name: 'Unavailable sign-in' })).not.toBeInTheDocument();
+  expect(within(picker).queryByRole('option', { name: 'Unchecked availability' })).not.toBeInTheDocument();
   fireEvent.click(picker);
   fireEvent.keyDown(picker, { key: 'ArrowDown' });
   fireEvent.change(picker, { target: { value: 'bob' } });
@@ -137,7 +141,7 @@ it.each(['refresh-last', 'save-last'])('keeps the newest assignment when another
   expect(h.request).toHaveBeenLastCalledWith('setResponsibilities', { accountId: 'willow', salespersonId: order === 'refresh-last' ? 'alice' : 'bob', version: order === 'refresh-last' ? 8 : 9 }, true);
 });
 
-it('assigns a lead with no workflow and preserves an unavailable existing owner for correction', async () => {
+it.each(['disabled', 'unavailable'])('assigns a lead with no workflow and preserves an unavailable existing owner for correction (%s)', async unavailableId => {
   owner = undefined; version = 0;
   const view = render(page());
   const picker = await willowPicker();
@@ -147,11 +151,11 @@ it('assigns a lead with no workflow and preserves an unavailable existing owner 
   await screen.findByText('Saved');
   expect(h.request).toHaveBeenCalledWith('setResponsibilities', { accountId: 'willow', salespersonId: 'bob', version: 0 }, true);
   view.unmount();
-  owner = 'disabled'; version = 2;
+  owner = unavailableId; version = 2;
   render(page());
   const unavailable = await willowPicker();
-  expect(unavailable).toHaveValue('disabled');
-  expect(within(unavailable).getByRole('option', { name: 'Disabled salesperson (unavailable)' })).toBeDisabled();
+  expect(unavailable).toHaveValue(unavailableId);
+  expect(within(unavailable).getByRole('option', { name: `${team.find(member => member.userId === unavailableId)!.name} (unavailable)` })).toBeDisabled();
   expect(unavailable).toBeEnabled();
 });
 

@@ -6,16 +6,17 @@ import { communicationRequest as request, type WorkflowContext, type TeamEligibi
 import { useAsyncResource } from "../lib/useAsyncResource";
 import { fmtDateTime, fmtProviderPhone, friendlyError } from "../lib/client";
 import { compactDateTime, communicationChannelLabels } from "../lib/communicationLabels";
+import { isAssignableSalesperson } from "../../../shared/salespersonOwnership";
 import "./LeadWorkflowPanel.css";
 
 const EMPTY: WorkflowContext = { workflow: null, tasks: [], communications: [], team: [], issues: [] };
-export function ResponsibilitySelect({ label, value, team, kind, onChange, disabled = false }: {
+export function ResponsibilitySelect({ label, value, team, onChange, disabled = false }: {
   label: string; value: string; team: TeamEligibility[]; kind: "salesperson"; onChange: (value: string) => void; disabled?: boolean;
 }) {
-  const eligible = team.filter(t => t.enabled && t[kind]);
+  const eligible = team.filter(isAssignableSalesperson);
   return <label className="field">{label}<select aria-label={label} value={value} onChange={e => onChange(e.target.value)} disabled={disabled}>
     <option value="">Choose teammate</option>
-    {value && !eligible.some(t => t.userId === value) && <option value={value}>{team.find(t => t.userId === value)?.name ?? "Assigned teammate"} (needs review)</option>}
+    {value && !eligible.some(t => t.userId === value) && <option value={value} disabled>{team.find(t => t.userId === value)?.name ?? "Assigned teammate"} (needs review)</option>}
     {eligible.map(t => <option key={t.userId} value={t.userId}>{t.name}</option>)}
   </select></label>;
 }

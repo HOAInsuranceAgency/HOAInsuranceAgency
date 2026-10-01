@@ -2,6 +2,7 @@ import { LEAD_SOURCES, LEAD_SOURCE_LABELS } from "../../../shared/leadSource";
 import { PROPERTY_TYPES, PROPERTY_TYPE_LABELS, normalizePropertyType } from "../../../shared/propertyType";
 import { communicationRequest, type TeamEligibility } from "../lib/communications";
 import { ResponsibilitySelect } from "../components/LeadWorkflowPanel";
+import { isAssignableSalesperson } from "../../../shared/salespersonOwnership";
 import { useAsyncResource } from "../lib/useAsyncResource";
 import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
@@ -37,7 +38,7 @@ export default function NewLead() {
   const [salespersonId, setSalesperson] = useState("");
   const members = useAsyncResource(() => communicationRequest<{ team: TeamEligibility[]; actorId?: string }>("team"), [], { initialData: { team: [] } });
   useEffect(() => {
-    const self = members.data.team.find(t => t.userId === members.data.actorId && t.enabled && t.salesperson);
+    const self = members.data.team.find(t => t.userId === members.data.actorId && isAssignableSalesperson(t));
     if (self) setSalesperson(s => s || self.userId);
   }, [members.data]);
   const [saving, setSaving] = useState(false);

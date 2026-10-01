@@ -12,9 +12,9 @@ export const account = { id: 'fictional-willow', name: 'Willow Court Condominium
 const actorId = '11111111-2222-4333-8444-555555555555';
 const formerId = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
 export const team: TeamEligibility[] = [
-  { userId: actorId, name: 'Avery Brooks', email: 'avery@example.test', frontId: 'tea_avery', dialpadId: 'dial_avery', enabled: true, salesperson: true },
-  { userId: 'jordan', name: 'Jordan Ellis', email: 'jordan@example.test', frontId: 'tea_jordan', enabled: true, salesperson: true },
-  { userId: formerId, name: 'Morgan Lane', email: 'morgan@example.test', frontId: 'tea_morgan', enabled: false, salesperson: true },
+  { userId: actorId, name: 'Avery Brooks', email: 'avery@example.test', frontId: 'tea_avery', dialpadId: 'dial_avery', enabled: true, salesperson: true, available: true },
+  { userId: 'jordan', name: 'Jordan Ellis', email: 'jordan@example.test', frontId: 'tea_jordan', enabled: true, salesperson: true, available: true },
+  { userId: formerId, name: 'Morgan Lane', email: 'morgan@example.test', frontId: 'tea_morgan', enabled: false, salesperson: true, available: false },
 ];
 const workflow: LeadWorkflow = { accountId: account.id, name: account.name, salespersonId: actorId, disposition: isClient ? 'BOUND' : 'ACTIVE', conversationId: 'cnv_fictional_willow', version: 1, updatedAt: time(), humanTakeover: isClient, ...(scenario === 'lead' ? { assignmentIssue: 'The linked Front conversation is assigned to Jordan Ellis. Review the handler before replying.' } : {}) };
 const comm = (id: string, channel: Communication['channel'], direction: Communication['direction'], hoursAgo: number, extra: Partial<Communication>): Communication => ({ id, accountId: account.id, conversationId: workflow.conversationId, channel, direction, at: time(hoursAgo), provider: channel === 'CALL' || channel === 'SMS' ? 'dialpad' : channel === 'NOTE' ? 'crm' : 'front', providerId: `fictional-${id}`, status: direction === 'INBOUND' ? 'RECEIVED' : 'SENT', classification: 'SUBSTANTIVE', version: 1, ...extra });

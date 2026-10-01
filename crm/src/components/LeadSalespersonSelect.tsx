@@ -2,6 +2,7 @@ import { useId, useRef, useState } from 'react';
 import { useIsAdmin } from '../lib/auth';
 import { friendlyError } from '../lib/client';
 import { communicationRequest, type LeadWorkflow, type TeamEligibility } from '../lib/communications';
+import { isAssignableSalesperson } from '../../../shared/salespersonOwnership';
 
 export function LeadSalespersonSelect({
   accountId, accountName, salespersonId, workflowVersion, team, onSaved, onRefresh,
@@ -20,7 +21,7 @@ export function LeadSalespersonSelect({
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [saved, setSaved] = useState(false);
-  const eligible = team.filter(member => member.enabled && member.salesperson);
+  const eligible = team.filter(isAssignableSalesperson);
 
   async function assign(nextId: string) {
     if (!isAdmin || saving.current || !nextId || nextId === salespersonId) return;
