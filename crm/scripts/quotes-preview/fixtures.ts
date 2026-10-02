@@ -83,7 +83,7 @@ export const client = {
 };
 export async function communicationRequest<T>(operation: string, input: Record<string, unknown> = {}, _mutation?: boolean): Promise<T> {
   await readReady();
-  if (operation === 'team') return { team: [{ userId: 'fictional-producer', name: 'Avery Brooks', salesperson: true, enabled: true }] } as T;
+  if (operation === 'team') return { team: [{ userId: 'fictional-producer', name: 'Avery Brooks', salesperson: true, enabled: true, available: true }] } as T;
   if (operation === 'commercialTable') return { items: (input.accountIds as string[]).map(accountId => ({ accountId, plan: structuredClone(plan), salespersonId: 'fictional-producer' })) } as T;
   if (operation === 'authorizeBind') {
     const row = quotes.find(q => q.id === input.quoteId);

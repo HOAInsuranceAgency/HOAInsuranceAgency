@@ -15,6 +15,8 @@ export interface TeamEligibility {
   userId: string; name: string; email: string; enabled: boolean;
   /** Response-only hint; never used as an authorization source. */
   canAccessAccount?: boolean;
+  /** Response-only current Cognito availability; saved eligibility stays separate. */
+  available?: boolean;
   salesperson: boolean; /** @deprecated Legacy storage only. */ champion?: boolean; frontId?: string; dialpadId?: string; version?: number;
 }
 export interface LeadWorkflow {

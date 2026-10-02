@@ -6,6 +6,8 @@ export interface CommercialEntry {
   accountId: string;
   plan: CommercialPlan;
   salespersonId?: string;
+  /** Optimistic-lock version for assignment edits; zero means no workflow yet. */
+  workflowVersion?: number;
   disposition?: LeadWorkflow['disposition'];
 }
 export interface CommercialData {

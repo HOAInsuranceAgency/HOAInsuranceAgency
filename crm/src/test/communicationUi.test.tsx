@@ -11,7 +11,7 @@ import CommunicationSettings from "../components/CommunicationSettings";
 const context = { workflow: null, tasks: [], communications: [], team: [], issues: [] };
 function linkedLead() {
   const linked = { ...context, workflow: { accountId: "a", name: "Willow HOA", salespersonId: "jake", version: 4, disposition: "ACTIVE", updatedAt: "2026-09-10T12:00:00Z", conversationId: "cnv_a" },
-    team: ["jake", "brian"].map(userId => ({ userId, name: userId === "jake" ? "Jake Greasley" : "Brian Cole", email: `${userId}@example.com`, enabled: true, salesperson: true })),
+    team: ["jake", "brian"].map(userId => ({ userId, name: userId === "jake" ? "Jake Greasley" : "Brian Cole", email: `${userId}@example.com`, enabled: true, salesperson: true, available: true })),
     tasks: [{ id: "task", accountId: "a", kind: "FOLLOW_UP", role: "SALESPERSON", title: "Follow up with prospect", status: "OPEN", dueAt: "2026-09-14T13:00:00Z", escalationAt: "2026-09-15T13:00:00Z", version: 2 }],
   };
   h.request.mockImplementation(async (op: string) => op === "context" ? linked : op === "accountSummary" ? { summary: { name: "Willow HOA", source: "website-ho6:willow-condominium", contacts: [{ id: "c", name: "Willow HOA", email: "jake@example.com", phone: "6178959530" }], quotes: [], documents: [], more: true, url: "https://staging.example.com/accounts/a" } } : op === "work" ? { items: [] } : { ok: true });
@@ -97,11 +97,16 @@ describe("communication UI boundaries", () => {
     await waitFor(() => expect(h.request).toHaveBeenCalledWith("restartConversationHistory", { conversationId: "cnv_test", reason: "Expired pagination" }, true));
   });
   it("filters assignment choices without treating eligibility as an access permission", () => {
-    render(<ResponsibilitySelect label="Salesperson" value="" kind="salesperson" team={[
-      { userId: "b", name: "Brian Cole", email: "b@e.com", enabled: true, salesperson: true },
-      { userId: "c", name: "Carrier specialist", email: "c@e.com", enabled: true, salesperson: false, champion: true },
+    render(<ResponsibilitySelect label="Salesperson" value="d" team={[
+      { userId: "b", name: "Brian Cole", email: "b@e.com", enabled: true, salesperson: true, available: true },
+      { userId: "c", name: "Carrier specialist", email: "c@e.com", enabled: true, salesperson: false, champion: true, available: true },
+      { userId: "d", name: "Disabled sign-in", email: "d@e.com", enabled: true, salesperson: true, available: false },
+      { userId: "e", name: "Deleted sign-in", email: "e@e.com", enabled: true, salesperson: true, available: false },
     ]} onChange={() => {}} />);
     expect(screen.getByRole("option", { name: "Brian Cole" })).toBeTruthy(); expect(screen.queryByRole("option", { name: "Carrier specialist" })).toBeNull();
+    expect(screen.getByRole('combobox', { name: 'Salesperson' })).toHaveValue('d');
+    expect(screen.getByRole('option', { name: 'Disabled sign-in (needs review)' })).toBeDisabled();
+    expect(screen.queryByRole('option', { name: 'Deleted sign-in' })).toBeNull();
   });
   it("discards a lead search result after the selected Front conversation changes", async () => {
     let resolve!: (value: unknown) => void; h.list.mockReturnValue(new Promise(r => { resolve = r; }));
