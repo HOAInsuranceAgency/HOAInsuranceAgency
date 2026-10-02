@@ -11,6 +11,7 @@ const time = (hoursAgo = 0) => new Date(Date.now() - hoursAgo * 3600000).toISOSt
 export const account = { id: 'fictional-willow', name: 'Willow Court Condominium', stage: isClient ? 'CLIENT' : 'LEAD', type: 'ASSOCIATION', city: 'Boston', state: 'MA', createdAt: time(24 * 14), convertedAt: isClient ? time(24 * 4) : undefined };
 const actorId = '11111111-2222-4333-8444-555555555555';
 const formerId = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+const savedNoteId = 'note:jordan:11111111-2222-4333-8444-666666666666';
 export const team: TeamEligibility[] = [
   { userId: actorId, name: 'Avery Brooks', email: 'avery@example.test', frontId: 'tea_avery', dialpadId: 'dial_avery', enabled: true, salesperson: true, available: true },
   { userId: 'jordan', name: 'Jordan Ellis', email: 'jordan@example.test', frontId: 'tea_jordan', enabled: true, salesperson: true, available: true },
@@ -22,7 +23,7 @@ const communications: Communication[] = scenario === 'empty' ? [] : [
   comm('email-inbound', 'EMAIL', 'INBOUND', 1, { subject: 'Updated building schedule and renewal questions', from: 'alex.propertymanager@example.test', to: ['avery@example.test'], text: 'Hi Avery,\n\nThe board approved the updated building schedule. Can you confirm the replacement cost and deductible before Friday’s meeting?\n\nThe attached file includes the roof work for Building 4 and the new common-area electrical panels.\n\nThanks,\nAlex', attachments: [{ id: 'attachment-1', filename: 'Willow_Court_Condominium_Association_2026_Updated_Building_Schedule_Replacement_Cost_and_Roof_Improvements_FINAL_REVISED.pdf', content_type: 'application/pdf', size: 2450000 }] }),
   comm('call', 'CALL', 'OUTBOUND', 3, { from: '+16175550123', to: ['+16175550142'], actorId, status: 'CONNECTED', endedAt: time(2.85), summary: 'Discussed the updated schedule and agreed to send two coverage options.', text: 'Alex prefers a bundled property and liability option. The board will compare premiums at its next meeting.', enrichment: '8-minute call · Dialpad summary available' }),
   comm('sms', 'SMS', 'INBOUND', 5, { from: '+16175550142', to: ['+16175550123'], text: 'I sent the updated roof documents. The board is available Friday at 2:30 if you can call then.' }),
-  comm('note', 'NOTE', 'INTERNAL', 7, { actorId: 'jordan', status: 'RECORDED', subject: 'Board prefers a $5,000 deductible', text: 'Discussed the renewal with the property manager. Confirm the umbrella limit before finalizing the presentation. Please preserve the existing D&O retroactive date.' }),
+  comm(savedNoteId, 'NOTE', 'INTERNAL', 7, { actorId: 'jordan', status: 'SAVED', text: 'Discussed the renewal with the property manager. The board prefers a $5,000 deductible.\n\nConfirm the umbrella limit before finalizing the presentation. Please preserve the existing D&O retroactive date.\n\nFollow up Friday afternoon after the board meeting. The property manager will send the updated building schedule and loss runs before we prepare the final comparison.' }),
   comm('email-outbound', 'EMAIL', 'OUTBOUND', 22, { from: 'avery@example.test', to: ['alex.propertymanager@example.test'], actorId: 'tea_avery', subject: 'Willow Court — coverage comparison', text: 'Hi Alex,\n\nI’m preparing the property and general liability comparison. Please send the latest board roster and loss runs when available.\n\nAvery', seenAt: time(20), seenCheckedAt: time(19) }),
   comm('missed-call', 'CALL', 'INBOUND', 25, { from: '+16175550142', to: ['+16175550123'], status: 'MISSED', text: 'Caller requested a callback about the renewal.', enrichment: 'Voicemail received' }),
 ];
@@ -46,6 +47,7 @@ const audit = (index: number, subjectType: string, subjectLabel: string, summary
 }) as unknown as Activity;
 const longFile = 'Willow_Court_Condominium_Association_2026_Property_Application_With_Roof_Updates_Building_Schedule_And_Replacement_Cost_Appendix_FINAL.pdf';
 const activities: Activity[] = scenario === 'empty' ? [] : [
+  audit(0, 'Lead communication', '', 'Internal note added', [change('id', null, savedNoteId)], { actor: 'jordan', actorName: 'Jordan Ellis', action: 'UPDATE', occurredAt: time(7) }),
   audit(1, 'Account', account.name, 'Updated the building values, roof information, and renewal notes.', [change('totalInsuredValue', 4200000, 4850000), change('unitCount', 24, 28), change('roofYear', 2008, 2025), change('notes', 'Renewal review requested.', 'Board approved the new roof replacement and electrical upgrades. Include all four buildings and the detached maintenance garage in the revised coverage comparison.')]),
   audit(2, 'Document', longFile, 'Renamed the application and linked it to the current quote.', [change('name', 'Application.pdf', longFile), change('quoteId', null, '4d8a5b16-7c40-4efb-8a3e-122398847acd'), change('status', 'UPLOADED', 'REVIEWED'), change('notes', '', 'Updated roof schedule verified against the board-approved property inventory.')]),
   audit(3, 'Quote', 'Harbor Mutual · Commercial Property + General Liability', 'Updated premium, deductible, coverage limit, and effective date.', [change('premium', 18250, 17400), change('perOccurrenceDeductible', 10000, 5000), change('blanketLimit', 4200000, 4850000), change('effectiveDate', '2026-10-01', '2026-11-01')]),
@@ -81,6 +83,11 @@ export async function communicationRequest<T>(operation: string, input: unknown 
   await ready();
   const data = input as Record<string, unknown>;
   if (operation === 'context') return structuredClone(context) as T;
+  if (operation === 'activity') {
+    const communication = communications.find(item => item.id === data.id && item.accountId === data.accountId);
+    if (!communication) throw new Error('The note could not be loaded.');
+    return { communication: structuredClone(communication) } as T;
+  }
   if (operation === 'team') return { team: structuredClone(team) } as T;
   if (operation === 'work') return { items: [] } as T;
   if (operation === 'setResponsibilities') { workflow.salespersonId = String(data.salespersonId); workflow.assignmentIssue = undefined; }
