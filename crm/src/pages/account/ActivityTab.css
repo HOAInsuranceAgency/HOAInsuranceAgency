@@ -269,6 +269,35 @@
   font-size: 12px;
 }
 
+.account-change-note {
+  margin-top: 14px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+}
+
+.account-change-note-text {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+
+.account-change-note-state {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.account-change-note-state.error-text {
+  color: var(--red);
+}
+
+.account-change-note button {
+  margin-top: 10px;
+}
+
 @media (max-width: 700px) {
   .account-changes-filters .field {
     flex: 1 1 130px;
