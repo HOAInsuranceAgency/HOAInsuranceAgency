@@ -1,5 +1,6 @@
 import { retiredReminderOperation } from "./retiredTasks";
 import { archiveAllowed } from "./cleanup";
+import { contactCleanupSource, isInitialAiCleanup, isInitialAiCommunication } from "./initialAi";
 import { config } from "./config";
 import { get, row, save, issue, commit, put, conflict, retryableStorage, check, absent, type Row } from "./store";
 import { front, ProviderError, assertRecipient, messageConversation, permittedConversation, type FrontMessage, verifyEmailChannel } from "./providers";
@@ -23,12 +24,21 @@ async function assignedSalesperson(userId: string | undefined) {
   return member;
 }
 
+/** Identity captured with the generated body; never guess a producer at send time. */
+export async function assignedEmailProducer(userId: string | undefined) {
+  const member = await assignedSalesperson(userId);
+  const name = typeof member.data.name === "string" ? member.data.name.trim() : "";
+  if (!name || name.length > 200 || /[\r\n\x00-\x1f\x7f]/.test(name)) throw new AssignmentError("Add the assigned salesperson’s name in Team settings before sending the initial email");
+  return { member, producerId: userId!, producerName: name };
+}
+
 export interface Operation {
   type: "ATTACHMENT" | "IMPORT" | "EMAIL" | "COMMENT" | "SMS_ALERT" | "ARCHIVE" | "REOPEN" | "ASSIGN";
   state: "READY" | "LEASED" | "ACCEPTED" | "CONFIRMED" | "RETRY_WAIT" | "UNKNOWN" | "FAILED" | "SUPPRESSED";
   accountId: string; attempts: number; failures?: number; submissionId?: string; replyId?: string;
   conversationId?: string; recipient?: string; subject?: string; html?: string; text?: string;
   uid?: string; messageId?: string; error?: string; leaseUntil?: string; assigneeId?: string;
+  producerId?: string; producerName?: string;
   lead?: LeadSummary; sourceMessageId?: string; attachmentId?: string; requestedBy?: string;
   // Legacy reminder metadata is retained so queued deliveries can be retired.
   reminder?: { taskId: string; noticeAt: string; recipientId: string; escalated: boolean; stage?: string; workflowVersion?: number };
@@ -64,9 +74,15 @@ export async function runOperation(candidate: Row<Operation>) {
     await transition(op, { state: "SUPPRESSED", leaseUntil: undefined, error: "Scheduled task reminders have been removed from the CRM" });
     return;
   }
+  // Never alter an active external attempt. Retire only cleanup that has not
+  // started, or whose old lease has expired.
+  if (op.data.state === "LEASED" && op.data.leaseUntil! > new Date().toISOString()) return;
+  if (await isInitialAiCleanup(op.id, op.data)) {
+    await transition(op, { state: "SUPPRESSED", leaseUntil: undefined, error: "The initial AI email leaves this conversation open for the salesperson" });
+    return;
+  }
   if (!['LEASED', 'ACCEPTED'].includes(op.data.state) && await get(`deleted-account:${op.data.accountId}`)) { await transition(op, { state: 'SUPPRESSED', error: 'Lead deleted' }); return; }
   if (op.data.state === "LEASED") {
-    if (op.data.leaseUntil! > new Date().toISOString()) return;
     const safe = ["IMPORT", "ATTACHMENT", "ARCHIVE", "REOPEN", "ASSIGN"].includes(op.data.type);
     op = await transition(op, { state: safe ? "RETRY_WAIT" : "UNKNOWN", error: "The previous attempt stopped before its result was saved" }, safe ? 5 : undefined);
     if (!safe) { await issue(op.id, "Delivery result needs review before any retry", op.accountId); return; }
@@ -86,11 +102,12 @@ export async function runOperation(candidate: Row<Operation>) {
     }
     // Delivery follows a durable assignment. It must never manufacture a
     // default owner when an intake workflow has not been assigned yet.
-    const wf = ["IMPORT", "SMS_ALERT", "ASSIGN"].includes(op.data.type)
+    const wf = ["IMPORT", "EMAIL", "SMS_ALERT", "ASSIGN"].includes(op.data.type)
       ? await get<LeadWorkflow>(`workflow:${op.data.accountId}`) : await ensureWorkflow(op.data.accountId);
     if (!wf) throw new AssignmentError("Assign an active salesperson to this lead before delivering its alert or Front assignment");
     let assignee: Row<TeamEligibility> | undefined;
     let inboundSource: Row<Communication> | undefined;
+    let cleanupSource: Row<Communication> | undefined;
     if (op.data.type === "REOPEN" && op.id.startsWith("op:inbound:")) {
       inboundSource = await get<Communication>(op.id.slice("op:inbound:".length));
       if (inboundSource && inboundSource.accountId === op.accountId && inboundSource.data.resolved) {
@@ -125,8 +142,12 @@ export async function runOperation(candidate: Row<Operation>) {
       if (messages._results.some(m => !m.is_inbound && m.is_draft === false && m.author)) {
         await transition(op, { state: "SUPPRESSED" }); await updateReply(op.data, "SUPPRESSED", "A teammate already replied in Front"); return;
       }
+      const producer = await assignedEmailProducer(wf.data.salespersonId);
+      assignee = producer.member;
+      if (!op.data.producerId || !op.data.producerName) throw new AssignmentError("Initial email held: its salesperson identity was not recorded. Review this queued email and handle the lead personally before sending");
+      if (op.data.producerId !== producer.producerId || op.data.producerName !== producer.producerName) throw new AssignmentError("Initial email held: the assigned salesperson changed after this email was prepared. Review it and handle the lead personally before sending");
       path = `/conversations/${wf.data.conversationId}/messages`;
-      body = { channel_id: c.frontChannelId, to: [op.data.recipient], cc: [], bcc: [], sender_name: "Brian Cole", subject: op.data.subject,
+      body = { channel_id: c.frontChannelId, to: [op.data.recipient], cc: [], bcc: [], sender_name: op.data.producerName, subject: op.data.subject,
         body: op.data.html, text: op.data.text, quote_body: "", should_add_default_signature: false, signature_id: null, options: { archive: false } };
     } else if (op.data.type === "COMMENT") {
       const cnv = op.data.conversationId ?? wf.data.conversationId;
@@ -138,6 +159,15 @@ export async function runOperation(candidate: Row<Operation>) {
       await permittedConversation(cnv); path = `/conversations/${cnv}`; method = "PATCH";
       body = op.data.type === "ASSIGN" ? { assignee_id: op.data.assigneeId ?? null } : { status: op.data.type === "ARCHIVE" ? "archived" : "open" };
       if (op.data.type === "ARCHIVE" && !await archiveAllowed(op.data.accountId, cnv)) { await transition(op, { state: "SUPPRESSED", error: "Cleanup held because lead work or sync health needs attention" }); return; }
+      if (op.data.type === "ARCHIVE" && op.id.startsWith("op:contact-cleanup:")) {
+        // Front delivery may normalize the source while archiveAllowed awaits.
+        // Re-read after preflight and fence this snapshot in the lease below.
+        cleanupSource = await contactCleanupSource(op.id, op.data);
+        if (!cleanupSource || await isInitialAiCommunication(cleanupSource.data)) {
+          await transition(op, { state: "SUPPRESSED", error: cleanupSource ? "The initial AI email leaves this conversation open for the salesperson" : "Cleanup held because its contact source could not be verified" });
+          return;
+        }
+      }
       if (op.data.type === "ASSIGN") {
         const link = await get<{ routing?: string }>(`front-link:${cnv}`);
         if (link?.data.routing === "MANUAL") { await transition(op, { state: "SUPPRESSED", error: "A teammate changed the conversation handler" }); return; }
@@ -147,7 +177,7 @@ export async function runOperation(candidate: Row<Operation>) {
       }
     }
     const leased = row("OPERATION", op.id, { ...op.data, ...(op.data.type === "ASSIGN" ? { assigneeId: assignee!.data.frontId } : {}), state: "LEASED" as const, attempts: op.data.attempts + 1, leaseUntil: new Date(Date.now() + 180_000).toISOString() }, { accountId: op.accountId, previous: op, dueAt: new Date(Date.now() + 180_000).toISOString() });
-    await commit([put(leased, op), absent(`deleted-account:${op.data.accountId}`), ...(["IMPORT", "EMAIL", "ASSIGN", "SMS_ALERT"].includes(op.data.type) ? [check(wf)] : []), ...(assignee ? [check(assignee)] : []), ...(inboundSource ? [check(inboundSource)] : [])]);
+    await commit([put(leased, op), absent(`deleted-account:${op.data.accountId}`), ...(["IMPORT", "EMAIL", "ASSIGN", "SMS_ALERT"].includes(op.data.type) ? [check(wf)] : []), ...(assignee ? [check(assignee)] : []), ...(inboundSource ? [check(inboundSource)] : []), ...(cleanupSource ? [check(cleanupSource)] : [])]);
     op = leased;
     posted = true;
     if (op.data.type === "SMS_ALERT") {

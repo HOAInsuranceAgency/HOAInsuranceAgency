@@ -91,7 +91,7 @@ import { runWebLeadAssignment } from "../../amplify/functions/lead-intake/assign
 import { defaultWorkflow, makeTask, saveTask as retiredSaveTask, recordInbound, recordOutbound, completeTask, setResponsibilities, mergeTasks } from "../../amplify/functions/communications/workflow";
 import { archiveAllowed } from "../../amplify/functions/communications/cleanup";
 import { remainingDelay, rememberBudget } from "../../amplify/functions/communications/budget";
-import { enqueueOperation, runOperation, type Operation } from "../../amplify/functions/communications/operations";
+import { assignedEmailProducer, enqueueOperation, runOperation, type Operation } from "../../amplify/functions/communications/operations";
 import { permittedConversation, FrontScopeError } from "../../amplify/functions/communications/providers";
 import { dialpadEvent, processEvent, ingestFrontMessage } from "../../amplify/functions/communications/events";
 import { renderIntakeBrief } from "../../amplify/functions/lead-intake/brief";
@@ -1013,6 +1013,194 @@ describe("website producer rotation", () => {
     expect(h.userReads).toEqual([]);
   });
 });
+describe("initial AI email handoff", () => {
+  async function linkedLead() {
+    await lead();
+    await save(row("LINK", "front-link:cnv_a", { accountId: "a1", conversationId: "cnv_a", purpose: "PROSPECT" }, { accountId: "a1" }));
+    await save(row("HEALTH", "health:worker", { at: NOW, lagging: false }));
+  }
+  const message = { id: "msg_initial", message_uid: "uid_initial", is_inbound: false, is_draft: false, created_at: Date.parse(NOW) / 1000,
+    text: "Thanks for your enquiry", author: { id: "tea_brian" }, recipients: [{ role: "to", handle: "prospect@example.com" }] };
+  it.each(["UID index", "operation UID", "confirmed message ID"].flatMap(evidence => [true, false].map(hasAuthor => ({ evidence, hasAuthor }))))("keeps webhook-first AI delivery open using $evidence, author present: $hasAuthor", async ({ evidence, hasAuthor }) => {
+    await linkedLead();
+    await save(row<Operation>("OPERATION", "op:ai:reply:s1", { type: "EMAIL", accountId: "a1", state: evidence === "confirmed message ID" ? "CONFIRMED" : "ACCEPTED", attempts: 1,
+      ...(evidence === "confirmed message ID" ? { messageId: message.id } : { uid: message.message_uid }) }, { accountId: "a1" }));
+    if (evidence === "UID index") await save(row("UID", `front-uid:${message.message_uid}`, { operationId: "op:ai:reply:s1", accountId: "a1" }));
+    const webhook = { ...message, author: hasAuthor ? message.author : undefined, ...(evidence === "confirmed message ID" ? { message_uid: undefined } : {}) };
+    await ingestFrontMessage(webhook, "cnv_a");
+    expect(record("comm:front:msg_initial").data).toMatchObject({ actorId: "crm:initial-ai", contactAppliedKind: "CONTACT", status: "SENT" });
+    await ingestFrontMessage(webhook, "cnv_a");
+    await (await import("../../amplify/functions/communications/contactProgress")).repairContactWork("a1");
+    expect(entries("OPERATION").filter(op => op.data.type === "ARCHIVE")).toEqual([]);
+    expect(record("workflow:a1").data.humanTakeover).not.toBe(true);
+  });
+  it("holds cleanup while a webhook arrives before the send UID was saved", async () => {
+    await linkedLead();
+    await save(row<Operation>("OPERATION", "op:ai:reply:s1", { type: "EMAIL", accountId: "a1", state: "LEASED", attempts: 1 }, { accountId: "a1" }));
+    await ingestFrontMessage(message, "cnv_a");
+    expect(record("comm:front:msg_initial").data.actorId).toBe("tea_brian");
+    const cleanup = entries("OPERATION").find(op => op.data.type === "ARCHIVE")!;
+    await runOperation(cleanup as Row<Operation>);
+    expect(record(cleanup.id).data.state).toBe("SUPPRESSED");
+    expect(h.front.mock.calls.some(([, method, body]) => method === "PATCH" && body.status === "archived")).toBe(false);
+    expect(record("workflow:a1").data.humanTakeover).not.toBe(true);
+  });
+  it("normalizes an earlier webhook when the durable UID becomes available and holds its queued cleanup", async () => {
+    await linkedLead();
+    const sending = await save(row<Operation>("OPERATION", "op:ai:reply:s1", { type: "EMAIL", accountId: "a1", state: "LEASED", attempts: 1 }, { accountId: "a1" }));
+    await ingestFrontMessage(message, "cnv_a");
+    const cleanup = entries("OPERATION").find(op => op.data.type === "ARCHIVE")!;
+    expect(cleanup).toBeTruthy();
+    await save(row("OPERATION", sending.id, { ...sending.data, state: "CONFIRMED", uid: message.message_uid, messageId: message.id }, { accountId: "a1", previous: sending }), sending);
+    await ingestFrontMessage(message, "cnv_a");
+    expect(record("comm:front:msg_initial").data.actorId).toBe("crm:initial-ai");
+    await runOperation(cleanup as Row<Operation>);
+    expect(record(cleanup.id).data.state).toBe("SUPPRESSED");
+    expect(h.front.mock.calls.some(([, method, body]) => method === "PATCH" && body.status === "archived")).toBe(false);
+  });
+  it("keeps cleanup open when accepted delivery confirms during archive preflight", async () => {
+    await linkedLead();
+    const sending = await save(row<Operation>("OPERATION", "op:ai:reply:s1", { type: "EMAIL", accountId: "a1", state: "LEASED", attempts: 1, recipient: "prospect@example.com" }, { accountId: "a1" }));
+    await ingestFrontMessage(message, "cnv_a");
+    const cleanup = entries("OPERATION").find(op => op.data.type === "ARCHIVE")!;
+    const accepted = await save(row<Operation>("OPERATION", sending.id, { ...sending.data, state: "ACCEPTED", uid: message.message_uid }, { accountId: "a1", previous: sending }), sending);
+    h.front.mockImplementation(async path => path.startsWith("/messages/alt:uid:") ? { ...message, conversation: { id: "cnv_a" } } : { _results: [] });
+    vi.mocked(permittedConversation).mockImplementationOnce(async id => {
+      // The early AI check saw only the webhook author and an accepted UID.
+      expect(record("comm:front:msg_initial").data.actorId).toBe("tea_brian");
+      await runOperation(accepted);
+      return { id, status: "open" };
+    });
+    await runOperation(cleanup as Row<Operation>);
+    expect(record(accepted.id).data.state).toBe("CONFIRMED");
+    expect(record("comm:front:msg_initial").data.actorId).toBe("crm:initial-ai");
+    expect(record(cleanup.id).data.state).toBe("SUPPRESSED");
+    expect(h.front.mock.calls.some(([, method]) => method === "PATCH")).toBe(false);
+  });
+  it("fences source normalization after the last cleanup check but before its lease", async () => {
+    await linkedLead();
+    await ingestFrontMessage(message, "cnv_a");
+    const cleanup = entries("OPERATION").find(op => op.data.type === "ARCHIVE")!;
+    const source = record("comm:front:msg_initial");
+    h.beforeWrite = () => h.records.set(`comms:${source.id}`, { ...source, version: source.version + 1, data: { ...source.data, actorId: "crm:initial-ai" } });
+    await runOperation(cleanup as Row<Operation>);
+    expect(record(cleanup.id).data.state).toBe("READY");
+    expect(h.front.mock.calls.some(([, method]) => method === "PATCH")).toBe(false);
+    await runOperation(cleanup as Row<Operation>);
+    expect(record(cleanup.id).data.state).toBe("SUPPRESSED");
+    expect(h.front.mock.calls.some(([, method]) => method === "PATCH")).toBe(false);
+  });
+  it.each(["missing", "different account"])("holds automatic cleanup with a %s source", async reason => {
+    await linkedLead();
+    if (reason === "different account") await inbound("unverified", NOW, { accountId: "a2", direction: "OUTBOUND", actorId: "tea_human" });
+    const cleanup = await enqueueOperation("op:contact-cleanup:comm:unverified:cnv_a", { type: "ARCHIVE", accountId: "a1", conversationId: "cnv_a" });
+    await runOperation(cleanup);
+    expect(record(cleanup.id).data).toMatchObject({ state: "SUPPRESSED", error: expect.stringContaining("source could not be verified") });
+    expect(h.front.mock.calls.some(([, method]) => method === "PATCH")).toBe(false);
+  });
+  it.each(["READY", "RETRY_WAIT", "expired lease", "active lease"])("holds historical initial-AI cleanup in %s", async state => {
+    await linkedLead();
+    // Old webhook records can have a Front author rather than the AI marker.
+    const sent = await inbound("front:msg_initial", NOW, { providerId: "msg_initial", direction: "OUTBOUND", actorId: "tea_brian" });
+    await save(row<Operation>("OPERATION", "op:ai:reply:s1", { type: "EMAIL", accountId: "a1", state: "CONFIRMED", attempts: 1, messageId: sent.providerId }, { accountId: "a1" }));
+    const cleanup = await save(row<Operation>("OPERATION", `op:contact-cleanup:${sent.id}:cnv_a`, { type: "ARCHIVE", accountId: "a1", conversationId: "cnv_a", attempts: 1,
+      state: state.includes("lease") ? "LEASED" : state as "READY" | "RETRY_WAIT",
+      ...(state.includes("lease") ? { leaseUntil: new Date(Date.now() + (state === "active lease" ? 60_000 : -60_000)).toISOString() } : {}) }, { accountId: "a1", dueAt: NOW }));
+    await runOperation(cleanup);
+    expect(record(cleanup.id).data.state).toBe(state === "active lease" ? "LEASED" : "SUPPRESSED");
+    if (state === "active lease") expect(record(cleanup.id)).toEqual(cleanup);
+    else expect(record(cleanup.id).dueAt).toBeUndefined();
+    expect(h.front.mock.calls.some(([, method]) => method === "PATCH")).toBe(false);
+  });
+  it("preserves explicit manual archive after the initial AI email", async () => {
+    await linkedLead();
+    const sent = await inbound("front:msg_initial", NOW, { direction: "OUTBOUND", actorId: "crm:initial-ai" });
+    await recordOutbound(sent);
+    const cleanup = await enqueueOperation("op:manual-cleanup:a1:chosen", { type: "ARCHIVE", accountId: "a1", conversationId: "cnv_a" });
+    await runOperation(cleanup);
+    expect(record(cleanup.id).data.state).toBe("CONFIRMED");
+    expect(h.front).toHaveBeenCalledWith("/conversations/cnv_a", "PATCH", { status: "archived" });
+  });
+  it("preserves ordinary human reply cleanup after an initial AI email", async () => {
+    await linkedLead();
+    await save(row<Operation>("OPERATION", "op:ai:reply:s1", { type: "EMAIL", accountId: "a1", state: "CONFIRMED", attempts: 1, uid: message.message_uid, messageId: message.id }, { accountId: "a1" }));
+    await ingestFrontMessage(message, "cnv_a");
+    await ingestFrontMessage({ ...message, id: "msg_human", message_uid: "uid_human", text: "I reviewed your request and will call you." }, "cnv_a");
+    expect(record("comm:front:msg_human").data.actorId).toBe("tea_brian");
+    const cleanup = entries("OPERATION").find(op => op.data.type === "ARCHIVE")!;
+    expect(cleanup.id).toContain("msg_human");
+    await runOperation(cleanup as Row<Operation>);
+    expect(record(cleanup.id).data.state).toBe("CONFIRMED");
+    expect(h.front).toHaveBeenCalledWith("/conversations/cnv_a", "PATCH", { status: "archived" });
+  });
+  it("does not label a human reply as AI using another account's UID", async () => {
+    await linkedLead();
+    await save(row<Operation>("OPERATION", "op:ai:other", { type: "EMAIL", accountId: "a2", state: "CONFIRMED", attempts: 1, uid: message.message_uid, messageId: message.id }, { accountId: "a2" }));
+    await save(row("UID", `front-uid:${message.message_uid}`, { operationId: "op:ai:other", accountId: "a2" }));
+    await ingestFrontMessage(message, "cnv_a");
+    expect(record("comm:front:msg_initial").data.actorId).toBe("tea_brian");
+    expect(entries("OPERATION").some(op => op.data.type === "ARCHIVE")).toBe(true);
+  });
+});
+describe("initial email salesperson identity", () => {
+  it("holds an email with a missing workflow without inventing a default assignment", async () => {
+    const op = await enqueueOperation("op:ai:reply:missing-workflow", { type: "EMAIL", accountId: "a1", producerId: "brian", producerName: "Brian Cole", recipient: "prospect@example.com" });
+    await runOperation(op);
+    expect(record("workflow:a1")).toBeUndefined();
+    expect(record(op.id).data).toMatchObject({ state: "RETRY_WAIT", attempts: 0 });
+    expect(record(op.id).dueAt).toBeTruthy();
+    expect(h.front).not.toHaveBeenCalled();
+  });
+  it("sends through the shared sales channel with the assigned Jake identity", async () => {
+    await save(row("ELIGIBILITY", "eligibility:jake", { userId: "jake", name: "Jake Greasley", enabled: true, salesperson: true }));
+    h.c.defaultSalespersonId = "jake"; await lead();
+    const op = await enqueueOperation("op:ai:reply:jake", { type: "EMAIL", accountId: "a1", producerId: "jake", producerName: "Jake Greasley", recipient: "prospect@example.com", text: "Thanks,\nJake Greasley", html: "<p>Thanks,<br>Jake Greasley</p>" });
+    h.front.mockImplementation(async (_path, method) => method === "POST" ? { message_uid: "uid_jake" } : { _results: [] });
+    await runOperation(op);
+    expect(record(op.id).data.state).toBe("ACCEPTED");
+    expect(h.front.mock.calls.find(([, method]) => method === "POST")?.[2]).toMatchObject({ channel_id: "cha_a", sender_name: "Jake Greasley", text: "Thanks,\nJake Greasley" });
+    expect(h.c.frontSender).toBe("sales@protectmyhoa.com");
+  });
+  it.each(["missing owner", "ineligible owner", "disabled owner", "unnamed owner"])("rejects an email identity with a %s", async reason => {
+    if (reason === "ineligible owner") record("eligibility:brian").data.salesperson = false;
+    if (reason === "disabled owner") h.userEnabled = false;
+    if (reason === "unnamed owner") record("eligibility:brian").data.name = "  ";
+    await expect(assignedEmailProducer(reason === "missing owner" ? undefined : "brian")).rejects.toThrow();
+  });
+  it.each([
+    { label: "legacy metadata missing", producerId: undefined, producerName: undefined },
+    { label: "different salesperson", producerId: "jake", producerName: "Jake Greasley" },
+    { label: "renamed salesperson", producerId: "brian", producerName: "Brian" },
+  ])("holds $label without changing the signed body or sending", async ({ producerId, producerName }) => {
+    await lead();
+    const op = await enqueueOperation("op:ai:reply:held", { type: "EMAIL", accountId: "a1", producerId, producerName, replyId: "reply:held", recipient: "prospect@example.com", text: "Original signed body", html: "<p>Original signed body</p>" });
+    await runOperation(op);
+    expect(record(op.id).data).toMatchObject({ state: "RETRY_WAIT", attempts: 0, text: op.data.text, html: op.data.html, error: expect.stringContaining("Initial email held:") });
+    expect(record(op.id).dueAt).toBeTruthy(); expect(record(`issue:${op.id}`).data.message).toContain("Initial email held:");
+    expect(h.front.mock.calls.some(([, method]) => method === "POST")).toBe(false); expect(h.update).not.toHaveBeenCalled();
+  });
+  it.each(["workflow:a1", "eligibility:brian"])("fences a change to %s before claiming the send", async id => {
+    await lead();
+    const op = await enqueueOperation("op:ai:reply:race", { type: "EMAIL", accountId: "a1", producerId: "brian", producerName: "Brian Cole", recipient: "prospect@example.com" });
+    h.beforeWrite = () => { record(id).version++; if (id === "workflow:a1") record(id).data.salespersonId = "jake"; else record(id).data.enabled = false; };
+    await runOperation(op);
+    expect(record(op.id).data.state).toBe("READY");
+    expect(h.front.mock.calls.some(([, method]) => method === "POST")).toBe(false);
+  });
+  it("reconciles already accepted legacy mail even after the producer becomes unavailable", async () => {
+    await lead(); h.userEnabled = false;
+    const op = await save(row<Operation>("OPERATION", "op:ai:reply:accepted", { type: "EMAIL", accountId: "a1", state: "ACCEPTED", attempts: 1, uid: "uid_accepted", replyId: "reply:accepted", recipient: "prospect@example.com" }, { accountId: "a1" }));
+    h.front.mockResolvedValue({ id: "msg_accepted", is_inbound: false, is_draft: false, created_at: Date.parse(NOW) / 1000, conversation: { id: "cnv_a" } });
+    await runOperation(op);
+    expect(record(op.id).data.state).toBe("CONFIRMED"); expect(h.update).toHaveBeenCalledWith(expect.objectContaining({ status: "SENT" }));
+    expect(h.front.mock.calls.some(([, method]) => method === "POST")).toBe(false);
+  });
+  it.each(["UNKNOWN", "CONFIRMED"] as const)("does not resend %s legacy mail without identity metadata", async state => {
+    await lead();
+    const op = await save(row<Operation>("OPERATION", "op:ai:reply:finished", { type: "EMAIL", accountId: "a1", state, attempts: 1 }, { accountId: "a1" }));
+    await runOperation(op); expect(h.front).not.toHaveBeenCalled();
+  });
+});
 describe("Front durable delivery", () => {
   it.each(["<pre>Website submission\nReference: hoa:main:s1\nDetails</pre>", "Website submission\n\nChanged formatting"])("does not turn an imported form into a prospect reply: %s", async text => {
     await lead();
@@ -1085,14 +1273,15 @@ describe("Front durable delivery", () => {
     expect(body.metadata.thread_ref).toBe(body.external_id);
   });
   it("treats accepted UID as pending until the outbound message resolves", async () => {
-    await lead(); const op = await enqueueOperation("op:test", { type: "EMAIL", accountId: "a1", replyId: "r1", recipient: "prospect@example.com", text: "Hello", html: "<p>Hello</p>" });
+    await lead(); const op = await enqueueOperation("op:test", { type: "EMAIL", accountId: "a1", producerId: "brian", producerName: "Brian Cole", replyId: "r1", recipient: "prospect@example.com", text: "Hello", html: "<p>Hello</p>" });
     h.front.mockImplementation(async (path: string, method?: string) => method === "POST" ? { message_uid: "uid_1" } : path.startsWith("/messages/alt") ? { id: "msg_1", message_uid: "uid_1", is_inbound: false, is_draft: false, created_at: Date.parse(NOW) / 1000, conversation: { id: "cnv_a" } } : { _results: [] });
     await runOperation(op); expect(record(op.id).data.state).toBe("ACCEPTED"); expect(h.update).not.toHaveBeenCalled(); expect(entries("TASK")).toHaveLength(0);
     await runOperation((await get<Operation>(op.id))!); expect(record(op.id).data.state).toBe("CONFIRMED"); expect(h.update).toHaveBeenCalledWith(expect.objectContaining({ status: "SENT" })); expect(entries("TASK")).toHaveLength(0);
+    expect(entries("OPERATION").filter(operation => operation.data.type === "ARCHIVE")).toEqual([]);
     const body = h.front.mock.calls.find(c => c[1] === "POST")![2]; expect(body).toMatchObject({ sender_name: "Brian Cole", to: ["prospect@example.com"], cc: [], bcc: [], quote_body: "", signature_id: null, options: { archive: false } });
   });
   it("never automatically resends after a lost delivery response", async () => {
-    await lead(); const op = await enqueueOperation("op:test", { type: "EMAIL", accountId: "a1", recipient: "prospect@example.com" });
+    await lead(); const op = await enqueueOperation("op:test", { type: "EMAIL", accountId: "a1", producerId: "brian", producerName: "Brian Cole", recipient: "prospect@example.com" });
     h.front.mockImplementation(async (_p: string, method?: string) => { if (method === "POST") throw new Error("Connection closed after send"); return { _results: [] }; });
     await runOperation(op); expect(record(op.id).data.state).toBe("UNKNOWN"); await runOperation((await get<Operation>(op.id))!); expect(h.front.mock.calls.filter(c => c[1] === "POST")).toHaveLength(1);
   });
@@ -1231,7 +1420,7 @@ describe("review regressions: provider capture and delivery", () => {
     await processEvent(event); expect(record(event.id).data.outcome.ignored).toContain("outside"); expect(entries("COMMUNICATION")).toHaveLength(0);
   });
   it("fences cancellation during Front preflight before claiming the outbound send", async () => {
-    await lead(); const op = await enqueueOperation("op:cancel-race", { type: "EMAIL", accountId: "a1", recipient: "prospect@example.com" });
+    await lead(); const op = await enqueueOperation("op:cancel-race", { type: "EMAIL", accountId: "a1", producerId: "brian", producerName: "Brian Cole", recipient: "prospect@example.com" });
     h.front.mockImplementation(async (_path: string, method?: string) => {
       if (!method) { const wf = (await get<any>("workflow:a1"))!; await save(row("WORKFLOW", wf.id, { ...wf.data, humanTakeover: true }, { accountId: "a1", previous: wf }), wf); }
       return { _results: [] };
@@ -1240,7 +1429,7 @@ describe("review regressions: provider capture and delivery", () => {
     await runOperation((await get<Operation>(op.id))!); expect(record(op.id).data.state).toBe("SUPPRESSED");
   });
   it.each([401, 403])("holds a %s rejection for credential repair instead of failing queued delivery", async status => {
-    await lead(); const op = await enqueueOperation("op:credential-rotation", { type: "EMAIL", accountId: "a1", recipient: "prospect@example.com" });
+    await lead(); const op = await enqueueOperation("op:credential-rotation", { type: "EMAIL", accountId: "a1", producerId: "brian", producerName: "Brian Cole", recipient: "prospect@example.com" });
     const { ProviderError } = await import("../../amplify/functions/communications/providers"); h.front.mockRejectedValue(new ProviderError("Credential rotation", status, false));
     await runOperation(op); expect(record(op.id).data.state).toBe("RETRY_WAIT"); expect(record(op.id).dueAt).toBeTruthy(); expect(record("issue:provider-auth").data.message).toContain("authorization");
   });
@@ -1334,7 +1523,7 @@ describe("second review: adverse ordering and recovery", () => {
     expect(h.front.mock.calls.every(([path]) => path.includes("/search/"))).toBe(true);
   });
   it.each(["TransactionConflict", "ThrottlingError"])("retries %s before send without marking the reply failed", async Code => {
-    await lead(); const op = await enqueueOperation("op:storage", { type: "EMAIL", accountId: "a1", recipient: "test@example.com", replyId: "r1" });
+    await lead(); const op = await enqueueOperation("op:storage", { type: "EMAIL", accountId: "a1", producerId: "brian", producerName: "Brian Cole", recipient: "test@example.com", replyId: "r1" });
     h.writeError = Object.assign(new Error(Code), { name: "TransactionCanceledException", CancellationReasons: [{ Code }] });
     await runOperation(op); expect(record(op.id).data.state).toBe("RETRY_WAIT"); expect(record(op.id).dueAt).toBeTruthy(); expect(h.update).not.toHaveBeenCalled();
     expect(h.front.mock.calls.some(([, method]) => method === "POST")).toBe(false);
@@ -1349,7 +1538,7 @@ describe("second review: adverse ordering and recovery", () => {
     await runOperation((await get<Operation>(op.id))!); expect(h.front.mock.calls.filter(([, method]) => method === "POST")).toHaveLength(1);
   });
   it("backs off preflight auth errors independently of send attempts", async () => {
-    await lead(); const op = await enqueueOperation("op:auth-backoff", { type: "EMAIL", accountId: "a1", recipient: "test@example.com" });
+    await lead(); const op = await enqueueOperation("op:auth-backoff", { type: "EMAIL", accountId: "a1", producerId: "brian", producerName: "Brian Cole", recipient: "test@example.com" });
     const { ProviderError } = await import("../../amplify/functions/communications/providers"); h.front.mockRejectedValue(new ProviderError("Repair authorization", 401, false));
     const delays = [];
     for (let n = 0; n < 4; n++) { await runOperation((await get<Operation>(op.id))!); delays.push(Date.parse(record(op.id).dueAt) - Date.now()); vi.setSystemTime(record(op.id).dueAt); }
@@ -1364,7 +1553,7 @@ describe("second review: adverse ordering and recovery", () => {
     await authorizationRestored("front", "new-fingerprint"); expect(await authorizationDelay("front", "new-fingerprint")).toBe(0);
   });
   it("finalizes worker health and gives reconciliation a turn under a time-limited backlog", async () => {
-    await lead(); for (let n = 0; n < 3; n++) await enqueueOperation(`op:slow:${n}`, { type: "EMAIL", accountId: "a1", recipient: "test@example.com" });
+    await lead(); for (let n = 0; n < 3; n++) await enqueueOperation(`op:slow:${n}`, { type: "EMAIL", accountId: "a1", producerId: "brian", producerName: "Brian Cole", recipient: "test@example.com" });
     h.front.mockImplementation(async (path, method) => {
       if (path.includes("/search/")) return { _results: [] };
       if (!method) { vi.setSystemTime(new Date(Date.now() + 40000)); return { _results: [] }; }
