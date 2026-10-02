@@ -5,6 +5,7 @@ import { ensureWorkflow, expected, recordInbound, recordOutbound } from "./workf
 import { permittedConversation, front, messageConversation, type FrontMessage } from "./providers";
 import type { Operation } from "./operations";
 import type { Communication } from "../../../../shared/leadWorkflow";
+import { matchesQueuedEmail } from "./emailReview";
 
 export async function reviewOperation(input: { id: string; version: number; action: string; reason: string; uid?: string; verifiedNotSent?: boolean }, actor: string) {
   const old = await get<Operation>(input.id);
@@ -19,7 +20,7 @@ export async function reviewOperation(input: { id: string; version: number; acti
     const canonicalId = (await permittedConversation(cnv)).id;
     const wf = await ensureWorkflow(old.data.accountId);
     const linkedId = wf.data.conversationId && (wf.data.conversationId === canonicalId ? canonicalId : (await permittedConversation(wf.data.conversationId)).id);
-    if (old.data.type === "EMAIL" && (message.is_inbound || canonicalId !== linkedId || !message.recipients?.some(r => r.role === "to" && r.handle.toLowerCase() === old.data.recipient?.toLowerCase()) || message.text?.trim() !== old.data.text?.trim())) throw new Error("The verified message does not match this queued email");
+    if (old.data.type === "EMAIL" && (canonicalId !== linkedId || !matchesQueuedEmail(message, old.data))) throw new Error("The verified message does not match this queued email");
     if (old.data.type === "IMPORT" && !message.text?.includes(`:${old.data.submissionId}`)) throw new Error("The import does not match this website submission");
     state = "ACCEPTED"; uid = input.uid;
   } else if (input.action === "retry") {

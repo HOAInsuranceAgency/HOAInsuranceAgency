@@ -3,7 +3,7 @@ import { communicationRequest as request, type TeamEligibility } from "../lib/co
 import { useAsyncResource } from "../lib/useAsyncResource";
 import Modal from "./Modal";
 
-type ConnectionIds = Pick<TeamEligibility, "frontId" | "dialpadId">;
+type ConnectionIds = Pick<TeamEligibility, "frontId" | "dialpadId" | "frontChannelId" | "frontSignatureId">;
 
 /** Assignment and connection editing within the unified team roster. */
 export function useLeadEligibilitySettings() {
@@ -51,6 +51,7 @@ export function LeadEligibilityCells({ member, settings }: { member?: TeamEligib
     <td><input aria-label={`Salesperson eligibility for ${member.name}`} type="checkbox" checked={member.salesperson} disabled={disabled} onChange={event => void save(member, { salesperson: event.target.checked })} /></td>
     <td>
       <div className="small">Front: {member.frontId ? <code className="team-connection-id">{member.frontId}</code> : <span className="muted">Not linked</span>}</div>
+      {member.frontId && <div className="small muted">Email: {member.frontChannelId || member.frontSignatureId ? "Custom Front selections" : "Automatic from Front"}</div>}
       <div className="small">Dialpad: {member.dialpadId ? <code className="team-connection-id">{member.dialpadId}</code> : <span className="muted">Not linked</span>}</div>
       <button type="button" className="secondary" disabled={disabled} aria-label={`Edit connections for ${member.name}`} onClick={() => editMember(member)}>Edit connections</button>
     </td>
@@ -66,22 +67,31 @@ function ConnectionEditor({ member, busy, error, onClose, onSave }: {
   member: TeamEligibility; busy: boolean; error: string; onClose: () => void; onSave: (ids: ConnectionIds) => Promise<void>;
 }) {
   const [frontId, setFrontId] = useState(member.frontId ?? ""), [dialpadId, setDialpadId] = useState(member.dialpadId ?? "");
-  const front = frontId.trim(), dialpad = dialpadId.trim();
+  const [frontChannelId, setFrontChannelId] = useState(member.frontChannelId ?? ""), [frontSignatureId, setFrontSignatureId] = useState(member.frontSignatureId ?? "");
+  const front = frontId.trim(), dialpad = dialpadId.trim(), channel = frontChannelId.trim(), signature = frontSignatureId.trim();
   const frontError = !!front && !/^tea_[a-z0-9]+$/.test(front);
   const dialpadError = !!dialpad && !/^\d+$/.test(dialpad);
-  const dirty = front !== (member.frontId ?? "") || dialpad !== (member.dialpadId ?? "");
+  const channelError = !!channel && (!front || !/^cha_[a-z0-9]+$/.test(channel));
+  const signatureError = !!signature && (!front || !/^sig_[a-z0-9]+$/.test(signature));
+  const invalid = frontError || dialpadError || channelError || signatureError;
+  const dirty = front !== (member.frontId ?? "") || dialpad !== (member.dialpadId ?? "") || channel !== (member.frontChannelId ?? "") || signature !== (member.frontSignatureId ?? "");
   return <Modal title={`Connections for ${member.name}`} className="modal-form team-connection-modal" onClose={onClose}>
     <p className="muted small">These IDs link this teammate to their Front and Dialpad accounts. Changes are applied only when you save.</p>
     {error && <p role="alert" className="error-text">{error}</p>}
-    <form aria-label={`Connections for ${member.name}`} onSubmit={event => { event.preventDefault(); if (!busy && dirty && !frontError && !dialpadError) void onSave({ frontId: front || undefined, dialpadId: dialpad || undefined }); }}>
+    <form aria-label={`Connections for ${member.name}`} onSubmit={event => { event.preventDefault(); if (!busy && dirty && !invalid) void onSave({ frontId: front, dialpadId: dialpad, frontChannelId: channel, frontSignatureId: signature }); }}>
       <fieldset disabled={busy} className="team-connection-fields">
         <div className="form-grid">
-          <label className="field">Front teammate ID<input value={frontId} autoComplete="off" autoCapitalize="none" spellCheck={false} placeholder="tea_…" aria-invalid={frontError} aria-describedby="front-id-help" onChange={event => setFrontId(event.target.value)} />
+          <label className="field">Front teammate ID<input value={frontId} autoComplete="off" autoCapitalize="none" spellCheck={false} placeholder="tea_…" aria-invalid={frontError} aria-describedby="front-id-help" onChange={event => { if (event.target.value.trim() !== front) { setFrontChannelId(""); setFrontSignatureId(""); } setFrontId(event.target.value); }} />
             <span id="front-id-help" className={frontError ? "error-text" : "muted small"}>{frontError ? "Use a Front teammate ID beginning with tea_, followed by lowercase letters or numbers." : "Starts with tea_, followed by letters and numbers."}</span></label>
           <label className="field">Dialpad user ID<input value={dialpadId} inputMode="numeric" autoComplete="off" spellCheck={false} aria-invalid={dialpadError} aria-describedby="dialpad-id-help" onChange={event => setDialpadId(event.target.value)} />
             <span id="dialpad-id-help" className={dialpadError ? "error-text" : "muted small"}>{dialpadError ? "Use the numeric Dialpad user ID without spaces or punctuation." : "The numeric user ID from Dialpad."}</span></label>
+          <label className="field">Email channel ID<input value={frontChannelId} autoComplete="off" autoCapitalize="none" spellCheck={false} placeholder="cha_…" aria-invalid={channelError} aria-describedby="front-channel-help front-email-help" onChange={event => setFrontChannelId(event.target.value)} />
+            <span id="front-channel-help" className={channelError ? "error-text" : "muted small"}>{channelError ? "Link a Front teammate and use their channel ID beginning with cha_." : "Optional Front sending channel, beginning with cha_."}</span></label>
+          <label className="field">Email signature ID<input value={frontSignatureId} autoComplete="off" autoCapitalize="none" spellCheck={false} placeholder="sig_…" aria-invalid={signatureError} aria-describedby="front-signature-help front-email-help" onChange={event => setFrontSignatureId(event.target.value)} />
+            <span id="front-signature-help" className={signatureError ? "error-text" : "muted small"}>{signatureError ? "Link a Front teammate and use their signature ID beginning with sig_." : "Optional Front email signature, beginning with sig_."}</span></label>
         </div>
-        <div className="form-actions"><button type="submit" className="primary" disabled={!dirty || frontError || dialpadError}>{busy ? "Saving…" : "Save connections"}</button><button type="button" className="secondary" onClick={onClose}>Cancel</button></div>
+        <p id="front-email-help" className="muted small">Leave blank to use the salesperson’s only mailbox and default signature in Front. Changing the Front teammate clears these selections.</p>
+        <div className="form-actions"><button type="submit" className="primary" disabled={!dirty || invalid}>{busy ? "Saving…" : "Save connections"}</button><button type="button" className="secondary" onClick={onClose}>Cancel</button></div>
       </fieldset>
     </form>
   </Modal>;

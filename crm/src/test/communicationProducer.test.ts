@@ -31,7 +31,7 @@ import { handler } from "../../amplify/functions/lead-reply/handler";
 beforeEach(() => {
   vi.clearAllMocks(); h.waitProjectionError = false; h.state = "WAITING"; h.operation = undefined; h.projectError = false; h.workerWins = false; delete process.env.SITE_BASE_URL;
   h.workflow = { data: { disposition: "ACTIVE", humanTakeover: false, salespersonId: "jake" } };
-  h.producer.mockReset().mockResolvedValue({ producerId: "jake", producerName: "Jake Greasley" });
+  h.producer.mockReset().mockResolvedValue({ producerId: "jake", producerName: "Jake Greasley", emailIdentity: { frontId: "tea_jake", channelId: "cha_jake", senderEmail: "jake@protectmyhoa.com", signatureId: "sig_jake", signatureMode: "FRONT" } });
   h.submission = undefined; h.accountName = "Willow Condominium Association"; h.contacts = [];
   h.update.mockResolvedValue({ data: {} }); h.issue.mockResolvedValue(undefined);
   h.model.mockResolvedValue({ content: [{ type: "tool_use", input: { subject: "Your HOA insurance enquiry", body: "I'll review what you shared about your association's insurance." } }] });
@@ -94,14 +94,15 @@ describe("personal, concise first-contact emails", () => {
   });
 });
 describe("producer and delivery ownership", () => {
-  it("uses the assigned salesperson in the prompt, both signatures, and queued identity", async () => {
+  it("uses the assigned salesperson in the prompt and queues their verified Front identity without a duplicate signature", async () => {
     await handler();
     expect(h.producer).toHaveBeenCalledWith("jake");
     expect(h.model.mock.calls[0][0].system).toContain("writing as Jake Greasley");
     const email = h.queue.mock.calls[0][1];
-    expect(email).toMatchObject({ producerId: "jake", producerName: "Jake Greasley" });
-    expect(email.text).toContain("Thanks,\nJake Greasley");
-    expect(email.html).toContain("Thanks,<br>Jake Greasley");
+    expect(email).toMatchObject({ producerId: "jake", producerName: "Jake Greasley", emailIdentity: { frontId: "tea_jake", channelId: "cha_jake", senderEmail: "jake@protectmyhoa.com", signatureId: "sig_jake", signatureMode: "FRONT" } });
+    expect(email.text).not.toContain("Thanks,\nJake Greasley");
+    expect(email.html).not.toContain("Thanks,<br>Jake Greasley");
+    expect(email.text).not.toContain("sales@protectmyhoa.com");
     expect(JSON.stringify(email)).not.toContain("Brian Cole");
   });
   it("retains the assigned identity during copy regeneration", async () => {
@@ -111,7 +112,7 @@ describe("producer and delivery ownership", () => {
     expect(h.model).toHaveBeenCalledTimes(2);
     for (const [request] of h.model.mock.calls) expect(request.system).toContain("writing as Jake Greasley");
   });
-  it.each(["missing workflow", "pending assignment", "disabled producer", "temporarily unavailable producer"])("waits and retries for %s without generating or permanently failing", async reason => {
+  it.each(["missing workflow", "pending assignment", "disabled producer", "temporarily unavailable producer", "mailbox unavailable", "signature unavailable"])("waits and retries for %s without generating or permanently failing", async reason => {
     if (reason === "missing workflow") h.workflow = undefined;
     else if (reason === "pending assignment") { h.workflow.data.salespersonId = undefined; h.producer.mockRejectedValue(new Error("Assign an active salesperson")); }
     else h.producer.mockRejectedValue(new Error(reason));
@@ -121,7 +122,7 @@ describe("producer and delivery ownership", () => {
     expect(h.model).not.toHaveBeenCalled(); expect(h.queue).not.toHaveBeenCalled(); expect(h.update).not.toHaveBeenCalled();
     expect(h.issue).toHaveBeenCalledWith("generation-assignment:r1", expect.stringContaining("Initial email is waiting:"), "a1");
     h.workflow = { data: { disposition: "ACTIVE", humanTakeover: false, salespersonId: "jake" } };
-    h.producer.mockResolvedValue({ producerId: "jake", producerName: "Jake Greasley" });
+    h.producer.mockResolvedValue({ producerId: "jake", producerName: "Jake Greasley", emailIdentity: { frontId: "tea_jake", channelId: "cha_jake", senderEmail: "jake@protectmyhoa.com", signatureId: "sig_jake", signatureMode: "FRONT" } });
     await handler();
     expect(h.queue).toHaveBeenCalledTimes(1);
     expect(h.resolveIssue).toHaveBeenCalledWith("generation-assignment:r1");

@@ -903,8 +903,10 @@ one submission ID and retry proof through retries; success means the lead, answe
 pending delivery work were saved together. A failed save preserves the entered answers.
 Missing `PUBLIC_CRM_API_URL` or `PUBLIC_CRM_API_KEY` shows a retryable error.
 
-Front imports the labelled website submission and sends Brian Cole's initial AI reply in
-that exact conversation using the shared `sales@protectmyhoa.com` channel. There is no
+Front imports the labelled website submission into the shared sales inbox and sends the
+initial AI reply in that exact conversation from the assigned salesperson’s verified personal
+Front mailbox, using their Front signature. Missing or ambiguous sender setup holds the reply
+for review; it does not fall back to the shared `sales@protectmyhoa.com` sender. There is no
 FormSubmit delivery or provider-selection environment flag. The general/service address
 remains `insurance@protectmyhoa.com`. Existing optional Zapier hooks remain separate.
 

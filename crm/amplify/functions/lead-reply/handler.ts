@@ -242,13 +242,14 @@ export const handler = async () => {
         generated,
         lead,
         producerName: producer!.producerName,
+        signatureMode: "FRONT",
         uploadUrl,
       });
 
       await enqueueOperation(`op:ai:${reply.id}`, {
         type: "EMAIL", accountId: reply.accountId, replyId: reply.id,
         recipient: reply.contactEmail, subject, text, html,
-        producerId: producer!.producerId, producerName: producer!.producerName,
+        producerId: producer!.producerId, producerName: producer!.producerName, emailIdentity: producer!.emailIdentity,
       });
       queued = true;
 
