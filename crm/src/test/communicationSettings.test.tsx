@@ -12,7 +12,7 @@ const config: IntegrationConfig = {
   frontSmsChannelId: "cha_sms", dialpadCompanyId: "123", dialpadOfficeId: "456", allowedInboxIds: ["inb_phone"],
   dialpadNumbers: ["+15082332261"], sharedSmsNumber: "+15082332261", holidays: ["2026-12-25"], testRecipients: ["test@example.com"],
 };
-const team = [{ userId: "brian", name: "Brian Cole", email: "brian@example.com", enabled: true, salesperson: true, champion: true }];
+const team = [{ userId: "brian", name: "Brian Cole", email: "brian@example.com", enabled: true, salesperson: true, champion: true, available: true }];
 const settings = () => ({ config: { ...config }, credentialStatus: { frontToken: true }, recovery: { front: { version: 3 } }, webhookUrl: "https://example.com/", sidebarUrl: "https://example.com/sidebar" });
 beforeEach(() => {
   vi.clearAllMocks();
@@ -98,7 +98,7 @@ describe("communication settings edit sessions", () => {
 
 describe("default teammate eligibility", () => {
   it("lets Jake select himself with salesperson eligibility alone", async () => {
-    const jake = { userId: "jake", name: "Jake Greasley", email: "jake@example.com", enabled: true, salesperson: true };
+    const jake = { userId: "jake", name: "Jake Greasley", email: "jake@example.com", enabled: true, salesperson: true, available: true };
     h.request.mockImplementation(async (op: string, input: { config: IntegrationConfig }) => {
       if (op === "settings") return { ...settings(), config: { ...config, defaultUserId: undefined } };
       if (op === "team") return { team: [jake] };
@@ -115,17 +115,19 @@ describe("default teammate eligibility", () => {
   });
   it("offers only eligible salespeople and preserves unavailable saved choices", async () => {
     h.request.mockImplementation(async (op: string) => op === "settings" ? settings() : { team: [
-      { ...team[0], salesperson: false },
+      { ...team[0], available: false },
       { ...team[0], userId: "jake", name: "Jake Greasley" },
       { ...team[0], userId: "sales", name: "Sales only", champion: false },
       { ...team[0], userId: "champ", name: "Champion only", salesperson: false },
       { ...team[0], userId: "disabled", name: "Disabled teammate", enabled: false },
+      { ...team[0], userId: "deleted", name: "Deleted sign-in", available: false },
     ] });
     render(<CommunicationSettings />); await editSettings();
     expect(screen.getAllByRole("option", { name: "Jake Greasley" })).toHaveLength(1);
     expect(within(screen.getByRole("combobox", { name: "Default salesperson" })).getByRole("option", { name: "Sales only" })).toBeEnabled();
     expect(screen.queryByRole("option", { name: "Champion only" })).not.toBeInTheDocument();
     expect(screen.queryByRole("option", { name: "Disabled teammate" })).toBeNull();
+    expect(screen.queryByRole("option", { name: "Deleted sign-in" })).toBeNull();
     expect(screen.getByRole("option", { name: "Brian Cole (unavailable)" })).toBeDisabled();
     expect(screen.getByRole("combobox", { name: "Default salesperson" })).toHaveValue("brian");
   });

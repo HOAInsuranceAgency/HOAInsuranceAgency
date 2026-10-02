@@ -1,7 +1,7 @@
 import { salespersonEligibility, salespersonWorkflow } from "../../../../shared/salespersonOwnership";
 import { CognitoIdentityProviderClient, ListUsersCommand } from "@aws-sdk/client-cognito-identity-provider";
 import { type LeadWorkflow, type LeadTask, type TeamEligibility, type TaskKind, type Responsibility, type Communication } from "../../../../shared/leadWorkflow";
-import { get, row, put, commit, query, audit, save, conflict, check, type Row, type Write } from "./store";
+import { get, row, put, commit, query, audit, save, conflict, check, absent, type Row, type Write } from "./store";
 import { config } from "./config";
 import { operationRow } from "./outbox";
 import { dataClient } from "./data";
@@ -81,11 +81,24 @@ export function expected(old: Row<unknown>, version: unknown) {
   if (old.version !== version) throw new Error("This record changed. Refresh before saving.");
 }
 export async function setResponsibilities(accountId: string, salespersonId: string, version: number, actor: string) {
-  const old = await ensureWorkflow(accountId); expected(old, version);
+  const current = await get<LeadWorkflow>(`workflow:${accountId}`);
+  if (!Number.isInteger(version) || version !== (current?.version ?? 0)) throw new Error("This record changed. Refresh before saving.");
+  const old = current ? await ensureWorkflow(accountId) : undefined;
+  if (old) expected(old, version);
   await validRole(salespersonId, "SALESPERSON");
-  const next = row("WORKFLOW", old.id, { ...salespersonWorkflow(old.data), salespersonId, assignmentIssue: undefined, version: old.version + 1, updatedAt: new Date().toISOString() }, { accountId, previous: old });
+  let data: LeadWorkflow;
+  if (old) data = salespersonWorkflow(old.data);
+  else {
+    const account = await (await dataClient()).models.Account.get({ id: accountId });
+    if (!account.data || account.errors?.length) throw new Error("The account could not be loaded");
+    if (await get(`deleted-account:${accountId}`)) throw new Error("This account is being deleted");
+    // Assign the requested owner in the first write. Initializing with the
+    // configured default first would briefly grant the wrong person access.
+    data = { accountId, name: account.data.name, disposition: account.data.stage === "CLIENT" ? "BOUND" : "ACTIVE", ownershipModel: "SALESPERSON", version: 1, updatedAt: new Date().toISOString() };
+  }
+  const next = row("WORKFLOW", `workflow:${accountId}`, { ...data, salespersonId, assignmentIssue: undefined, version: (old?.version ?? 0) + 1, updatedAt: new Date().toISOString() }, { accountId, previous: old });
   const job = row("ROLE_SYNC", `role-sync:${accountId}:${next.version}`, { phase: "LINK", accountId }, { accountId, dueAt: new Date().toISOString() });
-  await commit([put(next, old), put(job), audit(accountId, actor, "Salesperson changed", { salespersonId })]);
+  await commit([put(next, old), ...(!old ? [absent(`deleted-account:${accountId}`)] : []), put(job), audit(accountId, actor, "Salesperson changed", { salespersonId })]);
   await syncResponsibilities(job).catch(() => {}); // Durable job retries a failed first page.
   return next.data;
 }

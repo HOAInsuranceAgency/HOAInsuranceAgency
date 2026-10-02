@@ -15,6 +15,8 @@ export interface TeamEligibility {
   userId: string; name: string; email: string; enabled: boolean;
   /** Response-only hint; never used as an authorization source. */
   canAccessAccount?: boolean;
+  /** Response-only current Cognito availability; saved eligibility stays separate. */
+  available?: boolean;
   salesperson: boolean; /** @deprecated Legacy storage only. */ champion?: boolean; frontId?: string; dialpadId?: string; version?: number;
 }
 export interface LeadWorkflow {
@@ -79,6 +81,7 @@ export interface IntegrationConfig {
   activatedAt?: string; version: number;
 }
 export interface WorkflowContext {
+  snooze?: import('./leadSnooze').LeadSnooze;
   actorId?: string;
   /** Positive confirmation that automatic tracking is active and recently healthy. */
   trackingHealthy?: boolean;

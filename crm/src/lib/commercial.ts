@@ -2,10 +2,14 @@ import { useAsyncResource } from './useAsyncResource';
 import { communicationRequest, type TeamEligibility } from './communications';
 import type { CommercialPlan } from '../../../shared/quotePackages';
 import type { LeadWorkflow } from '../../../shared/leadWorkflow';
+import type { LeadSnooze } from '../../../shared/leadSnooze';
 export interface CommercialEntry {
   accountId: string;
   plan: CommercialPlan;
   salespersonId?: string;
+  snooze?: LeadSnooze;
+  /** Optimistic-lock version for assignment edits; zero means no workflow yet. */
+  workflowVersion?: number;
   disposition?: LeadWorkflow['disposition'];
 }
 export interface CommercialData {
@@ -14,16 +18,18 @@ export interface CommercialData {
 }
 /** Load attribution alongside report data so a failed assignment read cannot
  * silently turn an entire report into "Unassigned". */
-export async function loadCommercial(ids: string[]): Promise<CommercialData> {
+export async function loadCommercial(ids: string[], snoozeAccountIds: string[] = []): Promise<CommercialData> {
   const accounts = [...new Set(ids)].sort();
+  const snoozeIds = new Set(snoozeAccountIds);
   if (!accounts.length) return { entries: {}, team: [] };
   const roster = await communicationRequest<{ team: TeamEligibility[] }>('team', {});
   if (!Array.isArray(roster.team)) throw new Error('Could not load teammates');
   const entries: Record<string, CommercialEntry> = {};
   for (let i = 0; i < accounts.length; i += 25) {
     const batch = accounts.slice(i, i + 25);
+    const followUps = batch.filter(id => snoozeIds.has(id));
     const result = await communicationRequest<{ items: CommercialEntry[] }>(
-      'commercialTable', { accountIds: batch },
+      'commercialTable', { accountIds: batch, ...(followUps.length ? { snoozeAccountIds: followUps } : {}) },
     );
     if (!Array.isArray(result.items) || result.items.length !== batch.length ||
       batch.some(id => !result.items.some(item => item.accountId === id))) {
@@ -33,11 +39,12 @@ export async function loadCommercial(ids: string[]): Promise<CommercialData> {
   }
   return { entries, team: roster.team };
 }
-export function useCommercial(ids: string[], revision?: unknown) {
+export function useCommercial(ids: string[], revision?: unknown, snoozeAccountIds: string[] = []) {
   const key = [...new Set(ids)].sort().join(',');
+  const snoozeKey = [...new Set(snoozeAccountIds)].sort().join(',');
   return useAsyncResource(
-    () => loadCommercial(key ? key.split(',') : []),
-    [key, revision],
+    () => loadCommercial(key ? key.split(',') : [], snoozeKey ? snoozeKey.split(',') : []),
+    [key, revision, snoozeKey],
     {
       initialData: {
         entries: {} as Record<string, CommercialEntry>,

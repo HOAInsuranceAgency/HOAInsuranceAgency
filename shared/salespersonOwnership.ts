@@ -1,5 +1,10 @@
 import type { IntegrationConfig, LeadTask, LeadWorkflow, TeamEligibility, TeamRouting } from "./leadWorkflow";
 
+/** Assignment choices require both configured eligibility and current availability. */
+export function isAssignableSalesperson(member: TeamEligibility): boolean {
+  return member.enabled && member.salesperson && member.available === true;
+}
+
 /** Keep legacy fields readable for migration, but never expose them as active roles. */
 export function salespersonWorkflow(input: LeadWorkflow): LeadWorkflow {
   const { championId: _retired, ...workflow } = input;
