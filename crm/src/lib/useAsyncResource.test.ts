@@ -151,6 +151,56 @@ describe("useAsyncResource", () => {
       expect(result.current.error).toBe("later failure");
       expect(result.current.loading).toBe(false);
     });
+
+    it("retains data when the optional clear predicate does not match a network failure", async () => {
+      const first = deferred<string[]>();
+      const refresh = deferred<string[]>();
+      const fetcher = queuedFetcher(first.promise, refresh.promise);
+      const clearDataOnError = vi.fn((error: unknown) => error instanceof Error && error.name === "UnauthorizedException");
+      const { result } = renderHook(() => useAsyncResource(fetcher, [], { initialData: [] as string[], clearDataOnError }));
+      await act(async () => first.resolve(["authorized data"]));
+      act(() => { void result.current.refetch(); });
+      const networkError = new Error("Network request failed");
+      await act(async () => refresh.reject(networkError));
+
+      expect(clearDataOnError).toHaveBeenCalledWith(networkError);
+      expect(result.current.data).toEqual(["authorized data"]);
+      expect(result.current.error).toBe("Network request failed");
+      expect(result.current.loading).toBe(false);
+    });
+
+    it("clears matched errors to initialData and cannot restore revoked data through retries", async () => {
+      const first = deferred<string[]>();
+      const denied = deferred<string[]>();
+      const failedRetry = deferred<string[]>();
+      const reauthorized = deferred<string[]>();
+      const fetcher = queuedFetcher(first.promise, denied.promise, failedRetry.promise, reauthorized.promise);
+      const clearDataOnError = vi.fn((error: unknown) => error instanceof Error && error.name === "UnauthorizedException");
+      const { result } = renderHook(() => useAsyncResource(fetcher, [], { initialData: [] as string[], clearDataOnError }));
+      await act(async () => first.resolve(["revoked account data"]));
+      act(() => { void result.current.refetch(); });
+      const authorizationError = Object.assign(new Error("Request denied"), { name: "UnauthorizedException" });
+      await act(async () => denied.reject(authorizationError));
+
+      expect(clearDataOnError).toHaveBeenCalledWith(authorizationError);
+      expect(result.current.data).toEqual([]);
+      expect(result.current.error).toBeTruthy();
+      expect(result.current.loaded).toBe(true);
+      expect(result.current.loading).toBe(false);
+      act(() => { void result.current.refetch(); });
+      expect(result.current.loading).toBe(true);
+      expect(result.current.error).toBe("");
+      expect(result.current.data).toEqual([]);
+      await act(async () => failedRetry.reject(new Error("Connection interrupted")));
+      expect(result.current.data).toEqual([]);
+      expect(result.current.error).toBe("Connection interrupted");
+
+      act(() => { void result.current.refetch(); });
+      expect(result.current.data).toEqual([]);
+      await act(async () => reauthorized.resolve(["freshly authorized data"]));
+      expect(result.current.data).toEqual(["freshly authorized data"]);
+      expect(result.current.error).toBe("");
+    });
   });
 
   describe("refetch", () => {
@@ -318,6 +368,31 @@ describe("useAsyncResource", () => {
   });
 
   describe("ordering and lifetime", () => {
+    it("invalidates cached data and ignores an already-pending successful response", async () => {
+      const initial = deferred<string[]>();
+      const pending = deferred<string[]>();
+      const fresh = deferred<string[]>();
+      const fetcher = queuedFetcher(initial.promise, pending.promise, fresh.promise);
+      const { result } = renderHook(() => useAsyncResource(fetcher, [], { initialData: [] as string[] }));
+      await act(async () => initial.resolve(["private account data"]));
+      act(() => { void result.current.refetch(); });
+      expect(result.current.loading).toBe(true);
+
+      act(() => { result.current.invalidate(new Error("Account access was revoked")); });
+      expect(result.current.data).toEqual([]);
+      expect(result.current.error).toBe("Account access was revoked");
+      expect(result.current.loading).toBe(false);
+      expect(result.current.loaded).toBe(true);
+      await act(async () => pending.resolve(["late private response"]));
+      expect(result.current.data).toEqual([]);
+      expect(result.current.error).toBe("Account access was revoked");
+
+      act(() => { void result.current.refetch(); });
+      await act(async () => fresh.resolve(["fresh authorized response"]));
+      expect(result.current.data).toEqual(["fresh authorized response"]);
+      expect(result.current.error).toBe("");
+    });
+
     it("does not let a slow first response overwrite a fast second one", async () => {
       const slow = deferred<string>();
       const fast = deferred<string>();
@@ -365,6 +440,25 @@ describe("useAsyncResource", () => {
 
       expect(result.current.error).toBe("");
       expect(result.current.data).toBe("second");
+    });
+
+    it("ignores an obsolete authorization rejection before applying the clear predicate", async () => {
+      const obsolete = deferred<string[]>();
+      const current = deferred<string[]>();
+      const fetcher = queuedFetcher(obsolete.promise, current.promise);
+      const clearDataOnError = vi.fn(() => true);
+      const { result } = renderHook(() => useAsyncResource(fetcher, [], { manual: true, initialData: [] as string[], clearDataOnError }));
+      act(() => {
+        void result.current.refetch();
+        void result.current.refetch();
+      });
+      await act(async () => current.resolve(["new authorized response"]));
+      await act(async () => obsolete.reject(Object.assign(new Error("Request denied"), { name: "UnauthorizedException" })));
+
+      expect(clearDataOnError).not.toHaveBeenCalled();
+      expect(result.current.data).toEqual(["new authorized response"]);
+      expect(result.current.error).toBe("");
+      expect(result.current.loading).toBe(false);
     });
 
     // Caveat on the two tests below: React 18 dropped the "state update on an

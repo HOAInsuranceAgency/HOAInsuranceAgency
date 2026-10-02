@@ -11,46 +11,62 @@ import { agencyDay } from '../../../../shared/leadActionGuidance';
 import { dataClient } from './data';
 import {
   audit,
+  batchGet,
   check,
   absent,
   commit,
   get,
   put,
   row,
+  type Row,
   type Write,
 } from './store';
 import type { LeadWorkflow } from '../../../../shared/leadWorkflow';
 import type { Schema } from '../../data/resource';
+import { emptyLeadSnooze, type LeadSnooze } from '../../../../shared/leadSnooze';
 
 const idOf = (id: unknown) => {
   if (typeof id !== 'string' || !/^[a-zA-Z0-9_-]{1,100}$/.test(id))
     throw new Error('Choose a valid account');
   return id;
 };
-export async function commercialTable(ids: unknown) {
+export async function commercialTable(ids: unknown, snoozeAccountIds?: unknown) {
   if (
     !Array.isArray(ids) ||
     ids.length > 25 ||
     new Set(ids).size !== ids.length
   )
     throw new Error('Choose up to 25 accounts');
-  return Promise.all(
-    ids.map(async (raw) => {
-      const id = idOf(raw),
-        [plan, workflow] = await Promise.all([
-          get<CommercialPlan>(`commercial:${id}`),
-          get<LeadWorkflow>(`workflow:${id}`),
-        ]);
-      return {
-        accountId: id,
-        plan: plan
-          ? { ...plan.data, version: plan.version }
-          : emptyCommercialPlan(id),
-        salespersonId: workflow?.data.salespersonId,
-        disposition: workflow?.data.disposition,
-      };
-    }),
-  );
+  const accounts = ids.map(idOf);
+  const requested = snoozeAccountIds === undefined ? [] : snoozeAccountIds;
+  if (!Array.isArray(requested) || requested.length > 25 ||
+      new Set(requested).size !== requested.length ||
+      requested.some(id => !accounts.includes(id)))
+    throw new Error('Choose follow-ups only for the requested accounts');
+  const snoozeIds = new Set(requested.map(idOf));
+  // At most 75 keys: two commercial records per account plus explicitly
+  // requested lead follow-ups. Clients/report consumers need no snooze read.
+  const records = await batchGet<CommercialPlan | LeadWorkflow | LeadSnooze>([
+    ...accounts.flatMap(id => [`commercial:${id}`, `workflow:${id}`]),
+    ...[...snoozeIds].map(id => `lead-snooze:${id}`),
+  ]);
+  return accounts.map(id => {
+    const plan = records.get(`commercial:${id}`) as Row<CommercialPlan> | undefined;
+    const workflow = records.get(`workflow:${id}`) as Row<LeadWorkflow> | undefined;
+    const snooze = records.get(`lead-snooze:${id}`) as Row<LeadSnooze> | undefined;
+    return {
+      accountId: id,
+      plan: plan
+        ? { ...plan.data, version: plan.version }
+        : emptyCommercialPlan(id),
+      salespersonId: workflow?.data.salespersonId,
+      workflowVersion: workflow?.version ?? 0,
+      disposition: workflow?.data.disposition,
+      ...(snoozeIds.has(id) ? { snooze: snooze
+        ? { ...snooze.data, version: snooze.version }
+        : emptyLeadSnooze(id) } : {}),
+    };
+  });
 }
 export async function saveCommercial(
   input: Record<string, unknown>,

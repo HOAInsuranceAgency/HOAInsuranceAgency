@@ -2,7 +2,7 @@ import { AccountAccess } from "./access";
 import { AccessDenied, id, object, type RecordData } from "./policy";
 import { retiredTaskOperation } from "../../../../shared/retiredTaskOperations";
 const adminCommunication = new Set(["dashboardOpenQuotesPage", "dashboardBoundPoliciesPage", "dashboardQuotesPage", "dashboardQuoteStates", "dashboardInvoiceAnchors", "dashboardAssignments", "dashboardInterestPage", "dashboardPolicyAnchors", "dashboardLeadPlansPage", "settings", "prepareLeadDeletion", "saveEligibility", "saveSettings", "restartReconciliation", "restartConversationHistory", "validateConnection", "activate", "reviewOperation", "backfill"]);
-const accountOperations = new Set(["context", "accountSummary", "saveCommercial", "prepareBusinessDraft", "initializeLead", "setResponsibilities", "reopenLead", "setLeadDisposition", "cancelAi", "linkConversation", "linkActivity", "archive", "addNote"]);
+const accountOperations = new Set(["context", "accountSummary", "saveCommercial", "saveLeadSnooze", "prepareBusinessDraft", "initializeLead", "setResponsibilities", "reopenLead", "setLeadDisposition", "cancelAi", "linkConversation", "linkActivity", "archive", "addNote"]);
 async function filterAccountItems(access: AccountAccess, input: unknown) {
   const items = Array.isArray(input) ? input : [];
   await access.prefetchAccounts(items.map(value => id(object(value).accountId)));

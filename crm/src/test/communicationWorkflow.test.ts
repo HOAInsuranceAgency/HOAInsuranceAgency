@@ -1,7 +1,7 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import type { Communication, IntegrationConfig, LeadWorkflow } from "../../../shared/leadWorkflow";
 const h = vi.hoisted(() => ({ records: new Map<string, Record<string, any>>(), transactions: [] as any[][], inFlight: 0, maxInFlight: 0, fail: false, failAt: undefined as number | undefined, writeError: undefined as Error | undefined, writeErrors: [] as Error[], accountError: false, userEnabled: true, disabledUsers: new Set<string>(),
-  reads: [] as string[], readFailureId: undefined as string | undefined, userReads: [] as string[], userError: undefined as Error | undefined, queries: [] as any[], queryError: undefined as Error | undefined, deletionQuery: vi.fn(), batch: vi.fn(), front: vi.fn(), dialpad: vi.fn(), update: vi.fn(), accountList: vi.fn(), c: {} as IntegrationConfig }));
+  reads: [] as string[], readFailureId: undefined as string | undefined, beforeWrite: undefined as (() => void) | undefined, userReads: [] as string[], userError: undefined as Error | undefined, queries: [] as any[], queryError: undefined as Error | undefined, cognitoList: vi.fn(), deletionQuery: vi.fn(), batch: vi.fn(), front: vi.fn(), dialpad: vi.fn(), update: vi.fn(), accountList: vi.fn(), c: {} as IntegrationConfig }));
 vi.mock("@aws-sdk/lib-dynamodb", async importOriginal => {
   const actual = await importOriginal<typeof import("@aws-sdk/lib-dynamodb")>();
   return { ...actual, DynamoDBDocumentClient: { from: () => ({ send: async (command: any) => {
@@ -32,10 +32,15 @@ vi.mock("@aws-sdk/lib-dynamodb", async importOriginal => {
       if (h.failAt === h.transactions.length) { h.failAt = undefined; throw new Error("Interrupted contact progress"); }
       if (h.writeError) { const error = h.writeError; h.writeError = undefined; throw error; }
       if (h.writeErrors.length) throw h.writeErrors.shift();
+      const beforeWrite = h.beforeWrite; h.beforeWrite = undefined; beforeWrite?.();
       const writes = p.TransactItems;
       for (const entry of writes) {
         const w = entry.Put ?? entry.ConditionCheck ?? entry.Update;
         const old = h.records.get(`${w.TableName}:${w.Item?.id ?? w.Key?.id}`);
+        if (entry.ConditionCheck && w.ConditionExpression === '#stage = :lead') {
+          if (old?.stage !== w.ExpressionAttributeValues[':lead']) throw Object.assign(new Error('Lead stage changed'), { name: 'TransactionCanceledException', CancellationReasons: [{ Code: 'ConditionalCheckFailed' }] });
+          continue;
+        }
         if (entry.ConditionCheck && w.ConditionExpression === 'updatedAt = :at') {
           if (old?.updatedAt !== w.ExpressionAttributeValues[':at']) throw Object.assign(new Error('Source record changed'), { name: 'TransactionCanceledException', CancellationReasons: [{ Code: 'ConditionalCheckFailed' }] });
           continue;
@@ -62,7 +67,7 @@ vi.mock("@aws-sdk/lib-dynamodb", async importOriginal => {
     throw new Error(`Unexpected storage command ${command.constructor.name}`);
   } }) } };
 });
-vi.mock("@aws-sdk/client-cognito-identity-provider", () => ({ CognitoIdentityProviderClient: class { send = async (command: any) => { const id = /"([^"]+)"/.exec(command.input.Filter)?.[1] ?? "brian"; h.userReads.push(id); if (h.userError) throw h.userError; return { Users: [{ Enabled: h.userEnabled && !h.disabledUsers.has(id), Attributes: [{ Name: "email", Value: `${id}@example.com` }, { Name: "email_verified", Value: "true" }] }] }; }; }, ListUsersCommand: class { constructor(public input: unknown) {} } }));
+vi.mock("@aws-sdk/client-cognito-identity-provider", () => ({ CognitoIdentityProviderClient: class { send = async (command: any) => { if (!command.input.Filter) throw new Error('Unfiltered user-pool scans are not allowed'); const id = /"([^"]+)"/.exec(command.input.Filter)?.[1] ?? "brian"; h.userReads.push(id); if (h.userError) throw h.userError; const override = await h.cognitoList(command.input); if (override !== undefined) return override; return { Users: [{ Enabled: h.userEnabled && !h.disabledUsers.has(id), Attributes: [{ Name: "email", Value: `${id}@example.com` }, { Name: "email_verified", Value: "true" }] }] }; }; }, ListUsersCommand: class { constructor(public input: unknown) {} } }));
 vi.mock("../../amplify/functions/communications/config", async importOriginal => ({ ...(await importOriginal<typeof import("../../amplify/functions/communications/config")>()), saveCredentials: vi.fn(), config: async () => h.c, credentials: async () => ({ frontSigningKey: "test-signing-key", dialpadSigningKey: "test-dialpad-signing-key" }) }));
 vi.mock("../../amplify/functions/communications/data", () => ({ dataClient: async () => ({ models: {
   Account: { list: h.accountList, get: async ({ id }: { id: string }) => (h.accountError ? { data: null, errors: [{ message: "Simulated account read failure" }] } : { data: { id, name: "Willow HOA", stage: "LEAD", createdAt: "2026-09-08T14:00:00.000Z", updatedAt: "2026-09-08T14:00:00.000Z", ...Object.fromEntries([["quotes", "Quote"], ["policies", "Policy"], ["priorCarriers", "PriorCarrier"], ["certificates", "Certificate"], ["invoices", "Invoice"]].map(([name, model]) => [name, async () => ({ data: [...h.records.entries()].filter(([key, r]) => key.startsWith(`${model}:`) && r.accountId === id).map(([, r]) => r) })])), contacts: async () => ({ data: [...h.records.entries()].filter(([key, c]) => key.startsWith("Contact:") && c.accountId === id).map(([,c]) => c) }), ...h.records.get(`Account:${id}`) } }) },
@@ -107,8 +112,9 @@ beforeEach(async () => {
   vi.useFakeTimers(); vi.setSystemTime(NOW); h.records.clear(); h.transactions.length = 0; h.inFlight = 0; h.maxInFlight = 0; h.fail = false; h.failAt = undefined; h.accountError = false; h.userEnabled = true; h.writeError = undefined; vi.clearAllMocks();
   h.disabledUsers.clear();
   h.writeErrors.length = 0;
-  h.reads.length = 0; h.readFailureId = undefined; h.userReads.length = 0; h.queries.length = 0; h.userError = undefined; h.queryError = undefined;
+  h.reads.length = 0; h.readFailureId = undefined; h.beforeWrite = undefined; h.userReads.length = 0; h.queries.length = 0; h.userError = undefined; h.queryError = undefined;
   h.deletionQuery.mockReset();
+  h.cognitoList.mockReset().mockResolvedValue(undefined);
   h.batch.mockReset().mockImplementation((p: { RequestItems: Record<string, { Keys: { id: string }[] }> }) => ({
     Responses: Object.fromEntries(Object.entries(p.RequestItems).map(([name, request]) => [name,
       request.Keys.map(key => h.records.get(`${name}:${key.id}`)).filter(Boolean).map(item => structuredClone(item)).reverse(),
@@ -124,6 +130,255 @@ beforeEach(async () => {
   h.front.mockImplementation(async (path: string) => path.includes("/messages") && path.includes("/conversations") ? { _results: [] } : {});
 });
 afterEach(() => vi.useRealTimers());
+describe('producer lead snoozes', () => {
+  const input = { accountId: 'a1', version: 0, followUpOn: '2026-09-10', note: '  Call after the board meeting  ' };
+  async function setup() {
+    await lead();
+    h.records.set('Account:a1', { id: 'a1', stage: 'LEAD', name: 'Willow HOA', updatedAt: NOW });
+    return (await import('../../amplify/functions/communications/snooze')).saveLeadSnooze;
+  }
+  it('saves and audits a date without creating tasks, deliveries or queue work', async () => {
+    const write = await setup();
+    expect(await write(input, 'brian', false)).toEqual({ ...input, version: 1, note: 'Call after the board meeting', updatedAt: NOW, updatedBy: 'brian' });
+    expect(record('lead-snooze:a1')).toMatchObject({ kind: 'LEAD_SNOOZE', accountId: 'a1', version: 1, accountSort: expect.stringMatching(/^LEAD_SNOOZE#/) });
+    for (const field of ['dueAt', 'dueGroup', 'workKind', 'workAt']) expect(record('lead-snooze:a1')).not.toHaveProperty(field);
+    for (const kind of ['TASK', 'NOTIFICATION', 'OPERATION', 'LIFECYCLE']) expect(entries(kind)).toHaveLength(0);
+    expect([...h.records.values()].filter(r => r.__typename === 'Activity')).toMatchObject([{ actor: 'brian', summary: 'Lead snoozed until follow-up' }]);
+    expect(h.front).not.toHaveBeenCalled(); expect(h.dialpad).not.toHaveBeenCalled();
+  });
+  it('keeps a cleared row versioned and rejects stale changes without losing the clear', async () => {
+    const write = await setup();
+    await write(input, 'brian', false);
+    expect(await write({ ...input, version: 1, followUpOn: null }, 'brian', false)).toMatchObject({ version: 2, followUpOn: null, note: '' });
+    await expect(write(input, 'brian', false)).rejects.toThrow('Refresh before saving');
+    await expect(write({ ...input, version: 1 }, 'brian', false)).rejects.toThrow('Refresh before saving');
+    expect(record('lead-snooze:a1').data).toMatchObject({ version: 2, followUpOn: null });
+  });
+  it('allows one competing first save and tells the other editor to refresh', async () => {
+    const write = await setup();
+    const results = await Promise.allSettled([write(input, 'brian', false), write({ ...input, followUpOn: '2026-09-11' }, 'brian', false)]);
+    expect(results.filter(r => r.status === 'fulfilled')).toHaveLength(1);
+    expect(results.filter(r => r.status === 'rejected')).toMatchObject([{ reason: expect.objectContaining({ message: expect.stringContaining('Refresh before saving') }) }]);
+    expect(record('lead-snooze:a1').version).toBe(1);
+    expect([...h.records.values()].filter(r => r.__typename === 'Activity')).toHaveLength(1);
+  });
+  it.each(['assignment', 'binding', 'deletion', 'account removal'])('fences a concurrent %s before saving or auditing', async change => {
+    const write = await setup();
+    h.beforeWrite = () => {
+      if (change === 'assignment') h.records.set('comms:workflow:a1', { ...record('workflow:a1'), version: 2, data: { ...record('workflow:a1').data, salespersonId: 'other' } });
+      if (change === 'binding') h.records.get('Account:a1')!.stage = 'CLIENT';
+      if (change === 'deletion') h.records.set('comms:deleted-account:a1', row('DELETED_ACCOUNT', 'deleted-account:a1', {}));
+      if (change === 'account removal') h.records.delete('Account:a1');
+    };
+    await expect(write(input, 'brian', false)).rejects.toThrow('Refresh before saving');
+    expect(record('lead-snooze:a1')).toBeUndefined();
+    expect([...h.records.values()].filter(r => r.__typename === 'Activity')).toHaveLength(0);
+  });
+  it('rechecks ownership and permits an administrator to snooze a lead without initializing its workflow', async () => {
+    const write = await setup();
+    await expect(write(input, 'other', false)).rejects.toThrow('assigned leads');
+    h.records.delete('comms:workflow:a1');
+    await expect(write(input, 'brian', false)).rejects.toThrow('assigned leads');
+    expect(await write(input, 'admin', true)).toMatchObject({ version: 1, updatedBy: 'admin' });
+    expect(record('workflow:a1')).toBeUndefined();
+  });
+  it('requires a real, readable lead and rejects already deleted accounts', async () => {
+    const write = await setup();
+    h.accountError = true;
+    await expect(write(input, 'brian', false)).rejects.toThrow('Could not load this lead');
+    h.accountError = false; h.records.get('Account:a1')!.stage = 'CLIENT';
+    await expect(write(input, 'brian', false)).rejects.toThrow('only available for leads');
+    h.records.get('Account:a1')!.stage = 'LEAD';
+    h.records.set('comms:deleted-account:a1', row('DELETED_ACCOUNT', 'deleted-account:a1', {}));
+    await expect(write(input, 'admin', true)).rejects.toThrow('being deleted');
+    expect(record('lead-snooze:a1')).toBeUndefined();
+  });
+  it('validates dates against the Eastern calendar rather than the UTC day', async () => {
+    const write = await setup();
+    vi.setSystemTime('2026-09-09T02:00:00.000Z');
+    await expect(write({ ...input, followUpOn: '2026-09-08' }, 'brian', false)).rejects.toThrow('after today');
+    expect(await write({ ...input, followUpOn: '2026-09-09' }, 'brian', false)).toMatchObject({ followUpOn: '2026-09-09' });
+  });
+  it.each([
+    { followUpOn: '2026-09-31' }, { followUpOn: 'tomorrow' }, { followUpOn: undefined },
+    { note: 'x'.repeat(1001) }, { note: undefined }, { version: -1 }, { version: 0.5 }, { accountId: '../other' },
+  ])('rejects malformed input before storing a snooze: %j', async invalid => {
+    const write = await setup();
+    await expect(write({ ...input, ...invalid }, 'brian', false)).rejects.toThrow();
+    expect(record('lead-snooze:a1')).toBeUndefined();
+  });
+  it('preserves storage failures instead of reporting success or an empty read', async () => {
+    const write = await setup();
+    h.fail = true;
+    await expect(write(input, 'brian', false)).rejects.toThrow('storage outage');
+    h.fail = false; h.batch.mockRejectedValueOnce(new Error('Temporary read failure'));
+    const { commercialTable } = await import('../../amplify/functions/communications/commercial');
+    await expect(commercialTable(['a1'], ['a1'])).rejects.toThrow('Temporary read failure');
+  });
+  it('exposes source-row versions in table/context reads, including leads without a workflow', async () => {
+    const { commercialTable } = await import('../../amplify/functions/communications/commercial');
+    const { handler } = await import('../../amplify/functions/communications/handler');
+    const identity = { sub: 'brian', groups: ['ADMIN'] } as never;
+    const empty = { accountId: 'a1', version: 0, followUpOn: null, note: '' };
+    expect(await commercialTable(['a1'], ['a1'])).toMatchObject([{ snooze: empty }]);
+    expect(await handler({ arguments: { readOperation: 'context', input: { accountId: 'a1' } }, identity })).toMatchObject({ ok: true, workflow: null, snooze: empty });
+    h.records.set('comms:lead-snooze:a1', { ...row('LEAD_SNOOZE', 'lead-snooze:a1', { ...input, version: 1 }), version: 4 });
+    expect(await commercialTable(['a1'], ['a1'])).toMatchObject([{ snooze: { ...input, version: 4 } }]);
+    expect(await handler({ arguments: { readOperation: 'context', input: { accountId: 'a1' } }, identity })).toMatchObject({ ok: true, snooze: { ...input, version: 4 } });
+    h.records.set('Account:a1', { id: 'a1', stage: 'CLIENT' });
+    h.reads.length = 0;
+    const client = await handler({ arguments: { readOperation: 'context', input: { accountId: 'a1' } }, identity });
+    expect(client).toMatchObject({ ok: true }); expect(client).not.toHaveProperty('snooze');
+    expect(h.reads).not.toContain('lead-snooze:a1');
+  });
+  it('routes writes through active-role ownership checks and returns the saved snooze', async () => {
+    await setup();
+    const { handler } = await import('../../amplify/functions/communications/handler');
+    const identity = { sub: 'other', groups: ['ADMIN', 'PRODUCER'] } as never;
+    const event = { arguments: { operation: 'saveLeadSnooze', input }, identity };
+    expect(await handler({ ...event, request: { headers: { 'x-crm-role': 'PRODUCER' } } })).toMatchObject({ ok: false, error: expect.stringContaining('assigned leads') });
+    expect(await handler({ ...event, request: { headers: { 'x-crm-role': 'ADMIN' } } })).toMatchObject({ ok: true, snooze: { version: 1, followUpOn: input.followUpOn, updatedBy: 'other' } });
+  });
+});
+describe('commercial table batched reads', () => {
+  it('reads a full 25-account batch including requested follow-ups with one storage request', async () => {
+    const accounts = Array.from({ length: 25 }, (_, index) => `a${index}`);
+    h.records.set('comms:commercial:a1', { ...row('COMMERCIAL_PLAN', 'commercial:a1', { accountId: 'a1', estimatedCents: 10000 }), version: 7 });
+    h.records.set('comms:workflow:a1', { ...row('WORKFLOW', 'workflow:a1', { accountId: 'a1', salespersonId: 'brian', disposition: 'ACTIVE', version: 1 }), version: 6 });
+    h.records.set('comms:lead-snooze:a1', { ...row('LEAD_SNOOZE', 'lead-snooze:a1', { accountId: 'a1', followUpOn: '2026-09-10', note: 'Call back', version: 1 }), version: 3 });
+    const { commercialTable } = await import('../../amplify/functions/communications/commercial');
+    const results = await commercialTable(accounts, accounts);
+    expect(h.batch).toHaveBeenCalledTimes(1);
+    const request = h.batch.mock.calls[0][0].RequestItems.comms;
+    expect(request.ConsistentRead).toBe(true);
+    expect(request.Keys).toHaveLength(75);
+    expect(new Set(request.Keys.map((key: { id: string }) => key.id)).size).toBe(75);
+    expect(h.reads).toEqual([]);
+    expect(results.map(result => result.accountId)).toEqual(accounts);
+    expect(results[1]).toMatchObject({ accountId: 'a1', plan: { estimatedCents: 10000, version: 7 }, salespersonId: 'brian', workflowVersion: 6, disposition: 'ACTIVE', snooze: { version: 3, followUpOn: '2026-09-10', note: 'Call back' } });
+    expect(results[0]).toMatchObject({ workflowVersion: 0, snooze: { accountId: 'a0', version: 0, followUpOn: null, note: '' } });
+  });
+  it.each([undefined, []])('omits follow-up reads unless explicitly requested: %j', async requested => {
+    h.records.set('comms:lead-snooze:a1', row('LEAD_SNOOZE', 'lead-snooze:a1', { accountId: 'a1', followUpOn: '2026-09-10' }));
+    const { commercialTable } = await import('../../amplify/functions/communications/commercial');
+    const result = await commercialTable(['a1'], requested);
+    expect(result[0]).not.toHaveProperty('snooze');
+    expect(h.batch.mock.calls[0][0].RequestItems.comms.Keys).toEqual([{ id: 'commercial:a1' }, { id: 'workflow:a1' }]);
+    expect(h.reads).toEqual([]);
+  });
+  it('reads follow-ups only for the requested account subset through the API', async () => {
+    const { handler } = await import('../../amplify/functions/communications/handler');
+    const result = await handler({ arguments: { readOperation: 'commercialTable', input: { accountIds: ['lead', 'client'], snoozeAccountIds: ['lead'] } }, identity: { sub: 'admin', groups: ['ADMIN'] } as never });
+    expect(result).toMatchObject({ ok: true, items: [{ accountId: 'lead', snooze: { accountId: 'lead', version: 0 } }, { accountId: 'client' }] });
+    expect((result as { items: Record<string, unknown>[] }).items[1]).not.toHaveProperty('snooze');
+    const keys = h.batch.mock.calls[0][0].RequestItems.comms.Keys;
+    expect(keys).toHaveLength(5);
+    expect(keys).toContainEqual({ id: 'lead-snooze:lead' });
+    expect(keys).not.toContainEqual({ id: 'lead-snooze:client' });
+  });
+  it.each([null, 'a1', ['other-account'], ['a1', 'a1'], [1], Array.from({ length: 26 }, (_, index) => `a${index}`)])('rejects an invalid follow-up subset before storage access: %j', async requested => {
+    const { commercialTable } = await import('../../amplify/functions/communications/commercial');
+    await expect(commercialTable(['a1'], requested)).rejects.toThrow('requested accounts');
+    expect(h.batch).not.toHaveBeenCalled();
+    expect(h.reads).toEqual([]);
+  });
+  it('never treats repeatedly unprocessed follow-ups as an empty snooze', async () => {
+    h.batch.mockImplementation(input => ({ UnprocessedKeys: input.RequestItems }));
+    const { commercialTable } = await import('../../amplify/functions/communications/commercial');
+    const result = expect(commercialTable(['a1'], ['a1'])).rejects.toThrow('Communication batch read remains incomplete');
+    await vi.runAllTimersAsync();
+    await result;
+    expect(h.batch).toHaveBeenCalledTimes(4);
+  });
+});
+
+describe("inline salesperson assignment", () => {
+  async function eligible(userId = "chosen", overrides = {}) {
+    await save(row("ELIGIBILITY", `eligibility:${userId}`, { userId, name: userId, enabled: true, salesperson: true, ...overrides }));
+  }
+
+  it("returns the stored workflow version and zero for accounts without a workflow", async () => {
+    const workflow = row("WORKFLOW", "workflow:existing", { accountId: "existing", salespersonId: "brian", disposition: "ACTIVE", version: 2 });
+    h.records.set("comms:workflow:existing", { ...workflow, version: 7 });
+    const writes = h.transactions.length;
+    const { commercialTable } = await import("../../amplify/functions/communications/commercial");
+    expect(await commercialTable(["existing", "missing"])).toMatchObject([
+      { accountId: "existing", salespersonId: "brian", workflowVersion: 7 },
+      { accountId: "missing", workflowVersion: 0 },
+    ]);
+    expect(h.transactions).toHaveLength(writes);
+    expect(record("workflow:missing")).toBeUndefined();
+  });
+
+  it.each(["LEAD", "CLIENT"])("atomically initializes a %s with the selected salesperson, audit and sync job", async stage => {
+    await eligible();
+    h.c.defaultUserId = "missing-default";
+    h.records.set("Account:missing", { id: "missing", name: "Chosen Association", stage });
+    const before = h.transactions.length;
+    const workflow = await setResponsibilities("missing", "chosen", 0, "admin");
+    expect(workflow).toMatchObject({ accountId: "missing", name: "Chosen Association", salespersonId: "chosen", ownershipModel: "SALESPERSON", disposition: stage === "CLIENT" ? "BOUND" : "ACTIVE", version: 1 });
+    expect(record("workflow:missing")).toMatchObject({ version: 1, assignedSalespersonId: "chosen" });
+    const writes = h.transactions[before];
+    expect(writes.find(w => w.Put?.Item.kind === "WORKFLOW").Put).toMatchObject({ ConditionExpression: "attribute_not_exists(id)", Item: { data: { salespersonId: "chosen" } } });
+    expect(writes.some(w => w.Put?.Item.kind === "ROLE_SYNC")).toBe(true);
+    expect(writes.some(w => w.Put?.TableName === "Activity" && w.Put.Item.actor === "admin")).toBe(true);
+    expect(writes.some(w => w.ConditionCheck?.Key.id === "deleted-account:missing")).toBe(true);
+    expect(h.userReads).not.toContain("missing-default");
+    expect(entries("OPERATION")).toHaveLength(0);
+    expect(h.front).not.toHaveBeenCalled(); expect(h.dialpad).not.toHaveBeenCalled();
+  });
+
+  it("lets only one concurrent first assignment commit", async () => {
+    await eligible("first"); await eligible("second");
+    const results = await Promise.allSettled([
+      setResponsibilities("missing", "first", 0, "admin"),
+      setResponsibilities("missing", "second", 0, "admin"),
+    ]);
+    expect(results.filter(result => result.status === "fulfilled")).toHaveLength(1);
+    expect(results.filter(result => result.status === "rejected")).toHaveLength(1);
+    const winner = results.find(result => result.status === "fulfilled");
+    if (winner?.status !== "fulfilled") throw new Error("Missing winner");
+    expect(record("workflow:missing").data.salespersonId).toBe(winner.value.salespersonId);
+    expect(record("workflow:missing").version).toBe(1);
+    expect(entries("ROLE_SYNC")).toHaveLength(1);
+    expect([...h.records.keys()].filter(key => key.startsWith("Activity:"))).toHaveLength(1);
+  });
+
+  it("rejects stale existing or missing workflow versions without writes", async () => {
+    await eligible();
+    const original = await lead();
+    const writes = h.transactions.length;
+    await expect(setResponsibilities("a1", "chosen", 0, "admin")).rejects.toThrow("Refresh");
+    await expect(setResponsibilities("missing", "chosen", 1, "admin")).rejects.toThrow("Refresh");
+    expect(h.transactions).toHaveLength(writes);
+    expect(record(original.id)).toEqual(original);
+    expect(record("workflow:missing")).toBeUndefined();
+  });
+
+  it.each(["disabled eligibility", "ineligible", "disabled user"])("does not initialize a workflow for a %s salesperson", async reason => {
+    await eligible("chosen", { enabled: reason !== "disabled eligibility", salesperson: reason !== "ineligible" });
+    if (reason === "disabled user") h.disabledUsers.add("chosen");
+    const writes = h.transactions.length;
+    await expect(setResponsibilities("missing", "chosen", 0, "admin")).rejects.toThrow();
+    expect(h.transactions).toHaveLength(writes);
+    expect(record("workflow:missing")).toBeUndefined();
+  });
+
+  it("does not initialize a workflow if the account cannot be loaded or is being deleted", async () => {
+    await eligible();
+    let writes = h.transactions.length;
+    h.accountError = true;
+    await expect(setResponsibilities("missing", "chosen", 0, "admin")).rejects.toThrow("account could not be loaded");
+    expect(h.transactions).toHaveLength(writes);
+    h.accountError = false;
+    await save(row("DELETED_ACCOUNT", "deleted-account:missing", { accountId: "missing" }));
+    writes = h.transactions.length;
+    await expect(setResponsibilities("missing", "chosen", 0, "admin")).rejects.toThrow("being deleted");
+    expect(h.transactions).toHaveLength(writes);
+    expect(record("workflow:missing")).toBeUndefined();
+  });
+});
+
 describe('commercial package persistence', () => {
   async function seedPackages() {
     await lead(); h.records.set('Account:a1', { id: 'a1', stage: 'LEAD', name: 'Willow HOA', createdAt: NOW, updatedAt: NOW });
@@ -1235,6 +1490,37 @@ describe("round three: recoverable history capture", () => {
 });
 
 
+describe('shared team availability', () => {
+  it('decorates team/context with current availability while preserving saved eligibility and versions', async () => {
+    for (const id of ['active', 'disabled', 'deleted', 'staff', 'ineligible']) {
+      h.records.set(`UserProfile:${id}`, { userId: id, firstName: id, lastName: 'Member', email: `${id}@example.com` });
+      await save(row('ELIGIBILITY', `eligibility:${id}`, { userId: id, name: id, email: `${id}@example.com`, enabled: id !== 'ineligible', salesperson: id !== 'staff' }));
+    }
+    const before = structuredClone([...h.records]);
+    h.cognitoList.mockImplementation(async (input: { Filter: string }) => {
+      const id = /"([^"]+)"/.exec(input.Filter)![1];
+      return { Users: id === 'deleted' ? [] : [{ Enabled: id !== 'disabled', Attributes: [{ Name: 'sub', Value: id }] }] };
+    });
+    const { handler } = await import('../../amplify/functions/communications/handler');
+    const identity = { sub: 'admin', groups: ['ADMIN'] } as never;
+    for (const readOperation of ['team', 'context']) {
+      const result = await handler({ arguments: { readOperation, input: { accountId: 'a1' } }, identity });
+      expect(result).toMatchObject({ ok: true, team: [
+        { userId: 'active', available: true, enabled: true, salesperson: true, version: 1 },
+        { userId: 'disabled', available: false, enabled: true, salesperson: true, version: 1 },
+        { userId: 'deleted', available: false, enabled: true, salesperson: true, version: 1 },
+        { userId: 'staff', available: true, enabled: true, salesperson: false, version: 1 },
+        { userId: 'ineligible', available: true, enabled: false, salesperson: true, version: 1 },
+      ] });
+    }
+    expect([...h.records]).toEqual(before);
+    expect(h.userReads).toEqual(['active', 'disabled', 'deleted', 'staff', 'ineligible', 'active', 'disabled', 'deleted', 'staff', 'ineligible']);
+    expect(h.cognitoList.mock.calls.every(([input]) => input.Limit === 1 && input.Filter.startsWith('sub = ') && !input.PaginationToken)).toBe(true);
+    h.cognitoList.mockRejectedValue(new Error('Cognito temporarily unavailable'));
+    expect(await handler({ arguments: { readOperation: 'team' }, identity })).toMatchObject({ ok: false, error: 'Cognito temporarily unavailable' });
+  });
+});
+
 describe("configured default lead owner", () => {
   async function prepareJake(flags = { enabled: true, salesperson: true, champion: true }) {
     h.records.set("UserProfile:jake", { userId: "jake", firstName: "Jake", lastName: "Greasley", email: "jake@example.com" });
@@ -1285,10 +1571,12 @@ it("returns the committed teammate version so the next edit does not depend on a
   await save(row("ELIGIBILITY", "eligibility:jake", initial));
   const { handler } = await import("../../amplify/functions/communications/handler");
   const write = (input: Record<string, unknown>) => handler({ arguments: { operation: "saveEligibility", input }, identity: { sub: "admin", groups: ["ADMIN"] } as never });
-  const first = await write({ ...initial, version: 1, frontId: "tea_jake", dialpadId: "5655281245659136" });
-  expect(first).toMatchObject({ ok: true, member: { ...initial, frontId: "tea_jake", dialpadId: "5655281245659136", version: 2 } });
+  const first = await write({ ...initial, version: 1, available: false, frontId: "tea_jake", dialpadId: "5655281245659136" });
+  expect(first).toMatchObject({ ok: true, member: { ...initial, available: true, frontId: "tea_jake", dialpadId: "5655281245659136", version: 2 } });
+  expect(record('eligibility:jake').data).not.toHaveProperty('available');
   const committed = (first as { member: Record<string, unknown> }).member;
   expect(await write({ ...committed, salesperson: false })).toMatchObject({ ok: true, member: { version: 3, salesperson: false, frontId: "tea_jake", dialpadId: "5655281245659136" } });
+  expect(record('eligibility:jake').data).not.toHaveProperty('available');
 });
 
 

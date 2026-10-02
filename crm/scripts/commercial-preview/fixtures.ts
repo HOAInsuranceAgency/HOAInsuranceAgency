@@ -161,7 +161,7 @@ export const plans: Record<string, CommercialPlan> = {
   },
 };
 export const team = [
-  { userId: 'sales', name: 'Avery Brooks', salesperson: true, enabled: true },
+  { userId: 'sales', name: 'Avery Brooks', salesperson: true, enabled: true, available: true },
   { userId: 'champ', name: 'Morgan Lane', champion: true, enabled: true },
 ];
 export const client = {
