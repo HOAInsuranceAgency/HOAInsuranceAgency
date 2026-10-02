@@ -10,6 +10,7 @@ import "./LeadWorkflowPanel.css";
 import { LeadSnoozeControl } from './LeadSnoozeControl';
 import { useAgencyDay } from '../lib/useAgencyDay';
 import type { LeadSnooze } from '../../../shared/leadSnooze';
+import { isAuthorizationError } from '../lib/authorizationError';
 
 const EMPTY: WorkflowContext = { workflow: null, tasks: [], communications: [], team: [], issues: [] };
 export function ResponsibilitySelect({ label, value, team, kind, onChange, disabled = false }: {
@@ -36,8 +37,14 @@ export default function LeadWorkflowPanel({ accountId, conversationId, onOpen }:
   const noteId = useRef(crypto.randomUUID());
   const [channel, setChannel] = useState("ALL");
   const [note, setNote] = useState(""), [publish, setPublish] = useState(false);
-  const resource = useAsyncResource(() => request<WorkflowContext>("context", { accountId, conversationId }), [accountId, conversationId, revision], { initialData: EMPTY, errorMessage: "Could not load account communications" });
+  const resource = useAsyncResource(() => request<WorkflowContext>("context", { accountId, conversationId }), [accountId, conversationId, revision], { initialData: EMPTY, errorMessage: "Could not load account communications", clearDataOnError: isAuthorizationError });
   const { workflow, communications, team, issues } = resource.data;
+  useEffect(() => {
+    if (resource.data !== EMPTY || !resource.error) return;
+    setNote(''); setPublish(false); setNotice(''); setError('');
+    setSavedSnooze(undefined); setEditingTeam(false); setSalesperson('');
+    noteId.current = crypto.randomUUID();
+  }, [resource.data, resource.error]);
   useEffect(() => {
     if (!compact || busy || editingTeam || note.trim() || resource.loading || snoozeInteracting) return;
     const refresh = () => { if (document.visibilityState === "visible") void resource.refetch(); };
@@ -86,7 +93,7 @@ export default function LeadWorkflowPanel({ accountId, conversationId, onOpen }:
       {c.provider === "front" && <button className="link" onClick={() => open(`https://app.frontapp.com/open/${c.providerId}`)}>Open message</button>}
       </div>
     </details>)}
-    {resource.data.communicationNextToken && <button className="secondary activity-load-more" onClick={async () => { try { const more = await request<WorkflowContext>("context", { accountId: workflow.accountId, nextToken: resource.data.communicationNextToken }); resource.setData(current => ({ ...current, communications: [...current.communications, ...more.communications], communicationNextToken: more.communicationNextToken })); } catch(e) { setError(String(e)); } }}>Load older activity</button>}
+    {resource.data.communicationNextToken && <button className="secondary activity-load-more" onClick={async () => { try { const more = await request<WorkflowContext>("context", { accountId: workflow.accountId, nextToken: resource.data.communicationNextToken }); resource.setData(current => current.workflow ? ({ ...current, communications: [...current.communications, ...more.communications], communicationNextToken: more.communicationNextToken }) : current); } catch(e) { if (isAuthorizationError(e)) resource.invalidate(e); else setError(friendlyError(e, 'Could not load older activity')); } }}>Load older activity</button>}
   </>;
   const noteEditor = <>
     {!compact && <h3>Add an internal note</h3>}<div className="field"><textarea aria-label="Internal note" placeholder="Add a note for your team…" value={note} onChange={e => setNote(e.target.value)} rows={3} /></div>

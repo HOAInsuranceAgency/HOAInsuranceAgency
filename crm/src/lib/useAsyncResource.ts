@@ -36,14 +36,15 @@ import { friendlyError } from "./client";
  * exactly that hand-rolled form when it has no rule to apply. Normalizing
  * inside is therefore a strict improvement everywhere and removes the choice.
  *
- * Data survives a `refetch()` — the table stays on screen, greyed by
+ * Data survives a `refetch()` by default — the table stays on screen, greyed by
  * `loading`, instead of blanking and re-lengthening. Data is dropped when
  * `deps` change, because that isn't a refresh of the same resource, it's a
  * different one: showing the previous account's quotes under the new account's
- * heading is wrong, not merely jumpy.
+ * heading is wrong, not merely jumpy. Sensitive views can opt into clearing
+ * data for access failures with `clearDataOnError`.
  */
 export interface AsyncResource<T> {
-  /** Last successful result. Unchanged by a failed refetch. */
+  /** Last successful result, unless cleared by the configured error policy. */
   data: T;
   /** A fetch is in flight right now. True on the first render unless `manual`. */
   loading: boolean;
@@ -66,6 +67,8 @@ export interface AsyncResource<T> {
    * Identity-stable (it is React's own setState).
    */
   setData: Dispatch<SetStateAction<T>>;
+  /** Clear cached data and invalidate pending reads after an external denial. */
+  invalidate: (error: unknown) => void;
 }
 
 export interface AsyncResourceOptions<T> {
@@ -75,6 +78,8 @@ export interface AsyncResourceOptions<T> {
   errorMessage?: string;
   /** Don't fetch on mount or on `deps` change — only when `refetch()` is called. */
   manual?: boolean;
+  /** Opt out of retaining cached data for specific failures, e.g. revoked access. */
+  clearDataOnError?: (error: unknown) => boolean;
 }
 
 export function useAsyncResource<T>(
@@ -92,7 +97,7 @@ export function useAsyncResource<T>(
   deps: DependencyList,
   options: AsyncResourceOptions<T> = {}
 ): AsyncResource<T | undefined> {
-  const { initialData, errorMessage = "Couldn't load that — please try again.", manual = false } =
+  const { initialData, errorMessage = "Couldn't load that — please try again.", manual = false, clearDataOnError } =
     options;
 
   const [data, setData] = useState<T | undefined>(initialData);
@@ -106,10 +111,10 @@ export function useAsyncResource<T>(
   // that thread `refresh` down as a prop need that, or every render of the
   // parent re-renders the child.
   const fetcherRef = useRef(fetcher);
-  const configRef = useRef({ initialData, errorMessage });
+  const configRef = useRef({ initialData, errorMessage, clearDataOnError });
   useEffect(() => {
     fetcherRef.current = fetcher;
-    configRef.current = { initialData, errorMessage };
+    configRef.current = { initialData, errorMessage, clearDataOnError };
   });
 
   // Declared before the fetch effect so it is set up first on mount and torn
@@ -143,6 +148,7 @@ export function useAsyncResource<T>(
       setData(result);
     } catch (err) {
       if (!mounted.current || id !== ticket.current) return;
+      if (configRef.current.clearDataOnError?.(err)) setData(configRef.current.initialData);
       setError(friendlyError(err, configRef.current.errorMessage));
     } finally {
       if (mounted.current && id === ticket.current) {
@@ -153,6 +159,14 @@ export function useAsyncResource<T>(
   }, []);
 
   const refetch = useCallback(() => run(false), [run]);
+  const invalidate = useCallback((err: unknown) => {
+    if (!mounted.current) return;
+    ++ticket.current;
+    setData(configRef.current.initialData);
+    setError(friendlyError(err, configRef.current.errorMessage));
+    setLoading(false);
+    setLoaded(true);
+  }, []);
 
   useEffect(() => {
     if (manual) return;
@@ -162,5 +176,5 @@ export function useAsyncResource<T>(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, deps);
 
-  return { data, loading, loaded, error, refetch, setData };
+  return { data, loading, loaded, error, refetch, setData, invalidate };
 }
