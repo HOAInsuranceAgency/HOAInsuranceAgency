@@ -62,7 +62,7 @@ vi.mock("@aws-sdk/lib-dynamodb", async importOriginal => {
     throw new Error(`Unexpected storage command ${command.constructor.name}`);
   } }) } };
 });
-vi.mock("@aws-sdk/client-cognito-identity-provider", () => ({ CognitoIdentityProviderClient: class { send = async (command: any) => { if (!command.input.Filter) return h.cognitoList(command.input); const id = /"([^"]+)"/.exec(command.input.Filter)?.[1] ?? "brian"; h.userReads.push(id); if (h.userError) throw h.userError; return { Users: [{ Enabled: h.userEnabled && !h.disabledUsers.has(id), Attributes: [{ Name: "email", Value: `${id}@example.com` }, { Name: "email_verified", Value: "true" }] }] }; }; }, ListUsersCommand: class { constructor(public input: unknown) {} } }));
+vi.mock("@aws-sdk/client-cognito-identity-provider", () => ({ CognitoIdentityProviderClient: class { send = async (command: any) => { if (!command.input.Filter) throw new Error('Unfiltered user-pool scans are not allowed'); const id = /"([^"]+)"/.exec(command.input.Filter)?.[1] ?? "brian"; h.userReads.push(id); if (h.userError) throw h.userError; const override = await h.cognitoList(command.input); if (override !== undefined) return override; return { Users: [{ Enabled: h.userEnabled && !h.disabledUsers.has(id), Attributes: [{ Name: "email", Value: `${id}@example.com` }, { Name: "email_verified", Value: "true" }] }] }; }; }, ListUsersCommand: class { constructor(public input: unknown) {} } }));
 vi.mock("../../amplify/functions/communications/config", async importOriginal => ({ ...(await importOriginal<typeof import("../../amplify/functions/communications/config")>()), saveCredentials: vi.fn(), config: async () => h.c, credentials: async () => ({ frontSigningKey: "test-signing-key", dialpadSigningKey: "test-dialpad-signing-key" }) }));
 vi.mock("../../amplify/functions/communications/data", () => ({ dataClient: async () => ({ models: {
   Account: { list: h.accountList, get: async ({ id }: { id: string }) => (h.accountError ? { data: null, errors: [{ message: "Simulated account read failure" }] } : { data: { id, name: "Willow HOA", stage: "LEAD", createdAt: "2026-09-08T14:00:00.000Z", updatedAt: "2026-09-08T14:00:00.000Z", ...Object.fromEntries([["quotes", "Quote"], ["policies", "Policy"], ["priorCarriers", "PriorCarrier"], ["certificates", "Certificate"], ["invoices", "Invoice"]].map(([name, model]) => [name, async () => ({ data: [...h.records.entries()].filter(([key, r]) => key.startsWith(`${model}:`) && r.accountId === id).map(([, r]) => r) })])), contacts: async () => ({ data: [...h.records.entries()].filter(([key, c]) => key.startsWith("Contact:") && c.accountId === id).map(([,c]) => c) }), ...h.records.get(`Account:${id}`) } }) },
@@ -109,7 +109,7 @@ beforeEach(async () => {
   h.writeErrors.length = 0;
   h.reads.length = 0; h.readFailureId = undefined; h.userReads.length = 0; h.queries.length = 0; h.userError = undefined; h.queryError = undefined;
   h.deletionQuery.mockReset();
-  h.cognitoList.mockReset().mockImplementation(async () => ({ Users: [...h.records.entries()].filter(([key]) => key.startsWith('UserProfile:')).map(([, profile]) => ({ Enabled: h.userEnabled && !h.disabledUsers.has(profile.userId), Attributes: [{ Name: 'sub', Value: profile.userId }] })) }));
+  h.cognitoList.mockReset().mockResolvedValue(undefined);
   h.batch.mockReset().mockImplementation((p: { RequestItems: Record<string, { Keys: { id: string }[] }> }) => ({
     Responses: Object.fromEntries(Object.entries(p.RequestItems).map(([name, request]) => [name,
       request.Keys.map(key => h.records.get(`${name}:${key.id}`)).filter(Boolean).map(item => structuredClone(item)).reverse(),
@@ -1330,7 +1330,10 @@ describe('shared team availability', () => {
       await save(row('ELIGIBILITY', `eligibility:${id}`, { userId: id, name: id, email: `${id}@example.com`, enabled: id !== 'ineligible', salesperson: id !== 'staff' }));
     }
     const before = structuredClone([...h.records]);
-    h.cognitoList.mockResolvedValue({ Users: ['active', 'disabled', 'staff', 'ineligible'].map(id => ({ Enabled: id !== 'disabled', Attributes: [{ Name: 'sub', Value: id }] })) });
+    h.cognitoList.mockImplementation(async (input: { Filter: string }) => {
+      const id = /"([^"]+)"/.exec(input.Filter)![1];
+      return { Users: id === 'deleted' ? [] : [{ Enabled: id !== 'disabled', Attributes: [{ Name: 'sub', Value: id }] }] };
+    });
     const { handler } = await import('../../amplify/functions/communications/handler');
     const identity = { sub: 'admin', groups: ['ADMIN'] } as never;
     for (const readOperation of ['team', 'context']) {
@@ -1344,7 +1347,8 @@ describe('shared team availability', () => {
       ] });
     }
     expect([...h.records]).toEqual(before);
-    expect(h.userReads).toHaveLength(0);
+    expect(h.userReads).toEqual(['active', 'disabled', 'deleted', 'staff', 'ineligible', 'active', 'disabled', 'deleted', 'staff', 'ineligible']);
+    expect(h.cognitoList.mock.calls.every(([input]) => input.Limit === 1 && input.Filter.startsWith('sub = ') && !input.PaginationToken)).toBe(true);
     h.cognitoList.mockRejectedValue(new Error('Cognito temporarily unavailable'));
     expect(await handler({ arguments: { readOperation: 'team' }, identity })).toMatchObject({ ok: false, error: 'Cognito temporarily unavailable' });
   });

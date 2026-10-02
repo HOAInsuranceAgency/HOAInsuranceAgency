@@ -194,7 +194,7 @@ export default function NewLead() {
     <>
       <h1>New lead</h1>
       <div className="card"><div className="form-grid">
-        <ResponsibilitySelect label="Salesperson" value={salespersonId} team={members.data.team} kind="salesperson" onChange={setSalesperson} disabled={saving} />
+        <ResponsibilitySelect label="Salesperson" value={salespersonId} team={members.data.team} onChange={setSalesperson} disabled={saving} />
       </div>{members.error && <p className="error-text">{members.error}</p>}</div>
       <p className="sub">Association or individual prospect</p>
 

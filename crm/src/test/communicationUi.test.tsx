@@ -97,7 +97,7 @@ describe("communication UI boundaries", () => {
     await waitFor(() => expect(h.request).toHaveBeenCalledWith("restartConversationHistory", { conversationId: "cnv_test", reason: "Expired pagination" }, true));
   });
   it("filters assignment choices without treating eligibility as an access permission", () => {
-    render(<ResponsibilitySelect label="Salesperson" value="d" kind="salesperson" team={[
+    render(<ResponsibilitySelect label="Salesperson" value="d" team={[
       { userId: "b", name: "Brian Cole", email: "b@e.com", enabled: true, salesperson: true, available: true },
       { userId: "c", name: "Carrier specialist", email: "c@e.com", enabled: true, salesperson: false, champion: true, available: true },
       { userId: "d", name: "Disabled sign-in", email: "d@e.com", enabled: true, salesperson: true, available: false },
