@@ -16,6 +16,7 @@ import { useAsyncResource } from "../lib/useAsyncResource";
 import { useSort, SortTh } from "../lib/useSort";
 import { useCommercial, teammateName } from '../lib/commercial';
 import { OpportunityEstimate } from '../components/OpportunityEstimate';
+import { LeadSalespersonSelect } from '../components/LeadSalespersonSelect';
 import { ReportDownload } from '../components/ReportDownload';
 import { LeadSnoozeControl } from '../components/LeadSnoozeControl';
 import { leadSnoozeStatus, type LeadSnooze } from '../../../shared/leadSnooze';
@@ -35,6 +36,7 @@ export default function AccountsList({ stage }: { stage: "LEAD" | "CLIENT" }) {
   const [savedSnoozes, setSavedSnoozes] = useState<Record<string, LeadSnooze>>({});
   const [notice, setNotice] = useState('');
   const viewId = useId();
+  const [savedAssignments, setSavedAssignments] = useState<Record<string, { salespersonId?: string; workflowVersion: number }>>({});
   const navigate = useNavigate();
 
   const {
@@ -62,7 +64,13 @@ export default function AccountsList({ stage }: { stage: "LEAD" | "CLIENT" }) {
   };
   const snoozeStatus = (a: Account) => a.stage === 'LEAD' ? leadSnoozeStatus(snoozeOf(a), today) : 'ACTIVE';
   const forecastOf = (a: Account) => { const plan = commercial.data.entries[a.id]?.plan; return plan ? pendingCommission(plan, quoteResource.data.filter(q => q.accountId === a.id), today) : null; };
-  const assignee = (a: Account, role: 'salespersonId') => teammateName(commercial.data.entries[a.id]?.[role], commercial.data.team);
+  // A refresh from another row may have started before an assignment saved.
+  // Keep the newest confirmed owner even when those responses arrive out of order.
+  const assignmentOf = (a: Account) => {
+    const entry = commercial.data.entries[a.id], saved = savedAssignments[a.id];
+    return saved && saved.workflowVersion > (entry?.workflowVersion ?? -1) ? saved : entry;
+  };
+  const assignee = (a: Account, role: 'salespersonId') => teammateName(assignmentOf(a)?.[role], commercial.data.team);
 
   // Renewal dates only. A failure here costs the "Renewal" column its dates
   // and nothing else, so it stays out of the page-level error — the accounts
@@ -115,7 +123,7 @@ export default function AccountsList({ stage }: { stage: "LEAD" | "CLIENT" }) {
       : a.currentPolicyExpiration ?? null;
 
   const matching = accounts.filter(a => (a.stage === stage || stage === 'LEAD' && a.stage === 'CLIENT' && forecastOf(a)?.unfinished)
-    && (!isAdmin || !salesperson || commercial.data.entries[a.id]?.salespersonId === salesperson));
+    && (!isAdmin || !salesperson || assignmentOf(a)?.salespersonId === salesperson));
   const inView = (a: Account, view: LeadView) => view === 'All leads' || (view === 'Snoozed' ? snoozeStatus(a) === 'SNOOZED' : view === 'Follow-up due' ? snoozeStatus(a) === 'DUE' : snoozeStatus(a) !== 'SNOOZED');
   const visible = stage === 'LEAD' ? matching.filter(a => inView(a, leadView)) : matching;
   const dueCount = matching.filter(a => snoozeStatus(a) === 'DUE').length;
@@ -222,6 +230,7 @@ export default function AccountsList({ stage }: { stage: "LEAD" | "CLIENT" }) {
                   const renewal = renewalOf(a);
                   const contact = contactOf(a);
                   const snooze = snoozeOf(a);
+                  const assignment = assignmentOf(a);
                   return (
                     <tr
                       key={a.id}
@@ -242,7 +251,18 @@ export default function AccountsList({ stage }: { stage: "LEAD" | "CLIENT" }) {
                         )}
                       </td>
                       <td>{a.city || '—'}</td><td>{a.state || '—'}</td>
-                      {isAdmin && <td>{commercial.loading ? 'Loading…' : commercial.error ? 'Unavailable' : assignee(a, 'salespersonId')}</td>}
+                      {isAdmin && <td>{commercial.loading ? 'Loading…' : commercial.error ? 'Unavailable' : stage === 'LEAD' && assignment?.workflowVersion != null ? (
+                        <LeadSalespersonSelect
+                          onInteractionChange={onInteractionChange}
+                          accountId={a.id}
+                          accountName={a.name}
+                          salespersonId={assignment.salespersonId}
+                          workflowVersion={assignment.workflowVersion}
+                          team={commercial.data.team}
+                          onSaved={workflow => setSavedAssignments(current => (current[a.id]?.workflowVersion ?? -1) >= workflow.version ? current : { ...current, [a.id]: { salespersonId: workflow.salespersonId, workflowVersion: workflow.version } })}
+                          onRefresh={commercial.refetch}
+                        />
+                      ) : assignee(a, 'salespersonId')}</td>}
                       {stage === 'LEAD' && <td>{a.stage === 'LEAD' && snooze ? <LeadSnoozeControl onInteractionChange={onInteractionChange} accountName={a.name} snooze={snooze} today={today} onRefresh={commercial.refetch} onSaved={saved => {
                         setSavedSnoozes(current => (current[a.id]?.version ?? -1) >= saved.version ? current : { ...current, [a.id]: saved });
                         setNotice(saved.followUpOn ? `${a.name} snoozed until ${fmtDate(saved.followUpOn)}.` : `${a.name} is back in Active.`);

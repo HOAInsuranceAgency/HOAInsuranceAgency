@@ -8,6 +8,8 @@ export interface CommercialEntry {
   plan: CommercialPlan;
   salespersonId?: string;
   snooze?: LeadSnooze;
+  /** Optimistic-lock version for assignment edits; zero means no workflow yet. */
+  workflowVersion?: number;
   disposition?: LeadWorkflow['disposition'];
 }
 export interface CommercialData {

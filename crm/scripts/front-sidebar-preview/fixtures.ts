@@ -7,7 +7,7 @@ export const scenario = params.get('scenario') || 'lead';
 export const previewNow = '2026-09-14T13:00:00.000Z';
 export const team: TeamEligibility[] = [
   ['sales','Avery Brooks',true], ['owner','Jordan Ellis',false], ['specialist','Sam Patel',false],
-].map(([userId,name,salesperson]) => ({ userId: String(userId), name: String(name), email: `${userId}@example.test`, frontId: `tea_${userId}`, enabled: true, salesperson: !!salesperson }));
+].map(([userId,name,salesperson]) => ({ userId: String(userId), name: String(name), email: `${userId}@example.test`, frontId: `tea_${userId}`, enabled: true, salesperson: !!salesperson, available: true }));
 const bound = ['renewal','service'].includes(scenario);
 const wf: LeadWorkflow = { accountId:'example', name:'Willow Court Condominium', salespersonId:'sales',disposition:bound?'BOUND':'ACTIVE',conversationId:'cnv_example',version:1,updatedAt:previewNow };
 const carrier = scenario === 'carrier';

@@ -60,6 +60,7 @@ export async function commercialTable(ids: unknown, snoozeAccountIds?: unknown) 
         ? { ...plan.data, version: plan.version }
         : emptyCommercialPlan(id),
       salespersonId: workflow?.data.salespersonId,
+      workflowVersion: workflow?.version ?? 0,
       disposition: workflow?.data.disposition,
       ...(snoozeIds.has(id) ? { snooze: snooze
         ? { ...snooze.data, version: snooze.version }

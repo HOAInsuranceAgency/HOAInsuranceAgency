@@ -45,8 +45,8 @@ beforeEach(() => {
 afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
 
 function Location() { return <output aria-label="Current route">{useLocation().pathname}</output>; }
-function page(stage: 'LEAD' | 'CLIENT' = 'LEAD') {
-  return <AdminContext.Provider value={false}><MemoryRouter initialEntries={[stage === 'LEAD' ? '/leads' : '/clients']}>
+function page(stage: 'LEAD' | 'CLIENT' = 'LEAD', admin = false) {
+  return <AdminContext.Provider value={admin}><MemoryRouter initialEntries={[stage === 'LEAD' ? '/leads' : '/clients']}>
     <AccountsList stage={stage} /><Location />
   </MemoryRouter></AdminContext.Provider>;
 }
@@ -360,4 +360,58 @@ it('waits for an estimated opportunity save before refreshing', async () => {
   await allowReturnRefresh();
   expect(h.listAccounts).toHaveBeenCalledTimes(2);
   expect(row(willow).queryByLabelText('Estimated agency commission')).not.toBeInTheDocument();
+});
+
+it('defers return refresh while an admin changes a snoozed lead owner and retains the saved assignment', async () => {
+  snoozes.willow = { accountId: 'willow', version: 2, followUpOn: '2026-10-09', note: 'Waiting for the board' };
+  const initial = h.request.getMockImplementation()!;
+  let finishAssignment!: (value: unknown) => void;
+  let assignmentRequests = 0;
+  h.request.mockImplementation(async (operation, input) => {
+    if (operation === 'team') return { team: [
+      { userId: 'alice', name: 'Alice', enabled: true, salesperson: true, available: true },
+      { userId: 'bob', name: 'Bob', enabled: true, salesperson: true, available: true },
+    ] };
+    if (operation === 'commercialTable') {
+      const result = await initial(operation, input);
+      // The returned snapshot intentionally predates the successful save.
+      return { items: result.items.map((item: Record<string, unknown>) => ({ ...item, salespersonId: 'alice', workflowVersion: 7 })) };
+    }
+    if (operation === 'setResponsibilities') {
+      if (++assignmentRequests === 1) return new Promise(resolve => { finishAssignment = resolve; });
+      return { workflow: { accountId: input.accountId, salespersonId: input.salespersonId, version: input.version + 1 } };
+    }
+    return initial(operation, input);
+  });
+  render(page('LEAD', true));
+  await screen.findByRole('button', { name: `Snooze ${pine}` });
+  chooseView('Snoozed');
+  const picker = screen.getByRole('combobox', { name: `Salesperson for ${willow}` });
+  fireEvent.change(picker, { target: { value: 'bob' } });
+  act(() => returnToPage());
+  await allowReturnRefresh();
+  expect(h.listAccounts).toHaveBeenCalledTimes(1);
+  expect(h.request.mock.calls.filter(([operation]) => operation === 'commercialTable')).toHaveLength(1);
+  expect(screen.getByRole('combobox', { name: `Salesperson for ${willow}` })).toBe(picker);
+  expect(picker).toBeDisabled();
+  expect(picker).toHaveValue('bob');
+  expect(row(willow).getByRole('status')).toHaveTextContent('Saving…');
+  expect(screen.getByLabelText('Current route')).toHaveTextContent('/leads');
+
+  await act(async () => finishAssignment({ workflow: { accountId: 'willow', salespersonId: 'bob', version: 8 } }));
+  await allowReturnRefresh();
+  expect(h.listAccounts).toHaveBeenCalledTimes(2);
+  expect(h.request.mock.calls.filter(([operation]) => operation === 'commercialTable')).toHaveLength(2);
+  expect(screen.getByRole('tab', { name: 'Snoozed' })).toHaveAttribute('aria-selected', 'true');
+  const refreshedPicker = screen.getByRole('combobox', { name: `Salesperson for ${willow}` });
+  expect(refreshedPicker).toBeEnabled();
+  expect(refreshedPicker).toHaveValue('bob');
+  expect(row(willow).getByText('Waiting for the board')).toBeInTheDocument();
+  fireEvent.change(screen.getByRole('combobox', { name: 'Salesperson' }), { target: { value: 'bob' } });
+  expect(screen.getByText(willow)).toBeInTheDocument();
+  fireEvent.change(screen.getByRole('combobox', { name: 'Download Leads' }), { target: { value: 'csv' } });
+  const section = h.saveReport.mock.calls[0][0].sections[0];
+  expect(section.rows[0][section.columns.indexOf('Salesperson')]).toBe('Bob');
+  fireEvent.change(refreshedPicker, { target: { value: 'alice' } });
+  await waitFor(() => expect(h.request).toHaveBeenCalledWith('setResponsibilities', { accountId: 'willow', salespersonId: 'alice', version: 8 }, true));
 });

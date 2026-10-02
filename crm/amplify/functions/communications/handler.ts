@@ -24,6 +24,7 @@ import { modelPut } from "../lead-intake/handler";
 import type { ConversationLink } from "./events";
 import { isActiveAdmin, type RoleRequest } from "../crm-access/active-role";
 import { readLeadSnooze, saveLeadSnooze } from "./snooze";
+import { availableTeamUsers } from "./teamAvailability";
 
 type Input = Record<string, unknown>;
 function object(value: unknown): Input {
@@ -38,7 +39,8 @@ async function roster() {
   const client = await dataClient(), eligibility = await team();
   const profiles = []; let nextToken: string | null | undefined;
   do { const p = await client.models.UserProfile.list({ nextToken, limit: 100 }); if (p.errors?.length) throw new Error("Could not load teammates"); profiles.push(...p.data); nextToken = p.nextToken; } while (nextToken);
-  return profiles.map(p => eligibility.find(t => t.userId === p.userId) ?? { userId: p.userId, name: `${p.firstName} ${p.lastName}`, email: p.email, enabled: true, salesperson: false, version: 0 });
+  const available = await availableTeamUsers(profiles.map(p => p.userId));
+  return profiles.map(p => ({ ...(eligibility.find(t => t.userId === p.userId) ?? { userId: p.userId, name: `${p.firstName} ${p.lastName}`, email: p.email, enabled: true, salesperson: false, version: 0 }), available: available.has(p.userId) }));
 }
 function safeCommunication(data: Communication): Communication {
   return { ...data, text: data.text?.replace(/([?&](?:t|token|uploadToken)=)[^\s&<>]+/gi, "$1[protected]") };
@@ -199,7 +201,7 @@ export const handler = async (event: { arguments: { operation?: string; readOper
       if (next.dialpadId && !/^\d+$/.test(next.dialpadId)) throw new Error("Invalid Dialpad user ID");
       const saved = row("ELIGIBILITY", `eligibility:${userId}`, next, { previous: old });
       await commit([put(saved, old), audit("TEAM", actor, "Assignment eligibility changed", next)]);
-      return { ok: true, member: { ...next, version: saved.version } };
+      return { ok: true, member: { ...next, version: saved.version, available: member.available } };
     }
     if (op === "saveSettings") {
       requireAdmin(); const value = object(input.config) as unknown as IntegrationConfig;
