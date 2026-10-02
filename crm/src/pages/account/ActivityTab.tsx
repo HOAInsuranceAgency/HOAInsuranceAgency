@@ -7,6 +7,8 @@ import {
   type Activity,
 } from "../../lib/client";
 import { useAsyncResource } from "../../lib/useAsyncResource";
+import { communicationRequest, type Communication } from "../../lib/communications";
+import { isAuthorizationError } from "../../lib/authorizationError";
 import LeadWorkflowPanel from "../../components/LeadWorkflowPanel";
 import { fieldLabel } from "../../../amplify/functions/activity-log/diff";
 import "./ActivityTab.css";
@@ -14,10 +16,10 @@ import "./ActivityTab.css";
 /**
  * Account-change history, newest first, below the communication workspace.
  *
- * Read-only by construction, not by convention: the `Activity` model grants a
- * signed-in user `read` and nothing else, and the rows are written by the
- * stream handler as an IAM principal. Notes added in the communication
- * workspace are separate records; they do not write audit rows directly.
+ * The `Activity` model grants signed-in users read access only. Its rows are
+ * written by the stream handler and backend services as IAM principals.
+ * Internal notes live in Communication records; their audit rows contain a
+ * reference, so opening a note reads its text through the account-scoped API.
  *
  * ## What the timeline can and cannot tell you
  *
@@ -43,6 +45,12 @@ function readChanges(raw: unknown): ChangeRow[] {
     return [];
   }
   return Array.isArray(v) ? (v as ChangeRow[]) : [];
+}
+
+function internalNoteId(activity: Activity, changes: ChangeRow[]): string | undefined {
+  if (activity.subjectType !== "Lead communication" || activity.summary !== "Internal note added") return;
+  const id = changes.find(change => change?.field === "id")?.to;
+  return typeof id === "string" && id.startsWith("note:") && id.length > 5 ? id : undefined;
 }
 
 /**
@@ -218,7 +226,7 @@ function AccountChanges({ accountId }: { accountId: string }) {
                           {r.subjectLabel && <span className="account-change-record">{r.subjectLabel}</span>}
                         </td>
                         <td>
-                          <ChangeDetails summary={r.summary} changes={changes} />
+                          <ChangeDetails accountId={accountId} summary={r.summary} changes={changes} noteId={internalNoteId(r, changes)} />
                         </td>
                       </tr>
                     );
@@ -234,15 +242,15 @@ function AccountChanges({ accountId }: { accountId: string }) {
 }
 
 /** Keep large before/after values out of the DOM until their row is opened. */
-function ChangeDetails({ summary, changes }: { summary: Activity["summary"]; changes: ChangeRow[] }) {
+function ChangeDetails({ accountId, summary, changes, noteId }: { accountId: string; summary: Activity["summary"]; changes: ChangeRow[]; noteId?: string }) {
   const [expanded, setExpanded] = useState(false);
   return (
     <details className="account-change-details" onToggle={event => setExpanded(event.currentTarget.open)}>
       <summary>
         <span className="account-change-summary">{summary}</span>
-        <span className="account-change-expand">{changes.length ? `${changes.length} field change${changes.length === 1 ? "" : "s"}` : "View details"}</span>
+        <span className="account-change-expand">{noteId ? "View note" : changes.length ? `${changes.length} field change${changes.length === 1 ? "" : "s"}` : "View details"}</span>
       </summary>
-      {expanded && (changes.length ? (
+      {expanded && (noteId ? <InternalNoteContent key={`${accountId}:${noteId}`} accountId={accountId} noteId={noteId} /> : changes.length ? (
         <dl className="account-change-fields">
           {changes.map((c, index) => (
             <div className="account-change-field" key={`${c.field}-${index}`}>
@@ -256,5 +264,26 @@ function ChangeDetails({ summary, changes }: { summary: Activity["summary"]; cha
         </dl>
       ) : <p className="account-change-no-details">No field-level details recorded.</p>)}
     </details>
+  );
+}
+
+/** Unmount on collapse so reopening checks current access and note content. */
+function InternalNoteContent({ accountId, noteId }: { accountId: string; noteId: string }) {
+  const note = useAsyncResource(async () => {
+    const result = await communicationRequest<{ communication?: Communication | null }>("activity", { id: noteId, accountId });
+    const communication = result.communication;
+    if (!communication || communication.id !== noteId || communication.accountId !== accountId || communication.channel !== "NOTE") {
+      throw new Error("Could not load this note.");
+    }
+    return typeof communication.text === "string" && communication.text.trim() ? communication.text : null;
+  }, [accountId, noteId], { initialData: null, errorMessage: "Could not load this note.", clearDataOnError: isAuthorizationError });
+
+  return (
+    <div className="account-change-note">
+      {!note.loaded || note.loading ? <p className="account-change-note-state" role="status">Loading note…</p>
+        : note.error ? <div role="alert"><p className="account-change-note-state error-text">Could not load this note.</p><button className="secondary small" onClick={() => void note.refetch()}>Retry note</button></div>
+          : note.data === null ? <div><p className="account-change-note-state">Note text is unavailable.</p><button className="secondary small" onClick={() => void note.refetch()}>Retry note</button></div>
+            : <p className="account-change-note-text">{note.data}</p>}
+    </div>
   );
 }
