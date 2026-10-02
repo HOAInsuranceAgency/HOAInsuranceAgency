@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { communicationRequest } from '../lib/communications';
+import { useRowInteraction, type InteractionChange } from '../lib/useRefreshOnReturn';
 import {
   formatCommission,
   parseEstimate,
@@ -9,14 +10,17 @@ import {
 export function OpportunityEstimate({
   plan,
   onSaved,
+  onInteractionChange,
 }: {
   plan: CommercialPlan;
   onSaved: (plan: CommercialPlan) => void;
+  onInteractionChange?: InteractionChange;
 }) {
   const [editing, setEditing] = useState(false),
     [amount, setAmount] = useState(''),
     [saving, setSaving] = useState(false),
     [error, setError] = useState('');
+  useRowInteraction(`estimate:${plan.accountId}`, editing || saving, onInteractionChange);
   return (
     <div
       onClick={(e) => e.stopPropagation()}

@@ -3,9 +3,10 @@ import { useIsAdmin } from '../lib/auth';
 import { friendlyError } from '../lib/client';
 import { communicationRequest, type LeadWorkflow, type TeamEligibility } from '../lib/communications';
 import { isAssignableSalesperson } from '../../../shared/salespersonOwnership';
+import { useRowInteraction, type InteractionChange } from '../lib/useRefreshOnReturn';
 
 export function LeadSalespersonSelect({
-  accountId, accountName, salespersonId, workflowVersion, team, onSaved, onRefresh,
+  accountId, accountName, salespersonId, workflowVersion, team, onSaved, onRefresh, onInteractionChange,
 }: {
   accountId: string;
   accountName: string;
@@ -14,6 +15,7 @@ export function LeadSalespersonSelect({
   team: TeamEligibility[];
   onSaved: (workflow: LeadWorkflow) => void;
   onRefresh: () => Promise<void>;
+  onInteractionChange?: InteractionChange;
 }) {
   const isAdmin = useIsAdmin();
   const messageId = useId();
@@ -21,6 +23,7 @@ export function LeadSalespersonSelect({
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [saved, setSaved] = useState(false);
+  useRowInteraction(`assignment:${accountId}`, pending !== null, onInteractionChange);
   const eligible = team.filter(isAssignableSalesperson);
 
   async function assign(nextId: string) {

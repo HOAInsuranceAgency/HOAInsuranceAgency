@@ -23,6 +23,7 @@ import { enqueueOperation } from "./operations";
 import { modelPut } from "../lead-intake/handler";
 import type { ConversationLink } from "./events";
 import { isActiveAdmin, type RoleRequest } from "../crm-access/active-role";
+import { readLeadSnooze, saveLeadSnooze } from "./snooze";
 import { availableTeamUsers } from "./teamAvailability";
 
 type Input = Record<string, unknown>;
@@ -62,7 +63,7 @@ export const handler = async (event: { arguments: { operation?: string; readOper
       if (op === 'dashboardInterestPage') { requireAdmin(); return { ok: true, ...await (await import('./dashboardFinanceRead')).dashboardInterestPage(input) }; }
       if (op === 'dashboardPolicyAnchors') { requireAdmin(); return { ok: true, ...await (await import('./dashboardFinanceRead')).dashboardPolicyAnchors(input) }; }
       if (op === 'dashboardLeadPlansPage') { requireAdmin(); return { ok: true, ...await (await import('./dashboardLeadRead')).dashboardLeadPlansPage(input) }; }
-      if (op === "commercialTable") return { ok: true, items: await (await import("./commercial")).commercialTable(input.accountIds) };
+      if (op === "commercialTable") return { ok: true, items: await (await import("./commercial")).commercialTable(input.accountIds, input.snoozeAccountIds) };
       if (op === "lastContacts") {
         const accounts = input.accounts;
         if (!Array.isArray(accounts) || accounts.length > 10) throw new Error("Choose up to 10 leads at a time");
@@ -102,11 +103,16 @@ export const handler = async (event: { arguments: { operation?: string; readOper
         const conversationId = text(input, "conversationId");
         if (conversationId) { const conversation = await permittedConversation(conversationId); const link = await get<ConversationLink>(`front-link:${conversation.id}`); accountId = link?.data.accountId ?? ""; frontContext = { conversationId: conversation.id, assigneeId: conversation.assignee?.id, routing: link?.data.routing, purpose: link?.data.purpose, context: link?.data.context, policyId: link?.data.policyId }; }
         if (!accountId) return { ok: true, workflow: null, tasks: [], communications: [], issues: [], team: await roster() };
-        const [wf, communications, issues, members, settings, health, monitor, syncGap] = await Promise.all([
+        const [wf, communications, issues, members, settings, health, monitor, syncGap, { account, snooze }] = await Promise.all([
           get<LeadWorkflow>(`workflow:${accountId}`),
           query<Communication>("account", accountId, text(input, "nextToken") || undefined, 50, "COMMUNICATION#"),
           accountRows<{ message: string; at: string; resolved?: boolean; sourceId?: string }>(accountId, "ISSUE"), roster(), config(),
           get("health:worker"), get("health:monitor"), get("issue:sync-gap"),
+          (async () => {
+            const result = await (await dataClient()).models.Account.get({ id: accountId });
+            if (result.errors?.length || !result.data) throw new Error("Could not load this account");
+            return { account: result.data, snooze: result.data.stage === "LEAD" ? await readLeadSnooze(accountId) : undefined };
+          })(),
         ]);
         const recent = (value: unknown, maxAge: number) => {
           const age = typeof value === "string" ? Date.now() - Date.parse(value) : NaN;
@@ -117,7 +123,7 @@ export const handler = async (event: { arguments: { operation?: string; readOper
           && health?.data.lagging === false && recent(health.data.at, 300_000)
           && Array.isArray(monitor?.data.errors) && monitor.data.errors.length === 0 && recent(monitor.data.at, 600_000)
           && (!syncGap || syncGap.data.resolved === true);
-        return { ok: true, actorId: actor, trackingHealthy, frontContext, workflow: wf ? { ...salespersonWorkflow(wf.data), version: wf.version } : null,
+        return { ok: true, actorId: actor, trackingHealthy, frontContext, ...(account.stage === "LEAD" ? { snooze } : {}), workflow: wf ? { ...salespersonWorkflow(wf.data), version: wf.version } : null,
           tasks: [], communications: communications.items.filter(r => r.data.status !== "DRAFT").map(r => safeCommunication({ ...r.data, version: r.version })),
           communicationNextToken: communications.nextToken, issues: issues.filter((_, i) => issueVisibility[i]).map(r => ({ id: r.id, ...r.data })), team: members };
       }
@@ -136,6 +142,7 @@ export const handler = async (event: { arguments: { operation?: string; readOper
       throw new Error("Unknown read operation");
     }
     if (op === "saveCommercial") return { ok: true, plan: await (await import("./commercial")).saveCommercial(input, actor) };
+    if (op === "saveLeadSnooze") return { ok: true, snooze: await saveLeadSnooze(input, actor, admin) };
     if (op === 'prepareLeadDeletion') { requireAdmin(); await (await import('./deletion')).prepareLeadDeletion(text(input, 'accountId'), text(input, 'name'), actor); return { ok: true }; }
     if (op === "prepareBusinessDraft") return { ok: true, draft: await (await import("./businessDelivery")).prepareBusinessDraft(input as unknown as Parameters<typeof import("./businessDelivery").prepareBusinessDraft>[0], actor) };
     if (op === "authorizeBind") {
