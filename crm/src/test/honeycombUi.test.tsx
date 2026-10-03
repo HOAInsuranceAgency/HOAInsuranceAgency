@@ -95,8 +95,8 @@ it("leaves the saved-lead confirmation alone on network failure or deadline", as
 });
 it("preserves supplied property inputs and never routes HO-6 as an association", () => {
   const details = { associationName: "Example", propertyKind: "condominium", grossSquareFeet: "12000", replacementValue: "2500000" };
-  expect(buildCrmLead({ ...details, role: "board" }, "Brian")).toMatchObject({ type: "ASSOCIATION", grossSquareFeet: "12000", replacementValue: "2500000", propertyKind: "condominium" });
-  expect(buildCrmLead({ ...details, role: "owner" }, "Brian").grossSquareFeet).toBeUndefined();
+  expect(buildCrmLead({ ...details, role: "board" })).toMatchObject({ type: "ASSOCIATION", grossSquareFeet: "12000", replacementValue: "2500000", propertyKind: "condominium" });
+  expect(buildCrmLead({ ...details, role: "owner" }).grossSquareFeet).toBeUndefined();
 });
 
 it.each([25000, 45000, 60000])("accepts an estimate after %i ms without holding up the receipt", async delay => {

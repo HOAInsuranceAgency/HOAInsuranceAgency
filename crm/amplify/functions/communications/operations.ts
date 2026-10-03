@@ -130,7 +130,8 @@ export async function runOperation(candidate: Row<Operation>) {
       await assertRecipient(email);
       const externalId = `hoa:${c.environment}:${op.data.submissionId}`;
       const brief = renderIntakeBrief({ snapshot: submission.data.snapshot, receivedAt: submission.data.receivedAt,
-        accountId: op.data.accountId, accountName: wf.data.name, submissionId: op.data.submissionId!, environment: c.environment, crmBaseUrl: process.env.CRM_BASE_URL });
+        accountId: op.data.accountId, accountName: wf.data.name, submissionId: op.data.submissionId!, environment: c.environment, crmBaseUrl: process.env.CRM_BASE_URL,
+        assignedSalespersonName: assignee.data.name });
       path = `/inboxes/${c.frontInboxId}/imported_messages`;
       body = { sender: { handle: email, name: [submission.data.snapshot.contactFirstName, submission.data.snapshot.contactLastName].filter(Boolean).join(" ") || wf.data.name },
         to: [c.frontSender], subject: `Website enquiry — ${wf.data.name}`, body: brief.html, body_format: "html", external_id: externalId,

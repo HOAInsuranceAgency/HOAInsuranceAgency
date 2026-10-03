@@ -12,7 +12,7 @@ function Field({ initial = "" }: { initial?: string }) {
   const [value, setValue] = useState(initial);
   return <>
     <NumberField aria-label="Replacement cost" value={value} onChange={setValue} />
-    <output data-testid="submitted">{buildCrmLead({ role: "board", replacementValue: value }, "Brian").replacementValue ?? ""}</output>
+    <output data-testid="submitted">{buildCrmLead({ role: "board", replacementValue: value }).replacementValue ?? ""}</output>
   </>;
 }
 

@@ -60,12 +60,38 @@ describe.each(["board", "manager", "owner"])("%s quote contact step", (role) => 
         contactEmail: "taylor@example.com",
         contactPhone,
       };
-      expect(buildCrmLead(data, "Brian Cole").contactPhone).toBe(contactPhone);
+      expect(buildCrmLead(data).contactPhone).toBe(contactPhone);
 
-      const snapshot = JSON.parse(buildCrmLead(data, "Brian Cole").answerSnapshot!);
+      const snapshot = JSON.parse(buildCrmLead(data).answerSnapshot!);
       expect(snapshot.Phone).toBe(contactPhone);
       expect(snapshot["Full Name"]).toBe("Taylor Example");
 
     }
   );
+});
+
+it("submits the prospect's details without claiming the website greeter is their assigned agent", () => {
+  const lead = buildCrmLead({
+    role: "board",
+    associationName: "Trumbull Village",
+    contactName: "Patrick Meres",
+    contactEmail: "prospect@example.com",
+    coverageNeeds: ["master_property", "general_liability"],
+  });
+  const snapshot = JSON.parse(lead.answerSnapshot!);
+
+  expect(lead).toMatchObject({
+    name: "Trumbull Village",
+    contactFirstName: "Patrick",
+    contactLastName: "Meres",
+    contactEmail: "prospect@example.com",
+    notes: "Role: Board Member / Trustee\nLines to review: Commercial Property, General Liability",
+  });
+  expect(snapshot).toMatchObject({
+    "Full Name": "Patrick Meres",
+    Association: "Trumbull Village",
+    "Lines to Review": "Commercial Property, General Liability",
+  });
+  expect(snapshot).not.toHaveProperty("Website Agent");
+  expect(JSON.stringify(lead)).not.toMatch(/Assigned agent|Brian Cole/);
 });

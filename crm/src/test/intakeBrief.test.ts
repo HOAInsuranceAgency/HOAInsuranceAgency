@@ -20,13 +20,47 @@ describe("agent intake brief", () => {
     expect(intakeReferenceFromHtml(html, base.crmBaseUrl)).toBe(base.submissionId);
   });
 
-  it("preserves the quote wizard's coverage, role, agent, renewal, and second address line", () => {
-    const { html } = render({ contactFirstName: "Jane", address: "181 Ruggles Street, Suite 2", city: "Westborough", state: "MA", zip: "01581", unitCount: 33, currentCarrier: "Example Mutual", currentPolicyExpiration: "2027-01-01", source: "website-quote", notes: "Role: Board Member / Trustee\nAssigned agent: Brian Cole\nLines to review: General Liability, Crime / Fidelity", answers: { Association: "Willow HOA", Role: "Board Member / Trustee", "Website Agent": "Brian Cole", "Property Address": "181 Ruggles Street", "Address Line 2": "Suite 2", "Unit Count": "33", "Current Carriers": "Example Mutual", "Program Expiry": "2027-01-01", "Lines to Review": "General Liability, Crime / Fidelity" } }, { environment: "main" });
+  it("shows the verified salesperson instead of the quote wizard's legacy greeter", () => {
+    const snapshot = { contactFirstName: "Jane", address: "181 Ruggles Street, Suite 2", city: "Westborough", state: "MA", zip: "01581", unitCount: 33, currentCarrier: "Example Mutual", currentPolicyExpiration: "2027-01-01", source: "website-quote", notes: "Role: Board Member / Trustee\nAssigned agent: Brian Cole\nLines to review: General Liability, Crime / Fidelity", answers: { Association: "Willow HOA", Role: "Board Member / Trustee", "Website Agent": "Brian Cole", "Assigned agent": "Brian Cole", "Property Address": "181 Ruggles Street", "Address Line 2": "Suite 2", "Unit Count": "33", "Current Carriers": "Example Mutual", "Program Expiry": "2027-01-01", "Lines to Review": "General Liability, Crime / Fidelity" } };
+    const original = structuredClone(snapshot);
+    const { html, text: plain } = render(snapshot, { environment: "main", assignedSalespersonName: "Jake Greasley" });
     const text = bodyText(html);
-    for (const value of ["Willow HOA", "33 units", "Jan 1, 2027", "General Liability, Crime / Fidelity", "Board Member / Trustee", "Brian Cole"]) expect(text).toContain(value);
+    for (const value of ["Willow HOA", "33 units", "Jan 1, 2027", "General Liability, Crime / Fidelity", "Board Member / Trustee", "Salesperson at intake", "Jake Greasley"]) expect(text).toContain(value);
+    for (const output of [text, plain]) {
+      expect(output).not.toContain("Brian Cole"); expect(output).not.toContain("Website agent"); expect(output).not.toContain("Assigned agent");
+    }
+    expect(plain).toContain("Salesperson at intake: Jake Greasley");
+    expect(snapshot).toEqual(original);
     expect(text.match(/Suite 2/g)).toHaveLength(1);
     expect(text.match(/General Liability, Crime \/ Fidelity/g)).toHaveLength(1);
     expect(text).not.toContain("STAGING TEST"); expect(text).not.toContain("Submission notes");
+  });
+
+  it("never falls back to a legacy greeter when the verified salesperson name is missing", () => {
+    const { html, text } = render({ source: "website-quote", notes: "Assigned agent: Brian Cole", answers: { "Website Agent": "Brian Cole", Notes: "Assigned agent: Brian Cole" } });
+    for (const output of [bodyText(html), text]) {
+      expect(output).not.toContain("Brian Cole"); expect(output).not.toContain("Salesperson at intake");
+    }
+  });
+
+  it("preserves genuine notes and prospect messages mentioning the legacy greeter", () => {
+    const notes = "Assigned agent: Brian Cole\nBrian Cole answered our last question.\nAssigned agent: Daniel Rocha";
+    const { html, text } = render({ source: "website-quote", notes, answers: { "Website Agent": "Brian Cole" } }, { assignedSalespersonName: "Jake Greasley" });
+    for (const output of [bodyText(html), text]) {
+      expect(output).toContain("Brian Cole answered our last question."); expect(output).toContain("Assigned agent: Daniel Rocha");
+      expect(output).not.toContain("Assigned agent: Brian Cole");
+    }
+    // A prospect's message is not a generated note block, even when it happens
+    // to use the same wording as the legacy form's metadata.
+    expect(render({ source: "website-quote", answers: { "Website Agent": "Brian Cole", Message: "Assigned agent: Brian Cole" } }).text).toContain("Assigned agent: Brian Cole");
+  });
+
+  it("escapes the verified salesperson name in HTML", () => {
+    const name = '<img src=x onerror="alert(1)">';
+    const { html, text } = render({}, { assignedSalespersonName: name });
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    expect(doc.querySelectorAll("img, [onerror]")).toHaveLength(0);
+    expect(doc.body.textContent).toContain(name); expect(text).toContain(`Salesperson at intake: ${name}`);
   });
 
   it.each([
