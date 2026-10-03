@@ -30,6 +30,21 @@ const font = "Arial,Helvetica,sans-serif";
 const richText = (value: string) => escape(value).replace(/\r?\n/g, "<br>");
 type Detail = [string, string];
 
+/** Old quote pages added a greeter to generated notes, not the CRM assignment.
+ * Strip only that exact generated line; keep the immutable answers and any
+ * genuine prospect prose, including mentions of the same person.
+ */
+export function stripLegacyWebsiteAgentNote(notes: string, snapshot: Record<string, unknown>): string {
+  if (snapshot.source !== "website-quote") return notes;
+  const answers = snapshot.answers;
+  if (!answers || typeof answers !== "object" || Array.isArray(answers)) return notes;
+  const agent = Object.entries(answers).find(([name]) => key(name) === "websiteagent")?.[1];
+  if (typeof agent !== "string" || !agent.trim() || agent.trim().length > 200 || /[\x00-\x1f\x7f]/.test(agent)) return notes;
+  const generated = `Assigned agent: ${agent.trim()}`;
+  const lines = notes.split(/\r?\n/), kept = lines.filter(line => line.trim() !== generated);
+  return kept.length === lines.length ? notes : kept.join("\n");
+}
+
 export interface IntakeBriefInput {
   snapshot: Record<string, unknown>;
   accountId: string;
@@ -38,6 +53,7 @@ export interface IntakeBriefInput {
   receivedAt: string;
   environment: string;
   crmBaseUrl?: string;
+  assignedSalespersonName?: string;
 }
 
 export function renderIntakeBrief(input: IntakeBriefInput): { html: string; text: string } {
@@ -88,19 +104,22 @@ export function renderIntakeBrief(input: IntakeBriefInput): { html: string; text
   const coverages = take("Lines to Review", "Coverage Needs");
   const need = take("What They Need");
   const shown = take("Coverages Shown");
-  const websiteAgent = take("Website Agent");
-  const message = take("Message", "Notes");
-  const notes = valueText(s.notes);
+  // Legacy website greeters are not authoritative CRM assignments. Consume
+  // both aliases so neither can leak into the additional-details fallback.
+  take("Website Agent", "Assigned agent");
+  const prospectMessage = take("Message"), answerNotes = take("Notes");
+  const message = prospectMessage || stripLegacyWebsiteAgentNote(answerNotes, s).trim();
+  const notes = stripLegacyWebsiteAgentNote(valueText(s.notes), s);
   // The website adds these structured facts to Account.notes as well. Keep
   // genuine free text, but don't repeat the same coverage/role block below it.
-  const generatedNotes = [association && `Association: ${association}`, role && `Role: ${role}`, websiteAgent && `Assigned agent: ${websiteAgent}`,
+  const generatedNotes = [association && `Association: ${association}`, role && `Role: ${role}`,
     coverages && `Lines to review: ${coverages}`, need && `What they need: ${need}`, shown && `Coverages shown: ${shown.replace(/ \([^)]*\)/g, "")}`].filter(Boolean);
   const additionalNotes = notes.split(/\r?\n/).filter(line => !generatedNotes.includes(line.trim())).join("\n").trim();
   const note = message || additionalNotes;
   const property: Detail[] = [["Property address", location], ["Address line 2", !address.includes(line2) ? line2 : ""], ["Unit number", unit], ["Association size", units ? `${units} ${units === "1" ? "unit" : "units"}` : ""]];
   const coverage: Detail[] = [["Requested coverage", coverages], ["What they need", need], [isPersonal ? "Current HO-6 carrier" : "Current carrier", carrier], ["Policy expiration", dateOnly(renewal)], ["Coverages shown in calculator", shown]];
   const additional: Detail[] = Object.entries(answers).filter(([k]) => !used.has(k) && !technical(k)).map(([k, v]) => [label(k), valueText(v)]);
-  if (websiteAgent) additional.push(["Website agent", websiteAgent]);
+  if (input.assignedSalespersonName?.trim()) additional.push(["Salesperson at intake", input.assignedSalespersonName.trim()]);
   // Preserve a useful source label without exposing route slugs or system keys.
   const formSourceLabel = source.startsWith("website-ho6:") ? "Association page"
     : source === "website-quote" ? "Quote form" : source === "website-contact" ? "Contact form"

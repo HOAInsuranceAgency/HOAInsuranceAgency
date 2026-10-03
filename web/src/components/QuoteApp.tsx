@@ -401,7 +401,7 @@ function QuoteFlow({ isDay, onToggleTheme }: { isDay: boolean; onToggleTheme: ()
     setSubmitting(true);
     setError("");
     try {
-      const leadResult = await leadSubmission.submit(buildCrmLead(finalData, agent.name));
+      const leadResult = await leadSubmission.submit(buildCrmLead(finalData));
       setUploadToken(leadResult.uploadToken);
       setEstimateToken(leadResult.estimateToken);
       setDirection(1);
