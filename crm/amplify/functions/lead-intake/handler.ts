@@ -9,6 +9,7 @@ import { NO_UPLOAD_WINDOW_MINUTES } from "../../../../shared/leadUpload";
 import { parsePolicyExpiration, parseUnitCount } from "./fields";
 import { canonical, hash, get, row, put, commit, conflict, retryableStorage, type Write } from "../communications/store";
 import { pendingWebLeadWorkflow, webLeadAssignmentRow } from "./assignment";
+import { stripLegacyWebsiteAgentNote } from "./brief";
 
 export interface Submission {
   fingerprint: string; proofHash: string; accountId: string; uploadToken: string | null;
@@ -46,6 +47,8 @@ export const handler: Schema["submitWebLead"]["functionHandler"] = async event =
   const fingerprint = hash(canonical(answers)), key = `submission:${submissionId}`;
   const previous = await get<Submission>(key);
   if (previous) return replay(previous.data, fingerprint, proof);
+  let snapshot: Record<string, unknown> = { ...answers };
+  if (typeof args.answerSnapshot === "string") { try { snapshot = { ...answers, answers: JSON.parse(args.answerSnapshot) }; } catch { return { ok: false, error: "The form answers could not be read." }; } }
   const name = clean(args.name, 200);
   if (!name) return { ok: false, error: "Name is required" };
   const id = randomUUID(), at = new Date().toISOString();
@@ -53,7 +56,7 @@ export const handler: Schema["submitWebLead"]["functionHandler"] = async event =
   const validEmail = email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : undefined;
   const unitCount = parseUnitCount(args.unitCount), expiration = parsePolicyExpiration(args.currentPolicyExpiration);
   const contactName = [clean(args.contactFirstName, 100), clean(args.contactLastName, 100)].filter(Boolean).join(" ") || name;
-  const notes = [clean(args.notes, 10000), args.unitNumber && `Unit: ${clean(args.unitNumber)}`, email && !validEmail && `Email (unvalidated): ${email}`,
+  const notes = [stripLegacyWebsiteAgentNote(clean(args.notes, 10000) ?? "", snapshot), args.unitNumber && `Unit: ${clean(args.unitNumber)}`, email && !validEmail && `Email (unvalidated): ${email}`,
     unitCount === null && args.unitCount && `Units (unparsed): ${clean(args.unitCount)}`,
     expiration === null && args.currentPolicyExpiration && `Program expiry (unparsed): ${clean(args.currentPolicyExpiration)}`].filter(Boolean).join("\n");
   const attribution = cleanAttribution(args.attribution);
@@ -62,8 +65,6 @@ export const handler: Schema["submitWebLead"]["functionHandler"] = async event =
     address: clean(args.address, 500), city: clean(args.city, 100), state: clean(args.state, 2)?.toUpperCase(), zip: clean(args.zip, 10),
     unitCount: unitCount ?? undefined, currentPolicyExpiration: expiration ?? undefined, buildiumId: clean(args.buildiumId, 50), source: clean(args.source, 100) ?? "website", notes, lastWriteBy: "lead-intake" };
   const token = validEmail ? randomBytes(32).toString("base64url") : null;
-  let snapshot: Record<string, unknown> = { ...answers };
-  if (typeof args.answerSnapshot === "string") { try { snapshot = { ...answers, answers: JSON.parse(args.answerSnapshot) }; } catch { return { ok: false, error: "The form answers could not be read." }; } }
   snapshot.leadSource = account.leadSource;
   const estimationEnabled = process.env.HONEYCOMB_ENABLED === "true" && !!process.env.HONEYCOMB_ESTIMATE_TABLE && account.type === "ASSOCIATION";
   const carrierInput = estimateInput({ ...args, type: account.type, address: account.address, city: account.city, state: account.state });

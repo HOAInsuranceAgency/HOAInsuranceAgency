@@ -24,14 +24,13 @@ const HO6_LABELS: Record<string, string> = {
 };
 
 /** Preserve every useful wizard answer in the durable intake snapshot. */
-function buildSubmission(data: FormData, agentName: string) {
+function buildSubmission(data: FormData) {
   const get = (k: string) => (typeof data[k] === "string" ? (data[k] as string) : "");
   const role = get("role");
   const name = get("contactName") || "Unknown";
   const association = get("associationName") || "—";
 
   const payload: Record<string, string> = {
-    "Website Agent": agentName,
     "Role": ROLE_LABELS[role] || role || "—",
 
     /* ── Contact ── */
@@ -75,7 +74,7 @@ function buildSubmission(data: FormData, agentName: string) {
 }
 
 /** Map the wizard's answers onto the CRM's web-lead shape. */
-export function buildCrmLead(data: FormData, agentName: string): CrmLeadInput {
+export function buildCrmLead(data: FormData): CrmLeadInput {
   const get = (k: string) => (typeof data[k] === "string" ? (data[k] as string) : "");
   const role = get("role");
   const isOwner = role === "owner";
@@ -87,7 +86,6 @@ export function buildCrmLead(data: FormData, agentName: string): CrmLeadInput {
 
   const notes = [
     `Role: ${ROLE_LABELS[role] || role || "—"}`,
-    `Assigned agent: ${agentName}`,
     isOwner && association ? `Association: ${association}` : undefined,
     // `unitCount` and `renewalDate` are omitted here: both now have a real
     // column, and repeating them in prose is how the two copies drift.
@@ -128,7 +126,7 @@ export function buildCrmLead(data: FormData, agentName: string): CrmLeadInput {
     unitCount: (!isOwner && get("unitCount")) || undefined,
     currentPolicyExpiration: (!isOwner && get("renewalDate")) || undefined,
     source: "website-quote",
-    answerSnapshot: JSON.stringify(buildSubmission(data, agentName)),
+    answerSnapshot: JSON.stringify(buildSubmission(data)),
     notes,
   };
 }
