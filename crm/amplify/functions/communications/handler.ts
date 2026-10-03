@@ -195,10 +195,21 @@ export const handler = async (event: { arguments: { operation?: string; readOper
       const member = (await roster()).find(t => t.userId === userId); if (!member) throw new Error("Teammate not found");
       const old = await get<TeamEligibility>(`eligibility:${userId}`);
       if ((old?.version ?? 0) !== Number(input.version ?? 0)) throw new Error("Teammate settings changed. Refresh and try again.");
+      const connectionId = (key: "frontId" | "dialpadId" | "frontChannelId" | "frontSignatureId", previous?: string) => {
+        if (input[key] === undefined) return previous;
+        if (typeof input[key] !== "string") throw new Error("Connection IDs must be text");
+        return text(input, key) || undefined;
+      };
+      const frontId = connectionId("frontId", old?.data.frontId), changedFront = frontId !== old?.data.frontId;
       const next: TeamEligibility = { userId, name: member.name, email: member.email, enabled: input.enabled !== false, salesperson: input.salesperson === true,
-        frontId: text(input, "frontId") || undefined, dialpadId: text(input, "dialpadId") || undefined };
+        frontId, dialpadId: connectionId("dialpadId", old?.data.dialpadId),
+        frontChannelId: connectionId("frontChannelId", changedFront ? undefined : old?.data.frontChannelId),
+        frontSignatureId: connectionId("frontSignatureId", changedFront ? undefined : old?.data.frontSignatureId) };
       if (next.frontId && !/^tea_[a-z0-9]+$/.test(next.frontId)) throw new Error("Invalid Front teammate ID");
       if (next.dialpadId && !/^\d+$/.test(next.dialpadId)) throw new Error("Invalid Dialpad user ID");
+      if (next.frontChannelId && !/^cha_[a-z0-9]+$/.test(next.frontChannelId)) throw new Error("Invalid Front email channel ID");
+      if (next.frontSignatureId && !/^sig_[a-z0-9]+$/.test(next.frontSignatureId)) throw new Error("Invalid Front email signature ID");
+      if (!next.frontId && (next.frontChannelId || next.frontSignatureId)) throw new Error("Link a Front teammate before choosing their email channel or signature");
       const saved = row("ELIGIBILITY", `eligibility:${userId}`, next, { previous: old });
       await commit([put(saved, old), audit("TEAM", actor, "Assignment eligibility changed", next)]);
       return { ok: true, member: { ...next, version: saved.version, available: member.available } };

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 const h = vi.hoisted(() => ({ state: "WAITING", operation: undefined as any, submission: undefined as any,
-  accountName: "Willow Condominium Association", contacts: [] as any[],
-  projectError: false, workerWins: false, model: vi.fn(), update: vi.fn(), issue: vi.fn(), queue: vi.fn() }));
+  accountName: "Willow Condominium Association", contacts: [] as any[], workflow: undefined as any, producer: vi.fn(),
+  resolveIssue: vi.fn(), waitProjectionError: false, projectError: false, workerWins: false, model: vi.fn(), update: vi.fn(), issue: vi.fn(), queue: vi.fn() }));
 vi.mock("aws-amplify", () => ({ Amplify: { configure: vi.fn() } }));
 vi.mock("@aws-amplify/backend/function/runtime", () => ({ getAmplifyDataClientConfig: async () => ({ resourceConfig: {}, libraryOptions: {} }) }));
 vi.mock("aws-amplify/data", () => ({ generateClient: () => ({ models: {
@@ -11,22 +11,27 @@ vi.mock("aws-amplify/data", () => ({ generateClient: () => ({ models: {
   UploadPortal: { list: async () => ({ data: [{ token: "preview-token", expiresAt: "2099-01-01T00:00:00Z" }] }) },
 } }) }));
 vi.mock("@anthropic-ai/sdk", () => ({ default: class { messages = { create: h.model }; } }));
-vi.mock("../../amplify/functions/communications/workflow", () => ({ ensureWorkflow: async () => ({ data: { disposition: "ACTIVE", humanTakeover: false } }) }));
 vi.mock("../../amplify/functions/communications/store", () => ({
-  get: async (id: string) => id.startsWith("submission:") ? h.submission : h.operation, issue: h.issue,
+  get: async (id: string) => id.startsWith("workflow:") ? h.workflow : id.startsWith("submission:") ? h.submission : h.operation, issue: h.issue,
   db: { send: async ({ input }: any) => {
     if (input.ExpressionAttributeValues[":queued"]) {
       const expected = input.ConditionExpression?.match(/^#s = (:\w+)$/)?.[1];
       if (expected && h.state !== input.ExpressionAttributeValues[expected]) throw Object.assign(new Error("Already confirmed"), { name: "ConditionalCheckFailedException" });
       if (h.projectError) throw new Error("Status projection failed after durable queue");
       h.state = "QUEUED";
+    } else if (input.ExpressionAttributeValues[":retry"]) {
+      if (h.waitProjectionError) throw new Error("Temporary storage failure");
+      if (h.state !== "WAITING") throw Object.assign(new Error("Already claimed"), { name: "ConditionalCheckFailedException" });
     } else h.state = "SENDING";
   } },
 }));
-vi.mock("../../amplify/functions/communications/operations", () => ({ enqueueOperation: h.queue }));
+vi.mock("../../amplify/functions/communications/routing", () => ({ resolveIssue: h.resolveIssue }));
+vi.mock("../../amplify/functions/communications/operations", () => ({ enqueueOperation: h.queue, assignedEmailProducer: h.producer }));
 import { handler } from "../../amplify/functions/lead-reply/handler";
 beforeEach(() => {
-  vi.clearAllMocks(); h.state = "WAITING"; h.operation = undefined; h.projectError = false; h.workerWins = false; delete process.env.SITE_BASE_URL;
+  vi.clearAllMocks(); h.waitProjectionError = false; h.state = "WAITING"; h.operation = undefined; h.projectError = false; h.workerWins = false; delete process.env.SITE_BASE_URL;
+  h.workflow = { data: { disposition: "ACTIVE", humanTakeover: false, salespersonId: "jake" } };
+  h.producer.mockReset().mockResolvedValue({ producerId: "jake", producerName: "Jake Greasley", emailIdentity: { frontId: "tea_jake", channelId: "cha_jake", senderEmail: "jake@protectmyhoa.com", signatureId: "sig_jake", signatureMode: "FRONT" } });
   h.submission = undefined; h.accountName = "Willow Condominium Association"; h.contacts = [];
   h.update.mockResolvedValue({ data: {} }); h.issue.mockResolvedValue(undefined);
   h.model.mockResolvedValue({ content: [{ type: "tool_use", input: { subject: "Your HOA insurance enquiry", body: "I'll review what you shared about your association's insurance." } }] });
@@ -89,6 +94,54 @@ describe("personal, concise first-contact emails", () => {
   });
 });
 describe("producer and delivery ownership", () => {
+  it("uses the assigned salesperson in the prompt and queues their verified Front identity without a duplicate signature", async () => {
+    await handler();
+    expect(h.producer).toHaveBeenCalledWith("jake");
+    expect(h.model.mock.calls[0][0].system).toContain("writing as Jake Greasley");
+    const email = h.queue.mock.calls[0][1];
+    expect(email).toMatchObject({ producerId: "jake", producerName: "Jake Greasley", emailIdentity: { frontId: "tea_jake", channelId: "cha_jake", senderEmail: "jake@protectmyhoa.com", signatureId: "sig_jake", signatureMode: "FRONT" } });
+    expect(email.text).not.toContain("Thanks,\nJake Greasley");
+    expect(email.html).not.toContain("Thanks,<br>Jake Greasley");
+    expect(email.text).not.toContain("sales@protectmyhoa.com");
+    expect(JSON.stringify(email)).not.toContain("Brian Cole");
+  });
+  it("retains the assigned identity during copy regeneration", async () => {
+    process.env.SITE_BASE_URL = "https://preview.example.test";
+    h.model.mockResolvedValueOnce({ content: [{ type: "tool_use", input: { subject: "Welcome", body: "I've put a short list of what helps below." } }] });
+    await handler();
+    expect(h.model).toHaveBeenCalledTimes(2);
+    for (const [request] of h.model.mock.calls) expect(request.system).toContain("writing as Jake Greasley");
+  });
+  it.each(["missing workflow", "pending assignment", "disabled producer", "temporarily unavailable producer", "mailbox unavailable", "signature unavailable"])("waits and retries for %s without generating or permanently failing", async reason => {
+    if (reason === "missing workflow") h.workflow = undefined;
+    else if (reason === "pending assignment") { h.workflow.data.salespersonId = undefined; h.producer.mockRejectedValue(new Error("Assign an active salesperson")); }
+    else h.producer.mockRejectedValue(new Error(reason));
+    const result = await handler();
+    expect(result.failed).toBe(0);
+    expect(h.state).toBe("WAITING");
+    expect(h.model).not.toHaveBeenCalled(); expect(h.queue).not.toHaveBeenCalled(); expect(h.update).not.toHaveBeenCalled();
+    expect(h.issue).toHaveBeenCalledWith("generation-assignment:r1", expect.stringContaining("Initial email is waiting:"), "a1");
+    h.workflow = { data: { disposition: "ACTIVE", humanTakeover: false, salespersonId: "jake" } };
+    h.producer.mockResolvedValue({ producerId: "jake", producerName: "Jake Greasley", emailIdentity: { frontId: "tea_jake", channelId: "cha_jake", senderEmail: "jake@protectmyhoa.com", signatureId: "sig_jake", signatureMode: "FRONT" } });
+    await handler();
+    expect(h.queue).toHaveBeenCalledTimes(1);
+    expect(h.resolveIssue).toHaveBeenCalledWith("generation-assignment:r1");
+    expect(h.resolveIssue).not.toHaveBeenCalledWith("generation:r1");
+  });
+  it.each(["projection", "issue"])("keeps pending assignment retryable when %s persistence fails", async failure => {
+    h.workflow = undefined;
+    if (failure === "projection") h.waitProjectionError = true;
+    else h.issue.mockRejectedValueOnce(new Error("Temporary storage failure"));
+    const result = await handler();
+    expect(result.failed).toBe(0); expect(h.state).toBe("WAITING");
+    expect(h.update).not.toHaveBeenCalled(); expect(h.queue).not.toHaveBeenCalled(); expect(h.model).not.toHaveBeenCalled();
+  });
+  it("does not generate or change an email whose operation already exists", async () => {
+    h.operation = { data: { state: "ACCEPTED" } };
+    await handler();
+    expect(h.producer).not.toHaveBeenCalled(); expect(h.model).not.toHaveBeenCalled(); expect(h.queue).not.toHaveBeenCalled();
+    expect(h.update).toHaveBeenCalledWith({ id: "r1", status: "QUEUED" });
+  });
   it("does not claim non-delivery when status projection fails after queueing", async () => {
     h.projectError = true; const result = await handler();
     expect(result.queued).toBe(1); expect(result.failed).toBe(0); expect(h.queue).toHaveBeenCalledTimes(1);

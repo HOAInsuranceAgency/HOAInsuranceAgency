@@ -9,7 +9,7 @@ For hands-on acceptance, use the [step-by-step staging test walkthrough](FRONT-D
 ## Operating behavior
 
 - Website enquiries are captured once, together with their original answers, the configured default responsibilities, the pending Front import and team SMS alert. An unchanged browser retry uses the same submission ID, retry proof and answers to retrieve its receipt, including after reload. Corrected answers receive a new submission identity; a previous attempt whose response was lost may already have arrived. Cached older forms without an identity remain accepted during cutover, but cannot receive retry deduplication. A storage failure does not show a success screen.
-- Front imports the labelled website submission. After the existing document/upload window, the AI producer queues a reply as Brian Cole through the shared sales channel, using that exact conversation. There is no email provider selector and no SES fallback for this flow.
+- Front imports the labelled website submission into the shared sales conversation. After the existing document/upload window, the AI producer queues a reply for the currently assigned, eligible salesperson. The reply uses that salesperson’s verified personal Front email channel, author ID and applicable Front signature. Its conversation stays open for the salesperson. There is no shared-sender or SES fallback for this flow.
 - Front acceptance is pending delivery. The worker resolves the returned message UID to a message and conversation before recording SENT and scheduling follow-up. An ambiguous outbound result is held for review, without an automatic resend.
 - Brian is the intended production default salesperson and deal champion; admins may choose any active teammate eligible for both roles. Team settings control dropdown eligibility independently of Cognito access. Explicit reassignment preserves deadlines. Large accounts apply notification and Front-routing changes through durable batches of 25 records after committing the two duties. A unavailable or unconfigured default leaves a visible assignment exception.
 - Ordinary no-reply follow-up is 9 a.m. Eastern on the second business date after a substantive sent email/text or a completed connected call; all scheduled reminders and champion escalations run in the 9 a.m. Eastern batch. Inbound response and callbacks use eight staffed hours, 9–5 Eastern, Monday–Friday excluding the configured holidays. Response/callback reminders arrive at 9 a.m. on the due date, while the original staffed-hour deadline stays unchanged. Overdue work escalates at 9 a.m. on the next business date after that due date. Staff do not enter routine outcome notes or choose due dates. Previously dated promises retain their dates until handled. See [automatic contact-driven follow-up](AUTOMATIC-LEAD-FOLLOW-UP.md). A late-linked request retains its original deadline; if its escalation deadline has already passed, the salesperson and champion are informed together, using one escalated notice when they are the same person.
@@ -45,7 +45,7 @@ Create a private developer application for this CRM integration in the intended 
 Configure:
 
 - Company ID from Front's `/me` response.
-- Shared Sales inbox and its actual email channel. Production sends as `sales@protectmyhoa.com`; staging cannot use that production sender and also enforces a recipient allowlist.
+- Shared Sales inbox and its intake email channel (`sales@protectmyhoa.com` in production). Initial AI replies use the assigned salesperson’s personal channel, configured separately below. Staging uses a separate intake channel and enforces its recipient allowlist for every send.
 - Enable **Track sent emails** on that shared sales channel, and verify a Seen signal using a controlled test recipient. API delivery alone does not prove tracking is enabled.
 - Additional inboxes to include in CRM scope.
 - Separate native Dialpad voice and shared-line SMS channels, with the shared text channel mapped in settings.
@@ -55,6 +55,16 @@ The Integration screen displays the deployed webhook and sidebar URLs. Register 
 Install the sidebar at the displayed `/front-sidebar` URL. Users sign in with their existing CRM identity. If Front's embedded browser has separate storage, request a CRM sign-in email and copy its unopened sign-in link into the sidebar's private link field. No Front identity or teammate mapping substitutes for CRM authentication.
 
 Read-only connection checks establish API access and channel identity. They do not send a customer message. The final activation action also requires recent signed test events and the admin's confirmation of native channel tests.
+
+### Initial AI sender and signature (October 2 change; pending deployment)
+
+In **Settings → Team → Edit connections**, map each salesperson’s Front teammate. Optional **Email channel ID** (`cha_…`) and **Email signature ID** (`sig_…`) select that person’s sending mailbox and signature when Front has several. Without selections, the resolver uses the only valid personal email channel, or the unique channel on the configured sales-address domain, and an applicable default signature (or the sole applicable signature). It verifies both resources belong to that Front teammate. The CRM sign-in address is not used to guess a sending mailbox. Changing the teammate clears previous selections.
+
+The Front token needs **Private Resources**, **Read Channels**, **Read Signatures**, and the existing message-send permissions. Each salesperson must allow API access to their personal resources in Front. This expands the integration’s access and needs an explicit administrative decision; do not grant access to unrelated teammates as a workaround. See [Front token scopes](https://dev.frontapp.com/me/docs/authentication). The CRM still limits conversation processing to its configured inboxes; it does not automatically import personal inboxes.
+
+Missing, disconnected, inaccessible or ambiguous mailboxes/signatures leave the initial email waiting with a setup reason. Generation captures the verified sender and signature; delivery verifies them again and fences CRM assignment/eligibility changes. A changed identity or legacy signed body is held for review, never silently rewritten or resent. Front adds the signature once; confirmed CRM history stores Front’s final signed text and actual From address. Already accepted or uncertain deliveries retain their reconciliation safeguards.
+
+For a controlled staging acceptance test, use an authorized test recipient, verify the actual From address and signature in the received email, and confirm the same assigned intake conversation remains visible in the configured inbox. Repository tests do not establish live Front access or delivery.
 
 ### Dialpad
 
