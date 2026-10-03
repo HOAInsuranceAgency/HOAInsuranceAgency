@@ -721,6 +721,31 @@ describe("durable public capture", () => {
     expect(entries("WORKFLOW")[0].data).toMatchObject({ salespersonId: "brian" });
     expect(h.front).not.toHaveBeenCalled();
   });
+  it("cleans cached quote-page assignment metadata without changing its original answers or replay identity", async () => {
+    const notes = "Role: Board Member / Trustee\nAssigned agent: Brian Cole\nBrian Cole previously helped us.\nAssigned agent: Daniel Rocha";
+    const answerSnapshot = JSON.stringify({ "Website Agent": "Brian Cole", Role: "Board Member / Trustee" });
+    const input = { source: "website-quote", notes, answerSnapshot };
+    const result = await submit(input) as any;
+    expect(result.ok).toBe(true);
+    expect(h.records.get(`Account:${result.id}`)?.notes).toBe("Role: Board Member / Trustee\nBrian Cole previously helped us.\nAssigned agent: Daniel Rocha");
+    expect(entries("SUBMISSION")[0].data.snapshot).toMatchObject({ notes, answerSnapshot, answers: JSON.parse(answerSnapshot) });
+    expect(await submit(input)).toMatchObject({ ok: true, duplicate: true, id: result.id });
+    expect(await submit({ ...input, notes: h.records.get(`Account:${result.id}`)?.notes })).toMatchObject({ ok: false });
+    expect(entries("SUBMISSION")).toHaveLength(1);
+  });
+  it.each([
+    { source: "website-contact", answers: { "Website Agent": "Brian Cole" } },
+    { source: "website-quote", answers: {} },
+    { source: "website-quote", answers: { "Website Agent": "Daniel Rocha" } },
+    { source: "website-quote", answers: { "Website Agent": { name: "Brian Cole" } } },
+    { source: "website-quote", answers: { "Website Agent": "Brian Cole\n" } },
+    { source: "website-quote", answers: null },
+    { source: "website-quote", answers: ["Brian Cole"] },
+  ])("preserves notes when legacy quote assignment metadata cannot be matched: %j", async ({ source, answers }) => {
+    const notes = "Assigned agent: Brian Cole\nPlease keep Brian Cole informed.";
+    const result = await submit({ source, notes, answerSnapshot: JSON.stringify(answers) }) as any;
+    expect(result.ok).toBe(true); expect(h.records.get(`Account:${result.id}`)?.notes).toBe(notes);
+  });
   it("does not return a bearer upload token to a guessed identity or changed payload", async () => {
     await submit(); expect(await submit({ retryProof: "q".repeat(64) })).toMatchObject({ ok: false }); expect(await submit({ name: "Different HOA" })).toMatchObject({ ok: false });
   });
@@ -1305,6 +1330,29 @@ describe("Front durable delivery", () => {
     expect(body.body_format).toBe("html"); expect(body.body).toContain("&lt;script&gt;"); expect(body.body).not.toContain("<script>");
     expect(body.body).not.toContain("<pre>"); expect(body.external_id).toBe("hoa:main:html");
     expect(body.metadata.thread_ref).toBe(body.external_id);
+  });
+  it("imports the assigned CRM salesperson and keeps legacy greeter metadata only in the original snapshot", async () => {
+    const wf = await lead();
+    await save(row("ELIGIBILITY", "eligibility:jake", { userId: "jake", name: "Jake Greasley", enabled: true, salesperson: true }));
+    await save(row("WORKFLOW", wf.id, { ...wf.data, salespersonId: "jake" }, { accountId: "a1", previous: wf }), wf);
+    const snapshot = { source: "website-quote", contactEmail: "prospect@example.com", notes: "Assigned agent: Brian Cole", answers: { "Website Agent": "Brian Cole" } };
+    await save(row("SUBMISSION", "submission:owner", { snapshot, receivedAt: NOW }));
+    const op = await enqueueOperation("op:owner", { type: "IMPORT", accountId: "a1", submissionId: "owner" });
+    h.front.mockResolvedValue({ message_uid: "uid_owner" });
+    await runOperation(op);
+    const body = h.front.mock.calls.find(c => c[1] === "POST")![2];
+    expect(body.body).toContain("Salesperson at intake"); expect(body.body).toContain("Jake Greasley"); expect(body.body).not.toContain("Brian Cole");
+    expect(record("submission:owner").data.snapshot).toEqual(snapshot);
+    const lease = h.transactions.find(writes => writes.some(w => w.Put?.Item.id === op.id && w.Put.Item.data.state === "LEASED"))!;
+    expect(lease.filter(w => w.ConditionCheck).map(w => w.ConditionCheck.Key.id)).toEqual(expect.arrayContaining(["workflow:a1", "eligibility:jake"]));
+  });
+  it.each(["workflow:a1", "eligibility:brian"])("does not import a stale salesperson name when %s changes before delivery", async changedId => {
+    await lead();
+    await save(row("SUBMISSION", "submission:changed", { snapshot: { contactEmail: "prospect@example.com" }, receivedAt: NOW }));
+    const op = await enqueueOperation("op:changed", { type: "IMPORT", accountId: "a1", submissionId: "changed" });
+    h.beforeWrite = () => { const current = record(changedId); h.records.set(`comms:${changedId}`, { ...current, version: current.version + 1 }); };
+    await runOperation(op);
+    expect(h.front).not.toHaveBeenCalled(); expect(record(op.id).data.state).toBe("READY");
   });
   it("treats accepted UID as pending until the outbound message resolves", async () => {
     await lead(); const op = await enqueueOperation("op:test", { type: "EMAIL", accountId: "a1", producerId: "brian", producerName: "Brian Cole", emailIdentity: emailIdentity(), replyId: "r1", recipient: "prospect@example.com", text: "Hello", html: "<p>Hello</p>" });
