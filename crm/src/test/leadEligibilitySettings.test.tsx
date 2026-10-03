@@ -17,6 +17,8 @@ beforeEach(() => {
 async function edit() { fireEvent.click(await screen.findByRole("button", { name: "Edit connections for Jake Greasley" })); }
 const frontInput = () => screen.getByRole("textbox", { name: /^Front teammate ID/ });
 const dialpadInput = () => screen.getByRole("textbox", { name: /^Dialpad user ID/ });
+const channelInput = () => screen.getByRole("textbox", { name: /^Email channel ID/ });
+const signatureInput = () => screen.getByRole("textbox", { name: /^Email signature ID/ });
 
 describe("protected teammate connection IDs", () => {
   it("shows exact IDs as read-only text until the user explicitly opens the editor", async () => {
@@ -51,13 +53,49 @@ describe("protected teammate connection IDs", () => {
     fireEvent.change(frontInput(), { target: { value: " tea_new123 " } });
     fireEvent.change(dialpadInput(), { target: { value: " 5655281245659136 " } });
     fireEvent.click(screen.getByRole("button", { name: "Save connections" }));
-    await waitFor(() => expect(h.request).toHaveBeenCalledWith("saveEligibility", { ...member, frontId: "tea_new123" }, true));
+    await waitFor(() => expect(h.request).toHaveBeenCalledWith("saveEligibility", { ...member, frontId: "tea_new123", frontChannelId: "", frontSignatureId: "" }, true));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(screen.getByText("tea_new123")).toBeVisible();
     expect(screen.getByRole("checkbox", { name: "Salesperson eligibility for Jake Greasley" })).toBeChecked();
     expect(screen.queryByRole("checkbox", { name: /champion/i })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("checkbox", { name: "Salesperson eligibility for Jake Greasley" }));
-    await waitFor(() => expect(h.request).toHaveBeenLastCalledWith("saveEligibility", { ...member, frontId: "tea_new123", salesperson: false, version: 4 }, true));
+    await waitFor(() => expect(h.request).toHaveBeenLastCalledWith("saveEligibility", { ...member, frontId: "tea_new123", frontChannelId: "", frontSignatureId: "", salesperson: false, version: 4 }, true));
+  });
+  it("validates optional Front email selections and preserves them when eligibility changes", async () => {
+    render(<LeadEligibilitySettings />); await edit();
+    expect(screen.getByText(/Leave blank to use the salesperson’s only mailbox/)).toBeVisible();
+    fireEvent.change(channelInput(), { target: { value: "tea_wrong" } });
+    fireEvent.change(signatureInput(), { target: { value: "wrong-signature" } });
+    expect(channelInput()).toHaveAttribute("aria-invalid", "true");
+    expect(signatureInput()).toHaveAttribute("aria-invalid", "true");
+    fireEvent.submit(screen.getByRole("form", { name: "Connections for Jake Greasley" }));
+    expect(h.request.mock.calls.filter(call => call[0] === "saveEligibility")).toHaveLength(0);
+    fireEvent.change(channelInput(), { target: { value: " cha_jake123 " } });
+    fireEvent.change(signatureInput(), { target: { value: " sig_jake123 " } });
+    fireEvent.click(screen.getByRole("button", { name: "Save connections" }));
+    const selections = { frontChannelId: "cha_jake123", frontSignatureId: "sig_jake123" };
+    await waitFor(() => expect(h.request).toHaveBeenCalledWith("saveEligibility", { ...member, ...selections }, true));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(screen.getByText("Email: Custom Front selections")).toBeVisible();
+    fireEvent.click(screen.getByRole("checkbox", { name: "Salesperson eligibility for Jake Greasley" }));
+    await waitFor(() => expect(h.request).toHaveBeenLastCalledWith("saveEligibility", { ...member, ...selections, salesperson: false, version: 4 }, true));
+  });
+  it("clears previous email selections when changing the Front teammate", async () => {
+    h.request.mockImplementation(async (op: string, input: TeamEligibility) => op === "team" ? { team: [{ ...member, frontChannelId: "cha_old", frontSignatureId: "sig_old" }] } : { member: { ...input, version: 4 } });
+    render(<LeadEligibilitySettings />); await edit();
+    expect(channelInput()).toHaveValue("cha_old"); expect(signatureInput()).toHaveValue("sig_old");
+    fireEvent.change(frontInput(), { target: { value: "tea_new" } });
+    expect(channelInput()).toHaveValue(""); expect(signatureInput()).toHaveValue("");
+    fireEvent.click(screen.getByRole("button", { name: "Save connections" }));
+    await waitFor(() => expect(h.request).toHaveBeenCalledWith("saveEligibility", { ...member, frontId: "tea_new", frontChannelId: "", frontSignatureId: "" }, true));
+  });
+  it("sends explicit empty strings when clearing email overrides", async () => {
+    h.request.mockImplementation(async (op: string, input: TeamEligibility) => op === "team" ? { team: [{ ...member, frontChannelId: "cha_old", frontSignatureId: "sig_old" }] } : { member: { ...input, version: 4 } });
+    render(<LeadEligibilitySettings />); await edit();
+    fireEvent.change(channelInput(), { target: { value: "" } });
+    fireEvent.change(signatureInput(), { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save connections" }));
+    await waitFor(() => expect(h.request).toHaveBeenCalledWith("saveEligibility", { ...member, frontChannelId: "", frontSignatureId: "" }, true));
   });
   it("keeps the draft visible after a failed save so it can be retried", async () => {
     let saves = 0;

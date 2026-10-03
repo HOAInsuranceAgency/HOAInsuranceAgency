@@ -453,6 +453,8 @@ export function renderReply(opts: {
   generated: { subject: string; body: string };
   lead: LeadContext;
   producerName: string;
+  /** Front appends the assigned producer's configured signature at send time. */
+  signatureMode?: "FRONT";
   /**
    * The lead's document-upload page, if one was minted for them.
    *
@@ -463,6 +465,7 @@ export function renderReply(opts: {
   uploadUrl?: string | null;
 }): RenderedReply {
   const { lead, producerName } = opts;
+  const frontSignature = opts.signatureMode === "FRONT";
   /**
    * The generated text is cleaned here rather than trusted from the model.
    * `renderReply` is the single point every send goes through, so this is the
@@ -541,11 +544,8 @@ export function renderReply(opts: {
     "",
     ...paragraphs.flatMap((p) => [p, ""]),
     ...(uploadLine ? [uploadLine, "", uploadUrl as string, ""] : []),
-    "Thanks,",
-    producerName,
-    "",
-    ...signatureText(),
-  ].join("\n");
+    ...(!frontSignature ? ["Thanks,", producerName, "", ...signatureText()] : []),
+  ].join("\n").trimEnd();
 
   /**
    * `line-height` and `font-family` are set on every paragraph rather than once
@@ -587,9 +587,9 @@ ${[
         ),
       ]
     : []),
-  para(`Thanks,<br>${escapeHtml(producerName)}`, "0 0 22px"),
+  ...(!frontSignature ? [para(`Thanks,<br>${escapeHtml(producerName)}`, "0 0 22px")] : []),
 ].join("\n")}
-${signatureHtml()}
+${frontSignature ? "" : signatureHtml()}
 </body></html>`;
 
   return { subject: generated.subject, text, html };

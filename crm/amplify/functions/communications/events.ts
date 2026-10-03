@@ -7,6 +7,7 @@ import { recordInbound, recordOutbound, ensureWorkflow, accountRows } from "./wo
 import { normalizePhone, businessDeadline, type Communication } from "../../../../shared/leadWorkflow";
 import { dialpadBusinessLine } from "./phoneScope";
 import { intakeReferenceFromHtml } from "../lead-intake/brief";
+import { isInitialAiCommunication } from "./initialAi";
 
 export type EventRecord = { provider: "front" | "dialpad"; payload: Record<string, unknown>; attempts: number; processedAt?: string; snapshot?: { message: FrontMessage; conversationId: string } };
 export interface ConversationLink { accountId: string; conversationId: string; purpose: "PROSPECT" | "CARRIER"; routing?: "SALESPERSON" | "CHAMPION" | "MANUAL"; context?: Communication["context"]; policyId?: string; quoteId?: string }
@@ -63,13 +64,14 @@ export async function ingestFrontMessage(message: FrontMessage, conversationId?:
     attachments: message.attachments?.map(a => ({ id: a.id, filename: a.filename, content_type: a.content_type, size: a.size })), subject: message.subject, text: message.text?.slice(0, 50000), from: message.recipients?.find(r => r.role === "from")?.handle,
     to: message.recipients?.filter(r => r.role === "to").map(r => r.handle), actorId: message.author?.id, status: message.is_inbound ? "RECEIVED" : old?.data.status === "FAILED" ? "FAILED" : "SENT", frontDraft: false,
     classification: classifyEmail(message), purpose: link?.data.purpose, context: link?.data.context, policyId: link?.data.policyId, quoteId: link?.data.quoteId, version: (old?.version ?? 0) + 1 };
+  if (old?.data.actorId === "crm:initial-ai" || await isInitialAiCommunication(comm, message.message_uid)) comm.actorId = "crm:initial-ai";
   // Duplicate event delivery must not reopen a completed episode.
   if (old?.data.workflowApplied || old?.data.resolved) {
     if (comm.direction === "OUTBOUND" && link) await (await import("./businessDelivery")).applyBusinessDelivery(comm);
-    if (old.data.frontDraft !== false) await save(row("COMMUNICATION", old.id, { ...old.data, frontDraft: false }, { accountId: old.accountId, previous: old, dueAt: old.dueAt }), old);
+    if (old.data.frontDraft !== false || comm.actorId === "crm:initial-ai" && old.data.actorId !== comm.actorId) await save(row("COMMUNICATION", old.id, { ...old.data, frontDraft: false, ...(comm.actorId === "crm:initial-ai" ? { actorId: comm.actorId } : {}) }, { accountId: old.accountId, previous: old, dueAt: old.dueAt }), old);
     return;
   }
-  if (!old || old.accountId !== comm.accountId || old.data.conversationId !== cnv || old.data.status === "DRAFT" || old.data.frontDraft !== false) await save(row("COMMUNICATION", id, comm, { accountId: comm.accountId, previous: old,
+  if (!old || old.accountId !== comm.accountId || old.data.conversationId !== cnv || old.data.status === "DRAFT" || old.data.frontDraft !== false || comm.actorId === "crm:initial-ai" && old.data.actorId !== comm.actorId) await save(row("COMMUNICATION", id, comm, { accountId: comm.accountId, previous: old,
     dueAt: old?.dueAt ?? (comm.direction === "OUTBOUND" ? new Date(Date.now() + 900_000).toISOString() : undefined) }), old);
   if (!link) { await issue(id, "Link this Front enquiry to the correct lead"); return; }
   const linkingIssue = await get(`issue:${id}`);
