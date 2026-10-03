@@ -434,6 +434,44 @@ describe("the rendered email", () => {
     expect(html).toContain("Thanks,<br>Brian Cole");
   });
 
+  it.each([undefined, "https://protectmyhoa.com/upload/lead-token"])(
+    "leaves the sign-off and signature to Front while retaining the message and upload link (%s)",
+    uploadUrl => {
+      const { subject, text, html } = renderReply({
+        generated,
+        lead: lead(),
+        producerName: "Jake Greasley",
+        signatureMode: "FRONT",
+        uploadUrl,
+      });
+
+      expect(subject).toBe("Robin Hollow Condominium, your insurance review");
+      for (const out of [text, html]) {
+        expect(out).toContain("Hi Pat,");
+        expect(out).toContain("Thank you for contacting HOA Insurance Agency.");
+        expect(out).toContain("First paragraph about the association.");
+        expect(out).toContain("Second paragraph asking for the dec page.");
+        expect(out).not.toContain("Thanks,");
+        expect(out).not.toContain("Jake Greasley");
+        expect(out).not.toContain(AGENCY.email);
+        expect(out).not.toContain(AGENCY.phone);
+        expect(out).not.toContain(AGENCY.addressLine1);
+        expect(out).not.toContain(AGENCY.tagline);
+      }
+      expect(html).not.toContain("<table");
+      expect(html).not.toContain(`src="${AGENCY.site}/logo.png"`);
+
+      if (uploadUrl) {
+        expect(text).toContain(uploadUrl);
+        expect(html).toContain(`href="${uploadUrl}"`);
+        expect(html).toContain("Upload your documents");
+      } else {
+        expect(text).not.toContain("You can upload");
+        expect(html).not.toContain("Upload your documents");
+      }
+    }
+  );
+
   /**
    * The whole point of this email is that a board member reads it as something
    * a broker typed, so the things that gave it away as machinery are asserted

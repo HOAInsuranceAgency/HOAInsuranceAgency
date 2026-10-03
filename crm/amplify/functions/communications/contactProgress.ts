@@ -5,6 +5,7 @@ import { get, row, put, commit, check, save, conflict } from "./store";
 import { operationRow } from "./outbox";
 import { dataClient } from "./data";
 import type { Operation } from "./operations";
+import { isInitialAiCommunication } from "./initialAi";
 
 async function purpose(c: Communication): Promise<Communication> {
   const link = c.conversationId ? await get<{ purpose?: "PROSPECT" | "CARRIER"; context?: Communication["context"]; policyId?: string; quoteId?: string }>(`front-link:${c.conversationId}`) : undefined;
@@ -63,7 +64,9 @@ export async function applyContactProgress(input: Communication, repair = false)
   if (!changed && projection.data.contactAppliedKind === progress) return;
   writes.push(put(row("COMMUNICATION", comm.id, { ...projection.data, contactApplied: true, contactAppliedKind: progress, workflowApplied: true,
     ...(comm.channel === "CALL" ? { outcome: progress === "CONTACT" ? "CONNECTED" : "NO_ANSWER", outcomeAt: at, resolved: true } : {}) }, { accountId, previous: projection, dueAt: comm.channel === "CALL" ? undefined : projection.dueAt }), projection));
-  const conversations = new Set([comm.conversationId, wf.data.conversationId].filter((s): s is string => !!s));
+  // An automatic acknowledgement is contact evidence, but the salesperson
+  // still needs to see the newly assigned conversation in their open inbox.
+  const conversations = new Set((await isInitialAiCommunication(comm) ? [] : [comm.conversationId, wf.data.conversationId]).filter((s): s is string => !!s));
   for (const conversationId of conversations) {
     const key = `op:contact-cleanup:${comm.id}:${conversationId}`;
     const cleanup = await get<Operation>(key);

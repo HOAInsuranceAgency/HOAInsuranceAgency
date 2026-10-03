@@ -2,9 +2,10 @@ import { randomBytes } from "node:crypto";
 import Anthropic from "@anthropic-ai/sdk";
 import { LambdaClient, InvokeCommand } from "@aws-sdk/client-lambda";
 import { UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import { resolveIssue } from "../communications/routing";
 import { db, get, issue } from "../communications/store";
-import { enqueueOperation, type Operation } from "../communications/operations";
-import { ensureWorkflow } from "../communications/workflow";
+import { assignedEmailProducer, enqueueOperation, type Operation } from "../communications/operations";
+import type { LeadWorkflow } from "../../../../shared/leadWorkflow";
 import { Amplify } from "aws-amplify";
 import { generateClient } from "aws-amplify/data";
 import { getAmplifyDataClientConfig } from "@aws-amplify/backend/function/runtime";
@@ -49,9 +50,6 @@ async function getDataClient() {
 }
 
 const lambda = new LambdaClient();
-
-/** The real producer these emails come from. Matches the website's wizard. */
-const PRODUCER_NAME = "Brian Cole";
 
 /** How many leads one tick will send for. Keeps a backlog from timing out. */
 const MAX_PER_TICK = 8;
@@ -102,10 +100,34 @@ export const handler = async () => {
       }
       const priorOperation = await get<Operation>(`op:ai:${reply.id}`);
       if (priorOperation) {
+        await resolveIssue(`generation-assignment:${reply.id}`);
         await client.models.LeadReply.update({ id: reply.id, status: priorOperation.data.state === "CONFIRMED" ? "SENT" : priorOperation.data.state === "SUPPRESSED" ? "SUPPRESSED" : priorOperation.data.state === "FAILED" ? "FAILED" : "QUEUED" });
         continue;
       }
-      const workflow = await ensureWorkflow(reply.accountId);
+      // Website intake assigns asynchronously. Do not invent an owner, generate
+      // under a default identity, or permanently fail while assignment catches up.
+      let workflow;
+      let producer;
+      try {
+        workflow = await get<LeadWorkflow>(`workflow:${reply.accountId}`);
+        if (!workflow) throw new Error("Assign an active salesperson before the initial email can be prepared");
+        if (!workflow.data.humanTakeover && workflow.data.disposition === "ACTIVE") producer = await assignedEmailProducer(workflow.data.salespersonId);
+        await resolveIssue(`generation-assignment:${reply.id}`);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "The assigned salesperson could not be verified";
+        try {
+          await db.send(new UpdateCommand({ TableName: process.env.LEAD_REPLY_TABLE, Key: { id: reply.id },
+            UpdateExpression: "SET dueAt = :retry, note = :note, updatedAt = :now", ConditionExpression: "#s = :waiting",
+            ExpressionAttributeNames: { "#s": "status" }, ExpressionAttributeValues: { ":waiting": "WAITING", ":retry": new Date(Date.now() + 60_000).toISOString(), ":note": `Initial email is waiting: ${message}`.slice(0, 500), ":now": now },
+          }));
+          await issue(`generation-assignment:${reply.id}`, `Initial email is waiting: ${message}`.slice(0, 500), reply.accountId);
+        } catch (error) {
+          // A warning/projection failure cannot turn pending assignment into a
+          // permanent generation failure. The untouched WAITING row retries.
+          console.warn("lead-reply assignment waiting", reply.id, error instanceof Error ? error.message : "Could not record assignment wait");
+        }
+        continue;
+      }
       if (workflow.data.humanTakeover || workflow.data.disposition !== "ACTIVE") {
         await client.models.LeadReply.update({ id: reply.id, status: "SUPPRESSED", note: "The team is handling this lead." });
         continue;
@@ -215,17 +237,19 @@ export const handler = async () => {
           `[lead-reply] association name looks off: "${account.data.name}" (${lead.nameProblem})`
         );
       }
-      const generated = await generate(lead);
+      const generated = await generate(lead, producer!.producerName);
       const { subject, text, html } = renderReply({
         generated,
         lead,
-        producerName: PRODUCER_NAME,
+        producerName: producer!.producerName,
+        signatureMode: "FRONT",
         uploadUrl,
       });
 
       await enqueueOperation(`op:ai:${reply.id}`, {
         type: "EMAIL", accountId: reply.accountId, replyId: reply.id,
         recipient: reply.contactEmail, subject, text, html,
+        producerId: producer!.producerId, producerName: producer!.producerName, emailIdentity: producer!.emailIdentity,
       });
       queued = true;
 
@@ -411,12 +435,12 @@ async function ensurePortal(
 }
 
 /** One model call, forced through the reply schema. */
-async function callModel(lead: LeadContext, extraTurns: Anthropic.MessageParam[] = []) {
+async function callModel(lead: LeadContext, producerName: string, extraTurns: Anthropic.MessageParam[] = []) {
   const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
   const response = await anthropic.messages.create({
     model: CLAUDE_MODEL,
     max_tokens: 2000,
-    system: systemPrompt(PRODUCER_NAME),
+    system: systemPrompt(producerName),
     tools: [
       {
         name: "write_reply",
@@ -444,8 +468,8 @@ async function callModel(lead: LeadContext, extraTurns: Anthropic.MessageParam[]
  * Keep complete prose. If neither draft avoids repetition, use a short neutral
  * body so the lead still receives the greeting, next step and document link.
  */
-async function generate(lead: LeadContext) {
-  const first = await callModel(lead);
+async function generate(lead: LeadContext, producerName: string) {
+  const first = await callModel(lead, producerName);
   const words = countWords(first.body);
   const issues = replyCopyIssues(first.body, !!lead.hasUploadLink);
   if (words <= WORD_BUDGET.HARD && !issues.length) return first;
@@ -458,7 +482,7 @@ async function generate(lead: LeadContext) {
     body: "I'll review what you shared about your insurance enquiry. If it's easier to talk it through, tell me a good time to call.",
   };
   try {
-    const second = await callModel(lead, [
+    const second = await callModel(lead, producerName, [
       { role: "assistant", content: first.body },
       {
         role: "user",

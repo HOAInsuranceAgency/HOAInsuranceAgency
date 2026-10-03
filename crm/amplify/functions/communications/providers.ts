@@ -7,7 +7,10 @@ export class ProviderError extends Error {
   constructor(message: string, public status: number, public uncertain: boolean, public retryAfter = 60) { super(message); }
 }
 export class FrontScopeError extends Error {}
-export async function providerRequest<T = Record<string, unknown>>(provider: "front" | "dialpad", path: string, method = "GET", body?: unknown, redirects = 0, inboxScopeProbe = false): Promise<T> {
+export class FrontPersonalAccessError extends ProviderError {
+  constructor(message: string) { super(message, 0, false, 60); }
+}
+export async function providerRequest<T = Record<string, unknown>>(provider: "front" | "dialpad", path: string, method = "GET", body?: unknown, redirects = 0, inboxScopeProbe: boolean | "personal" = false): Promise<T> {
   const base = provider === "front" ? "https://api2.frontapp.com" : "https://dialpad.com/api/v2";
   const key = (await credentials())[provider === "front" ? "frontToken" : "dialpadToken"];
   if (!key) throw new ProviderError(`${provider === "front" ? "Front" : "Dialpad"} credentials need setup`, 401, false);
@@ -37,7 +40,8 @@ export async function providerRequest<T = Record<string, unknown>>(provider: "fr
   }
   // A company-wide hook can name a conversation outside this token's workspace.
   // Its denied metadata lookup must not pause every authorized send.
-  if (response.status === 403 && provider === "front" && method === "GET" && inboxScopeProbe) throw new FrontScopeError("Conversation is unavailable within the Front token's inbox scope");
+  if (response.status === 403 && provider === "front" && method === "GET" && inboxScopeProbe === "personal") throw new FrontPersonalAccessError("Front access to the salesperson's personal mailbox/signature needs setup in Team connections");
+  if (response.status === 403 && provider === "front" && method === "GET" && inboxScopeProbe === true) throw new FrontScopeError("Conversation is unavailable within the Front token's inbox scope");
   if ([401, 403].includes(response.status)) {
     const delay = await authorizationFailed(provider, fingerprint).catch(() => 60);
     throw new ProviderError(`${provider} authorization needs repair`, response.status, false, delay);
@@ -55,6 +59,14 @@ export async function front<T = Record<string, unknown>>(path: string, method = 
     if (alias) path = path.replace(match[1], alias.data.conversationId);
   }
   return providerRequest<T>("front", path, method, body);
+}
+/** A denied personal-resource lookup must not pause unrelated shared-inbox work. */
+export function frontPersonalResource<T = Record<string, unknown>>(path: string): Promise<T> {
+  const url = new URL(path, "https://api2.frontapp.com");
+  if (url.protocol !== "https:" || url.username || url.password || url.port || url.hash ||
+    !(url.hostname === "api2.frontapp.com" || /^[a-z0-9-]+\.api\.frontapp\.com$/.test(url.hostname)) ||
+    !/^\/teammates\/tea_[a-z0-9]+\/(channels|signatures)$/.test(url.pathname)) throw new Error("Untrusted Front personal resource URL");
+  return providerRequest<T>("front", url.href, "GET", undefined, 0, "personal");
 }
 export const dialpad = <T = Record<string, unknown>>(path: string) => providerRequest<T>("dialpad", path);
 export function dialpadCallItems(page: unknown): Record<string, unknown>[] {

@@ -18,6 +18,8 @@ export interface TeamEligibility {
   /** Response-only current Cognito availability; saved eligibility stays separate. */
   available?: boolean;
   salesperson: boolean; /** @deprecated Legacy storage only. */ champion?: boolean; frontId?: string; dialpadId?: string; version?: number;
+  /** Optional choices when the mapped Front teammate has multiple sending identities. */
+  frontChannelId?: string; frontSignatureId?: string;
 }
 export interface LeadWorkflow {
   accountId: string; name: string; salespersonId?: string; /** @deprecated Legacy storage only. */ championId?: string;

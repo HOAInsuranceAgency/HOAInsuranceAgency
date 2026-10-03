@@ -249,7 +249,7 @@ describe("combined team and assignment settings", () => {
     fireEvent.change(screen.getByRole("textbox", { name: /^Front teammate ID/ }), { target: { value: "tea_new" } });
     fireEvent.click(screen.getByRole("button", { name: "Save connections" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    expect(communicationRequest).toHaveBeenLastCalledWith("saveEligibility", { ...eligibility, salesperson: true, frontId: "tea_new", version: 4 }, true);
+    expect(communicationRequest).toHaveBeenLastCalledWith("saveEligibility", { ...eligibility, salesperson: true, frontId: "tea_new", frontChannelId: "", frontSignatureId: "", version: 4 }, true);
     expect(screen.getByText("tea_new")).toBeVisible();
     expect(communicationRequest.mock.calls.filter(call => call[0] === "team")).toHaveLength(1);
     UserProfile.update.mockResolvedValue({ data: { ...teammateProfile, leadTextAlerts: true } });
