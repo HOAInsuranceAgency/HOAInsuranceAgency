@@ -32,6 +32,15 @@ describe("active role requests", () => {
     expect(await activeRoleHeaders()).toEqual({ "x-crm-role": "PRODUCER" });
   });
 
+  it("defaults to Owner, restores narrower assigned views, and rejects unassigned Owner claims", async () => {
+    expect(restoreActiveRole("owner", ["ADMIN", "PRODUCER", "OWNER"])).toBe("OWNER");
+    expect(await activeRoleHeaders()).toEqual({ "x-crm-role": "OWNER" });
+    setActiveRole("owner", "PRODUCER", ["OWNER", "PRODUCER"]);
+    expect(restoreActiveRole("owner", ["OWNER", "PRODUCER"])).toBe("PRODUCER");
+    expect(restoreActiveRole("owner", ["OWNER"])).toBe("OWNER");
+    expect(() => setActiveRole("admin", "OWNER", ["ADMIN"])).toThrow("not assigned");
+  });
+
   it("preserves ungrouped legacy users without claiming a group", async () => {
     setActiveRole("alice", "ADMIN", ["ADMIN"]);
     expect(restoreActiveRole("bob", [])).toBe("STAFF");
