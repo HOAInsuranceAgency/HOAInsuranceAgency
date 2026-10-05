@@ -1,10 +1,12 @@
 import { useState } from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { Link, MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { UserProfile } from "../lib/client";
+import { AdminContext } from "../lib/auth";
 
-const mocks = vi.hoisted(() => ({ getAccount: vi.fn(), listActivity: vi.fn(), scrollIntoView: vi.fn() }));
+const mocks = vi.hoisted(() => ({ getAccount: vi.fn(), listActivity: vi.fn(), scrollIntoView: vi.fn(), request: vi.fn() }));
+vi.mock("../lib/communications", () => ({ communicationRequest: mocks.request }));
 vi.mock("aws-amplify/data", () => ({
   generateClient: () => ({ models: {
     Account: { get: mocks.getAccount },
@@ -43,11 +45,11 @@ function Navigation() {
   const location = useLocation();
   return <><Link to={`/accounts/beta${location.search}`}>Another account</Link><output aria-label="Current location">{location.pathname}{location.search}{location.hash}</output></>;
 }
-function renderAccount(path = "/accounts/alpha?tab=overview") {
-  render(<MemoryRouter initialEntries={[path]}>
+function renderAccount(path = "/accounts/alpha?tab=overview", admin = false) {
+  return render(<AdminContext.Provider value={admin}><MemoryRouter initialEntries={[path]}>
     <Navigation />
     <Routes><Route path="/accounts/:id" element={<AccountDetail profile={{ id: "user" } as UserProfile} />} /></Routes>
-  </MemoryRouter>);
+  </MemoryRouter></AdminContext.Provider>);
 }
 const coverageHeadings = ["Buildings", "Blanket coverages", "General liability", "Directors & officers"];
 
@@ -58,6 +60,117 @@ beforeEach(() => {
   mocks.getAccount.mockImplementation(async ({ id }: { id: string }) => ({
     data: { id, name: id === "alpha" ? "Alpha association" : "Beta association", stage: "LEAD", type: "HOA" },
   }));
+  mocks.request.mockReset();
+  mocks.request.mockImplementation(async (operation, input) => {
+    if (operation === "context") return {
+      workflow: { accountId: input.accountId, name: "Alpha association", salespersonId: "alice", version: 4, disposition: "ACTIVE" },
+      team: ["alice", "bob"].map(userId => ({ userId, name: userId === "alice" ? "Alice" : "Bob", enabled: true, salesperson: true, available: true })),
+      tasks: [], communications: [], issues: [],
+    };
+    if (operation === "setResponsibilities") return { workflow: { accountId: input.accountId, salespersonId: input.salespersonId, version: input.version + 1 } };
+    throw new Error(`Unexpected operation: ${operation}`);
+  });
+});
+
+describe("lead salesperson on Overview", () => {
+  it("lets an admin reassign in place and uses the saved version for the next change", async () => {
+    renderAccount(undefined, true);
+    const picker = await screen.findByRole("combobox", { name: "Salesperson for Alpha association" });
+    expect(picker).toHaveValue("alice");
+    fireEvent.change(picker, { target: { value: "bob" } });
+    await screen.findByText("Saved");
+    expect(picker).toHaveValue("bob");
+    expect(mocks.request).toHaveBeenCalledWith("setResponsibilities", { accountId: "alpha", salespersonId: "bob", version: 4 }, true);
+    expect(screen.getByLabelText("Current location")).toHaveTextContent("/accounts/alpha?tab=overview");
+
+    fireEvent.change(picker, { target: { value: "alice" } });
+    await screen.findByText("Saved");
+    expect(mocks.request).toHaveBeenCalledWith("setResponsibilities", { accountId: "alpha", salespersonId: "alice", version: 5 }, true);
+  });
+
+  it.each(["PRODUCER", "STAFF", "CLIENT"])("does not expose lead reassignment for %s", async view => {
+    if (view === "CLIENT") mocks.getAccount.mockResolvedValue({ data: { id: "alpha", name: "Alpha association", stage: "CLIENT", type: "HOA" } });
+    renderAccount(undefined, view === "CLIENT");
+    await screen.findByRole("heading", { name: "Overview information" });
+    expect(screen.queryByRole("region", { name: "Lead salesperson" })).not.toBeInTheDocument();
+    expect(mocks.request).not.toHaveBeenCalled();
+  });
+
+  it("assigns an uninitialized lead without first setting up communications", async () => {
+    const normal = mocks.request.getMockImplementation()!;
+    mocks.request.mockImplementation(async (operation, input) => {
+      const result = await normal(operation, input);
+      return operation === "context" ? { ...result, workflow: null } : result;
+    });
+    renderAccount(undefined, true);
+    const picker = await screen.findByRole("combobox", { name: "Salesperson for Alpha association" });
+    expect(picker).toHaveValue("");
+    fireEvent.change(picker, { target: { value: "bob" } });
+    await screen.findByText("Saved");
+    expect(mocks.request).toHaveBeenCalledWith("setResponsibilities", { accountId: "alpha", salespersonId: "bob", version: 0 }, true);
+    expect(mocks.request.mock.calls.some(([operation]) => operation === "initializeLead")).toBe(false);
+  });
+
+  it("reloads ownership after visiting Activity and when opening another lead", async () => {
+    renderAccount(undefined, true);
+    fireEvent.change(await screen.findByRole("combobox", { name: "Salesperson for Alpha association" }), { target: { value: "bob" } });
+    await screen.findByText("Saved");
+    fireEvent.click(screen.getByRole("button", { name: "Activity" }));
+    expect(screen.queryByRole("region", { name: "Lead salesperson" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Overview" }));
+    expect(await screen.findByRole("combobox", { name: "Salesperson for Alpha association" })).toHaveValue("alice");
+    expect(mocks.request.mock.calls.filter(([operation]) => operation === "context")).toHaveLength(2);
+
+    fireEvent.click(screen.getByRole("link", { name: "Another account" }));
+    const picker = await screen.findByRole("combobox", { name: "Salesperson for Beta association" });
+    fireEvent.change(picker, { target: { value: "bob" } });
+    await screen.findByText("Saved");
+    expect(mocks.request).toHaveBeenCalledWith("setResponsibilities", { accountId: "beta", salespersonId: "bob", version: 4 }, true);
+  });
+
+  it("keeps a failed ownership read unavailable until an explicit successful retry", async () => {
+    mocks.request.mockRejectedValueOnce(new Error("Assignment lookup unavailable"));
+    renderAccount(undefined, true);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Assignment lookup unavailable");
+    expect(screen.queryByRole("combobox", { name: /^Salesperson for/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Retry salesperson" }));
+    expect(await screen.findByRole("combobox", { name: "Salesperson for Alpha association" })).toHaveValue("alice");
+  });
+
+  it.each(["refresh-last", "save-last"])("retains the newest ownership when a refresh overlaps a save (%s)", async order => {
+    const normal = mocks.request.getMockImplementation()!;
+    let reads = 0, saves = 0;
+    let finishRefresh!: (result: unknown) => void;
+    let finishSave!: (result: unknown) => void;
+    mocks.request.mockImplementation((operation, input) => {
+      if (operation === "context" && ++reads > 1) return new Promise(resolve => { finishRefresh = resolve; });
+      if (operation === "setResponsibilities") {
+        if (++saves === 1) return Promise.reject(new Error("Refresh before saving."));
+        if (saves === 2) return new Promise(resolve => { finishSave = resolve; });
+      }
+      return normal(operation, input);
+    });
+    renderAccount(undefined, true);
+    const picker = await screen.findByRole("combobox", { name: "Salesperson for Alpha association" });
+    fireEvent.change(picker, { target: { value: "bob" } });
+    fireEvent.click(await screen.findByRole("button", { name: "Refresh assignments" }));
+    fireEvent.change(picker, { target: { value: "bob" } });
+    const refreshed = await normal("context", { accountId: "alpha" });
+    const saved = { workflow: { accountId: "alpha", salespersonId: "bob", version: 5 } };
+    if (order === "refresh-last") {
+      await act(async () => finishSave(saved));
+      await act(async () => finishRefresh(refreshed));
+      expect(picker).toHaveValue("bob");
+    } else {
+      refreshed.workflow.version = 6;
+      await act(async () => finishRefresh(refreshed));
+      await act(async () => finishSave(saved));
+      expect(picker).toHaveValue("alice");
+    }
+    fireEvent.change(picker, { target: { value: order === "refresh-last" ? "alice" : "bob" } });
+    await screen.findByText("Saved");
+    expect(mocks.request).toHaveBeenLastCalledWith("setResponsibilities", { accountId: "alpha", salespersonId: order === "refresh-last" ? "alice" : "bob", version: order === "refresh-last" ? 5 : 6 }, true);
+  });
 });
 
 describe("account underwriting layout", () => {

@@ -124,9 +124,9 @@ describe("CRM authorization", () => {
     const { handler } = await import("../../amplify/functions/communications/handler");
     expect(await handler({ arguments: { readOperation: "context", input: { conversationId: "cnv_a" } } })).toMatchObject({ ok: false, error: expect.stringContaining("Sign in") });
   });
-  it("does not let ordinary staff edit eligibility, secrets or replay uncertain sends", async () => {
+  it("does not let ordinary staff edit assignments, eligibility, secrets or replay uncertain sends", async () => {
     const { handler } = await import("../../amplify/functions/communications/handler");
-    for (const operation of ["saveEligibility", "saveSettings", "reviewOperation", "activate"]) {
+    for (const operation of ["setResponsibilities", "saveEligibility", "saveSettings", "reviewOperation", "activate"]) {
       expect(await handler({ arguments: { operation, input: {} }, identity: { sub: "staff", groups: [] } as never })).toMatchObject({ ok: false, error: expect.stringContaining("Only an admin") });
     }
   });

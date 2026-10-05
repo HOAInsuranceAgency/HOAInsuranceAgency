@@ -12,6 +12,7 @@ import { LeadSnoozeControl } from './LeadSnoozeControl';
 import { useAgencyDay } from '../lib/useAgencyDay';
 import type { LeadSnooze } from '../../../shared/leadSnooze';
 import { isAuthorizationError } from '../lib/authorizationError';
+import { useIsAdmin } from '../lib/auth';
 
 const EMPTY: WorkflowContext = { workflow: null, tasks: [], communications: [], team: [], issues: [] };
 export function ResponsibilitySelect({ label, value, team, onChange, disabled = false }: {
@@ -25,6 +26,7 @@ export function ResponsibilitySelect({ label, value, team, onChange, disabled = 
   </select></label>;
 }
 export default function LeadWorkflowPanel({ accountId, conversationId, onOpen }: { accountId?: string; conversationId?: string; onOpen?: (url: string) => void }) {
+  const isAdmin = useIsAdmin();
   const compact = !!onOpen;
   const [editingTeam, setEditingTeam] = useState(false);
   const [notice, setNotice] = useState("");
@@ -54,6 +56,7 @@ export default function LeadWorkflowPanel({ accountId, conversationId, onOpen }:
     return () => { window.clearInterval(timer); document.removeEventListener("visibilitychange", refresh); };
   }, [compact, busy, editingTeam, note, resource.loading, resource.refetch, snoozeInteracting]);
   useEffect(() => { setSalesperson(workflow?.salespersonId ?? ""); }, [workflow?.salespersonId]);
+  useEffect(() => { if (!isAdmin) { setEditingTeam(false); setSalesperson(workflow?.salespersonId ?? ""); } }, [isAdmin, workflow?.salespersonId]);
   // The parent keys the panel by conversation/account, so unsaved edits never
   // become writes against the newly selected lead in Front.
   const run = async (op: string, input: unknown) => {
@@ -116,14 +119,14 @@ export default function LeadWorkflowPanel({ accountId, conversationId, onOpen }:
     {compact && conversationId && <SidebarActivityLinker accountId={workflow.accountId} conversationId={conversationId} onSaved={() => void resource.refetch()} />}
   </>;
   const owner = <section className={compact ? "front-team" : "activity-owner"} aria-label="Account owner">
-      <div className="toolbar"><h3>Account owner</h3><div className="grow" />{!editingTeam && <button className="link" onClick={() => setEditingTeam(true)}>Edit salesperson</button>}</div>
-      {!editingTeam ? <dl className="front-team-list"><div><dt>Salesperson</dt><dd>{teamName(workflow.salespersonId)}</dd></div></dl> : <>
+      <div className="toolbar"><h3>Account owner</h3><div className="grow" />{isAdmin && !editingTeam && <button className="link" onClick={() => setEditingTeam(true)}>Edit salesperson</button>}</div>
+      {!isAdmin || !editingTeam ? <dl className="front-team-list"><div><dt>Salesperson</dt><dd>{teamName(workflow.salespersonId)}</dd></div></dl> : <>
         <div className="form-grid">
           <ResponsibilitySelect label="Salesperson" value={salesperson} team={team} onChange={setSalesperson} disabled={busy} />
         </div>
         <div className="toolbar">
           <button className="primary" disabled={busy || !salesperson || salesperson === workflow.salespersonId}
-            onClick={async () => { if (await run("setResponsibilities", { accountId: workflow.accountId, salespersonId: salesperson, version: workflow.version })) setEditingTeam(false); }}>Save salesperson</button>
+            onClick={async () => { if (isAdmin && await run("setResponsibilities", { accountId: workflow.accountId, salespersonId: salesperson, version: workflow.version })) setEditingTeam(false); }}>Save salesperson</button>
           <button className="secondary" disabled={busy} onClick={() => { setSalesperson(workflow.salespersonId ?? ""); setEditingTeam(false); }}>Cancel</button>
         </div>
       </>}
