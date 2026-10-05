@@ -39,6 +39,59 @@ function page(admin = true, stage: 'LEAD' | 'CLIENT' = 'LEAD') {
 }
 async function willowPicker() { return screen.findByRole('combobox', { name: 'Salesperson for Willow Court Condominium' }); }
 
+it.each(['focus', 'visibility', 'queued-focus'] as const)('keeps the assignment dropdown mounted across %s events until it loses focus', async trigger => {
+  render(page());
+  const picker = await willowPicker();
+  const reads = () => h.request.mock.calls.filter(([op]) => op === 'commercialTable').length;
+  const before = reads();
+  // A native select can return window focus while its menu is still open.
+  // Also cover a refresh queued just before the administrator opens it.
+  if (trigger === 'queued-focus') fireEvent(window, new Event('focus'));
+  act(() => picker.focus());
+  fireEvent.click(picker);
+  if (trigger === 'focus') fireEvent(window, new Event('focus'));
+  if (trigger === 'visibility') fireEvent(document, new Event('visibilitychange'));
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 150)); });
+
+  expect(reads()).toBe(before);
+  expect(await willowPicker()).toBe(picker);
+  expect(picker).toHaveFocus();
+  expect(picker).toBeEnabled();
+  expect(screen.getByLabelText('Current route')).toHaveTextContent('/leads');
+  // Escape/cancel must not save; leaving the control releases the refresh.
+  fireEvent.keyDown(picker, { key: 'Escape' });
+  act(() => picker.blur());
+  await waitFor(() => expect(reads()).toBe(before + 1));
+  expect(await willowPicker()).toHaveValue('alice');
+  expect(h.request.mock.calls.some(([op]) => op === 'setResponsibilities')).toBe(false);
+});
+
+it('holds a return refresh through choosing and saving an owner, including blur during saving', async () => {
+  const initial = h.request.getMockImplementation()!;
+  let finishSave!: (value: unknown) => void;
+  h.request.mockImplementation((op, input) => op === 'setResponsibilities'
+    ? new Promise(resolve => { finishSave = resolve; }) : initial(op, input));
+  render(page());
+  const picker = await willowPicker();
+  const reads = () => h.request.mock.calls.filter(([op]) => op === 'commercialTable').length;
+  const before = reads();
+  act(() => picker.focus());
+  fireEvent(window, new Event('focus'));
+  fireEvent.change(picker, { target: { value: 'bob' } });
+  act(() => picker.blur());
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 150)); });
+  expect(reads()).toBe(before);
+  expect(await willowPicker()).toBe(picker);
+  expect(picker).toBeDisabled();
+  expect(h.request).toHaveBeenCalledWith('setResponsibilities', { accountId: 'willow', salespersonId: 'bob', version: 7 }, true);
+
+  await act(async () => finishSave({ workflow: { accountId: 'willow', salespersonId: 'bob', version: 8 } }));
+  await waitFor(() => expect(reads()).toBe(before + 1));
+  // The background snapshot is deliberately older than the confirmed save.
+  expect(await willowPicker()).toHaveValue('bob');
+  expect(screen.getByLabelText('Current route')).toHaveTextContent('/leads');
+});
+
 it('saves inline without opening the lead and uses the returned version for the next edit', async () => {
   render(page());
   const picker = await willowPicker();

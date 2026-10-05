@@ -20,16 +20,21 @@ export function LeadSalespersonSelect({
   const isAdmin = useIsAdmin();
   const messageId = useId();
   const saving = useRef(false);
+  const [focused, setFocused] = useState(false);
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [saved, setSaved] = useState(false);
-  useRowInteraction(`assignment:${accountId}`, pending !== null, onInteractionChange);
+  // Native dropdowns can trigger window focus while their menu is open.
+  // Keep the row mounted from focus through selection/cancel and any save.
+  useRowInteraction(`assignment:${accountId}`, focused || pending !== null, onInteractionChange);
   const eligible = team.filter(isAssignableSalesperson);
 
   async function assign(nextId: string) {
     if (!isAdmin || saving.current || !nextId || nextId === salespersonId) return;
     saving.current = true;
     setPending(nextId);
+    // Disabling the select during a save can drop focus without a blur event.
+    setFocused(false);
     setError('');
     setSaved(false);
     try {
@@ -55,6 +60,10 @@ export function LeadSalespersonSelect({
         aria-invalid={!!error}
         value={pending ?? salespersonId ?? ''}
         disabled={pending !== null || eligible.length === 0}
+        onFocus={() => setFocused(true)}
+        onPointerDown={() => setFocused(true)}
+        onKeyDown={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
         onChange={event => void assign(event.target.value)}
       >
         <option value="" disabled>Unassigned</option>
@@ -64,7 +73,7 @@ export function LeadSalespersonSelect({
         {eligible.map(member => <option key={member.userId} value={member.userId}>{member.name}</option>)}
       </select>
       <div id={messageId}>
-        {error ? <div className="error-text small" role="alert">{error} <button className="link" onClick={() => void onRefresh()}>Refresh assignments</button></div>
+        {error ? <div className="error-text small" role="alert">{error} <button type="button" className="link" onClick={() => void onRefresh()}>Refresh assignments</button></div>
           : <span className="muted small" role="status">{pending !== null ? 'Saving…' : saved ? 'Saved' : eligible.length === 0 ? 'No eligible salespeople' : ''}</span>}
       </div>
     </div>
