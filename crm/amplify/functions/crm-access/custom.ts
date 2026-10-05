@@ -1,8 +1,8 @@
 import { AccountAccess } from "./access";
 import { AccessDenied, id, object, type RecordData } from "./policy";
 import { retiredTaskOperation } from "../../../../shared/retiredTaskOperations";
-const adminCommunication = new Set(["dashboardOpenQuotesPage", "dashboardBoundPoliciesPage", "dashboardQuotesPage", "dashboardQuoteStates", "dashboardInvoiceAnchors", "dashboardAssignments", "dashboardInterestPage", "dashboardPolicyAnchors", "dashboardLeadPlansPage", "settings", "prepareLeadDeletion", "saveEligibility", "saveSettings", "restartReconciliation", "restartConversationHistory", "validateConnection", "activate", "reviewOperation", "backfill"]);
-const accountOperations = new Set(["context", "accountSummary", "saveCommercial", "saveLeadSnooze", "prepareBusinessDraft", "initializeLead", "setResponsibilities", "reopenLead", "setLeadDisposition", "cancelAi", "linkConversation", "linkActivity", "archive", "addNote"]);
+const adminCommunication = new Set(["dashboardOpenQuotesPage", "dashboardBoundPoliciesPage", "dashboardQuotesPage", "dashboardQuoteStates", "dashboardInvoiceAnchors", "dashboardAssignments", "dashboardInterestPage", "dashboardPolicyAnchors", "dashboardLeadPlansPage", "settings", "prepareLeadDeletion", "setResponsibilities", "saveEligibility", "saveSettings", "restartReconciliation", "restartConversationHistory", "validateConnection", "activate", "reviewOperation", "backfill"]);
+const accountOperations = new Set(["context", "accountSummary", "saveCommercial", "saveLeadSnooze", "prepareBusinessDraft", "initializeLead", "reopenLead", "setLeadDisposition", "cancelAi", "linkConversation", "linkActivity", "archive", "addNote"]);
 async function filterAccountItems(access: AccountAccess, input: unknown) {
   const items = Array.isArray(input) ? input : [];
   await access.prefetchAccounts(items.map(value => id(object(value).accountId)));
@@ -75,7 +75,6 @@ export async function authorizeCustom(access: AccountAccess, field: string, args
   if (op === "saveAttachment") { await communicationAccount(access, id(input.communicationId), accountId); return; }
   if (op === "authorizeBind") { await access.requireRecord("Quote", id(input.quoteId)); return; }
   if (!accountOperations.has(op) || !accountId) throw new AccessDenied();
-  if (op === "setResponsibilities") await access.requireSalesperson(id(input.salespersonId));
   if (input.policyId) {
     const policy = await access.requireRecord("Policy", id(input.policyId));
     if (policy.accountId !== accountId) throw new AccessDenied();

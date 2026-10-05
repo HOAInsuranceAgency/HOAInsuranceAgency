@@ -301,6 +301,33 @@ describe("inline salesperson assignment", () => {
     await save(row("ELIGIBILITY", `eligibility:${userId}`, { userId, name: userId, enabled: true, salesperson: true, ...overrides }));
   }
 
+  it.each(["STAFF", "PRODUCER"])("rejects assignment writes from an active %s role before any workflow changes", async activeRole => {
+    const { handler } = await import("../../amplify/functions/communications/handler");
+    const workflow = await lead();
+    const before = h.transactions.length;
+    const event = {
+      arguments: { operation: "setResponsibilities", input: { accountId: "a1", salespersonId: "brian", version: workflow.version } },
+      identity: { sub: "brian", groups: ["ADMIN", activeRole] } as never,
+      request: { headers: { "x-crm-role": activeRole } },
+    };
+    expect(await handler(event)).toMatchObject({ ok: false, error: "Only an admin can change the salesperson" });
+    expect(h.transactions).toHaveLength(before);
+    expect(record(workflow.id)).toEqual(workflow);
+    expect(entries("ROLE_SYNC")).toHaveLength(0);
+  });
+
+  it("allows an active administrator to assign another eligible salesperson", async () => {
+    const { handler } = await import("../../amplify/functions/communications/handler");
+    await eligible();
+    const workflow = await lead();
+    expect(await handler({
+      arguments: { operation: "setResponsibilities", input: { accountId: "a1", salespersonId: "chosen", version: workflow.version } },
+      identity: { sub: "brian", groups: ["ADMIN", "PRODUCER"] } as never,
+      request: { headers: { "x-crm-role": "ADMIN" } },
+    })).toMatchObject({ ok: true, workflow: { salespersonId: "chosen", version: workflow.version + 1 } });
+    expect(record(workflow.id).data.salespersonId).toBe("chosen");
+  });
+
   it("returns the stored workflow version and zero for accounts without a workflow", async () => {
     const workflow = row("WORKFLOW", "workflow:existing", { accountId: "existing", salespersonId: "brian", disposition: "ACTIVE", version: 2 });
     h.records.set("comms:workflow:existing", { ...workflow, version: 7 });

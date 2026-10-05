@@ -181,7 +181,10 @@ export const handler = async (event: { arguments: { operation?: string; readOper
       return { ok: true };
     }
     if (op === "initializeLead") return { ok: true, workflow: (await ensureWorkflow(text(input, "accountId"))).data };
-    if (op === "setResponsibilities") return { ok: true, workflow: await setResponsibilities(text(input, "accountId"), text(input, "salespersonId"), version(input), actor) };
+    if (op === "setResponsibilities") {
+      if (!admin) throw new Error("Only an admin can change the salesperson");
+      return { ok: true, workflow: await setResponsibilities(text(input, "accountId"), text(input, "salespersonId"), version(input), actor) };
+    }
     if (op === "reopenLead") {
       const accountId = text(input, "accountId"), wf = await ensureWorkflow(accountId); expected(wf, version(input));
       if (!["LOST", "DISQUALIFIED"].includes(wf.data.disposition)) throw new Error("Only lost or disqualified leads can be reopened here");
