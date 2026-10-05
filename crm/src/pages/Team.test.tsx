@@ -29,6 +29,7 @@ vi.mock("../lib/scopedStorage", () => ({
 }));
 
 import Team from "./Team";
+import { OwnerContext } from "../lib/auth";
 import type { UserProfile as UserProfileType } from "../lib/client";
 import type { TeamEligibility } from "../lib/communications";
 
@@ -417,5 +418,26 @@ describe("assigning up to two roles", () => {
     await waitFor(() => expect(refreshed).toHaveBeenCalledTimes(1));
     expect(updateUserRoles).toHaveBeenCalledWith({ userId: profile.userId, roles: ["ADMIN", "PRODUCER"] });
     window.removeEventListener("team-roles-changed", refreshed);
+  });
+});
+
+
+describe("Owner role administration", () => {
+  it("hides Owner invitation and disables changing an Owner when acting as Admin", async () => {
+    listTeamUsers.mockResolvedValue({ data: { users: [{ ...teammate, groups: ["OWNER"] }], profiles: [teammateProfile] } });
+    renderPage();
+    expect(await screen.findByRole("button", { name: "Edit roles for Casey Staff" })).toBeDisabled();
+    expect(screen.queryByRole("checkbox", { name: "Owner" })).not.toBeInTheDocument();
+  });
+
+  it("allows Owners to assign Owner and prevents removing their own Owner role", async () => {
+    listTeamUsers.mockResolvedValue({ data: { users: [{ userId: profile.userId, email: profile.email, createdAt: null, groups: ["OWNER", "PRODUCER"] }], profiles: [profile] } });
+    render(<OwnerContext.Provider value={true}><Team profile={profile} /></OwnerContext.Provider>);
+    expect(screen.getByRole("checkbox", { name: "Owner" })).toBeEnabled();
+    fireEvent.click(await screen.findByRole("button", { name: "Edit roles for Ada Admin" }));
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByRole("checkbox", { name: "Owner" })).toBeChecked();
+    expect(within(dialog).getByRole("checkbox", { name: "Owner" })).toBeDisabled();
+    expect(within(dialog).getByRole("checkbox", { name: "Producer" })).toBeEnabled();
   });
 });

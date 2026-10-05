@@ -14,15 +14,18 @@ import {
 } from "./lib/agencySettings";
 import {
   AdminContext,
+  OwnerContext,
   fetchUserGroups,
   roleFromGroups,
   rolesFromGroups,
   type Role,
   useIsAdmin,
+  useIsOwner,
 } from "./lib/auth";
 import { clearActiveRole, restoreActiveRole, setActiveRole } from "./lib/activeRole";
 import MagicLinkSignIn from "./components/MagicLinkSignIn";
 import Dashboard from "./pages/Dashboard";
+import OwnerProfitability from "./pages/OwnerProfitability";
 import AccountsList from "./pages/AccountsList";
 import AccountDetail from "./pages/AccountDetail";
 import NewLead from "./pages/NewLead";
@@ -134,7 +137,7 @@ function ProfileGate({ user, signOut }: { user: AuthUser; signOut: () => void })
     setData(current => ({ ...current, activeRole: role }));
     // A record or settings page from the previous view may be inaccessible.
     // Remounting the shell also discards its old results and subscriptions.
-    navigate(role === "ADMIN" ? "/" : "/leads", { replace: true });
+    navigate(role === "ADMIN" || role === "OWNER" ? "/" : "/leads", { replace: true });
   }
 
   // This read used to have no catch at all: a failed profile/groups fetch
@@ -181,9 +184,11 @@ function ProfileGate({ user, signOut }: { user: AuthUser; signOut: () => void })
   }
 
   return (
-    <AdminContext.Provider value={activeRole === "ADMIN" && groups.includes("ADMIN")}>
-      <Shell key={activeRole} profile={profile} signOut={signOut} activeRole={activeRole} roles={rolesFromGroups(groups)} onRoleChange={switchRole} />
-    </AdminContext.Provider>
+    <OwnerContext.Provider value={activeRole === "OWNER" && groups.includes("OWNER")}>
+      <AdminContext.Provider value={(activeRole === "OWNER" || activeRole === "ADMIN") && groups.includes(activeRole)}>
+        <Shell key={activeRole} profile={profile} signOut={signOut} activeRole={activeRole} roles={rolesFromGroups(groups)} onRoleChange={switchRole} />
+      </AdminContext.Provider>
+    </OwnerContext.Provider>
   );
 }
 
@@ -349,6 +354,7 @@ function Shell({ profile, signOut, activeRole, roles, onRoleChange }: {
 }) {
   const location = useLocation();
   const isAdmin = useIsAdmin();
+  const isOwner = useIsOwner();
   const homePath = isAdmin ? "/" : "/leads";
   const [menuOpen, setMenuOpen] = useState(false);
   /**
@@ -357,7 +363,9 @@ function Shell({ profile, signOut, activeRole, roles, onRoleChange }: {
    * has nothing to say.
    */
   const navItems = [
-    ...NAV_ITEMS.slice(0, 4),
+    ...NAV_ITEMS.slice(0, 1),
+    ...(isOwner ? [{ to: "/owner", label: "Profitability", icon: <IconGrid /> }] : []),
+    ...NAV_ITEMS.slice(1, 4),
     { to: "/financing", label: "Financing", icon: <IconCoin /> } as const,
     ...NAV_ITEMS.slice(4),
   ].filter((item) => item.to !== "/" || isAdmin);
@@ -411,6 +419,7 @@ function Shell({ profile, signOut, activeRole, roles, onRoleChange }: {
             path="/"
             element={isAdmin ? <Dashboard /> : <Navigate to="/leads" replace />}
           />
+          <Route path="/owner" element={isOwner ? <OwnerProfitability /> : <Navigate to={homePath} replace />} />
           <Route path="/leads" element={<AccountsList stage="LEAD" />} />
           <Route path="/leads/new" element={<NewLead />} />
           <Route path="/lead-work" element={<Navigate to="/leads" replace />} />

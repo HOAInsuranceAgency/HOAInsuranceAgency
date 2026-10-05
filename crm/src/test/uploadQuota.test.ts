@@ -153,10 +153,10 @@ describe("bearer upload tokens are not readable by ordinary users", () => {
     return SCHEMA.slice(authAt, SCHEMA.indexOf("\n\n", authAt));
   };
 
-  it("keeps LeadReply and UploadPortal to ADMIN", () => {
+  it("keeps LeadReply and UploadPortal to Admin and Owner", () => {
     for (const model of ["LeadReply", "UploadPortal"]) {
       const rule = authAfter(model);
-      expect(rule, model).toContain('allow.groups(["ADMIN"])');
+      expect(rule, model).toContain('allow.groups(["ADMIN", "OWNER"])');
       expect(rule, model).not.toContain("allow.authenticated()");
     }
   });

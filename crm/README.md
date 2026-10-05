@@ -16,8 +16,11 @@ Internal agency management system replacing EzLynx for the commercial
   alerts; branch URLs for the link live in `BRANCH_URLS` there too).
   Admins assign one or two Cognito roles (`ADMIN` / `STAFF` / `PRODUCER`)
   in **Settings → Team**, when inviting someone or editing an existing user.
+  `OWNER` includes all Admin permissions plus private employee profitability;
+  only an active Owner can grant or change Owner membership. The first Owner
+  requires [deployment setup](../docs/OWNER-ACCESS.md).
   Users with two roles switch views using **Active role** at the bottom of
-  the sidebar. Admin sees all agency accounts; Producer and Staff see only
+  the sidebar. Admin and Owner see all agency accounts; Producer and Staff see only
   accounts assigned to them. The active view is remembered per user in the
   current browser tab and enforced on server requests; changing it clears
   the previous view's data. Updated role assignments appear on reload, and
@@ -57,6 +60,10 @@ Internal agency management system replacing EzLynx for the commercial
   worker backfills existing producer eligibility before assignment begins.
 - **Data** — AppSync + DynamoDB, schema in
   [amplify/data/resource.ts](amplify/data/resource.ts).
+- **Employee profitability** — Owner-only estimated insurance commission less
+  producer share and prorated salary, with private dated compensation settings.
+  Salary data is isolated from shared profiles and activity records. See
+  [the calculation and setup guide](../docs/OWNER-PROFITABILITY.md).
 - **Documents** — S3 ([amplify/storage/resource.ts](amplify/storage/resource.ts)).
   Uploads land at `documents/{entityType}/{entityId}/{documentId}/{filename}`,
   which triggers the Textract Lambda

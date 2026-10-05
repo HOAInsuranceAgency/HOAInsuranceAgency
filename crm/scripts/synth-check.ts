@@ -171,6 +171,8 @@ try {
   }
   const { checkAccountAccess } = await import("./check-account-access");
   checkAccountAccess(backend, outdir);
+  const { checkOwnerProfitability } = await import("./check-owner-profitability");
+  checkOwnerProfitability(backend);
   // Dashboard interest must use a backfilled time index without dropping the
   // loan relation or account-access indexes already on the payment table.
   const paymentTable = app.node.findAll().find((node): node is CfnResource =>
