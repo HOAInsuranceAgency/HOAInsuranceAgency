@@ -25,17 +25,25 @@ export async function loadCommercial(ids: string[], snoozeAccountIds: string[] =
   const roster = await communicationRequest<{ team: TeamEligibility[] }>('team', {});
   if (!Array.isArray(roster.team)) throw new Error('Could not load teammates');
   const entries: Record<string, CommercialEntry> = {};
-  for (let i = 0; i < accounts.length; i += 25) {
-    const batch = accounts.slice(i, i + 25);
-    const followUps = batch.filter(id => snoozeIds.has(id));
-    const result = await communicationRequest<{ items: CommercialEntry[] }>(
-      'commercialTable', { accountIds: batch, ...(followUps.length ? { snoozeAccountIds: followUps } : {}) },
-    );
-    if (!Array.isArray(result.items) || result.items.length !== batch.length ||
-      batch.some(id => !result.items.some(item => item.accountId === id))) {
-      throw new Error('Account details are incomplete. Refresh to try again.');
+  // Load up to four batches together; every batch must settle before a failed
+  // snapshot is rejected, so later failures cannot escape unhandled.
+  for (let offset = 0; offset < accounts.length; offset += 100) {
+    const results = await Promise.allSettled(Array.from({ length: Math.ceil(Math.min(100, accounts.length - offset) / 25) }, async (_, batchIndex) => {
+      const batch = accounts.slice(offset + batchIndex * 25, offset + (batchIndex + 1) * 25);
+      const followUps = batch.filter(id => snoozeIds.has(id));
+      const result = await communicationRequest<{ items: CommercialEntry[] }>(
+        'commercialTable', { accountIds: batch, ...(followUps.length ? { snoozeAccountIds: followUps } : {}) },
+      );
+      if (!Array.isArray(result.items) || result.items.length !== batch.length ||
+        batch.some(id => !result.items.some(item => item.accountId === id))) {
+        throw new Error('Account details are incomplete. Refresh to try again.');
+      }
+      return result;
+    }));
+    for (const result of results) {
+      if (result.status === 'rejected') throw result.reason;
+      for (const entry of result.value.items) entries[entry.accountId] = entry;
     }
-    for (const entry of result.items) entries[entry.accountId] = entry;
   }
   return { entries, team: roster.team };
 }

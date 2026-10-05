@@ -5,10 +5,13 @@ vi.mock(
   '../lib/client',
   () => import('../../scripts/commercial-preview/fixtures'),
 );
-vi.mock(
-  '../lib/communications',
-  () => import('../../scripts/commercial-preview/fixtures'),
-);
+vi.mock('../lib/communications', async () => {
+  const fixtures = await import('../../scripts/commercial-preview/fixtures');
+  return { ...fixtures, communicationRequest: async (operation: string, input: Record<string, unknown>) => {
+    const result = await fixtures.communicationRequest<{ team: import('../../../shared/leadWorkflow').TeamEligibility[] }>(operation, input);
+    return operation === 'team' ? { team: [...result.team, { userId: 'other-sales', name: 'Another producer', enabled: true, salesperson: true }] } : result;
+  } };
+});
 import { AdminContext } from '../lib/auth';
 const saveReport = vi.hoisted(() => vi.fn());
 vi.mock('../lib/reportDownload', async original => ({ ...await original<typeof import('../lib/reportDownload')>(), saveReport }));
@@ -31,7 +34,7 @@ it('keeps unfinished packages in Leads and shows the same visible salesperson fi
   expect(await screen.findByText('$250')).toBeTruthy();
   expect(screen.getByText('Quote form')).toBeTruthy();
   fireEvent.change(screen.getByRole('combobox', { name: 'Salesperson' }), {
-    target: { value: 'champ' },
+    target: { value: 'other-sales' },
   });
   expect(screen.getByText('No leads found.')).toBeTruthy();
   page.rerender(
@@ -40,7 +43,7 @@ it('keeps unfinished packages in Leads and shows the same visible salesperson fi
     </MemoryRouter></AdminContext.Provider>,
   );
   expect(await screen.findByText('No clients found.')).toBeTruthy();
-  expect(screen.getByRole('combobox', { name: 'Salesperson' })).toHaveValue('champ');
+  expect(screen.getByRole('combobox', { name: 'Salesperson' })).toHaveValue('other-sales');
   fireEvent.change(screen.getByRole('combobox', { name: 'Salesperson' }), { target: { value: '' } });
   expect(await screen.findByText('Cedar House — partially bound')).toBeTruthy();
   expect(screen.getByRole('columnheader', { name: 'City' })).toBeTruthy();
@@ -75,7 +78,7 @@ it.each(['LEAD', 'CLIENT'] as const)('retains salesperson columns, filters and e
 it('ignores a formerly selected salesperson filter when admin access is removed', async () => {
   const page = render(<AdminContext.Provider value={true}><MemoryRouter><AccountsList stage="LEAD" /></MemoryRouter></AdminContext.Provider>);
   await screen.findByText('Cedar House — partially bound');
-  fireEvent.change(screen.getByRole('combobox', { name: 'Salesperson' }), { target: { value: 'champ' } });
+  fireEvent.change(screen.getByRole('combobox', { name: 'Salesperson' }), { target: { value: 'other-sales' } });
   expect(screen.getByText('No leads found.')).toBeTruthy();
   page.rerender(<AdminContext.Provider value={false}><MemoryRouter><AccountsList stage="LEAD" /></MemoryRouter></AdminContext.Provider>);
   expect(await screen.findByText('Cedar House — partially bound')).toBeTruthy();

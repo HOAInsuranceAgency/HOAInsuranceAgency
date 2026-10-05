@@ -1,6 +1,6 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { MemoryRouter, useLocation } from 'react-router-dom';
+import { Link, MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { emptyCommercialPlan } from '../../../shared/quotePackages';
 
 const h = vi.hoisted(() => ({ request: vi.fn(), saveReport: vi.fn() }));
@@ -9,6 +9,7 @@ vi.mock('../lib/communications', () => ({ communicationRequest: h.request }));
 vi.mock('../lib/reportDownload', async original => ({ ...await original<typeof import('../lib/reportDownload')>(), saveReport: h.saveReport }));
 import { AdminContext } from '../lib/auth';
 import AccountsList from './AccountsList';
+import { AccountsListDataProvider } from '../lib/accountsListData';
 
 const team = [
   { userId: 'alice', name: 'Alice', enabled: true, salesperson: true, available: true },
@@ -218,4 +219,65 @@ it.each([false, true])('keeps non-admin leads and admin client rows free of assi
   await screen.findByText(admin ? 'Cedar House — partially bound' : 'Willow Court Condominium');
   expect(screen.queryByRole('combobox', { name: /^Salesperson for / })).not.toBeInTheDocument();
   expect(h.request.mock.calls.some(([op]) => op === 'setResponsibilities')).toBe(false);
+});
+
+
+it.each(['LEAD', 'CLIENT'] as const)('lists only configured producers in the %s filter, including inactive producers', async stage => {
+  // A staff member can own an old record without being a producer. The user's
+  // producer-only filter must not turn into a second full team roster.
+  owner = 'staff';
+  render(page(true, stage));
+  await screen.findByText(stage === 'LEAD' ? 'Willow Court Condominium' : 'Cedar House — partially bound');
+  const filter = within(screen.getByRole('combobox', { name: 'Salesperson' }));
+  expect(filter.getAllByRole('option').map(option => option.textContent)).toEqual([
+    'All salespeople', 'Alice', 'Bob', 'Disabled salesperson', 'Unavailable sign-in', 'Unchecked availability',
+  ]);
+  expect(filter.queryByRole('option', { name: 'Office staff' })).not.toBeInTheDocument();
+});
+
+it('shows the saved list immediately when returning from a lead and updates it without replacing its controls', async () => {
+  render(<AdminContext.Provider value={true}><AccountsListDataProvider><MemoryRouter initialEntries={['/leads']}>
+    <Routes>
+      <Route path="/leads" element={<AccountsList stage="LEAD" />} />
+      <Route path="/accounts/:id" element={<Link to="/leads">Back to leads</Link>} />
+    </Routes>
+  </MemoryRouter></AccountsListDataProvider></AdminContext.Provider>);
+  const picker = await willowPicker();
+  fireEvent.change(picker, { target: { value: 'bob' } });
+  await waitFor(() => expect(picker).toHaveValue('bob'));
+  await screen.findByText('Saved');
+  fireEvent.click(screen.getByText('Willow Court Condominium'));
+  const initial = h.request.getMockImplementation()!;
+  let finishRefresh!: (value: unknown) => void;
+  h.request.mockImplementation((op, input) => op === 'commercialTable'
+    ? new Promise(resolve => { finishRefresh = resolve; }) : initial(op, input));
+  fireEvent.click(screen.getByRole('link', { name: 'Back to leads' }));
+  const cached = screen.getByRole('combobox', { name: 'Salesperson for Willow Court Condominium' });
+  expect(cached).toHaveValue('bob');
+  expect(screen.queryByText('Loading…')).not.toBeInTheDocument();
+  await waitFor(() => expect(finishRefresh).toBeTypeOf('function'));
+  // A response from before the save must not undo the confirmed assignment.
+  await act(async () => finishRefresh(await initial('commercialTable', { accountIds: ['willow', 'pine', 'cedar'] })));
+  expect(await willowPicker()).toBe(cached);
+  expect(cached).toHaveValue('bob');
+});
+
+it('keeps rows and assignment controls visible throughout a background refresh', async () => {
+  render(page());
+  const picker = await willowPicker();
+  const table = screen.getByRole('table');
+  const initial = h.request.getMockImplementation()!;
+  let finishRefresh!: (value: unknown) => void;
+  h.request.mockImplementation((op, input) => op === 'commercialTable'
+    ? new Promise(resolve => { finishRefresh = resolve; }) : initial(op, input));
+  fireEvent(window, new Event('focus'));
+  await waitFor(() => expect(finishRefresh).toBeTypeOf('function'));
+  expect(screen.getByRole('table')).toBe(table);
+  expect(await willowPicker()).toBe(picker);
+  expect(picker).toBeEnabled();
+  expect(screen.queryByText('Loading…')).not.toBeInTheDocument();
+  owner = 'bob'; version = 8;
+  await act(async () => finishRefresh(await initial('commercialTable', { accountIds: ['willow', 'pine', 'cedar'] })));
+  expect(await willowPicker()).toBe(picker);
+  expect(picker).toHaveValue('bob');
 });
