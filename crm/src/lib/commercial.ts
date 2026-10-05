@@ -3,6 +3,7 @@ import { communicationRequest, type TeamEligibility } from './communications';
 import type { CommercialPlan } from '../../../shared/quotePackages';
 import type { LeadWorkflow } from '../../../shared/leadWorkflow';
 import type { LeadSnooze } from '../../../shared/leadSnooze';
+import { isAuthorizationError } from './authorizationError';
 export interface CommercialEntry {
   accountId: string;
   plan: CommercialPlan;
@@ -40,8 +41,13 @@ export async function loadCommercial(ids: string[], snoozeAccountIds: string[] =
       }
       return result;
     }));
+    const failed = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected');
+    // A timeout in an earlier batch must never conceal a later access denial:
+    // callers may retain stale rows after a transient failure, but not denial.
+    const failure = failed.find(result => isAuthorizationError(result.reason)) ?? failed[0];
+    if (failure) throw failure.reason;
     for (const result of results) {
-      if (result.status === 'rejected') throw result.reason;
+      if (result.status !== 'fulfilled') continue;
       for (const entry of result.value.items) entries[entry.accountId] = entry;
     }
   }

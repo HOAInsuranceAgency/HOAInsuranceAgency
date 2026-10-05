@@ -12,6 +12,7 @@ import {
 import { client, friendlyError, listAllPages, type Account, type Contact, type Policy, type Quote } from './client';
 import { loadCommercial, type CommercialData, type CommercialEntry } from './commercial';
 import { isAuthorizationError } from './authorizationError';
+import { useIsAdmin } from './auth';
 
 type Stage = 'LEAD' | 'CLIENT';
 export interface AccountsListData {
@@ -24,12 +25,19 @@ export interface AccountsListData {
 }
 interface ResourceState {
   stage: Stage;
+  isAdmin: boolean;
   data: AccountsListData;
   loading: boolean;
   loaded: boolean;
   error: string;
+  refreshError: string;
 }
-type ListCache = Map<Stage, AccountsListData>;
+interface CacheEntry { data: AccountsListData; detailsAt: number }
+type CacheKey = `${Stage}:${'admin' | 'scoped'}`;
+type ListCache = Map<CacheKey, CacheEntry>;
+const FRESH_MS = 60_000;
+const cacheKey = (stage: Stage, isAdmin: boolean): CacheKey => `${stage}:${isAdmin ? 'admin' : 'scoped'}`;
+const fresh = (entry?: CacheEntry) => !!entry && entry.detailsAt > 0 && Date.now() - entry.detailsAt < FRESH_MS;
 const CacheContext = createContext<ListCache | null>(null);
 
 /** The authenticated shell owns these snapshots. Its user/role remount drops
@@ -43,10 +51,37 @@ const emptyData = (): AccountsListData => ({
   accounts: [], contacts: [], policies: [], quotes: [],
   commercial: { entries: {}, team: [] }, quoteError: '',
 });
-function initialState(stage: Stage, cache: ListCache): ResourceState {
-  const cached = cache.get(stage);
-  return { stage, data: cached ?? emptyData(), loaded: !!cached, loading: true, error: '' };
+function initialState(stage: Stage, cache: ListCache, isAdmin: boolean): ResourceState {
+  // Cached non-admin rows are not authorization: ownership can change while
+  // another page is open. Every route entry waits for a new account read.
+  const cached = isAdmin ? cache.get(cacheKey(stage, isAdmin)) : undefined;
+  return { stage, isAdmin, data: cached?.data ?? emptyData(), loaded: !!cached, loading: true, error: '', refreshError: '' };
 }
+
+/** Apply the current account-access result to every dependent collection. */
+function restrict(data: AccountsListData, accounts: Account[]): AccountsListData {
+  const allowed = new Set(accounts.map(account => account.id));
+  return {
+    ...data, accounts,
+    contacts: data.contacts.filter(row => allowed.has(row.accountId)),
+    policies: data.policies.filter(row => allowed.has(row.accountId)),
+    quotes: data.quotes.filter(row => allowed.has(row.accountId)),
+    commercial: { ...data.commercial, entries: Object.fromEntries(Object.entries(data.commercial.entries).filter(([id]) => allowed.has(id))) },
+  };
+}
+/** Previously hydrated rows may remain visible while reloading. New or
+ * converted accounts need fresh commercial/snooze state before classification. */
+function surviving(data: AccountsListData, accounts: Account[]): AccountsListData {
+  const previous = new Map(data.accounts.map(account => [account.id, account.stage]));
+  return restrict(data, accounts.filter(account => previous.has(account.id) && previous.get(account.id) === account.stage));
+}
+const covered = (entry: CacheEntry, accounts: Account[]) => {
+  const previous = new Map(entry.data.accounts.map(account => [account.id, account]));
+  return accounts.every(account => {
+    const old = previous.get(account.id);
+    return old && old.stage === account.stage && old.updatedAt === account.updatedAt;
+  });
+};
 
 interface ModelPage<T> { data: T[]; nextToken?: string | null; errors?: readonly unknown[] }
 async function checkedList<T>(fetchPage: (nextToken?: string) => Promise<ModelPage<T>>): Promise<T[]> {
@@ -63,30 +98,30 @@ async function checkedList<T>(fetchPage: (nextToken?: string) => Promise<ModelPa
   });
 }
 
-/** Read the account set and its follow-up state as one complete snapshot. A
- * failed optional lookup may omit a column, but never hide an access denial. */
-async function loadSnapshot(stage: Stage): Promise<AccountsListData> {
-  const [accounts, contacts, policies, quotes] = await Promise.allSettled([
-    checkedList<Account>(nextToken => client.models.Account.list({ nextToken })),
-    checkedList<Contact>(nextToken => client.models.Contact.list({ nextToken })),
-    stage === 'CLIENT' ? checkedList<Policy>(nextToken => client.models.Policy.list({ nextToken })) : Promise.resolve([] as Policy[]),
-    stage === 'LEAD' ? checkedList<Quote>(nextToken => client.models.Quote.list({ nextToken })) : Promise.resolve([] as Quote[]),
+/** Access is validated first. Details can fail independently, but any access
+ * denial overrides transient errors and invalidates the entire cached scope. */
+async function loadDetails(stage: Stage, accounts: Account[], previous?: AccountsListData, commercialOnly = false) {
+  const [contacts, policies, quotes, commercial] = await Promise.allSettled([
+    commercialOnly ? Promise.resolve(previous!.contacts) : checkedList<Contact>(nextToken => client.models.Contact.list({ nextToken })),
+    commercialOnly ? Promise.resolve(previous!.policies) : stage === 'CLIENT' ? checkedList<Policy>(nextToken => client.models.Policy.list({ nextToken })) : Promise.resolve([] as Policy[]),
+    commercialOnly ? Promise.resolve(previous!.quotes) : stage === 'LEAD' ? checkedList<Quote>(nextToken => client.models.Quote.list({ nextToken })) : Promise.resolve([] as Quote[]),
+    loadCommercial(accounts.map(account => account.id), stage === 'LEAD' ? accounts.filter(account => account.stage === 'LEAD').map(account => account.id) : []),
   ]);
-  for (const result of [accounts, contacts, policies, quotes]) {
-    if (result.status === 'rejected' && isAuthorizationError(result.reason)) throw result.reason;
-  }
-  if (accounts.status === 'rejected') throw accounts.reason;
-  const commercial = await loadCommercial(
-    accounts.value.map(account => account.id),
-    stage === 'LEAD' ? accounts.value.filter(account => account.stage === 'LEAD').map(account => account.id) : [],
-  );
+  const results = [contacts, policies, quotes, commercial];
+  for (const result of results) if (result.status === 'rejected' && isAuthorizationError(result.reason)) throw result.reason;
+  if (commercial.status === 'rejected' && !previous) throw commercial.reason;
+  const warnings = results.flatMap(result => result.status === 'rejected' ? [friendlyError(result.reason, 'Could not refresh account details')] : []);
+  const visibleAccounts = commercial.status === 'fulfilled' ? accounts : previous!.accounts;
   return {
-    accounts: accounts.value,
-    contacts: contacts.status === 'fulfilled' ? contacts.value : [],
-    policies: policies.status === 'fulfilled' ? policies.value : [],
-    quotes: quotes.status === 'fulfilled' ? quotes.value : [],
-    commercial,
-    quoteError: quotes.status === 'rejected' ? friendlyError(quotes.reason, 'Could not load quoted commissions') : '',
+    data: restrict({
+      accounts,
+      contacts: contacts.status === 'fulfilled' ? contacts.value : previous?.contacts ?? [],
+      policies: policies.status === 'fulfilled' ? policies.value : previous?.policies ?? [],
+      quotes: quotes.status === 'fulfilled' ? quotes.value : previous?.quotes ?? [],
+      commercial: commercial.status === 'fulfilled' ? commercial.value : previous!.commercial,
+      quoteError: commercialOnly ? previous!.quoteError : quotes.status === 'rejected' ? friendlyError(quotes.reason, 'Could not load quoted commissions') : '',
+    }, visibleAccounts),
+    refreshError: [...new Set(warnings)].join('; '),
   };
 }
 
@@ -111,66 +146,108 @@ function mergeCommercial(fresh: CommercialData, previous: CommercialData, accoun
 }
 
 export function useAccountsListData(stage: Stage) {
+  const isAdmin = useIsAdmin();
   const providedCache = useContext(CacheContext);
   const localCache = useRef<ListCache>(new Map());
   const cache = providedCache ?? localCache.current;
-  const [state, setState] = useState(() => initialState(stage, cache));
+  const key = cacheKey(stage, isAdmin);
+  const [state, setState] = useState(() => initialState(stage, cache, isAdmin));
   const current = useRef(state);
   const mounted = useRef(false);
   const ticket = useRef(0);
-  const scope = useRef({ stage, cache });
-  scope.current = { stage, cache };
+  const scope = useRef({ key, cache });
+  scope.current = { key, cache };
 
   const publish = useCallback((next: ResourceState) => {
     current.current = next;
     setState(next);
   }, []);
 
-  const run = useCallback(async (commercialOnly: boolean): Promise<void> => {
+  const run = useCallback(async (mode: 'initial' | 'all' | 'commercial'): Promise<void> => {
     if (!mounted.current) return;
     const id = ++ticket.current;
-    const previous = current.current.stage === stage ? current.current : initialState(stage, cache);
-    publish({ ...previous, loaded: previous.loaded && !previous.error, loading: true, error: '' });
-    const stillCurrent = () => mounted.current && ticket.current === id && scope.current.stage === stage && scope.current.cache === cache;
+    const previous = current.current.stage === stage && current.current.isAdmin === isAdmin ? current.current : initialState(stage, cache, isAdmin);
+    const cached = cache.get(key);
+    publish({ ...previous, loaded: previous.loaded && !previous.error, loading: true, error: '', refreshError: '' });
+    const stillCurrent = () => mounted.current && ticket.current === id && scope.current.key === key && scope.current.cache === cache;
+    // Only a snapshot authorized in this mounted view can survive a failed
+    // account read. A non-admin route entry has no such snapshot yet.
+    let fallback = previous.loaded && !previous.error ? previous.data : undefined;
     try {
-      const next = commercialOnly && previous.loaded && !previous.error
-        ? { ...previous.data, commercial: await loadCommercial(
-          previous.data.accounts.map(account => account.id),
-          stage === 'LEAD' ? previous.data.accounts.filter(account => account.stage === 'LEAD').map(account => account.id) : [],
-        ) }
-        : await loadSnapshot(stage);
+      const accounts = await checkedList<Account>(nextToken => client.models.Account.list({ nextToken }));
       if (!stillCurrent()) return;
-      const data = { ...next, commercial: mergeCommercial(next.commercial, current.current.data.commercial, next.accounts) };
-      cache.set(stage, data);
-      publish({ stage, data, loaded: true, loading: false, error: '' });
+      const reuseDetails = mode === 'initial' && fresh(cached) && covered(cached!, accounts);
+      const latest = current.current.loaded && !current.current.error ? current.current.data : fallback ?? cache.get(key)?.data;
+      fallback = latest ? surviving(latest, accounts) : undefined;
+      // Revoke immediately, before optional reads or commercial hydration can
+      // fail. Both stage caches contain the same authorized account universe.
+      for (const [otherKey, entry] of cache) {
+        if (!otherKey.endsWith(isAdmin ? ':admin' : ':scoped')) continue;
+        cache.set(otherKey, { data: surviving(entry.data, accounts), detailsAt: covered(entry, accounts) ? entry.detailsAt : 0 });
+      }
+      if (fallback) publish({ stage, isAdmin, data: fallback, loaded: true, loading: true, error: '', refreshError: '' });
+      if (reuseDetails) {
+        const data = fallback!;
+        cache.set(key, { data, detailsAt: cached!.detailsAt });
+        publish({ stage, isAdmin, data, loaded: true, loading: false, error: '', refreshError: '' });
+        return;
+      }
+      // A successful commercial-only read cannot repair other stale columns.
+      // Missing/changed accounts and failed detail reads invalidate detailsAt.
+      const commercialOnly = mode === 'commercial' && !!fallback &&
+        (cache.get(key)?.detailsAt ?? 0) > 0 && !previous.refreshError;
+      const next = await loadDetails(stage, accounts, fallback, commercialOnly);
+      if (!stillCurrent()) return;
+      const data = { ...next.data, commercial: mergeCommercial(next.data.commercial, current.current.data.commercial, next.data.accounts) };
+      cache.set(key, { data, detailsAt: next.refreshError ? 0 : commercialOnly ? cached?.detailsAt ?? 0 : Date.now() });
+      publish({ stage, isAdmin, data, loaded: true, loading: false, error: '', refreshError: next.refreshError });
     } catch (error) {
       if (!stillCurrent()) return;
-      if (isAuthorizationError(error)) cache.clear(); else cache.delete(stage);
-      publish({ stage, data: emptyData(), loaded: true, loading: false, error: friendlyError(error, 'Could not load accounts and follow-up dates') });
+      const message = friendlyError(error, 'Could not load accounts and follow-up dates');
+      if (isAuthorizationError(error)) {
+        cache.clear();
+        publish({ stage, isAdmin, data: emptyData(), loaded: true, loading: false, error: message, refreshError: '' });
+      } else if (fallback) {
+        // Include inline saves confirmed while this read was pending.
+        const data = { ...fallback, commercial: mergeCommercial(fallback.commercial, current.current.data.commercial, fallback.accounts) };
+        cache.set(key, { data, detailsAt: 0 });
+        publish({ stage, isAdmin, data, loaded: true, loading: false, error: '', refreshError: message });
+      } else {
+        if (cached) cache.set(key, { ...cached, detailsAt: 0 });
+        publish({ stage, isAdmin, data: emptyData(), loaded: true, loading: false, error: message, refreshError: '' });
+      }
     }
-  }, [stage, cache, publish]);
+  }, [stage, cache, key, isAdmin, publish]);
 
-  const refetch = useCallback(() => run(false), [run]);
-  const refreshCommercial = useCallback(() => run(true), [run]);
+  const refetch = useCallback(() => run('all'), [run]);
+  const refreshCommercial = useCallback(() => run('commercial'), [run]);
   const setCommercial: Dispatch<SetStateAction<CommercialData>> = useCallback(action => {
-    if (!mounted.current || scope.current.stage !== stage || scope.current.cache !== cache) return;
+    if (!mounted.current || scope.current.key !== key || scope.current.cache !== cache) return;
     const previous = current.current;
-    if (previous.stage !== stage || !previous.loaded || previous.error) return;
+    if (previous.stage !== stage || previous.isAdmin !== isAdmin || !previous.loaded || previous.error) return;
     const commercial = typeof action === 'function' ? action(previous.data.commercial) : action;
-    const data = { ...previous.data, commercial };
-    cache.set(stage, data);
+    const data = restrict({ ...previous.data, commercial }, previous.data.accounts);
+    cache.set(key, { data, detailsAt: cache.get(key)?.detailsAt ?? 0 });
+    // Both lists may include a partially bound client. A confirmed edit must
+    // not regress when navigating to the other stage's still-fresh snapshot.
+    for (const [otherKey, entry] of cache) {
+      if (otherKey === key || !otherKey.endsWith(isAdmin ? ':admin' : ':scoped')) continue;
+      cache.set(otherKey, { ...entry, data: { ...entry.data,
+        commercial: mergeCommercial(entry.data.commercial, commercial, entry.data.accounts),
+      } });
+    }
     publish({ ...previous, data });
-  }, [stage, cache, publish]);
+  }, [stage, cache, key, isAdmin, publish]);
 
   useEffect(() => {
     mounted.current = true;
-    publish(initialState(stage, cache));
-    void refetch();
+    publish(initialState(stage, cache, isAdmin));
+    void run('initial');
     return () => { mounted.current = false; ++ticket.current; };
-  }, [stage, cache, refetch, publish]);
+  }, [stage, cache, isAdmin, run, publish]);
 
-  // React may reuse the component between Leads and Clients. Never expose the
-  // previous stage while its effect is waiting to initialize the next one.
-  const visible = state.stage === stage ? state : initialState(stage, cache);
-  return { data: visible.data, loading: visible.loading, loaded: visible.loaded, error: visible.error, refetch, refreshCommercial, setCommercial };
+  // React may reuse the component between Leads and Clients or role views.
+  // Never expose the previous scope while its effect is waiting to initialize.
+  const visible = state.stage === stage && state.isAdmin === isAdmin ? state : initialState(stage, cache, isAdmin);
+  return { data: visible.data, loading: visible.loading, loaded: visible.loaded, error: visible.error, refreshError: visible.refreshError, refetch, refreshCommercial, setCommercial };
 }

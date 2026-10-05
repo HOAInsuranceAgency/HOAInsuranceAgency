@@ -235,7 +235,7 @@ it.each(['LEAD', 'CLIENT'] as const)('lists only configured producers in the %s 
   expect(filter.queryByRole('option', { name: 'Office staff' })).not.toBeInTheDocument();
 });
 
-it('shows the saved list immediately when returning from a lead and updates it without replacing its controls', async () => {
+it('shows a recently saved list on return without rereading details, and supports an explicit refresh', async () => {
   render(<AdminContext.Provider value={true}><AccountsListDataProvider><MemoryRouter initialEntries={['/leads']}>
     <Routes>
       <Route path="/leads" element={<AccountsList stage="LEAD" />} />
@@ -248,6 +248,7 @@ it('shows the saved list immediately when returning from a lead and updates it w
   await screen.findByText('Saved');
   fireEvent.click(screen.getByText('Willow Court Condominium'));
   const initial = h.request.getMockImplementation()!;
+  const readsBefore = h.request.mock.calls.filter(([op]) => op === 'commercialTable').length;
   let finishRefresh!: (value: unknown) => void;
   h.request.mockImplementation((op, input) => op === 'commercialTable'
     ? new Promise(resolve => { finishRefresh = resolve; }) : initial(op, input));
@@ -255,11 +256,45 @@ it('shows the saved list immediately when returning from a lead and updates it w
   const cached = screen.getByRole('combobox', { name: 'Salesperson for Willow Court Condominium' });
   expect(cached).toHaveValue('bob');
   expect(screen.queryByText('Loading…')).not.toBeInTheDocument();
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Refresh leads' })).toBeEnabled());
+  expect(h.request.mock.calls.filter(([op]) => op === 'commercialTable')).toHaveLength(readsBefore);
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh leads' }));
   await waitFor(() => expect(finishRefresh).toBeTypeOf('function'));
   // A response from before the save must not undo the confirmed assignment.
   await act(async () => finishRefresh(await initial('commercialTable', { accountIds: ['willow', 'pine', 'cedar'] })));
   expect(await willowPicker()).toBe(cached);
   expect(cached).toHaveValue('bob');
+});
+
+it.each(['LEAD', 'CLIENT'] as const)('keeps the %s table on transient refresh failure, warns, and disables stale exports until retry succeeds', async stage => {
+  render(page(true, stage));
+  await screen.findByText(stage === 'LEAD' ? 'Willow Court Condominium' : 'Cedar House — partially bound');
+  const table = screen.getByRole('table');
+  const original = h.request.getMockImplementation()!;
+  h.request.mockImplementation((op, input) => op === 'commercialTable' ? Promise.reject(new Error('Temporary details outage')) : original(op, input));
+  fireEvent.click(screen.getByRole('button', { name: stage === 'LEAD' ? 'Refresh leads' : 'Refresh clients' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('Some details may be out of date.');
+  expect(screen.getByRole('table')).toBe(table);
+  expect(screen.getByRole('combobox', { name: `Download ${stage === 'LEAD' ? 'Leads' : 'Clients'}` })).toBeDisabled();
+  h.request.mockImplementation(original);
+  fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+  await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument());
+  expect(screen.getByRole('combobox', { name: `Download ${stage === 'LEAD' ? 'Leads' : 'Clients'}` })).toBeEnabled();
+  expect(screen.getByRole('table')).toBe(table);
+});
+
+it('clears a selected filter when that teammate is no longer a configured producer', async () => {
+  render(page());
+  await willowPicker();
+  fireEvent.change(screen.getByRole('combobox', { name: 'Salesperson' }), { target: { value: 'alice' } });
+  const original = h.request.getMockImplementation()!;
+  h.request.mockImplementation((op, input) => op === 'team'
+    ? { team: team.map(teammate => teammate.userId === 'alice' ? { ...teammate, salesperson: false } : teammate) }
+    : original(op, input));
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh leads' }));
+  await waitFor(() => expect(screen.getByRole('combobox', { name: 'Salesperson' })).toHaveValue(''));
+  expect(within(screen.getByRole('combobox', { name: 'Salesperson' })).queryByRole('option', { name: 'Alice' })).not.toBeInTheDocument();
+  expect(screen.getByText('Willow Court Condominium')).toBeInTheDocument();
 });
 
 it('keeps rows and assignment controls visible throughout a background refresh', async () => {

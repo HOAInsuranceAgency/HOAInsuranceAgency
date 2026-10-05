@@ -1,5 +1,5 @@
 import { useIsAdmin } from "../lib/auth";
-import { useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
   fmtDate,
@@ -35,14 +35,17 @@ export default function AccountsList({ stage }: { stage: "LEAD" | "CLIENT" }) {
 
   const resource = useAccountsListData(stage);
   const { accounts, contacts, policies } = resource.data;
-  const { loading, loaded, error, refetch: refetchAccounts } = resource;
+  const { loading, loaded, error, refreshError, refetch: refetchAccounts } = resource;
   const commercial = {
     data: resource.data.commercial,
     refetch: resource.refreshCommercial,
     setData: resource.setCommercial,
   };
   const quoteResource = { data: resource.data.quotes, error: resource.data.quoteError };
-  // Keep the complete prior snapshot on screen while checking for changes.
+  useEffect(() => {
+    if (loaded && !loading && !error && salesperson && !commercial.data.team.some(teammate => teammate.salesperson && teammate.userId === salesperson)) setSalesperson('');
+  }, [loaded, loading, error, salesperson, commercial.data.team]);
+  // Keep authorized rows on screen while checking for changes.
   // Native selects and other row editors still defer focus-triggered refreshes.
   const onInteractionChange = useRefreshOnReturn(refetchAccounts, true, loading);
   const today = useAgencyDay();
@@ -138,8 +141,9 @@ export default function AccountsList({ stage }: { stage: "LEAD" | "CLIENT" }) {
       {stage === 'LEAD' && notice && <p className="muted small" role="status">{notice}</p>}
 
       <div className="toolbar">
+        <button className="secondary" disabled={loading} onClick={() => void refetchAccounts()} aria-label={`Refresh ${label.toLowerCase()}`}>{loading && loaded ? 'Refreshing…' : 'Refresh'}</button>
         {isAdmin && <label className="field">Salesperson<select value={salesperson} onChange={e => setSalesperson(e.target.value)}><option value="">All salespeople</option>{commercial.data.team.filter(t => t.salesperson).map(t => <option key={t.userId} value={t.userId}>{t.name}</option>)}</select></label>}
-        <ReportDownload disabled={loading || !loaded || !!error || stage === 'LEAD' && !!quoteResource.error} report={{ title: label, filters: [isAdmin ? `Salesperson: ${commercial.data.team.find(t => t.userId === salesperson)?.name ?? 'All'}` : 'All displayed data', ...(stage === 'LEAD' ? [`View: ${leadView}`] : [])].join(' · '), sections: [{ title: label, columns: ['Name', 'Type', 'Contact', 'City', 'State', ...(isAdmin ? ['Salesperson'] : []), ...(stage === 'LEAD' ? [ 'Lead source', 'Website form', 'Estimated opportunity (USD)', 'Pending commission (USD)', 'Commission basis', 'Entered', 'Follow-up date', 'Follow-up note'] : []), 'Units', 'TIV (USD)', stage === 'LEAD' ? 'Incumbent expires' : 'Renewal'], rows: sorted.map(a => { const f = forecastOf(a), estimate = commercial.data.entries[a.id]?.plan.estimatedCents; return [a.name, a.type, contactOf(a)?.name, a.city, a.state, ...(isAdmin ? [assignee(a, 'salespersonId')] : []), ...(stage === 'LEAD' ? [ acquisitionLabel(a.leadSource, a.source), websiteFormLabel(a.source), estimate == null ? null : estimate / 100, f?.cents == null ? null : f.cents / 100, f?.label, a.createdAt?.slice(0,10), a.stage === 'LEAD' ? snoozeOf(a)?.followUpOn : null, a.stage === 'LEAD' ? snoozeOf(a)?.note : null] : []), a.unitCount, a.totalInsuredValue, renewalOf(a)]; }) }] }} />
+        <ReportDownload disabled={loading || !loaded || !!error || !!refreshError || stage === 'LEAD' && !!quoteResource.error} report={{ title: label, filters: [isAdmin ? `Salesperson: ${commercial.data.team.find(t => t.userId === salesperson)?.name ?? 'All'}` : 'All displayed data', ...(stage === 'LEAD' ? [`View: ${leadView}`] : [])].join(' · '), sections: [{ title: label, columns: ['Name', 'Type', 'Contact', 'City', 'State', ...(isAdmin ? ['Salesperson'] : []), ...(stage === 'LEAD' ? [ 'Lead source', 'Website form', 'Estimated opportunity (USD)', 'Pending commission (USD)', 'Commission basis', 'Entered', 'Follow-up date', 'Follow-up note'] : []), 'Units', 'TIV (USD)', stage === 'LEAD' ? 'Incumbent expires' : 'Renewal'], rows: sorted.map(a => { const f = forecastOf(a), estimate = commercial.data.entries[a.id]?.plan.estimatedCents; return [a.name, a.type, contactOf(a)?.name, a.city, a.state, ...(isAdmin ? [assignee(a, 'salespersonId')] : []), ...(stage === 'LEAD' ? [ acquisitionLabel(a.leadSource, a.source), websiteFormLabel(a.source), estimate == null ? null : estimate / 100, f?.cents == null ? null : f.cents / 100, f?.label, a.createdAt?.slice(0,10), a.stage === 'LEAD' ? snoozeOf(a)?.followUpOn : null, a.stage === 'LEAD' ? snoozeOf(a)?.note : null] : []), a.unitCount, a.totalInsuredValue, renewalOf(a)]; }) }] }} />
         {stage === "LEAD" && (
           <Link to="/leads/new">
             <button className="primary">+ New lead</button>
@@ -148,7 +152,8 @@ export default function AccountsList({ stage }: { stage: "LEAD" | "CLIENT" }) {
       </div>
 
       <div className="card" id={stage === 'LEAD' ? `${viewId}-panel` : undefined} role={stage === 'LEAD' ? 'tabpanel' : undefined} aria-labelledby={stage === 'LEAD' ? `${viewId}-${LEAD_VIEWS.indexOf(leadView)}` : undefined}>
-        {stage === 'LEAD' && quoteResource.error && <p className="error-text" role="alert">{quoteResource.error} <button onClick={() => void refetchAccounts()}>Retry</button></p>}
+        {refreshError && <p className="error-text" role="alert">Some details may be out of date. {refreshError} <button disabled={loading} onClick={() => void refetchAccounts()}>Retry</button></p>}
+        {stage === 'LEAD' && quoteResource.error && !refreshError && <p className="error-text" role="alert">{quoteResource.error} <button onClick={() => void refetchAccounts()}>Retry</button></p>}
         {stage === 'LEAD' && <p className="muted small">Commission estimates are for the agency. Client accounts with a selected package still being bound remain here until the package is finished.</p>}
         {!loaded && loading ? (
           <p className="muted small">Loading…</p>

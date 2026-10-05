@@ -63,6 +63,16 @@ it('rejects an incomplete later batch instead of returning an earlier successful
   await expect(loadCommercial(Array.from({ length: 101 }, (_, i) => `account-${i}`))).rejects.toThrow('incomplete');
   expect(batchCount).toBe(5);
 });
+it.each([0, 1])('prioritizes access denial over transient errors in concurrent batches (denied batch %s)', async deniedBatch => {
+  const denied = Object.assign(new Error('This record is not available to your account'), { name: 'Unauthorized' });
+  let batch = 0;
+  request.mockImplementation(async operation => {
+    if (operation === 'team') return { team: [] };
+    throw batch++ === deniedBatch ? denied : new Error('Temporary service failure');
+  });
+  await expect(loadCommercial(Array.from({ length: 50 }, (_, i) => `account-${i}`))).rejects.toBe(denied);
+  expect(batch).toBe(2);
+});
 it('requests follow-ups only for the opted-in accounts in each bounded batch', async () => {
   request.mockImplementation(async (operation, input) => operation === 'team' ? { team: [] } : { items: input.accountIds.map((accountId: string) => ({ accountId })) });
   const ids = Array.from({ length: 51 }, (_, i) => `account-${String(i).padStart(2, '0')}`);
