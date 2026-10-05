@@ -59,6 +59,18 @@ describe("current account assignment", () => {
     expect(new AccountAccess({ sub: "admin", claims: { "cognito:groups": ["ADMIN"] } }, reader).admin).toBe(true);
     expect(() => new AccountAccess(undefined, reader)).toThrow(AccessDenied);
   });
+  it("inherits account, assignment and file administration for Owner without paired Admin membership", async () => {
+    const owner = new AccountAccess({ sub: "owner", groups: ["OWNER", "PRODUCER"] }, reader);
+    expect(owner.admin).toBe(true);
+    expect(await owner.canAccount("b")).toBe(true);
+    await expect(owner.path("templates/acord.pdf", "write")).resolves.toBeUndefined();
+    await expect(authorizeCustom(owner, "communicationWrite", { operation: "setResponsibilities", input: { accountId: "b", salespersonId: "alice" } })).resolves.toBeUndefined();
+    const narrowed = new AccountAccess({ sub: "owner", groups: ["OWNER", "PRODUCER"] }, reader, { headers: { "x-crm-role": "PRODUCER" } });
+    expect(narrowed.admin).toBe(false);
+    expect(await narrowed.canAccount("b")).toBe(false);
+    await expect(narrowed.path("templates/acord.pdf", "write")).rejects.toThrow(AccessDenied);
+    expect(() => new AccountAccess({ sub: "admin", groups: ["ADMIN"] }, reader, { headers: { "x-crm-role": "OWNER" } })).toThrow(AccessDenied);
+  });
   it("rechecks reassignment on the next request without consulting obsolete manager changes", async () => {
     expect(await user().canAccount("a")).toBe(true);
     records["Communication:workflow:a"] = { data: { salespersonId: "bob" } };

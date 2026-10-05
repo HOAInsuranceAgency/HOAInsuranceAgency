@@ -11,13 +11,13 @@ import {
  * invite-only, created by an admin (Cognito console/CLI), then sign in by
  * clicking the link emailed to them.
  *
- * Groups are role placeholders; privileges are not enforced yet.
+ * Cognito groups are the authority for CRM roles; OWNER includes admin access.
  */
 export const auth = defineAuth({
   loginWith: {
     email: true,
   },
-  groups: ["ADMIN", "STAFF", "PRODUCER"],
+  groups: ["OWNER", "ADMIN", "STAFF", "PRODUCER"],
   triggers: {
     defineAuthChallenge: magicLinkDefine,
     createAuthChallenge: magicLinkCreate,

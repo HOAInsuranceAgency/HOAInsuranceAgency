@@ -1,3 +1,4 @@
+import { ownerProfitability } from "../functions/owner-profitability/resource";
 import { crmAccess } from "../functions/crm-access/resource";
 import { type ClientSchema, a, defineData } from "@aws-amplify/backend";
 import { processDocument } from "../functions/process-document/resource";
@@ -160,7 +161,7 @@ const schema = a
       "INTEREST",
       "OTHER",
     ]),
-    UserRole: a.enum(["ADMIN", "STAFF", "PRODUCER"]),
+    UserRole: a.enum(["OWNER", "ADMIN", "STAFF", "PRODUCER"]),
     // ── Renewal marketing tasks ──
     MarketingTaskStatus: a.enum(["OPEN", "COMPLETE"]),
     // The only two ways a marketing task can be satisfied.
@@ -418,7 +419,7 @@ const schema = a
       .secondaryIndexes((index) => [index("stage").sortKeys(["name"])])
       .authorization((allow) => [
         allow.authenticated().to(["read", "update"]),
-        allow.groups(["ADMIN"]).to(["read", "update", "delete"]),
+        allow.groups(["ADMIN", "OWNER"]).to(["read", "update", "delete"]),
       ]),
 
     // ── Contacts: the people at an association ─────────────────────────
@@ -527,7 +528,7 @@ const schema = a
       .secondaryIndexes((index) => [index("entityId").sortKeys(["occurredAt"])])
       .authorization((allow) => [
         allow.authenticated().to(["read"]),
-        allow.groups(["ADMIN"]),
+        allow.groups(["ADMIN", "OWNER"]),
       ]),
 
     // ── Loss history ───────────────────────────────────────────────────
@@ -822,7 +823,7 @@ const schema = a
     }).disableOperations(["subscriptions"])
       .authorization((allow) => [
         allow.authenticated().to(["read", "create", "update"]),
-        allow.groups(["ADMIN"]),
+        allow.groups(["ADMIN", "OWNER"]),
       ]),
 
     // ── Policies: created on bind; source data for COI generation ──────
@@ -907,7 +908,7 @@ const schema = a
     }).disableOperations(["subscriptions"])
       .authorization((allow) => [
         allow.authenticated().to(["read", "create", "update"]),
-        allow.groups(["ADMIN"]),
+        allow.groups(["ADMIN", "OWNER"]),
       ]),
 
     /**
@@ -1029,7 +1030,7 @@ const schema = a
       .secondaryIndexes((index) => [index("accountId").sortKeys(["status"])])
       .authorization((allow) => [
         allow.authenticated().to(["read", "create", "update"]),
-        allow.groups(["ADMIN"]),
+        allow.groups(["ADMIN", "OWNER"]),
       ]),
 
     InvoiceLine: a.model({
@@ -1075,7 +1076,7 @@ const schema = a
     }).disableOperations(["subscriptions"])
       .authorization((allow) => [
         allow.authenticated().to(["read", "create", "update", "delete"]),
-        allow.groups(["ADMIN"]),
+        allow.groups(["ADMIN", "OWNER"]),
       ]),
 
     /**
@@ -1335,7 +1336,7 @@ const schema = a
       .secondaryIndexes((index) => [index("jurisdiction").sortKeys(["effectiveAt"])])
       .authorization((allow) => [
         allow.authenticated().to(["read"]),
-        allow.groups(["ADMIN"]).to(["read", "create"]),
+        allow.groups(["ADMIN", "OWNER"]).to(["read", "create"]),
       ]),
 
     /**
@@ -1366,7 +1367,7 @@ const schema = a
         // row would waive nothing, and a write path to nowhere invites
         // someone to believe it did.
         allow.authenticated().to(["read"]),
-        allow.groups(["ADMIN"]).to(["read"]),
+        allow.groups(["ADMIN", "OWNER"]).to(["read"]),
       ]),
 
     // ── Carriers & appointments ────────────────────────────────────────
@@ -1513,7 +1514,7 @@ const schema = a
       completedAt: a.datetime(),
       completedBy: a.string(),
       notes: a.string(),
-    }).authorization(allow => [allow.groups(["ADMIN"]).to(["read"])])
+    }).authorization(allow => [allow.groups(["ADMIN", "OWNER"]).to(["read"])])
       .disableOperations(["subscriptions"]).secondaryIndexes((index) => [index("accountId")]),
 
     // ── Certificates (ACORD 25 issuance history) ───────────────────────
@@ -1541,7 +1542,7 @@ const schema = a
     }).disableOperations(["subscriptions"])
       .authorization((allow) => [
         allow.authenticated().to(["read", "create", "update"]),
-        allow.groups(["ADMIN"]),
+        allow.groups(["ADMIN", "OWNER"]),
       ]),
 
     // ── Users & onboarding ─────────────────────────────────────────────
@@ -1607,7 +1608,7 @@ const schema = a
           .ownerDefinedIn("userId")
           .identityClaim("sub")
           .to(["create", "update"]),
-        allow.groups(["ADMIN"]),
+        allow.groups(["ADMIN", "OWNER"]),
       ]),
 
     /**
@@ -1672,7 +1673,7 @@ const schema = a
       .secondaryIndexes((index) => [index("userProfileId")])
       .authorization((allow) => [
         allow.authenticated().to(["read", "create"]),
-        allow.groups(["ADMIN"]),
+        allow.groups(["ADMIN", "OWNER"]),
       ]),
 
     /**
@@ -1752,7 +1753,7 @@ const schema = a
       })
       .authorization((allow) => [
         allow.authenticated().to(["read"]),
-        allow.groups(["ADMIN"]),
+        allow.groups(["ADMIN", "OWNER"]),
       ]),
 
     /**
@@ -1817,7 +1818,7 @@ const schema = a
        * its own accounts. The Lambdas reach this over IAM, which model rules do
        * not apply to.
        */
-      .authorization((allow) => [allow.groups(["ADMIN"]).to(["read"])]),
+      .authorization((allow) => [allow.groups(["ADMIN", "OWNER"]).to(["read"])]),
 
     /**
      * A lead's document upload link, and what it has collected.
@@ -1881,7 +1882,7 @@ const schema = a
       .secondaryIndexes((index) => [index("token")])
       // Same reasoning as LeadReply, and this one was authenticated-*writable*:
       // any signed-in user could revoke or extend another account's portal.
-      .authorization((allow) => [allow.groups(["ADMIN"]).to(["read", "update"])]),
+      .authorization((allow) => [allow.groups(["ADMIN", "OWNER"]).to(["read", "update"])]),
 
     /**
      * One row per licence-expiry email the agency has already been sent.
@@ -2002,11 +2003,11 @@ const schema = a
       .handler(a.handler.function(crmAccess)),
 
     marketingReportSettings: a.query()
-      .returns(a.json()).authorization(allow => [allow.groups(["ADMIN"])])
+      .returns(a.json()).authorization(allow => [allow.groups(["ADMIN", "OWNER"])])
       .handler(a.handler.function(marketingReportApi)),
     marketingReportAction: a.mutation()
       .arguments({ operation: a.string().required(), input: a.json() })
-      .returns(a.json()).authorization(allow => [allow.groups(["ADMIN"])])
+      .returns(a.json()).authorization(allow => [allow.groups(["ADMIN", "OWNER"])])
       .handler(a.handler.function(marketingReportApi)),
 
     communicationRead: a.query()
@@ -2146,7 +2147,19 @@ const schema = a
       .authorization((allow) => [allow.publicApiKey()])
       .handler(a.handler.function(pfElection)),
 
-    // ── Team administration (ADMIN group only) ─────────────────────────
+    // Private owner reporting uses its own storage; salaries never enter team profiles.
+    ownerProfitability: a.query()
+      .arguments({ from: a.string().required(), to: a.string().required() })
+      .returns(a.json())
+      .authorization(allow => [allow.groups(["OWNER"])])
+      .handler(a.handler.function(ownerProfitability)),
+    saveEmployeeCompensation: a.mutation()
+      .arguments({ userId: a.string().required(), version: a.integer().required(), terms: a.json().required() })
+      .returns(a.json())
+      .authorization(allow => [allow.groups(["OWNER"])])
+      .handler(a.handler.function(ownerProfitability)),
+
+    // ── Team administration (Admin and Owner views) ────────────────────
     inviteUser: a
       .mutation()
       .arguments({
@@ -2154,7 +2167,7 @@ const schema = a
         roles: a.string().array().required(), // One or two assigned Cognito role groups.
       })
       .returns(a.json())
-      .authorization((allow) => [allow.groups(["ADMIN"])])
+      .authorization((allow) => [allow.groups(["ADMIN", "OWNER"])])
       .handler(a.handler.function(teamAdmin)),
 
     updateUserRoles: a
@@ -2164,14 +2177,14 @@ const schema = a
         roles: a.string().array().required(),
       })
       .returns(a.json())
-      .authorization((allow) => [allow.groups(["ADMIN"])])
+      .authorization((allow) => [allow.groups(["ADMIN", "OWNER"])])
       .handler(a.handler.function(teamAdmin)),
 
     listTeamUsers: a
       .query()
       .arguments({ nextToken: a.string() })
       .returns(a.json())
-      .authorization((allow) => [allow.groups(["ADMIN"])])
+      .authorization((allow) => [allow.groups(["ADMIN", "OWNER"])])
       .handler(a.handler.function(teamAdmin)),
 
     // ── AI extraction: kick off async document → datapoints extraction ──
@@ -2261,7 +2274,7 @@ const schema = a
       .mutation()
       .arguments({ enabled: a.boolean().required() })
       .returns(a.json())
-      .authorization((allow) => [allow.groups(["ADMIN"])])
+      .authorization((allow) => [allow.groups(["ADMIN", "OWNER"])])
       .handler(a.handler.function(pfAdmin)),
 
     /**

@@ -669,6 +669,7 @@ export function isExtractableCategory(category: string | null | undefined): bool
 // ── UserRole ─────────────────────────────────────────────────────────────────
 
 const USER_ROLE = {
+  OWNER: "Owner",
   ADMIN: "Admin",
   STAFF: "Staff",
   PRODUCER: "Producer",

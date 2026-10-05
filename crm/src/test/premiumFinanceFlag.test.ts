@@ -32,9 +32,9 @@ describe("the premium finance flag", () => {
   const SCHEMA = read("amplify/data/resource.ts");
   const HANDLER = read("amplify/functions/pf-admin/handler.ts");
 
-  it("is flipped only through an ADMIN-gated mutation", () => {
+  it("is flipped only through an Admin/Owner-gated mutation", () => {
     expect(SCHEMA).toMatch(
-      /setPremiumFinanceEnabled:[\s\S]{0,400}allow\.groups\(\["ADMIN"\]\)/
+      /setPremiumFinanceEnabled:[\s\S]{0,400}allow\.groups\(\["ADMIN", "OWNER"\]\)/
     );
   });
 

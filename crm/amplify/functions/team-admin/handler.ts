@@ -17,11 +17,12 @@ import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 // see the note on `isUserRole`. enums.ts pulls in no runtime dependency, the
 // way pagination.ts does not.
 import { isUserRole, type UserRole } from "../../../src/lib/enums";
-import { isActiveAdmin } from "../crm-access/active-role";
+import { isActiveAdmin, isActiveOwner } from "../crm-access/active-role";
 import { listTeamUsers, loadTeamProfile, type TeamRosterArgs } from "./roster";
 
 /**
- * Team administration behind ADMIN-group-only mutations.
+ * Team administration for active Admin and Owner views. Only an active Owner
+ * may grant or change Owner membership.
  *
  * inviteUser: creates the Cognito user passwordless (CONFIRMED, verified
  * email — ready for magic-link sign-in immediately), assigns one or two
@@ -47,7 +48,8 @@ function assignedRoles(raw: unknown): UserRole[] | null {
   return raw;
 }
 
-const ROLE_ERROR = "Choose one or two different roles: Admin, Staff, or Producer.";
+const ROLE_ERROR = "Choose one or two different roles: Owner, Admin, Staff, or Producer.";
+const OWNER_ERROR = "Only an Owner can assign or change Owner access.";
 
 async function groupsFor(username: string) {
   const groups: string[] = [];
@@ -64,13 +66,14 @@ async function groupsFor(username: string) {
   return groups;
 }
 
-async function inviteUser(args: InviteArgs, invitedBy: string) {
+async function inviteUser(args: InviteArgs, invitedBy: string, owner: boolean) {
   const email = args.email?.trim().toLowerCase();
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     return { ok: false, error: "A valid email is required." };
   }
   const roles = assignedRoles(args.roles);
   if (!roles) return { ok: false, error: ROLE_ERROR };
+  if (roles.includes("OWNER") && !owner) return { ok: false, error: OWNER_ERROR };
   let username: string;
 
   try {
@@ -152,9 +155,10 @@ async function inviteUser(args: InviteArgs, invitedBy: string) {
   return { ok: true, email, roles };
 }
 
-async function updateUserRoles(args: UpdateRolesArgs, actor: { username: string; sub?: string }) {
+async function updateUserRoles(args: UpdateRolesArgs, actor: { username: string; sub?: string; owner: boolean }) {
   const roles = assignedRoles(args.roles);
   if (!roles) return { ok: false, error: ROLE_ERROR };
+  if (roles.includes("OWNER") && !actor.owner) return { ok: false, error: OWNER_ERROR };
   const userId = args.userId?.trim();
   if (!userId) return { ok: false, error: "A team member is required." };
 
@@ -165,8 +169,16 @@ async function updateUserRoles(args: UpdateRolesArgs, actor: { username: string;
   const sub = user.UserAttributes?.find(attribute => attribute.Name === "sub")?.Value;
   const groups = await groupsFor(username);
   const previous = groups.filter(isUserRole);
-  if ((username === actor.username || (sub && sub === actor.sub)) && previous.includes("ADMIN") && !roles.includes("ADMIN")) {
-    return { ok: false, error: "Keep your Admin role so you can continue managing team access." };
+  // Check the real Cognito membership, never the editable profile mirror.
+  // Administrators must not promote themselves or downgrade another Owner.
+  if (previous.includes("OWNER") && !actor.owner) return { ok: false, error: OWNER_ERROR };
+  if (username === actor.username || (sub && sub === actor.sub)) {
+    if (previous.includes("OWNER") && !roles.includes("OWNER")) {
+      return { ok: false, error: "Keep your Owner role so you can continue managing owner access." };
+    }
+    if (previous.includes("ADMIN") && !roles.includes("ADMIN") && !roles.includes("OWNER")) {
+      return { ok: false, error: "Keep your Admin role so you can continue managing team access." };
+    }
   }
 
   // Add replacements before removing obsolete roles: a failed add cannot
@@ -214,11 +226,12 @@ export const handler = async (
 
   switch (field) {
     case "inviteUser":
-      return inviteUser(event.arguments as InviteArgs, String(invokedBy));
+      return inviteUser(event.arguments as InviteArgs, String(invokedBy), isActiveOwner(event.identity, event.request));
     case "updateUserRoles":
       return updateUserRoles(event.arguments as UpdateRolesArgs, {
         username: String(invokedBy),
         sub: event.identity && "sub" in event.identity ? event.identity.sub : undefined,
+        owner: isActiveOwner(event.identity, event.request),
       });
     case "listTeamUsers":
       return listTeamUsers(cognito, POOL_ID, event.arguments as TeamRosterArgs, groupsFor,

@@ -5,12 +5,12 @@ import { fetchAuthSession } from "aws-amplify/auth";
  * Who you are, from the only source that's actually enforced.
  *
  * Cognito groups (declared in amplify/auth/resource.ts) are what the backend
- * checks — `allow.groups(["ADMIN"])` on the team mutations. UserProfile.role
+ * checks — native group rules plus the active-role guard on team mutations. UserProfile.role
  * is a plain row any signed-in user can write, so it must never gate a screen;
  * it's a display mirror of the group, nothing more.
  */
 
-export type Role = "ADMIN" | "STAFF" | "PRODUCER";
+export type Role = "OWNER" | "ADMIN" | "STAFF" | "PRODUCER";
 
 /**
  * The signed-in user's Cognito groups, read off the ID token.
@@ -37,11 +37,11 @@ export async function fetchUserGroups(forceRefresh = false): Promise<string[]> {
 }
 
 export function isAdminGroup(groups: string[]): boolean {
-  return groups.includes("ADMIN");
+  return groups.includes("OWNER") || groups.includes("ADMIN");
 }
 
 export function rolesFromGroups(groups: string[]): Role[] {
-  return (["ADMIN", "PRODUCER", "STAFF"] as const).filter(role => groups.includes(role));
+  return (["OWNER", "ADMIN", "PRODUCER", "STAFF"] as const).filter(role => groups.includes(role));
 }
 
 /**
@@ -49,6 +49,7 @@ export function rolesFromGroups(groups: string[]): Role[] {
  * no group is staff, which grants nothing beyond a signed-in session.
  */
 export function roleFromGroups(groups: string[]): Role {
+  if (groups.includes("OWNER")) return "OWNER";
   if (groups.includes("ADMIN")) return "ADMIN";
   if (groups.includes("PRODUCER")) return "PRODUCER";
   return "STAFF";
@@ -63,4 +64,11 @@ export const AdminContext = createContext(false);
 
 export function useIsAdmin(): boolean {
   return useContext(AdminContext);
+}
+
+/** Salary and profitability access belongs only to the active Owner view. */
+export const OwnerContext = createContext(false);
+
+export function useIsOwner(): boolean {
+  return useContext(OwnerContext);
 }
