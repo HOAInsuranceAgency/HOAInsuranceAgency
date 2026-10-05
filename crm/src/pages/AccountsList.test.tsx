@@ -235,7 +235,7 @@ it.each(['LEAD', 'CLIENT'] as const)('lists only configured producers in the %s 
   expect(filter.queryByRole('option', { name: 'Office staff' })).not.toBeInTheDocument();
 });
 
-it('shows a recently saved list on return without rereading details, and supports an explicit refresh', async () => {
+it('keeps the saved list and controls visible while revalidating on return, and supports explicit refresh', async () => {
   render(<AdminContext.Provider value={true}><AccountsListDataProvider><MemoryRouter initialEntries={['/leads']}>
     <Routes>
       <Route path="/leads" element={<AccountsList stage="LEAD" />} />
@@ -256,14 +256,21 @@ it('shows a recently saved list on return without rereading details, and support
   const cached = screen.getByRole('combobox', { name: 'Salesperson for Willow Court Condominium' });
   expect(cached).toHaveValue('bob');
   expect(screen.queryByText('Loading…')).not.toBeInTheDocument();
-  await waitFor(() => expect(screen.getByRole('button', { name: 'Refresh leads' })).toBeEnabled());
-  expect(h.request.mock.calls.filter(([op]) => op === 'commercialTable')).toHaveLength(readsBefore);
-  fireEvent.click(screen.getByRole('button', { name: 'Refresh leads' }));
   await waitFor(() => expect(finishRefresh).toBeTypeOf('function'));
+  expect(h.request.mock.calls.filter(([op]) => op === 'commercialTable')).toHaveLength(readsBefore + 1);
+  expect(screen.getByRole('button', { name: 'Refresh leads' })).toBeDisabled();
+  expect(screen.getByRole('combobox', { name: 'Download Leads' })).toBeDisabled();
+  expect(cached).toBeEnabled();
   // A response from before the save must not undo the confirmed assignment.
   await act(async () => finishRefresh(await initial('commercialTable', { accountIds: ['willow', 'pine', 'cedar'] })));
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Refresh leads' })).toBeEnabled());
   expect(await willowPicker()).toBe(cached);
   expect(cached).toHaveValue('bob');
+  h.request.mockImplementation(initial);
+  version = 9;
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh leads' }));
+  await waitFor(() => expect(cached).toHaveValue('alice'));
+  expect(h.request.mock.calls.filter(([op]) => op === 'commercialTable')).toHaveLength(readsBefore + 2);
 });
 
 it.each(['LEAD', 'CLIENT'] as const)('keeps the %s table on transient refresh failure, warns, and disables stale exports until retry succeeds', async stage => {

@@ -42,7 +42,7 @@ beforeEach(() => {
   h.commercial.mockImplementation(async (ids: string[]) => commercial(ids));
 });
 
-it('shows admin cache immediately, validates account changes, and reuses fresh related data on route return', async () => {
+it('shows admin cache immediately while revalidating details on route return', async () => {
   const app = render(<App />);
   await settled();
   app.rerender(<App show={false} />);
@@ -52,14 +52,54 @@ it('shows admin cache immediately, validates account changes, and reuses fresh r
   expect(latest.data.accounts.map(row => row.name)).toEqual(['a']);
   await settled();
   expect(h.accounts).toHaveBeenCalledTimes(2);
-  expect(h.contacts).toHaveBeenCalledTimes(1);
-  expect(h.quotes).toHaveBeenCalledTimes(1);
-  expect(h.commercial).toHaveBeenCalledTimes(1);
-  await act(async () => { await latest.refetch(); });
-  expect(h.accounts).toHaveBeenCalledTimes(3);
   expect(h.contacts).toHaveBeenCalledTimes(2);
   expect(h.quotes).toHaveBeenCalledTimes(2);
   expect(h.commercial).toHaveBeenCalledTimes(2);
+  await act(async () => { await latest.refetch(); });
+  expect(h.accounts).toHaveBeenCalledTimes(3);
+  expect(h.contacts).toHaveBeenCalledTimes(3);
+  expect(h.quotes).toHaveBeenCalledTimes(3);
+  expect(h.commercial).toHaveBeenCalledTimes(3);
+});
+
+it.each([
+  { stage: 'LEAD' as const, isAdmin: true },
+  { stage: 'LEAD' as const, isAdmin: false },
+  { stage: 'CLIENT' as const, isAdmin: true },
+  { stage: 'CLIENT' as const, isAdmin: false },
+])('revalidates separately saved details without an account timestamp change ($stage, admin=$isAdmin)', async ({ stage, isAdmin }) => {
+  h.isAdmin = isAdmin;
+  // Returning in the same instant must still pick up writes to other models.
+  vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
+  h.accounts.mockResolvedValue({ data: [{ ...account('a', 'A', stage), updatedAt: '2026-10-01T00:00:00Z' }] });
+  h.contacts.mockResolvedValue({ data: [{ id: 'ca', accountId: 'a', name: 'Before' }] });
+  h.quotes.mockResolvedValue({ data: [{ id: 'qa', accountId: 'a', premium: 100 }] });
+  h.policies.mockResolvedValue({ data: [{ id: 'pa', accountId: 'a', expirationDate: '2026-11-01' }] });
+  const app = render(<App stage={stage} />);
+  await settled();
+  app.rerender(<App stage={stage} show={false} />);
+  h.contacts.mockResolvedValue({ data: [{ id: 'ca', accountId: 'a', name: 'After' }] });
+  h.quotes.mockResolvedValue({ data: [{ id: 'qa', accountId: 'a', premium: 250 }] });
+  h.policies.mockResolvedValue({ data: [{ id: 'pa', accountId: 'a', expirationDate: '2027-11-01' }] });
+  const pending = deferred<CommercialData>();
+  h.commercial.mockReturnValue(pending.promise);
+  app.rerender(<App stage={stage} />);
+  await waitFor(() => expect(h.commercial).toHaveBeenCalledTimes(2));
+  expect(latest.loaded).toBe(true);
+  expect(latest.loading).toBe(true);
+  expect(latest.data.accounts.map(row => row.id)).toEqual(['a']);
+  expect(latest.data.contacts[0].name).toBe('Before');
+  const updated = commercial(['a'], 2);
+  updated.entries.a.snooze = { accountId: 'a', version: 2, followUpOn: '2026-12-01', note: 'Call in December' };
+  await act(async () => { pending.resolve(updated); });
+  await settled();
+  expect(latest.data.contacts[0].name).toBe('After');
+  if (stage === 'LEAD') expect(latest.data.quotes[0].premium).toBe(250);
+  else expect(latest.data.policies[0].expirationDate).toBe('2027-11-01');
+  expect(latest.data.commercial.entries.a).toMatchObject({
+    salespersonId: 'owner-2', workflowVersion: 2,
+    snooze: { followUpOn: '2026-12-01', note: 'Call in December' },
+  });
 });
 
 it('purges both stage caches on a GraphQL authorization error from an optional lookup', async () => {
@@ -148,7 +188,7 @@ it('retains the account list on optional non-authorization failures and exposes 
   expect(h.policies).not.toHaveBeenCalled();
 });
 
-it('hides non-admin cache until access validation, then prunes revoked dependents without rereading fresh details', async () => {
+it('hides non-admin cache until access validation and prunes revoked dependents during revalidation', async () => {
   h.isAdmin = false;
   h.accounts.mockResolvedValue({ data: [account('a'), account('b')] });
   h.contacts.mockResolvedValue({ data: [{ id: 'ca', accountId: 'a' }, { id: 'cb', accountId: 'b' }] });
@@ -171,9 +211,9 @@ it('hides non-admin cache until access validation, then prunes revoked dependent
   expect(latest.data.quotes.map(row => row.id)).toEqual(['qb']);
   expect(Object.keys(latest.data.commercial.entries)).toEqual(['b']);
   expect(h.accounts).toHaveBeenCalledTimes(2);
-  expect(h.contacts).toHaveBeenCalledTimes(1);
-  expect(h.quotes).toHaveBeenCalledTimes(1);
-  expect(h.commercial).toHaveBeenCalledTimes(1);
+  expect(h.contacts).toHaveBeenCalledTimes(2);
+  expect(h.quotes).toHaveBeenCalledTimes(2);
+  expect(h.commercial).toHaveBeenCalledTimes(2);
 });
 
 it('prunes revoked rows before slow details settle and retains surviving contacts/policies on failure', async () => {
@@ -238,14 +278,11 @@ it('retains a mounted authorized view on transient account failure but not on a 
   expect(h.contacts).toHaveBeenCalledTimes(1);
 });
 
-it('reloads after bounded freshness expires and hydrates newly accessible accounts within the freshness window', async () => {
-  let now = 1_000_000;
-  vi.spyOn(Date, 'now').mockImplementation(() => now);
+it('hydrates newly accessible accounts on consecutive route returns', async () => {
   h.isAdmin = false;
   const app = render(<App />);
   await settled();
   app.rerender(<App show={false} />);
-  now += 60_001;
   app.rerender(<App />);
   await settled();
   expect(h.contacts).toHaveBeenCalledTimes(2);
@@ -340,7 +377,7 @@ it.each([true, false])('rechecks failed contacts on commercial refresh, clearing
   if (recovered) expect(latest.data.contacts[0].id).toBe('contact');
 });
 
-it('carries confirmed newer commercial versions across both stage caches without rereading all details', async () => {
+it('carries confirmed newer commercial versions across both stage caches before revalidation finishes', async () => {
   const app = render(<App />);
   await settled();
   app.rerender(<App stage="CLIENT" />);
@@ -352,7 +389,7 @@ it('carries confirmed newer commercial versions across both stage caches without
   app.rerender(<App stage="CLIENT" />);
   expect(latest.data.commercial.entries.a.workflowVersion).toBe(7);
   expect(latest.data.commercial.entries.a.plan.version).toBe(7);
-  expect(h.commercial).toHaveBeenCalledTimes(2);
+  expect(h.commercial).toHaveBeenCalledTimes(3);
 });
 
 it.each(['new', 'stage-changed'])('withholds a %s snoozed lead until commercial hydration succeeds, including after failure', async change => {

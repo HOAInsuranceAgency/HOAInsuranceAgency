@@ -32,12 +32,10 @@ interface ResourceState {
   error: string;
   refreshError: string;
 }
-interface CacheEntry { data: AccountsListData; detailsAt: number }
+interface CacheEntry { data: AccountsListData; detailsComplete: boolean }
 type CacheKey = `${Stage}:${'admin' | 'scoped'}`;
 type ListCache = Map<CacheKey, CacheEntry>;
-const FRESH_MS = 60_000;
 const cacheKey = (stage: Stage, isAdmin: boolean): CacheKey => `${stage}:${isAdmin ? 'admin' : 'scoped'}`;
-const fresh = (entry?: CacheEntry) => !!entry && entry.detailsAt > 0 && Date.now() - entry.detailsAt < FRESH_MS;
 const CacheContext = createContext<ListCache | null>(null);
 
 /** The authenticated shell owns these snapshots. Its user/role remount drops
@@ -163,7 +161,7 @@ export function useAccountsListData(stage: Stage) {
     setState(next);
   }, []);
 
-  const run = useCallback(async (mode: 'initial' | 'all' | 'commercial'): Promise<void> => {
+  const run = useCallback(async (mode: 'all' | 'commercial'): Promise<void> => {
     if (!mounted.current) return;
     const id = ++ticket.current;
     const previous = current.current.stage === stage && current.current.isAdmin === isAdmin ? current.current : initialState(stage, cache, isAdmin);
@@ -176,30 +174,26 @@ export function useAccountsListData(stage: Stage) {
     try {
       const accounts = await checkedList<Account>(nextToken => client.models.Account.list({ nextToken }));
       if (!stillCurrent()) return;
-      const reuseDetails = mode === 'initial' && fresh(cached) && covered(cached!, accounts);
       const latest = current.current.loaded && !current.current.error ? current.current.data : fallback ?? cache.get(key)?.data;
       fallback = latest ? surviving(latest, accounts) : undefined;
       // Revoke immediately, before optional reads or commercial hydration can
       // fail. Both stage caches contain the same authorized account universe.
       for (const [otherKey, entry] of cache) {
         if (!otherKey.endsWith(isAdmin ? ':admin' : ':scoped')) continue;
-        cache.set(otherKey, { data: surviving(entry.data, accounts), detailsAt: covered(entry, accounts) ? entry.detailsAt : 0 });
+        cache.set(otherKey, { data: surviving(entry.data, accounts), detailsComplete: covered(entry, accounts) && entry.detailsComplete });
       }
       if (fallback) publish({ stage, isAdmin, data: fallback, loaded: true, loading: true, error: '', refreshError: '' });
-      if (reuseDetails) {
-        const data = fallback!;
-        cache.set(key, { data, detailsAt: cached!.detailsAt });
-        publish({ stage, isAdmin, data, loaded: true, loading: false, error: '', refreshError: '' });
-        return;
-      }
+      // Related records change independently of Account.updatedAt. On every
+      // route entry, keep authorized cached rows visible while revalidating
+      // their contacts, quotes/policies, assignments and follow-up details.
       // A successful commercial-only read cannot repair other stale columns.
-      // Missing/changed accounts and failed detail reads invalidate detailsAt.
+      // Missing/changed accounts and failed detail reads invalidate completeness.
       const commercialOnly = mode === 'commercial' && !!fallback &&
-        (cache.get(key)?.detailsAt ?? 0) > 0 && !previous.refreshError;
+        !!cache.get(key)?.detailsComplete && !previous.refreshError;
       const next = await loadDetails(stage, accounts, fallback, commercialOnly);
       if (!stillCurrent()) return;
       const data = { ...next.data, commercial: mergeCommercial(next.data.commercial, current.current.data.commercial, next.data.accounts) };
-      cache.set(key, { data, detailsAt: next.refreshError ? 0 : commercialOnly ? cached?.detailsAt ?? 0 : Date.now() });
+      cache.set(key, { data, detailsComplete: !next.refreshError });
       publish({ stage, isAdmin, data, loaded: true, loading: false, error: '', refreshError: next.refreshError });
     } catch (error) {
       if (!stillCurrent()) return;
@@ -210,10 +204,10 @@ export function useAccountsListData(stage: Stage) {
       } else if (fallback) {
         // Include inline saves confirmed while this read was pending.
         const data = { ...fallback, commercial: mergeCommercial(fallback.commercial, current.current.data.commercial, fallback.accounts) };
-        cache.set(key, { data, detailsAt: 0 });
+        cache.set(key, { data, detailsComplete: false });
         publish({ stage, isAdmin, data, loaded: true, loading: false, error: '', refreshError: message });
       } else {
-        if (cached) cache.set(key, { ...cached, detailsAt: 0 });
+        if (cached) cache.set(key, { ...cached, detailsComplete: false });
         publish({ stage, isAdmin, data: emptyData(), loaded: true, loading: false, error: message, refreshError: '' });
       }
     }
@@ -227,9 +221,9 @@ export function useAccountsListData(stage: Stage) {
     if (previous.stage !== stage || previous.isAdmin !== isAdmin || !previous.loaded || previous.error) return;
     const commercial = typeof action === 'function' ? action(previous.data.commercial) : action;
     const data = restrict({ ...previous.data, commercial }, previous.data.accounts);
-    cache.set(key, { data, detailsAt: cache.get(key)?.detailsAt ?? 0 });
+    cache.set(key, { data, detailsComplete: cache.get(key)?.detailsComplete ?? false });
     // Both lists may include a partially bound client. A confirmed edit must
-    // not regress when navigating to the other stage's still-fresh snapshot.
+    // not regress when navigating to the other stage's cached snapshot.
     for (const [otherKey, entry] of cache) {
       if (otherKey === key || !otherKey.endsWith(isAdmin ? ':admin' : ':scoped')) continue;
       cache.set(otherKey, { ...entry, data: { ...entry.data,
@@ -242,7 +236,7 @@ export function useAccountsListData(stage: Stage) {
   useEffect(() => {
     mounted.current = true;
     publish(initialState(stage, cache, isAdmin));
-    void run('initial');
+    void run('all');
     return () => { mounted.current = false; ++ticket.current; };
   }, [stage, cache, isAdmin, run, publish]);
 
