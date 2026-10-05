@@ -27,6 +27,11 @@ import { PriorCarrierTab } from "./account/PriorCarrierTab";
 import { LossesTab } from "./account/LossesTab";
 import { ActivityTab } from "./account/ActivityTab";
 import { CertificatesTab } from "./account/CertificatesTab";
+import { useIsAdmin } from "../lib/auth";
+import { communicationRequest, type LeadWorkflow, type WorkflowContext } from "../lib/communications";
+import { isAuthorizationError } from "../lib/authorizationError";
+import { LeadSalespersonSelect } from "../components/LeadSalespersonSelect";
+import "./AccountDetail.css";
 
 type Tab =
   | "overview"
@@ -145,6 +150,7 @@ export function resolveTab(
 }
 
 export default function AccountDetail({ profile }: { profile: UserProfile }) {
+  const isAdmin = useIsAdmin();
   const { id } = useParams<{ id: string }>();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
@@ -253,6 +259,7 @@ export default function AccountDetail({ profile }: { profile: UserProfile }) {
 
       {activeTab === "overview" && (
         <div className="account-overview">
+          {isAdmin && account.stage === "LEAD" && <LeadAssignment key={account.id} account={account} />}
           <OverviewTab key={account.id} account={account} onChange={setAccount} />
           <div id="contacts"><ContactsCard key={account.id} accountId={account.id} /></div>
           <PropertyPanel key={account.id} account={account} onChange={setAccount} />
@@ -293,4 +300,33 @@ export default function AccountDetail({ profile }: { profile: UserProfile }) {
       {activeTab === "activity" && <ActivityTab key={account.id} accountId={account.id} />}
     </>
   );
+}
+
+/** Loaded only on Overview; Activity has its own account owner controls. */
+function LeadAssignment({ account }: { account: Account }) {
+  const savedWorkflow = useRef<LeadWorkflow | null>(null);
+  const resource = useAsyncResource(async () => {
+    const context = await communicationRequest<WorkflowContext>("context", { accountId: account.id });
+    // An explicit retry may finish after a newer assignment save.
+    const saved = savedWorkflow.current;
+    return saved && saved.version > (context.workflow?.version ?? 0) ? { ...context, workflow: saved } : context;
+  }, [account.id], { initialData: null as WorkflowContext | null, errorMessage: "Could not load salesperson", clearDataOnError: isAuthorizationError });
+
+  return <section className="card account-lead-assignment" aria-label="Lead salesperson">
+    <h2>Salesperson</h2>
+    {!resource.loaded ? <p className="muted small" role="status">Loading salesperson…</p>
+      : resource.data && <LeadSalespersonSelect
+        accountId={account.id}
+        accountName={account.name}
+        salespersonId={resource.data.workflow?.salespersonId}
+        workflowVersion={resource.data.workflow?.version ?? 0}
+        team={resource.data.team}
+        onRefresh={resource.refetch}
+        onSaved={workflow => {
+          if (!savedWorkflow.current || workflow.version > savedWorkflow.current.version) savedWorkflow.current = workflow;
+          resource.setData(current => current && workflow.version > (current.workflow?.version ?? 0) ? { ...current, workflow } : current);
+        }}
+      />}
+    {resource.error && <p className="error-text small" role="alert">{resource.error} <button className="link" onClick={() => void resource.refetch()}>Retry salesperson</button></p>}
+  </section>;
 }

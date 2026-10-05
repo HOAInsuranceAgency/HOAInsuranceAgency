@@ -209,10 +209,14 @@ describe("custom API operations", () => {
     records['Communication:deleted-account:a'] = { id: 'deleted-account:a' };
     await expect(call('saveLeadSnooze', input, user('bob'))).rejects.toThrow(AccessDenied);
   });
-  it("cannot assign a foreign lead to yourself", async () => {
+  it("requires an administrator for all salesperson assignment writes", async () => {
     await expect(call("setResponsibilities", { accountId: "b", salespersonId: "alice" })).rejects.toThrow(AccessDenied);
     await expect(call("setResponsibilities", { accountId: "a", salespersonId: "bob" })).rejects.toThrow(AccessDenied);
-    await expect(call("setResponsibilities", { accountId: "a", salespersonId: "alice" })).resolves.toBeUndefined();
+    await expect(call("setResponsibilities", { accountId: "a", salespersonId: "alice" })).rejects.toThrow(AccessDenied);
+    const identity = { sub: "alice", groups: ["ADMIN", "PRODUCER"] };
+    const input = { accountId: "a", salespersonId: "alice" };
+    await expect(call("setResponsibilities", input, new AccountAccess(identity, reader, { headers: { "x-crm-role": "PRODUCER" } }))).rejects.toThrow(AccessDenied);
+    await expect(call("setResponsibilities", input, new AccountAccess(identity, reader, { headers: { "x-crm-role": "ADMIN" } }))).resolves.toBeUndefined();
   });
   it("allows only administrators to create or reassign leads for another salesperson", async () => {
     await expect(call("createLead", { salespersonId: "alice" }, user("manager"))).rejects.toThrow(AccessDenied);
@@ -222,7 +226,7 @@ describe("custom API operations", () => {
     records["Communication:workflow:owned"] = { data: { salespersonId: "manager" } };
     await expect(call("setResponsibilities", { accountId: "owned", salespersonId: "alice" }, user("manager"))).rejects.toThrow(AccessDenied);
     await expect(call("setResponsibilities", { accountId: "a", salespersonId: "manager" }, user("manager"))).rejects.toThrow(AccessDenied);
-    await expect(call("setResponsibilities", { accountId: "owned", salespersonId: "manager" }, user("manager"))).resolves.toBeUndefined();
+    await expect(call("setResponsibilities", { accountId: "owned", salespersonId: "manager" }, user("manager"))).rejects.toThrow(AccessDenied);
     await expect(call("createLead", { salespersonId: "alice" }, admin())).resolves.toBeUndefined();
     await expect(call("setResponsibilities", { accountId: "owned", salespersonId: "alice" }, admin())).resolves.toBeUndefined();
   });
