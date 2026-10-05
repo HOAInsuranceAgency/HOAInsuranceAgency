@@ -1,6 +1,8 @@
 import { installAccountAccess } from "./account-access";
 import { modelIndex } from "./model-index";
 import { installDashboardReads } from "./dashboard-reports";
+import { installOwnerProfitability } from "./owner-profitability";
+import { ownerProfitability } from "./functions/owner-profitability/resource";
 import { crmAccess } from "./functions/crm-access/resource";
 import { Alarm, TreatMissingData, Metric, ComparisonOperator } from "aws-cdk-lib/aws-cloudwatch";
 import { SnsAction } from "aws-cdk-lib/aws-cloudwatch-actions";
@@ -68,6 +70,7 @@ import {
 export const backend = defineBackend({
   auth,
   crmAccess,
+  ownerProfitability,
   assignmentIndexWorker,
   data,
   storage,
@@ -997,3 +1000,4 @@ backend.extractLead.resources.lambda.grantInvoke(
 
 installAccountAccess(backend, communicationTable);
 installDashboardReads(backend);
+installOwnerProfitability(backend, communicationTable);

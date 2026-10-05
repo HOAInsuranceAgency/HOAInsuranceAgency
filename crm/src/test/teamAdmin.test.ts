@@ -83,6 +83,55 @@ describe("team role assignments", () => {
     expect(dbSend).not.toHaveBeenCalled();
   });
 
+  it("lets an Owner use admin functions without a paired Admin group", async () => {
+    expect(await run("listTeamUsers", {}, ["OWNER"])).toMatchObject({ ok: true });
+    expect(await run("inviteUser", { email: "owner@example.com", roles: ["OWNER", "PRODUCER"] }, ["OWNER"]))
+      .toMatchObject({ ok: true, roles: ["OWNER", "PRODUCER"] });
+    expect(changes().map(command => command.input.GroupName)).toEqual(["OWNER", "PRODUCER"]);
+  });
+
+  it.each([{ groups: ["ADMIN"] }, { groups: ["OWNER", "ADMIN"] }])("rejects Owner invitations and self-promotion from the Admin view ($groups)", async ({ groups }) => {
+    for (const field of ["inviteUser", "updateUserRoles"]) {
+      expect(await run(field, { email: "owner@example.com", userId: "admin-sub", roles: ["OWNER"] }, groups, "ADMIN"))
+        .toMatchObject({ ok: false, error: expect.stringContaining("Only an Owner") });
+    }
+    expect(cognitoSend).not.toHaveBeenCalled();
+    expect(sesSend).not.toHaveBeenCalled();
+  });
+
+  it("prevents an Admin from removing or changing any existing Owner roles", async () => {
+    cognitoSend.mockImplementation(async command => command instanceof AdminGetUserCommand
+      ? { Username: "owner", UserAttributes: [{ Name: "sub", Value: "owner-sub" }] }
+      : { Groups: [{ GroupName: "OWNER" }, { GroupName: "PRODUCER" }] });
+    expect(await run("updateUserRoles", { userId: "owner-sub", roles: ["ADMIN"] }))
+      .toMatchObject({ ok: false, error: expect.stringContaining("Only an Owner") });
+    expect(changes()).toHaveLength(0);
+  });
+
+  it("preserves an Owner's own access while permitting changes to another Owner", async () => {
+    cognitoSend.mockImplementation(async command => command instanceof AdminGetUserCommand
+      ? { Username: "owner-alias", UserAttributes: [{ Name: "sub", Value: "admin-sub" }] }
+      : { Groups: [{ GroupName: "OWNER" }] });
+    expect(await run("updateUserRoles", { userId: "admin-sub", roles: ["ADMIN"] }, ["OWNER"]))
+      .toMatchObject({ ok: false, error: expect.stringContaining("Keep your Owner role") });
+    expect(changes()).toHaveLength(0);
+    cognitoSend.mockImplementation(async command => command instanceof AdminGetUserCommand
+      ? { Username: "other-owner", UserAttributes: [{ Name: "sub", Value: "other-sub" }] }
+      : command instanceof AdminListGroupsForUserCommand ? { Groups: [{ GroupName: "OWNER" }] } : {});
+    expect(await run("updateUserRoles", { userId: "other-sub", roles: ["ADMIN"] }, ["OWNER"]))
+      .toMatchObject({ ok: true, roles: ["ADMIN"] });
+    expect(changes().map(command => [command.constructor.name, command.input.GroupName])).toEqual([
+      ["AdminAddUserToGroupCommand", "ADMIN"], ["AdminRemoveUserFromGroupCommand", "OWNER"],
+    ]);
+  });
+
+  it("removes Owner privileges when the Producer view is selected and rejects a forged Owner header", async () => {
+    expect(await run("inviteUser", { email: "staff@example.com", roles: ["STAFF"] }, ["OWNER", "PRODUCER"], "PRODUCER"))
+      .toMatchObject({ ok: false });
+    await expect(run("listTeamUsers", {}, ["ADMIN"], "OWNER")).rejects.toThrow("not available");
+    expect(cognitoSend).not.toHaveBeenCalled();
+  });
+
   it("adds Producer to an existing admin without removing Admin or unrelated groups", async () => {
     expect(await run("updateUserRoles", { userId: "member-sub", roles: ["ADMIN", "PRODUCER"] }))
       .toMatchObject({ ok: true, userId: "member-sub", roles: ["ADMIN", "PRODUCER"] });

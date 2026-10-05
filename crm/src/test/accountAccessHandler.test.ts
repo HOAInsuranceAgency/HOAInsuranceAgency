@@ -247,3 +247,15 @@ it("rejects retired task model access before touching storage for every signed-i
   }
   expect(h.db).not.toHaveBeenCalled();
 });
+
+
+it("requires active Owner for the private profitability guard", async () => {
+  const owner = { sub: "owner", groups: ["OWNER", "ADMIN", "PRODUCER"] };
+  await expect(handler({ identity: owner, mode: "owner", previous: "allowed" })).resolves.toBe("allowed");
+  await expect(handler({ identity: { sub: "owner", groups: ["OWNER"] }, mode: "admin", previous: "admin access" })).resolves.toBe("admin access");
+  for (const selected of ["ADMIN", "PRODUCER"]) {
+    await expect(handler({ identity: owner, request: { headers: { "x-crm-role": selected } }, mode: "owner" })).rejects.toThrow("not available");
+  }
+  await expect(handler({ identity: { sub: "admin", groups: ["ADMIN"] }, mode: "owner" })).rejects.toThrow("not available");
+  await expect(handler({ identity: { sub: "admin", groups: ["ADMIN"] }, request: { headers: { "x-crm-role": "OWNER" } }, mode: "owner" })).rejects.toThrow("not available");
+});

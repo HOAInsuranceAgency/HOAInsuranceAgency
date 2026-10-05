@@ -412,6 +412,7 @@ describe("option lists reproduce the hand-written ones they replaced", () => {
   it("USER_ROLE_OPTIONS — Team invite <option>s, alphabetical by label", () => {
     expect(USER_ROLE_OPTIONS.map((o) => [o.value, o.label])).toEqual([
       ["ADMIN", "Admin"],
+      ["OWNER", "Owner"],
       ["PRODUCER", "Producer"],
       ["STAFF", "Staff"],
     ]);
@@ -420,6 +421,7 @@ describe("option lists reproduce the hand-written ones they replaced", () => {
   it("USER_ROLE_LABELS — Onboarding ROLE_LABELS", () => {
     expect({ ...USER_ROLE_LABELS }).toEqual({
       ADMIN: "Admin",
+      OWNER: "Owner",
       PRODUCER: "Producer",
       STAFF: "Staff",
     });
