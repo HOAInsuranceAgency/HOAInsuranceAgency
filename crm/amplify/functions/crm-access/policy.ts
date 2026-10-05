@@ -4,6 +4,7 @@ export const ACCOUNT_MODELS = ["Account", "Contact", "PriorCarrier", "Activity",
 export const RETIRED_MODELS: readonly string[] = ["MarketingTask"];
 export const SHARED_MODELS = ["Carrier", "AppetiteGuide", "PfCounselOpinion", "UserProfile", "ProducerLicense", "License", "AgencySettings", "LicenseReminder"] as const;
 export const PUBLIC_OPERATIONS = ["webLeadEstimate", "leadIntakeReady", "submitWebLead", "requestLeadUpload", "closeLeadUploadWindow", "uploadPortalStatus", "requestPortalUpload", "financeElectionTerms", "acceptFinanceElection"];
+export const OWNER_OPERATIONS = ["ownerProfitability", "saveEmployeeCompensation"];
 export const ADMIN_OPERATIONS = ["inviteUser", "updateUserRoles", "listTeamUsers", "setPremiumFinanceEnabled", "marketingReportSettings", "marketingReportAction"];
 /** Native group authorization still sees every assigned Cognito group. These
  * ADMIN-only model actions also require the ADMIN view to be selected. */

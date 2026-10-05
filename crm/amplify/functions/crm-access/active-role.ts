@@ -1,8 +1,8 @@
 import { AccessDenied } from "./policy";
 
 export type RoleRequest = { headers?: Record<string, unknown> };
-export type ActiveRole = "ADMIN" | "STAFF" | "PRODUCER";
-const roles: ActiveRole[] = ["ADMIN", "STAFF", "PRODUCER"];
+export type ActiveRole = "OWNER" | "ADMIN" | "STAFF" | "PRODUCER";
+const roles: ActiveRole[] = ["OWNER", "ADMIN", "STAFF", "PRODUCER"];
 
 /** A view selection can narrow a signed-in user's privileges; only the
  * verified Cognito identity can establish which roles they may select. */
@@ -18,4 +18,8 @@ export function activeRole(identity: unknown, request?: RoleRequest): ActiveRole
   return role as ActiveRole;
 }
 
-export const isActiveAdmin = (identity: unknown, request?: RoleRequest) => activeRole(identity, request) === "ADMIN";
+export const isActiveOwner = (identity: unknown, request?: RoleRequest) => activeRole(identity, request) === "OWNER";
+export const isActiveAdmin = (identity: unknown, request?: RoleRequest) => {
+  const role = activeRole(identity, request);
+  return role === "OWNER" || role === "ADMIN";
+};

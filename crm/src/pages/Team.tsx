@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useIsOwner } from "../lib/auth";
 import { LeadEligibilityCells, LeadEligibilityEditor, LeadEligibilityFeedback, useLeadEligibilitySettings } from "../components/LeadEligibilitySettings";
 import { client, fmtDate, friendlyError, type UserProfile } from "../lib/client";
 import { toE164 } from "../../amplify/functions/lead-intake/sms";
@@ -18,27 +19,28 @@ interface TeamUser {
   groups: string[];
 }
 
-function RoleChoices({ roles, onChange, disabled = false, keepAdmin = false }: {
+function RoleChoices({ roles, onChange, disabled = false, keepRole, canManageOwners }: {
   roles: UserRole[];
   onChange: (roles: UserRole[]) => void;
   disabled?: boolean;
-  keepAdmin?: boolean;
+  keepRole?: "ADMIN" | "OWNER";
+  canManageOwners: boolean;
 }) {
   return <fieldset disabled={disabled} style={{ border: 0, padding: 0, margin: 0 }}>
     <legend>Assigned roles</legend>
     <p className="muted small" style={{ margin: "4px 0 10px" }}>Choose one or two roles.</p>
     <div style={{ display: "flex", flexWrap: "wrap", gap: 16 }}>
-      {USER_ROLE_OPTIONS.map(option => {
+      {USER_ROLE_OPTIONS.filter(option => option.value !== "OWNER" || canManageOwners || roles.includes("OWNER")).map(option => {
         const checked = roles.includes(option.value);
         return <label key={option.value} style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <input type="checkbox" checked={checked}
-            disabled={checked ? roles.length === 1 || (keepAdmin && option.value === "ADMIN") : roles.length >= 2}
+            disabled={(option.value === "OWNER" && !canManageOwners) || (checked ? roles.length === 1 || keepRole === option.value : roles.length >= 2)}
             onChange={() => onChange(checked ? roles.filter(role => role !== option.value) : [...roles, option.value])} />
           {option.label}
         </label>;
       })}
     </div>
-    {keepAdmin && <p className="muted small">Keep your Admin role to manage team access.</p>}
+    {keepRole && <p className="muted small">Keep your {keepRole === "OWNER" ? "Owner" : "Admin"} role to manage team access.</p>}
   </fieldset>;
 }
 
@@ -49,6 +51,7 @@ function RoleEditor({ user, name, currentUser, onSave, onClose }: {
   onSave: (roles: UserRole[]) => Promise<void>;
   onClose: () => void;
 }) {
+  const canManageOwners = useIsOwner();
   const initialRoles = user.groups.filter(isUserRole);
   const [roles, setRoles] = useState<UserRole[]>(initialRoles);
   const status = useSaveStatus();
@@ -56,7 +59,8 @@ function RoleEditor({ user, name, currentUser, onSave, onClose }: {
   const close = () => { if (!status.busy) onClose(); };
   return <Modal title={`Roles for ${name}`} className="modal-form team-connection-modal" onClose={close}>
     <p className="muted small">The team member can switch between assigned roles at the bottom of the side menu.</p>
-    <RoleChoices roles={roles} disabled={status.busy} keepAdmin={currentUser && initialRoles.includes("ADMIN")}
+    <RoleChoices roles={roles} disabled={status.busy || (initialRoles.includes("OWNER") && !canManageOwners)} canManageOwners={canManageOwners}
+      keepRole={currentUser ? initialRoles.includes("OWNER") ? "OWNER" : initialRoles.includes("ADMIN") ? "ADMIN" : undefined : undefined}
       onChange={next => { setRoles(next); status.markDirty(); }} />
     <div className="form-actions">
       <button className="primary" disabled={status.busy || !dirty || roles.length < 1 || roles.length > 2}
@@ -159,6 +163,7 @@ async function fetchTeamPage(nextToken?: string) {
  * so there's no check of its own here.
  */
 export default function Team({ profile }: { profile: UserProfile }) {
+  const canManageOwners = useIsOwner();
   const eligibility = useLeadEligibilitySettings();
   // The invite confirmation used to be a `notice` string nothing ever
   // cleared — it sat over the form while you typed the next invitee's
@@ -345,7 +350,7 @@ export default function Team({ profile }: { profile: UserProfile }) {
             />
           </div>
           <div className="field">
-            <RoleChoices roles={form.roles} disabled={inviteStatus.busy} onChange={roles => setF("roles", roles)} />
+            <RoleChoices roles={form.roles} disabled={inviteStatus.busy} canManageOwners={canManageOwners} onChange={roles => setF("roles", roles)} />
           </div>
         </div>
         <div className="form-actions">
@@ -426,7 +431,7 @@ export default function Team({ profile }: { profile: UserProfile }) {
                           {(u.groups.filter(isUserRole).length ? u.groups.filter(isUserRole) : [p?.role ?? "—"]).map(role =>
                             <span key={role} className="badge gray">{role}</span>)}
                         </div>
-                        <button type="button" className="secondary" disabled={team.loading || !!editingRoles} aria-label={`Edit roles for ${name || u.email}`}
+                        <button type="button" className="secondary" disabled={team.loading || !!editingRoles || (u.groups.includes("OWNER") && !canManageOwners)} aria-label={`Edit roles for ${name || u.email}`}
                           onClick={() => { roleStatus.markDirty(); setEditingRoles(u); }}>Edit roles</button>
                       </td>
                       <td>

@@ -47,12 +47,14 @@ vi.mock("./pages/AccountsList", () => ({
       <section>
         <h1>{isAdmin ? "All leads" : "My leads"}</h1>
         {isAdmin && <button>Admin control</button>}
+        {useIsOwner() && <span>Owner access</span>}
         <input aria-label="Page note" value={note} onChange={(e) => setNote(e.target.value)} />
       </section>
     );
   },
 }));
 vi.mock("./pages/Dashboard", () => ({ default: () => <h1>Agency dashboard</h1> }));
+vi.mock("./pages/OwnerProfitability", () => ({ default: () => <h1>{useIsOwner() ? "Private employee profitability" : "Owner context missing"}</h1> }));
 vi.mock("./pages/FrontSidebar", () => ({ default: () => null }));
 vi.mock("./pages/AccountDetail", () => ({ default: () => null }));
 vi.mock("./pages/NewLead", () => ({ default: () => null }));
@@ -78,7 +80,7 @@ vi.mock("./components/UniversalSearch", () => ({ default: () => null }));
 vi.mock("./components/MagicLinkSignIn", () => ({ default: () => null }));
 
 import App from "./App";
-import { useIsAdmin } from "./lib/auth";
+import { useIsAdmin, useIsOwner } from "./lib/auth";
 import { activeRoleHeaders } from "./lib/activeRole";
 
 const savedLicense = {
@@ -117,6 +119,34 @@ beforeEach(() => {
 });
 
 describe("assigned role switching", () => {
+  it("shows the Profitability navigation and private route only in the Owner view", async () => {
+    fetchUserGroups.mockResolvedValue(["OWNER", "ADMIN", "PRODUCER"]);
+    renderApp("/owner");
+    expect(await screen.findByRole("heading", { name: "Private employee profitability" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Profitability" })).toHaveAttribute("href", "/owner");
+    fireEvent.change(screen.getByRole("combobox", { name: "Active role" }), { target: { value: "ADMIN" } });
+    expect(await screen.findByRole("heading", { name: "Agency dashboard" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Profitability" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Private employee profitability" })).not.toBeInTheDocument();
+  });
+
+  it.each(["ADMIN", "PRODUCER"])("denies a direct profitability URL in the %s view even for an assigned owner", async role => {
+    fetchUserGroups.mockResolvedValue(["OWNER", "ADMIN", "PRODUCER"]);
+    sessionStorage.setItem("hoa-crm:active-role:user-one", role);
+    renderApp("/owner");
+    expect(await screen.findByRole("heading", { name: role === "ADMIN" ? "Agency dashboard" : "My leads" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Profitability" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Private employee profitability" })).not.toBeInTheDocument();
+  });
+
+  it("denies the profitability route to an admin without the Owner group", async () => {
+    fetchUserGroups.mockResolvedValue(["ADMIN"]);
+    renderApp("/owner");
+    expect(await screen.findByRole("heading", { name: "Agency dashboard" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Profitability" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Private employee profitability" })).not.toBeInTheDocument();
+  });
+
   it("loads the signed-in profile through its paginated user index without scanning profiles", async () => {
     listProfiles.mockResolvedValueOnce({ data: [], nextToken: "profile-page-two" });
     renderApp();
@@ -180,6 +210,24 @@ describe("assigned role switching", () => {
     expect(screen.getByRole("link", { name: "Dashboard" })).toBeInTheDocument();
     expect(await activeRoleHeaders()).toMatchObject({ "x-crm-role": "ADMIN" });
     expect(sessionStorage.getItem("hoa-crm:active-role:user-one")).toBe("ADMIN");
+  });
+
+  it("gives Owner all admin controls and narrows both contexts when switching views", async () => {
+    fetchUserGroups.mockResolvedValue(["OWNER", "PRODUCER"]);
+    renderApp("/leads");
+    const selector = await screen.findByRole("combobox", { name: "Active role" });
+    expect(selector).toHaveValue("OWNER");
+    expect(screen.getByRole("heading", { name: "All leads" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Admin control" })).toBeInTheDocument();
+    expect(screen.getByText("Owner access")).toBeInTheDocument();
+    expect(within(selector).getAllByRole("option").map(option => option.getAttribute("value"))).toEqual(["OWNER", "PRODUCER"]);
+    fireEvent.change(selector, { target: { value: "PRODUCER" } });
+    expect(await screen.findByRole("heading", { name: "My leads" })).toBeInTheDocument();
+    expect(screen.queryByText("Owner access")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Admin control" })).not.toBeInTheDocument();
+    fireEvent.change(screen.getByRole("combobox", { name: "Active role" }), { target: { value: "OWNER" } });
+    expect(await screen.findByRole("heading", { name: "Agency dashboard" })).toBeInTheDocument();
+    expect(await activeRoleHeaders()).toEqual({ "x-crm-role": "OWNER" });
   });
 
   it("remembers the selected role when the same user reopens the app", async () => {
