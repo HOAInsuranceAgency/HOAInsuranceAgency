@@ -127,6 +127,11 @@ export class AccountAccess {
   }
   async write(model: string, operation: string, input: RecordData) {
     if (RETIRED_MODELS.includes(model)) throw new AccessDenied();
+    // Field-level delete grants are required for whole-account deletion, but
+    // Amplify also uses them to authorize clearing fields in an update. Keep
+    // acquisition immutable for every browser role, including administrators.
+    if (model === "Account" && ["create", "update"].includes(operation)
+      && ["source", "leadSource", "leadAttribution"].some(field => Object.hasOwn(input, field))) throw new AccessDenied();
     if (this.admin) return;
     const key = id(["GlApplication", "DoApplication"].includes(model) ? input.accountId : input.id);
     const old = key ? await this.get(model, key) : undefined;
