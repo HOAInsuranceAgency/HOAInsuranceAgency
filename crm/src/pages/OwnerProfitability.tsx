@@ -11,7 +11,7 @@ import {
 import "./OwnerProfitability.css";
 
 type Employee = { userId: string; name: string; salesperson?: boolean };
-type Snapshot = { ok: true; employees: Employee[]; compensations: Record<string, EmployeeCompensation>; report: EmployeeProfitabilityResult };
+type Snapshot = { ok: true; employees: Employee[]; compensations: Record<string, EmployeeCompensation>; report: EmployeeProfitabilityResult; reportStale?: boolean };
 const money = (cents: number | null) => cents == null ? "Incomplete" : new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 }).format(cents / 100);
 const dollars = (cents: number | null) => cents == null ? null : cents / 100;
 const today = () => new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
@@ -55,7 +55,39 @@ function OwnerPage() {
 }
 
 function ProfitabilitySnapshot({ from, to }: { from: string; to: string }) {
-  const resource = useAsyncResource(async () => response<Snapshot>(await client.queries.ownerProfitability({ from, to })), [from, to], { errorMessage: "Could not load employee profitability.", clearDataOnError: () => true });
+  // Pay writes can be ahead of the report's read. Keep the newest confirmed
+  // versions in the parent so switching employees or reopening an editor
+  // cannot restore an older salary or optimistic-lock version.
+  const latestPay = useRef<Record<string, EmployeeCompensation>>({});
+  const active = useRef(true);
+  const readVersion = useRef(0);
+  useEffect(() => {
+    active.current = true;
+    return () => { active.current = false; ++readVersion.current; latestPay.current = {}; };
+  }, []);
+  const resource = useAsyncResource(async () => {
+    const reading = ++readVersion.current;
+    try {
+      const snapshot = response<Snapshot>(await client.queries.ownerProfitability({ from, to }));
+      if (!active.current || reading !== readVersion.current) return snapshot;
+      const compensations = { ...snapshot.compensations };
+      let reportStale = false;
+      for (const employee of snapshot.employees) {
+        const known = latestPay.current[employee.userId];
+        if (known && known.version > (compensations[employee.userId]?.version ?? -1)) {
+          compensations[employee.userId] = known;
+          reportStale = true;
+        }
+      }
+      latestPay.current = compensations;
+      return { ...snapshot, compensations, reportStale };
+    } catch (error) {
+      // The same fail-closed policy applies to this version memory as to the
+      // rendered snapshot, including transient read failures.
+      if (active.current && reading === readVersion.current) latestPay.current = {};
+      throw error;
+    }
+  }, [from, to], { errorMessage: "Could not load employee profitability.", clearDataOnError: () => true });
   const [payOpen, setPayOpen] = useState(false), [employeeId, setEmployeeId] = useState(""), [paySaved, setPaySaved] = useState(false);
   const [payBusy, setPayBusy] = useState(false);
   const payPanel = useRef<HTMLElement>(null);
@@ -69,8 +101,9 @@ function ProfitabilitySnapshot({ from, to }: { from: string; to: string }) {
   return <>
     <div className="owner-profitability-toolbar">
       <p className="muted small">{report.from} through {report.to} · USD · Estimated</p>
-      <div className="owner-profitability-actions"><button className="secondary" disabled={resource.loading || payOpen} onClick={() => void resource.refetch()}>{resource.loading ? "Refreshing…" : "Refresh"}</button><button className="secondary" disabled={payBusy || resource.loading} aria-expanded={payOpen} onClick={() => setPayOpen(!payOpen)}>Manage pay settings</button><ReportDownload disabled={resource.loading} report={exportReport(report)} /></div>
+      <div className="owner-profitability-actions"><button className="secondary" disabled={resource.loading || payOpen} onClick={() => void resource.refetch()}>{resource.loading ? "Refreshing…" : "Refresh"}</button><button className="secondary" disabled={payBusy || resource.loading} aria-expanded={payOpen} onClick={() => setPayOpen(!payOpen)}>Manage pay settings</button><ReportDownload disabled={resource.loading || snapshot.reportStale} report={exportReport(report)} /></div>
     </div>
+    {snapshot.reportStale && <p className="owner-profitability-notice" role="status">Pay settings are saved, but the report is still catching up. {payOpen ? 'Close pay settings and refresh the report to update its totals.' : 'Refresh the report to update its totals.'}</p>}
     <div className="stat-row owner-profitability-summary">
       <Summary label="Agency commission" amount={totals.grossCommissionCents} known={totals.knownGrossCommissionCents} />
       <Summary label="After producer share" amount={totals.netRevenueCents} known={totals.knownNetRevenueCents} />
@@ -87,7 +120,14 @@ function ProfitabilitySnapshot({ from, to }: { from: string; to: string }) {
       </tr>)}</tbody></table></div> : <p className="muted">No employees or policies found for this report.</p>}
     </div>
     {payOpen && <section className="card owner-profitability-pay-panel" ref={payPanel} tabIndex={-1} aria-label="Private pay settings"><h2>Private pay settings</h2><p className="muted small">Only owners can see or change these amounts. Add a dated period for each pay change. Use 0 for unpaid salary or no commission share.</p>
-      {selected ? <CompensationEditor key={selected.userId} employee={selected} employees={employees} compensation={compensations[selected.userId]} defaultFrom={from} onBusyChange={setPayBusy} onSelect={id => { setEmployeeId(id); setPaySaved(false); }} onChange={() => setPaySaved(false)} onSaved={async () => { await resource.refetch(); setPaySaved(true); }} /> : <p className="muted">No employees are available.</p>}
+      {selected ? <CompensationEditor key={selected.userId} employee={selected} employees={employees} compensation={compensations[selected.userId]} defaultFrom={from} onBusyChange={setPayBusy} onSelect={id => { setEmployeeId(id); setPaySaved(false); }} onChange={() => setPaySaved(false)} onSaved={async saved => {
+        if (!active.current) return;
+        if (saved.version >= (latestPay.current[saved.userId]?.version ?? -1)) latestPay.current = { ...latestPay.current, [saved.userId]: saved };
+        const confirmed = latestPay.current[saved.userId];
+        resource.setData(current => current ? { ...current, compensations: { ...current.compensations, [saved.userId]: confirmed }, reportStale: true } : current);
+        await resource.refetch();
+        if (active.current) setPaySaved(true);
+      }} /> : <p className="muted">No employees are available.</p>}
       {paySaved && <p role="status">Pay settings saved.</p>}
     </section>}
     <section className="card owner-profitability-basis" aria-label="Report calculation basis"><h2>How this estimate works</h2><p>{basis}</p><p>Annual salary is prorated by calendar day within each dated pay period. This is an estimate of employee contribution, not collected income or accounting net profit.</p>
@@ -132,7 +172,7 @@ function decimalHundredths(value: string, label: string) {
 }
 function toDraft(term: CompensationTerm): DraftTerm { return { from: term.from, to: term.to ?? "", salary: (term.annualSalaryCents / 100).toFixed(2), share: (term.producerShareBps / 100).toFixed(2) }; }
 
-function CompensationEditor({ employee, employees, compensation, defaultFrom, onSelect, onChange, onSaved, onBusyChange }: { employee: Employee; employees: Employee[]; compensation?: EmployeeCompensation; defaultFrom: string; onSelect: (id: string) => void; onChange: () => void; onSaved: () => Promise<void>; onBusyChange: (busy: boolean) => void }) {
+function CompensationEditor({ employee, employees, compensation, defaultFrom, onSelect, onChange, onSaved, onBusyChange }: { employee: Employee; employees: Employee[]; compensation?: EmployeeCompensation; defaultFrom: string; onSelect: (id: string) => void; onChange: () => void; onSaved: (compensation: EmployeeCompensation) => Promise<void>; onBusyChange: (busy: boolean) => void }) {
   const [baseline, setBaseline] = useState(compensation);
   const initialTerms = (value?: EmployeeCompensation) => value?.terms.map(toDraft) ?? [{ from: defaultFrom, to: "", salary: "", share: "" }];
   const [terms, setTerms] = useState<DraftTerm[]>(() => initialTerms(compensation));
@@ -155,7 +195,7 @@ function CompensationEditor({ employee, employees, compensation, defaultFrom, on
       inFlight.current = true; setBusy(true); onBusyChange(true);
       const result = response<{ ok: true; compensation: EmployeeCompensation }>(await client.mutations.saveEmployeeCompensation({ userId: employee.userId, version: value.version, terms: JSON.stringify(value.terms) }));
       setBaseline(result.compensation); setTerms(initialTerms(result.compensation));
-      await onSaved();
+      await onSaved(result.compensation);
     } catch (error) { setError(error instanceof Error ? error.message : "Could not save pay settings."); }
     finally { inFlight.current = false; setBusy(false); onBusyChange(false); }
   }

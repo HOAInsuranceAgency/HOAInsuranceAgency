@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { client, fmtProviderPhone } from "../lib/client";
+import { fmtProviderPhone } from "../lib/client";
 import { communicationRequest as request, type Communication } from "../lib/communications";
 import { useAsyncResource } from "../lib/useAsyncResource";
-import { listAllPages } from "../lib/pagination";
+import { isAuthorizationError } from "../lib/authorizationError";
 
 function useReviewMutation() {
   const [busy, setBusy] = useState(false), [error, setError] = useState("");
@@ -19,6 +19,7 @@ function useReviewMutation() {
 }
 
 type ActivityProps = { id: string; onSaved: () => void; accountId?: string; conversationId?: string };
+type AccountSearchPage = { items: { id: string; name: string }[]; nextToken?: string };
 export function ActivityReview(props: ActivityProps) {
   return <ActivityEditor key={`${props.id}:${props.accountId ?? ""}:${props.conversationId ?? ""}`} {...props} />;
 }
@@ -26,34 +27,47 @@ function ActivityEditor({ id, onSaved, accountId, conversationId }: ActivityProp
   const resource = useAsyncResource(() => request<{ communication: Communication }>("activity", { id }), [id], { initialData: null });
   const [name, setName] = useState(""), [matches, setMatches] = useState<{ id: string; name: string }[]>([]), [purpose, setPurpose] = useState("PROSPECT");
   const [searching, setSearching] = useState(false), [searchError, setSearchError] = useState(""), [searched, setSearched] = useState(false);
+  const [nextToken, setNextToken] = useState<string>(), [continued, setContinued] = useState(false);
   const searchVersion = useRef(0);
+  const searchPending = useRef<number>();
   const mutation = useReviewMutation();
   useEffect(() => () => { searchVersion.current++; }, []);
   const link = (target: string, selectedConversation?: string) => mutation.run(() => request("linkActivity", { id, accountId: target, conversationId: selectedConversation, version: resource.data!.communication.version, purpose }, true), onSaved);
+  async function findAccounts(cursor?: string) {
+    if (mutation.busy || searchPending.current !== undefined || !name.trim()) return;
+    const version = ++searchVersion.current;
+    searchPending.current = version;
+    setSearchError(""); setSearching(true);
+    if (!cursor) { setSearched(false); setMatches([]); setNextToken(undefined); setContinued(false); }
+    try {
+      const page = await request<AccountSearchPage>("searchAccounts", { query: name.trim(), ...(cursor ? { nextToken: cursor } : {}) });
+      if (version !== searchVersion.current) return;
+      if (!Array.isArray(page.items) || page.items.length > 25 || page.items.some(item => !item || typeof item.id !== "string" || !item.id || typeof item.name !== "string") ||
+        page.nextToken != null && (typeof page.nextToken !== "string" || !page.nextToken || page.nextToken === cursor)) {
+        throw new Error("The search could not finish. Please try again.");
+      }
+      setMatches([...new Map(page.items.map(item => [item.id, item])).values()]);
+      setNextToken(page.nextToken); setSearched(true); setContinued(Boolean(cursor));
+    } catch(e) {
+      if (version === searchVersion.current) {
+        setSearchError(String(e));
+        if (isAuthorizationError(e)) { setMatches([]); setNextToken(undefined); setSearched(false); }
+      }
+    }
+    finally { if (version === searchVersion.current) { searchPending.current = undefined; setSearching(false); } }
+  }
   return <div className="workflow-editor"><h3>Link communication to an association</h3>
     {resource.data && <p>{fmtProviderPhone(resource.data.communication.from)} · {resource.data.communication.status}<br />{resource.data.communication.text?.slice(0, 500)}</p>}
     {(mutation.error || searchError || resource.error) && <p role="alert" className="error-text">{mutation.error || searchError || resource.error}</p>}
     {accountId && <button disabled={mutation.busy || !resource.data} onClick={() => void link(accountId, conversationId)}>Link this activity to the selected lead and Front conversation</button>}
-    <form onSubmit={async e => {
-      e.preventDefault(); if (mutation.busy || searching || !name.trim()) return;
-      const version = ++searchVersion.current, term = name.trim().toLocaleLowerCase();
-      setSearchError(""); setSearching(true); setSearched(false); setMatches([]);
-      try {
-        const accounts = await listAllPages(async nextToken => {
-          const page = await client.models.Account.list({ nextToken, limit: 200, selectionSet: ["id", "name"] });
-          if (page.errors?.length) throw new Error(page.errors[0].message);
-          return page;
-        });
-        if (version === searchVersion.current) { setMatches(accounts.filter(account => account.name.toLocaleLowerCase().includes(term)).map(account => ({ id: account.id, name: account.name }))); setSearched(true); }
-      } catch(e) { if (version === searchVersion.current) setSearchError(String(e)); }
-      finally { if (version === searchVersion.current) setSearching(false); }
-    }}>
-      <label className="field">Association name<input required disabled={mutation.busy} value={name} onChange={e => { searchVersion.current++; setName(e.target.value); setMatches([]); setSearching(false); setSearched(false); setSearchError(""); }} /></label><button disabled={mutation.busy || searching || !name.trim()}>{searching ? "Searching…" : "Find lead or client"}</button>
+    <form onSubmit={e => { e.preventDefault(); void findAccounts(); }}>
+      <label className="field">Association name<input required maxLength={200} disabled={mutation.busy} value={name} onChange={e => { searchVersion.current++; searchPending.current = undefined; setName(e.target.value); setMatches([]); setNextToken(undefined); setContinued(false); setSearching(false); setSearched(false); setSearchError(""); }} /></label><button disabled={mutation.busy || searching || !name.trim()}>{searching ? "Searching…" : "Find lead or client"}</button>
     </form>
-    {searched && !matches.length && <p role="status">No matching leads or clients.</p>}
+    {searched && !matches.length && !nextToken && <p role="status">{continued ? "No more matching leads or clients." : "No matching leads or clients."}</p>}
     <label className="field">Purpose<select disabled={mutation.busy} value={purpose} onChange={e => setPurpose(e.target.value)}><option value="PROSPECT">Prospect or client</option><option value="CARRIER">Carrier</option></select></label>
     <p className="muted small">Only this activity is linked. A property manager's other associations remain separate.</p>
-    {matches.map(m => <p key={m.id}><button className="link" disabled={mutation.busy || !resource.data} onClick={() => void link(m.id)}>{m.name}</button></p>)}
+    {matches.map(m => <p key={m.id}><button className="link" disabled={mutation.busy || searching || !resource.data} onClick={() => void link(m.id)}>{m.name}</button></p>)}
+    {nextToken && <div><p className="muted small" role="status">{matches.length ? "More leads and clients remain to search." : "Search is not finished. Continue to check the remaining leads and clients."}</p><button type="button" disabled={mutation.busy || searching} onClick={() => void findAccounts(nextToken)}>{matches.length ? "Next matches" : "Continue searching"}</button></div>}
   </div>;
 }
 export function ReviewAction({ id, version, onSaved, event = false }: { id: string; version: number; onSaved: () => void; event?: boolean }) {

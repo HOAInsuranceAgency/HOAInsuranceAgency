@@ -10,8 +10,8 @@ import OwnerProfitability from "./OwnerProfitability";
 
 const employees = [{ userId: "jake", name: "Jake Greasley", salesperson: true }, { userId: "casey", name: "Casey Staff", salesperson: false }];
 const compensation: EmployeeCompensation = { userId: "jake", version: 3, terms: [{ from: "2026-01-01", annualSalaryCents: 6_000_000, producerShareBps: 2500 }] };
-function snapshot(partial = false) {
-  const compensations: Record<string, EmployeeCompensation> = { jake: compensation, ...(!partial ? { casey: { userId: "casey", version: 1, terms: [{ from: "2026-01-01", annualSalaryCents: 0, producerShareBps: 0 }] } } : {}) };
+function snapshot(partial = false, pay = compensation) {
+  const compensations: Record<string, EmployeeCompensation> = { jake: pay, ...(!partial ? { casey: { userId: "casey", version: 1, terms: [{ from: "2026-01-01", annualSalaryCents: 0, producerShareBps: 0 }] } } : {}) };
   const report = calculateEmployeeProfitability({ from: "2026-01-01", to: "2026-12-31", employees, compensations, assignments: { a: { salespersonId: "jake" }, b: { salespersonId: "casey" } }, policies: [{ id: "policy1", accountId: "a", effectiveDate: "2026-03-01", premium: 20_000, commissionPct: 10, status: "ACTIVE" }, ...(partial ? [{ id: "policy2", accountId: "b", effectiveDate: "2026-04-01", premium: 10_000, commissionPct: null, status: "ACTIVE" }] : [])] });
   return { ok: true, employees, compensations, report };
 }
@@ -182,4 +182,103 @@ it('keeps an in-flight pay save attached to its employee and adopts the committe
   fireEvent.click(screen.getByRole('button', { name: 'Save pay settings' }));
   await waitFor(() => expect(h.save).toHaveBeenCalledTimes(2));
   expect(h.save).toHaveBeenLastCalledWith(expect.objectContaining({ version: 4 }));
+});
+
+it('retains saved pay across employee switches, reopening, and discarding later edits after an older report', async () => {
+  const committed = { ...compensation, version: 4, terms: [{ ...compensation.terms[0], annualSalaryCents: 7_100_000 }] };
+  h.save.mockResolvedValue({ data: { ok: true, compensation: committed } });
+  render(<OwnerProfitability />); await openPay();
+  fireEvent.change(screen.getByLabelText('Annual salary 1'), { target: { value: '71000' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save pay settings' }));
+  await screen.findByText('Pay settings saved.');
+  expect(h.query).toHaveBeenCalledTimes(2); // The report still returns version 3.
+  fireEvent.change(screen.getByRole('combobox', { name: 'Employee' }), { target: { value: 'casey' } });
+  fireEvent.change(screen.getByRole('combobox', { name: 'Employee' }), { target: { value: 'jake' } });
+  expect(screen.getByLabelText('Annual salary 1')).toHaveValue('71000.00');
+  fireEvent.click(screen.getByRole('button', { name: 'Manage pay settings' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Manage pay settings' }));
+  expect(screen.getByLabelText('Annual salary 1')).toHaveValue('71000.00');
+  fireEvent.change(screen.getByLabelText('Annual salary 1'), { target: { value: '72000' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Discard pay changes' }));
+  expect(screen.getByLabelText('Annual salary 1')).toHaveValue('71000.00');
+  fireEvent.click(screen.getByRole('button', { name: 'Save pay settings' }));
+  await waitFor(() => expect(h.save).toHaveBeenCalledTimes(2));
+  expect(h.save).toHaveBeenLastCalledWith(expect.objectContaining({ version: 4, terms: JSON.stringify(committed.terms) }));
+});
+
+it('adopts a newer report pay version and does not regress it on a later older report', async () => {
+  const committed = { ...compensation, version: 4, terms: [{ ...compensation.terms[0], annualSalaryCents: 7_100_000 }] };
+  const newer = { ...committed, version: 5, terms: [{ ...compensation.terms[0], annualSalaryCents: 8_200_000 }] };
+  h.save.mockResolvedValue({ data: { ok: true, compensation: committed } });
+  render(<OwnerProfitability />); await openPay();
+  h.query.mockResolvedValueOnce({ data: { ...snapshot(), compensations: { ...snapshot().compensations, jake: newer } } });
+  fireEvent.change(screen.getByLabelText('Annual salary 1'), { target: { value: '71000' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save pay settings' }));
+  await screen.findByText('Pay settings saved.');
+  await waitFor(() => expect(screen.getByLabelText('Annual salary 1')).toHaveValue('82000.00'));
+  fireEvent.click(screen.getByRole('button', { name: 'Manage pay settings' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+  await waitFor(() => expect(h.query).toHaveBeenCalledTimes(3));
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Manage pay settings' })).toBeEnabled());
+  fireEvent.click(screen.getByRole('button', { name: 'Manage pay settings' }));
+  expect(screen.getByLabelText('Annual salary 1')).toHaveValue('82000.00');
+  fireEvent.change(screen.getByLabelText('Annual salary 1'), { target: { value: '83000' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Discard pay changes' }));
+  expect(screen.getByLabelText('Annual salary 1')).toHaveValue('82000.00');
+  fireEvent.click(screen.getByRole('button', { name: 'Save pay settings' }));
+  await waitFor(() => expect(h.save).toHaveBeenCalledTimes(2));
+  expect(h.save).toHaveBeenLastCalledWith(expect.objectContaining({ version: 5, terms: JSON.stringify(newer.terms) }));
+});
+
+it('labels stale report totals and disables exports until a refreshed report includes confirmed pay', async () => {
+  const committed = { ...compensation, version: 4, terms: [{ ...compensation.terms[0], annualSalaryCents: 7_100_000 }] };
+  const newer = { ...committed, version: 5, terms: [{ ...compensation.terms[0], annualSalaryCents: 7_200_000 }] };
+  h.save.mockResolvedValue({ data: { ok: true, compensation: committed } });
+  render(<OwnerProfitability />); await openPay();
+  fireEvent.change(screen.getByLabelText('Annual salary 1'), { target: { value: '71000' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save pay settings' }));
+  await screen.findByText('Pay settings saved.');
+  expect(screen.getByText(/report is still catching up/)).toHaveTextContent('Close pay settings and refresh');
+  const download = screen.getByRole('combobox', { name: 'Download Estimated employee profitability' });
+  expect(download).toBeDisabled();
+  expect(screen.getByLabelText('Annual salary 1')).toHaveValue('71000.00');
+  fireEvent.click(screen.getByRole('button', { name: 'Manage pay settings' }));
+  h.query.mockResolvedValueOnce({ data: snapshot(false, newer) });
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+  await waitFor(() => expect(download).toBeEnabled());
+  expect(screen.queryByText(/report is still catching up/)).toBeNull();
+  fireEvent.change(download, { target: { value: 'csv' } });
+  const exported = h.download.mock.calls[0][0];
+  expect(exported.sections[0].rows.find((row: unknown[]) => row[0] === 'Jake Greasley')[4]).toBe(72000);
+  await openPay();
+  expect(screen.getByLabelText('Annual salary 1')).toHaveValue('72000.00');
+});
+
+it.each(['read failure', 'leaving Owner'] as const)('clears remembered saved salaries after %s', async reset => {
+  const committed = { ...compensation, version: 4, terms: [{ ...compensation.terms[0], annualSalaryCents: 7_100_000 }] };
+  h.save.mockResolvedValue({ data: { ok: true, compensation: committed } });
+  const view = render(<OwnerProfitability />); await openPay();
+  fireEvent.change(screen.getByLabelText('Annual salary 1'), { target: { value: '71000' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save pay settings' }));
+  await screen.findByText('Pay settings saved.');
+  expect(screen.getByLabelText('Annual salary 1')).toHaveValue('71000.00');
+  if (reset === 'read failure') {
+    fireEvent.click(screen.getByRole('button', { name: 'Manage pay settings' }));
+    h.query.mockRejectedValueOnce(new Error('Report temporarily unavailable'));
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Report temporarily unavailable');
+    expect(screen.queryByRole('table')).toBeNull();
+    expect(screen.queryByLabelText('Annual salary 1')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+  } else {
+    h.owner = false; view.rerender(<OwnerProfitability />);
+    expect(screen.queryByRole('table')).toBeNull();
+    expect(screen.queryByLabelText('Annual salary 1')).toBeNull();
+    h.owner = true; view.rerender(<OwnerProfitability />);
+  }
+  await screen.findByRole('table'); await openPay();
+  expect(screen.getByLabelText('Annual salary 1')).toHaveValue('60000.00');
+  fireEvent.click(screen.getByRole('button', { name: 'Save pay settings' }));
+  await waitFor(() => expect(h.save).toHaveBeenCalledTimes(2));
+  expect(h.save).toHaveBeenLastCalledWith(expect.objectContaining({ version: 3 }));
 });
