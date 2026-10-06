@@ -98,6 +98,15 @@ jobs:
           prompt-file: ${{ github.workspace }}/source/audit-output/prompt.md
           output-file: ${{ github.workspace }}/source/audit-output/final-message.md
           codex-args: '["--ephemeral"]'
+      - name: Save final audit report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: nightly-audit-report
+          path: source/audit-output/final-message.md
+          if-no-files-found: ignore
+          retention-days: 7
+          include-hidden-files: false
       - name: Confirm smoke result
         if: github.event_name != 'schedule' && inputs.mode != 'audit'
         run: |
