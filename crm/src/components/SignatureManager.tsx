@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { uploadData, getUrl, remove } from "../lib/scopedStorage";
 import { client, friendlyError, type UserProfile } from "../lib/client";
 import FileButton from "./FileButton";
@@ -12,7 +12,11 @@ import { SaveStatus, useSaveStatus } from "./SaveStatus";
  * full-width on the self-service card (managing your own). Stored at
  * signatures/<profileId>.<ext>; one current signature per person.
  */
-export default function SignatureManager({
+export default function SignatureManager(props: { profile: UserProfile | null; compact?: boolean; onChange: (p: UserProfile) => void }) {
+  return <SignatureEditor key={props.profile?.id ?? "none"} {...props} />;
+}
+
+function SignatureEditor({
   profile,
   compact,
   onChange,
@@ -21,7 +25,11 @@ export default function SignatureManager({
   compact?: boolean;
   onChange: (p: UserProfile) => void;
 }) {
-  const [url, setUrl] = useState<string | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<{ key: string; url: string } | null>(null);
+  const [revision, setRevision] = useState(0);
+  const inFlight = useRef(false);
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const [busy, setBusy] = useState(false);
   const [drawing, setDrawing] = useState(false);
   // Persistent: the new signature is rendered right beside the confirmation,
@@ -33,26 +41,22 @@ export default function SignatureManager({
 
   const key = profile?.signatureKey ?? null;
 
+  const url = previewUrl?.key === key ? previewUrl.url : null;
   useEffect(() => {
-    if (!key) {
-      setUrl(null);
-      return;
-    }
+    let active = true;
+    setPreviewUrl(null);
     setError("");
-    getUrl({ path: key })
-      .then(({ url }) => setUrl(url.toString()))
-      .catch((err) => {
-        // There IS a signature on record — failing quietly here shows
-        // "None on file", which reads as a missing signature.
-        setUrl(null);
-        setError(friendlyError(err, "Couldn't load signature"));
-      });
-  }, [key]);
+    if (key) getUrl({ path: key })
+      .then(({ url }) => { if (active) setPreviewUrl({ key, url: url.toString() }); })
+      .catch(err => { if (active) setError(friendlyError(err, "Couldn't load signature")); });
+    return () => { active = false; };
+  }, [key, revision]);
 
   if (!profile) return <span className="muted small">—</span>;
 
   async function store(data: Blob | File, ext: string, contentType: string) {
-    if (!profile) return;
+    if (!profile || inFlight.current) return;
+    inFlight.current = true;
     setBusy(true);
     await saveStatus.run(
       async () => {
@@ -65,17 +69,16 @@ export default function SignatureManager({
           signatureKey: path,
         });
         if (errors?.length || !updated) throw new Error(errors?.[0]?.message);
+        if (!mounted.current) return;
         onChange(updated);
-        // Same key on replace, so bust the cached URL to show the new mark.
-        setUrl(null);
-        getUrl({ path })
-          .then(({ url }) => setUrl(url.toString()))
-          .catch(() => undefined);
+        // Replacing an image can retain its storage key; reload the preview.
+        setRevision(value => value + 1);
         setDrawing(false);
       },
       { savedMessage: "Signature saved.", errorMessage: "Save failed" }
     );
-    setBusy(false);
+    inFlight.current = false;
+    if (mounted.current) setBusy(false);
   }
 
   async function uploadFile(file: File | undefined) {
@@ -91,20 +94,18 @@ export default function SignatureManager({
   }
 
   async function clear() {
-    if (!profile || !key) return;
+    if (!profile || !key || inFlight.current) return;
+    inFlight.current = true;
     setBusy(true);
-    try {
-      await remove({ path: key }).catch(() => {
-        /* the record is what matters; a stray object is harmless */
-      });
-      const { data: updated } = await client.models.UserProfile.update({
-        id: profile.id,
-        signatureKey: null,
-      });
-      if (updated) onChange(updated);
-    } finally {
-      setBusy(false);
-    }
+    await saveStatus.run(async () => {
+      // Commit the profile first. A rejected update must leave its signature usable.
+      const { data: updated, errors } = await client.models.UserProfile.update({ id: profile.id, signatureKey: null });
+      if (errors?.length || !updated) throw new Error(errors?.[0]?.message || "Could not remove signature.");
+      if (mounted.current) { onChange(updated); setPreviewUrl(null); }
+      await remove({ path: key }).catch(() => undefined);
+    }, { savedMessage: "Signature removed.", errorMessage: "Could not remove signature." });
+    inFlight.current = false;
+    if (mounted.current) setBusy(false);
   }
 
   const preview = url ? (
@@ -170,7 +171,7 @@ export default function SignatureManager({
         </button>
       )}
       <SaveStatus {...saveStatus.status} />
-      {error && <span className="error-text small">{error}</span>}
+      {error && <span role="alert" className="error-text small">{error} <button className="link" disabled={busy} onClick={() => setRevision(value => value + 1)}>Retry signature</button></span>}
     </div>
   );
 }

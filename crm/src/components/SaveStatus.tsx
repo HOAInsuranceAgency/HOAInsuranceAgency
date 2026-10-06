@@ -154,7 +154,7 @@ export interface SaveStatusApi {
    * setter, in a dependency array, or passed down as a prop. Calling it when
    * already idle does not re-render.
    */
-  markDirty: () => void;
+  markDirty: (reason?: 'edit' | 'reset') => void;
   markSaving: () => void;
   markSaved: (message?: string) => void;
   markWarning: (message: string) => void;
@@ -224,6 +224,7 @@ export function useSaveStatus(options: SaveStatusOptions = {}): SaveStatusApi {
   // while `busy`, but nothing forces a caller to honour that, and a superseded
   // save resolving late must not stamp "Saved." over the current one.
   const ticket = useRef(0);
+  const edits = useRef(0);
 
   const clearTimer = useCallback(() => {
     if (timer.current !== null) {
@@ -250,7 +251,8 @@ export function useSaveStatus(options: SaveStatusOptions = {}): SaveStatusApi {
     [clearTimer]
   );
 
-  const markDirty = useCallback(() => {
+  const markDirty = useCallback((reason?: 'edit' | 'reset') => {
+    if (reason !== 'reset') ++edits.current;
     clearTimer();
     // Returning the identical value makes React bail out, so wiring this into
     // a form setter costs nothing on the keystrokes where it is already idle.
@@ -273,13 +275,18 @@ export function useSaveStatus(options: SaveStatusOptions = {}): SaveStatusApi {
 
   const run = useCallback(
     async (task: SaveTask, runOptions: SaveRunOptions = {}): Promise<void> => {
+      if (!mounted.current) return;
       const id = ++ticket.current;
+      const submittedEdit = edits.current;
       apply(SAVING);
       try {
         const warning = await task();
         if (!mounted.current || id !== ticket.current) return;
-        if (typeof warning === "string" && warning.trim())
-          apply({ state: "warning", message: warning });
+        const newerEdits = submittedEdit !== edits.current;
+        const message = [typeof warning === 'string' ? warning.trim() : '',
+          newerEdits ? 'Your submitted changes were saved. Newer edits still need saving.' : ''].filter(Boolean).join(' ');
+        if (message)
+          apply({ state: "warning", message });
         else apply({ state: "saved", message: runOptions.savedMessage });
       } catch (err) {
         if (!mounted.current || id !== ticket.current) return;

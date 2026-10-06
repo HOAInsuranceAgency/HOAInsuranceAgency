@@ -118,9 +118,9 @@ describe("SearchResults", () => {
 
     fireEvent.click(screen.getByRole("link", { name: "Change query" }));
     expect(screen.getByText("Everything matching “springfield”")).toBeInTheDocument();
-    expect(screen.getByText("Showing 50 of 121")).toBeInTheDocument();
+    expect(await screen.findByText("Showing 50 of 121")).toBeInTheDocument();
     expect(screen.queryByText("Harbor 051 HOA")).not.toBeInTheDocument();
-    expect(models.Account.list).toHaveBeenCalledTimes(1);
+    expect(models.Account.list).toHaveBeenCalledTimes(2);
   });
 
   it("does not offer another page when every match already fits", async () => {

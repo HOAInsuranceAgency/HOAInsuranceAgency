@@ -2,6 +2,7 @@ import { client, listAllPages } from './client';
 import { communicationRequest } from './communications';
 import { loadAssignments } from './dashboardAssignments';
 import { hasFinancingReceivable, outstandingPrincipal } from './dashboardFinance';
+import { allWithAuthorizationPriority } from './allWithAuthorizationPriority';
 
 export interface FinancePaymentReceipt { id: string; accountId: string; postedAt: string; interest: number | null }
 export interface FinancePolicyAnchor { id: string; accountId: string; quoteId?: string | null }
@@ -32,7 +33,7 @@ export async function loadRecentFinanceInterest(asOf: Date): Promise<FinancePaym
 async function mapLimited<T, R>(items: readonly T[], read: (item: T) => Promise<R>): Promise<R[]> {
   const results: R[] = new Array(items.length);
   let next = 0;
-  await Promise.all(Array.from({ length: Math.min(4, items.length) }, async () => {
+  await allWithAuthorizationPriority(Array.from({ length: Math.min(4, items.length) }, async () => {
     while (next < items.length) { const index = next++; results[index] = await read(items[index]); }
   }));
   return results;
@@ -84,7 +85,7 @@ export async function loadFinanceInvoiceAnchors(ids: readonly string[]): Promise
  * referenced policies, and assignments for accounts represented here. */
 export async function loadFinanceDashboard() {
   const asOf = new Date();
-  const [invoices, pfLoans, payments] = await Promise.all([
+  const [invoices, pfLoans, payments] = await allWithAuthorizationPriority([
     listAllPages(nextToken => client.models.Invoice.list({ nextToken,
       filter: { or: [{ status: { eq: 'SENT' } }, { status: { eq: 'PROCESSING' } }] },
     })),
@@ -95,7 +96,7 @@ export async function loadFinanceDashboard() {
   const loanAccounts = new Set(outstanding.map(loan => loan.accountId));
   const overlapInvoices = invoices.filter(invoice =>
     (invoice.status === 'SENT' || invoice.status === 'PROCESSING') && loanAccounts.has(invoice.accountId));
-  const [invoiceLines, commercial] = await Promise.all([
+  const [invoiceLines, commercial] = await allWithAuthorizationPriority([
     loadFinanceInvoiceAnchors(overlapInvoices.map(invoice => invoice.id)),
     loadAssignments([...new Set([...invoices, ...outstanding, ...payments].map(record => record.accountId))]),
   ]);

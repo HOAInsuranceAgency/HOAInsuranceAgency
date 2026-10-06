@@ -52,6 +52,8 @@ export interface ChildRowsCardProps<
   F extends object,
 > {
   title: string;
+  /** Coordinate caller-owned writes such as changing the primary contact. */
+  busy?: boolean;
   /** Optional scoped styling and supporting copy for this card. */
   className?: string;
   description?: ReactNode;
@@ -91,6 +93,7 @@ export default function ChildRowsCard<
   F extends object,
 >({
   title,
+  busy = false,
   className,
   description,
   child,
@@ -124,17 +127,19 @@ export default function ChildRowsCard<
   );
 
   const editingRow = child.rows.find((r) => r.id === child.editingId) ?? null;
+  const mutating = busy || child.addStatus.busy || child.editStatus.busy || child.delStatus.busy;
+  const fields = (content: ReactNode) => <fieldset disabled={mutating} style={{ display: "contents", border: 0, padding: 0, margin: 0 }}>{content}</fieldset>;
 
   const editActions = (
     <>
       <button
         className="primary"
-        disabled={child.editStatus.busy}
+        disabled={mutating}
         onClick={child.saveEdit}
       >
         {child.editStatus.busy ? "Saving…" : "Save"}
       </button>
-      <button className="secondary" onClick={child.cancelEdit}>
+      <button className="secondary" disabled={mutating} onClick={child.cancelEdit}>
         Cancel
       </button>
       <SaveStatus {...child.editStatus.status} />
@@ -144,7 +149,7 @@ export default function ChildRowsCard<
   const addButton = (
     <button
       className={addDisclosure ? "primary" : "secondary"}
-      disabled={child.addStatus.busy}
+      disabled={mutating}
       onClick={child.add}
     >
       {addDisclosure && child.addStatus.busy ? "Adding…" : addLabel}
@@ -187,7 +192,7 @@ export default function ChildRowsCard<
             <details className="child-rows-add">
               <summary>{addDisclosure}</summary>
               <div className="child-rows-add-body">
-                <div className="form-grid child-rows-fields">{addFields}</div>
+                <div className="form-grid child-rows-fields">{fields(addFields)}</div>
                 <div className="form-actions child-rows-form-actions">
                   {addButton}
                 </div>
@@ -195,7 +200,7 @@ export default function ChildRowsCard<
             </details>
           ) : (
             <div className="toolbar">
-              {addFields}
+              {fields(addFields)}
               {addButton}
               <SaveStatus {...child.addStatus.status} />
             </div>
@@ -260,7 +265,7 @@ export default function ChildRowsCard<
                             </p>
                           ) : null}
                           <div className="form-grid child-rows-fields">
-                            {editFields}
+                            {fields(editFields)}
                           </div>
                           <div className="form-actions child-rows-form-actions">
                             {editActions}
@@ -277,12 +282,14 @@ export default function ChildRowsCard<
                             <button
                               className="secondary"
                               aria-label={editButtonLabel?.(row)}
+                              disabled={mutating}
                               onClick={() => child.startEdit(row)}
                             >
                               Edit
                             </button>{" "}
                             <ConfirmButton
                               label="Remove"
+                              disabled={mutating}
                               busyLabel="Removing…"
                               message={removeMessage?.(row)}
                               onConfirm={() => child.remove(row.id)}
@@ -300,13 +307,13 @@ export default function ChildRowsCard<
           {editIn === "modal" && editingRow ? (
             <Modal
               title={editTitle?.(editingRow) ?? `Edit ${title}`}
-              onClose={child.cancelEdit}
+              onClose={() => { if (!mutating) child.cancelEdit(); }}
               // The `.preview-*` shell defaults to a fixed box that centres one
               // object in it — right for the file preview it grew out of, and
               // unusable for a form, which has to start at the top and grow.
               className="modal-form child-rows-editor"
             >
-              <div className="form-grid child-rows-fields">{editFields}</div>
+              <div className="form-grid child-rows-fields">{fields(editFields)}</div>
               <div className="form-actions child-rows-form-actions">
                 {editActions}
               </div>

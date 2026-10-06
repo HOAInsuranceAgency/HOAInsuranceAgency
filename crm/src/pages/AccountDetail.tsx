@@ -150,6 +150,13 @@ export function resolveTab(
 }
 
 export default function AccountDetail({ profile }: { profile: UserProfile }) {
+  const { id } = useParams<{ id: string }>();
+  // A route change creates a new editing session, including its pending saves.
+  // Late callbacks from the previous account must not replace this account.
+  return <AccountDetailPage key={id} profile={profile} />;
+}
+
+function AccountDetailPage({ profile }: { profile: UserProfile }) {
   const isAdmin = useIsAdmin();
   const { id } = useParams<{ id: string }>();
   const [searchParams] = useSearchParams();

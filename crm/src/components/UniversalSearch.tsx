@@ -54,7 +54,7 @@ export default function UniversalSearch() {
   const [q, setQ] = useState("");
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
-  const [docHits, setDocHits] = useState<DocumentHit[]>([]);
+  const [docResult, setDocResult] = useState<{ query: string; hits: DocumentHit[] }>({ query: '', hits: [] });
   const [docSearching, setDocSearching] = useState(false);
   const boxRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -82,35 +82,37 @@ export default function UniversalSearch() {
   }, [location.key]);
 
   const qt = q.trim();
+  const docHits = docResult.query === qt && open ? docResult.hits : [];
   const groups = useMemo(() => searchRows(index.data, qt), [index.data, qt]);
 
   // The document lane: debounced, tickets dropping stale answers — a reply
   // to "harb" must not land on top of the results for "harbor".
   useEffect(() => {
     const ticket = ++docTicket.current;
-    if (qt.length < MIN_QUERY_LENGTH) {
-      setDocHits([]);
+    if (!open || qt.length < MIN_QUERY_LENGTH) {
+      setDocResult({ query: qt, hits: [] });
       setDocSearching(false);
       return;
     }
+    setDocResult({ query: qt, hits: [] });
     setDocSearching(true);
     const timer = setTimeout(() => {
       fetchDocumentHits(qt)
         .then((hits) => {
           if (docTicket.current !== ticket) return;
-          setDocHits(hits);
+          setDocResult({ query: qt, hits });
           setDocSearching(false);
         })
         .catch(() => {
           // The dropdown's document section going quiet is not worth an
           // error banner mid-typeahead; /search reports failures properly.
           if (docTicket.current !== ticket) return;
-          setDocHits([]);
+          setDocResult({ query: qt, hits: [] });
           setDocSearching(false);
         });
     }, DOC_DEBOUNCE_MS);
-    return () => clearTimeout(timer);
-  }, [qt]);
+    return () => { clearTimeout(timer); ++docTicket.current; };
+  }, [qt, open]);
 
   const accountNames = useMemo(() => {
     const m = new Map<string, string>();
@@ -279,7 +281,6 @@ export default function UniversalSearch() {
             setOpen(true);
             if (!index.loading) {
               index.setData([]);
-              setDocHits([]);
               void index.refetch();
             }
           }}

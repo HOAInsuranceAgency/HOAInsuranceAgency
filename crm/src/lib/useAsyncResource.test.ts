@@ -27,6 +27,35 @@ afterEach(() => {
 });
 
 describe("useAsyncResource", () => {
+  it('never renders data from a previous dependency scope, including before effects run', async () => {
+    const seen: { key: string; data: string[]; loaded: boolean }[] = [];
+    const pending = deferred<string[]>();
+    const { rerender } = renderHook(({ key }) => {
+      const resource = useAsyncResource(() => key === 'a' ? Promise.resolve(['account-a']) : pending.promise, [key], { initialData: [] as string[] });
+      seen.push({ key, data: resource.data, loaded: resource.loaded });
+      return resource;
+    }, { initialProps: { key: 'a' } });
+    await act(async () => {});
+    rerender({ key: 'b' });
+    expect(seen.filter(row => row.key === 'b').every(row => !row.loaded && row.data.length === 0)).toBe(true);
+    await act(async () => pending.resolve(['account-b']));
+  });
+
+  it('resets manual resources on dependency changes and drops old reads and setters', async () => {
+    const pending = deferred<string[]>();
+    const { result, rerender } = renderHook(({ key }) => useAsyncResource(
+      () => pending.promise, [key], { manual: true, initialData: [] as string[] },
+    ), { initialProps: { key: 'a' } });
+    const oldSetter = result.current.setData;
+    act(() => { void result.current.refetch(); });
+    rerender({ key: 'b' });
+    await act(async () => { pending.resolve(['account-a']); });
+    act(() => oldSetter(['late write to a']));
+    expect(result.current.data).toEqual([]);
+    expect(result.current.loaded).toBe(false);
+    expect(result.current.loading).toBe(false);
+  });
+
   describe("happy path", () => {
     it("fetches on mount and exposes the result", async () => {
       const d = deferred<string[]>();
@@ -65,6 +94,23 @@ describe("useAsyncResource", () => {
   });
 
   describe("error path", () => {
+    it("clears denied data by default and keeps it cleared during retry", async () => {
+      const retry = deferred<string[]>();
+      const fetcher = vi.fn<() => Promise<string[]>>()
+        .mockResolvedValueOnce(["private rows"])
+        .mockRejectedValueOnce({ errorType: "Unauthorized", message: "Request denied" })
+        .mockImplementationOnce(() => retry.promise);
+      const { result } = renderHook(() => useAsyncResource(fetcher, [], { initialData: [] as string[] }));
+      await act(async () => {});
+      expect(result.current.data).toEqual(["private rows"]);
+      await act(async () => { await result.current.refetch(); });
+      expect(result.current.data).toEqual([]);
+      act(() => { void result.current.refetch(); });
+      expect(result.current.data).toEqual([]);
+      await act(async () => retry.resolve(["newly authorized rows"]));
+      expect(result.current.data).toEqual(["newly authorized rows"]);
+    });
+
     it("captures a throw as an error string and stops loading", async () => {
       const d = deferred<string[]>();
       const { result } = renderHook(() =>

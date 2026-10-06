@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { UserProfile } from "../lib/client";
 import { AdminContext } from "../lib/auth";
 
-const mocks = vi.hoisted(() => ({ getAccount: vi.fn(), listActivity: vi.fn(), scrollIntoView: vi.fn(), request: vi.fn() }));
+const mocks = vi.hoisted(() => ({ getAccount: vi.fn(), listActivity: vi.fn(), scrollIntoView: vi.fn(), request: vi.fn(), accountChanges: new Map<string, (account: unknown) => void>() }));
 vi.mock("../lib/communications", () => ({ communicationRequest: mocks.request }));
 vi.mock("aws-amplify/data", () => ({
   generateClient: () => ({ models: {
@@ -14,7 +14,10 @@ vi.mock("aws-amplify/data", () => ({
   } }),
 }));
 vi.mock("./account/OverviewTab", () => ({
-  OverviewTab: () => <h2>Overview information</h2>,
+  OverviewTab: ({ account, onChange }: { account: { id: string }; onChange: (account: unknown) => void }) => {
+    mocks.accountChanges.set(account.id, onChange);
+    return <h2>Overview information</h2>;
+  },
 }));
 vi.mock("../components/ContactsCard", () => ({
   default: ({ accountId }: { accountId: string }) => <EditableCard heading="Contacts" accountId={accountId} />,
@@ -55,6 +58,7 @@ const coverageHeadings = ["Buildings", "Blanket coverages", "General liability",
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.accountChanges.clear();
   Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: mocks.scrollIntoView });
   mocks.listActivity.mockResolvedValue({ data: [], nextToken: null });
   mocks.getAccount.mockImplementation(async ({ id }: { id: string }) => ({
@@ -70,6 +74,17 @@ beforeEach(() => {
     if (operation === "setResponsibilities") return { workflow: { accountId: input.accountId, salespersonId: input.salespersonId, version: input.version + 1 } };
     throw new Error(`Unexpected operation: ${operation}`);
   });
+});
+
+it("does not let a pending save replace a different account after route navigation", async () => {
+  renderAccount();
+  await screen.findByRole("heading", { name: /Alpha association/ });
+  const finishEarlierSave = mocks.accountChanges.get("alpha")!;
+  fireEvent.click(screen.getByRole("link", { name: "Another account" }));
+  await screen.findByRole("heading", { name: /Beta association/ });
+  act(() => finishEarlierSave({ id: "alpha", name: "Old account saved late", stage: "LEAD", type: "HOA" }));
+  expect(screen.getByRole("heading", { name: /Beta association/ })).toBeInTheDocument();
+  expect(screen.queryByText("Old account saved late")).not.toBeInTheDocument();
 });
 
 describe("lead salesperson on Overview", () => {

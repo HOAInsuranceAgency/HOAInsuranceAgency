@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -60,6 +60,23 @@ beforeEach(() => {
   Contact.create.mockReset();
   Contact.update.mockReset();
   Contact.delete.mockReset();
+});
+
+it("locks other row actions and form fields while a contact is being removed", async () => {
+  const user = userEvent.setup();
+  let finish!: (value: unknown) => void;
+  Contact.list.mockResolvedValue({ data: rows(), nextToken: null });
+  Contact.delete.mockReturnValue(new Promise(resolve => { finish = resolve; }));
+  renderCard(); await screen.findByText("Pat Alvarez");
+  await user.click(screen.getAllByRole("button", { name: "Remove" })[0]);
+  await user.click(screen.getAllByRole("button", { name: "Remove" })[0]);
+  await user.click(screen.getAllByRole("button", { name: "Confirm" })[0]);
+  expect(screen.getByRole("button", { name: "Confirm" })).toBeDisabled();
+  expect(screen.getAllByRole("button", { name: /^Edit / }).every(button => button.hasAttribute("disabled"))).toBe(true);
+  expect(screen.getByRole("textbox", { name: "Name" })).toBeDisabled();
+  expect(screen.getByRole("radio", { name: "Make Robin Chen the primary contact" })).toBeDisabled();
+  await act(async () => finish({ data: rows()[0] }));
+  expect(Contact.delete).toHaveBeenCalledTimes(1);
 });
 
 describe("read states", () => {

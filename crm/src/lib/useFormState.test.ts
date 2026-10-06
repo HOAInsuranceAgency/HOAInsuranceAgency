@@ -200,6 +200,19 @@ describe("useFormState", () => {
   });
 
   describe("markSaved moves the baseline", () => {
+    it('marks only the submitted snapshot saved when editing continues during the request', () => {
+      const { result } = renderHook(() => useFormState(seed()));
+      act(() => result.current.setF('name', 'Submitted'));
+      const submitted = result.current.form;
+      act(() => result.current.setF('name', 'Still typing'));
+      act(() => result.current.markSaved(submitted));
+      expect(result.current.form.name).toBe('Still typing');
+      expect(result.current.saved).toBe(false);
+      expect(result.current.dirty).toBe(true);
+      act(() => result.current.reset());
+      expect(result.current.form.name).toBe('Submitted');
+    });
+
     it("clears dirty, and measures later edits against the saved values", () => {
       const { result } = renderHook(() => useFormState(seed()));
       act(() => result.current.setF("unitCount", "50"));

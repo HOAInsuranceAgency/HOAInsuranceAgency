@@ -4,22 +4,27 @@ import { listAllPages } from "../lib/pagination";
 import { useEffect } from "react";
 import { client } from "../lib/client";
 import { useAsyncResource } from "../lib/useAsyncResource";
+import { isAuthorizationError } from "../lib/authorizationError";
 import { visibleStatus } from "../../amplify/functions/honeycomb/contract";
 
 export default function HoneycombEstimates({ accountId }: { accountId: string }) {
   const resource = useAsyncResource(async () => {
     return listAllPages(async nextToken => {
       const result = await client.models.HoneycombEstimate.listHoneycombEstimateByAccountId({ accountId }, { nextToken });
-      if (result.errors?.length) throw new Error("Unable to load carrier estimates");
       return result;
     });
-  }, [accountId], { initialData: [], errorMessage: "Carrier estimates could not be loaded." });
+  }, [accountId], { initialData: [], errorMessage: "Carrier estimates could not be loaded.", clearDataOnError: isAuthorizationError });
   const pending = resource.data.some(r => ["PENDING", "RUNNING"].includes(visibleStatus(r)));
   useEffect(() => {
-    if (!pending) return;
-    const timer = setInterval(() => void resource.refetch(), 5000);
+    if (!pending || resource.loading) return;
+    let polling = false;
+    const timer = setInterval(() => {
+      if (polling) return;
+      polling = true;
+      void resource.refetch().finally(() => { polling = false; });
+    }, 5000);
     return () => clearInterval(timer);
-  }, [pending, resource.refetch]);
+  }, [pending, resource.loading, resource.refetch]);
   if (!resource.data.length && !resource.error) return null;
   return <section className="card" style={{ marginBottom: 20 }} aria-label="Honeycomb estimates">
     <h3>Honeycomb · staging estimates</h3>

@@ -6,6 +6,7 @@ import { activeLeadQuotes } from './dashboardLeads';
 import { isInLast30Days } from './dashboardPeople';
 import { isOpenQuoteStatus, OPEN_QUOTE_STATUSES } from './quoteStatus';
 import { unfinishedSelectedPackage, type DashboardLeadSelection } from '../../../shared/dashboardLeadSelection';
+import { allWithAuthorizationPriority } from './allWithAuthorizationPriority';
 
 const ACCOUNT_FIELDS = ['id', 'name', 'stage', 'leadSource', 'source', 'createdAt', 'convertedAt', 'currentPolicyExpiration', 'totalInsuredValue', 'city', 'state'] as const;
 export type DashboardLeadAccount = Pick<Account, typeof ACCOUNT_FIELDS[number]>;
@@ -25,7 +26,7 @@ export const EMPTY_LEADS_DATA: LeadsData = { leads: [], clients: [], quotes: [],
 async function mapLimited<T, R>(items: readonly T[], read: (item: T) => Promise<R>): Promise<R[]> {
   const results: R[] = new Array(items.length);
   let next = 0;
-  await Promise.all(Array.from({ length: Math.min(4, items.length) }, async () => {
+  await allWithAuthorizationPriority(Array.from({ length: Math.min(4, items.length) }, async () => {
     while (next < items.length) { const index = next++; results[index] = await read(items[index]); }
   }));
   return results;
@@ -100,10 +101,10 @@ export async function loadLeadsDashboard(): Promise<LeadsData> {
   const since = new Date(now.getTime() - 30 * 86_400_000).toISOString();
   const leadsRequest = listAllPages(nextToken => client.models.Account.listAccountByStageAndName({ stage: 'LEAD' }, { nextToken, selectionSet: [...ACCOUNT_FIELDS] }));
   const selectionsRequest = loadDashboardLeadSelections();
-  const [leads, clients, openQuotes, policies, selections, leadQuotes, selectedQuotes] = await Promise.all([
+  const [leads, clients, openQuotes, policies, selections, leadQuotes, selectedQuotes] = await allWithAuthorizationPriority([
     leadsRequest,
     listAllPages(nextToken => client.models.Account.listAccountByStageAndName({ stage: 'CLIENT' }, { nextToken, selectionSet: [...ACCOUNT_FIELDS] })),
-    Promise.all(OPEN_QUOTE_STATUSES.map(status => reportPages<CompactQuote>('dashboardOpenQuotesPage', { status }, item => isCompactQuote(item) && item.status === status))).then(pages => pages.flat()),
+    allWithAuthorizationPriority(OPEN_QUOTE_STATUSES.map(status => reportPages<CompactQuote>('dashboardOpenQuotesPage', { status }, item => isCompactQuote(item) && item.status === status))).then(pages => pages.flat()),
     reportPages<DashboardBoundPolicy>('dashboardBoundPoliciesPage', { from: since, to: asOf }, item => !!item && typeof item.id === 'string' && typeof item.accountId === 'string' && typeof item.datePolicyBound === 'string'),
     selectionsRequest,
     leadsRequest.then(accounts => loadDashboardAccountQuotes(accounts.map(account => account.id))),

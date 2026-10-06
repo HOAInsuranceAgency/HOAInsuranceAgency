@@ -22,7 +22,7 @@ import { connectionChecks, activationChecks } from "./setup";
 import { enqueueOperation } from "./operations";
 import { modelPut } from "../lead-intake/handler";
 import type { ConversationLink } from "./events";
-import { isActiveAdmin, type RoleRequest } from "../crm-access/active-role";
+import { activeRole, isActiveAdmin, type RoleRequest } from "../crm-access/active-role";
 import { readLeadSnooze, saveLeadSnooze } from "./snooze";
 import { availableTeamUsers } from "./teamAvailability";
 
@@ -54,6 +54,7 @@ export const handler = async (event: { arguments: { operation?: string; readOper
     if (retiredTaskOperation(op ?? "", input)) tasksRemoved();
     const requireAdmin = () => { if (!admin) throw new Error("Only an admin can change integration or team settings"); };
     if (event.arguments.readOperation) {
+      if (op === "searchAccounts") return { ok: true, ...await (await import("./accountSearch")).searchAccounts(input, { actor, role: activeRole(event.identity, event.request) }) };
       if (op === 'dashboardOpenQuotesPage') { requireAdmin(); return { ok: true, ...await (await import('./dashboardLeadQueries')).dashboardOpenQuotesPage(input) }; }
       if (op === 'dashboardBoundPoliciesPage') { requireAdmin(); return { ok: true, ...await (await import('./dashboardLeadQueries')).dashboardBoundPoliciesPage(input) }; }
       if (op === 'dashboardQuotesPage') { requireAdmin(); return { ok: true, ...await (await import('./dashboardLeadQueries')).dashboardQuotesPage(input) }; }

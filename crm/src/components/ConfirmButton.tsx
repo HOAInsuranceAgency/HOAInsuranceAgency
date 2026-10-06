@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState } from "react";
+import { friendlyError } from '../lib/client';
 
 /**
  * A destructive button that arms itself instead of firing, replacing the
@@ -57,6 +58,8 @@ export default function ConfirmButton({
 }: ConfirmButtonProps) {
   const [armed, setArmed] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const pending = useRef(false);
   const cancelRef = useRef<HTMLButtonElement>(null);
   const alive = useRef(true);
   const messageId = useId();
@@ -76,7 +79,9 @@ export default function ConfirmButton({
   }, [armed]);
 
   async function confirm() {
-    if (busy) return;
+    if (pending.current || disabled) return;
+    pending.current = true;
+    setError('');
     setBusy(true);
     try {
       await onConfirm();
@@ -85,8 +90,13 @@ export default function ConfirmButton({
         setArmed(false);
       }
     } catch (err) {
-      if (alive.current) setBusy(false);
-      onError?.(err);
+      if (alive.current) {
+        setBusy(false);
+        setError(friendlyError(err, 'Could not complete that action. Please try again.'));
+        onError?.(err);
+      }
+    } finally {
+      pending.current = false;
     }
   }
 
@@ -106,7 +116,7 @@ export default function ConfirmButton({
           <button
             type="button"
             className={confirmClassName}
-            disabled={busy}
+            disabled={busy || disabled}
             aria-describedby={message ? messageId : undefined}
             onClick={confirm}
           >
@@ -117,7 +127,7 @@ export default function ConfirmButton({
             ref={cancelRef}
             className={cancelClassName}
             disabled={busy}
-            onClick={() => setArmed(false)}
+            onClick={() => { setArmed(false); setError(''); }}
           >
             {cancelLabel}
           </button>
@@ -132,6 +142,7 @@ export default function ConfirmButton({
           {label}
         </button>
       )}
+      {error && !onError && <span className="error-text" role="alert">{error}</span>}
     </span>
   );
 }

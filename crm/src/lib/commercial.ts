@@ -65,6 +65,7 @@ export function useCommercial(ids: string[], revision?: unknown, snoozeAccountId
         team: [] as TeamEligibility[],
       },
       errorMessage: 'Could not load assignments and commission estimates',
+      clearDataOnError: isAuthorizationError,
     },
   );
 }

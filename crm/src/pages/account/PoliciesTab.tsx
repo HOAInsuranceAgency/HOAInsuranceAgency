@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
   client,
   fmtDate,
   fmtMoney,
+  friendlyError,
   listAllPages,
   type Carrier,
   type Policy,
@@ -12,13 +13,18 @@ import { BILL_TYPE_SHORT, POLICY_STATUSES } from "../../lib/enums";
 import { useSort, SortTh } from "../../lib/useSort";
 import { commissionCell, termsSummary } from "../../components/QuotesPanel";
 import CoverageForm from "../../components/CoverageForm";
-import { SaveStatus, useSaveStatus } from "../../components/SaveStatus";
+import { SaveStatus, type SaveStatusValue } from "../../components/SaveStatus";
+import { isAuthorizationError } from "../../lib/authorizationError";
 
 export function PoliciesTab({ accountId }: { accountId: string }) {
+  return <AccountPolicies key={accountId} accountId={accountId} />;
+}
+
+function AccountPolicies({ accountId }: { accountId: string }) {
   const [editing, setEditing] = useState<Policy | null>(null);
-  // Persistent: the row this refers to stays on screen, so nothing about it
-  // stops being true after a few seconds.
-  const saveStatus = useSaveStatus();
+  const updates = useRef(new Set<string>());
+  const [rowStatus, setRowStatus] = useState<Record<string, SaveStatusValue>>({});
+  const saving = Object.values(rowStatus).some(status => status.state === "saving");
 
   const policyRes = useAsyncResource(
     () =>
@@ -29,7 +35,7 @@ export function PoliciesTab({ accountId }: { accountId: string }) {
         })
       ),
     [accountId],
-    { initialData: [] as Policy[], errorMessage: "Failed to load policies" }
+    { initialData: [] as Policy[], errorMessage: "Failed to load policies", clearDataOnError: isAuthorizationError }
   );
   const policies = policyRes.data;
   const setPolicies = policyRes.setData;
@@ -37,27 +43,30 @@ export function PoliciesTab({ accountId }: { accountId: string }) {
   // fresh function every render.
   const refresh = policyRes.refetch;
 
-  // Agency-wide, not account-scoped — its own resource on its own deps, so a
-  // policy refresh doesn't re-read the carrier table and an account switch
-  // doesn't blank the carrier names while it does.
+  // A separate resource keeps policy refreshes from re-reading the carriers.
   const carrierRes = useAsyncResource(
-    async () => (await client.models.Carrier.list()).data,
+    () => listAllPages(nextToken => client.models.Carrier.list({ nextToken })),
     [],
-    { initialData: [] as Carrier[] }
+    { initialData: [] as Carrier[], errorMessage: "Failed to load carriers", clearDataOnError: isAuthorizationError }
   );
   const carrierRows = carrierRes.data;
 
   async function updatePolicy(id: string, patch: Partial<Policy>) {
-    await saveStatus.run(
-      async () => {
-        // `errors` used to be dropped on the floor here: a rejected status
-        // change left the <select> showing the value it had failed to save.
-        const { data, errors } = await client.models.Policy.update({ id, ...patch });
-        if (errors?.length || !data) throw new Error(errors?.[0]?.message);
-        setPolicies((ps) => ps.map((p) => (p.id === id ? data : p)));
-      },
-      { savedMessage: "Policy updated.", errorMessage: "Couldn't update that policy." }
-    );
+    // Each row owns its request and feedback. Rapid clicks on one policy
+    // cannot duplicate its write or suppress a distinct policy's change.
+    if (updates.current.has(id)) return;
+    updates.current.add(id);
+    setRowStatus(previous => ({ ...previous, [id]: { state: "saving" } }));
+    try {
+      const { data, errors } = await client.models.Policy.update({ id, ...patch });
+      if (errors?.length || !data) throw new Error(errors?.[0]?.message);
+      setPolicies(ps => ps.map(p => p.id === id ? data : p));
+      setRowStatus(previous => ({ ...previous, [id]: { state: "saved", message: "Policy updated." } }));
+    } catch (error) {
+      setRowStatus(previous => ({ ...previous, [id]: {
+        state: "error", message: friendlyError(error, "Couldn't update that policy."),
+      } }));
+    } finally { updates.current.delete(id); }
   }
 
   // Carrier picker order only — no header to click, so the default stands.
@@ -88,11 +97,8 @@ export function PoliciesTab({ accountId }: { accountId: string }) {
   return (
     <div className="card">
       <h2>Policies</h2>
-      {/* Status changes are made from the per-row <select>, so the panel-level
-          line is where their outcome lands. */}
-      <SaveStatus {...saveStatus.status} />
 
-      {editing && (
+      {editing && policies.some(p => p.id === editing.id) && (
         <CoverageForm
           key={editing.id}
           kind="policy"
@@ -109,14 +115,19 @@ export function PoliciesTab({ accountId }: { accountId: string }) {
 
       {/* Surfaced rather than ignored: without carriers every row's carrier
           column reads "—", indistinguishable from a policy with none set. */}
-      {carrierRes.error && <p className="error-text">{carrierRes.error}</p>}
+      {carrierRes.error && <p className="error-text" role="alert">
+        {carrierRes.error}{" "}
+        <button className="secondary" disabled={carrierRes.loading} onClick={() => void carrierRes.refetch()}>Retry carriers</button>
+      </p>}
+      {policyRes.error && <p className="error-text" role="alert">
+        {policyRes.error}{" "}
+        <button className="secondary" disabled={policyRes.loading} onClick={() => void refresh()}>Retry policies</button>
+      </p>}
 
-      {!policyRes.loaded ? (
+      {!policyRes.loaded || (policyRes.loading && policies.length === 0) ? (
         <p className="muted small">Loading…</p>
-      ) : policyRes.error ? (
-        <p className="error-text">{policyRes.error}</p>
       ) : policies.length === 0 ? (
-        <p className="muted small">
+        !policyRes.error && <p className="muted small">
           No policies. Policies are created by binding a quote.
         </p>
       ) : (
@@ -161,6 +172,8 @@ export function PoliciesTab({ accountId }: { accountId: string }) {
                   <td>{fmtDate(p.datePolicyBound?.slice(0, 10))}</td>
                   <td>
                     <select
+                      aria-label={`Status for policy ${p.policyNumber || p.id}`}
+                      disabled={rowStatus[p.id]?.state === "saving" || policyRes.loading || Boolean(policyRes.error) || Boolean(editing)}
                       value={p.status}
                       onChange={(e) =>
                         updatePolicy(p.id, { status: e.target.value as Policy["status"] })
@@ -170,9 +183,10 @@ export function PoliciesTab({ accountId }: { accountId: string }) {
                         <option key={s}>{s}</option>
                       ))}
                     </select>
+                    <SaveStatus {...(rowStatus[p.id] ?? { state: "idle" })} />
                   </td>
                   <td>
-                    <button className="link" onClick={() => setEditing(p)}>
+                    <button className="link" disabled={saving || policyRes.loading || Boolean(policyRes.error) || Boolean(editing) || !carrierRes.loaded || carrierRes.loading || Boolean(carrierRes.error)} onClick={() => setEditing(p)}>
                       Edit
                     </button>
                   </td>

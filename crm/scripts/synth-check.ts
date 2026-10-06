@@ -51,7 +51,9 @@
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
-import { CfnResource, Stack, type App } from "aws-cdk-lib";
+import { AssetStaging, CfnResource, Stack, type App } from "aws-cdk-lib";
+import { CfnFunctionConfiguration } from "aws-cdk-lib/aws-appsync";
+import { Asset } from "aws-cdk-lib/aws-s3-assets";
 import type { CfnFunction, CfnEventInvokeConfig } from "aws-cdk-lib/aws-lambda";
 import type { CfnSchedule } from "aws-cdk-lib/aws-scheduler";
 
@@ -173,6 +175,55 @@ try {
   checkAccountAccess(backend, outdir);
   const { checkOwnerProfitability } = await import("./check-owner-profitability");
   checkOwnerProfitability(backend);
+  // Field-level read-only rules can silently remove every browser role from
+  // deleteAccount even though the model permits administrator deletion. Check
+  // the generated native authorization, not the TypeScript schema declaration.
+  const accountFunctions = app.node.findAll().filter((node): node is CfnFunctionConfiguration => node instanceof CfnFunctionConfiguration);
+  const accountTemplate = (fn: CfnFunctionConfiguration, side: "request" | "response") => {
+    const inline = side === "request" ? fn.requestMappingTemplate : fn.responseMappingTemplate;
+    if (inline) return inline;
+    const location = side === "request" ? fn.requestMappingTemplateS3Location : fn.responseMappingTemplateS3Location;
+    if (!location) return "";
+    const resolved = JSON.stringify(Stack.of(fn).resolve(location));
+    const asset = fn.node.scope!.node.findAll().find((node): node is Asset => node instanceof Asset && JSON.stringify(Stack.of(node).resolve(node.s3ObjectUrl)) === resolved);
+    if (!asset) throw new Error(`Missing generated account authorization template: ${fn.name}`);
+    return readFileSync((asset.node.findChild("Stage") as AssetStaging).absoluteStagedPath, "utf8");
+  };
+  const accountPipeline = (field: string) => {
+    const resolver = Object.values(backend.data.resources.cfnResources.cfnResolvers).find(item => item.typeName === "Mutation" && item.fieldName === field);
+    const ids = (resolver?.pipelineConfig as { functions?: string[] } | undefined)?.functions;
+    if (!ids?.length) throw new Error(`Missing generated account mutation pipeline: ${field}`);
+    return ids.map(id => {
+      const fn = accountFunctions.find(item => item.attrFunctionId === id);
+      if (!fn) throw new Error(`Unknown pipeline stage in ${field}`);
+      return fn;
+    });
+  };
+  const deleteStages = accountPipeline("deleteAccount");
+  const deleteAuth = deleteStages.find(fn => !fn.name.startsWith("access_") && accountTemplate(fn, "response").includes("Authorization Steps"));
+  if (!deleteAuth) throw new Error("Missing native deleteAccount authorization");
+  const deleteAuthTemplate = accountTemplate(deleteAuth, "response");
+  const cognitoStart = deleteAuthTemplate.search(/#if\s*\(\s*\$util\.authType\(\)\s*==\s*"User Pool Authorization"\s*\)/);
+  let cognitoBlock = "", depth = 0;
+  if (cognitoStart >= 0) for (const directive of deleteAuthTemplate.slice(cognitoStart).matchAll(/#(if|foreach|end)\b/g)) {
+    depth += directive[1] === "end" ? -1 : 1;
+    if (depth === 0) { cognitoBlock = deleteAuthTemplate.slice(cognitoStart, cognitoStart + directive.index! + directive[0].length); break; }
+  }
+  const groupJson = cognitoBlock.match(/#set\s*\(\s*\$staticGroupRoles\s*=\s*(\[[^\n]*\])\s*\)/)?.[1];
+  const deleteGroups = groupJson ? JSON.parse(groupJson) as { claim: string; entity: string }[] : [];
+  if (deleteGroups.length !== 2 || deleteGroups.some(role => role.claim !== "cognito:groups") || ["ADMIN", "OWNER"].some(role => !deleteGroups.some(group => group.entity === role))) {
+    throw new Error("Native deleteAccount authorization must permit exactly ADMIN and OWNER Cognito groups");
+  }
+  // A private/authenticated rule would grant access before the group check.
+  // Require the only successful Cognito grant to be conditional on membership.
+  if ([...cognitoBlock.matchAll(/#set\s*\(\s*\$isAuthorized\s*=\s*true\s*\)/g)].length !== 1 ||
+      !/#if\s*\(\s*\$groupsInToken\.contains\(\$groupRole\.entity\)\s*\)\s*#set\s*\(\s*\$isAuthorized\s*=\s*true\s*\)/.test(cognitoBlock) ||
+      !/#if\s*\(\s*!\$isAuthorized\s*\)\s*\$util\.unauthorized\(\)/.test(deleteAuthTemplate)) {
+    throw new Error("Native deleteAccount authorization must reject callers outside the administrator groups");
+  }
+  const deleteAdminAt = deleteStages.findIndex(fn => fn.name === "access_admin___");
+  if (deleteAdminAt < 0 || deleteAdminAt >= deleteStages.findIndex(fn => !fn.name.startsWith("access_"))) throw new Error("deleteAccount must check the active administrator role before native authorization and deletion");
+  if (accountPipeline("updateAccount")[0].name !== "access_write_Account__update") throw new Error("updateAccount must protect acquisition fields before native authorization and writes");
   // Dashboard interest must use a backfilled time index without dropping the
   // loan relation or account-access indexes already on the payment table.
   const paymentTable = app.node.findAll().find((node): node is CfnResource =>

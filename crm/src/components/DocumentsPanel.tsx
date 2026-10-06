@@ -11,6 +11,8 @@ import {
 } from "../lib/client";
 import { downloadFile } from "../lib/storage";
 import { useAsyncResource } from "../lib/useAsyncResource";
+import { isAuthorizationError } from "../lib/authorizationError";
+import { allWithAuthorizationPriority } from "../lib/allWithAuthorizationPriority";
 import {
   linkFields,
   linkKeyOf,
@@ -56,7 +58,11 @@ const CATEGORIES = DOCUMENT_CATEGORY_OPTIONS;
  * extension, because `canPreview` reads it off `name`; `withExtension` is
  * shared with the Lambda's auto-namer so both paths hold it the same way.
  */
-export default function DocumentsPanel({
+export default function DocumentsPanel(props: Parameters<typeof DocumentsPanelContent>[0]) {
+  return <DocumentsPanelContent key={`${props.entityType}:${props.entityId}`} {...props} />;
+}
+
+function DocumentsPanelContent({
   entityType,
   entityId,
   linkAccountId,
@@ -95,7 +101,7 @@ export default function DocumentsPanel({
   const linkTargets = useAsyncResource(
     async () => {
       if (!linkAccountId) return { options: [] as { key: string; label: string }[] };
-      const [policies, quotes] = await Promise.all([
+      const [policies, quotes] = await allWithAuthorizationPriority([
         listAllPages((nextToken) =>
           client.models.Policy.list({
             filter: { accountId: { eq: linkAccountId } },
@@ -123,12 +129,13 @@ export default function DocumentsPanel({
       };
     },
     [linkAccountId],
-    { initialData: { options: [] } }
+    { initialData: { options: [] }, clearDataOnError: isAuthorizationError }
   );
   const linkOptions = linkTargets.data.options;
   const linkLabel = (key: string) =>
     linkOptions.find((o) => o.key === key)?.label ?? "(deleted record)";
   const [uploading, setUploading] = useState(false);
+  const uploadLock = useRef(false);
   const [error, setError] = useState("");
   const [openDocId, setOpenDocId] = useState<string | null>(null);
   const [renameId, setRenameId] = useState<string | null>(null);
@@ -138,6 +145,12 @@ export default function DocumentsPanel({
   // the renamed one is back to plain text — so nothing on screen would ever
   // clear it.
   const rowStatus = useSaveStatus({ autoClearMs: 4000 });
+  const rowLock = useRef(false);
+  async function runRow(...args: Parameters<typeof rowStatus.run>) {
+    if (rowLock.current) return;
+    rowLock.current = true;
+    try { await rowStatus.run(...args); } finally { rowLock.current = false; }
+  }
   const [previewDoc, setPreviewDoc] = useState<CrmDocument | null>(null);
   const [ocrSearch, setOcrSearch] = useState("");
   const [matchIdx, setMatchIdx] = useState(0);
@@ -155,7 +168,10 @@ export default function DocumentsPanel({
       try {
         const items = await listAllPages(async nextToken => {
           const page = await client.models.Document.listDocumentByEntityId({ entityId }, { filter: { entityType: { eq: entityType } }, nextToken });
-          if (page.errors?.length) throw new Error(page.errors[0].message);
+          if (page.errors?.length) {
+            const denied = page.errors.find(isAuthorizationError);
+            throw Object.assign(new Error((denied ?? page.errors[0]).message), denied ? { name: 'Unauthorized' } : {});
+          }
           return page;
         });
         if (active && request === generation) {
@@ -163,7 +179,10 @@ export default function DocumentsPanel({
           setPreviewDoc(current => current && items.some(item => item.id === current.id) ? current : null);
         }
       } catch (err) {
-        if (active && request === generation) { setDocs([]); setDocsSynced(false); setPreviewDoc(null); setLoadError(friendlyError(err, "Could not load documents.")); }
+        if (active && request === generation) {
+          if (isAuthorizationError(err)) { setDocs([]); setDocsSynced(false); setPreviewDoc(null); }
+          setLoadError(friendlyError(err, "Could not load documents."));
+        }
       }
     };
     reloadDocuments.current = refresh;
@@ -175,7 +194,8 @@ export default function DocumentsPanel({
   }, [entityId, entityType]);
 
   async function handleUpload(files: File[] | null) {
-    if (!files?.length) return;
+    if (!files?.length || uploadLock.current) return;
+    uploadLock.current = true;
     setUploading(true);
     setError("");
     for (const file of files) {
@@ -199,7 +219,8 @@ export default function DocumentsPanel({
         docId = doc.id;
 
         const path = `documents/${entityType}/${entityId}/${doc.id}/${file.name}`;
-        await client.models.Document.update({ id: doc.id, s3Key: path });
+        const linked = await client.models.Document.update({ id: doc.id, s3Key: path });
+        if (linked.errors?.length) throw new Error(linked.errors[0].message);
         await uploadData({
           path,
           data: file,
@@ -216,6 +237,7 @@ export default function DocumentsPanel({
       }
     }
     setUploading(false);
+    uploadLock.current = false;
     await reloadDocuments.current();
   }
 
@@ -250,16 +272,16 @@ export default function DocumentsPanel({
       rowStatus.markError("A document needs a name.");
       return;
     }
-    setRenameId(null);
-    if (name === doc.name) return;
+    if (name === doc.name) { setRenameId(null); return; }
 
-    await rowStatus.run(
+    await runRow(
       async () => {
         const { errors } = await client.models.Document.update({
           id: doc.id,
           name,
         });
         if (errors?.length) throw new Error(errors[0].message);
+        setRenameId(null);
         await reloadDocuments.current();
       },
       {
@@ -270,7 +292,7 @@ export default function DocumentsPanel({
   }
 
   async function deleteDoc(doc: CrmDocument) {
-    await rowStatus.run(
+    await runRow(
       async () => {
         if (doc.s3Key && doc.s3Key !== "pending") {
           await remove({ path: doc.s3Key }).catch(() => {});
@@ -291,7 +313,7 @@ export default function DocumentsPanel({
   }
 
   async function relink(doc: CrmDocument, key: string) {
-    await rowStatus.run(
+    await runRow(
       async () => {
         const { errors } = await client.models.Document.update({
           id: doc.id,
@@ -383,7 +405,7 @@ export default function DocumentsPanel({
             {/* One control, two jobs on purpose: it filters the table AND
                 targets uploads — "you are looking at this policy's
                 documents; files you attach here belong to it". */}
-            <select id={`${controlId}-link`} value={view} onChange={(e) => setView(e.target.value)}>
+            <select id={`${controlId}-link`} disabled={uploading || linkTargets.loading || !!linkTargets.error} value={view} onChange={(e) => setView(e.target.value)}>
               <option value="">Everything</option>
               {linkOptions.map((o) => (
                 <option key={o.key} value={o.key}>
@@ -398,6 +420,7 @@ export default function DocumentsPanel({
           <select
             id={`${controlId}-category`}
             value={category}
+            disabled={uploading}
             onChange={(e) => setCategory(e.target.value as Category)}
           >
             {CATEGORIES.map((c) => (
@@ -418,6 +441,7 @@ export default function DocumentsPanel({
         </div>
       </div>
       {linkAccountId && view && <p className="documents-filter-note">Showing files for {linkLabel(view)}. New uploads will be linked here.</p>}
+      {linkAccountId && linkTargets.error && <p role="alert" className="error-text">Could not load policy and quote links. {linkTargets.error} <button className="secondary" disabled={linkTargets.loading} onClick={() => void linkTargets.refetch()}>Retry links</button></p>}
       <div className="documents-feedback">
         {error && <p role="alert" className="error-text">{error}</p>}
         {/* Renames and deletes are per-row with no per-row place to report;
@@ -425,7 +449,8 @@ export default function DocumentsPanel({
         <SaveStatus {...rowStatus.status} />
       </div>
 
-      {loadError ? <div role="alert" className="documents-state documents-state--error"><p>{loadError}</p><button className="secondary" onClick={() => void reloadDocuments.current()}>Retry</button></div> : !docsSynced ? (
+      {loadError && <div role="alert" className="documents-state documents-state--error"><p>{loadError}</p><button className="secondary" onClick={() => void reloadDocuments.current()}>Retry</button></div>}
+      {!docsSynced ? (!loadError &&
         <p className="documents-state" role="status">Loading…</p>
       ) : visible.length === 0 ? (
         <p className="documents-state">
@@ -468,6 +493,7 @@ export default function DocumentsPanel({
                             aria-label="Document name"
                             autoFocus
                             value={renameValue}
+                            disabled={rowStatus.busy}
                             onChange={(e) => setRenameValue(e.target.value)}
                             onKeyDown={(e) => {
                               if (e.key === "Enter") void saveRename(d);
@@ -493,6 +519,7 @@ export default function DocumentsPanel({
                         <select
                           aria-label={`Link ${d.name}`}
                           value={linkKeyOf(d)}
+                          disabled={rowStatus.busy || linkTargets.loading || !!linkTargets.error}
                           onChange={(e) => void relink(d, e.target.value)}
                         >
                           <option value="">—</option>
@@ -527,12 +554,14 @@ export default function DocumentsPanel({
                         <>
                           <button
                             className="secondary"
+                            disabled={rowStatus.busy}
                             onClick={() => void saveRename(d)}
                           >
                             Save name
                           </button>
                           <button
                             className="link"
+                            disabled={rowStatus.busy}
                             onClick={() => setRenameId(null)}
                           >
                             Cancel
@@ -553,6 +582,7 @@ export default function DocumentsPanel({
                           </button>
                           <button
                             className="link"
+                            disabled={rowStatus.busy}
                             onClick={() => startRename(d)}
                           >
                             Rename
@@ -568,6 +598,7 @@ export default function DocumentsPanel({
                             </button>
                           )}
                           <ConfirmButton
+                            disabled={rowStatus.busy}
                             confirmLabel="Confirm delete"
                             cancelLabel="Keep"
                             onConfirm={() => deleteDoc(d)}

@@ -90,6 +90,38 @@ describe("reading", () => {
 });
 
 describe("saving", () => {
+  it('preserves newer edits as unsaved when an earlier submission completes', async () => {
+    const { result } = await mount();
+    let resolve!: (value: unknown) => void;
+    model.create.mockReturnValue(new Promise(done => { resolve = done; }));
+    act(() => result.current.form.setF('fullTimeEmployees', '4'));
+    let saving!: Promise<void>;
+    act(() => { saving = result.current.save(); });
+    act(() => result.current.form.setF('fullTimeEmployees', '8'));
+    await act(async () => { resolve({ data: { accountId: 'a1', fullTimeEmployees: 4 } }); await saving; });
+    expect(result.current.form.form.fullTimeEmployees).toBe('8');
+    expect(result.current.form.dirty).toBe(true);
+    expect(result.current.form.saved).toBe(false);
+    expect(result.current.status.status.state).toBe('warning');
+  });
+
+  it('does not mistake a failed initial read for an absent record that can be created', async () => {
+    model.get.mockResolvedValue({ data: null, errors: [{ message: 'Read failed' }] });
+    const { result } = await mount();
+    await act(async () => result.current.save());
+    expect(model.create).not.toHaveBeenCalled();
+    expect(model.update).not.toHaveBeenCalled();
+  });
+
+  it('starts a blank form for a different account with no existing application', async () => {
+    model.get.mockResolvedValueOnce({ data: { accountId: 'a1', fullTimeEmployees: 4 } }).mockResolvedValue({ data: null });
+    const { result, rerender } = renderHook(({ id }) => useSingletonChild<Row, Form>(model, { ...options, accountId: id }), { initialProps: { id: 'a1' } });
+    await waitFor(() => expect(result.current.form.form.fullTimeEmployees).toBe('4'));
+    rerender({ id: 'a2' });
+    await waitFor(() => expect(result.current.loaded).toBe(true));
+    expect(result.current.form.form.fullTimeEmployees).toBe('');
+  });
+
   it("creates on the first save, keyed on the account", async () => {
     const { result } = await mount();
     await act(async () => result.current.form.setF("fullTimeEmployees", "4"));

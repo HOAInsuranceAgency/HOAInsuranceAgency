@@ -28,6 +28,8 @@ import {
 } from "../../lib/badges";
 import { useSort, SortTh } from "../../lib/useSort";
 import { useAsyncResource } from "../../lib/useAsyncResource";
+import { isAuthorizationError } from "../../lib/authorizationError";
+import { allWithAuthorizationPriority } from "../../lib/allWithAuthorizationPriority";
 import {
   leadQuoteStanding,
   quoteStandingRank,
@@ -57,7 +59,7 @@ export default function LeadsTab() {
   const [salespersonFilter, setSalespersonFilter] = useState('');
 
   const res = useAsyncResource(loadLeadsDashboard, [], {
-    initialData: EMPTY_LEADS_DATA, errorMessage: "Failed to load the lead pipeline",
+    initialData: EMPTY_LEADS_DATA, errorMessage: "Failed to load the lead pipeline", clearDataOnError: isAuthorizationError,
   });
   const { leads, clients, quotes, policies, commercial, selections, asOf } = res.data;
   const now = useMemo(() => new Date(asOf || Date.now()), [asOf]);
@@ -86,11 +88,11 @@ export default function LeadsTab() {
   const worklist = useAsyncResource<{ key: string; snapshot: typeof res.data | null; commercial: CommercialData; quotes: Quote[] }>(async () => {
     if (!salespersonSelection) return { key: worklistKey, snapshot: res.data, commercial: { entries: {}, team: [] }, quotes: [] };
     const ids = selectedLeads.map(account => account.id);
-    const [commercial, quotes] = await Promise.all([
+    const [commercial, quotes] = await allWithAuthorizationPriority([
       loadCommercial(ids), loadDashboardAccountQuotes(ids, true),
     ]);
     return { key: worklistKey, snapshot: res.data, commercial, quotes };
-  }, [worklistKey, res.data], { initialData: { key: '', snapshot: null, commercial: { entries: {}, team: [] }, quotes: [] }, errorMessage: 'Could not load lead work details' });
+  }, [worklistKey, res.data], { initialData: { key: '', snapshot: null, commercial: { entries: {}, team: [] }, quotes: [] }, errorMessage: 'Could not load lead work details', clearDataOnError: isAuthorizationError });
   const worklistReady = worklist.loaded && worklist.data.key === worklistKey && worklist.data.snapshot === res.data && !worklist.error;
   const worklistLeads = useMemo(() => worklistReady ? selectedLeads.filter(account =>
     salespersonKey(account.id, worklist.data.commercial.entries) === salespersonSelection
@@ -152,7 +154,7 @@ export default function LeadsTab() {
   );
 
   return (
-    <TabFrame res={res}>
+    <TabFrame res={res} hasSnapshot={res.data !== EMPTY_LEADS_DATA}>
       <p className="muted small">Figures use each account's current salesperson. The last 30 days end at this refresh.</p>
       <div className="dashboard-chart-grid">
         <LeadChart title="Open leads per person" rows={metrics.open} series={people} note="Current leads, excluding lost, disqualified and bound accounts." />

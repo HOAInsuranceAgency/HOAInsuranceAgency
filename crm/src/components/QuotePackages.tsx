@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useCommercial } from '../lib/commercial';
 import { communicationRequest } from '../lib/communications';
 import {
@@ -19,7 +19,11 @@ import {
 import { OpportunityEstimate } from './OpportunityEstimate';
 import './QuotePackages.css';
 
-export default function QuotePackages({
+export default function QuotePackages(props: Parameters<typeof QuotePackagesContent>[0]) {
+  return <QuotePackagesContent key={props.accountId} {...props} />;
+}
+
+function QuotePackagesContent({
   accountId,
   quotes,
   carriers,
@@ -50,7 +54,10 @@ export default function QuotePackages({
         [accountId]: { ...data.entries[accountId], accountId, plan: next },
       },
     }));
+  const writeLock = useRef(false);
   async function write(input: Record<string, unknown>) {
+    if (writeLock.current) return;
+    writeLock.current = true;
     setSaving(true);
     setError('');
     try {
@@ -64,6 +71,7 @@ export default function QuotePackages({
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not save package');
     } finally {
+      writeLock.current = false;
       setSaving(false);
     }
   }
@@ -124,7 +132,7 @@ export default function QuotePackages({
           + Package option
         </button>
       </div>
-      {resource.loading ? (
+      {!resource.loaded ? (
         <p className="package-empty" role="status">
           Loading package options…
         </p>
@@ -302,6 +310,7 @@ export default function QuotePackages({
                 <input
                   id="package-option-name"
                   value={editor.name}
+                  disabled={saving}
                   maxLength={100}
                   required
                   onChange={(e) =>
@@ -310,7 +319,7 @@ export default function QuotePackages({
                 />
               </div>
               <div className="package-editor-grid">
-                <fieldset className="package-fieldset">
+                <fieldset className="package-fieldset" disabled={saving}>
                   <legend>Coverages needed for this account</legend>
                   <div className="package-coverage-grid">
                     {[
@@ -343,7 +352,7 @@ export default function QuotePackages({
                     ))}
                   </div>
                 </fieldset>
-                <fieldset className="package-fieldset">
+                <fieldset className="package-fieldset" disabled={saving}>
                   <legend>Quotes in this option</legend>
                   <div className="package-quote-choices">
                     {!selectableQuotes.length && (
@@ -405,6 +414,7 @@ export default function QuotePackages({
                 <input
                   type="checkbox"
                   checked={editor.reviewed}
+                  disabled={saving}
                   onChange={(e) =>
                     setEditor({ ...editor, reviewed: e.target.checked })
                   }

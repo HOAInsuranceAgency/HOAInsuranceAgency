@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -279,5 +279,62 @@ describe("the editor is a modal", () => {
     expect(await screen.findByText("Firm licenses")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "+ Add license" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Edit" })).not.toBeInTheDocument();
+  });
+});
+
+
+describe("licensing reliability", () => {
+  it("loads all license and profile pages before drawing coverage", async () => {
+    models.License.list.mockResolvedValueOnce({ data: LICENSES.slice(0, 1), nextToken: "licenses-2" }).mockResolvedValueOnce({ data: LICENSES.slice(1) });
+    models.UserProfile.list.mockResolvedValueOnce({ data: profiles.slice(0, 1), nextToken: "profiles-2" }).mockResolvedValueOnce({ data: profiles.slice(1) });
+    renderPage();
+    await screen.findByRole("button", { name: "People" });
+    fireEvent.click(view("People"));
+    expect(await screen.findByText("Dana Reyes")).toBeVisible();
+    expect(models.License.list).toHaveBeenLastCalledWith({ nextToken: "licenses-2" });
+    expect(models.UserProfile.list).toHaveBeenLastCalledWith({ nextToken: "profiles-2" });
+  });
+
+  it("reports GraphQL list failures and offers a retry", async () => {
+    models.License.list.mockResolvedValueOnce({ data: [], errors: [{ message: "License service unavailable" }] });
+    renderPage();
+    expect(await screen.findByRole("alert")).toHaveTextContent("License service unavailable");
+    fireEvent.click(screen.getByRole("button", { name: "Retry licensing" }));
+    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+    fireEvent.click(view("Firm"));
+    expect(await screen.findByText("FIRM-MA")).toBeVisible();
+  });
+
+  it("keeps a license after a rejected delete and allows retry", async () => {
+    models.License.delete.mockResolvedValueOnce({ errors: [{ message: "License is in use" }] }).mockResolvedValueOnce({ data: LICENSES[0] });
+    renderPage(); fireEvent.click(await screen.findByRole("button", { name: "Firm" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Delete" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("License is in use");
+    expect(screen.getByText("FIRM-MA")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    await waitFor(() => expect(screen.queryByText("FIRM-MA")).toBeNull());
+  });
+
+  it("keeps an in-flight editor open and recovers its draft after a rejected save", async () => {
+    let reject!: (reason: Error) => void;
+    models.License.update.mockImplementationOnce(() => new Promise((_resolve, fail) => { reject = fail; }));
+    renderPage(); fireEvent.click(await screen.findByRole("button", { name: "Firm" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+    const dialog = screen.getByRole("dialog");
+    const number = within(dialog).getByDisplayValue("FIRM-MA");
+    fireEvent.change(number, { target: { value: "NEW-MA" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save changes" }));
+    expect(number).toBeDisabled();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.getByRole("dialog")).toBe(dialog);
+    await act(async () => reject(new Error("Network interrupted")));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("Network interrupted");
+    expect(number).toHaveValue("NEW-MA");
+    expect(number).toBeEnabled();
+    models.License.update.mockResolvedValueOnce({ data: { ...LICENSES[0], licenseNumber: "NEW-MA" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(screen.getByText("NEW-MA")).toBeVisible();
   });
 });

@@ -1,6 +1,6 @@
 import { listAllPages } from "../lib/pagination";
 import { useAsyncResource } from "../lib/useAsyncResource";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   client,
   friendlyError,
@@ -49,6 +49,8 @@ export default function CoverageForm({
   onSaved: () => void;
   onCancel: () => void;
 }) {
+  const savingNow = useRef(false), mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const isPolicy = kind === "policy";
   const policies = useAsyncResource(() => isPolicy ? Promise.resolve([]) : listAllPages(token => client.models.Policy.list({ filter: { accountId: { eq: accountId } }, nextToken: token })), [accountId, isPolicy], { initialData: [] });
   const editing = !!existing;
@@ -112,6 +114,7 @@ export default function CoverageForm({
   }
 
   async function save() {
+    if (savingNow.current) return;
     if (
       form.effectiveDate &&
       form.expirationDate &&
@@ -120,6 +123,7 @@ export default function CoverageForm({
       setError("Effective date can't be after the expiration date.");
       return;
     }
+    savingNow.current = true;
     setSaving(true);
     setError("");
 
@@ -187,11 +191,12 @@ export default function CoverageForm({
         });
         if (errors?.length) throw new Error(errors[0].message);
       }
-      onSaved();
+      if (mounted.current) onSaved();
     } catch (err) {
-      setError(friendlyError(err, "Save failed"));
+      if (mounted.current) setError(friendlyError(err, "Save failed"));
     } finally {
-      setSaving(false);
+      savingNow.current = false;
+      if (mounted.current) setSaving(false);
     }
   }
 
@@ -208,6 +213,7 @@ export default function CoverageForm({
       <h3 style={{ marginTop: 0 }}>
         {editing ? "Edit" : "New"} {isPolicy ? "policy" : "quote"}
       </h3>
+      <fieldset disabled={saving} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
       <div className="form-grid">
         <div className="field">
           <label>Carrier</label>
@@ -430,11 +436,12 @@ export default function CoverageForm({
         <button className="primary" disabled={saving} onClick={save}>
           {saving ? "Saving…" : editing ? "Save changes" : "Save quote"}
         </button>
-        <button className="link" onClick={onCancel}>
+        <button className="link" disabled={saving} onClick={() => { if (!savingNow.current) onCancel(); }}>
           Cancel
         </button>
         {error && <span className="error-text">{error}</span>}
       </div>
+      </fieldset>
     </div>
   );
 }

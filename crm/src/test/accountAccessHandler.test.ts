@@ -7,6 +7,34 @@ vi.mock("@aws-sdk/s3-request-presigner", () => ({ getSignedUrl: h.sign }));
 import { handler } from "../../amplify/functions/crm-access/handler";
 import { ACCOUNT_MODELS, RETIRED_MODELS, LIST_PARENTS, type RecordData } from "../../amplify/functions/crm-access/policy";
 const identity = { sub: "alice" };
+it.each(["source", "leadSource", "leadAttribution"])("keeps %s immutable even when the caller can delete leads", async field => {
+  for (const groups of [["ADMIN"], ["OWNER"], ["PRODUCER"], ["STAFF"]]) {
+    for (const operation of ["create", "update"]) {
+      for (const value of ["changed", null]) {
+        await expect(handler({
+          mode: "write", model: "Account", operation,
+          identity: { sub: "alice", groups },
+          arguments: { input: { id: "a", [field]: value } },
+        })).rejects.toThrow("not available");
+      }
+    }
+  }
+});
+it.each(["ADMIN", "OWNER"])("lets %s finish deleting a lead whose automated work was already retired", async role => {
+  const identity = { sub: "alice", groups: [role, "PRODUCER"] };
+  const request = { headers: { "x-crm-role": role } };
+  h.records.set("communications:deleted-account:a", { id: "deleted-account:a" });
+  await expect(handler({ mode: "admin", identity, request, previous: "allowed" })).resolves.toBe("allowed");
+  await expect(handler({ mode: "write", model: "Account", operation: "delete", identity, request, arguments: { input: { id: "a" } }, previous: "allowed" })).resolves.toBe("allowed");
+  await expect(handler({ mode: "admin", identity, request: { headers: { "x-crm-role": "PRODUCER" } } })).rejects.toThrow("not available");
+});
+it.each(["ADMIN", "OWNER", "PRODUCER", "STAFF"])("keeps normal account edits available to %s without acquisition fields", async role => {
+  await expect(handler({
+    mode: "write", model: "Account", operation: "update",
+    identity: { sub: "alice", groups: [role] },
+    arguments: { input: { id: "a", name: "Updated association", notes: null } }, previous: "allowed",
+  })).resolves.toBe("allowed");
+});
 it.each(['dashboardAssignments', 'dashboardInterestPage', 'dashboardPolicyAnchors', 'dashboardLeadPlansPage', 'dashboardOpenQuotesPage', 'dashboardBoundPoliciesPage', 'dashboardQuotesPage', 'dashboardQuoteStates', 'dashboardInvoiceAnchors'])('keeps %s admin-only at the custom resolver boundary', async readOperation => {
   await expect(handler({ mode: 'custom-pre', field: 'communicationRead', identity, arguments: { readOperation, input: '{}' } })).rejects.toThrow();
   await expect(handler({ mode: 'custom-pre', field: 'communicationRead', identity: { sub: 'admin', groups: ['ADMIN'] }, arguments: { readOperation, input: '{}' } })).resolves.toBeUndefined();
@@ -37,6 +65,38 @@ it("filters raw list/relationship responses without dropping the pagination curs
   const result = await handler({ mode: "read", model: "Account", identity, previous: { items: [{ id: "b", name: "Hidden" }, { id: "a", name: "Visible" }], nextToken: "cursor" } });
   expect(result).toEqual({ items: [{ id: "a", name: "Visible" }], nextToken: "cursor" });
   expect(h.db.mock.calls.every(([command]) => command.input.ConsistentRead || Object.values(command.input.RequestItems ?? {}).every(request => (request as { ConsistentRead?: boolean }).ConsistentRead))).toBe(true);
+});
+it("authorizes account search only as a read and filters names by current assignment with consistent batched reads", async () => {
+  const args = { readOperation: "searchAccounts", input: { query: "community" } };
+  await expect(handler({ mode: "custom-pre", field: "communicationRead", identity, arguments: args })).resolves.toBeUndefined();
+  await expect(handler({ mode: "custom-pre", field: "communicationWrite", identity, arguments: { operation: "searchAccounts", input: args.input } })).rejects.toThrow();
+  const previous = { ok: true, items: [{ id: "a", name: "My community" }, { id: "b", name: "Private community" }], nextToken: "later" };
+  const event = { mode: "custom-post" as const, field: "communicationRead", identity, arguments: args, previous };
+  expect(await handler(event)).toEqual({ ...previous, items: [previous.items[0]] });
+  expect(h.db.mock.calls).toHaveLength(1);
+  expect(h.db.mock.calls[0][0].input.RequestItems.communications.ConsistentRead).toBe(true);
+  h.records.set("communications:workflow:a", { data: { salespersonId: "bob" } });
+  expect(await handler(event)).toEqual({ ...previous, items: [] });
+  h.records.set("communications:workflow:a", { data: { salespersonId: "alice" } });
+  h.records.set("communications:deleted-account:a", {});
+  expect(await handler(event)).toEqual({ ...previous, items: [] });
+});
+it("keeps admin and owner searches unrestricted unless an alternate role was selected", async () => {
+  const previous = { ok: true, items: [{ id: "a", name: "A" }, { id: "b", name: "B" }], nextToken: "later" };
+  const event = { mode: "custom-post" as const, field: "communicationRead", arguments: { readOperation: "searchAccounts", input: { query: "a" } }, previous };
+  for (const role of ["ADMIN", "OWNER"]) {
+    const identity = { sub: "alice", groups: [role, "PRODUCER"] };
+    expect(await handler({ ...event, identity })).toEqual(previous);
+    expect(await handler({ ...event, identity, request: { headers: { "x-crm-role": "PRODUCER" } } })).toEqual({ ...previous, items: [previous.items[0]] });
+  }
+});
+it("fails closed on search permission read failures and malformed result shapes", async () => {
+  const event = { mode: "custom-post" as const, field: "communicationRead", identity, arguments: { readOperation: "searchAccounts" }, previous: { ok: true, items: [{ id: "a", name: "A" }], nextToken: "later" } };
+  h.db.mockRejectedValueOnce(new Error("assignment unavailable"));
+  await expect(handler(event)).rejects.toThrow("assignment unavailable");
+  for (const items of [null, [{ name: "No ID" }], Array.from({ length: 26 }, () => ({ id: "a", name: "A" }))]) {
+    await expect(handler({ ...event, previous: { ...event.previous, items } })).rejects.toThrow();
+  }
 });
 it.each(ACCOUNT_MODELS.filter(model => !RETIRED_MODELS.includes(model)))("batches permission reads for a large %s connection", async model => {
   const tables = JSON.parse(process.env.ACCESS_TABLES!);

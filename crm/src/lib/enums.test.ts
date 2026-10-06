@@ -633,7 +633,7 @@ describe("bill type at bind", () => {
     // The button is disabled…
     expect(src).toMatch(/disabled=\{saving \|\| !billType\}/);
     // …and `bind` itself refuses, so a re-enabled button is not a way in.
-    expect(src).toMatch(/if \(!billType\) return;/);
+    expect(src).toMatch(/if \(!billType \|\| bindLock.current\) return;/);
   });
 
   it("writes it onto the policy it creates", () => {

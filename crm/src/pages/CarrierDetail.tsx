@@ -1,5 +1,5 @@
 import { useParams } from "react-router-dom";
-import { client, type Carrier } from "../lib/client";
+import { assertNoErrors, client, type Carrier } from "../lib/client";
 import { Badge, flagBadge, CARRIER_APPOINTMENT_BADGE } from "../lib/badges";
 import DocumentsPanel from "../components/DocumentsPanel";
 import { CarrierForm } from "./carrier/CarrierForm";
@@ -17,7 +17,9 @@ export default function CarrierDetail() {
   const res = useAsyncResource(
     async () => {
       if (!id) return null;
-      return (await client.models.Carrier.get({ id })).data;
+      const result = await client.models.Carrier.get({ id });
+      assertNoErrors(result);
+      return result.data;
     },
     [id],
     { initialData: null as Carrier | null, errorMessage: "Failed to load carrier" }
@@ -25,7 +27,7 @@ export default function CarrierDetail() {
   const carrier = res.data;
 
   if (!res.loaded) return <p className="muted">Loading…</p>;
-  if (res.error) return <p className="error-text">{res.error}</p>;
+  if (res.error) return <p className="error-text" role="alert">{res.error} <button onClick={() => void res.refetch()}>Retry</button></p>;
   if (!carrier) return <p>Carrier not found.</p>;
 
   return (

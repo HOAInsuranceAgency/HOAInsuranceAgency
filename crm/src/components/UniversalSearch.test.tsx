@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -64,6 +64,32 @@ beforeEach(() => {
 });
 
 describe("UniversalSearch", () => {
+  it('rechecks documents when reopening the same query and ignores the closed search response', async () => {
+    let resolveOld!: (value: unknown) => void;
+    models.Document.list.mockReturnValueOnce(new Promise(resolve => { resolveOld = resolve; }));
+    const input = renderBar();
+    fireEvent.focus(input);
+    fireEvent.change(input, { target: { value: 'harbor' } });
+    await waitFor(() => expect(models.Document.list).toHaveBeenCalledTimes(1));
+    fireEvent.keyDown(input, { key: 'Escape' });
+    models.Document.list.mockResolvedValue(page([{ id: 'fresh', name: 'harbor-new.pdf', entityType: 'ACCOUNT', entityId: 'a1' }]));
+    fireEvent.focus(input);
+    expect(await screen.findByText(hitLabel('harbor-new.pdf'))).toBeInTheDocument();
+    await act(async () => resolveOld(page([{ id: 'old', name: 'harbor-old.pdf', entityType: 'ACCOUNT', entityId: 'a1' }])));
+    expect(screen.queryByText(hitLabel('harbor-old.pdf'))).not.toBeInTheDocument();
+    expect(screen.getByText(hitLabel('harbor-new.pdf'))).toBeInTheDocument();
+  });
+
+  it('removes old document choices immediately when the query changes', async () => {
+    const input = renderBar();
+    fireEvent.focus(input);
+    fireEvent.change(input, { target: { value: 'harbor' } });
+    await screen.findByText(hitLabel('harbor-budget.pdf'));
+    models.Document.list.mockReturnValue(new Promise(() => {}));
+    fireEvent.change(input, { target: { value: 'other' } });
+    expect(screen.queryByText(hitLabel('harbor-budget.pdf'))).not.toBeInTheDocument();
+  });
+
   it("builds the index lazily on focus and answers keystrokes from it", async () => {
     const input = renderBar();
     expect(models.Account.list).not.toHaveBeenCalled();

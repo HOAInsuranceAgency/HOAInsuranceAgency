@@ -73,3 +73,33 @@ describe("marketing report controls", () => {
     expect(h.send).not.toHaveBeenCalled();
   });
 });
+
+it('ignores a status read started before a committed recipient change', async () => {
+  render(<MarketingReportSettings />); await screen.findByRole('button', { name: 'Send now' });
+  let finish!: (value: unknown) => void;
+  h.load.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh status' }));
+  fireEvent.change(screen.getByLabelText('Recipient email'), { target: { value: 'new@example.com' } });
+  h.save.mockResolvedValue({ ...snapshot(), settings: { ...snapshot().settings, version: 3, recipient: 'new@example.com' } });
+  fireEvent.submit(screen.getByRole('form', { name: 'Marketing report settings' }));
+  await screen.findByText('Saved. Weekly delivery is on for Friday at 8:00 a.m. Eastern.');
+  await act(async () => finish(snapshot()));
+  expect(screen.getByLabelText('Recipient email')).toHaveValue('new@example.com');
+  expect(screen.getByRole('button', { name: 'Send now' })).toBeEnabled();
+  expect(screen.getByText(/Email a fresh Excel snapshot to new@example.com/)).toBeVisible();
+});
+
+it('preserves a dirty recipient and its original version across a status refresh', async () => {
+  render(<MarketingReportSettings />); await screen.findByRole('button', { name: 'Send now' });
+  fireEvent.change(screen.getByLabelText('Recipient email'), { target: { value: 'mine@example.com' } });
+  h.load.mockResolvedValue({ ...snapshot(), settings: { ...snapshot().settings, version: 3, recipient: 'other@example.com' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh status' }));
+  await screen.findByText(/Email a fresh Excel snapshot to other@example.com/);
+  expect(screen.getByLabelText('Recipient email')).toHaveValue('mine@example.com');
+  h.save.mockRejectedValue(new Error('Settings changed. Refresh before saving.'));
+  fireEvent.submit(screen.getByRole('form', { name: 'Marketing report settings' }));
+  await screen.findByText('Settings changed. Refresh before saving.');
+  expect(h.save).toHaveBeenCalledWith(expect.objectContaining({ version: 2, recipient: 'mine@example.com' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Discard changes' }));
+  expect(screen.getByLabelText('Recipient email')).toHaveValue('other@example.com');
+});
