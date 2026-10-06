@@ -29,6 +29,7 @@ vi.mock("../lib/scopedStorage", () => ({
 }));
 
 import Team from "./Team";
+import * as signatureStorage from "../lib/scopedStorage";
 import { OwnerContext } from "../lib/auth";
 import type { UserProfile as UserProfileType } from "../lib/client";
 import type { TeamEligibility } from "../lib/communications";
@@ -440,4 +441,79 @@ describe("Owner role administration", () => {
     expect(within(dialog).getByRole("checkbox", { name: "Owner" })).toBeDisabled();
     expect(within(dialog).getByRole("checkbox", { name: "Producer" })).toBeEnabled();
   });
+});
+
+it('does not claim a lead-alert change persisted when its save fails, and lets it retry', async () => {
+  combinedSetup();
+  UserProfile.update.mockResolvedValueOnce({ errors: [{ message: 'Profile save failed' }] }).mockResolvedValueOnce({ data: { ...teammateProfile, leadTextAlerts: true } });
+  renderPage();
+  const toggle = await screen.findByRole('checkbox', { name: 'Lead texts for Casey Staff' });
+  fireEvent.click(toggle);
+  expect(await screen.findByText('Profile save failed')).toBeVisible();
+  expect(toggle).not.toBeChecked();
+  expect(toggle).toBeEnabled();
+  fireEvent.click(toggle);
+  await waitFor(() => expect(toggle).toBeChecked());
+  expect(UserProfile.update).toHaveBeenCalledTimes(2);
+});
+
+it('retains an unsaved phone draft through roster refresh but adopts refreshes when pristine', async () => {
+  combinedSetup(); renderPage();
+  const phone = await screen.findByRole('textbox', { name: 'Mobile number for Casey Staff' });
+  listTeamUsers.mockResolvedValue({ data: { users: [teammate], profiles: [{ ...teammateProfile, mobilePhone: '5085550200' }] } });
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh team' }));
+  await waitFor(() => expect(phone).toHaveValue('5085550200'));
+  fireEvent.change(phone, { target: { value: '5085550300' } });
+  listTeamUsers.mockResolvedValue({ data: { users: [teammate], profiles: [{ ...teammateProfile, mobilePhone: '5085550400' }] } });
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh team' }));
+  await waitFor(() => expect(listTeamUsers).toHaveBeenCalledTimes(3));
+  expect(phone).toHaveValue('5085550300');
+});
+
+
+it.each(['alerts-first', 'signature-first'])('merges only committed fields when signature and alert saves overlap (%s)', async order => {
+  combinedSetup();
+  const signed = { ...teammateProfile, signatureKey: 'signatures/p-1.png' };
+  listTeamUsers.mockResolvedValue({ data: { users: [teammate], profiles: [signed] } });
+  vi.mocked(signatureStorage.getUrl).mockResolvedValue({ url: new URL('https://example.com/signature'), expiresAt: new Date() });
+  vi.mocked(signatureStorage.remove).mockResolvedValue({ path: signed.signatureKey });
+  let finishAlerts!: (value: unknown) => void, finishSignature!: (value: unknown) => void;
+  UserProfile.update.mockImplementation((patch: Partial<UserProfileType>) => new Promise(resolve => {
+    if ('signatureKey' in patch) finishSignature = resolve; else finishAlerts = resolve;
+  }));
+  renderPage();
+  const toggle = await screen.findByRole('checkbox', { name: 'Lead texts for Casey Staff' });
+  fireEvent.click(toggle);
+  fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
+  if (order === 'alerts-first') {
+    await act(async () => finishAlerts({ data: { ...signed, leadTextAlerts: true } }));
+    await act(async () => finishSignature({ data: { ...signed, signatureKey: null } }));
+  } else {
+    await act(async () => finishSignature({ data: { ...signed, signatureKey: null } }));
+    await act(async () => finishAlerts({ data: { ...signed, leadTextAlerts: true } }));
+  }
+  expect(toggle).toBeChecked();
+  expect(screen.getByText('None on file')).toBeVisible();
+  expect(screen.queryByRole('button', { name: 'Remove' })).toBeNull();
+});
+
+
+it('confirms a successful invite without treating the cleared email as an unsaved edit', async () => {
+  listTeamUsers.mockResolvedValue({ data: { users: [] } });
+  let finish!: (value: unknown) => void;
+  inviteUser.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  renderPage(); await screen.findByText('No users found.');
+  const email = screen.getByRole('textbox', { name: 'Email' });
+  fireEvent.change(email, { target: { value: 'producer@example.com' } });
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Producer' }));
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Staff' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Send invite' }));
+  expect(email).toBeDisabled();
+  expect(screen.getByRole('checkbox', { name: 'Producer' })).toBeDisabled();
+  await act(async () => finish({ data: { ok: true } }));
+  expect(await screen.findByText(/Invited producer@example.com as PRODUCER/)).toBeVisible();
+  expect(screen.queryByText(/Newer edits still need saving/)).toBeNull();
+  expect(email).toHaveValue('');
+  expect(screen.getByRole('checkbox', { name: 'Producer' })).toBeChecked();
+  expect(screen.getByRole('checkbox', { name: 'Staff' })).not.toBeChecked();
 });

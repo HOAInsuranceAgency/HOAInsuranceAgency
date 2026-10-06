@@ -404,9 +404,12 @@ const schema = a
         buildiumId: a.string(), // lineage from web lead forms / Buildium sync
         // Creation runs through createLead / submitWebLead. Even admins cannot
         // rewrite acquisition history through generated account mutations.
-        source: a.string().authorization(allow => [allow.authenticated().to(["read"])]),
-        leadSource: a.ref("LeadSource").authorization(allow => [allow.authenticated().to(["read"])]),
-        leadAttribution: a.string().authorization(allow => [allow.authenticated().to(["read"])]),
+        // Amplify requires delete access to every field to delete the account.
+        // These grants also permit null updates in Amplify, so AccountAccess.write
+        // rejects acquisition-field edits before its administrator bypass.
+        source: a.string().authorization(allow => [allow.authenticated().to(["read"]), allow.groups(["ADMIN", "OWNER"]).to(["delete"])]),
+        leadSource: a.ref("LeadSource").authorization(allow => [allow.authenticated().to(["read"]), allow.groups(["ADMIN", "OWNER"]).to(["delete"])]),
+        leadAttribution: a.string().authorization(allow => [allow.authenticated().to(["read"]), allow.groups(["ADMIN", "OWNER"]).to(["delete"])]),
         notes: a.string(),
         convertedAt: a.datetime(), // set when first quote is bound
         // Who made this write — see the Contact model's note.

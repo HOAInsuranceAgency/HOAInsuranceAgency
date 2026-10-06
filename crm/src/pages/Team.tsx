@@ -88,11 +88,20 @@ function RoleEditor({ user, name, currentUser, onSave, onClose }: {
 function LeadTextCell({
   profile,
   onSave,
+  disabled,
 }: {
   profile: UserProfile;
+  disabled: boolean;
   onSave: (p: UserProfile, patch: Partial<UserProfile>) => void | Promise<void>;
 }) {
   const [draft, setDraft] = useState(profile.mobilePhone ?? "");
+  const previousPhone = useRef(profile.mobilePhone ?? "");
+  useEffect(() => {
+    const phone = profile.mobilePhone ?? "";
+    const previous = previousPhone.current;
+    setDraft(current => current === previous ? phone : current);
+    previousPhone.current = phone;
+  }, [profile.mobilePhone]);
   const on = !!profile.leadTextAlerts;
   const reachable = toE164(draft) !== null;
 
@@ -101,6 +110,7 @@ function LeadTextCell({
       <label className="lead-text-switch">
         <input
           type="checkbox"
+          disabled={disabled}
           checked={on}
           aria-label={`Lead texts for ${profile.firstName} ${profile.lastName}`}
           onChange={(e) => void onSave(profile, { leadTextAlerts: e.target.checked })}
@@ -108,6 +118,7 @@ function LeadTextCell({
         <span>{on ? "On" : "Off"}</span>
       </label>
       <input
+        disabled={disabled}
         className="lead-text-phone"
         type="tel"
         inputMode="tel"
@@ -172,9 +183,10 @@ export default function Team({ profile }: { profile: UserProfile }) {
   // Auto-clearing: these are per-row edits with no form to go dirty and
   // retire the message, so nothing else would ever clear it.
   const alertStatus = useSaveStatus({ autoClearMs: 4000 });
+  const alertPending = useRef(false);
   const [editingRoles, setEditingRoles] = useState<TeamUser | null>(null);
   const roleStatus = useSaveStatus({ autoClearMs: 4000 });
-  const { form, setF } = useFormState(
+  const { form, setF, reset } = useFormState(
     { email: "", roles: [DEFAULT_USER_ROLE] as UserRole[] },
     { onEdit: inviteStatus.markDirty }
   );
@@ -255,11 +267,9 @@ export default function Team({ profile }: { profile: UserProfile }) {
           reload();
           throw new Error(String(body.error ?? "Invite failed"));
         }
-        // Not `reset()`: the baseline would put the role back to STAFF too, and
-        // inviting a second person to the same role is the common case. Its
-        // `onEdit` fires while the status is still "saving", which markDirty
-        // ignores — so clearing the field can't erase the confirmation.
-        setF("email", "");
+        // Clear the submitted address while preserving the selected roles.
+        // This is a completed-form reset, not an unsaved user edit.
+        reset({ ...form, email: "" });
         reload();
       },
       {
@@ -293,9 +303,8 @@ export default function Team({ profile }: { profile: UserProfile }) {
    * have set. The phone field commits on blur for the same reason.
    */
   async function saveAlerts(p: UserProfile, patch: Partial<UserProfile>) {
-    setProfiles((ps) =>
-      ps.map((x) => (x.id === p.id ? { ...x, ...patch } : x))
-    );
+    if (alertPending.current) return;
+    alertPending.current = true;
     await alertStatus.run(
       async () => {
         const { data, errors } = await client.models.UserProfile.update({
@@ -303,13 +312,17 @@ export default function Team({ profile }: { profile: UserProfile }) {
           ...patch,
         });
         if (errors?.length || !data) throw new Error(errors?.[0]?.message);
-        setProfiles((ps) => ps.map((x) => (x.id === data.id ? data : x)));
+        // Only the submitted fields belong to this response; another control
+        // may have saved a signature or profile decoration in the meantime.
+        const committed = Object.fromEntries(Object.keys(patch).map(key => [key, data[key as keyof UserProfile]]));
+        setProfiles(ps => ps.map(x => x.id === data.id ? { ...x, ...committed } : x));
       },
       {
         savedMessage: `Lead alerts updated for ${p.firstName} ${p.lastName}.`,
         errorMessage: "Couldn't save that.",
       }
     );
+    alertPending.current = false;
   }
 
   // By email; a user with no email sorts last, which useSort does for nulls
@@ -343,6 +356,7 @@ export default function Team({ profile }: { profile: UserProfile }) {
             <label htmlFor="team-invite-email">Email</label>
             <input
               id="team-invite-email"
+              disabled={inviteStatus.busy}
               type="email"
               value={form.email}
               onChange={(e) => setF("email", e.target.value)}
@@ -382,7 +396,7 @@ export default function Team({ profile }: { profile: UserProfile }) {
             </p>
           </div>
           <div className="grow" />
-          <button type="button" className="secondary" disabled={team.loading || moreLoading || !!editingRoles} onClick={reload}>
+          <button type="button" className="secondary" disabled={team.loading || moreLoading || alertStatus.busy || !!editingRoles} onClick={reload}>
             Refresh team
           </button>
           {/* Toggles are per-row with no per-row place to report; this is
@@ -451,7 +465,7 @@ export default function Team({ profile }: { profile: UserProfile }) {
                           profile={p ?? null}
                           onChange={(updated) =>
                             setProfiles((ps) =>
-                              ps.map((x) => (x.id === updated.id ? updated : x))
+                              ps.map((x) => (x.id === updated.id ? { ...x, signatureKey: updated.signatureKey } : x))
                             )
                           }
                         />
@@ -460,7 +474,7 @@ export default function Team({ profile }: { profile: UserProfile }) {
                         {/* No profile means the invite is unaccepted — there
                             is no row to write the preference onto yet. */}
                         {p ? (
-                          <LeadTextCell profile={p} onSave={saveAlerts} />
+                          <LeadTextCell profile={p} disabled={team.loading || alertStatus.busy} onSave={saveAlerts} />
                         ) : (
                           <span className="muted small">—</span>
                         )}

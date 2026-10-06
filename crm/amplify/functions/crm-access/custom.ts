@@ -40,7 +40,7 @@ export async function authorizeCustom(access: AccountAccess, field: string, args
   if (!["communicationRead", "communicationWrite"].includes(field)) throw new AccessDenied();
   const op = id(args.readOperation ?? args.operation), input = object(args.input);
   if (adminCommunication.has(op)) throw new AccessDenied();
-  if (["team", "smsComposer"].includes(op) && field === "communicationRead") return;
+  if (["team", "smsComposer", "searchAccounts"].includes(op) && field === "communicationRead") return;
   if (op === "work" && field === "communicationRead") {
     if (!["WORKFLOW", "TRIAGE"].includes(id(input.kind))) throw new AccessDenied();
     return; // Returned pages are filtered by current assignment below.
@@ -91,6 +91,20 @@ export async function filterCustom(access: AccountAccess, field: string, args: R
   const result = object(original), op = id(args.readOperation);
   if (retiredTaskOperation(op, object(args.input))) throw new AccessDenied();
   if (access.admin) return op === "team" ? { ...result, actorId: access.actor } : original;
+  if (op === "searchAccounts") {
+    // Candidates come from the stage index, not an authorization index. Keep
+    // continuation even when every candidate is no longer assigned to this user.
+    if (result.ok !== true) return original;
+    if (!Array.isArray(result.items) || result.items.length > 25) throw new AccessDenied();
+    const items = result.items.map(value => {
+      const item = object(value);
+      if (!id(item.id) || typeof item.name !== "string") throw new AccessDenied();
+      return { id: id(item.id), name: item.name };
+    });
+    await access.prefetchAccounts(items.map(item => item.id));
+    const permitted = await Promise.all(items.map(async item => await access.canAccount(item.id) ? item : undefined));
+    return { ...result, items: permitted.filter(Boolean) };
+  }
   if (op === "work") {
     return { ...result, items: await filterAccountItems(access, result.items) };
   }

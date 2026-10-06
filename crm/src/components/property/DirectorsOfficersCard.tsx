@@ -208,11 +208,12 @@ function CoverageParts({ accountId }: { accountId: string }) {
   );
 
   const seeded = useRef(false);
+  const saving = useRef(false);
   useEffect(() => {
     seeded.current = false;
   }, [accountId]);
   useEffect(() => {
-    if (seeded.current || !res.loaded) return;
+    if (seeded.current || !res.loaded || res.loading || res.error) return;
     seeded.current = true;
     const byPart = new Map(res.data.map((r) => [r.part, r]));
     form.reset(
@@ -235,21 +236,27 @@ function CoverageParts({ accountId }: { accountId: string }) {
       ) as Record<DoPart, PartForm>
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [res.loaded]);
+  }, [res.loaded, res.loading, res.error, res.data]);
 
   const filled = (p: PartForm) => Object.values(p).some((v) => v.trim() !== "");
 
   async function save() {
-    await status.run(async () => {
+    if (saving.current) return;
+    saving.current = true;
+    const submitted = form.form;
+    try { await status.run(async () => {
       const byPart = new Map(res.data.map((r) => [r.part, r]));
       const saved: DoCoveragePart[] = [];
       for (const part of DO_PARTS) {
-        const values = form.form[part];
+        const values = submitted[part];
         const existing = byPart.get(part);
         if (!filled(values)) {
           // Blanked out entirely: remove the row rather than storing an empty
           // one, so "not asked" stays distinguishable from "asked, no cover".
-          if (existing) assertNoErrors(await client.models.DoCoveragePart.delete({ id: existing.id }));
+          if (existing) {
+            assertNoErrors(await client.models.DoCoveragePart.delete({ id: existing.id }));
+            res.setData(current => current.filter(row => row.id !== existing.id));
+          }
           continue;
         }
         const payload = {
@@ -259,21 +266,24 @@ function CoverageParts({ accountId }: { accountId: string }) {
           perClaimRetention: num(values.perClaimRetention),
           aggregateRetention: num(values.aggregateRetention),
         };
-        saved.push(
-          unwrap(
+        const updated = unwrap(
             existing
               ? await client.models.DoCoveragePart.update({ id: existing.id, ...payload })
               : await client.models.DoCoveragePart.create({ accountId, part, ...payload })
-          )
-        );
+          );
+        saved.push(updated);
+        // Preserve each confirmed write if a later part fails, so retrying
+        // updates the row already created instead of creating a duplicate.
+        res.setData(current => [...current.filter(row => row.part !== part), updated]);
       }
       res.setData(saved);
-      form.markSaved();
-    }, { savedMessage: "Coverage parts saved.", errorMessage: "Couldn't save the coverage parts." });
+      form.markSaved(submitted);
+    }, { savedMessage: "Coverage parts saved.", errorMessage: "Couldn't save the coverage parts." }); }
+    finally { saving.current = false; }
   }
 
   if (!res.loaded) return <p className="muted small">Loading…</p>;
-  if (res.error) return <p className="error-text">{res.error}</p>;
+  if (res.error) return <p className="error-text">{res.error} <button className="secondary" disabled={res.loading} onClick={() => void res.refetch()}>Retry coverage parts</button></p>;
 
   return (
     <>

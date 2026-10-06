@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -384,4 +384,77 @@ describe("the idempotency marker", () => {
     await user.click(screen.getByText("Apply again anyway"));
     await waitFor(() => expect(models.Account.update).toHaveBeenCalled());
   });
+});
+
+
+describe("extraction refresh reliability", () => {
+  it("blocks applying children when matching reads fail and recovers on retry", async () => {
+    const user = userEvent.setup();
+    models.Building.list.mockResolvedValueOnce({ data: [], errors: [{ message: "Building read failed" }] });
+    renderPanel();
+    await screen.findByRole("button", { name: "Retry buildings" });
+    expect(screen.getByText(/^Apply selected to/)).toBeDisabled();
+    await apply(user);
+    expect(models.Account.update).not.toHaveBeenCalled();
+    expect(models.Building.create).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Retry buildings" }));
+    await waitFor(() => expect(screen.getByText(/^Apply selected to/)).toBeEnabled());
+    await apply(user);
+    await waitFor(() => expect(models.Building.create).toHaveBeenCalledTimes(2));
+  });
+
+  it("preserves review choices through an equivalent structured extraction refresh", async () => {
+    const user = userEvent.setup();
+    const result = JSON.parse(extraction(CANDIDATES));
+    const view = renderPanel(account({ aiExtraction: result }));
+    await user.click(screen.getByRole("checkbox", { name: "Select street address" }));
+    view.rerender(<ExtractionPanel account={account({ aiExtraction: { ...result } })} onChange={vi.fn()} />);
+    expect(screen.getByRole("checkbox", { name: "Select street address" })).not.toBeChecked();
+  });
+
+  it("ignores an old account's extraction poll after navigation", async () => {
+    vi.useFakeTimers();
+    try {
+      let finish!: (value: unknown) => void;
+      models.Account.get.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+      const changed = vi.fn();
+      const view = render(<ExtractionPanel account={account({ extractionStatus: "PROCESSING" })} onChange={changed} />);
+      await act(async () => { await vi.advanceTimersByTimeAsync(4000); });
+      expect(models.Account.get).toHaveBeenCalledTimes(1);
+      view.rerender(<ExtractionPanel account={account({ id: "a2", extractionStatus: "COMPLETE" })} onChange={changed} />);
+      await act(async () => finish({ data: account() }));
+      expect(changed).not.toHaveBeenCalled();
+    } finally { vi.useRealTimers(); }
+  });
+});
+
+it("holds extraction choices steady and prevents duplicate apply while writes are pending", async () => {
+  let finish!: (value: unknown) => void;
+  models.Account.update.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  renderPanel();
+  const applyButton = screen.getByText(/^Apply selected to/);
+  await waitFor(() => expect(applyButton).toBeEnabled());
+  fireEvent.click(applyButton); fireEvent.click(applyButton);
+  await waitFor(() => expect(models.Account.update).toHaveBeenCalledTimes(1));
+  expect(screen.getByRole("checkbox", { name: "Select street address" })).toBeDisabled();
+  expect(screen.getByRole("checkbox", { name: "Select building: Clubhouse · 4,200 sq ft" })).toBeDisabled();
+  await act(async () => finish({ data: account() }));
+  await waitFor(() => expect(models.Building.create).toHaveBeenCalledTimes(2));
+});
+it("reports transient extraction polling errors and retries without overlapping requests", async () => {
+  vi.useFakeTimers();
+  try {
+    let finish!: (value: unknown) => void;
+    models.Account.get.mockRejectedValueOnce(new Error("Temporary extraction status failure"))
+      .mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    const changed = vi.fn();
+    render(<ExtractionPanel account={account({ extractionStatus: "PROCESSING" })} onChange={changed} />);
+    await act(async () => { await vi.advanceTimersByTimeAsync(4000); });
+    expect(screen.getByRole("alert")).toHaveTextContent("Temporary extraction status failure");
+    await act(async () => { await vi.advanceTimersByTimeAsync(12000); });
+    expect(models.Account.get).toHaveBeenCalledTimes(2);
+    await act(async () => finish({ data: account() }));
+    expect(changed).toHaveBeenCalledWith(expect.objectContaining({ id: "a1", extractionStatus: "COMPLETE" }));
+    expect(screen.queryByRole("alert")).toBeNull();
+  } finally { vi.useRealTimers(); }
 });

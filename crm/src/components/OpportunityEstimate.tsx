@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { communicationRequest } from '../lib/communications';
 import { useRowInteraction, type InteractionChange } from '../lib/useRefreshOnReturn';
 import {
@@ -20,6 +20,8 @@ export function OpportunityEstimate({
     [amount, setAmount] = useState(''),
     [saving, setSaving] = useState(false),
     [error, setError] = useState('');
+  const pending = useRef(false);
+  const [editingVersion, setEditingVersion] = useState(plan.version);
   useRowInteraction(`estimate:${plan.accountId}`, editing || saving, onInteractionChange);
   return (
     <div
@@ -31,6 +33,7 @@ export function OpportunityEstimate({
           className="link"
           aria-label="Edit estimated opportunity"
           onClick={() => {
+            setEditingVersion(plan.version);
             setAmount(
               plan.estimatedCents == null
                 ? ''
@@ -48,6 +51,8 @@ export function OpportunityEstimate({
         <form
           onSubmit={async (e) => {
             e.preventDefault();
+            if (pending.current) return;
+            pending.current = true;
             setError('');
             setSaving(true);
             try {
@@ -58,7 +63,7 @@ export function OpportunityEstimate({
                 'saveCommercial',
                 {
                   accountId: plan.accountId,
-                  version: plan.version,
+                  version: editingVersion,
                   action: 'ESTIMATE',
                   amount,
                 },
@@ -71,6 +76,7 @@ export function OpportunityEstimate({
                 err instanceof Error ? err.message : 'Could not save estimate',
               );
             } finally {
+              pending.current = false;
               setSaving(false);
             }
           }}

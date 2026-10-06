@@ -6,6 +6,8 @@ import { loadAssignments, type AssignmentData } from "../../lib/dashboardAssignm
 import { salespersonSeries } from "../../lib/dashboardPeople";
 import { effectiveInWindow, performanceBySalesperson, type PerformanceMoneyRow } from "../../lib/dashboardPerformance";
 import { useAsyncResource } from "../../lib/useAsyncResource";
+import { isAuthorizationError } from "../../lib/authorizationError";
+import { allWithAuthorizationPriority } from "../../lib/allWithAuthorizationPriority";
 import { localToday, TabFrame } from "./common";
 
 type PerformancePolicy = Pick<Policy, "id" | "accountId" | "carrierId" | "effectiveDate" | "premium" | "commissionPct" | "status">;
@@ -64,7 +66,7 @@ export default function PerformanceTab() {
 function PerformanceSnapshot({ from, to, excludeCancelled }: { from: string; to: string; excludeCancelled: boolean }) {
   const res = useAsyncResource<PerformanceData>(async () => {
     const dateFilter = from || to ? { effectiveDate: { ...(from ? { ge: from } : {}), ...(to ? { le: to } : {}) } } : {};
-    const [rawPolicies, carriers, rawQuotes] = await Promise.all([
+    const [rawPolicies, carriers, rawQuotes] = await allWithAuthorizationPriority([
       listAllPages(nextToken => client.models.Policy.list({
         nextToken,
         ...(from || to || excludeCancelled ? { filter: { ...dateFilter, ...(excludeCancelled ? { status: { ne: "CANCELLED" as const } } : {}) } } : {}),
@@ -83,7 +85,7 @@ function PerformanceSnapshot({ from, to, excludeCancelled }: { from: string; to:
     const quotes = rawQuotes.filter(quote => DECIDED_STATUSES.some(status => status === quote.status) && effectiveInWindow(quote.effectiveDate, from, to));
     const commercial = await loadAssignments([...new Set([...policies, ...quotes].map(row => row.accountId))]);
     return { policies, carriers, quotes, accounts: commercial.accounts, commercial };
-  }, [from, to, excludeCancelled], { initialData: EMPTY, errorMessage: "Failed to load dashboard" });
+  }, [from, to, excludeCancelled], { initialData: EMPTY, errorMessage: "Failed to load dashboard", clearDataOnError: isAuthorizationError });
   const series = useMemo(() => salespersonSeries(res.data.commercial), [res.data.commercial]);
   const result = useMemo(() => performanceBySalesperson({
     ...res.data, entries: res.data.commercial.entries, series, from, to, excludeCancelled,
@@ -96,7 +98,7 @@ function PerformanceSnapshot({ from, to, excludeCancelled }: { from: string; to:
     key: person.key, label: `${person.label} · ${person.bound} / ${person.decided} won`, values: { [person.key]: person.winRate! * 100 },
   }));
 
-  return <TabFrame res={res}>
+  return <TabFrame res={res} hasSnapshot={res.data !== EMPTY}>
       <div className="dashboard-chart-grid">
         <div className="card">
           <div className="card-head"><h2>Est. commission per person</h2><ReportDownload report={{ title: "Estimated commission per person", filters: exportFilters, sections: [{ title: "Estimated commission", columns: ["Salesperson", "Estimated commission (USD)", "Policy count", "Policies missing commission %"], rows: result.people.map(person => [person.label, person.commission, person.policies, person.missingCommissionPct]) }] }} /></div>

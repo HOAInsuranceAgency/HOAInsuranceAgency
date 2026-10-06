@@ -35,6 +35,10 @@ import {
 export default function NewLead() {
   const navigate = useNavigate();
   const requestId = useRef(crypto.randomUUID());
+  const savingNow = useRef(false);
+  const created = useRef<string | null>(null);
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const [salespersonId, setSalesperson] = useState("");
   const members = useAsyncResource(() => communicationRequest<{ team: TeamEligibility[]; actorId?: string }>("team"), [], { initialData: { team: [] } });
   useEffect(() => {
@@ -67,6 +71,7 @@ export default function NewLead() {
   });
 
   async function save() {
+    if (savingNow.current || created.current) return;
     if (!form.name.trim()) {
       setError("Name is required.");
       return;
@@ -77,6 +82,7 @@ export default function NewLead() {
       return;
     }
     if (!form.leadSource) { setError("Choose a lead source before creating the lead."); return; }
+    savingNow.current = true;
     setSaving(true);
     setError("");
     let data: { id: string } | null = null;
@@ -105,10 +111,12 @@ export default function NewLead() {
       }, true);
     } catch (e) { errors = [{ message: e instanceof Error ? e.message : "Could not create lead" }]; }
     if (errors?.length || !data) {
+      savingNow.current = false;
       setSaving(false);
       setError(friendlyError(errors?.[0]?.message, "Failed to create lead."));
       return;
     }
+    created.current = data.id;
 
     // The primary contact, as a row rather than four columns on the Account.
     // Not fatal, for the same reason it isn't in `lead-intake`: the lead
@@ -123,13 +131,15 @@ export default function NewLead() {
         email: str(form.contactEmail),
         phone: str(form.contactPhone),
       };
-      const { errors: contactErrors } = await client.models.Contact.create({
-        accountId: data.id,
-        ...contact,
-        isPrimary: true,
-        extractionSourceKey: contactKey(contact),
-      });
-      contactFailed = Boolean(contactErrors?.length);
+      try {
+        const { errors: contactErrors } = await client.models.Contact.create({
+          accountId: data.id,
+          ...contact,
+          isPrimary: true,
+          extractionSourceKey: contactKey(contact),
+        });
+        contactFailed = Boolean(contactErrors?.length);
+      } catch { contactFailed = true; }
     }
 
     // Upload any staged documents to the new account so OCR + AI extraction
@@ -152,7 +162,8 @@ export default function NewLead() {
           continue;
         }
         const path = `documents/ACCOUNT/${data.id}/${doc.id}/${file.name}`;
-        await client.models.Document.update({ id: doc.id, s3Key: path });
+        const updated = await client.models.Document.update({ id: doc.id, s3Key: path });
+        if (updated.errors?.length) throw new Error(updated.errors[0].message);
         await uploadData({
           path,
           data: file,
@@ -165,6 +176,8 @@ export default function NewLead() {
       }
     }
 
+    savingNow.current = false;
+    if (!mounted.current) return;
     setSaving(false);
     const afterCreate: string[] = [];
     if (failedUploads.length) {
@@ -194,11 +207,12 @@ export default function NewLead() {
     <>
       <h1>New lead</h1>
       <div className="card"><div className="form-grid">
-        <ResponsibilitySelect label="Salesperson" value={salespersonId} team={members.data.team} onChange={setSalesperson} disabled={saving} />
+        <ResponsibilitySelect label="Salesperson" value={salespersonId} team={members.data.team} onChange={setSalesperson} disabled={saving || !!createdId} />
       </div>{members.error && <p className="error-text">{members.error}</p>}</div>
       <p className="sub">Association or individual prospect</p>
 
       <div className="card">
+        <fieldset disabled={saving || !!createdId} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
         <div className="form-grid">
           <div className="field">
             <label htmlFor="new-lead-account-type">Account type</label>
@@ -235,10 +249,11 @@ export default function NewLead() {
               re-joined by everything that rendered them. More contacts are
               added on the account's Contacts card; this one is the primary. */}
           <div className="field">
-            <label>Contact name</label>
+            <label htmlFor="new-lead-contact-name">Contact name</label>
             <input
               placeholder="Pat Alvarez"
               value={form.contactName}
+              id="new-lead-contact-name"
               onChange={(e) => setF("contactName", e.target.value)}
             />
           </div>
@@ -383,6 +398,7 @@ export default function NewLead() {
           </div>
         )}
 
+        </fieldset>
         <div className="form-actions">
           {createdId ? (
             <button

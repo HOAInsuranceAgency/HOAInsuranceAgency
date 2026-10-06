@@ -9,6 +9,7 @@ import {
 import { Badge, statusBadge, INVOICE_STATUS_BADGE } from "../../lib/badges";
 import { useSort, SortTh } from "../../lib/useSort";
 import { useAsyncResource } from "../../lib/useAsyncResource";
+import { isAuthorizationError } from "../../lib/authorizationError";
 import {
   invoiceAging,
   type AgingBucket,
@@ -47,7 +48,7 @@ export default function FinanceTab() {
   const res = useAsyncResource<FinanceData>(
     loadFinanceDashboard,
     [],
-    { initialData: EMPTY, errorMessage: "Failed to load the finance view" }
+    { initialData: EMPTY, errorMessage: "Failed to load the finance view", clearDataOnError: isAuthorizationError }
   );
   const { invoices, pfLoans, accounts, payments, policies, invoiceLines, commercial, asOf } = res.data;
 
@@ -107,7 +108,7 @@ export default function FinanceTab() {
   );
 
   return (
-    <TabFrame res={res}>
+    <TabFrame res={res} hasSnapshot={res.data !== EMPTY}>
       <div className="report-actions"><ReportDownload report={{ title: "Finance summary", filters: `Snapshot as of ${today}. ${nonBilledNote} ${gapNote}`, sections: [{ title: "Finance summary", columns: ["Measure", "Amount (USD)", "Count"], rows: [
         [nonBilledIncomplete ? "Known non-billed principal (incomplete)" : "Total non-billed principal", nonBilled.total, nonBilled.count],
         ["Total billed and uncollected", billed, open.length],

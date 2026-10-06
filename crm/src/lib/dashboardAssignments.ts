@@ -1,6 +1,7 @@
 import { emptyCommercialPlan } from '../../../shared/quotePackages';
 import { communicationRequest, type TeamEligibility } from './communications';
 import type { CommercialData, CommercialEntry } from './commercial';
+import { allWithAuthorizationPriority } from './allWithAuthorizationPriority';
 
 export interface ReportAccount { id: string; name: string; leadSource?: string | null; source?: string | null }
 export interface AssignmentData extends CommercialData { accounts: ReportAccount[] }
@@ -13,7 +14,7 @@ export async function loadAssignments(ids: string[]): Promise<AssignmentData> {
   if (!Array.isArray(roster.team)) throw new Error('Could not load teammates');
   const entries: Record<string, CommercialEntry> = {}, reportAccounts: ReportAccount[] = [];
   for (let offset = 0; offset < accounts.length; offset += 2000) {
-    const results = await Promise.allSettled(Array.from({ length: Math.ceil(Math.min(2000, accounts.length - offset) / 500) }, async (_, batchIndex) => {
+    const results = await allWithAuthorizationPriority(Array.from({ length: Math.ceil(Math.min(2000, accounts.length - offset) / 500) }, async (_, batchIndex) => {
       const batch = accounts.slice(offset + batchIndex * 500, offset + (batchIndex + 1) * 500);
       const result = await communicationRequest<{ items: Omit<CommercialEntry, 'plan'>[]; accounts: ReportAccount[] }>('dashboardAssignments', { accountIds: batch });
       if (!Array.isArray(result.items) || result.items.length !== batch.length || batch.some(id => !result.items.some(item => item.accountId === id)) || !Array.isArray(result.accounts)) {
@@ -22,9 +23,8 @@ export async function loadAssignments(ids: string[]): Promise<AssignmentData> {
       return result;
     }));
     for (const result of results) {
-      if (result.status === 'rejected') throw result.reason;
-      for (const item of result.value.items) entries[item.accountId] = { ...item, plan: emptyCommercialPlan(item.accountId) };
-      reportAccounts.push(...result.value.accounts);
+      for (const item of result.items) entries[item.accountId] = { ...item, plan: emptyCommercialPlan(item.accountId) };
+      reportAccounts.push(...result.accounts);
     }
   }
   return { entries, team: roster.team, accounts: reportAccounts };

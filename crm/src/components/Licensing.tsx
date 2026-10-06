@@ -1,6 +1,7 @@
 import { Suspense, lazy, useMemo, useState } from "react";
 import {
   client,
+  listAllPages,
   licenseHealth,
   type License,
   type UserProfile,
@@ -61,6 +62,7 @@ export default function Licensing() {
   // three of them.
   const [view, setView] = useState<View>("map");
   const [adding, setAdding] = useState<HolderType | null>(null);
+  const [saving, setSaving] = useState(false);
   const [editing, setEditing] = useState<License | null>(null);
   const [openDocsFor, setOpenDocsFor] = useState<string | null>(null);
   const [query, setQuery] = useState("");
@@ -69,17 +71,17 @@ export default function Licensing() {
   const isAdmin = useIsAdmin();
 
   // Two hooks rather than one `{licenses, profiles}` fetcher: this screen
-  // never refetches, it patches `licenses` locally in three places (delete,
-  // append after backfill, upsert after save), and those stay one-liners only
+  // patches `licenses` locally after deletes and saves, with retry reads
+  // only when loading fails, and those edits stay one-liners only
   // while `licenses` is its own resource. The single loading gate the two
   // reads shared is reproduced below by OR-ing the two flags.
   const lic = useAsyncResource(
-    async () => (await client.models.License.list()).data,
+    () => listAllPages(nextToken => client.models.License.list({ nextToken })),
     [],
     { initialData: [] as License[], errorMessage: "Failed to load licenses" }
   );
   const prof = useAsyncResource(
-    async () => (await client.models.UserProfile.list()).data,
+    () => listAllPages(nextToken => client.models.UserProfile.list({ nextToken })),
     [],
     { initialData: [] as UserProfile[], errorMessage: "Failed to load team profiles" }
   );
@@ -166,16 +168,17 @@ export default function Licensing() {
   }, [licenses]);
 
   async function del(id: string) {
-    await client.models.License.delete({ id });
+    const { data, errors } = await client.models.License.delete({ id });
+    if (errors?.length || !data) throw new Error(errors?.[0]?.message || "Could not confirm the license was deleted.");
     setLicenses((ls) => ls.filter((l) => l.id !== id));
   }
 
   if (loading) return <p className="muted small">Loading licenses…</p>;
+  // An incomplete read must never paint the licensing map as unlicensed.
+  if (error) return <div role="alert"><p className="error-text">{error}</p><button onClick={() => { void lic.refetch(); void prof.refetch(); }}>Retry licensing</button></div>;
 
   return (
     <>
-      {error && <p className="error-text">{error}</p>}
-
       <div className="card lic-bar">
         <div className="lic-stats">
           <div className="lic-stat">
@@ -338,6 +341,7 @@ export default function Licensing() {
           className="modal-form"
           closeLabel="Cancel"
           onClose={() => {
+            if (saving) return;
             setAdding(null);
             setEditing(null);
           }}
@@ -349,7 +353,9 @@ export default function Licensing() {
             holderType={editing ? (editing.holderType as HolderType) : adding!}
             existing={editing}
             profiles={profiles}
+            onSaving={setSaving}
             onCancel={() => {
+              if (saving) return;
               setAdding(null);
               setEditing(null);
             }}

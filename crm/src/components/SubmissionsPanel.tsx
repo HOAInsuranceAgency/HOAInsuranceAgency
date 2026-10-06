@@ -2,6 +2,8 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { client, type Account } from "../lib/client";
 import { listAllPages } from "../lib/pagination";
 import { useAsyncResource } from "../lib/useAsyncResource";
+import { isAuthorizationError } from "../lib/authorizationError";
+import { allWithAuthorizationPriority } from "../lib/allWithAuthorizationPriority";
 import { businessDate, eligibleEstimate, lastEffectiveDate, object, partialInput, portalUrl, submissionStatus, type SubmissionDetails } from "../../amplify/functions/honeycomb/submission-contract";
 import type { Schema } from "../../amplify/data/resource";
 import "./SubmissionsPanel.css";
@@ -16,32 +18,48 @@ export function initialDetails(account: Account): SubmissionDetails {
     effectiveDate: date && date >= businessDate() && date <= lastEffectiveDate() ? date : "",
     numUnits: account.unitCount ?? "", yearBuilt: account.yearBuilt ?? "", numStories: account.stories ?? "" };
 }
-export default function SubmissionsPanel({ account, initialEstimateId }: { account: Account; initialEstimateId?: string }) {
+export default function SubmissionsPanel(props: Parameters<typeof SubmissionsPanelContent>[0]) {
+  return <SubmissionsPanelContent key={props.account.id} {...props} />;
+}
+
+function SubmissionsPanelContent({ account, initialEstimateId }: { account: Account; initialEstimateId?: string }) {
   const [open, setOpen] = useState<boolean | undefined>(initialEstimateId ? true : undefined);
   const [retry, setRetry] = useState<Submission>();
   const [queuedId, setQueuedId] = useState("");
   const resource = useAsyncResource(async () => {
-    const [submissions, estimates, settings] = await Promise.all([
+    const [submissions, estimates, settings] = await allWithAuthorizationPriority([
       listAllPages(async nextToken => {
         const page = await client.models.HoneycombSubmission.listHoneycombSubmissionByAccountId({ accountId: account.id }, { nextToken });
-        if (page.errors?.length) throw new Error("Unable to load submissions."); return page;
+        return page;
       }),
       listAllPages(async nextToken => {
         const page = await client.models.HoneycombEstimate.listHoneycombEstimateByAccountId({ accountId: account.id }, { nextToken });
-        if (page.errors?.length) throw new Error("Unable to load estimates."); return page;
+        return page;
       }),
-      client.queries.honeycombSubmissionSettings(),
+      client.queries.honeycombSubmissionSettings().then(settings => {
+        if (settings.errors?.length) throw settings.errors.find(isAuthorizationError) ?? settings.errors[0];
+        return settings;
+      }),
     ]);
-    if (settings.errors?.length) throw new Error("Unable to check submission availability.");
     return { submissions: submissions.sort((a, b) => b.createdAt.localeCompare(a.createdAt)), estimates: estimates.sort((a, b) => b.createdAt.localeCompare(a.createdAt)), enabled: object(settings.data).enabled === true };
-  }, [account.id]);
+  }, [account.id], { clearDataOnError: isAuthorizationError });
   const records = resource.data?.submissions ?? [];
+  // Decide the initial empty-state composer once. Later history refreshes
+  // must not close a draft just because another submission appeared.
+  useEffect(() => {
+    if (open === undefined && resource.data && !resource.error) setOpen(resource.data.submissions.length === 0 && !queuedId);
+  }, [open, resource.data, resource.error, queuedId]);
   const pending = records.some(r => ["PENDING", "RUNNING"].includes(submissionStatus(r))) || !!queuedId && !records.some(r => r.id === queuedId);
   useEffect(() => {
-    if (!pending) return;
-    const timer = setInterval(() => void resource.refetch(), 5000);
+    if (!pending || resource.loading) return;
+    let polling = false;
+    const timer = setInterval(() => {
+      if (polling) return;
+      polling = true;
+      void resource.refetch().finally(() => { polling = false; });
+    }, 5000);
     return () => clearInterval(timer);
-  }, [pending, resource.refetch]);
+  }, [pending, resource.loading, resource.refetch]);
   return <section className="hc-submissions" aria-label="Carrier submissions">
     <div className="hc-heading"><div><h2>Submissions</h2><p className="muted">Create a Honeycomb partial submission, then finish it in the carrier portal.</p></div>
       {resource.data?.enabled && account.type === "ASSOCIATION" && <button className="primary" onClick={() => { setRetry(undefined); setOpen(true); }}>New submission</button>}
@@ -51,8 +69,8 @@ export default function SubmissionsPanel({ account, initialEstimateId }: { accou
     {!resource.loaded && <p role="status">Loading submissions…</p>}
     {resource.data && !resource.data.enabled && <p>Honeycomb submissions are currently enabled in staging only.</p>}
     {account.type !== "ASSOCIATION" && <p>This Honeycomb workflow supports association accounts.</p>}
-    {resource.data?.enabled && !resource.error && account.type === "ASSOCIATION" && (open ?? (!records.length && !queuedId)) && <Composer
-      key={retry ? `${retry.id}:${retry.attempt}` : "new"} account={account} estimates={resource.data.estimates} records={records} retry={retry}
+    {resource.data?.enabled && account.type === "ASSOCIATION" && (open ?? (!records.length && !queuedId)) && <Composer
+      key={retry ? `${retry.id}:${retry.attempt}` : "new"} blocked={!!resource.error || resource.loading} account={account} estimates={resource.data.estimates} records={records} retry={retry}
       initialEstimateId={retry?.sourceEstimateId ?? initialEstimateId} onCancel={() => { setOpen(false); setRetry(undefined); }}
       onQueued={id => { setQueuedId(id); setOpen(false); setRetry(undefined); void resource.refetch(); }} />}
     {queuedId && !records.some(r => r.id === queuedId) && <p role="status">Request saved. Loading its status… <button className="secondary" onClick={() => void resource.refetch()}>Refresh</button></p>}
@@ -61,8 +79,8 @@ export default function SubmissionsPanel({ account, initialEstimateId }: { accou
       onRetry={() => { setRetry(record); setOpen(true); }} />)}
   </section>;
 }
-function Composer({ account, estimates, records, retry, initialEstimateId, onCancel, onQueued }: {
-  account: Account; estimates: Estimate[]; records: Submission[]; retry?: Submission; initialEstimateId?: string; onCancel: () => void; onQueued: (id: string) => void;
+function Composer({ account, estimates, records, retry, initialEstimateId, onCancel, onQueued, blocked }: {
+  blocked: boolean; account: Account; estimates: Estimate[]; records: Submission[]; retry?: Submission; initialEstimateId?: string; onCancel: () => void; onQueued: (id: string) => void;
 }) {
   const eligible = estimates.filter(eligibleEstimate);
   const [sourceId, setSourceId] = useState(initialEstimateId ?? "");
@@ -75,7 +93,7 @@ function Composer({ account, estimates, records, retry, initialEstimateId, onCan
   const duplicate = records.find(r => r.effectiveDate === details.effectiveDate && (!retry || r.id !== retry.id));
   const change = (key: keyof SubmissionDetails, value: string) => { setDetails(d => ({ ...d, [key]: value })); setReviewed(false); setError(""); };
   async function submit(event: FormEvent) {
-    event.preventDefault(); if (lock.current) return;
+    event.preventDefault(); if (lock.current || blocked) return;
     if (sourceId && !source) { setError("This estimate is not eligible for conversion. Choose another estimate or enter property details."); return; }
     if (!reviewed) { setError("Review and confirm the property details first."); return; }
     try { partialInput(form, source); } catch (err) { setError((err as Error).message); return; }
@@ -108,7 +126,7 @@ function Composer({ account, estimates, records, retry, initialEstimateId, onCan
     <label className="hc-review"><input type="checkbox" checked={reviewed} disabled={busy} onChange={e => setReviewed(e.target.checked)} /><span>I reviewed these details and want to create a partial submission in Honeycomb staging.</span></label>
     {duplicate && <p role="status">A submission already exists for this effective date. Review its status in the history below.</p>}
     {error && <p role="alert" className="error-text">{error}</p>}
-    <div className="hc-actions"><button className="primary" disabled={busy || !reviewed || !!duplicate || !!sourceId && !source} type="submit">{busy ? "Saving request…" : retry ? "Retry partial submission" : "Create partial submission"}</button><button className="secondary" type="button" disabled={busy} onClick={onCancel}>Cancel</button></div>
+    <div className="hc-actions"><button className="primary" disabled={busy || blocked || !reviewed || !!duplicate || !!sourceId && !source} type="submit">{busy ? "Saving request…" : retry ? "Retry partial submission" : "Create partial submission"}</button><button className="secondary" type="button" disabled={busy} onClick={onCancel}>Cancel</button></div>
   </form>;
 }
 function formatInput(value: string | number | undefined, year: boolean) {

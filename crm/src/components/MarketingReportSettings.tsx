@@ -28,19 +28,29 @@ export default function MarketingReportSettings() {
   const inFlight = useRef(false);
   const requestId = useRef(savedRequest());
   const mounted = useRef(true);
+  const readVersion = useRef(0);
+  const reading = useRef(false);
+  const edited = useRef(false);
+  const draftVersion = useRef(0);
 
   const load = useCallback(async (adopt = false) => {
+    if (inFlight.current || reading.current) return;
+    const version = ++readVersion.current;
+    reading.current = true;
     try {
       const result = await loadMarketingReports();
-      if (!mounted.current) return;
+      if (!mounted.current || version !== readVersion.current) return;
       setSnapshot(result); setReadError("");
-      if (adopt) { setRecipient(result.settings.recipient); setEnabled(result.settings.enabled); }
+      if (adopt || !edited.current) {
+        setRecipient(result.settings.recipient); setEnabled(result.settings.enabled);
+        draftVersion.current = result.settings.version; edited.current = false;
+      }
     } catch (e) {
-      if (mounted.current) setReadError(e instanceof Error ? e.message : "Could not load marketing report settings.");
-    }
+      if (mounted.current && version === readVersion.current) setReadError(e instanceof Error ? e.message : "Could not load marketing report settings.");
+    } finally { if (version === readVersion.current) reading.current = false; }
   }, []);
 
-  useEffect(() => { mounted.current = true; void load(true); return () => { mounted.current = false; }; }, [load]);
+  useEffect(() => { mounted.current = true; void load(true); return () => { mounted.current = false; ++readVersion.current; reading.current = false; }; }, [load]);
   const hasPending = snapshot?.recentRuns.some(pending) ?? false;
   useEffect(() => {
     if (!hasPending) return;
@@ -50,9 +60,10 @@ export default function MarketingReportSettings() {
 
   async function act(name: string, action: () => Promise<void>) {
     if (inFlight.current) return;
+    ++readVersion.current; reading.current = false;
     inFlight.current = true; setBusy(name); setError(""); setMessage("");
     try { await action(); }
-    catch (e) { setError(e instanceof Error ? e.message : "Could not complete this action. Try again."); }
+    catch (e) { if (mounted.current) setError(e instanceof Error ? e.message : "Could not complete this action. Try again."); }
     finally { inFlight.current = false; if (mounted.current) setBusy(""); }
   }
 
@@ -74,15 +85,17 @@ export default function MarketingReportSettings() {
       <form aria-label="Marketing report settings" onSubmit={e => {
         e.preventDefault();
         void act("save", async () => {
-          const result = await saveMarketingReports({ version: snapshot.settings.version, enabled, recipient: recipient.trim() });
+          const result = await saveMarketingReports({ version: draftVersion.current, enabled, recipient: recipient.trim() });
+          if (!mounted.current) return;
+          edited.current = false; draftVersion.current = result.settings.version;
           setSnapshot(result); setRecipient(result.settings.recipient); setEnabled(result.settings.enabled); setReadError("");
           setMessage(result.settings.enabled && result.environment === "main" ? "Saved. Weekly delivery is on for Friday at 8:00 a.m. Eastern." : "Settings saved. Automatic delivery is off.");
         });
       }}>
         <fieldset disabled={!!busy} style={{ border: 0, padding: 0, margin: 0 }}>
-          <label className="field">Recipient email<input type="email" autoComplete="email" value={recipient} onChange={e => setRecipient(e.target.value)} required={enabled} maxLength={254} /></label>
-          <label className="small"><input type="checkbox" checked={enabled} onChange={e => setEnabled(e.target.checked)} /> Send automatically every Friday</label>
-          <div className="form-actions"><button type="submit" className="primary" disabled={disabled || !dirty}>{busy === "save" ? "Saving…" : "Save settings"}</button></div>
+          <label className="field">Recipient email<input type="email" autoComplete="email" value={recipient} onChange={e => { edited.current = true; setRecipient(e.target.value); }} required={enabled} maxLength={254} /></label>
+          <label className="small"><input type="checkbox" checked={enabled} onChange={e => { edited.current = true; setEnabled(e.target.checked); }} /> Send automatically every Friday</label>
+          <div className="form-actions"><button type="submit" className="primary" disabled={disabled || !dirty}>{busy === "save" ? "Saving…" : "Save settings"}</button>{dirty && <button type="button" className="secondary" onClick={() => { setRecipient(snapshot.settings.recipient); setEnabled(snapshot.settings.enabled); draftVersion.current = snapshot.settings.version; edited.current = false; setError(""); }}>Discard changes</button>}</div>
         </fieldset>
       </form>
       <hr />
@@ -94,6 +107,7 @@ export default function MarketingReportSettings() {
           if (!requestId.current) { requestId.current = crypto.randomUUID(); keepRequest(requestId.current); }
           const result = await sendMarketingReport(requestId.current);
           requestId.current = ""; keepRequest("");
+          if (!mounted.current) return;
           setSnapshot(previous => previous ? { ...previous, recentRuns: [result.run, ...previous.recentRuns.filter(r => r.id !== result.run.id)].slice(0, 10) } : previous);
           setMessage(pending(result.run) ? "Report queued. The delivery status below will update automatically." : result.run.status === "sent" ? "This report has already been sent. Its status is shown below." : "This request has already been processed. Review its delivery status below.");
         })}>{busy === "send" ? "Queuing…" : hasPending ? "Report in progress…" : "Send now"}</button>

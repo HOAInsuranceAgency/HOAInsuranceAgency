@@ -67,6 +67,20 @@ describe("TabFrame", () => {
     expect(screen.getByText(/showing the last numbers/)).toBeTruthy();
     expect(screen.getByRole("button", { name: "Refresh" })).toBeTruthy();
   });
+
+  it('removes a cleared snapshot and keeps it hidden during retry', () => {
+    const { rerender } = render(<TabFrame res={base} hasSnapshot>private report</TabFrame>);
+    rerender(<TabFrame res={{ ...base, error: 'Credentials changed' }} hasSnapshot={false}>empty report</TabFrame>);
+    expect(screen.queryByText('private report')).toBeNull();
+    expect(screen.queryByText('empty report')).toBeNull();
+    expect(screen.getByRole('alert')).toHaveTextContent('Credentials changed');
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeEnabled();
+    rerender(<TabFrame res={{ ...base, loading: true }} hasSnapshot={false}>empty report</TabFrame>);
+    expect(screen.getByText('Loading…')).toBeVisible();
+    expect(screen.queryByText('empty report')).toBeNull();
+    rerender(<TabFrame res={base} hasSnapshot>fresh report</TabFrame>);
+    expect(screen.getByText('fresh report')).toBeVisible();
+  });
 });
 
 describe("Tile", () => {

@@ -83,7 +83,7 @@ export interface FormState<T extends object> {
    * current values so `dirty` goes false and later edits are measured against
    * what was actually persisted. Identity-stable.
    */
-  markSaved: () => void;
+  markSaved: (submitted?: T) => void;
   /**
    * Return the form to its baseline — the seed values, or the values as of the
    * last `markSaved()` — clearing `dirty` and `saved`. This is the replacement
@@ -131,7 +131,7 @@ export interface FormStateOptions {
    * the same guarantee `saved` gets: one place to put it, no per-field call to
    * forget. Read from a ref, so it may be a fresh closure each render.
    */
-  onEdit?: () => void;
+  onEdit?: (reason?: 'edit' | 'reset') => void;
 }
 
 export function useFormState<T extends object>(
@@ -155,7 +155,7 @@ export function useFormState<T extends object>(
 
   const setF = useCallback(
     <K extends keyof T>(key: K, value: T[K] | ((prev: T[K]) => T[K])) => {
-      onEditRef.current?.();
+      onEditRef.current?.('edit');
       setState((s) => ({
         ...s,
         form: {
@@ -172,7 +172,7 @@ export function useFormState<T extends object>(
   );
 
   const patch = useCallback((fields: Partial<T> | ((prev: T) => Partial<T>)) => {
-    onEditRef.current?.();
+    onEditRef.current?.('edit');
     setState((s) => ({
       ...s,
       form: { ...s.form, ...(typeof fields === "function" ? fields(s.form) : fields) },
@@ -180,12 +180,16 @@ export function useFormState<T extends object>(
     }));
   }, []);
 
-  const markSaved = useCallback(() => {
-    setState((s) => ({ form: s.form, baseline: s.form, saved: true }));
+  const markSaved = useCallback((submitted?: T) => {
+    setState((s) => {
+      const baseline = submitted ?? s.form;
+      return { form: s.form, baseline,
+        saved: (Object.keys(s.form) as (keyof T)[]).every(key => sameValue(s.form[key], baseline[key])) };
+    });
   }, []);
 
   const reset = useCallback((next?: T) => {
-    onEditRef.current?.();
+    onEditRef.current?.('reset');
     setState((s) => {
       const seed = next ?? s.baseline;
       return { form: seed, baseline: seed, saved: false };

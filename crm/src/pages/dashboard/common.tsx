@@ -75,16 +75,19 @@ interface TabResource {
  * a retry button, which the old error screen also lacked), after it the
  * content stays up and a failure is a line above it, not a replacement.
  *
- * "Has this tab ever had real numbers" is a ref, not hook state — `loaded`
- * can't answer it (it goes true when a failed first fetch settles too), and
- * it only ever flips false→true for the life of the mount.
+ * "Has this tab retained real numbers" is a ref, not hook state — `loaded`
+ * can't answer it (it goes true when a failed first fetch settles too).
+ * Clearing a denied snapshot resets the latch, so retry cannot render
+ * empty defaults as if they were a successfully loaded report.
  */
 export function TabFrame({
   res,
   children,
+  hasSnapshot = true,
 }: {
   res: TabResource;
   children: ReactNode;
+  hasSnapshot?: boolean;
 }) {
   const succeeded = useRef(false);
   const [asOf, setAsOf] = useState<Date | null>(null);
@@ -93,13 +96,14 @@ export function TabFrame({
   // while a retry after a failed first load is in flight (loaded stuck from
   // the failed settle, error just cleared). Latching there would render the
   // empty-state copy over data that never arrived, mid-retry.
-  if (res.loaded && !res.loading && !res.error) succeeded.current = true;
+  if (!hasSnapshot) succeeded.current = false;
+  else if (res.loaded && !res.loading && !res.error) succeeded.current = true;
 
   if (!succeeded.current) {
     if (res.error && !res.loading) {
       return (
         <>
-          <p className="error-text">{res.error}</p>
+          <p className="error-text" role="alert">{res.error}</p>
           <button className="secondary" onClick={() => void res.refetch()}>
             Try again
           </button>

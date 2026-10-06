@@ -1,4 +1,4 @@
-import { useId } from "react";
+import { useId, useRef } from "react";
 import {
   EMAIL_RE,
   client,
@@ -105,12 +105,15 @@ export default function ContactsCard({ accountId }: { accountId: string }) {
   // Its own status because it is its own write, and one that touches rows the
   // add and edit forms never see.
   const primaryStatus = useSaveStatus({ autoClearMs: 4000 });
+  const primaryBusy = useRef(false);
 
   async function makePrimary(id: string) {
+    if (primaryBusy.current || child.addStatus.busy || child.editStatus.busy || child.delStatus.busy) return;
     const target = child.rows.find((c) => c.id === id);
     if (!target || target.isPrimary) return;
     const demote = child.rows.filter((c) => c.isPrimary && c.id !== id);
-    await primaryStatus.run(
+    primaryBusy.current = true;
+    try { await primaryStatus.run(
       async () => {
         // The promotion first: if the batch fails half-way, an account with
         // two primaries is recoverable and one with none is a blank field on
@@ -135,12 +138,13 @@ export default function ContactsCard({ accountId }: { accountId: string }) {
         savedMessage: `${target.name} is now the primary contact.`,
         errorMessage: "Couldn't change the primary contact.",
       },
-    );
+    ); } finally { primaryBusy.current = false; }
   }
 
   return (
     <ChildRowsCard
       title="Contacts"
+      busy={primaryStatus.busy}
       className="contacts-card"
       description="Select a primary contact for applications and certificates."
       child={child}
@@ -175,7 +179,7 @@ export default function ContactsCard({ accountId }: { accountId: string }) {
               type="radio"
               name={`primary-contact-${accountId}`}
               checked={contact.isPrimary === true}
-              disabled={primaryStatus.busy}
+              disabled={primaryStatus.busy || child.addStatus.busy || child.editStatus.busy || child.delStatus.busy}
               onChange={() => makePrimary(contact.id)}
               aria-label={`Make ${contact.name} the primary contact`}
             />
