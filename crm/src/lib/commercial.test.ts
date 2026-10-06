@@ -1,8 +1,18 @@
 import { beforeEach, expect, it, vi } from 'vitest';
+import { act, renderHook, waitFor } from '@testing-library/react';
 const request = vi.hoisted(() => vi.fn());
 vi.mock('./communications', () => ({ communicationRequest: request }));
-import { loadCommercial } from './commercial';
+import { loadCommercial, useCommercial } from './commercial';
 beforeEach(() => { request.mockReset(); });
+it('clears cached commercial details after an authorization failure', async () => {
+  request.mockImplementation(async (operation, input) => operation === 'team' ? { team: [] } : { items: input.accountIds.map((accountId: string) => ({ accountId, salespersonId: 'a' })) });
+  const { result } = renderHook(() => useCommercial(['a']));
+  await waitFor(() => expect(result.current.data.entries.a).toBeDefined());
+  request.mockRejectedValue(Object.assign(new Error('Access denied'), { name: 'Unauthorized' }));
+  await act(async () => { await result.current.refetch(); });
+  expect(result.current.data.entries).toEqual({});
+  expect(result.current.error).toBeTruthy();
+});
 it('loads deduplicated assignments in bounded batches and fails an incomplete snapshot', async () => {
   request.mockImplementation(async (operation, input) => operation === 'team' ? { team: [] } : { items: input.accountIds.map((accountId: string) => ({ accountId, salespersonId: 'a' })) });
   const ids = Array.from({ length: 26 }, (_, i) => `account-${i}`);

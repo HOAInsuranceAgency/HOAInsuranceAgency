@@ -2,10 +2,16 @@ import { useEffect, useRef, useState } from "react";
 import { communicationRequest as request } from "../lib/communications";
 
 type Draft = { channelId: string; originalMessageId: string; recipient: string; subject: string; body: string; attachments: { filename: string; url: string; contentType: string }[] };
-export default function BusinessDraftButton({ accountId, conversationId, kind, recordId, label }: { accountId: string; conversationId: string; kind: "QUOTE" | "CERTIFICATE" | "DOCUMENT"; recordId: string; label: string }) {
+export default function BusinessDraftButton(props: Parameters<typeof BusinessDraftButtonContent>[0]) {
+  return <BusinessDraftButtonContent key={`${props.accountId}:${props.conversationId}:${props.kind}:${props.recordId}`} {...props} />;
+}
+function BusinessDraftButtonContent({ accountId, conversationId, kind, recordId, label }: { accountId: string; conversationId: string; kind: "QUOTE" | "CERTIFICATE" | "DOCUMENT"; recordId: string; label: string }) {
   const [busy, setBusy] = useState(false), [error, setError] = useState("");
+  const lock = useRef(false);
   const live = useRef(true); useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
   return <><button className="secondary" disabled={busy} onClick={async () => {
+    if (lock.current) return;
+    lock.current = true;
     setBusy(true); setError("");
     try {
       const { draft } = await request<{ draft: Draft }>("prepareBusinessDraft", { accountId, conversationId, kind, recordId }, true);
@@ -16,6 +22,6 @@ export default function BusinessDraftButton({ accountId, conversationId, kind, r
       const { default: Front } = await import("@frontapp/plugin-sdk");
       if (!live.current) return;
       await Front.createDraft({ channelId: draft.channelId as Parameters<typeof Front.createDraft>[0]["channelId"], replyOptions: { type: "reply", originalMessageId: draft.originalMessageId as NonNullable<Parameters<typeof Front.createDraft>[0]["replyOptions"]>["originalMessageId"] }, to: [draft.recipient], cc: [], bcc: [], subject: draft.subject, content: { type: "html", body: draft.body }, attachments: files });
-    } catch (e) { if (live.current) setError(e instanceof Error ? e.message : "Could not prepare the Front draft"); } finally { if (live.current) setBusy(false); }
+    } catch (e) { if (live.current) setError(e instanceof Error ? e.message : "Could not prepare the Front draft"); } finally { lock.current = false; if (live.current) setBusy(false); }
   }}>{busy ? "Preparing…" : label}</button>{error && <p className="error-text" role="alert">{error}</p>}</>;
 }

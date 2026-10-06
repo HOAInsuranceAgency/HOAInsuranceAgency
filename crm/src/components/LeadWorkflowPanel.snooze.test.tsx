@@ -40,6 +40,41 @@ beforeEach(() => {
 });
 afterEach(() => vi.useRealTimers());
 
+it('keeps a follow-up draft mounted while another account action refreshes the workspace', async () => {
+  const refresh = deferred<unknown>();
+  let reads = 0;
+  request.mockImplementation(operation => operation === 'context' ? ++reads === 1 ? Promise.resolve(context()) : refresh.promise : Promise.resolve({}));
+  render(<LeadWorkflowPanel accountId="a" />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Snooze Example lead' }));
+  fireEvent.change(screen.getByLabelText('Follow-up note'), { target: { value: 'Draft follow-up' } });
+  fireEvent.change(screen.getByLabelText('Internal note'), { target: { value: 'Save this note' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save note' }));
+  await act(async () => {});
+  expect(screen.getByLabelText('Follow-up note')).toHaveValue('Draft follow-up');
+  expect(screen.getByLabelText('Internal note')).toBeDisabled();
+  await act(async () => refresh.resolve(context()));
+  expect(screen.getByLabelText('Follow-up note')).toHaveValue('Draft follow-up');
+  expect(screen.getByLabelText('Internal note')).toHaveValue('');
+});
+
+it('does not append an older page after the communication history has refreshed', async () => {
+  const page = deferred<unknown>();
+  let reads = 0;
+  request.mockImplementation((operation, input) => {
+    if (operation !== 'context') throw new Error(`Unexpected operation: ${operation}`);
+    if (input.nextToken) return page.promise;
+    return Promise.resolve({ ...context('Example lead', ++reads === 1 ? 'Original history' : 'Refreshed history'), communicationNextToken: reads === 1 ? 'old-page' : undefined });
+  });
+  render(<LeadWorkflowPanel accountId="a" />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Load older activity' }));
+  expect(screen.getByRole('button', { name: 'Loading older activity…' })).toBeDisabled();
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+  await screen.findByText('Refreshed history');
+  await act(async () => page.resolve(context('Example lead', 'Stale older history')));
+  expect(screen.queryByText('Stale older history')).not.toBeInTheDocument();
+  expect(screen.getByText('Refreshed history')).toBeInTheDocument();
+});
+
 it('keeps a snooze draft when an already-running background refresh fails', async () => {
   let failRefresh!: (error: Error) => void;
   request.mockResolvedValueOnce({ workflow: { accountId: 'a', name: 'Example lead', version: 1, disposition: 'ACTIVE', humanTakeover: true }, snooze: emptyLeadSnooze('a'), tasks: [], communications: [], team: [], issues: [] });
@@ -154,8 +189,8 @@ it('clears access denied from older activity and ignores an in-flight context re
   });
   render(<LeadWorkflowPanel accountId="a" />);
   await screen.findByRole('button', { name: 'Snooze Example lead' });
-  fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
   fireEvent.click(screen.getByRole('button', { name: 'Load older activity' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
   await act(async () => older.reject(new Error(accessDenied)));
   expectPrivateContextCleared();
   expect(screen.getByRole('alert')).toHaveTextContent(accessDenied);

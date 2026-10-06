@@ -1,5 +1,5 @@
 import { beforeEach, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 
 const h = vi.hoisted(() => ({
@@ -79,4 +79,29 @@ it('keeps funded cancellations in the portfolio and non-billed debt until reconc
   expect(screen.getByText('A/R · Total non-billed').closest('.stat')).toHaveTextContent('$750');
   expect(screen.getByText('Awaiting refund / reconciliation')).toBeInTheDocument();
   expect(screen.getByText('Stopped')).toBeInTheDocument();
+});
+
+it('retains finance data for transient failures but clears denied data through retry', async () => {
+  const initial = h.loadAssignments.getMockImplementation()!;
+  render(<MemoryRouter><FinanceTab /></MemoryRouter>);
+  await screen.findByRole('heading', { name: 'Premium finance portfolio' });
+  h.loadAssignments.mockRejectedValueOnce(new Error('Report temporarily unavailable'));
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+  await screen.findByText(/Report temporarily unavailable/);
+  expect(screen.getByText('INV-1')).toBeVisible();
+  expect(screen.getByRole('combobox', { name: 'Download Finance summary' })).toBeDisabled();
+  h.loadAssignments.mockRejectedValueOnce(Object.assign(new Error('Credentials changed'), { name: 'Unauthorized' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('Credentials changed');
+  expect(screen.queryByText('INV-1')).toBeNull();
+  expect(screen.queryByRole('heading', { name: 'A/R aging' })).toBeNull();
+  expect(screen.queryByRole('combobox', { name: 'Download Finance summary' })).toBeNull();
+  let finish!: (value: unknown) => void;
+  h.loadAssignments.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+  await waitFor(() => expect(finish).toBeTypeOf('function'));
+  expect(screen.getByText('Loading…')).toBeVisible();
+  expect(screen.queryByRole('heading', { name: 'A/R aging' })).toBeNull();
+  await act(async () => finish(await initial()));
+  expect(await screen.findByText('INV-1')).toBeVisible();
 });

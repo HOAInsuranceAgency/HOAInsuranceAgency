@@ -131,3 +131,55 @@ describe("private employee compensation editor", () => {
     expect(h.query).toHaveBeenCalledTimes(1);
   });
 });
+
+it('blocks manual refresh while pay settings are open and keeps a dirty draft intact', async () => {
+  render(<OwnerProfitability />); await openPay();
+  fireEvent.change(screen.getByLabelText('Annual salary 1'), { target: { value: '71000' } });
+  h.query.mockRejectedValue(new Error('Report temporarily unavailable'));
+  expect(screen.getByRole('button', { name: 'Refresh' })).toBeDisabled();
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+  expect(h.query).toHaveBeenCalledTimes(1);
+  expect(screen.getByLabelText('Annual salary 1')).toHaveValue('71000');
+  fireEvent.click(screen.getByRole('button', { name: 'Manage pay settings' }));
+  expect(screen.getByRole('button', { name: 'Refresh' })).toBeEnabled();
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('Report temporarily unavailable');
+  expect(screen.queryByRole('table')).toBeNull();
+  expect(screen.queryByRole('region', { name: 'Private pay settings' })).toBeNull();
+  expect(screen.getByRole('button', { name: 'Try again' })).toBeEnabled();
+});
+
+it('prevents starting pay edits while a report refresh may clear private data', async () => {
+  h.query.mockResolvedValueOnce({ data: snapshot(true) });
+  render(<OwnerProfitability />); await screen.findByRole('table');
+  let fail!: (error: Error) => void;
+  h.query.mockImplementationOnce(() => new Promise((_resolve, reject) => { fail = reject; }));
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+  const manage = screen.getByRole('button', { name: 'Manage pay settings' });
+  const setup = screen.getByRole('button', { name: 'Edit pay settings for Casey Staff' });
+  expect(manage).toBeDisabled(); expect(setup).toBeDisabled();
+  fireEvent.click(manage); fireEvent.click(setup);
+  expect(screen.queryByRole('region', { name: 'Private pay settings' })).toBeNull();
+  await act(async () => fail(new Error('Report temporarily unavailable')));
+  expect(screen.getByRole('alert')).toHaveTextContent('Report temporarily unavailable');
+  expect(screen.queryByRole('table')).toBeNull();
+});
+
+
+it('keeps an in-flight pay save attached to its employee and adopts the committed version before rereads catch up', async () => {
+  let finish!: (value: unknown) => void;
+  h.save.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  render(<OwnerProfitability />); await openPay();
+  fireEvent.change(screen.getByLabelText('Annual salary 1'), { target: { value: '71000' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save pay settings' }));
+  expect(screen.getByRole('button', { name: 'Manage pay settings' })).toBeDisabled();
+  expect(screen.getByRole('combobox', { name: 'Employee' })).toBeDisabled();
+  const committed = { ...compensation, version: 4, terms: [{ ...compensation.terms[0], annualSalaryCents: 7_100_000 }] };
+  await act(async () => finish({ data: { ok: true, compensation: committed } }));
+  await screen.findByText('Pay settings saved.');
+  expect(screen.getByLabelText('Annual salary 1')).toHaveValue('71000.00');
+  fireEvent.change(screen.getByLabelText('Annual salary 1'), { target: { value: '72000' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save pay settings' }));
+  await waitFor(() => expect(h.save).toHaveBeenCalledTimes(2));
+  expect(h.save).toHaveBeenLastCalledWith(expect.objectContaining({ version: 4 }));
+});

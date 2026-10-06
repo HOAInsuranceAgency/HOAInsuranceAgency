@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   client,
   type Account,
@@ -78,7 +78,11 @@ function policyLabel(p: Policy): string {
   return `${number || lines || "Policy"}${term}`;
 }
 
-export function InvoiceEditor({
+export function InvoiceEditor(props: Parameters<typeof InvoiceEditorContent>[0]) {
+  return <InvoiceEditorContent key={props.invoice.id} {...props} />;
+}
+
+function InvoiceEditorContent({
   invoice,
   policies,
   quotes,
@@ -87,6 +91,7 @@ export function InvoiceEditor({
   onChange,
   onLinesChange,
   onDeleted,
+  onBusyChange,
 }: {
   invoice: Invoice;
   /** The account's policies, so the invoice can say which one it bills. */
@@ -101,6 +106,7 @@ export function InvoiceEditor({
   /** Lifted so the summary table's totals move with the lines edited here. */
   onLinesChange: (invoiceId: string, lines: InvoiceLine[]) => void;
   onDeleted: () => void;
+  onBusyChange?: (busy: boolean) => void;
 }) {
   const linesRes = useAsyncResource(
     () =>
@@ -165,33 +171,142 @@ export function InvoiceEditor({
    * with the editor. Every mutation below goes through this rather than
    * `linesRes.setData`, which would update this component and nothing else.
    */
-  const setLines = useCallback(
-    (next: (ls: InvoiceLine[]) => InvoiceLine[]) => {
-      linesRes.setData((ls) => {
-        const updated = next(ls);
-        onLinesChange(invoice.id, updated);
-        return updated;
-      });
-    },
-    [invoice.id, linesRes, onLinesChange]
-  );
+  const alive = useRef(true);
+  useEffect(() => {
+    alive.current = true;
+    return () => { alive.current = false; };
+  }, []);
+  const linesRef = useRef(linesRes.data);
+  linesRef.current = linesRes.data;
+  function setLines(next: (ls: InvoiceLine[]) => InvoiceLine[]) {
+    if (!alive.current) return;
+    const updated = next(linesRef.current);
+    linesRef.current = updated;
+    linesRes.setData(updated);
+    onLinesChange(invoice.id, updated);
+  }
 
-  const patchInvoice = useCallback(
-    async (patch: Partial<Invoice>, savedMessage = "Saved.") => {
-      await saveStatus.run(
-        async () => {
-          const { data, errors } = await client.models.Invoice.update({
-            id: invoice.id,
-            ...patch,
-          });
-          if (errors?.length || !data) throw new Error(errors?.[0]?.message);
-          onChange(data);
-        },
-        { savedMessage, errorMessage: "Couldn't save that." }
-      );
-    },
-    [invoice.id, onChange, saveStatus]
-  );
+  // Keep drafts separate from returned rows. A save response must not erase
+  // text entered while it was in flight, and failed writes remain retryable.
+  const [invoiceDraft, setInvoiceDraft] = useState<Partial<Invoice>>({});
+  const [lineDrafts, setLineDrafts] = useState<Record<string, Partial<InvoiceLine>>>({});
+  const [moneyInputs, setMoneyInputs] = useState<Record<string, string>>({});
+  const moneyInputsRef = useRef(moneyInputs);
+  const acknowledgedInvoice = useRef(invoice);
+  const acknowledgedChanges = useRef<Partial<Invoice>>({});
+  const lastInvoiceProp = useRef(invoice);
+  if (lastInvoiceProp.current !== invoice) {
+    lastInvoiceProp.current = invoice;
+    acknowledgedInvoice.current = invoice;
+  }
+  const invoiceDraftRef = useRef(invoiceDraft);
+  const lineDraftsRef = useRef(lineDrafts);
+  const queue = useRef(Promise.resolve());
+  const actionPending = useRef(false);
+  const [pending, setPending] = useState(0);
+  const [actionBusy, setActionBusy] = useState(false);
+  useEffect(() => { onBusyChange?.(pending > 0); }, [pending, onBusyChange]);
+  useEffect(() => () => onBusyChange?.(false), [onBusyChange]);
+  const dirty = Object.keys(invoiceDraft).length > 0 || Object.keys(lineDrafts).length > 0;
+
+  function editInvoice(patch: Partial<Invoice>) {
+    invoiceDraftRef.current = { ...invoiceDraftRef.current, ...patch };
+    setInvoiceDraft(invoiceDraftRef.current);
+    saveStatus.markDirty();
+  }
+  function editLine(id: string, patch: Partial<InvoiceLine>) {
+    lineDraftsRef.current = {
+      ...lineDraftsRef.current, [id]: { ...lineDraftsRef.current[id], ...patch },
+    };
+    setLineDrafts(lineDraftsRef.current);
+    saveStatus.markDirty();
+  }
+  function editMoney(id: string, field: "retailAmount" | "costAmount", raw: string) {
+    moneyInputsRef.current = { ...moneyInputsRef.current, [`${id}:${field}`]: raw };
+    setMoneyInputs(moneyInputsRef.current);
+    editLine(id, { [field]: fromInput(raw) });
+  }
+  function remaining<T extends object>(current: T, submitted: T): T {
+    const next = { ...current };
+    for (const key of Object.keys(submitted) as (keyof T)[]) {
+      if (Object.is(current[key], submitted[key])) delete next[key];
+    }
+    return next;
+  }
+  async function saveDrafts() {
+    const invoicePatch = { ...invoiceDraftRef.current };
+    const submittedMoney = { ...moneyInputsRef.current };
+    for (const raw of Object.values(submittedMoney)) {
+      if (raw.trim() && !Number.isFinite(Number(raw))) throw new Error("Enter a valid amount before saving or sending.");
+    }
+    const linePatches = Object.entries(lineDraftsRef.current);
+    if (Object.keys(invoicePatch).length) {
+      const { data, errors } = await client.models.Invoice.update({ id: invoice.id, ...invoicePatch });
+      if (errors?.length || !data) throw new Error(errors?.[0]?.message ?? "Couldn't save invoice details.");
+      if (!alive.current) return;
+      acknowledgedInvoice.current = data;
+      acknowledgedChanges.current = { ...acknowledgedChanges.current, ...invoicePatch };
+      onChange(data);
+      invoiceDraftRef.current = remaining(invoiceDraftRef.current, invoicePatch);
+      setInvoiceDraft(invoiceDraftRef.current);
+    }
+    for (const [id, patch] of linePatches) {
+      if (!alive.current) return;
+      const { data, errors } = await client.models.InvoiceLine.update({ id, ...patch });
+      if (errors?.length || !data) throw new Error(errors?.[0]?.message ?? "Couldn't save that line.");
+      if (!alive.current) return;
+      setLines(ls => ls.map(l => l.id === id ? data : l));
+      const rest = remaining(lineDraftsRef.current[id] ?? {}, patch);
+      const money = { ...moneyInputsRef.current };
+      for (const field of ["retailAmount", "costAmount"] as const) {
+        const key = `${id}:${field}`;
+        if (money[key] === submittedMoney[key]) delete money[key];
+        else if (Object.hasOwn(patch, field)) rest[field] = fromInput(money[key] ?? "");
+      }
+      moneyInputsRef.current = money;
+      setMoneyInputs(money);
+      const drafts = { ...lineDraftsRef.current };
+      if (Object.keys(rest).length) drafts[id] = rest;
+      else delete drafts[id];
+      lineDraftsRef.current = drafts;
+      setLineDrafts(drafts);
+    }
+  }
+  // Blur saves are queued rather than dropped while another field is saving.
+  // Send/void/add/remove run behind them and flush any still-focused draft.
+  function enqueue(task: () => Promise<string | void>, savedMessage = "Saved.", sending = false, action = false) {
+    if (action && actionPending.current) return Promise.resolve();
+    if (action) { actionPending.current = true; setActionBusy(true); }
+    onBusyChange?.(true);
+    setPending(n => n + 1);
+    const job = queue.current.then(async () => {
+      if (!alive.current) return;
+      await (sending ? sendStatus : saveStatus).run(async () => {
+        await saveDrafts();
+        if (alive.current) return task();
+      }, { savedMessage, errorMessage: "Couldn't save that. Your changes are still here; try again." });
+    }).finally(() => {
+      if (action) actionPending.current = false;
+      if (alive.current) {
+        setPending(n => n - 1);
+        if (action) setActionBusy(false);
+      }
+    });
+    queue.current = job;
+    return job;
+  }
+  function saveEdits() { return enqueue(async () => {}); }
+  function patchInvoice(patch: Partial<Invoice>, savedMessage = "Saved.") {
+    return enqueue(async () => {
+      const { data, errors } = await client.models.Invoice.update({ id: invoice.id, ...patch });
+      if (errors?.length || !data) throw new Error(errors?.[0]?.message ?? "Couldn't save invoice.");
+      if (alive.current) {
+        acknowledgedInvoice.current = data;
+        acknowledgedChanges.current = { ...acknowledgedChanges.current, ...patch };
+        onChange(data);
+      }
+    }, savedMessage, false, true);
+  }
 
   /**
    * Add a line, optionally directly below an existing one.
@@ -199,65 +314,35 @@ export function InvoiceEditor({
    * `after` is the row the + was pressed on. Everything below it is pushed down
    * a place first, so the new row lands where the button is rather than at the
    * bottom of the table — which is the whole point of putting the control on
-   * the row. The renumbering is fire-and-forget on the server and applied
-   * locally either way: a `sortOrder` collision sorts by an arbitrary but
-   * stable order, which is untidy, not wrong.
+   * the row. Each reorder is checked before creating the new row so failed
+   * writes never silently change the order shown here.
    */
-  async function addLine(seed?: Partial<InvoiceLine>, after?: InvoiceLine) {
-    const at = after ? (after.sortOrder ?? 0) + 1 : lines.length;
-    if (after) {
-      const below = lines.filter((l) => (l.sortOrder ?? 0) >= at);
-      await Promise.all(
-        below.map((l) =>
-          client.models.InvoiceLine.update({
-            id: l.id,
-            sortOrder: (l.sortOrder ?? 0) + 1,
-          })
-        )
-      );
-      setLines((ls) =>
-        ls.map((l) =>
-          (l.sortOrder ?? 0) >= at ? { ...l, sortOrder: (l.sortOrder ?? 0) + 1 } : l
-        )
-      );
-    }
-    await saveStatus.run(
-      async () => {
-        const { data, errors } = await client.models.InvoiceLine.create({
-          invoiceId: invoice.id,
-          accountId: invoice.accountId,
-          kind: "PREMIUM",
-          description: "",
-          sortOrder: at,
-          ...seed,
-        });
-        if (errors?.length || !data) throw new Error(errors?.[0]?.message);
-        setLines((ls) => [...ls, data]);
-      },
-      { savedMessage: "Line added.", errorMessage: "Couldn't add that line." }
-    );
+  function addLine(seed?: Partial<InvoiceLine>, after?: InvoiceLine) {
+    return enqueue(async () => {
+      const at = after ? (after.sortOrder ?? 0) + 1 : linesRef.current.length;
+      if (after) {
+        for (const line of linesRef.current.filter(l => (l.sortOrder ?? 0) >= at)
+          .sort((a, b) => (b.sortOrder ?? 0) - (a.sortOrder ?? 0))) {
+          const { data, errors } = await client.models.InvoiceLine.update({ id: line.id, sortOrder: (line.sortOrder ?? 0) + 1 });
+          if (errors?.length || !data) throw new Error(errors?.[0]?.message ?? "Couldn't reorder the lines. Try adding again.");
+          setLines(ls => ls.map(l => l.id === data.id ? data : l));
+        }
+      }
+      const { data, errors } = await client.models.InvoiceLine.create({
+        invoiceId: invoice.id, accountId: invoice.accountId,
+        kind: "PREMIUM", description: "", sortOrder: at, ...seed,
+      });
+      if (errors?.length || !data) throw new Error(errors?.[0]?.message ?? "Couldn't add that line.");
+      setLines(ls => [...ls, data]);
+    }, "Line added.", false, true);
   }
 
-  async function patchLine(id: string, patch: Partial<InvoiceLine>) {
-    await saveStatus.run(
-      async () => {
-        const { data, errors } = await client.models.InvoiceLine.update({ id, ...patch });
-        if (errors?.length || !data) throw new Error(errors?.[0]?.message);
-        setLines((ls) => ls.map((l) => (l.id === id ? data : l)));
-      },
-      { errorMessage: "Couldn't save that line." }
-    );
-  }
-
-  async function removeLine(id: string) {
-    await saveStatus.run(
-      async () => {
-        const { errors } = await client.models.InvoiceLine.delete({ id });
-        if (errors?.length) throw new Error(errors[0].message);
-        setLines((ls) => ls.filter((l) => l.id !== id));
-      },
-      { savedMessage: "Line removed.", errorMessage: "Couldn't remove that line." }
-    );
+  function removeLine(id: string) {
+    return enqueue(async () => {
+      const { errors } = await client.models.InvoiceLine.delete({ id });
+      if (errors?.length) throw new Error(errors[0].message);
+      setLines(ls => ls.filter(l => l.id !== id));
+    }, "Line removed.", false, true);
   }
 
   /** Seed the premium line from the policy, so the common case is one click. */
@@ -282,8 +367,29 @@ export function InvoiceEditor({
    * it. Closing the link needs the secret key, so the whole operation moved
    * server-side; see `void-invoice/resource.ts`.
    */
+  async function refreshAfterAction(fallback: Invoice, reflectsAction: (row: Invoice) => boolean) {
+    try {
+      const fresh = await client.models.Invoice.get({ id: invoice.id });
+      const row = fresh.data;
+      // A send can race a payment or void. Keep a returned protected state
+      // even when the read has not caught up with the send or our saved edits.
+      const statusOrder = ["DRAFT", "SENT", "PROCESSING", "PAID", "VOID"];
+      if (!fresh.errors?.length && row && statusOrder.indexOf(row.status) > statusOrder.indexOf(fallback.status)) {
+        fallback = { ...fallback, status: row.status, paidAt: row.paidAt, paymentUrl: row.paymentUrl };
+      }
+      const reflectsEdits = row && Object.entries(acknowledgedChanges.current)
+        .every(([key, value]) => Object.is(row[key as keyof Invoice], value));
+      if (!fresh.errors?.length && row && reflectsEdits && reflectsAction(row)) {
+        if (alive.current) { acknowledgedInvoice.current = row; onChange(row); }
+        return true;
+      }
+    } catch { /* The action succeeded; a failed read must not invite a resend. */ }
+    if (alive.current) { acknowledgedInvoice.current = fallback; onChange(fallback); }
+    return false;
+  }
+
   async function voidThis() {
-    await saveStatus.run(
+    await enqueue(
       async () => {
         const { data, errors } = await client.mutations.voidInvoice({
           invoiceId: invoice.id,
@@ -293,15 +399,18 @@ export function InvoiceEditor({
         const result =
           typeof data === "string" ? JSON.parse(data) : (data as Record<string, unknown>);
         if (!result?.ok) throw new Error(String(result?.error ?? "Void failed."));
-        const fresh = await client.models.Invoice.get({ id: invoice.id });
-        if (fresh.data) onChange(fresh.data);
+        const refreshed = await refreshAfterAction(
+          { ...acknowledgedInvoice.current, status: "VOID" },
+          row => row.status === "VOID"
+        );
+        if (!refreshed) return "Invoice voided. Reopen it to refresh its details.";
       },
-      { savedMessage: "Voided.", errorMessage: "Couldn't void that invoice." }
+      "Voided.", false, true
     );
   }
 
   async function send() {
-    await sendStatus.run(
+    await enqueue(
       async () => {
         const { data, errors } = await client.mutations.sendInvoice({
           invoiceId: invoice.id,
@@ -316,16 +425,21 @@ export function InvoiceEditor({
         const result =
           typeof data === "string" ? JSON.parse(data) : (data as Record<string, unknown>);
         if (!result?.ok) throw new Error(String(result?.error ?? "Send failed."));
-        const fresh = await client.models.Invoice.get({ id: invoice.id });
-        if (fresh.data) onChange(fresh.data);
-        return `Sent to ${result.sentTo}.`;
+        const previousSentAt = acknowledgedInvoice.current.sentAt;
+        const sentTo = typeof result.sentTo === "string" ? result.sentTo : toEmails.join(",");
+        const recipients = (value: string | null | undefined) => (value ?? "").split(",").map(email => email.trim().toLowerCase()).sort().join(",");
+        const refreshed = await refreshAfterAction(
+          { ...acknowledgedInvoice.current, sentAt: new Date().toISOString(), sentTo },
+          row => Boolean(row.sentAt && row.sentAt !== previousSentAt) && recipients(row.sentTo) === recipients(sentTo)
+        );
+        return `Sent to ${result.sentTo}.${!refreshed ? " Reopen the invoice to refresh its details." : ""}`;
       },
-      { errorMessage: "Couldn't send that invoice." }
+      "Sent.", true, true
     );
   }
 
   if (!linesRes.loaded) return <p className="muted small">Loading invoice…</p>;
-  if (linesRes.error) return <p className="error-text">{linesRes.error}</p>;
+  if (linesRes.error) return <p className="error-text">{linesRes.error} <button type="button" disabled={linesRes.loading} onClick={() => void linesRes.refetch()}>Retry invoice lines</button></p>;
 
   const inputId = (part: string) => `inv-${part}-${invoice.id}`;
 
@@ -338,6 +452,7 @@ export function InvoiceEditor({
         </h2>
         <div className="inline-actions">
           <SaveStatus {...saveStatus.status} />
+          {dirty && <button type="button" disabled={pending > 0} onClick={() => void saveEdits()}>Save changes</button>}
           {/* Voided, not deleted: the number must never be reused, and a gap in
               the sequence is explainable in a way a reissue is not. */}
           {/* Not offered while a debit is clearing: an in-flight ACH cannot be
@@ -349,6 +464,7 @@ export function InvoiceEditor({
               busyLabel="Voiding…"
               className="danger"
               message="The number is retired, and the payment link is closed."
+              disabled={actionBusy}
               onConfirm={() => voidThis()}
             />
           )}
@@ -358,11 +474,12 @@ export function InvoiceEditor({
               busyLabel="Deleting…"
               className="danger"
               message="It is void and has no lines."
-              onConfirm={async () => {
+              disabled={actionBusy}
+              onConfirm={() => enqueue(async () => {
                 const { errors } = await client.models.Invoice.delete({ id: invoice.id });
                 if (errors?.length) throw new Error(errors[0].message);
-                onDeleted();
-              }}
+                if (alive.current) onDeleted();
+              }, "Deleted.", false, true)}
             />
           )}
         </div>
@@ -392,7 +509,8 @@ export function InvoiceEditor({
             </tr>
           </thead>
           <tbody>
-            {lines.map((l) => {
+            {lines.map((savedLine) => {
+              const l = { ...savedLine, ...lineDrafts[savedLine.id] };
               const retail = l.retailAmount ?? 0;
               const cost = l.costAmount ?? 0;
               /**
@@ -409,23 +527,21 @@ export function InvoiceEditor({
                     <input
                       aria-label="Description"
                       placeholder="What this line is for"
-                      defaultValue={l.description ?? ""}
-                      disabled={locked}
-                      onBlur={(e) =>
-                        void patchLine(l.id, { description: e.target.value })
-                      }
+                      value={l.description ?? ""}
+                      disabled={locked || actionBusy}
+                      onChange={e => editLine(l.id, { description: e.target.value })}
+                      onBlur={() => void saveEdits()}
                     />
                   </td>
                   <td className="kind-col">
                     <select
                       aria-label="Kind"
-                      defaultValue={l.kind ?? "PREMIUM"}
-                      disabled={locked}
-                      onChange={(e) =>
-                        void patchLine(l.id, {
-                          kind: e.target.value as InvoiceLine["kind"],
-                        })
-                      }
+                      value={l.kind ?? "PREMIUM"}
+                      disabled={locked || actionBusy}
+                      onChange={e => {
+                        editLine(l.id, { kind: e.target.value as InvoiceLine["kind"] });
+                        void saveEdits();
+                      }}
                     >
                       {LINE_KINDS.map(([value, label]) => (
                         <option key={value} value={value}>
@@ -438,28 +554,26 @@ export function InvoiceEditor({
                     <input
                       aria-label="Bills the association"
                       className="money"
-                      type="number"
-                      step="0.01"
+                      type="text"
+                      inputMode="decimal"
                       placeholder="0.00"
-                      defaultValue={toInput(l.retailAmount)}
-                      disabled={locked}
-                      onBlur={(e) =>
-                        void patchLine(l.id, { retailAmount: fromInput(e.target.value) })
-                      }
+                      value={moneyInputs[`${l.id}:retailAmount`] ?? toInput(l.retailAmount)}
+                      disabled={locked || actionBusy}
+                      onChange={e => editMoney(l.id, "retailAmount", e.target.value)}
+                      onBlur={() => void saveEdits()}
                     />
                   </td>
                   <td className="num internal band-start">
                     <input
                       aria-label="Costs the agency"
                       className="money"
-                      type="number"
-                      step="0.01"
+                      type="text"
+                      inputMode="decimal"
                       placeholder="0.00"
-                      defaultValue={toInput(l.costAmount)}
-                      disabled={locked}
-                      onBlur={(e) =>
-                        void patchLine(l.id, { costAmount: fromInput(e.target.value) })
-                      }
+                      value={moneyInputs[`${l.id}:costAmount`] ?? toInput(l.costAmount)}
+                      disabled={locked || actionBusy}
+                      onChange={e => editMoney(l.id, "costAmount", e.target.value)}
+                      onBlur={() => void saveEdits()}
                     />
                   </td>
                   <td className="num internal muted">
@@ -476,6 +590,7 @@ export function InvoiceEditor({
                           className="icon-btn"
                           title="Add a line below this one"
                           aria-label="Add a line below this one"
+                          disabled={actionBusy}
                           onClick={() => void addLine(undefined, l)}
                         >
                           +
@@ -484,6 +599,7 @@ export function InvoiceEditor({
                           label="Remove"
                           busyLabel="Removing…"
                           className="danger"
+                          disabled={actionBusy}
                           onConfirm={() => removeLine(l.id)}
                         />
                       </div>
@@ -528,13 +644,14 @@ export function InvoiceEditor({
         <div className="inline-actions">
           {/* Every other row is added with its own +. This is the way in when
               there is no row to press one on, and the way to append. */}
-          <button type="button" className="secondary" onClick={() => void addLine()}>
+          <button type="button" className="secondary" disabled={actionBusy} onClick={() => void addLine()}>
             {lines.length === 0 ? "Add line" : "Add line at the end"}
           </button>
           {policy && (
             <button
               type="button"
               className="secondary"
+              disabled={actionBusy}
               onClick={() => void addPremiumFromPolicy()}
             >
               Add premium from {policyLabel(policy)}
@@ -592,9 +709,10 @@ export function InvoiceEditor({
           <input
             id={inputId("issued")}
             type="date"
-            defaultValue={invoice.issuedAt ?? ""}
-            disabled={locked}
-            onBlur={(e) => void patchInvoice({ issuedAt: e.target.value || null })}
+            value={Object.hasOwn(invoiceDraft, "issuedAt") ? invoiceDraft.issuedAt ?? "" : invoice.issuedAt ?? ""}
+            disabled={locked || actionBusy}
+            onChange={e => editInvoice({ issuedAt: e.target.value || null })}
+            onBlur={() => void saveEdits()}
           />
         </div>
         <div className="field">
@@ -602,9 +720,10 @@ export function InvoiceEditor({
           <input
             id={inputId("due")}
             type="date"
-            defaultValue={invoice.dueAt ?? ""}
-            disabled={locked}
-            onBlur={(e) => void patchInvoice({ dueAt: e.target.value || null })}
+            value={Object.hasOwn(invoiceDraft, "dueAt") ? invoiceDraft.dueAt ?? "" : invoice.dueAt ?? ""}
+            disabled={locked || actionBusy}
+            onChange={e => editInvoice({ dueAt: e.target.value || null })}
+            onBlur={() => void saveEdits()}
           />
         </div>
         <div className="field full">
@@ -613,9 +732,10 @@ export function InvoiceEditor({
             id={inputId("memo")}
             rows={2}
             placeholder="Optional. Shown to the association above the total."
-            defaultValue={invoice.memo ?? ""}
-            disabled={locked}
-            onBlur={(e) => void patchInvoice({ memo: e.target.value.trim() || null })}
+            value={Object.hasOwn(invoiceDraft, "memo") ? invoiceDraft.memo ?? "" : invoice.memo ?? ""}
+            disabled={locked || actionBusy}
+            onChange={e => editInvoice({ memo: e.target.value || null })}
+            onBlur={() => void saveEdits()}
           />
         </div>
       </div>
@@ -645,6 +765,7 @@ export function InvoiceEditor({
                         <input
                           type="checkbox"
                           checked={toIds.includes(c.id)}
+                          disabled={actionBusy}
                           onChange={(e) =>
                             setToIds((ids) =>
                               e.target.checked
@@ -694,7 +815,7 @@ export function InvoiceEditor({
             <button
               type="button"
               className="primary"
-              disabled={sendStatus.busy || lines.length === 0 || toEmails.length === 0}
+              disabled={actionBusy || lines.length === 0 || toEmails.length === 0}
               onClick={() => void send()}
             >
               {invoice.sentAt ? "Send again" : "Send invoice"}
@@ -721,6 +842,7 @@ export function InvoiceEditor({
           <button
             type="button"
             className="secondary"
+            disabled={actionBusy}
             onClick={() =>
               void patchInvoice(
                 { status: "PAID", paidAt: new Date().toISOString().slice(0, 10) },

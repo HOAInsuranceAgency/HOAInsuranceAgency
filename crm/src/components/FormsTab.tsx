@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { uploadData } from "../lib/scopedStorage";
 import {
   client,
@@ -22,6 +22,7 @@ import {
 import type { UserProfile } from "../lib/client";
 import { useSort, SortTh } from "../lib/useSort";
 import { useAsyncResource } from "../lib/useAsyncResource";
+import { isAuthorizationError } from "../lib/authorizationError";
 import AiFilledList from "./AiFilledList";
 import FilePreviewModal from "./FilePreview";
 import { SaveStatus, useSaveStatus } from "./SaveStatus";
@@ -36,7 +37,11 @@ const OTHER_FORMS = APP_FORMS.filter((form) => !MAPPED_APP_FORM_KEYS.has(form.ke
  * from this account's data, store the PDF under generated/, and track it as
  * an ACORD_FORM document.
  */
-export default function FormsTab({
+export default function FormsTab(props: Parameters<typeof FormsTabContent>[0]) {
+  return <FormsTabContent key={props.account.id} {...props} />;
+}
+
+function FormsTabContent({
   account,
   profile,
 }: {
@@ -53,13 +58,13 @@ export default function FormsTab({
           },
           nextToken,
         });
-        if (page.errors?.length) throw new Error(page.errors[0].message);
-        if (!page.data) throw new Error("Failed to load generated forms");
+        if (!page.data && !page.errors?.length) throw new Error("Failed to load generated forms");
         return page;
       }),
     [account.id],
     {
       initialData: [] as CrmDocument[],
+      clearDataOnError: isAuthorizationError,
       // A failed read renders "Nothing generated yet.", so the user
       // regenerates a form that already exists and gets a duplicate row plus
       // a duplicate S3 object.
@@ -98,8 +103,10 @@ export default function FormsTab({
     "desc"
   );
 
+  const generateLock = useRef(false);
   async function generate(form: AcordFormDef) {
-    if (!canGenerate) return;
+    if (!canGenerate || generateLock.current) return;
+    generateLock.current = true;
     setBusyKey(form.key);
     setAiFilled([]);
     await genStatus.run(
@@ -321,6 +328,7 @@ export default function FormsTab({
       },
       { savedMessage: "Generated — every mapped field matched." }
     );
+    generateLock.current = false;
     setBusyKey(null);
   }
 

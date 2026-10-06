@@ -29,7 +29,7 @@ export function useLeadEligibilitySettings() {
   function refresh() {
     // Inviting another user refreshes the roster independently. Do not start a
     // read here that could replace this save's committed member/version later.
-    if (inFlight.current) return;
+    if (inFlight.current || editing) return;
     setError(""); void resource.refetch();
   }
   return { resource, busy, error, message, editing, disabled, save, closeEditor, editMember, refresh, setEditing };

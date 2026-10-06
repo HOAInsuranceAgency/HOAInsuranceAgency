@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { list, uploadData } from "../lib/scopedStorage";
 import { ACORD_FORMS, listTemplateFields, type AcordFormDef } from "../lib/acord";
@@ -49,12 +49,9 @@ export default function Settings({ profile }: { profile: UserProfile }) {
   ];
 
   const requested = searchParams.get("tab") as Tab | null;
-  const [tab, setTab] = useState<Tab>(
-    requested && TABS.some(([t]) => t === requested) ? requested : "templates"
-  );
+  const tab = requested && TABS.some(([t]) => t === requested) ? requested : "templates";
 
   function selectTab(t: Tab) {
-    setTab(t);
     // Keep the tab in the URL so Settings views are linkable.
     const next = new URLSearchParams(searchParams);
     next.set("tab", t);
@@ -91,7 +88,13 @@ export default function Settings({ profile }: { profile: UserProfile }) {
 
 function TemplatesPanel() {
   const isAdmin = useIsAdmin();
-  const [busy, setBusy] = useState<string | null>(null);
+  const [busy, setBusy] = useState<Set<string>>(new Set());
+  const pending = useRef(new Set<string>());
+  function start(path: string) {
+    if (pending.current.has(path)) return false;
+    pending.current.add(path); setBusy(new Set(pending.current)); return true;
+  }
+  function finish(path: string) { pending.current.delete(path); setBusy(new Set(pending.current)); }
   const [fields, setFields] = useState<Record<string, string[]>>({});
   const [error, setError] = useState("");
 
@@ -121,8 +124,7 @@ function TemplatesPanel() {
   const setUploaded = uploadedRes.setData;
 
   async function upload(tpl: TemplateDef, file: File | undefined) {
-    if (!isAdmin || !file) return;
-    setBusy(tpl.path);
+    if (!isAdmin || !file || !start(tpl.path)) return;
     setError("");
     try {
       await uploadData({
@@ -135,12 +137,12 @@ function TemplatesPanel() {
     } catch (err) {
       setError(friendlyError(err, "Upload failed"));
     } finally {
-      setBusy(null);
+      finish(tpl.path);
     }
   }
 
   async function inspect(tpl: TemplateDef) {
-    setBusy(tpl.path);
+    if (!start(tpl.path)) return;
     setError("");
     try {
       const names = await listTemplateFields(tpl.path);
@@ -148,7 +150,7 @@ function TemplatesPanel() {
     } catch (err) {
       setError(friendlyError(err, "Could not read template"));
     } finally {
-      setBusy(null);
+      finish(tpl.path);
     }
   }
 
@@ -167,7 +169,7 @@ function TemplatesPanel() {
       {/* Only claim a template is missing once we know. `uploaded` is `{}`
           until the S3 list returns, which would otherwise flag every form. */}
       {uploadedRes.error && (
-        <p className="error-text">{uploadedRes.error}</p>
+        <p className="error-text" role="alert">{uploadedRes.error} <button disabled={uploadedRes.loading || busy.size > 0} onClick={() => void uploadedRes.refetch()}>Retry templates</button></p>
       )}
       {uploadedRes.loaded && !uploadedRes.error && missing > 0 && (
         <p className="small" style={{ color: "var(--amber)" }}>
@@ -193,9 +195,9 @@ function TemplatesPanel() {
                 tpl={tpl}
                 // `null` until the S3 listing settles — the badge would
                 // otherwise read "Missing" for every form on first paint.
-                isUploaded={uploadedRes.loaded ? !!uploaded[tpl.path] : null}
+                isUploaded={uploadedRes.loaded && !uploadedRes.error ? !!uploaded[tpl.path] : null}
                 canUpload={isAdmin}
-                busy={busy === tpl.path}
+                busy={busy.has(tpl.path) || uploadedRes.loading}
                 fieldNames={fields[tpl.path]}
                 onUpload={(f) => upload(tpl, f)}
                 onInspect={() => inspect(tpl)}
@@ -309,7 +311,11 @@ function AgencyPanel({ profile }: { profile: UserProfile }) {
   const saveStatus = useSaveStatus();
   const [ids, setIds] = useState<AgencyIdentifiers>(EMPTY_IDENTIFIERS);
 
-  const res = useAsyncResource(loadAgencyIdentifiers, [], {
+  const res = useAsyncResource(async () => {
+    const value = await loadAgencyIdentifiers();
+    if (!value) throw new Error("Couldn’t load the agency identifiers. Try again before editing.");
+    return value;
+  }, [], {
     initialData: null as AgencyIdentifiers | null,
     errorMessage: "Couldn't load the agency identifiers",
   });
@@ -355,11 +361,11 @@ function AgencyPanel({ profile }: { profile: UserProfile }) {
         and state portals ask for them constantly. Only admins can change them.
       </p>
 
-      {res.error && <p className="error-text">{res.error}</p>}
+      {res.error && <p className="error-text" role="alert">{res.error} <button disabled={res.loading} onClick={() => void res.refetch()}>Retry agency identifiers</button></p>}
       {!res.loaded ? (
         <p className="muted small">Loading…</p>
-      ) : (
-        <>
+      ) : !res.error && (
+        <fieldset disabled={saveStatus.busy} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
           <div className="form-grid">
             <div className="field">
               <label htmlFor="agency-npn">Agency NPN</label>
@@ -402,7 +408,7 @@ function AgencyPanel({ profile }: { profile: UserProfile }) {
             </button>
             <SaveStatus {...saveStatus.status} />
           </div>
-        </>
+        </fieldset>
       )}
     </div>
   );

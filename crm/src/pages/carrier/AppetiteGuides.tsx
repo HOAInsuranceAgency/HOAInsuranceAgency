@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
   BEST_FIT_BUSINESS,
+  assertNoErrors,
   client,
   fmtMoney,
   friendlyError,
@@ -37,11 +38,12 @@ export function AppetiteGuides({ carrierId }: { carrierId: string }) {
   const guides = res.data;
   const setGuides = res.setData;
   const [showForm, setShowForm] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [editing, setEditing] = useState<AppetiteGuide | null>(null);
 
 
   async function del(id: string) {
-    await client.models.AppetiteGuide.delete({ id });
+    assertNoErrors(await client.models.AppetiteGuide.delete({ id }));
     setGuides((gs) => gs.filter((g) => g.id !== id));
   }
 
@@ -58,6 +60,7 @@ export function AppetiteGuides({ carrierId }: { carrierId: string }) {
         <div className="grow" />
         <button
           className="primary"
+          disabled={saving || !res.loaded || res.loading || !!res.error}
           onClick={() => {
             setEditing(null);
             setShowForm(!showForm);
@@ -72,6 +75,7 @@ export function AppetiteGuides({ carrierId }: { carrierId: string }) {
           key={editing?.id ?? "new"}
           carrierId={carrierId}
           existing={editing}
+          onBusyChange={setSaving}
           onSaved={(g) => {
             setGuides((gs) => {
               const without = gs.filter((x) => x.id !== g.id);
@@ -90,7 +94,7 @@ export function AppetiteGuides({ carrierId }: { carrierId: string }) {
       {!res.loaded ? (
         <p className="muted small">Loading…</p>
       ) : res.error ? (
-        <p className="error-text">{res.error}</p>
+        <p className="error-text" role="alert">{res.error} <button disabled={res.loading} onClick={() => void res.refetch()}>Retry appetite guides</button></p>
       ) : guides.length === 0 ? (
         <p className="muted small">No appetite guides recorded.</p>
       ) : (
@@ -141,6 +145,7 @@ export function AppetiteGuides({ carrierId }: { carrierId: string }) {
                   <td style={{ whiteSpace: "nowrap" }}>
                     <button
                       className="link"
+                      disabled={saving}
                       onClick={() => {
                         setShowForm(false);
                         setEditing(g);
@@ -150,6 +155,7 @@ export function AppetiteGuides({ carrierId }: { carrierId: string }) {
                     </button>
                     <ConfirmButton
                       className="link"
+                      disabled={saving}
                       onConfirm={() => del(g.id)}
                     />
                   </td>
@@ -169,11 +175,13 @@ function GuideForm({
   existing,
   onSaved,
   onCancel,
+  onBusyChange,
 }: {
   carrierId: string;
   existing: AppetiteGuide | null;
   onSaved: (g: AppetiteGuide) => void;
   onCancel: () => void;
+  onBusyChange: (busy: boolean) => void;
 }) {
   // Read side: column value → input string. (Not `formCodec`'s `str`, which
   // runs the other way; that boundary is a separate migration.)
@@ -199,9 +207,11 @@ function GuideForm({
     notes: existing?.notes ?? "",
   });
   const [saving, setSaving] = useState(false);
+  const inFlight = useRef(false);
   const [error, setError] = useState("");
 
   async function save() {
+    if (inFlight.current) return;
     // Inverted ranges silently break the Appetite Finder — catch them here.
     const problems: string[] = [];
     if (form.minValue && form.maxValue && Number(form.minValue) > Number(form.maxValue))
@@ -227,7 +237,9 @@ function GuideForm({
       return;
     }
     setError("");
+    inFlight.current = true;
     setSaving(true);
+    onBusyChange(true);
     const num = (v: string) => (v.trim() === "" ? null : Number(v));
     const payload = {
       linesWritten: form.lines,
@@ -248,15 +260,20 @@ function GuideForm({
       maxLossIncurred: num(form.maxLossIncurred),
       notes: form.notes.trim() || null,
     };
-    const { data, errors } = existing
-      ? await client.models.AppetiteGuide.update({ id: existing.id, ...payload })
-      : await client.models.AppetiteGuide.create({ carrierId, ...payload });
-    setSaving(false);
-    if (errors?.length || !data) {
-      setError(friendlyError(errors?.[0]?.message, "Save failed"));
-      return;
+    try {
+      const result = existing
+        ? await client.models.AppetiteGuide.update({ id: existing.id, ...payload })
+        : await client.models.AppetiteGuide.create({ carrierId, ...payload });
+      assertNoErrors(result);
+      if (!result.data) throw new Error('No saved guide was returned.');
+      onSaved(result.data);
+    } catch (error) {
+      setError(friendlyError(error, 'Save failed'));
+    } finally {
+      inFlight.current = false;
+      setSaving(false);
+      onBusyChange(false);
     }
-    onSaved(data);
   }
 
   return (
@@ -264,7 +281,7 @@ function GuideForm({
       <h3 style={{ marginTop: 0 }}>
         {existing ? "Edit" : "Add"} appetite guide
       </h3>
-      <div className="form-grid">
+      <fieldset disabled={saving} style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}><div className="form-grid">
         <div className="field full">
           <label>Lines written</label>
           <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 14px" }}>
@@ -449,14 +466,15 @@ function GuideForm({
           <textarea rows={2} value={form.notes} onChange={(e) => setF("notes", e.target.value)} />
         </div>
       </div>
+      </fieldset>
       <div className="form-actions">
         <button className="primary" disabled={saving} onClick={save}>
           {saving ? "Saving…" : existing ? "Save changes" : "Add guide"}
         </button>
-        <button className="link" onClick={onCancel}>
+        <button className="link" disabled={saving} onClick={onCancel}>
           Cancel
         </button>
-        {error && <span className="error-text">{error}</span>}
+        {error && <span className="error-text" role="alert">{error}</span>}
       </div>
     </div>
   );

@@ -102,7 +102,7 @@ export default function Carriers() {
       {carrierRes.loaded && guideRes.loaded && !carrierRes.error && !guideRes.error && (
         <AppetiteFinder carriers={carriers} guides={guides} />
       )}
-      {guideRes.error && <p className="error-text">{guideRes.error}</p>}
+      {guideRes.error && <p className="error-text" role="alert">{guideRes.error} <button disabled={guideRes.loading} onClick={() => void guideRes.refetch()}>Retry appetite guides</button></p>}
 
       <div className="toolbar">
         <div className="grow" />
@@ -146,7 +146,7 @@ export default function Carriers() {
         {!carrierRes.loaded ? (
           <p className="muted small">Loading…</p>
         ) : carrierRes.error ? (
-          <p className="error-text">{carrierRes.error}</p>
+          <p className="error-text" role="alert">{carrierRes.error} <button disabled={carrierRes.loading} onClick={() => void carrierRes.refetch()}>Retry carriers</button></p>
         ) : carriers.length === 0 ? (
           <p className="muted small">No carriers yet.</p>
         ) : (

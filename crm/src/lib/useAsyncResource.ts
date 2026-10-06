@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type DependencyList,
@@ -8,6 +9,7 @@ import {
   type SetStateAction,
 } from "react";
 import { friendlyError } from "./client";
+import { isAuthorizationError } from "./authorizationError";
 
 /**
  * One async read, one state machine.
@@ -40,8 +42,8 @@ import { friendlyError } from "./client";
  * `loading`, instead of blanking and re-lengthening. Data is dropped when
  * `deps` change, because that isn't a refresh of the same resource, it's a
  * different one: showing the previous account's quotes under the new account's
- * heading is wrong, not merely jumpy. Sensitive views can opt into clearing
- * data for access failures with `clearDataOnError`.
+ * heading is wrong, not merely jumpy. Access failures clear cached data by
+ * default; `clearDataOnError` can specify a stricter policy for sensitive views.
  */
 export interface AsyncResource<T> {
   /** Last successful result, unless cleared by the configured error policy. */
@@ -64,7 +66,7 @@ export interface AsyncResource<T> {
   /**
    * Patch the cached data locally, for the read-modify-write case where the
    * component already knows the new row and a full re-read would be a waste.
-   * Identity-stable (it is React's own setState).
+   * Stable within one resource. Old-resource setters cannot patch a new one.
    */
   setData: Dispatch<SetStateAction<T>>;
   /** Clear cached data and invalidate pending reads after an external denial. */
@@ -78,7 +80,7 @@ export interface AsyncResourceOptions<T> {
   errorMessage?: string;
   /** Don't fetch on mount or on `deps` change — only when `refetch()` is called. */
   manual?: boolean;
-  /** Opt out of retaining cached data for specific failures, e.g. revoked access. */
+  /** Error policy; defaults to clearing cached data on access failures. */
   clearDataOnError?: (error: unknown) => boolean;
 }
 
@@ -97,84 +99,77 @@ export function useAsyncResource<T>(
   deps: DependencyList,
   options: AsyncResourceOptions<T> = {}
 ): AsyncResource<T | undefined> {
-  const { initialData, errorMessage = "Couldn't load that — please try again.", manual = false, clearDataOnError } =
+  const { initialData, errorMessage = "Couldn't load that — please try again.", manual = false, clearDataOnError = isAuthorizationError } =
     options;
 
-  const [data, setData] = useState<T | undefined>(initialData);
-  const [loading, setLoading] = useState(!manual);
-  const [loaded, setLoaded] = useState(false);
-  const [error, setError] = useState("");
-
-  // The fetcher closes over props and state, so it is a different function
-  // every render. Holding the latest one in a ref is what lets `refetch` keep
-  // one identity forever while still calling the current closure — the sites
-  // that thread `refresh` down as a prop need that, or every render of the
-  // parent re-renders the child.
-  const fetcherRef = useRef(fetcher);
-  const configRef = useRef({ initialData, errorMessage, clearDataOnError });
-  useEffect(() => {
-    fetcherRef.current = fetcher;
-    configRef.current = { initialData, errorMessage, clearDataOnError };
-  });
-
-  // Declared before the fetch effect so it is set up first on mount and torn
-  // down first on unmount.
+  // Scope is part of the state, not just an effect dependency. A new account
+  // must never render the previous account's rows even for the render before
+  // its fetch effect runs. Manual resources need the same isolation.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const scope = useMemo(() => ({}), deps);
+  const [state, setState] = useState(() => ({
+    scope, data: initialData, loading: !manual, loaded: false, error: "",
+  }));
+  const latest = useRef({ scope, fetcher, initialData, errorMessage, clearDataOnError });
+  latest.current = { scope, fetcher, initialData, errorMessage, clearDataOnError };
   const mounted = useRef(true);
+  const ticket = useRef(0);
   useEffect(() => {
     mounted.current = true;
-    return () => {
-      mounted.current = false;
-    };
+    return () => { mounted.current = false; ++ticket.current; };
   }, []);
 
-  // Monotonic ticket. A response may only touch state if its ticket is still
-  // the newest one — that is the whole of the ordering guarantee.
-  const ticket = useRef(0);
-
   const run = useCallback(async (reset: boolean): Promise<void> => {
+    if (!mounted.current) return;
+    const config = latest.current;
     const id = ++ticket.current;
-    if (reset) {
-      // A different resource, not a refresh of this one: back to pristine, so
-      // `!loaded` re-arms the caller's loader instead of showing "none found"
-      // over the new resource's empty initial data.
-      setData(configRef.current.initialData);
-      setLoaded(false);
-    }
-    setLoading(true);
-    setError("");
+    const current = () => mounted.current && id === ticket.current && latest.current.scope === config.scope;
+    setState(previous => ({
+      scope: config.scope,
+      data: reset || previous.scope !== config.scope ? config.initialData : previous.data,
+      loaded: !reset && previous.scope === config.scope && previous.loaded,
+      loading: true, error: "",
+    }));
     try {
-      const result = await fetcherRef.current();
-      if (!mounted.current || id !== ticket.current) return;
-      setData(result);
+      const data = await config.fetcher();
+      if (current()) setState(previous => ({ ...previous, data }));
     } catch (err) {
-      if (!mounted.current || id !== ticket.current) return;
-      if (configRef.current.clearDataOnError?.(err)) setData(configRef.current.initialData);
-      setError(friendlyError(err, configRef.current.errorMessage));
+      if (current()) setState(previous => ({
+        ...previous,
+        ...(config.clearDataOnError?.(err) ? { data: config.initialData } : {}),
+        error: friendlyError(err, config.errorMessage),
+      }));
     } finally {
-      if (mounted.current && id === ticket.current) {
-        setLoading(false);
-        setLoaded(true);
-      }
+      if (current()) setState(previous => ({ ...previous, loading: false, loaded: true }));
     }
   }, []);
 
   const refetch = useCallback(() => run(false), [run]);
+  const setData: Dispatch<SetStateAction<T | undefined>> = useCallback(action => {
+    if (!mounted.current || latest.current.scope !== scope) return;
+    setState(previous => {
+      if (previous.scope !== scope) return previous;
+      return { ...previous, data: typeof action === 'function'
+        ? (action as (value: T | undefined) => T | undefined)(previous.data) : action };
+    });
+  }, [scope]);
   const invalidate = useCallback((err: unknown) => {
-    if (!mounted.current) return;
+    if (!mounted.current || latest.current.scope !== scope) return;
     ++ticket.current;
-    setData(configRef.current.initialData);
-    setError(friendlyError(err, configRef.current.errorMessage));
-    setLoading(false);
-    setLoaded(true);
-  }, []);
+    const config = latest.current;
+    setState({ scope, data: config.initialData, error: friendlyError(err, config.errorMessage), loading: false, loaded: true });
+  }, [scope]);
 
   useEffect(() => {
-    if (manual) return;
-    void run(true);
-    // `deps` is the caller's own identity list; `run` is stable for the life
-    // of the hook, so it deliberately isn't in here.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, deps);
+    if (manual) {
+      ++ticket.current;
+      setState({ scope, data: latest.current.initialData, loading: false, loaded: false, error: "" });
+    } else void run(true);
+    return () => { ++ticket.current; };
+  }, [scope, manual, run]);
 
-  return { data, loading, loaded, error, refetch, setData, invalidate };
+  const visible = state.scope === scope ? state : {
+    data: initialData, loading: !manual, loaded: false, error: "",
+  };
+  return { ...visible, refetch, setData, invalidate };
 }

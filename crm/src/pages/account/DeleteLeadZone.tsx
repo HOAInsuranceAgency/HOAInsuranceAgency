@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { remove } from "../../lib/scopedStorage";
 import {
@@ -40,6 +40,8 @@ export function DeleteLeadZone({ account }: { account: Account }) {
   const isAdmin = useIsAdmin();
   const [error, setError] = useState("");
   const navigate = useNavigate();
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
 
   // Throws rather than swallowing: <ConfirmButton> keeps the pair armed on a
   // rejection, so a failed cascade can be retried or backed out of, and the
@@ -87,7 +89,7 @@ export function DeleteLeadZone({ account }: { account: Account }) {
 
     const { errors } = await client.models.Account.delete({ id: account.id });
     if (errors?.length) throw new Error(errors[0].message);
-    navigate("/leads");
+    if (mounted.current) navigate("/leads");
   }
 
   if (!isAdmin) return null;

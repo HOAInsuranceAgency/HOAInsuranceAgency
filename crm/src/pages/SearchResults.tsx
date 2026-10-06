@@ -81,7 +81,7 @@ export default function SearchResults() {
   // failed search, and shouldn't be wiped out by the next one either.
   const [downloadError, setDownloadError] = useState("");
 
-  const index = useAsyncResource(fetchSearchIndexRows, [], {
+  const index = useAsyncResource(fetchSearchIndexRows, [q], {
     initialData: [],
     errorMessage: "Couldn't load records to search",
   });
@@ -152,7 +152,7 @@ export default function SearchResults() {
 
       {runnable && (
         <>
-          {index.error && <p className="error-text">{index.error}</p>}
+          {index.error && <p className="error-text" role="alert">{index.error} <button disabled={index.loading} onClick={() => void index.refetch()}>Retry records</button></p>}
           {index.loading && !index.loaded && (
             <p className="muted small">Searching records…</p>
           )}
@@ -169,7 +169,7 @@ export default function SearchResults() {
             {!docs.loaded ? (
               <p className="muted small">Searching document text…</p>
             ) : docs.error ? (
-              <p className="error-text">{docs.error}</p>
+              <p className="error-text" role="alert">{docs.error} <button disabled={docs.loading} onClick={() => void docs.refetch()}>Retry document search</button></p>
             ) : sorted.length === 0 ? (
               <p className="muted small">No documents match “{q}”.</p>
             ) : (

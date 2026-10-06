@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
   client,
   fmtDate,
@@ -11,6 +11,8 @@ import {
   type Policy,
   type Quote,
 } from "../../lib/client";
+import { isAuthorizationError } from "../../lib/authorizationError";
+import { allWithAuthorizationPriority } from "../../lib/allWithAuthorizationPriority";
 import { useAsyncResource } from "../../lib/useAsyncResource";
 import { SaveStatus, useSaveStatus } from "../../components/SaveStatus";
 import { InvoiceEditor } from "../../components/InvoiceEditor";
@@ -58,6 +60,10 @@ export function addDays(isoDay: string, days: number): string {
 export const DEFAULT_TERM_DAYS = 14;
 
 export function InvoicesTab({ accountId }: { accountId: string }) {
+  return <InvoicesTabContent key={accountId} accountId={accountId} />;
+}
+
+function InvoicesTabContent({ accountId }: { accountId: string }) {
   const res = useAsyncResource(
     async () => {
       /**
@@ -68,7 +74,7 @@ export function InvoicesTab({ accountId }: { accountId: string }) {
        * know which policies are already billed. Fetching them per-invoice would
        * be one round trip per row to render a summary.
        */
-      const [invoices, lines, policies, quotes, contacts, account] = await Promise.all([
+      const [invoices, lines, policies, quotes, contacts, account] = await allWithAuthorizationPriority([
         listAllPages((nextToken) =>
           client.models.Invoice.list({
             filter: { accountId: { eq: accountId } },
@@ -103,7 +109,11 @@ export function InvoicesTab({ accountId }: { accountId: string }) {
         ),
         // The financing hint predicts the send's origination, which reads
         // the account's state, type and incorporation.
-        client.models.Account.get({ id: accountId }).then((r) => r.data),
+        client.models.Account.get({ id: accountId }).then((r) => {
+          if (r.errors?.length) throw r.errors.find(isAuthorizationError) ?? r.errors[0];
+          if (!r.data) throw new Error("Couldn't load the account for billing.");
+          return r.data;
+        }),
       ]);
       return {
         invoices: invoices as Invoice[],
@@ -115,11 +125,13 @@ export function InvoicesTab({ accountId }: { accountId: string }) {
       };
     },
     [accountId],
-    { initialData: null, errorMessage: "Failed to load invoices" }
+    { initialData: null, errorMessage: "Failed to load invoices", clearDataOnError: isAuthorizationError }
   );
 
   const createStatus = useSaveStatus();
+  const creating = useRef(false);
   const [openId, setOpenId] = useState<string | null>(null);
+  const [editorBusy, setEditorBusy] = useState(false);
   /** "policy:<id>" | "quote:<id>" — the anchor the next invoice bills. */
   const [anchorKey, setAnchorKey] = useState("");
 
@@ -131,7 +143,8 @@ export function InvoicesTab({ accountId }: { accountId: string }) {
    */
   async function newInvoice() {
     const loaded = res.data;
-    if (!loaded || !anchorKey) return;
+    if (!loaded || !anchorKey || creating.current) return;
+    creating.current = true;
     const [kind, anchorId] = anchorKey.split(":", 2);
     await createStatus.run(
       async () => {
@@ -142,11 +155,13 @@ export function InvoicesTab({ accountId }: { accountId: string }) {
          * deliberately: gaps are explainable, reuse is not.
          */
         const reserved = await client.mutations.reserveInvoiceNumber();
+        if (reserved.errors?.length) throw new Error(reserved.errors[0].message);
         const raw = reserved.data;
         const parsed =
           typeof raw === "string" ? JSON.parse(raw) : (raw as Record<string, unknown>);
         const number =
           typeof parsed?.invoiceNumber === "string" ? parsed.invoiceNumber : null;
+        if (!number) throw new Error("Couldn't reserve an invoice number. Nothing was created; try again.");
 
         const today = new Date().toISOString().slice(0, 10);
         const { data, errors } = await client.models.Invoice.create({
@@ -157,7 +172,11 @@ export function InvoicesTab({ accountId }: { accountId: string }) {
           dueAt: addDays(today, DEFAULT_TERM_DAYS),
           ...(kind === "policy" ? { policyId: anchorId } : { quoteId: anchorId }),
         });
-        if (errors?.length || !data) throw new Error(errors?.[0]?.message);
+        if (errors?.length || !data) throw new Error(errors?.[0]?.message ?? "Couldn't create the invoice.");
+        // Creation has committed even if seeding fails. Show that invoice and
+        // remove its anchor from the picker before attempting another write.
+        res.setData(cur => cur ? { ...cur, invoices: [data, ...cur.invoices] } : cur);
+        setAnchorKey("");
 
         // One anchor, one seeded premium line: the number the record actually
         // knows is the cost; what to bill for it stays the producer's call.
@@ -167,6 +186,7 @@ export function InvoicesTab({ accountId }: { accountId: string }) {
         const created: InvoiceLine[] = [];
         if (source) {
           const { retailAmount, costAmount } = premiumLineFromPolicy(source);
+          try {
           const line = await client.models.InvoiceLine.create({
             invoiceId: data.id,
             accountId,
@@ -179,30 +199,35 @@ export function InvoicesTab({ accountId }: { accountId: string }) {
             retailAmount,
             costAmount,
           });
-          if (line.data) created.push(line.data);
+          if (line.errors?.length || !line.data) {
+            throw new Error("Premium line was not saved.");
+          }
+          created.push(line.data);
+          } catch {
+            setOpenId(data.id);
+            throw new Error("Invoice created, but its premium line couldn't be added. Open this invoice and add the line there; do not create another invoice.");
+          }
         }
 
         res.setData((cur) =>
           cur
             ? {
                 ...cur,
-                invoices: [data, ...cur.invoices],
                 lines: [...cur.lines, ...created],
               }
             : cur
         );
-        setAnchorKey("");
-        // Straight into the one just made — it is the only reason to press it.
         setOpenId(data.id);
         return "Invoice created — price the premium line.";
       },
       { errorMessage: "Couldn't create an invoice." }
     );
+    creating.current = false;
   }
 
   if (!res.loaded) return <p className="muted small">Loading…</p>;
-  if (res.error) return <p className="error-text">{res.error}</p>;
-  if (!res.data) return null;
+  const readError = res.error && <p className="error-text">{res.error} <button type="button" disabled={res.loading} onClick={() => void res.refetch()}>Retry invoices</button></p>;
+  if (!res.data) return readError || null;
 
   const { invoices, lines, policies, quotes, contacts, account } = res.data;
   // Newest first: the one someone came here for is almost always the last made.
@@ -219,6 +244,7 @@ export function InvoicesTab({ accountId }: { accountId: string }) {
 
   return (
     <>
+      {readError}
       <div className="card">
         <div className="card-head">
           <h2>Invoices</h2>
@@ -227,6 +253,7 @@ export function InvoicesTab({ accountId }: { accountId: string }) {
             <select
               aria-label="Bill which policy or quote"
               value={anchorKey}
+              disabled={createStatus.busy}
               onChange={(e) => setAnchorKey(e.target.value)}
             >
               <option value="">Bill which policy or quote…</option>
@@ -249,7 +276,7 @@ export function InvoicesTab({ accountId }: { accountId: string }) {
             <button
               type="button"
               className="primary"
-              disabled={createStatus.busy || !anchorKey}
+              disabled={createStatus.busy || editorBusy || !anchorKey}
               onClick={() => void newInvoice()}
             >
               New invoice
@@ -302,6 +329,7 @@ export function InvoicesTab({ accountId }: { accountId: string }) {
                           type="button"
                           className="link"
                           aria-expanded={isOpen}
+                          disabled={createStatus.busy || editorBusy}
                           onClick={() => setOpenId(isOpen ? null : inv.id)}
                         >
                           {isOpen ? "Close" : "Open"}
@@ -322,6 +350,7 @@ export function InvoicesTab({ accountId }: { accountId: string }) {
           // the previous one's unsaved input across.
           key={open.id}
           invoice={open}
+          onBusyChange={setEditorBusy}
           policies={policies}
           quotes={quotes}
           account={account}

@@ -1,3 +1,5 @@
+import { isAuthorizationError } from './authorizationError';
+
 /**
  * Page through a filtered list until it's exhausted.
  *
@@ -12,12 +14,12 @@
  *
  * Lives here rather than in client.ts so the Lambdas can import it: client.ts
  * calls generateClient() at module scope, and a handler must not pull the
- * browser data client into its bundle. This module has no imports.
+ * browser data client into its bundle. Its error helper has no SDK dependencies.
  */
 export async function listAllPages<T>(
   fetchPage: (
     nextToken?: string
-  ) => Promise<{ data: T[]; nextToken?: string | null }>,
+  ) => Promise<{ data: T[]; nextToken?: string | null; errors?: readonly unknown[] }>,
   options?: {
     /** Stop after this many pages instead of reading to the end. */
     maxPages?: number;
@@ -29,6 +31,15 @@ export async function listAllPages<T>(
   let pages = 0;
   do {
     const page = await fetchPage(token);
+    // Amplify resolves GraphQL failures instead of rejecting. Never turn a
+    // failed page into a successful empty/partial list or report.
+    if (page.errors?.length) {
+      const denied = page.errors.find(isAuthorizationError);
+      const cause = denied ?? page.errors[0];
+      const message = cause && typeof cause === 'object' && 'message' in cause
+        ? String(cause.message) : typeof cause === 'string' ? cause : 'Could not load all records. Please try again.';
+      throw Object.assign(new Error(message), denied ? { name: 'Unauthorized' } : {});
+    }
     out.push(...page.data);
     token = page.nextToken ?? undefined;
     pages++;
