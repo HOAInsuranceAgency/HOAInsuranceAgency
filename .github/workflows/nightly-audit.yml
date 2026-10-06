@@ -1,0 +1,159 @@
+name: Nightly Audit Engineer
+
+on:
+  schedule:
+    - cron: '0 4 * * *'
+      timezone: America/New_York
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Smoke verifies API access and dependencies; audit may open draft PRs.'
+        type: choice
+        options: [smoke, audit]
+        default: smoke
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/nightly-audit.yml'
+      - '.github/scripts/nightly_audit.py'
+      - '.github/scripts/test_nightly_audit.py'
+      - '.github/prompts/nightly-audit.md'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-audit-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    # Fork PRs never receive the API key. PR runs always use the small smoke prompt.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 65
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      base_sha: ${{ steps.context.outputs.base_sha }}
+    steps:
+      - name: Check out workflow tools
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          path: control
+          persist-credentials: false
+      - name: Check out integration branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: staging
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify publisher safeguards
+        run: python3 -m unittest discover -s control/.github/scripts -p 'test_*.py' -v
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+      - name: Install locked dependencies
+        run: |
+          npm ci --prefix source/web --no-audit --no-fund
+          npm ci --prefix source/crm --no-audit --no-fund
+      - name: Read pending work and prior audit results
+        id: context
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AUDIT_REPOSITORY: ${{ github.repository }}
+        run: >-
+          python3 control/.github/scripts/nightly_audit.py prepare
+          --repo source --output source/audit-output --repository "$AUDIT_REPOSITORY"
+      - name: Select audit prompt
+        env:
+          AUDIT_MODE: ${{ github.event_name == 'schedule' && 'audit' || inputs.mode || 'smoke' }}
+        run: |
+          if [ "$AUDIT_MODE" = audit ]; then
+            cp control/.github/prompts/nightly-audit.md source/audit-output/prompt.md
+          else
+            cat > source/audit-output/prompt.md <<'PROMPT'
+          This is an authentication and repository smoke check, not a cleanup run.
+          Read README.md, web/package.json, crm/package.json, and audit-output/context.json.
+          Report the exact staging base SHA, the four repository areas, and whether both
+          web/node_modules and crm/node_modules exist. Do not edit any file, run project
+          commands, access network services, or propose/create branches or pull requests.
+          Finish with "NIGHTLY_AUDIT_SMOKE_OK" only if all requested files/directories exist.
+          PROMPT
+          fi
+      - name: Run Codex
+        timeout-minutes: ${{ (github.event_name == 'schedule' || inputs.mode == 'audit') && 50 || 5 }}
+        uses: openai/codex-action@bdf19a4a223ec2549a3e2274a0cf61556bc07675 # v1
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          model: ${{ vars.CODEX_AUDIT_MODEL || 'gpt-6-astra' }}
+          effort: ${{ (github.event_name == 'schedule' || inputs.mode == 'audit') && 'high' || 'low' }}
+          permission-profile: ${{ (github.event_name == 'schedule' || inputs.mode == 'audit') && ':workspace' || ':read-only' }}
+          safety-strategy: drop-sudo
+          codex-version: '0.160.1'
+          working-directory: ${{ github.workspace }}/source
+          prompt-file: ${{ github.workspace }}/source/audit-output/prompt.md
+          output-file: ${{ github.workspace }}/source/audit-output/final-message.md
+          codex-args: '["--ephemeral"]'
+      - name: Confirm smoke result
+        if: github.event_name != 'schedule' && inputs.mode != 'audit'
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          report = Path('source/audit-output/final-message.md').read_text()
+          assert 'NIGHTLY_AUDIT_SMOKE_OK' in report, 'Codex smoke did not complete successfully'
+          with open(__import__('os').environ['GITHUB_STEP_SUMMARY'], 'a') as out:
+              out.write('API authentication, staging checkout, repository reading, and locked dependency installation passed. No cleanup PR was created.\n')
+          PY
+      - name: Save proposed patches only
+        if: github.event_name == 'schedule' || inputs.mode == 'audit'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: nightly-audit-proposals
+          path: |
+            source/audit-output/manifest.json
+            source/audit-output/web.patch
+            source/audit-output/crm.patch
+            source/audit-output/backend.patch
+            source/audit-output/shared.patch
+          if-no-files-found: error
+          retention-days: 7
+          include-hidden-files: false
+
+  publish:
+    needs: audit
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || inputs.mode == 'audit')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Check out trusted publishing tools
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          path: control
+          persist-credentials: false
+      - name: Check out current integration branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: staging
+          path: source
+          persist-credentials: false
+      - name: Download proposed patches
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: nightly-audit-proposals
+          path: proposals
+      - name: Validate and create independent draft pull requests
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AUDIT_REPOSITORY: ${{ github.repository }}
+          AUDIT_BASE: ${{ needs.audit.outputs.base_sha }}
+        run: >-
+          python3 control/.github/scripts/nightly_audit.py publish
+          --repo source --output proposals --repository "$AUDIT_REPOSITORY" --base "$AUDIT_BASE"
