@@ -27,6 +27,7 @@ import MagicLinkSignIn from "./components/MagicLinkSignIn";
 import Dashboard from "./pages/Dashboard";
 import OwnerProfitability from "./pages/OwnerProfitability";
 import AccountsList from "./pages/AccountsList";
+import { AccountsListDataProvider } from "./lib/accountsListData";
 import AccountDetail from "./pages/AccountDetail";
 import NewLead from "./pages/NewLead";
 import Carriers from "./pages/Carriers";
@@ -414,30 +415,32 @@ function Shell({ profile, signOut, activeRole, roles, onRoleChange }: {
       </aside>
       <main className="main">
         <UniversalSearch />
-        <Routes>
-          <Route
-            path="/"
-            element={isAdmin ? <Dashboard /> : <Navigate to="/leads" replace />}
-          />
-          <Route path="/owner" element={isOwner ? <OwnerProfitability /> : <Navigate to={homePath} replace />} />
-          <Route path="/leads" element={<AccountsList stage="LEAD" />} />
-          <Route path="/leads/new" element={<NewLead />} />
-          <Route path="/lead-work" element={<Navigate to="/leads" replace />} />
-          <Route path="/clients" element={<AccountsList stage="CLIENT" />} />
-          <Route path="/accounts/:id" element={<AccountDetail profile={profile} />} />
-          <Route path="/carriers" element={<Carriers />} />
-          <Route path="/carriers/:id" element={<CarrierDetail />} />
-          <Route path="/tasks" element={<Navigate to="/leads" replace />} />
-          <Route path="/quotes" element={<QuotesList />} />
-          <Route path="/policies" element={<PoliciesList />} />
-          <Route path="/search" element={<SearchResults />} />
-          {/* The old document-search page — redirect, don't 404, the
-              bookmarks people made of it. */}
-          <Route path="/documents" element={<Navigate to="/search" replace />} />
-          <Route path="/financing" element={<Financing />} />
-          <Route path="/settings" element={<Settings profile={profile} />} />
-          <Route path="*" element={<NotFound />} />
-        </Routes>
+        <AccountsListDataProvider>
+          <Routes>
+            <Route
+              path="/"
+              element={isAdmin ? <Dashboard /> : <Navigate to="/leads" replace />}
+            />
+            <Route path="/owner" element={isOwner ? <OwnerProfitability /> : <Navigate to={homePath} replace />} />
+            <Route path="/leads" element={<AccountsList stage="LEAD" />} />
+            <Route path="/leads/new" element={<NewLead />} />
+            <Route path="/lead-work" element={<Navigate to="/leads" replace />} />
+            <Route path="/clients" element={<AccountsList stage="CLIENT" />} />
+            <Route path="/accounts/:id" element={<AccountDetail profile={profile} />} />
+            <Route path="/carriers" element={<Carriers />} />
+            <Route path="/carriers/:id" element={<CarrierDetail />} />
+            <Route path="/tasks" element={<Navigate to="/leads" replace />} />
+            <Route path="/quotes" element={<QuotesList />} />
+            <Route path="/policies" element={<PoliciesList />} />
+            <Route path="/search" element={<SearchResults />} />
+            {/* The old document-search page — redirect, don't 404, the
+                bookmarks people made of it. */}
+            <Route path="/documents" element={<Navigate to="/search" replace />} />
+            <Route path="/financing" element={<Financing />} />
+            <Route path="/settings" element={<Settings profile={profile} />} />
+            <Route path="*" element={<NotFound />} />
+          </Routes>
+        </AccountsListDataProvider>
       </main>
     </div>
   );
