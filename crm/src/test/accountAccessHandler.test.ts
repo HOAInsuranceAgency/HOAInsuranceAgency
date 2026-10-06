@@ -7,6 +7,34 @@ vi.mock("@aws-sdk/s3-request-presigner", () => ({ getSignedUrl: h.sign }));
 import { handler } from "../../amplify/functions/crm-access/handler";
 import { ACCOUNT_MODELS, RETIRED_MODELS, LIST_PARENTS, type RecordData } from "../../amplify/functions/crm-access/policy";
 const identity = { sub: "alice" };
+it.each(["source", "leadSource", "leadAttribution"])("keeps %s immutable even when the caller can delete leads", async field => {
+  for (const groups of [["ADMIN"], ["OWNER"], ["PRODUCER"], ["STAFF"]]) {
+    for (const operation of ["create", "update"]) {
+      for (const value of ["changed", null]) {
+        await expect(handler({
+          mode: "write", model: "Account", operation,
+          identity: { sub: "alice", groups },
+          arguments: { input: { id: "a", [field]: value } },
+        })).rejects.toThrow("not available");
+      }
+    }
+  }
+});
+it.each(["ADMIN", "OWNER"])("lets %s finish deleting a lead whose automated work was already retired", async role => {
+  const identity = { sub: "alice", groups: [role, "PRODUCER"] };
+  const request = { headers: { "x-crm-role": role } };
+  h.records.set("communications:deleted-account:a", { id: "deleted-account:a" });
+  await expect(handler({ mode: "admin", identity, request, previous: "allowed" })).resolves.toBe("allowed");
+  await expect(handler({ mode: "write", model: "Account", operation: "delete", identity, request, arguments: { input: { id: "a" } }, previous: "allowed" })).resolves.toBe("allowed");
+  await expect(handler({ mode: "admin", identity, request: { headers: { "x-crm-role": "PRODUCER" } } })).rejects.toThrow("not available");
+});
+it.each(["ADMIN", "OWNER", "PRODUCER", "STAFF"])("keeps normal account edits available to %s without acquisition fields", async role => {
+  await expect(handler({
+    mode: "write", model: "Account", operation: "update",
+    identity: { sub: "alice", groups: [role] },
+    arguments: { input: { id: "a", name: "Updated association", notes: null } }, previous: "allowed",
+  })).resolves.toBe("allowed");
+});
 it.each(['dashboardAssignments', 'dashboardInterestPage', 'dashboardPolicyAnchors', 'dashboardLeadPlansPage', 'dashboardOpenQuotesPage', 'dashboardBoundPoliciesPage', 'dashboardQuotesPage', 'dashboardQuoteStates', 'dashboardInvoiceAnchors'])('keeps %s admin-only at the custom resolver boundary', async readOperation => {
   await expect(handler({ mode: 'custom-pre', field: 'communicationRead', identity, arguments: { readOperation, input: '{}' } })).rejects.toThrow();
   await expect(handler({ mode: 'custom-pre', field: 'communicationRead', identity: { sub: 'admin', groups: ['ADMIN'] }, arguments: { readOperation, input: '{}' } })).resolves.toBeUndefined();
