@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { uploadData } from "../../lib/scopedStorage";
 import {
   client,
@@ -20,13 +20,18 @@ import {
 } from "../../lib/acord";
 import { downloadFile } from "../../lib/storage";
 import { useSort, SortTh } from "../../lib/useSort";
+import { isAuthorizationError } from "../../lib/authorizationError";
 import { useAsyncResource } from "../../lib/useAsyncResource";
 import AiFilledList from "../../components/AiFilledList";
 import FilePreviewModal from "../../components/FilePreview";
 import { SaveStatus, useSaveStatus } from "../../components/SaveStatus";
 import { useFormState } from "../../lib/useFormState";
 
-export function CertificatesTab({
+export function CertificatesTab(props: Parameters<typeof CertificatesTabContent>[0]) {
+  return <CertificatesTabContent key={`${props.account.id}:${props.sourceCommunicationId ?? ""}`} {...props} />;
+}
+
+function CertificatesTabContent({
   account,
   profile,
   sourceCommunicationId,
@@ -44,7 +49,7 @@ export function CertificatesTab({
         })
       ),
     [account.id],
-    { initialData: [] as Certificate[], errorMessage: "Failed to load certificates" }
+    { initialData: [] as Certificate[], errorMessage: "Failed to load certificates", clearDataOnError: isAuthorizationError }
   );
   const certs = certRes.data;
   const setCerts = certRes.setData;
@@ -58,7 +63,7 @@ export function CertificatesTab({
         })
       ),
     [account.id],
-    { initialData: [] as Policy[], errorMessage: "Failed to load policies" }
+    { initialData: [] as Policy[], errorMessage: "Failed to load policies", clearDataOnError: isAuthorizationError }
   );
   const policies = policyRes.data;
 
@@ -68,9 +73,9 @@ export function CertificatesTab({
    * the insurer block silently blank.
    */
   const carrierRes = useAsyncResource(
-    async () => (await client.models.Carrier.list()).data,
+    () => listAllPages(nextToken => client.models.Carrier.list({ nextToken })),
     [],
-    { initialData: [] as Carrier[], errorMessage: "Failed to load carriers" }
+    { initialData: [] as Carrier[], errorMessage: "Failed to load carriers", clearDataOnError: isAuthorizationError }
   );
   const carriers = carrierRes.data;
 
@@ -81,7 +86,13 @@ export function CertificatesTab({
     description: "",
     selectedPolicies: [] as string[],
   });
-  const [saving, setSaving] = useState(false);
+  const issueStatus = useSaveStatus();
+  const issuePending = useRef(false);
+  const generationPending = useRef(false);
+  const saving = issueStatus.busy;
+  const referencesReady = certRes.loaded && !certRes.loading && !certRes.error &&
+    policyRes.loaded && !policyRes.loading && !policyRes.error &&
+    carrierRes.loaded && !carrierRes.loading && !carrierRes.error;
   // Which certificate is being filled — the button label is per row, so this
   // stays alongside the panel-level status below.
   const [generating, setGenerating] = useState<string | null>(null);
@@ -96,57 +107,44 @@ export function CertificatesTab({
   const [aiFilled, setAiFilled] = useState<AiFilledField[]>([]);
 
   async function issue() {
-    if (!form.holderName.trim()) return;
-    setSaving(true);
-    setError("");
-
-    // Reserve a unique, sequential certificate number (atomic server-side
-    // counter) before recording the certificate.
-    let certificateNumber: string | undefined;
-    try {
-      const { data: r, errors } = await client.mutations.reserveCertificateNumber();
-      if (errors?.length) throw new Error(errors[0].message);
-      const body = typeof r === "string" ? JSON.parse(r) : (r ?? {});
-      certificateNumber = body?.certificateNumber;
-      if (!certificateNumber) throw new Error("No number returned");
-    } catch (err) {
-      setSaving(false);
-      setError(
-        "Couldn't reserve a certificate number: " +
-          friendlyError(err, "unknown error") +
-          ". Nothing was saved — try again."
-      );
-      return;
-    }
-
-    const { data } = await client.models.Certificate.create({
-      accountId: account.id,
-      sourceCommunicationId,
-      certificateNumber,
-      policyIds: form.selectedPolicies,
-      holderName: form.holderName.trim(),
-      holderAddress: form.holderAddress.trim() || undefined,
-      descriptionOfOperations: form.description.trim() || undefined,
-      formType: "ACORD_25",
-      issuedBy: `${profile.firstName} ${profile.lastName}`,
-      issuedAt: new Date().toISOString(),
-    });
-    setSaving(false);
-    if (data) {
-      setCerts((cs) => [data, ...cs]);
+    if (!form.holderName.trim() || !referencesReady || generationPending.current || issuePending.current) return;
+    issuePending.current = true;
+    const submitted = form;
+    await issueStatus.run(async () => {
+      setError("");
+      const { data: reserved, errors: reserveErrors } = await client.mutations.reserveCertificateNumber();
+      if (reserveErrors?.length) throw new Error(reserveErrors[0].message);
+      const body = typeof reserved === "string" ? JSON.parse(reserved) : reserved;
+      const certificateNumber = body?.certificateNumber;
+      if (!certificateNumber) throw new Error("Couldn't reserve a certificate number. Nothing was saved; try again.");
+      const { data, errors } = await client.models.Certificate.create({
+        accountId: account.id,
+        sourceCommunicationId,
+        certificateNumber,
+        policyIds: submitted.selectedPolicies,
+        holderName: submitted.holderName.trim(),
+        holderAddress: submitted.holderAddress.trim() || undefined,
+        descriptionOfOperations: submitted.description.trim() || undefined,
+        formType: "ACORD_25",
+        issuedBy: `${profile.firstName} ${profile.lastName}`,
+        issuedAt: new Date().toISOString(),
+      });
+      if (errors?.length || !data) throw new Error(errors?.[0]?.message ?? "Couldn't record the certificate. Your entries are still here; try again.");
+      setCerts(cs => [data, ...cs]);
       setShowForm(false);
-      // Baseline is still the blanks this mounted with — markSaved is never
-      // called here — so `reset()` is the four setters it replaces.
       reset();
-      generatePdf(data); // fire the fill immediately; failures leave a retry button
-    }
+      await generatePdf(data, true);
+    }, { savedMessage: "Certificate recorded.", errorMessage: "Couldn't record the certificate. Your entries are still here; try again." });
+    issuePending.current = false;
   }
 
-  async function generatePdf(cert: Certificate) {
-    setGenerating(cert.id);
-    setError("");
-    setAiFilled([]);
+  async function generatePdf(cert: Certificate, fromIssue = false) {
+    if (!referencesReady || generationPending.current || (issuePending.current && !fromIssue)) return;
+    generationPending.current = true;
     await genStatus.run(async () => {
+      setGenerating(cert.id);
+      setError("");
+      setAiFilled([]);
       try {
         const { bytes, missing, unsigned, pdf, empty } = await fillAcord25(
           account,
@@ -211,9 +209,11 @@ export function CertificatesTab({
         throw new Error(
           msg === TEMPLATE_MISSING_MESSAGE ? msg : `PDF generation failed: ${msg}`
         );
+      } finally {
+        setGenerating(null);
       }
     }, { savedMessage: "Certificate PDF generated." });
-    setGenerating(null);
+    generationPending.current = false;
   }
 
   async function downloadPdf(cert: Certificate) {
@@ -263,13 +263,14 @@ export function CertificatesTab({
         <>
           <div className="toolbar">
             <div className="grow" />
-            <button className="primary" onClick={() => setShowForm(!showForm)}>
+            <button className="primary" disabled={saving} onClick={() => setShowForm(!showForm)}>
               {showForm ? "Cancel" : "+ New certificate"}
             </button>
           </div>
 
           {showForm && (
             <div className="card" style={{ background: "#f8fafc" }}>
+              <fieldset disabled={saving} style={{ border: 0, padding: 0, margin: 0 }}>
               <div className="form-grid">
                 <div className="field">
                   <label>Certificate holder *</label>
@@ -294,6 +295,8 @@ export function CertificatesTab({
                   <label>Policies on certificate</label>
                   {!policyRes.loaded ? (
                     <span className="muted small">Loading…</span>
+                  ) : policyRes.error ? (
+                    <span className="error-text">Policies are unavailable. Retry below before issuing.</span>
                   ) : policies.length === 0 ? (
                     <span className="muted small">No policies on this account.</span>
                   ) : (
@@ -321,10 +324,11 @@ export function CertificatesTab({
                   )}
                 </div>
               </div>
+              </fieldset>
               <div className="form-actions">
                 <button
                   className="primary"
-                  disabled={saving || !form.holderName.trim()}
+                  disabled={saving || genStatus.busy || !referencesReady || !form.holderName.trim()}
                   onClick={issue}
                 >
                   {saving ? "Saving…" : "Record certificate"}
@@ -333,6 +337,7 @@ export function CertificatesTab({
             </div>
           )}
 
+          <SaveStatus {...issueStatus.status} />
           {genStatus.status.state !== "idle" && (
             <p style={{ margin: "10px 0" }}>
               <SaveStatus {...genStatus.status} />
@@ -341,14 +346,13 @@ export function CertificatesTab({
           <AiFilledList fields={aiFilled} />
           {/* `error` is the issue/generate failure; the reads have their own. */}
           {error && <p className="error-text">{error}</p>}
-          {carrierRes.error && <p className="error-text">{carrierRes.error}</p>}
-          {policyRes.error && <p className="error-text">{policyRes.error}</p>}
+          {carrierRes.error && <p className="error-text">{carrierRes.error} <button disabled={carrierRes.loading} onClick={() => void carrierRes.refetch()}>Retry carriers</button></p>}
+          {policyRes.error && <p className="error-text">{policyRes.error} <button disabled={policyRes.loading} onClick={() => void policyRes.refetch()}>Retry policies</button></p>}
+          {certRes.error && <p className="error-text">{certRes.error} <button disabled={certRes.loading} onClick={() => void certRes.refetch()}>Retry certificates</button></p>}
 
           {!certRes.loaded ? (
             <p className="muted small">Loading…</p>
-          ) : certRes.error ? (
-            <p className="error-text">{certRes.error}</p>
-          ) : certs.length === 0 ? (
+          ) : certs.length === 0 && !certRes.error ? (
             <p className="muted small">No certificates issued.</p>
           ) : (
             <div className="table-wrap">
@@ -386,7 +390,7 @@ export function CertificatesTab({
                             </button>
                             <button
                               className="link"
-                              disabled={generating === c.id}
+                              disabled={genStatus.busy || saving || !referencesReady}
                               onClick={() => generatePdf(c)}
                             >
                               {generating === c.id ? "Regenerating…" : "Regenerate"}
@@ -395,7 +399,7 @@ export function CertificatesTab({
                         ) : (
                           <button
                             className="link"
-                            disabled={generating === c.id}
+                            disabled={genStatus.busy || saving || !referencesReady}
                             onClick={() => generatePdf(c)}
                           >
                             {generating === c.id ? "Generating…" : "Generate PDF"}

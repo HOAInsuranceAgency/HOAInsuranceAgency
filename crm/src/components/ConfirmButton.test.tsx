@@ -19,6 +19,30 @@ const confirm = () => screen.getByRole("button", { name: "Confirm" });
 const cancel = () => screen.getByRole("button", { name: "Cancel" });
 
 describe("ConfirmButton", () => {
+  it('honors disabled after confirmation is armed', async () => {
+    const user = userEvent.setup();
+    const action = vi.fn();
+    const view = render(<ConfirmButton onConfirm={action} />);
+    await user.click(trigger());
+    view.rerender(<ConfirmButton onConfirm={action} disabled />);
+    expect(confirm()).toBeDisabled();
+    await user.click(confirm());
+    expect(action).not.toHaveBeenCalled();
+  });
+
+  it('shows a retryable failure even when the caller supplies no error handler', async () => {
+    const user = userEvent.setup();
+    const action = vi.fn().mockRejectedValueOnce(new Error('Delete unavailable')).mockResolvedValue(undefined);
+    render(<ConfirmButton onConfirm={action} />);
+    await user.click(trigger());
+    await user.click(confirm());
+    expect(await screen.findByRole('alert')).toHaveTextContent('Delete unavailable');
+    expect(confirm()).toBeEnabled();
+    await user.click(confirm());
+    expect(trigger()).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
   it("shows only the trigger before it is armed", () => {
     render(<ConfirmButton onConfirm={vi.fn()} />);
     expect(trigger()).toBeInTheDocument();

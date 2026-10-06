@@ -60,3 +60,61 @@ it("polls queued submissions to a portal link and stops on unmount", async () =>
   h.list.mockResolvedValue({ data: [{ ...job, status: "CREATED", submissionId: "created", submissionStatus: "incomplete" }] }); await act(async () => { await vi.advanceTimersByTimeAsync(5000); }); expect(screen.getByRole("link", { name: /Open in Honeycomb/ })).toHaveAttribute("href", "https://staging-falcon.honeycombinsurance.com/quotes/created");
   const count = h.list.mock.calls.length; view.unmount(); await vi.advanceTimersByTimeAsync(15000); expect(h.list).toHaveBeenCalledTimes(count);
 });
+
+it("keeps edited submission details through failed refresh and blocks creation until retry succeeds", async () => {
+  render(<SubmissionsPanel account={account} />);
+  await screen.findByRole("form");
+  fireEvent.change(screen.getByLabelText("Legal insured name *"), { target: { value: "Unsaved legal name" } });
+  fireEvent.click(screen.getByRole("checkbox"));
+  h.list.mockRejectedValueOnce(new Error("Temporary history failure"));
+  fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  await screen.findByRole("alert");
+  expect(screen.getByLabelText("Legal insured name *")).toHaveValue("Unsaved legal name");
+  expect(screen.getByRole("button", { name: "Create partial submission" })).toBeDisabled();
+  fireEvent.submit(screen.getByRole("form"));
+  expect(h.start).not.toHaveBeenCalled();
+  fireEvent.click(screen.getAllByRole("button", { name: "Refresh" })[0]);
+  await waitFor(() => expect(screen.getByRole("button", { name: "Create partial submission" })).toBeEnabled());
+  expect(screen.getByLabelText("Legal insured name *")).toHaveValue("Unsaved legal name");
+});
+it("resets submission drafts when the account changes", async () => {
+  const view = render(<SubmissionsPanel account={account} />);
+  await screen.findByRole("form");
+  fireEvent.change(screen.getByLabelText("Legal insured name *"), { target: { value: "Old account draft" } });
+  view.rerender(<SubmissionsPanel account={{ ...account, id: "account-2", name: "Other Association" }} />);
+  await screen.findByRole("form");
+  expect(screen.getByLabelText("Legal insured name *")).toHaveValue("Other Association");
+});
+
+it("clears cached submission details when a refreshed read denies access", async () => {
+  render(<SubmissionsPanel account={account} />);
+  await screen.findByRole("form");
+  h.list.mockResolvedValue({ data: [], errors: [{ errorType: "Unauthorized", message: "Not authorized" }] });
+  fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  await screen.findByRole("alert");
+  expect(screen.queryByRole("form")).toBeNull();
+  expect(screen.queryByLabelText("Legal insured name *")).toBeNull();
+});
+it("lets a slow status refresh finish instead of replacing it with overlapping polls", async () => {
+  vi.useFakeTimers();
+  h.list.mockResolvedValueOnce({ data: [job] });
+  let finish!: (value: unknown) => void;
+  h.list.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  render(<SubmissionsPanel account={account} />);
+  await act(async () => {});
+  await act(async () => { await vi.advanceTimersByTimeAsync(20000); });
+  expect(h.list).toHaveBeenCalledTimes(2);
+  await act(async () => finish({ data: [{ ...job, status: "CREATED", submissionId: "created", submissionStatus: "incomplete" }] }));
+  expect(screen.getByRole("link", { name: /Open in Honeycomb/ })).toHaveAttribute("href", "https://staging-falcon.honeycombinsurance.com/quotes/created");
+});
+
+it("keeps the draft open when a refresh discovers another submission", async () => {
+  render(<SubmissionsPanel account={account} />);
+  await screen.findByRole("form");
+  fireEvent.change(screen.getByLabelText("Legal insured name *"), { target: { value: "Draft being reviewed" } });
+  h.list.mockResolvedValue({ data: [{ ...job, status: "CREATED", submissionId: "other" }] });
+  fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  await screen.findByText(/A submission already exists for this effective date/);
+  expect(screen.getByLabelText("Legal insured name *")).toHaveValue("Draft being reviewed");
+  expect(screen.getByRole("button", { name: "Create partial submission" })).toBeDisabled();
+});

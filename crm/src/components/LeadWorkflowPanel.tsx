@@ -30,7 +30,10 @@ export default function LeadWorkflowPanel({ accountId, conversationId, onOpen }:
   const compact = !!onOpen;
   const [editingTeam, setEditingTeam] = useState(false);
   const [notice, setNotice] = useState("");
-  const [revision, setRevision] = useState(0), [error, setError] = useState(""), [busy, setBusy] = useState(false);
+  const [error, setError] = useState(""), [busy, setBusy] = useState(false);
+  const mutationBusy = useRef(false), olderBusy = useRef(false), mounted = useRef(true);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const [salesperson, setSalesperson] = useState("");
   const [savedSnooze, setSavedSnooze] = useState<LeadSnooze>();
   const [snoozeInteracting, setSnoozeInteracting] = useState(false);
@@ -40,8 +43,10 @@ export default function LeadWorkflowPanel({ accountId, conversationId, onOpen }:
   const noteId = useRef(crypto.randomUUID());
   const [channel, setChannel] = useState("ALL");
   const [note, setNote] = useState(""), [publish, setPublish] = useState(false);
-  const resource = useAsyncResource(() => request<WorkflowContext>("context", { accountId, conversationId }), [accountId, conversationId, revision], { initialData: EMPTY, errorMessage: "Could not load account communications", clearDataOnError: isAuthorizationError });
+  const resource = useAsyncResource(() => request<WorkflowContext>("context", { accountId, conversationId }), [accountId, conversationId], { initialData: EMPTY, errorMessage: "Could not load account communications", clearDataOnError: isAuthorizationError });
   const { workflow, communications, team, issues } = resource.data;
+  const currentData = useRef(resource.data);
+  currentData.current = resource.data;
   useEffect(() => {
     if (resource.data !== EMPTY || !resource.error) return;
     setNote(''); setPublish(false); setNotice(''); setError('');
@@ -49,21 +54,28 @@ export default function LeadWorkflowPanel({ accountId, conversationId, onOpen }:
     noteId.current = crypto.randomUUID();
   }, [resource.data, resource.error]);
   useEffect(() => {
-    if (!compact || busy || editingTeam || note.trim() || resource.loading || snoozeInteracting) return;
+    if (!compact || busy || editingTeam || note.trim() || resource.loading || snoozeInteracting || loadingOlder) return;
     const refresh = () => { if (document.visibilityState === "visible") void resource.refetch(); };
     const timer = window.setInterval(refresh, 15_000);
     document.addEventListener("visibilitychange", refresh);
     return () => { window.clearInterval(timer); document.removeEventListener("visibilitychange", refresh); };
-  }, [compact, busy, editingTeam, note, resource.loading, resource.refetch, snoozeInteracting]);
-  useEffect(() => { setSalesperson(workflow?.salespersonId ?? ""); }, [workflow?.salespersonId]);
+  }, [compact, busy, editingTeam, note, resource.loading, resource.refetch, snoozeInteracting, loadingOlder]);
+  useEffect(() => { if (!editingTeam) setSalesperson(workflow?.salespersonId ?? ""); }, [workflow?.salespersonId, editingTeam]);
   useEffect(() => { if (!isAdmin) { setEditingTeam(false); setSalesperson(workflow?.salespersonId ?? ""); } }, [isAdmin, workflow?.salespersonId]);
   // The parent keys the panel by conversation/account, so unsaved edits never
   // become writes against the newly selected lead in Front.
   const run = async (op: string, input: unknown) => {
-    setBusy(true); setError(""); setNotice("");
-    try { const result = await request<{ notice?: string }>(op, input, true); if (result.notice) setNotice(result.notice); setRevision(n => n + 1); return true; }
-    catch (e) { setError(friendlyError(e, "Could not save")); return false; }
-    finally { setBusy(false); }
+    if (mutationBusy.current) return false;
+    mutationBusy.current = true; setBusy(true); setError(""); setNotice("");
+    try {
+      const result = await request<{ notice?: string }>(op, input, true);
+      if (!mounted.current) return false;
+      if (result.notice) setNotice(result.notice);
+      await resource.refetch();
+      return mounted.current;
+    }
+    catch (e) { if (mounted.current) { if (isAuthorizationError(e)) resource.invalidate(e); else setError(friendlyError(e, "Could not save")); } return false; }
+    finally { mutationBusy.current = false; if (mounted.current) setBusy(false); }
   };
   function open(url: string) { if (onOpen) onOpen(url); else window.open(url, "_blank", "noopener,noreferrer"); }
   const fetchedSnooze = resource.data.snooze;
@@ -97,17 +109,26 @@ export default function LeadWorkflowPanel({ accountId, conversationId, onOpen }:
       {c.provider === "front" && <button className="link" onClick={() => open(`https://app.frontapp.com/open/${c.providerId}`)}>Open message</button>}
       </div>
     </details>)}
-    {resource.data.communicationNextToken && <button className="secondary activity-load-more" onClick={async () => { try { const more = await request<WorkflowContext>("context", { accountId: workflow.accountId, nextToken: resource.data.communicationNextToken }); resource.setData(current => current.workflow ? ({ ...current, communications: [...current.communications, ...more.communications], communicationNextToken: more.communicationNextToken }) : current); } catch(e) { if (isAuthorizationError(e)) resource.invalidate(e); else setError(friendlyError(e, 'Could not load older activity')); } }}>Load older activity</button>}
+    {resource.data.communicationNextToken && <button className="secondary activity-load-more" disabled={loadingOlder || resource.loading} onClick={async () => {
+      if (olderBusy.current) return;
+      olderBusy.current = true; setLoadingOlder(true);
+      const captured = resource.data;
+      try {
+        const more = await request<WorkflowContext>("context", { accountId: workflow.accountId, nextToken: captured.communicationNextToken });
+        if (mounted.current && currentData.current === captured) resource.setData(current => current === captured ? ({ ...current, communications: [...new Map([...current.communications, ...more.communications].map(item => [item.id, item])).values()], communicationNextToken: more.communicationNextToken }) : current);
+      } catch(e) { if (mounted.current) { if (isAuthorizationError(e)) resource.invalidate(e); else setError(friendlyError(e, 'Could not load older activity')); } }
+      finally { olderBusy.current = false; if (mounted.current) setLoadingOlder(false); }
+    }}>{loadingOlder ? 'Loading older activity…' : 'Load older activity'}</button>}
   </>;
   const noteEditor = <>
-    {!compact && <h3>Add an internal note</h3>}<div className="field"><textarea aria-label="Internal note" placeholder="Add a note for your team…" value={note} onChange={e => setNote(e.target.value)} rows={3} /></div>
+    {!compact && <h3>Add an internal note</h3>}<div className="field"><textarea disabled={busy} aria-label="Internal note" placeholder="Add a note for your team…" value={note} onChange={e => setNote(e.target.value)} rows={3} /></div>
     <div className="activity-note-actions">
-    <label className="workflow-note-publish"><input type="checkbox" checked={publish} onChange={e => setPublish(e.target.checked)} /> Also post as a Front comment</label>
+    <label className="workflow-note-publish"><input type="checkbox" disabled={busy} checked={publish} onChange={e => setPublish(e.target.checked)} /> Also post as a Front comment</label>
     <div className="toolbar"><button className="primary" disabled={busy || !note.trim()} onClick={async () => { if (await run("addNote", { accountId: workflow.accountId, text: note, publishToFront: publish, requestId: noteId.current })) { setNote(""); noteId.current = crypto.randomUUID(); } }}>Save note</button></div></div>  </>;
   const conversationTools = <>
     {(conversationId ?? workflow.conversationId) && <ConversationContext accountId={workflow.accountId} conversationId={(conversationId ?? workflow.conversationId)!} bound={workflow.disposition === "BOUND"} saved={resource.data.frontContext} onSaved={() => void resource.refetch()} />}
     {workflow.disposition !== "BOUND" && <details className="front-disclosure"><summary>Lead status</summary>
-      {workflow.disposition === "ACTIVE" ? <><label className="field">Status<select value={leadStatus} onChange={e => setLeadStatus(e.target.value)}><option value="LOST">Lost</option><option value="DISQUALIFIED">Not a fit</option></select></label><button className="secondary" disabled={busy} onClick={() => void run("setLeadDisposition", { accountId: workflow.accountId, version: workflow.version, disposition: leadStatus })}>Update lead status</button></>
+      {workflow.disposition === "ACTIVE" ? <><label className="field">Status<select disabled={busy} value={leadStatus} onChange={e => setLeadStatus(e.target.value)}><option value="LOST">Lost</option><option value="DISQUALIFIED">Not a fit</option></select></label><button className="secondary" disabled={busy} onClick={() => void run("setLeadDisposition", { accountId: workflow.accountId, version: workflow.version, disposition: leadStatus })}>Update lead status</button></>
         : <button className="secondary" disabled={busy} onClick={() => void run("setLeadDisposition", { accountId: workflow.accountId, version: workflow.version, disposition: "ACTIVE" })}>Reopen lead</button>}
     </details>}
 

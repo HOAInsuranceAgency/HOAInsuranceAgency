@@ -17,13 +17,16 @@ export default function MagicLinkSignIn({ embedded = false }: { embedded?: boole
   const [phase, setPhase] = useState<"email" | "sent" | "completing">("email");
   const [error, setError] = useState("");
   const consumed = useRef(false);
+  const requesting = useRef(false);
+  const [sending, setSending] = useState(false);
 
   useEffect(() => {
     const match = window.location.hash.match(/magic=([^&]+)/);
     if (match && !consumed.current) {
       consumed.current = true; // StrictMode double-mount guard
       window.history.replaceState(null, "", window.location.pathname);
-      completeSignIn(decodeURIComponent(match[1]));
+      try { void completeSignIn(decodeURIComponent(match[1])); }
+      catch { setError('That sign-in link is malformed. Request a new one.'); }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -75,7 +78,9 @@ export default function MagicLinkSignIn({ embedded = false }: { embedded?: boole
 
   async function requestLink() {
     const addr = email.trim().toLowerCase();
-    if (!addr) return;
+    if (!addr || requesting.current) return;
+    requesting.current = true;
+    setSending(true);
     setError("");
     try {
       await signIn({
@@ -88,6 +93,9 @@ export default function MagicLinkSignIn({ embedded = false }: { embedded?: boole
     } catch (err) {
       // Same response either way — don't reveal whether the account exists.
       console.warn(err);
+    } finally {
+      requesting.current = false;
+      setSending(false);
     }
     setPhase("sent");
   }
@@ -138,13 +146,14 @@ export default function MagicLinkSignIn({ embedded = false }: { embedded?: boole
                 type="email"
                 autoFocus
                 value={email}
+                disabled={sending}
                 onChange={(e) => setEmail(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && requestLink()}
               />
             </div>
             <div className="form-actions">
-              <button className="primary" disabled={!email.trim()} onClick={requestLink}>
-                Email me a sign-in link
+              <button className="primary" disabled={sending || !email.trim()} onClick={requestLink}>
+                {sending ? 'Sending…' : 'Email me a sign-in link'}
               </button>
             </div>
           </>

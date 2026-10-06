@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { communicationRequest as request, type LeadTask, type LeadWorkflow } from "./communications";
 import { useAsyncResource } from "./useAsyncResource";
+import { isAuthorizationError } from './authorizationError';
 
 export type WorkItem = Partial<LeadTask & LeadWorkflow> & {
   id: string; version: number; message?: string; at?: string; state?: string; error?: string;
@@ -14,7 +15,7 @@ export function useWorkItems(kind: string, filters: { view?: string; mine?: bool
   const generation = useRef(0), paging = useRef(false);
   const [loadingMore, setLoadingMore] = useState(false), [pageError, setPageError] = useState("");
   const resource = useAsyncResource(() => request<WorkPage>("work", { kind, view, mine }), [scope], {
-    initialData: { items: [] }, errorMessage: "Could not load this work. Please refresh.",
+    initialData: { items: [] }, errorMessage: "Could not load this work. Please refresh.", clearDataOnError: isAuthorizationError,
   });
   useEffect(() => {
     setPageError(""); setLoadingMore(false); paging.current = false;
@@ -35,7 +36,10 @@ export function useWorkItems(kind: string, filters: { view?: string; mine?: bool
       if (page.nextToken === cursor) throw new Error("More work could not be loaded. Refresh and try again.");
       resource.setData(previous => ({ ...page, items: [...new Map([...previous.items, ...page.items].map(item => [item.id, item])).values()] }));
     } catch (e) {
-      if (ticket === generation.current && current.current === scope) setPageError(e instanceof Error ? e.message : "Could not load more work.");
+      if (ticket === generation.current && current.current === scope) {
+        if (isAuthorizationError(e)) resource.invalidate(e);
+        else setPageError(e instanceof Error ? e.message : "Could not load more work.");
+      }
     } finally {
       if (ticket === generation.current && current.current === scope) { paging.current = false; setLoadingMore(false); }
     }

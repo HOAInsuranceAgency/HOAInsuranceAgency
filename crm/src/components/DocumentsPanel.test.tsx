@@ -5,7 +5,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // Same stubbing as ExtractionPanel.test.tsx: replace generateClient rather
 // than ./client, so the actor proxy that stamps `lastWriteBy` stays real.
 const models = vi.hoisted(() => ({
-  Document: { listDocumentByEntityId: vi.fn(), update: vi.fn(), delete: vi.fn() },
+  Policy: { list: vi.fn() },
+  Quote: { list: vi.fn() },
+  Document: { create: vi.fn(), listDocumentByEntityId: vi.fn(), update: vi.fn(), delete: vi.fn() },
 }));
 vi.mock("aws-amplify/data", () => ({
   generateClient: () => ({ models, mutations: {} }),
@@ -20,6 +22,7 @@ vi.mock("../lib/scopedStorage", () => ({
 }));
 
 import DocumentsPanel from "./DocumentsPanel";
+import { uploadData } from "../lib/scopedStorage";
 
 /**
  * Renaming a document.
@@ -63,6 +66,8 @@ async function typeName(user: ReturnType<typeof userEvent.setup>, text: string) 
 
 beforeEach(() => {
   vi.clearAllMocks();
+  models.Policy.list.mockResolvedValue({ data: [] });
+  models.Quote.list.mockResolvedValue({ data: [] });
   models.Document.update.mockResolvedValue({ errors: undefined });
 });
 
@@ -207,4 +212,79 @@ describe("DocumentsPanel authorized reads", () => {
     await waitFor(() => expect(screen.queryByText("scan_0043.pdf")).toBeNull());
     expect(screen.getByRole("alert")).toBeTruthy();
   });
+});
+
+
+describe("document recovery", () => {
+  it("keeps a failed rename editable and retries the same typed name", async () => {
+    const user = userEvent.setup();
+    renderPanel();
+    models.Document.update.mockResolvedValueOnce({ errors: [{ message: "Network temporarily unavailable" }] });
+    await typeName(user, "Reviewed budget");
+    await user.click(screen.getByRole("button", { name: "Save name" }));
+    await screen.findByRole("alert");
+    expect(screen.getByRole("textbox", { name: "Document name" })).toHaveValue("Reviewed budget");
+    await user.click(screen.getByRole("button", { name: "Save name" }));
+    await waitFor(() => expect(screen.queryByRole("textbox", { name: "Document name" })).toBeNull());
+    expect(models.Document.update.mock.calls.filter(([arg]) => arg.name === "Reviewed budget.pdf")).toHaveLength(2);
+  });
+
+  it("retains a rename draft through a transient background read failure", async () => {
+    const user = userEvent.setup();
+    renderPanel();
+    await typeName(user, "Keep my title");
+    models.Document.listDocumentByEntityId.mockRejectedValueOnce(new Error("Network unavailable"));
+    await act(async () => window.dispatchEvent(new Event("focus")));
+    await screen.findByRole("alert");
+    expect(screen.getByRole("textbox", { name: "Document name" })).toHaveValue("Keep my title");
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+    expect(screen.getByRole("textbox", { name: "Document name" })).toHaveValue("Keep my title");
+  });
+
+  it("does not upload an object when saving its document path failed", async () => {
+    const user = userEvent.setup();
+    models.Document.listDocumentByEntityId.mockResolvedValue({ data: [] });
+    models.Document.create.mockResolvedValue({ data: { id: "new-doc" } });
+    models.Document.update.mockResolvedValue({ errors: [{ message: "Could not save document path" }] });
+    models.Document.delete.mockResolvedValue({ data: { id: "new-doc" } });
+    const view = render(<DocumentsPanel entityType="ACCOUNT" entityId="acct-1" />);
+    await user.upload(view.container.querySelector('input[type="file"]')!, new File(["pdf"], "budget.pdf", { type: "application/pdf" }));
+    await screen.findByRole("alert");
+    expect(uploadData).not.toHaveBeenCalled();
+    expect(models.Document.delete).toHaveBeenCalledWith({ id: "new-doc" });
+  });
+
+  it("resets document drafts immediately when the entity changes", async () => {
+    const user = userEvent.setup();
+    models.Document.listDocumentByEntityId.mockResolvedValue({ data: [DOC] });
+    const view = render(<DocumentsPanel entityType="ACCOUNT" entityId="acct-1" />);
+    await typeName(user, "Old account draft");
+    models.Document.listDocumentByEntityId.mockReturnValue(new Promise(() => {}));
+    view.rerender(<DocumentsPanel entityType="ACCOUNT" entityId="acct-2" />);
+    expect(screen.queryByRole("textbox", { name: "Document name" })).toBeNull();
+    expect(screen.queryByText("scan_0043.pdf")).toBeNull();
+  });
+});
+
+it("keeps row actions locked until a rename settles and reports failed link reads", async () => {
+  const user = userEvent.setup();
+  models.Document.listDocumentByEntityId.mockResolvedValue({ data: [DOC, { ...DOC, id: "doc-2", name: "bylaws.pdf" }] });
+  models.Policy.list.mockResolvedValueOnce({ data: [], errors: [{ message: "Policy links unavailable" }] });
+  let finish!: (value: unknown) => void;
+  models.Document.update.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  render(<DocumentsPanel entityType="ACCOUNT" entityId="acct-1" linkAccountId="acct-1" />);
+  await screen.findByRole("button", { name: "Retry links" });
+  expect(screen.getByLabelText("Link bylaws.pdf")).toBeDisabled();
+  await user.click(screen.getByRole("button", { name: "Retry links" }));
+  await waitFor(() => expect(screen.getByLabelText("Link bylaws.pdf")).toBeEnabled());
+  await user.click(screen.getAllByRole("button", { name: "Rename" })[0]);
+  const box = screen.getByRole("textbox", { name: "Document name" });
+  await user.clear(box); await user.type(box, "New title");
+  await user.click(screen.getByRole("button", { name: "Save name" }));
+  expect(screen.getByRole("button", { name: "Rename" })).toBeDisabled();
+  expect(screen.getByLabelText("Link bylaws.pdf")).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Save name" })).toBeDisabled();
+  for (const button of screen.getAllByRole("button", { name: "Delete" })) expect(button).toBeDisabled();
+  await act(async () => finish({ data: {} }));
 });

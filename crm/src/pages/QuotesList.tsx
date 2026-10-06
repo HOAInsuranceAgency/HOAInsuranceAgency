@@ -87,14 +87,14 @@ export default function QuotesList() {
         </div>
       </div>
 
-      {accountRes.error && <p className="error-text">{accountRes.error}</p>}
-      {carrierRes.error && <p className="error-text">{carrierRes.error}</p>}
+      {accountRes.error && <p className="error-text" role="alert">{accountRes.error} <button disabled={accountRes.loading} onClick={() => void accountRes.refetch()}>Retry account names</button></p>}
+      {carrierRes.error && <p className="error-text" role="alert">{carrierRes.error} <button disabled={carrierRes.loading} onClick={() => void carrierRes.refetch()}>Retry carriers</button></p>}
 
       <div className="card">
         {!quoteRes.loaded ? (
           <p className="muted small">Loading…</p>
         ) : quoteRes.error ? (
-          <p className="error-text">{quoteRes.error}</p>
+          <p className="error-text" role="alert">{quoteRes.error} <button disabled={quoteRes.loading} onClick={() => void quoteRes.refetch()}>Retry quotes</button></p>
         ) : sorted.length === 0 ? (
           <p className="muted small">No quotes.</p>
         ) : (

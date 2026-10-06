@@ -52,7 +52,7 @@ export default function FilePreviewModal({
       }
     >
       {error ? (
-        <p className="error-text">{error}</p>
+        <p className="error-text" role="alert">{error} <button className="secondary" disabled={res.loading} onClick={() => void res.refetch()}>Retry preview</button></p>
       ) : !url ? (
         <p className="muted small">Loading…</p>
       ) : isImage ? (

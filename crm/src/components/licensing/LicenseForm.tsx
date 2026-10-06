@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
   client,
   friendlyError,
@@ -21,12 +21,14 @@ export default function LicenseForm({
   profiles,
   onCancel,
   onSaved,
+  onSaving,
 }: {
   holderType: HolderType;
   existing: License | null;
   profiles: UserProfile[];
   onCancel: () => void;
   onSaved: (l: License) => void;
+  onSaving?: (saving: boolean) => void;
 }) {
   const { form, setF } = useFormState({
     userProfileId: existing?.userProfileId ?? "",
@@ -49,10 +51,12 @@ export default function LicenseForm({
     // a `string[]`; it is a field like any other.
     loa: (existing?.linesOfAuthority ?? []).filter((x): x is string => !!x),
   });
+  const inFlight = useRef(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
   async function save() {
+    if (inFlight.current) return;
     if (!form.state || !form.licenseNumber.trim()) {
       setError("State and license number are required.");
       return;
@@ -69,7 +73,9 @@ export default function LicenseForm({
       setError("Effective date can't be after the expiration date.");
       return;
     }
+    inFlight.current = true;
     setSaving(true);
+    onSaving?.(true);
     setError("");
     const holder = profiles.find((p) => p.id === form.userProfileId);
     const payload = {
@@ -92,15 +98,19 @@ export default function LicenseForm({
       continuingEducationDueDate: form.continuingEducationDueDate || null,
       notes: form.notes.trim() || null,
     };
-    const { data, errors } = existing
-      ? await client.models.License.update({ id: existing.id, ...payload })
-      : await client.models.License.create(payload);
-    setSaving(false);
-    if (errors?.length || !data) {
-      setError(friendlyError(errors?.[0]?.message, "Save failed"));
-      return;
+    try {
+      const { data, errors } = existing
+        ? await client.models.License.update({ id: existing.id, ...payload })
+        : await client.models.License.create(payload);
+      if (errors?.length || !data) throw new Error(errors?.[0]?.message || "Save failed");
+      onSaved(data);
+    } catch (error) {
+      setError(friendlyError(error, "Save failed"));
+    } finally {
+      inFlight.current = false;
+      setSaving(false);
+      onSaving?.(false);
     }
-    onSaved(data);
   }
 
   /**
@@ -110,7 +120,7 @@ export default function LicenseForm({
    * the only scroll container.
    */
   return (
-    <>
+    <fieldset disabled={saving} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
       <div className="form-grid">
         {holderType === "PRODUCER" && (
           <div className="field">
@@ -233,7 +243,7 @@ export default function LicenseForm({
         <button className="link" onClick={onCancel}>
           Cancel
         </button>
-        {error && <span className="error-text">{error}</span>}
+        {error && <span role="alert" className="error-text">{error}</span>}
       </div>
       {!existing && (
         <p className="muted small">
@@ -241,6 +251,6 @@ export default function LicenseForm({
           the license PDF and renewal paperwork.
         </p>
       )}
-    </>
+    </fieldset>
   );
 }

@@ -115,6 +115,8 @@ export function useSingletonChild<T, F extends object>(
   );
 
   const row = res.data;
+  const scope = useRef(accountId);
+  scope.current = accountId;
 
   const status = useSaveStatus();
   const form = useFormState<F>(initialForm, { onEdit: status.markDirty });
@@ -124,11 +126,14 @@ export function useSingletonChild<T, F extends object>(
   const { reset } = form;
   useEffect(() => {
     seeded.current = false;
+    reset(initialForm);
+    // Each account starts with its own blank form until its read succeeds.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accountId]);
   useEffect(() => {
-    if (seeded.current || !res.loaded) return;
+    if (seeded.current || !res.loaded || res.error) return;
     seeded.current = true;
-    if (row) reset(toForm(row));
+    reset(row ? toForm(row) : initialForm);
     // `toForm` is a fresh closure each render and `reset` is identity-stable;
     // the ref is what makes this run once, not the dependency list.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -152,30 +157,34 @@ export function useSingletonChild<T, F extends object>(
   async function createOrFold(): Promise<T> {
     const payload = toWrite(form.form);
     const created = await model.create({ accountId, ...payload });
-    if (created.data) return created.data;
+    if (created.data && !created.errors?.length) return created.data;
 
     const existing = await model.get({ accountId });
+    assertNoErrors(existing);
     if (existing.data) return unwrap(await model.update({ accountId, ...payload }));
 
     throw new Error(created.errors?.[0]?.message ?? `Couldn't save the ${noun}.`);
   }
 
   async function save() {
+    if (!res.loaded || res.error) return;
     const problems = validate?.(form.form) ?? [];
     if (problems.length) {
       status.markError(problems.join(" "));
       return;
     }
-    const payload = toWrite(form.form);
+    const submitted = form.form;
+    const payload = toWrite(submitted);
     await status.run(
       async () => {
         const saved = row
           ? unwrap(await model.update({ accountId, ...payload }))
           : await createOrFold();
+        if (scope.current !== accountId) return;
         res.setData(saved);
         // Moves the baseline, so `dirty` goes false and the next edit is
         // measured against what was actually persisted.
-        form.markSaved();
+        form.markSaved(submitted);
       },
       { errorMessage: `Couldn't save the ${noun}.` }
     );

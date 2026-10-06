@@ -1,4 +1,4 @@
-import { client, type AgencySettings } from "./client";
+import { assertNoErrors, client, type AgencySettings } from "./client";
 
 /**
  * The agency's own identifiers — read by the sidebar, written by
@@ -83,6 +83,7 @@ export async function saveAgencyIdentifiers(
   const existing = await client.models.AgencySettings.get({
     id: AGENCY_SETTINGS_ID,
   });
+  assertNoErrors(existing);
 
   const { data, errors } = existing.data
     ? await client.models.AgencySettings.update({

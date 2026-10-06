@@ -38,6 +38,38 @@ it("filters raw list/relationship responses without dropping the pagination curs
   expect(result).toEqual({ items: [{ id: "a", name: "Visible" }], nextToken: "cursor" });
   expect(h.db.mock.calls.every(([command]) => command.input.ConsistentRead || Object.values(command.input.RequestItems ?? {}).every(request => (request as { ConsistentRead?: boolean }).ConsistentRead))).toBe(true);
 });
+it("authorizes account search only as a read and filters names by current assignment with consistent batched reads", async () => {
+  const args = { readOperation: "searchAccounts", input: { query: "community" } };
+  await expect(handler({ mode: "custom-pre", field: "communicationRead", identity, arguments: args })).resolves.toBeUndefined();
+  await expect(handler({ mode: "custom-pre", field: "communicationWrite", identity, arguments: { operation: "searchAccounts", input: args.input } })).rejects.toThrow();
+  const previous = { ok: true, items: [{ id: "a", name: "My community" }, { id: "b", name: "Private community" }], nextToken: "later" };
+  const event = { mode: "custom-post" as const, field: "communicationRead", identity, arguments: args, previous };
+  expect(await handler(event)).toEqual({ ...previous, items: [previous.items[0]] });
+  expect(h.db.mock.calls).toHaveLength(1);
+  expect(h.db.mock.calls[0][0].input.RequestItems.communications.ConsistentRead).toBe(true);
+  h.records.set("communications:workflow:a", { data: { salespersonId: "bob" } });
+  expect(await handler(event)).toEqual({ ...previous, items: [] });
+  h.records.set("communications:workflow:a", { data: { salespersonId: "alice" } });
+  h.records.set("communications:deleted-account:a", {});
+  expect(await handler(event)).toEqual({ ...previous, items: [] });
+});
+it("keeps admin and owner searches unrestricted unless an alternate role was selected", async () => {
+  const previous = { ok: true, items: [{ id: "a", name: "A" }, { id: "b", name: "B" }], nextToken: "later" };
+  const event = { mode: "custom-post" as const, field: "communicationRead", arguments: { readOperation: "searchAccounts", input: { query: "a" } }, previous };
+  for (const role of ["ADMIN", "OWNER"]) {
+    const identity = { sub: "alice", groups: [role, "PRODUCER"] };
+    expect(await handler({ ...event, identity })).toEqual(previous);
+    expect(await handler({ ...event, identity, request: { headers: { "x-crm-role": "PRODUCER" } } })).toEqual({ ...previous, items: [previous.items[0]] });
+  }
+});
+it("fails closed on search permission read failures and malformed result shapes", async () => {
+  const event = { mode: "custom-post" as const, field: "communicationRead", identity, arguments: { readOperation: "searchAccounts" }, previous: { ok: true, items: [{ id: "a", name: "A" }], nextToken: "later" } };
+  h.db.mockRejectedValueOnce(new Error("assignment unavailable"));
+  await expect(handler(event)).rejects.toThrow("assignment unavailable");
+  for (const items of [null, [{ name: "No ID" }], Array.from({ length: 26 }, () => ({ id: "a", name: "A" }))]) {
+    await expect(handler({ ...event, previous: { ...event.previous, items } })).rejects.toThrow();
+  }
+});
 it.each(ACCOUNT_MODELS.filter(model => !RETIRED_MODELS.includes(model)))("batches permission reads for a large %s connection", async model => {
   const tables = JSON.parse(process.env.ACCESS_TABLES!);
   const items = Array.from({ length: 120 }, (_, i) => {

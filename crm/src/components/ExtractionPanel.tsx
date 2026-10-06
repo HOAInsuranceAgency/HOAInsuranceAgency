@@ -29,6 +29,7 @@ import {
   type Match,
 } from "../lib/extractionMatch";
 import { useAsyncResource } from "../lib/useAsyncResource";
+import { isAuthorizationError } from "../lib/authorizationError";
 import { SaveStatus, useSaveStatus } from "./SaveStatus";
 import "./ExtractionPanel.css";
 
@@ -328,6 +329,7 @@ function CandidateRow<E>({
   kind,
   match,
   checked,
+  disabled,
   onToggle,
   current,
   title,
@@ -336,6 +338,7 @@ function CandidateRow<E>({
   kind: string;
   match: Match<E>;
   checked: boolean;
+  disabled: boolean;
   onToggle: (v: boolean) => void;
   /** How the stored row reads today, or "" when there isn't one. */
   current: string;
@@ -352,7 +355,7 @@ function CandidateRow<E>({
           type="checkbox"
           aria-label={`Select ${kind.toLowerCase()}: ${title}`}
           checked={checked && !identical}
-          disabled={identical}
+          disabled={identical || disabled}
           title={identical ? "Already on the record — nothing to write" : undefined}
           onChange={(e) => onToggle(e.target.checked)}
         />
@@ -412,7 +415,11 @@ function parseExtraction(raw: unknown): ExtractionResult | null {
   return v && typeof v === "object" ? (v as ExtractionResult) : null;
 }
 
-export default function ExtractionPanel({
+export default function ExtractionPanel(props: Parameters<typeof ExtractionPanelContent>[0]) {
+  return <ExtractionPanelContent key={props.account.id} {...props} />;
+}
+
+function ExtractionPanelContent({
   account,
   onChange,
 }: {
@@ -425,18 +432,19 @@ export default function ExtractionPanel({
   // in-flight, applied, failed — is the one state machine below.
   const [error, setError] = useState("");
   const applyStatus = useSaveStatus();
+  const applyLock = useRef(false);
   const [selected, setSelected] = useState<Record<string, boolean>>({});
   const [selectedBuildings, setSelectedBuildings] = useState<Record<number, boolean>>({});
   const [selectedContacts, setSelectedContacts] = useState<Record<number, boolean>>({});
   const [selectedLosses, setSelectedLosses] = useState<Record<number, boolean>>({});
   const [showReview, setShowReview] = useState(true);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const startLock = useRef(false);
+  const live = useRef(true);
+  useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
 
   const status = account.extractionStatus;
-  const result = useMemo(
-    () => parseExtraction(account.aiExtraction),
-    [account.aiExtraction]
-  );
+  const extractionKey = typeof account.aiExtraction === 'string' ? account.aiExtraction : JSON.stringify(account.aiExtraction);
+  const result = useMemo(() => parseExtraction(extractionKey), [extractionKey]);
 
   /**
    * This exact extraction has already been applied.
@@ -457,10 +465,8 @@ export default function ExtractionPanel({
   //
   // A separate resource rather than part of the poll: the poll is an interval
   // that deliberately drops most of its successful responses, and this is a
-  // plain fetch-per-account. The error is deliberately not surfaced — a failed
-  // read leaves every candidate classified as "add", which is what the panel
-  // did before contacts existed, and blocking the whole review over it would
-  // be worse than the duplicate it prevents.
+  // plain fetch-per-account. Applying candidates waits for these reads: a
+  // failed match lookup must never classify every existing row as a new row.
   const contactsRes = useAsyncResource(
     () =>
       listAllPages((nextToken) =>
@@ -470,7 +476,7 @@ export default function ExtractionPanel({
         })
       ),
     [account.id],
-    { initialData: [] as Contact[] }
+    { initialData: [] as Contact[], clearDataOnError: isAuthorizationError }
   );
 
   // Same shape and the same reason as the contacts read: a candidate has to
@@ -485,7 +491,7 @@ export default function ExtractionPanel({
         })
       ),
     [account.id],
-    { initialData: [] as Loss[] }
+    { initialData: [] as Loss[], clearDataOnError: isAuthorizationError }
   );
 
   // Buildings were the original bug: they were created unconditionally on
@@ -499,7 +505,7 @@ export default function ExtractionPanel({
         })
       ),
     [account.id],
-    { initialData: [] as Building[] }
+    { initialData: [] as Building[], clearDataOnError: isAuthorizationError }
   );
 
   /**
@@ -558,12 +564,23 @@ export default function ExtractionPanel({
   // Poll while an extraction is in flight (30-90s typical).
   useEffect(() => {
     if (status === "PENDING" || status === "PROCESSING") {
-      pollRef.current = setInterval(async () => {
-        const { data } = await client.models.Account.get({ id: account.id });
-        if (data && data.extractionStatus !== status) onChange(data);
+      let active = true, pending = false;
+      const timer = setInterval(async () => {
+        if (pending) return;
+        pending = true;
+        try {
+          const { data, errors } = await client.models.Account.get({ id: account.id });
+          if (errors?.length || !data) throw new Error(errors?.[0]?.message ?? 'Could not refresh extraction status');
+          if (!active) return;
+          setError('');
+          if (data.extractionStatus !== status) onChange(data);
+        } catch (err) {
+          if (active) setError(friendlyError(err, 'Could not refresh extraction status. Retrying…'));
+        } finally { pending = false; }
       }, 4000);
       return () => {
-        if (pollRef.current) clearInterval(pollRef.current);
+        active = false;
+        clearInterval(timer);
       };
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -605,6 +622,8 @@ export default function ExtractionPanel({
   }, [result]);
 
   async function start() {
+    if (startLock.current) return;
+    startLock.current = true;
     setStarting(true);
     setError("");
     try {
@@ -612,11 +631,13 @@ export default function ExtractionPanel({
         accountId: account.id,
       });
       if (errors?.length) throw new Error(errors[0].message);
-      const { data } = await client.models.Account.get({ id: account.id });
-      if (data) onChange(data);
+      const { data, errors: readErrors } = await client.models.Account.get({ id: account.id });
+      if (readErrors?.length || !data) throw new Error(readErrors?.[0]?.message ?? 'Could not refresh extraction status');
+      if (live.current) onChange(data);
     } catch (err) {
       setError(friendlyError(err, "Could not start extraction"));
     } finally {
+      startLock.current = false;
       setStarting(false);
     }
   }
@@ -627,8 +648,13 @@ export default function ExtractionPanel({
    *   guard cannot be left switched off by a click three minutes ago.
    */
   async function apply(force = false) {
-    if (!result) return;
-    await applyStatus.run(
+    if (!result || applyLock.current) return;
+    if (!matchesReady) {
+      applyStatus.markError('Load existing contacts, losses and buildings before applying extracted rows.');
+      return;
+    }
+    applyLock.current = true;
+    try { await applyStatus.run(
       async () => {
         // The idempotency rule. Match-then-write already makes a second apply
         // harmless row by row, but "harmless" is not the same as "did
@@ -766,7 +792,7 @@ export default function ExtractionPanel({
         }
         if (buildingCandidates.length) await buildingsRes.refetch();
 
-        onChange(data);
+        if (live.current) onChange(data);
         // The account fields did land, so a child row that failed is a partial
         // success, not a failure: it comes back as `run`'s warning arm rather
         // than a throw, and it names where to finish the job by hand.
@@ -798,7 +824,7 @@ export default function ExtractionPanel({
         savedMessage: "Applied to the account.",
         errorMessage: "Apply failed",
       }
-    );
+    ); } finally { applyLock.current = false; }
   }
 
   const extractedFields = result ? fieldDefsFor(account).filter(def => {
@@ -810,6 +836,12 @@ export default function ExtractionPanel({
     + contactCandidates.filter(c => selectedContacts[c.i] && c.match.verdict !== "identical").length
     + lossCandidates.filter(l => selectedLosses[l.i] && l.match.verdict !== "identical").length
     + buildingCandidates.filter(b => selectedBuildings[b.i] && b.match.verdict !== "identical").length;
+  const matchingReads = [
+    ...(contactCandidates.length ? [{ label: 'contacts', resource: contactsRes }] : []),
+    ...(lossCandidates.length ? [{ label: 'losses', resource: lossesRes }] : []),
+    ...(buildingCandidates.length ? [{ label: 'buildings', resource: buildingsRes }] : []),
+  ];
+  const matchesReady = matchingReads.every(({ resource }) => resource.loaded && !resource.loading && !resource.error);
 
   return (
     <section className="card extraction-panel" aria-label="Extracted data">
@@ -820,7 +852,7 @@ export default function ExtractionPanel({
         </div>
         <button
           className={result ? "secondary" : "primary"}
-          disabled={starting || status === "PENDING" || status === "PROCESSING"}
+          disabled={starting || applyStatus.busy || status === "PENDING" || status === "PROCESSING"}
           onClick={start}
         >
           {status === "PENDING" || status === "PROCESSING"
@@ -834,6 +866,9 @@ export default function ExtractionPanel({
       </div>
       {status === "FAILED" && <p className="error-text extraction-feedback" role="alert">{account.extractionError ?? "Extraction failed"}</p>}
       {error && <p className="error-text extraction-feedback" role="alert">{error}</p>}
+      {matchingReads.map(({ label, resource }) => resource.error && <p key={label} role="alert" className="error-text">
+        Could not check existing {label}. {resource.error} <button type="button" disabled={resource.loading} onClick={() => void resource.refetch()}>Retry {label}</button>
+      </p>)}
 
       {result && status === "COMPLETE" && (
         <>
@@ -888,6 +923,7 @@ export default function ExtractionPanel({
                           type="checkbox"
                           aria-label={`Select ${def.label.toLowerCase()}`}
                           checked={!!selected[def.key]}
+                          disabled={applyStatus.busy}
                           onChange={(e) =>
                             setSelected((s) => ({ ...s, [def.key]: e.target.checked }))
                           }
@@ -924,6 +960,7 @@ export default function ExtractionPanel({
                       kind="Contact"
                       match={match}
                       checked={!!selectedContacts[i]}
+                      disabled={applyStatus.busy}
                       onToggle={(v) =>
                         setSelectedContacts((s) => ({ ...s, [i]: v }))
                       }
@@ -961,6 +998,7 @@ export default function ExtractionPanel({
                       kind="Loss"
                       match={match}
                       checked={!!selectedLosses[i]}
+                      disabled={applyStatus.busy}
                       onToggle={(v) => setSelectedLosses((s) => ({ ...s, [i]: v }))}
                       current={
                         found
@@ -993,6 +1031,7 @@ export default function ExtractionPanel({
                       kind="Building"
                       match={match}
                       checked={!!selectedBuildings[i]}
+                      disabled={applyStatus.busy}
                       onToggle={(v) =>
                         setSelectedBuildings((s) => ({ ...s, [i]: v }))
                       }
@@ -1017,7 +1056,7 @@ export default function ExtractionPanel({
           <div className="form-actions extraction-actions">
             <button
               className="primary"
-              disabled={applyStatus.busy}
+              disabled={applyStatus.busy || !matchesReady}
               onClick={() => apply()}
             >
               {applyStatus.busy
@@ -1031,7 +1070,7 @@ export default function ExtractionPanel({
             {alreadyApplied && (
               <button
                 className="link"
-                disabled={applyStatus.busy}
+                disabled={applyStatus.busy || !matchesReady}
                 onClick={() => apply(true)}
               >
                 Apply again anyway

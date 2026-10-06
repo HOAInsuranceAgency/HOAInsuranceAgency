@@ -113,6 +113,31 @@ describe("the D&O application record", () => {
 });
 
 describe("the three coverage parts", () => {
+  it("retains earlier writes when a later coverage part fails, so retry does not duplicate them", async () => {
+    const user = userEvent.setup();
+    DoCoveragePart.create.mockImplementation(async ({ part, ...data }) => part === "B" && DoCoveragePart.create.mock.calls.length === 2
+      ? { data: null, errors: [{ message: "Part B unavailable" }] }
+      : { data: { ...data, part, id: `part-${part}` } });
+    DoCoveragePart.update.mockImplementation(async data => ({ data: { ...data, part: "A" } }));
+    renderCard(); await screen.findByText("Coverage parts");
+    await user.type(rowFor("Part A").getAllByRole("textbox")[0], "1000000");
+    await user.type(rowFor("Part B").getAllByRole("textbox")[0], "2000000");
+    await user.click(screen.getByText("Save coverage parts"));
+    await screen.findByText("Part B unavailable");
+    await user.click(screen.getByText("Save coverage parts"));
+    await screen.findByText("Coverage parts saved.");
+    expect(DoCoveragePart.create.mock.calls.filter(([data]) => data.part === "A")).toHaveLength(1);
+    expect(DoCoveragePart.update).toHaveBeenCalledWith(expect.objectContaining({ id: "part-A", perClaimLimit: 1000000 }));
+  });
+
+  it("seeds existing coverage after retrying a failed initial read", async () => {
+    const user = userEvent.setup();
+    DoCoveragePart.list.mockRejectedValueOnce(new Error("Read unavailable")).mockResolvedValueOnce({ data: [{ id: "a", part: "A", perClaimLimit: 123000 }], nextToken: null });
+    renderCard();
+    await user.click(await screen.findByRole("button", { name: "Retry coverage parts" }));
+    expect(await screen.findByDisplayValue("123,000")).toBeInTheDocument();
+  });
+
   it("always renders exactly three, whether or not any are stored", async () => {
     renderCard();
     await screen.findByText("Coverage parts");

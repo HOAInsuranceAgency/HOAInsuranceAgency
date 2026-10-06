@@ -1,6 +1,7 @@
 import { Fragment, useMemo, useState } from "react";
 import {
   fmtDate,
+  friendlyError,
   licenseHealth,
   type License,
   type UserProfile,
@@ -265,6 +266,7 @@ function FragmentRow({
   onEdit: () => void;
   onDelete: () => void | Promise<unknown>;
 }) {
+  const [deleteError, setDeleteError] = useState("");
   return (
     <>
       <tr>
@@ -300,7 +302,8 @@ function FragmentRow({
             <button className="link" onClick={onEdit}>
               Edit
             </button>
-            <ConfirmButton className="link" onConfirm={onDelete} />
+            <ConfirmButton className="link" onConfirm={async () => { setDeleteError(""); await onDelete(); }} onError={error => setDeleteError(friendlyError(error, "Could not delete license."))} />
+            {deleteError && <p role="alert" className="error-text small">{deleteError}</p>}
           </td>
         )}
       </tr>

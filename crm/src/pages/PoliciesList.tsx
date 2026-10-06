@@ -77,14 +77,14 @@ export default function PoliciesList() {
       <h1>Policies</h1>
       <p className="sub">All bound policies — soonest expiration first</p>
 
-      {accountRes.error && <p className="error-text">{accountRes.error}</p>}
-      {carrierRes.error && <p className="error-text">{carrierRes.error}</p>}
+      {accountRes.error && <p className="error-text" role="alert">{accountRes.error} <button disabled={accountRes.loading} onClick={() => void accountRes.refetch()}>Retry account names</button></p>}
+      {carrierRes.error && <p className="error-text" role="alert">{carrierRes.error} <button disabled={carrierRes.loading} onClick={() => void carrierRes.refetch()}>Retry carriers</button></p>}
 
       <div className="card">
         {!policyRes.loaded ? (
           <p className="muted small">Loading…</p>
         ) : policyRes.error ? (
-          <p className="error-text">{policyRes.error}</p>
+          <p className="error-text" role="alert">{policyRes.error} <button disabled={policyRes.loading} onClick={() => void policyRes.refetch()}>Retry policies</button></p>
         ) : sorted.length === 0 ? (
           <p className="muted small">No policies bound yet.</p>
         ) : (

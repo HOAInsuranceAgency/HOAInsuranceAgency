@@ -141,3 +141,27 @@ it("keeps salespeople with no production visible when the selected period needs 
   expect(await screen.findByText("No decided quotes: Alice, Bob, Unassigned.")).toBeInTheDocument();
   expect(h.accounts).not.toHaveBeenCalled();
 });
+
+it('retains performance data for transient failures but clears denied data through retry', async () => {
+  const initial = h.assignments.getMockImplementation()!;
+  render(<PerformanceTab />);
+  await screen.findByRole('group', { name: 'Estimated commission per person' });
+  h.assignments.mockRejectedValueOnce(new Error('Report temporarily unavailable'));
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+  await screen.findByText(/Report temporarily unavailable/);
+  expect(screen.getByRole('group', { name: 'Estimated commission per person' })).toBeVisible();
+  expect(screen.getByRole('combobox', { name: 'Download Estimated commission per person' })).toBeDisabled();
+  h.assignments.mockRejectedValueOnce(Object.assign(new Error('Credentials changed'), { name: 'Unauthorized' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('Credentials changed');
+  expect(screen.queryByRole('group', { name: 'Estimated commission per person' })).toBeNull();
+  expect(screen.queryByRole('combobox', { name: /^Download / })).toBeNull();
+  let finish!: (value: unknown) => void;
+  h.assignments.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+  await waitFor(() => expect(finish).toBeTypeOf('function'));
+  expect(screen.getByText('Loading…')).toBeVisible();
+  expect(screen.queryByRole('group', { name: 'Estimated commission per person' })).toBeNull();
+  await act(async () => finish(await initial(['a'])));
+  expect(await screen.findByRole('group', { name: 'Estimated commission per person' })).toBeVisible();
+});

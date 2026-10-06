@@ -96,6 +96,14 @@ describe("loadAgencyIdentifiers", () => {
 });
 
 describe("saveAgencyIdentifiers", () => {
+  it('does not create or update after a failed existence read', async () => {
+    AgencySettings.get.mockResolvedValue({ data: null, errors: [{ message: 'Read unavailable' }] });
+    await expect(saveAgencyIdentifiers({ agencyNpn: '1', drlpNpn: '2', agencyEin: '3' }, 'Dana'))
+      .rejects.toThrow('Read unavailable');
+    expect(AgencySettings.create).not.toHaveBeenCalled();
+    expect(AgencySettings.update).not.toHaveBeenCalled();
+  });
+
   it("creates the row the first time", async () => {
     AgencySettings.get.mockResolvedValue({ data: null, errors: undefined });
 

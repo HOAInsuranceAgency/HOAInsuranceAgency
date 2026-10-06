@@ -315,7 +315,14 @@ describe("useSaveStatus", () => {
         d.resolve();
         await done;
       });
-      expect(result.current.status.state).toBe("saved");
+      expect(result.current.status.state).toBe("warning");
+      expect(result.current.status).toMatchObject({ message: expect.stringContaining('Newer edits still need saving') });
+    });
+
+    it('keeps a success confirmation when the task resets its completed add form', async () => {
+      const { result } = renderHook(() => useSaveStatus());
+      await act(async () => { await result.current.run(async () => { result.current.markDirty('reset'); }); });
+      expect(result.current.status.state).toBe('saved');
     });
 
     it("keeps one identity across renders, so it can live in a form setter", () => {

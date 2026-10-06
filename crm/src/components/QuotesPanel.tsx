@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import QuotePackages from "./QuotePackages";
 import "./QuotesPanel.css";
 import { packageTerms, type CommercialPlan } from '../../../shared/quotePackages';
@@ -14,6 +14,7 @@ import {
 } from "../lib/client";
 import { Badge, statusBadge, QUOTE_STATUS_BADGE } from "../lib/badges";
 import { useAsyncResource } from "../lib/useAsyncResource";
+import { isAuthorizationError } from "../lib/authorizationError";
 import { useSort, SortTh } from "../lib/useSort";
 import CoverageForm from "./CoverageForm";
 import { communicationRequest } from "../lib/communications";
@@ -58,7 +59,11 @@ export function termsSummary(q: {
  * Quotes for an account. Binding a quote is the conversion event: it creates
  * a Policy and flips the account LEAD → CLIENT in place.
  */
-export default function QuotesPanel({
+export default function QuotesPanel(props: Parameters<typeof QuotesPanelContent>[0]) {
+  return <QuotesPanelContent key={props.account.id} {...props} />;
+}
+
+function QuotesPanelContent({
   account,
   onAccountChange,
 }: {
@@ -72,11 +77,13 @@ export default function QuotesPanel({
   const [authorization, setAuthorization] = useState<Quote | null>(null);
   const [clientAuthorized, setClientAuthorized] = useState(false);
   const [authorizing, setAuthorizing] = useState(false);
+  const authorizationLock = useRef(false);
   // Auto-clearing: the status change is made from a per-row <select> that
   // then re-renders with the new value, and an open quote that moves to
   // DECLINED/LOST leaves the table entirely — there is no form to go dirty
   // and retire the confirmation, so a timer is what retires it.
   const statusSave = useSaveStatus({ autoClearMs: 4000 });
+  const statusLock = useRef(false);
 
   const quoteRes = useAsyncResource(
     () =>
@@ -87,7 +94,7 @@ export default function QuotesPanel({
         })
       ),
     [account.id],
-    { initialData: [] as Quote[], errorMessage: "Failed to load quotes" }
+    { initialData: [] as Quote[], errorMessage: "Failed to load quotes", clearDataOnError: isAuthorizationError }
   );
   const quotes = quoteRes.data;
   // Identity-stable, so passing it to CoverageForm/BindForm no longer
@@ -96,17 +103,18 @@ export default function QuotesPanel({
 
   // Carriers are agency-wide, not account-scoped, so they are their own
   // resource on their own (empty) deps: refreshing the quotes after a status
-  // change or a bind must not re-read the whole carrier table, and switching
-  // accounts must not blank the carrier names while it re-reads.
+  // change or a bind must not re-read the whole carrier table.
   const carrierRes = useAsyncResource(
-    async () => (await client.models.Carrier.list()).data,
+    () => listAllPages(nextToken => client.models.Carrier.list({ nextToken })),
     [],
-    { initialData: [] as Carrier[] }
+    { initialData: [] as Carrier[], clearDataOnError: isAuthorizationError }
   );
   const carrierRows = carrierRes.data;
 
   async function setStatus(quote: Quote, status: Quote["status"]) {
-    await statusSave.run(
+    if (statusLock.current) return;
+    statusLock.current = true;
+    try { await statusSave.run(
       async () => {
         // `errors` used to be dropped: the refetch quietly restored the old
         // value and the user was told nothing.
@@ -117,13 +125,13 @@ export default function QuotesPanel({
           ...(status === "PRESENTED" && !quote.presentedAt ? { presentedAt: new Date().toISOString() } : {}),
         });
         if (errors?.length) throw new Error(errors[0].message);
-        refresh();
+        await refresh();
       },
       {
         savedMessage: `Quote set to ${status}.`,
         errorMessage: "Couldn't change that quote's status.",
       }
-    );
+    ); } finally { statusLock.current = false; }
   }
 
   // Carrier picker order only — no header to click, so the default stands.
@@ -203,7 +211,7 @@ export default function QuotesPanel({
           having no carrier set. */}
         {carrierRes.error && (
           <p className="error-text quotes-feedback" role="alert">
-            {carrierRes.error}
+            {carrierRes.error} <button className="secondary" disabled={carrierRes.loading} onClick={() => void carrierRes.refetch()}>Retry carriers</button>
           </p>
         )}
 
@@ -306,6 +314,7 @@ export default function QuotesPanel({
                             <select
                               className="quote-status-select"
                               aria-label="Quote status"
+                              disabled={statusSave.busy || !!binding}
                               value={qt.status}
                               onChange={(e) =>
                                 setStatus(qt, e.target.value as Quote["status"])
@@ -319,6 +328,7 @@ export default function QuotesPanel({
                             </select>{" "}
                             <button
                               className="link quote-action"
+                              disabled={statusSave.busy || !!binding}
                               onClick={() => setBinding(qt)}
                             >
                               Bind
@@ -372,6 +382,7 @@ export default function QuotesPanel({
               <input
                 type="checkbox"
                 checked={clientAuthorized}
+                disabled={authorizing}
                 onChange={(e) => setClientAuthorized(e.target.checked)}
               />{" "}
               The client has authorized binding these terms.
@@ -381,6 +392,8 @@ export default function QuotesPanel({
                 className="primary"
                 disabled={!clientAuthorized || authorizing}
                 onClick={async () => {
+                  if (authorizationLock.current) return;
+                  authorizationLock.current = true;
                   setAuthorizing(true);
                   setBindError("");
                   try {
@@ -400,6 +413,7 @@ export default function QuotesPanel({
                       friendlyError(e, "Could not record authorization"),
                     );
                   } finally {
+                    authorizationLock.current = false;
                     setAuthorizing(false);
                   }
                 }}
@@ -418,6 +432,7 @@ export default function QuotesPanel({
         )}
         {binding && (
           <BindForm
+            key={binding.id}
             quote={binding}
             account={account}
             onDone={(updated) => {
@@ -457,7 +472,10 @@ function BindForm({
    * association directly is an invoice sent for money already paid.
    */
   const [billType, setBillType] = useState<BillType | "">("");
-    const [saving, setSaving] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const bindLock = useRef(false);
+  const live = useRef(true);
+  useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
 
   // A quote must carry real terms before it can become a policy.
   const blockers = [
@@ -471,7 +489,9 @@ function BindForm({
   async function bind() {
     // Belt and braces: the button is disabled without one, but `bind` is the
     // thing that writes the row and an unset bill type must never reach it.
-    if (!billType) return;
+    if (!billType || bindLock.current) return;
+    bindLock.current = true;
+    let policyCreated = false;
     setSaving(true);
     onError("");
     try {
@@ -499,10 +519,9 @@ function BindForm({
         const selected = plan.options.find(o => o.id === plan.selectedOptionId);
         if (!selected?.quoteIds.includes(quote.id) || plan.selectedTerms?.[quote.id] !== packageTerms(freshQuote)) throw new Error('This quote is not in the current client-selected package. Review the package before binding.');
       }
-      const { data: priorPolicies, errors: ppErr } = await client.models.Policy.list({
-        filter: { quoteId: { eq: quote.id } },
-      });
-      if (ppErr?.length) throw new Error(ppErr[0].message);
+      const priorPolicies = await listAllPages(nextToken => client.models.Policy.list({
+        filter: { quoteId: { eq: quote.id } }, nextToken,
+      }));
       if (priorPolicies?.length) {
         throw new Error(
           `This quote is already bound to policy ${priorPolicies[0].policyNumber ?? priorPolicies[0].id}. Binding it twice would bill one premium twice.`
@@ -545,6 +564,7 @@ function BindForm({
         minimumEarnedPremiumPct: quote.minimumEarnedPremiumPct ?? undefined,
       });
       if (pErr?.length || !policy) throw new Error(pErr?.[0]?.message);
+      policyCreated = true;
 
       // 2. Mark the quote bound. The Amplify client reports GraphQL errors
       // without throwing — a silent failure here leaves an ACTIVE policy on
@@ -629,7 +649,7 @@ function BindForm({
       } catch (err) {
         rollFailures.push((err as Error).message);
       }
-      if (rollFailures.length) {
+      if (rollFailures.length && live.current) {
         onError(
           `Policy bound, but some billing didn't roll onto it: ${rollFailures.join("; ")}. The Financing tab can re-run a stuck loan's rollover.`
         );
@@ -638,18 +658,21 @@ function BindForm({
       // 3. Convert the lead in place — the only path to CLIENT
       let updated: Account | null = null;
       if (account.stage === "LEAD") {
-        const { data } = await client.models.Account.update({
+        const { data, errors } = await client.models.Account.update({
           id: account.id,
           stage: "CLIENT",
           convertedAt: new Date().toISOString(),
         });
+        if (errors?.length || !data) throw new Error(errors?.[0]?.message ?? "Could not convert the lead to a client");
         updated = data;
       }
-      onDone(updated);
+      if (live.current) onDone(updated);
     } catch (err) {
-      onError(friendlyError(err, "Bind failed"));
-      onDone(null);
+      const message = friendlyError(err, "Bind failed");
+      if (live.current) onError(policyCreated ? `Policy created, but binding did not finish: ${message}. Check the policies and account before retrying.` : message);
+      if (policyCreated && live.current) onDone(null);
     } finally {
+      bindLock.current = false;
       setSaving(false);
     }
   }
@@ -684,6 +707,7 @@ function BindForm({
               <select
                 id="bind-bill-type"
                 value={billType}
+                disabled={saving}
                 onChange={(e) => setBillType(e.target.value as BillType | "")}
               >
                 <option value="">Choose…</option>
@@ -701,6 +725,7 @@ function BindForm({
               <input
                 id="bind-policy-number"
                 value={policyNumber}
+                disabled={saving}
                 onChange={(e) => setPolicyNumber(e.target.value)}
               />
             </div>
@@ -719,7 +744,7 @@ function BindForm({
             >
               {saving ? "Binding…" : "Confirm bind"}
             </button>
-            <button className="secondary" onClick={() => onDone(null)}>
+            <button className="secondary" disabled={saving} onClick={() => onDone(null)}>
               Cancel
             </button>
           </div>

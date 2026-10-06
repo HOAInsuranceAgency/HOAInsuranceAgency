@@ -55,12 +55,12 @@ export function FinanceOfferHint({
     async () => {
       const [opinions, loans] = await Promise.all([
         j?.status === "conditional"
-          ? client.models.PfCounselOpinion.list({
+          ? listAllPages(nextToken => client.models.PfCounselOpinion.list({
               filter: { jurisdiction: { eq: j.code } },
-              limit: 100,
-            }).then((r) =>
+              nextToken,
+            })).then((opinions) =>
               hasCurrentOpinion(
-                r.data.map((o) => ({ effectiveAt: o.effectiveAt, reviewBy: o.reviewBy })),
+                opinions.map((o) => ({ effectiveAt: o.effectiveAt, reviewBy: o.reviewBy })),
                 new Date().toISOString().slice(0, 10)
               )
             )
@@ -81,9 +81,8 @@ export function FinanceOfferHint({
     { initialData: null, errorMessage: "Couldn't check financing." }
   );
 
-  if (!res.loaded || !res.data) {
-    return res.error ? <p className="muted small">{res.error}</p> : null;
-  }
+  if (res.error) return <p className="muted small">{res.error} <button type="button" disabled={res.loading} onClick={() => void res.refetch()}>Retry financing check</button></p>;
+  if (!res.loaded || !res.data) return null;
   const { hasOpinion, loans } = res.data;
 
   // Money already touched a loan on this anchor: the choice was made.

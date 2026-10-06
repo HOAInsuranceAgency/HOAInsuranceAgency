@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -68,13 +68,201 @@ const activeLoan = {
 };
 
 beforeEach(() => {
-  vi.clearAllMocks();
+  vi.resetAllMocks();
   models.Policy.list.mockImplementation(() => page([]));
   models.PfOverride.list.mockImplementation(() => page([]));
   models.PfCounselOpinion.list.mockImplementation(() => page([]));
   models.PfNotice.list.mockImplementation(() => page([]));
   models.Document.list.mockImplementation(() => page([]));
   models.PfLoan.list.mockImplementation(() => page([quotedLoan]));
+});
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>(r => { resolve = r; });
+  return { promise, resolve };
+}
+
+describe("servicing reliability", () => {
+  it("holds duplicate posting and loan switching until the updated loan finishes loading", async () => {
+    const saved = deferred<{ data: string }>();
+    const refreshed = deferred<{ data: typeof activeLoan[] }>();
+    models.PfLoan.list.mockResolvedValueOnce({ data: [activeLoan] }).mockReturnValueOnce(refreshed.promise);
+    mutations.servicePfLoan.mockReturnValue(saved.promise);
+    await openServicing();
+
+    const post = screen.getByRole("button", { name: "Post payment 3 of 12" });
+    fireEvent.click(post);
+    fireEvent.click(post);
+    expect(mutations.servicePfLoan).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button", { name: "Close" })).toBeDisabled();
+
+    await act(async () => saved.resolve({ data: JSON.stringify({ ok: true }) }));
+    expect(post).toBeDisabled();
+    expect(screen.getByText("$68,570.32")).toBeInTheDocument();
+    await act(async () => refreshed.resolve({ data: [{ ...activeLoan, paidThrough: 2, balance: 62000 }] }));
+    expect(await screen.findByRole("button", { name: "Post payment 4 of 12" })).toBeEnabled();
+    expect(screen.getByText("$62,000.00")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Close" })).toBeEnabled();
+  });
+
+  it("retains a successfully posted loan after a refresh failure and retries only its read", async () => {
+    models.PfLoan.list.mockResolvedValueOnce({ data: [activeLoan] })
+      .mockResolvedValueOnce({ data: [], errors: [{ message: "Loan read unavailable" }] })
+      .mockResolvedValueOnce({ data: [{ ...activeLoan, paidThrough: 2 }] });
+    mutations.servicePfLoan.mockResolvedValue({ data: JSON.stringify({ ok: true }) });
+    await openServicing();
+    await userEvent.click(screen.getByRole("button", { name: "Post payment 3 of 12" }));
+
+    expect(await screen.findByText(/Payment posted\. Could not refresh financing/)).toBeInTheDocument();
+    expect(screen.getByText("$68,570.32")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Post payment 3 of 12" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Close" })).toBeDisabled();
+    await userEvent.click(screen.getByRole("button", { name: "Refresh financing" }));
+    expect(await screen.findByRole("button", { name: "Post payment 4 of 12" })).toBeEnabled();
+    expect(mutations.servicePfLoan).toHaveBeenCalledTimes(1);
+  });
+
+  it("reconciles an uncertain mutation error before another payment can be posted", async () => {
+    models.PfLoan.list.mockResolvedValueOnce({ data: [activeLoan] })
+      .mockRejectedValueOnce(new Error("Read failed"))
+      .mockResolvedValueOnce({ data: [{ ...activeLoan, paidThrough: 2 }] });
+    mutations.servicePfLoan.mockRejectedValue(new Error("Connection lost"));
+    await openServicing();
+    await userEvent.click(screen.getByRole("button", { name: "Post payment 3 of 12" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Connection lost");
+    expect(screen.getByRole("button", { name: "Post payment 3 of 12" })).toBeDisabled();
+    await userEvent.click(screen.getByRole("button", { name: "Refresh financing" }));
+    expect(await screen.findByRole("button", { name: "Post payment 4 of 12" })).toBeEnabled();
+    expect(mutations.servicePfLoan).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["transport", "GraphQL", "generic refusal", "ledger refusal"])("retains the target installment after a %s failure and stale successful reads", async failure => {
+    models.PfLoan.list.mockResolvedValueOnce({ data: [activeLoan] })
+      .mockResolvedValueOnce({ data: [activeLoan] })
+      .mockResolvedValueOnce({ data: [activeLoan] })
+      .mockResolvedValueOnce({ data: [{ ...activeLoan, paidThrough: 2 }] });
+    if (failure === "transport") mutations.servicePfLoan.mockRejectedValue(new Error("Connection lost"));
+    else if (failure === "GraphQL") mutations.servicePfLoan.mockResolvedValue({ data: null, errors: [{ message: "Response unavailable" }] });
+    else mutations.servicePfLoan.mockResolvedValue({ data: JSON.stringify({ ok: false, error: failure === "generic refusal"
+      ? "Servicing action failed. Try again."
+      : "The loan changed underneath posting installment 2. The payment is on the ledger; reconcile the loan by hand before anything else." }) });
+    await openServicing();
+    await userEvent.click(screen.getByRole("button", { name: "Post payment 3 of 12" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Payment status is unconfirmed");
+    expect(screen.getByRole("button", { name: "Post payment 3 of 12" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Close" })).toBeDisabled();
+    await userEvent.click(screen.getByRole("button", { name: "Refresh financing" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("The requested payment is not yet confirmed");
+    expect(screen.getByRole("button", { name: "Post payment 3 of 12" })).toBeDisabled();
+    await userEvent.click(screen.getByRole("button", { name: "Refresh financing" }));
+    expect(await screen.findByRole("button", { name: "Post payment 4 of 12" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Close" })).toBeEnabled();
+    expect(mutations.servicePfLoan).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not infer a definitive posting outcome from a familiar refusal message", async () => {
+    models.PfLoan.list.mockResolvedValue({ data: [activeLoan] });
+    mutations.servicePfLoan.mockResolvedValue({ data: JSON.stringify({ ok: false, error: "The loan's schedule is unreadable." }) });
+    await openServicing();
+    await userEvent.click(screen.getByRole("button", { name: "Post payment 3 of 12" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("The loan's schedule is unreadable.");
+    expect(screen.getByRole("alert")).toHaveTextContent("Payment status is unconfirmed");
+    expect(screen.getByRole("button", { name: "Post payment 3 of 12" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Close" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Refresh financing" })).toBeEnabled();
+    expect(mutations.servicePfLoan).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not treat a successful read omitting the loan as payment confirmation", async () => {
+    models.PfLoan.list.mockResolvedValueOnce({ data: [activeLoan] })
+      .mockResolvedValueOnce({ data: [] })
+      .mockResolvedValueOnce({ data: [{ ...activeLoan, paidThrough: 2 }] });
+    mutations.servicePfLoan.mockRejectedValue(new Error("Connection lost"));
+    await openServicing();
+    await userEvent.click(screen.getByRole("button", { name: "Post payment 3 of 12" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Payment status is unconfirmed");
+    expect(screen.getByRole("button", { name: "Post payment 3 of 12" })).toBeDisabled();
+    expect(screen.queryByText(/No financing on this association/)).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Refresh financing" }));
+    expect(await screen.findByRole("button", { name: "Post payment 4 of 12" })).toBeEnabled();
+    expect(mutations.servicePfLoan).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps posting locked when a successful read still returns the pre-payment installment", async () => {
+    models.PfLoan.list.mockResolvedValueOnce({ data: [activeLoan] })
+      .mockResolvedValueOnce({ data: [activeLoan] })
+      .mockResolvedValueOnce({ data: [{ ...activeLoan, paidThrough: 2 }] });
+    mutations.servicePfLoan.mockResolvedValue({ data: JSON.stringify({ ok: true, posted: { n: 2 } }) });
+    await openServicing();
+    await userEvent.click(screen.getByRole("button", { name: "Post payment 3 of 12" }));
+    expect(await screen.findByText(/Payment posted\. Could not refresh financing/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Post payment 3 of 12" })).toBeDisabled();
+    await userEvent.click(screen.getByRole("button", { name: "Refresh financing" }));
+    expect(await screen.findByRole("button", { name: "Post payment 4 of 12" })).toBeEnabled();
+    expect(mutations.servicePfLoan).toHaveBeenCalledTimes(1);
+  });
+
+  it("resets cancellation and certificate drafts when switching loans", async () => {
+    const defaulted = { ...activeLoan, status: "DEFAULTED" };
+    models.PfLoan.list.mockResolvedValue({ data: [defaulted, { ...defaulted, id: "loan-b" }] });
+    models.PfNotice.list.mockImplementation(({ filter }) => page([{
+      id: `intent-${filter.loanId.eq}`, loanId: filter.loanId.eq,
+      type: "INTENT_TO_CANCEL", occurredAt: "2026-09-01T00:00:00Z",
+    }]));
+    render(<FinancingTab account={account} />);
+    await userEvent.click((await screen.findAllByRole("button", { name: "Service" }))[0]);
+    fireEvent.change(await screen.findByLabelText("Cancellation effective"), { target: { value: "2026-10-01" } });
+    fireEvent.change(await screen.findByLabelText("Notice"), { target: { value: "intent-loan-a" } });
+    await userEvent.type(screen.getByLabelText("Certificate number"), "receipt-A");
+    await userEvent.click(screen.getByRole("button", { name: "Service" }));
+    expect(await screen.findByLabelText("Cancellation effective")).toHaveValue("");
+    expect(await screen.findByLabelText("Certificate number")).toHaveValue("");
+    expect(screen.getByLabelText("Notice")).toHaveValue("");
+    expect(screen.getByRole("button", { name: "Request cancellation" })).toBeDisabled();
+  });
+
+  it("surfaces notice and bound-policy read failures and retries without hiding the loan", async () => {
+    models.PfLoan.list.mockResolvedValue({ data: [{ ...activeLoan, status: "DEFAULTED", quoteId: "q1", policyId: null }] });
+    models.PfNotice.list.mockResolvedValueOnce({ data: [], errors: [{ message: "Notice read failed" }] })
+      .mockResolvedValue({ data: [] });
+    models.Policy.list.mockResolvedValueOnce({ data: [], errors: [{ message: "Policy read failed" }] })
+      .mockResolvedValue({ data: [{ id: "p1", policyNumber: "HOA-1" }] });
+    await openServicing();
+    expect(await screen.findByText("Notice read failed")).toBeInTheDocument();
+    expect(await screen.findByText("Policy read failed")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Record notice of intent to cancel" })).toBeDisabled();
+    await userEvent.click(screen.getByRole("button", { name: "Retry notices" }));
+    expect(screen.getByRole("button", { name: "Record notice of intent to cancel" })).toBeEnabled();
+    await userEvent.click(screen.getByRole("button", { name: "Retry bound policy" }));
+    expect(await screen.findByRole("button", { name: "Roll to policy" })).toBeEnabled();
+    expect(screen.getByText("$68,570.32")).toBeInTheDocument();
+  });
+
+  it("retries an initial loan failure without claiming the account has no financing", async () => {
+    models.PfLoan.list.mockResolvedValueOnce({ data: [], errors: [{ message: "Loan read failed" }] })
+      .mockResolvedValueOnce({ data: [activeLoan] });
+    render(<FinancingTab account={account} />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Loan read failed");
+    expect(screen.queryByText(/No financing on this association/)).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Retry financing" }));
+    expect(await screen.findByText("$68,570.32")).toBeInTheDocument();
+  });
+
+  it("isolates late servicing responses and open loan state after an account switch", async () => {
+    const pending = deferred<{ data: string }>();
+    models.PfLoan.list.mockImplementation(({ filter }) => page(filter.accountId.eq === "a1" ? [activeLoan] : []));
+    mutations.servicePfLoan.mockReturnValue(pending.promise);
+    const view = render(<FinancingTab account={account} />);
+    await userEvent.click(await screen.findByRole("button", { name: "Service" }));
+    await userEvent.click(screen.getByRole("button", { name: "Post payment 3 of 12" }));
+    view.rerender(<FinancingTab account={{ ...account, id: "a2" }} />);
+    expect(await screen.findByText(/No financing on this association/)).toBeInTheDocument();
+    await act(async () => pending.resolve({ data: JSON.stringify({ ok: true }) }));
+    expect(screen.queryByText("$68,570.32")).not.toBeInTheDocument();
+    expect(screen.queryByText("Servicing")).not.toBeInTheDocument();
+    expect(screen.queryByText("Payment posted.")).not.toBeInTheDocument();
+  });
 });
 
 const openServicing = async () => {
