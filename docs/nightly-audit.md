@@ -50,7 +50,9 @@ other GitHub workflows run, so audit validation runs before publication.
 
 Read the workflow run summary for findings, validation, skipped overlaps, and draft PR
 links. Proposed patches and the manifest are retained as an artifact for seven days;
-raw agent transcripts, dependency directories, and environment files are not uploaded.
+the final Codex report is saved separately for seven days whenever it exists, including
+failed runs, so coverage and blockers remain available if proposal validation fails.
+Raw agent transcripts, dependency directories, and environment files are not uploaded.
 Closed/merged audit PR history serves as durable context for later runs.
 
 Overlapping runs are serialized. A changed staging base, invalid artifact, API failure,

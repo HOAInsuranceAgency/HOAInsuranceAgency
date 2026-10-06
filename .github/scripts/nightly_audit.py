@@ -89,11 +89,28 @@ def load_manifest(output, expected_base):
 
 def current_prs(repo_name):
     prs = json.loads(run(["gh", "pr", "list", "--repo", repo_name, "--state", "open", "--limit", "1000",
-                          "--json", "number,title,url,headRefName,baseRefName,files,changedFiles"]))
+                          "--json", "number,title,url,headRefName,headRefOid,baseRefName,baseRefOid,files,changedFiles"]))
     if len(prs) >= 1000:
         raise ValueError("Open PR list may be truncated; review overlap manually")
-    if any(len(pr["files"]) < pr["changedFiles"] for pr in prs):
-        raise ValueError("PR file list is truncated; review overlap manually")
+    for pr in prs:
+        expected = pr["changedFiles"]
+        if len(pr["files"]) == expected:
+            continue
+        if len(pr["files"]) > expected:
+            raise ValueError("PR file count changed; rerun the overlap check")
+        if expected >= 3000:
+            raise ValueError("PR reaches the REST API's 3000-file limit; review overlap manually")
+        endpoint = f"repos/{repo_name}/pulls/{pr['number']}"
+        pages = json.loads(run(["gh", "api", "--paginate", "--slurp", f"{endpoint}/files?per_page=100"]))
+        files = [{"path": item["filename"]} for page in pages for item in page]
+        if len(files) != expected or len({item["path"] for item in files}) != expected:
+            raise ValueError("PR file list is incomplete; rerun the overlap check")
+        latest = json.loads(run(["gh", "api", endpoint, "--jq",
+                                 "{head: .head.sha, base: .base.sha, count: .changed_files, state: .state}"]))
+        if latest != {"head": pr["headRefOid"], "base": pr["baseRefOid"],
+                      "count": expected, "state": "open"}:
+            raise ValueError("PR changed during pagination; rerun the overlap check")
+        pr["files"] = files
     return prs
 
 

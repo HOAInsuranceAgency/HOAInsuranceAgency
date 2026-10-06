@@ -121,10 +121,53 @@ class AuditTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Symlinks"):
             audit.validate_patch(self.repo, self.output / "web.patch", "web")
 
-    def test_truncated_pr_files_stop_overlap_check(self):
-        rows = [{"files": [{"path": "web/src/app.ts"}], "changedFiles": 101}]
-        with patch.object(audit, "run", return_value=json.dumps(rows)), self.assertRaisesRegex(ValueError, "truncated"):
-            audit.current_prs("owner/repo")
+    def paginated_pr_fixture(self, count=122):
+        files = [{"filename": f"src/file-{i}.ts", "patch": "not retained"} for i in range(count)]
+        pr = {"number": 67, "headRefName": "feature/release", "headRefOid": "a" * 40,
+              "baseRefOid": "b" * 40, "changedFiles": count,
+              "files": [{"path": item["filename"]} for item in files[:100]]}
+        latest = {"head": pr["headRefOid"], "base": pr["baseRefOid"], "count": count, "state": "open"}
+        return pr, files, latest
+
+    def test_large_pr_pagination_preserves_overlap_beyond_first_page(self):
+        pr, files, latest = self.paginated_pr_fixture()
+        results = [json.dumps([pr]), json.dumps([files[:100], files[100:]]), json.dumps(latest)]
+        with patch.object(audit, "run", side_effect=results) as mocked:
+            prs = audit.current_prs("owner/repo")
+        self.assertEqual(prs[0]["files"], [{"path": item["filename"]} for item in files])
+        self.assertIsNotNone(audit.overlapping_pr(prs, "crm", ["src/file-121.ts"]))
+        self.assertEqual(mocked.call_args_list[1].args[0],
+                         ["gh", "api", "--paginate", "--slurp", "repos/owner/repo/pulls/67/files?per_page=100"])
+
+    def test_complete_pr_file_list_needs_no_pagination(self):
+        pr, _, _ = self.paginated_pr_fixture(50)
+        with patch.object(audit, "run", return_value=json.dumps([pr])) as mocked:
+            self.assertEqual(audit.current_prs("owner/repo"), [pr])
+        self.assertEqual(mocked.call_count, 1)
+
+    def test_incomplete_or_duplicate_paginated_files_stop_overlap_check(self):
+        pr, files, _ = self.paginated_pr_fixture()
+        for returned in (files[:-1], files[:-1] + [files[0]]):
+            with self.subTest(returned=len(returned)):
+                results = [json.dumps([pr]), json.dumps([returned[:100], returned[100:]])]
+                with patch.object(audit, "run", side_effect=results), self.assertRaisesRegex(ValueError, "incomplete"):
+                    audit.current_prs("owner/repo")
+
+    def test_pr_changes_during_pagination_stop_overlap_check(self):
+        pr, files, latest = self.paginated_pr_fixture()
+        for changed in ({"head": "c" * 40}, {"base": "c" * 40}, {"count": 123}, {"state": "closed"}):
+            results = [json.dumps([pr]), json.dumps([files[:100], files[100:]]),
+                       json.dumps({**latest, **changed})]
+            with self.subTest(changed=changed):
+                with patch.object(audit, "run", side_effect=results), self.assertRaisesRegex(ValueError, "changed during pagination"):
+                    audit.current_prs("owner/repo")
+
+    def test_rest_file_limit_stops_overlap_check_without_pagination(self):
+        pr, _, _ = self.paginated_pr_fixture(3000)
+        with patch.object(audit, "run", return_value=json.dumps([pr])) as mocked:
+            with self.assertRaisesRegex(ValueError, "3000-file limit"):
+                audit.current_prs("owner/repo")
+        self.assertEqual(mocked.call_count, 1)
 
     def test_pending_audit_area_and_any_pr_file_overlap_are_detected(self):
         prs = [{"headRefName": "codex/nightly-audit/2026-10-06/1-1/web", "files": [{"path": "web/src/other.ts"}]}]
