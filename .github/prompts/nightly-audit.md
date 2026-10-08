@@ -70,7 +70,7 @@ the blocker instead of proposing an unverified patch. Report pre-existing failur
 
 Do not push branches, create PRs, merge, enable auto-merge, force-push, deploy, modify live
 data/infrastructure, or send email/chat/SMS. A separate trusted job will validate output
-and create draft PRs against staging. You have no publishing credentials or network access.
+and create ready-for-review PRs against staging. You have no publishing credentials or network access.
 
 ## Handoff format
 
@@ -107,4 +107,4 @@ customer data, raw service logs, or environment dumps in any artifact, report, o
 
 The trusted publisher rechecks pending PRs and staging freshness before publication.
 It may skip stale or overlapping proposals. Finish with a concise summary; do not claim
-a PR was created. The resulting draft PRs and workflow summaries are the durable run notes.
+a PR was created. The resulting ready-for-review PRs and workflow summaries are the durable run notes.

@@ -35,20 +35,21 @@ Configure these under **Settings → Secrets and variables → Actions**:
 
 Under **Settings → Actions → General → Workflow permissions**, enable
 **Allow GitHub Actions to create and approve pull requests**. This workflow only creates
-draft PRs and never approves or merges them. Repository branch protections still apply.
+ready-for-review PRs so configured automated reviewers such as Greptile can start.
+It never approves or merges them. Repository branch protections still apply.
 The agent job has a read-only GitHub token and no network access in its sandbox. A fresh
 publisher job gets scoped contents/pull-request write permission, revalidates patches,
-rechecks open PRs and the staging base, and creates one draft PR per selected area.
+rechecks open PRs and the staging base, and creates one ready-for-review PR per selected area.
 It never executes proposed code. All action revisions and the Codex CLI are pinned.
 
-Draft PRs target `staging`; the workflow never pushes directly to `main` or `staging`,
+Ready-for-review PRs target `staging`; the workflow never pushes directly to `main` or `staging`,
 merges, or deploys. Audit branches use `codex/nightly-audit/<date>/<run>-<attempt>/<area>`.
 Commits include `[skip-cd]`. PRs created using `GITHUB_TOKEN` may require approval before
 other GitHub workflows run, so audit validation runs before publication.
 
 ## Results, failures, and cost
 
-Read the workflow run summary for findings, validation, skipped overlaps, and draft PR
+Read the workflow run summary for findings, validation, skipped overlaps, and PR
 links. Proposed patches and the manifest are retained as an artifact for seven days;
 the final Codex report is saved separately for seven days whenever it exists, including
 failed runs, so coverage and blockers remain available if proposal validation fails.

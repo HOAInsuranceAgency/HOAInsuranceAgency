@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate untrusted audit proposals and publish independent draft PRs.
+"""Validate untrusted audit proposals and publish independent ready-for-review PRs.
 
 Only this trusted workflow copy runs with a write token. Candidate code is never
 executed here; dependency installation and tests belong to the read-only job.
@@ -252,11 +252,11 @@ def publish(args):
         # gh reads GH_TOKEN from this publisher step only; no token is persisted.
         git(repo, "-c", "credential.helper=!gh auth git-credential", "push", "origin", f"HEAD:refs/heads/{branch}")
         run_url = f"https://github.com/{args.repository}/actions/runs/{run_id}"
-        body = f"{item['body']}\n\nBase: `{args.base}`. [Audit run]({run_url}).\n\nCreated as a draft for human review. No merge or deployment is authorized.\n<!-- nightly-audit:{area} -->\n"
+        body = f"{item['body']}\n\nBase: `{args.base}`. [Audit run]({run_url}).\n\nReady for automated and human review. No merge or deployment is authorized.\n<!-- nightly-audit:{area} -->\n"
         pr_url = run(["gh", "pr", "create", "--repo", args.repository, "--base", "staging", "--head", branch,
-                      "--draft", "--title", title, "--body-file", "-"], input=body).strip()
-        summary(f"Draft PR for {area}: {pr_url}")
-        print(f"Published draft PR for {area}: {pr_url}")
+                      "--title", title, "--body-file", "-"], input=body).strip()
+        summary(f"Ready-for-review PR for {area}: {pr_url}")
+        print(f"Published ready-for-review PR for {area}: {pr_url}")
     if not proposals:
         summary("No worthwhile cleanup selected. No branch or PR was created.")
 
