@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: 'Smoke verifies API access and dependencies; audit may open draft PRs.'
+        description: 'Smoke verifies API access and dependencies; audit may open ready-for-review PRs.'
         type: choice
         options: [smoke, audit]
         default: smoke
@@ -158,7 +158,7 @@ jobs:
         with:
           name: nightly-audit-proposals
           path: proposals
-      - name: Validate and create independent draft pull requests
+      - name: Validate and create independent ready-for-review pull requests
         env:
           GH_TOKEN: ${{ github.token }}
           AUDIT_REPOSITORY: ${{ github.repository }}
