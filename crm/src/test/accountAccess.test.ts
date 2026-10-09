@@ -230,6 +230,16 @@ describe("custom API operations", () => {
     await expect(call("setResponsibilities", input, new AccountAccess(identity, reader, { headers: { "x-crm-role": "PRODUCER" } }))).rejects.toThrow(AccessDenied);
     await expect(call("setResponsibilities", input, new AccountAccess(identity, reader, { headers: { "x-crm-role": "ADMIN" } }))).resolves.toBeUndefined();
   });
+  it("allows only active administrators to reassign a client to another salesperson", async () => {
+    records["Account:a"].stage = "CLIENT";
+    records["Communication:workflow:a"].data = { salespersonId: "alice", disposition: "BOUND" };
+    const input = { accountId: "a", salespersonId: "bob", version: 1 };
+    await expect(call("setResponsibilities", input)).rejects.toThrow(AccessDenied);
+    await expect(call("setResponsibilities", input, user("bob"))).rejects.toThrow(AccessDenied);
+    await expect(call("setResponsibilities", input, admin())).resolves.toBeUndefined();
+    const narrowedAdmin = new AccountAccess({ sub: "alice", groups: ["ADMIN", "PRODUCER"] }, reader, { headers: { "x-crm-role": "PRODUCER" } });
+    await expect(call("setResponsibilities", input, narrowedAdmin)).rejects.toThrow(AccessDenied);
+  });
   it("allows only administrators to create or reassign leads for another salesperson", async () => {
     await expect(call("createLead", { salespersonId: "alice" }, user("manager"))).rejects.toThrow(AccessDenied);
     await expect(call("createLead", { salespersonId: "bob" }, user("manager"))).rejects.toThrow(AccessDenied);

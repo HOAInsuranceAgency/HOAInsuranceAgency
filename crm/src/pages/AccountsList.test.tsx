@@ -36,13 +36,17 @@ beforeEach(() => {
 
 function Location() { return <output aria-label="Current route">{useLocation().pathname}</output>; }
 function page(admin = true, stage: 'LEAD' | 'CLIENT' = 'LEAD') {
-  return <AdminContext.Provider value={admin}><MemoryRouter initialEntries={['/leads']}><AccountsList stage={stage} /><Location /></MemoryRouter></AdminContext.Provider>;
+  return <AdminContext.Provider value={admin}><MemoryRouter initialEntries={[stage === 'LEAD' ? '/leads' : '/clients']}><AccountsList stage={stage} /><Location /></MemoryRouter></AdminContext.Provider>;
 }
-async function willowPicker() { return screen.findByRole('combobox', { name: 'Salesperson for Willow Court Condominium' }); }
+const stages = [
+  { stage: 'LEAD' as const, route: '/leads', accountId: 'willow', accountName: 'Willow Court Condominium', label: 'Leads' },
+  { stage: 'CLIENT' as const, route: '/clients', accountId: 'cedar', accountName: 'Cedar House — partially bound', label: 'Clients' },
+];
+async function salespersonPicker(accountName = 'Willow Court Condominium') { return screen.findByRole('combobox', { name: `Salesperson for ${accountName}` }); }
 
 it.each(['focus', 'visibility', 'queued-focus'] as const)('keeps the assignment dropdown mounted across %s events until it loses focus', async trigger => {
   render(page());
-  const picker = await willowPicker();
+  const picker = await salespersonPicker();
   const reads = () => h.request.mock.calls.filter(([op]) => op === 'commercialTable').length;
   const before = reads();
   // A native select can return window focus while its menu is still open.
@@ -55,7 +59,7 @@ it.each(['focus', 'visibility', 'queued-focus'] as const)('keeps the assignment 
   await act(async () => { await new Promise(resolve => setTimeout(resolve, 150)); });
 
   expect(reads()).toBe(before);
-  expect(await willowPicker()).toBe(picker);
+  expect(await salespersonPicker()).toBe(picker);
   expect(picker).toHaveFocus();
   expect(picker).toBeEnabled();
   expect(screen.getByLabelText('Current route')).toHaveTextContent('/leads');
@@ -63,7 +67,7 @@ it.each(['focus', 'visibility', 'queued-focus'] as const)('keeps the assignment 
   fireEvent.keyDown(picker, { key: 'Escape' });
   act(() => picker.blur());
   await waitFor(() => expect(reads()).toBe(before + 1));
-  expect(await willowPicker()).toHaveValue('alice');
+  expect(await salespersonPicker()).toHaveValue('alice');
   expect(h.request.mock.calls.some(([op]) => op === 'setResponsibilities')).toBe(false);
 });
 
@@ -73,7 +77,7 @@ it('holds a return refresh through choosing and saving an owner, including blur 
   h.request.mockImplementation((op, input) => op === 'setResponsibilities'
     ? new Promise(resolve => { finishSave = resolve; }) : initial(op, input));
   render(page());
-  const picker = await willowPicker();
+  const picker = await salespersonPicker();
   const reads = () => h.request.mock.calls.filter(([op]) => op === 'commercialTable').length;
   const before = reads();
   act(() => picker.focus());
@@ -82,20 +86,20 @@ it('holds a return refresh through choosing and saving an owner, including blur 
   act(() => picker.blur());
   await act(async () => { await new Promise(resolve => setTimeout(resolve, 150)); });
   expect(reads()).toBe(before);
-  expect(await willowPicker()).toBe(picker);
+  expect(await salespersonPicker()).toBe(picker);
   expect(picker).toBeDisabled();
   expect(h.request).toHaveBeenCalledWith('setResponsibilities', { accountId: 'willow', salespersonId: 'bob', version: 7 }, true);
 
   await act(async () => finishSave({ workflow: { accountId: 'willow', salespersonId: 'bob', version: 8 } }));
   await waitFor(() => expect(reads()).toBe(before + 1));
   // The background snapshot is deliberately older than the confirmed save.
-  expect(await willowPicker()).toHaveValue('bob');
+  expect(await salespersonPicker()).toHaveValue('bob');
   expect(screen.getByLabelText('Current route')).toHaveTextContent('/leads');
 });
 
-it('saves inline without opening the lead and uses the returned version for the next edit', async () => {
-  render(page());
-  const picker = await willowPicker();
+it.each(stages)('$stage saves inline without opening the account and uses the returned version for the next edit', async ({ stage, route, accountId, accountName, label }) => {
+  render(page(true, stage));
+  const picker = await salespersonPicker(accountName);
   expect(picker).toHaveValue('alice');
   expect(within(picker).queryByRole('option', { name: 'Disabled salesperson' })).not.toBeInTheDocument();
   expect(within(picker).queryByRole('option', { name: 'Office staff' })).not.toBeInTheDocument();
@@ -106,26 +110,26 @@ it('saves inline without opening the lead and uses the returned version for the 
   fireEvent.change(picker, { target: { value: 'bob' } });
   await waitFor(() => expect(picker).toHaveValue('bob'));
   expect(await screen.findByText('Saved')).toBeInTheDocument();
-  expect(h.request).toHaveBeenCalledWith('setResponsibilities', { accountId: 'willow', salespersonId: 'bob', version: 7 }, true);
-  expect(screen.getByLabelText('Current route')).toHaveTextContent('/leads');
+  expect(h.request).toHaveBeenCalledWith('setResponsibilities', { accountId, salespersonId: 'bob', version: 7 }, true);
+  expect(screen.getByLabelText('Current route')).toHaveTextContent(route);
 
-  fireEvent.change(screen.getByRole('combobox', { name: 'Download Leads' }), { target: { value: 'csv' } });
+  fireEvent.change(screen.getByRole('combobox', { name: `Download ${label}` }), { target: { value: 'csv' } });
   const section = h.saveReport.mock.calls[0][0].sections[0];
-  expect(section.rows.find((row: unknown[]) => row[0] === 'Willow Court Condominium')[section.columns.indexOf('Salesperson')]).toBe('Bob');
+  expect(section.rows.find((row: unknown[]) => row[0] === accountName)[section.columns.indexOf('Salesperson')]).toBe('Bob');
 
   fireEvent.change(picker, { target: { value: 'alice' } });
-  await waitFor(() => expect(h.request).toHaveBeenCalledWith('setResponsibilities', { accountId: 'willow', salespersonId: 'alice', version: 8 }, true));
+  await waitFor(() => expect(h.request).toHaveBeenCalledWith('setResponsibilities', { accountId, salespersonId: 'alice', version: 8 }, true));
   await waitFor(() => expect(picker).toBeEnabled());
-  fireEvent.click(screen.getByText('Willow Court Condominium'));
-  expect(screen.getByLabelText('Current route')).toHaveTextContent('/accounts/willow');
+  fireEvent.click(screen.getByText(accountName));
+  expect(screen.getByLabelText('Current route')).toHaveTextContent(`/accounts/${accountId}`);
 });
 
-it('keeps the old assignment on failure and can refresh a stale version before retrying', async () => {
+it.each(stages)('$stage keeps the old assignment on failure and can refresh a stale version before retrying', async ({ stage, route, accountId, accountName }) => {
   const initial = h.request.getMockImplementation()!;
   let rejectSave!: (reason: Error) => void;
   h.request.mockImplementation((op, input) => op === 'setResponsibilities' ? new Promise((_, reject) => { rejectSave = reject; }) : initial(op, input));
-  render(page());
-  const picker = await willowPicker();
+  render(page(true, stage));
+  const picker = await salespersonPicker(accountName);
   fireEvent.change(picker, { target: { value: 'bob' } });
   expect(picker).toBeDisabled();
   expect(screen.getByText('Saving…')).toBeInTheDocument();
@@ -135,25 +139,25 @@ it('keeps the old assignment on failure and can refresh a stale version before r
   expect(picker).toHaveValue('alice');
   expect(picker).toBeEnabled();
   expect(screen.getByRole('alert')).toHaveTextContent('This record changed. Refresh before saving.');
-  expect(screen.getByLabelText('Current route')).toHaveTextContent('/leads');
+  expect(screen.getByLabelText('Current route')).toHaveTextContent(route);
 
   version = 9;
   h.request.mockImplementation(initial);
   fireEvent.click(screen.getByRole('button', { name: 'Refresh assignments' }));
-  const refreshed = await willowPicker();
+  const refreshed = await salespersonPicker(accountName);
   fireEvent.change(refreshed, { target: { value: 'bob' } });
   await screen.findByText('Saved');
-  expect(h.request).toHaveBeenCalledWith('setResponsibilities', { accountId: 'willow', salespersonId: 'bob', version: 9 }, true);
+  expect(h.request).toHaveBeenCalledWith('setResponsibilities', { accountId, salespersonId: 'bob', version: 9 }, true);
 });
 
-it('updates the active salesperson filter immediately after saving', async () => {
-  render(page());
-  const picker = await willowPicker();
+it.each(stages)('$stage updates the active salesperson filter immediately after saving', async ({ stage, accountName }) => {
+  render(page(true, stage));
+  const picker = await salespersonPicker(accountName);
   fireEvent.change(screen.getByRole('combobox', { name: 'Salesperson' }), { target: { value: 'alice' } });
   fireEvent.change(picker, { target: { value: 'bob' } });
-  await waitFor(() => expect(screen.queryByText('Willow Court Condominium')).not.toBeInTheDocument());
+  await waitFor(() => expect(screen.queryByText(accountName)).not.toBeInTheDocument());
   fireEvent.change(screen.getByRole('combobox', { name: 'Salesperson' }), { target: { value: 'bob' } });
-  expect(await willowPicker()).toHaveValue('bob');
+  expect(await salespersonPicker(accountName)).toHaveValue('bob');
 });
 
 it.each(['refresh-last', 'save-last'])('keeps the newest assignment when another row refreshes during a save (%s)', async order => {
@@ -170,7 +174,7 @@ it.each(['refresh-last', 'save-last'])('keeps the newest assignment when another
     return initial(op, input);
   });
   render(page());
-  const willow = await willowPicker();
+  const willow = await salespersonPicker();
   fireEvent.change(screen.getByRole('combobox', { name: 'Salesperson for Pine Grove Association' }), { target: { value: 'bob' } });
   await screen.findByRole('alert');
   fireEvent.change(willow, { target: { value: 'bob' } });
@@ -182,41 +186,41 @@ it.each(['refresh-last', 'save-last'])('keeps the newest assignment when another
   if (order === 'refresh-last') {
     await act(async () => finishSave(saved));
     await act(async () => finishRefresh(snapshot));
-    expect(await willowPicker()).toHaveValue('bob');
+    expect(await salespersonPicker()).toHaveValue('bob');
   } else {
     snapshot.items[0].workflowVersion = 9;
     await act(async () => finishRefresh(snapshot));
     await act(async () => finishSave(saved));
-    expect(await willowPicker()).toHaveValue('alice');
+    expect(await salespersonPicker()).toHaveValue('alice');
   }
   h.request.mockImplementation(initial);
-  fireEvent.change(await willowPicker(), { target: { value: order === 'refresh-last' ? 'alice' : 'bob' } });
+  fireEvent.change(await salespersonPicker(), { target: { value: order === 'refresh-last' ? 'alice' : 'bob' } });
   await screen.findByText('Saved');
   expect(h.request).toHaveBeenLastCalledWith('setResponsibilities', { accountId: 'willow', salespersonId: order === 'refresh-last' ? 'alice' : 'bob', version: order === 'refresh-last' ? 8 : 9 }, true);
 });
 
-it.each(['disabled', 'unavailable'])('assigns a lead with no workflow and preserves an unavailable existing owner for correction (%s)', async unavailableId => {
+it.each(stages.flatMap(testCase => ['disabled', 'unavailable'].map(unavailableId => ({ ...testCase, unavailableId }))))('$stage assigns an account with no workflow and preserves an unavailable existing owner for correction ($unavailableId)', async ({ stage, accountId, accountName, unavailableId }) => {
   owner = undefined; version = 0;
-  const view = render(page());
-  const picker = await willowPicker();
+  const view = render(page(true, stage));
+  const picker = await salespersonPicker(accountName);
   expect(picker).toHaveValue('');
   expect(within(picker).getByRole('option', { name: 'Unassigned' })).toBeDisabled();
   fireEvent.change(picker, { target: { value: 'bob' } });
   await screen.findByText('Saved');
-  expect(h.request).toHaveBeenCalledWith('setResponsibilities', { accountId: 'willow', salespersonId: 'bob', version: 0 }, true);
+  expect(h.request).toHaveBeenCalledWith('setResponsibilities', { accountId, salespersonId: 'bob', version: 0 }, true);
   view.unmount();
   owner = unavailableId; version = 2;
-  render(page());
-  const unavailable = await willowPicker();
+  render(page(true, stage));
+  const unavailable = await salespersonPicker(accountName);
   expect(unavailable).toHaveValue(unavailableId);
   expect(within(unavailable).getByRole('option', { name: `${team.find(member => member.userId === unavailableId)!.name} (unavailable)` })).toBeDisabled();
   expect(unavailable).toBeEnabled();
 });
 
-it.each([false, true])('keeps non-admin leads and admin client rows free of assignment controls (admin=%s)', async admin => {
-  render(page(admin, admin ? 'CLIENT' : 'LEAD'));
+it.each(stages)('$stage keeps non-admin rows free of assignment controls', async ({ stage, accountName }) => {
+  render(page(false, stage));
   await waitFor(() => expect(h.request).toHaveBeenCalledWith('commercialTable', expect.anything()));
-  await screen.findByText(admin ? 'Cedar House — partially bound' : 'Willow Court Condominium');
+  await screen.findByText(accountName);
   expect(screen.queryByRole('combobox', { name: /^Salesperson for / })).not.toBeInTheDocument();
   expect(h.request.mock.calls.some(([op]) => op === 'setResponsibilities')).toBe(false);
 });
@@ -242,7 +246,7 @@ it('keeps the saved list and controls visible while revalidating on return, and 
       <Route path="/accounts/:id" element={<Link to="/leads">Back to leads</Link>} />
     </Routes>
   </MemoryRouter></AccountsListDataProvider></AdminContext.Provider>);
-  const picker = await willowPicker();
+  const picker = await salespersonPicker();
   fireEvent.change(picker, { target: { value: 'bob' } });
   await waitFor(() => expect(picker).toHaveValue('bob'));
   await screen.findByText('Saved');
@@ -264,7 +268,7 @@ it('keeps the saved list and controls visible while revalidating on return, and 
   // A response from before the save must not undo the confirmed assignment.
   await act(async () => finishRefresh(await initial('commercialTable', { accountIds: ['willow', 'pine', 'cedar'] })));
   await waitFor(() => expect(screen.getByRole('button', { name: 'Refresh leads' })).toBeEnabled());
-  expect(await willowPicker()).toBe(cached);
+  expect(await salespersonPicker()).toBe(cached);
   expect(cached).toHaveValue('bob');
   h.request.mockImplementation(initial);
   version = 9;
@@ -292,7 +296,7 @@ it.each(['LEAD', 'CLIENT'] as const)('keeps the %s table on transient refresh fa
 
 it('clears a selected filter when that teammate is no longer a configured producer', async () => {
   render(page());
-  await willowPicker();
+  await salespersonPicker();
   fireEvent.change(screen.getByRole('combobox', { name: 'Salesperson' }), { target: { value: 'alice' } });
   const original = h.request.getMockImplementation()!;
   h.request.mockImplementation((op, input) => op === 'team'
@@ -306,7 +310,7 @@ it('clears a selected filter when that teammate is no longer a configured produc
 
 it('keeps rows and assignment controls visible throughout a background refresh', async () => {
   render(page());
-  const picker = await willowPicker();
+  const picker = await salespersonPicker();
   const table = screen.getByRole('table');
   const initial = h.request.getMockImplementation()!;
   let finishRefresh!: (value: unknown) => void;
@@ -315,11 +319,11 @@ it('keeps rows and assignment controls visible throughout a background refresh',
   fireEvent(window, new Event('focus'));
   await waitFor(() => expect(finishRefresh).toBeTypeOf('function'));
   expect(screen.getByRole('table')).toBe(table);
-  expect(await willowPicker()).toBe(picker);
+  expect(await salespersonPicker()).toBe(picker);
   expect(picker).toBeEnabled();
   expect(screen.queryByText('Loading…')).not.toBeInTheDocument();
   owner = 'bob'; version = 8;
   await act(async () => finishRefresh(await initial('commercialTable', { accountIds: ['willow', 'pine', 'cedar'] })));
-  expect(await willowPicker()).toBe(picker);
+  expect(await salespersonPicker()).toBe(picker);
   expect(picker).toHaveValue('bob');
 });

@@ -5,7 +5,7 @@ import { communicationRequest, type LeadWorkflow, type TeamEligibility } from '.
 import { isAssignableSalesperson } from '../../../shared/salespersonOwnership';
 import { useRowInteraction, type InteractionChange } from '../lib/useRefreshOnReturn';
 
-export function LeadSalespersonSelect({
+export function AccountSalespersonSelect({
   accountId, accountName, salespersonId, workflowVersion, team, onSaved, onRefresh, onInteractionChange,
 }: {
   accountId: string;
@@ -53,7 +53,7 @@ export function LeadSalespersonSelect({
 
   if (!isAdmin) return null;
   return (
-    <div className="lead-salesperson" onClick={event => event.stopPropagation()} onKeyDown={event => event.stopPropagation()}>
+    <div className="account-salesperson" onClick={event => event.stopPropagation()} onKeyDown={event => event.stopPropagation()}>
       <select
         aria-label={`Salesperson for ${accountName}`}
         aria-describedby={messageId}
