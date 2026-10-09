@@ -30,7 +30,7 @@ import { CertificatesTab } from "./account/CertificatesTab";
 import { useIsAdmin } from "../lib/auth";
 import { communicationRequest, type LeadWorkflow, type WorkflowContext } from "../lib/communications";
 import { isAuthorizationError } from "../lib/authorizationError";
-import { LeadSalespersonSelect } from "../components/LeadSalespersonSelect";
+import { AccountSalespersonSelect } from "../components/AccountSalespersonSelect";
 import "./AccountDetail.css";
 
 type Tab =
@@ -322,7 +322,7 @@ function LeadAssignment({ account }: { account: Account }) {
   return <section className="card account-lead-assignment" aria-label="Lead salesperson">
     <h2>Salesperson</h2>
     {!resource.loaded ? <p className="muted small" role="status">Loading salesperson…</p>
-      : resource.data && <LeadSalespersonSelect
+      : resource.data && <AccountSalespersonSelect
         accountId={account.id}
         accountName={account.name}
         salespersonId={resource.data.workflow?.salespersonId}

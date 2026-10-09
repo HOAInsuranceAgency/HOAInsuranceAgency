@@ -492,9 +492,9 @@ select {
 select:hover { border-color: var(--accent); }
 select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 td select { padding: 5px 26px 5px 8px; font-size: 13px; background-position: right 8px center; }
-.lead-salesperson { min-width: 160px; max-width: 240px; }
-.lead-salesperson select { width: 100%; }
-.lead-salesperson .error-text { margin-top: 4px; overflow-wrap: anywhere; }
+.account-salesperson { min-width: 160px; max-width: 240px; }
+.account-salesperson select { width: 100%; }
+.account-salesperson .error-text { margin-top: 4px; overflow-wrap: anywhere; }
 
 /* ── Styled file pickers (native inputs hidden behind label buttons) ── */
 .file-btn {
