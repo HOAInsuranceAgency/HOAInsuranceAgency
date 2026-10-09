@@ -33,15 +33,6 @@ function recordedStates(carrier: Carrier) {
   return [...new Set((carrier.states ?? []).filter((state): state is string => Boolean(state)))];
 }
 
-function CarrierSortTh({ label, colKey, sortKey, dir, onToggle }: Parameters<typeof SortTh>[0]) {
-  const active = colKey === sortKey;
-  return <th aria-sort={active ? dir === "asc" ? "ascending" : "descending" : "none"}>
-    <button className="carrier-sort" onClick={() => onToggle(colKey)}>
-      {label}<span className="arrow" aria-hidden="true">{active ? dir === "asc" ? " ▲" : " ▼" : ""}</span>
-    </button>
-  </th>;
-}
-
 export default function Carriers() {
   const [showForm, setShowForm] = useState(false);
   const [search, setSearch] = useState("");
@@ -253,12 +244,12 @@ export default function Carriers() {
             <table className="carrier-table" aria-label="Carrier directory">
               <thead>
                 <tr>
-                  <CarrierSortTh label="Carrier" colKey="name" sortKey={sortKey} dir={dir} onToggle={toggle} />
-                  <CarrierSortTh label="Status" colKey="status" sortKey={sortKey} dir={dir} onToggle={toggle} />
-                  <CarrierSortTh label="Market" colKey="market" sortKey={sortKey} dir={dir} onToggle={toggle} />
-                  <CarrierSortTh label="Underwriter" colKey="underwriter" sortKey={sortKey} dir={dir} onToggle={toggle} />
-                  <CarrierSortTh label="Commission" colKey="commission" sortKey={sortKey} dir={dir} onToggle={toggle} />
-                  <CarrierSortTh label="States" colKey="states" sortKey={sortKey} dir={dir} onToggle={toggle} />
+                  <SortTh label="Carrier" colKey="name" sortKey={sortKey} dir={dir} onToggle={toggle} />
+                  <SortTh label="Status" colKey="status" sortKey={sortKey} dir={dir} onToggle={toggle} />
+                  <SortTh label="Market" colKey="market" sortKey={sortKey} dir={dir} onToggle={toggle} />
+                  <SortTh label="Underwriter" colKey="underwriter" sortKey={sortKey} dir={dir} onToggle={toggle} />
+                  <SortTh label="Commission" colKey="commission" sortKey={sortKey} dir={dir} onToggle={toggle} />
+                  <SortTh label="States" colKey="states" sortKey={sortKey} dir={dir} onToggle={toggle} />
                   <th>Lines written</th>
                 </tr>
               </thead>

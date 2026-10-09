@@ -52,9 +52,6 @@
 .carrier-empty p { margin: 18px 0 12px; }
 .carrier-table { min-width: 940px; table-layout: fixed; }
 .carrier-table th { padding-top: 10px; padding-bottom: 10px; background: #f8fafc; font-size: 11px; }
-.carrier-table .carrier-sort { border: 0; padding: 0; background: none; color: inherit; font: inherit; text-transform: inherit; letter-spacing: inherit; cursor: pointer; text-align: left; white-space: nowrap; }
-.carrier-table .carrier-sort:hover { color: var(--accent-dark); }
-.carrier-table .arrow { color: var(--accent-dark); }
 .carrier-table td { padding-top: 13px; padding-bottom: 13px; vertical-align: middle; overflow-wrap: anywhere; font-size: 12px; }
 .carrier-table :is(th, td):first-child { padding-left: 20px; width: 21%; }
 .carrier-table :is(th, td):nth-child(2) { width: 12%; }

@@ -521,6 +521,8 @@ td select { padding: 5px 26px 5px 8px; font-size: 13px; background-position: rig
 th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
 th.sortable:hover { color: var(--accent-dark); }
 th.sortable .arrow { display: inline-block; width: 1em; color: var(--accent-dark); }
+th.sortable .sort-label { border: 0; padding: 0; background: none; color: inherit; font: inherit; text-transform: inherit; letter-spacing: inherit; cursor: pointer; text-align: left; white-space: nowrap; }
+th.sortable .sort-label:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 
 /* ── Dashboard tiles & renewals ────────────────────────────────────── */
 .stat.clickable { cursor: pointer; transition: border-color 0.15s ease, box-shadow 0.15s ease; }
