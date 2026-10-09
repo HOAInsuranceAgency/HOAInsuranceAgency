@@ -1,6 +1,6 @@
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // ./client calls generateClient() at module scope — stub generateClient
@@ -118,40 +118,162 @@ const GUIDES = [
 beforeEach(() => {
   vi.clearAllMocks();
   models.Carrier.list.mockResolvedValue({ data: CARRIERS, nextToken: null });
+  models.Carrier.create.mockResolvedValue({ data: { id: "c-new" } });
   models.AppetiteGuide.list.mockResolvedValue({ data: GUIDES, nextToken: null });
 });
 
-const renderPage = async () => {
+function CurrentRoute() {
+  return <output aria-label="Current route">{useLocation().pathname}</output>;
+}
+
+const renderPage = async ({ openFinder = true } = {}) => {
   render(
-    <MemoryRouter>
+    <MemoryRouter initialEntries={["/carriers"]}>
       <Carriers />
+      <CurrentRoute />
     </MemoryRouter>
   );
   // The finder is gated on both reads landing — before that, "no appetite" is
   // a false negative rather than a placeholder.
   expect(await screen.findByText("Appetite finder")).toBeInTheDocument();
+  if (openFinder) {
+    await userEvent.click(screen.getByText("Appetite finder").closest("summary")!);
+  }
 };
 
-/**
- * The form's labels sit beside their control rather than wrapping it, so
- * `getByLabelText` has nothing to follow. `selector: "label"` keeps this off
- * the table headers of the same name.
- */
+/** Open optional risk fields the same way a producer does before editing. */
 const field = (label: string) => {
-  const el = screen
-    .getByText(label, { selector: "label" })
-    .parentElement!.querySelector("input, select");
-  if (!el) throw new Error(`no control beside the "${label}" label`);
+  const el = screen.getByLabelText(label);
+  const section = el.closest("details");
+  if (section && !section.open) fireEvent.click(section.querySelector("summary")!);
   return el as HTMLInputElement | HTMLSelectElement;
 };
 
 /** The finder's own results table — not the carrier list above it. */
 const results = () => {
-  const header = screen.getByText("Appetite finder").closest(".card")!;
+  const header = screen.getByText("Appetite finder").closest("details")!;
   return within(header as HTMLElement);
 };
 
+const directory = () => within(screen.getByRole("table", { name: "Carrier directory" }));
+
 describe("the carrier list", () => {
+  it("starts with the directory visible and the appetite finder collapsed", async () => {
+    await renderPage({ openFinder: false });
+    expect(directory().getAllByRole("link")).toHaveLength(3);
+    expect(screen.getByText("Appetite finder").closest("details")).not.toHaveAttribute("open");
+    expect(screen.getByRole("searchbox", { name: "Search carriers" })).toBeVisible();
+  });
+
+  it("searches carrier names and underwriters without changing appetite results", async () => {
+    const user = userEvent.setup();
+    await renderPage();
+    await user.selectOptions(field("State"), "MA");
+    expect(results().getByRole("link", { name: "Beacon Specialty" })).toBeInTheDocument();
+    const search = screen.getByRole("searchbox", { name: "Search carriers" });
+    await user.type(search, "Robin");
+    expect(directory().getByRole("link", { name: "Atlantic Mutual" })).toBeInTheDocument();
+    expect(directory().queryByRole("link", { name: "Beacon Specialty" })).not.toBeInTheDocument();
+    expect(results().getByRole("link", { name: "Beacon Specialty" })).toBeInTheDocument();
+    await user.clear(search);
+    await user.type(search, "Casco");
+    expect(directory().getByRole("link", { name: "Casco Prospective" })).toBeInTheDocument();
+    expect(directory().queryByRole("link", { name: "Atlantic Mutual" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Clear filters" }));
+    expect(directory().getAllByRole("link")).toHaveLength(3);
+    expect(field("State")).toHaveValue("MA");
+    expect(results().getByRole("link", { name: "Beacon Specialty" })).toBeInTheDocument();
+  });
+
+  it("combines appointment, coverage state and market filters and clears them together", async () => {
+    const user = userEvent.setup();
+    models.Carrier.list.mockResolvedValue({
+      data: CARRIERS.map(carrier => carrier.id === "c-beacon" ? { ...carrier, states: ["NH"] } : carrier),
+      nextToken: null,
+    });
+    await renderPage({ openFinder: false });
+    const all = screen.getByRole("button", { name: /^All \(3\)$/ });
+    const appointed = screen.getByRole("button", { name: /^Appointed \(2\)$/ });
+    const prospective = screen.getByRole("button", { name: /^Prospective \(1\)$/ });
+    expect(all).toHaveAttribute("aria-pressed", "true");
+    await user.click(prospective);
+    expect(prospective).toHaveAttribute("aria-pressed", "true");
+    expect(directory().getAllByRole("link")).toHaveLength(1);
+    expect(directory().getByRole("link", { name: "Casco Prospective" })).toBeInTheDocument();
+    await user.click(appointed);
+    await user.selectOptions(screen.getByLabelText("Coverage state"), "NH");
+    await user.selectOptions(screen.getByLabelText("Market type"), "WHOLESALER");
+    expect(directory().getAllByRole("link")).toHaveLength(1);
+    expect(directory().getByRole("link", { name: "Beacon Specialty" })).toBeInTheDocument();
+    await user.selectOptions(screen.getByLabelText("Market type"), "MGA");
+    expect(screen.getByText("No carriers match these filters.")).toBeInTheDocument();
+    expect(screen.queryByRole("table", { name: "Carrier directory" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Clear filters" }));
+    expect(all).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByLabelText("Coverage state")).toHaveValue("");
+    expect(screen.getByLabelText("Market type")).toHaveValue("");
+    expect(directory().getAllByRole("link")).toHaveLength(3);
+  });
+
+  it("expands coverage and lines without following the clickable carrier row", async () => {
+    const user = userEvent.setup();
+    models.Carrier.list.mockResolvedValue({
+      data: CARRIERS.map(carrier => carrier.id === "c-atlantic" ? { ...carrier, states: ["MA", "FL", "NH"] } : carrier),
+      nextToken: null,
+    });
+    models.AppetiteGuide.list.mockResolvedValue({
+      data: GUIDES.map(guide => guide.id === "g-atlantic" ? {
+        ...guide,
+        linesWritten: ["Commercial Property", "General Liability", "Directors & Officers", "Workers Compensation"],
+      } : guide),
+      nextToken: null,
+    });
+    await renderPage({ openFinder: false });
+    const row = directory().getByRole("link", { name: "Atlantic Mutual" }).closest("tr")!;
+    const coverage = within(row).getByLabelText("Coverage for Atlantic Mutual").closest("details")!;
+    const lines = within(row).getByLabelText("Lines written for Atlantic Mutual").closest("details")!;
+    expect(coverage).not.toHaveAttribute("open");
+    expect(lines).not.toHaveAttribute("open");
+    await user.click(within(coverage).getByText("3 states"));
+    await user.click(lines.querySelector("summary")!);
+    expect(coverage).toHaveAttribute("open");
+    expect(coverage).toHaveTextContent("MA");
+    expect(coverage).toHaveTextContent("FL");
+    expect(coverage).toHaveTextContent("NH");
+    expect(lines).toHaveAttribute("open");
+    expect(lines).toHaveTextContent("Directors & Officers");
+    expect(lines).toHaveTextContent("Workers Compensation");
+    expect(screen.getByLabelText("Current route")).toHaveTextContent("/carriers");
+  });
+
+  it("opens the carrier detail through keyboard activation of its named link", async () => {
+    const user = userEvent.setup();
+    await renderPage({ openFinder: false });
+    const link = directory().getByRole("link", { name: "Atlantic Mutual" });
+    expect(link).toHaveAttribute("href", "/carriers/c-atlantic");
+    link.focus();
+    await user.keyboard("{Enter}");
+    expect(screen.getByLabelText("Current route")).toHaveTextContent("/carriers/c-atlantic");
+  });
+
+  it("sorts carriers through keyboard activation and announces the sort direction", async () => {
+    const user = userEvent.setup();
+    await renderPage({ openFinder: false });
+    const sort = directory().getByRole("button", { name: "Carrier" });
+    const header = sort.closest("th")!;
+    expect(header).toHaveAttribute("aria-sort", "ascending");
+    expect(directory().getAllByRole("link").map(link => link.textContent)).toEqual([
+      "Atlantic Mutual", "Beacon Specialty", "Casco Prospective",
+    ]);
+    sort.focus();
+    await user.keyboard("{Enter}");
+    expect(header).toHaveAttribute("aria-sort", "descending");
+    expect(directory().getAllByRole("link").map(link => link.textContent)).toEqual([
+      "Casco Prospective", "Beacon Specialty", "Atlantic Mutual",
+    ]);
+    expect(screen.getByLabelText("Current route")).toHaveTextContent("/carriers");
+  });
+
   it("includes carriers and appetite guides from later pages, including after an empty page", async () => {
     models.Carrier.list
       .mockResolvedValueOnce({ data: [CARRIERS[0]], nextToken: "carrier-page-2" })
@@ -207,7 +329,63 @@ describe("the carrier list", () => {
   });
 });
 
+describe("adding a carrier", () => {
+  it("submits on Enter, locks pending fields, and retains the form after a failure for retry", async () => {
+    const user = userEvent.setup();
+    let fail!: (reason: Error) => void;
+    models.Carrier.create.mockImplementationOnce(() => new Promise((_resolve, reject) => { fail = reject; }));
+    await renderPage({ openFinder: false });
+    await user.click(screen.getByRole("button", { name: /Add carrier/ }));
+    const form = screen.getByRole("form", { name: "Add carrier" });
+    const name = within(form).getByLabelText("Carrier name *");
+    const status = within(form).getByLabelText("Status");
+    await user.type(name, "  New Specialty  ");
+    await user.selectOptions(status, "0");
+    await user.click(name);
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(models.Carrier.create).toHaveBeenCalledTimes(1));
+    expect(models.Carrier.create).toHaveBeenCalledWith({ name: "New Specialty", appointed: false });
+    expect(name).toBeDisabled();
+    expect(status).toBeDisabled();
+    expect(within(form).getByRole("button", { name: "Creating…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
+    fireEvent.submit(form);
+    expect(models.Carrier.create).toHaveBeenCalledTimes(1);
+    await act(async () => { fail(new Error("Carrier temporarily unavailable")); });
+    expect(await screen.findByRole("alert")).toHaveTextContent("Carrier temporarily unavailable");
+    expect(name).toBeEnabled();
+    expect(name).toHaveValue("  New Specialty  ");
+    expect(status).toHaveValue("0");
+    await user.click(within(form).getByRole("button", { name: "Create carrier" }));
+    await waitFor(() => expect(screen.getByLabelText("Current route")).toHaveTextContent("/carriers/c-new"));
+    expect(models.Carrier.create).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe("the appetite finder", () => {
+  it("retains the risk while refresh and retry withhold stale appetite results", async () => {
+    const user = userEvent.setup();
+    await renderPage();
+    await user.selectOptions(field("State"), "MA");
+    await user.type(field("Rented units (%)"), "40");
+    expect(results().getByRole("link", { name: "Beacon Specialty" })).toBeInTheDocument();
+    let finish!: (page: { data: typeof GUIDES; nextToken: null; errors: { message: string }[] }) => void;
+    models.AppetiteGuide.list.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    await user.click(screen.getByRole("button", { name: "Refresh" }));
+    expect(results().queryByRole("table", { name: "Appetite matches" })).not.toBeInTheDocument();
+    expect(results().getByRole("status")).toHaveTextContent("Appetite results are unavailable");
+    expect(field("State")).toHaveValue("MA");
+    expect(field("Rented units (%)")).toHaveValue(40);
+    await act(async () => { finish({ data: [], nextToken: null, errors: [{ message: "Guide refresh unavailable" }] }); });
+    expect(await screen.findByRole("alert")).toHaveTextContent("Guide refresh unavailable");
+    expect(results().queryByRole("table", { name: "Appetite matches" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Retry appetite guides" }));
+    await waitFor(() => expect(results().getByRole("link", { name: "Beacon Specialty" })).toBeInTheDocument());
+    expect(results().queryByRole("link", { name: "Atlantic Mutual" })).not.toBeInTheDocument();
+    expect(field("State")).toHaveValue("MA");
+    expect(field("Rented units (%)")).toHaveValue(40);
+  });
+
   it("stays quiet until something is asked of it", async () => {
     await renderPage();
     expect(
@@ -233,6 +411,19 @@ describe("the appetite finder", () => {
       expect(results().getByText("Beacon Specialty")).toBeInTheDocument()
     );
     expect(results().queryByText("Atlantic Mutual")).not.toBeInTheDocument();
+  });
+
+  it("keeps optional risk criteria active when their details are collapsed", async () => {
+    const user = userEvent.setup();
+    await renderPage();
+    await user.type(field("Rented units (%)"), "40");
+    const more = screen.getByText("More risk details").closest("summary")!;
+    await user.click(more);
+    expect(more.closest("details")).not.toHaveAttribute("open");
+    expect(results().getByRole("link", { name: "Beacon Specialty" })).toBeInTheDocument();
+    expect(results().queryByRole("link", { name: "Atlantic Mutual" })).not.toBeInTheDocument();
+    await user.click(more);
+    expect(field("Rented units (%)")).toHaveValue(40);
   });
 
   it("keeps a carrier at the edge of its cap rather than just under it", async () => {
