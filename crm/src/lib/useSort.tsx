@@ -61,9 +61,11 @@ export function SortTh({
 }) {
   const active = colKey === sortKey;
   return (
-    <th className="sortable" onClick={() => onToggle(colKey)}>
-      {label}
-      <span className="arrow">{active ? (dir === "asc" ? " ▲" : " ▼") : ""}</span>
+    <th className="sortable" aria-sort={active ? (dir === "asc" ? "ascending" : "descending") : "none"} onClick={() => onToggle(colKey)}>
+      <button type="button" className="sort-label">
+        {label}
+        <span className="arrow" aria-hidden="true">{active ? (dir === "asc" ? " ▲" : " ▼") : ""}</span>
+      </button>
     </th>
   );
 }

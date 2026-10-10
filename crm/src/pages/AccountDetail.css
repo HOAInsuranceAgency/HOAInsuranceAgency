@@ -1,5 +1,5 @@
 .account-lead-assignment { display: flex; align-items: start; flex-wrap: wrap; gap: 12px 24px; }
 .account-lead-assignment h2 { margin: 8px 0 0; min-width: 140px; }
-.account-lead-assignment .lead-salesperson { flex: 1 1 240px; max-width: 360px; }
+.account-lead-assignment .account-salesperson { flex: 1 1 240px; max-width: 360px; }
 .account-lead-assignment > p { margin: 8px 0 0; }
 .account-lead-assignment > .error-text { flex-basis: 100%; }

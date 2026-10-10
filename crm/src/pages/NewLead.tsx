@@ -31,9 +31,11 @@ import {
   DEFAULT_ACCOUNT_TYPE,
   type AccountType,
 } from "../lib/enums";
+import "./NewLead.css";
 
 export default function NewLead() {
   const navigate = useNavigate();
+  const formRef = useRef<HTMLFormElement>(null);
   const requestId = useRef(crypto.randomUUID());
   const savingNow = useRef(false);
   const created = useRef<string | null>(null);
@@ -70,18 +72,31 @@ export default function NewLead() {
     notes: "",
   });
 
+  function focusField(id: string) {
+    const field = formRef.current?.querySelector<HTMLElement>(`#${id}`);
+    const section = field?.closest('details');
+    if (section) section.open = true;
+    field?.focus();
+  }
+
   async function save() {
     if (savingNow.current || created.current) return;
     if (!form.name.trim()) {
       setError("Name is required.");
+      focusField('new-lead-name');
       return;
     }
     const problems = validateAccountFields(form);
     if (problems.length) {
       setError(problems.join(" "));
+      const invalid = ([
+        ['contactEmail', 'new-lead-contact-email'], ['zip', 'new-lead-zip'],
+        ['unitCount', 'new-lead-unit-count'], ['totalInsuredValue', 'new-lead-tiv'],
+      ] as const).find(([key]) => validateAccountFields({ [key]: form[key] }).length > 0);
+      if (invalid) focusField(invalid[1]);
       return;
     }
-    if (!form.leadSource) { setError("Choose a lead source before creating the lead."); return; }
+    if (!form.leadSource) { setError("Choose a lead source before creating the lead."); focusField('new-lead-source'); return; }
     savingNow.current = true;
     setSaving(true);
     setError("");
@@ -202,213 +217,148 @@ export default function NewLead() {
   }
 
   const isPersonal = form.type === "PERSONAL";
+  const propertySummary = [
+    [form.city, form.state].filter(Boolean).join(", ") || (form.address ? "Address added" : ""),
+    form.unitCount && !isPersonal ? `${form.unitCount} units` : "",
+    form.currentPolicyExpiration ? "Renewal date added" : "",
+  ].filter(Boolean).join(" · ");
+  const extrasSummary = [
+    form.notes.trim() ? "Notes added" : "",
+    stagedFiles.length ? `${stagedFiles.length} document${stagedFiles.length > 1 ? "s" : ""}` : "",
+  ].filter(Boolean).join(" · ");
 
   return (
-    <>
-      <h1>New lead</h1>
-      <div className="card"><div className="form-grid">
-        <ResponsibilitySelect label="Salesperson" value={salespersonId} team={members.data.team} onChange={setSalesperson} disabled={saving || !!createdId} />
-      </div>{members.error && <p className="error-text">{members.error}</p>}</div>
-      <p className="sub">Association or individual prospect</p>
+    <div className="new-lead">
+      <button type="button" className="new-lead-back" disabled={saving} onClick={() => navigate('/leads')}>
+        <span aria-hidden="true">←</span> Leads
+      </button>
+      <header className="new-lead-heading">
+        <h1>New lead</h1>
+        <p>Add the basics now. You can fill in the rest later.</p>
+      </header>
 
-      <div className="card">
-        <fieldset disabled={saving || !!createdId} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
-        <div className="form-grid">
-          <div className="field">
-            <label htmlFor="new-lead-account-type">Account type</label>
-            <select id="new-lead-account-type" value={form.type} onChange={(e) => setF("type", e.target.value)}>
-              {ACCOUNT_TYPE_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
+      <form ref={formRef} className="card new-lead-form" aria-label="New lead" noValidate onSubmit={event => { event.preventDefault(); void save(); }}>
+        <fieldset className="new-lead-fields" disabled={saving || !!createdId} aria-label="Lead information">
+          <div className="new-lead-essentials">
+            <section className="new-lead-section" aria-labelledby="new-lead-details-heading">
+              <h2 id="new-lead-details-heading">Lead details</h2>
+              <div className="new-lead-grid">
+                <div className="field full">
+                  <label htmlFor="new-lead-name">Name (association / insured) *</label>
+                  <input id="new-lead-name" required placeholder={isPersonal ? "Insured's full name" : "Association or business name"} value={form.name} onChange={e => setF("name", e.target.value)} />
+                </div>
+                <div className="field">
+                  <label htmlFor="new-lead-account-type">Account type</label>
+                  <select id="new-lead-account-type" value={form.type} onChange={e => setF("type", e.target.value)}>
+                    {ACCOUNT_TYPE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                  </select>
+                </div>
+                <div className="field">
+                  <label htmlFor="new-lead-property-type">Property type</label>
+                  <select id="new-lead-property-type" value={form.propertyType} onChange={e => setF("propertyType", e.target.value)}>
+                    <option value="">Choose if confirmed</option>
+                    {PROPERTY_TYPES.map(value => <option key={value} value={value}>{PROPERTY_TYPE_LABELS[value]}</option>)}
+                  </select>
+                  {isPersonal && <span className="new-lead-hint">Personal (HO-6) accounts use Individual unit owner unless you choose another property type.</span>}
+                </div>
+                <div className="field">
+                  <label htmlFor="new-lead-source">Lead source *</label>
+                  <select id="new-lead-source" required value={form.leadSource} onChange={e => setF("leadSource", e.target.value)}>
+                    <option value="">Choose a source</option>
+                    {LEAD_SOURCES.map(value => <option key={value} value={value}>{LEAD_SOURCE_LABELS[value]}</option>)}
+                  </select>
+                </div>
+                <ResponsibilitySelect label="Salesperson" value={salespersonId} team={members.data.team} onChange={setSalesperson} disabled={saving || members.loading} />
+              </div>
+              {members.error && <p className="error-text small" role="alert">{members.error} <button type="button" className="link" onClick={() => void members.refetch()}>Retry</button></p>}
+            </section>
+
+            <section className="new-lead-section new-lead-contact" aria-labelledby="new-lead-contact-heading">
+              <div className="new-lead-section-heading"><h2 id="new-lead-contact-heading">Primary contact</h2><span className="new-lead-optional">Optional</span></div>
+              <div className="new-lead-grid">
+                <div className="field">
+                  <label htmlFor="new-lead-contact-name">Contact name</label>
+                  <input id="new-lead-contact-name" autoComplete="name" placeholder="Full name" value={form.contactName} onChange={e => setF("contactName", e.target.value)} />
+                </div>
+                <div className="field">
+                  <label htmlFor="new-lead-contact-role">Contact role</label>
+                  <select id="new-lead-contact-role" value={form.contactType} onChange={e => setF("contactType", e.target.value)}>
+                    <option value="">Choose a role</option>
+                    {CONTACT_TYPE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                  </select>
+                </div>
+                <div className="field full">
+                  <label htmlFor="new-lead-contact-email">Contact email</label>
+                  <input id="new-lead-contact-email" type="email" autoComplete="email" placeholder="name@example.com" value={form.contactEmail} onChange={e => setF("contactEmail", e.target.value)} />
+                </div>
+                <div className="field full">
+                  <label htmlFor="new-lead-contact-phone">Contact phone</label>
+                  <PhoneInput id="new-lead-contact-phone" placeholder="(555) 123-4567" value={form.contactPhone} onChange={value => setF("contactPhone", value)} />
+                </div>
+              </div>
+            </section>
           </div>
-          <div className="field">
-            <label htmlFor="new-lead-property-type">Property type</label>
-            <select id="new-lead-property-type" value={form.propertyType} onChange={e => setF("propertyType", e.target.value)}>
-              <option value="">Choose property type</option>
-              {PROPERTY_TYPES.map(value => <option key={value} value={value}>{PROPERTY_TYPE_LABELS[value]}</option>)}
-            </select>
-            <span className="muted small">{isPersonal ? "Personal (HO-6) accounts use Individual unit owner unless you choose another property type." : "Choose only when the property group is confirmed."}</span>
-          </div>
-          <div className="field">
-            <label htmlFor="new-lead-name">Name (association / insured) *</label>
-            <input id="new-lead-name" value={form.name} onChange={(e) => setF("name", e.target.value)} />
-          </div>
-          <div className="field">
-            <label htmlFor="new-lead-source">Lead source *</label>
-            <select id="new-lead-source" required value={form.leadSource} onChange={e => setF("leadSource", e.target.value)}>
-              <option value="">Choose a source</option>
-              {LEAD_SOURCES.map(value => <option key={value} value={value}>{LEAD_SOURCE_LABELS[value]}</option>)}
-            </select>
-            <span className="muted small">Set once when the lead is created.</span>
-          </div>
-          {/* One person, matching `Contact` exactly — this used to be a first
-              and last name feeding two Account columns, which then had to be
-              re-joined by everything that rendered them. More contacts are
-              added on the account's Contacts card; this one is the primary. */}
-          <div className="field">
-            <label htmlFor="new-lead-contact-name">Contact name</label>
-            <input
-              placeholder="Pat Alvarez"
-              value={form.contactName}
-              id="new-lead-contact-name"
-              onChange={(e) => setF("contactName", e.target.value)}
-            />
-          </div>
-          <div className="field">
-            <label>Contact role</label>
-            <select
-              value={form.contactType}
-              onChange={(e) => setF("contactType", e.target.value)}
-            >
-              <option value="">—</option>
-              {CONTACT_TYPE_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="field">
-            <label>Contact email</label>
-            <input type="email" value={form.contactEmail} onChange={(e) => setF("contactEmail", e.target.value)} />
-          </div>
-          <div className="field">
-            <label>Contact phone</label>
-            <PhoneInput
-              value={form.contactPhone}
-              onChange={(v) => setF("contactPhone", v)}
-            />
-          </div>
-          <div className="field">
-            <label>Street address</label>
-            <AddressAutocomplete
-              value={form.address}
-              onChange={(v) => setF("address", v)}
-              onPlace={(p) =>
-                patch((f) => ({
-                  address: p.address || f.address,
-                  city: p.city || f.city,
-                  state: p.state || f.state,
-                  zip: p.zip || f.zip,
-                }))
-              }
-            />
-          </div>
-          <div className="field">
-            <label>City</label>
-            <input value={form.city} onChange={(e) => setF("city", e.target.value)} />
-          </div>
-          <div className="field">
-            <label>State</label>
-            <select value={form.state} onChange={(e) => setF("state", e.target.value)}>
-              <option value="">—</option>
-              {US_STATES.map((s) => (
-                <option key={s}>{s}</option>
-              ))}
-            </select>
-          </div>
-          <div className="field">
-            <label>ZIP</label>
-            <input value={form.zip} onChange={(e) => setF("zip", e.target.value)} />
-          </div>
-          {!isPersonal && (
-            <div className="field">
-              <label>Unit count</label>
-              <IntegerInput
-                value={form.unitCount}
-                onChange={(v) => setF("unitCount", v)}
-              />
+
+          <details className="new-lead-disclosure">
+            <summary><span className="new-lead-disclosure-copy"><span className="new-lead-disclosure-title">Property & current coverage</span><span className="new-lead-hint">{propertySummary || "Address, units, insured value and renewal details"}</span></span><span className="new-lead-optional">Optional</span></summary>
+            <div className="new-lead-disclosure-body">
+              <div className="new-lead-grid new-lead-property-grid">
+                <label className="field new-lead-address-field" onKeyDown={event => {
+                  // Enter selects a Places suggestion; it must not create the lead.
+                  if (event.key === 'Enter') event.preventDefault();
+                }}>
+                  <span>Street address</span>
+                  <AddressAutocomplete value={form.address} onChange={value => setF("address", value)} onPlace={place => patch(current => ({ address: place.address || current.address, city: place.city || current.city, state: place.state || current.state, zip: place.zip || current.zip }))} />
+                </label>
+                <div className="field">
+                  <label htmlFor="new-lead-city">City</label>
+                  <input id="new-lead-city" autoComplete="address-level2" value={form.city} onChange={e => setF("city", e.target.value)} />
+                </div>
+                <div className="field">
+                  <label htmlFor="new-lead-state">State</label>
+                  <select id="new-lead-state" autoComplete="address-level1" value={form.state} onChange={e => setF("state", e.target.value)}>
+                    <option value="">—</option>{US_STATES.map(state => <option key={state}>{state}</option>)}
+                  </select>
+                </div>
+                <div className="field">
+                  <label htmlFor="new-lead-zip">ZIP</label>
+                  <input id="new-lead-zip" autoComplete="postal-code" inputMode="numeric" value={form.zip} onChange={e => setF("zip", e.target.value)} />
+                </div>
+              </div>
+              <div className="new-lead-grid new-lead-coverage-grid">
+                {!isPersonal && <div className="field"><label htmlFor="new-lead-unit-count">Unit count</label><IntegerInput id="new-lead-unit-count" value={form.unitCount} onChange={value => setF("unitCount", value)} /></div>}
+                <div className="field"><label htmlFor="new-lead-tiv">Total insured value ($)</label><MoneyInput id="new-lead-tiv" value={form.totalInsuredValue} onChange={value => setF("totalInsuredValue", value)} /></div>
+                <div className="field"><label htmlFor="new-lead-current-agent">Current agent / broker</label><input id="new-lead-current-agent" placeholder="Agency name" value={form.currentAgent} onChange={e => setF("currentAgent", e.target.value)} /></div>
+                <div className="field"><label htmlFor="new-lead-expiration">Current policy expiration</label><DateInput id="new-lead-expiration" value={form.currentPolicyExpiration} onChange={value => setF("currentPolicyExpiration", value)} /></div>
+              </div>
             </div>
-          )}
-          {/* No "Year built" here any more. A year built belongs to a
-              building, not to a site — that is why the Property card lost it
-              and every Building gained one — and asking for a single year on
-              the one form that creates the account put it back, on a column
-              nothing reads. An association with a 1978 clubhouse and 2016
-              townhouses has no answer to give this field. */}
-          <div className="field">
-            <label>Total insured value ($)</label>
-            <MoneyInput
-              value={form.totalInsuredValue}
-              onChange={(v) => setF("totalInsuredValue", v)}
-            />
-          </div>
-          <div className="field">
-            <label>Current agent / broker</label>
-            <input
-              placeholder="Incumbent agency"
-              value={form.currentAgent}
-              onChange={(e) => setF("currentAgent", e.target.value)}
-            />
-          </div>
-          <div className="field">
-            <label>Current policy expiration</label>
-            <DateInput
-              value={form.currentPolicyExpiration}
-              onChange={(v) => setF("currentPolicyExpiration", v)}
-            />
-          </div>
-          <div className="field full">
-            <label>Notes</label>
-            <textarea rows={3} value={form.notes} onChange={(e) => setF("notes", e.target.value)} />
-          </div>
-        </div>
+          </details>
 
-        <h3>Documents (optional)</h3>
-        <p className="muted small" style={{ marginTop: 0 }}>
-          Attach prior policy packets, budgets, or condo docs now. They're
-          OCR'd on the account, then AI extraction can auto-fill the details.
-        </p>
-        <div className="toolbar">
-          <FileButton
-            label="Add documents…"
-            multiple
-            onFiles={(files) =>
-              files && setStagedFiles((prev) => [...prev, ...files])
-            }
-          />
-        </div>
-        {stagedFiles.length > 0 && (
-          <div className="table-wrap" style={{ marginBottom: 4 }}>
-            <table>
-              <tbody>
-                {stagedFiles.map((f, i) => (
-                  <tr key={i}>
-                    <td>{f.name}</td>
-                    <td className="muted small">
-                      {Math.max(1, Math.round(f.size / 1024))} KB
-                    </td>
-                    <td style={{ width: 60 }}>
-                      <button
-                        className="danger"
-                        onClick={() =>
-                          setStagedFiles((prev) => prev.filter((_, j) => j !== i))
-                        }
-                      >
-                        Remove
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-
+          <details className="new-lead-disclosure">
+            <summary><span className="new-lead-disclosure-copy"><span className="new-lead-disclosure-title">Notes & documents</span><span className="new-lead-hint">{extrasSummary || "Background notes and supporting files"}</span></span><span className="new-lead-optional">Optional</span></summary>
+            <div className="new-lead-disclosure-body new-lead-extras">
+              <div className="field"><label htmlFor="new-lead-notes">Notes</label><textarea id="new-lead-notes" rows={3} placeholder="Anything the team should know…" value={form.notes} onChange={e => setF("notes", e.target.value)} /></div>
+              <div className="new-lead-documents">
+                <div className="new-lead-document-heading"><h3>Documents</h3><FileButton label="Add documents…" multiple disabled={saving || !!createdId} onFiles={files => files && setStagedFiles(current => [...current, ...files])} /></div>
+                <p className="new-lead-hint">Add policies, budgets or association documents. You can extract their details after creating the lead.</p>
+                {stagedFiles.length > 0 && <ul className="new-lead-file-list" aria-label="Attached documents">
+                  {stagedFiles.map((file, index) => <li key={index}><span className="new-lead-file-name">{file.name}</span><span className="new-lead-hint">{Math.max(1, Math.round(file.size / 1024))} KB</span><button type="button" className="link" aria-label={`Remove ${file.name}`} onClick={() => setStagedFiles(current => current.filter((_, position) => position !== index))}>Remove</button></li>)}
+                </ul>}
+              </div>
+            </div>
+          </details>
         </fieldset>
-        <div className="form-actions">
+
+        <footer className="new-lead-actions">
+          {error && <p className="error-text new-lead-error" role="alert">{error}</p>}
+          <span className="new-lead-hint">{createdId ? "Your lead is ready to open." : "Only name and lead source are required."}</span>
+          <div className="new-lead-action-buttons">
           {createdId ? (
-            <button
-              className="primary"
-              onClick={() => navigate(`/accounts/${createdId}?tab=documents`)}
-            >
+            <button type="button" className="primary" onClick={() => navigate(`/accounts/${createdId}?tab=documents`)}>
               Go to the lead
             </button>
           ) : (
-            <button className="primary" disabled={saving} onClick={save}>
+            <><button type="button" className="secondary" disabled={saving} onClick={() => navigate('/leads')}>Cancel</button><button type="submit" className="primary" disabled={saving}>
               {saving
                 ? stagedFiles.length
                   ? "Creating & uploading…"
@@ -416,11 +366,11 @@ export default function NewLead() {
                 : stagedFiles.length
                   ? `Create lead & upload ${stagedFiles.length} document${stagedFiles.length > 1 ? "s" : ""}`
                   : "Create lead"}
-            </button>
+            </button></>
           )}
-          {error && <span className="error-text">{error}</span>}
-        </div>
-      </div>
-    </>
+          </div>
+        </footer>
+      </form>
+    </div>
   );
 }

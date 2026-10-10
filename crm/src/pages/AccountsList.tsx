@@ -13,7 +13,7 @@ import { useAccountsListData } from "../lib/accountsListData";
 import { useSort, SortTh } from "../lib/useSort";
 import { teammateName } from '../lib/commercial';
 import { OpportunityEstimate } from '../components/OpportunityEstimate';
-import { LeadSalespersonSelect } from '../components/LeadSalespersonSelect';
+import { AccountSalespersonSelect } from '../components/AccountSalespersonSelect';
 import { ReportDownload } from '../components/ReportDownload';
 import { LeadSnoozeControl } from '../components/LeadSnoozeControl';
 import { leadSnoozeStatus } from '../../../shared/leadSnooze';
@@ -214,8 +214,8 @@ export default function AccountsList({ stage }: { stage: "LEAD" | "CLIENT" }) {
                         )}
                       </td>
                       <td>{a.city || '—'}</td><td>{a.state || '—'}</td>
-                      {isAdmin && <td>{stage === 'LEAD' && assignment?.workflowVersion != null ? (
-                        <LeadSalespersonSelect
+                      {isAdmin && <td>{assignment?.workflowVersion != null ? (
+                        <AccountSalespersonSelect
                           onInteractionChange={onInteractionChange}
                           accountId={a.id}
                           accountName={a.name}

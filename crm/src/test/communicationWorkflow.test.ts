@@ -359,6 +359,25 @@ describe("inline salesperson assignment", () => {
     expect(h.front).not.toHaveBeenCalled(); expect(h.dialpad).not.toHaveBeenCalled();
   });
 
+  it("reassigns an existing bound client without changing its lifecycle and rejects stale saves", async () => {
+    await eligible();
+    h.records.set("Account:a1", { id: "a1", name: "Willow HOA", stage: "CLIENT" });
+    const original = await save(row<LeadWorkflow>("WORKFLOW", "workflow:a1", {
+      accountId: "a1", name: "Willow HOA", salespersonId: "brian", ownershipModel: "SALESPERSON", disposition: "BOUND", version: 1, updatedAt: NOW,
+    }, { accountId: "a1" }));
+    const before = h.transactions.length;
+    const workflow = await setResponsibilities("a1", "chosen", original.version, "admin");
+    expect(workflow).toMatchObject({ salespersonId: "chosen", disposition: "BOUND", version: 2 });
+    expect(record(original.id)).toMatchObject({ assignedSalespersonId: "chosen", version: 2, data: workflow });
+    expect(h.records.get("Account:a1")).toMatchObject({ stage: "CLIENT" });
+    expect(h.transactions[before].some(w => w.Put?.Item.kind === "ROLE_SYNC")).toBe(true);
+    expect(h.transactions[before].some(w => w.Put?.TableName === "Activity" && w.Put.Item.actor === "admin" && w.Put.Item.summary === "Salesperson changed")).toBe(true);
+    const writes = h.transactions.length;
+    await expect(setResponsibilities("a1", "brian", original.version, "admin")).rejects.toThrow("Refresh");
+    expect(h.transactions).toHaveLength(writes);
+    expect(record(original.id).data).toEqual(workflow);
+  });
+
   it("lets only one concurrent first assignment commit", async () => {
     await eligible("first"); await eligible("second");
     const results = await Promise.allSettled([
