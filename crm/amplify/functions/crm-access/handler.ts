@@ -6,10 +6,15 @@ import { AccessDenied, id, object, RETIRED_MODELS, type Identity, type RecordDat
 import { downloadContentDisposition, fileClient, fileSigningOptions } from "./file-signing";
 import { listAssigned } from "./listing";
 import { isActiveOwner, type RoleRequest } from "./active-role";
+import { assertUserSession } from "./user-status";
 const s3 = fileClient();
-type Event = { identity?: Identity; request?: RoleRequest; fieldName?: string; info?: { fieldName?: string }; arguments?: RecordData; mode?: "read" | "write" | "list" | "admin" | "owner" | "custom-pre" | "custom-post"; model?: string; field?: string; operation?: string; previous?: unknown };
+type Event = { identity?: Identity; request?: RoleRequest; fieldName?: string; info?: { fieldName?: string }; arguments?: RecordData; mode?: "session" | "read" | "write" | "list" | "admin" | "owner" | "custom-pre" | "custom-post"; model?: string; field?: string; operation?: string; previous?: unknown };
 export async function handler(event: Event) {
+  if (event.mode === "session") { await assertUserSession(event.identity); return event.previous; }
   const access = new AccountAccess(event.identity, undefined, event.request), args = object(event.arguments);
+  // These custom entry points are also guarded when invoked directly, before
+  // signing files or looking up any assignment records.
+  if (!event.mode) await assertUserSession(event.identity);
   if (RETIRED_MODELS.includes(id(event.model))) throw new AccessDenied();
   if (event.mode === "owner") { if (!isActiveOwner(event.identity, event.request)) throw new AccessDenied(); return event.previous; }
   if (event.mode === "admin") { if (!access.admin) throw new AccessDenied(); return event.previous; }

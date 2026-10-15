@@ -1,19 +1,77 @@
-import { salespersonEligibility, salespersonWorkflow } from "../../../../shared/salespersonOwnership";
-import { CognitoIdentityProviderClient, ListUsersCommand } from "@aws-sdk/client-cognito-identity-provider";
+import { receivesNewLeads, salespersonEligibility, salespersonWorkflow } from "../../../../shared/salespersonOwnership";
+import { AdminListGroupsForUserCommand, CognitoIdentityProviderClient, ListUsersCommand, ListUsersInGroupCommand, type UserType } from "@aws-sdk/client-cognito-identity-provider";
 import { type LeadWorkflow, type LeadTask, type TeamEligibility, type TaskKind, type Responsibility, type Communication } from "../../../../shared/leadWorkflow";
 import { get, row, put, commit, query, audit, save, conflict, check, absent, type Row, type Write } from "./store";
 import { config } from "./config";
 import { operationRow } from "./outbox";
 import { dataClient } from "./data";
 import { tasksRemoved } from "./retiredTasks";
+import { activeTeamUserCheck, teamUserDisabled } from "../crm-access/user-status";
 
 const cognito = new CognitoIdentityProviderClient();
 export class UnavailableTeammateError extends Error {}
+export class IneligibleProducerError extends Error {}
 export async function enabledUser(userId: string) {
   if (!/^[a-zA-Z0-9_-]{1,128}$/.test(userId)) throw new Error("Invalid teammate identity");
+  if (await teamUserDisabled(userId)) throw new UnavailableTeammateError("This teammate is deactivated or no longer available");
   const out = await cognito.send(new ListUsersCommand({ UserPoolId: process.env.USER_POOL_ID, Filter: `sub = "${userId}"`, Limit: 1 }));
   if (!out.Users?.[0]?.Enabled) throw new UnavailableTeammateError("This teammate is disabled or no longer available");
   return out.Users[0];
+}
+/** Membership is checked live; an eligibility record cannot grant Producer access. */
+export async function hasProducerRole(userId: string, user: UserType): Promise<boolean> {
+  let nextToken: string | undefined;
+  do {
+    let result;
+    try {
+      result = await cognito.send(new AdminListGroupsForUserCommand({ UserPoolId: process.env.USER_POOL_ID,
+        Username: user.Username ?? userId, NextToken: nextToken }));
+    } catch (error) {
+      if (error instanceof Error && error.name === "UserNotFoundException") return false;
+      throw error;
+    }
+    if (result.Groups?.some(group => group.GroupName === "PRODUCER")) return true;
+    nextToken = result.NextToken;
+  } while (nextToken);
+  return false;
+}
+export async function producerUser(userId: string) {
+  const user = await enabledUser(userId);
+  if (!await hasProducerRole(userId, user)) throw new IneligibleProducerError("Choose an enabled teammate with the Producer role eligible for this responsibility");
+  return user;
+}
+/** Bounded discovery for new Producers who have no saved connection settings. */
+export async function producerDirectoryPage(nextToken?: string) {
+  return cognito.send(new ListUsersInGroupCommand({ UserPoolId: process.env.USER_POOL_ID, GroupName: "PRODUCER", Limit: 4, NextToken: nextToken }));
+}
+function producerMember(userId: string, user: UserType, previous?: TeamEligibility): TeamEligibility {
+  const attribute = (name: string) => user.Attributes?.find(value => value.Name === name)?.Value;
+  const email = previous?.email || attribute("email") || "";
+  return { ...(previous ? salespersonEligibility(previous) : {}), userId,
+    name: previous?.name || attribute("name") || email || userId, email,
+    enabled: true, salesperson: true, receiveNewLeads: receivesNewLeads(previous) };
+}
+/** Materialize only a discovery snapshot. Every assignment still verifies Cognito. */
+export async function syncProducerEligibility(userId: string, initial?: Row<TeamEligibility>) {
+  let previous = initial ?? await get<TeamEligibility>(`eligibility:${userId}`);
+  for (let attempt = 0; attempt < 3; attempt++) {
+    let user: UserType | undefined, producer = false;
+    try { user = await enabledUser(userId); producer = await hasProducerRole(userId, user); }
+    catch (error) { if (!(error instanceof UnavailableTeammateError)) throw error; }
+    if (!previous && !producer) return;
+    const data: TeamEligibility = producer ? producerMember(userId, user!, previous?.data)
+      : { ...salespersonEligibility(previous!.data), enabled: !!user, salesperson: false,
+        receiveNewLeads: receivesNewLeads(previous?.data) };
+    const next = row("ELIGIBILITY", `eligibility:${userId}`, data, { previous });
+    // Rewriting the derived role snapshot cannot restore an administrator's
+    // concurrently changed preference or provider connection.
+    if (previous && JSON.stringify(previous.data) === JSON.stringify(data) && previous.producerGroup === next.producerGroup) return previous;
+    try { return await save(next, previous); }
+    catch (error) {
+      if (!conflict(error) || attempt === 2) throw error;
+      previous = await get<TeamEligibility>(`eligibility:${userId}`);
+    }
+  }
 }
 export async function team() {
   const out: TeamEligibility[] = [];
@@ -22,10 +80,11 @@ export async function team() {
   return out;
 }
 export async function validRole(userId: string, role: Responsibility, checkEnabled = true) {
+  void checkEnabled; // Producer membership always requires a current enabled identity.
+  if (role !== "SALESPERSON") throw new Error("Choose an enabled teammate with the Producer role eligible for this responsibility");
+  const user = await producerUser(userId);
   const member = await get<TeamEligibility>(`eligibility:${userId}`);
-  if (role !== "SALESPERSON" || !member?.data.enabled || !member.data.salesperson) throw new Error("Choose an enabled teammate eligible for this responsibility");
-  if (checkEnabled) await enabledUser(userId);
-  return member.data;
+  return producerMember(userId, user, member?.data);
 }
 export async function defaultWorkflow(accountId: string, name: string): Promise<LeadWorkflow> {
   const c = await config();
@@ -55,7 +114,7 @@ export async function ensureWorkflow(accountId: string): Promise<Row<LeadWorkflo
     const next = row("WORKFLOW", old.id, { ...data, ownershipModel: "SALESPERSON" as const, version: old.version + 1, updatedAt: new Date().toISOString() }, { accountId, previous: old });
     const job = row("ROLE_SYNC", `role-sync:ownership:${accountId}`, { phase: "LINK", accountId }, { accountId, dueAt: new Date().toISOString() });
     const existing = await get(job.id);
-    try { await commit([put(next, old), ...(!existing ? [put(job)] : [])]); }
+    try { await commit([put(next, old), ...(data.salespersonId && !data.assignmentIssue ? [activeTeamUserCheck(data.salespersonId)] : []), ...(!existing ? [put(job)] : [])]); }
     catch (e) {
       if (!conflict(e)) throw e;
       const current = await get<LeadWorkflow>(old.id);
@@ -69,7 +128,8 @@ export async function ensureWorkflow(accountId: string): Promise<Row<LeadWorkflo
   const data = await defaultWorkflow(accountId, account.data.name);
   if (account.data.stage === "CLIENT") data.disposition = "BOUND";
   const next = row("WORKFLOW", `workflow:${accountId}`, data, { accountId });
-  try { await save(next); } catch (e) { if (!conflict(e)) throw e; return (await get<LeadWorkflow>(next.id))!; }
+  try { await commit([put(next), ...(data.salespersonId && !data.assignmentIssue ? [activeTeamUserCheck(data.salespersonId)] : [])]); }
+  catch (e) { if (!conflict(e)) throw e; const current = await get<LeadWorkflow>(next.id); if (!current) throw e; return current; }
   return next;
 }
 export async function accountRows<T>(accountId: string, kind: string): Promise<Row<T>[]> {
@@ -98,7 +158,7 @@ export async function setResponsibilities(accountId: string, salespersonId: stri
   }
   const next = row("WORKFLOW", `workflow:${accountId}`, { ...data, salespersonId, assignmentIssue: undefined, version: (old?.version ?? 0) + 1, updatedAt: new Date().toISOString() }, { accountId, previous: old });
   const job = row("ROLE_SYNC", `role-sync:${accountId}:${next.version}`, { phase: "LINK", accountId }, { accountId, dueAt: new Date().toISOString() });
-  await commit([put(next, old), ...(!old ? [absent(`deleted-account:${accountId}`)] : []), put(job), audit(accountId, actor, "Salesperson changed", { salespersonId })]);
+  await commit([put(next, old), activeTeamUserCheck(salespersonId), ...(!old ? [absent(`deleted-account:${accountId}`)] : []), put(job), audit(accountId, actor, "Salesperson changed", { salespersonId })]);
   await syncResponsibilities(job).catch(() => {}); // Durable job retries a failed first page.
   return next.data;
 }
@@ -117,9 +177,9 @@ export async function syncResponsibilities(candidate: Row<{ phase: string; accou
     const link = item as unknown as Row<{ conversationId: string; routing?: string }>;
     if (link.data.routing === "MANUAL") continue;
     if (link.data.routing !== "SALESPERSON") writes.push(put(row("LINK", link.id, { ...link.data, routing: "SALESPERSON" }, { accountId, previous: link }), link));
-    const member = salespersonId ? await get<TeamEligibility>(`eligibility:${salespersonId}`) : undefined;
+    const member = salespersonId ? await validRole(salespersonId, "SALESPERSON") : undefined;
     const key = `op:route:${job.id}:${link.id}`;
-    if (member?.data.enabled && member.data.salesperson && member.data.frontId && !await get(key)) writes.push(put(operationRow(key, { type: "ASSIGN", accountId, conversationId: link.data.conversationId, assigneeId: member.data.frontId })));
+    if (member?.frontId && !await get(key)) writes.push(put(operationRow(key, { type: "ASSIGN", accountId, conversationId: link.data.conversationId, assigneeId: member.frontId })));
   }
   writes.push(put(row("ROLE_SYNC", job.id, { ...job.data, phase: "LINK", cursor: page.nextToken }, { accountId, previous: job, dueAt: page.nextToken ? new Date().toISOString() : undefined }), job));
   await commit(writes);

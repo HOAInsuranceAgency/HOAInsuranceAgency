@@ -1335,7 +1335,7 @@ const schema = a
         uploadedBy: a.string(),
         uploadedByName: a.string(),
         occurredAt: a.datetime().required(),
-      })
+      }).disableOperations(["subscriptions"])
       .secondaryIndexes((index) => [index("jurisdiction").sortKeys(["effectiveAt"])])
       .authorization((allow) => [
         allow.authenticated().to(["read"]),
@@ -1401,7 +1401,7 @@ const schema = a
       appetiteGuides: a.hasMany("AppetiteGuide", "carrierId"),
       quotes: a.hasMany("Quote", "carrierId"),
       policies: a.hasMany("Policy", "carrierId"),
-    }),
+    }).disableOperations(["subscriptions"]),
 
     AppetiteGuide: a.model({
       carrierId: a.id().required(),
@@ -1455,7 +1455,7 @@ const schema = a
       maxLosses: a.integer(),
       maxLossIncurred: a.float(), // paid + reserved, over the same window
       notes: a.string(),
-    }),
+    }).disableOperations(["subscriptions"]),
 
     // ── Documents: polymorphic, attach to anything, OCR'd by Textract ──
     Document: a
@@ -1603,7 +1603,7 @@ const schema = a
         signatureKey: a.string(),
         onboardingComplete: a.boolean().required(),
         licenses: a.hasMany("ProducerLicense", "userProfileId"), // deprecated
-      })
+      }).disableOperations(["subscriptions"])
       .secondaryIndexes((index) => [index("userId")])
       .authorization((allow) => [
         allow.authenticated().to(["read"]),
@@ -1627,7 +1627,7 @@ const schema = a
       licenseNumber: a.string().required(),
       expirationDate: a.date(),
       linesOfAuthority: a.string().array(),
-    }).authorization((allow) => [allow.authenticated().to(["read"])]),
+    }).disableOperations(["subscriptions"]).authorization((allow) => [allow.authenticated().to(["read"])]),
 
     /**
      * Unified licensing record — one row per (holder, state, license).
@@ -1672,7 +1672,7 @@ const schema = a
       expirationDate: a.date(),
       continuingEducationDueDate: a.date(),
       notes: a.string(),
-    })
+    }).disableOperations(["subscriptions"])
       .secondaryIndexes((index) => [index("userProfileId")])
       .authorization((allow) => [
         allow.authenticated().to(["read", "create"]),
@@ -1916,7 +1916,7 @@ const schema = a
         threshold: a.integer().required(), // 60 | 30 | 3
         expirationDate: a.date().required(),
         sentAt: a.datetime().required(),
-      })
+      }).disableOperations(["subscriptions"])
       .authorization((allow) => [allow.authenticated().to(["read"])]),
 
     // Private carrier results; only server code writes these records.
@@ -2188,6 +2188,13 @@ const schema = a
       .arguments({ nextToken: a.string() })
       .returns(a.json())
       .authorization((allow) => [allow.groups(["ADMIN", "OWNER"])])
+      .handler(a.handler.function(teamAdmin)),
+
+    setTeamUserEnabled: a
+      .mutation()
+      .arguments({ userId: a.string().required(), enabled: a.boolean().required() })
+      .returns(a.json())
+      .authorization(allow => [allow.groups(["OWNER"])])
       .handler(a.handler.function(teamAdmin)),
 
     // ── AI extraction: kick off async document → datapoints extraction ──

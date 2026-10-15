@@ -15,7 +15,7 @@ export function useLeadEligibilitySettings() {
     if (inFlight.current) return false;
     inFlight.current = true; setBusy(true); setError(""); setMessage("");
     try {
-      const result = await request<{ member: TeamEligibility }>("saveEligibility", { ...member, ...patch }, true);
+      const result = await request<{ member: TeamEligibility }>("saveEligibility", { userId: member.userId, version: member.version ?? 0, ...patch }, true);
       // Use the committed version, rather than immediately rereading a stale index.
       resource.setData(previous => ({ team: previous.team.map(item => item.userId === member.userId ? result.member : item) }));
       setMessage(`Settings saved for ${member.name}.`);
@@ -44,16 +44,21 @@ export function LeadEligibilityFeedback({ settings }: { settings: EligibilitySet
   </>;
 }
 
-export function LeadEligibilityCells({ member, settings }: { member?: TeamEligibility; settings: EligibilitySettings }) {
+export function LeadEligibilityCells({ member, settings, disabled: rowDisabled = false }: { member?: TeamEligibility; settings: EligibilitySettings; disabled?: boolean }) {
   const { disabled, save, editMember, resource } = settings;
   if (!member) return <td colSpan={2} className="muted small">{resource.loading ? "Loading assignment settings…" : resource.error ? "Assignment settings unavailable" : "Available after first sign-in"}</td>;
   return <>
-    <td><input aria-label={`Salesperson eligibility for ${member.name}`} type="checkbox" checked={member.salesperson} disabled={disabled} onChange={event => void save(member, { salesperson: event.target.checked })} /></td>
+    <td>{member.salesperson ? <label className="lead-text-switch">
+      <input aria-label={`Receive new leads for ${member.name}`} type="checkbox" checked={member.receiveNewLeads !== false}
+        disabled={disabled || rowDisabled || member.available === false}
+        onChange={event => void save(member, { receiveNewLeads: event.target.checked })} />
+      <span>{member.receiveNewLeads !== false ? "On" : "Off"}</span>
+    </label> : <span className="muted small">Producers only</span>}</td>
     <td>
       <div className="small">Front: {member.frontId ? <code className="team-connection-id">{member.frontId}</code> : <span className="muted">Not linked</span>}</div>
       {member.frontId && <div className="small muted">Email: {member.frontChannelId || member.frontSignatureId ? "Custom Front selections" : "Automatic from Front"}</div>}
       <div className="small">Dialpad: {member.dialpadId ? <code className="team-connection-id">{member.dialpadId}</code> : <span className="muted">Not linked</span>}</div>
-      <button type="button" className="secondary" disabled={disabled} aria-label={`Edit connections for ${member.name}`} onClick={() => editMember(member)}>Edit connections</button>
+      <button type="button" className="secondary" disabled={disabled || rowDisabled || member.available === false} aria-label={`Edit connections for ${member.name}`} onClick={() => editMember(member)}>Edit connections</button>
     </td>
   </>;
 }

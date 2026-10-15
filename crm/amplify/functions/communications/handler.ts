@@ -1,4 +1,4 @@
-import { salespersonWorkflow } from "../../../../shared/salespersonOwnership";
+import { receivesNewLeads, salespersonWorkflow } from "../../../../shared/salespersonOwnership";
 import { retiredTaskOperation } from "../../../../shared/retiredTaskOperations";
 import { tasksRemoved, currentCommunicationIssues } from "./retiredTasks";
 import { isLeadSource } from "../../../../shared/leadSource";
@@ -24,7 +24,8 @@ import { modelPut } from "../lead-intake/handler";
 import type { ConversationLink } from "./events";
 import { activeRole, isActiveAdmin, type RoleRequest } from "../crm-access/active-role";
 import { readLeadSnooze, saveLeadSnooze } from "./snooze";
-import { availableTeamUsers } from "./teamAvailability";
+import { currentTeamRoles } from "./teamAvailability";
+import { activeTeamUserCheck } from "../crm-access/user-status";
 
 type Input = Record<string, unknown>;
 function object(value: unknown): Input {
@@ -39,8 +40,12 @@ async function roster() {
   const client = await dataClient(), eligibility = await team();
   const profiles = []; let nextToken: string | null | undefined;
   do { const p = await client.models.UserProfile.list({ nextToken, limit: 100 }); if (p.errors?.length) throw new Error("Could not load teammates"); profiles.push(...p.data); nextToken = p.nextToken; } while (nextToken);
-  const available = await availableTeamUsers(profiles.map(p => p.userId));
-  return profiles.map(p => ({ ...(eligibility.find(t => t.userId === p.userId) ?? { userId: p.userId, name: `${p.firstName} ${p.lastName}`, email: p.email, enabled: true, salesperson: false, version: 0 }), available: available.has(p.userId) }));
+  const { available, producers } = await currentTeamRoles(profiles.map(p => p.userId));
+  return profiles.map(p => {
+    const saved = eligibility.find(t => t.userId === p.userId), producer = producers.has(p.userId);
+    return { ...saved, userId: p.userId, name: `${p.firstName} ${p.lastName}`, email: p.email, version: saved?.version ?? 0,
+      enabled: available.has(p.userId), salesperson: producer, receiveNewLeads: receivesNewLeads(saved, producer), available: available.has(p.userId) };
+  });
 }
 function safeCommunication(data: Communication): Communication {
   return { ...data, text: data.text?.replace(/([?&](?:t|token|uploadToken)=)[^\s&<>]+/gi, "$1[protected]") };
@@ -205,7 +210,11 @@ export const handler = async (event: { arguments: { operation?: string; readOper
         return text(input, key) || undefined;
       };
       const frontId = connectionId("frontId", old?.data.frontId), changedFront = frontId !== old?.data.frontId;
-      const next: TeamEligibility = { userId, name: member.name, email: member.email, enabled: input.enabled !== false, salesperson: input.salesperson === true,
+      if (input.salesperson !== undefined && input.salesperson !== member.salesperson) throw new Error("Assign or remove the Producer role to change salesperson eligibility");
+      if (input.receiveNewLeads !== undefined && typeof input.receiveNewLeads !== "boolean") throw new Error("Choose whether this Producer receives new website leads");
+      if (input.receiveNewLeads !== undefined && !member.salesperson) throw new Error("Only a teammate with the Producer role can receive new website leads");
+      const next: TeamEligibility = { userId, name: member.name, email: member.email, enabled: member.enabled, salesperson: member.salesperson,
+        receiveNewLeads: input.receiveNewLeads === undefined ? member.receiveNewLeads : input.receiveNewLeads,
         frontId, dialpadId: connectionId("dialpadId", old?.data.dialpadId),
         frontChannelId: connectionId("frontChannelId", changedFront ? undefined : old?.data.frontChannelId),
         frontSignatureId: connectionId("frontSignatureId", changedFront ? undefined : old?.data.frontSignatureId) };
@@ -364,7 +373,7 @@ export const handler = async (event: { arguments: { operation?: string; readOper
       for (const field of ["unitCount", "totalInsuredValue"]) if (fields[field] != null && fields[field] !== "") {
         const value = Number(fields[field]); if (!Number.isFinite(value) || value < 0 || field === "unitCount" && !Number.isInteger(value)) throw new Error("Enter valid units and insured value"); account[field] = value;
       }
-      try { await commit([modelPut("Account", id, account), put(row("WORKFLOW", `workflow:${id}`, wf, { accountId: id })), put(row("MANUAL_REQUEST", key, { accountId: id })), audit(id, actor, "Lead created", { name })]); }
+      try { await commit([modelPut("Account", id, account), put(row("WORKFLOW", `workflow:${id}`, wf, { accountId: id })), ...(wf.salespersonId && !wf.assignmentIssue ? [activeTeamUserCheck(wf.salespersonId)] : []), put(row("MANUAL_REQUEST", key, { accountId: id })), audit(id, actor, "Lead created", { name })]); }
       catch(e) { if (conflict(e)) { const winner = await get<{ accountId: string }>(key); if (winner) return { ok: true, id: winner.data.accountId }; } throw e; }
       return { ok: true, id };
     }
@@ -381,7 +390,7 @@ export const handler = async (event: { arguments: { operation?: string; readOper
         if (!old.data.salespersonId) {
           const defaults = await defaultWorkflow(account.id, account.name);
           if (defaults.assignmentIssue) { exceptions++; continue; }
-          await save(row("WORKFLOW", old.id, { ...old.data, salespersonId: old.data.salespersonId ?? defaults.salespersonId, assignmentIssue: undefined, version: old.version + 1 }, { accountId: account.id, previous: old }), old);
+          await commit([put(row("WORKFLOW", old.id, { ...old.data, salespersonId: old.data.salespersonId ?? defaults.salespersonId, assignmentIssue: undefined, version: old.version + 1 }, { accountId: account.id, previous: old }), old), ...(defaults.salespersonId ? [activeTeamUserCheck(defaults.salespersonId)] : [])]);
           assigned++;
         }
       }

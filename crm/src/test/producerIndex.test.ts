@@ -5,6 +5,24 @@ const h = vi.hoisted(() => ({
   projected: undefined as any[] | undefined,
   beforeWrite: undefined as ((record: any) => void) | undefined,
   batchFailures: 0, batchUnprocessed: 0,
+  nonProducers: new Set<string>(), disabled: new Set<string>(), directory: [] as string[],
+  onLookup: undefined as (() => void) | undefined,
+}));
+vi.mock("../../amplify/functions/crm-access/user-status", () => ({ teamUserDisabled: async () => false }));
+vi.mock("@aws-sdk/client-cognito-identity-provider", async importOriginal => ({
+  ...(await importOriginal<typeof import("@aws-sdk/client-cognito-identity-provider")>()),
+  CognitoIdentityProviderClient: class { send = async (command: any) => {
+    const input = command.input;
+    if (command.constructor.name === "AdminListGroupsForUserCommand") return { Groups: h.nonProducers.has(input.Username) ? [] : [{ GroupName: "PRODUCER" }] };
+    if (command.constructor.name === "ListUsersInGroupCommand") {
+      const offset = Number(input.NextToken ?? 0), ids = h.directory.slice(offset, offset + input.Limit);
+      return { Users: ids.map(id => ({ Username: id, Attributes: [{ Name: "sub", Value: id }] })), ...(h.directory.length > offset + ids.length ? { NextToken: String(offset + ids.length) } : {}) };
+    }
+    const userId = /"([^"]+)"/.exec(input.Filter)?.[1];
+    if (!userId) throw new Error("Expected one teammate");
+    h.onLookup?.();
+    return { Users: [{ Username: userId, Enabled: !h.disabled.has(userId), Attributes: [{ Name: "email", Value: `${userId}@example.com` }] }] };
+  }; },
 }));
 vi.mock("@aws-sdk/lib-dynamodb", async importOriginal => ({
   ...(await importOriginal<typeof import("@aws-sdk/lib-dynamodb")>()),
@@ -48,8 +66,9 @@ vi.mock("@aws-sdk/lib-dynamodb", async importOriginal => ({
 import { row } from "../../amplify/functions/communications/store";
 import { indexedProducerPage, migrateProducerIndex, PRODUCER_INDEX_MIGRATION_ID } from "../../amplify/functions/communications/producerIndex";
 
-function member(userId: string, options: { enabled?: boolean; salesperson?: boolean; legacy?: boolean } = {}) {
-  const result = row("ELIGIBILITY", `eligibility:${userId}`, { userId, name: userId, enabled: options.enabled ?? true, salesperson: options.salesperson ?? true });
+function member(userId: string, options: { enabled?: boolean; salesperson?: boolean; receiveNewLeads?: boolean; legacy?: boolean } = {}) {
+  const result = row("ELIGIBILITY", `eligibility:${userId}`, { userId, name: userId, email: `${userId}@example.com`, enabled: options.enabled ?? true, salesperson: options.salesperson ?? true,
+    ...(!options.legacy ? { receiveNewLeads: options.receiveNewLeads ?? true } : {}) });
   if (options.legacy) delete result.producerGroup;
   h.records.set(result.id, result);
   return result;
@@ -60,6 +79,8 @@ function members(count: number, legacy = false) {
 beforeEach(() => {
   h.records.clear(); h.requests = []; h.projected = undefined; h.beforeWrite = undefined;
   h.batchFailures = 0; h.batchUnprocessed = 0;
+  h.nonProducers.clear(); h.disabled.clear(); h.directory = [];
+  h.onLookup = undefined;
   process.env.COMMUNICATION_TABLE = "comms";
 });
 afterEach(() => { vi.useRealTimers(); });
@@ -68,7 +89,7 @@ describe("bounded website producer index", () => {
   it("materializes only enabled salesperson membership and removes it on every rewrite", () => {
     const previous = member("active");
     expect(previous.producerGroup).toBe("WEBSITE");
-    for (const patch of [{ enabled: false }, { salesperson: false }]) {
+    for (const patch of [{ enabled: false }, { salesperson: false }, { receiveNewLeads: false }]) {
       expect(row("ELIGIBILITY", previous.id, { ...previous.data, ...patch }, { previous }).producerGroup).toBeUndefined();
     }
     expect(row("OTHER", "other", previous.data).producerGroup).toBeUndefined();
@@ -138,15 +159,71 @@ describe("bounded website producer index", () => {
 });
 
 describe("website producer index bootstrap", () => {
+  it("discovers new Producers without an eligibility row or a Team page visit, and refreshes after bootstrap", async () => {
+    h.directory = ["new-producer", "stale-staff"];
+    h.nonProducers.add("stale-staff");
+    await migrateProducerIndex();
+    expect(h.records.get("eligibility:new-producer")).toMatchObject({ producerGroup: "WEBSITE", data: { salesperson: true, enabled: true, receiveNewLeads: true } });
+    expect(h.records.has("eligibility:stale-staff")).toBe(false);
+    vi.useFakeTimers(); vi.setSystemTime(Date.now() + 60_001);
+    h.directory.push("another-producer");
+    await migrateProducerIndex();
+    expect(h.records.get("eligibility:another-producer").producerGroup).toBe("WEBSITE");
+    expect(h.records.get(PRODUCER_INDEX_MIGRATION_ID).data.complete).toBe(true);
+  });
+
+  it("removes old Staff eligibility and preserves a paused Producer across deactivation and restoration", async () => {
+    member("legacy-staff", { legacy: true }); h.nonProducers.add("legacy-staff");
+    member("paused", { salesperson: false, legacy: true }); h.disabled.add("paused");
+    await migrateProducerIndex();
+    expect(h.records.get("eligibility:legacy-staff")).toMatchObject({ data: { salesperson: false } });
+    expect(h.records.get("eligibility:legacy-staff").producerGroup).toBeUndefined();
+    expect(h.records.get("eligibility:paused")).toMatchObject({ data: { salesperson: false, receiveNewLeads: false } });
+    vi.useFakeTimers(); vi.setSystemTime(Date.now() + 60_001); h.disabled.delete("paused");
+    await migrateProducerIndex();
+    expect(h.records.get("eligibility:paused")).toMatchObject({ data: { salesperson: true, enabled: true, receiveNewLeads: false } });
+    expect(h.records.get("eligibility:paused").producerGroup).toBeUndefined();
+  });
+
+  it("checkpoints completed small pages even when live identity checks exceed the time budget", async () => {
+    vi.useFakeTimers();
+    members(9, true);
+    h.onLookup = () => vi.setSystemTime(Date.now() + 3_000);
+    await migrateProducerIndex({ budgetMs: 10_000 });
+    expect(h.records.get(PRODUCER_INDEX_MIGRATION_ID).data).toMatchObject({ phase: "ELIGIBILITY", processed: 4 });
+    await migrateProducerIndex({ budgetMs: 10_000 });
+    expect(h.records.get(PRODUCER_INDEX_MIGRATION_ID).data).toMatchObject({ phase: "ELIGIBILITY", processed: 8 });
+    await migrateProducerIndex({ budgetMs: 10_000 });
+    expect(h.records.get(PRODUCER_INDEX_MIGRATION_ID).data.complete).toBe(true);
+    const pages = h.requests.filter(request => request.name === "QueryCommand" && request.input.IndexName === "kind");
+    expect(pages.map(request => request.input.Limit)).toEqual([4, 4, 4]);
+  });
+
+  it("preserves a concurrent pause instead of restoring rotation from a stale role snapshot", async () => {
+    const previous = member("active", { legacy: true });
+    h.beforeWrite = next => {
+      if (next.id !== previous.id) return;
+      h.beforeWrite = undefined;
+      h.records.set(previous.id, row("ELIGIBILITY", previous.id, { ...previous.data, receiveNewLeads: false }, { previous }));
+    };
+    await migrateProducerIndex();
+    expect(h.records.get(previous.id)).toMatchObject({ data: { salesperson: true, receiveNewLeads: false } });
+    expect(h.records.get(previous.id).producerGroup).toBeUndefined();
+  });
+
   it("checkpoints a bounded page and resumes existing eligibility without a full roster scan", async () => {
-    const existing = members(105, true);
+    const existing = members(9, true);
     await migrateProducerIndex({ maxPages: 1 });
-    expect(h.records.get(PRODUCER_INDEX_MIGRATION_ID).data).toMatchObject({ processed: 100, complete: false });
-    expect(h.records.get(existing[99].id).producerGroup).toBe("WEBSITE");
-    expect(h.records.get(existing[100].id).producerGroup).toBeUndefined();
+    expect(h.records.get(PRODUCER_INDEX_MIGRATION_ID).data).toMatchObject({ processed: 4, phase: "ELIGIBILITY" });
+    expect(h.records.get(existing[3].id).producerGroup).toBe("WEBSITE");
+    expect(h.records.get(existing[4].id).producerGroup).toBeUndefined();
     await migrateProducerIndex({ maxPages: 1 });
-    expect(h.records.get(PRODUCER_INDEX_MIGRATION_ID).data).toMatchObject({ processed: 105, complete: true });
-    expect(h.records.get(existing[104].id).producerGroup).toBe("WEBSITE");
+    expect(h.records.get(PRODUCER_INDEX_MIGRATION_ID).data).toMatchObject({ processed: 8, phase: "ELIGIBILITY" });
+    await migrateProducerIndex({ maxPages: 1 });
+    expect(h.records.get(PRODUCER_INDEX_MIGRATION_ID).data).toMatchObject({ processed: 9, phase: "PRODUCERS" });
+    await migrateProducerIndex({ maxPages: 1 });
+    expect(h.records.get(PRODUCER_INDEX_MIGRATION_ID).data).toMatchObject({ processed: 9, complete: true });
+    expect(h.records.get(existing[8].id).producerGroup).toBe("WEBSITE");
     const writes = h.requests.filter(request => request.name === "TransactWriteCommand").length;
     await migrateProducerIndex();
     expect(h.requests.filter(request => request.name === "TransactWriteCommand")).toHaveLength(writes);
@@ -167,10 +244,11 @@ describe("website producer index bootstrap", () => {
     h.beforeWrite = next => {
       if (next.id !== previous.id) return;
       h.beforeWrite = undefined;
+      h.disabled.add("active");
       h.records.set(previous.id, row("ELIGIBILITY", previous.id, { ...previous.data, enabled: false }, { previous }));
     };
     await migrateProducerIndex();
-    expect(h.records.get(previous.id)).toMatchObject({ version: 2, data: { enabled: false } });
+    expect(h.records.get(previous.id)).toMatchObject({ version: 3, data: { enabled: false, salesperson: false } });
     expect(h.records.get(previous.id).producerGroup).toBeUndefined();
     expect(h.records.get(PRODUCER_INDEX_MIGRATION_ID).data.complete).toBe(true);
   });

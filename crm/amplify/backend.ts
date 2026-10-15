@@ -379,6 +379,21 @@ const communicationTable = new Table(backend.data.resources.graphqlApi, "Communi
   partitionKey: { name: "id", type: AttributeType.STRING }, billingMode: BillingMode.PAY_PER_REQUEST,
   encryption: TableEncryption.AWS_MANAGED, pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true },
 });
+// Persistent account denial supplements Cognito: AppSync otherwise accepts
+// already-issued JWTs after AdminDisableUser and global sign-out.
+const userAccessTable = new Table(backend.data.resources.graphqlApi, "TeamUserAccess", {
+  partitionKey: { name: "userId", type: AttributeType.STRING }, billingMode: BillingMode.PAY_PER_REQUEST,
+  encryption: TableEncryption.AWS_MANAGED, pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true },
+});
+for (const fn of [backend.crmAccess, backend.teamAdmin, backend.communications, backend.communicationWorker, backend.leadIntake, backend.leadReply, backend.assignmentIndexWorker]) {
+  fn.addEnvironment("USER_ACCESS_TABLE", userAccessTable.tableName);
+  fn.resources.lambda.addToRolePolicy(new PolicyStatement({ actions: ["dynamodb:GetItem", "dynamodb:ConditionCheckItem"], resources: [userAccessTable.tableArn] }));
+}
+backend.teamAdmin.resources.lambda.addToRolePolicy(new PolicyStatement({ actions: ["dynamodb:UpdateItem"], resources: [userAccessTable.tableArn] }));
+// Cognito and DynamoDB cannot share a transaction. Serialize this low-volume
+// management handler so concurrent disable/restore requests cannot undo one
+// another's session denial while leaving a contradictory Cognito state.
+(backend.teamAdmin.resources.lambda.node.defaultChild as CfnFunction).reservedConcurrentExecutions = 1;
 communicationTable.addGlobalSecondaryIndex({ indexName: "kind", partitionKey: { name: "kind", type: AttributeType.STRING }, sortKey: { name: "id", type: AttributeType.STRING } });
 communicationTable.addGlobalSecondaryIndex({ indexName: "work", partitionKey: { name: "workKind", type: AttributeType.STRING }, sortKey: { name: "workAt", type: AttributeType.STRING } });
 communicationTable.addGlobalSecondaryIndex({ indexName: "account", partitionKey: { name: "accountId", type: AttributeType.STRING }, sortKey: { name: "accountSort", type: AttributeType.STRING } });
@@ -403,9 +418,9 @@ for (const fn of [backend.communicationMonitor, backend.communications, backend.
   fn.addEnvironment("COMMUNICATION_SECRET", communicationSecret.secretArn);
 }
 communicationSecret.grantWrite(backend.communications.resources.lambda);
-for (const fn of [backend.communications, backend.communicationWorker, backend.leadIntake, backend.leadReply]) {
+for (const fn of [backend.communications, backend.communicationWorker, backend.leadIntake, backend.leadReply, backend.assignmentIndexWorker]) {
   fn.addEnvironment("USER_POOL_ID", backend.auth.resources.userPool.userPoolId);
-  fn.resources.lambda.addToRolePolicy(new PolicyStatement({ actions: ["cognito-idp:ListUsers"], resources: [backend.auth.resources.userPool.userPoolArn] }));
+  fn.resources.lambda.addToRolePolicy(new PolicyStatement({ actions: ["cognito-idp:ListUsers", "cognito-idp:AdminListGroupsForUser", "cognito-idp:ListUsersInGroup"], resources: [backend.auth.resources.userPool.userPoolArn] }));
 }
 for (const model of ["Account", "Contact", "PriorCarrier", "LeadReply"] as const) {
   const modelTable = backend.data.resources.tables[model];
@@ -530,6 +545,8 @@ backend.teamAdmin.resources.lambda.addToRolePolicy(
       "cognito-idp:AdminCreateUser",
       "cognito-idp:AdminDeleteUser",
       "cognito-idp:AdminDisableUser",
+      "cognito-idp:AdminEnableUser",
+      "cognito-idp:AdminUserGlobalSignOut",
       "cognito-idp:AdminAddUserToGroup",
       "cognito-idp:AdminRemoveUserFromGroup",
       "cognito-idp:AdminGetUser",

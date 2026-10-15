@@ -5,6 +5,11 @@ export function isAssignableSalesperson(member: TeamEligibility): boolean {
   return member.enabled && member.salesperson && member.available === true;
 }
 
+/** Preserve a legacy Producer's paused lead rotation without pausing manual assignments. */
+export function receivesNewLeads(member?: Pick<TeamEligibility, "receiveNewLeads" | "salesperson">, producer = true): boolean {
+  return member?.receiveNewLeads ?? !(producer && member?.salesperson === false);
+}
+
 /** Keep legacy fields readable for migration, but never expose them as active roles. */
 export function salespersonWorkflow(input: LeadWorkflow): LeadWorkflow {
   const { championId: _retired, ...workflow } = input;
