@@ -127,7 +127,10 @@ export function installAccountAccess(backend: typeof Backend, communicationTable
     }
     if (type === "Subscription") {
       const target = field.replace(/^on(Create|Update|Delete)/, "");
-      if (!(SHARED_MODELS as readonly string[]).includes(target)) throw new Error(`Unsafe account subscription: ${field}`);
+      if (target !== "AgencySettings") throw new Error(`Unsafe account subscription: ${field}`);
+      // There are only three supported broadcasts. Each connection records
+      // its authenticated user so an Owner can close it on deactivation.
+      resolver.responseMappingTemplate = '#if(!$util.isNull($ctx.identity.sub))\n$extensions.setSubscriptionInvalidationFilter({"filterGroup":[{"filters":[{"fieldName":"userId","operator":"eq","value":$ctx.identity.sub}]}]})\n#end\n' + resolver.responseMappingTemplate;
       continue;
     }
     if (PUBLIC_OPERATIONS.includes(field)) continue;
@@ -144,5 +147,21 @@ export function installAccountAccess(backend: typeof Backend, communicationTable
       continue;
     }
     throw new Error(`Unclassified CRM resolver: ${type}.${field}`);
+  }
+  // Apply this last so it is always first, even before active-role guards and
+  // native model reads. This covers shared data, indexes, relationships,
+  // subscriptions, custom functions, and file signing. Trusted server IAM
+  // retains its existing bypass; identity-pool browser IAM is still rejected.
+  const session = makeGuard("session", "");
+  for (const resolver of Object.values(resources.cfnResolvers)) {
+    if (!PUBLIC_OPERATIONS.includes(resolver.fieldName)) extend(resolver, [session], []);
+    if (resolver.fieldName === "setTeamUserEnabled") {
+      const invalidate = ["onCreateAgencySettings", "onUpdateAgencySettings", "onDeleteAgencySettings"].map(subscriptionField =>
+        `$extensions.invalidateSubscriptions({"subscriptionField":"${subscriptionField}","payload":{"userId":$ctx.prev.result.userId}})`).join("\n");
+      // Close broadcasts even when a committed denial's response was lost.
+      // Only an authorized attempt with a verified, non-self target returns
+      // userId; on a failed write an active user can safely reconnect.
+      resolver.responseMappingTemplate = `#if($ctx.arguments.enabled == false && !$util.isNull($ctx.prev.result.userId))\n${invalidate}\n#end\n` + resolver.responseMappingTemplate;
+    }
   }
 }

@@ -157,7 +157,7 @@ try {
     const resource = node as unknown as { cfnResourceType?: string; policyDocument?: unknown };
     if (resource.cfnResourceType === "AWS::IAM::Policy" && JSON.stringify(Stack.of(node).resolve(resource.policyDocument)).includes("ses:Send")) throw new Error("Default detection must not retain staff-email send permissions");
   }
-  for (const fn of [backend.communicationWorker, backend.leadReply, backend.portalSweep, backend.marketingReportWorker]) {
+  for (const fn of [backend.teamAdmin, backend.communicationWorker, backend.leadReply, backend.portalSweep, backend.marketingReportWorker]) {
     const resource = fn.resources.lambda.node.defaultChild as CfnFunction;
     if (Stack.of(resource).resolve(resource.reservedConcurrentExecutions) !== 1) throw new Error(`${resource.node.path} must retain reserved concurrency 1`);
   }
@@ -223,7 +223,8 @@ try {
   }
   const deleteAdminAt = deleteStages.findIndex(fn => fn.name === "access_admin___");
   if (deleteAdminAt < 0 || deleteAdminAt >= deleteStages.findIndex(fn => !fn.name.startsWith("access_"))) throw new Error("deleteAccount must check the active administrator role before native authorization and deletion");
-  if (accountPipeline("updateAccount")[0].name !== "access_write_Account__update") throw new Error("updateAccount must protect acquisition fields before native authorization and writes");
+  const updateStages = accountPipeline("updateAccount");
+  if (updateStages[0].name !== "access_session___" || updateStages[1].name !== "access_write_Account__update") throw new Error("updateAccount must check the live session and protect acquisition fields before native authorization and writes");
   // Dashboard interest must use a backfilled time index without dropping the
   // loan relation or account-access indexes already on the payment table.
   const paymentTable = app.node.findAll().find((node): node is CfnResource =>

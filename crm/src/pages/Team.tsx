@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useIsOwner } from "../lib/auth";
 import { LeadEligibilityCells, LeadEligibilityEditor, LeadEligibilityFeedback, useLeadEligibilitySettings } from "../components/LeadEligibilitySettings";
 import { client, fmtDate, friendlyError, type UserProfile } from "../lib/client";
@@ -17,6 +17,7 @@ interface TeamUser {
   email: string;
   createdAt: string | null;
   groups: string[];
+  enabled?: boolean;
 }
 
 function RoleChoices({ roles, onChange, disabled = false, keepRole, canManageOwners }: {
@@ -68,6 +69,36 @@ function RoleEditor({ user, name, currentUser, onSave, onClose }: {
         {status.busy ? "Saving…" : "Save roles"}
       </button>
       <button className="secondary" disabled={status.busy} onClick={close}>Cancel</button>
+      <SaveStatus {...status.status} />
+    </div>
+  </Modal>;
+}
+
+function AccessEditor({ user, name, onSave, onClose }: {
+  user: TeamUser;
+  name: string;
+  onSave: (enabled: boolean) => Promise<void>;
+  onClose: () => void;
+}) {
+  const status = useSaveStatus();
+  const pending = useRef(false);
+  const enable = user.enabled === false;
+  const close = () => { if (!pending.current) onClose(); };
+  async function save() {
+    if (pending.current) return;
+    pending.current = true;
+    try {
+      await status.run(async () => { await onSave(enable); onClose(); }, { errorMessage: "Couldn't update this member's access." });
+    } finally { pending.current = false; }
+  }
+  return <Modal title={`${enable ? "Reactivate" : "Deactivate"} ${name}`} className="modal-form team-connection-modal" onClose={close}>
+    <p>{enable ? "Restore this team member’s access to the CRM. They’ll need to sign in again."
+      : "Block this team member’s CRM access and sign them out. They won’t be eligible for new assignments. You can reactivate them later."}</p>
+    <div className="form-actions">
+      <button type="button" className={enable ? "primary" : "danger"} disabled={status.busy} onClick={() => void save()}>
+        {status.busy ? "Updating access…" : enable ? "Reactivate user" : "Deactivate user"}
+      </button>
+      <button type="button" className="secondary" disabled={status.busy} onClick={close}>Cancel</button>
       <SaveStatus {...status.status} />
     </div>
   </Modal>;
@@ -175,7 +206,6 @@ async function fetchTeamPage(nextToken?: string) {
  */
 export default function Team({ profile }: { profile: UserProfile }) {
   const canManageOwners = useIsOwner();
-  const eligibility = useLeadEligibilitySettings();
   // The invite confirmation used to be a `notice` string nothing ever
   // cleared — it sat over the form while you typed the next invitee's
   // address. `markDirty` in `onEdit` is what retires it now.
@@ -185,7 +215,9 @@ export default function Team({ profile }: { profile: UserProfile }) {
   const alertStatus = useSaveStatus({ autoClearMs: 4000 });
   const alertPending = useRef(false);
   const [editingRoles, setEditingRoles] = useState<TeamUser | null>(null);
+  const [editingAccess, setEditingAccess] = useState<TeamUser | null>(null);
   const roleStatus = useSaveStatus({ autoClearMs: 4000 });
+  const accessStatus = useSaveStatus({ autoClearMs: 4000 });
   const { form, setF, reset } = useFormState(
     { email: "", roles: [DEFAULT_USER_ROLE] as UserRole[] },
     { onEdit: inviteStatus.markDirty }
@@ -214,12 +246,18 @@ export default function Team({ profile }: { profile: UserProfile }) {
     { initialData: EMPTY_TEAM, errorMessage: "Failed to load team" }
   );
   const { users, profiles } = team.data;
+  const eligibilityMembers = useMemo(() => users.map(user => {
+    const memberProfile = profiles.find(p => p.userId === user.userId || p.email === user.email);
+    return { userId: user.userId, email: user.email, groups: user.groups, enabled: user.enabled !== false,
+      name: memberProfile ? `${memberProfile.firstName} ${memberProfile.lastName}` : user.email, hasProfile: !!memberProfile };
+  }), [users, profiles]);
+  const eligibility = useLeadEligibilitySettings(eligibilityMembers, team.loading || moreLoading || inviteStatus.busy || alertStatus.busy || !!editingRoles || !!editingAccess);
   const setProfiles = (update: (profiles: UserProfile[]) => UserProfile[]) =>
     team.setData(previous => ({ ...previous, profiles: update(previous.profiles) }));
 
   async function loadMore() {
     const nextToken = team.data.nextToken;
-    if (!nextToken || team.loading || morePending.current) return;
+    if (!nextToken || team.loading || morePending.current || eligibility.disabled || editingRoles || editingAccess) return;
     const version = pageVersion.current;
     morePending.current = true;
     setMoreLoading(true);
@@ -294,7 +332,23 @@ export default function Team({ profile }: { profile: UserProfile }) {
       ? { ...member, groups: [...member.groups.filter(group => !isUserRole(group)), ...roles] }
       : member) }));
     roleStatus.markSaved(`Roles updated for ${user.email}.`);
+    eligibility.refresh();
     if (user.userId === profile.userId) window.dispatchEvent(new Event("team-roles-changed"));
+  }
+
+  async function saveAccess(user: TeamUser, enabled: boolean) {
+    const { data, errors } = await client.mutations.setTeamUserEnabled({ userId: user.userId, enabled });
+    const body = parse(data);
+    if (typeof body.enabled === "boolean") {
+      team.setData(previous => ({ ...previous, users: previous.users.map(member => member.userId === user.userId
+        ? { ...member, enabled: body.enabled as boolean } : member) }));
+    }
+    eligibility.refresh();
+    if (errors?.length || !body.ok) {
+      void team.refetch();
+      throw new Error(errors?.[0]?.message ?? String(body.error ?? "Couldn't update this member's access."));
+    }
+    accessStatus.markSaved(`Access ${enabled ? "restored" : "deactivated"} for ${user.email}.`);
   }
 
   /**
@@ -389,20 +443,21 @@ export default function Team({ profile }: { profile: UserProfile }) {
           <div>
             <h2 id="team-members-title" style={{ margin: 0 }}>Team members</h2>
             <p className="muted small" style={{ margin: "4px 0 0" }}>
-              Assign roles and manage salesperson eligibility, lead texts and connections in one place.
-              Salesperson eligibility controls assignment choices and does not change access.
-              Website leads rotate among active eligible salespeople. Only the assigned salesperson gets the Front conversation and lead text.
+              Assign roles and manage access, new leads, lead texts and connections in one place.
+              Producers are automatically eligible for account assignments. Receive new leads controls automatic website lead rotation.
+              Only the assigned producer gets the Front conversation and lead text.
               Lead texts need both the switch and a mobile number.
             </p>
           </div>
           <div className="grow" />
-          <button type="button" className="secondary" disabled={team.loading || moreLoading || alertStatus.busy || !!editingRoles} onClick={reload}>
+          <button type="button" className="secondary" disabled={team.loading || moreLoading || alertStatus.busy || eligibility.disabled || !!editingRoles || !!editingAccess} onClick={reload}>
             Refresh team
           </button>
           {/* Toggles are per-row with no per-row place to report; this is
               the card's one status line. */}
           <SaveStatus {...alertStatus.status} />
           <SaveStatus {...roleStatus.status} />
+          <SaveStatus {...accessStatus.status} />
         </div>
         <LeadEligibilityFeedback settings={eligibility} />
         {!team.loaded ? (
@@ -416,10 +471,11 @@ export default function Team({ profile }: { profile: UserProfile }) {
                 <tr>
                   <SortTh label="Team member" colKey="email" sortKey={sortKey} dir={dir} onToggle={toggle} />
                   <SortTh label="Roles" colKey="role" sortKey={sortKey} dir={dir} onToggle={toggle} />
+                  <th scope="col">Access</th>
                   <SortTh label="Onboarded" colKey="onboarded" sortKey={sortKey} dir={dir} onToggle={toggle} />
                   <th>Signature</th>
                   <SortTh label="Lead texts" colKey="leadTexts" sortKey={sortKey} dir={dir} onToggle={toggle} />
-                  <th scope="col">Salesperson</th>
+                  <th scope="col">Receive new leads</th>
                   <th scope="col">Connections</th>
                   <SortTh label="Invited" colKey="invited" sortKey={sortKey} dir={dir} onToggle={toggle} />
                 </tr>
@@ -428,7 +484,7 @@ export default function Team({ profile }: { profile: UserProfile }) {
                 {sorted.map((u) => {
                   const p = profileFor(u);
                   const member = eligibility.resource.data.team.find(item => item.userId === u.userId);
-                  const name = p ? `${p.firstName} ${p.lastName}` : member?.name;
+                  const name = p ? `${p.firstName} ${p.lastName}` : undefined;
                   return (
                     <tr key={u.userId}>
                       <td>
@@ -445,8 +501,15 @@ export default function Team({ profile }: { profile: UserProfile }) {
                           {(u.groups.filter(isUserRole).length ? u.groups.filter(isUserRole) : [p?.role ?? "—"]).map(role =>
                             <span key={role} className="badge gray">{role}</span>)}
                         </div>
-                        <button type="button" className="secondary" disabled={team.loading || !!editingRoles || (u.groups.includes("OWNER") && !canManageOwners)} aria-label={`Edit roles for ${name || u.email}`}
+                        <button type="button" className="secondary" disabled={team.loading || moreLoading || eligibility.busy || !!eligibility.editing || !!editingRoles || !!editingAccess || (u.groups.includes("OWNER") && !canManageOwners)} aria-label={`Edit roles for ${name || u.email}`}
                           onClick={() => { roleStatus.markDirty(); setEditingRoles(u); }}>Edit roles</button>
+                      </td>
+                      <td>
+                        <div style={{ marginBottom: 6 }}><span className={`badge ${u.enabled === false ? "gray" : "green"}`}>{u.enabled === false ? "Inactive" : "Active"}</span></div>
+                        {canManageOwners && <button type="button" className="secondary"
+                          disabled={u.userId === profile.userId || team.loading || moreLoading || eligibility.busy || !!eligibility.editing || !!editingRoles || !!editingAccess}
+                          aria-label={`${u.enabled === false ? "Reactivate" : "Deactivate"} ${name || u.email}`}
+                          onClick={() => { accessStatus.markDirty(); setEditingAccess(u); }}>{u.enabled === false ? "Reactivate" : "Deactivate"}</button>}
                       </td>
                       <td>
                         {/* One-off pair — onboarding state is badged here and
@@ -474,12 +537,13 @@ export default function Team({ profile }: { profile: UserProfile }) {
                         {/* No profile means the invite is unaccepted — there
                             is no row to write the preference onto yet. */}
                         {p ? (
-                          <LeadTextCell profile={p} disabled={team.loading || alertStatus.busy} onSave={saveAlerts} />
+                          <LeadTextCell profile={p} disabled={u.enabled === false || team.loading || alertStatus.busy || !!editingAccess} onSave={saveAlerts} />
                         ) : (
                           <span className="muted small">—</span>
                         )}
                       </td>
-                      <LeadEligibilityCells member={member} settings={eligibility} />
+                      {p ? <LeadEligibilityCells member={member} settings={eligibility} disabled={u.enabled === false || team.loading || moreLoading || !!editingRoles || !!editingAccess} />
+                        : <td colSpan={2} className="muted small">Available after first sign-in</td>}
                       <td className="small">
                         {fmtDate(u.createdAt?.slice(0, 10))}
                       </td>
@@ -496,7 +560,7 @@ export default function Team({ profile }: { profile: UserProfile }) {
         </div>}
         {moreError && <p className="error-text" role="alert">{moreError}</p>}
         {team.data.nextToken && <div className="form-actions">
-          <button type="button" className="secondary" disabled={team.loading || moreLoading} onClick={() => void loadMore()}>
+          <button type="button" className="secondary" disabled={team.loading || moreLoading || alertStatus.busy || eligibility.disabled || !!editingRoles || !!editingAccess} onClick={() => void loadMore()}>
             {moreLoading ? "Loading more…" : moreError ? "Retry loading more" : "Load more team members"}
           </button>
         </div>}
@@ -505,6 +569,9 @@ export default function Team({ profile }: { profile: UserProfile }) {
           name={(() => { const p = profileFor(editingRoles); return p ? `${p.firstName} ${p.lastName}` : editingRoles.email; })()}
           currentUser={editingRoles.userId === profile.userId}
           onSave={roles => saveRoles(editingRoles, roles)} onClose={() => setEditingRoles(null)} />}
+        {editingAccess && <AccessEditor user={editingAccess}
+          name={(() => { const p = profileFor(editingAccess); return p ? `${p.firstName} ${p.lastName}` : editingAccess.email; })()}
+          onSave={enabled => saveAccess(editingAccess, enabled)} onClose={() => setEditingAccess(null)} />}
       </section>
     </>
   );

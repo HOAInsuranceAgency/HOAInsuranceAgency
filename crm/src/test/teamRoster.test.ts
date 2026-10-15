@@ -121,4 +121,9 @@ describe("indexed team profile decorations", () => {
     const send = vi.fn().mockResolvedValue({ Items: [{ id: "other-profile", userId: "other-sub" }] });
     expect(await loadTeamProfile({ send } as unknown as DynamoDBDocumentClient, "profiles", "by-userId", "member-sub")).toBeNull();
   });
+  it("reports CRM access as inactive when persistent denial remains after a partial Cognito failure", async () => {
+    const send = vi.fn().mockResolvedValue({ Users: [{ ...member(1), Enabled: true }, { ...member(2), Enabled: false }, { ...member(3), Enabled: true }] });
+    const result = await listTeamUsers(mockCognito(send), "pool", {}, async () => ["PRODUCER"], async () => null, async userId => userId === "sub-1");
+    expect(result.users?.map(user => [user.userId, user.enabled])).toEqual([["sub-1", false], ["sub-2", false], ["sub-3", true]]);
+  });
 });

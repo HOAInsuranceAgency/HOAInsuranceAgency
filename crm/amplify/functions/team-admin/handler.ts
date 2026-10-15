@@ -4,6 +4,8 @@ import {
   AdminCreateUserCommand,
   AdminDeleteUserCommand,
   AdminDisableUserCommand,
+  AdminEnableUserCommand,
+  AdminUserGlobalSignOutCommand,
   AdminAddUserToGroupCommand,
   AdminRemoveUserFromGroupCommand,
   AdminGetUserCommand,
@@ -12,13 +14,14 @@ import {
 } from "@aws-sdk/client-cognito-identity-provider";
 import { SESv2Client, SendEmailCommand } from "@aws-sdk/client-sesv2";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
+import { DynamoDBDocumentClient, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 // Role names are the schema's `UserRole` and the Cognito group names both —
 // see the note on `isUserRole`. enums.ts pulls in no runtime dependency, the
 // way pagination.ts does not.
 import { isUserRole, type UserRole } from "../../../src/lib/enums";
 import { isActiveAdmin, isActiveOwner } from "../crm-access/active-role";
 import { listTeamUsers, loadTeamProfile, type TeamRosterArgs } from "./roster";
+import { assertUserSession, readUserAccess } from "../crm-access/user-status";
 
 /**
  * Team administration for active Admin and Owner views. Only an active Owner
@@ -39,6 +42,7 @@ const INVITE_FROM = process.env.INVITE_FROM ?? "";
 
 type InviteArgs = { email?: string | null; roles: unknown };
 type UpdateRolesArgs = { userId?: string | null; roles?: unknown };
+type SetEnabledArgs = { userId?: string | null; enabled?: unknown };
 
 /** Reject malformed assignments before creating a user or changing any groups. */
 function assignedRoles(raw: unknown): UserRole[] | null {
@@ -210,8 +214,83 @@ async function updateUserRoles(args: UpdateRolesArgs, actor: { username: string;
   return { ok: true, userId: sub ?? userId, roles };
 }
 
+/** The handler has one reserved concurrent execution so opposite access
+ * changes cannot race Cognito and the persistent session denial. All changes
+ * remain retryable: a failed disable keeps CRM access denied; a failed restore
+ * keeps that denial until Cognito enable and sign-out have both succeeded. */
+async function setTeamUserEnabled(args: SetEnabledArgs, actor: { username: string; sub?: string }) {
+  const userId = args.userId?.trim();
+  if (!userId || typeof args.enabled !== "boolean") return { ok: false, error: "Choose a team member and an access status." };
+  const user = await cognito.send(new AdminGetUserCommand({ UserPoolId: POOL_ID, Username: userId }));
+  const username = user.Username;
+  const sub = user.UserAttributes?.find(attribute => attribute.Name === "sub")?.Value;
+  if (!username || !sub) return { ok: false, error: "This team member's identity could not be verified." };
+  if (!args.enabled && (username === actor.username || sub === actor.sub)) {
+    return { ok: false, error: "You cannot deactivate your own access." };
+  }
+  const previous = await readUserAccess(sub, db);
+  const enabled = user.Enabled !== false && previous?.disabled !== true;
+  if (args.enabled && enabled) return { ok: true, userId: sub, enabled: true };
+  const TableName = process.env.USER_ACCESS_TABLE!;
+  const revokedBefore = Math.max(previous?.revokedBefore ?? 0, Math.floor(Date.now() / 1000));
+  try {
+    // Persist the denial before contacting Cognito. Cached JWTs can no longer
+    // reach any CRM resolver even if a subsequent Cognito request fails.
+    await db.send(new UpdateCommand({
+      TableName, Key: { userId: sub },
+      UpdateExpression: "SET #disabled = :disabled, revokedBefore = :cutoff, changedBy = :actor, updatedAt = :now",
+      ExpressionAttributeNames: { "#disabled": "disabled" },
+      ExpressionAttributeValues: { ":disabled": true, ":cutoff": revokedBefore, ":actor": actor.sub ?? actor.username, ":now": new Date().toISOString() },
+    }));
+  } catch (error) {
+    console.error("Could not persist team access denial", { userId: sub, error });
+    // A transport failure can follow a committed write. Read back the actual
+    // denial rather than incorrectly telling the Owner that access stayed on.
+    try {
+      const current = await readUserAccess(sub, db);
+      return { ok: false, userId: sub, enabled: user.Enabled !== false && current?.disabled !== true,
+        error: "The access change could not be completed. Refresh the team and try again." };
+    } catch {
+      return { ok: false, userId: sub, error: "The access change could not be confirmed. Refresh the team before trying again." };
+    }
+  }
+  if (!args.enabled) {
+    let failed = false;
+    try { await cognito.send(new AdminDisableUserCommand({ UserPoolId: POOL_ID, Username: username })); }
+    catch (error) { failed = true; console.error("Could not disable team sign-in", { userId: sub, error }); }
+    try { await cognito.send(new AdminUserGlobalSignOutCommand({ UserPoolId: POOL_ID, Username: username })); }
+    catch (error) { failed = true; console.error("Could not sign out team sessions", { userId: sub, error }); }
+    return failed
+      ? { ok: false, userId: sub, enabled: false, error: "CRM access is blocked, but completing sign-in shutdown failed. Try Deactivate again." }
+      : { ok: true, userId: sub, enabled: false };
+  }
+  try {
+    // Revoke any refresh tokens left behind by an earlier partial shutdown.
+    await cognito.send(new AdminUserGlobalSignOutCommand({ UserPoolId: POOL_ID, Username: username }));
+    await cognito.send(new AdminEnableUserCommand({ UserPoolId: POOL_ID, Username: username }));
+    const restored = await cognito.send(new AdminGetUserCommand({ UserPoolId: POOL_ID, Username: username }));
+    if (restored.Enabled !== true) throw new Error("Cognito did not confirm enabled access.");
+    await db.send(new UpdateCommand({
+      TableName, Key: { userId: sub }, UpdateExpression: "SET #disabled = :disabled, updatedAt = :now",
+      ExpressionAttributeNames: { "#disabled": "disabled" },
+      ExpressionAttributeValues: { ":disabled": false, ":now": new Date().toISOString() },
+    }));
+  } catch (error) {
+    console.error("Could not complete team access restoration", { userId: sub, error });
+    // The final release may have committed despite a lost response.
+    try {
+      const current = await readUserAccess(sub, db);
+      if (current?.disabled === false) return { ok: true, userId: sub, enabled: true };
+    } catch {
+      return { ok: false, userId: sub, error: "Reactivation could not be confirmed. Refresh the team before trying again." };
+    }
+    return { ok: false, userId: sub, enabled: false, error: "Access remains blocked because reactivation could not be completed. Try Reactivate again." };
+  }
+  return { ok: true, userId: sub, enabled: true };
+}
+
 export const handler = async (
-  event: AppSyncResolverEvent<InviteArgs | UpdateRolesArgs | TeamRosterArgs>
+  event: AppSyncResolverEvent<InviteArgs | UpdateRolesArgs | SetEnabledArgs | TeamRosterArgs>
 ) => {
   if (!isActiveAdmin(event.identity, event.request)) return { ok: false, error: "Admin access is required." };
   const invokedBy =
@@ -222,7 +301,11 @@ export const handler = async (
   // argument shape to tell the operations apart.
   const field =
     event.info?.fieldName ??
-    ("userId" in (event.arguments ?? {}) ? "updateUserRoles" : "email" in (event.arguments ?? {}) ? "inviteUser" : "listTeamUsers");
+    ("enabled" in (event.arguments ?? {}) ? "setTeamUserEnabled" : "userId" in (event.arguments ?? {}) ? "updateUserRoles" : "email" in (event.arguments ?? {}) ? "inviteUser" : "listTeamUsers");
+  if (field === "setTeamUserEnabled" && !isActiveOwner(event.identity, event.request)) {
+    return { ok: false, error: "Only an Owner can deactivate or reactivate team access." };
+  }
+  await assertUserSession(event.identity, db);
 
   switch (field) {
     case "inviteUser":
@@ -233,9 +316,15 @@ export const handler = async (
         sub: event.identity && "sub" in event.identity ? event.identity.sub : undefined,
         owner: isActiveOwner(event.identity, event.request),
       });
+    case "setTeamUserEnabled":
+      return setTeamUserEnabled(event.arguments as SetEnabledArgs, {
+        username: String(invokedBy),
+        sub: event.identity && "sub" in event.identity ? event.identity.sub : undefined,
+      });
     case "listTeamUsers":
       return listTeamUsers(cognito, POOL_ID, event.arguments as TeamRosterArgs, groupsFor,
-        userId => loadTeamProfile(db, process.env.USER_PROFILE_TABLE_NAME!, process.env.USER_PROFILE_USER_ID_INDEX_NAME!, userId));
+        userId => loadTeamProfile(db, process.env.USER_PROFILE_TABLE_NAME!, process.env.USER_PROFILE_USER_ID_INDEX_NAME!, userId),
+        async userId => (await readUserAccess(userId, db))?.disabled === true);
     default:
       return { ok: false, error: `Unknown field ${field}` };
   }
