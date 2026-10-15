@@ -5,15 +5,19 @@ const h = vi.hoisted(() => ({
   projected: undefined as any[] | undefined,
   beforeWrite: undefined as ((record: any) => void) | undefined,
   batchFailures: 0, batchUnprocessed: 0,
-  nonProducers: new Set<string>(), disabled: new Set<string>(), directory: [] as string[],
+  nonProducers: new Set<string>(), disabled: new Set<string>(), deactivated: new Set<string>(), directory: [] as string[],
+  groupError: undefined as Error | undefined,
   onLookup: undefined as (() => void) | undefined,
 }));
-vi.mock("../../amplify/functions/crm-access/user-status", () => ({ teamUserDisabled: async () => false }));
+vi.mock("../../amplify/functions/crm-access/user-status", () => ({ teamUserDisabled: async (userId: string) => h.deactivated.has(userId) }));
 vi.mock("@aws-sdk/client-cognito-identity-provider", async importOriginal => ({
   ...(await importOriginal<typeof import("@aws-sdk/client-cognito-identity-provider")>()),
   CognitoIdentityProviderClient: class { send = async (command: any) => {
     const input = command.input;
-    if (command.constructor.name === "AdminListGroupsForUserCommand") return { Groups: h.nonProducers.has(input.Username) ? [] : [{ GroupName: "PRODUCER" }] };
+    if (command.constructor.name === "AdminListGroupsForUserCommand") {
+      if (h.groupError) throw h.groupError;
+      return { Groups: h.nonProducers.has(input.Username) ? [] : [{ GroupName: "PRODUCER" }] };
+    }
     if (command.constructor.name === "ListUsersInGroupCommand") {
       const offset = Number(input.NextToken ?? 0), ids = h.directory.slice(offset, offset + input.Limit);
       return { Users: ids.map(id => ({ Username: id, Attributes: [{ Name: "sub", Value: id }] })), ...(h.directory.length > offset + ids.length ? { NextToken: String(offset + ids.length) } : {}) };
@@ -79,8 +83,9 @@ function members(count: number, legacy = false) {
 beforeEach(() => {
   h.records.clear(); h.requests = []; h.projected = undefined; h.beforeWrite = undefined;
   h.batchFailures = 0; h.batchUnprocessed = 0;
-  h.nonProducers.clear(); h.disabled.clear(); h.directory = [];
+  h.nonProducers.clear(); h.disabled.clear(); h.deactivated.clear(); h.directory = [];
   h.onLookup = undefined;
+  h.groupError = undefined;
   process.env.COMMUNICATION_TABLE = "comms";
 });
 afterEach(() => { vi.useRealTimers(); });
@@ -172,17 +177,59 @@ describe("website producer index bootstrap", () => {
     expect(h.records.get(PRODUCER_INDEX_MIGRATION_ID).data.complete).toBe(true);
   });
 
-  it("removes old Staff eligibility and preserves a paused Producer across deactivation and restoration", async () => {
+  it.each(["Cognito", "CRM"])("removes old Staff eligibility and preserves a paused Producer across %s deactivation and restoration", async source => {
     member("legacy-staff", { legacy: true }); h.nonProducers.add("legacy-staff");
-    member("paused", { salesperson: false, legacy: true }); h.disabled.add("paused");
+    member("paused", { salesperson: false, legacy: true });
+    const disabled = source === "Cognito" ? h.disabled : h.deactivated;
+    disabled.add("paused");
     await migrateProducerIndex();
     expect(h.records.get("eligibility:legacy-staff")).toMatchObject({ data: { salesperson: false } });
     expect(h.records.get("eligibility:legacy-staff").producerGroup).toBeUndefined();
     expect(h.records.get("eligibility:paused")).toMatchObject({ data: { salesperson: false, receiveNewLeads: false } });
-    vi.useFakeTimers(); vi.setSystemTime(Date.now() + 60_001); h.disabled.delete("paused");
+    vi.useFakeTimers(); vi.setSystemTime(Date.now() + 60_001); disabled.delete("paused");
     await migrateProducerIndex();
     expect(h.records.get("eligibility:paused")).toMatchObject({ data: { salesperson: true, enabled: true, receiveNewLeads: false } });
     expect(h.records.get("eligibility:paused").producerGroup).toBeUndefined();
+  });
+
+  it("starts automatic rotation when a migrated legacy Staff member becomes a Producer", async () => {
+    member("promoted-staff", { salesperson: false, legacy: true });
+    h.nonProducers.add("promoted-staff");
+    await migrateProducerIndex();
+    expect(h.records.get("eligibility:promoted-staff")).toMatchObject({ data: { salesperson: false, receiveNewLeads: true } });
+
+    vi.useFakeTimers(); vi.setSystemTime(Date.now() + 60_001);
+    h.nonProducers.delete("promoted-staff");
+    h.directory = ["promoted-staff"];
+    await migrateProducerIndex();
+    expect(h.records.get("eligibility:promoted-staff")).toMatchObject({ producerGroup: "WEBSITE", data: { salesperson: true, receiveNewLeads: true } });
+    expect((await indexedProducerPage()).items.map(item => item.data.userId)).toEqual(["promoted-staff"]);
+  });
+
+  it("preserves an explicit pause while a teammate loses and regains Producer membership", async () => {
+    member("paused", { receiveNewLeads: false });
+    h.nonProducers.add("paused");
+    await migrateProducerIndex();
+    expect(h.records.get("eligibility:paused")).toMatchObject({ data: { salesperson: false, receiveNewLeads: false } });
+
+    vi.useFakeTimers(); vi.setSystemTime(Date.now() + 60_001);
+    h.nonProducers.delete("paused");
+    await migrateProducerIndex();
+    expect(h.records.get("eligibility:paused")).toMatchObject({ data: { salesperson: true, receiveNewLeads: false } });
+    expect(h.records.get("eligibility:paused").producerGroup).toBeUndefined();
+  });
+
+  it("leaves the migration checkpoint unchanged when current Producer membership cannot be verified", async () => {
+    const previous = member("paused", { salesperson: false, legacy: true });
+    h.groupError = new Error("Cognito group service unavailable");
+    await expect(migrateProducerIndex()).rejects.toThrow("Cognito group service unavailable");
+    expect(h.records.get(previous.id)).toEqual(previous);
+    expect(h.records.has(PRODUCER_INDEX_MIGRATION_ID)).toBe(false);
+
+    h.groupError = undefined;
+    await migrateProducerIndex();
+    expect(h.records.get(previous.id)).toMatchObject({ data: { salesperson: true, receiveNewLeads: false } });
+    expect(h.records.get(PRODUCER_INDEX_MIGRATION_ID).data.complete).toBe(true);
   });
 
   it("checkpoints completed small pages even when live identity checks exceed the time budget", async () => {

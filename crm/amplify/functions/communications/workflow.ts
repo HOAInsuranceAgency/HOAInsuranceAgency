@@ -11,12 +11,17 @@ import { activeTeamUserCheck, teamUserDisabled } from "../crm-access/user-status
 const cognito = new CognitoIdentityProviderClient();
 export class UnavailableTeammateError extends Error {}
 export class IneligibleProducerError extends Error {}
+async function currentUser(userId: string) {
+  if (!/^[a-zA-Z0-9_-]{1,128}$/.test(userId)) throw new Error("Invalid teammate identity");
+  const out = await cognito.send(new ListUsersCommand({ UserPoolId: process.env.USER_POOL_ID, Filter: `sub = "${userId}"`, Limit: 1 }));
+  return out.Users?.[0];
+}
 export async function enabledUser(userId: string) {
   if (!/^[a-zA-Z0-9_-]{1,128}$/.test(userId)) throw new Error("Invalid teammate identity");
   if (await teamUserDisabled(userId)) throw new UnavailableTeammateError("This teammate is deactivated or no longer available");
-  const out = await cognito.send(new ListUsersCommand({ UserPoolId: process.env.USER_POOL_ID, Filter: `sub = "${userId}"`, Limit: 1 }));
-  if (!out.Users?.[0]?.Enabled) throw new UnavailableTeammateError("This teammate is disabled or no longer available");
-  return out.Users[0];
+  const user = await currentUser(userId);
+  if (!user?.Enabled) throw new UnavailableTeammateError("This teammate is disabled or no longer available");
+  return user;
 }
 /** Membership is checked live; an eligibility record cannot grant Producer access. */
 export async function hasProducerRole(userId: string, user: UserType): Promise<boolean> {
@@ -49,19 +54,22 @@ function producerMember(userId: string, user: UserType, previous?: TeamEligibili
   const email = previous?.email || attribute("email") || "";
   return { ...(previous ? salespersonEligibility(previous) : {}), userId,
     name: previous?.name || attribute("name") || email || userId, email,
-    enabled: true, salesperson: true, receiveNewLeads: receivesNewLeads(previous) };
+    enabled: true, salesperson: true, receiveNewLeads: receivesNewLeads(previous, true) };
 }
 /** Materialize only a discovery snapshot. Every assignment still verifies Cognito. */
 export async function syncProducerEligibility(userId: string, initial?: Row<TeamEligibility>) {
   let previous = initial ?? await get<TeamEligibility>(`eligibility:${userId}`);
   for (let attempt = 0; attempt < 3; attempt++) {
-    let user: UserType | undefined, producer = false;
-    try { user = await enabledUser(userId); producer = await hasProducerRole(userId, user); }
-    catch (error) { if (!(error instanceof UnavailableTeammateError)) throw error; }
-    if (!previous && !producer) return;
-    const data: TeamEligibility = producer ? producerMember(userId, user!, previous?.data)
-      : { ...salespersonEligibility(previous!.data), enabled: !!user, salesperson: false,
-        receiveNewLeads: receivesNewLeads(previous?.data) };
+    // Availability and role membership have different migration meaning: a
+    // disabled Producer retains a legacy pause, while Staff's old false flag
+    // never becomes a pause when they are later promoted to Producer.
+    const user = await currentUser(userId), disabled = await teamUserDisabled(userId);
+    const producer = user ? await hasProducerRole(userId, user) : false;
+    const enabled = user?.Enabled === true && !disabled;
+    if (!previous && !(producer && enabled)) return;
+    const data: TeamEligibility = producer && enabled ? producerMember(userId, user!, previous?.data)
+      : { ...salespersonEligibility(previous!.data), enabled, salesperson: false,
+        receiveNewLeads: receivesNewLeads(previous?.data, producer) };
     const next = row("ELIGIBILITY", `eligibility:${userId}`, data, { previous });
     // Rewriting the derived role snapshot cannot restore an administrator's
     // concurrently changed preference or provider connection.
@@ -79,8 +87,7 @@ export async function team() {
   do { const page = await query<TeamEligibility>("kind", "ELIGIBILITY", cursor); out.push(...page.items.map(r => ({ ...salespersonEligibility(r.data), version: r.version }))); cursor = page.nextToken; } while (cursor);
   return out;
 }
-export async function validRole(userId: string, role: Responsibility, checkEnabled = true) {
-  void checkEnabled; // Producer membership always requires a current enabled identity.
+export async function validRole(userId: string, role: Responsibility) {
   if (role !== "SALESPERSON") throw new Error("Choose an enabled teammate with the Producer role eligible for this responsibility");
   const user = await producerUser(userId);
   const member = await get<TeamEligibility>(`eligibility:${userId}`);
@@ -173,11 +180,11 @@ export async function syncResponsibilities(candidate: Row<{ phase: string; accou
   const wf = await ensureWorkflow(accountId), { salespersonId } = wf.data;
   const page = await query<Record<string, unknown>>("account", accountId, cursor, 25, `${phase}#`);
   const writes: Write[] = [check(wf)];
-  if (phase === "LINK") for (const item of page.items) {
+  const automaticLinks = page.items.filter(item => item.data.routing !== "MANUAL");
+  const member = salespersonId && automaticLinks.length ? await validRole(salespersonId, "SALESPERSON") : undefined;
+  for (const item of automaticLinks) {
     const link = item as unknown as Row<{ conversationId: string; routing?: string }>;
-    if (link.data.routing === "MANUAL") continue;
     if (link.data.routing !== "SALESPERSON") writes.push(put(row("LINK", link.id, { ...link.data, routing: "SALESPERSON" }, { accountId, previous: link }), link));
-    const member = salespersonId ? await validRole(salespersonId, "SALESPERSON") : undefined;
     const key = `op:route:${job.id}:${link.id}`;
     if (member?.frontId && !await get(key)) writes.push(put(operationRow(key, { type: "ASSIGN", accountId, conversationId: link.data.conversationId, assigneeId: member.frontId })));
   }

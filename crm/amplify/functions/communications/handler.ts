@@ -1,4 +1,4 @@
-import { receivesNewLeads, salespersonWorkflow } from "../../../../shared/salespersonOwnership";
+import { receivesNewLeads, salespersonEligibility, salespersonWorkflow } from "../../../../shared/salespersonOwnership";
 import { retiredTaskOperation } from "../../../../shared/retiredTaskOperations";
 import { tasksRemoved, currentCommunicationIssues } from "./retiredTasks";
 import { isLeadSource } from "../../../../shared/leadSource";
@@ -15,7 +15,7 @@ import { authorizedQuoteTerms } from "../../../../shared/quoteAuthorization";
 import { validCalendarDate } from "../../../../shared/renewalPolicy";
 import { config, credentials, saveCredentials, saveConfig, type Credentials } from "./config";
 import { dataClient } from "./data";
-import { accountRows, defaultWorkflow, ensureWorkflow, expected, validRole, setResponsibilities, team, enabledUser } from "./workflow";
+import { accountRows, defaultWorkflow, ensureWorkflow, expected, validRole, setResponsibilities, team, enabledUser, hasProducerRole } from "./workflow";
 import { permittedConversation, verifySmsChannel } from "./providers";
 import { operationRow } from "./outbox";
 import { connectionChecks, activationChecks } from "./setup";
@@ -95,6 +95,21 @@ export const handler = async (event: { arguments: { operation?: string; readOper
       if (op === "activity") { const r = await get<Communication>(text(input, "id")); if (!r || r.kind !== "COMMUNICATION") throw new Error("Communication not found"); return { ok: true, communication: safeCommunication({ ...r.data, version: r.version }) }; }
       if (op === "smsComposer") { const c = await config(); if (!c.frontSmsChannelId || !c.activatedAt || c.paused) throw new Error("Activate the shared-line text channel first"); await verifySmsChannel(); return { ok: true, channelId: c.frontSmsChannelId, sender: c.sharedSmsNumber }; }
       if (op === "team") return { ok: true, team: await roster() };
+      if (op === "teamSettings") {
+        requireAdmin();
+        if (!Array.isArray(input.userIds) || input.userIds.length > 20 || input.userIds.some(id => typeof id !== "string" || !/^[a-zA-Z0-9_-]{1,128}$/.test(id))) {
+          throw new Error("Choose up to 20 valid team members at a time");
+        }
+        // The paged team roster already supplies current roles, access and
+        // profile details. Read only its saved preferences and connections.
+        const ids = [...new Set(input.userIds as string[])];
+        const settings = await batchGet<TeamEligibility>(ids.map(id => `eligibility:${id}`));
+        return { ok: true, team: ids.flatMap(id => {
+          const saved = settings.get(`eligibility:${id}`);
+          return saved?.kind === "ELIGIBILITY" && saved.data.userId === id
+            ? [{ ...salespersonEligibility(saved.data), version: saved.version }] : [];
+        }) };
+      }
       if (op === "settings") {
         requireAdmin(); const keys = await credentials();
         const recovery = Object.fromEntries(await Promise.all(["front", "dialpad"].map(async provider => {
@@ -200,10 +215,20 @@ export const handler = async (event: { arguments: { operation?: string; readOper
     }
     if (op === "setLeadDisposition") { const { setLeadDisposition } = await import("./workflow"); await setLeadDisposition(text(input, "accountId"), text(input, "disposition"), Number(input.version), actor); return { ok: true }; }
     if (op === "saveEligibility") {
-      requireAdmin(); const userId = text(input, "userId"); await enabledUser(userId);
-      const member = (await roster()).find(t => t.userId === userId); if (!member) throw new Error("Teammate not found");
+      requireAdmin(); const userId = text(input, "userId");
+      const user = await enabledUser(userId);
       const old = await get<TeamEligibility>(`eligibility:${userId}`);
       if ((old?.version ?? 0) !== Number(input.version ?? 0)) throw new Error("Teammate settings changed. Refresh and try again.");
+      const client = await dataClient();
+      const [profiles, producer] = await Promise.all([
+        client.models.UserProfile.listUserProfileByUserId({ userId }, { limit: 1, selectionSet: ["userId", "firstName", "lastName", "email"] }),
+        hasProducerRole(userId, user),
+      ]);
+      if (profiles.errors?.length) throw new Error("Could not load teammate");
+      const profile = profiles.data[0];
+      if (!profile || profile.userId !== userId) throw new Error("Teammate not found");
+      const member = { userId, name: `${profile.firstName} ${profile.lastName}`, email: profile.email,
+        enabled: true, salesperson: producer, receiveNewLeads: receivesNewLeads(old?.data, producer), available: true };
       const connectionId = (key: "frontId" | "dialpadId" | "frontChannelId" | "frontSignatureId", previous?: string) => {
         if (input[key] === undefined) return previous;
         if (typeof input[key] !== "string") throw new Error("Connection IDs must be text");
@@ -224,7 +249,7 @@ export const handler = async (event: { arguments: { operation?: string; readOper
       if (next.frontSignatureId && !/^sig_[a-z0-9]+$/.test(next.frontSignatureId)) throw new Error("Invalid Front email signature ID");
       if (!next.frontId && (next.frontChannelId || next.frontSignatureId)) throw new Error("Link a Front teammate before choosing their email channel or signature");
       const saved = row("ELIGIBILITY", `eligibility:${userId}`, next, { previous: old });
-      await commit([put(saved, old), audit("TEAM", actor, "Assignment eligibility changed", next)]);
+      await commit([put(saved, old), activeTeamUserCheck(userId), audit("TEAM", actor, "Assignment eligibility changed", next)]);
       return { ok: true, member: { ...next, version: saved.version, available: member.available } };
     }
     if (op === "saveSettings") {

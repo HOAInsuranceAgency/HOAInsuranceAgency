@@ -299,6 +299,15 @@ describe("custom API operations", () => {
     await expect(call("takeResponse", { taskId: "task:a", accountId: "a" })).rejects.toThrow(AccessDenied);
     await expect(authorizeCustom(user(), "futureEndpoint", {})).rejects.toThrow(AccessDenied);
   });
+  it("keeps saved Team settings restricted to the active administrator or Owner view", async () => {
+    const args = { readOperation: "teamSettings", input: { userIds: ["alice"] } };
+    for (const actor of [user(), new AccountAccess({ sub: "admin", groups: ["ADMIN", "PRODUCER"] }, reader, { headers: { "x-crm-role": "PRODUCER" } })]) {
+      await expect(authorizeCustom(actor, "communicationRead", args)).rejects.toThrow(AccessDenied);
+    }
+    for (const actor of [admin(), new AccountAccess({ sub: "owner", groups: ["OWNER"] }, reader)]) {
+      await expect(authorizeCustom(actor, "communicationRead", args)).resolves.toBeUndefined();
+    }
+  });
   it("filters work pages and preserves cursors even when a page is empty", async () => {
     const result = await filterCustom(user(), "communicationRead", { readOperation: "work", input: { kind: "WORKFLOW" } }, { ok: true, items: [{ id: "b", accountId: "b" }, { id: "unlinked" }], nextToken: "cursor" });
     expect(result).toEqual({ ok: true, items: [], nextToken: "cursor" });

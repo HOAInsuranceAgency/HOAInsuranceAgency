@@ -1,23 +1,90 @@
-import { useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { receivesNewLeads } from "../../../shared/salespersonOwnership";
 import { communicationRequest as request, type TeamEligibility } from "../lib/communications";
 import { useAsyncResource } from "../lib/useAsyncResource";
+import { isAuthorizationError } from "../lib/authorizationError";
 import Modal from "./Modal";
 
 type ConnectionIds = Pick<TeamEligibility, "frontId" | "dialpadId" | "frontChannelId" | "frontSignatureId">;
 
-/** Assignment and connection editing within the unified team roster. */
-export function useLeadEligibilitySettings() {
-  const resource = useAsyncResource(() => request<{ team: TeamEligibility[] }>("team"), [], { initialData: { team: [] }, errorMessage: "Could not load assignment settings" });
+/** Display authority comes from the bounded Cognito roster and its profiles. */
+export type EligibilityRosterMember = {
+  userId: string; name: string; email: string; enabled: boolean; groups: readonly string[]; hasProfile: boolean;
+};
+
+/** Load only visible teammates' stored settings, preserving committed versions
+ * as roster pages arrive and keeping connection drafts isolated from reads. */
+export function useLeadEligibilitySettings(members: readonly EligibilityRosterMember[], paused = false) {
   const [busy, setBusy] = useState(false), [error, setError] = useState(""), [message, setMessage] = useState("");
   const [editing, setEditing] = useState<TeamEligibility | null>(null);
-  const inFlight = useRef(false);
+  const inFlight = useRef(false), readPending = useRef(false), refreshPending = useRef(false);
+  const saved = useRef(new Map<string, TeamEligibility>()), loaded = useRef(new Set<string>());
+  const readIds = useRef<string[]>([]);
+  const current = useRef({ members, paused, editing });
+  current.current = { members, paused, editing };
+  const resource = useAsyncResource(async () => {
+    const ids = [...readIds.current];
+    try {
+      const rows: TeamEligibility[] = [];
+      for (let offset = 0; offset < ids.length; offset += 20) {
+        const page = await request<{ team: TeamEligibility[] }>("teamSettings", { userIds: ids.slice(offset, offset + 20) });
+        rows.push(...page.team);
+      }
+      // Do not replace a newer committed version with an older response. Missing
+      // rows mean defaults, rather than needing a broad roster/profile lookup.
+      for (const id of ids) loaded.current.add(id);
+      for (const row of rows) {
+        const previous = saved.current.get(row.userId);
+        if (ids.includes(row.userId) && (!previous || (row.version ?? 0) >= (previous.version ?? 0))) saved.current.set(row.userId, row);
+      }
+      return { team: [...saved.current.values()] };
+    } finally {
+      // Release before the resource publishes loading=false, so newly visible
+      // IDs can start their read in that render's effect without a timing gap.
+      readPending.current = false;
+    }
+  }, [], { manual: true, initialData: { team: [] as TeamEligibility[] }, errorMessage: "Could not load assignment settings",
+    clearDataOnError: failure => {
+      if (!isAuthorizationError(failure)) return false;
+      saved.current.clear(); loaded.current.clear();
+      return true;
+    },
+  });
+  const idsKey = JSON.stringify(members.map(member => member.userId));
+
+  function read(ids: string[]) {
+    if (!ids.length || readPending.current || inFlight.current || current.current.editing || current.current.paused) return;
+    readIds.current = [...new Set(ids)];
+    readPending.current = true;
+    void resource.refetch();
+  }
+  useEffect(() => {
+    if (paused || busy || editing || resource.loading) return;
+    if (refreshPending.current) {
+      refreshPending.current = false;
+      read(current.current.members.map(member => member.userId));
+    } else if (!resource.error) read(current.current.members.map(member => member.userId).filter(id => !loaded.current.has(id)));
+  }, [idsKey, paused, busy, editing, resource.loading, resource.error]);
+
+  const team = useMemo(() => {
+    const raw = new Map(resource.data.team.map(member => [member.userId, member]));
+    return members.flatMap(member => {
+      if (!member.hasProfile || !loaded.current.has(member.userId)) return [];
+      const stored = raw.get(member.userId), producer = member.groups.includes("PRODUCER");
+      return [{ ...stored, userId: member.userId, name: member.name, email: member.email,
+        enabled: member.enabled, available: member.enabled, salesperson: producer,
+        receiveNewLeads: receivesNewLeads(stored, producer), version: stored?.version ?? 0 }];
+    });
+  }, [members, resource.data]);
+
   async function save(member: TeamEligibility, patch: Partial<TeamEligibility>) {
-    if (inFlight.current) return false;
+    if (inFlight.current || readPending.current || current.current.paused) return false;
     inFlight.current = true; setBusy(true); setError(""); setMessage("");
     try {
       const result = await request<{ member: TeamEligibility }>("saveEligibility", { userId: member.userId, version: member.version ?? 0, ...patch }, true);
-      // Use the committed version, rather than immediately rereading a stale index.
-      resource.setData(previous => ({ team: previous.team.map(item => item.userId === member.userId ? result.member : item) }));
+      saved.current.set(member.userId, result.member);
+      loaded.current.add(member.userId);
+      resource.setData({ team: [...saved.current.values()] });
       setMessage(`Settings saved for ${member.name}.`);
       return true;
     } catch(e) { setError(e instanceof Error ? e.message : "Could not save teammate settings"); return false; }
@@ -25,14 +92,13 @@ export function useLeadEligibilitySettings() {
   }
   function closeEditor() { if (!inFlight.current) { setEditing(null); setError(""); } }
   const disabled = busy || resource.loading || !!editing;
-  function editMember(member: TeamEligibility) { setEditing(member); setError(""); setMessage(""); }
+  function editMember(member: TeamEligibility) { if (!readPending.current && !current.current.paused) { setEditing(member); setError(""); setMessage(""); } }
   function refresh() {
-    // Inviting another user refreshes the roster independently. Do not start a
-    // read here that could replace this save's committed member/version later.
-    if (inFlight.current || editing) return;
-    setError(""); void resource.refetch();
+    if (inFlight.current || current.current.editing) return;
+    if (current.current.paused) { refreshPending.current = true; return; }
+    setError(""); read(current.current.members.map(member => member.userId));
   }
-  return { resource, busy, error, message, editing, disabled, save, closeEditor, editMember, refresh, setEditing };
+  return { resource: { ...resource, data: { team } }, busy, error, message, editing, disabled, save, closeEditor, editMember, refresh, setEditing };
 }
 type EligibilitySettings = ReturnType<typeof useLeadEligibilitySettings>;
 
@@ -46,7 +112,7 @@ export function LeadEligibilityFeedback({ settings }: { settings: EligibilitySet
 
 export function LeadEligibilityCells({ member, settings, disabled: rowDisabled = false }: { member?: TeamEligibility; settings: EligibilitySettings; disabled?: boolean }) {
   const { disabled, save, editMember, resource } = settings;
-  if (!member) return <td colSpan={2} className="muted small">{resource.loading ? "Loading assignment settings…" : resource.error ? "Assignment settings unavailable" : "Available after first sign-in"}</td>;
+  if (!member) return <td colSpan={2} className="muted small">{resource.error ? "Assignment settings unavailable" : "Loading assignment settings…"}</td>;
   return <>
     <td>{member.salesperson ? <label className="lead-text-switch">
       <input aria-label={`Receive new leads for ${member.name}`} type="checkbox" checked={member.receiveNewLeads !== false}

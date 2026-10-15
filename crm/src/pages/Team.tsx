@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useIsOwner } from "../lib/auth";
 import { LeadEligibilityCells, LeadEligibilityEditor, LeadEligibilityFeedback, useLeadEligibilitySettings } from "../components/LeadEligibilitySettings";
 import { client, fmtDate, friendlyError, type UserProfile } from "../lib/client";
@@ -206,7 +206,6 @@ async function fetchTeamPage(nextToken?: string) {
  */
 export default function Team({ profile }: { profile: UserProfile }) {
   const canManageOwners = useIsOwner();
-  const eligibility = useLeadEligibilitySettings();
   // The invite confirmation used to be a `notice` string nothing ever
   // cleared — it sat over the form while you typed the next invitee's
   // address. `markDirty` in `onEdit` is what retires it now.
@@ -247,12 +246,18 @@ export default function Team({ profile }: { profile: UserProfile }) {
     { initialData: EMPTY_TEAM, errorMessage: "Failed to load team" }
   );
   const { users, profiles } = team.data;
+  const eligibilityMembers = useMemo(() => users.map(user => {
+    const memberProfile = profiles.find(p => p.userId === user.userId || p.email === user.email);
+    return { userId: user.userId, email: user.email, groups: user.groups, enabled: user.enabled !== false,
+      name: memberProfile ? `${memberProfile.firstName} ${memberProfile.lastName}` : user.email, hasProfile: !!memberProfile };
+  }), [users, profiles]);
+  const eligibility = useLeadEligibilitySettings(eligibilityMembers, team.loading || moreLoading || inviteStatus.busy || alertStatus.busy || !!editingRoles || !!editingAccess);
   const setProfiles = (update: (profiles: UserProfile[]) => UserProfile[]) =>
     team.setData(previous => ({ ...previous, profiles: update(previous.profiles) }));
 
   async function loadMore() {
     const nextToken = team.data.nextToken;
-    if (!nextToken || team.loading || morePending.current) return;
+    if (!nextToken || team.loading || morePending.current || eligibility.disabled || editingRoles || editingAccess) return;
     const version = pageVersion.current;
     morePending.current = true;
     setMoreLoading(true);
@@ -479,7 +484,7 @@ export default function Team({ profile }: { profile: UserProfile }) {
                 {sorted.map((u) => {
                   const p = profileFor(u);
                   const member = eligibility.resource.data.team.find(item => item.userId === u.userId);
-                  const name = p ? `${p.firstName} ${p.lastName}` : member?.name;
+                  const name = p ? `${p.firstName} ${p.lastName}` : undefined;
                   return (
                     <tr key={u.userId}>
                       <td>
@@ -496,13 +501,13 @@ export default function Team({ profile }: { profile: UserProfile }) {
                           {(u.groups.filter(isUserRole).length ? u.groups.filter(isUserRole) : [p?.role ?? "—"]).map(role =>
                             <span key={role} className="badge gray">{role}</span>)}
                         </div>
-                        <button type="button" className="secondary" disabled={team.loading || eligibility.busy || !!editingRoles || !!editingAccess || (u.groups.includes("OWNER") && !canManageOwners)} aria-label={`Edit roles for ${name || u.email}`}
+                        <button type="button" className="secondary" disabled={team.loading || moreLoading || eligibility.busy || !!eligibility.editing || !!editingRoles || !!editingAccess || (u.groups.includes("OWNER") && !canManageOwners)} aria-label={`Edit roles for ${name || u.email}`}
                           onClick={() => { roleStatus.markDirty(); setEditingRoles(u); }}>Edit roles</button>
                       </td>
                       <td>
                         <div style={{ marginBottom: 6 }}><span className={`badge ${u.enabled === false ? "gray" : "green"}`}>{u.enabled === false ? "Inactive" : "Active"}</span></div>
                         {canManageOwners && <button type="button" className="secondary"
-                          disabled={u.userId === profile.userId || team.loading || eligibility.busy || !!editingRoles || !!editingAccess}
+                          disabled={u.userId === profile.userId || team.loading || moreLoading || eligibility.busy || !!eligibility.editing || !!editingRoles || !!editingAccess}
                           aria-label={`${u.enabled === false ? "Reactivate" : "Deactivate"} ${name || u.email}`}
                           onClick={() => { accessStatus.markDirty(); setEditingAccess(u); }}>{u.enabled === false ? "Reactivate" : "Deactivate"}</button>}
                       </td>
@@ -537,7 +542,8 @@ export default function Team({ profile }: { profile: UserProfile }) {
                           <span className="muted small">—</span>
                         )}
                       </td>
-                      <LeadEligibilityCells member={member} settings={eligibility} disabled={u.enabled === false || team.loading || !!editingRoles || !!editingAccess} />
+                      {p ? <LeadEligibilityCells member={member} settings={eligibility} disabled={u.enabled === false || team.loading || moreLoading || !!editingRoles || !!editingAccess} />
+                        : <td colSpan={2} className="muted small">Available after first sign-in</td>}
                       <td className="small">
                         {fmtDate(u.createdAt?.slice(0, 10))}
                       </td>
@@ -554,7 +560,7 @@ export default function Team({ profile }: { profile: UserProfile }) {
         </div>}
         {moreError && <p className="error-text" role="alert">{moreError}</p>}
         {team.data.nextToken && <div className="form-actions">
-          <button type="button" className="secondary" disabled={team.loading || moreLoading} onClick={() => void loadMore()}>
+          <button type="button" className="secondary" disabled={team.loading || moreLoading || alertStatus.busy || eligibility.disabled || !!editingRoles || !!editingAccess} onClick={() => void loadMore()}>
             {moreLoading ? "Loading more…" : moreError ? "Retry loading more" : "Load more team members"}
           </button>
         </div>}
