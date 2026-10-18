@@ -21,7 +21,7 @@ const metadata = (slug, extra = {}) => ({
   sources: [{ title: "Synthetic reference", publisher: "Example", url: "https://example.com/reference", accessedAt: "2026-01-14T12:00:00Z" }], ...extra,
 });
 const paragraph = "This synthetic paragraph exercises the article layout with plain readable text. It is a software test fixture and makes no insurance claim. Readers can use the headings and source list to inspect the rendered page. The fixture never enters the production content collection. ";
-const body = `## A synthetic heading\n\n${paragraph.repeat(13)}\n\n## A second heading\n\n${paragraph.repeat(13)}\n\nSee the [existing coverage page](/what-we-do/) and the [synthetic reference](https://example.com/reference).`;
+const body = `## A synthetic heading\n\n${paragraph.repeat(13)}\n\n## A second heading\n\n> Quoted guidance from a synthetic source.\n\nThe plain-text comparison says one = two and 2 < 3.\n\n${paragraph.repeat(13)}\n\nSee the [existing coverage page](/what-we-do/) and the [synthetic reference](https://example.com/reference).`;
 async function fixture(slug, extra = {}, text = body) {
   const data = metadata(slug, extra);
   await mkdir(join(root, `public/images/blog/${slug}`), { recursive: true });
@@ -54,6 +54,8 @@ try {
   const listing = await readFile(join(out, "blog/index.html"), "utf8");
   const sitemap = await readFile(join(out, "sitemap-0.xml"), "utf8");
   assert.match(article, /<h2 id="a-synthetic-heading">/);
+  assert.match(article, /<blockquote>/);
+  assert.match(article, /one = two and 2 &lt; 3/);
   assert.match(article, /Sources &amp; further reading/);
   assert.match(article, /href="https:\/\/example.com\/reference"/);
   assert.match(article, /<meta property="og:type" content="article"/);

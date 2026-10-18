@@ -57,8 +57,12 @@ checks remain editorial responsibilities; schema validation cannot verify claims
 Draft and future-dated entries have no generated route, listing link or sitemap
 entry. A future timestamp does not schedule a release: publication needs a new
 reviewed build when due. This change adds no calendar or publishing service.
-A production build fails on malformed content. During local development a
-failed content reload clears the article store and logs the error.
+A production build fails on malformed content. During local development,
+Markdown and article-image changes enter one serialized validation queue. A
+failed reload clears the article store and logs the error; fixing an image
+triggers revalidation without requiring another Markdown edit. The safety
+checks use the already locked Satteri 0.10.5 parser directly to inspect syntax
+nodes and HTML attributes while preserving ordinary prose and blockquotes.
 
 Run `npm run articles:test`, `npm run articles:build-test`, `npm run typecheck`
 and `npm run build` from `web/`. The build tests copy the site to a temporary

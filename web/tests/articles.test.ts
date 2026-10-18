@@ -35,12 +35,25 @@ test("only released public articles appear in date order, including after a seco
 
 test("prose Markdown and renderer output reject HTML and disguised executable links", () => {
   assertArticleMarkdown("## Heading\n\nA useful [internal link](/what-we-do/) and a citation.");
-  for (const body of ["<script>alert(1)</script>", "<Component />", "![inline image](x)", "import X from 'x'", "export const x = 1", "# Duplicate title"]) assert.throws(() => assertArticleMarkdown(body));
-  for (const url of ["javascript:alert(1)", "data:text/html,x", "//evil.example", "/&#x2f;/evil.example", "https://example.com/%0aevil", "https://user:pass@example.com", "/%2e%2e/private", "http://example.com", "https://example.com/&#Tab;bad"]) assert.throws(() => assertArticleHtml(`<p><a href="${url}">link</a></p>`));
+  for (const body of ["<script>alert(1)</script>", "<Component />", "![inline image](x)", "import X from 'x'", "export const x = 1", "# Duplicate title", "Setext title\n============", "> <script>alert(1)</script>", "[Bad](javascript&#58;alert(1))", "[Bad][unsafe]\n\n[unsafe]: java&#x73;cript:alert(1)"]) assert.throws(() => assertArticleMarkdown(body));
+  for (const url of ["javascript:alert(1)", "data:text/html,x", "//evil.example", "/&#x2f;/evil.example", "https://example.com/%0aevil", "https://user:pass@example.com", "/%2e%2e/private", "http://example.com", "https://example.com/&#Tab;bad"]) assert.throws(() => assertArticleHtml(`<p><a href="${url}">link</a></p>`), url);
   assertArticleHtml('<p><a href="https://example.com/?a=1&amp;b=2">source</a><a href="/what-we-do/">coverage</a><a href="#heading">heading</a></p>');
 });
 
 test("route and display date preserve the trailing-slash and Eastern-time contracts", () => {
   assert.equal(articlePath(metadata.slug), "/blog/layout-fixture/");
   assert.equal(articleDate("2026-01-16T01:00:00Z"), "January 15, 2026");
+});
+
+test("blockquotes, comparison signs and attribute-looking prose remain valid", () => {
+  assertArticleMarkdown("> Quoted guidance\n\nThe comparison is 2 < 3 and 5 > 4; one = two is just text.\n\n`<script>` and ` onerror = true` are code examples.");
+  assertArticleHtml('<blockquote><p>Quoted guidance</p></blockquote><p>one = two and 2 &lt; 3</p><code>&lt;script&gt; onerror = true</code>');
+  for (const html of [
+    '<p onclick="bad()">text</p>', '<a OnMouseOver=bad href="/">link</a>',
+    '<svg onload="bad()"></svg>', '<iframe srcdoc="bad"></iframe>',
+    '<a href=javascript:alert(1)>link</a>', '<a href="javascript&#58;alert(1)">link</a>',
+    '<a href="javascript&colon;alert(1)">link</a>', '<a href="&#9;javascript:alert(1)">link</a>',
+    '<a href="/&#47;evil.example">link</a>', '<input type="text">',
+  ]) assert.throws(() => assertArticleHtml(html), html);
+  assertArticleHtml('<input type="checkbox" disabled>');
 });

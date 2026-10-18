@@ -14,7 +14,7 @@
     "seo:check": "node scripts/seo-fingerprint.mjs",
     "seo:save": "node scripts/seo-fingerprint.mjs --save",
     "sync": "tsx scripts/sync-buildium.ts",
-    "articles:test": "tsx --test tests/articles.test.ts",
+    "articles:test": "tsx --test tests/articles.test.ts tests/article-loader.test.ts",
     "articles:build-test": "node tests/articles-build.mjs"
   },
   "dependencies": {
@@ -22,7 +22,8 @@
     "@astrojs/sitemap": "^3.7.4",
     "astro": "^7.3.1",
     "react": "~18.3.1",
-    "react-dom": "~18.3.1"
+    "react-dom": "~18.3.1",
+    "satteri": "0.10.5"
   },
   "devDependencies": {
     "@astrojs/check": "^0.9.10",
