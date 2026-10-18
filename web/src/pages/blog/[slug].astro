@@ -1,0 +1,45 @@
+---
+import { getCollection, render, type CollectionEntry } from "astro:content";
+import Layout from "../../layouts/Layout.astro";
+import { publishedArticles, articlePath, articleDate, articleWordCount } from "../../lib/articles";
+import { articleSchemaNode } from "../../lib/article-seo";
+import { breadcrumbSchema } from "../../lib/seo";
+import { AGENCY } from "../../../../shared/agency";
+import "./articles.css";
+
+export async function getStaticPaths() {
+  return publishedArticles(await getCollection("articles")).map((article) => ({ params: { slug: article.data.slug }, props: { article } }));
+}
+interface Props { article: CollectionEntry<"articles"> }
+const { article } = Astro.props;
+const { data } = article;
+const { Content, headings } = await render(article);
+const contents = headings.filter((heading) => heading.depth === 2);
+const minutes = Math.max(1, Math.ceil(articleWordCount(article.body ?? "") / 220));
+---
+
+<Layout title={`${data.title} | ProtectMyHOA`} description={data.description} canonicalPath={articlePath(data.slug)} ogImage={data.image.src} ogImageAlt={data.image.alt} ogImageWidth={data.image.width} ogImageHeight={data.image.height} ogType="article" publishedAt={data.publishedAt} modifiedAt={data.updatedAt} solidNav jsonLd={[
+  articleSchemaNode(article),
+  breadcrumbSchema([{ name: "Home", path: "/" }, { name: "Articles", path: "/blog/" }, { name: data.title, path: articlePath(data.slug) }]),
+]}>
+  <article class="article-page">
+    <header class="article-header container">
+      <nav class="article-breadcrumb" aria-label="Breadcrumb"><a href="/">Home</a><span aria-hidden="true">/</span><a href="/blog/">Articles</a></nav>
+      <p class="articles-eyebrow">{data.topic}</p>
+      <h1>{data.title}</h1>
+      <p class="article-description">{data.description}</p>
+      <div class="article-meta"><span>By {AGENCY.name}</span><span aria-hidden="true">·</span><time datetime={data.publishedAt}>{articleDate(data.publishedAt)}</time><span aria-hidden="true">·</span><span>{minutes} min read</span></div>
+      {data.updatedAt && <p class="article-updated">Updated <time datetime={data.updatedAt}>{articleDate(data.updatedAt)}</time></p>}
+    </header>
+    <figure class="article-cover container"><img src={data.image.src} alt={data.image.alt} width={data.image.width} height={data.image.height} loading="eager" fetchpriority="high" /><figcaption>{data.image.sourceUrl ? <a href={data.image.sourceUrl} rel="noopener noreferrer">{data.image.credit}</a> : data.image.credit}</figcaption></figure>
+    <div class="article-reading-layout container">
+      {contents.length > 0 && <aside class="article-toc"><nav aria-label="In this article"><p>In this article</p><ul>{contents.map((heading) => <li><a href={`#${heading.slug}`}>{heading.text}</a></li>)}</ul></nav></aside>}
+      <div class="article-reading-main">
+        <div class="article-prose"><Content /></div>
+        <section class="article-sources" aria-labelledby="article-sources-title"><h2 id="article-sources-title">Sources &amp; further reading</h2><ol>{data.sources.map((source) => <li><a href={source.url} rel="noopener noreferrer">{source.title}</a><span>{source.publisher} · Accessed {articleDate(source.accessedAt)}</span></li>)}</ol></section>
+        <p class="article-disclaimer">This article is general information. Coverage depends on the policy, endorsements and facts of the association. Contact a licensed insurance professional for guidance about your community.</p>
+        <div class="article-end"><a href="/blog/" class="articles-text-link"><span aria-hidden="true">←</span> All articles</a><a href="/contact/" class="btn btn-primary">Talk with our team</a></div>
+      </div>
+    </div>
+  </article>
+</Layout>
