@@ -1,0 +1,51 @@
+---
+import { getCollection } from "astro:content";
+import Layout from "../../layouts/Layout.astro";
+import Hero from "../../components/Hero.astro";
+import { publishedArticles, articlePath, articleDate } from "../../lib/articles";
+import { breadcrumbSchema, canonicalUrl } from "../../lib/seo";
+import { AGENCY } from "../../../../shared/agency";
+import "./articles.css";
+
+const articles = publishedArticles(await getCollection("articles"));
+const title = "Association Insurance Articles | ProtectMyHOA";
+const description = "Articles and resources for HOA and condominium association boards from HOA Insurance Agency, the agency behind ProtectMyHOA.";
+---
+
+<Layout title={title} description={description} canonicalPath="/blog/" jsonLd={[
+  breadcrumbSchema([{ name: "Home", path: "/" }, { name: "Articles", path: "/blog/" }]),
+  { "@type": "Blog", "@id": `${canonicalUrl("/blog/")}#blog`, name: "ProtectMyHOA Articles", url: canonicalUrl("/blog/"), blogPost: articles.map((article) => ({ "@id": `${canonicalUrl(articlePath(article.data.slug))}#article` })) },
+]}>
+  <Hero eyebrow="For association boards" title="Clarity for your community." subtitle="Articles and resources for the people who care for shared-ownership communities." backgroundImage="/images/board-meeting.jpg" compact />
+  <section class="section articles-section">
+    <div class="container">
+      <div class="articles-section__heading">
+        <div><p class="articles-eyebrow">The ProtectMyHOA journal</p><h2>Association insights</h2></div>
+        <p>From {AGENCY.name}, the agency behind ProtectMyHOA.</p>
+      </div>
+      {articles.length > 0 ? (
+        <div class="articles-grid">
+          {articles.map((article) => (
+            <article class="article-card">
+              <a href={articlePath(article.data.slug)} class="article-card__image" tabindex="-1" aria-hidden="true"><img src={article.data.image.src} alt="" width={article.data.image.width} height={article.data.image.height} loading="lazy" /></a>
+              <div class="article-card__body">
+                <p class="articles-eyebrow">{article.data.topic}</p>
+                <time datetime={article.data.publishedAt}>{articleDate(article.data.publishedAt)}</time>
+                <h3><a href={articlePath(article.data.slug)}>{article.data.title}</a></h3>
+                <p>{article.data.description}</p>
+                <a class="article-card__link" href={articlePath(article.data.slug)}>Read article <span aria-hidden="true">→</span><span class="sr-only">: {article.data.title}</span></a>
+              </div>
+            </article>
+          ))}
+        </div>
+      ) : (
+        <div class="articles-empty">
+          <span class="articles-empty__icon" aria-hidden="true"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h6a3 3 0 0 1 3 3v14a4 4 0 0 0-4-2H4z"/><path d="M13 7a3 3 0 0 1 3-3h5v15h-4a4 4 0 0 0-4 2"/></svg></span>
+          <h3>A resource for your next board conversation.</h3>
+          <p>New articles will appear here as they’re published. In the meantime, explore how we work with associations or get in touch with our team.</p>
+          <div class="articles-empty__links"><a href="/what-we-do/" class="btn btn-primary">Explore association coverage</a><a href="/contact/" class="articles-text-link">Contact our team <span aria-hidden="true">→</span></a></div>
+        </div>
+      )}
+    </div>
+  </section>
+</Layout>
