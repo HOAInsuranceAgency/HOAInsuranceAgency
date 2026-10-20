@@ -161,16 +161,17 @@ try {
     const resource = fn.resources.lambda.node.defaultChild as CfnFunction;
     if (Stack.of(resource).resolve(resource.reservedConcurrentExecutions) !== 1) throw new Error(`${resource.node.path} must retain reserved concurrency 1`);
   }
-  const carrierEnv = Stack.of(backend.honeycombWorker.resources.lambda).resolve((backend.honeycombWorker.resources.lambda.node.defaultChild as CfnFunction).environment);
   const intakeEnv = Stack.of(backend.leadIntake.resources.lambda).resolve((backend.leadIntake.resources.lambda.node.defaultChild as CfnFunction).environment);
-  const staging = process.env.AWS_BRANCH === "staging";
-  if (carrierEnv.variables.HONEYCOMB_ENABLED !== String(staging) || intakeEnv.variables.HONEYCOMB_ENABLED !== String(staging)) throw new Error("Honeycomb must only run on staging");
-  if (!staging && JSON.stringify(carrierEnv).includes("HONEYCOMB_API_SECRET_KEY")) throw new Error("Non-staging deployment must not resolve Honeycomb secrets");
-  for (const fn of [backend.honeycombSubmissions, backend.honeycombSubmissionWorker]) {
+  const environment = process.env.AWS_BRANCH === "main" ? "production" : process.env.AWS_BRANCH === "staging" ? "staging" : "disabled";
+  const enabled = environment !== "disabled";
+  if (intakeEnv.variables.HONEYCOMB_ENABLED !== String(enabled)) throw new Error("Honeycomb intake enablement does not match the release branch");
+  for (const fn of [backend.honeycombWorker, backend.honeycombSubmissions, backend.honeycombSubmissionWorker]) {
     const env = Stack.of(fn.resources.lambda).resolve((fn.resources.lambda.node.defaultChild as CfnFunction).environment);
-    if (env.variables.HONEYCOMB_ENABLED !== String(staging)) throw new Error("Submissions must only run on staging");
-    if (!staging && JSON.stringify(env).includes("HONEYCOMB_API_SECRET_KEY")) throw new Error("Non-staging submissions must not resolve secrets");
+    if (env.variables.HONEYCOMB_ENABLED !== String(enabled) || env.variables.HONEYCOMB_ENVIRONMENT !== environment) throw new Error("Honeycomb worker/resolver environment does not match the release branch");
+    if (!enabled && JSON.stringify(env).includes("HONEYCOMB_API_SECRET_KEY")) throw new Error("Preview deployments must not resolve Honeycomb secrets");
   }
+  const statusEnv = Stack.of(backend.honeycombStatus.resources.lambda).resolve((backend.honeycombStatus.resources.lambda.node.defaultChild as CfnFunction).environment);
+  if (statusEnv.variables.HONEYCOMB_ENVIRONMENT !== environment) throw new Error("Honeycomb public status must label the correct environment");
   const { checkAccountAccess } = await import("./check-account-access");
   checkAccountAccess(backend, outdir);
   const { checkOwnerProfitability } = await import("./check-owner-profitability");

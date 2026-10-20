@@ -9,6 +9,6 @@ export async function handler(event: { arguments: { estimateToken: string } }) {
   const id = createHash("sha256").update(token).digest("hex");
   try {
     const record = (await db.send(new GetCommand({ TableName: process.env.HONEYCOMB_ESTIMATE_TABLE!, Key: { id }, ConsistentRead: true }))).Item;
-    return publicEstimate(record as EstimateRecord | undefined);
+    return publicEstimate(record as EstimateRecord | undefined, Date.now(), process.env.HONEYCOMB_ENVIRONMENT === "staging");
   } catch { return { status: "unavailable" }; }
 }

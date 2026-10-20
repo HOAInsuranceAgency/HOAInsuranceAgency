@@ -7,6 +7,7 @@ const response = JSON.parse(execFileSync("aws", ["ssm", "get-parameters", "--reg
 if (response.InvalidParameters?.length || response.Parameters?.length !== names.length) throw new Error("Staging credentials are incomplete");
 for (const parameter of response.Parameters) process.env[parameter.Name.slice(prefix.length)] = parameter.Value;
 process.env.HONEYCOMB_ENABLED = "true";
+process.env.HONEYCOMB_ENVIRONMENT = "staging";
 // Synthetic test inputs at the public address shown in Honeycomb's Swagger example.
 // Estimation only: no submission, email, SMS or underwriting referral is created.
 const started = Date.now();

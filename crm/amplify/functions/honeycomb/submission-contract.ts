@@ -1,4 +1,5 @@
 /** Shared validation and display helpers; no secrets or browser data client. */
+import { HONEYCOMB_ENDPOINTS, isHoneycombEnvironment } from "./environment";
 export type SubmissionDetails = {
   address: string; effectiveDate: string; nameInsured: string;
   buildingType?: string; grossSQFeet?: string | number; replacementValue?: string | number;
@@ -69,8 +70,9 @@ export function partialInput(details: unknown, estimate?: SourceEstimate, now = 
   if (new TextEncoder().encode(JSON.stringify(input)).length > 16000) throw new Error("The submission data is too large.");
   return input;
 }
-export function portalUrl(submissionId: string): string | undefined {
-  return /^[a-zA-Z0-9_-]{1,200}$/.test(submissionId) ? `https://staging-falcon.honeycombinsurance.com/quotes/${encodeURIComponent(submissionId)}` : undefined;
+export function portalUrl(submissionId: string, environment: unknown): string | undefined {
+  return isHoneycombEnvironment(environment) && /^[a-zA-Z0-9_-]{1,200}$/.test(submissionId)
+    ? `${HONEYCOMB_ENDPOINTS[environment].portal}/quotes/${encodeURIComponent(submissionId)}` : undefined;
 }
 export function submissionStatus(record: Pick<SubmissionRecord, "status" | "updatedAt">, now = Date.now()): string {
   return record.status === "RUNNING" && now - Date.parse(record.updatedAt) > 120000 ? "UNKNOWN" : record.status;
