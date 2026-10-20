@@ -33,6 +33,7 @@ import { data } from "./data/resource";
 import { storage } from "./storage/resource";
 import { processDocument } from "./functions/process-document/resource";
 import { honeycombWorker, honeycombStatus, honeycombSubmissions, honeycombSubmissionWorker } from "./functions/honeycomb/resource";
+import { honeycombEnvironmentForBranch } from "./functions/honeycomb/environment";
 import { leadIntake } from "./functions/lead-intake/resource";
 import { teamAdmin } from "./functions/team-admin/resource";
 import { migrateProducerLicenses } from "./functions/migrate-producer-licenses/resource";
@@ -347,7 +348,7 @@ for (const fn of [backend.leadIntake, backend.honeycombWorker]) {
 }
 estimateTable.grantReadData(backend.honeycombStatus.resources.lambda);
 backend.honeycombStatus.addEnvironment("HONEYCOMB_ESTIMATE_TABLE", estimateTable.tableName);
-backend.leadIntake.addEnvironment("HONEYCOMB_ENABLED", String(branch === "staging"));
+backend.leadIntake.addEnvironment("HONEYCOMB_ENABLED", String(honeycombEnvironmentForBranch(branch) !== "disabled"));
 backend.data.resources.cfnResources.amplifyDynamoDbTables.HoneycombEstimate.streamSpecification = { streamViewType: StreamViewType.NEW_IMAGE };
 backend.honeycombWorker.resources.lambda.addEventSource(new DynamoEventSource(estimateTable, {
   // Include jobs captured while the new event mapping is still being deployed.

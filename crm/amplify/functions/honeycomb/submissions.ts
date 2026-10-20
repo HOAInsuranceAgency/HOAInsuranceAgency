@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, GetCommand, PutCommand, TransactWriteCommand } from "@aws-sdk/lib-dynamodb";
 import { partialInput, portalUrl, submissionStatus, type SourceEstimate, type SubmissionRecord } from "./submission-contract";
+import { isHoneycombEnvironment } from "./environment";
 const db = DynamoDBDocumentClient.from(new DynamoDBClient(), { marshallOptions: { removeUndefinedValues: true } });
 const table = () => process.env.HONEYCOMB_SUBMISSION_TABLE!;
 const validId = (id: unknown): id is string => typeof id === "string" && /^[a-zA-Z0-9_-]{1,100}$/.test(id);
@@ -15,8 +16,10 @@ type Event = { info?: { fieldName?: string }; identity?: { sub?: string }; argum
 export async function handler(event: Event) {
   const actor = event.identity?.sub;
   if (!actor) return { ok: false, error: "Sign in to manage carrier submissions." };
-  if (event.info?.fieldName === "honeycombSubmissionSettings") return { enabled: process.env.HONEYCOMB_ENABLED === "true", environment: "staging" };
-  if (process.env.HONEYCOMB_ENABLED !== "true") return { ok: false, error: "Honeycomb submissions are enabled in staging only." };
+  const environment = process.env.HONEYCOMB_ENVIRONMENT;
+  const enabled = process.env.HONEYCOMB_ENABLED === "true" && isHoneycombEnvironment(environment);
+  if (event.info?.fieldName === "honeycombSubmissionSettings") return { enabled, environment: isHoneycombEnvironment(environment) ? environment : "disabled" };
+  if (!enabled) return { ok: false, error: "Honeycomb submissions are not enabled in this environment." };
   try {
     if (event.info?.fieldName === "resolveHoneycombSubmission") return await resolve(event.arguments, actor);
     return await start(event.arguments, actor);
@@ -71,7 +74,7 @@ async function resolve(args: Event["arguments"], actor: string) {
   if (!old) throw new InputError("Submission not found.");
   if (submissionStatus(old) !== "UNKNOWN") return receipt(old);
   if (!["LINK_EXISTING", "NOT_CREATED"].includes(args.outcome ?? "")) throw new InputError("Choose a review outcome.");
-  const link = args.submissionId ? portalUrl(args.submissionId.trim()) : undefined;
+  const link = args.submissionId ? portalUrl(args.submissionId.trim(), process.env.HONEYCOMB_ENVIRONMENT) : undefined;
   if (args.outcome === "LINK_EXISTING" && !link) throw new InputError("Enter the submission ID from the Honeycomb portal URL.");
   const record: SubmissionRecord = { ...old, updatedAt: new Date().toISOString(), resolvedBy: actor, resolutionNote: args.note.trim(),
     ...(args.outcome === "LINK_EXISTING" ? { status: "EXISTING", submissionId: args.submissionId!.trim(), portalUrl: link, submissionStatus: "linked after review", issue: "MANUALLY_LINKED" }

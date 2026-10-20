@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createHmac } from "node:crypto";
 const h = vi.hoisted(() => ({ records: new Map<string, any>(), send: vi.fn() }));
 vi.mock("@aws-sdk/lib-dynamodb", async original => ({ ...await original<typeof import("@aws-sdk/lib-dynamodb")>(), DynamoDBDocumentClient: { from: () => ({ send: h.send }) } }));
-import { businessDate, partialInput, eligibleEstimate, submissionStatus, type SourceEstimate, type SubmissionRecord } from "../../amplify/functions/honeycomb/submission-contract";
+import { businessDate, partialInput, portalUrl, eligibleEstimate, submissionStatus, type SourceEstimate, type SubmissionRecord } from "../../amplify/functions/honeycomb/submission-contract";
 import { createPartial, partialResult, PARTIAL_PATH } from "../../amplify/functions/honeycomb/submission-client";
 import { handler, submissionKey } from "../../amplify/functions/honeycomb/submissions";
 import { processSubmission } from "../../amplify/functions/honeycomb/submission-worker";
@@ -15,6 +15,7 @@ const readJob = () => h.records.get(`submissions/${submissionKey("account", deta
 const conflict = () => Object.assign(new Error("Conflict"), { name: "ConditionalCheckFailedException" });
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(now);
+  vi.stubEnv("HONEYCOMB_ENVIRONMENT", "staging");
   for (const [key, value] of Object.entries({ HONEYCOMB_ENABLED: "true", HONEYCOMB_API_BASE_URL: "https://staging-api.honeycombinsurance.com", HONEYCOMB_API_USER: "test", HONEYCOMB_PRODUCER_ID: "producer", HONEYCOMB_API_SECRET_KEY: "test-secret", HONEYCOMB_SUBMISSION_TABLE: "submissions", HONEYCOMB_ACCOUNT_TABLE: "accounts", HONEYCOMB_ESTIMATE_TABLE: "estimates" })) vi.stubEnv(key, value);
   h.records.clear(); h.records.set("accounts/account", { id: "account", type: "ASSOCIATION", stage: "LEAD" }); h.records.set("estimates/estimate", source);
   h.send.mockReset().mockImplementation(async command => {
@@ -71,9 +72,29 @@ describe("partial submission contract", () => {
     expect(await createPartial(partialInput(details, undefined, now), request)).toEqual({ status: "UNKNOWN", issue: "TIMEOUT" }); expect(request).toHaveBeenCalledTimes(1);
     vi.stubEnv("HONEYCOMB_API_BASE_URL", "https://api.honeycombinsurance.com"); request.mockClear(); expect((await createPartial(partialInput(details, undefined, now), request)).issue).toBe("CONFIGURATION"); expect(request).not.toHaveBeenCalled();
   });
+  it("routes production submissions and recovery links to production only", async () => {
+    vi.stubEnv("HONEYCOMB_ENVIRONMENT", "production");
+    vi.stubEnv("HONEYCOMB_API_BASE_URL", "https://api.honeycombinsurance.com");
+    const request = vi.fn().mockResolvedValue(new Response(JSON.stringify({ submissionId: "prod-id", submissionStatus: "incomplete", honeycombLink: "https://evil.test" })));
+    expect(await createPartial(partialInput(details, undefined, now), request)).toMatchObject({ status: "CREATED", portalUrl: "https://app.honeycombinsurance.com/quotes/prod-id" });
+    expect(request.mock.calls[0][0]).toBe(`https://api.honeycombinsurance.com${PARTIAL_PATH}`);
+    expect(request.mock.calls[0][1].headers["User-Agent"]).toBe("HOAInsuranceAgency-Honeycomb/1.0");
+    expect(await handler({ ...createEvent(), info: { fieldName: "honeycombSubmissionSettings" } })).toEqual({ enabled: true, environment: "production" });
+    await handler(createEvent()); Object.assign(readJob(), { status: "UNKNOWN" });
+    await handler({ info: { fieldName: "resolveHoneycombSubmission" }, identity: { sub: "agent" }, arguments: { id: readJob().id, outcome: "LINK_EXISTING", submissionId: "existing", reviewed: true, note: "Found in production portal" } });
+    expect(readJob().portalUrl).toBe("https://app.honeycombinsurance.com/quotes/existing");
+    for (const endpoint of ["https://staging-api.honeycombinsurance.com", "https://evil.test"]) {
+      request.mockClear(); vi.stubEnv("HONEYCOMB_API_BASE_URL", endpoint);
+      expect(await createPartial(partialInput(details, undefined, now), request)).toMatchObject({ issue: "CONFIGURATION" });
+      expect(request).not.toHaveBeenCalled();
+    }
+    expect(portalUrl("../evil", "production")).toBeUndefined();
+    expect(portalUrl("valid", "preview")).toBeUndefined();
+    expect(portalUrl("valid", undefined)).toBeUndefined();
+  });
 });
 describe("agent workflow and durable job", () => {
-  it("requires authentication, staging, review, association, and ownership of linked estimate", async () => {
+  it("requires authentication, enablement, review, association, and ownership of linked estimate", async () => {
     expect(await handler({ ...createEvent(), identity: undefined })).toMatchObject({ ok: false });
     vi.stubEnv("HONEYCOMB_ENABLED", "false"); expect(await handler(createEvent())).toMatchObject({ ok: false }); vi.stubEnv("HONEYCOMB_ENABLED", "true");
     expect(await handler(createEvent({ reviewed: false }))).toMatchObject({ ok: false });
