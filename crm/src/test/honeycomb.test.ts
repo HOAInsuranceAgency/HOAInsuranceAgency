@@ -48,7 +48,7 @@ describe("carrier contract", () => {
     expect(url).toBe(`https://staging-api.honeycombinsurance.com${ESTIMATE_PATH}`);
     expect(opts.body).toBe(JSON.stringify(value));
     expect(opts.headers["x-signature"]).toBe(createHmac("sha256", "test-secret").update("POST" + opts.body + ESTIMATE_PATH).digest("hex"));
-    expect(opts.headers["x-producer-id"]).toBe("producer@example.test");
+    expect(opts.headers).not.toHaveProperty("x-producer-id");
     expect(signature("post", opts.body, ESTIMATE_PATH, "test-secret")).toBe(opts.headers["x-signature"]);
   });
   it("never sends staging credentials to production or a disabled integration", async () => {
@@ -64,7 +64,8 @@ describe("carrier contract", () => {
     const request = vi.fn().mockResolvedValue(new Response(JSON.stringify({ isOkToSubmit: true, priceIndication: 900 })));
     expect(await estimate(payload(), request)).toMatchObject({ status: "READY", price: 900 });
     expect(request.mock.calls[0][0]).toBe(`https://api.honeycombinsurance.com${ESTIMATE_PATH}`);
-    expect(request.mock.calls[0][1]).toMatchObject({ redirect: "error", headers: { "User-Agent": "HOAInsuranceAgency-Honeycomb/1.0", "x-user": "test-user", "x-producer-id": "producer@example.test" } });
+    expect(request.mock.calls[0][1]).toMatchObject({ redirect: "error", headers: { "User-Agent": "HOAInsuranceAgency-Honeycomb/1.0", "x-user": "test-user" } });
+    expect(request.mock.calls[0][1].headers).not.toHaveProperty("x-producer-id");
     for (const endpoint of ["https://staging-api.honeycombinsurance.com", "https://api.honeycombinsurance.com.evil.test", "http://api.honeycombinsurance.com", "https://api.honeycombinsurance.com/"]) {
       request.mockClear(); vi.stubEnv("HONEYCOMB_API_BASE_URL", endpoint);
       expect(await estimate(payload(), request)).toMatchObject({ issue: "CONFIGURATION" });
@@ -74,6 +75,18 @@ describe("carrier contract", () => {
     vi.stubEnv("HONEYCOMB_ENVIRONMENT", "preview");
     expect(await estimate(payload(), request)).toMatchObject({ issue: "CONFIGURATION" });
     expect(request).not.toHaveBeenCalled();
+  });
+  it("uses default-agency rating without retrying the failing producer override", async () => {
+    vi.stubEnv("HONEYCOMB_ENVIRONMENT", "production");
+    vi.stubEnv("HONEYCOMB_API_BASE_URL", "https://api.honeycombinsurance.com");
+    // Reproduced against production: the producer override fails; default-agency
+    // rating returns an ordinary underwriting decision and carrier estimate ID.
+    const request = vi.fn(async (_url: string | URL | Request, init?: RequestInit) =>
+      new Headers(init?.headers).has("x-producer-id")
+        ? new Response('{"errorType":"InternalServerException"}', { status: 500 })
+        : new Response(JSON.stringify({ isOkToSubmit: false, estimationId: "production-estimate", declinationReasons: ["Outside appetite"] })));
+    expect(await estimate(payload(), request)).toMatchObject({ status: "DECLINED", estimationId: "production-estimate" });
+    expect(request).toHaveBeenCalledTimes(1);
   });
   it("uses isOkToSubmit and requires a positive numeric price", () => {
     expect(parseResult({ isOkToSubmit: false, priceIndication: 1234, declinationReasons: ["Outside territory"] })).toMatchObject({ status: "DECLINED" });

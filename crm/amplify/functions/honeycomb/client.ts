@@ -26,7 +26,10 @@ export async function estimate(input: EstimateInput, request: typeof fetch = fet
   try {
     const response = await request(env.HONEYCOMB_API_BASE_URL + ESTIMATE_PATH, {
       method: "POST", redirect: "error", signal: AbortSignal.timeout(60_000),
-      headers: { "Content-Type": "application/json", "User-Agent": HONEYCOMB_USER_AGENT, "x-user": env.HONEYCOMB_API_USER, "x-producer-id": env.HONEYCOMB_PRODUCER_ID,
+      // Estimates use the API client's default agency. The optional producer override
+      // changes rating configuration and currently fails in production; submissions
+      // still require the configured producer in submission-client.ts.
+      headers: { "Content-Type": "application/json", "User-Agent": HONEYCOMB_USER_AGENT, "x-user": env.HONEYCOMB_API_USER,
         "x-signature": signature("POST", body, ESTIMATE_PATH, env.HONEYCOMB_API_SECRET_KEY) }, body,
     });
     // No automatic retry: an ambiguous response may already have created an estimate.
