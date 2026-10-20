@@ -79,6 +79,7 @@ describe("partial submission contract", () => {
     expect(await createPartial(partialInput(details, undefined, now), request)).toMatchObject({ status: "CREATED", portalUrl: "https://app.honeycombinsurance.com/quotes/prod-id" });
     expect(request.mock.calls[0][0]).toBe(`https://api.honeycombinsurance.com${PARTIAL_PATH}`);
     expect(request.mock.calls[0][1].headers["User-Agent"]).toBe("HOAInsuranceAgency-Honeycomb/1.0");
+    expect(request.mock.calls[0][1].headers["x-producer-id"]).toBe("producer");
     expect(await handler({ ...createEvent(), info: { fieldName: "honeycombSubmissionSettings" } })).toEqual({ enabled: true, environment: "production" });
     await handler(createEvent()); Object.assign(readJob(), { status: "UNKNOWN" });
     await handler({ info: { fieldName: "resolveHoneycombSubmission" }, identity: { sub: "agent" }, arguments: { id: readJob().id, outcome: "LINK_EXISTING", submissionId: "existing", reviewed: true, note: "Found in production portal" } });
