@@ -29,10 +29,10 @@ export function visibleStatus(record: Pick<EstimateRecord, "status" | "createdAt
   return ["PENDING", "RUNNING"].includes(record.status) && now - Date.parse(record.createdAt) > PROCESSING_WINDOW_MS ? "TIMED_OUT" : record.status;
 }
 /** The public receipt cannot disclose carrier identity, reasons, or account data. */
-export function publicEstimate(record: EstimateRecord | undefined, now = Date.now()) {
+export function publicEstimate(record: EstimateRecord | undefined, now = Date.now(), staging = false) {
   if (!record || record.expiresAt * 1000 <= now) return { status: "unavailable" };
   const status = visibleStatus(record, now);
-  if (status === "READY" && Number.isFinite(record.price) && record.price! > 0) return { status: "ready", price: record.price, currency: "USD", staging: true };
+  if (status === "READY" && Number.isFinite(record.price) && record.price! > 0) return { status: "ready", price: record.price, currency: "USD", staging };
   if (status === "PENDING" || status === "RUNNING") return { status: "pending" };
   return { status: "unavailable" };
 }
