@@ -5,6 +5,7 @@ import { useAsyncResource } from "../lib/useAsyncResource";
 import { isAuthorizationError } from "../lib/authorizationError";
 import { allWithAuthorizationPriority } from "../lib/allWithAuthorizationPriority";
 import { businessDate, eligibleEstimate, lastEffectiveDate, object, partialInput, portalUrl, submissionStatus, type SubmissionDetails } from "../../amplify/functions/honeycomb/submission-contract";
+import { isHoneycombEnvironment } from "../../amplify/functions/honeycomb/environment";
 import type { Schema } from "../../amplify/data/resource";
 import "./SubmissionsPanel.css";
 
@@ -41,7 +42,8 @@ function SubmissionsPanelContent({ account, initialEstimateId }: { account: Acco
         return settings;
       }),
     ]);
-    return { submissions: submissions.sort((a, b) => b.createdAt.localeCompare(a.createdAt)), estimates: estimates.sort((a, b) => b.createdAt.localeCompare(a.createdAt)), enabled: object(settings.data).enabled === true };
+    const environment = object(settings.data).environment;
+    return { submissions: submissions.sort((a, b) => b.createdAt.localeCompare(a.createdAt)), estimates: estimates.sort((a, b) => b.createdAt.localeCompare(a.createdAt)), environment, enabled: object(settings.data).enabled === true && isHoneycombEnvironment(environment) };
   }, [account.id], { clearDataOnError: isAuthorizationError });
   const records = resource.data?.submissions ?? [];
   // Decide the initial empty-state composer once. Later history refreshes
@@ -64,23 +66,23 @@ function SubmissionsPanelContent({ account, initialEstimateId }: { account: Acco
     <div className="hc-heading"><div><h2>Submissions</h2><p className="muted">Create a Honeycomb partial submission, then finish it in the carrier portal.</p></div>
       {resource.data?.enabled && account.type === "ASSOCIATION" && <button className="primary" onClick={() => { setRetry(undefined); setOpen(true); }}>New submission</button>}
     </div>
-    <p className="hc-notice">Staging · For testing. Partial submissions stay on this account; they do not create a bindable quote or change a Lead to a Client.</p>
+    <p className="hc-notice">{resource.data?.environment === "staging" && "Staging · For testing. "}Partial submissions stay on this account; they do not create a bindable quote or change a Lead to a Client.</p>
     {resource.error && <p role="alert" className="error-text">{resource.error} <button className="secondary" onClick={() => void resource.refetch()}>Refresh</button></p>}
     {!resource.loaded && <p role="status">Loading submissions…</p>}
-    {resource.data && !resource.data.enabled && <p>Honeycomb submissions are currently enabled in staging only.</p>}
+    {resource.data && !resource.data.enabled && <p>Honeycomb submissions are not enabled in this environment.</p>}
     {account.type !== "ASSOCIATION" && <p>This Honeycomb workflow supports association accounts.</p>}
     {resource.data?.enabled && account.type === "ASSOCIATION" && (open ?? (!records.length && !queuedId)) && <Composer
-      key={retry ? `${retry.id}:${retry.attempt}` : "new"} blocked={!!resource.error || resource.loading} account={account} estimates={resource.data.estimates} records={records} retry={retry}
+      key={retry ? `${retry.id}:${retry.attempt}` : "new"} staging={resource.data.environment === "staging"} blocked={!!resource.error || resource.loading} account={account} estimates={resource.data.estimates} records={records} retry={retry}
       initialEstimateId={retry?.sourceEstimateId ?? initialEstimateId} onCancel={() => { setOpen(false); setRetry(undefined); }}
       onQueued={id => { setQueuedId(id); setOpen(false); setRetry(undefined); void resource.refetch(); }} />}
     {queuedId && !records.some(r => r.id === queuedId) && <p role="status">Request saved. Loading its status… <button className="secondary" onClick={() => void resource.refetch()}>Refresh</button></p>}
     {resource.loaded && <div className="hc-heading"><h3>Submission history</h3><button className="secondary" disabled={resource.loading} onClick={() => void resource.refetch()}>Refresh</button></div>}
-    {records.map(record => <SubmissionCard key={record.id} record={record} enabled={resource.data?.enabled === true} refresh={resource.refetch}
+    {records.map(record => <SubmissionCard key={record.id} record={record} environment={resource.data?.environment} enabled={resource.data?.enabled === true} refresh={resource.refetch}
       onRetry={() => { setRetry(record); setOpen(true); }} />)}
   </section>;
 }
-function Composer({ account, estimates, records, retry, initialEstimateId, onCancel, onQueued, blocked }: {
-  blocked: boolean; account: Account; estimates: Estimate[]; records: Submission[]; retry?: Submission; initialEstimateId?: string; onCancel: () => void; onQueued: (id: string) => void;
+function Composer({ account, estimates, records, retry, initialEstimateId, onCancel, onQueued, blocked, staging }: {
+  staging: boolean; blocked: boolean; account: Account; estimates: Estimate[]; records: Submission[]; retry?: Submission; initialEstimateId?: string; onCancel: () => void; onQueued: (id: string) => void;
 }) {
   const eligible = estimates.filter(eligibleEstimate);
   const [sourceId, setSourceId] = useState(initialEstimateId ?? "");
@@ -123,7 +125,7 @@ function Composer({ account, estimates, records, retry, initialEstimateId, onCan
       {([['grossSQFeet', 'Total building area (sq ft)'], ['replacementValue', 'Building replacement cost ($)'], ['numUnits', 'Number of units'], ['yearBuilt', 'Year built'], ['numStories', 'Stories']] as const).map(([key, label]) => <div className="field" key={key}><label htmlFor={`hc-${key}`}>{label}</label><input id={`hc-${key}`} inputMode={key === "grossSQFeet" || key === "replacementValue" ? "decimal" : "numeric"} value={formatInput(form[key], key === "yearBuilt")} readOnly={originalData[key] != null} onChange={e => { const raw = e.target.value.replaceAll(",", ""); if (/^\d*(\.\d*)?$/.test(raw)) change(key, raw); }} /></div>)}
     </div></fieldset>
     <p className="small muted">Replacement cost means the cost to rebuild the buildings. Confirm it separately from the account’s total insured value.</p>
-    <label className="hc-review"><input type="checkbox" checked={reviewed} disabled={busy} onChange={e => setReviewed(e.target.checked)} /><span>I reviewed these details and want to create a partial submission in Honeycomb staging.</span></label>
+    <label className="hc-review"><input type="checkbox" checked={reviewed} disabled={busy} onChange={e => setReviewed(e.target.checked)} /><span>I reviewed these details and want to create a partial submission in Honeycomb{staging ? " staging" : ""}.</span></label>
     {duplicate && <p role="status">A submission already exists for this effective date. Review its status in the history below.</p>}
     {error && <p role="alert" className="error-text">{error}</p>}
     <div className="hc-actions"><button className="primary" disabled={busy || blocked || !reviewed || !!duplicate || !!sourceId && !source} type="submit">{busy ? "Saving request…" : retry ? "Retry partial submission" : "Create partial submission"}</button><button className="secondary" type="button" disabled={busy} onClick={onCancel}>Cancel</button></div>
@@ -134,9 +136,9 @@ function formatInput(value: string | number | undefined, year: boolean) {
   const [integer, decimal] = raw.split(".");
   return integer.replace(/\B(?=(\d{3})+(?!\d))/g, ",") + (decimal === undefined ? "" : `.${decimal}`);
 }
-function SubmissionCard({ record, enabled, refresh, onRetry }: { record: Submission; enabled: boolean; refresh: () => Promise<void>; onRetry: () => void }) {
+function SubmissionCard({ record, enabled, refresh, onRetry, environment }: { record: Submission; enabled: boolean; refresh: () => Promise<void>; onRetry: () => void; environment: unknown }) {
   const status = submissionStatus(record), pending = ["PENDING", "RUNNING"].includes(status);
-  const link = record.submissionId ? portalUrl(record.submissionId) : undefined;
+  const link = record.submissionId ? portalUrl(record.submissionId, environment) : undefined;
   const declined = record.submissionStatus?.toLowerCase() === "declined";
   return <article className="card hc-submission" aria-label={`Submission effective ${record.effectiveDate}`}>
     <div className="hc-heading"><h3>Effective {record.effectiveDate}</h3><span className={`badge ${declined ? "red" : pending ? "blue" : status === "UNKNOWN" || status === "REJECTED" ? "amber" : "green"}`} role={pending ? "status" : undefined}>{declined ? "Declined by Honeycomb" : labels[status] ?? status}</span></div>
@@ -144,7 +146,7 @@ function SubmissionCard({ record, enabled, refresh, onRetry }: { record: Submiss
     {pending && <p role="status">{status === "PENDING" ? "Your request is saved and waiting to be processed." : "Honeycomb is creating the partial submission. This may take about a minute."} You can leave this tab and return.</p>}
     {link && <><p><strong>Honeycomb status: {record.submissionStatus}</strong>{record.readableSubmissionId ? ` · ${record.readableSubmissionId}` : ""}</p><p><a className="secondary" href={link} target="_blank" rel="noopener noreferrer">Open in Honeycomb ↗</a></p><p className="small muted">Complete and review the remaining application in Honeycomb. Status shown here is from creation or manual review.</p></>}
     {status === "REJECTED" && <><p>Honeycomb did not create this submission. Review the response and correct the details before retrying.</p>{enabled && record.attempt < 5 && <button className="secondary" onClick={onRetry}>Review and retry</button>}</>}
-    {status === "UNKNOWN" && <><p>Honeycomb may have created this submission. Check the staging portal or confirm with Honeycomb before recording an outcome below.</p>{enabled && <Recovery record={record} refresh={refresh} />}</>}
+    {status === "UNKNOWN" && <><p>Honeycomb may have created this submission. Check the Honeycomb portal or confirm with Honeycomb before recording an outcome below.</p>{enabled && <Recovery record={record} refresh={refresh} />}</>}
     {record.issue && <p className="small muted">Result: {record.issue}</p>}
     {record.resolutionNote && <p className="small">Review note: {record.resolutionNote}</p>}
     {record.result && <details><summary>Carrier response</summary><pre>{pretty(record.result)}</pre></details>}

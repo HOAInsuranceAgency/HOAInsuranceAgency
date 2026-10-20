@@ -1,5 +1,7 @@
 # Honeycomb partial submissions
 
+October 20, 2026: production enablement now uses separate encrypted credentials and the user-confirmed producer `insurance@protectmyhoa.com`. `main` targets the production API and agent portal; `staging` retains its test endpoints. Preview branches remain disabled. The notes below describe the original staging release; the workflow, agent review and duplicate/retry protections are unchanged.
+
 Implemented September 23, 2026 on `codex/honeycomb-submissions`, based on staging commit `778f7eb`. Staging only. This is the agent-controlled partial submission phase; completing the application still happens in Honeycomb's portal.
 
 ## Agent workflow

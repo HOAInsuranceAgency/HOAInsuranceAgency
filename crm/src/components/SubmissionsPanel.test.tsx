@@ -9,10 +9,19 @@ const account = { id: "account", name: "Example Association", type: "ASSOCIATION
 const estimate = { id: "estimate", accountId: "account", status: "READY", price: 1234, estimationId: "carrier-id", createdAt: "2026-09-23T12:00:00Z", input: JSON.stringify({ address: "1 Original St, Chicago, IL", submissionData: { buildingType: "condominium", grossSQFeet: 15000, replacementValue: 2500000, numUnits: 12 } }), result: '{"isOkToSubmit":true}' };
 const job = { id: "job", accountId: "account", effectiveDate: businessDate(), status: "PENDING", attempt: 1, input: JSON.stringify({ address: "Address", submissionData: { effectiveDate: businessDate(), nameInsured: "Example Association" } }), requestedAt: new Date().toISOString(), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
 beforeEach(() => {
-  vi.clearAllMocks(); h.list.mockResolvedValue({ data: [] }); h.estimates.mockResolvedValue({ data: [estimate] }); h.settings.mockResolvedValue({ data: { enabled: true } });
+  vi.clearAllMocks(); h.list.mockResolvedValue({ data: [] }); h.estimates.mockResolvedValue({ data: [estimate] }); h.settings.mockResolvedValue({ data: { enabled: true, environment: "staging" } });
   h.start.mockImplementation(async () => { h.list.mockResolvedValue({ data: [job] }); return { data: JSON.stringify({ ok: true, id: "job", status: "PENDING" }) }; }); h.resolve.mockResolvedValue({ data: { ok: true } });
 });
 afterEach(() => vi.useRealTimers());
+it("uses production portal links and removes staging language for production", async () => {
+  h.settings.mockResolvedValue({ data: { enabled: true, environment: "production" } });
+  h.list.mockResolvedValue({ data: [{ ...job, status: "CREATED", submissionId: "live", portalUrl: "https://evil.test", submissionStatus: "incomplete" }] });
+  render(<SubmissionsPanel account={account} />);
+  expect(await screen.findByRole("link", { name: /Open in Honeycomb/ })).toHaveAttribute("href", "https://app.honeycombinsurance.com/quotes/live");
+  fireEvent.click(screen.getByRole("button", { name: "New submission" }));
+  expect(screen.getByRole("checkbox")).toHaveAccessibleName("I reviewed these details and want to create a partial submission in Honeycomb.");
+  expect(screen.queryByText(/Staging · For testing/)).toBeNull();
+});
 it("prefills account fields while leaving replacement cost unconfirmed", () => {
   expect(initialDetails(account)).toMatchObject({ nameInsured: "Example Association", address: "9 Changed St, Chicago, IL, 60601", numUnits: 12 });
   expect(initialDetails(account).replacementValue).toBeUndefined(); expect(initialDetails(account).buildingType).toBeUndefined();
@@ -41,9 +50,9 @@ it("submits unlinked property details and removes review confirmation after an e
 it("closes an empty composer when canceled", async () => {
   render(<SubmissionsPanel account={account} />); await screen.findByRole("form"); fireEvent.click(screen.getByRole("button", { name: "Cancel" })); expect(screen.queryByRole("form")).toBeNull();
 });
-it("does not allow creation when lists fail or staging is disabled", async () => {
+it("does not allow creation when lists fail or the integration is disabled", async () => {
   h.list.mockResolvedValue({ data: [], errors: [{ message: "denied" }] }); const view = render(<SubmissionsPanel account={account} />); await screen.findByRole("alert"); expect(screen.queryByRole("form")).toBeNull(); view.unmount();
-  h.list.mockResolvedValue({ data: [] }); h.settings.mockResolvedValue({ data: { enabled: false } }); render(<SubmissionsPanel account={account} />); await screen.findByText("Honeycomb submissions are currently enabled in staging only."); expect(screen.queryByRole("form")).toBeNull();
+  h.list.mockResolvedValue({ data: [] }); h.settings.mockResolvedValue({ data: { enabled: false } }); render(<SubmissionsPanel account={account} />); await screen.findByText("Honeycomb submissions are not enabled in this environment."); expect(screen.queryByRole("form")).toBeNull();
 });
 it("shows a timeout review path rather than an automatic retry", async () => {
   h.list.mockResolvedValue({ data: [{ ...job, status: "RUNNING", updatedAt: new Date(Date.now()-130000).toISOString() }] }); render(<SubmissionsPanel account={account} />);

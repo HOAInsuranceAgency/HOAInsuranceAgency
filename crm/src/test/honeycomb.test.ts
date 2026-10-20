@@ -15,6 +15,7 @@ const payload = () => estimateInput(input)!;
 const record = (overrides: Partial<EstimateRecord> = {}): EstimateRecord => ({ id: "id", accountId: "private-account", status: "PENDING", input: JSON.stringify(payload()), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), expiresAt: Math.floor(Date.now()/1000)+900, ...overrides });
 beforeEach(() => {
   vi.stubEnv("HONEYCOMB_ENABLED", "true"); vi.stubEnv("HONEYCOMB_API_BASE_URL", "https://staging-api.honeycombinsurance.com");
+  vi.stubEnv("HONEYCOMB_ENVIRONMENT", "staging");
   vi.stubEnv("HONEYCOMB_API_USER", "test-user"); vi.stubEnv("HONEYCOMB_PRODUCER_ID", "producer@example.test"); vi.stubEnv("HONEYCOMB_API_SECRET_KEY", "test-secret"); vi.stubEnv("HONEYCOMB_ESTIMATE_TABLE", "estimates");
   h.records.clear(); h.send.mockReset().mockImplementation(async command => {
     const p = command.input, old = h.records.get(p.Key.id);
@@ -50,12 +51,29 @@ describe("carrier contract", () => {
     expect(opts.headers["x-producer-id"]).toBe("producer@example.test");
     expect(signature("post", opts.body, ESTIMATE_PATH, "test-secret")).toBe(opts.headers["x-signature"]);
   });
-  it("never sends a credential to a production or arbitrary host", async () => {
+  it("never sends staging credentials to production or a disabled integration", async () => {
     const request = vi.fn();
     vi.stubEnv("HONEYCOMB_API_BASE_URL", "https://api.honeycombinsurance.com");
     expect(await estimate(payload(), request)).toMatchObject({ issue: "CONFIGURATION" });
     vi.stubEnv("HONEYCOMB_API_BASE_URL", "https://staging-api.honeycombinsurance.com"); vi.stubEnv("HONEYCOMB_ENABLED", "false");
     expect(await estimate(payload(), request)).toMatchObject({ issue: "CONFIGURATION" }); expect(request).not.toHaveBeenCalled();
+  });
+  it("signs production estimates only for the exact production endpoint", async () => {
+    vi.stubEnv("HONEYCOMB_ENVIRONMENT", "production");
+    vi.stubEnv("HONEYCOMB_API_BASE_URL", "https://api.honeycombinsurance.com");
+    const request = vi.fn().mockResolvedValue(new Response(JSON.stringify({ isOkToSubmit: true, priceIndication: 900 })));
+    expect(await estimate(payload(), request)).toMatchObject({ status: "READY", price: 900 });
+    expect(request.mock.calls[0][0]).toBe(`https://api.honeycombinsurance.com${ESTIMATE_PATH}`);
+    expect(request.mock.calls[0][1]).toMatchObject({ redirect: "error", headers: { "User-Agent": "HOAInsuranceAgency-Honeycomb/1.0", "x-user": "test-user", "x-producer-id": "producer@example.test" } });
+    for (const endpoint of ["https://staging-api.honeycombinsurance.com", "https://api.honeycombinsurance.com.evil.test", "http://api.honeycombinsurance.com", "https://api.honeycombinsurance.com/"]) {
+      request.mockClear(); vi.stubEnv("HONEYCOMB_API_BASE_URL", endpoint);
+      expect(await estimate(payload(), request)).toMatchObject({ issue: "CONFIGURATION" });
+      expect(request).not.toHaveBeenCalled();
+    }
+    vi.stubEnv("HONEYCOMB_API_BASE_URL", "https://api.honeycombinsurance.com");
+    vi.stubEnv("HONEYCOMB_ENVIRONMENT", "preview");
+    expect(await estimate(payload(), request)).toMatchObject({ issue: "CONFIGURATION" });
+    expect(request).not.toHaveBeenCalled();
   });
   it("uses isOkToSubmit and requires a positive numeric price", () => {
     expect(parseResult({ isOkToSubmit: false, priceIndication: 1234, declinationReasons: ["Outside territory"] })).toMatchObject({ status: "DECLINED" });
@@ -94,6 +112,8 @@ describe("durable worker and public receipt", () => {
     expect(await status({ arguments: { estimateToken: token } })).toEqual({ status: "unavailable" });
     h.records.set(id, record({ status: "READY", price: 1234, result: "private", estimationId: "private" }));
     expect(await status({ arguments: { estimateToken: token } })).toEqual({ status: "ready", price: 1234, currency: "USD", staging: true });
+    vi.stubEnv("HONEYCOMB_ENVIRONMENT", "production");
+    expect(await status({ arguments: { estimateToken: token } })).toEqual({ status: "ready", price: 1234, currency: "USD", staging: false });
     for (const status of ["DECLINED", "ERROR", "NEEDS_DETAILS", "UNAVAILABLE"]) expect(publicEstimate(record({ status, issue: "secret reason" }))).toEqual({ status: "unavailable" });
     expect(publicEstimate(record({ status: "READY", price: 1234, expiresAt: 1 }))).toEqual({ status: "unavailable" });
     expect(publicEstimate(record({ createdAt: new Date(Date.now()-130000).toISOString() }))).toEqual({ status: "unavailable" });

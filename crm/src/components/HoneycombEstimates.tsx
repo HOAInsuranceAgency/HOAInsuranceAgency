@@ -27,7 +27,7 @@ export default function HoneycombEstimates({ accountId }: { accountId: string })
   }, [pending, resource.loading, resource.refetch]);
   if (!resource.data.length && !resource.error) return null;
   return <section className="card" style={{ marginBottom: 20 }} aria-label="Honeycomb estimates">
-    <h3>Honeycomb · staging estimates</h3>
+    <h3>Honeycomb estimates</h3>
     <p className="muted small">Directional indications only. No application has been submitted to underwriting.</p>
     {resource.error && <p role="alert">{resource.error} <button onClick={() => void resource.refetch()}>Retry</button></p>}
     {resource.data.map(record => {
