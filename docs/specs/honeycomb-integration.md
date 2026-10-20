@@ -1,5 +1,19 @@
 # Honeycomb integration: implementation plan and blockers
 
+## Production estimate investigation — October 20, 2026
+
+The production 500 is triggered by the optional `x-producer-id` override on estimation requests. At the user's selected address, `420 Lakeside Ave, Marlborough, MA`, a controlled comparison used the same synthetic rating inputs (`buildingType: condominium`, 1,200 square feet, $513,000 replacement value):
+
+- Production with the configured producer: HTTP 500 / `InternalServerException` after 23 seconds at 16:18:44 UTC; Cloudflare reference `a4d956851b789aaa-BOS`.
+- Staging with its configured producer: HTTP 200, an estimate ID and an indicative test price of $1,848.13.
+- Production using the API client's default agency (omitting the optional producer header): HTTP 200 after 24 seconds at 16:20:11 UTC, an estimate ID and an underwriting decline. Cloudflare reference `a4d9589d383472e6-BOS`.
+- A separate test through the unchanged deployed production DynamoDB stream worker reproduced `HTTP_500` with the producer override at 16:21:32 UTC. Only a temporary diagnostic estimate was created, then removed; no customer lead or submission was created.
+- The corrected application client then called production with the original payload, including ZIP code `01752`. It returned `READY`, a carrier estimate ID and a positive price in 25 seconds. The original client had returned HTTP 500 for that payload. The successful result used the configured production API account, with no producer override.
+
+The [current API contract](https://swagger-api.honeycombinsurance.com/swagger.yaml) explicitly makes the producer header optional for estimates and specifies default-agency rating when it is omitted. The estimate client now uses that documented default. Partial submissions retain the required, user-confirmed producer. There is no automatic fallback or repeated carrier request after an ambiguous failure.
+
+This isolates the failing request mode, but Honeycomb's generic response does not expose the underlying defect in its producer-specific configuration or service. Both priced and declined production responses were observed with different address formatting; do not assume that an estimate is bindable or that staging and production underwriting results agree. The address and synthetic rating values are a connectivity fixture, not a verified property valuation or quote. Deployment and post-deployment worker verification for this fix are pending.
+
 ## Production enablement — October 20, 2026
 
 The user supplied separate production API credentials and authorized production deployment. Production submissions use the confirmed producer email `insurance@protectmyhoa.com`. All four production settings are encrypted `SecureString` parameters under `/amplify/d2d4g940z91vj4/main-branch-bb008ce041/`; no credential values are stored in source.
@@ -8,9 +22,9 @@ The prepared release enables Honeycomb on `main` (production) and `staging`, res
 
 Validation: 3,306 tests across 191 files passed, including production request signing, environment isolation, production portal links and public price labeling. Frontend/backend type checks, the CRM production build, and infrastructure synthesis for main, staging and a disabled preview branch passed. All four production secrets were read back and verified without printing their values.
 
-Release status: **prepared, not deployed**. A signed production estimate using synthetic rating values at the agency office address returned HTTP 500 after approximately 25 seconds, with `InternalServerException` and the message “Something went wrong, please contact our support”. No estimation ID or price was returned. The request uses fields allowed by the current published contract; the carrier response does not identify the underlying cause. An invalid-body authentication probe returned HTTP 400 rather than 401, which does not establish successful end-to-end operation. An earlier California example returned 403, and repeating that example returned 409 (“This request has been processed already”). Do not repeat the ambiguous Massachusetts request or treat these results as a successful production smoke test. No partial/full submission was requested.
+Release status: **deployed**. PR #80 was merged as `46243c3879005d59e3ee1fdb9a20c0a76824877b`; CRM staging job 247 and website staging job 246 succeeded on that exact commit. PR #79 was merged as `4d4d8e0463971d5839fe10670cb647c6df904b0e`; CRM main job 77 and website main job 86 succeeded on that exact commit. The deployed production environment and encrypted secret references were verified.
 
-The user subsequently instructed deployment to staging and then production once Greptile rates the release 5/5. This authorizes deployment while the carrier error remains a separate unresolved integration check. Main requires one approving GitHub review and permits squash merges; no rule bypass has been authorized for this release. Verify the exact merged commit succeeds in both CRM and website Amplify jobs in staging before promoting these changes to production, then verify both production jobs and the deployed Honeycomb environment. Report deployment success separately from carrier API readiness. Production secrets alone do not enable the integration in the currently deployed code.
+Both release heads received Greptile 5/5. Main requires one approving GitHub review and permits squash merges. The user explicitly authorized a one-time administrator override for PR #79; it was used for that PR only and does not authorize future bypasses. The original signed production smoke test returned HTTP 500 despite successful deployment. The user then requested investigation, repair and verification of production estimates; the findings are recorded above.
 
 The September implementation notes below describe the earlier staging-only rollout. The October production authorization supersedes that earlier deployment restriction. Full completion, webhooks, and automatic underwriting submission remain outside this integration.
 
