@@ -93,6 +93,21 @@ export function installAccountAccess(backend: typeof Backend, communicationTable
     if (functions.length > 10) throw new Error(`Too many pipeline stages for ${resolver.fieldName}`);
     resolver.pipelineConfig = { functions };
   }
+  function prependResponse(resolver: CfnResolver, prefix: string) {
+    let template = resolver.responseMappingTemplate;
+    if (resolver.responseMappingTemplateS3Location) {
+      const location = JSON.stringify(Stack.of(resolver).resolve(resolver.responseMappingTemplateS3Location));
+      const asset = backend.stack.node.root.node.findAll().find((node): node is Asset =>
+        node instanceof Asset && JSON.stringify(Stack.of(resolver).resolve(node.s3ObjectUrl)) === location);
+      if (!asset) throw new Error(`Missing generated response template for ${resolver.fieldName}`);
+      template = readFileSync((asset.node.findChild("Stage") as AssetStaging).absoluteStagedPath, "utf8");
+    }
+    if (!template) throw new Error(`Empty generated response template for ${resolver.fieldName}`);
+    // Preserve Amplify's response while replacing its asset reference with one
+    // inline template. AppSync rejects a resolver that specifies both.
+    resolver.responseMappingTemplate = prefix + template;
+    resolver.responseMappingTemplateS3Location = undefined;
+  }
   for (const resolver of Object.values(resources.cfnResolvers)) {
     const { typeName: type, fieldName: field } = resolver;
     const model = Object.entries(backend.data.resources.tables).find(([, table]) => resolver.requestMappingTemplate?.includes(`"tableName", "${table.tableName}"`))?.[0];
@@ -130,7 +145,7 @@ export function installAccountAccess(backend: typeof Backend, communicationTable
       if (target !== "AgencySettings") throw new Error(`Unsafe account subscription: ${field}`);
       // There are only three supported broadcasts. Each connection records
       // its authenticated user so an Owner can close it on deactivation.
-      resolver.responseMappingTemplate = '#if(!$util.isNull($ctx.identity.sub))\n$extensions.setSubscriptionInvalidationFilter({"filterGroup":[{"filters":[{"fieldName":"userId","operator":"eq","value":$ctx.identity.sub}]}]})\n#end\n' + resolver.responseMappingTemplate;
+      prependResponse(resolver, '#if(!$util.isNull($ctx.identity.sub))\n$extensions.setSubscriptionInvalidationFilter({"filterGroup":[{"filters":[{"fieldName":"userId","operator":"eq","value":$ctx.identity.sub}]}]})\n#end\n');
       continue;
     }
     if (PUBLIC_OPERATIONS.includes(field)) continue;
@@ -161,7 +176,7 @@ export function installAccountAccess(backend: typeof Backend, communicationTable
       // Close broadcasts even when a committed denial's response was lost.
       // Only an authorized attempt with a verified, non-self target returns
       // userId; on a failed write an active user can safely reconnect.
-      resolver.responseMappingTemplate = `#if($ctx.arguments.enabled == false && !$util.isNull($ctx.prev.result.userId))\n${invalidate}\n#end\n` + resolver.responseMappingTemplate;
+      prependResponse(resolver, `#if($ctx.arguments.enabled == false && !$util.isNull($ctx.prev.result.userId))\n${invalidate}\n#end\n`);
     }
   }
 }

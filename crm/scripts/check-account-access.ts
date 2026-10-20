@@ -49,6 +49,8 @@ export function checkAccountAccess(backend: typeof Backend, outdir: string) {
   if (!session) throw new Error("Persistent session guard is missing");
   for (const model of ACCOUNT_MODELS) if (!functions.some(fn => fn.name === `access_list_${model}__`)) throw new Error(`Assignment-scoped list missing for ${model}`);
   for (const resolver of Object.values(backend.data.resources.cfnResources.cfnResolvers)) {
+    if (resolver.responseMappingTemplate !== undefined && resolver.responseMappingTemplateS3Location !== undefined) throw new Error(`Conflicting inline and S3 response templates: ${resolver.typeName}.${resolver.fieldName}`);
+    if (resolver.fieldName === "setTeamUserEnabled" && !resolver.responseMappingTemplate?.includes("$util.toJson($ctx.prev.result)")) throw new Error("Team invalidation must retain the generated pipeline response");
     const target = Object.entries(backend.data.resources.tables).find(([, table]) => resolver.requestMappingTemplate?.includes(`"tableName", "${table.tableName}"`))?.[0];
     const pipeline = resolver.pipelineConfig as CfnResolver.PipelineConfigProperty;
     if (!PUBLIC_OPERATIONS.includes(resolver.fieldName) && pipeline?.functions?.[0] !== session.attrFunctionId) throw new Error(`Session guard must run first: ${resolver.typeName}.${resolver.fieldName}`);
