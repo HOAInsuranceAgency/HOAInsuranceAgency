@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import { QUOTE_URL, PHONE, trackLead } from "../constants";
 import { states as ALL_STATES } from "../data/states";
 import { useLeadSubmission } from "../lib/crmLead";
+import { loadGooglePlaces } from "../lib/googlePlaces";
 import "./CoverageCalculator.css";
 
 /* ── Types ── */
@@ -13,35 +14,6 @@ interface CoverageResult {
   icon: string;
   priority: Priority;
   reason: string;
-}
-
-/* ── Google Places autocomplete loader ── */
-const GOOGLE_API_KEY = import.meta.env.PUBLIC_GOOGLE_PLACES_KEY || "";
-
-function loadGooglePlaces(): Promise<void> {
-  return new Promise((resolve, reject) => {
-    // No key configured — don't inject a script that can only fail with
-    // NoApiKeys/InvalidKey. The manual fallback below carries the flow.
-    if (!GOOGLE_API_KEY) {
-      reject(new Error("No Google Places key configured"));
-      return;
-    }
-    if (window.google?.maps?.places) {
-      resolve();
-      return;
-    }
-    const existing = document.querySelector(`script[src*="maps.googleapis.com"]`);
-    if (existing) {
-      existing.addEventListener("load", () => resolve());
-      return;
-    }
-    const script = document.createElement("script");
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${GOOGLE_API_KEY}&libraries=places`;
-    script.async = true;
-    script.onload = () => resolve();
-    script.onerror = () => reject(new Error("Failed to load Google Maps"));
-    document.head.appendChild(script);
-  });
 }
 
 /** State lookup derived from the nationwide route data. */
