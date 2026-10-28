@@ -1,3 +1,4 @@
+import { relationshipCurrent } from "../../../../shared/relationships";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, GetCommand, BatchGetCommand } from "@aws-sdk/lib-dynamodb";
 import { ACCOUNT_MODELS, ACCOUNT_REFERENCES, LIST_PARENTS, SHARED_MODELS, RETIRED_MODELS, AccessDenied, id, object, type Identity, type RecordData } from "./policy";
@@ -132,6 +133,12 @@ export class AccountAccess {
     // acquisition immutable for every browser role, including administrators.
     if (model === "Account" && ["create", "update"].includes(operation)
       && ["source", "leadSource", "leadAttribution"].some(field => Object.hasOwn(input, field))) throw new AccessDenied();
+    if (model === "Contact") {
+      if (["partyId", "relationshipId", "validFrom", "validUntil", "isBilling"].some(field => Object.hasOwn(input, field))) throw new AccessDenied();
+      const existing = input.id ? await this.get("Contact", id(input.id)) : undefined;
+      if (existing?.relationshipId && input.accountId != null && input.accountId !== existing.accountId) throw new AccessDenied();
+      if (existing && ((!relationshipCurrent(existing) && operation === "update") || (existing.relationshipId || existing.validUntil) && operation === "delete") && !(operation === "delete" && this.admin && await this.get("Communication", `deleted-account:${id(existing.accountId)}`))) throw new AccessDenied();
+    }
     // Financial provenance is server-owned, including in the Owner view.
     if (model === "Policy" && operation === "create") throw new Error("Bind the quote through the commission-aware bind workflow.");
     if (model === "Quote" && input.status === "BOUND" && (operation === "create" || (await this.get("Quote", id(input.id)))?.status !== "BOUND")) throw new Error("Use the bind workflow to mark a quote bound.");

@@ -433,6 +433,11 @@ for (const model of ["Account", "Contact", "PriorCarrier", "LeadReply"] as const
     modelTable.grantReadWriteData(fn.resources.lambda); fn.addEnvironment(envName, modelTable.tableName);
   }
 }
+for (const model of ["Party", "PartyAffiliation", "AccountRelationship"] as const) {
+  const target = backend.data.resources.tables[model];
+  target.grantReadWriteData(backend.communications.resources.lambda);
+  backend.communications.addEnvironment(`${model.replace(/([a-z])([A-Z])/g, "$1_$2").toUpperCase()}_TABLE`, target.tableName);
+}
 for (const model of ["Quote", "Certificate", "Document"] as const) for (const fn of [backend.communications, backend.communicationWorker]) {
   backend.data.resources.tables[model].grantReadWriteData(fn.resources.lambda);
   fn.addEnvironment(`${model.toUpperCase()}_TABLE`, backend.data.resources.tables[model].tableName);

@@ -1,3 +1,4 @@
+import { DIRECTORY_READS } from '../../../../shared/relationships';
 import { AccountAccess } from "./access";
 import { AccessDenied, id, object, type RecordData } from "./policy";
 import { retiredTaskOperation } from "../../../../shared/retiredTaskOperations";
@@ -42,6 +43,11 @@ export async function authorizeCustom(access: AccountAccess, field: string, args
   if (!["communicationRead", "communicationWrite"].includes(field)) throw new AccessDenied();
   const op = id(args.readOperation ?? args.operation), input = object(args.input);
   if (adminCommunication.has(op)) throw new AccessDenied();
+  if (field === "communicationRead" && DIRECTORY_READS.has(op)) return;
+  // Relationship handlers authorize again and bind mutations to current assignment.
+  if (field === "communicationRead" && op === "relationshipContext") { await access.requireAccount(id(input.accountId)); return; }
+  if (field === "communicationWrite" && ["relationshipSaveParty", "relationshipSaveAffiliation"].includes(op)) return;
+  if (field === "communicationWrite" && ["relationshipLink", "relationshipEnd", "relationshipChangeManagement"].includes(op)) { await access.requireAccount(id(input.accountId)); return; }
   if (["team", "smsComposer", "searchAccounts"].includes(op) && field === "communicationRead") return;
   if (op === "work" && field === "communicationRead") {
     if (!["WORKFLOW", "TRIAGE"].includes(id(input.kind))) throw new AccessDenied();

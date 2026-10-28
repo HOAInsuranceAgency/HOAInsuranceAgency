@@ -1,3 +1,4 @@
+import { currentContacts } from "../../../src/lib/contacts";
 import { randomBytes } from "node:crypto";
 import Anthropic from "@anthropic-ai/sdk";
 import { LambdaClient, InvokeCommand } from "@aws-sdk/client-lambda";
@@ -317,8 +318,8 @@ function toContext(
   submission?: Record<string, unknown>
 ): LeadContext {
   // Use the actual recipient before considering another primary contact.
-  const contact = contacts.find(c => c.email?.trim().toLowerCase() === recipient.trim().toLowerCase())
-    ?? contacts.find((c) => c.isPrimary) ?? contacts[0];
+  const contact = currentContacts(contacts).find(c => c.email?.trim().toLowerCase() === recipient.trim().toLowerCase())
+    ?? currentContacts(contacts).find((c) => c.isPrimary) ?? currentContacts(contacts)[0];
   const rawContactName = contact?.name?.trim() || null;
   /**
    * Intake reuses the association name as the Contact's `name` when the form
