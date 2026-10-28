@@ -175,9 +175,20 @@ export async function handler(event: Event) {
       ).requireRecord('Account', accountId);
       const old = await store.get<CommissionAccount>('ACCOUNT', accountId);
       currentVersion(input, old);
-      if (old?.firstBoundOn && input.neverBound)
+      const firstBoundOn = Object.hasOwn(input, 'firstBoundOn')
+        ? input.firstBoundOn
+        : old?.firstBoundOn;
+      const neverBound = Object.hasOwn(input, 'neverBound')
+        ? input.neverBound
+        : firstBoundOn
+          ? undefined
+          : old?.neverBound;
+      const bindingEvidence = Object.hasOwn(input, 'bindingEvidence')
+        ? input.bindingEvidence
+        : old?.bindingEvidence;
+      if (old?.firstBoundOn && neverBound)
         throw new Error('An account with a recorded first bind cannot be reset to never bound.');
-      if (old?.firstBoundOn && (!input.firstBoundOn || day(input.firstBoundOn) > old.firstBoundOn))
+      if (old?.firstBoundOn && (!firstBoundOn || day(firstBoundOn) > old.firstBoundOn))
         throw new Error(
           'A recorded original first bind date cannot be cleared or moved forward. Earlier corrections require supporting evidence.',
         );
@@ -185,11 +196,12 @@ export async function handler(event: Event) {
         id: accountId,
         version: Number(input.version),
         name: String(account.name),
-        ...(input.firstBoundOn ? { firstBoundOn: day(input.firstBoundOn) } : {}),
-        ...(input.neverBound !== undefined ? { neverBound: input.neverBound as true } : {}),
-        ...(input.firstBoundOn || input.neverBound
-          ? { bindingEvidence: required(input.bindingEvidence, 'the first-bind history reference') }
+        ...(firstBoundOn ? { firstBoundOn: day(firstBoundOn) } : {}),
+        ...(neverBound !== undefined ? { neverBound: neverBound as true } : {}),
+        ...(firstBoundOn || neverBound
+          ? { bindingEvidence: required(bindingEvidence, 'the first-bind history reference') }
           : {}),
+        ...(old?.firstBindPolicyId ? { firstBindPolicyId: old.firstBindPolicyId } : {}),
         periods: input.periods as CommissionAccount['periods'],
       });
       if (classification.firstBoundOn && classification.firstBoundOn > agencyToday())
