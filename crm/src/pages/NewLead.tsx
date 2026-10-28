@@ -1,3 +1,5 @@
+import { loadParties } from "../lib/relationships";
+import { RELATIONSHIP_LABELS, RELATIONSHIP_ROLES, type RelationshipRole } from "../../../shared/relationships";
 import { LEAD_SOURCES, LEAD_SOURCE_LABELS } from "../../../shared/leadSource";
 import { PROPERTY_TYPES, PROPERTY_TYPE_LABELS, normalizePropertyType } from "../../../shared/propertyType";
 import { communicationRequest, type TeamEligibility } from "../lib/communications";
@@ -5,7 +7,7 @@ import { ResponsibilitySelect } from "../components/LeadWorkflowPanel";
 import { isAssignableSalesperson } from "../../../shared/salespersonOwnership";
 import { useAsyncResource } from "../lib/useAsyncResource";
 import { useState, useEffect, useRef } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { uploadData } from "../lib/scopedStorage";
 import {
   client,
@@ -35,6 +37,10 @@ import "./NewLead.css";
 
 export default function NewLead() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const [relatedParty, setRelatedParty] = useState(searchParams.get('relatedParty') ?? '');
+  const [relationshipRole, setRelationshipRole] = useState<RelationshipRole>('MANAGER');
+  const parties = useAsyncResource(loadParties, [], { initialData: [] });
   const formRef = useRef<HTMLFormElement>(null);
   const requestId = useRef(crypto.randomUUID());
   const savingNow = useRef(false);
@@ -97,6 +103,7 @@ export default function NewLead() {
       return;
     }
     if (!form.leadSource) { setError("Choose a lead source before creating the lead."); focusField('new-lead-source'); return; }
+    if (relatedParty && (parties.loading || parties.error || !parties.data.some(p => p.id === relatedParty && !p.archived))) { setError('Refresh and choose an active relationship before creating this lead.'); return; }
     savingNow.current = true;
     setSaving(true);
     setError("");
@@ -157,6 +164,12 @@ export default function NewLead() {
       } catch { contactFailed = true; }
     }
 
+    let relationshipFailed = false;
+    if (relatedParty && relationshipRole !== 'MANAGER') {
+      try { await communicationRequest('relationshipLink', { accountId: data.id, partyId: relatedParty, role: relationshipRole, requestId: requestId.current }, true); }
+      catch { relationshipFailed = true; }
+    }
+
     // Upload any staged documents to the new account so OCR + AI extraction
     // are ready when they land on the Documents tab.
     const failedUploads: string[] = [];
@@ -207,13 +220,16 @@ export default function NewLead() {
         "the contact wasn't saved. Open the lead and add it from the Contacts card."
       );
     }
+    if (relationshipFailed) afterCreate.push("the relationship wasn't linked. Open the lead and use Link relationship to retry.");
     if (afterCreate.length) {
       setCreatedId(data.id);
       setError(`The lead was created, but ${afterCreate.join(" Also, ")}`);
       return;
     }
     // Land on Documents so OCR completes and AI extraction is the next step.
-    navigate(`/accounts/${data.id}?tab=documents`);
+    navigate(relatedParty && relationshipRole === 'MANAGER'
+      ? `/accounts/${data.id}?management=1&partyId=${encodeURIComponent(relatedParty)}`
+      : `/accounts/${data.id}?tab=documents`);
   }
 
   const isPersonal = form.type === "PERSONAL";
@@ -239,6 +255,12 @@ export default function NewLead() {
 
       <form ref={formRef} className="card new-lead-form" aria-label="New lead" noValidate onSubmit={event => { event.preventDefault(); void save(); }}>
         <fieldset className="new-lead-fields" disabled={saving || !!createdId} aria-label="Lead information">
+          <details className="new-lead-section" open={!!relatedParty}>
+            <summary>Related person or organization {relatedParty ? '· Selected' : '(optional)'}</summary>
+            <label className="field">Relationship<select value={relatedParty} onChange={e => setRelatedParty(e.target.value)} disabled={parties.loading || !!parties.error}><option value="">No relationship selected</option>{parties.data.filter(p => !p.archived).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
+            {parties.error && <p className="error-text">Relationships are unavailable. <button type="button" onClick={() => void parties.refetch()}>Retry</button></p>}
+            {relatedParty && <><label className="field">Role<select value={relationshipRole} onChange={e => setRelationshipRole(e.target.value as RelationshipRole)}>{RELATIONSHIP_ROLES.map(r => <option key={r} value={r}>{RELATIONSHIP_LABELS[r]}</option>)}</select></label>{relationshipRole === 'MANAGER' && <p className="muted small">After creating the lead, review the effective date and management contacts.</p>}</>}
+          </details>
           <div className="new-lead-essentials">
             <section className="new-lead-section" aria-labelledby="new-lead-details-heading">
               <h2 id="new-lead-details-heading">Lead details</h2>

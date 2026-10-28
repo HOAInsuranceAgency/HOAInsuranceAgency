@@ -1,3 +1,6 @@
+import { useAgencyDay } from "../lib/useAgencyDay";
+import { currentContacts, primaryContact } from "../lib/contacts";
+import { relationshipCurrent } from "../../../shared/relationships";
 import { useId, useRef } from "react";
 import {
   EMAIL_RE,
@@ -59,6 +62,7 @@ const BLANK: ContactForm = {
 };
 
 export default function ContactsCard({ accountId }: { accountId: string }) {
+  const today = useAgencyDay();
   const child = useChildRows<Contact, ContactForm>(client.models.Contact, {
     accountId,
     noun: "contact",
@@ -110,8 +114,8 @@ export default function ContactsCard({ accountId }: { accountId: string }) {
   async function makePrimary(id: string) {
     if (primaryBusy.current || child.addStatus.busy || child.editStatus.busy || child.delStatus.busy) return;
     const target = child.rows.find((c) => c.id === id);
-    if (!target || target.isPrimary) return;
-    const demote = child.rows.filter((c) => c.isPrimary && c.id !== id);
+    if (!target || !relationshipCurrent(target) || primaryContact(child.rows)?.id === id) return;
+    const demote = currentContacts(child.rows).filter((c) => c.isPrimary && c.id !== id);
     primaryBusy.current = true;
     try { await primaryStatus.run(
       async () => {
@@ -144,6 +148,8 @@ export default function ContactsCard({ accountId }: { accountId: string }) {
   return (
     <ChildRowsCard
       title="Contacts"
+      canEditRow={c => relationshipCurrent(c)}
+      canRemoveRow={c => !c.relationshipId && !c.validUntil}
       busy={primaryStatus.busy}
       className="contacts-card"
       description="Select a primary contact for applications and certificates."
@@ -178,8 +184,8 @@ export default function ContactsCard({ accountId }: { accountId: string }) {
             <input
               type="radio"
               name={`primary-contact-${accountId}`}
-              checked={contact.isPrimary === true}
-              disabled={primaryStatus.busy || child.addStatus.busy || child.editStatus.busy || child.delStatus.busy}
+              checked={primaryContact(child.rows)?.id === contact.id}
+              disabled={!relationshipCurrent(contact, today) || primaryStatus.busy || child.addStatus.busy || child.editStatus.busy || child.delStatus.busy}
               onChange={() => makePrimary(contact.id)}
               aria-label={`Make ${contact.name} the primary contact`}
             />
@@ -190,7 +196,7 @@ export default function ContactsCard({ accountId }: { accountId: string }) {
           label: "Name",
           sort: (contact) => contact.name,
           cell: (contact) => (
-            <span className="contacts-name">{contact.name}</span>
+            <span className="contacts-name">{contact.name}{!relationshipCurrent(contact, today) && <span className="badge gray">{contact.validFrom && contact.validFrom > today ? "Scheduled" : "Former"}</span>}{contact.partyId && <span className="muted small"> · Linked relationship</span>}</span>
           ),
         },
         {

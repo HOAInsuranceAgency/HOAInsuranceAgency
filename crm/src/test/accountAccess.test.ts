@@ -350,3 +350,24 @@ describe("retired tasks and daily staff reports", () => {
     }
   });
 });
+
+describe('relationship access boundaries', () => {
+  it('shares directory identities while keeping reverse portfolio links scoped', async () => {
+    expect(await user().canRecord('Party', { id: 'manager' })).toBe(true);
+    expect(await user().canRecord('PartyAffiliation', { personId: 'p', organizationId: 'manager' })).toBe(true);
+    expect(await user().canRecord('AccountRelationship', { id: 'link-a', accountId: 'a', partyId: 'manager' })).toBe(true);
+    expect(await user().canRecord('AccountRelationship', { id: 'link-b', accountId: 'b', partyId: 'manager' })).toBe(false);
+    await expect(authorizeCustom(user(), 'communicationWrite', { operation: 'relationshipChangeManagement', input: { accountId: 'b' } })).rejects.toThrow(AccessDenied);
+  });
+  it('prevents generic writes from rewriting relationship dates or deleting historical contacts', async () => {
+    records['Contact:managed'] = { id: 'managed', accountId: 'a', relationshipId: 'r', validFrom: '2020-01-01', validUntil: '2021-01-01' };
+    for (const access of [user(), admin()]) {
+      await expect(access.write('Contact', 'update', { id: 'managed', validUntil: null })).rejects.toThrow(AccessDenied);
+      await expect(access.write('Contact', 'update', { id: 'managed', name: 'Rewrite history' })).rejects.toThrow(AccessDenied);
+      await expect(access.write('Contact', 'delete', { id: 'managed' })).rejects.toThrow(AccessDenied);
+      await expect(access.write('Contact', 'create', { accountId: 'a', name: 'Bypass', relationshipId: 'r' })).rejects.toThrow(AccessDenied);
+    }
+    records['Communication:deleted-account:a'] = { id: 'deleted-account:a' };
+    await expect(admin().write('Contact', 'delete', { id: 'managed' })).resolves.toBeUndefined();
+  });
+});

@@ -271,7 +271,7 @@ export default function UniversalSearch() {
             showPop && selectable > 0 ? `usearch-opt-${activeIdx}` : undefined
           }
           aria-label="Search"
-          placeholder="Search accounts, contacts, policies, invoices, documents…"
+          placeholder="Search accounts, relationships, contacts, policies, documents…"
           value={q}
           onChange={(e) => {
             setQ(e.target.value);
@@ -428,6 +428,7 @@ function IconGlass() {
 }
 
 const TYPE_ICONS: Record<HitItem["type"], ReactNode> = {
+  relationship: <svg {...iconProps}><circle cx="8" cy="8" r="3" /><circle cx="17" cy="9" r="2.5" /><path d="M2 21v-3a6 6 0 0112 0v3M16 15a5 5 0 015 5" /></svg>,
   account: (
     <svg {...iconProps}>
       <path d="M4 21V5a1 1 0 011-1h9a1 1 0 011 1v16" />

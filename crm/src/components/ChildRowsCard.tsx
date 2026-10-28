@@ -54,6 +54,8 @@ export interface ChildRowsCardProps<
   title: string;
   /** Coordinate caller-owned writes such as changing the primary contact. */
   busy?: boolean;
+  canEditRow?: (row: T) => boolean;
+  canRemoveRow?: (row: T) => boolean;
   /** Optional scoped styling and supporting copy for this card. */
   className?: string;
   description?: ReactNode;
@@ -94,6 +96,8 @@ export default function ChildRowsCard<
 >({
   title,
   busy = false,
+  canEditRow,
+  canRemoveRow,
   className,
   description,
   child,
@@ -282,14 +286,14 @@ export default function ChildRowsCard<
                             <button
                               className="secondary"
                               aria-label={editButtonLabel?.(row)}
-                              disabled={mutating}
+                              disabled={mutating || canEditRow?.(row) === false}
                               onClick={() => child.startEdit(row)}
                             >
                               Edit
                             </button>{" "}
                             <ConfirmButton
                               label="Remove"
-                              disabled={mutating}
+                              disabled={mutating || canRemoveRow?.(row) === false}
                               busyLabel="Removing…"
                               message={removeMessage?.(row)}
                               onConfirm={() => child.remove(row.id)}
