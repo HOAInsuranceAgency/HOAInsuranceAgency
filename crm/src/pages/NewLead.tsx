@@ -376,7 +376,7 @@ export default function NewLead() {
           <span className="new-lead-hint">{createdId ? "Your lead is ready to open." : "Only name and lead source are required."}</span>
           <div className="new-lead-action-buttons">
           {createdId ? (
-            <button type="button" className="primary" onClick={() => navigate(`/accounts/${createdId}?tab=documents`)}>
+            <button type="button" className="primary" onClick={() => navigate(relatedParty && relationshipRole === 'MANAGER' ? `/accounts/${createdId}?management=1&partyId=${encodeURIComponent(relatedParty)}` : `/accounts/${createdId}?tab=documents`)}>
               Go to the lead
             </button>
           ) : (
