@@ -5,23 +5,27 @@ import { config } from "./config";
 import { resolveProducerEmail, ProducerEmailSetupError, type ProducerEmailIdentity } from "./producerEmail";
 import { get, row, save, issue, commit, put, conflict, retryableStorage, check, absent, type Row } from "./store";
 import { front, ProviderError, FrontPersonalAccessError, assertRecipient, messageConversation, permittedConversation, type FrontMessage } from "./providers";
-import { ensureWorkflow, recordOutbound, enabledUser } from "./workflow";
+import { ensureWorkflow, producerUser, recordOutbound, syncProducerEligibility } from "./workflow";
 import { dataClient } from "./data";
 import { textLeadAlerts } from "../lead-intake/alerts";
 import type { LeadSummary } from "../lead-intake/sms";
 import type { Submission } from "../lead-intake/handler";
 import { renderIntakeBrief } from "../lead-intake/brief";
 import type { Communication, LeadWorkflow, Responsibility, TeamEligibility } from "../../../../shared/leadWorkflow";
+import { activeTeamUserCheck } from "../crm-access/user-status";
 
 class AssignmentError extends ProviderError {
   constructor(message: string) { super(message, 0, false); }
 }
 async function assignedSalesperson(userId: string | undefined) {
   if (!userId || !/^[a-zA-Z0-9_-]{1,128}$/.test(userId)) throw new AssignmentError("Assign an active salesperson to this lead before delivering its alert or Front assignment");
-  const member = await get<TeamEligibility>(`eligibility:${userId}`);
-  if (!member?.data.enabled || !member.data.salesperson) throw new AssignmentError("The assigned salesperson is no longer eligible. Choose an active salesperson for this lead in the CRM");
-  try { await enabledUser(userId); }
+  let member: Row<TeamEligibility> | undefined;
+  try {
+    await producerUser(userId);
+    member = await get<TeamEligibility>(`eligibility:${userId}`) ?? await syncProducerEligibility(userId);
+  }
   catch { throw new AssignmentError("The assigned salesperson could not be verified as active. Check their user access or reassign this lead in the CRM"); }
+  if (!member) throw new AssignmentError("The assigned salesperson is no longer eligible. Choose an active salesperson for this lead in the CRM");
   return member;
 }
 
@@ -182,7 +186,7 @@ export async function runOperation(candidate: Row<Operation>) {
       }
     }
     const leased = row("OPERATION", op.id, { ...op.data, ...(op.data.type === "ASSIGN" ? { assigneeId: assignee!.data.frontId } : {}), state: "LEASED" as const, attempts: op.data.attempts + 1, leaseUntil: new Date(Date.now() + 180_000).toISOString() }, { accountId: op.accountId, previous: op, dueAt: new Date(Date.now() + 180_000).toISOString() });
-    await commit([put(leased, op), absent(`deleted-account:${op.data.accountId}`), ...(["IMPORT", "EMAIL", "ASSIGN", "SMS_ALERT"].includes(op.data.type) ? [check(wf)] : []), ...(assignee ? [check(assignee)] : []), ...(inboundSource ? [check(inboundSource)] : []), ...(cleanupSource ? [check(cleanupSource)] : [])]);
+    await commit([put(leased, op), absent(`deleted-account:${op.data.accountId}`), ...(["IMPORT", "EMAIL", "ASSIGN", "SMS_ALERT"].includes(op.data.type) ? [check(wf)] : []), ...(assignee ? [check(assignee), activeTeamUserCheck(assignee.data.userId)] : []), ...(inboundSource ? [check(inboundSource)] : []), ...(cleanupSource ? [check(cleanupSource)] : [])]);
     op = leased;
     posted = true;
     if (op.data.type === "SMS_ALERT") {

@@ -42,7 +42,7 @@ it.each(['dashboardAssignments', 'dashboardInterestPage', 'dashboardPolicyAnchor
 beforeEach(() => {
   vi.clearAllMocks(); h.records.clear();
   process.env.ACCESS_TABLES = JSON.stringify({ Account: "accounts", Document: "documents", Quote: "quotes", Policy: "policies", Certificate: "certificates", Invoice: "invoices", Carrier: "carriers", License: "licenses", GlApplication: "gl", PfLoan: "loans", UserProfile: "profiles" });
-  process.env.COMMUNICATION_TABLE = "communications"; process.env.STORAGE_BUCKET = "bucket";
+  process.env.COMMUNICATION_TABLE = "communications"; process.env.STORAGE_BUCKET = "bucket"; process.env.USER_ACCESS_TABLE = "user-access";
   h.records.set("communications:workflow:a", { data: { salespersonId: "alice" } });
   h.records.set("communications:workflow:b", { data: { salespersonId: "bob" } });
   h.records.set("accounts:a", { id: "a" }); h.records.set("accounts:b", { id: "b" });
@@ -57,7 +57,7 @@ beforeEach(() => {
         return record ? [{ ...record, ...key }] : [];
       }),
     ])) };
-    return { Item: h.records.get(`${input.TableName}:${input.Key.id ?? input.Key.accountId}`) };
+    return { Item: h.records.get(`${input.TableName}:${input.Key.id ?? input.Key.accountId ?? input.Key.userId}`) };
   });
   h.sign.mockResolvedValue("https://files.example.test/signed"); h.s3.mockResolvedValue({});
 });
@@ -65,6 +65,19 @@ it("filters raw list/relationship responses without dropping the pagination curs
   const result = await handler({ mode: "read", model: "Account", identity, previous: { items: [{ id: "b", name: "Hidden" }, { id: "a", name: "Visible" }], nextToken: "cursor" } });
   expect(result).toEqual({ items: [{ id: "a", name: "Visible" }], nextToken: "cursor" });
   expect(h.db.mock.calls.every(([command]) => command.input.ConsistentRead || Object.values(command.input.RequestItems ?? {}).every(request => (request as { ConsistentRead?: boolean }).ConsistentRead))).toBe(true);
+});
+it.each(["crmAccess", "crmFile"])("blocks a disabled user's cached session on direct %s calls before data access or file signing", async fieldName => {
+  h.records.set("user-access:alice", { userId: "alice", disabled: true, revokedBefore: 100 });
+  await expect(handler({ fieldName, identity, arguments: { operation: "read", path: "templates/acord.pdf" } })).rejects.toThrow("Your access is inactive");
+  expect(h.db).toHaveBeenCalledOnce();
+  expect(h.db.mock.calls[0][0].input.TableName).toBe("user-access");
+  expect(h.s3).not.toHaveBeenCalled(); expect(h.sign).not.toHaveBeenCalled();
+});
+it("blocks every pipeline mode through the initial session stage, including an Owner with a cached JWT", async () => {
+  h.records.set("user-access:alice", { userId: "alice", disabled: true });
+  await expect(handler({ mode: "session", identity: { ...identity, groups: ["OWNER"] }, previous: "data" })).rejects.toThrow("Your access is inactive");
+  h.records.delete("user-access:alice");
+  await expect(handler({ mode: "session", identity, previous: "data" })).resolves.toBe("data");
 });
 it("authorizes account search only as a read and filters names by current assignment with consistent batched reads", async () => {
   const args = { readOperation: "searchAccounts", input: { query: "community" } };

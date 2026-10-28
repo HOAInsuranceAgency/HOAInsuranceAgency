@@ -45,6 +45,7 @@ export async function listTeamUsers(
   args: TeamRosterArgs,
   groupsFor: (username: string) => Promise<string[]>,
   profileFor: (userId: string) => Promise<TeamProfile | null> = async () => null,
+  disabledFor: (userId: string) => Promise<boolean> = async () => false,
 ) {
   const token = args.nextToken;
   if (token != null && (typeof token !== "string" || !token.trim() || token.length > 131072)) {
@@ -61,6 +62,7 @@ export async function listTeamUsers(
     const attrs = Object.fromEntries((user.Attributes ?? []).map(attribute => [attribute.Name, attribute.Value]));
     const userId = attrs.sub ?? user.Username;
     const groups = await groupsFor(user.Username);
+    const disabled = await disabledFor(userId);
     // A missing/failed decoration must not prevent role administration. The
     // same four workers cap the indexed reads as well as Cognito lookups.
     let profile: TeamProfile | null = null;
@@ -71,7 +73,7 @@ export async function listTeamUsers(
         userId,
         email: attrs.email ?? user.Username,
         status: user.UserStatus,
-        enabled: user.Enabled ?? true,
+        enabled: (user.Enabled ?? true) && !disabled,
         createdAt: user.UserCreateDate?.toISOString() ?? null,
         groups,
       },

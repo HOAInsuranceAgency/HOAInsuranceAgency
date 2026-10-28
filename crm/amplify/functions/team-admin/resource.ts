@@ -1,8 +1,8 @@
 import { defineFunction } from "@aws-amplify/backend";
 
 /**
- * Admin team management: handles ADMIN-only invitations, role assignments,
- * and roster reads (one handler, switched on fieldName).
+ * Team management: Admin/Owner invitations, roles and roster reads, plus
+ * Owner-only account deactivation and restoration.
  */
 export const teamAdmin = defineFunction({
   name: "team-admin",

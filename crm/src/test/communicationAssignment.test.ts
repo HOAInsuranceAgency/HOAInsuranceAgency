@@ -2,8 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { LeadWorkflow, TeamEligibility } from "../../../shared/leadWorkflow";
 
 const h = vi.hoisted(() => ({
-  records: new Map<string, any>(), front: vi.fn(), text: vi.fn(), enabledUser: vi.fn(), ensureWorkflow: vi.fn(),
-  beforeLease: undefined as (() => void) | undefined,
+  records: new Map<string, any>(), front: vi.fn(), text: vi.fn(), producerUser: vi.fn(), syncProducerEligibility: vi.fn(), ensureWorkflow: vi.fn(),
+  beforeLease: undefined as (() => void) | undefined, disabled: new Set<string>(),
 }));
 vi.mock("@aws-sdk/lib-dynamodb", async importOriginal => ({
   ...(await importOriginal<typeof import("@aws-sdk/lib-dynamodb")>()),
@@ -16,6 +16,10 @@ vi.mock("@aws-sdk/lib-dynamodb", async importOriginal => ({
     }
     for (const write of input.TransactItems) {
       const change = write.Put ?? write.ConditionCheck;
+      if (write.ConditionCheck?.Key.userId) {
+        if (h.disabled.has(change.Key.userId)) throw Object.assign(new Error("Team access changed"), { name: "ConditionalCheckFailedException" });
+        continue;
+      }
       const current = h.records.get(change.Item?.id ?? change.Key.id);
       if (change.ConditionExpression === "attribute_not_exists(id)" ? !!current : current?.version !== change.ExpressionAttributeValues[":v"]) {
         throw Object.assign(new Error("Concurrent assignment changed"), { name: "ConditionalCheckFailedException" });
@@ -27,7 +31,7 @@ vi.mock("@aws-sdk/lib-dynamodb", async importOriginal => ({
 }));
 vi.mock("../../amplify/functions/communications/cleanup", () => ({ archiveAllowed: async () => true }));
 vi.mock("../../amplify/functions/communications/config", () => ({ config: async () => ({ paused: false, activatedAt: "2026-09-01", environment: "main", frontInboxId: "inb_sales", frontChannelId: "cha_sales", frontSender: "sales@example.com" }) }));
-vi.mock("../../amplify/functions/communications/workflow", () => ({ ensureWorkflow: h.ensureWorkflow, enabledUser: h.enabledUser, recordOutbound: vi.fn() }));
+vi.mock("../../amplify/functions/communications/workflow", () => ({ ensureWorkflow: h.ensureWorkflow, producerUser: h.producerUser, syncProducerEligibility: h.syncProducerEligibility, recordOutbound: vi.fn() }));
 vi.mock("../../amplify/functions/communications/data", () => ({ dataClient: async () => ({ models: {} }) }));
 vi.mock("../../amplify/functions/lead-intake/alerts", () => ({ textLeadAlerts: h.text }));
 vi.mock("../../amplify/functions/communications/providers", async importOriginal => ({
@@ -49,9 +53,11 @@ async function workflow(overrides: Partial<LeadWorkflow> = {}) {
   return save(row<LeadWorkflow>("WORKFLOW", "workflow:a1", { accountId: "a1", name: lead.name, salespersonId: "alice", ownershipModel: "SALESPERSON", disposition: "ACTIVE", version: 1, updatedAt: new Date().toISOString(), ...overrides }, { accountId: "a1", previous: old }), old);
 }
 beforeEach(async () => {
-  vi.clearAllMocks(); h.records.clear(); h.beforeLease = undefined;
+  vi.clearAllMocks(); h.records.clear(); h.beforeLease = undefined; h.disabled.clear();
   process.env.COMMUNICATION_TABLE = "comms";
-  h.enabledUser.mockReset().mockResolvedValue({ Enabled: true });
+  process.env.USER_ACCESS_TABLE = "access";
+  h.syncProducerEligibility.mockReset().mockImplementation(async id => get(`eligibility:${id}`));
+  h.producerUser.mockReset().mockResolvedValue({ Enabled: true });
   h.ensureWorkflow.mockReset().mockImplementation(async () => get("workflow:a1"));
   h.text.mockReset().mockResolvedValue({ attempted: 1, sent: 1, failed: 0 });
   h.front.mockReset().mockResolvedValue({});
@@ -59,21 +65,36 @@ beforeEach(async () => {
 });
 
 describe("single-producer website text alerts", () => {
+  it("keeps existing account delivery active while automatic new leads are paused", async () => {
+    await member("alice", { salesperson: false, receiveNewLeads: false });
+    const op = await enqueueOperation("op:sms:s1", { type: "SMS_ALERT", accountId: "a1", lead });
+    await runOperation(op);
+    expect(h.text).toHaveBeenCalledExactlyOnceWith(expect.anything(), lead, "alice");
+    expect(record(op.id).data.state).toBe("CONFIRMED");
+  });
+
+  it("does not lease delivery when deactivation completes after the active-user lookup", async () => {
+    const op = await enqueueOperation("op:sms:s1", { type: "SMS_ALERT", accountId: "a1", lead });
+    h.beforeLease = () => { h.disabled.add("alice"); };
+    await runOperation(op);
+    expect(record(op.id).data.state).toBe("READY");
+    expect(h.text).not.toHaveBeenCalled();
+  });
+
   it("sends only to the persisted owner and does not repeat a confirmed alert", async () => {
     const op = await enqueueOperation("op:sms:s1", { type: "SMS_ALERT", accountId: "a1", assigneeId: "tea_bob", lead });
     await runOperation(op); await runOperation(op);
     expect(h.text).toHaveBeenCalledExactlyOnceWith(expect.anything(), lead, "alice");
-    expect(h.enabledUser).toHaveBeenCalledExactlyOnceWith("alice");
+    expect(h.producerUser).toHaveBeenCalledExactlyOnceWith("alice");
     expect(record(op.id).data.state).toBe("CONFIRMED");
     expect(h.ensureWorkflow).not.toHaveBeenCalled();
   });
 
-  it.each(["missing workflow", "missing owner", "ineligible owner", "disabled eligibility", "disabled user"])("holds %s visibly without broadcasting or choosing a default", async state => {
+  it.each(["missing workflow", "missing owner", "removed Producer role", "disabled user"])("holds %s visibly without broadcasting or choosing a default", async state => {
     if (state === "missing workflow") h.records.delete("workflow:a1");
     if (state === "missing owner") await workflow({ salespersonId: undefined });
-    if (state === "ineligible owner") await member("alice", { salesperson: false });
-    if (state === "disabled eligibility") await member("alice", { enabled: false });
-    if (state === "disabled user") h.enabledUser.mockRejectedValue(new Error("Disabled user"));
+    if (state === "removed Producer role") h.producerUser.mockRejectedValue(new Error("Producer role removed"));
+    if (state === "disabled user") h.producerUser.mockRejectedValue(new Error("Disabled user"));
     const op = await enqueueOperation("op:sms:s1", { type: "SMS_ALERT", accountId: "a1", lead });
     await runOperation(op);
     expect(record(op.id).data).toMatchObject({ state: "RETRY_WAIT", attempts: 0 });
@@ -106,6 +127,7 @@ describe("single-producer website text alerts", () => {
     h.beforeLease = () => {
       const old = record("eligibility:alice");
       h.records.set(old.id, row("ELIGIBILITY", old.id, { ...old.data, enabled: false }, { previous: old }));
+      h.producerUser.mockRejectedValue(new Error("Producer role removed"));
     };
     await runOperation(op); await runOperation(op);
     expect(h.text).not.toHaveBeenCalled(); expect(record(op.id).data.state).toBe("RETRY_WAIT");
@@ -130,12 +152,11 @@ describe("website Front assignment", () => {
     return enqueueOperation("op:intake:s1", { type: "IMPORT", accountId: "a1", submissionId: "s1" });
   }
 
-  it.each(["missing workflow", "missing owner", "ineligible owner", "disabled eligibility", "disabled user"])("holds a Front import with %s until an active producer is assigned", async state => {
+  it.each(["missing workflow", "missing owner", "removed Producer role", "disabled user"])("holds a Front import with %s until an active producer is assigned", async state => {
     if (state === "missing workflow") h.records.delete("workflow:a1");
     if (state === "missing owner") await workflow({ salespersonId: undefined });
-    if (state === "ineligible owner") await member("alice", { salesperson: false });
-    if (state === "disabled eligibility") await member("alice", { enabled: false });
-    if (state === "disabled user") h.enabledUser.mockRejectedValue(new Error("Disabled user"));
+    if (state === "removed Producer role") h.producerUser.mockRejectedValue(new Error("Producer role removed"));
+    if (state === "disabled user") h.producerUser.mockRejectedValue(new Error("Disabled user"));
     const op = await intake();
     await runOperation(op);
     expect(record(op.id).data).toMatchObject({ state: "RETRY_WAIT", attempts: 0 });
@@ -151,7 +172,7 @@ describe("website Front assignment", () => {
     const op = await intake();
     h.front.mockResolvedValueOnce({ message_uid: "uid_s1" });
     await runOperation(op);
-    expect(h.enabledUser).toHaveBeenCalledExactlyOnceWith("bob");
+    expect(h.producerUser).toHaveBeenCalledExactlyOnceWith("bob");
     expect(h.front).toHaveBeenCalledExactlyOnceWith("/inboxes/inb_sales/imported_messages", "POST", expect.objectContaining({ external_id: "hoa:main:s1" }));
     expect(record(op.id).data).toMatchObject({ state: "ACCEPTED", attempts: 1, uid: "uid_s1" });
     expect(h.ensureWorkflow).not.toHaveBeenCalled();
@@ -167,7 +188,7 @@ describe("website Front assignment", () => {
     expect(h.front).not.toHaveBeenCalled(); expect(record(op.id).data.state).toBe("READY");
     h.front.mockResolvedValueOnce({ message_uid: "uid_s1" });
     await runOperation(op);
-    expect(h.enabledUser).toHaveBeenLastCalledWith("bob");
+    expect(h.producerUser).toHaveBeenLastCalledWith("bob");
     expect(h.front).toHaveBeenCalledTimes(1);
     expect(record(op.id).data.state).toBe("ACCEPTED");
   });
@@ -177,6 +198,7 @@ describe("website Front assignment", () => {
     h.beforeLease = () => {
       const old = record("eligibility:alice");
       h.records.set(old.id, row("ELIGIBILITY", old.id, { ...old.data, enabled: false }, { previous: old }));
+      h.producerUser.mockRejectedValue(new Error("Producer role removed"));
     };
     await runOperation(op); await runOperation(op);
     expect(h.front).not.toHaveBeenCalled();
@@ -213,12 +235,12 @@ describe("website Front assignment", () => {
     });
     await runOperation(op);
     expect(h.front).toHaveBeenCalledExactlyOnceWith("/conversations/cnv_a", "PATCH", { assignee_id: "tea_alice" });
-    expect(h.enabledUser).toHaveBeenCalledExactlyOnceWith("alice");
+    expect(h.producerUser).toHaveBeenCalledExactlyOnceWith("alice");
     expect(record(op.id).data).toMatchObject({ state: "CONFIRMED", assigneeId: "tea_alice" });
   });
 
   it("holds Front assignment for a disabled user even if their Front mapping remains", async () => {
-    h.enabledUser.mockRejectedValue(new Error("Disabled user"));
+    h.producerUser.mockRejectedValue(new Error("Disabled user"));
     const op = await enqueueOperation("op:assign:cnv_a", { type: "ASSIGN", accountId: "a1", conversationId: "cnv_a" });
     await runOperation(op);
     expect(record(op.id).data.state).toBe("RETRY_WAIT");
@@ -231,6 +253,6 @@ describe("website Front assignment", () => {
     const op = await enqueueOperation("op:assign:cnv_a", { type: "ASSIGN", accountId: "a1", conversationId: "cnv_a" });
     await runOperation(op);
     expect(record(op.id).data.state).toBe("SUPPRESSED");
-    expect(h.enabledUser).not.toHaveBeenCalled(); expect(h.front).not.toHaveBeenCalled();
+    expect(h.producerUser).not.toHaveBeenCalled(); expect(h.front).not.toHaveBeenCalled();
   });
 });

@@ -9,12 +9,13 @@ const listTeamUsers = vi.hoisted(() => vi.fn());
 const UserProfile = vi.hoisted(() => ({ listUserProfileByUserId: vi.fn(), update: vi.fn() }));
 const inviteUser = vi.hoisted(() => vi.fn());
 const updateUserRoles = vi.hoisted(() => vi.fn());
+const setTeamUserEnabled = vi.hoisted(() => vi.fn());
 const communicationRequest = vi.hoisted(() => vi.fn());
 vi.mock("aws-amplify/data", () => ({
   generateClient: () => ({
     models: { UserProfile },
     queries: { listTeamUsers },
-    mutations: { inviteUser, updateUserRoles },
+    mutations: { inviteUser, updateUserRoles, setTeamUserEnabled },
   }),
 }));
 vi.mock("../lib/communications", () => ({ communicationRequest }));
@@ -148,9 +149,14 @@ describe("Team roster read states", () => {
 const teammate = { userId: "u-1", email: "casey@example.com", createdAt: "2026-01-15T09:30:00Z", groups: ["STAFF"] };
 const teammateProfile = { id: "p-1", userId: "u-1", email: teammate.email, firstName: "Casey", lastName: "Staff", onboardingComplete: true, leadTextAlerts: false, mobilePhone: "5085550100" } as UserProfileType;
 const eligibility: TeamEligibility = { userId: "u-1", name: "Casey Staff", email: teammate.email, enabled: true, salesperson: false, frontId: "tea_casey", dialpadId: "5655281245659136", version: 3 };
-function combinedSetup() {
-  listTeamUsers.mockResolvedValue({ data: { users: [teammate], profiles: [teammateProfile] } });
-  communicationRequest.mockImplementation(async (operation: string, input: TeamEligibility) => operation === "team" ? { team: [{ ...eligibility }] } : { member: { ...input, version: (input.version ?? 0) + 1 } });
+function combinedSetup(producer = false) {
+  listTeamUsers.mockResolvedValue({ data: { users: [{ ...teammate, groups: producer ? ["PRODUCER"] : teammate.groups }], profiles: [teammateProfile] } });
+  let member = { ...eligibility, salesperson: producer, receiveNewLeads: false };
+  communicationRequest.mockImplementation(async (operation: string, input: Partial<TeamEligibility>) => {
+    if (operation === "teamSettings") return { team: [member] };
+    member = { ...member, ...input, version: (input.version ?? 0) + 1 };
+    return { member };
+  });
 }
 
 describe("paged team roster", () => {
@@ -234,38 +240,40 @@ describe("combined team and assignment settings", () => {
     expect(within(row).getByText("Casey Staff")).toBeVisible();
     expect(within(row).getByText("STAFF")).toBeVisible();
     expect(within(row).getByRole("checkbox", { name: "Lead texts for Casey Staff" })).not.toBeChecked();
-    expect(within(row).getByRole("checkbox", { name: "Salesperson eligibility for Casey Staff" })).not.toBeChecked();
+    expect(within(row).queryByRole("checkbox", { name: /Salesperson eligibility/ })).toBeNull();
+    expect(within(row).queryByRole("checkbox", { name: /Receive new leads/ })).toBeNull();
+    expect(within(row).getByText("Producers only")).toBeVisible();
     expect(within(row).getByText(eligibility.frontId!)).toBeVisible();
     expect(within(row).getByText(eligibility.dialpadId!)).toBeVisible();
   });
 
   it("saves eligibility and connections from the same row using the committed version without changing access or lead alerts", async () => {
-    combinedSetup(); renderPage();
-    const checkbox = await screen.findByRole("checkbox", { name: "Salesperson eligibility for Casey Staff" });
+    combinedSetup(true); renderPage();
+    const checkbox = await screen.findByRole("checkbox", { name: "Receive new leads for Casey Staff" });
     fireEvent.click(checkbox);
     await waitFor(() => expect(checkbox).toBeChecked());
-    expect(communicationRequest).toHaveBeenCalledWith("saveEligibility", { ...eligibility, salesperson: true }, true);
-    expect(screen.getByText("STAFF")).toBeVisible();
+    expect(communicationRequest).toHaveBeenCalledWith("saveEligibility", { userId: eligibility.userId, version: 3, receiveNewLeads: true }, true);
+    expect(screen.getByText("PRODUCER")).toBeVisible();
     expect(UserProfile.update).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Edit connections for Casey Staff" }));
     fireEvent.change(screen.getByRole("textbox", { name: /^Front teammate ID/ }), { target: { value: "tea_new" } });
     fireEvent.click(screen.getByRole("button", { name: "Save connections" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    expect(communicationRequest).toHaveBeenLastCalledWith("saveEligibility", { ...eligibility, salesperson: true, frontId: "tea_new", frontChannelId: "", frontSignatureId: "", version: 4 }, true);
+    expect(communicationRequest).toHaveBeenLastCalledWith("saveEligibility", { userId: eligibility.userId, frontId: "tea_new", frontChannelId: "", frontSignatureId: "", dialpadId: eligibility.dialpadId, version: 4 }, true);
     expect(screen.getByText("tea_new")).toBeVisible();
-    expect(communicationRequest.mock.calls.filter(call => call[0] === "team")).toHaveLength(1);
+    expect(communicationRequest.mock.calls.filter(call => call[0] === "teamSettings")).toHaveLength(1);
     UserProfile.update.mockResolvedValue({ data: { ...teammateProfile, leadTextAlerts: true } });
     fireEvent.click(screen.getByRole("checkbox", { name: "Lead texts for Casey Staff" }));
     await waitFor(() => expect(UserProfile.update).toHaveBeenCalledWith(expect.objectContaining({ id: teammateProfile.id, leadTextAlerts: true })));
   });
 
   it("keeps the roster visible through an assignment load failure and recovers with refresh", async () => {
-    combinedSetup(); communicationRequest.mockRejectedValueOnce(new Error("Assignment service unavailable")); renderPage();
+    combinedSetup(true); communicationRequest.mockRejectedValueOnce(new Error("Assignment service unavailable")); renderPage();
     expect(await screen.findByText("Assignment service unavailable")).toBeVisible();
     expect(await screen.findByText(teammate.email)).toBeVisible();
-    expect(screen.queryByRole("checkbox", { name: "Salesperson eligibility for Casey Staff" })).toBeNull();
+    expect(screen.queryByRole("checkbox", { name: "Receive new leads for Casey Staff" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Refresh assignment settings" }));
-    expect(await screen.findByRole("checkbox", { name: "Salesperson eligibility for Casey Staff" })).toBeEnabled();
+    expect(await screen.findByRole("checkbox", { name: "Receive new leads for Casey Staff" })).toBeEnabled();
     expect(screen.queryByText("Assignment service unavailable")).toBeNull();
     expect(within(screen.getByRole("region", { name: "Team members" })).getAllByRole("row")).toHaveLength(2);
   });
@@ -277,15 +285,16 @@ describe("combined team and assignment settings", () => {
     expect(await screen.findByText("Available after first sign-in")).toBeVisible();
     expect(screen.getByText(teammate.email)).toBeVisible();
     inviteUser.mockResolvedValue({ data: { ok: true } });
-    communicationRequest.mockResolvedValue({ team: [eligibility] });
+    listTeamUsers.mockResolvedValue({ data: { users: [{ ...teammate, groups: ["PRODUCER"] }], profiles: [teammateProfile] } });
+    communicationRequest.mockResolvedValue({ team: [{ ...eligibility, salesperson: true }] });
     fireEvent.change(screen.getByRole("textbox"), { target: { value: "new@example.com" } });
     fireEvent.click(screen.getByRole("button", { name: "Send invite" }));
-    expect(await screen.findByRole("checkbox", { name: "Salesperson eligibility for Casey Staff" })).toBeEnabled();
-    expect(communicationRequest.mock.calls.filter(call => call[0] === "team")).toHaveLength(2);
+    expect(await screen.findByRole("checkbox", { name: "Receive new leads for Casey Staff" })).toBeEnabled();
+    expect(communicationRequest.mock.calls.filter(call => call[0] === "teamSettings")).toHaveLength(2);
   });
 
   it("refreshes incomplete members after invitation cleanup fails while retaining the invitation error", async () => {
-    combinedSetup();
+    combinedSetup(true);
     const incomplete = { userId: "u-incomplete", email: "incomplete@example.com", groups: ["ADMIN"], createdAt: null };
     const error = "The invitation failed and the incomplete account could not be removed or disabled. Review this member's access immediately before trying again.";
     inviteUser.mockResolvedValue({ data: { ok: false, error } });
@@ -312,11 +321,11 @@ describe("combined team and assignment settings", () => {
   });
 
   it("disables repeated assignment edits while saving and retains the original choice on failure", async () => {
-    combinedSetup();
+    combinedSetup(true);
     let fail!: (error: Error) => void;
-    communicationRequest.mockImplementation((op: string) => op === "team" ? Promise.resolve({ team: [eligibility] }) : new Promise((_, reject) => { fail = reject; }));
+    communicationRequest.mockImplementation((op: string) => op === "teamSettings" ? Promise.resolve({ team: [{ ...eligibility, salesperson: true, receiveNewLeads: false }] }) : new Promise((_, reject) => { fail = reject; }));
     renderPage();
-    const checkbox = await screen.findByRole("checkbox", { name: "Salesperson eligibility for Casey Staff" });
+    const checkbox = await screen.findByRole("checkbox", { name: "Receive new leads for Casey Staff" });
     fireEvent.click(checkbox);
     expect(checkbox).toBeDisabled();
     expect(screen.getByRole("button", { name: "Edit connections for Casey Staff" })).toBeDisabled();
@@ -327,21 +336,21 @@ describe("combined team and assignment settings", () => {
   });
 
   it("refreshes the invited roster without letting a late assignment read overwrite an in-flight save", async () => {
-    combinedSetup();
+    combinedSetup(true);
     let finishSave!: (result: unknown) => void;
     let finishStaleRead: ((result: unknown) => void) | undefined;
     let reads = 0, saves = 0;
-    communicationRequest.mockImplementation((operation: string, input: TeamEligibility) => {
-      if (operation === "team") {
-        if (++reads === 1) return Promise.resolve({ team: [{ ...eligibility }] });
+    communicationRequest.mockImplementation((operation: string, input: Partial<TeamEligibility>) => {
+      if (operation === "teamSettings") {
+        if (++reads === 1) return Promise.resolve({ team: [{ ...eligibility, salesperson: true, receiveNewLeads: false }] });
         return new Promise(resolve => { finishStaleRead = resolve; });
       }
       if (++saves === 1) return new Promise(resolve => { finishSave = resolve; });
-      return Promise.resolve({ member: { ...input, version: (input.version ?? 0) + 1 } });
+      return Promise.resolve({ member: { ...eligibility, salesperson: true, ...input, version: (input.version ?? 0) + 1 } });
     });
     inviteUser.mockResolvedValue({ data: { ok: true } });
     renderPage();
-    const checkbox = await screen.findByRole("checkbox", { name: "Salesperson eligibility for Casey Staff" });
+    const checkbox = await screen.findByRole("checkbox", { name: "Receive new leads for Casey Staff" });
     fireEvent.click(checkbox);
     expect(checkbox).toBeDisabled();
 
@@ -351,7 +360,7 @@ describe("combined team and assignment settings", () => {
     await waitFor(() => expect(listTeamUsers).toHaveBeenCalledTimes(2));
     expect(UserProfile.listUserProfileByUserId).not.toHaveBeenCalled();
 
-    await act(async () => finishSave({ member: { ...eligibility, salesperson: true, version: 4 } }));
+    await act(async () => finishSave({ member: { ...eligibility, salesperson: true, receiveNewLeads: true, version: 4 } }));
     // Before the guard, the invite starts a stale read which can settle after
     // the successful save. Deliver it last to exercise that exact ordering.
     if (finishStaleRead) await act(async () => finishStaleRead!({ team: [{ ...eligibility }] }));
@@ -359,7 +368,7 @@ describe("combined team and assignment settings", () => {
     expect(checkbox).toBeEnabled();
     expect(reads).toBe(1);
     fireEvent.click(checkbox);
-    await waitFor(() => expect(communicationRequest).toHaveBeenLastCalledWith("saveEligibility", { ...eligibility, salesperson: false, version: 4 }, true));
+    await waitFor(() => expect(communicationRequest).toHaveBeenLastCalledWith("saveEligibility", { userId: eligibility.userId, receiveNewLeads: false, version: 4 }, true));
   });
 });
 
@@ -443,6 +452,80 @@ describe("Owner role administration", () => {
   });
 });
 
+describe("Owner access management", () => {
+  const renderOwner = () => render(<OwnerContext.Provider value={true}><Team profile={profile} /></OwnerContext.Provider>);
+
+  it("offers access changes only to Owners and prevents self-deactivation", async () => {
+    combinedSetup();
+    const { unmount } = renderPage();
+    expect(await screen.findByText("Active")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Deactivate Casey Staff" })).toBeNull();
+    unmount();
+    listTeamUsers.mockResolvedValue({ data: { users: [teammate, { userId: profile.userId, email: profile.email, createdAt: null, groups: ["OWNER"] }], profiles: [teammateProfile, profile] } });
+    renderOwner();
+    expect(await screen.findByRole("button", { name: "Deactivate Casey Staff" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Deactivate Ada Admin" })).toBeDisabled();
+    expect(setTeamUserEnabled).not.toHaveBeenCalled();
+  });
+
+  it("confirms deactivation, blocks duplicate submissions and shows the saved inactive status", async () => {
+    combinedSetup(true);
+    let finish!: (result: unknown) => void;
+    setTeamUserEnabled.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    renderOwner();
+    fireEvent.click(await screen.findByRole("button", { name: "Deactivate Casey Staff" }));
+    const dialog = screen.getByRole("dialog", { name: "Deactivate Casey Staff" });
+    expect(within(dialog).getByText(/Block this team member’s CRM access/)).toBeVisible();
+    expect(setTeamUserEnabled).not.toHaveBeenCalled();
+    const confirm = within(dialog).getByRole("button", { name: "Deactivate user" });
+    fireEvent.click(confirm);
+    fireEvent.click(confirm);
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(dialog).toBeVisible();
+    expect(within(dialog).getByRole("button", { name: "Updating access…" })).toBeDisabled();
+    expect(setTeamUserEnabled).toHaveBeenCalledExactlyOnceWith({ userId: teammate.userId, enabled: false });
+    await act(async () => finish({ data: { ok: true, userId: teammate.userId, enabled: false } }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    const row = screen.getByText(teammate.email).closest("tr")!;
+    expect(within(row).getByText("Inactive")).toBeVisible();
+    expect(within(row).getByRole("button", { name: "Reactivate Casey Staff" })).toBeEnabled();
+    expect(within(row).getByRole("checkbox", { name: "Receive new leads for Casey Staff" })).toBeDisabled();
+    expect(within(row).getByRole("checkbox", { name: "Lead texts for Casey Staff" })).toBeDisabled();
+    expect(screen.getByText(`Access deactivated for ${teammate.email}.`)).toBeVisible();
+  });
+
+  it("reactivates an inactive user with a new sign-in", async () => {
+    combinedSetup();
+    listTeamUsers.mockResolvedValue({ data: { users: [{ ...teammate, enabled: false }], profiles: [teammateProfile] } });
+    setTeamUserEnabled.mockResolvedValue({ data: { ok: true, userId: teammate.userId, enabled: true } });
+    renderOwner();
+    fireEvent.click(await screen.findByRole("button", { name: "Reactivate Casey Staff" }));
+    expect(screen.getByText(/They’ll need to sign in again/)).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Reactivate user" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(setTeamUserEnabled).toHaveBeenCalledWith({ userId: teammate.userId, enabled: true });
+    expect(screen.getByText("Active")).toBeVisible();
+  });
+
+  it("keeps failed requests reviewable and reflects access already blocked by a partial failure", async () => {
+    combinedSetup();
+    const error = "CRM access is blocked, but Cognito sign-out failed. Retry deactivation.";
+    setTeamUserEnabled.mockResolvedValueOnce({ data: { ok: false, enabled: false, error } })
+      .mockResolvedValueOnce({ data: { ok: true, enabled: false } });
+    renderOwner();
+    fireEvent.click(await screen.findByRole("button", { name: "Deactivate Casey Staff" }));
+    listTeamUsers.mockResolvedValue({ data: { users: [{ ...teammate, enabled: false }], profiles: [teammateProfile] } });
+    fireEvent.click(screen.getByRole("button", { name: "Deactivate user" }));
+    const dialog = screen.getByRole("dialog");
+    expect(await within(dialog).findByText(error)).toBeVisible();
+    expect(screen.getByText("Inactive")).toBeVisible();
+    expect(within(dialog).getByRole("button", { name: "Deactivate user" })).toBeEnabled();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Deactivate user" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(setTeamUserEnabled).toHaveBeenCalledTimes(2);
+  });
+});
+
 it('does not claim a lead-alert change persisted when its save fails, and lets it retry', async () => {
   combinedSetup();
   UserProfile.update.mockResolvedValueOnce({ errors: [{ message: 'Profile save failed' }] }).mockResolvedValueOnce({ data: { ...teammateProfile, leadTextAlerts: true } });
@@ -516,4 +599,95 @@ it('confirms a successful invite without treating the cleared email as an unsave
   expect(email).toHaveValue('');
   expect(screen.getByRole('checkbox', { name: 'Producer' })).toBeChecked();
   expect(screen.getByRole('checkbox', { name: 'Staff' })).not.toBeChecked();
+});
+
+describe("bounded visible teammate settings", () => {
+  const page = (start: number, count: number, nextToken: string | null) => {
+    const users = Array.from({ length: count }, (_, offset) => ({ userId: `page-user-${start + offset}`, email: `member${start + offset}@example.com`, groups: ["PRODUCER"], enabled: true, createdAt: null }));
+    const profiles = users.map((user, offset) => ({ ...teammateProfile, id: `profile-${user.userId}`, userId: user.userId, email: user.email, firstName: "Member", lastName: String(start + offset) }));
+    return { users, profiles, nextToken };
+  };
+  const settingsCalls = () => communicationRequest.mock.calls.filter(([operation]) => operation === "teamSettings");
+
+  it("waits for the roster, loads its exact first twenty IDs, and reads only twenty new IDs on Load more", async () => {
+    const first = page(0, 20, "second-page"), second = page(20, 20, null);
+    let finishRoster!: (result: unknown) => void;
+    listTeamUsers.mockImplementationOnce(() => new Promise(resolve => { finishRoster = resolve; }))
+      .mockResolvedValueOnce({ data: second });
+    renderPage();
+    expect(communicationRequest).not.toHaveBeenCalled();
+    await act(async () => finishRoster({ data: first }));
+    await waitFor(() => expect(settingsCalls()).toHaveLength(1));
+    expect(settingsCalls()[0]).toEqual(["teamSettings", { userIds: first.users.map(user => user.userId) }]);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Load more team members" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "Load more team members" }));
+    await waitFor(() => expect(settingsCalls()).toHaveLength(2));
+    expect(settingsCalls()[1]).toEqual(["teamSettings", { userIds: second.users.map(user => user.userId) }]);
+    expect(communicationRequest.mock.calls.some(([operation]) => operation === "team")).toBe(false);
+    expect(UserProfile.listUserProfileByUserId).not.toHaveBeenCalled();
+    expect(await screen.findByRole("checkbox", { name: "Receive new leads for Member 0" })).toBeChecked();
+    expect(await screen.findByRole("checkbox", { name: "Receive new leads for Member 39" })).toBeChecked();
+    fireEvent.click(screen.getByRole("button", { name: "Roles" }));
+    expect(settingsCalls()).toHaveLength(2);
+  });
+
+  it("keeps role and access management usable during settings failure and retries visible settings in bounded chunks", async () => {
+    const first = page(0, 20, "second-page"), second = page(20, 20, null);
+    listTeamUsers.mockResolvedValueOnce({ data: first }).mockResolvedValueOnce({ data: second });
+    let failRefresh = false;
+    communicationRequest.mockImplementation(async (operation: string) => {
+      if (operation !== "teamSettings") throw new Error("Unexpected operation");
+      if (failRefresh) { failRefresh = false; throw new Error("Settings temporarily unavailable"); }
+      return { team: [] };
+    });
+    render(<OwnerContext.Provider value={true}><Team profile={profile} /></OwnerContext.Provider>);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Load more team members" })).toBeEnabled());
+    failRefresh = true;
+    fireEvent.click(screen.getByRole("button", { name: "Load more team members" }));
+    expect(await screen.findByText("Settings temporarily unavailable")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Edit roles for Member 20" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Deactivate Member 20" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "Refresh assignment settings" }));
+    await waitFor(() => expect(settingsCalls()).toHaveLength(4));
+    expect(settingsCalls().slice(2).map(([, input]) => input)).toEqual([
+      { userIds: first.users.map(user => user.userId) }, { userIds: second.users.map(user => user.userId) },
+    ]);
+    expect(await screen.findByRole("checkbox", { name: "Receive new leads for Member 39" })).toBeEnabled();
+    expect(screen.queryByText("Settings temporarily unavailable")).toBeNull();
+  });
+
+  it("prevents page loading during connection drafts, saves and access editing", async () => {
+    combinedSetup(true);
+    listTeamUsers.mockResolvedValue({ data: { users: [{ ...teammate, groups: ["PRODUCER"] }], profiles: [teammateProfile], nextToken: "second-page" } });
+    let finishSave!: (result: unknown) => void;
+    communicationRequest.mockImplementation((operation: string) => operation === "teamSettings" ? Promise.resolve({ team: [eligibility] }) : new Promise(resolve => { finishSave = resolve; }));
+    render(<OwnerContext.Provider value={true}><Team profile={profile} /></OwnerContext.Provider>);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit connections for Casey Staff" }));
+    const more = screen.getByRole("button", { name: "Load more team members" });
+    expect(more).toBeDisabled();
+    fireEvent.click(more);
+    fireEvent.change(screen.getByRole("textbox", { name: /^Front teammate ID/ }), { target: { value: "tea_draft" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save connections" }));
+    expect(more).toBeDisabled();
+    expect(settingsCalls()).toHaveLength(1);
+    expect(listTeamUsers).toHaveBeenCalledOnce();
+    await act(async () => finishSave({ member: { ...eligibility, frontId: "tea_draft", version: 4 } }));
+    expect(more).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "Deactivate Casey Staff" }));
+    expect(more).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(more).toBeEnabled();
+  });
+
+  it("keeps an unaccepted invitation unavailable even when a saved row contains stale display and Producer metadata", async () => {
+    listTeamUsers.mockResolvedValue({ data: { users: [teammate], profiles: [] } });
+    communicationRequest.mockResolvedValue({ team: [{ ...eligibility, name: "Stale Name", email: "old@example.com", salesperson: true }] });
+    renderPage();
+    await waitFor(() => expect(settingsCalls()).toHaveLength(1));
+    expect(screen.getByText("Available after first sign-in")).toBeVisible();
+    expect(screen.getByText(teammate.email)).toBeVisible();
+    expect(screen.queryByText("Stale Name")).toBeNull();
+    expect(screen.queryByRole("checkbox", { name: /Receive new leads/ })).toBeNull();
+    expect(screen.getByRole("button", { name: `Edit roles for ${teammate.email}` })).toBeEnabled();
+  });
 });

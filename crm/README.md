@@ -27,6 +27,12 @@ Internal agency management system replacing EzLynx for the commercial
   saving your own roles refreshes them immediately. The team roster loads
   twenty members at a time, including profile details in the same response;
   use **Load more** to reach additional teammates.
+  Owners can deactivate and reactivate teammates in **Settings → Team**.
+  Deactivation blocks CRM requests from existing sessions, closes settings
+  subscriptions, disables sign-in, and signs the teammate out. Owners cannot
+  deactivate themselves. Reactivation requires a new sign-in; existing account
+  assignments remain available for an administrator to reassign. Previously
+  issued file links expire within sixty seconds.
   First login runs an onboarding flow ([src/pages/Onboarding.tsx](src/pages/Onboarding.tsx)).
   Producers must supply an NPN and at least one state license, including
   existing users who gain Producer later and have missing licensing details.
@@ -35,8 +41,12 @@ Internal agency management system replacing EzLynx for the commercial
   frontend is released. It preserves existing license records and leaves the
   old table read-only as a backup. A failed copy blocks deployment and can be
   retried safely; the app no longer reads or imports legacy licenses.
-- **Website assignment and lead texts** — website enquiries rotate among
-  active teammates with salesperson eligibility in Settings → Team. The
+- **Website assignment and lead texts** — current Producer membership makes
+  active teammates eligible for manual account assignment. **Receive new leads**
+  in Settings → Team controls automatic website enquiry rotation separately;
+  pausing it leaves manual assignments and existing work available. New
+  Producers receive website leads by default, while migration preserves an
+  existing Producer's paused lead rotation. The
   lead and its pending assignment are saved together. A durable worker
   advances the rotation with the assigned owner, so retries do not consume
   another turn and bursts never compete for the cursor during capture.
@@ -57,7 +67,9 @@ Internal agency management system replacing EzLynx for the commercial
   missing or temporarily unavailable assignments, and holds Front import and
   texts until an owner is verified. Missing Front connections surface as
   repair issues; alerts never go to the rest of the team. The scheduled index
-  worker backfills existing producer eligibility before assignment begins.
+  worker backfills existing producer preferences before assignment begins and
+  reconciles Producer membership automatically. Assignment checks current
+  membership and access status again before choosing a recipient.
 - **Data** — AppSync + DynamoDB, schema in
   [amplify/data/resource.ts](amplify/data/resource.ts).
 - **Employee profitability** — Owner-only estimated insurance commission less
