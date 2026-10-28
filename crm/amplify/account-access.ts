@@ -48,6 +48,7 @@ export function installAccountAccess(backend: typeof Backend, communicationTable
       if (added) { resource.addPropertyOverride("globalSecondaryIndexes", all); resource.addPropertyOverride("attributeDefinitions", definitions); }
     }
   }
+  backend.commissions.addEnvironment("COMMISSION_POLICY_ACCOUNT_INDEX", indexes["Policy.accountId"]);
   // Lead deletion checks must query the account partition, rather than mistake
   // an empty filtered scan page's continuation token for a related record.
   const deletionIndexes = ["Policy", "Invoice"].map(model => {
@@ -72,17 +73,24 @@ export function installAccountAccess(backend: typeof Backend, communicationTable
   bucket.grantDelete(guard.resources.lambda);
   const source = api.addLambdaDataSource("CrmAssignmentAccess", guard.resources.lambda);
   const guards = new Map<string, CfnFunctionConfiguration>();
-  const makeGuard = (mode: string, model: string, field = "", operation = "") => {
-    const key = `${mode}_${model}_${field}_${operation}`.replace(/-/g, "_");
+  // Custom operations share a guard; AppSync supplies the actual schema field
+  // for each invocation (including aliased queries). Avoid one otherwise
+  // identical CloudFormation resource per custom operation.
+  const makeGuard = (mode: string, model: string, operation = "") => {
+    const key = `${mode}_${model}__${operation}`.replace(/-/g, "_");
     const cached = guards.get(key); if (cached) return cached.attrFunctionId;
     const listAdminBypass = '#set($assignmentGroups = $util.defaultIfNull($ctx.identity.groups, $util.defaultIfNull($ctx.identity.claims.get("cognito:groups"), [])))\n'
       + '#set($assignmentRole = "")\n#set($assignmentRoleCount = 0)\n#foreach($header in $ctx.request.headers.entrySet())\n#if($header.key.toLowerCase() == "x-crm-role")\n#set($assignmentRole = $header.value)\n#set($assignmentRoleCount = $assignmentRoleCount + 1)\n#end\n#end\n'
       + '#if(($assignmentRoleCount == 0 && ($assignmentGroups.contains("OWNER") || $assignmentGroups.contains("ADMIN"))) || ($assignmentRoleCount == 1 && (($assignmentRole == "OWNER" && $assignmentGroups.contains("OWNER")) || ($assignmentRole == "ADMIN" && $assignmentGroups.contains("ADMIN")))))\n#return($ctx.prev.result)\n#end\n';
     const fn = new CfnFunctionConfiguration(api, `Access_${key}`, {
       apiId: api.apiId, name: `access_${key}`, dataSourceName: source.name, functionVersion: "2018-05-29",
-      requestMappingTemplate: `#if($util.authType() == "IAM Authorization")\n#if(!$util.isNull($ctx.identity.cognitoIdentityId))\n$util.unauthorized()\n#end\n#return($ctx.prev.result)\n#end\n${mode === "list" ? listAdminBypass : mode === "read" ? '#if(!$util.isNull($ctx.stash.assignmentList))\n#return($ctx.prev.result)\n#end\n' : ''}{"version":"2018-05-29","operation":"Invoke","payload":{"mode":"${mode}","model":"${model}","field":"${field}","operation":"${operation}","identity":$util.toJson($ctx.identity),"request":$util.toJson($ctx.request),"arguments":$util.toJson($ctx.arguments),"previous":$util.toJson($ctx.prev.result)}}`,
+      requestMappingTemplate: `#if($util.authType() == "IAM Authorization")\n#if(!$util.isNull($ctx.identity.cognitoIdentityId))\n$util.unauthorized()\n#end\n#return($ctx.prev.result)\n#end\n${mode === "list" ? listAdminBypass : mode === "read" ? '#if(!$util.isNull($ctx.stash.assignmentList))\n#return($ctx.prev.result)\n#end\n' : ''}{"version":"2018-05-29","operation":"Invoke","payload":{"mode":"${mode}","model":"${model}","field":$util.toJson($ctx.info.fieldName),"operation":"${operation}","identity":$util.toJson($ctx.identity),"request":$util.toJson($ctx.request),"arguments":$util.toJson($ctx.arguments),"previous":$util.toJson($ctx.prev.result)}}`,
       responseMappingTemplate: `#if($ctx.error)\n$util.error($ctx.error.message, $ctx.error.type)\n#end\n${mode === "list" ? '$util.qr($ctx.stash.put("assignmentList", $ctx.result))\n' : ''}$util.toJson($ctx.result)`,
     });
+    // CDK's diagnostic construct paths duplicate these already descriptive
+    // access_* names. Omit only that metadata to keep the staging data template
+    // below CloudFormation's limit; all resource properties and checks remain.
+    fn.addDeletionOverride("Metadata.aws:cdk:path");
     fn.addResourceDependency(source.node.defaultChild as import("aws-cdk-lib/aws-appsync").CfnDataSource);
     guards.set(key, fn); return fn.attrFunctionId;
   };
@@ -117,7 +125,7 @@ export function installAccountAccess(backend: typeof Backend, communicationTable
         const operation = /^(create|update|delete)/.exec(field)?.[1];
         if (!operation) throw new Error(`Unclassified model mutation: ${field}`);
         if (ADMIN_MODEL_OPERATIONS[model]?.includes(operation)) extend(resolver, [makeGuard("admin", "")], []);
-        if (scoped || model === "UserProfile") extend(resolver, [makeGuard("write", model, "", operation)], []);
+        if (scoped || model === "UserProfile") extend(resolver, [makeGuard("write", model, operation)], []);
       } else if (scoped) {
         if (ADMIN_MODEL_OPERATIONS[model]?.includes("read")) extend(resolver, [makeGuard("admin", "")], []);
         const pipeline = resolver.pipelineConfig as CfnResolver.PipelineConfigProperty;
@@ -158,7 +166,7 @@ export function installAccountAccess(backend: typeof Backend, communicationTable
       continue;
     }
     if (CUSTOM_OPERATIONS.includes(field)) {
-      if (!["crmAccess", "crmFile"].includes(field)) extend(resolver, [makeGuard("custom-pre", "", field)], field === "communicationRead" ? [makeGuard("custom-post", "", field)] : []);
+      if (!["crmAccess", "crmFile"].includes(field)) extend(resolver, [makeGuard("custom-pre", "")], field === "communicationRead" ? [makeGuard("custom-post", "")] : []);
       continue;
     }
     throw new Error(`Unclassified CRM resolver: ${type}.${field}`);

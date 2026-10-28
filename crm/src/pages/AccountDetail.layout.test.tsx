@@ -108,7 +108,7 @@ describe("lead salesperson on Overview", () => {
     renderAccount(undefined, view === "CLIENT");
     await screen.findByRole("heading", { name: "Overview information" });
     expect(screen.queryByRole("region", { name: "Lead salesperson" })).not.toBeInTheDocument();
-    expect(mocks.request).not.toHaveBeenCalled();
+    expect(mocks.request.mock.calls.some(([operation]) => ["context", "setResponsibilities", "initializeLead"].includes(operation))).toBe(false);
   });
 
   it("assigns an uninitialized lead without first setting up communications", async () => {

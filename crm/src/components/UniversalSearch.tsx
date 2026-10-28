@@ -1,3 +1,4 @@
+import { searchParties, type PartyRecord } from '../lib/relationships';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAsyncResource } from "../lib/useAsyncResource";
@@ -55,6 +56,7 @@ export default function UniversalSearch() {
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
   const [docResult, setDocResult] = useState<{ query: string; hits: DocumentHit[] }>({ query: '', hits: [] });
+  const [partyResult, setPartyResult] = useState<{ query: string; items: PartyRecord[]; more: boolean }>({ query: '', items: [], more: false });
   const [docSearching, setDocSearching] = useState(false);
   const boxRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -97,6 +99,7 @@ export default function UniversalSearch() {
     setDocResult({ query: qt, hits: [] });
     setDocSearching(true);
     const timer = setTimeout(() => {
+      searchParties(qt).then(page => { if (docTicket.current === ticket) setPartyResult({ query: qt, items: page.items, more: !!page.nextToken }); }).catch(() => { if (docTicket.current === ticket) setPartyResult({ query: qt, items: [], more: true }); });
       fetchDocumentHits(qt)
         .then((hits) => {
           if (docTicket.current !== ticket) return;
@@ -135,6 +138,7 @@ export default function UniversalSearch() {
         target: h.target,
       })),
     }));
+    if (partyResult.query === qt) out.push({ name: 'Relationships', note: null, items: [...partyResult.items.slice(0, 5).map(p => ({ key: `party-${p.id}`, type: 'relationship' as const, label: p.name, sub: p.category ?? '', target: `/relationships/${p.id}` })), ...(partyResult.more || partyResult.items.length > 5 ? [{ key: 'party-more', type: 'relationship' as const, label: 'Continue searching relationships', sub: 'Open directory search', target: `/relationships?q=${encodeURIComponent(qt)}` }] : [])] });
     if (docHits.length > 0 || docSearching) {
       out.push({
         name: "Documents",
@@ -152,7 +156,7 @@ export default function UniversalSearch() {
       });
     }
     return out;
-  }, [groups, docHits, docSearching, qt, accountNames]);
+  }, [groups, docHits, docSearching, qt, accountNames, partyResult]);
 
   const flat = useMemo(() => renderGroups.flatMap((g) => g.items), [renderGroups]);
   const footerTarget = `/search?q=${encodeURIComponent(qt)}`;
@@ -271,7 +275,7 @@ export default function UniversalSearch() {
             showPop && selectable > 0 ? `usearch-opt-${activeIdx}` : undefined
           }
           aria-label="Search"
-          placeholder="Search accounts, contacts, policies, invoices, documents…"
+          placeholder="Search accounts, relationships, contacts, policies, documents…"
           value={q}
           onChange={(e) => {
             setQ(e.target.value);
@@ -428,6 +432,7 @@ function IconGlass() {
 }
 
 const TYPE_ICONS: Record<HitItem["type"], ReactNode> = {
+  relationship: <svg {...iconProps}><circle cx="8" cy="8" r="3" /><circle cx="17" cy="9" r="2.5" /><path d="M2 21v-3a6 6 0 0112 0v3M16 15a5 5 0 015 5" /></svg>,
   account: (
     <svg {...iconProps}>
       <path d="M4 21V5a1 1 0 011-1h9a1 1 0 011 1v16" />

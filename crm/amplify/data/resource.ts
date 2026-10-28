@@ -1,3 +1,4 @@
+import { commissions } from '../functions/commissions/resource';
 import { ownerProfitability } from "../functions/owner-profitability/resource";
 import { crmAccess } from "../functions/crm-access/resource";
 import { type ClientSchema, a, defineData } from "@aws-amplify/backend";
@@ -425,6 +426,46 @@ const schema = a
         allow.groups(["ADMIN", "OWNER"]).to(["read", "update", "delete"]),
       ]),
 
+    // Business directory is shared; linked insured records retain assignment access.
+    Party: a.model({
+      kind: a.enum(["PERSON", "ORGANIZATION"]),
+      name: a.string().required(),
+      category: a.string(),
+      email: a.email(),
+      phone: a.string(),
+      website: a.string(),
+      ownerId: a.string().required(),
+      notes: a.string(),
+      archived: a.boolean(),
+      revision: a.integer().required(),
+      updatedBy: a.string(),
+    }).disableOperations(["create", "update", "delete", "subscriptions"])
+      .authorization(allow => [allow.authenticated().to(["read"])]),
+    PartyAffiliation: a.model({
+      personId: a.id().required(),
+      organizationId: a.id().required(),
+      title: a.string(),
+      validFrom: a.date(),
+      validUntil: a.date(),
+      revision: a.integer().required(),
+      updatedBy: a.string(),
+    }).secondaryIndexes(index => [index("personId"), index("organizationId")])
+      .disableOperations(["create", "update", "delete", "subscriptions"])
+      .authorization(allow => [allow.authenticated().to(["read"])]),
+    AccountRelationship: a.model({
+      contactIds: a.string().array(),
+      accountId: a.id().required(),
+      partyId: a.id().required(),
+      role: a.enum(["MANAGER", "OWNER", "REFERRER", "INSURED"]),
+      validFrom: a.date(),
+      validUntil: a.date(),
+      notes: a.string(),
+      revision: a.integer().required(),
+      updatedBy: a.string(),
+    }).secondaryIndexes(index => [index("accountId"), index("partyId")])
+      .disableOperations(["create", "update", "delete", "subscriptions"])
+      .authorization(allow => [allow.authenticated().to(["read"])]),
+
     // ── Contacts: the people at an association ─────────────────────────
     //
     // One row per person, replacing the four flat `contact*` columns and the
@@ -440,6 +481,12 @@ const schema = a
     // affected by this rule either way — see the note on `allow.resource` at
     // the bottom of this file.
     Contact: a.model({
+      // Account-specific snapshots; historical documents never follow directory edits.
+      partyId: a.id(),
+      relationshipId: a.id(),
+      validFrom: a.date(),
+      validUntil: a.date(),
+      isBilling: a.boolean(),
       accountId: a.id().required(),
       account: a.belongsTo("Account", "accountId"),
       // Who made this write. Set by the actor proxy in `src/lib/client.ts`,
@@ -842,6 +889,7 @@ const schema = a
       account: a.belongsTo("Account", "accountId"),
       // Who made this write — see the Contact model's note.
       lastWriteBy: a.string(),
+      commissionSnapshotId: a.string(), // Server-owned reference; no compensation details on shared policies.
       quoteId: a.id(),
       quote: a.belongsTo("Quote", "quoteId"),
       carrierId: a.id(),
@@ -2149,6 +2197,18 @@ const schema = a
       .returns(a.json())
       .authorization((allow) => [allow.publicApiKey()])
       .handler(a.handler.function(pfElection)),
+
+    commissionOverview: a.query().returns(a.json())
+      .authorization(allow => [allow.authenticated()])
+      .handler(a.handler.function(commissions)),
+    commissionAction: a.mutation()
+      .arguments({ operation: a.string().required(), input: a.json().required() }).returns(a.json())
+      .authorization(allow => [allow.groups(["OWNER"])])
+      .handler(a.handler.function(commissions)),
+    bindCommissionPolicy: a.mutation()
+      .arguments({ input: a.json().required() }).returns(a.json())
+      .authorization(allow => [allow.authenticated()])
+      .handler(a.handler.function(commissions)),
 
     // Private owner reporting uses its own storage; salaries never enter team profiles.
     ownerProfitability: a.query()

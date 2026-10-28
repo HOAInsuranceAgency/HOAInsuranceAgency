@@ -1,3 +1,4 @@
+import { currentContacts } from "../../../src/lib/contacts";
 import { Amplify } from "aws-amplify";
 import { generateClient } from "aws-amplify/data";
 import { getAmplifyDataClientConfig } from "@aws-amplify/backend/function/runtime";
@@ -118,7 +119,7 @@ async function accountBundle(
 
   return {
     account: slim(account as Row),
-    contacts: slimAll(contacts as Row[]),
+    contacts: slimAll(currentContacts(contacts) as Row[]),
     priorCarriers: slimAll(priorCarriers as Row[]),
     buildings: slimAll(buildings as Row[]),
     blankets: slimAll(blankets as Row[]),

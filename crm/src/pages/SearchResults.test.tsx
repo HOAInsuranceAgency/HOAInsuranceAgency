@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // Keep the real search index, ranking and pagination. The generated client
 // returns only the caller's authorized records, just as it does in the app.
 const models = vi.hoisted(() => ({
+  Party: { list: vi.fn() },
   Account: { list: vi.fn() },
   Contact: { list: vi.fn() },
   Policy: { list: vi.fn() },

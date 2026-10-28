@@ -1,3 +1,5 @@
+import { currentContacts } from "../../../src/lib/contacts";
+import { RELATIONSHIP_READS, RELATIONSHIP_WRITES, relationshipOperation } from "./relationships";
 import { receivesNewLeads, salespersonEligibility, salespersonWorkflow } from "../../../../shared/salespersonOwnership";
 import { retiredTaskOperation } from "../../../../shared/retiredTaskOperations";
 import { tasksRemoved, currentCommunicationIssues } from "./retiredTasks";
@@ -57,6 +59,9 @@ export const handler = async (event: { arguments: { operation?: string; readOper
     const admin = isActiveAdmin(event.identity, event.request);
     const input = object(event.arguments.input), op = event.arguments.readOperation ?? event.arguments.operation;
     if (retiredTaskOperation(op ?? "", input)) tasksRemoved();
+    if ((event.arguments.readOperation ? RELATIONSHIP_READS : RELATIONSHIP_WRITES).has(op ?? "")) {
+      return { ok: true, ...await relationshipOperation(op!, input, { sub: actor, groups: event.identity?.groups ?? undefined, claims: event.identity?.claims }, event.request) };
+    }
     const requireAdmin = () => { if (!admin) throw new Error("Only an admin can change integration or team settings"); };
     if (event.arguments.readOperation) {
       if (op === "searchAccounts") return { ok: true, ...await (await import("./accountSearch")).searchAccounts(input, { actor, role: activeRole(event.identity, event.request) }) };
@@ -89,7 +94,7 @@ export const handler = async (event: { arguments: { operation?: string; readOper
         const [contacts, quotes, documents] = await Promise.all([account.data.contacts({ limit: 25 }), account.data.quotes({ limit: 25 }), client.models.Document.listDocumentByEntityId({ entityId: id }, { limit: 25 })]);
         if (contacts.errors?.length || quotes.errors?.length || documents.errors?.length) throw new Error("Could not load account context");
         return { ok: true, summary: { name: account.data.name, source: account.data.source, leadSource: account.data.leadSource, notes: account.data.notes, currentPolicyExpiration: account.data.currentPolicyExpiration,
-          contacts: contacts.data.map(c => ({ id: c.id, name: c.name, email: c.email, phone: c.phone })), quotes: quotes.data.map(q => ({ id: q.id, status: q.status, lines: q.lines })), documents: documents.data.map(d => ({ id: d.id, name: d.name, status: d.ocrStatus })),
+          contacts: currentContacts(contacts.data).map(c => ({ id: c.id, name: c.name, email: c.email, phone: c.phone })), quotes: quotes.data.map(q => ({ id: q.id, status: q.status, lines: q.lines })), documents: documents.data.map(d => ({ id: d.id, name: d.name, status: d.ocrStatus })),
           more: !!(contacts.nextToken || quotes.nextToken || documents.nextToken), url: `${process.env.CRM_BASE_URL}/accounts/${id}` } };
       }
       if (op === "activity") { const r = await get<Communication>(text(input, "id")); if (!r || r.kind !== "COMMUNICATION") throw new Error("Communication not found"); return { ok: true, communication: safeCommunication({ ...r.data, version: r.version }) }; }

@@ -72,6 +72,7 @@ Internal agency management system replacing EzLynx for the commercial
   membership and access status again before choosing a recipient.
 - **Data** — AppSync + DynamoDB, schema in
   [amplify/data/resource.ts](amplify/data/resource.ts).
+- **Producer commissions** — Owner-only carrier statement reconciliation, dated individual new/renewal rates, receipt-based earnings, reviewed payroll batches, and proportional proposed chargebacks. Producers see their own statements. See [setup and rollout](../docs/PRODUCER-COMMISSIONS.md).
 - **Employee profitability** — Owner-only estimated insurance commission less
   producer share and prorated salary, with private dated compensation settings.
   Salary data is isolated from shared profiles and activity records. See
