@@ -13,12 +13,12 @@ export function canonical(value: unknown): string {
   if (value && typeof value === "object") return `{${Object.entries(value).filter(([,v]) => v !== undefined).sort(([a],[b]) => a.localeCompare(b)).map(([k,v]) => `${JSON.stringify(k)}:${canonical(v)}`).join(",")}}`;
   return JSON.stringify(value) ?? "null";
 }
-export function websiteProducerGroup(id: string, data: { enabled?: boolean; salesperson?: boolean; userId?: unknown }) {
-  return data.enabled === true && data.salesperson === true && typeof data.userId === "string" && /^[a-zA-Z0-9_-]{1,128}$/.test(data.userId) && id === `eligibility:${data.userId}` ? "WEBSITE" : undefined;
+export function websiteProducerGroup(id: string, data: { enabled?: boolean; salesperson?: boolean; receiveNewLeads?: boolean; userId?: unknown }) {
+  return data.enabled === true && data.salesperson === true && data.receiveNewLeads !== false && typeof data.userId === "string" && /^[a-zA-Z0-9_-]{1,128}$/.test(data.userId) && id === `eligibility:${data.userId}` ? "WEBSITE" : undefined;
 }
 export function row<T>(kind: string, id: string, data: T, opts: { accountId?: string; dueAt?: string; previous?: Row<unknown> } = {}): Row<T> {
   const now = new Date().toISOString();
-  const values = data as { status?: string; state?: string; resolved?: boolean; processedAt?: string; disposition?: string; salespersonId?: string; assignmentIssue?: string; dueAt?: string; at?: string; enabled?: boolean; salesperson?: boolean; userId?: unknown };
+  const values = data as { status?: string; state?: string; resolved?: boolean; processedAt?: string; disposition?: string; salespersonId?: string; assignmentIssue?: string; dueAt?: string; at?: string; enabled?: boolean; salesperson?: boolean; receiveNewLeads?: boolean; userId?: unknown };
   const producerGroup = kind === "ELIGIBILITY" ? websiteProducerGroup(id, values) : undefined;
   const actionable = kind === "TASK" || kind === "NOTIFICATION" ? false
     : kind === "WORKFLOW" ? ["ACTIVE", "BOUND"].includes(values.disposition ?? "") && (!values.salespersonId || !!values.assignmentIssue)

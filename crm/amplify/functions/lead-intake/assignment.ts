@@ -1,7 +1,8 @@
 import type { LeadWorkflow } from "../../../../shared/leadWorkflow";
 import { absent, check, commit, conflict, get, issue, put, row, save, type Row, type Write } from "../communications/store";
 import { indexedProducerPage, PRODUCER_INDEX_MIGRATION_ID } from "../communications/producerIndex";
-import { enabledUser, UnavailableTeammateError } from "../communications/workflow";
+import { IneligibleProducerError, producerUser, UnavailableTeammateError } from "../communications/workflow";
+import { activeTeamUserCheck } from "../crm-access/user-status";
 
 const ROTATION_ID = "rotation:web-leads";
 export interface WebLeadAssignment {
@@ -55,13 +56,13 @@ export async function runWebLeadAssignment(candidate: Row<WebLeadAssignment>) {
     const wrapped = !!lastUserId && !!progress?.wrapped;
     const page = await indexedProducerPage({ ...(wrapped ? { through: lastUserId } : { after: lastUserId }), nextToken: progress?.nextToken });
     for (const member of page.items) {
-      try { await enabledUser(member.data.userId); }
-      catch (error) { if (error instanceof UnavailableTeammateError) continue; throw error; }
+      try { await producerUser(member.data.userId); }
+      catch (error) { if (error instanceof UnavailableTeammateError || error instanceof IneligibleProducerError) continue; throw error; }
       const assigned = row("WORKFLOW", workflow.id, { ...workflow.data, salespersonId: member.data.userId, assignmentIssue: undefined,
         version: workflow.version + 1, updatedAt: new Date().toISOString() }, { accountId, previous: workflow });
       await commit([
         put(row("CURSOR", ROTATION_ID, { lastUserId: member.data.userId }, { previous: cursor }), cursor),
-        put(assigned, workflow), check(member), absent(`deleted-account:${accountId}`),
+        put(assigned, workflow), check(member), activeTeamUserCheck(member.data.userId), absent(`deleted-account:${accountId}`),
         put(row("WEB_LEAD_ASSIGNMENT", job.id, { accountId, state: "COMPLETE", attempts: job.data.attempts }, { accountId, previous: job }), job),
         ...await resolvedIssue(job),
       ]);
@@ -76,7 +77,7 @@ export async function runWebLeadAssignment(candidate: Row<WebLeadAssignment>) {
     // Empty indexes can be briefly stale after eligibility changes. Leave
     // durable work queued, including when there really are no active users.
     job = await defer(job, { rotationVersion: undefined, wrapped: undefined, nextToken: undefined,
-      attempts: job.data.attempts + 1, error: "No active producer is available yet. Website assignment will retry automatically; check salesperson eligibility in Team settings." }, 30_000);
+      attempts: job.data.attempts + 1, error: "No active Producer is receiving new website leads yet. Website assignment will retry automatically; check Producer roles and new lead settings in Team." }, 30_000);
     await issue(job.id, job.data.error!, accountId);
   } catch (error) {
     const current = await get<WebLeadAssignment>(job.id);

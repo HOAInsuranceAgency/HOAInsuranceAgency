@@ -1,7 +1,7 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import type { Communication, IntegrationConfig, LeadWorkflow } from "../../../shared/leadWorkflow";
-const h = vi.hoisted(() => ({ records: new Map<string, Record<string, any>>(), transactions: [] as any[][], inFlight: 0, maxInFlight: 0, fail: false, failAt: undefined as number | undefined, writeError: undefined as Error | undefined, writeErrors: [] as Error[], accountError: false, userEnabled: true, disabledUsers: new Set<string>(),
-  reads: [] as string[], readFailureId: undefined as string | undefined, beforeWrite: undefined as (() => void) | undefined, userReads: [] as string[], userError: undefined as Error | undefined, queries: [] as any[], queryError: undefined as Error | undefined, cognitoList: vi.fn(), deletionQuery: vi.fn(), batch: vi.fn(), producerEmail: vi.fn(), front: vi.fn(), dialpad: vi.fn(), update: vi.fn(), accountList: vi.fn(), c: {} as IntegrationConfig }));
+const h = vi.hoisted(() => ({ records: new Map<string, Record<string, any>>(), transactions: [] as any[][], inFlight: 0, maxInFlight: 0, fail: false, failAt: undefined as number | undefined, writeError: undefined as Error | undefined, writeErrors: [] as Error[], accountError: false, userEnabled: true, disabledUsers: new Set<string>(), nonProducers: new Set<string>(), deactivatedUsers: new Set<string>(),
+  reads: [] as string[], readFailureId: undefined as string | undefined, beforeWrite: undefined as (() => void) | undefined, userReads: [] as string[], groupReads: [] as string[], userError: undefined as Error | undefined, queries: [] as any[], queryError: undefined as Error | undefined, cognitoList: vi.fn(), deletionQuery: vi.fn(), batch: vi.fn(), producerEmail: vi.fn(), front: vi.fn(), dialpad: vi.fn(), update: vi.fn(), accountList: vi.fn(), profileList: vi.fn(), profileByUser: vi.fn(), c: {} as IntegrationConfig }));
 vi.mock("@aws-sdk/lib-dynamodb", async importOriginal => {
   const actual = await importOriginal<typeof import("@aws-sdk/lib-dynamodb")>();
   return { ...actual, DynamoDBDocumentClient: { from: () => ({ send: async (command: any) => {
@@ -36,6 +36,10 @@ vi.mock("@aws-sdk/lib-dynamodb", async importOriginal => {
       const writes = p.TransactItems;
       for (const entry of writes) {
         const w = entry.Put ?? entry.ConditionCheck ?? entry.Update;
+        if (entry.ConditionCheck && w.Key?.userId) {
+          if (h.deactivatedUsers.has(w.Key.userId)) throw Object.assign(new Error("Team access changed"), { name: "TransactionCanceledException", CancellationReasons: [{ Code: "ConditionalCheckFailed" }] });
+          continue;
+        }
         const old = h.records.get(`${w.TableName}:${w.Item?.id ?? w.Key?.id}`);
         if (entry.ConditionCheck && w.ConditionExpression === '#stage = :lead') {
           if (old?.stage !== w.ExpressionAttributeValues[':lead']) throw Object.assign(new Error('Lead stage changed'), { name: 'TransactionCanceledException', CancellationReasons: [{ Code: 'ConditionalCheckFailed' }] });
@@ -67,7 +71,23 @@ vi.mock("@aws-sdk/lib-dynamodb", async importOriginal => {
     throw new Error(`Unexpected storage command ${command.constructor.name}`);
   } }) } };
 });
-vi.mock("@aws-sdk/client-cognito-identity-provider", () => ({ CognitoIdentityProviderClient: class { send = async (command: any) => { if (!command.input.Filter) throw new Error('Unfiltered user-pool scans are not allowed'); const id = /"([^"]+)"/.exec(command.input.Filter)?.[1] ?? "brian"; h.userReads.push(id); if (h.userError) throw h.userError; const override = await h.cognitoList(command.input); if (override !== undefined) return override; return { Users: [{ Enabled: h.userEnabled && !h.disabledUsers.has(id), Attributes: [{ Name: "email", Value: `${id}@example.com` }, { Name: "email_verified", Value: "true" }] }] }; }; }, ListUsersCommand: class { constructor(public input: unknown) {} } }));
+vi.mock("../../amplify/functions/crm-access/user-status", async importOriginal => ({ ...(await importOriginal<typeof import("../../amplify/functions/crm-access/user-status")>()), teamUserDisabled: async (id: string) => h.deactivatedUsers.has(id) }));
+vi.mock("@aws-sdk/client-cognito-identity-provider", async importOriginal => ({
+  ...(await importOriginal<typeof import("@aws-sdk/client-cognito-identity-provider")>()),
+  CognitoIdentityProviderClient: class { send = async (command: any) => {
+    if (command.constructor.name === "AdminListGroupsForUserCommand") {
+      h.groupReads.push(command.input.Username);
+      if (h.userError) throw h.userError;
+      return { Groups: h.nonProducers.has(command.input.Username) ? [{ GroupName: "STAFF" }] : [{ GroupName: "PRODUCER" }] };
+    }
+    if (command.constructor.name === "ListUsersInGroupCommand") return { Users: [] };
+    if (!command.input.Filter) throw new Error('Unfiltered user-pool scans are not allowed');
+    const id = /"([^"]+)"/.exec(command.input.Filter)?.[1] ?? "brian";
+    h.userReads.push(id); if (h.userError) throw h.userError;
+    const override = await h.cognitoList(command.input); if (override !== undefined) return override;
+    return { Users: [{ Username: id, Enabled: h.userEnabled && !h.disabledUsers.has(id), Attributes: [{ Name: "sub", Value: id }, { Name: "email", Value: `${id}@example.com` }, { Name: "email_verified", Value: "true" }] }] };
+  }; },
+}));
 vi.mock("../../amplify/functions/communications/config", async importOriginal => ({ ...(await importOriginal<typeof import("../../amplify/functions/communications/config")>()), saveCredentials: vi.fn(), config: async () => h.c, credentials: async () => ({ frontSigningKey: "test-signing-key", dialpadSigningKey: "test-dialpad-signing-key" }) }));
 vi.mock("../../amplify/functions/communications/data", () => ({ dataClient: async () => ({ models: {
   Account: { list: h.accountList, get: async ({ id }: { id: string }) => (h.accountError ? { data: null, errors: [{ message: "Simulated account read failure" }] } : { data: { id, name: "Willow HOA", stage: "LEAD", createdAt: "2026-09-08T14:00:00.000Z", updatedAt: "2026-09-08T14:00:00.000Z", ...Object.fromEntries([["quotes", "Quote"], ["policies", "Policy"], ["priorCarriers", "PriorCarrier"], ["certificates", "Certificate"], ["invoices", "Invoice"]].map(([name, model]) => [name, async () => ({ data: [...h.records.entries()].filter(([key, r]) => key.startsWith(`${model}:`) && r.accountId === id).map(([, r]) => r) })])), contacts: async () => ({ data: [...h.records.entries()].filter(([key, c]) => key.startsWith("Contact:") && c.accountId === id).map(([,c]) => c) }), ...h.records.get(`Account:${id}`) } }) },
@@ -79,7 +99,7 @@ vi.mock("../../amplify/functions/communications/data", () => ({ dataClient: asyn
   Certificate: { list: async () => ({ data: [...h.records.entries()].filter(([key]) => key.startsWith("Certificate:")).map(([,d]) => d) }) },
   Document: { listDocumentByEntityId: async () => ({ data: [...h.records.entries()].filter(([key]) => key.startsWith("Document:")).map(([,d]) => d) }) },
   LeadReply: { update: h.update },
-  UserProfile: { list: async () => ({ data: [...h.records.entries()].filter(([key]) => key.startsWith("UserProfile:")).map(([,profile]) => profile) }) },
+  UserProfile: { list: h.profileList, listUserProfileByUserId: h.profileByUser },
 } }) }));
 vi.mock("../../amplify/functions/communications/providers", async importOriginal => {
   const actual = await importOriginal<typeof import("../../amplify/functions/communications/providers")>();
@@ -113,7 +133,8 @@ async function seedLegacyPromise(input: any, actor: string) {
 }
 beforeEach(async () => {
   vi.useFakeTimers(); vi.setSystemTime(NOW); h.records.clear(); h.transactions.length = 0; h.inFlight = 0; h.maxInFlight = 0; h.fail = false; h.failAt = undefined; h.accountError = false; h.userEnabled = true; h.writeError = undefined; vi.clearAllMocks();
-  h.disabledUsers.clear();
+  h.disabledUsers.clear(); h.nonProducers.clear(); h.deactivatedUsers.clear();
+  h.groupReads.length = 0;
   h.writeErrors.length = 0;
   h.reads.length = 0; h.readFailureId = undefined; h.beforeWrite = undefined; h.userReads.length = 0; h.queries.length = 0; h.userError = undefined; h.queryError = undefined;
   h.producerEmail.mockReset().mockImplementation(async member => emailIdentity(member.userId));
@@ -124,13 +145,15 @@ beforeEach(async () => {
       request.Keys.map(key => h.records.get(`${name}:${key.id}`)).filter(Boolean).map(item => structuredClone(item)).reverse(),
     ])),
   }));
-  Object.assign(process.env, { COMMUNICATION_TABLE: "comms", ACTIVITY_TABLE: "Activity", ACCOUNT_TABLE: "Account", CONTACT_TABLE: "Contact", PRIOR_CARRIER_TABLE: "PriorCarrier", LEAD_REPLY_TABLE: "LeadReply", USER_POOL_ID: "pool", CRM_BASE_URL: "https://crm.example.test", QUOTE_TABLE: "Quote", CERTIFICATE_TABLE: "Certificate", DOCUMENT_TABLE: "Document", LEAD_DELETION_POLICY_TABLE: 'Policy', LEAD_DELETION_POLICY_INDEX: 'gsi-Account.policies', LEAD_DELETION_INVOICE_TABLE: 'Invoice', LEAD_DELETION_INVOICE_INDEX: 'gsi-Account.invoices' });
+  Object.assign(process.env, { USER_ACCESS_TABLE: "access", COMMUNICATION_TABLE: "comms", ACTIVITY_TABLE: "Activity", ACCOUNT_TABLE: "Account", CONTACT_TABLE: "Contact", PRIOR_CARRIER_TABLE: "PriorCarrier", LEAD_REPLY_TABLE: "LeadReply", USER_POOL_ID: "pool", CRM_BASE_URL: "https://crm.example.test", QUOTE_TABLE: "Quote", CERTIFICATE_TABLE: "Certificate", DOCUMENT_TABLE: "Document", LEAD_DELETION_POLICY_TABLE: 'Policy', LEAD_DELETION_POLICY_INDEX: 'gsi-Account.policies', LEAD_DELETION_INVOICE_TABLE: 'Invoice', LEAD_DELETION_INVOICE_INDEX: 'gsi-Account.invoices' });
   h.c = { frontCompanyId: "cmp_a", environment: "main", defaultUserId: "brian", frontSender: "sales@protectmyhoa.com", frontInboxId: "inb_a", frontChannelId: "cha_a", holidays: [], paused: false, activatedAt: "2026-09-01T00:00:00Z", allowedInboxIds: [], testRecipients: [], dialpadNumbers: ["+15082332261", "+16175550123"], sharedSmsNumber: "+15082332261", version: 1 };
   await save(row("ELIGIBILITY", "eligibility:brian", { userId: "brian", name: "Brian Cole", email: "brian@example.com", salesperson: true, champion: true, enabled: true }));
   await save(row("TEAM_ROUTING", "team-routing", { ownerId: "brian", members: [] }));
-  h.records.set("comms:migration:website-producers:v1", row("MIGRATION", "migration:website-producers:v1", { complete: true }));
+  h.records.set("comms:migration:website-producers:v2", row("MIGRATION", "migration:website-producers:v2", { complete: true }));
   h.update.mockResolvedValue({ data: {} });
   h.accountList.mockReset().mockResolvedValue({ data: [] });
+  h.profileList.mockReset().mockImplementation(async () => ({ data: [...h.records.entries()].filter(([key]) => key.startsWith("UserProfile:")).map(([, profile]) => profile) }));
+  h.profileByUser.mockReset().mockImplementation(async ({ userId }: { userId: string }) => ({ data: h.records.has(`UserProfile:${userId}`) ? [h.records.get(`UserProfile:${userId}`)] : [] }));
   h.front.mockImplementation(async (path: string) => path.includes("/messages") && path.includes("/conversations") ? { _results: [] } : {});
 });
 afterEach(() => vi.useRealTimers());
@@ -405,12 +428,21 @@ describe("inline salesperson assignment", () => {
     expect(record("workflow:missing")).toBeUndefined();
   });
 
-  it.each(["disabled eligibility", "ineligible", "disabled user"])("does not initialize a workflow for a %s salesperson", async reason => {
-    await eligible("chosen", { enabled: reason !== "disabled eligibility", salesperson: reason !== "ineligible" });
+  it.each(["deactivated user", "non-Producer", "disabled user"])("does not initialize a workflow for a %s salesperson", async reason => {
+    await eligible("chosen");
+    if (reason === "non-Producer") h.nonProducers.add("chosen");
+    if (reason === "deactivated user") h.deactivatedUsers.add("chosen");
     if (reason === "disabled user") h.disabledUsers.add("chosen");
     const writes = h.transactions.length;
     await expect(setResponsibilities("missing", "chosen", 0, "admin")).rejects.toThrow();
     expect(h.transactions).toHaveLength(writes);
+    expect(record("workflow:missing")).toBeUndefined();
+  });
+
+  it("prevents a manual assignment from committing after the selected Producer is deactivated", async () => {
+    await eligible("chosen");
+    h.beforeWrite = () => { h.deactivatedUsers.add("chosen"); };
+    await expect(setResponsibilities("missing", "chosen", 0, "admin")).rejects.toThrow();
     expect(record("workflow:missing")).toBeUndefined();
   });
 
@@ -959,12 +991,12 @@ describe("website producer rotation", () => {
     expect(record(`issue:web-assignment:${result.id}`).data.resolved).toBe(true);
   });
   it("waits durably for the producer index migration and resumes the captured lead once ready", async () => {
-    h.records.delete("comms:migration:website-producers:v1");
+    h.records.delete("comms:migration:website-producers:v2");
     const result = await submit(0) as any;
     await runJob(result);
     expect(assignedTo(result)).toBeUndefined(); expect(jobFor(result).dueAt).toBeTruthy();
     expect(h.userReads).toEqual([]); expect(h.queries).toEqual([]);
-    h.records.set("comms:migration:website-producers:v1", row("MIGRATION", "migration:website-producers:v1", { complete: true }));
+    h.records.set("comms:migration:website-producers:v2", row("MIGRATION", "migration:website-producers:v2", { complete: true }));
     await runJob(result);
     expect(assignedTo(result)).toBe("brian"); expect(entries("SUBMISSION")).toHaveLength(1);
   });
@@ -1052,6 +1084,17 @@ describe("website producer rotation", () => {
     expect(assignedTo(result)).toBe("alice"); expect(jobFor(result).data.state).toBe("COMPLETE");
     expect(record("rotation:web-leads")).toEqual(cursor); expect(assignedTo(await assign(2))).toBe("bravo");
   });
+  it("prevents a website assignment from committing after its Producer is deactivated", async () => {
+    await roster([{ userId: "alice" }, { userId: "bravo" }]);
+    const result = await submit(0) as any;
+    h.beforeWrite = () => { h.deactivatedUsers.add("alice"); };
+    await runJob(result);
+    expect(assignedTo(result)).toBeUndefined();
+    expect(record("rotation:web-leads")).toBeUndefined();
+    await completeJob(result);
+    expect(assignedTo(result)).toBe("bravo");
+  });
+
   it.each(["manual assignment", "deletion"])("fences %s between producer selection and assignment commit", async change => {
     await roster([{ userId: "alice" }, { userId: "bravo" }]);
     expect(assignedTo(await assign(0))).toBe("alice");
@@ -1237,7 +1280,7 @@ describe("initial email salesperson identity", () => {
     expect(h.c.frontSender).toBe("sales@protectmyhoa.com");
   });
   it.each(["missing owner", "ineligible owner", "disabled owner", "unnamed owner"])("rejects an email identity with a %s", async reason => {
-    if (reason === "ineligible owner") record("eligibility:brian").data.salesperson = false;
+    if (reason === "ineligible owner") h.nonProducers.add("brian");
     if (reason === "disabled owner") h.userEnabled = false;
     if (reason === "unnamed owner") record("eligibility:brian").data.name = "  ";
     await expect(assignedEmailProducer(reason === "missing owner" ? undefined : "brian")).rejects.toThrow();
@@ -1813,7 +1856,7 @@ describe('shared team availability', () => {
       h.records.set(`UserProfile:${id}`, { userId: id, firstName: id, lastName: 'Member', email: `${id}@example.com` });
       await save(row('ELIGIBILITY', `eligibility:${id}`, { userId: id, name: id, email: `${id}@example.com`, enabled: id !== 'ineligible', salesperson: id !== 'staff' }));
     }
-    const before = structuredClone([...h.records]);
+    const before = structuredClone([...h.records]); h.nonProducers.add('staff');
     h.cognitoList.mockImplementation(async (input: { Filter: string }) => {
       const id = /"([^"]+)"/.exec(input.Filter)![1];
       return { Users: id === 'deleted' ? [] : [{ Enabled: id !== 'disabled', Attributes: [{ Name: 'sub', Value: id }] }] };
@@ -1824,10 +1867,10 @@ describe('shared team availability', () => {
       const result = await handler({ arguments: { readOperation, input: { accountId: 'a1' } }, identity });
       expect(result).toMatchObject({ ok: true, team: [
         { userId: 'active', available: true, enabled: true, salesperson: true, version: 1 },
-        { userId: 'disabled', available: false, enabled: true, salesperson: true, version: 1 },
-        { userId: 'deleted', available: false, enabled: true, salesperson: true, version: 1 },
+        { userId: 'disabled', available: false, enabled: false, salesperson: false, version: 1 },
+        { userId: 'deleted', available: false, enabled: false, salesperson: false, version: 1 },
         { userId: 'staff', available: true, enabled: true, salesperson: false, version: 1 },
-        { userId: 'ineligible', available: true, enabled: false, salesperson: true, version: 1 },
+        { userId: 'ineligible', available: true, enabled: true, salesperson: true, version: 1 },
       ] });
     }
     expect([...h.records]).toEqual(before);
@@ -1861,13 +1904,18 @@ describe("configured default lead owner", () => {
       expect((await connectionChecks()).find(check => check.name === "Default responsibilities")).toMatchObject({ ok: true });
     } finally { vi.unstubAllEnvs(); }
   });
-  it.each([
-    { enabled: true, salesperson: false, champion: true },
-    { enabled: false, salesperson: true, champion: true },
-  ])("rejects an ineligible default before saving: %j", async flags => {
-    await prepareJake(flags);
-    expect(await chooseJake()).toMatchObject({ ok: false, error: expect.stringContaining("eligible") });
+  it("rejects a legacy eligible Staff member as the default before saving", async () => {
+    await prepareJake(); h.nonProducers.add("jake");
+    expect(await chooseJake()).toMatchObject({ ok: false, error: expect.stringContaining("Producer") });
     expect(record("config").data.defaultUserId).toBe("brian");
+  });
+  it("allows a paused Producer as the manual/default owner", async () => {
+    vi.stubEnv("COMMUNICATION_ENV", "main");
+    await prepareJake({ enabled: false, salesperson: false, champion: false });
+    expect(await chooseJake()).toMatchObject({ ok: true });
+    h.c.defaultSalespersonId = "jake";
+    expect(await defaultWorkflow("paused-owner", "Paused Producer HOA")).toMatchObject({ salespersonId: "jake", assignmentIssue: undefined });
+    vi.unstubAllEnvs();
   });
   it("rejects a disabled sign-in account even when both eligibility flags remain enabled", async () => {
     await prepareJake(); h.userEnabled = false;
@@ -1892,7 +1940,7 @@ it("returns the committed teammate version so the next edit does not depend on a
   expect(first).toMatchObject({ ok: true, member: { ...initial, available: true, frontId: "tea_jake", dialpadId: "5655281245659136", version: 2 } });
   expect(record('eligibility:jake').data).not.toHaveProperty('available');
   const committed = (first as { member: Record<string, unknown> }).member;
-  expect(await write({ ...committed, salesperson: false })).toMatchObject({ ok: true, member: { version: 3, salesperson: false, frontId: "tea_jake", dialpadId: "5655281245659136" } });
+  expect(await write({ userId: "jake", version: committed.version, receiveNewLeads: false })).toMatchObject({ ok: true, member: { version: 3, salesperson: true, receiveNewLeads: false, frontId: "tea_jake", dialpadId: "5655281245659136" } });
   expect(record('eligibility:jake').data).not.toHaveProperty('available');
 });
 
@@ -1905,9 +1953,9 @@ describe("Front email selections in teammate settings", () => {
     const { handler } = await import("../../amplify/functions/communications/handler");
     return (patch: Record<string, unknown>, groups = ["ADMIN"]) => handler({ arguments: { operation: "saveEligibility", input: { userId: "jake", enabled: true, salesperson: true, version: 1, ...patch } }, identity: { sub: "admin", groups } as never });
   }
-  it("preserves omitted email selections on an eligibility toggle", async () => {
+  it("preserves omitted email selections when pausing automatic leads", async () => {
     const write = await setup();
-    expect(await write({ salesperson: false })).toMatchObject({ ok: true, member: { ...initial, salesperson: false, version: 2 } });
+    expect(await write({ receiveNewLeads: false })).toMatchObject({ ok: true, member: { ...initial, receiveNewLeads: false, version: 2 } });
     expect(record("eligibility:jake").data).toMatchObject({ frontChannelId: "cha_jake", frontSignatureId: "sig_jake" });
   });
   it("clears explicit blank overrides without removing the teammate connection", async () => {
@@ -1943,6 +1991,102 @@ describe("Front email selections in teammate settings", () => {
     expect(await write({ frontChannelId: "cha_new" }, ["SALESPERSON"])).toMatchObject({ ok: false, error: expect.stringContaining("Only an admin") });
     expect(await write({ frontChannelId: "cha_new", version: 0 })).toMatchObject({ ok: false, error: expect.stringContaining("settings changed") });
     expect(record("eligibility:jake").data).toEqual(initial);
+  });
+});
+
+describe("paged Team settings and targeted saves", () => {
+  const identity = { sub: "admin", groups: ["ADMIN"] } as never;
+  async function read(userIds: unknown, actor = identity) {
+    const { handler } = await import("../../amplify/functions/communications/handler");
+    return handler({ arguments: { readOperation: "teamSettings", input: { userIds } }, identity: actor });
+  }
+  async function setupTarget() {
+    h.records.set("UserProfile:target", { userId: "target", firstName: "Target", lastName: "Producer", email: "target@example.com" });
+    await save(row("ELIGIBILITY", "eligibility:target", { userId: "target", name: "Old name", email: "old@example.com", enabled: true, salesperson: true, receiveNewLeads: true, frontId: "tea_target" }));
+    h.profileList.mockRejectedValue(new Error("A full roster read must never run"));
+    const { handler } = await import("../../amplify/functions/communications/handler");
+    return (patch: Record<string, unknown>) => handler({ arguments: { operation: "saveEligibility", input: { userId: "target", version: 1, ...patch } }, identity });
+  }
+
+  it("reads only a requested page through one consistent batch and reuses roster metadata", async () => {
+    const ids = Array.from({ length: 20 }, (_, index) => `member_${index}`);
+    for (const id of [...ids, "unrelated"]) {
+      await save(row("ELIGIBILITY", `eligibility:${id}`, { userId: id, name: id, email: `${id}@example.com`, enabled: true, salesperson: true, frontId: `tea_${id}` }));
+    }
+    h.profileList.mockRejectedValue(new Error("Profiles already came from listTeamUsers"));
+    h.userError = new Error("No repeated Cognito lookups are needed");
+    const queriesBefore = h.queries.length;
+    const result = await read(ids);
+    expect(result).toMatchObject({ ok: true, team: ids.map(userId => ({ userId, version: 1, frontId: `tea_${userId}` })) });
+    expect(h.batch).toHaveBeenCalledExactlyOnceWith({ RequestItems: { comms: { Keys: ids.map(id => ({ id: `eligibility:${id}` })), ConsistentRead: true } } });
+    expect(h.queries).toHaveLength(queriesBefore);
+    expect(h.profileList).not.toHaveBeenCalled();
+    expect(h.profileByUser).not.toHaveBeenCalled();
+    expect(h.userReads).toEqual([]);
+    expect(h.groupReads).toEqual([]);
+  });
+
+  it("deduplicates a bounded page and omits missing settings so the roster can supply defaults", async () => {
+    expect(await read(["brian", "new", "brian"])).toMatchObject({ ok: true, team: [{ userId: "brian", version: 1 }] });
+    expect(h.batch.mock.calls[0][0].RequestItems.comms.Keys).toEqual([{ id: "eligibility:brian" }, { id: "eligibility:new" }]);
+    expect(await read([])).toMatchObject({ ok: true, team: [] });
+    expect(h.batch).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([undefined, null, "brian", [""], ["brian/other"], [3], ["a".repeat(129)], Array.from({ length: 21 }, (_, index) => `user${index}`)].map(userIds => ({ userIds })))("rejects an invalid or oversized Team page before reading: $userIds", async ({ userIds }) => {
+    expect(await read(userIds)).toMatchObject({ ok: false, error: expect.stringContaining("20 valid team members") });
+    expect(h.batch).not.toHaveBeenCalled();
+  });
+
+  it("checks admin access before exposing any saved connections", async () => {
+    expect(await read(["brian"], { sub: "staff", groups: ["STAFF"] } as never)).toMatchObject({ ok: false, error: expect.stringContaining("Only an admin") });
+    expect(h.batch).not.toHaveBeenCalled();
+  });
+
+  it("saves only the target using its profile index and one live identity/role check", async () => {
+    const write = await setupTarget();
+    h.records.set("UserProfile:unrelated", { userId: "unrelated", firstName: "Other", lastName: "Member" });
+    h.cognitoList.mockImplementation(async input => {
+      if (!input.Filter.includes('"target"')) throw new Error("Unrelated teammate is unavailable");
+    });
+    const beforeQueries = h.queries.length;
+    expect(await write({ receiveNewLeads: false })).toMatchObject({ ok: true, member: {
+      userId: "target", name: "Target Producer", email: "target@example.com", receiveNewLeads: false, salesperson: true, frontId: "tea_target", version: 2,
+    } });
+    expect(h.profileByUser).toHaveBeenCalledExactlyOnceWith({ userId: "target" }, { limit: 1, selectionSet: ["userId", "firstName", "lastName", "email"] });
+    expect(h.profileList).not.toHaveBeenCalled();
+    expect(h.queries).toHaveLength(beforeQueries);
+    expect(h.userReads).toEqual(["target"]);
+    expect(h.groupReads).toEqual(["target"]);
+    expect(h.reads.filter(id => id === "eligibility:target")).toHaveLength(1);
+    expect(h.batch).not.toHaveBeenCalled();
+  });
+
+  it("uses the target's current role and rejects stale versions without scanning", async () => {
+    const write = await setupTarget();
+    h.nonProducers.add("target");
+    expect(await write({ receiveNewLeads: true })).toMatchObject({ ok: false, error: expect.stringContaining("Producer role") });
+    expect(record("eligibility:target").version).toBe(1);
+    expect(await write({ version: 0, frontId: "tea_new" })).toMatchObject({ ok: false, error: expect.stringContaining("settings changed") });
+    expect(h.profileByUser).toHaveBeenCalledTimes(1);
+    expect(h.profileList).not.toHaveBeenCalled();
+    expect(record("eligibility:target").version).toBe(1);
+  });
+
+  it("does not overwrite preferences if the target is deactivated before commit", async () => {
+    const write = await setupTarget();
+    h.beforeWrite = () => h.deactivatedUsers.add("target");
+    expect(await write({ frontId: "tea_new" })).toMatchObject({ ok: false });
+    expect(record("eligibility:target").version).toBe(1);
+    expect(record("eligibility:target").data.frontId).toBe("tea_target");
+  });
+
+  it("does not save when the indexed target profile is missing or unavailable", async () => {
+    const write = await setupTarget();
+    h.profileByUser.mockResolvedValueOnce({ data: [], errors: [{ message: "Profile index unavailable" }] }).mockResolvedValueOnce({ data: [] });
+    expect(await write({ frontId: "tea_new" })).toMatchObject({ ok: false, error: "Could not load teammate" });
+    expect(await write({ frontId: "tea_new" })).toMatchObject({ ok: false, error: "Teammate not found" });
+    expect(record("eligibility:target").version).toBe(1);
   });
 });
 
@@ -2151,6 +2295,51 @@ describe('routing repair and underlying business requirements', () => {
   });
 });
 
+describe("account conversation routing synchronization", () => {
+  async function setup(automatic: boolean) {
+    await lead();
+    const previous = (await get<any>("eligibility:brian"))!;
+    await save(row("ELIGIBILITY", previous.id, { ...previous.data, frontId: "tea_brian" }, { previous }), previous);
+    for (let index = 0; index < 25; index++) {
+      const conversationId = `cnv_${String(index).padStart(2, "0")}`;
+      await save(row("LINK", `front-link:${conversationId}`, { conversationId, routing: automatic && index > 0 ? "SALESPERSON" : "MANUAL" }, { accountId: "a1" }));
+    }
+    const job = await save(row("ROLE_SYNC", "role-sync:many-links", { accountId: "a1", phase: "LINK" }, { accountId: "a1", dueAt: NOW }));
+    h.userReads.length = 0; h.groupReads.length = 0; h.reads.length = 0;
+    return job;
+  }
+
+  it("validates the Producer once for a full page of automatic links and verifies the role again before delivery", async () => {
+    const job = await setup(true);
+    const { syncResponsibilities } = await import("../../amplify/functions/communications/workflow");
+    await syncResponsibilities(job);
+    const queued = entries("OPERATION").filter(operation => operation.data.type === "ASSIGN");
+    expect(queued).toHaveLength(24);
+    expect(h.userReads).toEqual(["brian"]);
+    expect(h.groupReads).toEqual(["brian"]);
+    expect(h.reads.filter(id => id === "eligibility:brian")).toHaveLength(1);
+    expect(record(job.id).dueAt).toBeUndefined();
+    expect(record("front-link:cnv_00").data.routing).toBe("MANUAL");
+
+    h.nonProducers.add("brian");
+    await runOperation(queued[0] as Row<Operation>);
+    expect(h.groupReads).toEqual(["brian", "brian"]);
+    expect(h.front).not.toHaveBeenCalled();
+    expect(record(queued[0].id).data.state).toBe("RETRY_WAIT");
+  });
+
+  it("does not load the Producer when every conversation has a manual handler", async () => {
+    const job = await setup(false);
+    h.userError = new Error("Identity service unavailable");
+    const { syncResponsibilities } = await import("../../amplify/functions/communications/workflow");
+    await syncResponsibilities(job);
+    expect(h.userReads).toEqual([]);
+    expect(h.groupReads).toEqual([]);
+    expect(entries("OPERATION")).toHaveLength(0);
+    expect(record(job.id).dueAt).toBeUndefined();
+  });
+});
+
 // Pre-migration records deliberately retain the retired role fields.
 describe("single salesperson ownership migration", () => {
   async function legacyAccount(id = "a1", salespersonId: string | undefined = "brian") {
@@ -2183,7 +2372,7 @@ describe("single salesperson ownership migration", () => {
   it("uses the validated default for missing ownership and leaves invalid assignments visible", async () => {
     const missing = await legacyAccount("missing");
     await save(row("WORKFLOW", missing.id, { ...missing.data, salespersonId: undefined }, { accountId: "missing", previous: missing }), missing);
-    const invalid = await legacyAccount("invalid", "former-champ");
+    const invalid = await legacyAccount("invalid", "former-champ"); h.nonProducers.add("former-champ");
     await save(row("WORKFLOW", invalid.id, { ...invalid.data, disposition: "BOUND" }, { accountId: "invalid", previous: invalid }), invalid);
     await save(row("ELIGIBILITY", "eligibility:former-champ", { userId: "former-champ", enabled: true, salesperson: false, champion: true }));
     await migrateAll();

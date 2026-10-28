@@ -1,8 +1,9 @@
 import { QueryCommand } from "@aws-sdk/lib-dynamodb";
 import type { TeamEligibility } from "../../../../shared/leadWorkflow";
 import { batchGet, conflict, db, get, query, row, save, table, websiteProducerGroup } from "./store";
+import { producerDirectoryPage, syncProducerEligibility } from "./workflow";
 
-export const PRODUCER_INDEX_MIGRATION_ID = "migration:website-producers:v1";
+export const PRODUCER_INDEX_MIGRATION_ID = "migration:website-producers:v2";
 const PAGE_SIZE = 8;
 
 /** One bounded rotation leg. The normal leg starts after the last owner; the
@@ -37,43 +38,66 @@ export async function indexedProducerPage(input: { after?: string; through?: str
   };
 }
 
-/** Upgrade pre-index eligibility in bounded pages. New eligibility writes
- * maintain membership automatically; current primary reads and conditional
- * rewrites prevent an old index projection from restoring revoked access. */
+interface DirectoryCheckpoint {
+  phase?: "ELIGIBILITY" | "PRODUCERS";
+  cursor?: string;
+  producerToken?: string;
+  complete?: boolean;
+  refreshAfter?: string;
+  processed?: number;
+}
+
+/** Reconcile saved preferences and discover new Producer memberships independently
+ * of UI visits. Keep the completed bootstrap usable during subsequent cycles. */
 export async function migrateProducerIndex(options: { maxPages?: number; budgetMs?: number } = {}) {
   const deadline = Date.now() + (options.budgetMs ?? 10_000);
-  let checkpoint = await get<{ cursor?: string; complete?: boolean; processed?: number }>(PRODUCER_INDEX_MIGRATION_ID);
-  if (checkpoint?.data.complete) return;
+  let checkpoint = await get<DirectoryCheckpoint>(PRODUCER_INDEX_MIGRATION_ID);
+  if (checkpoint?.data.complete && !checkpoint.data.phase && Date.parse(checkpoint.data.refreshAfter ?? "") > Date.now()) return;
+  let state: DirectoryCheckpoint = { ...checkpoint?.data, phase: checkpoint?.data.phase ?? "ELIGIBILITY" };
   for (let pageNumber = 0; pageNumber < (options.maxPages ?? 10) && Date.now() < deadline; pageNumber++) {
-    const page = await query<TeamEligibility>("kind", "ELIGIBILITY", checkpoint?.data.cursor, 100);
-    const currentRows = await batchGet<TeamEligibility>(page.items.map(candidate => candidate.id));
-    for (let offset = 0; offset < page.items.length; offset += 25) {
-      if (Date.now() >= deadline) return;
-      const results = await Promise.allSettled(page.items.slice(offset, offset + 25).map(async candidate => {
-        let current = currentRows.get(candidate.id);
-        for (let attempt = 0; attempt < 3; attempt++) {
+    if (state.phase === "ELIGIBILITY") {
+      const page = await query<TeamEligibility>("kind", "ELIGIBILITY", state.cursor, 4);
+      const currentRows = await batchGet<TeamEligibility>(page.items.map(candidate => candidate.id));
+      for (let offset = 0; offset < page.items.length; offset += 4) {
+        const results = await Promise.allSettled(page.items.slice(offset, offset + 4).map(async candidate => {
+          let current = currentRows.get(candidate.id);
           if (!current || current.kind !== "ELIGIBILITY") return;
-          const group = websiteProducerGroup(current.id, current.data);
-          if (current.producerGroup === group) return;
-          if (Date.now() >= deadline) throw new Error("Producer index migration will resume this page");
-          try {
-            await save(row("ELIGIBILITY", current.id, current.data, { previous: current, accountId: current.accountId, dueAt: current.dueAt }), current);
+          const userId = current.data.userId;
+          if (typeof userId === "string" && /^[a-zA-Z0-9_-]{1,128}$/.test(userId) && current.id === `eligibility:${userId}`) {
+            await syncProducerEligibility(userId, current);
             return;
-          } catch (error) {
-            if (!conflict(error) || attempt === 2) throw error;
-            current = await get<TeamEligibility>(candidate.id);
           }
-        }
-      }));
-      // Complete in-flight changes before surfacing failure. The checkpoint
-      // advances only after all rows succeed; rerunning a page is idempotent.
-      const failure = results.find(result => result.status === "rejected");
-      if (failure?.status === "rejected") throw failure.reason;
+          // Invalid historical identities cannot block valid Producers or remain
+          // discoverable through an old index projection.
+          for (let attempt = 0; current?.producerGroup && attempt < 3; attempt++) {
+            try {
+              await save(row("ELIGIBILITY", current.id, current.data, { previous: current, accountId: current.accountId, dueAt: current.dueAt }), current);
+              return;
+            } catch (error) {
+              if (!conflict(error) || attempt === 2) throw error;
+              current = await get<TeamEligibility>(candidate.id);
+            }
+          }
+        }));
+        const failure = results.find(result => result.status === "rejected");
+        if (failure?.status === "rejected") throw failure.reason;
+      }
+      state = { ...state, cursor: page.nextToken, phase: page.nextToken ? "ELIGIBILITY" : "PRODUCERS", processed: (state.processed ?? 0) + page.items.length };
+    } else {
+      const page = await producerDirectoryPage(state.producerToken);
+      const ids = (page.Users ?? []).flatMap(user => {
+        const userId = user.Attributes?.find(attribute => attribute.Name === "sub")?.Value;
+        return typeof userId === "string" && /^[a-zA-Z0-9_-]{1,128}$/.test(userId) ? [userId] : [];
+      });
+      for (let offset = 0; offset < ids.length; offset += 4) {
+        const results = await Promise.allSettled(ids.slice(offset, offset + 4).map(id => syncProducerEligibility(id)));
+        const failure = results.find(result => result.status === "rejected");
+        if (failure?.status === "rejected") throw failure.reason;
+      }
+      state = page.NextToken ? { ...state, producerToken: page.NextToken }
+        : { complete: true, processed: state.processed, refreshAfter: new Date(Date.now() + 60_000).toISOString() };
     }
-    if (Date.now() >= deadline) return;
-    checkpoint = await save(row("MIGRATION", PRODUCER_INDEX_MIGRATION_ID, {
-      cursor: page.nextToken, complete: !page.nextToken, processed: (checkpoint?.data.processed ?? 0) + page.items.length,
-    }, { previous: checkpoint }), checkpoint);
-    if (!page.nextToken) return;
+    checkpoint = await save(row("MIGRATION", PRODUCER_INDEX_MIGRATION_ID, state, { previous: checkpoint }), checkpoint);
+    if (!state.phase) return;
   }
 }

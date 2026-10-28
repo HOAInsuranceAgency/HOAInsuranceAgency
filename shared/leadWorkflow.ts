@@ -17,7 +17,11 @@ export interface TeamEligibility {
   canAccessAccount?: boolean;
   /** Response-only current Cognito availability; saved eligibility stays separate. */
   available?: boolean;
-  salesperson: boolean; /** @deprecated Legacy storage only. */ champion?: boolean; frontId?: string; dialpadId?: string; version?: number;
+  /** Derived from current Producer membership, never an editable grant. */
+  salesperson: boolean;
+  /** Producer's preference for automatic website leads; manual ownership stays available. */
+  receiveNewLeads?: boolean;
+  /** @deprecated Legacy storage only. */ champion?: boolean; frontId?: string; dialpadId?: string; version?: number;
   /** Optional choices when the mapped Front teammate has multiple sending identities. */
   frontChannelId?: string; frontSignatureId?: string;
 }
