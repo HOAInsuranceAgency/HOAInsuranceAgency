@@ -123,3 +123,52 @@ it('limits classification to Standard or GIM and validates evidence and date per
   account.periods.push({ ...account.periods[0] });
   expect(() => validateCommissionAccount(account)).toThrow(/overlap/);
 });
+
+it.each(['STANDARD', 'GIM'] as const)(
+  'permanently excludes pre-cutoff %s accounts on new business and later renewals',
+  (classification) => {
+    const p = plan();
+    p.accountBoundFrom = '2026-10-01';
+    p.receiptsFrom = '2026-10-01';
+    const account = classification === 'GIM' ? gim() : commissionAccount();
+    for (const transaction of ['NEW', 'RENEWAL'] as const) {
+      const selected = selectCommissionTerms(p, account, '2027-01-01', transaction, '2026-09-30');
+      expect(selected).toMatchObject({
+        producerBps: 0,
+        eligibility: { eligible: false, accountFirstBoundOn: '2026-09-30' },
+      });
+      const policy = { ...commissionPolicy(), ...selected };
+      expect(() => appendEntry(policy, line(), statement(), 'receipt')).toThrow(/later renewals/);
+      expect(
+        appendEntry(policy, line({ eligible: false }), statement(), 'receipt').entries[0],
+      ).toMatchObject({ agencyCents: 100000, producerCents: 0, eligible: false });
+    }
+  },
+);
+it('includes the cutoff day, rejects unknown history and enforces the separate agency receipt cutoff', () => {
+  const p = plan();
+  p.accountBoundFrom = '2026-10-01';
+  p.receiptsFrom = '2026-10-01';
+  expect(() => selectCommissionTerms(p, gim(), '2026-10-28', 'NEW')).toThrow(/first bind history/);
+  const selected = selectCommissionTerms(p, gim(), '2026-10-28', 'NEW', '2026-10-01');
+  expect(selected).toMatchObject({ producerBps: 500, eligibility: { eligible: true } });
+  const policy = { ...commissionPolicy(), ...selected };
+  expect(() =>
+    appendEntry(policy, line(), { ...statement(), receivedOn: '2026-09-30' }, 'receipt'),
+  ).toThrow(/received before/);
+  expect(appendEntry(policy, line(), statement(), 'receipt').entries[0].producerCents).toBe(5000);
+});
+it('validates account first-bind evidence and producer cutoff dates', () => {
+  expect(() =>
+    validateCommissionAccount({
+      ...commissionAccount(),
+      neverBound: true,
+      firstBoundOn: '2026-10-01',
+    }),
+  ).toThrow(/Choose/);
+  expect(() =>
+    validateCommissionAccount({ ...commissionAccount(), firstBoundOn: '2026-10-01' }),
+  ).toThrow(/history reference/);
+  expect(() => validatePlan({ ...plan(), accountBoundFrom: '2026-02-30' })).toThrow(/calendar/);
+  expect(() => validatePlan({ ...plan(), receiptsFrom: 'invalid' })).toThrow(/calendar/);
+});

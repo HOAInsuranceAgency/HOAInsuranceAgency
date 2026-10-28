@@ -1,3 +1,5 @@
+import { QueryCommand } from '@aws-sdk/lib-dynamodb';
+import { bindDay, firstBindDate } from './account-history';
 import { createHash, randomUUID } from 'node:crypto';
 import { PutObjectCommand, GetObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
@@ -112,6 +114,8 @@ export async function handler(event: Event) {
             premiumCents: p.premiumCents,
             agencyRateUnits: p.agencyRateUnits,
             producerBps: p.producerBps,
+            eligibility: p.eligibility,
+            receiptsFrom: p.receiptsFrom,
             entries: p.entries.map((e) => ({
               id: e.id,
               lineRef: e.lineRef,
@@ -171,12 +175,37 @@ export async function handler(event: Event) {
       ).requireRecord('Account', accountId);
       const old = await store.get<CommissionAccount>('ACCOUNT', accountId);
       currentVersion(input, old);
+      const firstBoundOn = Object.hasOwn(input, 'firstBoundOn')
+        ? input.firstBoundOn
+        : old?.firstBoundOn;
+      const neverBound = Object.hasOwn(input, 'neverBound')
+        ? input.neverBound
+        : firstBoundOn
+          ? undefined
+          : old?.neverBound;
+      const bindingEvidence = Object.hasOwn(input, 'bindingEvidence')
+        ? input.bindingEvidence
+        : old?.bindingEvidence;
+      if (old?.firstBoundOn && neverBound)
+        throw new Error('An account with a recorded first bind cannot be reset to never bound.');
+      if (old?.firstBoundOn && (!firstBoundOn || day(firstBoundOn) > old.firstBoundOn))
+        throw new Error(
+          'A recorded original first bind date cannot be cleared or moved forward. Earlier corrections require supporting evidence.',
+        );
       const classification = validateCommissionAccount({
         id: accountId,
         version: Number(input.version),
         name: String(account.name),
+        ...(firstBoundOn ? { firstBoundOn: day(firstBoundOn) } : {}),
+        ...(neverBound !== undefined ? { neverBound: neverBound as true } : {}),
+        ...(firstBoundOn || neverBound
+          ? { bindingEvidence: required(bindingEvidence, 'the first-bind history reference') }
+          : {}),
+        ...(old?.firstBindPolicyId ? { firstBindPolicyId: old.firstBindPolicyId } : {}),
         periods: input.periods as CommissionAccount['periods'],
       });
+      if (classification.firstBoundOn && classification.firstBoundOn > agencyToday())
+        throw new Error('The original first bind date cannot be in the future.');
       await store.commit([change('ACCOUNT', classification, old)], actor);
       return { ok: true };
     }
@@ -192,6 +221,8 @@ export async function handler(event: Event) {
         id: producerId,
         version: Number(input.version),
         producerId,
+        ...(input.accountBoundFrom ? { accountBoundFrom: day(input.accountBoundFrom) } : {}),
+        ...(input.receiptsFrom ? { receiptsFrom: day(input.receiptsFrom) } : {}),
         name: required(input.name, 'the producer name'),
         terms: input.terms as CommissionPlan['terms'],
       });
@@ -244,11 +275,35 @@ export async function handler(event: Event) {
         throw new Error('Configure the original producer agreement and carrier terms first.');
       const rateDate = input.transaction === 'RENEWAL' ? effectiveDate : boundOn;
       const commissionAccount = await store.get<CommissionAccount>('ACCOUNT', String(account.id));
+      let cursor: store.Data | undefined;
+      let earliestKnown: string | undefined;
+      if (commissionAccount?.firstBoundOn) {
+        for (let page = 0; ; page++) {
+          if (page === 100) throw new Error('Could not finish checking account policy history.');
+          const found = await store.db.send(
+            new QueryCommand({
+              TableName: tableName('Policy'),
+              IndexName: process.env.COMMISSION_POLICY_ACCOUNT_INDEX,
+              KeyConditionExpression: 'accountId = :account',
+              ExpressionAttributeValues: { ':account': account.id },
+              ExclusiveStartKey: cursor,
+            }),
+          );
+          for (const priorPolicy of found.Items ?? []) {
+            const bound = bindDay(priorPolicy.datePolicyBound);
+            if (bound && (!earliestKnown || bound < earliestKnown)) earliestKnown = bound;
+          }
+          cursor = found.LastEvaluatedKey;
+          if (!cursor) break;
+        }
+      }
+      const accountFirstBoundOn = firstBindDate(commissionAccount, boundOn, true, earliestKnown);
       const selectedTerms = selectCommissionTerms(
         plan,
         commissionAccount,
         rateDate,
         input.transaction as 'NEW' | 'RENEWAL',
+        accountFirstBoundOn,
       );
       required(input.evidence, 'evidence of original producer attribution and policy terms');
       if (boundOn > agencyToday())

@@ -195,3 +195,36 @@ checks passed. Focused bind/service tests also passed after the final retry guar
 The existing frontend bundle-size advisory remains. The Owner reconciliation and
 Producer statement views were visually checked using fictional data. No live
 carrier receipt, payroll payment, recovery, or cloud deployment was performed.
+
+## Account-first-bind eligibility cutoff
+
+A producer agreement may set an inclusive **Account first-bind cutoff** and an
+independent **Agency receipt eligibility begins** date. An account originally
+bound before the cutoff earns zero producer commission on new business and all
+later renewals, regardless of its current Standard/GIM classification. This does
+not block placing coverage or recording agency receipts: record receipts on an
+excluded account as ineligible. The server rejects an attempt to mark them
+eligible at both draft validation and posting. Adjustments retain the original
+receipt's producer amount. Existing snapshots are not recalculated.
+
+In account classification, the Owner confirms either the original first bind
+date (including history outside this CRM) with supporting evidence, or that the
+account has never been bound with this agency. Missing history blocks a bind
+under a cutoff agreement. A new account's first successful bind records the
+agency-local date in the private account record in the same version-guarded
+transaction as its policy. It cannot subsequently be reset to never bound, cleared, or moved forward.
+An earlier correction requires supporting evidence; moving a date forward needs
+a separately reviewed data correction, not ordinary classification editing.
+Existing policy history prevents treating an older account as new; a confirmed
+date later than a known policy's bind is rejected. Historical adoption also
+requires confirmed first-bind history and checks known policy dates. Pre-cutoff
+historical policies can use the cutoff agreement to record explicit zero
+entitlement while still tracking agency receipts. Snapshot eligibility includes
+the original first-bind date, cutoff, and outcome; later changes do not change it.
+
+For Brian Cole, Jake confirmed on October 28, 2026: agreement and receipt
+eligibility begin October 1, 2026; Standard rates are 20% new / 10% renewal; GIM
+rates are 10% new / 5% renewal; accounts originally bound before October 1 remain
+excluded from commissions on all later renewals. October 1 itself is eligible.
+These are configuration requirements, not seeded global defaults. Other
+producers' agreements remain independently configurable.
