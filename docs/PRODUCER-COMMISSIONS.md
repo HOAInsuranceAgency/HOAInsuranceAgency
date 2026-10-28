@@ -167,7 +167,7 @@ the production components without authentication, CRM requests, or money movemen
 See [the design and draft comparison](specs/producer-commission-process.md) for
 business decisions and the original document differences.
 
-Verification for this implementation: 3,448 tests across 198 files passed; frontend
+Verification for this implementation: 3,449 tests across 198 files passed; frontend
 and backend type checks, the production build, backend synthesis, and whitespace
 checks passed. Focused bind/service tests also passed after the final retry guard.
 The existing frontend bundle-size advisory remains. The Owner reconciliation and

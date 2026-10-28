@@ -1208,8 +1208,11 @@ function LegacyPolicies({
         disabled={resource.loading || search.trim().length < 2}
         onClick={() => {
           setPolicy('');
-          setCursor(undefined);
-          setQuery(search.trim());
+          if (query === search.trim() && cursor === undefined) void resource.refetch();
+          else {
+            setCursor(undefined);
+            setQuery(search.trim());
+          }
         }}
       >
         Search historical policies

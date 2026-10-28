@@ -116,3 +116,23 @@ it('searches historical policies in filtered pages and follows empty continuatio
   expect(h.policies.mock.calls[1][0]).toMatchObject({ limit: 25, nextToken: 'page-2' });
   expect(h.policies).toHaveBeenCalledTimes(2);
 });
+
+it('retries a failed historical search with the same text without leaving the page', async () => {
+  h.owner = true;
+  h.policies
+    .mockRejectedValueOnce(new Error('Search temporarily unavailable'))
+    .mockResolvedValueOnce({ data: [{ id: 'legacy', policyNumber: 'OLD-1' }], nextToken: null });
+  render(<Commissions />);
+  await screen.findByText('Producer earned');
+  fireEvent.click(screen.getByRole('tab', { name: 'Agreements & carriers' }));
+  fireEvent.change(await screen.findByLabelText('Find historical policy number'), {
+    target: { value: 'OLD' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Search historical policies' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('Search temporarily unavailable');
+  fireEvent.click(screen.getByRole('button', { name: 'Search historical policies' }));
+  await screen.findByRole('option', { name: /OLD-1/ });
+  expect(screen.queryByRole('alert')).toBeNull();
+  expect(h.policies).toHaveBeenCalledTimes(2);
+  expect(h.policies.mock.calls[1][0]).toEqual(h.policies.mock.calls[0][0]);
+});
