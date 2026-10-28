@@ -27,21 +27,42 @@ Private statement uploads are immutable and download links last sixty seconds.
 1. In **Agreements & carriers**, choose a teammate and enter dated new-business
    and renewal rates and an agreement reference. Periods cannot overlap; explicit
    zero is permitted. Salary remains in the existing owner pay settings.
-2. Configure each carrier's written/earned/collected-premium basis, remittance
+2. For each producer period, optionally enable **GIM Property Management** rates
+   and enter both percentages plus the GIM agreement reference. An unchecked GIM
+   section means terms are pending, never standard-rate fallback. Explicit zero
+   is allowed; blank is not zero. Both schedules use the period's dates; add a
+   new period when either schedule changes.
+3. In **Account commission classification**, search for the insured account or
+   select a configured account. Record dated **Standard** or **GIM Property
+   Management · house account** periods and the source/reference supporting the
+   decision. GIM is the only house-account program. Every account needs an
+   explicit Owner classification before binding. Dates are inclusive; gaps and
+   overlapping periods cannot silently pick a rate. A relationship or account
+   name alone never determines compensation. When GIM management changes, the
+   Owner must update classification periods before the next bind/renewal.
+4. Configure each carrier's written/earned/collected-premium basis, remittance
    schedule, and contract reference. These forecast timing; they do not generate
    payable earnings.
-3. At bind, confirm the exact commissionable policy premium and agency percentage.
+5. At bind, confirm the exact commissionable policy premium and agency percentage.
    These must match the accepted quote. Edit the quote first if necessary and
    obtain renewed client authorization when client-facing terms change.
-4. The server atomically saves the policy, private commission snapshot, bound quote
+6. The server atomically saves the policy, private commission snapshot, bound quote
    status, and lead conversion. Retries return the same policy. Direct model
    creation and direct transitions to BOUND cannot bypass the workflow.
 
 The assigned producer at bind receives the snapshot. New business selects the
 agreement by bind date in America/New_York; renewals select it by effective date.
 Renewals require the existing renewal-policy link. Missing agreements or carrier
-terms block a new bind with an actionable message. Direct financial changes to
-bound policies are rejected; unchanged values can accompany normal service edits.
+terms, missing account classification on the commission date, or missing GIM
+rates for a GIM account block a new bind with an actionable message. Historical
+adoption uses the same selector on the original commission date. Policy snapshots
+freeze the classification period/reference/version and selected agreement/rate.
+The transaction checks classification and agreement versions against concurrent
+Owner edits. Existing snapshots are never recalculated; older snapshots remain
+valid and display “Legacy snapshot” in the Owner ledger. No business rates,
+classification dates, or GIM membership are seeded by this release. There is no
+schema migration; classifications use the existing private, audited ledger.
+Direct financial changes to bound policies are rejected; unchanged values can accompany normal service edits.
 The Owner can update the carrier policy number from the commission ledger. The
 regular policy editor directs tracked-policy corrections there; the server rejects
 direct number changes that would leave the commission snapshot out of sync.

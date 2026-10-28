@@ -6,12 +6,37 @@ export const COMMISSION_BASES: Record<CommissionBasis, string> = {
   EARNED: 'Earned premium',
   COLLECTED: 'Collected premium / installments',
 };
+export const ACCOUNT_COMMISSION_CLASSES = {
+  STANDARD: 'Standard account',
+  GIM: 'GIM Property Management · house account',
+} as const;
+export type AccountCommissionClass = keyof typeof ACCOUNT_COMMISSION_CLASSES;
+export interface CommissionAccount {
+  id: string;
+  version: number;
+  name: string;
+  periods: {
+    from: string;
+    to?: string;
+    classification: AccountCommissionClass;
+    evidence: string;
+  }[];
+}
+export interface CommissionRates {
+  newBps: number;
+  renewalBps: number;
+  agreement: string;
+}
 export interface CommissionPlan {
   id: string;
   version: number;
   producerId: string;
   name: string;
-  terms: { from: string; to?: string; newBps: number; renewalBps: number; agreement: string }[];
+  terms: (CommissionRates & {
+    from: string;
+    to?: string;
+    gim?: CommissionRates;
+  })[];
 }
 export interface CarrierCommissionTerms {
   id: string;
@@ -54,6 +79,10 @@ export interface CommissionPolicy {
   producerBps: number;
   agreement: string;
   planVersion: number;
+  // Optional only for snapshots created before account classification was introduced.
+  accountClassification?: CommissionAccount['periods'][number] & {
+    version: number;
+  };
   carrierTerms: CarrierCommissionTerms;
   entries: CommissionEntry[];
 }
@@ -105,6 +134,7 @@ export interface CommissionBatch {
 }
 export interface CommissionOverview {
   plans: CommissionPlan[];
+  accounts?: CommissionAccount[];
   carriers: CarrierCommissionTerms[];
   policies: CommissionPolicy[];
   statements: CommissionStatement[];
@@ -151,27 +181,92 @@ export function sum(values: number[]): number {
   if (!Number.isSafeInteger(value)) throw new Error('Total is too large.');
   return value;
 }
+function validatePeriods<T extends { from: string; to?: string }>(periods: T[]): T[] {
+  if (!Array.isArray(periods) || !periods.length || periods.length > 100)
+    throw new Error('Enter between 1 and 100 agreement or classification periods.');
+  const sorted = periods
+    .map((t) => ({
+      ...t,
+      from: day(t.from),
+      ...(t.to ? { to: day(t.to) } : {}),
+    }))
+    .sort((a, b) => a.from.localeCompare(b.from));
+  for (let i = 0; i < sorted.length; i++)
+    if (
+      (sorted[i].to && sorted[i].to! < sorted[i].from) ||
+      (i && (!sorted[i - 1].to || sorted[i].from <= sorted[i - 1].to!))
+    )
+      throw new Error(
+        'Agreement or classification periods must not overlap or end before they start.',
+      );
+  return sorted;
+}
+function validateRates(rates: CommissionRates): CommissionRates {
+  return {
+    newBps: integer(rates.newBps, 0, 10000, 'new-business rate'),
+    renewalBps: integer(rates.renewalBps, 0, 10000, 'renewal rate'),
+    agreement: required(rates.agreement, 'an agreement reference'),
+  };
+}
 export function validatePlan(plan: CommissionPlan): CommissionPlan {
   required(plan.producerId, 'a producer', 128);
   required(plan.name, 'a producer name', 200);
-  if (!Array.isArray(plan.terms) || !plan.terms.length || plan.terms.length > 100)
-    throw new Error('Enter between 1 and 100 agreement periods.');
-  const terms = plan.terms
-    .map((t) => ({
-      from: day(t.from),
-      ...(t.to ? { to: day(t.to) } : {}),
-      newBps: integer(t.newBps, 0, 10000, 'new-business rate'),
-      renewalBps: integer(t.renewalBps, 0, 10000, 'renewal rate'),
-      agreement: required(t.agreement, 'an agreement reference'),
-    }))
-    .sort((a, b) => a.from.localeCompare(b.from));
-  for (let i = 0; i < terms.length; i++)
-    if (
-      (terms[i].to && terms[i].to! < terms[i].from) ||
-      (i && (!terms[i - 1].to || terms[i].from <= terms[i - 1].to!))
-    )
-      throw new Error('Agreement periods must not overlap or end before they start.');
-  return { ...plan, terms };
+  return {
+    ...plan,
+    terms: validatePeriods(plan.terms).map((t) => ({
+      from: t.from,
+      ...(t.to ? { to: t.to } : {}),
+      ...validateRates(t),
+      ...(t.gim !== undefined ? { gim: validateRates(t.gim) } : {}),
+    })),
+  };
+}
+export function validateCommissionAccount(account: CommissionAccount): CommissionAccount {
+  return {
+    ...account,
+    periods: validatePeriods(account.periods).map((t) => {
+      if (!Object.hasOwn(ACCOUNT_COMMISSION_CLASSES, t.classification))
+        throw new Error(
+          'Choose Standard or GIM Property Management. GIM is the only house-account program.',
+        );
+      return {
+        from: t.from,
+        ...(t.to ? { to: t.to } : {}),
+        classification: t.classification,
+        evidence: required(t.evidence, 'the account classification reference'),
+      };
+    }),
+  };
+}
+/** Classification is an explicit Owner decision, not a name match or mutable manager link.
+ * Select once on the commission date and freeze the result in the policy snapshot. */
+export function selectCommissionTerms(
+  plan: CommissionPlan,
+  account: CommissionAccount | undefined,
+  rateDate: string,
+  transaction: 'NEW' | 'RENEWAL',
+) {
+  day(rateDate);
+  const classification = account?.periods.find(
+    (t) => t.from <= rateDate && (!t.to || t.to >= rateDate),
+  );
+  if (!classification || !Object.hasOwn(ACCOUNT_COMMISSION_CLASSES, classification.classification))
+    throw new Error(
+      `An Owner must classify this account as Standard or GIM Property Management for ${rateDate} in Agreements & carriers.`,
+    );
+  const term = plan.terms.find((t) => t.from <= rateDate && (!t.to || t.to >= rateDate));
+  if (!term)
+    throw new Error(`An Owner must configure a commission agreement covering ${rateDate}.`);
+  const rates = classification.classification === 'GIM' ? term.gim : term;
+  if (!rates)
+    throw new Error(
+      `An Owner must configure this producer’s GIM house-account rates for ${rateDate}. Standard rates cannot be used.`,
+    );
+  return {
+    producerBps: transaction === 'NEW' ? rates.newBps : rates.renewalBps,
+    agreement: rates.agreement,
+    accountClassification: { ...classification, version: account!.version },
+  };
 }
 /** Append, never rewrite posted history. Negative producer amounts are proposed
  * recoveries only; they do not reduce unpaid wages or enter payroll batches. */
