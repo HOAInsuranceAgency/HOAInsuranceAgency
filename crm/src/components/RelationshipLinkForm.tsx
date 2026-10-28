@@ -1,11 +1,10 @@
+import PartyPicker from './PartyPicker';
+import AccountPicker from './AccountPicker';
 import { useMounted } from '../lib/useMounted';
 import { useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Modal from './Modal';
-import { client, listAllPages } from '../lib/client';
-import { loadParties } from '../lib/relationships';
 import { communicationRequest } from '../lib/communications';
-import { useAsyncResource } from '../lib/useAsyncResource';
 import {
   RELATIONSHIP_LABELS,
   RELATIONSHIP_ROLES,
@@ -23,21 +22,6 @@ export default function RelationshipLinkForm({
   onSaved: () => void;
 }) {
   const navigate = useNavigate();
-  const resource = useAsyncResource(
-    async () => {
-      const [parties, accounts] = await Promise.all([
-        partyId ? Promise.resolve([]) : loadParties(),
-        accountId
-          ? Promise.resolve([])
-          : listAllPages((nextToken) =>
-              client.models.Account.list({ nextToken, selectionSet: ['id', 'name'] }),
-            ),
-      ]);
-      return { parties, accounts };
-    },
-    [accountId, partyId],
-    { initialData: { parties: [], accounts: [] } },
-  );
   const [account, setAccount] = useState(accountId ?? ''),
     [party, setParty] = useState(partyId ?? ''),
     [role, setRole] = useState<RelationshipRole>('MANAGER'),
@@ -95,48 +79,28 @@ export default function RelationshipLinkForm({
           void save();
         }}
       >
-        <fieldset className="relationship-fields" disabled={busy || resource.loading || !!resource.error}>
+        <fieldset className="relationship-fields" disabled={busy}>
           {!accountId && (
-            <label className="field">
-              Insured account
-              <select
-                required
-                value={account}
-                onChange={(e) => {
-                  setAccount(e.target.value);
-                  changed();
-                }}
-              >
-                <option value="">Choose an account</option>
-                {resource.data.accounts.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.name}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <AccountPicker
+              value={account}
+              disabled={busy}
+              onChange={(id) => {
+                setAccount(id);
+                changed();
+              }}
+            />
           )}
           {!partyId && (
-            <label className="field">
-              Person or organization
-              <select
-                required
-                value={party}
-                onChange={(e) => {
-                  setParty(e.target.value);
-                  changed();
-                }}
-              >
-                <option value="">Choose a relationship</option>
-                {resource.data.parties
-                  .filter((p) => !p.archived)
-                  .map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name}
-                    </option>
-                  ))}
-              </select>
-            </label>
+            <PartyPicker
+              label="Person or organization"
+              value={party}
+              required
+              disabled={busy}
+              onChange={(id) => {
+                setParty(id);
+                changed();
+              }}
+            />
           )}
           <label className="field">
             Role
@@ -188,9 +152,9 @@ export default function RelationshipLinkForm({
             {busy ? 'Saving…' : role === 'MANAGER' ? 'Review management change' : 'Link relationship'}
           </button>
         </fieldset>
-        {(error || resource.error) && (
+        {error && (
           <p className="error-text" role="alert">
-            {error || resource.error}
+            {error}
           </p>
         )}
       </form>

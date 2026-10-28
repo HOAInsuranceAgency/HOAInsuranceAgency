@@ -1,3 +1,10 @@
+import {
+  DIRECTORY_READS,
+  relationshipRead,
+  relationshipBatch,
+  relationshipCursor,
+  relationshipToken,
+} from './relationshipReads';
 import { randomUUID } from 'node:crypto';
 import { GetCommand } from '@aws-sdk/lib-dynamodb';
 import { AccountAccess } from '../crm-access/access';
@@ -23,7 +30,7 @@ import {
 } from './store';
 import { dataClient } from './data';
 
-export const RELATIONSHIP_READS = new Set(['relationshipContext']);
+export const RELATIONSHIP_READS = new Set(['relationshipContext', ...DIRECTORY_READS]);
 export const RELATIONSHIP_WRITES = new Set([
   'relationshipSaveParty',
   'relationshipSaveAffiliation',
@@ -99,28 +106,12 @@ async function party(id: unknown) {
   if (!record || record.archived) throw new Error('Choose an active person or organization.');
   return record;
 }
-async function pageAll<T>(
-  fetch: (token?: string) => Promise<{ data: T[]; errors?: readonly unknown[]; nextToken?: string | null }>,
-) {
-  const result: T[] = [];
-  let token: string | undefined;
-  const seen = new Set<string>();
-  do {
-    const page = await fetch(token);
-    if (page.errors?.length) throw new Error('Could not load relationships.');
-    result.push(...page.data);
-    token = page.nextToken ?? undefined;
-    if (token && seen.has(token)) throw new Error('Relationship paging did not advance.');
-    if (token) seen.add(token);
-  } while (token);
-  return result;
-}
 export async function relationshipOperation(
   op: string,
   input: RecordData,
   identity: Identity,
   request?: RoleRequest,
-) {
+): Promise<RecordData> {
   await assertUserSession(identity);
   const access = new AccountAccess(
     identity,
@@ -130,6 +121,7 @@ export async function relationshipOperation(
   const actor = access.actor;
   if (!RELATIONSHIP_READS.has(op) && !RELATIONSHIP_WRITES.has(op))
     throw new Error('Unknown relationship action.');
+  if (DIRECTORY_READS.has(op)) return relationshipRead(op, input, identity, request);
   const accountId = input.accountId ? key(input.accountId) : undefined;
   const accountWrites: Write[] = [];
   let accountWorkflow: Row<RecordData> | undefined;
@@ -151,22 +143,25 @@ export async function relationshipOperation(
     if (!accountId) throw new Error('Choose an account.');
     const lock = await get<{ relationshipId?: string; effectiveOn?: string }>(`management:${accountId}`);
     const client = await dataClient();
-    const links = await pageAll((token) =>
-      client.models.AccountRelationship.listAccountRelationshipByAccountId(
-        { accountId },
-        { nextToken: token },
-      ),
+    const scope = hash(canonical(['context', actor, access.admin, accountId]));
+    const cursor = relationshipCursor(input.nextToken, scope);
+    const page = await client.models.AccountRelationship.listAccountRelationshipByAccountId(
+      { accountId },
+      { nextToken: cursor.token, limit: 25 },
     );
-    // Re-read GSI candidates and the authoritative latest relationship; never use a lagging end date.
-    const ids = new Set([
-      ...links.map((x) => x.id),
-      ...(lock?.data.relationshipId ? [lock.data.relationshipId] : []),
-    ]);
-    const relationships = (await Promise.all([...ids].map((id) => read('AccountRelationship', id)))).filter(
-      (x) => x?.accountId === accountId,
+    if (page.errors?.length) throw new Error('Could not load relationships.');
+    const ids = [
+      ...new Set([
+        ...page.data.map((x) => x.id),
+        ...(lock?.data.relationshipId ? [lock.data.relationshipId] : []),
+      ]),
+    ];
+    const relationships = [...(await relationshipBatch('AccountRelationship', ids)).values()].filter(
+      (r) => r.accountId === accountId,
     );
     return {
       relationships,
+      nextToken: relationshipToken(scope, { token: page.nextToken }),
       version: lock?.version ?? 0,
       selfManagedFrom: lock && !lock.data.relationshipId ? lock.data.effectiveOn : undefined,
     };
@@ -223,7 +218,20 @@ export async function relationshipOperation(
       revision: Number(old?.revision ?? 0) + 1,
       updatedBy: actor,
     };
-    writes = [modelWrite('Party', fields, old), ...(ownerId !== actor ? [activeTeamUserCheck(ownerId)] : [])];
+    writes = [
+      modelWrite(
+        'Party',
+        {
+          ...fields,
+          directorySearch: [fields.name, fields.category, fields.email, fields.phone]
+            .filter(Boolean)
+            .join(' ')
+            .toLowerCase(),
+        },
+        old,
+      ),
+      ...(ownerId !== actor ? [activeTeamUserCheck(ownerId)] : []),
+    ];
     result = { party: fields };
   } else if (op === 'relationshipSaveAffiliation') {
     const person = await party(input.personId),

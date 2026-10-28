@@ -18,7 +18,7 @@ import { buildSearchRows, type SearchRow } from "./universalSearch";
  * leave the local search index. No unrelated account tables are scanned.
  */
 export async function fetchSearchIndexRows(): Promise<SearchRow[]> {
-  const [accounts, contacts, policies, invoices, certificates, carriers, parties] =
+  const [accounts, contacts, policies, invoices, certificates, carriers] =
     await Promise.all([
       listAllPages((nextToken) =>
         client.models.Account.list({
@@ -56,7 +56,6 @@ export async function fetchSearchIndexRows(): Promise<SearchRow[]> {
           nextToken,
         })
       ),
-      listAllPages(nextToken => client.models.Party.list({ selectionSet: ["id", "name", "email", "phone", "category", "archived"], nextToken })),
     ]);
   return buildSearchRows({
     accounts,
@@ -65,7 +64,6 @@ export async function fetchSearchIndexRows(): Promise<SearchRow[]> {
     invoices,
     certificates,
     carriers,
-    parties,
   });
 }
 

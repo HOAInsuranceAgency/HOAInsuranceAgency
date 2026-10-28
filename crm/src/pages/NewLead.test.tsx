@@ -11,7 +11,7 @@ const h = vi.hoisted(() => ({
   upload: vi.fn(),
 }));
 vi.mock("react-router-dom", () => ({ useNavigate: () => h.navigate, useSearchParams: () => [new URLSearchParams()] }));
-vi.mock("../lib/relationships", () => ({ loadParties: async () => [] }));
+vi.mock("../lib/relationships", () => ({ loadPartyIds: async () => [], searchParties: async () => ({ items: [] }) }));
 vi.mock("../lib/communications", () => ({ communicationRequest: h.request }));
 vi.mock("../components/LeadWorkflowPanel", () => ({ ResponsibilitySelect: () => null }));
 vi.mock("../lib/googlePlaces", () => ({

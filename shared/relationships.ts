@@ -1,3 +1,10 @@
+export const DIRECTORY_READS = new Set([
+  'relationshipSearch',
+  'relationshipProfiles',
+  'relationshipPortfolio',
+  'relationshipAffiliations',
+  'relationshipLegacyCandidates',
+]);
 import { validCalendarDate } from './renewalPolicy';
 import { agencyDay } from './leadActionGuidance';
 

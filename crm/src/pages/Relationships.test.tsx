@@ -2,7 +2,7 @@ import { beforeEach, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 const h = vi.hoisted(() => ({ load: vi.fn(), request: vi.fn() }));
-vi.mock('../lib/relationships', () => ({ loadParties: h.load }));
+vi.mock('../lib/relationships', () => ({ searchParties: h.load }));
 vi.mock('../lib/communications', () => ({ communicationRequest: h.request }));
 vi.mock('../lib/auth', () => ({ useIsAdmin: () => false }));
 vi.mock('../lib/client', () => ({ friendlyError: (e: Error) => e.message, client: {}, listAllPages: vi.fn() }));
@@ -12,17 +12,17 @@ const parties = [
   { id: 'jane', kind: 'PERSON', name: 'Jane Landlord', email: 'jane@example.test', category: 'Landlord', revision: 1 },
   { id: 'former', kind: 'ORGANIZATION', name: 'Archived Company', archived: true, revision: 1 },
 ];
-beforeEach(() => { h.load.mockResolvedValue(parties); h.request.mockReset(); });
+beforeEach(() => { h.load.mockImplementation(async (query = '', options: any = {}) => ({ items: parties.filter(p => (options.archived || !p.archived) && (!options.kind || p.kind === options.kind) && [p.name, p.email, p.category].some(v => v?.toLowerCase().includes(query.toLowerCase()))) })); h.request.mockReset(); });
 it('finds a standalone person by category and keeps archived profiles out unless requested', async () => {
   render(<MemoryRouter><Relationships /></MemoryRouter>);
   expect(await screen.findByRole('link', { name: 'Apex Management' })).toHaveAttribute('href', '/relationships/apex');
   expect(screen.queryByText('Archived Company')).not.toBeInTheDocument();
   fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'Landlord' } });
-  expect(screen.getByRole('link', { name: 'Jane Landlord' })).toBeVisible();
+  expect(await screen.findByRole('link', { name: 'Jane Landlord' })).toBeVisible();
   expect(screen.queryByText('Apex Management')).not.toBeInTheDocument();
   fireEvent.change(screen.getByRole('searchbox'), { target: { value: '' } });
   fireEvent.click(screen.getByLabelText('Include archived'));
-  expect(screen.getByRole('link', { name: 'Archived Company' })).toBeVisible();
+  expect(await screen.findByRole('link', { name: 'Archived Company' })).toBeVisible();
 });
 it('offers an existing shared profile while entering a matching company', async () => {
   render(<MemoryRouter><Relationships /></MemoryRouter>);
@@ -31,4 +31,12 @@ it('offers an existing shared profile while entering a matching company', async 
   fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Apex' } });
   expect(await screen.findByRole('button', { name: 'Use existing profile' })).toBeVisible();
   expect(h.request).not.toHaveBeenCalled();
+});
+it('keeps an empty search continuation available and loads it only on request', async () => {
+  h.load.mockReset().mockResolvedValueOnce({ items: [], nextToken: 'next-page' }).mockResolvedValueOnce({ items: [parties[0]] });
+  render(<MemoryRouter><Relationships /></MemoryRouter>);
+  fireEvent.click(await screen.findByRole('button', { name: 'Load more relationships' }));
+  expect(await screen.findByRole('link', { name: 'Apex Management' })).toBeVisible();
+  expect(h.load).toHaveBeenCalledTimes(2);
+  expect(h.load.mock.calls[1][2]).toBe('next-page');
 });

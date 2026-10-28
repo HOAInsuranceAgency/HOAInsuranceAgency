@@ -28,6 +28,12 @@ export const client = { models: {
 let version = 1;
 let selfManagedFrom: string | undefined;
 export async function communicationRequest(op: string, input: any = {}) {
+  if (op === 'relationshipSearch') return { items: parties.filter(p => (input.archived || !p.archived) && (!input.kind || p.kind === input.kind) && [p.name, p.email, p.phone, p.category].some(v => v?.toLowerCase().includes((input.query || '').toLowerCase()))) };
+  if (op === 'relationshipProfiles') return { items: parties.filter(p => input.ids.includes(p.id)) };
+  if (op === 'relationshipPortfolio') return { items: links.filter(l => l.partyId === input.partyId).map(relationship => ({ id: relationship.id, relationship, account: accounts.find(a => a.id === relationship.accountId) })) };
+  if (op === 'relationshipAffiliations') return { items: affiliations.filter(a => a.personId === input.partyId || a.organizationId === input.partyId).map(a => ({ ...a, relatedName: parties.find(p => p.id === (a.personId === input.partyId ? a.organizationId : a.personId))?.name })) };
+  if (op === 'relationshipLegacyCandidates') return { items: [] };
+  if (op === 'searchAccounts') return { items: accounts.filter(a => a.name.toLowerCase().includes(input.query.toLowerCase())) };
   if (op === 'team') return { team: [{ userId: 'alice', name: 'Avery Brooks', available: true }] };
   if (op === 'relationshipContext') return { relationships: structuredClone(links), version, selfManagedFrom };
   if (op === 'relationshipSaveParty') { const party = { ...input, id: input.id || crypto.randomUUID(), ownerId: 'alice', revision: input.revision + 1 }; const index = parties.findIndex(p => p.id === party.id); if (index < 0) parties.push(party); else parties[index] = party; return { party }; }

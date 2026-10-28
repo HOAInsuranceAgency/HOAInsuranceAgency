@@ -65,3 +65,8 @@
 .relationship-toolbar .field:first-child { width: min(100%, 330px); }
 .relationship-toolbar > label:not(.field) { margin-bottom: 8px; }
 .relationship-grid aside { overflow-wrap: anywhere; }
+
+.relationship-picker { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: end; gap: 8px 16px; }
+.relationship-picker .toolbar input { flex: 1; min-width: 100px; }
+.relationship-picker > p, .relationship-picker > button { grid-column: 1 / -1; }
+@media (max-width: 780px) { .relationship-picker { grid-template-columns: 1fr; } }

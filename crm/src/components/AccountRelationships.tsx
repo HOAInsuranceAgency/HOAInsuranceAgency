@@ -3,7 +3,7 @@ import { useAgencyDay } from '../lib/useAgencyDay';
 import { useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { client, listAllPages, fmtDate } from '../lib/client';
-import { loadAccountRelationships, loadParties, type AccountRelationshipRecord } from '../lib/relationships';
+import { loadAccountRelationships, loadPartyIds, type AccountRelationshipRecord } from '../lib/relationships';
 import { useAsyncResource } from '../lib/useAsyncResource';
 import { isAuthorizationError } from '../lib/authorizationError';
 import { RELATIONSHIP_LABELS, relationshipCurrent } from '../../../shared/relationships';
@@ -19,6 +19,7 @@ export default function AccountRelationships({
   accountId: string;
   onChanged: () => void;
 }) {
+  const [historyToken, setHistoryToken] = useState<string>();
   const [params, setParams] = useSearchParams();
   const day = useAgencyDay();
   const [management, setManagement] = useState(false),
@@ -27,22 +28,26 @@ export default function AccountRelationships({
     [notice, setNotice] = useState('');
   const resource = useAsyncResource(
     async () => {
-      const [context, parties, contacts] = await Promise.all([
-        loadAccountRelationships(accountId),
-        loadParties(),
+      const [context, contacts] = await Promise.all([
+        loadAccountRelationships(accountId, historyToken),
         listAllPages((nextToken) =>
           client.models.Contact.list({ filter: { accountId: { eq: accountId } }, nextToken }),
         ),
       ]);
+      const parties = await loadPartyIds([
+        ...context.relationships.map((r) => r.partyId),
+        ...(params.get('partyId') ? [params.get('partyId')!] : []),
+      ]);
       return { ...context, parties, contacts };
     },
-    [accountId],
+    [accountId, historyToken, params.get('partyId')],
     {
       initialData: {
         relationships: [],
         version: 0,
         parties: [],
         contacts: [],
+        nextToken: undefined as string | undefined,
         selfManagedFrom: undefined as string | undefined,
       },
       clearDataOnError: isAuthorizationError,
@@ -65,7 +70,8 @@ export default function AccountRelationships({
     setEnding(null);
     setNotice('Relationship saved.');
     onChanged();
-    await resource.refetch();
+    if (historyToken) setHistoryToken(undefined);
+    else await resource.refetch();
   }
   const display = (r: AccountRelationshipRecord) => (
     <li key={r.id}>
@@ -94,17 +100,28 @@ export default function AccountRelationships({
       <div className="card-head">
         <h2>Management and related people</h2>
         <div className="toolbar">
-          <button className="secondary" disabled={resource.loading || !!resource.error} onClick={() => setManagement(true)}>
+          <button
+            className="secondary"
+            disabled={resource.loading || !!resource.error}
+            onClick={() => setManagement(true)}
+          >
             Change management
           </button>
-          <button className="secondary" disabled={resource.loading || !!resource.error} onClick={() => setLinking(true)}>
+          <button
+            className="secondary"
+            disabled={resource.loading || !!resource.error}
+            onClick={() => setLinking(true)}
+          >
             Link relationship
           </button>
         </div>
       </div>
       {resource.error ? (
         <p className="error-text" role="alert">
-          {resource.error} <button className="secondary" onClick={() => void resource.refetch()}>Retry</button>
+          {resource.error}{' '}
+          <button className="secondary" onClick={() => void resource.refetch()}>
+            Retry
+          </button>
         </p>
       ) : resource.loading ? (
         <p className="muted">Loading relationships…</p>
@@ -112,7 +129,7 @@ export default function AccountRelationships({
         <>
           {!current.length && !resource.data.selfManagedFrom ? (
             <p className="muted">
-              No current relationships recorded. Link the company or people involved with this account.
+              No current relationships on this page. Link the company or people involved with this account.
             </p>
           ) : (
             <>
@@ -134,6 +151,28 @@ export default function AccountRelationships({
             </details>
           )}
         </>
+      )}
+      {resource.data.nextToken && (
+        <p>
+          <button
+            className="secondary"
+            disabled={resource.loading}
+            onClick={() => setHistoryToken(resource.data.nextToken)}
+          >
+            Next relationships page
+          </button>
+        </p>
+      )}
+      {historyToken && (
+        <p>
+          <button
+            className="secondary"
+            disabled={resource.loading}
+            onClick={() => setHistoryToken(undefined)}
+          >
+            Back to first relationships page
+          </button>
+        </p>
       )}
       {notice && (
         <p role="status" className="muted small">

@@ -1,3 +1,4 @@
+import PartyPicker from './PartyPicker';
 import { useMounted } from '../lib/useMounted';
 import { useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
@@ -40,13 +41,16 @@ export default function ManagementChangeForm({
   const mounted = useMounted();
   const requestId = useRef(crypto.randomUUID()),
     pending = useRef(false);
-  const active = parties.filter((p) => !p.archived).sort((a, b) => a.name.localeCompare(b.name));
+  const [selectedManager, setSelectedManager] = useState<PartyRecord>();
   const previous = relationships.filter((r) => r.role === 'MANAGER' && relationshipCurrent(r, effectiveOn));
   const managedContactIds = new Set(
     relationships.filter((r) => r.role === 'MANAGER' && !r.validUntil).flatMap((r) => r.contactIds ?? []),
   );
   const legacy = contacts.filter((c) => !managedContactIds.has(c.id) && relationshipCurrent(c, effectiveOn));
-  const newName = parties.find((p) => p.id === partyId)?.name ?? 'Self-managed';
+  const newName =
+    selectedManager?.name ??
+    parties.find((p) => p.id === partyId)?.name ??
+    (partyId ? 'Selected manager' : 'Self-managed');
   function changed() {
     setConfirmed(false);
     requestId.current = crypto.randomUUID();
@@ -82,24 +86,17 @@ export default function ManagementChangeForm({
     }
   }
   const select = (label: string, value: string, setter: (s: string) => void) => (
-    <label className="field">
-      {label}
-      <select
-        value={value}
-        onChange={(e) => {
-          setter(e.target.value);
-          changed();
-        }}
-      >
-        <option value="">Use remaining account contacts</option>
-        {active.map((p) => (
-          <option key={p.id} value={p.id}>
-            {p.name}
-            {p.email ? ` · ${p.email}` : ''}
-          </option>
-        ))}
-      </select>
-    </label>
+    <PartyPicker
+      label={label}
+      value={value}
+      initial={[...parties, ...(selectedManager ? [selectedManager] : [])]}
+      emptyLabel="Use remaining account contacts"
+      onChange={(id) => {
+        setter(id);
+        changed();
+      }}
+      disabled={busy}
+    />
   );
   return (
     <Modal
@@ -115,23 +112,18 @@ export default function ManagementChangeForm({
         }}
       >
         <fieldset className="relationship-fields" disabled={busy}>
-          <label className="field">
-            New manager
-            <select
-              value={partyId}
-              onChange={(e) => {
-                setParty(e.target.value);
-                changed();
-              }}
-            >
-              <option value="">Self-managed / no management company</option>
-              {active.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
-          </label>
+          <PartyPicker
+            label="New manager"
+            value={partyId}
+            initial={[...parties, ...(selectedManager ? [selectedManager] : [])]}
+            emptyLabel="Self-managed / no management company"
+            onChange={(id, profile) => {
+              setParty(id);
+              setSelectedManager(profile);
+              changed();
+            }}
+            disabled={busy}
+          />
           <p className="muted small">
             Missing someone?{' '}
             <Link to="/relationships" target="_blank" rel="noreferrer">

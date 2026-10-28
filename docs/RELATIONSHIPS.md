@@ -26,6 +26,7 @@ There is one management timeline per account in this release. Other roles can co
 - `Contact`: additive optional party/relationship references, effective dates and billing designation.
 - The three new models expose reads only. Writes use validated `relationship*` operations on the existing authenticated communication API. The management lock and idempotency receipt use the existing workflow store; business records use dedicated model tables.
 - New account relationship indexes are guarded by the same access layer as the other account models, including direct IDs, lists and reverse portfolio lookups. Shared parties and affiliations do not embed account names or portfolio totals.
+- Directory, portfolio, affiliation and migration reads use bounded server pages and explicit continuation. Account and permission rows are fetched with BatchGet for each portfolio/review page. Search keeps a private normalized `directorySearch` attribute on each Party write; it is not part of public profile responses. Sparse scans evaluate at most 100 rows per request, so an empty page with a cursor is not a complete search. Pickers use these pages or the existing bounded `searchAccounts` operation.
 - Universal search includes directory names, emails, phones and categories. New lead creation can select a relationship; manager links lead into the reviewed handoff form.
 - Leads' Active, Snoozed and Follow-up due views exclude closed dispositions using the dashboard's shared open-lead definition. All leads remains historical.
 

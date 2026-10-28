@@ -1,10 +1,13 @@
+import PartyPicker from '../components/PartyPicker';
+import { usePagedList } from '../lib/usePagedList';
 import { useMounted } from '../lib/useMounted';
 import { useAgencyDay } from '../lib/useAgencyDay';
 import { useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import {
   loadPartyProfile,
-  loadParties,
+  loadPortfolio,
+  loadAffiliations,
   type AffiliationRecord,
   type PartyRecord,
 } from '../lib/relationships';
@@ -23,31 +26,39 @@ export default function RelationshipDetail() {
   return <RelationshipProfile key={id} id={id!} />;
 }
 function RelationshipProfile({ id }: { id: string }) {
-  const resource = useAsyncResource(
-    async () => {
-      const [profile, parties] = await Promise.all([loadPartyProfile(id), loadParties()]);
-      return { ...profile, parties };
-    },
-    [id],
-    { initialData: null, clearDataOnError: isAuthorizationError },
-  );
+  const resource = useAsyncResource(() => loadPartyProfile(id), [id], {
+    initialData: null,
+    clearDataOnError: isAuthorizationError,
+  });
   const [editing, setEditing] = useState(false),
     [linking, setLinking] = useState(false),
     [affiliation, setAffiliation] = useState<AffiliationRecord | 'new' | null>(null);
+  const portfolioPage = usePagedList((token) => loadPortfolio(id, token), [id]);
+  const affiliationPage = usePagedList((token) => loadAffiliations(id, token), [id]);
+  function refresh() {
+    void resource.refetch();
+    void portfolioPage.reload();
+    void affiliationPage.reload();
+  }
   const admin = useIsAdmin();
   const day = useAgencyDay();
   if (resource.error)
     return (
       <p role="alert" className="error-text">
-        {resource.error} <button className="secondary" onClick={() => void resource.refetch()}>Retry</button>
+        {resource.error}{' '}
+        <button className="secondary" onClick={() => void resource.refetch()}>
+          Retry
+        </button>
       </p>
     );
   if (resource.loading || !resource.data) return <p>Loading relationship…</p>;
-  const { party, parties, links, accounts, affiliations, actor } = resource.data;
+  const { party, actor } = resource.data;
+  const links = portfolioPage.items.map((item) => item.relationship);
+  const accounts = new Map(portfolioPage.items.map((item) => [item.account.id, item.account]));
+  const affiliations = affiliationPage.items;
   const canEdit = admin || party.ownerId === actor;
   const current = links.filter((r) => relationshipCurrent(r, day)),
     other = links.filter((r) => !relationshipCurrent(r, day));
-  const name = (key: string) => parties.find((p) => p.id === key)?.name ?? 'Unavailable profile';
   const portfolio = (rows: typeof links) =>
     rows.length ? (
       <div className="table-wrap">
@@ -78,7 +89,7 @@ function RelationshipProfile({ id }: { id: string }) {
         </table>
       </div>
     ) : (
-      <p className="muted">No linked accounts visible in this view.</p>
+      <p className="muted">No linked accounts in the loaded pages.</p>
     );
   return (
     <>
@@ -93,8 +104,14 @@ function RelationshipProfile({ id }: { id: string }) {
           </p>
         </div>
         <div className="toolbar">
-          {canEdit && <button className="secondary" onClick={() => setEditing(true)}>Edit profile</button>}
-          <button className="secondary" onClick={() => void resource.refetch()}>Refresh</button>
+          {canEdit && (
+            <button className="secondary" onClick={() => setEditing(true)}>
+              Edit profile
+            </button>
+          )}
+          <button className="secondary" onClick={refresh}>
+            Refresh
+          </button>
         </div>
       </div>
       <div className="relationship-grid">
@@ -102,18 +119,40 @@ function RelationshipProfile({ id }: { id: string }) {
           <section className="card">
             <div className="card-head">
               <h2>Linked insured accounts</h2>
-              {!party.archived && <button className="secondary" onClick={() => setLinking(true)}>Link existing account</button>}
+              {!party.archived && (
+                <button className="secondary" onClick={() => setLinking(true)}>
+                  Link existing account
+                </button>
+              )}
             </div>
             <p className="muted small">
               Only accounts you can access are shown. Managing this relationship does not change
               insured-account assignments.
             </p>
+            {portfolioPage.error && (
+              <p role="alert" className="error-text">
+                {portfolioPage.error}{' '}
+                <button className="secondary" onClick={() => void portfolioPage.more()}>
+                  Retry portfolio
+                </button>
+              </p>
+            )}
+            {portfolioPage.loading && <p>Loading portfolio…</p>}
             {portfolio(current)}
             {other.length > 0 && (
               <details>
                 <summary>Former and scheduled relationships ({other.length})</summary>
                 {portfolio(other)}
               </details>
+            )}
+            {portfolioPage.nextToken && (
+              <button
+                className="secondary"
+                disabled={portfolioPage.loading}
+                onClick={() => void portfolioPage.more()}
+              >
+                Load more account relationships
+              </button>
             )}
             {!party.archived && (
               <p>
@@ -131,7 +170,9 @@ function RelationshipProfile({ id }: { id: string }) {
                   : 'Organizations and employment history'}
               </h2>
               {canEdit && !party.archived && (
-                <button className="secondary" onClick={() => setAffiliation('new')}>Add affiliation</button>
+                <button className="secondary" onClick={() => setAffiliation('new')}>
+                  Add affiliation
+                </button>
               )}
             </div>
             <ul className="relationship-list">
@@ -139,7 +180,7 @@ function RelationshipProfile({ id }: { id: string }) {
                 const related = party.kind === 'PERSON' ? a.organizationId : a.personId;
                 return (
                   <li key={a.id}>
-                    <Link to={`/relationships/${related}`}>{name(related)}</Link>
+                    <Link to={`/relationships/${related}`}>{a.relatedName}</Link>
                     {a.title && ` · ${a.title}`}
                     <div className="relationship-dates">
                       {a.validFrom ? fmtDate(a.validFrom) : 'Start not recorded'}
@@ -155,7 +196,27 @@ function RelationshipProfile({ id }: { id: string }) {
                 );
               })}
             </ul>
-            {!affiliations.length && <p className="muted">No affiliations recorded.</p>}
+            {affiliationPage.loading && <p>Loading affiliations…</p>}
+            {affiliationPage.error && (
+              <p role="alert" className="error-text">
+                {affiliationPage.error}{' '}
+                <button className="secondary" onClick={() => void affiliationPage.more()}>
+                  Retry affiliations
+                </button>
+              </p>
+            )}
+            {!affiliations.length && !affiliationPage.loading && (
+              <p className="muted">No affiliations in the loaded pages.</p>
+            )}
+            {affiliationPage.nextToken && (
+              <button
+                className="secondary"
+                disabled={affiliationPage.loading}
+                onClick={() => void affiliationPage.more()}
+              >
+                Load more affiliations
+              </button>
+            )}
           </section>
         </div>
         <aside>
@@ -192,7 +253,7 @@ function RelationshipProfile({ id }: { id: string }) {
           onClose={() => setEditing(false)}
           onSaved={() => {
             setEditing(false);
-            void resource.refetch();
+            refresh();
           }}
         />
       )}
@@ -202,19 +263,18 @@ function RelationshipProfile({ id }: { id: string }) {
           onClose={() => setLinking(false)}
           onSaved={() => {
             setLinking(false);
-            void resource.refetch();
+            refresh();
           }}
         />
       )}
       {affiliation && (
         <AffiliationForm
           party={party}
-          parties={parties}
           existing={affiliation === 'new' ? undefined : affiliation}
           onClose={() => setAffiliation(null)}
           onSaved={() => {
             setAffiliation(null);
-            void resource.refetch();
+            refresh();
           }}
         />
       )}
@@ -223,13 +283,11 @@ function RelationshipProfile({ id }: { id: string }) {
 }
 function AffiliationForm({
   party,
-  parties,
   existing,
   onClose,
   onSaved,
 }: {
   party: PartyRecord;
-  parties: PartyRecord[];
   existing?: AffiliationRecord;
   onClose: () => void;
   onSaved: () => void;
@@ -287,29 +345,17 @@ function AffiliationForm({
         }}
       >
         <fieldset disabled={busy} className="relationship-fields">
-          <label className="field">
-            {party.kind === 'PERSON' ? 'Organization' : 'Person'}
-            <select
-              required
-              disabled={!!existing}
-              value={related}
-              onChange={(e) => {
-                setRelated(e.target.value);
-                changed();
-              }}
-            >
-              <option value="">Choose a profile</option>
-              {parties
-                .filter(
-                  (p) => p.id !== party.id && p.kind !== party.kind && (!p.archived || p.id === related),
-                )
-                .map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-            </select>
-          </label>
+          <PartyPicker
+            label={party.kind === 'PERSON' ? 'Organization' : 'Person'}
+            kind={party.kind === 'PERSON' ? 'ORGANIZATION' : 'PERSON'}
+            required
+            value={related}
+            disabled={busy || !!existing}
+            onChange={(id) => {
+              setRelated(id);
+              changed();
+            }}
+          />
           <label className="field">
             Role / title
             <input

@@ -2,7 +2,7 @@ import { useMounted } from '../lib/useMounted';
 import { useRef, useState } from 'react';
 import Modal from './Modal';
 import { communicationRequest } from '../lib/communications';
-import { loadParties, type PartyRecord } from '../lib/relationships';
+import { searchParties, type PartyRecord } from '../lib/relationships';
 import { useIsAdmin } from '../lib/auth';
 import { useAsyncResource } from '../lib/useAsyncResource';
 import type { TeamEligibility } from '../lib/communications';
@@ -41,15 +41,12 @@ export default function PartyForm({
     [admin],
     { initialData: [] },
   );
-  const directory = useAsyncResource(async () => (party ? [] : loadParties()), [party?.id], {
-    initialData: [],
-  });
-  const matches = directory.data.filter(
-    (p) =>
-      !p.archived &&
-      ((form.name.trim().length > 2 && p.name.toLowerCase().includes(form.name.trim().toLowerCase())) ||
-        (form.email.trim() && p.email?.toLowerCase() === form.email.trim().toLowerCase())),
+  const directory = useAsyncResource(
+    async () => (party || form.name.trim().length < 3 ? [] : (await searchParties(form.name.trim())).items),
+    [party?.id, form.name],
+    { initialData: [] },
   );
+  const matches = directory.data;
   function change(key: string, value: string | boolean) {
     setForm((old) => ({ ...old, [key]: value }));
     requestId.current = crypto.randomUUID();

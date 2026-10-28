@@ -7,7 +7,7 @@ vi.mock('../../amplify/functions/crm-access/user-status', () => ({ assertUserSes
 vi.mock('../../amplify/functions/communications/data', () => ({ dataClient: async () => ({ models: { AccountRelationship: { listAccountRelationshipByAccountId: async ({ accountId }: { accountId: string }) => ({ data: [...h.records].filter(([k, v]) => k.startsWith('AccountRelationship:') && v.accountId === accountId).map(([, v]) => v) }) } } }) }));
 vi.mock('../../amplify/functions/communications/store', async original => {
   const actual = await original<typeof import('../../amplify/functions/communications/store')>();
-  return { ...actual, get: async (id: string) => structuredClone(h.records.get(`Communication:${id}`)), db: { send: async (cmd: any) => ({ Item: structuredClone(h.records.get(`${cmd.input.TableName}:${cmd.input.Key.id}`)) }) }, commit: h.commit };
+  return { ...actual, get: async (id: string) => structuredClone(h.records.get(`Communication:${id}`)), db: { send: async (cmd: any) => cmd.input.RequestItems ? { Responses: Object.fromEntries(Object.entries(cmd.input.RequestItems).map(([table, request]: [string, any]) => [table, request.Keys.map((k: any) => structuredClone(h.records.get(`${table}:${k.id}`))).filter(Boolean)])) } : ({ Item: structuredClone(h.records.get(`${cmd.input.TableName}:${cmd.input.Key.id}`)) }) }, commit: h.commit };
 });
 import { relationshipOperation } from '../../amplify/functions/communications/relationships';
 const actor = { sub: 'alice', groups: ['PRODUCER'] };

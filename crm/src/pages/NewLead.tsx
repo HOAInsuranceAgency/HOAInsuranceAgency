@@ -1,4 +1,5 @@
-import { loadParties } from "../lib/relationships";
+import { loadPartyIds } from '../lib/relationships';
+import PartyPicker from "../components/PartyPicker";
 import { RELATIONSHIP_LABELS, RELATIONSHIP_ROLES, type RelationshipRole } from "../../../shared/relationships";
 import { LEAD_SOURCES, LEAD_SOURCE_LABELS } from "../../../shared/leadSource";
 import { PROPERTY_TYPES, PROPERTY_TYPE_LABELS, normalizePropertyType } from "../../../shared/propertyType";
@@ -40,7 +41,6 @@ export default function NewLead() {
   const [searchParams] = useSearchParams();
   const [relatedParty, setRelatedParty] = useState(searchParams.get('relatedParty') ?? '');
   const [relationshipRole, setRelationshipRole] = useState<RelationshipRole>('MANAGER');
-  const parties = useAsyncResource(loadParties, [], { initialData: [] });
   const formRef = useRef<HTMLFormElement>(null);
   const requestId = useRef(crypto.randomUUID());
   const savingNow = useRef(false);
@@ -103,10 +103,10 @@ export default function NewLead() {
       return;
     }
     if (!form.leadSource) { setError("Choose a lead source before creating the lead."); focusField('new-lead-source'); return; }
-    if (relatedParty && (parties.loading || parties.error || !parties.data.some(p => p.id === relatedParty && !p.archived))) { setError('Refresh and choose an active relationship before creating this lead.'); return; }
     savingNow.current = true;
     setSaving(true);
     setError("");
+    if (relatedParty) { try { const selected = await loadPartyIds([relatedParty]); if (!selected.some(p => p.id === relatedParty && !p.archived)) throw new Error('Choose an active relationship.'); } catch { setError('Refresh and choose an active relationship before creating this lead.'); savingNow.current = false; setSaving(false); return; } }
     let data: { id: string } | null = null;
     let errors: { message: string }[] = [];
     try {
@@ -257,8 +257,7 @@ export default function NewLead() {
         <fieldset className="new-lead-fields" disabled={saving || !!createdId} aria-label="Lead information">
           <details className="new-lead-section" open={!!relatedParty}>
             <summary>Related person or organization {relatedParty ? '· Selected' : '(optional)'}</summary>
-            <label className="field">Relationship<select value={relatedParty} onChange={e => setRelatedParty(e.target.value)} disabled={parties.loading || !!parties.error}><option value="">No relationship selected</option>{parties.data.filter(p => !p.archived).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
-            {parties.error && <p className="error-text">Relationships are unavailable. <button type="button" onClick={() => void parties.refetch()}>Retry</button></p>}
+            <PartyPicker label="Relationship" value={relatedParty} onChange={id => setRelatedParty(id)} emptyLabel="No relationship selected" />
             {relatedParty && <><label className="field">Role<select value={relationshipRole} onChange={e => setRelationshipRole(e.target.value as RelationshipRole)}>{RELATIONSHIP_ROLES.map(r => <option key={r} value={r}>{RELATIONSHIP_LABELS[r]}</option>)}</select></label>{relationshipRole === 'MANAGER' && <p className="muted small">After creating the lead, review the effective date and management contacts.</p>}</>}
           </details>
           <div className="new-lead-essentials">

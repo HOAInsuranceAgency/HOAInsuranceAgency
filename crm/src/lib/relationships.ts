@@ -1,53 +1,45 @@
-import { client, listAllPages, currentActor } from './client';
+import { client, currentActor } from './client';
 import { communicationRequest } from './communications';
+import type { Page } from './usePagedList';
 import type {
   PartyRecord,
   AccountRelationshipRecord,
   AffiliationRecord,
 } from '../../../shared/relationships';
 export type { PartyRecord, AccountRelationshipRecord, AffiliationRecord };
-export async function loadParties(): Promise<PartyRecord[]> {
-  return (await listAllPages((token) => client.models.Party.list({ nextToken: token }))) as PartyRecord[];
+export const searchParties = (
+  query = '',
+  options: { kind?: string; archived?: boolean } = {},
+  nextToken?: string,
+) => communicationRequest<Page<PartyRecord>>('relationshipSearch', { query, ...options, nextToken });
+export async function loadPartyIds(ids: string[]): Promise<PartyRecord[]> {
+  const unique = [...new Set(ids)];
+  if (!unique.length) return [];
+  if (unique.length > 100) throw new Error('Load fewer profiles at a time.');
+  return (await communicationRequest<Page<PartyRecord>>('relationshipProfiles', { ids: unique })).items;
 }
-export async function loadAccountRelationships(accountId: string) {
+export async function loadAccountRelationships(accountId: string, nextToken?: string) {
   return communicationRequest<{
     relationships: AccountRelationshipRecord[];
     version: number;
     selfManagedFrom?: string;
-  }>('relationshipContext', { accountId });
+    nextToken?: string;
+  }>('relationshipContext', { accountId, nextToken });
 }
 export async function loadPartyProfile(id: string) {
-  const [party, links, asPerson, asOrganization, actor] = await Promise.all([
-    client.models.Party.get({ id }),
-    listAllPages((nextToken) =>
-      client.models.AccountRelationship.listAccountRelationshipByPartyId({ partyId: id }, { nextToken }),
-    ),
-    listAllPages((nextToken) =>
-      client.models.PartyAffiliation.listPartyAffiliationByPersonId({ personId: id }, { nextToken }),
-    ),
-    listAllPages((nextToken) =>
-      client.models.PartyAffiliation.listPartyAffiliationByOrganizationId(
-        { organizationId: id },
-        { nextToken },
-      ),
-    ),
-    currentActor(),
-  ]);
+  const [party, actor] = await Promise.all([client.models.Party.get({ id }), currentActor()]);
   if (party.errors?.length || !party.data) throw new Error('Could not load this relationship.');
-  // Account reads are authorized independently, even after a portfolio index read.
-  const accounts = await Promise.all(
-    [...new Set(links.map((l) => l.accountId))].map(async (accountId) => {
-      const result = await client.models.Account.get({ id: accountId });
-      if (result.errors?.length) throw new Error('Account access changed. Refresh the profile.');
-      return result.data;
-    }),
-  );
-  const names = new Map(accounts.filter((a) => a != null).map((a) => [a!.id, a!]));
-  return {
-    party: party.data as PartyRecord,
-    links: (links as AccountRelationshipRecord[]).filter((l) => names.has(l.accountId)),
-    accounts: names,
-    affiliations: [...asPerson, ...asOrganization] as AffiliationRecord[],
-    actor,
-  };
+  return { party: party.data as PartyRecord, actor };
 }
+export interface PortfolioItem {
+  id: string;
+  relationship: AccountRelationshipRecord;
+  account: { id: string; name: string; stage: string };
+}
+export const loadPortfolio = (partyId: string, nextToken?: string) =>
+  communicationRequest<Page<PortfolioItem>>('relationshipPortfolio', { partyId, nextToken });
+export const loadAffiliations = (partyId: string, nextToken?: string) =>
+  communicationRequest<Page<AffiliationRecord & { relatedName: string }>>('relationshipAffiliations', {
+    partyId,
+    nextToken,
+  });

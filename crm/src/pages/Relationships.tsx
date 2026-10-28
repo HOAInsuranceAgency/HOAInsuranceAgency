@@ -1,29 +1,23 @@
 import LegacyManagerReview from '../components/LegacyManagerReview';
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
-import { loadParties } from '../lib/relationships';
-import { useAsyncResource } from '../lib/useAsyncResource';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { searchParties } from '../lib/relationships';
+import { usePagedList } from '../lib/usePagedList';
 import PartyForm from '../components/PartyForm';
 import './Relationships.css';
 export default function Relationships() {
-  const resource = useAsyncResource(loadParties, [], {
-    initialData: [],
-    errorMessage: 'Could not load relationships.',
-  });
-  const [query, setQuery] = useState(''),
+  const [params] = useSearchParams();
+  const [query, setQuery] = useState(params.get('q') ?? ''),
     [kind, setKind] = useState(''),
     [archived, setArchived] = useState(false),
     [adding, setAdding] = useState(false);
   const navigate = useNavigate();
   const [reviewing, setReviewing] = useState(false);
-  const items = resource.data
-    .filter(
-      (p) =>
-        (archived || !p.archived) &&
-        (!kind || p.kind === kind) &&
-        [p.name, p.email, p.phone, p.category].some((v) => v?.toLowerCase().includes(query.toLowerCase())),
-    )
-    .sort((a, b) => a.name.localeCompare(b.name));
+  const resource = usePagedList(
+    (token) => searchParties(query, { kind, archived }, token),
+    [query, kind, archived],
+  );
+  const items = [...resource.items].sort((a, b) => a.name.localeCompare(b.name));
   return (
     <>
       <div className="relationship-heading">
@@ -59,7 +53,7 @@ export default function Relationships() {
           <input type="checkbox" checked={archived} onChange={(e) => setArchived(e.target.checked)} /> Include
           archived
         </label>
-        <button className="secondary" disabled={resource.loading} onClick={() => void resource.refetch()}>
+        <button className="secondary" disabled={resource.loading} onClick={() => void resource.reload()}>
           Refresh
         </button>
       </div>
@@ -71,7 +65,11 @@ export default function Relationships() {
         ) : resource.loading ? (
           <p>Loading relationships…</p>
         ) : !items.length ? (
-          <p>No relationships found. Add a company or person to get started.</p>
+          <p>
+            {resource.nextToken
+              ? 'More profiles remain to search.'
+              : 'No relationships found. Add a company or person to get started.'}
+          </p>
         ) : (
           <div className="table-wrap">
             <table>
@@ -103,6 +101,11 @@ export default function Relationships() {
           </div>
         )}
       </div>
+      {resource.nextToken && (
+        <button className="secondary" disabled={resource.loading} onClick={() => void resource.more()}>
+          Load more relationships
+        </button>
+      )}
       <p>
         <button className="link" onClick={() => setReviewing((v) => !v)}>
           {reviewing ? 'Hide manager review' : 'Review existing manager contacts'}
