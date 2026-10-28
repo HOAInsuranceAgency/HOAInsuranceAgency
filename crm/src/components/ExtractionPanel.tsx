@@ -1,3 +1,4 @@
+import { relationshipCurrent } from "../../../shared/relationships";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import {
   client,
@@ -715,9 +716,10 @@ function ExtractionPanelContent({
         // somebody typed in by hand.
         let contactFailures = 0;
         let unchanged = 0;
-        let primaryTaken = contactsRes.data.some((c) => c.isPrimary);
+        let primaryTaken = contactsRes.data.some((c) => c.isPrimary && relationshipCurrent(c));
         for (const c of contactCandidates) {
           if (!selectedContacts[c.i]) continue;
+          if (c.match.existing && !relationshipCurrent(c.match.existing)) { unchanged++; continue; }
           if (c.match.verdict === "identical") {
             unchanged++;
             continue;
@@ -959,8 +961,8 @@ function ExtractionPanelContent({
                       key={`c-${i}`}
                       kind="Contact"
                       match={match}
-                      checked={!!selectedContacts[i]}
-                      disabled={applyStatus.busy}
+                      checked={!!selectedContacts[i] && (!found || relationshipCurrent(found))}
+                      disabled={applyStatus.busy || !!found && !relationshipCurrent(found)}
                       onToggle={(v) =>
                         setSelectedContacts((s) => ({ ...s, [i]: v }))
                       }
@@ -971,7 +973,7 @@ function ExtractionPanelContent({
                               .join(" · ")
                           : ""
                       }
-                      title={c.name?.trim() ?? ""}
+                      title={`${c.name?.trim() ?? ""}${found && !relationshipCurrent(found) ? " · Former or scheduled contact (kept in history)" : ""}`}
                       detail={bits}
                     />
                   );

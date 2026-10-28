@@ -1,3 +1,4 @@
+import { relationshipCurrent, type DatedRelationship } from '../../../shared/relationships';
 /**
  * Which of an account's contacts stands for the account.
  *
@@ -11,7 +12,8 @@
  * `pagination.ts`.
  */
 
-export interface ContactLike {
+export interface ContactLike extends DatedRelationship {
+  isBilling?: boolean | null;
   name?: string | null;
   email?: string | null;
   phone?: string | null;
@@ -32,7 +34,8 @@ export interface ContactLike {
  * and the producer can see which it picked.
  */
 export function primaryContact<T extends ContactLike>(contacts: T[]): T | undefined {
-  return contacts.find((c) => c.isPrimary) ?? contacts[0];
+  const current = currentContacts(contacts);
+  return current.find((c) => c.isPrimary) ?? current[0];
 }
 
 /**
@@ -46,5 +49,14 @@ export function primaryContact<T extends ContactLike>(contacts: T[]): T | undefi
 export function inspectionContact<T extends ContactLike>(
   contacts: T[]
 ): T | undefined {
-  return contacts.find((c) => c.type === "INSPECTION");
+  return currentContacts(contacts).find((c) => c.type === "INSPECTION");
+}
+
+/** New dated selections win over undated legacy flags; former contacts never default. */
+export function currentContacts<T extends ContactLike>(contacts: T[], day?: string): T[] {
+  return contacts.filter(c => relationshipCurrent(c, day)).sort((a, b) => (b.validFrom ?? '').localeCompare(a.validFrom ?? ''));
+}
+export function billingContact<T extends ContactLike>(contacts: T[]): T | undefined {
+  const current = currentContacts(contacts).filter(c => c.email);
+  return current.find(c => c.isBilling) ?? primaryContact(current);
 }

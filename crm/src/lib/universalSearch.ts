@@ -19,6 +19,7 @@
  */
 
 export type SearchHitType =
+  | "relationship"
   | "account"
   | "contact"
   | "policy"
@@ -29,6 +30,7 @@ export type SearchHitType =
 /** Display order of the dropdown's groups — people before paper. */
 export const HIT_TYPE_ORDER: readonly SearchHitType[] = [
   "account",
+  "relationship",
   "contact",
   "policy",
   "invoice",
@@ -37,6 +39,7 @@ export const HIT_TYPE_ORDER: readonly SearchHitType[] = [
 ];
 
 export const HIT_TYPE_LABEL: Record<SearchHitType, string> = {
+  relationship: "Relationships",
   account: "Accounts",
   contact: "Contacts",
   policy: "Policies",

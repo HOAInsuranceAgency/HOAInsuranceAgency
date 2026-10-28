@@ -143,6 +143,7 @@ export default function SearchResults() {
 
   return (
     <>
+      {runnable && <section className="card"><h2>Relationships</h2><Link to={`/relationships?q=${encodeURIComponent(q)}`}>Search the shared directory for “{q}” →</Link></section>}
       <h1>Search</h1>
       <p className="sub">
         {runnable

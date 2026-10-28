@@ -1,3 +1,4 @@
+import { isOpenLead } from "../lib/dashboardLeads";
 import { useIsAdmin } from "../lib/auth";
 import { useEffect, useId, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
@@ -88,9 +89,9 @@ export default function AccountsList({ stage }: { stage: "LEAD" | "CLIENT" }) {
 
   const matching = accounts.filter(a => (a.stage === stage || stage === 'LEAD' && a.stage === 'CLIENT' && forecastOf(a)?.unfinished)
     && (!isAdmin || !salesperson || assignmentOf(a)?.salespersonId === salesperson));
-  const inView = (a: Account, view: LeadView) => view === 'All leads' || (view === 'Snoozed' ? snoozeStatus(a) === 'SNOOZED' : view === 'Follow-up due' ? snoozeStatus(a) === 'DUE' : snoozeStatus(a) !== 'SNOOZED');
+  const inView = (a: Account, view: LeadView) => view === 'All leads' || (a.stage === 'CLIENT' || isOpenLead(a, commercial.data.entries)) && (view === 'Snoozed' ? snoozeStatus(a) === 'SNOOZED' : view === 'Follow-up due' ? snoozeStatus(a) === 'DUE' : snoozeStatus(a) !== 'SNOOZED');
   const visible = stage === 'LEAD' ? matching.filter(a => inView(a, leadView)) : matching;
-  const dueCount = matching.filter(a => snoozeStatus(a) === 'DUE').length;
+  const dueCount = matching.filter(a => isOpenLead(a, commercial.data.entries) && snoozeStatus(a) === 'DUE').length;
 
   // Default: policy end date ascending — next up / expired at the top,
   // accounts without a date after, alphabetically.

@@ -1,3 +1,4 @@
+import AccountRelationships from "../components/AccountRelationships";
 import SubmissionsPanel from "../components/SubmissionsPanel";
 import HoneycombEstimates from "../components/HoneycombEstimates";
 import { useEffect, useRef, useState } from "react";
@@ -157,6 +158,7 @@ export default function AccountDetail({ profile }: { profile: UserProfile }) {
 }
 
 function AccountDetailPage({ profile }: { profile: UserProfile }) {
+  const [contactRevision, setContactRevision] = useState(0);
   const isAdmin = useIsAdmin();
   const { id } = useParams<{ id: string }>();
   const [searchParams] = useSearchParams();
@@ -268,7 +270,8 @@ function AccountDetailPage({ profile }: { profile: UserProfile }) {
         <div className="account-overview">
           {isAdmin && account.stage === "LEAD" && <LeadAssignment key={account.id} account={account} />}
           <OverviewTab key={account.id} account={account} onChange={setAccount} />
-          <div id="contacts"><ContactsCard key={account.id} accountId={account.id} /></div>
+          <AccountRelationships key={account.id} accountId={account.id} onChanged={() => setContactRevision(n => n + 1)} />
+          <div id="contacts"><ContactsCard key={`${account.id}:${contactRevision}`} accountId={account.id} /></div>
           <PropertyPanel key={account.id} account={account} onChange={setAccount} />
           {account.stage === "LEAD" && <DeleteLeadZone account={account} />}
         </div>

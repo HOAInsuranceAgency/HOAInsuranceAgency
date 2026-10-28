@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // Same stubbing as DocumentsPanel.test.tsx: replace generateClient rather
 // than ./client, so the actor proxy stays real.
 const models = vi.hoisted(() => ({
+  Party: { list: vi.fn() },
   Account: { list: vi.fn() },
   Contact: { list: vi.fn() },
   Policy: { list: vi.fn() },
@@ -54,6 +55,7 @@ beforeEach(() => {
   models.Contact.list.mockResolvedValue(
     page([{ id: "ct1", accountId: "a1", name: "Dana Reyes", email: "dana@harborpointe.org" }])
   );
+  models.Party.list.mockResolvedValue(page([]));
   models.Policy.list.mockResolvedValue(page([]));
   models.Invoice.list.mockResolvedValue(page([]));
   models.Certificate.list.mockResolvedValue(page([]));

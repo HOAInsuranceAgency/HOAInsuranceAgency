@@ -1,3 +1,4 @@
+import { currentContacts, billingContact } from "../../../src/lib/contacts";
 import { randomUUID } from "node:crypto";
 import { SESv2Client, SendEmailCommand } from "@aws-sdk/client-sesv2";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
@@ -677,14 +678,15 @@ export const handler = async (event: {
      * primary contact. Never a guess — an invoice sent to the wrong address is
      * worse than one not sent.
      */
-    const contacts = await listAllPages((nextToken) =>
+    const allContacts = await listAllPages((nextToken) =>
       client.models.Contact.list({
         filter: { accountId: { eq: invoice.accountId } },
         limit: 1000,
         nextToken,
       })
     );
-    const primary = contacts.find((c) => c.isPrimary) ?? contacts[0];
+    const contacts = currentContacts(allContacts);
+    const primary = billingContact(contacts);
     /**
      * One or several. The app sends a comma-separated list because an invoice
      * routinely goes to a manager and a treasurer at once, and splitting here
@@ -699,6 +701,9 @@ export const handler = async (event: {
       .split(",")
       .map((a) => a.trim())
       .filter(Boolean);
+    const activeEmails = new Set(contacts.map(c => c.email?.trim().toLowerCase()).filter(Boolean));
+    const formerEmails = new Set(allContacts.filter(c => c.validUntil).map(c => c.email?.trim().toLowerCase()).filter(Boolean));
+    if (requested.some(email => formerEmails.has(email.toLowerCase()) && !activeEmails.has(email.toLowerCase()))) return { ok: false, error: 'A selected recipient no longer represents this account. Refresh the invoice contacts before sending.' };
     const to = [...new Set(requested)];
     if (!to.length || !to.every((a) => EMAIL_RE.test(a))) {
       return {

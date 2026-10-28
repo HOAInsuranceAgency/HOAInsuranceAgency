@@ -10,7 +10,8 @@ const h = vi.hoisted(() => ({
   documentUpdate: vi.fn(),
   upload: vi.fn(),
 }));
-vi.mock("react-router-dom", () => ({ useNavigate: () => h.navigate }));
+vi.mock("react-router-dom", () => ({ useNavigate: () => h.navigate, useSearchParams: () => [new URLSearchParams()] }));
+vi.mock("../lib/relationships", () => ({ loadPartyIds: async () => [], searchParties: async () => ({ items: [] }) }));
 vi.mock("../lib/communications", () => ({ communicationRequest: h.request }));
 vi.mock("../components/LeadWorkflowPanel", () => ({ ResponsibilitySelect: () => null }));
 vi.mock("../lib/googlePlaces", () => ({

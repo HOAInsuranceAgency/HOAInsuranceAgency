@@ -1,3 +1,5 @@
+import { commissions } from './functions/commissions/resource';
+import { installCommissions } from './commissions';
 import { installAccountAccess } from "./account-access";
 import { modelIndex } from "./model-index";
 import { installDashboardReads } from "./dashboard-reports";
@@ -72,6 +74,7 @@ export const backend = defineBackend({
   auth,
   crmAccess,
   ownerProfitability,
+  commissions,
   assignmentIndexWorker,
   data,
   storage,
@@ -386,7 +389,7 @@ const userAccessTable = new Table(backend.data.resources.graphqlApi, "TeamUserAc
   partitionKey: { name: "userId", type: AttributeType.STRING }, billingMode: BillingMode.PAY_PER_REQUEST,
   encryption: TableEncryption.AWS_MANAGED, pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true },
 });
-for (const fn of [backend.crmAccess, backend.teamAdmin, backend.communications, backend.communicationWorker, backend.leadIntake, backend.leadReply, backend.assignmentIndexWorker]) {
+for (const fn of [backend.crmAccess, backend.commissions, backend.teamAdmin, backend.communications, backend.communicationWorker, backend.leadIntake, backend.leadReply, backend.assignmentIndexWorker]) {
   fn.addEnvironment("USER_ACCESS_TABLE", userAccessTable.tableName);
   fn.resources.lambda.addToRolePolicy(new PolicyStatement({ actions: ["dynamodb:GetItem", "dynamodb:ConditionCheckItem"], resources: [userAccessTable.tableArn] }));
 }
@@ -429,6 +432,11 @@ for (const model of ["Account", "Contact", "PriorCarrier", "LeadReply"] as const
   for (const fn of [backend.leadIntake, backend.communications, backend.communicationWorker, backend.leadReply]) {
     modelTable.grantReadWriteData(fn.resources.lambda); fn.addEnvironment(envName, modelTable.tableName);
   }
+}
+for (const model of ["Party", "PartyAffiliation", "AccountRelationship"] as const) {
+  const target = backend.data.resources.tables[model];
+  target.grantReadWriteData(backend.communications.resources.lambda);
+  backend.communications.addEnvironment(`${model.replace(/([a-z])([A-Z])/g, "$1_$2").toUpperCase()}_TABLE`, target.tableName);
 }
 for (const model of ["Quote", "Certificate", "Document"] as const) for (const fn of [backend.communications, backend.communicationWorker]) {
   backend.data.resources.tables[model].grantReadWriteData(fn.resources.lambda);
@@ -1019,3 +1027,4 @@ backend.extractLead.resources.lambda.grantInvoke(
 installAccountAccess(backend, communicationTable);
 installDashboardReads(backend);
 installOwnerProfitability(backend, communicationTable);
+installCommissions(backend, communicationTable);

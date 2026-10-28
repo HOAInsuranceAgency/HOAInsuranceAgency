@@ -1,0 +1,72 @@
+.relationship-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 20px;
+  margin-bottom: 24px;
+}
+.relationship-heading h1 {
+  margin-bottom: 8px;
+}
+.relationship-fields {
+  border: 0;
+  padding: 0;
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+.relationship-fields .form-actions {
+  margin-top: 12px;
+}
+.relationship-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(240px, 1fr);
+  gap: 20px;
+}
+.relationship-dates {
+  color: var(--muted);
+  font-size: 13px;
+  margin-top: 4px;
+}
+.relationship-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.relationship-list > li {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border, #e5e7eb);
+}
+.relationship-review {
+  background: #f3f6fb;
+  color: #172c48;
+  border-radius: 8px;
+  padding: 16px;
+}
+.relationship-review p:last-child {
+  margin-bottom: 0;
+}
+.relationship-checkbox {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  margin: 8px 0;
+}
+@media (max-width: 780px) {
+  .relationship-grid {
+    grid-template-columns: 1fr;
+  }
+  .relationship-heading {
+    flex-direction: column;
+  }
+}
+
+.relationship-toolbar { align-items: flex-end; flex-wrap: wrap; }
+.relationship-toolbar .field:first-child { width: min(100%, 330px); }
+.relationship-toolbar > label:not(.field) { margin-bottom: 8px; }
+.relationship-grid aside { overflow-wrap: anywhere; }
+
+.relationship-picker { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: end; gap: 8px 16px; }
+.relationship-picker .toolbar input { flex: 1; min-width: 100px; }
+.relationship-picker > p, .relationship-picker > button { grid-column: 1 / -1; }
+@media (max-width: 780px) { .relationship-picker { grid-template-columns: 1fr; } }

@@ -327,3 +327,20 @@ it('keeps rows and assignment controls visible throughout a background refresh',
   expect(await salespersonPicker()).toBe(picker);
   expect(picker).toHaveValue('bob');
 });
+
+it.each(['LOST', 'DISQUALIFIED', 'BOUND'])('keeps %s leads out of working views but available in All leads', async disposition => {
+  const initial = h.request.getMockImplementation()!;
+  h.request.mockImplementation(async (op, input) => {
+    const result = await initial(op, input);
+    return op === 'commercialTable' ? { items: result.items.map((entry: any) => ({ ...entry, disposition })) } : result;
+  });
+  render(page());
+  await waitFor(() => expect(screen.getByRole('tab', { name: /^All leads/ })).toHaveTextContent('(2)'));
+  expect(screen.queryByRole('combobox', { name: 'Salesperson for Willow Court Condominium' })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('tab', { name: /^Snoozed/ }));
+  expect(screen.queryByText('Willow Court Condominium')).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('tab', { name: /^Follow-up due/ }));
+  expect(screen.queryByText('Willow Court Condominium')).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('tab', { name: /^All leads/ }));
+  expect(await salespersonPicker()).toBeVisible();
+});

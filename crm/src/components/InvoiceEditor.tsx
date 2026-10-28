@@ -1,3 +1,4 @@
+import { currentContacts, billingContact } from "../lib/contacts";
 import { useEffect, useRef, useState } from "react";
 import {
   client,
@@ -132,9 +133,9 @@ function InvoiceEditorContent({
    * invites a typo into the one field where a mistake means the bill silently
    * never arrives — and every address worth using is already a Contact row.
    */
-  const withEmail = contacts.filter((c) => (c.email ?? "").trim());
+  const withEmail = currentContacts(contacts).filter((c) => (c.email ?? "").trim());
   const [toIds, setToIds] = useState<string[]>(() => {
-    const primary = withEmail.find((c) => c.isPrimary) ?? withEmail[0];
+    const primary = billingContact(withEmail);
     return primary ? [primary.id] : [];
   });
   const toEmails = toIds
