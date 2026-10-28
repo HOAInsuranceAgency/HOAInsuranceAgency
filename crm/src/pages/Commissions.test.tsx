@@ -136,3 +136,21 @@ it('retries a failed historical search with the same text without leaving the pa
   expect(h.policies).toHaveBeenCalledTimes(2);
   expect(h.policies.mock.calls[1][0]).toEqual(h.policies.mock.calls[0][0]);
 });
+
+it('lets the Owner confirm missing historical dates before adopting a policy', async () => {
+  h.owner = true;
+  h.read.mockResolvedValue({...snapshot(), plans: [{id: 'producer', producerId: 'producer', name: 'Avery', terms: []}]});
+  h.policies.mockResolvedValue({data: [{id: 'legacy', policyNumber: 'OLD-1', effectiveDate: null, expirationDate: null}], nextToken: null});
+  render(<Commissions />);
+  await screen.findByText('Producer earned');
+  fireEvent.click(screen.getByRole('tab', {name: 'Agreements & carriers'}));
+  fireEvent.change(await screen.findByLabelText('Find historical policy number'), {target: {value: 'OLD'}});
+  fireEvent.click(screen.getByRole('button', {name: 'Search historical policies'}));
+  await screen.findByRole('option', {name: /OLD-1/});
+  fireEvent.change(screen.getByLabelText('Existing policy'), {target: {value: 'legacy'}});
+  for (const [label, value] of [['Original producer', 'producer'], ['Original bind date', '2026-01-01'], ['Original transaction', 'NEW'], ['Confirmed policy premium ($)', '1000'], ['Confirmed agency commission (%)', '12'], ['Confirmed effective date', '2026-01-01'], ['Confirmed expiration date', '2027-01-01'], ['Historical attribution and policy evidence', 'Original binder']]) {
+    fireEvent.change(screen.getByLabelText(label), {target: {value}});
+  }
+  fireEvent.click(screen.getByRole('button', {name: 'Save', exact: true}));
+  await waitFor(() => expect(h.action).toHaveBeenCalledWith('adoptPolicy', expect.objectContaining({policyId: 'legacy', effectiveDate: '2026-01-01', expirationDate: '2027-01-01'})));
+});

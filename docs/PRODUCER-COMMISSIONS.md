@@ -135,7 +135,7 @@ salary or wage deduction.
 
 Owners can add an existing policy using documented original producer attribution,
 original bind date, transaction classification, agreement history, and policy
-premium/rate confirmed in the migration form. Current assignment is not used to guess historical ownership.
+premium/rate and term dates confirmed in the migration form. Missing or incorrect historical term dates can be repaired here by the active Owner; the original dates and supporting evidence remain in the private audit, and the shared policy and commission snapshot update atomically. Current assignment is not used to guess historical ownership.
 Search by policy number to select an untracked policy. The search sends its filters
 to the backend and reads one page at a time, including continuation through empty
 pages. Add a missing number in the existing policy editor before searching.

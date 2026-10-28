@@ -32,6 +32,8 @@ There is one management timeline per account in this release. Other roles can co
 
 ## Additive migration and rollout
 
+Directory substring search currently scans bounded pages rather than a search index. Its cost and the number of continuation clicks grow with directory size; this release does not claim million-record search performance. An indexed search service and migration are required before a large directory rollout. Portfolio and affiliation reads use their existing indexes.
+
 1. Deploy the schema, access guards, server operations and date-aware contact readers to **staging** together. Existing accounts/contact IDs are untouched; null dates retain legacy behavior. No automatic data copy runs on deployment.
 2. In Relationships, select **Review existing manager contacts**. The list contains only current, unlinked contacts on accounts the viewer can access. Search for an existing shared profile before creating one. Review whether the name represents a person or organization, then create/link it and review the account's management handoff.
 3. Do not infer an employer from an email domain, merge people using a shared mailbox, or invent a historical start date. Unknown start dates are supported on general relationships and affiliations. A new management handoff records its explicitly chosen effective date.
