@@ -212,7 +212,9 @@ date (including history outside this CRM) with supporting evidence, or that the
 account has never been bound with this agency. Missing history blocks a bind
 under a cutoff agreement. A new account's first successful bind records the
 agency-local date in the private account record in the same version-guarded
-transaction as its policy. It cannot subsequently be reset to never bound.
+transaction as its policy. It cannot subsequently be reset to never bound, cleared, or moved forward.
+An earlier correction requires supporting evidence; moving a date forward needs
+a separately reviewed data correction, not ordinary classification editing.
 Existing policy history prevents treating an older account as new; a confirmed
 date later than a known policy's bind is rejected. Historical adoption also
 requires confirmed first-bind history and checks known policy dates. Pre-cutoff

@@ -177,6 +177,10 @@ export async function handler(event: Event) {
       currentVersion(input, old);
       if (old?.firstBoundOn && input.neverBound)
         throw new Error('An account with a recorded first bind cannot be reset to never bound.');
+      if (old?.firstBoundOn && (!input.firstBoundOn || day(input.firstBoundOn) > old.firstBoundOn))
+        throw new Error(
+          'A recorded original first bind date cannot be cleared or moved forward. Earlier corrections require supporting evidence.',
+        );
       const classification = validateCommissionAccount({
         id: accountId,
         version: Number(input.version),
