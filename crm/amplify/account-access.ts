@@ -87,6 +87,10 @@ export function installAccountAccess(backend: typeof Backend, communicationTable
       requestMappingTemplate: `#if($util.authType() == "IAM Authorization")\n#if(!$util.isNull($ctx.identity.cognitoIdentityId))\n$util.unauthorized()\n#end\n#return($ctx.prev.result)\n#end\n${mode === "list" ? listAdminBypass : mode === "read" ? '#if(!$util.isNull($ctx.stash.assignmentList))\n#return($ctx.prev.result)\n#end\n' : ''}{"version":"2018-05-29","operation":"Invoke","payload":{"mode":"${mode}","model":"${model}","field":$util.toJson($ctx.info.fieldName),"operation":"${operation}","identity":$util.toJson($ctx.identity),"request":$util.toJson($ctx.request),"arguments":$util.toJson($ctx.arguments),"previous":$util.toJson($ctx.prev.result)}}`,
       responseMappingTemplate: `#if($ctx.error)\n$util.error($ctx.error.message, $ctx.error.type)\n#end\n${mode === "list" ? '$util.qr($ctx.stash.put("assignmentList", $ctx.result))\n' : ''}$util.toJson($ctx.result)`,
     });
+    // CDK's diagnostic construct paths duplicate these already descriptive
+    // access_* names. Omit only that metadata to keep the staging data template
+    // below CloudFormation's limit; all resource properties and checks remain.
+    fn.addDeletionOverride("Metadata.aws:cdk:path");
     fn.addResourceDependency(source.node.defaultChild as import("aws-cdk-lib/aws-appsync").CfnDataSource);
     guards.set(key, fn); return fn.attrFunctionId;
   };
