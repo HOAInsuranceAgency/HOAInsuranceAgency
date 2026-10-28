@@ -9,6 +9,7 @@ const h = vi.hoisted(() => ({
   session: vi.fn(),
   bind: vi.fn(),
   s3: vi.fn(),
+  db: vi.fn(),
   sources: new Map<string, Record<string, unknown>>(),
 }));
 vi.mock('../../amplify/functions/commissions/store', () => ({
@@ -17,6 +18,7 @@ vi.mock('../../amplify/functions/commissions/store', () => ({
   list: h.list,
   commit: h.commit,
   table: () => 'private-ledger',
+  db: { send: h.db },
 }));
 vi.mock('../../amplify/functions/commissions/bind', () => ({
   bindPolicy: h.bind,
@@ -61,6 +63,7 @@ beforeEach(() => {
   records = new Map();
   h.sources.clear();
   h.s3.mockResolvedValue({});
+  h.db.mockResolvedValue({ Items: [] });
   h.session.mockResolvedValue(undefined);
   h.get.mockImplementation(async (k, id) => structuredClone(records.get(`${k}:${id}`)));
   h.getMany.mockImplementation(async (refs: { kind: string; id: string }[]) =>
@@ -586,3 +589,62 @@ it.each(['NEW', 'RENEWAL'] as const)(
     });
   },
 );
+
+it('adopts an old pre-cutoff policy at zero and rejects eligible receipts without changing the agency amount', async () => {
+  h.sources.set('Account:a', { id: 'a', name: 'Legacy account' });
+  h.sources.set('Policy:old', { id: 'old', accountId: 'a', carrierId: 'c', updatedAt: 'before' });
+  records.set('ACCOUNT:a', {
+    ...commissionAccount(),
+    firstBoundOn: '2026-09-15',
+    bindingEvidence: 'Original binder',
+  });
+  records.set('PLAN:producer', {
+    id: 'producer',
+    name: 'Brian',
+    version: 1,
+    accountBoundFrom: '2026-10-01',
+    receiptsFrom: '2026-10-01',
+    terms: [{ from: '2026-10-01', newBps: 2000, renewalBps: 1000, agreement: 'Signed plan' }],
+  });
+  records.set('CARRIER:c', commissionPolicy().carrierTerms);
+  const input = {
+    policyId: 'old',
+    producerId: 'producer',
+    transaction: 'NEW',
+    boundOn: '2026-09-15',
+    effectiveDate: '2026-09-15',
+    expirationDate: '2027-09-15',
+    premium: '10000',
+    agencyRate: '10',
+    evidence: 'Original binder',
+  };
+  expect(await handler(request('adoptPolicy', input))).toEqual({ ok: true });
+  const policy = records.get('POLICY:old') as CommissionPolicy;
+  expect(policy).toMatchObject({
+    producerBps: 0,
+    eligibility: { eligible: false, accountFirstBoundOn: '2026-09-15' },
+  });
+  expect(() => appendEntry(policy, line(), statement(), 'receipt')).toThrow(/noncommissionable/);
+  expect(
+    appendEntry(policy, line({ eligible: false }), statement(), 'receipt').entries[0],
+  ).toMatchObject({ agencyCents: 100000, producerCents: 0 });
+  expect(h.db).toHaveBeenCalledTimes(1);
+});
+it('will not reset recorded account history to never bound', async () => {
+  h.sources.set('Account:a', { id: 'a', name: 'Old account' });
+  records.set('ACCOUNT:a', {
+    ...commissionAccount(),
+    firstBoundOn: '2026-09-01',
+    bindingEvidence: 'Original binder',
+  });
+  expect(
+    await handler(
+      request('saveAccountClassification', {
+        ...commissionAccount(),
+        neverBound: true,
+        bindingEvidence: 'Reset',
+      }),
+    ),
+  ).toMatchObject({ ok: false, error: expect.stringMatching(/cannot be reset/) });
+  expect(h.commit).not.toHaveBeenCalled();
+});

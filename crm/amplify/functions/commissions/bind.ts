@@ -1,3 +1,4 @@
+import { bindDay, firstBindDate } from './account-history';
 import { createHash } from 'node:crypto';
 import { QueryCommand } from '@aws-sdk/lib-dynamodb';
 import { AccountAccess, tableName } from '../crm-access/access';
@@ -115,10 +116,12 @@ export async function bindPolicy(event: Event, input: Data) {
   }
   const rateDate = transaction === 'RENEWAL' ? effectiveDate : today;
   const commissionAccount = await get<CommissionAccount>('ACCOUNT', accountId);
-  const selectedTerms = selectCommissionTerms(plan, commissionAccount, rateDate, transaction);
+
   // Catch pre-feature policies whose quote status was never updated. Follow all
   // pages; do not turn a filtered empty first page into permission to rebind.
   let cursor: Data | undefined;
+  let hasPolicies = false,
+    earliestKnown: string | undefined;
   for (let page = 0; ; page++) {
     if (page === 100) throw new Error('Could not finish checking existing policies.');
     const found = await db.send(
@@ -134,9 +137,23 @@ export async function bindPolicy(event: Event, input: Data) {
       throw new Error(
         'This quote already has a policy. Review the existing policy instead of binding again.',
       );
+    for (const priorPolicy of found.Items ?? []) {
+      hasPolicies = true;
+      const bound = bindDay(priorPolicy.datePolicyBound);
+      if (bound && (!earliestKnown || bound < earliestKnown)) earliestKnown = bound;
+    }
     cursor = found.LastEvaluatedKey;
     if (!cursor) break;
   }
+  const accountFirstBoundOn = firstBindDate(commissionAccount, today, hasPolicies, earliestKnown);
+  const selectedTerms = selectCommissionTerms(
+    plan,
+    commissionAccount,
+    rateDate,
+    transaction,
+    accountFirstBoundOn,
+  );
+  const firstBinding = commissionAccount?.neverBound === true;
   const fields = [
     'carrierId',
     'lines',
@@ -238,7 +255,10 @@ export async function bindPolicy(event: Event, input: Data) {
         ExpressionAttributeValues: { ':v': carrierTerms.version },
       },
     },
-    {
+    activeTeamUserCheck(producerId),
+  ];
+  if (!firstBinding)
+    guards.push({
       ConditionCheck: {
         TableName: table(),
         Key: { kind: 'ACCOUNT', id: accountId },
@@ -246,9 +266,7 @@ export async function bindPolicy(event: Event, input: Data) {
         ExpressionAttributeNames: { '#v': 'version' },
         ExpressionAttributeValues: { ':v': commissionAccount!.version },
       },
-    },
-    activeTeamUserCheck(producerId),
-  ];
+    });
   for (const [id, row] of [
     [`workflow:${accountId}`, workflow],
     [`commercial:${accountId}`, commercial],
@@ -303,7 +321,23 @@ export async function bindPolicy(event: Event, input: Data) {
       },
     });
   await commit(
-    [{ kind: 'POLICY', value: snapshot as unknown as Data & { id: string } }],
+    [
+      { kind: 'POLICY', value: snapshot as unknown as Data & { id: string } },
+      ...(firstBinding
+        ? [
+            {
+              kind: 'ACCOUNT',
+              previous: commissionAccount as unknown as Data,
+              value: {
+                ...commissionAccount!,
+                neverBound: undefined,
+                firstBoundOn: today,
+                firstBindPolicyId: policyId,
+              } as unknown as Data & { id: string },
+            },
+          ]
+        : []),
+    ],
     access.actor,
     guards,
   );

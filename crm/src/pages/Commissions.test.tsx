@@ -215,6 +215,12 @@ it('requires explicit GIM rates and sends both standard and GIM agreement schedu
     target: { value: 'producer' },
   });
   expect(screen.getByText(/GIM terms pending/)).toBeVisible();
+  fireEvent.change(screen.getByLabelText('Account first-bind cutoff (optional)'), {
+    target: { value: '2026-10-01' },
+  });
+  fireEvent.change(screen.getByLabelText('Agency receipt eligibility begins (optional)'), {
+    target: { value: '2026-10-01' },
+  });
   fireEvent.change(screen.getByLabelText('Effective from 1'), {
     target: { value: '2026-01-01' },
   });
@@ -242,6 +248,8 @@ it('requires explicit GIM rates and sends both standard and GIM agreement schedu
   fireEvent.click(screen.getByRole('button', { name: 'Save producer agreement' }));
   await waitFor(() =>
     expect(h.action).toHaveBeenCalledWith('savePlan', {
+      accountBoundFrom: '2026-10-01',
+      receiptsFrom: '2026-10-01',
       producerId: 'producer',
       name: 'Brian Cole',
       version: 0,
@@ -271,6 +279,12 @@ it('searches and classifies a GIM account with dates and evidence and clears con
     target: { value: 'a' },
   });
   expect(await screen.findByLabelText('Account classification 1')).toHaveValue('');
+  fireEvent.change(screen.getByLabelText('Original account binding history'), {
+    target: { value: 'NEW' },
+  });
+  fireEvent.change(screen.getByLabelText('First-bind history reference'), {
+    target: { value: 'Owner confirmed new account' },
+  });
   fireEvent.change(screen.getByLabelText('Classification effective from 1'), {
     target: { value: '2026-01-01' },
   });
@@ -285,6 +299,8 @@ it('searches and classifies a GIM account with dates and evidence and clears con
     expect(h.action).toHaveBeenCalledWith('saveAccountClassification', {
       id: 'a',
       version: 0,
+      neverBound: true,
+      bindingEvidence: 'Owner confirmed new account',
       periods: [
         {
           from: '2026-01-01',
@@ -306,6 +322,8 @@ it('does not offer an empty classification editor after a failed read and reload
     classification: {
       id: 'a',
       version: 4,
+      firstBoundOn: '2026-01-01',
+      bindingEvidence: 'Original binder',
       name: 'Cedar HOA',
       periods: [{ from: '2026-01-01', classification: 'GIM', evidence: 'Existing GIM evidence' }],
     },
