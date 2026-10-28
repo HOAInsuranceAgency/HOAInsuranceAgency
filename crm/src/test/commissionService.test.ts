@@ -648,3 +648,25 @@ it('will not reset recorded account history to never bound', async () => {
   ).toMatchObject({ ok: false, error: expect.stringMatching(/cannot be reset/) });
   expect(h.commit).not.toHaveBeenCalled();
 });
+
+it.each([undefined, '2026-10-01'])(
+  'does not clear or move a confirmed pre-cutoff date forward (%s)',
+  async (firstBoundOn) => {
+    h.sources.set('Account:a', { id: 'a', name: 'Old account' });
+    records.set('ACCOUNT:a', {
+      ...commissionAccount(),
+      firstBoundOn: '2026-09-01',
+      bindingEvidence: 'Original binder',
+    });
+    expect(
+      await handler(
+        request('saveAccountClassification', {
+          ...commissionAccount(),
+          firstBoundOn,
+          bindingEvidence: 'Attempted update',
+        }),
+      ),
+    ).toMatchObject({ ok: false, error: expect.stringMatching(/cleared or moved forward/) });
+    expect(h.commit).not.toHaveBeenCalled();
+  },
+);
