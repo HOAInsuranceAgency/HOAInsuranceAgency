@@ -32,8 +32,9 @@ Private statement uploads are immutable and download links last sixty seconds.
    section means terms are pending, never standard-rate fallback. Explicit zero
    is allowed; blank is not zero. Both schedules use the period's dates; add a
    new period when either schedule changes.
-3. In **Account commission classification**, search for the insured account or
-   select a configured account. Record dated **Standard** or **GIM Property
+3. In **Account commission classification**, search for the insured account.
+   Only the selected classification is loaded; a failed read offers a retry,
+   never an empty replacement form. Record dated **Standard** or **GIM Property
    Management · house account** periods and the source/reference supporting the
    decision. GIM is the only house-account program. Every account needs an
    explicit Owner classification before binding. Dates are inclusive; gaps and

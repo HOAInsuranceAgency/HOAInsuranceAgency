@@ -115,6 +115,7 @@ it.each([
   for (const op of [
     'savePlan',
     'saveAccountClassification',
+    'getAccountClassification',
     'saveCarrier',
     'file',
     'saveStatement',
@@ -496,18 +497,23 @@ it('saves Owner account classification with an audit version and rejects stale e
     await handler(request('saveAccountClassification', { ...input, id: 'nonexistent' })),
   ).toMatchObject({ ok: false });
 });
-it('keeps account classification and its evidence private to the active Owner', async () => {
+it('loads only the selected classification for the Owner and excludes classifications from overview', async () => {
   records.set('ACCOUNT:a', commissionAccount());
+  h.sources.set('Account:a', { id: 'a', name: 'Cedar HOA' });
+  expect(await handler(request('getAccountClassification', { id: 'a' }))).toMatchObject({
+    classification: { id: 'a', version: 2 },
+    accountName: 'Cedar HOA',
+  });
+  expect(h.get).toHaveBeenCalledExactlyOnceWith('ACCOUNT', 'a');
   const owner = request('');
   owner.fieldName = 'commissionOverview';
-  expect(await handler(owner)).toMatchObject({
-    accounts: [expect.objectContaining({ id: 'a' })],
-  });
-  const producer = request('', {}, 'PRODUCER');
-  producer.fieldName = 'commissionOverview';
-  const response = await handler(producer);
+  const response = await handler(owner);
   expect(response).not.toHaveProperty('accounts');
+  expect(h.list.mock.calls.some(([kind]) => kind === 'ACCOUNT')).toBe(false);
   expect(JSON.stringify(response)).not.toContain('Owner reviewed account source');
+  expect(await handler(request('getAccountClassification', { id: 'a' }, 'PRODUCER'))).toMatchObject(
+    { ok: false },
+  );
 });
 it.each(['NEW', 'RENEWAL'] as const)(
   'adopts historical GIM %s with original dated classification and concurrency guard',

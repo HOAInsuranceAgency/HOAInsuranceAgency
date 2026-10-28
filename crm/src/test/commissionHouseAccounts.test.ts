@@ -46,12 +46,8 @@ it.each([
   'selects %s %s rates and calculates commission from agency receipts',
   (classification, transaction, rate, agreement) => {
     const account = classification === 'GIM' ? gim() : commissionAccount();
-    const selected = selectCommissionTerms(
-      validatePlan(plan()),
-      account,
-      '2026-10-28',
-      transaction,
-    );
+    const originalPlan = validatePlan(plan());
+    const selected = selectCommissionTerms(originalPlan, account, '2026-10-28', transaction);
     expect(selected).toMatchObject({
       producerBps: rate,
       agreement,
@@ -65,7 +61,9 @@ it.each([
     );
     expect(policy.entries[0].producerCents).toBe(rate * 10);
     account.periods[0].evidence = 'Later edit';
-    plan().terms[0].newBps = 3000;
+    const originalRates =
+      classification === 'GIM' ? originalPlan.terms[0].gim! : originalPlan.terms[0];
+    originalRates[transaction === 'NEW' ? 'newBps' : 'renewalBps'] = 3000;
     expect(policy.accountClassification?.evidence).not.toBe('Later edit');
     expect(policy.producerBps).toBe(rate);
   },

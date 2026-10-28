@@ -40,7 +40,7 @@ beforeEach(() => {
     items: [{ id: 'a', name: 'Cedar HOA' }],
   });
   h.read.mockResolvedValue(snapshot());
-  h.action.mockResolvedValue({ ok: true });
+  h.action.mockResolvedValue({ ok: true, classification: null, accountName: 'Cedar HOA' });
 });
 it('shows producer earnings without any reconciliation or payroll controls', async () => {
   render(<Commissions />);
@@ -270,7 +270,7 @@ it('searches and classifies a GIM account with dates and evidence and clears con
   fireEvent.change(screen.getByLabelText('Insured account', { selector: 'select' }), {
     target: { value: 'a' },
   });
-  expect(screen.getByLabelText('Account classification 1')).toHaveValue('');
+  expect(await screen.findByLabelText('Account classification 1')).toHaveValue('');
   fireEvent.change(screen.getByLabelText('Classification effective from 1'), {
     target: { value: '2026-01-01' },
   });
@@ -298,4 +298,40 @@ it('searches and classifies a GIM account with dates and evidence and clears con
   view.rerender(<Commissions />);
   expect(screen.queryByLabelText('Account classification 1')).toBeNull();
   expect(screen.queryByText('GIM management agreement')).toBeNull();
+});
+
+it('does not offer an empty classification editor after a failed read and reloads saved terms on retry', async () => {
+  h.owner = true;
+  h.action.mockRejectedValueOnce(new Error('Classification unavailable')).mockResolvedValue({
+    classification: {
+      id: 'a',
+      version: 4,
+      name: 'Cedar HOA',
+      periods: [{ from: '2026-01-01', classification: 'GIM', evidence: 'Existing GIM evidence' }],
+    },
+    accountName: 'Cedar HOA',
+  });
+  render(<Commissions />);
+  await screen.findByText('Producer earned');
+  fireEvent.click(screen.getByRole('tab', { name: 'Agreements & carriers' }));
+  fireEvent.change(await screen.findByRole('textbox', { name: /Find insured account/ }), {
+    target: { value: 'Cedar' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Search accounts' }));
+  await screen.findByRole('option', { name: 'Cedar HOA' });
+  fireEvent.change(screen.getByLabelText('Insured account', { selector: 'select' }), {
+    target: { value: 'a' },
+  });
+  await screen.findByText('Classification unavailable');
+  expect(screen.queryByRole('button', { name: 'Save classification' })).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Retry account classification' }));
+  expect(await screen.findByLabelText('Account classification 1')).toHaveValue('GIM');
+  expect(screen.getByLabelText('Classification reference 1')).toHaveValue('Existing GIM evidence');
+  fireEvent.click(screen.getByRole('button', { name: 'Save classification' }));
+  await waitFor(() =>
+    expect(h.action).toHaveBeenCalledWith(
+      'saveAccountClassification',
+      expect.objectContaining({ id: 'a', version: 4 }),
+    ),
+  );
 });
