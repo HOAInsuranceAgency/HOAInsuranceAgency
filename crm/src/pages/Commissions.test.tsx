@@ -151,6 +151,6 @@ it('lets the Owner confirm missing historical dates before adopting a policy', a
   for (const [label, value] of [['Original producer', 'producer'], ['Original bind date', '2026-01-01'], ['Original transaction', 'NEW'], ['Confirmed policy premium ($)', '1000'], ['Confirmed agency commission (%)', '12'], ['Confirmed effective date', '2026-01-01'], ['Confirmed expiration date', '2027-01-01'], ['Historical attribution and policy evidence', 'Original binder']]) {
     fireEvent.change(screen.getByLabelText(label), {target: {value}});
   }
-  fireEvent.click(screen.getByRole('button', {name: 'Save', exact: true}));
+  fireEvent.click(screen.getByRole('button', {name: 'Save'}));
   await waitFor(() => expect(h.action).toHaveBeenCalledWith('adoptPolicy', expect.objectContaining({policyId: 'legacy', effectiveDate: '2026-01-01', expirationDate: '2027-01-01'})));
 });
