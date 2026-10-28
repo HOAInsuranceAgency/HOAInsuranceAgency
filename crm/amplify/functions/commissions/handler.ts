@@ -191,14 +191,16 @@ export async function handler(event: Event) {
         required(policy.accountId, 'the policy account'),
       );
       const producerId = required(input.producerId, 'the original producer'),
-        boundOn = day(input.boundOn);
+        boundOn = day(input.boundOn),
+        effectiveDate = day(input.effectiveDate ?? policy.effectiveDate),
+        expirationDate = day(input.expirationDate ?? policy.expirationDate);
       if (!['NEW', 'RENEWAL'].includes(String(input.transaction)))
         throw new Error('Confirm the original transaction type.');
       const plan = await store.get<CommissionPlan>('PLAN', producerId),
         carrierTerms = await store.get<CarrierCommissionTerms>('CARRIER', String(policy.carrierId));
       if (!plan || !carrierTerms)
         throw new Error('Configure the original producer agreement and carrier terms first.');
-      const rateDate = input.transaction === 'RENEWAL' ? day(policy.effectiveDate) : boundOn;
+      const rateDate = input.transaction === 'RENEWAL' ? effectiveDate : boundOn;
       const term = plan.terms.find((t) => t.from <= rateDate && (!t.to || t.to >= rateDate));
       if (!term)
         throw new Error(
@@ -207,7 +209,7 @@ export async function handler(event: Event) {
       required(input.evidence, 'evidence of original producer attribution and policy terms');
       if (boundOn > agencyToday())
         throw new Error('A historical bind date cannot be in the future.');
-      if (day(policy.expirationDate) <= day(policy.effectiveDate))
+      if (expirationDate <= effectiveDate)
         throw new Error('The policy term dates must be valid before adding commission tracking.');
       const premiumCents = integer(
         decimal(required(input.premium, 'the confirmed policy premium')),
@@ -233,8 +235,8 @@ export async function handler(event: Event) {
         producerId,
         producerName: plan.name,
         boundAt: boundOn, // Historical source establishes a date, not an invented time.
-        effectiveDate: day(policy.effectiveDate),
-        expirationDate: day(policy.expirationDate),
+        effectiveDate,
+        expirationDate,
         transaction: input.transaction as 'NEW' | 'RENEWAL',
         premiumCents,
         agencyRateUnits,
@@ -245,7 +247,14 @@ export async function handler(event: Event) {
         entries: [],
       };
       await store.commit(
-        [change('POLICY', { ...snapshot, migrationEvidence: input.evidence })],
+        [change('POLICY', {
+          ...snapshot,
+          migrationEvidence: input.evidence,
+          originalTermDates: {
+            effectiveDate: policy.effectiveDate ?? null,
+            expirationDate: policy.expirationDate ?? null,
+          },
+        })],
         actor,
         [
           {
@@ -253,7 +262,7 @@ export async function handler(event: Event) {
               TableName: tableName('Policy'),
               Key: { id: policy.id },
               UpdateExpression:
-                'SET commissionSnapshotId = :id, premium = :premium, commissionPct = :rate, updatedAt = :at, lastWriteBy = :actor',
+                'SET commissionSnapshotId = :id, premium = :premium, commissionPct = :rate, effectiveDate = :effective, expirationDate = :expiration, updatedAt = :at, lastWriteBy = :actor',
               ConditionExpression:
                 'updatedAt = :old AND attribute_not_exists(commissionSnapshotId)',
               ExpressionAttributeValues: {
@@ -261,6 +270,8 @@ export async function handler(event: Event) {
                 ':old': policy.updatedAt,
                 ':premium': premiumCents / 100,
                 ':rate': agencyRateUnits / 10000,
+                ':effective': effectiveDate,
+                ':expiration': expirationDate,
                 ':at': new Date().toISOString(),
                 ':actor': actor,
               },
@@ -439,11 +450,16 @@ export async function handler(event: Event) {
       if (sum(statement.lines.map((l) => l.agencyCents)) !== statement.totalCents)
         throw new Error('Statement lines must equal the verified settlement allocation total.');
       // Validate matching/adjustments now and again against fresh records at posting.
+      const policies = new Map(
+        (await store.getMany<CommissionPolicy>(
+          [...new Set(statement.lines.map(line => line.policyId))].map(id => ({ kind: 'POLICY', id })),
+        )).map(policy => [policy.id, policy]),
+      );
       for (const line of statement.lines) {
-        const policy = await store.get<CommissionPolicy>('POLICY', line.policyId);
+        const policy = policies.get(line.policyId);
         if (!policy || policy.carrierId !== carrierId)
           throw new Error('Each line must match a policy for this carrier.');
-        appendEntry(policy, line, statement, `${id}:${line.lineRef}`);
+        policies.set(policy.id, appendEntry(policy, line, statement, `${id}:${line.lineRef}`));
       }
       await store.commit([change('STATEMENT', statement, old)], actor);
       return { ok: true };
