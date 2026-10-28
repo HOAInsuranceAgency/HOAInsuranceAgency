@@ -670,3 +670,28 @@ it.each([undefined, '2026-10-01'])(
     expect(h.commit).not.toHaveBeenCalled();
   },
 );
+
+it('preserves original history and the server policy link when only classification fields are saved', async () => {
+  h.sources.set('Account:a', { id: 'a', name: 'Old account' });
+  records.set('ACCOUNT:a', {
+    ...commissionAccount(),
+    firstBoundOn: '2026-09-01',
+    bindingEvidence: 'Original binder',
+    firstBindPolicyId: 'original-policy',
+  });
+  expect(
+    await handler(
+      request('saveAccountClassification', {
+        ...commissionAccount(),
+        periods: [{ from: '2026-01-01', classification: 'GIM', evidence: 'GIM management source' }],
+        firstBindPolicyId: 'forged',
+      }),
+    ),
+  ).toEqual({ ok: true });
+  expect(records.get('ACCOUNT:a')).toMatchObject({
+    firstBoundOn: '2026-09-01',
+    bindingEvidence: 'Original binder',
+    firstBindPolicyId: 'original-policy',
+    periods: [{ classification: 'GIM' }],
+  });
+});
