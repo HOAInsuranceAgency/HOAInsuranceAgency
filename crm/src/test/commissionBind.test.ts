@@ -257,3 +257,55 @@ it.each(['missing account', 'missing GIM terms'])(
     expect(h.commit).not.toHaveBeenCalled();
   },
 );
+
+it('records the first bind atomically with the policy and replaces the duplicate account guard', async () => {
+  const fallback = h.get.getMockImplementation()!;
+  h.get.mockImplementation(async (kind, id) => {
+    const value = await fallback(kind, id);
+    if (kind === 'ACCOUNT')
+      return { ...value, neverBound: true, bindingEvidence: 'Owner confirmed never bound' };
+    if (kind === 'PLAN') return { ...value, accountBoundFrom: '2026-10-01' };
+    return value;
+  });
+  await bindPolicy(event, input());
+  const [changes, , guards] = h.commit.mock.calls[0];
+  expect(changes[0].value.eligibility.eligible).toBe(true);
+  expect(changes[1]).toMatchObject({
+    kind: 'ACCOUNT',
+    previous: { version: 2 },
+    value: {
+      firstBoundOn: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
+      firstBindPolicyId: changes[0].value.id,
+    },
+  });
+  expect(changes[1].value.neverBound).toBeUndefined();
+  expect(
+    guards.some(
+      (g: { ConditionCheck?: { Key?: { kind: string } } }) =>
+        g.ConditionCheck?.Key?.kind === 'ACCOUNT',
+    ),
+  ).toBe(false);
+});
+it('preserves the account exclusion on a later renewal', async () => {
+  const fallback = h.get.getMockImplementation()!;
+  h.get.mockImplementation(async (kind, id) => {
+    const value = await fallback(kind, id);
+    if (kind === 'ACCOUNT')
+      return { ...value, firstBoundOn: '2026-09-30', bindingEvidence: 'Original binder' };
+    if (kind === 'PLAN') return { ...value, accountBoundFrom: '2026-10-01' };
+    return value;
+  });
+  const renewal = {
+    ...quote,
+    effectiveDate: '2027-01-01',
+    expirationDate: '2028-01-01',
+    renewalPolicyId: 'prior',
+  };
+  h.rows.set('Quote:q', renewal);
+  h.rows.set('Policy:prior', { id: 'prior', accountId: 'a' });
+  await bindPolicy(event, { ...input(), terms: packageTerms(renewal) });
+  expect(h.commit.mock.calls[0][0][0].value).toMatchObject({
+    producerBps: 0,
+    eligibility: { eligible: false, accountFirstBoundOn: '2026-09-30' },
+  });
+});

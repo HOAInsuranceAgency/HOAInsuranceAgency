@@ -15,6 +15,10 @@ export interface CommissionAccount {
   id: string;
   version: number;
   name: string;
+  firstBoundOn?: string;
+  neverBound?: true;
+  bindingEvidence?: string;
+  firstBindPolicyId?: string;
   periods: {
     from: string;
     to?: string;
@@ -32,6 +36,8 @@ export interface CommissionPlan {
   version: number;
   producerId: string;
   name: string;
+  accountBoundFrom?: string;
+  receiptsFrom?: string;
   terms: (CommissionRates & {
     from: string;
     to?: string;
@@ -83,6 +89,12 @@ export interface CommissionPolicy {
   accountClassification?: CommissionAccount['periods'][number] & {
     version: number;
   };
+  eligibility?: {
+    accountFirstBoundOn: string;
+    accountBoundFrom: string;
+    eligible: boolean;
+  };
+  receiptsFrom?: string;
   carrierTerms: CarrierCommissionTerms;
   entries: CommissionEntry[];
 }
@@ -212,6 +224,8 @@ export function validatePlan(plan: CommissionPlan): CommissionPlan {
   required(plan.name, 'a producer name', 200);
   return {
     ...plan,
+    ...(plan.accountBoundFrom ? { accountBoundFrom: day(plan.accountBoundFrom) } : {}),
+    ...(plan.receiptsFrom ? { receiptsFrom: day(plan.receiptsFrom) } : {}),
     terms: validatePeriods(plan.terms).map((t) => ({
       from: t.from,
       ...(t.to ? { to: t.to } : {}),
@@ -221,6 +235,15 @@ export function validatePlan(plan: CommissionPlan): CommissionPlan {
   };
 }
 export function validateCommissionAccount(account: CommissionAccount): CommissionAccount {
+  if (account.neverBound !== undefined && account.neverBound !== true)
+    throw new Error('Confirm whether the account has ever been bound.');
+  if (account.firstBoundOn && account.neverBound)
+    throw new Error(
+      'Choose an original first bind date or confirm the account has never been bound.',
+    );
+  if (account.firstBoundOn) day(account.firstBoundOn);
+  if (account.firstBoundOn || account.neverBound)
+    required(account.bindingEvidence, 'the first-bind history reference');
   return {
     ...account,
     periods: validatePeriods(account.periods).map((t) => {
@@ -244,6 +267,7 @@ export function selectCommissionTerms(
   account: CommissionAccount | undefined,
   rateDate: string,
   transaction: 'NEW' | 'RENEWAL',
+  accountFirstBoundOn?: string,
 ) {
   day(rateDate);
   const classification = account?.periods.find(
@@ -253,7 +277,24 @@ export function selectCommissionTerms(
     throw new Error(
       `An Owner must classify this account as Standard or GIM Property Management for ${rateDate} in Agreements & carriers.`,
     );
-  const term = plan.terms.find((t) => t.from <= rateDate && (!t.to || t.to >= rateDate));
+  if (plan.accountBoundFrom && !accountFirstBoundOn)
+    throw new Error(
+      'An Owner must confirm this account’s original first bind history in Agreements & carriers.',
+    );
+  const eligibility = plan.accountBoundFrom
+    ? {
+        accountFirstBoundOn: day(accountFirstBoundOn),
+        accountBoundFrom: plan.accountBoundFrom,
+        eligible: accountFirstBoundOn! >= plan.accountBoundFrom,
+      }
+    : undefined;
+  // Historical pre-cutoff policies may still need agency receipt tracking. Use
+  // the cutoff agreement only to document their explicit zero entitlement.
+  const agreementDate =
+    eligibility?.eligible === false && rateDate < eligibility.accountBoundFrom
+      ? eligibility.accountBoundFrom
+      : rateDate;
+  const term = plan.terms.find((t) => t.from <= agreementDate && (!t.to || t.to >= agreementDate));
   if (!term)
     throw new Error(`An Owner must configure a commission agreement covering ${rateDate}.`);
   const rates = classification.classification === 'GIM' ? term.gim : term;
@@ -262,7 +303,10 @@ export function selectCommissionTerms(
       `An Owner must configure this producer’s GIM house-account rates for ${rateDate}. Standard rates cannot be used.`,
     );
   return {
-    producerBps: transaction === 'NEW' ? rates.newBps : rates.renewalBps,
+    ...(eligibility ? { eligibility } : {}),
+    ...(plan.receiptsFrom ? { receiptsFrom: plan.receiptsFrom } : {}),
+    producerBps:
+      eligibility?.eligible === false ? 0 : transaction === 'NEW' ? rates.newBps : rates.renewalBps,
     agreement: rates.agreement,
     accountClassification: { ...classification, version: account!.version },
   };
@@ -289,6 +333,14 @@ export function appendEntry(
   if (line.kind === 'RECEIPT') {
     if (line.agencyCents < 0 || line.originalId)
       throw new Error('Receipts must be positive and have no reversal link.');
+    if (line.eligible && policy.eligibility?.eligible === false)
+      throw new Error(
+        'This account was first bound before the producer agreement cutoff. New business and later renewals are noncommissionable. Record the agency receipt as ineligible.',
+      );
+    if (line.eligible && policy.receiptsFrom && statement.receivedOn < policy.receiptsFrom)
+      throw new Error(
+        `Agency commission received before ${policy.receiptsFrom} is not eligible under this agreement.`,
+      );
     const prior = policy.entries.filter((e) => e.kind === 'RECEIPT' && e.eligible);
     const received = sum(prior.map((e) => e.agencyCents));
     producerCents = line.eligible

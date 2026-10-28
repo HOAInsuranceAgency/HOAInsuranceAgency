@@ -200,6 +200,14 @@ function Ledger({
               Premium {money(p.premiumCents)} · Agency {p.agencyRateUnits / 10000}% · Producer{' '}
               {p.producerBps / 100}% of agency commission
             </p>
+            {p.eligibility && (
+              <p className="small">
+                {p.eligibility.eligible
+                  ? 'Account passes first-bind cutoff'
+                  : 'Noncommissionable account — includes later renewals'}
+                {` · First bound ${p.eligibility.accountFirstBoundOn} · Cutoff ${p.eligibility.accountBoundFrom}`}
+              </p>
+            )}
             {owner && (
               <p className="small">
                 {p.accountClassification
@@ -419,6 +427,8 @@ function PlanEditor({
   plan?: CommissionPlan;
   refresh: () => Promise<void>;
 }) {
+  const [accountBoundFrom, setAccountBoundFrom] = useState(plan?.accountBoundFrom ?? '');
+  const [receiptsFrom, setReceiptsFrom] = useState(plan?.receiptsFrom ?? '');
   const [terms, setTerms] = useState(
     plan?.terms.map((t) => ({
       ...t,
@@ -453,6 +463,8 @@ function PlanEditor({
           producerId,
           name,
           version: plan?.version ?? 0,
+          ...(accountBoundFrom ? { accountBoundFrom } : {}),
+          ...(receiptsFrom ? { receiptsFrom } : {}),
           terms: terms.map((t) => ({
             from: t.from,
             ...(t.to ? { to: t.to } : {}),
@@ -472,6 +484,30 @@ function PlanEditor({
         })
       }
     >
+      <div className="form-grid">
+        <label className="field">
+          Account first-bind cutoff (optional)
+          <input
+            type="date"
+            value={accountBoundFrom}
+            onChange={(e) => setAccountBoundFrom(e.target.value)}
+          />
+        </label>
+        <label className="field">
+          Agency receipt eligibility begins (optional)
+          <input
+            type="date"
+            value={receiptsFrom}
+            onChange={(e) => setReceiptsFrom(e.target.value)}
+          />
+        </label>
+      </div>
+      <p className="small muted">
+        Accounts first bound before the cutoff earn no producer commission, including later
+        renewals. The cutoff date itself is eligible. This rule uses the account’s original first
+        bind, not the current policy’s bind or effective date. Blank means no cutoff for this
+        producer.
+      </p>
       {terms.map((t, i) => (
         <div key={i} className="commission-period">
           <div className="form-grid">
@@ -652,6 +688,11 @@ function AccountClassificationEditor({
   account?: CommissionAccount;
   refresh: () => Promise<void>;
 }) {
+  const [history, setHistory] = useState(
+    account?.firstBoundOn ? 'BOUND' : account?.neverBound ? 'NEW' : '',
+  );
+  const [firstBoundOn, setFirstBoundOn] = useState(account?.firstBoundOn ?? '');
+  const [bindingEvidence, setBindingEvidence] = useState(account?.bindingEvidence ?? '');
   const [periods, setPeriods] = useState(
     account?.periods.map((p) => ({ ...p, to: p.to ?? '' })) ?? [
       {
@@ -671,6 +712,8 @@ function AccountClassificationEditor({
         commissionAction('saveAccountClassification', {
           id,
           version: account?.version ?? 0,
+          ...(history === 'BOUND' ? { firstBoundOn } : { neverBound: true }),
+          bindingEvidence,
           periods: periods.map((p) => ({
             from: p.from,
             ...(p.to ? { to: p.to } : {}),
@@ -683,6 +726,32 @@ function AccountClassificationEditor({
       <p className="small muted">
         Use the bind date for new business and the term effective date for renewals. Existing
         snapshots keep their original classification and rate. Through dates are inclusive.
+      </p>
+      <label className="field">
+        Original account binding history
+        <select required value={history} onChange={(e) => setHistory(e.target.value)}>
+          <option value="">Confirm the account’s history…</option>
+          <option value="NEW">Never bound with this agency</option>
+          <option value="BOUND">Previously bound with this agency</option>
+        </select>
+      </label>
+      {history === 'BOUND' && (
+        <Field
+          label="Account’s original first bind date"
+          type="date"
+          value={firstBoundOn}
+          change={setFirstBoundOn}
+        />
+      )}
+      <Field
+        label="First-bind history reference"
+        value={bindingEvidence}
+        change={setBindingEvidence}
+      />
+      <p className="small muted">
+        Include business that predates the CRM. For a genuinely new account, its first successful
+        bind records this date automatically. An older account stays excluded on all later renewals
+        when a producer’s cutoff applies.
       </p>
       {periods.map((p, i) => (
         <div key={i} className="commission-period">
