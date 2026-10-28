@@ -6,9 +6,20 @@ import { usePagedList } from '../lib/usePagedList';
 import PartyForm from '../components/PartyForm';
 import './Relationships.css';
 export default function Relationships() {
-  const [params] = useSearchParams();
-  const [query, setQuery] = useState(params.get('q') ?? ''),
-    [kind, setKind] = useState(''),
+  const [params, setParams] = useSearchParams();
+  const query = params.get('q') ?? '';
+  function setQuery(value: string) {
+    setParams(
+      (old) => {
+        const next = new URLSearchParams(old);
+        if (value) next.set('q', value);
+        else next.delete('q');
+        return next;
+      },
+      { replace: true },
+    );
+  }
+  const [kind, setKind] = useState(''),
     [archived, setArchived] = useState(false),
     [adding, setAdding] = useState(false);
   const navigate = useNavigate();

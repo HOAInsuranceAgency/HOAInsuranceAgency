@@ -1,3 +1,4 @@
+import { usePagedList } from '../lib/usePagedList';
 import { useMounted } from '../lib/useMounted';
 import { useRef, useState } from 'react';
 import Modal from './Modal';
@@ -41,12 +42,19 @@ export default function PartyForm({
     [admin],
     { initialData: [] },
   );
-  const directory = useAsyncResource(
-    async () => (party || form.name.trim().length < 3 ? [] : (await searchParties(form.name.trim())).items),
-    [party?.id, form.name],
-    { initialData: [] },
+  const nameQuery = form.name.trim(),
+    emailQuery = form.email.trim();
+  const nameMatches = usePagedList(
+    (token) => searchParties(nameQuery, {}, token),
+    [nameQuery],
+    !party && nameQuery.length >= 3,
   );
-  const matches = directory.data;
+  const emailMatches = usePagedList(
+    (token) => searchParties(emailQuery, {}, token),
+    [emailQuery],
+    !party && emailQuery.includes('@'),
+  );
+  const matches = [...new Map([...nameMatches.items, ...emailMatches.items].map((p) => [p.id, p])).values()];
   function change(key: string, value: string | boolean) {
     setForm((old) => ({ ...old, [key]: value }));
     requestId.current = crypto.randomUUID();
@@ -104,13 +112,59 @@ export default function PartyForm({
               onChange={(e) => change('name', e.target.value)}
             />
           </label>
-          {!party && matches.length > 0 && (
+          {!party && (nameQuery.length >= 3 || emailQuery.includes('@')) && (
             <div className="relationship-review">
               <strong>Possible existing relationships</strong>
               <p className="muted small">
                 Use an existing profile when it represents the same person or company.
               </p>
-              {matches.slice(0, 5).map((p) => (
+              {(nameMatches.loading || emailMatches.loading) && (
+                <p className="muted small">Checking existing profiles…</p>
+              )}
+              {!matches.length && !nameMatches.loading && !emailMatches.loading && (
+                <p className="muted small">No matches in the pages checked so far.</p>
+              )}
+              {nameMatches.error && (
+                <p role="alert">
+                  {nameMatches.error}{' '}
+                  <button type="button" onClick={() => void nameMatches.more()}>
+                    Retry name check
+                  </button>
+                </p>
+              )}
+              {emailMatches.error && (
+                <p role="alert">
+                  {emailMatches.error}{' '}
+                  <button type="button" onClick={() => void emailMatches.more()}>
+                    Retry email check
+                  </button>
+                </p>
+              )}
+              {nameMatches.nextToken && (
+                <p>
+                  <button
+                    type="button"
+                    className="secondary"
+                    disabled={nameMatches.loading}
+                    onClick={() => void nameMatches.more()}
+                  >
+                    Continue checking name matches
+                  </button>
+                </p>
+              )}
+              {emailMatches.nextToken && (
+                <p>
+                  <button
+                    type="button"
+                    className="secondary"
+                    disabled={emailMatches.loading}
+                    onClick={() => void emailMatches.more()}
+                  >
+                    Continue checking email matches
+                  </button>
+                </p>
+              )}
+              {matches.map((p) => (
                 <p key={p.id}>
                   {p.name}
                   {p.email ? ` · ${p.email}` : ''}{' '}

@@ -1,3 +1,4 @@
+import { db } from '../../amplify/functions/communications/store';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { relationshipCurrent, relationshipDates } from '../../../shared/relationships';
 import { primaryContact, billingContact, inspectionContact } from '../lib/contacts';
@@ -113,6 +114,19 @@ describe('management handoff', () => {
     await save('relationshipChangeManagement', { accountId: 'a', partyId: 'apex', version: 0, effectiveOn: '2026-10-28', retireContactIds: ['manager'] });
     expect(h.records.get('Contact:manager')?.validUntil).toBe('2026-10-28');
     expect(h.records.get('Contact:board')?.validUntil).toBeUndefined();
+  });
+  it('batch-loads all 50 retiring contacts instead of issuing per-contact reads', async () => {
+    const ids = Array.from({ length: 50 }, (_, i) => `legacy-${i}`);
+    for (const id of ids) h.records.set(`Contact:${id}`, { id, accountId: 'a', updatedAt: 'old' });
+    const send = vi.spyOn(db, 'send');
+    try {
+      await save('relationshipChangeManagement', { accountId: 'a', partyId: 'apex', version: 0, effectiveOn: '2026-10-28', retireContactIds: ids });
+      const batches = send.mock.calls.filter(([cmd]: any) => cmd.input.RequestItems?.Contact);
+      expect(batches).toHaveLength(1);
+      expect((batches[0][0] as any).input.RequestItems.Contact.Keys).toHaveLength(50);
+      expect(send.mock.calls.some(([cmd]: any) => cmd.input.TableName === 'Contact')).toBe(false);
+      expect(rows('Contact').every(c => c.validUntil === '2026-10-28')).toBe(true);
+    } finally { send.mockRestore(); }
   });
   it('never grants portfolio access to a relationship owner who does not own the insured', async () => {
     h.records.get('Communication:workflow:a')!.data.salespersonId = 'bob';

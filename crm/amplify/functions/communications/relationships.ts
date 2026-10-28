@@ -343,11 +343,12 @@ export async function relationshipOperation(
       const retireIds = input.retireContactIds ?? [];
       if (!Array.isArray(retireIds) || retireIds.length > 50)
         throw new Error('Choose up to 50 former contacts.');
-      for (const contactId of new Set([
-        ...(Array.isArray(old?.contactIds) ? old.contactIds : []),
-        ...retireIds,
-      ])) {
-        const contact = await read('Contact', key(contactId));
+      const retiringIds = [
+        ...new Set([...(Array.isArray(old?.contactIds) ? old.contactIds : []), ...retireIds].map(key)),
+      ];
+      const retiringContacts = await relationshipBatch('Contact', retiringIds);
+      for (const contactId of retiringIds) {
+        const contact = retiringContacts.get(contactId);
         if (!contact || contact.accountId !== accountId)
           throw new Error('A selected contact is no longer on this account.');
         if (contact.validUntil && String(contact.validUntil) <= effective) continue;
