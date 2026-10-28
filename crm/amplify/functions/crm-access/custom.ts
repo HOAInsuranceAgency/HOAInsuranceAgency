@@ -19,6 +19,8 @@ async function communicationAccount(access: AccountAccess, key: string, expected
 }
 export async function authorizeCustom(access: AccountAccess, field: string, args: RecordData) {
   if (["communicationRead", "communicationWrite"].includes(field) && retiredTaskOperation(id(args.readOperation ?? args.operation), object(args.input))) throw new AccessDenied();
+  if (field === "commissionOverview") return; // Handler returns only the caller’s own financial records.
+  if (field === "bindCommissionPolicy") { await access.requireRecord("Quote", id(object(args.input).quoteId)); return; }
   if (access.admin) return;
   if (["crmAccess", "crmFile", "honeycombSubmissionSettings", "reserveCertificateNumber", "reserveInvoiceNumber"].includes(field)) return;
   if (["startLeadExtraction", "suggestFormFields", "startHoneycombSubmission"].includes(field)) {

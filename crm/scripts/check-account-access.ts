@@ -5,7 +5,7 @@ import { CfnManagedPolicy, CfnPolicy, CfnRole } from "aws-cdk-lib/aws-iam";
 import { crmPolicySize } from "./iam-policy-size";
 import { CfnFunctionConfiguration, type CfnResolver } from "aws-cdk-lib/aws-appsync";
 import type { CfnFunction } from "aws-cdk-lib/aws-lambda";
-import { ACCOUNT_MODELS, PUBLIC_OPERATIONS, ADMIN_OPERATIONS, OWNER_OPERATIONS, ADMIN_MODEL_OPERATIONS } from "../amplify/functions/crm-access/policy";
+import { ACCOUNT_MODELS, PUBLIC_OPERATIONS, ADMIN_OPERATIONS, OWNER_OPERATIONS, ADMIN_MODEL_OPERATIONS, CUSTOM_OPERATIONS } from "../amplify/functions/crm-access/policy";
 import type { backend as Backend } from "../amplify/backend";
 
 export function checkAccountAccess(backend: typeof Backend, outdir: string) {
@@ -62,6 +62,13 @@ export function checkAccountAccess(backend: typeof Backend, outdir: string) {
     if (OWNER_OPERATIONS.includes(resolver.fieldName) && (!owner || !pipeline?.functions?.includes(owner.attrFunctionId))) throw new Error(`Active owner guard missing: ${resolver.fieldName}`);
     const operation = resolver.typeName === "Mutation" ? /^(create|update|delete)/.exec(resolver.fieldName)?.[1] ?? "" : "read";
     if ((ADMIN_OPERATIONS.includes(resolver.fieldName) || target && ADMIN_MODEL_OPERATIONS[target]?.includes(operation)) && (!admin || !pipeline?.functions?.includes(admin.attrFunctionId))) throw new Error(`Active administrator guard missing: ${resolver.fieldName}`);
+    if (CUSTOM_OPERATIONS.includes(resolver.fieldName) && !["crmAccess", "crmFile"].includes(resolver.fieldName)) {
+      const pre = functions.find(fn => fn.name === "access_custom_pre___");
+      const post = functions.find(fn => fn.name === "access_custom_post___");
+      const stages = pipeline?.functions ?? [];
+      if (!pre || stages[1] !== pre.attrFunctionId) throw new Error(`Custom authorization must run after the session guard: ${resolver.fieldName}`);
+      if (resolver.fieldName === "communicationRead" && (!post || stages.at(-1) !== post.attrFunctionId)) throw new Error("Communication results must retain the post-read access filter");
+    }
     if (target && (ACCOUNT_MODELS as readonly string[]).includes(target) && !guarded) throw new Error(`Assignment guard missing: ${resolver.typeName}.${resolver.fieldName}`);
     if (target && (ACCOUNT_MODELS as readonly string[]).includes(target) && resolver.typeName === "Query") {
       const data = Object.values(backend.data.resources.cfnResources.cfnFunctionConfigurations).find(fn => pipeline?.functions?.includes(fn.attrFunctionId) && fn.requestMappingTemplate?.includes('"Scan"'));
@@ -79,6 +86,7 @@ export function checkAccountAccess(backend: typeof Backend, outdir: string) {
   }
   for (const fn of functions) {
     if (!fn.requestMappingTemplate?.includes('$util.authType() == "IAM Authorization"') || !fn.responseMappingTemplate?.includes("$util.error")) throw new Error("Guard bypass or error handling changed");
+    if (fn.name.startsWith("access_custom_") && !fn.requestMappingTemplate.includes('"field":$util.toJson($ctx.info.fieldName)')) throw new Error("Shared custom guards must use the actual AppSync schema field");
     if (!fn.requestMappingTemplate.includes('"request":$util.toJson($ctx.request)')) throw new Error("Assignment guards must receive the active-role header");
     if (fn.name.startsWith("access_list_") && !fn.requestMappingTemplate.includes('claims.get("cognito:groups")')) throw new Error("Scoped lists must recognize administrators from Cognito JWT claims");
     if (fn.name.startsWith("access_list_") && (!fn.requestMappingTemplate.includes('"x-crm-role"') || !fn.requestMappingTemplate.includes('$assignmentRole == "ADMIN"') || !fn.requestMappingTemplate.includes('$assignmentRole == "OWNER"'))) throw new Error("Scoped list bypass must require the active administrator role");

@@ -1,3 +1,4 @@
+import { commissions } from '../functions/commissions/resource';
 import { ownerProfitability } from "../functions/owner-profitability/resource";
 import { crmAccess } from "../functions/crm-access/resource";
 import { type ClientSchema, a, defineData } from "@aws-amplify/backend";
@@ -888,6 +889,7 @@ const schema = a
       account: a.belongsTo("Account", "accountId"),
       // Who made this write — see the Contact model's note.
       lastWriteBy: a.string(),
+      commissionSnapshotId: a.string(), // Server-owned reference; no compensation details on shared policies.
       quoteId: a.id(),
       quote: a.belongsTo("Quote", "quoteId"),
       carrierId: a.id(),
@@ -2195,6 +2197,18 @@ const schema = a
       .returns(a.json())
       .authorization((allow) => [allow.publicApiKey()])
       .handler(a.handler.function(pfElection)),
+
+    commissionOverview: a.query().returns(a.json())
+      .authorization(allow => [allow.authenticated()])
+      .handler(a.handler.function(commissions)),
+    commissionAction: a.mutation()
+      .arguments({ operation: a.string().required(), input: a.json().required() }).returns(a.json())
+      .authorization(allow => [allow.groups(["OWNER"])])
+      .handler(a.handler.function(commissions)),
+    bindCommissionPolicy: a.mutation()
+      .arguments({ input: a.json().required() }).returns(a.json())
+      .authorization(allow => [allow.authenticated()])
+      .handler(a.handler.function(commissions)),
 
     // Private owner reporting uses its own storage; salaries never enter team profiles.
     ownerProfitability: a.query()
