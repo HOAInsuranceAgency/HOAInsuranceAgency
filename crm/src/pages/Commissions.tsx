@@ -1165,7 +1165,9 @@ function LegacyPolicies({
     { clearDataOnError: () => true },
   );
   const [premium, setPremium] = useState(''),
-    [agencyRate, setAgencyRate] = useState('');
+    [agencyRate, setAgencyRate] = useState(''),
+    [effectiveDate, setEffectiveDate] = useState(''),
+    [expirationDate, setExpirationDate] = useState('');
   const [policyId, setPolicy] = useState(''),
     [producerId, setProducer] = useState(''),
     [boundOn, setBound] = useState(''),
@@ -1190,6 +1192,8 @@ function LegacyPolicies({
           evidence,
           premium,
           agencyRate,
+          effectiveDate,
+          expirationDate,
         })
       }
     >
@@ -1252,6 +1256,8 @@ function LegacyPolicies({
             const selected = options.find((p) => p.id === e.target.value);
             setPremium(selected?.premium == null ? '' : String(selected.premium));
             setAgencyRate(selected?.commissionPct == null ? '' : String(selected.commissionPct));
+            setEffectiveDate(selected?.effectiveDate ?? '');
+            setExpirationDate(selected?.expirationDate ?? '');
             setBound(
               options.find((p) => p.id === e.target.value)?.datePolicyBound?.slice(0, 10) ?? '',
             );
@@ -1296,6 +1302,8 @@ function LegacyPolicies({
       <div className="form-grid">
         <Field label="Confirmed policy premium ($)" value={premium} change={setPremium} />
         <Field label="Confirmed agency commission (%)" value={agencyRate} change={setAgencyRate} />
+        <Field label="Confirmed effective date" type="date" value={effectiveDate} change={setEffectiveDate} />
+        <Field label="Confirmed expiration date" type="date" value={expirationDate} change={setExpirationDate} />
       </div>
       <Field
         label="Historical attribution and policy evidence"

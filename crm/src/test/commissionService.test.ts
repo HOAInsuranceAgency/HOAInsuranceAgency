@@ -242,13 +242,13 @@ it('does not post when the owner has not confirmed the reconciliation', async ()
   expect(h.commit).not.toHaveBeenCalled();
 });
 
-it('captures historical attribution and exact financial inputs atomically without guessing current ownership', async () => {
+it.each([[undefined, 'NEW'], [null, 'NEW'], ['2025-06-01', 'RENEWAL']])('repairs historical dates (%s, %s) during audited atomic adoption', async (oldDate, transaction) => {
   h.sources.set('Policy:legacy', {
     id: 'legacy',
     accountId: 'a',
     carrierId: 'c',
-    effectiveDate: '2026-01-01',
-    expirationDate: '2027-01-01',
+    effectiveDate: oldDate,
+    expirationDate: oldDate,
     updatedAt: 'original',
   });
   h.sources.set('Account:a', { id: 'a', name: 'Cedar HOA' });
@@ -267,24 +267,29 @@ it('captures historical attribution and exact financial inputs atomically withou
         policyId: 'legacy',
         producerId: 'original-producer',
         boundOn: '2026-01-01',
-        transaction: 'NEW',
+        transaction,
         premium: '100000.01',
         agencyRate: '12.3456',
         evidence: 'Historical binder and signed producer allocation',
+        effectiveDate: '2026-01-01',
+        expirationDate: '2027-01-01',
       }),
     ),
   ).toEqual({ ok: true });
   expect(records.get('POLICY:legacy')).toMatchObject({
     producerId: 'original-producer',
+    effectiveDate: '2026-01-01',
+    expirationDate: '2027-01-01',
+    originalTermDates: { effectiveDate: oldDate ?? null, expirationDate: oldDate ?? null },
     premiumCents: 10000001,
     agencyRateUnits: 123456,
-    producerBps: 1600,
+    producerBps: transaction === 'NEW' ? 1600 : 800,
     entries: [],
   });
   expect(h.commit.mock.calls[0][2][0].Update).toMatchObject({
     TableName: 'Policy',
     ConditionExpression: 'updatedAt = :old AND attribute_not_exists(commissionSnapshotId)',
-    ExpressionAttributeValues: { ':premium': 100000.01, ':rate': 12.3456, ':old': 'original' },
+    ExpressionAttributeValues: { ':premium': 100000.01, ':rate': 12.3456, ':old': 'original', ':effective': '2026-01-01', ':expiration': '2027-01-01' },
   });
 });
 it('retains carrier-reported comparison values and refuses an unbalanced settlement', async () => {
@@ -352,4 +357,27 @@ it('updates shared and private policy numbers in the same version-guarded transa
     ConditionExpression: 'updatedAt = :old',
     ExpressionAttributeValues: { ':number': 'CORRECT-1', ':old': 'old' },
   });
+});
+
+it('validates cumulative draft reversals from one batch without modifying the ledger', async () => {
+  const policy = appendEntry(commissionPolicy(), line(), statement(), 'receipt');
+  records.set('POLICY:p', policy);
+  records.set('CARRIER:c', policy.carrierTerms);
+  const input = {
+    version: 0, carrierId: 'c', reference: 'REV-1',
+    source: 'statements/00000000-0000-0000-0000-000000000000',
+    receivedOn: '2026-10-02', settlementRef: 'OFFSET-1', settlementType: 'NET_SETTLEMENT',
+    totalCents: -120000,
+    lines: [line({lineRef: 'R1', kind: 'REVERSAL', originalId: 'receipt', agencyCents: -60000}),
+      line({lineRef: 'R2', kind: 'REVERSAL', originalId: 'receipt', agencyCents: -60000})],
+  };
+  expect(await handler(request('saveStatement', input))).toMatchObject({ok: false, error: expect.stringMatching(/exceed the original/)});
+  expect(h.commit).not.toHaveBeenCalled();
+  expect(h.getMany).toHaveBeenCalledExactlyOnceWith([{kind: 'POLICY', id: 'p'}]);
+  expect(h.get.mock.calls.filter(([kind]) => kind === 'POLICY')).toEqual([]);
+  expect(records.get('POLICY:p')).toEqual(policy);
+  input.lines[1].agencyCents = -40000;
+  input.totalCents = -100000;
+  expect(await handler(request('saveStatement', input))).toEqual({ok: true});
+  expect(records.get('POLICY:p')).toEqual(policy);
 });

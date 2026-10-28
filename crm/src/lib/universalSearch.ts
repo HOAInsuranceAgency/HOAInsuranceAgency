@@ -62,7 +62,6 @@ export interface SearchRow {
 }
 
 export interface SearchIndexInput {
-  parties?: readonly { id: string; name: string; email?: string | null; phone?: string | null; category?: string | null; archived?: boolean | null }[];
   accounts: readonly {
     id: string;
     name: string;
@@ -138,10 +137,6 @@ export function buildSearchRows(input: SearchIndexInput): SearchRow[] {
       target: `/accounts/${a.id}`,
       haystack: [a.name, a.legalName, a.city, a.state].map(lower).filter(Boolean),
     });
-  }
-  for (const p of input.parties ?? []) {
-    if (p.archived) continue;
-    rows.push({ type: 'relationship', id: p.id, label: p.name, sub: [p.category, p.email].filter(Boolean).join(' · '), target: `/relationships/${p.id}`, haystack: [p.name, p.email, p.phone, p.category].map(lower) });
   }
   for (const c of input.contacts) {
     rows.push({
