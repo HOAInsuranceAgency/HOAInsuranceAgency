@@ -1,0 +1,72 @@
+.commissions {
+  max-width: 1280px;
+  margin: 0 auto;
+}
+.commissions header {
+  margin-bottom: 24px;
+}
+.commissions .card {
+  margin-top: 20px;
+  padding: 24px;
+}
+.commission-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 20px 0;
+}
+.commissions fieldset {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+.commissions .field {
+  margin-bottom: 14px;
+}
+.commissions .stat-row {
+  margin-top: 24px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+.commissions .stat {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.commission-period {
+  border: 1px solid #dce3e7;
+  padding: 18px;
+  border-radius: 10px;
+  margin: 18px 0;
+}
+.commission-scroll {
+  overflow-x: auto;
+  margin: 16px 0;
+}
+.commissions td {
+  vertical-align: top;
+}
+.commission-confirm {
+  display: block;
+  margin: 20px 0;
+}
+.commissions input[type='checkbox'] {
+  width: auto;
+  margin-right: 8px;
+}
+.commissions .form-actions {
+  margin-top: 20px;
+}
+
+@media (max-width: 760px) {
+  .commissions .stat-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 440px) {
+  .commissions .stat-row {
+    grid-template-columns: 1fr;
+  }
+}

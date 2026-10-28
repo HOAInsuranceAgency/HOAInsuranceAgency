@@ -468,8 +468,9 @@ describe("quotes can answer the screens the offer runs on (W8 review)", () => {
     const PANEL = read("src/components/QuotesPanel.tsx");
     // The two writes whose silently-swallowed errors left an open quote
     // with an ACTIVE policy, or a live quote-invoice beside a policy bill.
-    expect(PANEL).toContain("if (bErr?.length) throw new Error(bErr[0].message)");
-    expect(PANEL).toContain("Binding it twice would bill one premium twice.");
+    expect(PANEL).toContain("if (response.errors?.length) throw new Error(response.errors[0].message)");
+    expect(PANEL).toContain("client.mutations.bindCommissionPolicy");
+    expect(read("amplify/functions/commissions/bind.ts")).toContain("This quote already has a policy.");
     expect(PANEL).toContain('action: "BIND_ROLLOVER"');
   });
 
@@ -477,7 +478,10 @@ describe("quotes can answer the screens the offer runs on (W8 review)", () => {
     // "Client since" and production reporting read a real bound date; the
     // single Policy.create site is where it can only come from.
     const PANEL = read("src/components/QuotesPanel.tsx");
-    expect(PANEL).toContain("datePolicyBound: new Date().toISOString()");
+    expect(PANEL).toContain("client.mutations.bindCommissionPolicy");
+    const BIND = read("amplify/functions/commissions/bind.ts");
+    expect(BIND).toContain("const at = new Date().toISOString()");
+    expect(BIND).toContain("datePolicyBound: at");
   });
 
   it("bind rolls document links alongside invoices and loans", () => {

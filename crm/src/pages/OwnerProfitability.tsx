@@ -40,7 +40,7 @@ function OwnerPage() {
     catch (error) { setError(error instanceof Error ? error.message : "Choose valid report dates."); }
   }
   return <div className="owner-profitability">
-    <header className="owner-profitability-heading"><div><p className="owner-profitability-eyebrow">Owner only</p><h1>Employee profitability</h1><p className="muted">Estimated contribution after commission share and salary.</p></div></header>
+    <header className="owner-profitability-heading"><div><p className="owner-profitability-eyebrow">Owner only</p><h1>Employee profitability</h1><p className="muted">Estimated contribution after commission share and salary.</p><p className="muted small">This estimate uses the single share in private pay settings. Actual new-business and renewal earnings, receipts, and payouts are in <a href="/commissions">Commissions</a>.</p></div></header>
     <form className="card owner-profitability-period" aria-label="Reporting period" onSubmit={event => { event.preventDefault(); apply(draft.from, draft.to); }}>
       <div className="filter-row">
         <button type="button" className="secondary" onClick={() => apply(`${today().slice(0, 4)}-01-01`, today())}>Year to date</button>

@@ -132,6 +132,16 @@ export class AccountAccess {
     // acquisition immutable for every browser role, including administrators.
     if (model === "Account" && ["create", "update"].includes(operation)
       && ["source", "leadSource", "leadAttribution"].some(field => Object.hasOwn(input, field))) throw new AccessDenied();
+    // Financial provenance is server-owned, including in the Owner view.
+    if (model === "Policy" && operation === "create") throw new Error("Bind the quote through the commission-aware bind workflow.");
+    if (model === "Quote" && input.status === "BOUND" && (operation === "create" || (await this.get("Quote", id(input.id)))?.status !== "BOUND")) throw new Error("Use the bind workflow to mark a quote bound.");
+    if (model === "Policy" && operation === "update") {
+      const prior = await this.get("Policy", id(input.id));
+      if (Object.hasOwn(input, "commissionSnapshotId") && input.commissionSnapshotId !== prior?.commissionSnapshotId) throw new Error("Commission provenance is server-owned.");
+      if (prior && ["accountId", "quoteId", "carrierId", "premium", "commissionPct", "effectiveDate", "expirationDate", "datePolicyBound"].some(f => Object.hasOwn(input, f) && (input[f] ?? null) !== (prior[f] ?? null))) throw new Error("Bound financial terms are immutable. Record a reviewed adjustment instead.");
+      if (prior?.commissionSnapshotId && Object.hasOwn(input, "policyNumber") && (input.policyNumber ?? null) !== (prior.policyNumber ?? null)) throw new Error("The Owner must update tracked policy numbers through Commissions so both records stay in sync.");
+    }
+    if (model === "Policy" && operation === "delete") throw new Error("Bound policies retain commission history and cannot be deleted.");
     if (this.admin) return;
     const key = id(["GlApplication", "DoApplication"].includes(model) ? input.accountId : input.id);
     const old = key ? await this.get(model, key) : undefined;

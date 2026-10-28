@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import QuotePackages from "./QuotePackages";
 import "./QuotesPanel.css";
-import { packageTerms, type CommercialPlan } from '../../../shared/quotePackages';
+import { packageTerms } from '../../../shared/quotePackages';
 import {
   client,
   fmtDate,
@@ -11,6 +11,7 @@ import {
   type Account,
   type Carrier,
   type Quote,
+  type Policy,
 } from "../lib/client";
 import { Badge, statusBadge, QUOTE_STATUS_BADGE } from "../lib/badges";
 import { useAsyncResource } from "../lib/useAsyncResource";
@@ -465,6 +466,9 @@ function BindForm({
   onError: (msg: string) => void;
 }) {
   const [policyNumber, setPolicyNumber] = useState("");
+  const [premium, setPremium] = useState(quote.premium == null ? "" : String(quote.premium));
+  const [agencyRate, setAgencyRate] = useState(quote.commissionPct == null ? "" : String(quote.commissionPct));
+  const [confirmed, setConfirmed] = useState(false);
   /**
    * No default. Bill type decides whether anyone here is supposed to collect
    * the premium, and a pre-selected answer to that is one nobody reads — the
@@ -483,99 +487,28 @@ function BindForm({
     !quote.carrierId && "a carrier",
     !(quote.premium && quote.premium > 0) && "a premium",
     !quote.effectiveDate && "an effective date",
+    !quote.expirationDate && "an expiration date",
+    quote.commissionPct == null && "the exact agency commission percentage",
     !(quote.lines ?? []).filter(Boolean).length && "at least one line",
   ].filter(Boolean) as string[];
 
   async function bind() {
     // Belt and braces: the button is disabled without one, but `bind` is the
     // thing that writes the row and an unset bill type must never reach it.
-    if (!billType || bindLock.current) return;
+    if (!billType || !confirmed || bindLock.current) return;
     bindLock.current = true;
     let policyCreated = false;
     setSaving(true);
     onError("");
     try {
-      /**
-       * 0. One policy per quote, checked before anything is written. The
-       * schema's hasOne is a query convenience, not a constraint — and a
-       * stale panel (another producer bound seconds ago, or a prior bind
-       * whose status write silently failed) is exactly when this button
-       * gets clicked again.
-       */
-      const { data: freshQuote, errors: fqErr } = await client.models.Quote.get({
-        id: quote.id,
-      });
-      if (fqErr?.length) throw new Error(fqErr[0].message);
-      if (!freshQuote || !isOpenQuoteStatus(freshQuote.status)) {
-        throw new Error(
-          "This quote is no longer open — it may already be bound. Refresh and check the policies list."
-        );
-      }
-      if (packageTerms(freshQuote) !== packageTerms(quote)) throw new Error('The quote changed. Refresh and review its current terms before binding.');
-      const packages = await communicationRequest<{ items: { plan: CommercialPlan }[] }>('commercialTable', { accountIds: [account.id] });
-      const plan = packages.items[0]?.plan;
-      if (!plan) throw new Error('Could not verify the selected package. Refresh before binding.');
-      if (plan.selectedOptionId && !freshQuote.renewalPolicyId) {
-        const selected = plan.options.find(o => o.id === plan.selectedOptionId);
-        if (!selected?.quoteIds.includes(quote.id) || plan.selectedTerms?.[quote.id] !== packageTerms(freshQuote)) throw new Error('This quote is not in the current client-selected package. Review the package before binding.');
-      }
-      const priorPolicies = await listAllPages(nextToken => client.models.Policy.list({
-        filter: { quoteId: { eq: quote.id } }, nextToken,
-      }));
-      if (priorPolicies?.length) {
-        throw new Error(
-          `This quote is already bound to policy ${priorPolicies[0].policyNumber ?? priorPolicies[0].id}. Binding it twice would bill one premium twice.`
-        );
-      }
-
-      // 1. Policy from the accepted quote (terms + commission carry over)
-      const { data: policy, errors: pErr } = await client.models.Policy.create({
-        accountId: account.id,
-        quoteId: quote.id,
-        carrierId: quote.carrierId ?? undefined,
-        policyNumber: policyNumber.trim() || undefined,
-        status: "ACTIVE",
-        // When the bind happened, as a fact of its own — never typed, and
-        // "client since" maths read it rather than guessing from createdAt.
-        datePolicyBound: new Date().toISOString(),
-        billType,
-        lines: (quote.lines ?? []).filter((l): l is string => !!l),
-        premium: quote.premium ?? undefined,
-        commissionPct: quote.commissionPct ?? undefined,
-        // Limits are what print on the COI — they must survive the bind.
-        glEachOccurrence: quote.glEachOccurrence ?? undefined,
-        glDamageToRentedPremises: quote.glDamageToRentedPremises ?? undefined,
-        glMedicalExpense: quote.glMedicalExpense ?? undefined,
-        glPersonalAdvInjury: quote.glPersonalAdvInjury ?? undefined,
-        glGeneralAggregate: quote.glGeneralAggregate ?? undefined,
-        glProductsCompletedOps: quote.glProductsCompletedOps ?? undefined,
-        glClaimsMade: quote.glClaimsMade ?? undefined,
-        glAggregateAppliesTo: quote.glAggregateAppliesTo ?? undefined,
-        perOccurrenceDeductible: quote.perOccurrenceDeductible ?? undefined,
-        perUnitDeductible: quote.perUnitDeductible ?? undefined,
-        blanketLimit: quote.blanketLimit ?? undefined,
-        coinsurancePct: quote.coinsurancePct ?? undefined,
-        replacementCostType: quote.replacementCostType ?? undefined,
-        effectiveDate: quote.effectiveDate ?? undefined,
-        expirationDate: quote.expirationDate ?? undefined,
-        // W8: facts answered on the quote survive the bind — re-answering
-        // invites a different answer. MEP rides along as underwriting data.
-        // (Auditable retired 2026-08-24; nothing carries or reads it now.)
-        minimumEarnedPremiumPct: quote.minimumEarnedPremiumPct ?? undefined,
-      });
-      if (pErr?.length || !policy) throw new Error(pErr?.[0]?.message);
+      const response = await client.mutations.bindCommissionPolicy({ input: JSON.stringify({
+        quoteId: quote.id, terms: packageTerms(quote), premium, agencyRate, billType, policyNumber,
+      }) });
+      if (response.errors?.length) throw new Error(response.errors[0].message);
+      const result = (typeof response.data === "string" ? JSON.parse(response.data) : response.data) as { ok: boolean; error?: string; policy: Policy; account: Account };
+      if (!result?.ok || !result.policy) throw new Error(result?.error ?? "Could not bind this policy.");
+      const policy = result.policy;
       policyCreated = true;
-
-      // 2. Mark the quote bound. The Amplify client reports GraphQL errors
-      // without throwing — a silent failure here leaves an ACTIVE policy on
-      // a still-open quote, with Bind clickable for a second policy.
-      {
-        const { errors: bErr } = await client.models.Quote.update({
-          id: quote.id,
-          status: "BOUND",
-        });
-        if (bErr?.length) throw new Error(bErr[0].message);
-      }
 
       /**
        * 2.5 (W8) The quote's billing follows it onto the policy: invoices
@@ -655,18 +588,7 @@ function BindForm({
         );
       }
 
-      // 3. Convert the lead in place — the only path to CLIENT
-      let updated: Account | null = null;
-      if (account.stage === "LEAD") {
-        const { data, errors } = await client.models.Account.update({
-          id: account.id,
-          stage: "CLIENT",
-          convertedAt: new Date().toISOString(),
-        });
-        if (errors?.length || !data) throw new Error(errors?.[0]?.message ?? "Could not convert the lead to a client");
-        updated = data;
-      }
-      if (live.current) onDone(updated);
+      if (live.current) onDone(result.account);
     } catch (err) {
       const message = friendlyError(err, "Bind failed");
       if (live.current) onError(policyCreated ? `Policy created, but binding did not finish: ${message}. Check the policies and account before retrying.` : message);
@@ -701,7 +623,10 @@ function BindForm({
         </>
       ) : (
         <>
+          <p className="small muted">Confirm the exact commissionable premium and agency percentage from the accepted quote. To change either amount, edit the quote first. Producer earnings follow reconciled carrier receipts and the agreement saved by the Owner.</p>
           <div className="form-grid">
+            <label className="field">Exact policy premium ($)<input aria-label="Exact policy premium" inputMode="decimal" value={premium} disabled={saving} onChange={e => { setPremium(e.target.value); setConfirmed(false); }} /></label>
+            <label className="field">Agency commission (%)<input aria-label="Agency commission percentage" inputMode="decimal" value={agencyRate} disabled={saving} onChange={e => { setAgencyRate(e.target.value); setConfirmed(false); }} /></label>
             <div className="field">
               <label htmlFor="bind-bill-type">Bill type (required)</label>
               <select
@@ -736,10 +661,11 @@ function BindForm({
               afterwards, so there is nothing to invoice from here.
             </p>
           )}
+          <label><input type="checkbox" checked={confirmed} disabled={saving} onChange={e => setConfirmed(e.target.checked)} /> I confirmed the exact premium and agency commission percentage.</label>
           <div className="form-actions quote-flow-actions">
             <button
               className="primary"
-              disabled={saving || !billType}
+              disabled={saving || !billType || !confirmed || !premium || !agencyRate}
               onClick={bind}
             >
               {saving ? "Binding…" : "Confirm bind"}

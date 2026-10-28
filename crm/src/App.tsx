@@ -25,6 +25,7 @@ import {
 import { clearActiveRole, restoreActiveRole, setActiveRole } from "./lib/activeRole";
 import MagicLinkSignIn from "./components/MagicLinkSignIn";
 import Dashboard from "./pages/Dashboard";
+import Commissions from "./pages/Commissions";
 import OwnerProfitability from "./pages/OwnerProfitability";
 import AccountsList from "./pages/AccountsList";
 import { AccountsListDataProvider } from "./lib/accountsListData";
@@ -366,6 +367,7 @@ function Shell({ profile, signOut, activeRole, roles, onRoleChange }: {
   const navItems = [
     ...NAV_ITEMS.slice(0, 1),
     ...(isOwner ? [{ to: "/owner", label: "Profitability", icon: <IconGrid /> }] : []),
+    { to: "/commissions", label: "Commissions", icon: <IconCoin /> },
     ...NAV_ITEMS.slice(1, 4),
     { to: "/financing", label: "Financing", icon: <IconCoin /> } as const,
     ...NAV_ITEMS.slice(4),
@@ -421,6 +423,7 @@ function Shell({ profile, signOut, activeRole, roles, onRoleChange }: {
               path="/"
               element={isAdmin ? <Dashboard /> : <Navigate to="/leads" replace />}
             />
+            <Route path="/commissions" element={<Commissions />} />
             <Route path="/owner" element={isOwner ? <OwnerProfitability /> : <Navigate to={homePath} replace />} />
             <Route path="/leads" element={<AccountsList stage="LEAD" />} />
             <Route path="/leads/new" element={<NewLead />} />

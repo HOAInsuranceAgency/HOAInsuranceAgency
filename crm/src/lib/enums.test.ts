@@ -631,13 +631,15 @@ describe("bill type at bind", () => {
 
   it("will not submit without one", () => {
     // The button is disabled…
-    expect(src).toMatch(/disabled=\{saving \|\| !billType\}/);
+    expect(src).toMatch(/disabled=\{saving \|\| !billType \|\| !confirmed/);
     // …and `bind` itself refuses, so a re-enabled button is not a way in.
-    expect(src).toMatch(/if \(!billType \|\| bindLock.current\) return;/);
+    expect(src).toMatch(/if \(!billType \|\| !confirmed \|\| bindLock.current\) return;/);
   });
 
   it("writes it onto the policy it creates", () => {
-    expect(src).toMatch(/^\s*billType,$/m);
+    expect(src).toContain("premium, agencyRate, billType, policyNumber");
+    const server = readFileSync(resolve(process.cwd(), "amplify/functions/commissions/bind.ts"), "utf8");
+    expect(server).toContain("billType: input.billType");
   });
 
   it("offers exactly the two the schema declares", () => {
