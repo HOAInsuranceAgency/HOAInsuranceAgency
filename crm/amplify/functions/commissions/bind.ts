@@ -10,6 +10,8 @@ import {
 } from '../../../../shared/quotePackages';
 import { authorizedQuoteTerms } from '../../../../shared/quoteAuthorization';
 import {
+  selectCommissionTerms,
+  type CommissionAccount,
   day,
   decimal,
   integer,
@@ -112,9 +114,8 @@ export async function bindPolicy(event: Event, input: Data) {
       throw new Error('The renewal must refer to a policy on this account.');
   }
   const rateDate = transaction === 'RENEWAL' ? effectiveDate : today;
-  const term = plan.terms.find((t) => t.from <= rateDate && (!t.to || t.to >= rateDate));
-  if (!term)
-    throw new Error(`An Owner must configure a commission agreement covering ${rateDate}.`);
+  const commissionAccount = await get<CommissionAccount>('ACCOUNT', accountId);
+  const selectedTerms = selectCommissionTerms(plan, commissionAccount, rateDate, transaction);
   // Catch pre-feature policies whose quote status was never updated. Follow all
   // pages; do not turn a filtered empty first page into permission to rebind.
   let cursor: Data | undefined;
@@ -190,8 +191,7 @@ export async function bindPolicy(event: Event, input: Data) {
     transaction,
     premiumCents,
     agencyRateUnits,
-    producerBps: transaction === 'NEW' ? term.newBps : term.renewalBps,
-    agreement: term.agreement,
+    ...selectedTerms,
     planVersion: plan.version,
     carrierTerms,
     entries: [],
@@ -238,6 +238,15 @@ export async function bindPolicy(event: Event, input: Data) {
         ExpressionAttributeValues: { ':v': carrierTerms.version },
       },
     },
+    {
+      ConditionCheck: {
+        TableName: table(),
+        Key: { kind: 'ACCOUNT', id: accountId },
+        ConditionExpression: '#v = :v',
+        ExpressionAttributeNames: { '#v': 'version' },
+        ExpressionAttributeValues: { ':v': commissionAccount!.version },
+      },
+    },
     activeTeamUserCheck(producerId),
   ];
   for (const [id, row] of [
@@ -259,7 +268,13 @@ export async function bindPolicy(event: Event, input: Data) {
     });
   const updatedAccount =
     account.stage === 'LEAD'
-      ? { ...account, stage: 'CLIENT', convertedAt: at, updatedAt: at, lastWriteBy: access.actor }
+      ? {
+          ...account,
+          stage: 'CLIENT',
+          convertedAt: at,
+          updatedAt: at,
+          lastWriteBy: access.actor,
+        }
       : account;
   if (account.stage === 'LEAD')
     guards.push({

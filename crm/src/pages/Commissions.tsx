@@ -4,9 +4,13 @@ import { useAsyncResource } from '../lib/useAsyncResource';
 import { client, listAllPages, fmtMoney } from '../lib/client';
 import { communicationRequest, type TeamEligibility } from '../lib/communications';
 import { commissionAction, readCommissions } from '../lib/commissions';
+import AccountPicker from '../components/AccountPicker';
 import { ReportDownload } from '../components/ReportDownload';
 import {
   COMMISSION_BASES,
+  ACCOUNT_COMMISSION_CLASSES,
+  type CommissionAccount,
+  type AccountCommissionClass,
   decimal,
   policyTotals,
   recoveryBalances,
@@ -177,7 +181,7 @@ function Ledger({
         <div className="card">
           No commission snapshots yet.{' '}
           {owner
-            ? 'Configure producer agreements and carrier terms, then bind a policy.'
+            ? 'Configure producer agreements, account classifications, and carrier terms, then bind a policy.'
             : 'Your policy commission records will appear here after binding.'}
         </div>
       )}
@@ -196,6 +200,13 @@ function Ledger({
               Premium {money(p.premiumCents)} · Agency {p.agencyRateUnits / 10000}% · Producer{' '}
               {p.producerBps / 100}% of agency commission
             </p>
+            {owner && (
+              <p className="small">
+                {p.accountClassification
+                  ? `${ACCOUNT_COMMISSION_CLASSES[p.accountClassification.classification]} · ${p.agreement} · Classification reference: ${p.accountClassification.evidence}`
+                  : 'Legacy snapshot · original rate retained; account classification was not recorded.'}
+              </p>
+            )}
             <p className="small">
               Expected agency commission {money(t.expectedAgency)} · Received{' '}
               {money(t.receivedAgency)} · Producer earned {money(t.earned)} · Proposed adjustments{' '}
@@ -392,6 +403,7 @@ function Settings({ data, refresh }: { data: CommissionOverview; refresh: () => 
           refresh={refresh}
         />
       )}
+      <AccountClassifications />
       <LegacyPolicies data={data} refresh={refresh} />
     </>
   );
@@ -413,11 +425,28 @@ function PlanEditor({
       to: t.to ?? '',
       newRate: String(t.newBps / 100),
       renewalRate: String(t.renewalBps / 100),
-    })) ?? [{ from: '', to: '', newRate: '', renewalRate: '', agreement: '' }],
+      gimEnabled: !!t.gim,
+      gimNewRate: t.gim ? String(t.gim.newBps / 100) : '',
+      gimRenewalRate: t.gim ? String(t.gim.renewalBps / 100) : '',
+      gimAgreement: t.gim?.agreement ?? '',
+    })) ?? [
+      {
+        from: '',
+        to: '',
+        newRate: '',
+        renewalRate: '',
+        agreement: '',
+        gimEnabled: false,
+        gimNewRate: '',
+        gimRenewalRate: '',
+        gimAgreement: '',
+      },
+    ],
   );
   return (
     <ActionForm
       title={`${name} · commission agreement`}
+      button="Save producer agreement"
       onDone={refresh}
       submit={() =>
         commissionAction('savePlan', {
@@ -430,6 +459,15 @@ function PlanEditor({
             newBps: decimal(t.newRate),
             renewalBps: decimal(t.renewalRate),
             agreement: t.agreement,
+            ...(t.gimEnabled
+              ? {
+                  gim: {
+                    newBps: decimal(t.gimNewRate),
+                    renewalBps: decimal(t.gimRenewalRate),
+                    agreement: t.gimAgreement,
+                  },
+                }
+              : {}),
           })),
         })
       }
@@ -471,6 +509,54 @@ function PlanEditor({
             value={t.agreement}
             change={(v) => setTerms(terms.map((r, j) => (i === j ? { ...r, agreement: v } : r)))}
           />
+          <h3>GIM Property Management · house-account rates</h3>
+          <label className="checkbox-field">
+            <input
+              type="checkbox"
+              checked={t.gimEnabled}
+              onChange={(e) =>
+                setTerms(
+                  terms.map((r, j) => (i === j ? { ...r, gimEnabled: e.target.checked } : r)),
+                )
+              }
+            />
+            {`Configure GIM rates for period ${i + 1}`}
+          </label>
+          {t.gimEnabled ? (
+            <>
+              <div className="form-grid">
+                <Field
+                  label={`GIM new business % ${i + 1}`}
+                  value={t.gimNewRate}
+                  change={(v) =>
+                    setTerms(terms.map((r, j) => (i === j ? { ...r, gimNewRate: v } : r)))
+                  }
+                />
+                <Field
+                  label={`GIM renewal % ${i + 1}`}
+                  value={t.gimRenewalRate}
+                  change={(v) =>
+                    setTerms(terms.map((r, j) => (i === j ? { ...r, gimRenewalRate: v } : r)))
+                  }
+                />
+              </div>
+              <Field
+                label={`GIM agreement reference ${i + 1}`}
+                value={t.gimAgreement}
+                change={(v) =>
+                  setTerms(terms.map((r, j) => (i === j ? { ...r, gimAgreement: v } : r)))
+                }
+              />
+              <p className="small muted">
+                GIM rates use this period’s dates. Add a rate period when either schedule changes.
+              </p>
+            </>
+          ) : (
+            <p className="small muted">
+              GIM terms pending. GIM policies cannot be bound under this period until both rates and
+              the agreement reference are configured.
+            </p>
+          )}
           <button
             type="button"
             className="secondary"
@@ -485,7 +571,20 @@ function PlanEditor({
         type="button"
         className="secondary"
         onClick={() =>
-          setTerms([...terms, { from: '', to: '', newRate: '', renewalRate: '', agreement: '' }])
+          setTerms([
+            ...terms,
+            {
+              from: '',
+              to: '',
+              newRate: '',
+              renewalRate: '',
+              agreement: '',
+              gimEnabled: false,
+              gimNewRate: '',
+              gimRenewalRate: '',
+              gimAgreement: '',
+            },
+          ])
         }
       >
         Add rate period
@@ -494,6 +593,167 @@ function PlanEditor({
         Both rates are percentages of agency commission received. Explicit 0% means no commission;
         blank is not zero. Salary remains in private pay settings.
       </p>
+    </ActionForm>
+  );
+}
+function AccountClassifications() {
+  const [accountId, setAccountId] = useState('');
+  return (
+    <section>
+      <h2>Account commission classification</h2>
+      <p>
+        GIM Property Management is the only house-account program. Review each account as Standard
+        or GIM before binding. Classification is an Owner decision; changing a management
+        relationship does not change commission terms.
+      </p>
+      <AccountPicker value={accountId} onChange={setAccountId} disabled={false} />
+      {accountId && <AccountClassificationResource key={accountId} id={accountId} />}
+    </section>
+  );
+}
+function AccountClassificationResource({ id }: { id: string }) {
+  const resource = useAsyncResource(
+    () =>
+      commissionAction<{ classification: CommissionAccount | null; accountName: string }>(
+        'getAccountClassification',
+        { id },
+      ),
+    [id],
+    { clearDataOnError: () => true },
+  );
+  if (resource.error)
+    return (
+      <div role="alert">
+        <p>{resource.error}</p>
+        <button type="button" className="secondary" onClick={() => void resource.refetch()}>
+          Retry account classification
+        </button>
+      </div>
+    );
+  if (!resource.data || resource.loading) return <p>Loading account classification…</p>;
+  return (
+    <AccountClassificationEditor
+      key={`${id}:${resource.data.classification?.version ?? 0}`}
+      id={id}
+      name={resource.data.accountName}
+      account={resource.data.classification ?? undefined}
+      refresh={resource.refetch}
+    />
+  );
+}
+function AccountClassificationEditor({
+  id,
+  name,
+  account,
+  refresh,
+}: {
+  id: string;
+  name: string;
+  account?: CommissionAccount;
+  refresh: () => Promise<void>;
+}) {
+  const [periods, setPeriods] = useState(
+    account?.periods.map((p) => ({ ...p, to: p.to ?? '' })) ?? [
+      {
+        from: '',
+        to: '',
+        classification: '' as AccountCommissionClass | '',
+        evidence: '',
+      },
+    ],
+  );
+  return (
+    <ActionForm
+      title={`${name} · commission classification`}
+      button="Save classification"
+      onDone={refresh}
+      submit={() =>
+        commissionAction('saveAccountClassification', {
+          id,
+          version: account?.version ?? 0,
+          periods: periods.map((p) => ({
+            from: p.from,
+            ...(p.to ? { to: p.to } : {}),
+            classification: p.classification,
+            evidence: p.evidence,
+          })),
+        })
+      }
+    >
+      <p className="small muted">
+        Use the bind date for new business and the term effective date for renewals. Existing
+        snapshots keep their original classification and rate. Through dates are inclusive.
+      </p>
+      {periods.map((p, i) => (
+        <div key={i} className="commission-period">
+          <div className="form-grid">
+            <Field
+              label={`Classification effective from ${i + 1}`}
+              type="date"
+              value={p.from}
+              change={(v) => setPeriods(periods.map((r, j) => (i === j ? { ...r, from: v } : r)))}
+            />
+            <label className="field">
+              {`Classification through ${i + 1} (optional)`}
+              <input
+                type="date"
+                value={p.to}
+                onChange={(e) =>
+                  setPeriods(periods.map((r, j) => (i === j ? { ...r, to: e.target.value } : r)))
+                }
+              />
+            </label>
+            <label className="field">
+              {`Account classification ${i + 1}`}
+              <select
+                required
+                value={p.classification}
+                onChange={(e) =>
+                  setPeriods(
+                    periods.map((r, j) =>
+                      i === j
+                        ? {
+                            ...r,
+                            classification: e.target.value as AccountCommissionClass,
+                          }
+                        : r,
+                    ),
+                  )
+                }
+              >
+                <option value="">Choose Standard or GIM…</option>
+                {Object.entries(ACCOUNT_COMMISSION_CLASSES).map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <Field
+            label={`Classification reference ${i + 1}`}
+            value={p.evidence}
+            change={(v) => setPeriods(periods.map((r, j) => (i === j ? { ...r, evidence: v } : r)))}
+          />
+          <button
+            type="button"
+            className="secondary"
+            disabled={periods.length === 1}
+            onClick={() => setPeriods(periods.filter((_, j) => i !== j))}
+          >
+            Remove classification period
+          </button>
+        </div>
+      ))}
+      <button
+        type="button"
+        className="secondary"
+        onClick={() =>
+          setPeriods([...periods, { from: '', to: '', classification: '', evidence: '' }])
+        }
+      >
+        Add classification period
+      </button>
     </ActionForm>
   );
 }
@@ -760,7 +1020,12 @@ function StatementEditor({
                 <select
                   required
                   value={l.policyId}
-                  onChange={(e) => update(i, { policyId: e.target.value, originalId: undefined })}
+                  onChange={(e) =>
+                    update(i, {
+                      policyId: e.target.value,
+                      originalId: undefined,
+                    })
+                  }
                 >
                   <option value="">Match a policy…</option>
                   {data.policies
@@ -910,7 +1175,9 @@ function StatementCard({
         className="secondary"
         onClick={async () => {
           try {
-            const r = await commissionAction<{ url: string }>('file', { key: s.source });
+            const r = await commissionAction<{ url: string }>('file', {
+              key: s.source,
+            });
             window.location.assign(r.url);
           } catch (e) {
             setFileError((e as Error).message);
@@ -969,7 +1236,13 @@ function StatementCard({
       disabled={!confirmed}
       button="Post reconciled statement"
       onDone={refresh}
-      submit={() => commissionAction('postStatement', { id: s.id, version: s.version, confirmed })}
+      submit={() =>
+        commissionAction('postStatement', {
+          id: s.id,
+          version: s.version,
+          confirmed,
+        })
+      }
     >
       {body}
       <button className="secondary" type="button" onClick={edit}>
@@ -1006,7 +1279,12 @@ function Payroll({ data, refresh }: { data: CommissionOverview; refresh: () => P
           await refresh();
         }}
         submit={() =>
-          commissionAction('preparePayroll', { producerId, cutoff, payDate, requestId })
+          commissionAction('preparePayroll', {
+            producerId,
+            cutoff,
+            payDate,
+            requestId,
+          })
         }
       >
         <div className="form-grid">
@@ -1108,7 +1386,12 @@ function BatchCard({
       onDone={refresh}
       button="Record payroll outcome"
       submit={() =>
-        commissionAction(action, { id: b.id, version: b.version, reference, payDate: date })
+        commissionAction(action, {
+          id: b.id,
+          version: b.version,
+          reference,
+          payDate: date,
+        })
       }
     >
       {body}
@@ -1302,8 +1585,18 @@ function LegacyPolicies({
       <div className="form-grid">
         <Field label="Confirmed policy premium ($)" value={premium} change={setPremium} />
         <Field label="Confirmed agency commission (%)" value={agencyRate} change={setAgencyRate} />
-        <Field label="Confirmed effective date" type="date" value={effectiveDate} change={setEffectiveDate} />
-        <Field label="Confirmed expiration date" type="date" value={expirationDate} change={setExpirationDate} />
+        <Field
+          label="Confirmed effective date"
+          type="date"
+          value={effectiveDate}
+          change={setEffectiveDate}
+        />
+        <Field
+          label="Confirmed expiration date"
+          type="date"
+          value={expirationDate}
+          change={setExpirationDate}
+        />
       </div>
       <Field
         label="Historical attribution and policy evidence"

@@ -13,6 +13,9 @@ import {
   integer,
   sum,
   validatePlan,
+  validateCommissionAccount,
+  selectCommissionTerms,
+  type CommissionAccount,
   MONEY_MAX,
   validateAllocationSnapshot,
   COMMISSION_BASES,
@@ -135,9 +138,48 @@ export async function handler(event: Event) {
         store.list<CommissionBatch>('BATCH'),
       ]);
       validateAllocationSnapshot(policies, batches);
-      return { ok: true, plans, carriers, policies, statements, batches };
+      return {
+        ok: true,
+        plans,
+        carriers,
+        policies,
+        statements,
+        batches,
+      };
     }
     const operation = required(args.operation, 'an operation');
+    if (operation === 'getAccountClassification') {
+      const accountId = required(input.id, 'an account');
+      const account = await new AccountAccess(
+        event.identity,
+        undefined,
+        event.request,
+      ).requireRecord('Account', accountId);
+      const classification = await store.get<CommissionAccount>('ACCOUNT', accountId);
+      return {
+        ok: true,
+        classification: classification ?? null,
+        accountName: String(account.name),
+      };
+    }
+    if (operation === 'saveAccountClassification') {
+      const accountId = required(input.id, 'an account');
+      const account = await new AccountAccess(
+        event.identity,
+        undefined,
+        event.request,
+      ).requireRecord('Account', accountId);
+      const old = await store.get<CommissionAccount>('ACCOUNT', accountId);
+      currentVersion(input, old);
+      const classification = validateCommissionAccount({
+        id: accountId,
+        version: Number(input.version),
+        name: String(account.name),
+        periods: input.periods as CommissionAccount['periods'],
+      });
+      await store.commit([change('ACCOUNT', classification, old)], actor);
+      return { ok: true };
+    }
     if (operation === 'savePlan') {
       const producerId = required(input.producerId, 'a producer', 128);
       const access = new AccountAccess(event.identity, undefined, event.request);
@@ -201,11 +243,13 @@ export async function handler(event: Event) {
       if (!plan || !carrierTerms)
         throw new Error('Configure the original producer agreement and carrier terms first.');
       const rateDate = input.transaction === 'RENEWAL' ? effectiveDate : boundOn;
-      const term = plan.terms.find((t) => t.from <= rateDate && (!t.to || t.to >= rateDate));
-      if (!term)
-        throw new Error(
-          'The agreement history does not cover this policy’s original commission date.',
-        );
+      const commissionAccount = await store.get<CommissionAccount>('ACCOUNT', String(account.id));
+      const selectedTerms = selectCommissionTerms(
+        plan,
+        commissionAccount,
+        rateDate,
+        input.transaction as 'NEW' | 'RENEWAL',
+      );
       required(input.evidence, 'evidence of original producer attribution and policy terms');
       if (boundOn > agencyToday())
         throw new Error('A historical bind date cannot be in the future.');
@@ -240,21 +284,22 @@ export async function handler(event: Event) {
         transaction: input.transaction as 'NEW' | 'RENEWAL',
         premiumCents,
         agencyRateUnits,
-        producerBps: input.transaction === 'NEW' ? term.newBps : term.renewalBps,
-        agreement: term.agreement,
+        ...selectedTerms,
         planVersion: plan.version,
         carrierTerms,
         entries: [],
       };
       await store.commit(
-        [change('POLICY', {
-          ...snapshot,
-          migrationEvidence: input.evidence,
-          originalTermDates: {
-            effectiveDate: policy.effectiveDate ?? null,
-            expirationDate: policy.expirationDate ?? null,
-          },
-        })],
+        [
+          change('POLICY', {
+            ...snapshot,
+            migrationEvidence: input.evidence,
+            originalTermDates: {
+              effectiveDate: policy.effectiveDate ?? null,
+              expirationDate: policy.expirationDate ?? null,
+            },
+          }),
+        ],
         actor,
         [
           {
@@ -293,6 +338,15 @@ export async function handler(event: Event) {
               ConditionExpression: '#v = :v',
               ExpressionAttributeNames: { '#v': 'version' },
               ExpressionAttributeValues: { ':v': carrierTerms.version },
+            },
+          },
+          {
+            ConditionCheck: {
+              TableName: store.table(),
+              Key: { kind: 'ACCOUNT', id: account.id },
+              ConditionExpression: '#v = :v',
+              ExpressionAttributeNames: { '#v': 'version' },
+              ExpressionAttributeValues: { ':v': commissionAccount!.version },
             },
           },
         ],
@@ -393,7 +447,12 @@ export async function handler(event: Event) {
       const source = required(input.source, 'the source statement file');
       if (!/^statements\/[a-f0-9-]{36}$/.test(source))
         throw new Error('Attach the original statement.');
-      await s3.send(new HeadObjectCommand({ Bucket: process.env.COMMISSION_BUCKET, Key: source }));
+      await s3.send(
+        new HeadObjectCommand({
+          Bucket: process.env.COMMISSION_BUCKET,
+          Key: source,
+        }),
+      );
       const lines = input.lines as StatementLine[];
       if (!Array.isArray(lines) || !lines.length || lines.length > 20)
         throw new Error('Enter 1–20 statement lines per reconciliation batch.');
@@ -451,9 +510,14 @@ export async function handler(event: Event) {
         throw new Error('Statement lines must equal the verified settlement allocation total.');
       // Validate matching/adjustments now and again against fresh records at posting.
       const policies = new Map(
-        (await store.getMany<CommissionPolicy>(
-          [...new Set(statement.lines.map(line => line.policyId))].map(id => ({ kind: 'POLICY', id })),
-        )).map(policy => [policy.id, policy]),
+        (
+          await store.getMany<CommissionPolicy>(
+            [...new Set(statement.lines.map((line) => line.policyId))].map((id) => ({
+              kind: 'POLICY',
+              id,
+            })),
+          )
+        ).map((policy) => [policy.id, policy]),
       );
       for (const line of statement.lines) {
         const policy = policies.get(line.policyId);

@@ -7,16 +7,22 @@ const h = vi.hoisted(() => ({
   read: vi.fn(),
   action: vi.fn(),
   policies: vi.fn(),
+  communications: vi.fn(),
 }));
 vi.mock('../lib/auth', () => ({ useIsOwner: () => h.owner }));
-vi.mock('../lib/commissions', () => ({ readCommissions: h.read, commissionAction: h.action }));
+vi.mock('../lib/commissions', () => ({
+  readCommissions: h.read,
+  commissionAction: h.action,
+}));
 vi.mock('../lib/client', () => ({
   client: { models: { Policy: { list: h.policies } } },
   listAllPages: async () => [],
   fmtMoney: (n: number) => `$${n.toFixed(2)}`,
   friendlyError: (e: Error) => e.message,
 }));
-vi.mock('../lib/communications', () => ({ communicationRequest: async () => ({ team: [] }) }));
+vi.mock('../lib/communications', () => ({
+  communicationRequest: h.communications,
+}));
 vi.mock('../components/ReportDownload', () => ({ ReportDownload: () => null }));
 import Commissions from './Commissions';
 const snapshot = () => ({
@@ -29,8 +35,12 @@ const snapshot = () => ({
 beforeEach(() => {
   vi.resetAllMocks();
   h.owner = false;
+  h.communications.mockResolvedValue({
+    team: [{ userId: 'producer', name: 'Brian Cole' }],
+    items: [{ id: 'a', name: 'Cedar HOA' }],
+  });
   h.read.mockResolvedValue(snapshot());
-  h.action.mockResolvedValue({ ok: true });
+  h.action.mockResolvedValue({ ok: true, classification: null, accountName: 'Cedar HOA' });
 });
 it('shows producer earnings without any reconciliation or payroll controls', async () => {
   render(<Commissions />);
@@ -113,7 +123,10 @@ it('searches historical policies in filtered pages and follows empty continuatio
   });
   fireEvent.click(next);
   await screen.findByRole('option', { name: /OLD-1/ });
-  expect(h.policies.mock.calls[1][0]).toMatchObject({ limit: 25, nextToken: 'page-2' });
+  expect(h.policies.mock.calls[1][0]).toMatchObject({
+    limit: 25,
+    nextToken: 'page-2',
+  });
   expect(h.policies).toHaveBeenCalledTimes(2);
 });
 
@@ -121,7 +134,10 @@ it('retries a failed historical search with the same text without leaving the pa
   h.owner = true;
   h.policies
     .mockRejectedValueOnce(new Error('Search temporarily unavailable'))
-    .mockResolvedValueOnce({ data: [{ id: 'legacy', policyNumber: 'OLD-1' }], nextToken: null });
+    .mockResolvedValueOnce({
+      data: [{ id: 'legacy', policyNumber: 'OLD-1' }],
+      nextToken: null,
+    });
   render(<Commissions />);
   await screen.findByText('Producer earned');
   fireEvent.click(screen.getByRole('tab', { name: 'Agreements & carriers' }));
@@ -139,18 +155,183 @@ it('retries a failed historical search with the same text without leaving the pa
 
 it('lets the Owner confirm missing historical dates before adopting a policy', async () => {
   h.owner = true;
-  h.read.mockResolvedValue({...snapshot(), plans: [{id: 'producer', producerId: 'producer', name: 'Avery', terms: []}]});
-  h.policies.mockResolvedValue({data: [{id: 'legacy', policyNumber: 'OLD-1', effectiveDate: null, expirationDate: null}], nextToken: null});
+  h.read.mockResolvedValue({
+    ...snapshot(),
+    plans: [{ id: 'producer', producerId: 'producer', name: 'Avery', terms: [] }],
+  });
+  h.policies.mockResolvedValue({
+    data: [
+      {
+        id: 'legacy',
+        policyNumber: 'OLD-1',
+        effectiveDate: null,
+        expirationDate: null,
+      },
+    ],
+    nextToken: null,
+  });
   render(<Commissions />);
   await screen.findByText('Producer earned');
-  fireEvent.click(screen.getByRole('tab', {name: 'Agreements & carriers'}));
-  fireEvent.change(await screen.findByLabelText('Find historical policy number'), {target: {value: 'OLD'}});
-  fireEvent.click(screen.getByRole('button', {name: 'Search historical policies'}));
-  await screen.findByRole('option', {name: /OLD-1/});
-  fireEvent.change(screen.getByLabelText('Existing policy'), {target: {value: 'legacy'}});
-  for (const [label, value] of [['Original producer', 'producer'], ['Original bind date', '2026-01-01'], ['Original transaction', 'NEW'], ['Confirmed policy premium ($)', '1000'], ['Confirmed agency commission (%)', '12'], ['Confirmed effective date', '2026-01-01'], ['Confirmed expiration date', '2027-01-01'], ['Historical attribution and policy evidence', 'Original binder']]) {
-    fireEvent.change(screen.getByLabelText(label), {target: {value}});
+  fireEvent.click(screen.getByRole('tab', { name: 'Agreements & carriers' }));
+  fireEvent.change(await screen.findByLabelText('Find historical policy number'), {
+    target: { value: 'OLD' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Search historical policies' }));
+  await screen.findByRole('option', { name: /OLD-1/ });
+  fireEvent.change(screen.getByLabelText('Existing policy'), {
+    target: { value: 'legacy' },
+  });
+  for (const [label, value] of [
+    ['Original producer', 'producer'],
+    ['Original bind date', '2026-01-01'],
+    ['Original transaction', 'NEW'],
+    ['Confirmed policy premium ($)', '1000'],
+    ['Confirmed agency commission (%)', '12'],
+    ['Confirmed effective date', '2026-01-01'],
+    ['Confirmed expiration date', '2027-01-01'],
+    ['Historical attribution and policy evidence', 'Original binder'],
+  ]) {
+    fireEvent.change(screen.getByLabelText(label), { target: { value } });
   }
-  fireEvent.click(screen.getByRole('button', {name: 'Save'}));
-  await waitFor(() => expect(h.action).toHaveBeenCalledWith('adoptPolicy', expect.objectContaining({policyId: 'legacy', effectiveDate: '2026-01-01', expirationDate: '2027-01-01'})));
+  fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+  await waitFor(() =>
+    expect(h.action).toHaveBeenCalledWith(
+      'adoptPolicy',
+      expect.objectContaining({
+        policyId: 'legacy',
+        effectiveDate: '2026-01-01',
+        expirationDate: '2027-01-01',
+      }),
+    ),
+  );
+});
+
+it('requires explicit GIM rates and sends both standard and GIM agreement schedules', async () => {
+  h.owner = true;
+  render(<Commissions />);
+  await screen.findByText('Producer earned');
+  fireEvent.click(screen.getByRole('tab', { name: 'Agreements & carriers' }));
+  fireEvent.change(await screen.findByLabelText('Producer'), {
+    target: { value: 'producer' },
+  });
+  expect(screen.getByText(/GIM terms pending/)).toBeVisible();
+  fireEvent.change(screen.getByLabelText('Effective from 1'), {
+    target: { value: '2026-01-01' },
+  });
+  fireEvent.change(screen.getByLabelText('New business % 1'), {
+    target: { value: '20' },
+  });
+  fireEvent.change(screen.getByLabelText('Renewal % 1'), {
+    target: { value: '10' },
+  });
+  fireEvent.change(screen.getByLabelText('Agreement reference 1'), {
+    target: { value: 'Signed standard plan' },
+  });
+  fireEvent.click(screen.getByLabelText('Configure GIM rates for period 1'));
+  expect(screen.getByLabelText('GIM new business % 1')).toBeRequired();
+  expect(screen.getByLabelText('GIM new business % 1')).toHaveValue('');
+  fireEvent.change(screen.getByLabelText('GIM new business % 1'), {
+    target: { value: '5' },
+  });
+  fireEvent.change(screen.getByLabelText('GIM renewal % 1'), {
+    target: { value: '0' },
+  });
+  fireEvent.change(screen.getByLabelText('GIM agreement reference 1'), {
+    target: { value: 'GIM signed addendum' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Save producer agreement' }));
+  await waitFor(() =>
+    expect(h.action).toHaveBeenCalledWith('savePlan', {
+      producerId: 'producer',
+      name: 'Brian Cole',
+      version: 0,
+      terms: [
+        {
+          from: '2026-01-01',
+          newBps: 2000,
+          renewalBps: 1000,
+          agreement: 'Signed standard plan',
+          gim: { newBps: 500, renewalBps: 0, agreement: 'GIM signed addendum' },
+        },
+      ],
+    }),
+  );
+});
+it('searches and classifies a GIM account with dates and evidence and clears controls on role switch', async () => {
+  h.owner = true;
+  const view = render(<Commissions />);
+  await screen.findByText('Producer earned');
+  fireEvent.click(screen.getByRole('tab', { name: 'Agreements & carriers' }));
+  fireEvent.change(await screen.findByRole('textbox', { name: /Find insured account/ }), {
+    target: { value: 'Cedar' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Search accounts' }));
+  await screen.findByRole('option', { name: 'Cedar HOA' });
+  fireEvent.change(screen.getByLabelText('Insured account', { selector: 'select' }), {
+    target: { value: 'a' },
+  });
+  expect(await screen.findByLabelText('Account classification 1')).toHaveValue('');
+  fireEvent.change(screen.getByLabelText('Classification effective from 1'), {
+    target: { value: '2026-01-01' },
+  });
+  fireEvent.change(screen.getByLabelText('Account classification 1'), {
+    target: { value: 'GIM' },
+  });
+  fireEvent.change(screen.getByLabelText('Classification reference 1'), {
+    target: { value: 'GIM management agreement' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Save classification' }));
+  await waitFor(() =>
+    expect(h.action).toHaveBeenCalledWith('saveAccountClassification', {
+      id: 'a',
+      version: 0,
+      periods: [
+        {
+          from: '2026-01-01',
+          classification: 'GIM',
+          evidence: 'GIM management agreement',
+        },
+      ],
+    }),
+  );
+  h.owner = false;
+  view.rerender(<Commissions />);
+  expect(screen.queryByLabelText('Account classification 1')).toBeNull();
+  expect(screen.queryByText('GIM management agreement')).toBeNull();
+});
+
+it('does not offer an empty classification editor after a failed read and reloads saved terms on retry', async () => {
+  h.owner = true;
+  h.action.mockRejectedValueOnce(new Error('Classification unavailable')).mockResolvedValue({
+    classification: {
+      id: 'a',
+      version: 4,
+      name: 'Cedar HOA',
+      periods: [{ from: '2026-01-01', classification: 'GIM', evidence: 'Existing GIM evidence' }],
+    },
+    accountName: 'Cedar HOA',
+  });
+  render(<Commissions />);
+  await screen.findByText('Producer earned');
+  fireEvent.click(screen.getByRole('tab', { name: 'Agreements & carriers' }));
+  fireEvent.change(await screen.findByRole('textbox', { name: /Find insured account/ }), {
+    target: { value: 'Cedar' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Search accounts' }));
+  await screen.findByRole('option', { name: 'Cedar HOA' });
+  fireEvent.change(screen.getByLabelText('Insured account', { selector: 'select' }), {
+    target: { value: 'a' },
+  });
+  await screen.findByText('Classification unavailable');
+  expect(screen.queryByRole('button', { name: 'Save classification' })).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Retry account classification' }));
+  expect(await screen.findByLabelText('Account classification 1')).toHaveValue('GIM');
+  expect(screen.getByLabelText('Classification reference 1')).toHaveValue('Existing GIM evidence');
+  fireEvent.click(screen.getByRole('button', { name: 'Save classification' }));
+  await waitFor(() =>
+    expect(h.action).toHaveBeenCalledWith(
+      'saveAccountClassification',
+      expect.objectContaining({ id: 'a', version: 4 }),
+    ),
+  );
 });

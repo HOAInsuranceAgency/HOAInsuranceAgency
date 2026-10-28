@@ -55,3 +55,16 @@ export const line = (overrides: Partial<StatementLine> = {}): StatementLine => (
   eligibilityNote: 'License, signed plan, in-force policy and deposit reviewed',
   ...overrides,
 });
+
+export const commissionAccount = () => ({
+  id: 'a',
+  name: 'Cedar HOA',
+  version: 2,
+  periods: [
+    {
+      from: '2020-01-01',
+      classification: 'STANDARD' as const,
+      evidence: 'Owner reviewed account source',
+    },
+  ],
+});
