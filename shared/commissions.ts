@@ -134,7 +134,6 @@ export interface CommissionBatch {
 }
 export interface CommissionOverview {
   plans: CommissionPlan[];
-  accounts?: CommissionAccount[];
   carriers: CarrierCommissionTerms[];
   policies: CommissionPolicy[];
   statements: CommissionStatement[];

@@ -403,7 +403,7 @@ function Settings({ data, refresh }: { data: CommissionOverview; refresh: () => 
           refresh={refresh}
         />
       )}
-      <AccountClassifications accounts={data.accounts ?? []} refresh={refresh} />
+      <AccountClassifications />
       <LegacyPolicies data={data} refresh={refresh} />
     </>
   );
@@ -596,15 +596,8 @@ function PlanEditor({
     </ActionForm>
   );
 }
-function AccountClassifications({
-  accounts,
-  refresh,
-}: {
-  accounts: CommissionAccount[];
-  refresh: () => Promise<void>;
-}) {
+function AccountClassifications() {
   const [accountId, setAccountId] = useState('');
-  const account = accounts.find((a) => a.id === accountId);
   return (
     <section>
       <h2>Account commission classification</h2>
@@ -613,38 +606,49 @@ function AccountClassifications({
         or GIM before binding. Classification is an Owner decision; changing a management
         relationship does not change commission terms.
       </p>
-      {!!accounts.length && (
-        <label className="field">
-          Configured account
-          <select value={accountId} onChange={(e) => setAccountId(e.target.value)}>
-            <option value="">Choose a configured account…</option>
-            {accounts.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.name}
-              </option>
-            ))}
-            {accountId && !account && <option value={accountId}>Selected account</option>}
-          </select>
-        </label>
-      )}
       <AccountPicker value={accountId} onChange={setAccountId} disabled={false} />
-      {accountId && (
-        <AccountClassificationEditor
-          key={`${accountId}:${account?.version ?? 0}`}
-          id={accountId}
-          account={account}
-          refresh={refresh}
-        />
-      )}
+      {accountId && <AccountClassificationResource key={accountId} id={accountId} />}
     </section>
+  );
+}
+function AccountClassificationResource({ id }: { id: string }) {
+  const resource = useAsyncResource(
+    () =>
+      commissionAction<{ classification: CommissionAccount | null; accountName: string }>(
+        'getAccountClassification',
+        { id },
+      ),
+    [id],
+    { clearDataOnError: () => true },
+  );
+  if (resource.error)
+    return (
+      <div role="alert">
+        <p>{resource.error}</p>
+        <button type="button" className="secondary" onClick={() => void resource.refetch()}>
+          Retry account classification
+        </button>
+      </div>
+    );
+  if (!resource.data || resource.loading) return <p>Loading account classification…</p>;
+  return (
+    <AccountClassificationEditor
+      key={`${id}:${resource.data.classification?.version ?? 0}`}
+      id={id}
+      name={resource.data.accountName}
+      account={resource.data.classification ?? undefined}
+      refresh={resource.refetch}
+    />
   );
 }
 function AccountClassificationEditor({
   id,
+  name,
   account,
   refresh,
 }: {
   id: string;
+  name: string;
   account?: CommissionAccount;
   refresh: () => Promise<void>;
 }) {
@@ -660,7 +664,7 @@ function AccountClassificationEditor({
   );
   return (
     <ActionForm
-      title={`${account?.name ?? 'Selected account'} · commission classification`}
+      title={`${name} · commission classification`}
       button="Save classification"
       onDone={refresh}
       submit={() =>

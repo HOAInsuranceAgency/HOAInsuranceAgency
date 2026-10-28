@@ -130,13 +130,12 @@ export async function handler(event: Event) {
           batches: rows.filter((r) => r && r.producerId === actor && 'payDate' in r),
         };
       }
-      const [plans, carriers, policies, statements, batches, accounts] = await Promise.all([
+      const [plans, carriers, policies, statements, batches] = await Promise.all([
         store.list<CommissionPlan>('PLAN'),
         store.list<CarrierCommissionTerms>('CARRIER'),
         store.list<CommissionPolicy>('POLICY'),
         store.list<CommissionStatement>('STATEMENT'),
         store.list<CommissionBatch>('BATCH'),
-        store.list<CommissionAccount>('ACCOUNT'),
       ]);
       validateAllocationSnapshot(policies, batches);
       return {
@@ -146,10 +145,23 @@ export async function handler(event: Event) {
         policies,
         statements,
         batches,
-        accounts,
       };
     }
     const operation = required(args.operation, 'an operation');
+    if (operation === 'getAccountClassification') {
+      const accountId = required(input.id, 'an account');
+      const account = await new AccountAccess(
+        event.identity,
+        undefined,
+        event.request,
+      ).requireRecord('Account', accountId);
+      const classification = await store.get<CommissionAccount>('ACCOUNT', accountId);
+      return {
+        ok: true,
+        classification: classification ?? null,
+        accountName: String(account.name),
+      };
+    }
     if (operation === 'saveAccountClassification') {
       const accountId = required(input.id, 'an account');
       const account = await new AccountAccess(
