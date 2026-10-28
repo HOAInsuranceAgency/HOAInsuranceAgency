@@ -48,6 +48,7 @@ export function installAccountAccess(backend: typeof Backend, communicationTable
       if (added) { resource.addPropertyOverride("globalSecondaryIndexes", all); resource.addPropertyOverride("attributeDefinitions", definitions); }
     }
   }
+  backend.commissions.addEnvironment("COMMISSION_POLICY_ACCOUNT_INDEX", indexes["Policy.accountId"]);
   // Lead deletion checks must query the account partition, rather than mistake
   // an empty filtered scan page's continuation token for a related record.
   const deletionIndexes = ["Policy", "Invoice"].map(model => {
