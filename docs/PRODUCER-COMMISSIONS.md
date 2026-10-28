@@ -27,21 +27,43 @@ Private statement uploads are immutable and download links last sixty seconds.
 1. In **Agreements & carriers**, choose a teammate and enter dated new-business
    and renewal rates and an agreement reference. Periods cannot overlap; explicit
    zero is permitted. Salary remains in the existing owner pay settings.
-2. Configure each carrier's written/earned/collected-premium basis, remittance
+2. For each producer period, optionally enable **GIM Property Management** rates
+   and enter both percentages plus the GIM agreement reference. An unchecked GIM
+   section means terms are pending, never standard-rate fallback. Explicit zero
+   is allowed; blank is not zero. Both schedules use the period's dates; add a
+   new period when either schedule changes.
+3. In **Account commission classification**, search for the insured account.
+   Only the selected classification is loaded; a failed read offers a retry,
+   never an empty replacement form. Record dated **Standard** or **GIM Property
+   Management · house account** periods and the source/reference supporting the
+   decision. GIM is the only house-account program. Every account needs an
+   explicit Owner classification before binding. Dates are inclusive; gaps and
+   overlapping periods cannot silently pick a rate. A relationship or account
+   name alone never determines compensation. When GIM management changes, the
+   Owner must update classification periods before the next bind/renewal.
+4. Configure each carrier's written/earned/collected-premium basis, remittance
    schedule, and contract reference. These forecast timing; they do not generate
    payable earnings.
-3. At bind, confirm the exact commissionable policy premium and agency percentage.
+5. At bind, confirm the exact commissionable policy premium and agency percentage.
    These must match the accepted quote. Edit the quote first if necessary and
    obtain renewed client authorization when client-facing terms change.
-4. The server atomically saves the policy, private commission snapshot, bound quote
+6. The server atomically saves the policy, private commission snapshot, bound quote
    status, and lead conversion. Retries return the same policy. Direct model
    creation and direct transitions to BOUND cannot bypass the workflow.
 
 The assigned producer at bind receives the snapshot. New business selects the
 agreement by bind date in America/New_York; renewals select it by effective date.
 Renewals require the existing renewal-policy link. Missing agreements or carrier
-terms block a new bind with an actionable message. Direct financial changes to
-bound policies are rejected; unchanged values can accompany normal service edits.
+terms, missing account classification on the commission date, or missing GIM
+rates for a GIM account block a new bind with an actionable message. Historical
+adoption uses the same selector on the original commission date. Policy snapshots
+freeze the classification period/reference/version and selected agreement/rate.
+The transaction checks classification and agreement versions against concurrent
+Owner edits. Existing snapshots are never recalculated; older snapshots remain
+valid and display “Legacy snapshot” in the Owner ledger. No business rates,
+classification dates, or GIM membership are seeded by this release. There is no
+schema migration; classifications use the existing private, audited ledger.
+Direct financial changes to bound policies are rejected; unchanged values can accompany normal service edits.
 The Owner can update the carrier policy number from the commission ledger. The
 regular policy editor directs tracked-policy corrections there; the server rejects
 direct number changes that would leave the commission snapshot out of sync.
@@ -173,3 +195,36 @@ checks passed. Focused bind/service tests also passed after the final retry guar
 The existing frontend bundle-size advisory remains. The Owner reconciliation and
 Producer statement views were visually checked using fictional data. No live
 carrier receipt, payroll payment, recovery, or cloud deployment was performed.
+
+## Account-first-bind eligibility cutoff
+
+A producer agreement may set an inclusive **Account first-bind cutoff** and an
+independent **Agency receipt eligibility begins** date. An account originally
+bound before the cutoff earns zero producer commission on new business and all
+later renewals, regardless of its current Standard/GIM classification. This does
+not block placing coverage or recording agency receipts: record receipts on an
+excluded account as ineligible. The server rejects an attempt to mark them
+eligible at both draft validation and posting. Adjustments retain the original
+receipt's producer amount. Existing snapshots are not recalculated.
+
+In account classification, the Owner confirms either the original first bind
+date (including history outside this CRM) with supporting evidence, or that the
+account has never been bound with this agency. Missing history blocks a bind
+under a cutoff agreement. A new account's first successful bind records the
+agency-local date in the private account record in the same version-guarded
+transaction as its policy. It cannot subsequently be reset to never bound, cleared, or moved forward.
+An earlier correction requires supporting evidence; moving a date forward needs
+a separately reviewed data correction, not ordinary classification editing.
+Existing policy history prevents treating an older account as new; a confirmed
+date later than a known policy's bind is rejected. Historical adoption also
+requires confirmed first-bind history and checks known policy dates. Pre-cutoff
+historical policies can use the cutoff agreement to record explicit zero
+entitlement while still tracking agency receipts. Snapshot eligibility includes
+the original first-bind date, cutoff, and outcome; later changes do not change it.
+
+For Brian Cole, Jake confirmed on October 28, 2026: agreement and receipt
+eligibility begin October 1, 2026; Standard rates are 20% new / 10% renewal; GIM
+rates are 10% new / 5% renewal; accounts originally bound before October 1 remain
+excluded from commissions on all later renewals. October 1 itself is eligible.
+These are configuration requirements, not seeded global defaults. Other
+producers' agreements remain independently configurable.
