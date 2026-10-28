@@ -4,7 +4,7 @@ vi.mock('@aws-sdk/lib-dynamodb', async (original) => ({
   ...(await original<typeof import('@aws-sdk/lib-dynamodb')>()),
   DynamoDBDocumentClient: { from: () => ({ send: h.send }) },
 }));
-import { commit, list } from '../../amplify/functions/commissions/store';
+import { commit, list, getMany } from '../../amplify/functions/commissions/store';
 beforeEach(() => {
   vi.resetAllMocks();
   vi.stubEnv('COMMISSION_TABLE', 'private');
@@ -53,5 +53,39 @@ it('uses only the authenticated producer partition for self-service discovery', 
     IndexName: 'producer',
     ExpressionAttributeNames: { '#key': 'producerId' },
     ExpressionAttributeValues: { ':value': 'producer-id' },
+  });
+});
+
+it('loads authoritative records in batches of 100 and retries only unprocessed keys', async () => {
+  const refs = Array.from({ length: 101 }, (_, i) => ({ kind: 'POLICY', id: String(i) }));
+  h.send
+    .mockResolvedValueOnce({
+      Responses: { private: refs.slice(0, 99) },
+      UnprocessedKeys: { private: { Keys: [refs[99]] } },
+    })
+    .mockResolvedValueOnce({ Responses: { private: [refs[99]] } })
+    .mockResolvedValueOnce({ Responses: { private: [refs[100]] } });
+  expect(await getMany(refs)).toEqual(refs);
+  expect(
+    h.send.mock.calls.map(([command]) => command.input.RequestItems.private.Keys.length),
+  ).toEqual([100, 1, 1]);
+  for (const [command] of h.send.mock.calls) {
+    expect(command.constructor.name).toBe('BatchGetCommand');
+    expect(command.input.RequestItems.private.ConsistentRead).toBe(true);
+  }
+});
+it('fails a throttled batch without returning partial commission totals', async () => {
+  const refs = [{ kind: 'POLICY', id: 'p' }];
+  h.send.mockResolvedValue({ UnprocessedKeys: { private: { Keys: refs } } });
+  await expect(getMany(refs)).rejects.toThrow(/completely loaded/);
+  expect(h.send).toHaveBeenCalledTimes(5);
+});
+it('filters payroll discovery by producer and record kind in DynamoDB', async () => {
+  h.send.mockResolvedValue({ Items: [] });
+  await list('producer', true, 'POLICY');
+  expect(h.send.mock.calls[0][0].input).toMatchObject({
+    IndexName: 'producer',
+    FilterExpression: '#kind = :kind',
+    ExpressionAttributeValues: { ':value': 'producer', ':kind': 'POLICY' },
   });
 });

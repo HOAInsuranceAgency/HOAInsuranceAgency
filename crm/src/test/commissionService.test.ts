@@ -3,6 +3,7 @@ import { commissionPolicy, line, statement } from './commissionFixtures';
 import { appendEntry, type CommissionPolicy } from '../../../shared/commissions';
 const h = vi.hoisted(() => ({
   get: vi.fn(),
+  getMany: vi.fn(),
   list: vi.fn(),
   commit: vi.fn(),
   session: vi.fn(),
@@ -12,12 +13,15 @@ const h = vi.hoisted(() => ({
 }));
 vi.mock('../../amplify/functions/commissions/store', () => ({
   get: h.get,
+  getMany: h.getMany,
   list: h.list,
   commit: h.commit,
   table: () => 'private-ledger',
 }));
 vi.mock('../../amplify/functions/commissions/bind', () => ({ bindPolicy: h.bind }));
-vi.mock('../../amplify/functions/crm-access/user-status', () => ({ assertUserSession: h.session }));
+vi.mock('../../amplify/functions/crm-access/user-status', () => ({
+  assertUserSession: h.session,
+}));
 vi.mock('../../amplify/functions/crm-access/access', () => ({
   tableName: (model: string) => model,
   AccountAccess: class {
@@ -57,11 +61,17 @@ beforeEach(() => {
   h.s3.mockResolvedValue({});
   h.session.mockResolvedValue(undefined);
   h.get.mockImplementation(async (k, id) => structuredClone(records.get(`${k}:${id}`)));
-  h.list.mockImplementation(async (k, producer) =>
+  h.getMany.mockImplementation(async (refs: { kind: string; id: string }[]) =>
+    structuredClone(refs.map((r) => records.get(`${r.kind}:${r.id}`)).filter(Boolean)),
+  );
+  h.list.mockImplementation(async (k, producer, recordKind) =>
     structuredClone(
       [...records.entries()]
         .filter(([key, v]) =>
-          producer ? (v as { producerId?: string }).producerId === k : key.startsWith(`${k}:`),
+          producer
+            ? (v as { producerId?: string }).producerId === k &&
+              (!recordKind || key.startsWith(`${recordKind}:`))
+            : key.startsWith(`${k}:`),
         )
         .map(([key, v]) => ({ ...(v as object), kind: key.split(':')[0] })),
     ),
@@ -306,4 +316,40 @@ it('retains carrier-reported comparison values and refuses an unbalanced settlem
     ),
   ).toMatchObject({ ok: false, error: expect.stringMatching(/must equal/) });
   expect(h.commit).not.toHaveBeenCalled();
+});
+
+it('prepares payroll from only the selected producer partition with fresh batched records', async () => {
+  const own = appendEntry(commissionPolicy(), line(), statement(), 'e');
+  records.set('POLICY:p', own);
+  records.set('POLICY:other', { ...own, id: 'other', producerId: 'someone-else' });
+  records.set('PLAN:producer', { id: 'producer', producerId: 'producer' });
+  expect(
+    await handler(
+      request('preparePayroll', {
+        producerId: 'producer',
+        cutoff: '2026-10-01',
+        payDate: '2026-10-15',
+        requestId: 'batch',
+      }),
+    ),
+  ).toEqual({ ok: true });
+  expect(h.list).toHaveBeenCalledExactlyOnceWith('producer', true, 'POLICY');
+  expect(h.getMany).toHaveBeenCalledExactlyOnceWith([{ kind: 'POLICY', id: 'p' }]);
+  expect(records.get('BATCH:batch')).toMatchObject({ lines: [{ policyId: 'p' }] });
+});
+it('updates shared and private policy numbers in the same version-guarded transaction', async () => {
+  records.set('POLICY:p', commissionPolicy());
+  h.sources.set('Policy:p', { id: 'p', updatedAt: 'old', commissionSnapshotId: 'p' });
+  expect(
+    await handler(
+      request('updatePolicyNumber', { id: 'p', version: 1, policyNumber: 'CORRECT-1' }),
+    ),
+  ).toEqual({ ok: true });
+  expect(records.get('POLICY:p')).toMatchObject({ policyNumber: 'CORRECT-1' });
+  expect(h.commit.mock.calls[0][2][0].Update).toMatchObject({
+    TableName: 'Policy',
+    Key: { id: 'p' },
+    ConditionExpression: 'updatedAt = :old',
+    ExpressionAttributeValues: { ':number': 'CORRECT-1', ':old': 'old' },
+  });
 });

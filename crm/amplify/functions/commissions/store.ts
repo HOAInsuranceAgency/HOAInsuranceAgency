@@ -1,8 +1,10 @@
 import { randomUUID } from 'node:crypto';
+import { setTimeout } from 'node:timers/promises';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import {
   DynamoDBDocumentClient,
   GetCommand,
+  BatchGetCommand,
   QueryCommand,
   TransactWriteCommand,
   type TransactWriteCommandInput,
@@ -26,7 +28,36 @@ export async function get<T>(kind: string, id: string): Promise<T | undefined> {
     await db.send(new GetCommand({ TableName: table(), Key: { kind, id }, ConsistentRead: true }))
   ).Item as T | undefined;
 }
-export async function list<T>(kind: string, producer = false): Promise<T[]> {
+/** Consistent, bounded batches; never return partial financial records on throttling. */
+export async function getMany<T>(refs: { kind: string; id: string }[]): Promise<T[]> {
+  const keys = [
+    ...new Map(
+      refs.map((r) => [JSON.stringify([r.kind, r.id]), { kind: r.kind, id: r.id }]),
+    ).values(),
+  ];
+  if (keys.length > 5000) throw new Error('Too many commission records for one request.');
+  const name = table(),
+    rows: T[] = [];
+  for (let start = 0; start < keys.length; start += 100) {
+    let pending: Data[] = keys.slice(start, start + 100);
+    for (let attempt = 0; pending.length && attempt < 5; attempt++) {
+      if (attempt) await setTimeout(25 * 2 ** (attempt - 1));
+      const response = await db.send(
+        new BatchGetCommand({
+          RequestItems: { [name]: { Keys: pending, ConsistentRead: true } },
+        }),
+      );
+      rows.push(...((response.Responses?.[name] as T[]) ?? []));
+      pending = response.UnprocessedKeys?.[name]?.Keys ?? [];
+    }
+    if (pending.length)
+      throw new Error(
+        'Commission records could not be completely loaded. Retry before proceeding.',
+      );
+  }
+  return rows;
+}
+export async function list<T>(kind: string, producer = false, recordKind?: string): Promise<T[]> {
   let cursor: Data | undefined;
   const result: T[] = [],
     seen = new Set<string>();
@@ -36,8 +67,15 @@ export async function list<T>(kind: string, producer = false): Promise<T[]> {
         TableName: table(),
         ...(producer ? { IndexName: 'producer' } : { ConsistentRead: true }),
         KeyConditionExpression: '#key = :value',
-        ExpressionAttributeNames: { '#key': producer ? 'producerId' : 'kind' },
-        ExpressionAttributeValues: { ':value': kind },
+        ExpressionAttributeNames: {
+          '#key': producer ? 'producerId' : 'kind',
+          ...(recordKind ? { '#kind': 'kind' } : {}),
+        },
+        ExpressionAttributeValues: {
+          ':value': kind,
+          ...(recordKind ? { ':kind': recordKind } : {}),
+        },
+        ...(recordKind ? { FilterExpression: '#kind = :kind' } : {}),
         ExclusiveStartKey: cursor,
         Limit: 100,
       }),

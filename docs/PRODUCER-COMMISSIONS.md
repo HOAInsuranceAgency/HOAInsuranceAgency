@@ -42,7 +42,10 @@ agreement by bind date in America/New_York; renewals select it by effective date
 Renewals require the existing renewal-policy link. Missing agreements or carrier
 terms block a new bind with an actionable message. Direct financial changes to
 bound policies are rejected; unchanged values can accompany normal service edits.
-The Owner can update the carrier policy number from the commission ledger.
+The Owner can update the carrier policy number from the commission ledger. The
+regular policy editor directs tracked-policy corrections there; the server rejects
+direct number changes that would leave the commission snapshot out of sync.
+Historical policies with missing financial fields still permit ordinary note edits.
 
 Each package policy binds separately and retains its own carrier/rate snapshot.
 There is no additional package-level payable amount. Existing profitability charts
@@ -98,6 +101,11 @@ be cancelled to release its allocations. Duplicate confirmations do not pay an
 entry again. Partial payroll payment tracking is not available in this release;
 use batches that payroll will settle in full.
 
+Payroll discovers policies within the selected producer's index partition and
+loads current records in consistent batches of up to 100. Producer self-service
+uses the same bounded batch reads; a throttled read fails rather than returning
+partial totals.
+
 Reads verify that payment allocations and policy entries agree; a concurrent
 write or incomplete source fails the view rather than showing misleading totals.
 Views are bounded at 5,000 records per category and policy histories at 500 entries;
@@ -128,6 +136,9 @@ salary or wage deduction.
 Owners can add an existing policy using documented original producer attribution,
 original bind date, transaction classification, agreement history, and policy
 premium/rate confirmed in the migration form. Current assignment is not used to guess historical ownership.
+Search by policy number to select an untracked policy. The search sends its filters
+to the backend and reads one page at a time, including continuation through empty
+pages. Add a missing number in the existing policy editor before searching.
 Then reconcile original receipts and previously paid payroll with their actual
 dates/references. Establish a cutover date to avoid paying historical earnings
 again. This is an explicit migration, not an automatic backfill.
@@ -156,7 +167,7 @@ the production components without authentication, CRM requests, or money movemen
 See [the design and draft comparison](specs/producer-commission-process.md) for
 business decisions and the original document differences.
 
-Verification for this implementation: 3,434 tests across 198 files passed; frontend
+Verification for this implementation: 3,448 tests across 198 files passed; frontend
 and backend type checks, the production build, backend synthesis, and whitespace
 checks passed. Focused bind/service tests also passed after the final retry guard.
 The existing frontend bundle-size advisory remains. The Owner reconciliation and

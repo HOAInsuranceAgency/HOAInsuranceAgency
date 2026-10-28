@@ -156,7 +156,7 @@ export default function CoverageForm({
         const { errors } = await client.models.Policy.update({
           id: existing.id,
           ...shared,
-          policyNumber: form.policyNumber.trim() || null,
+          ...(!asPolicy?.commissionSnapshotId ? { policyNumber: form.policyNumber.trim() || null } : {}),
           status: form.status as Policy["status"],
           // Nullable on the way back out: a policy bound before this field
           // existed opens with the box empty, and saving other edits must not
@@ -228,11 +228,14 @@ export default function CoverageForm({
         </div>
         {isPolicy && (
           <div className="field">
-            <label>Policy number</label>
+            <label htmlFor="coverage-policy-number">Policy number</label>
             <input
+              id="coverage-policy-number"
+              disabled={!!asPolicy?.commissionSnapshotId}
               value={form.policyNumber}
               onChange={(e) => setF("policyNumber", e.target.value)}
             />
+            {asPolicy?.commissionSnapshotId && <p className="small muted">The Owner can update this number in <a href="/commissions">Commissions</a> to keep policy and payroll records consistent.</p>}
           </div>
         )}
         {/* The financing-eligibility facts, on quotes and policies alike:

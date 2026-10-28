@@ -782,7 +782,10 @@ function StatementEditor({
                 <select
                   value={l.kind}
                   onChange={(e) =>
-                    update(i, { kind: e.target.value as LineDraft['kind'], originalId: undefined })
+                    update(i, {
+                      kind: e.target.value as LineDraft['kind'],
+                      originalId: undefined,
+                    })
                   }
                 >
                   <option value="RECEIPT">Commission receipt</option>
@@ -1139,9 +1142,26 @@ function LegacyPolicies({
   data: CommissionOverview;
   refresh: () => Promise<void>;
 }) {
+  const [search, setSearch] = useState('');
+  const [query, setQuery] = useState('');
+  const [cursor, setCursor] = useState<string | undefined>();
   const resource = useAsyncResource(
-    () => listAllPages((nextToken) => client.models.Policy.list({ nextToken })),
-    [],
+    async () => {
+      if (!query) return { data: [], nextToken: null };
+      const page = await client.models.Policy.list({
+        filter: {
+          and: [
+            { commissionSnapshotId: { attributeExists: false } },
+            { policyNumber: { contains: query } },
+          ],
+        },
+        limit: 25,
+        nextToken: cursor,
+      });
+      if (page.errors?.length) throw new Error(page.errors[0].message);
+      return page;
+    },
+    [query, cursor],
     { clearDataOnError: () => true },
   );
   const [premium, setPremium] = useState(''),
@@ -1151,15 +1171,7 @@ function LegacyPolicies({
     [boundOn, setBound] = useState(''),
     [transaction, setTransaction] = useState(''),
     [evidence, setEvidence] = useState('');
-  if (!resource.data)
-    return (
-      <p role={resource.error ? 'alert' : undefined}>
-        {resource.error || 'Loading existing policies…'}
-      </p>
-    );
-  const options = resource.data.filter(
-      (p) => !p.commissionSnapshotId && !data.policies.some((s) => s.id === p.id),
-    ),
+  const options = resource.data?.data ?? [],
     selected = options.find((p) => p.id === policyId);
   return (
     <ActionForm
@@ -1185,6 +1197,47 @@ function LegacyPolicies({
         Use documented original ownership and agreement terms. Current account assignment is not
         evidence of historical commission ownership. Import receipts and prior payments separately
         so opening balances reconcile.
+      </p>
+      <label className="field">
+        Find historical policy number
+        <input value={search} onChange={(e) => setSearch(e.target.value)} />
+      </label>
+      <button
+        type="button"
+        className="secondary"
+        disabled={resource.loading || search.trim().length < 2}
+        onClick={() => {
+          setPolicy('');
+          setCursor(undefined);
+          setQuery(search.trim());
+        }}
+      >
+        Search historical policies
+      </button>
+      {resource.error && <p role="alert">{resource.error}</p>}
+      {resource.loading && <p>Loading matching policies…</p>}
+      {query && !resource.loading && !resource.error && !options.length && (
+        <p>
+          No matching policies on this page.
+          {resource.data?.nextToken ? ' Continue to the next page to search more records.' : ''}
+        </p>
+      )}
+      {resource.data?.nextToken && (
+        <button
+          type="button"
+          className="secondary"
+          disabled={resource.loading}
+          onClick={() => {
+            setPolicy('');
+            setCursor(resource.data?.nextToken ?? undefined);
+          }}
+        >
+          Next policies
+        </button>
+      )}
+      <p className="small muted">
+        Search by policy number (at least two characters). Results are paged; only policies without
+        commission tracking are returned. Add a missing policy number in the policy editor first.
       </p>
       <label className="field">
         Existing policy

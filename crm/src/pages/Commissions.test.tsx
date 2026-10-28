@@ -2,15 +2,21 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, expect, it, vi } from 'vitest';
 import { appendEntry } from '../../../shared/commissions';
 import { commissionPolicy, line, statement } from '../test/commissionFixtures';
-const h = vi.hoisted(() => ({ owner: false, read: vi.fn(), action: vi.fn() }));
+const h = vi.hoisted(() => ({
+  owner: false,
+  read: vi.fn(),
+  action: vi.fn(),
+  policies: vi.fn(),
+}));
 vi.mock('../lib/auth', () => ({ useIsOwner: () => h.owner }));
 vi.mock('../lib/commissions', () => ({ readCommissions: h.read, commissionAction: h.action }));
 vi.mock('../lib/client', () => ({
-  client: {},
-  listAllPages: vi.fn(),
+  client: { models: { Policy: { list: h.policies } } },
+  listAllPages: async () => [],
   fmtMoney: (n: number) => `$${n.toFixed(2)}`,
   friendlyError: (e: Error) => e.message,
 }));
+vi.mock('../lib/communications', () => ({ communicationRequest: async () => ({ team: [] }) }));
 vi.mock('../components/ReportDownload', () => ({ ReportDownload: () => null }));
 import Commissions from './Commissions';
 const snapshot = () => ({
@@ -79,4 +85,34 @@ it('clears all financial data after a failed refresh', async () => {
   fireEvent.click(screen.getByRole('button', { name: 'Refresh commissions' }));
   await screen.findByRole('alert');
   expect(screen.queryByText('Producer earned')).toBeNull();
+});
+
+it('searches historical policies in filtered pages and follows empty continuation pages', async () => {
+  h.owner = true;
+  h.policies.mockResolvedValueOnce({ data: [], nextToken: 'page-2' }).mockResolvedValueOnce({
+    data: [{ id: 'legacy', policyNumber: 'OLD-1' }],
+    nextToken: null,
+  });
+  render(<Commissions />);
+  await screen.findByText('Producer earned');
+  fireEvent.click(screen.getByRole('tab', { name: 'Agreements & carriers' }));
+  const search = await screen.findByLabelText('Find historical policy number');
+  expect(h.policies).not.toHaveBeenCalled();
+  fireEvent.change(search, { target: { value: 'OLD' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Search historical policies' }));
+  const next = await screen.findByRole('button', { name: 'Next policies' });
+  expect(h.policies).toHaveBeenCalledExactlyOnceWith({
+    filter: {
+      and: [
+        { commissionSnapshotId: { attributeExists: false } },
+        { policyNumber: { contains: 'OLD' } },
+      ],
+    },
+    limit: 25,
+    nextToken: undefined,
+  });
+  fireEvent.click(next);
+  await screen.findByRole('option', { name: /OLD-1/ });
+  expect(h.policies.mock.calls[1][0]).toMatchObject({ limit: 25, nextToken: 'page-2' });
+  expect(h.policies).toHaveBeenCalledTimes(2);
 });

@@ -84,10 +84,8 @@ export async function handler(event: Event) {
         // Query only this identity, then load authoritative records consistently:
         // GSI lag can delay discovery, but cannot expose old payment/ownership data.
         const refs = await store.list<{ kind: string; id: string }>(actor, true);
-        const rows = await Promise.all(
-          refs
-            .filter((r) => ['POLICY', 'BATCH'].includes(r.kind))
-            .map((r) => store.get<CommissionPolicy | CommissionBatch>(r.kind, r.id)),
+        const rows = await store.getMany<CommissionPolicy | CommissionBatch>(
+          refs.filter((r) => ['POLICY', 'BATCH'].includes(r.kind)),
         );
         const ownPolicies = rows.filter(
           (r): r is CommissionPolicy => !!r && r.producerId === actor && 'entries' in r,
@@ -499,7 +497,12 @@ export async function handler(event: Event) {
       changes.push(
         change(
           'STATEMENT',
-          { ...statement, status: 'POSTED', postedAt: new Date().toISOString(), postedBy: actor },
+          {
+            ...statement,
+            status: 'POSTED',
+            postedAt: new Date().toISOString(),
+            postedBy: actor,
+          },
           statement,
         ),
       );
@@ -522,9 +525,10 @@ export async function handler(event: Event) {
           throw new Error('Payroll request ID was already used.');
         return { ok: true };
       }
-      const policies = (await store.list<CommissionPolicy>('POLICY')).filter(
-        (p) => p.producerId === producerId,
-      );
+      const refs = await store.list<{ id: string }>(producerId, true, 'POLICY');
+      const policies = (
+        await store.getMany<CommissionPolicy>(refs.map((r) => ({ kind: 'POLICY', id: r.id })))
+      ).filter((p) => p.producerId === producerId);
       const changes: store.Change[] = [],
         lines: CommissionBatch['lines'] = [];
       for (const p of policies) {
