@@ -1,8 +1,9 @@
+import { usePagedList } from '../lib/usePagedList';
 import { useMounted } from '../lib/useMounted';
 import { useAgencyDay } from '../lib/useAgencyDay';
 import { useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { client, listAllPages, fmtDate } from '../lib/client';
+import { client, fmtDate, type Contact } from '../lib/client';
 import { loadAccountRelationships, loadPartyIds, type AccountRelationshipRecord } from '../lib/relationships';
 import { useAsyncResource } from '../lib/useAsyncResource';
 import { isAuthorizationError } from '../lib/authorizationError';
@@ -28,17 +29,12 @@ export default function AccountRelationships({
     [notice, setNotice] = useState('');
   const resource = useAsyncResource(
     async () => {
-      const [context, contacts] = await Promise.all([
-        loadAccountRelationships(accountId, historyToken),
-        listAllPages((nextToken) =>
-          client.models.Contact.list({ filter: { accountId: { eq: accountId } }, nextToken }),
-        ),
-      ]);
+      const context = await loadAccountRelationships(accountId, historyToken);
       const parties = await loadPartyIds([
         ...context.relationships.map((r) => r.partyId),
         ...(params.get('partyId') ? [params.get('partyId')!] : []),
       ]);
-      return { ...context, parties, contacts };
+      return { ...context, parties };
     },
     [accountId, historyToken, params.get('partyId')],
     {
@@ -46,13 +42,17 @@ export default function AccountRelationships({
         relationships: [],
         version: 0,
         parties: [],
-        contacts: [],
         nextToken: undefined as string | undefined,
         selfManagedFrom: undefined as string | undefined,
       },
       clearDataOnError: isAuthorizationError,
     },
   );
+  const contactPage = usePagedList<Contact>(async nextToken => {
+    const page = await client.models.Contact.list({ filter: { accountId: { eq: accountId } }, limit: 50, nextToken });
+    if (page.errors?.length) throw new Error(page.errors.map(e => e.message).join('; '));
+    return { items: page.data, nextToken: page.nextToken ?? undefined };
+  }, [accountId]);
   useEffect(() => {
     if (params.get('management') === '1' && resource.loaded && !resource.error && !resource.loading)
       setManagement(true);
@@ -70,6 +70,7 @@ export default function AccountRelationships({
     setEnding(null);
     setNotice('Relationship saved.');
     onChanged();
+    void contactPage.reload();
     if (historyToken) setHistoryToken(undefined);
     else await resource.refetch();
   }
@@ -183,6 +184,11 @@ export default function AccountRelationships({
         <ManagementChangeForm
           accountId={accountId}
           {...resource.data}
+          contacts={contactPage.items}
+          moreContacts={contactPage.nextToken ? () => void contactPage.more() : undefined}
+          contactsLoading={contactPage.loading}
+          contactsError={contactPage.error}
+          retryContacts={() => void contactPage.more()}
           initialPartyId={params.get('partyId') ?? undefined}
           onClose={closeManagement}
           onSaved={() => void saved()}

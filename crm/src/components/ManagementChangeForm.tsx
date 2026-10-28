@@ -15,6 +15,7 @@ export default function ManagementChangeForm({
   relationships,
   parties,
   contacts,
+  moreContacts, contactsLoading, contactsError, retryContacts,
   initialPartyId,
   onClose,
   onSaved,
@@ -24,6 +25,7 @@ export default function ManagementChangeForm({
   relationships: AccountRelationshipRecord[];
   parties: PartyRecord[];
   contacts: Contact[];
+  moreContacts?: () => void; contactsLoading?: boolean; contactsError?: string; retryContacts?: () => void;
   initialPartyId?: string;
   onClose: () => void;
   onSaved: () => void;
@@ -56,7 +58,7 @@ export default function ManagementChangeForm({
     requestId.current = crypto.randomUUID();
   }
   async function save() {
-    if (pending.current || !confirmed) return;
+    if (pending.current || !confirmed || contactsLoading || contactsError) return;
     pending.current = true;
     setBusy(true);
     setError('');
@@ -178,6 +180,9 @@ export default function ManagementChangeForm({
               <p className="muted">No additional current contacts.</p>
             )}
           </div>
+          {contactsLoading && <p className="muted">Loading account contacts…</p>}
+          {contactsError && <p role="alert" className="error-text">{contactsError} <button type="button" className="secondary" onClick={retryContacts}>Retry contacts</button></p>}
+          {moreContacts && <p className="muted small">Additional account contacts are available to review. <button type="button" className="secondary" disabled={contactsLoading} onClick={moreContacts}>Load more account contacts</button></p>}
           <label className="field">
             Handoff note
             <textarea
@@ -220,7 +225,7 @@ export default function ManagementChangeForm({
             I reviewed the effective date and contact handoff.
           </label>
           <div className="form-actions">
-            <button className="primary" type="submit" disabled={!confirmed}>
+            <button className="primary" type="submit" disabled={!confirmed || contactsLoading || !!contactsError}>
               {busy ? 'Saving…' : 'Save management change'}
             </button>
             <button className="secondary" type="button" onClick={onClose}>
