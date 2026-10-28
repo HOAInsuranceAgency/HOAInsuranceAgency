@@ -209,7 +209,9 @@ class AuditTest(unittest.TestCase):
         command, body = created[0]
         self.assertFalse(any(arg == "--draft" or arg.startswith("--draft=") for arg in command))
         self.assertEqual(command[command.index("--base") + 1], "staging")
-        self.assertTrue(command[command.index("--head") + 1].startswith("codex/nightly-audit/"))
+        head = command[command.index("--head") + 1]
+        self.assertTrue(head.startswith("codex/nightly-audit/"))
+        self.assertEqual(pushed[0][-3:], ["push", "origin", f"HEAD:refs/heads/{head}"])
         self.assertIn("Ready for automated and human review.", body)
         self.assertIn("No merge or deployment is authorized.", body)
         self.assertIn("[skip-cd]", audit.git(self.repo, "log", "-1", "--format=%s"))
