@@ -1,4 +1,68 @@
-// Bootstrap interlock: the migration branch cannot deploy before its exact destination is bound.
-if ((process.env.AWS_BRANCH ?? "").startsWith("codex-hoa-")) {
-  throw new Error("HOA migration destination is not yet configured. Production remains unchanged.");
+import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+const targets = JSON.parse(readFileSync(new URL("../amplify/migration-targets.json", import.meta.url), "utf8"));
+const branch = process.env.AWS_BRANCH ?? "";
+const binding = targets.branches[branch];
+if (binding) {
+  const app = process.env.AWS_APP_ID;
+  if (!/^[a-z0-9]+$/.test(targets.crmApp) || !/^[a-z0-9]+$/.test(targets.webApp)
+    || ![targets.crmApp, targets.webApp].includes(app)
+    || process.env.HOA_MIGRATION_AUTH !== "true"
+    || !["true", "false"].includes(process.env.HOA_MIGRATION_PREVIEW ?? "")) {
+    throw new Error("HOA migration deployment is not bound to an approved app and mode.");
+  }
+  const account = execFileSync("aws", ["sts", "get-caller-identity", "--query", "Account", "--output", "text"], { encoding: "utf8" }).trim();
+  if (account !== targets.account || process.env.HOA_DEPLOY_ACCOUNT_ID !== targets.account) {
+    throw new Error("Refusing HOA deployment outside the dedicated destination account.");
+  }
+  if (app === targets.webApp && (!binding.graphqlUrl || process.env.PUBLIC_CRM_API_URL !== binding.graphqlUrl)) {
+    throw new Error("The website must target its verified destination CRM API.");
+  }
+  if (process.env.HOA_MIGRATION_PREVIEW === "true") {
+    const prefix = app === targets.crmApp ? "VITE" : "PUBLIC";
+    if (process.env[`${prefix}_HOA_MIGRATION_PREVIEW`] !== "true") throw new Error("Preview frontend isolation must be explicitly enabled.");
+    if (app === targets.webApp && process.env.PUBLIC_ANALYTICS_DISABLED !== "true") throw new Error("Website preview analytics must be disabled.");
+    for (const key of ["PUBLIC_GOOGLE_PLACES_KEY", "VITE_GOOGLE_PLACES_KEY"]) {
+      if (process.env[key]) throw new Error("Provider credentials must be absent from the migration preview.");
+    }
+  }
+  if (app === targets.crmApp && process.env.HOA_MIGRATION_PREVIEW === "false") {
+    if (process.env.HOA_MIGRATION_STREAM_PHASE !== "armed") throw new Error("Release requires separately armed streams.");
+    let receipt;
+    try { receipt = JSON.parse(process.env.HOA_MIGRATION_RELEASE_RECEIPT ?? ""); } catch { throw new Error("Release needs a reviewed final-copy and pending-work receipt."); }
+    const ordered = [receipt.sourceQuiescedAt, receipt.finalSyncCompletedAt, receipt.pendingWorkReconciledAt, receipt.pollingVerifiedAt, receipt.reviewedAt].map(value => Date.parse(value ?? ""));
+    if (receipt.schema !== 1 || receipt.account !== targets.account || receipt.app !== app || receipt.branch !== branch || receipt.backendBranch !== binding.backendBranch
+      || !/^[a-f0-9]{64}$/.test(receipt.finalSyncReceiptSha256 ?? "") || !receipt.reviewedBy
+      || ordered.some((v, i) => !Number.isFinite(v) || v > Date.now() || (i > 0 && v < ordered[i - 1]))
+      || Date.now() - ordered[4] > 2 * 60 * 60_000 || !Array.isArray(receipt.mappingUuids) || receipt.mappingUuids.length !== 22) {
+      throw new Error("Release receipt does not prove reviewed final sync, pending work and polling readiness for this backend.");
+    }
+    const aws = (...args) => JSON.parse(execFileSync("aws", [...args, "--region", targets.region, "--output", "json"], { encoding: "utf8" }));
+    const hosted = aws("amplify", "get-branch", "--app-id", app, "--branch-name", branch).branch;
+    if (!hosted?.backend?.stackArn) throw new Error("The retained branch has no existing backend to release.");
+    const inventory = [];
+    const collect = arn => {
+      for (const r of aws("cloudformation", "list-stack-resources", "--stack-name", arn).StackResourceSummaries) {
+        if (r.ResourceStatus === "DELETE_COMPLETE") continue;
+        inventory.push(r);
+        if (r.ResourceType === "AWS::CloudFormation::Stack" && r.PhysicalResourceId) collect(r.PhysicalResourceId);
+      }
+    };
+    collect(hosted.backend.stackArn);
+    const mappings = inventory.filter(r => r.ResourceType === "AWS::Lambda::EventSourceMapping");
+    if (mappings.length !== 22) throw new Error("Stream inventory differs from the reviewed migration contract.");
+    if (JSON.stringify(mappings.map(r => r.PhysicalResourceId).sort()) !== JSON.stringify([...receipt.mappingUuids].sort())) throw new Error("Live stream cursors differ from the reviewed release receipt.");
+    for (const r of mappings) {
+      if (!r.LogicalResourceId.endsWith("MigrationLiveV1")) throw new Error("A quarantined import stream has not been replaced.");
+      const live = aws("lambda", "get-event-source-mapping", "--uuid", r.PhysicalResourceId);
+      if (live.State !== "Enabled" || live.StartingPosition !== "LATEST") throw new Error("Fresh stream cursors are not yet fully armed.");
+      const modified = typeof live.LastModified === "number" ? live.LastModified * 1000 : Date.parse(live.LastModified ?? "");
+      if (!["OK", "No records processed"].includes(live.LastProcessingResult) || !Number.isFinite(modified) || Date.now() - modified < 5 * 60_000) {
+        throw new Error("Keep the write fence until every fresh stream cursor is polling successfully.");
+      }
+    }
+  }
+  console.log(`Verified isolated HOA ${binding.businessEnvironment} deployment (${process.env.HOA_MIGRATION_PREVIEW === "true" ? "read-only preview" : "release"}).`);
+} else if (process.env.HOA_MIGRATION_AUTH === "true" || process.env.HOA_MIGRATION_PREVIEW === "true") {
+  throw new Error("Migration settings cannot be deployed to an original release branch.");
 }

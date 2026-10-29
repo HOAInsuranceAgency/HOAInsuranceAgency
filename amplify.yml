@@ -6,6 +6,7 @@ applications:
       phases:
         preBuild:
           commands:
+            - export HOA_DEPLOY_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
             - node ../crm/scripts/assert-migration-destination.mjs
             - nvm install 22
             - nvm use 22
@@ -16,6 +17,7 @@ applications:
             # website until the CRM accepts this bundle's submission contract.
             - node scripts/wait-for-intake-contract.mjs
             - npm run build
+            - node ../crm/scripts/prepare-migration-preview.mjs
       artifacts:
         baseDirectory: dist
         files:
@@ -31,6 +33,7 @@ applications:
       phases:
         build:
           commands:
+            - export HOA_DEPLOY_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
             - node scripts/assert-migration-destination.mjs
             - nvm install 22
             - nvm use 22
@@ -45,12 +48,13 @@ applications:
             # Validate generated IAM policy sizes and CloudFormation structure
             # before applying any backend changes.
             - npm run synth:check
-            - npx ampx pipeline-deploy --branch $AWS_BRANCH --app-id $AWS_APP_ID
+            - node scripts/deploy-migration-backend.mjs
     frontend:
       phases:
         build:
           commands:
             - npm run build
+            - node ../crm/scripts/prepare-migration-preview.mjs
       artifacts:
         baseDirectory: dist
         files:

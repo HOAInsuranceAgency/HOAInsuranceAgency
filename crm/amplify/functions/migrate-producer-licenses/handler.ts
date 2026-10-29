@@ -14,6 +14,7 @@ function requiredEnvironment(name: string) {
 }
 
 export async function handler(event: CloudFormationCustomResourceEvent, context: Context) {
+  if (process.env.HOA_MIGRATION_PREVIEW === "true") return handleMigrationEvent({ RequestType: "Delete" }, async () => ({ copied: 0, skipped: 0 }));
   return handleMigrationEvent(event, () => migrateProducerLicenseRows(db, {
     legacyTable: requiredEnvironment("LEGACY_PRODUCER_LICENSE_TABLE"),
     licenseTable: requiredEnvironment("LICENSE_TABLE"),

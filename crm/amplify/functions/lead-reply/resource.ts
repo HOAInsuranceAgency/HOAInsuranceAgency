@@ -1,3 +1,4 @@
+import { migrationPreview } from "../../migration-config";
 import { defineFunction, secret } from "@aws-amplify/backend";
 
 /**
@@ -37,7 +38,7 @@ export const leadReply = defineFunction({
   timeoutSeconds: 600,
   memoryMB: 1024,
   environment: {
-    ANTHROPIC_API_KEY: secret("ANTHROPIC_API_KEY"),
+    ...(migrationPreview ? {} : { ANTHROPIC_API_KEY: secret("ANTHROPIC_API_KEY") }),
   },
   resourceGroupName: "data",
 });

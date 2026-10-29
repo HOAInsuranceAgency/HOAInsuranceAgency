@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { signIn, confirmSignIn } from "aws-amplify/auth";
+import { destinationSignIn, previewSignInAvailable } from "../lib/migrationAuth";
 
 /**
  * Magic-link sign-in (the only sign-in path — no passwords).
@@ -45,6 +46,11 @@ export default function MagicLinkSignIn({ embedded = false }: { embedded?: boole
   async function completeSignIn(token: string) {
     setPhase("completing");
     setError("");
+    if (!previewSignInAvailable()) {
+      setError("Administrator sign-in is disabled in this migration preview.");
+      setPhase("email");
+      return;
+    }
     const tokenEmail = emailFromToken(token);
     if (!tokenEmail) {
       setError("That sign-in link is malformed. Request a new one.");
@@ -78,18 +84,23 @@ export default function MagicLinkSignIn({ embedded = false }: { embedded?: boole
 
   async function requestLink() {
     const addr = email.trim().toLowerCase();
-    if (!addr || requesting.current) return;
+    if (!addr || requesting.current || !previewSignInAvailable()) return;
     requesting.current = true;
     setSending(true);
     setError("");
     try {
-      await signIn({
+      const result = await signIn({
         username: addr,
         options: {
           authFlowType: "CUSTOM_WITHOUT_SRP",
           clientMetadata: { mode: "request" },
         },
       });
+      if (destinationSignIn() && result.nextStep.signInStep === "CONFIRM_SIGN_IN_WITH_CUSTOM_CHALLENGE") {
+        // InitiateAuth metadata is not forwarded to Cognito's create trigger.
+        // Only this explicit answer may send a destination sign-in email.
+        await confirmSignIn({ challengeResponse: "REQUEST_LINK" });
+      }
     } catch (err) {
       // Same response either way — don't reveal whether the account exists.
       console.warn(err);
@@ -106,7 +117,9 @@ export default function MagicLinkSignIn({ embedded = false }: { embedded?: boole
       <div className="auth-card card">
         <h2 style={{ textAlign: "center" }}>Sign in</h2>
 
-        {phase === "completing" ? (
+        {!previewSignInAvailable() ? (
+          <p className="muted small">Administrator sign-in and email are disabled in this migration preview.</p>
+        ) : phase === "completing" ? (
           <p className="muted" style={{ textAlign: "center" }}>
             Signing you in…
           </p>

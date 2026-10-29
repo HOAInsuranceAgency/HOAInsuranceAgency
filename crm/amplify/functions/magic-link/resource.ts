@@ -30,3 +30,9 @@ export const magicLinkVerify = defineFunction({
   entry: "./verify.ts",
   resourceGroupName: "auth",
 });
+
+export const migrationNativeMessage = defineFunction({
+  name: "migration-native-message",
+  entry: "./native-message.ts",
+  resourceGroupName: "auth",
+});
