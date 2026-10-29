@@ -25,7 +25,11 @@ if (process.env.HOA_MIGRATION_PREVIEW === "true") {
     for (const [source, target] of Object.entries(origins)) text = text.replaceAll(source, target);
     if (path.endsWith(".html")) {
       text = text.replace(/<meta[^>]*name=["']robots["'][^>]*>/gi, "");
-      text = text.replace(/<head([^>]*)>/i, '$&<meta name="robots" content="noindex,nofollow,noarchive">');
+      const robots = '<meta name="robots" content="noindex,nofollow,noarchive">';
+      // Astro redirects use an implicit head (doctype + title + meta), unlike
+      // ordinary pages. Keep their redirect destination and noindex both intact.
+      text = /<head\b/i.test(text) ? text.replace(/<head([^>]*)>/i, `$&${robots}`)
+        : /<!doctype[^>]*>/i.test(text) ? text.replace(/<!doctype[^>]*>/i, `$&${robots}`) : robots + text;
       text = text.replace(/<body([^>]*)>/i, '$&<aside role="status" style="position:relative;z-index:9999;background:#fff3cd;color:#594500;padding:12px;text-align:center;font:16px system-ui">Migration preview — viewing only. Business actions, messages, uploads and integrations are disabled.</aside>');
       count++;
     }
