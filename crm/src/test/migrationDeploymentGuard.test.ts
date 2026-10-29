@@ -25,7 +25,7 @@ const baseline = {
   HOA_DEPLOY_ACCOUNT_ID: "917680434255", HOA_MIGRATION_AUTH: "true", HOA_MIGRATION_PREVIEW: "true",
   HOA_MIGRATION_STREAM_PHASE: "quarantine", VITE_HOA_MIGRATION_PREVIEW: "true", PUBLIC_GOOGLE_PLACES_KEY: "", VITE_GOOGLE_PLACES_KEY: "",
 };
-function run(env: Record<string, string> = {}) {
+function run(env: Record<string, string | undefined> = {}) {
   return execFileSync(process.execPath, [resolve("scripts/assert-migration-destination.mjs")], { env: { ...baseline, ...env }, stdio: "pipe", encoding: "utf8" });
 }
 describe("destination deployment and replay barrier", () => {
