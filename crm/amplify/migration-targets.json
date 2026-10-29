@@ -7,13 +7,13 @@
     "codex-hoa-account-migration": {
       "businessEnvironment": "main",
       "alias": "migration",
-      "graphqlUrl": "",
+      "graphqlUrl": "https://7n7x6zvx4ze7nixu2lkjcmkteq.appsync-api.us-east-1.amazonaws.com/graphql",
       "backendBranch": "main"
     },
     "codex-hoa-staging-migration": {
       "businessEnvironment": "staging",
       "alias": "migration-staging",
-      "graphqlUrl": "",
+      "graphqlUrl": "https://6ibyan35zrfixjwpspnoi6dc2q.appsync-api.us-east-1.amazonaws.com/graphql",
       "backendBranch": "staging"
     }
   }
