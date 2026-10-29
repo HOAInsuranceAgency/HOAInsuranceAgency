@@ -3,6 +3,7 @@ import { CfnResolver } from "aws-cdk-lib/aws-appsync";
 import { Effect, ManagedPolicy, PolicyStatement } from "aws-cdk-lib/aws-iam";
 import { CfnFunction } from "aws-cdk-lib/aws-lambda";
 import { migrationDestination, migrationPreview, migrationTargets, migrationStreamPhase, migrationSchedulesEnabled } from "./migration-config";
+import { disableBucketNotifications } from "./migration-notifications";
 
 const READ_FUNCTIONS = new Set(["crmAccess", "communications", "commissions", "ownerProfitability"]);
 const AUTH_FUNCTIONS = new Set(["magicLinkDefine", "magicLinkCreate", "magicLinkVerify", "migrationNativeMessage"]);
@@ -40,7 +41,8 @@ export function installMigrationPreview(backend: any) {
     if (node instanceof CfnResource) {
       if (["Custom::AmplifyDynamoDBTable", "AWS::DynamoDB::Table", "AWS::Cognito::UserPool", "AWS::SecretsManager::Secret"].includes(node.cfnResourceType)) node.applyRemovalPolicy(RemovalPolicy.RETAIN);
       if (node.cfnResourceType === "Custom::AmplifyDynamoDBTable") {
-        node.addPropertyOverride("pointInTimeRecoverySpecification", { PointInTimeRecoveryEnabled: true });
+        // Amplify's custom provider uses camelCase input, unlike native CFN.
+        node.addPropertyOverride("pointInTimeRecoverySpecification", { pointInTimeRecoveryEnabled: true });
         node.addPropertyOverride("deletionProtectionEnabled", true);
       }
       if (node.cfnResourceType === "AWS::DynamoDB::Table") {
@@ -76,7 +78,7 @@ export function installMigrationPreview(backend: any) {
       case "AWS::Events::Rule": node.addPropertyOverride("State", "DISABLED"); break;
       case "AWS::CloudWatch::Alarm": node.addPropertyOverride("ActionsEnabled", false); break;
       case "Custom::S3BucketNotifications":
-        for (const key of ["LambdaFunctionConfigurations", "QueueConfigurations", "TopicConfigurations", "EventBridgeConfiguration"]) node.addPropertyDeletionOverride(`NotificationConfiguration.${key}`);
+        disableBucketNotifications(node);
         break;
       case "AWS::S3::Bucket": node.addPropertyDeletionOverride("NotificationConfiguration"); break;
     }
