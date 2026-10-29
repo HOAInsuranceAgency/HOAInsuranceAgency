@@ -13,7 +13,7 @@ import { SnsAction } from "aws-cdk-lib/aws-cloudwatch-actions";
 import { Topic } from "aws-cdk-lib/aws-sns";
 import { defineBackend } from "@aws-amplify/backend";
 import { CfnWebACL, CfnWebACLAssociation } from "aws-cdk-lib/aws-wafv2";
-import { ArnFormat, CfnResource, CustomResource, Duration, Names, Stack, TimeZone } from "aws-cdk-lib";
+import { ArnFormat, CustomResource, Duration, Names, Stack, TimeZone } from "aws-cdk-lib";
 import { Provider } from "aws-cdk-lib/custom-resources";
 import { Schedule, ScheduleExpression, ScheduleTargetInput, ContextAttribute } from "aws-cdk-lib/aws-scheduler";
 import { LambdaInvoke } from "aws-cdk-lib/aws-scheduler-targets";
@@ -1053,19 +1053,9 @@ installDashboardReads(backend);
 installOwnerProfitability(backend, communicationTable);
 installCommissions(backend, communicationTable);
 
-// Amplify's stack namespace stays short and immutable. Link its console metadata
-// to the retained hosted Git branch, which is a separate deployment identity.
-if (migrationDestination) {
-  const linker = backend.stack.node.findChild("AmplifyBranchLinker");
-  const linkerFunction = linker.node.findChild("CustomResourceLambda") as import("aws-cdk-lib/aws-lambda").Function;
-  linkerFunction.addToRolePolicy(new PolicyStatement({
-    actions: ["amplify:GetBranch", "amplify:UpdateBranch"],
-    resources: [`arn:aws:amplify:us-east-1:${migrationTargets.account}:apps/${migrationTargets.crmApp}/branches/${process.env.AWS_BRANCH}`],
-  }));
-  for (const node of linker.node.findAll()) {
-    if (node instanceof CfnResource && node.cfnResourceType === "Custom::AmplifyBranchLinkerResource") node.addPropertyOverride("branchName", process.env.AWS_BRANCH!);
-  }
-}
+// The backend's main/staging namespace is linked to an equally named dormant
+// destination branch. Hosted migration branches consume the generated outputs;
+// Amplify requires branchName to match the branch encoded in the stack ARN.
 
 // Apply preview isolation after all normal resources exist, preserving their identities.
 installMigrationPreview(backend);

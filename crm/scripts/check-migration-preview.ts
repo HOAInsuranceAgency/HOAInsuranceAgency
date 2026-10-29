@@ -1,7 +1,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { Stack, CfnResource } from "aws-cdk-lib";
-import { migrationStreamPhase } from "../amplify/migration-config";
+import { migrationStreamPhase, businessBranch } from "../amplify/migration-config";
 import { PREVIEW_DENIED_ACTIONS } from "../amplify/migration-preview";
 
 type Resource = { Type: string; Properties?: Record<string, any> };
@@ -13,7 +13,7 @@ export function checkMigrationPreview(backend: any, outdir: string) {
   let mutations = 0, mappings = 0, schedules = 0;
   for (const r of resources) {
     const p = r.Properties ?? {};
-    if (r.Type === "Custom::AmplifyBranchLinkerResource") require(p.branchName === process.env.AWS_BRANCH, "backend linked to the wrong hosted branch");
+    if (r.Type === "Custom::AmplifyBranchLinkerResource") require(p.branchName === businessBranch, "backend namespace does not match its Amplify branch link");
     if (r.Type === "AWS::AppSync::Resolver" && p.TypeName === "Mutation") {
       mutations++; require(JSON.stringify(p.RequestMappingTemplate ?? p.Code ?? "").includes("MigrationPreviewReadOnly"), `unguarded mutation ${p.FieldName}`);
     }

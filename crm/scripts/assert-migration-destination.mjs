@@ -15,6 +15,15 @@ if (binding) {
   if (account !== targets.account || process.env.HOA_DEPLOY_ACCOUNT_ID !== targets.account) {
     throw new Error("Refusing HOA deployment outside the dedicated destination account.");
   }
+  const aws = (...args) => JSON.parse(execFileSync("aws", [...args, "--region", targets.region, "--output", "json"], { encoding: "utf8" }));
+  let namespaceBranch;
+  if (app === targets.crmApp) {
+    namespaceBranch = aws("amplify", "get-branch", "--app-id", app, "--branch-name", binding.backendBranch).branch;
+    if (namespaceBranch?.branchName !== binding.backendBranch) throw new Error("The stable backend namespace needs its matching destination branch.");
+    if (process.env.HOA_MIGRATION_PREVIEW === "true" && (namespaceBranch.enableAutoBuild !== false || namespaceBranch.enablePullRequestPreview === true)) {
+      throw new Error("Backend namespace branches must stay dormant while migration previews are built separately.");
+    }
+  }
   if (app === targets.webApp && (!binding.graphqlUrl || process.env.PUBLIC_CRM_API_URL !== binding.graphqlUrl)) {
     throw new Error("The website must target its verified destination CRM API.");
   }
@@ -37,9 +46,8 @@ if (binding) {
       || Date.now() - ordered[4] > 2 * 60 * 60_000 || !Array.isArray(receipt.mappingUuids) || receipt.mappingUuids.length !== 22) {
       throw new Error("Release receipt does not prove reviewed final sync, pending work and polling readiness for this backend.");
     }
-    const aws = (...args) => JSON.parse(execFileSync("aws", [...args, "--region", targets.region, "--output", "json"], { encoding: "utf8" }));
-    const hosted = aws("amplify", "get-branch", "--app-id", app, "--branch-name", branch).branch;
-    if (!hosted?.backend?.stackArn) throw new Error("The retained branch has no existing backend to release.");
+    const hosted = namespaceBranch;
+    if (!hosted?.backend?.stackArn?.startsWith(`arn:aws:cloudformation:${targets.region}:${targets.account}:stack/amplify-${app}-${binding.backendBranch}-branch-`)) throw new Error("The stable namespace branch has no matching existing backend to release.");
     const inventory = [];
     const collect = arn => {
       for (const r of aws("cloudformation", "list-stack-resources", "--stack-name", arn).StackResourceSummaries) {
