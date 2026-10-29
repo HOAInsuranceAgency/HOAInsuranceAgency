@@ -1,0 +1,20 @@
+{
+  "account": "917680434255",
+  "region": "us-east-1",
+  "crmApp": "d1nuh9rw1hcuxo",
+  "webApp": "d1x0kxb71w6nvt",
+  "branches": {
+    "codex-hoa-account-migration": {
+      "businessEnvironment": "main",
+      "alias": "migration",
+      "graphqlUrl": "",
+      "backendBranch": "main"
+    },
+    "codex-hoa-staging-migration": {
+      "businessEnvironment": "staging",
+      "alias": "migration-staging",
+      "graphqlUrl": "",
+      "backendBranch": "staging"
+    }
+  }
+}

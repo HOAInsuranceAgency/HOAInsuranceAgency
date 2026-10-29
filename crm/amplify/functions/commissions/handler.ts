@@ -1,3 +1,4 @@
+import { assertPreviewRead } from "../migration-readonly";
 import { QueryCommand } from '@aws-sdk/lib-dynamodb';
 import { bindDay, firstBindDate } from './account-history';
 import { createHash, randomUUID } from 'node:crypto';
@@ -78,6 +79,7 @@ export function permitted(event: Event) {
   return { actor, role, field };
 }
 export async function handler(event: Event) {
+  assertPreviewRead((event.fieldName ?? event.info?.fieldName) === "commissionOverview");
   try {
     const { actor, role, field } = permitted(event);
     await assertUserSession(event.identity);

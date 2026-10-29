@@ -1,3 +1,4 @@
+import { assertWebsiteActionsEnabled } from "./migrationPreview";
 /**
  * The finance election's two calls against the CRM's public AppSync API.
  *
@@ -41,6 +42,7 @@ async function call(
   if (!API_URL || !API_KEY) {
     throw new Error("Financing is not configured on this build.");
   }
+  assertWebsiteActionsEnabled();
   const res = await fetch(API_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-api-key": API_KEY },
