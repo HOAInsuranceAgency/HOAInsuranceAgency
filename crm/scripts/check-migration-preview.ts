@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { Stack, CfnResource } from "aws-cdk-lib";
 import { migrationStreamPhase, businessBranch } from "../amplify/migration-config";
 import { PREVIEW_DENIED_ACTIONS } from "../amplify/migration-preview";
+import { hasNoBucketNotifications } from "../amplify/migration-notifications";
 
 type Resource = { Type: string; Properties?: Record<string, any> };
 export function checkMigrationPreview(backend: any, outdir: string) {
@@ -13,13 +14,15 @@ export function checkMigrationPreview(backend: any, outdir: string) {
   let mutations = 0, mappings = 0, schedules = 0;
   for (const r of resources) {
     const p = r.Properties ?? {};
+    if (r.Type === "Custom::AmplifyDynamoDBTable") require(p.pointInTimeRecoverySpecification?.pointInTimeRecoveryEnabled === true && p.deletionProtectionEnabled === true, "custom table recovery protection does not match its provider contract");
     if (r.Type === "Custom::AmplifyBranchLinkerResource") require(p.branchName === businessBranch, "backend namespace does not match its Amplify branch link");
     if (r.Type === "AWS::AppSync::Resolver" && p.TypeName === "Mutation") {
       mutations++; require(JSON.stringify(p.RequestMappingTemplate ?? p.Code ?? "").includes("MigrationPreviewReadOnly"), `unguarded mutation ${p.FieldName}`);
     }
     if (r.Type === "AWS::Lambda::EventSourceMapping") { mappings++; require(p.Enabled === (migrationStreamPhase === "armed"), "wrong stream phase"); if (migrationStreamPhase === "armed") require(p.StartingPosition === "LATEST", "armed stream without fresh LATEST cursor"); }
     if (["AWS::Scheduler::Schedule", "AWS::Events::Rule"].includes(r.Type)) { schedules++; require(p.State === "DISABLED", "enabled schedule"); }
-    if (r.Type === "Custom::S3BucketNotifications" || r.Type === "AWS::S3::Bucket") require(!Object.keys(p.NotificationConfiguration ?? {}).length, "S3 events enabled");
+    if (r.Type === "Custom::S3BucketNotifications") require(hasNoBucketNotifications(p.NotificationConfiguration), "S3 notification provider configuration missing or events enabled");
+    if (r.Type === "AWS::S3::Bucket") require(p.NotificationConfiguration === undefined || hasNoBucketNotifications(p.NotificationConfiguration), "S3 events enabled");
     if (r.Type === "AWS::Lambda::Url") require(p.AuthType === "AWS_IAM", "public webhook URL");
     if (r.Type === "AWS::Lambda::Permission" && p.Principal === "*") require(false, "public Lambda permission");
     if (r.Type === "AWS::CloudWatch::Alarm") require(p.ActionsEnabled === false, "alarm notifications enabled");
