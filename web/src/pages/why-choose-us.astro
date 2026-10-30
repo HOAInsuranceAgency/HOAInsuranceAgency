@@ -2,20 +2,21 @@
 /**
  * Why choose us.
  *
- * Aligned to the homepage and /what-we-do: same hero treatment with the address
- * lookup, same section furniture from global.css, and sections 04 and 05 reuse
- * the homepage's own process stages and carrier wall from shared data files, so
- * the three pages state those once and state them identically.
+ * Same hero treatment and section furniture as the homepage and /what-we-do.
+ * The carrier wall reuses the shared MARKETS list; the process keeps its own
+ * wording here so the homepage's shared STAGES copy is unchanged.
  *
- *   01 hero            02 the practice + four reasons
- *   03 the offer       04 Review. Compare. Place. Record.
- *   05 Our markets     06 contact (matching /contact)
+ *   01 hero                 02 the 2026 market (sourced figures)
+ *   03 who we are (video)   04 what it means
+ *   05 how we help          06 process
+ *   08 our markets
+ *   09 questions            10 contact (matching /contact)
  */
 import Layout from "../layouts/Layout.astro";
+import CondoIndicationCta from "../components/CondoIndicationCta.astro";
 import Hero from "../components/Hero.astro";
 import HeroLookup from "../components/HeroLookup.astro";
 import { ContactForm } from "../components/ContactForm";
-import { STAGES } from "../data/process";
 import { MARKETS } from "../data/markets";
 import { QUOTE_URL } from "../constants";
 import { AGENCY } from "../../../shared/agency";
@@ -45,63 +46,52 @@ const metaDescription =
   AGENCY.phone +
   ".";
 
-/* 02 — Four reasons. Each carries a claim, a short argument, and the specifics
-   that make the claim checkable rather than assertive. */
-const DIFFERENTIATORS = [
-  {
-    num: "01",
-    title: "Community association focus",
-    /* "better submissions ... sharper renewal conversations and fewer gaps left
-       open" was three comparative claims with nothing to compare against, and
-       the last of them read as an outcome we control. What working one class
-       actually produces is a submission an underwriter can read and a renewal
-       conversation that starts from the policy — both describable, neither a
-       promise about what the coverage will do. */
-    desc: "Our association-focused process produces a submission an underwriter can read quickly, a renewal conversation that starts from the policy itself, and gaps that get named rather than left unmentioned.",
-    bullets: [
-      "Condominium associations and condominium trusts",
-      "Homeowners associations",
-      "Property managers running multiple associations",
-      "Unit owners whose HO-6 has to match the master policy",
-    ],
-  },
-  {
-    num: "02",
-    title: "One program, not six purchases",
-    desc: "Property, liability, umbrella, D&O, crime and ordinance or law are placed as one system, so the limits and deductibles agree with each other.",
-    bullets: [
-      "Property, general liability and umbrella as one tower",
-      "D&O and crime and fidelity written together",
-      "HO-6 aligned to the master policy structure",
-      "Deductibles and assessments explained to owners in advance",
-    ],
-  },
-  {
-    num: "03",
-    title: "A renewal a board can defend",
-    desc: "Every recommendation comes with the reasoning behind it, in writing, ready to be read at a meeting and filed with the minutes.",
-    bullets: [
-      "What the current policy does and does not cover",
-      "Why each limit and deductible was set where it was",
-      "What the market returned, option by option",
-      "A written recommendation, not a verbal one",
-    ],
-  },
-  {
-    num: "04",
-    title: "HO-6 coordinated to the master policy",
-    /* Previously "so the gap between them does not land on a resident", which
-       promised a post-loss result no agency can guarantee — whether a resident
-       ends up paying is decided by the two policies' terms and the adjusters,
-       not by who placed them. Placing both sides and writing the boundary down
-       is the part we actually do, so that is what the sentence now claims. */
-    desc: "Uncoordinated owner policies are where post-loss disputes begin. We place both sides and set out in writing where one ends and the other starts, so the gap is found before a loss rather than argued over after one.",
-    bullets: [
-      "The master policy structure identified and explained",
-      "Owners told what they are responsible for",
-      "HO-6 written against the actual policy, not a template",
-    ],
-  },
+/* 02 — Market brief. One line per figure; the sources are numbered
+   footnotes below the grid. Check every figure and date against its source
+   before each publish. */
+const SOURCES = [
+  "Foundation for Community Association Research, Insurance Coverage Trends Survey.",
+  "Industry commercial Insurance rate index, Q3 2026.",
+  "Fannie Mae Lender Letter LL-2026-03, March 18, 2026. Freddie Mac issued matching guidance the same day.",
+];
+
+const MARKET_STATS = [
+  { tag: "Premiums", value: "91%", meter: 91, label: "of associations saw premiums rise", note: "17% saw increases above 100%", src: 1 },
+  { tag: "Capacity", value: "23%", meter: 23, label: "moved to surplus lines carriers", note: "20% lost access to at least one insurer", src: 1 },
+  { tag: "Property · Easing", value: "−10%", trend: "down", label: "U.S. commercial property rates, year over year", note: "Capacity and competition returned in Q3 2026", src: 2 },
+  { tag: "Liability · Rising", value: "+6%", trend: "up", label: "U.S. casualty rates, Q3 2026", note: "Umbrella and excess rising faster still", src: 2 },
+];
+
+const LENDER_RULE = { value: "$50,000", label: "Maximum per-unit master policy deductible under Fannie Mae’s updated condo requirements", note: "Loan applications dated on or after July 1, 2026", src: 3 };
+
+/* 03 — What the market means for a board: one line each. */
+const PRESSURES = [
+  { title: "Property relief isn’t automatic", desc: "Softer pricing reaches associations whose risk is actively marketed, not those that simply renew." },
+  { title: "Liability is the new pressure point", desc: "Limits set years ago may no longer match your exposure, and D&O terms face closer scrutiny." },
+  { title: "Lender rules now reach your policy", desc: "Deductibles and replacement cost can decide whether condo owners can sell or refinance." },
+];
+
+/* 04 — How we help. */
+const HELP = [
+  { num: "01", title: "We work for the association", desc: "Appointed with 12 markets, we recommend the best fit for your community, not one insurer." },
+  { num: "02", title: "One coordinated program", desc: "Property, liability, umbrella, D&O, crime and ordinance or law placed so limits and deductibles agree." },
+  { num: "03", title: "Renewals planned, not rushed", desc: "Valuations and loss runs updated early, with options back in time for your board to budget." },
+  { num: "04", title: "No broker fee, full disclosure", desc: "Review, comparison and indication cost nothing, and our compensation is shown on every option." },
+];
+
+/* 05 — Process. This page's own wording; the homepage keeps data/process.ts. */
+const STEPS = [
+  { num: "01", title: "Review", desc: "Policy, loss runs and governing documents, read together." },
+  { num: "02", title: "Compare", desc: "Every quote from the appointed markets, side by side." },
+  { num: "03", title: "Place", desc: "Your board’s choice bound, with certificates and lender evidence checked." },
+  { num: "04", title: "Record", desc: "The ProtectMyHOA Board Record, ready for your minutes." },
+];
+
+/* 09 — Questions. Answers are drafts for review. */
+const FAQS = [
+  { q: "What are the best HOA and condominium Insurance companies?", a: "There’s no single best insurer for every association. The right fit depends on your property, location, loss history, coverage needs and budget, and on which companies are writing that risk today. As an independent agency appointed with 12 markets, we compare the ones that write your association and set out the trade-offs in writing." },
+  { q: "Should our HOA or condominium association use an independent agent or go directly to an insurer?", a: "Going direct gives you one insurer’s options. An independent agent can take one submission to multiple Insurance companies, compare coverage, deductibles and limits side by side, and find other markets if your carrier raises rates or non-renews. Your board still makes the choice, and nothing is bound until it does." },
+  { q: "When should our board start the renewal process?", a: "Ideally 90 to 120 days before your policy expires. That leaves time to update valuations and loss runs, market the risk and bring options back in time for your board to budget and vote. If your renewal is sooner, contact us anyway and we’ll work to the time you have." },
 ];
 ---
 
@@ -112,120 +102,196 @@ const DIFFERENTIATORS = [
 >
   {/* ═══ 01 · Hero — same treatment as the homepage ═════════════════ */}
   <Hero
-    eyebrow="ProtectMyHOA™"
+    eyebrow="ProtectMyHOA™ · Licensed Nationwide"
     title="Why Choose HOA Insurance Agency"
-    subtitle="HOA boards need more than a generic insurance quote. Associations face shared ownership, shared liability and shared governance, alongside increasingly complex underwriting requirements."
+    subtitle="Premiums, complexity and lender scrutiny are all rising. We compare up to 12 appointed Insurance companies for your association, explain every option in writing, and charge no broker fee."
     backgroundImage="/images/hero-people.jpg"
+    backgroundVideo="/images/hero-video.mp4"
+    autoplayVideo
+    short
   >
-    <HeroLookup slot="action" />
+    <HeroLookup
+      slot="action"
+      placeholder="Association property address"
+      buttonText="Start my market comparison"
+      microcopy="Licensed nationwide · No broker fee · Non-binding indication, subject to underwriting"
+    />
   </Hero>
 
   <div class="wcu">
-    {/* ═══ 02 · The practice + four reasons ═════════════════════════ */}
-    <section class="section" aria-labelledby="practice-h">
+    {/* ═══ 02 · The 2026 market — navy brief ═══════════════════════ */}
+    <section class="section section--navy wcu-brief" aria-labelledby="market-h">
       <div class="container">
-        <div class="sec-head sec-head--center">
-          <p class="eyebrow">The practice</p>
-          <h2 class="section-title" id="practice-h">
-            A practice focused on community associations
-          </h2>
-          <p class="section-subtitle">
-            Master policies and HO-6, placed together, so a board can see how the decisions fit
-            and explain them afterwards.
+        <div class="wcu-brief__head">
+          <div>
+            <p class="eyebrow eyebrow--gold">The 2026 Insurance market</p>
+            <h2 class="section-title" id="market-h">The HOA Insurance market has turned. Your renewal may not have.</h2>
+          </div>
+          <p class="wcu-brief__lede">
+            Property pricing is softening while liability keeps climbing. Boards that renew
+            without re-marketing can miss the relief and still absorb the increases.
           </p>
-          <div class="wwd-cta wwd-cta--center">
-            <a href={QUOTE_URL} class="btn btn-primary">Request Insurance Review</a>
+        </div>
+
+        <ul class="wcu-tiles">
+          {MARKET_STATS.map((st) => (
+            <li class="wcu-tile">
+              <span class={`wcu-tile__tag${st.trend ? ` wcu-tile__tag--${st.trend}` : ""}`}>
+                {st.trend && (
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    {st.trend === "up" ? <path d="M12 19V5M5 12l7-7 7 7" /> : <path d="M12 5v14M5 12l7 7 7-7" />}
+                  </svg>
+                )}
+                {st.tag}
+              </span>
+              <span class="wcu-tile__v">{st.value}<sup class="wcu-fn">{st.src}</sup></span>
+              <p class="wcu-tile__l">{st.label}</p>
+              {st.meter !== undefined && (
+                <span class="wcu-meter" role="img" aria-label={`${st.meter} percent`}>
+                  <span class="wcu-meter__fill" style={`width: ${st.meter}%`}></span>
+                </span>
+              )}
+              <p class="wcu-tile__n">{st.note}</p>
+            </li>
+          ))}
+          <li class="wcu-tile wcu-tile--rule">
+            <span class="wcu-tile__tag wcu-tile__tag--rule">New lender rule</span>
+            <span class="wcu-tile__v">{LENDER_RULE.value}<sup class="wcu-fn">{LENDER_RULE.src}</sup></span>
+            <p class="wcu-tile__l">{LENDER_RULE.label}</p>
+            <p class="wcu-tile__n">{LENDER_RULE.note}</p>
+          </li>
+        </ul>
+
+        <ol class="wcu-sources">
+          {SOURCES.map((src) => <li>{src}</li>)}
+        </ol>
+        <CondoIndicationCta tone="dark" />
+      </div>
+    </section>
+
+    {/* ═══ 03 · Who we are — video beside the offer ════════════════ */}
+    <section class="section section--alt" aria-labelledby="about-h">
+      <div class="container wcu-about">
+        <div class="wcu-about__media">
+          {/* Decorative and muted, so it autoplays; the poster shows until it starts. */}
+          <video
+            src="/images/hoa-intro.mp4"
+            poster="/images/practice-team.jpg"
+            width="1920"
+            height="1080"
+            autoplay
+            muted
+            loop
+            playsinline
+            preload="metadata"
+            aria-hidden="true"
+          />
+        </div>
+        <div class="wcu-about__lead">
+          <p class="eyebrow">Who we are</p>
+          <h2 class="section-title" id="about-h">An independent agency built for community associations</h2>
+          <p class="wcu-about__lede">
+            We place master policies for homeowners and condominium associations nationwide,
+            take your risk to the markets that write it, and document every recommendation for
+            your board.
+          </p>
+          <ul class="wcu-about__points">
+            <li>Property, liability, D&amp;O, crime and umbrella placed as one program</li>
+            <li>Licensed in all 50 states and the District of Columbia</li>
+            <li>No broker fee, with our compensation disclosed on every option</li>
+          </ul>
+          <div class="wwd-cta">
+            <a href="/contact/" class="btn btn-primary">Speak with a licensed agent</a>
             <span class="wwd-cta__note">Free review. No broker fee, now or at renewal.</span>
           </div>
         </div>
+      </div>
+    </section>
 
-        {/* Numbered because the four build on each other: focus produces the
-            program, the program produces the defensible renewal, and the
-            renewal is what makes HO-6 coordination possible. */}
-        <ol class="wcu-grid">
-          {DIFFERENTIATORS.map((d) => (
-            <li class="wcu-card">
-              <span class="wcu-card__num" aria-hidden="true">{d.num}</span>
-              <h3 class="wcu-card__title">{d.title}</h3>
-              <p class="wcu-card__desc">{d.desc}</p>
-              <ul class="wcu-card__list">
-                {d.bullets.map((b) => <li>{b}</li>)}
-              </ul>
+    {/* ═══ 04 · What it means for your board — editorial list ═══════ */}
+    <section class="section" aria-labelledby="means-h">
+      <div class="container wcu-split">
+        <div class="wcu-split__lead">
+          <p class="eyebrow">What it means for your board</p>
+          <h2 class="section-title" id="means-h">Why your association needs an HOA Insurance agency right now</h2>
+          <p class="section-subtitle">
+            A shifting market rewards associations that prepare and penalizes those that simply renew.
+          </p>
+          <div class="wwd-cta">
+            <a href={QUOTE_URL} class="btn btn-primary">Test my renewal against today’s market</a>
+          </div>
+        </div>
+        <ol class="wcu-pressures">
+          {PRESSURES.map((pr, i) => (
+            <li class="wcu-pressure">
+              <span class="wcu-pressure__num" aria-hidden="true">{String(i + 1).padStart(2, "0")}</span>
+              <div>
+                <h3>{pr.title}</h3>
+                <p>{pr.desc}</p>
+              </div>
             </li>
           ))}
         </ol>
       </div>
     </section>
 
-    {/* ═══ 03 · The offer ══════════════════════════════════════════ */}
-    <section class="section section--navy" aria-labelledby="offer-h">
+    {/* ═══ 05 · How we help — 2×2 index grid ════════════════════════ */}
+    <section class="section section--alt" aria-labelledby="help-h">
       <div class="container">
-        <div class="wcu-offer">
-          <div class="wcu-offer__lead">
-            <p class="eyebrow eyebrow--gold">The offer</p>
-            <h2 class="section-title wcu-offer__title" id="offer-h">
-              An insurance partner built for association renewals and HO-6 coordination
-            </h2>
-            <p class="wcu-offer__body">
-              Send us the current policy and the renewal date. We come back with the markets
-              approached, what each returned, and a written recommendation your board can file
-              with its minutes.
-            </p>
-          </div>
-          <div class="wcu-offer__actions">
-            <a href={QUOTE_URL} class="btn btn-gold">Request Insurance Review</a>
-            <a href="/what-we-do/" class="btn btn-outline">See our HOA coverages</a>
-            {/* The one qualifier this page carries, placed where the offer is
-                made rather than repeated under every paragraph. Same sentence
-                the rest of the site uses, so it reads as house voice. */}
-            <p class="wcu-offer__note">
-              No broker fee. No obligation. Coverage is subject to underwriting, policy terms,
-              and eligibility.
-            </p>
-          </div>
+        <div class="sec-head sec-head--center">
+          <p class="eyebrow">How we help</p>
+          <h2 class="section-title" id="help-h">Why boards choose ProtectMyHOA as their HOA Insurance agency</h2>
+          <p class="section-subtitle">
+            A dedicated HOA and condominium Insurance agency, licensed nationwide.
+          </p>
+        </div>
+        <ol class="wcu-index">
+          {HELP.map((d) => (
+            <li class="wcu-index__item">
+              <span class="wcu-index__num" aria-hidden="true">{d.num}</span>
+              <h3>{d.title}</h3>
+              <p>{d.desc}</p>
+            </li>
+          ))}
+        </ol>
+        <div class="wwd-cta wwd-cta--center">
+          <a href={QUOTE_URL} class="btn btn-primary">See how we’d place my association</a>
         </div>
       </div>
     </section>
 
-    {/* ═══ 04 · Process — shared with the homepage ═════════════════ */}
+    {/* ═══ 06 · Process — connected timeline ════════════════════════ */}
     <section class="section" aria-labelledby="stages-h">
       <div class="container">
         <div class="sec-head sec-head--center">
           <p class="eyebrow">The process</p>
           <h2 class="section-title" id="stages-h">Review. Compare. Place. Record.</h2>
-          <p class="section-subtitle">
-            Four stages, in order, on a schedule the board can hold us to.
-          </p>
+          <p class="section-subtitle">Four stages, in order, on a schedule your board can hold us to.</p>
         </div>
-        <ol class="stage-grid">
-          {STAGES.map((s) => (
-            <li class="stage-card reveal">
-              <span class="stage-num">{s.num}</span>
-              <h3>{s.title}</h3>
-              <p>{s.desc}</p>
+        <ol class="wcu-timeline">
+          {STEPS.map((st) => (
+            <li class="wcu-timeline__step">
+              <span class="wcu-timeline__node" aria-hidden="true">{st.num}</span>
+              <h3>{st.title}</h3>
+              <p>{st.desc}</p>
             </li>
           ))}
         </ol>
         <div class="wwd-cta wwd-cta--center">
-          <a href={QUOTE_URL} class="btn btn-primary">Request Insurance Review</a>
-          {/* Was "Most reviews start the same week." Nothing in the business
-              measures that, and an agency formed in December 2025 has no volume
-              of completed reviews to draw a "most" from. The replacement says
-              what stage one needs instead, which is the same invitation without
-              the statistic. */}
-          <span class="wwd-cta__note">Stage one starts with your current policy.</span>
+          <a href={QUOTE_URL} class="btn btn-primary">Begin with a policy review</a>
         </div>
       </div>
     </section>
 
-    {/* ═══ 05 · Our markets — shared with the homepage ═════════════ */}
+    {/* ═══ 08 · Our markets — shared carrier list ═══════════════════ */}
     <section class="section section--alt" aria-labelledby="markets-h">
       <div class="container">
         <div class="sec-head sec-head--center">
           <p class="eyebrow">Our markets</p>
-          <h2 class="section-title" id="markets-h">Markets a board will recognize</h2>
+          <h2 class="section-title" id="markets-h">The HOA Insurance companies we compare</h2>
           <p class="section-subtitle">
-            Direct appointments with twelve markets — national insurers alongside the specialists.
+            One submission reaches 12 directly appointed markets. Availability varies by state,
+            association type and risk profile.
           </p>
         </div>
 
@@ -236,47 +302,45 @@ const DIFFERENTIATORS = [
           <ul class="carrier-track">
             {MARKETS.map((m) => (
               <li class="carrier">
-                <img
-                  class="carrier__logo"
-                  src={`/images/carriers/${m.slug}.png`}
-                  alt={m.name}
-                  width="240"
-                  height="120"
-                  loading="lazy"
-                  decoding="async"
-                />
+                <img class="carrier__logo" src={`/images/carriers/${m.slug}.png`} alt={m.name} width="240" height="120" loading="lazy" decoding="async" />
               </li>
             ))}
             {MARKETS.map((m) => (
               <li class="carrier" aria-hidden="true">
-                <img
-                  class="carrier__logo"
-                  src={`/images/carriers/${m.slug}.png`}
-                  alt=""
-                  width="240"
-                  height="120"
-                  loading="lazy"
-                  decoding="async"
-                />
+                <img class="carrier__logo" src={`/images/carriers/${m.slug}.png`} alt="" width="240" height="120" loading="lazy" decoding="async" />
               </li>
             ))}
           </ul>
         </div>
 
-        <p class="carrier-note">
-          One submission goes out to the markets that write it. Carrier availability varies by
-          state, association type and risk profile, and not every market is approached on every
-          placement.
-        </p>
-
         <div class="wwd-cta wwd-cta--center">
-          <a href={QUOTE_URL} class="btn btn-primary">Request Insurance Review</a>
-          <span class="wwd-cta__note">See what each market returned, side by side.</span>
+          <a href={QUOTE_URL} class="btn btn-primary">Submit my association once</a>
         </div>
       </div>
     </section>
 
-    {/* ═══ 06 · Contact — same treatment as /contact ═══════════════ */}
+    {/* ═══ 09 · Questions ═══════════════════════════════════════════ */}
+    <section class="section" aria-labelledby="faq-h">
+      <div class="container">
+        <div class="sec-head sec-head--center">
+          <p class="eyebrow">Questions</p>
+          <h2 class="section-title" id="faq-h">Choosing an HOA Insurance agency</h2>
+        </div>
+        <div class="wcu-faq">
+          {FAQS.map((f) => (
+            <details class="wcu-faq__item">
+              <summary>{f.q}</summary>
+              <p>{f.a}</p>
+            </details>
+          ))}
+        </div>
+        <div class="wwd-cta wwd-cta--center">
+          <a href="/contact/" class="btn btn-primary">Send us your question</a>
+        </div>
+      </div>
+    </section>
+
+    {/* ═══ 10 · Contact — same treatment as /contact ═══════════════ */}
     <ContactForm showClaims client:visible />
   </div>
 </Layout>

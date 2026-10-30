@@ -1,0 +1,81 @@
+---
+/**
+ * "Our standards" credibility band, shared by /what-we-do and /condo-insurance.
+ * Every claim is a confirmed business fact (docs/WEBSITE-STRUCTURE.md §9); no
+ * unverifiable superlatives.
+ */
+import { MARKETS } from "../data/markets";
+import { QUOTE_URL } from "../constants";
+import { AGENCY } from "../../../shared/agency";
+import "./AgencyStandards.css";
+
+const STANDARD_FIGURES = [
+  { value: "50 + DC", label: "Nationwide coverage, one-stop solution" },
+  { value: "12", label: "Direct carrier appointments" },
+  { value: "$0", label: "Broker fee, now or at renewal" },
+  { value: "1 day", label: "Response, within one business day" },
+];
+
+/* Title-only, benefit-led: each one answers a reason a board hesitates to
+   request a review, and the section closes on the indication CTA. */
+const STANDARDS = [
+  "Licensed in all 50 states and DC",
+  "One submission, twelve appointed markets",
+  "Compensation disclosed on every option",
+  "Every recommendation in writing",
+  "Nothing bound until your board chooses",
+  "Details used only to place your coverage",
+];
+---
+
+<section class="section section--navy std-band" aria-labelledby="std-h">
+  <div class="container">
+    <div class="std-layout">
+      <div class="std-lead">
+        <p class="eyebrow eyebrow--gold">Our standards</p>
+        <h2 class="section-title" id="std-h">Why associations nationwide choose HOA Insurance Agency</h2>
+        <p class="section-subtitle">
+          An independent Insurance agency held to the rules every licensed agency follows,
+          and to a few standards of our own that boards can check us against.
+        </p>
+        <ul class="std-list">
+          {STANDARDS.map((title) => (
+            <li>
+              <span class="std-list__mark" aria-hidden="true">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>
+              </span>
+              {title}
+            </li>
+          ))}
+        </ul>
+        <div class="std-cta">
+          <a href={QUOTE_URL} class="btn btn-gold">Get my premium indication</a>
+          <a href="/contact/" class="btn btn-outline">Talk to a licensed HOA agent</a>
+        </div>
+        <p class="std-cta__note">Free · No broker fee · Non-binding indication</p>
+      </div>
+
+      <ul class="std-figs">
+        {STANDARD_FIGURES.map((f) => (
+          <li class="std-fig">
+            <span class="std-fig__v">{f.value}</span>
+            <span class="std-fig__l">{f.label}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+
+    {/* Same twelve logos as the homepage marquee, static here. */}
+    <div class="std-markets">
+      <p class="std-markets__label">Directly appointed with</p>
+      <ul class="std-markets__list">
+        {MARKETS.map((m) => (
+          <li>
+            <img src={`/images/carriers/${m.slug}.png`} alt={m.name} width="240" height="120" loading="lazy" decoding="async" />
+          </li>
+        ))}
+      </ul>
+    </div>
+    <p class="std-legal">{AGENCY.name}, licensed in {AGENCY.areaServed}.</p>
+  </div>
+</section>

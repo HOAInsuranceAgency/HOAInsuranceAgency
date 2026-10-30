@@ -1,10 +1,18 @@
 type DataConnection = EventTarget & { saveData?: boolean };
 
-/** Poster-first enhancement: desktop motion begins only after initial input. */
+/**
+ * Poster-first enhancement: desktop motion begins only after initial input.
+ *
+ * A video marked `data-autoplay` has no toggle and starts once the page has
+ * loaded instead, so the poster still wins LCP. Reduced-motion, narrow and
+ * save-data visitors keep the poster either way.
+ */
 export function initializeHeroVideo(hero: HTMLElement): () => void {
   const video = hero.querySelector<HTMLVideoElement>("[data-hero-video]");
   const toggle = hero.querySelector<HTMLButtonElement>("[data-hero-video-toggle]");
-  if (!video || !toggle || !video.dataset.src) return () => {};
+  const autoplay = video?.hasAttribute("data-autoplay") ?? false;
+  if (!video || !video.dataset.src) return () => {};
+  if (!toggle && !autoplay) return () => {};
 
   const doc = hero.ownerDocument;
   const view = doc.defaultView;
@@ -20,6 +28,7 @@ export function initializeHeroVideo(hero: HTMLElement): () => void {
   let generation = 0;
 
   const updateLabel = () => {
+    if (!toggle) return;
     toggle.textContent = activated && !userPaused && !video.paused
       ? "Pause background video"
       : "Play background video";
@@ -38,7 +47,7 @@ export function initializeHeroVideo(hero: HTMLElement): () => void {
 
   const sync = async () => {
     const allowed = !staticOnly.matches && !connection?.saveData;
-    toggle.hidden = !allowed;
+    if (toggle) toggle.hidden = !allowed;
     if (disposed || !allowed || doc.hidden || !activated || userPaused) {
       pause(!allowed || disposed);
       return;
@@ -56,7 +65,9 @@ export function initializeHeroVideo(hero: HTMLElement): () => void {
     } catch {
       // Browser playback policy or network failure leaves the poster usable.
       if (attempt !== generation || disposed) return;
-      userPaused = true;
+      // Autoplay stays armed so the first click or keypress can retry it.
+      if (autoplay) activated = false;
+      else userPaused = true;
       video.classList.remove("is-playing");
     }
     updateLabel();
@@ -67,7 +78,7 @@ export function initializeHeroVideo(hero: HTMLElement): () => void {
     view.removeEventListener("keydown", onInitialInput);
   };
   const onInitialInput = (event: Event) => {
-    if (event.target instanceof Node && toggle.contains(event.target)) return;
+    if (event.target instanceof Node && toggle?.contains(event.target)) return;
     activated = true;
     removeInputListeners();
     void sync();
@@ -80,19 +91,27 @@ export function initializeHeroVideo(hero: HTMLElement): () => void {
   };
   const onChange = () => { void sync(); };
 
-  // No source is assigned until input, so video bytes cannot delay initial LCP.
+  // No source is assigned until input (or window load, for autoplay), so video
+  // bytes cannot delay initial LCP.
   view.addEventListener("pointerdown", onInitialInput, { passive: true });
   view.addEventListener("keydown", onInitialInput);
-  toggle.addEventListener("click", onToggle);
+  toggle?.addEventListener("click", onToggle);
   staticOnly.addEventListener("change", onChange);
   connection?.addEventListener("change", onChange);
   doc.addEventListener("visibilitychange", onChange);
-  void sync();
+  const onLoad = () => {
+    activated = true;
+    void sync();
+  };
+  if (autoplay && doc.readyState === "complete") onLoad();
+  else if (autoplay) view.addEventListener("load", onLoad, { once: true });
+  else void sync();
 
   return () => {
     disposed = true;
     removeInputListeners();
-    toggle.removeEventListener("click", onToggle);
+    view.removeEventListener("load", onLoad);
+    toggle?.removeEventListener("click", onToggle);
     staticOnly.removeEventListener("change", onChange);
     connection?.removeEventListener("change", onChange);
     doc.removeEventListener("visibilitychange", onChange);

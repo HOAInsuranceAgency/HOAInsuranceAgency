@@ -60,7 +60,7 @@ export default function PriceIndication({ token, read = readEstimate }: { token?
     <p className="qf-estimate-disclaimer">
       This is a preliminary, non-binding estimate. Final premiums may be significantly higher
       or lower based on underwriting, verified property details, coverage selections and other
-      factors. This estimate does not guarantee eligibility or coverage and does not bind insurance.
+      factors. This estimate does not guarantee eligibility or coverage and does not bind Insurance.
     </p>
   </section>;
 }

@@ -11,7 +11,6 @@
  */
 import Layout from "../layouts/Layout.astro";
 import Hero from "../components/Hero.astro";
-import HeroLookup from "../components/HeroLookup.astro";
 import CoverageMap from "../components/CoverageMap.astro";
 import { ContactForm } from "../components/ContactForm";
 import { QUOTE_URL, PHONE } from "../constants";
@@ -37,14 +36,9 @@ const COVER_TYPES = [
     icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.6L12 3l9 7.6"/><path d="M5.4 9.6V20h13.2V9.6"/><path d="M10 20v-5.2h4V20"/></svg>',
   },
   {
-    title: "Condo — condominium associations & trusts",
+    title: "Condo: condominium associations & trusts",
     href: "/condo-insurance/",
     icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="18" rx="1"/><path d="M8 7h.01M12 7h.01M16 7h.01M8 11h.01M12 11h.01M16 11h.01"/><path d="M10 21v-3h4v3"/></svg>',
-  },
-  {
-    title: "Unit owners — HO-6",
-    href: "/what-we-do/",
-    icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 018 0v4"/></svg>',
   },
 ];
 ---
@@ -65,14 +59,37 @@ const COVER_TYPES = [
        lookup omits `compact` for this reason. */}
   <Hero
     eyebrow="Contact"
-    title="Talk to an HOA insurance specialist"
-    note="Nationwide coverage"
-    subtitle="Whether you are renewing, reviewing, or starting from scratch, tell us about your association and we will put our recommendation in writing. No broker fee, now or at renewal."
+    title="Talk to an HOA Insurance specialist"
+    subtitle="Choose how you’d like to start. A licensed agent replies within one business day."
     backgroundImage="/images/hero-people.jpg"
     backgroundVideo="/images/hero-video.mp4"
-  >
-    <HeroLookup slot="action" />
-  </Hero>
+    short
+  />
+
+  {/* ═══ Two ways to start ═════════════════════════════════════════ */}
+  {/* The full review is the existing /quote wizard, unchanged. The condo path
+       is its three-screen sibling at /quote/condo for visitors who want a
+       number first, and is the page to use as a paid-ad landing page. */}
+  <section class="start-paths" aria-labelledby="paths-h">
+    <div class="container">
+      <h2 class="start-paths__title" id="paths-h">How would you like to start?</h2>
+      <div class="start-paths__grid">
+        <div class="start-path start-path--primary">
+          <span class="start-path__tag">Condominium associations</span>
+          <span class="start-path__name">Premium indication</span>
+          <span class="start-path__desc">See an estimate in about a minute.</span>
+          <a class="btn btn-gold start-path__btn" href="/quote/condo/">Get my indication</a>
+        </div>
+        <div class="start-path">
+          <span class="start-path__tag">Any HOA or condominium</span>
+          <span class="start-path__name">Full review</span>
+          <span class="start-path__desc">Every coverage, with a written recommendation.</span>
+          <a class="btn btn-primary start-path__btn" href={QUOTE_URL}>Request my review</a>
+        </div>
+      </div>
+      <p class="start-paths__note">No broker fee. Indications are non-binding and subject to underwriting.</p>
+    </div>
+  </section>
 
   {/* ═══ 02 · Contact + who we cover ════════════════════════════════ */}
   {/* ONE heading for the section, then a form beside a compact sidebar.
@@ -95,7 +112,7 @@ const COVER_TYPES = [
                padding and line up. */}
         <div class="sec-head contact-cover__head">
           <p class="eyebrow">Get in touch</p>
-          <h2 class="section-title" id="contact-h">Request an insurance review</h2>
+          <h2 class="section-title" id="contact-h">Request an Insurance review</h2>
         </div>
 
         <div class="contact-cover__grid">
@@ -110,7 +127,7 @@ const COVER_TYPES = [
             <ul class="form-assurance">
               <li>A reply within one business day</li>
               <li>No broker fee, now or at renewal</li>
-              <li>No obligation — review first, decide later</li>
+              <li>No obligation: review first, decide later</li>
             </ul>
           </div>
 
@@ -235,6 +252,112 @@ const COVER_TYPES = [
 
   /* Clears the fixed navbar so a deep link (e.g. /contact#states) lands with the
      heading visible rather than tucked under it. */
+  /* ── Two ways to start ──
+     Two side-by-side choices under the hero. The indication card leads in gold;
+     the full review is the quieter alternative. */
+  .start-paths {
+    padding: 44px 0 12px;
+    background: var(--color-white);
+  }
+
+  .start-paths__title {
+    margin-bottom: 18px;
+    text-align: center;
+    font-family: var(--font-display);
+    font-size: clamp(21px, 2vw, 25px);
+    font-weight: 600;
+    color: var(--color-navy);
+  }
+
+  .start-paths__grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+    max-width: 920px;
+    margin: 0 auto;
+  }
+
+  .start-path {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+    padding: 26px 26px 24px;
+    border: 1px solid var(--color-gray-200);
+    border-radius: 16px;
+    background: var(--color-white);
+    color: var(--color-gray-900);
+    text-decoration: none;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+  }
+
+  .start-path:hover {
+    box-shadow: 0 16px 36px -18px rgba(15, 23, 42, 0.3);
+  }
+
+  .start-path--primary {
+    border-color: transparent;
+    background: var(--brand-blend);
+    color: var(--color-white);
+  }
+
+  .start-path__tag {
+    font-size: 11.5px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--color-gray-500);
+  }
+
+  .start-path--primary .start-path__tag {
+    color: var(--color-gold-light);
+  }
+
+  .start-path__name {
+    font-family: var(--font-display);
+    font-size: 21px;
+    font-weight: 600;
+    color: var(--color-navy);
+  }
+
+  .start-path--primary .start-path__name {
+    color: var(--color-white);
+  }
+
+  .start-path__desc {
+    font-size: 14px;
+    line-height: 1.6;
+    color: var(--color-gray-600);
+  }
+
+  .start-path--primary .start-path__desc {
+    color: rgba(255, 255, 255, 0.75);
+  }
+
+  .start-path__btn {
+    margin-top: 12px;
+  }
+
+  .start-paths__note {
+    margin-top: 12px;
+    text-align: center;
+    font-size: 12.5px;
+    color: var(--color-gray-500);
+  }
+
+  @media (max-width: 700px) {
+    .start-paths__grid {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .start-path {
+      transition: none;
+    }
+
+  }
+
   #review,
   #markets,
   #states {
@@ -305,6 +428,7 @@ const COVER_TYPES = [
      sidebar item, so it is demoted to match .side-label rather than forked into a
      component variant. */
   .contact-cover__types :global(.contact-heading) {
+    font-family: inherit;
     font-size: 11px;
     font-weight: 700;
     letter-spacing: 0.14em;
@@ -490,7 +614,7 @@ const COVER_TYPES = [
   /* Link blue rather than body navy, and the tile sits on a blue ground: between
      them nobody has to hover to work out these are clickable. */
   .cover-block__title {
-    font-size: 14.5px;
+    font-size: 14px;
     font-weight: 700;
     letter-spacing: -0.01em;
     color: var(--color-navy);

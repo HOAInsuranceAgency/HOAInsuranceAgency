@@ -57,7 +57,7 @@ function getCoverages(state: string, units: number): CoverageResult[] {
   if (["MA", "CT", "NH", "NY"].includes(state)) {
     results.push({ name: "Ordinance or Law", icon: "scale", priority: "essential", reason: state === "NY" ? "New York codes, and FISP facade work in New York City, can push a rebuild well past the original construction spec." : "Strict building codes increase rebuild costs significantly." });
   } else {
-    results.push({ name: "Ordinance or Law", icon: "scale", priority: "recommended", reason: state === "OK" ? "Storm rebuilds must meet current codes — costs can spike." : "Rebuilding to current code after a loss can cost more than the original construction." });
+    results.push({ name: "Ordinance or Law", icon: "scale", priority: "recommended", reason: state === "OK" ? "Storm rebuilds must meet current codes, and costs can spike." : "Rebuilding to current code after a loss can cost more than the original construction." });
   }
 
   results.push({ name: "HO-6 Program", icon: "home", priority: units >= 10 ? "recommended" : "consider", reason: "Coordinated unit owner coverage reduces claims conflicts." });
@@ -410,7 +410,7 @@ export function CoverageCalculator() {
                 <div className="calc-results-header">
                   <h3>Coverage areas to discuss for your <strong>{units}-unit</strong> {stateName} association</h3>
                   <p className="calc-email-note">
-                    A general checklist based only on size and state — not a coverage
+                    A general checklist based only on size and state, not a coverage
                     determination, quote or binder. The policy, governing documents,
                     applicable law, endorsements and facts of a loss control.
                   </p>

@@ -1,4 +1,4 @@
-@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Source+Serif+4:opsz,wght@8..60,500;8..60,600&display=swap");
 
 :root {
   --color-navy: #1a365d;
@@ -21,7 +21,13 @@
   --color-accent: #2b6cb0;
   --color-accent-hover: #2558a0;
   --max-width: 1200px;
-  --nav-height: 72px;
+  --nav-height: 60px;
+  /* Brand blend for every navy band: navy into blue, warmed by gold. */
+  --brand-blend:
+    radial-gradient(900px 420px at 85% 0%, rgba(229, 193, 106, 0.28), transparent 65%),
+    radial-gradient(700px 360px at 10% 100%, rgba(43, 108, 176, 0.45), transparent 70%),
+    linear-gradient(135deg, #132a4a 0%, #1a365d 55%, #234f86 100%);
+  --font-display: "Source Serif 4", Georgia, "Times New Roman", serif;
 }
 
 *,
@@ -93,9 +99,9 @@ ul {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  padding: 14px 28px;
+  padding: 12px 22px;
   border-radius: 8px;
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 600;
   border: none;
   transition: all 0.25s ease;
@@ -186,7 +192,7 @@ ul {
 }
 
 .sec-head {
-  margin-bottom: 40px;
+  margin-bottom: 32px;
 }
 
 .sec-head--center {
@@ -202,13 +208,15 @@ ul {
 }
 
 .section-cta-wrap {
-  margin-top: 40px;
+  margin-top: 32px;
   text-align: center;
 }
 
 /* ── Section spacing ── */
+/* Site-wide scale, set from the homepage: tight vertical rhythm and a quiet,
+   consistent heading / standfirst / body hierarchy on every page. */
 .section {
-  padding: 80px 0;
+  padding: 60px 0;
 }
 
 .section--alt {
@@ -216,15 +224,15 @@ ul {
 }
 
 .section--navy {
-  background: var(--color-navy);
+  background: var(--brand-blend);
   color: var(--color-white);
 }
 
 .section-title {
-  font-size: clamp(28px, 4vw, 40px);
-  font-weight: 700;
-  letter-spacing: -0.02em;
-  line-height: 1.2;
+  font-size: clamp(23px, 2.4vw, 30px);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.25;
   margin-bottom: 16px;
   color: var(--color-gray-900);
 }
@@ -234,10 +242,10 @@ ul {
 }
 
 .section-subtitle {
-  font-size: clamp(16px, 2vw, 18px);
+  font-size: 16px;
   color: var(--color-gray-500);
   max-width: 640px;
-  line-height: 1.6;
+  line-height: 1.65;
 }
 
 .section--navy .section-subtitle {
@@ -278,13 +286,13 @@ ul {
 }
 
 .card h3 {
-  font-size: 18px;
+  font-size: 16.5px;
   font-weight: 600;
   margin-bottom: 8px;
 }
 
 .card p {
-  font-size: 15px;
+  font-size: 14px;
   color: var(--color-gray-500);
   line-height: 1.6;
 }
@@ -337,7 +345,7 @@ ul {
 }
 
 .aud-card h3 {
-  font-size: 18px;
+  font-size: 16.5px;
   font-weight: 700;
   color: var(--color-navy);
   line-height: 1.3;
@@ -409,14 +417,14 @@ ul {
 }
 
 .stage-card h3 {
-  font-size: 19px;
+  font-size: 16.5px;
   font-weight: 700;
   color: var(--color-navy);
   margin-bottom: 10px;
 }
 
 .stage-card p {
-  font-size: 14.5px;
+  font-size: 14px;
   line-height: 1.65;
   color: var(--color-gray-600);
 }
@@ -541,7 +549,7 @@ ul {
 /* ── Responsive ── */
 @media (max-width: 768px) {
   .section {
-    padding: 56px 0;
+    padding: 44px 0;
   }
 
   .card-grid {
@@ -576,4 +584,44 @@ ul {
     transform: none;
     transition: none;
   }
+}
+
+/* ── Reading rhythm (site-wide) ──
+   Page and section headings set in a book serif; body copy stays in Inter.
+   Balanced heading breaks, no stranded last word in paragraphs, and kerning
+   and ligatures on, so long pages read like a well-set book. */
+body {
+  line-height: 1.7;
+  text-rendering: optimizeLegibility;
+  font-kerning: normal;
+  font-feature-settings: "kern", "liga";
+}
+
+.section-title,
+.hero-title,
+.ev-hero__title,
+.contact-heading,
+.ho6-card__title,
+.record-close__line,
+.articles-section__heading h2,
+.articles-empty h3,
+.article-header h1,
+.article-prose h2,
+.article-prose h3,
+.legal-content h2 {
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+h1,
+h2,
+h3 {
+  text-wrap: balance;
+}
+
+p,
+li,
+dd {
+  text-wrap: pretty;
 }

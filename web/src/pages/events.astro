@@ -1,0 +1,113 @@
+---
+/**
+ * Events.
+ *
+ *   01 hero: brand-colour blend, text beside one featured event photo
+ *   02 the events as a timeline: numbered node, photo card and summary
+ *   05 premium-indication CTA, set apart from the footer
+ *
+ * The Google rating badge renders in local preview only until confirmed.
+ */
+import Layout from "../layouts/Layout.astro";
+import { QUOTE_URL } from "../constants";
+import "./Events.css";
+
+/* Google rating: local preview only until the five-star rating is confirmed
+   against the agency's Google Business Profile. */
+const SHOW_RATING = import.meta.env.DEV;
+
+const EVENTS = [
+  {
+    id: "new-england-condo-expo",
+    tag: "Trade show",
+    title: "The New England Condominium Expo",
+    summary: "Our team joined condo and HOA board members, property managers and building owners at New England’s largest one-day condominium trade show in Boston. We spent the day talking with boards about rising master policy premiums, deductibles and how to prepare for renewal.",
+    image: "/images/events/new-england-condo-expo.jpg",
+    alt: "The HOA Insurance Agency booth at the New England Condominium Expo in Boston",
+  },
+  {
+    id: "cai-ne-condoconnect",
+    tag: "Conference",
+    title: "CAI-NE CondoConnect Annual Conference & Expo",
+    summary: "We attended the Community Associations Institute New England Chapter’s flagship conference, which brings together condominium and homeowners association leaders from across the region. Sessions on Insurance, D&O protection and current market conditions reinforced the issues we help associations address every day.",
+    image: "/images/events/cai-ne-condoconnect.jpg",
+    alt: "An HOA Insurance Agency team member speaking with an attendee at the CAI-NE CondoConnect expo",
+  },
+  {
+    id: "maia-big-event",
+    tag: "Industry conference",
+    title: "MAIA Big Event Conference & Expo",
+    summary: "We joined independent Insurance agents and carrier partners at the Massachusetts Association of Insurance Agents’ annual conference, one of the largest state agent gatherings in the country. It keeps our agents current on carrier appetite, regulation and the markets we place association coverage with.",
+    image: "/images/events/maia-big-event.jpg",
+    alt: "Three HOA Insurance Agency team members at the MAIA Big Event 2026 sponsor wall",
+  },
+];
+---
+
+<Layout
+  title="Events — HOA Insurance Agency"
+  description="Webinars, board education sessions and community association events from HOA Insurance Agency."
+  canonicalPath="/events/"
+>
+  {/* ═══ 01 · Hero — text beside one featured event photo ═══════════ */}
+  <section class="ev-hero" aria-labelledby="ev-hero-h">
+    <div class="container ev-hero__inner">
+      <div class="ev-hero__copy">
+        <p class="ev-hero__tag">Built for associations</p>
+        <h1 class="ev-hero__title" id="ev-hero-h">Learn, plan and renew with confidence</h1>
+        <ul class="ev-hero__badges">
+          {SHOW_RATING && (
+            <li class="ev-badge ev-badge--draft" aria-label="Rated five stars on Google">
+              <span class="ev-badge__g" aria-hidden="true"><span>G</span></span>
+              <span class="ev-badge__stars" aria-hidden="true">★★★★★</span>
+            </li>
+          )}
+          <li class="ev-badge">From small HOAs to large condominium communities</li>
+        </ul>
+      </div>
+      <figure class="ev-hero__media">
+        <img src="/images/events/maia-big-event.jpg" alt="HOA Insurance Agency team members at the MAIA Big Event" width="1200" height="900" loading="eager" decoding="async" />
+      </figure>
+    </div>
+  </section>
+
+  {/* ═══ 02 · Events as a timeline ════════════════════════════════════ */}
+  <div class="ev-page">
+    <ol class="container ev-timeline">
+      {EVENTS.map((ev, i) => (
+        <li class={"ev reveal" + (i % 2 ? " ev--reverse" : "")} id={ev.id} aria-labelledby={`${ev.id}-h`}>
+          <span class="ev__node" aria-hidden="true">{String(i + 1).padStart(2, "0")}</span>
+          <div class="ev__grid">
+            <figure class="ev__media">
+              <img class="ev__photo" src={ev.image} alt={ev.alt} width="1200" height="900" loading={i === 0 ? "eager" : "lazy"} decoding="async" />
+              <figcaption class="ev__chip">{ev.tag}</figcaption>
+            </figure>
+            <div class="ev__body">
+              <h2 class="section-title" id={`${ev.id}-h`}>{ev.title}</h2>
+              <p class="ev__summary">{ev.summary}</p>
+            </div>
+          </div>
+        </li>
+      ))}
+    </ol>
+
+    {/* ═══ 05 · Premium-indication CTA — a panel, apart from the footer ═ */}
+    <section class="ev-cta" aria-labelledby="ev-cta-h">
+      <div class="container">
+        <div class="ev-cta__panel">
+          <h2 class="ev-cta__title" id="ev-cta-h">
+            Get your premium indication in minutes
+          </h2>
+          <div class="ev-cta__actions">
+            <a href={QUOTE_URL} class="btn btn-gold">Get my premium indication</a>
+            <a href="/contact/" class="btn btn-outline">Talk to a licensed agent</a>
+          </div>
+          <p class="ev-cta__terms" id="ev-cta-terms">
+            Preliminary and non-binding. Not a quote or binder; final premium depends on
+            underwriting, verified property details and eligibility. No broker fee.
+          </p>
+        </div>
+      </div>
+    </section>
+  </div>
+</Layout>
