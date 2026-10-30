@@ -173,17 +173,17 @@ const FAQS = [
     <section class="section section--alt" aria-labelledby="about-h">
       <div class="container wcu-about">
         <div class="wcu-about__media">
-          {/* Decorative and muted, so it autoplays; the poster shows until it starts. */}
+          {/* Decorative and muted. It downloads and plays once scrolled near; the poster shows until then. */}
           <video
-            src="/images/hoa-intro.mp4"
+            data-lazy-video
+            data-src="/images/hoa-intro.mp4"
             poster="/images/practice-team.jpg"
             width="1920"
             height="1080"
-            autoplay
             muted
             loop
             playsinline
-            preload="metadata"
+            preload="none"
             aria-hidden="true"
           />
         </div>
@@ -344,3 +344,9 @@ const FAQS = [
     <ContactForm showClaims client:visible />
   </div>
 </Layout>
+
+<script>
+  import { initializeLazyVideos } from "../lib/lazy-video";
+
+  initializeLazyVideos();
+</script>

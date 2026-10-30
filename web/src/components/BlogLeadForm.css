@@ -1,0 +1,14 @@
+.blog-form__grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 16px; }
+.blog-form--briefing .blog-form__grid { grid-template-columns: 1fr; gap: 12px; }
+.blog-form__field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.blog-form__field label { font-size: 12.5px; font-weight: 600; color: var(--color-gray-600); }
+.blog-form__field label span { font-weight: 400; color: var(--color-gray-500); }
+/* 16px keeps iOS from zooming into the field. */
+.blog-form__field :is(input, select) { width: 100%; border: 1px solid var(--color-gray-200); border-radius: 8px; padding: 10px 12px; font: inherit; font-size: 16px; color: var(--color-gray-900); background: var(--color-white); }
+.blog-form__field :is(input, select):focus { outline: 2px solid var(--color-blue); outline-offset: 1px; border-color: var(--color-blue); }
+.blog-form__submit { margin-top: 18px; }
+.blog-form--briefing .blog-form__submit { width: 100%; justify-content: center; margin-top: 14px; }
+.blog-form__error { color: #b42318; font-size: 13.5px; margin-top: 12px; }
+.blog-form__done strong { display: block; color: var(--color-navy); font-size: 16px; }
+.blog-form__done p { color: var(--color-gray-600); font-size: 14px; margin-top: 4px; }
+@media (max-width: 560px) { .blog-form__grid { grid-template-columns: 1fr; } }

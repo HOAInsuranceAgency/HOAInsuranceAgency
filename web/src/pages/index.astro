@@ -170,17 +170,17 @@ const faqJsonLd = faqPageSchema(HOME_CANONICAL, FAQS);
           </div>
         </div>
         <div class="what-media">
-          {/* Decorative and muted, so it autoplays; the poster shows until it starts. */}
+          {/* Decorative and muted. It downloads and plays once scrolled near; the poster shows until then. */}
           <video
-            src="/images/hoa-intro.mp4"
+            data-lazy-video
+            data-src="/images/hoa-intro.mp4"
             poster="/images/practice-team.jpg"
             width="1920"
             height="1080"
-            autoplay
             muted
             loop
             playsinline
-            preload="metadata"
+            preload="none"
             aria-hidden="true"
           />
         </div>
@@ -498,3 +498,9 @@ const faqJsonLd = faqPageSchema(HOME_CANONICAL, FAQS);
     </div>
   </section>
 </Layout>
+
+<script>
+  import { initializeLazyVideos } from "../lib/lazy-video";
+
+  initializeLazyVideos();
+</script>
