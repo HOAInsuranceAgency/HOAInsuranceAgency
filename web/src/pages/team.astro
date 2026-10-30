@@ -1,0 +1,102 @@
+---
+/**
+ * Team.
+ *
+ *   01 hero
+ *   02 how the team works (three functions, no headcount claims)
+ *   03 top producers: photo and name
+ *   04 CTA
+ */
+import Layout from "../layouts/Layout.astro";
+import Hero from "../components/Hero.astro";
+import { QUOTE_URL } from "../constants";
+import { AGENCY } from "../../../shared/agency";
+import "./Team.css";
+
+/* How an account is handled. Describes the work, not the number of people. */
+const FUNCTIONS = [
+  { title: "Placement", desc: "Licensed agents take your association to the markets that write it and compare every option." },
+  { title: "Account service", desc: "Certificates, policy changes and lender requests handled without the runaround." },
+  { title: "Renewal planning", desc: "Valuations and loss history updated early, so your board has time to decide." },
+];
+
+/* Ordered for the row: darker backdrops at the ends, the gray one centered. */
+const PRODUCERS = [
+  { name: "Jake Greasley", photo: "/images/team/jake-greasley.jpg" },
+  { name: "Holly Martin", photo: "/images/team/holly-martin.jpg" },
+  { name: "Brian Cole", photo: "/images/team/brian-cole.jpg" },
+  { name: "Samuel Danis", photo: "/images/team/samuel-danis.jpg" },
+  { name: "Michael Greasley", photo: "/images/team/michael-greasley.jpg" },
+];
+---
+
+<Layout
+  title="Our Team — HOA Insurance Agency"
+  description="Meet the licensed Insurance professionals at HOA Insurance Agency who place coverage for homeowners and condominium associations."
+  canonicalPath="/team/"
+>
+  <Hero
+    eyebrow="Our team"
+    title="The people behind your association’s coverage"
+    subtitle="Licensed Insurance professionals focused on homeowners and condominium associations."
+    backgroundImage="/images/practice-team.jpg"
+    compact
+    short
+  />
+
+  {/* ═══ 02 · How the team works ═════════════════════════════════════ */}
+  <section class="section" aria-labelledby="team-work-h">
+    <div class="container">
+      <div class="sec-head sec-head--center">
+        <p class="eyebrow">How we work</p>
+        <h2 class="section-title" id="team-work-h">The same team, from first review to renewal</h2>
+        <p class="section-subtitle">
+          Your association is supported from first review to renewal, by people who
+          specialize in community associations.
+        </p>
+      </div>
+      <ol class="tm-functions">
+        {FUNCTIONS.map((fn, i) => (
+          <li class="tm-function">
+            <span class="tm-function__num" aria-hidden="true">{String(i + 1).padStart(2, "0")}</span>
+            <h3>{fn.title}</h3>
+            <p>{fn.desc}</p>
+          </li>
+        ))}
+      </ol>
+    </div>
+  </section>
+
+  {/* ═══ 03 · Top producers ══════════════════════════════════════════ */}
+  <section class="section section--alt" aria-labelledby="team-h">
+    <div class="container">
+      <div class="sec-head sec-head--center">
+        <p class="eyebrow">Top producers</p>
+        <h2 class="section-title" id="team-h">Meet a few of our top producers</h2>
+        <p class="section-subtitle">
+          Licensed agents who work with boards, property managers and owners every day.
+        </p>
+      </div>
+      <ul class="tm-producers">
+        {PRODUCERS.map((p) => (
+          <li class="tm-producer">
+            <img class="tm-producer__photo" src={p.photo} alt={p.name} width="640" height="800" loading="lazy" decoding="async" />
+            <h3 class="tm-producer__name">{p.name}</h3>
+          </li>
+        ))}
+      </ul>
+    </div>
+  </section>
+
+  {/* ═══ 04 · CTA ═════════════════════════════════════════════════════ */}
+  <section class="section" aria-labelledby="team-cta-h">
+    <div class="container tm-cta">
+      <h2 class="section-title" id="team-cta-h">Talk to someone who knows associations</h2>
+      <div class="tm-cta__actions">
+        <a href="/contact/" class="btn btn-primary">Speak with a licensed agent</a>
+        <a href={QUOTE_URL} class="btn tm-cta__alt">Request Insurance Review</a>
+      </div>
+      <p class="tm-cta__note">{AGENCY.name}, licensed in {AGENCY.areaServed}. No broker fee.</p>
+    </div>
+  </section>
+</Layout>

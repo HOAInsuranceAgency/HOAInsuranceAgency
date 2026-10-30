@@ -1,0 +1,71 @@
+---
+import CondoEstimate from "../../components/CondoEstimate";
+import LegalStrip from "../../components/LegalStrip.astro";
+import "../../styles/quote.css";
+import Analytics from "../../components/Analytics.astro";
+import { AGENCY } from "../../../../shared/agency";
+import { canonicalUrl, absoluteUrl, siteGraph } from "../../lib/seo";
+
+/**
+ * Condominium premium indication — the three-screen sibling of /quote, for paid
+ * and organic visitors who want a number first. Same shell as quote.astro: the
+ * island runs full-bleed with no navbar or site footer.
+ *
+ * noindex, follow, like /quote: the island is client-only, so the served HTML
+ * has no body content. It sits under /quote/, which data/routes.ts already
+ * keeps out of the sitemap.
+ */
+const canonical = canonicalUrl("/quote/condo/");
+const title = `Condo Premium Indication · ${AGENCY.brandName}`;
+const description =
+  "Get a preliminary premium indication for your condominium association's master policy from ProtectMyHOA, the consumer brand of HOA Insurance Agency LLC.";
+const graph = siteGraph({ canonical, title, description });
+---
+
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/png" href="/favicon.png" />
+    <link rel="apple-touch-icon" href="/favicon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#0b1220" />
+    <meta name="description" content={description} />
+    <title>{title}</title>
+    <meta name="robots" content="noindex, follow" />
+    <meta name="googlebot" content="noindex, follow" />
+    <link rel="canonical" href={canonical} />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:image" content={absoluteUrl("/logo.png")} />
+    <meta property="og:url" content={canonical} />
+    <meta property="og:site_name" content={AGENCY.brandName} />
+
+    <script type="application/ld+json" set:html={JSON.stringify(graph)} />
+
+    <Analytics />
+  </head>
+  <body>
+    <div id="quote-root">
+      <CondoEstimate client:only="react" />
+    </div>
+    <LegalStrip />
+
+    <style is:global>
+      /* The two lines this page adds to the wizard's look. */
+      .qf-condo-kicker {
+        margin: 0 0 6px;
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+      }
+      .qf-condo-consent {
+        margin: 18px 0 0;
+        font-size: 12px;
+        line-height: 1.6;
+      }
+    </style>
+  </body>
+</html>

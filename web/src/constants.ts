@@ -130,7 +130,8 @@ export type LeadForm =
   | "coverage_calculator"
   | "instant_assessment"
   | "association_ho6"
-  | "quote_wizard";
+  | "quote_wizard"
+  | "condo_estimate";
 
 /**
  * Report one converted lead, to BOTH destinations.
@@ -203,18 +204,19 @@ export const NAV_LINKS = [
     ],
   },
   { label: "Why Choose Us", path: "/why-choose-us/" },
-  // Moved after Why Choose Us: the order now runs product → proof → who we are,
-  // rather than putting the company before what it sells.
-  //
-  // Points at the homepage, not /about-us, by request. Two consequences worth
-  // knowing about:
-  //   1. Navbar.astro highlights only the FIRST matching link, otherwise Home
-  //      and About Us would both light up on "/".
-  //   2. /about-us still exists, is still indexed and is still linked from the
-  //      homepage ("About our insurance agency" in the practice section). It has lost
-  //      its site-wide nav link, so that homepage link is now its only internal
-  //      one — do not remove it without replacing the path here.
-  { label: "About Us", path: "/" },
+  // Company group: who we are, plus the events, carriers and articles pages.
+  {
+    label: "Company",
+    children: [
+      // Points at the homepage, by request. /about-us still exists and stays
+      // linked from the homepage ("Meet the agency behind ProtectMyHOA").
+      { label: "About Us", path: "/" },
+      { label: "Team", path: "/team/" },
+      { label: "Events", path: "/events/" },
+      { label: "Carriers", path: "/carriers/" },
+      { label: "Blog", path: "/blog/" },
+    ],
+  },
   // A real route now, not an in-page anchor. Navbar.astro treats non-hash paths
   // as highlightable, so Contact gains an active state on /contact.
   { label: "Contact", path: "/contact/" },

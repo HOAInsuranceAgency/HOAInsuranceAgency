@@ -35,6 +35,7 @@ import { cities } from "../data/cities";
 import { STAGES } from "../data/process";
 import { MARKETS } from "../data/markets";
 import { COVERAGES } from "../data/coverages";
+import CondoIndicationCta from "../components/CondoIndicationCta.astro";
 import "./StatePage.css";
 
 export function getStaticPaths() {
@@ -61,14 +62,16 @@ const stateCities = cities.filter(
  */
 const canonicalPath = "/hoa-insurance-" + state.slug + "/";
 
-/* Same four audiences and the same marks as the homepage and /what-we-do, so the
-   three pages say this once and say it identically. */
+/* The association audiences from the homepage and /what-we-do. State pages
+   speak to the association, so the unit-owner (HO-6) card is left out. */
 const AUDIENCES = [
   { icon: "board",     title: "Boards & trustees",     cta: "Request a board review",       href: QUOTE_URL },
   { icon: "manager",   title: "Property managers",     cta: "Talk to us about a portfolio", href: "/contact/" },
   { icon: "developer", title: "Developers & sponsors", cta: "Discuss a new project",        href: "/contact/" },
-  { icon: "owner",     title: "Unit owners",           cta: "Get HO-6 coverage",            href: "/what-we-do/" },
 ];
+
+/* The association's own coverages; the HO-6 card is not shown on state pages. */
+const STATE_COVERAGES = COVERAGES.filter((c) => !c.title.startsWith("HO-6"));
 ---
 
 <Layout
@@ -79,13 +82,19 @@ const AUDIENCES = [
 >
   {/* ═══ 01 · Hero — same treatment as the homepage ═══════════════════ */}
   <Hero
-    eyebrow="ProtectMyHOA™"
+    eyebrow="ProtectMyHOA™ · Licensed Nationwide"
     title={state.heroTitle}
-    subtitle={`Master insurance for the association, HO-6 for the unit owner, and a written record of why each was placed the way it was — for ${state.name} community associations.`}
+    subtitle={`The master policy, liability, D&O and crime coverage for ${state.name} homeowners and condominium associations, compared across up to 12 appointed Insurance companies and set out in writing for your board.`}
     backgroundImage="/images/hero-people.jpg"
     backgroundVideo="/images/hero-video.mp4"
+    short
   >
-    <HeroLookup slot="action" />
+    <HeroLookup
+      slot="action"
+      placeholder="Association address"
+      buttonText="Get my premium indication"
+      microcopy="Free · No broker fee · Non-binding indication, subject to underwriting"
+    />
   </Hero>
 
   {/* ═══ 02 · The master policy in this state ════════════════════════ */}
@@ -97,7 +106,7 @@ const AUDIENCES = [
           <h2 class="section-title" id="intro-h">HOA Insurance for {state.name} Associations</h2>
           <p class="st-lead">{state.intro}</p>
           <p class="st-closer">
-            Where the master policy ends and a unit owner's HO-6 begins depends on the
+            Where the association’s coverage ends and each owner’s begins depends on the
             master-policy form, governing documents, applicable law and endorsements.
           </p>
           <div class="st-cta">
@@ -131,7 +140,7 @@ const AUDIENCES = [
         </p>
       </div>
       <div class="st-cov-grid">
-        {COVERAGES.map((c) => (
+        {STATE_COVERAGES.map((c) => (
           <article class="st-cov-card">
             <span class="st-cov-card__mark" aria-hidden="true">
               {c.icon === "building" && <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="18" rx="1"/><path d="M8 7h.01M12 7h.01M16 7h.01M8 11h.01M12 11h.01M16 11h.01"/><path d="M10 21v-3h4v3"/></svg>}
@@ -233,7 +242,7 @@ const AUDIENCES = [
         <p class="eyebrow">Our markets</p>
         <h2 class="section-title" id="markets-h">Markets a board will recognize</h2>
         <p class="section-subtitle">
-          Direct appointments with twelve markets — national insurers alongside the specialists.
+          Direct appointments with twelve markets, national insurers alongside the specialists.
         </p>
       </div>
 
@@ -299,7 +308,7 @@ const AUDIENCES = [
         <p class="eyebrow">Who we serve</p>
         <h2 class="section-title" id="aud-h">Who we work with</h2>
         <p class="section-subtitle">
-          Four groups, each needing something different from the same placement.
+          Three groups, each needing something different from the same placement.
         </p>
       </div>
       <div class="aud-grid">
@@ -322,11 +331,14 @@ const AUDIENCES = [
   {/* ═══ 10 · Close ══════════════════════════════════════════════════ */}
   <section class="section section--navy" style="text-align: center">
     <div class="container">
-      <h2 class="section-title st-invert">Ready to review your {state.name} HOA insurance?</h2>
+      <h2 class="section-title st-invert">Ready to review your {state.name} HOA Insurance?</h2>
       <p class="section-subtitle st-invert-sub" style="margin: 0 auto 32px">
-        Start with a free insurance review — no commitment, no pressure.
+        Start with a free Insurance review. No commitment, no pressure.
       </p>
       <a href={QUOTE_URL} class="btn btn-gold">Request Insurance Review</a>
+      <div class="st-close-condo">
+        <CondoIndicationCta tone="dark" />
+      </div>
     </div>
   </section>
 

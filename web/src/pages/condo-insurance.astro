@@ -1,9 +1,11 @@
 ---
 /** Condo product page. Keep the FAQ copy and its page-bound schema together. */
 import Layout from "../layouts/Layout.astro";
+import CondoIndicationCta from "../components/CondoIndicationCta.astro";
 import Hero from "../components/Hero.astro";
 import HeroLookup from "../components/HeroLookup.astro";
 import { ContactForm } from "../components/ContactForm";
+import AgencyStandards from "../components/AgencyStandards.astro";
 import { QUOTE_URL } from "../constants";
 import { canonicalUrl, faqPageSchema } from "../lib/seo";
 import "./WhatWeDo.css";
@@ -14,30 +16,30 @@ const PAGE_URL = canonicalUrl("/condo-insurance/");
 
 /** Coverage summaries; issued forms, endorsements, limits and exclusions control. */
 const MASTER_COVERAGES = [
-  { title: "Commercial Property", icon: "building", desc: "Covers shared buildings and common elements after a covered loss, typically on a replacement-cost basis, subject to the policy's valuation terms and limits. Equipment breakdown for shared boilers, elevators and HVAC can be written alongside it." },
-  { title: "General Liability", icon: "shield", desc: "Can cover the association's liability and defense costs for covered injury or property-damage claims arising from common property and operations." },
-  { title: "Umbrella / Excess Liability", icon: "umbrella", desc: "Adds limits above specified primary liability policies. The underlying coverage, exclusions and excess-policy terms determine when it responds." },
-  { title: "Directors & Officers Liability", icon: "briefcase", desc: "Can cover board members and the association against covered governance claims, including defense costs, subject to the form's terms and exclusions." },
-  { title: "Crime and Fidelity", icon: "lock", desc: "Can cover theft of association funds by employees or volunteers; third-party theft may require additional coverage. Applicable lender guidelines may set limits based on the funds held." },
-  { title: "Ordinance or Law", icon: "scale", desc: "Can cover certain extra costs of rebuilding to current code after a covered loss. Coverage is written in parts with separate limits, which matters especially in older buildings." },
-  { title: "Workers Compensation", icon: "worker", desc: "Reviewed against state law and the association's staffing and contractor arrangements. Employee and uninsured-contractor exposures need to be considered before placement." },
+  { title: "Commercial property", icon: "building", covers: "Shared buildings and common elements after a covered loss, typically at replacement cost. Equipment breakdown for boilers, elevators and HVAC can be added.", check: "Valuation terms and whether the building limit reflects today’s rebuilding cost." },
+  { title: "General liability", icon: "shield", covers: "The association’s liability and defense costs for covered injury or property-damage claims from common property and operations.", check: "Limits against the condominium’s amenities, size and exposure." },
+  { title: "Umbrella / excess liability", icon: "umbrella", covers: "Additional limits above specified primary liability policies.", check: "Which underlying policies it sits over, and the excess-policy terms." },
+  { title: "Directors & officers liability", icon: "briefcase", covers: "Board members and the association against covered governance claims, including defense costs.", check: "Exclusions, and prior-acts terms when changing carriers." },
+  { title: "Crime and fidelity", icon: "lock", covers: "Theft of association funds by employees or volunteers. Third-party theft may need additional coverage.", check: "The limit against funds held, including reserves, and lender guidelines." },
+  { title: "Ordinance or law", icon: "scale", covers: "Certain extra costs of rebuilding to current code after a covered loss.", check: "Each part carries its own limit, which matters most in older buildings." },
+  { title: "Workers compensation", icon: "worker", covers: "Employee injury exposure, as required by state law.", check: "Staffing and contractor arrangements, including uninsured contractors." },
 ];
 
 /** Common review issues, not predictions about a particular claim or project. */
 const COMMON_ISSUES = [
-  { title: "The board does not know which master policy type applies", desc: "Bare walls, single entity and all-in describe different unit boundaries. We compare the governing documents and applicable law with the issued policy and endorsements; the label alone does not establish coverage." },
-  { title: "The per-unit deductible may affect financing", desc: "Some loan programs limit the deductible structure a condominium can carry. We review the current policy against the requirements applicable to the project and loan program, including any per-unit deductible." },
-  { title: "Owners carry little or no loss-assessment coverage", desc: "An association may be able to assess certain deductibles or shortfalls to owners, depending on applicable law, the governing documents and the loss. HO-6 loss-assessment coverage is not automatic and remains subject to covered causes, exclusions and limits." },
-  { title: "Improvements may be uninsured on both sides", desc: "If the master policy excludes an owner's upgrades and the HO-6 does not cover them adequately, a gap can remain. We compare the actual policy forms and unit improvements rather than assume either policy responds." },
-  { title: "The building limit predates today's costs", desc: "A replacement-cost policy still has valuation conditions and limits. We review current rebuilding estimates against the issued coverage to identify potential shortfalls." },
-  { title: "Reserves may fall short of lender requirements", desc: "Reserve funding and project-review requirements vary by lender, loan program and project. We flag questions for the board and lender alongside the insurance review; insurance alone does not establish loan eligibility." },
+  { title: "The board isn’t sure which master policy form applies", desc: "Bare walls, single entity and all-in (also called walls-in) forms draw the unit boundary differently. We compare your condominium declaration and applicable state law with the issued policy and endorsements, because the label alone doesn’t establish coverage." },
+  { title: "The per-unit deductible may affect financing", desc: "Some loan programs limit the deductible a condominium can carry. A deductible outside those limits can affect owners’ ability to sell or refinance, so we review it against the project and loan requirements that apply." },
+  { title: "Owners don’t know what they could be assessed", desc: "After a large loss, a condo association may be able to pass the deductible or a shortfall to owners as a special assessment. We help the board identify that exposure and communicate it before a claim, not after." },
+  { title: "The building limit predates today’s costs", desc: "Condo building Insurance written on a replacement-cost basis still has valuation conditions and limits. We review current rebuilding estimates against the issued coverage to flag potential shortfalls." },
+  { title: "Ordinance or law limits are too low for an older building", desc: "Rebuilding to current code can add significant cost after a covered loss, especially in an older condominium. We check whether each part of ordinance or law coverage carries a realistic limit." },
+  { title: "Fidelity coverage falls below lender minimums", desc: "Lenders may require crime and fidelity coverage based on the funds a condominium association holds, including reserves. We compare your limit with the funds on hand and the lender guidelines that apply." },
 ];
 
 /** Typical structures; the actual documents, law and policy terms control. */
 const POLICY_TYPES = [
-  { name: "Bare walls", covers: "Structure and common elements", stops: "Typically excludes unit interiors; the policy and governing documents control", owner: "Most" },
-  { name: "Single entity", covers: "Structure, common elements, and usually original fixtures and finishes", stops: "Typically excludes improvements added by an owner", owner: "Some" },
-  { name: "All-in", covers: "Structure, common elements, original finishes and usually owner improvements", stops: "Typically excludes belongings and personal liability", owner: "Least" },
+  { name: "Bare walls", covers: "Structure and common elements", stops: "Interior walls, fixtures, cabinets, flooring, improvements and belongings", owner: "Most" },
+  { name: "Single entity", covers: "Structure, common elements, and original fixtures and finishes", stops: "Owner upgrades and improvements, belongings and personal liability", owner: "Some" },
+  { name: "All-in (walls-in)", covers: "Structure, common elements, original finishes and usually owner improvements", stops: "Belongings and personal liability", owner: "Least" },
 ];
 
 const AUDIENCES = [
@@ -51,7 +53,7 @@ const AUDIENCES = [
 const FAQS = [
   { q: "How do we find out whether our condominium is bare walls, single entity or all-in?", a: "We compare the governing documents and applicable law with the issued master policy, forms and endorsements. These labels describe typical arrangements, but do not replace the actual terms, limits and exclusions. A certificate is not a substitute for that review. We identify the unit boundary and any mismatch in writing so the board and owners can review the master policy and HO-6 together." },
   { q: "A pipe failed and damaged three units. Who pays the deductible?", a: "A deductible may apply per occurrence or per unit. Whether any amount can be allocated to an owner depends on applicable law, the governing documents, the policy's allocation provisions and the facts of the loss. A loss below the master deductible does not automatically become an owner assessment. HO-6 loss-assessment coverage may respond only if the cause and assessment are covered, subject to its own terms, exclusions and limits, including any special limit for a master-policy deductible. We review the actual policies before drawing a conclusion." },
-  { q: "Can our insurance affect owners' mortgage options?", a: "Yes. Insurance can affect whether a condominium meets a particular lender's or loan program's project requirements. Depending on the project and review type, those requirements may address replacement-cost coverage, deductibles, fidelity or crime coverage, and reserve funding. They are not identical across all mortgages, and insurance is only part of project eligibility. We check the insurance against the requirements identified for the review and flag questions for the lender, which determines loan eligibility." },
+  { q: "Can our Insurance affect owners' mortgage options?", a: "Yes. Insurance can affect whether a condominium meets a particular lender's or loan program's project requirements. Depending on the project and review type, those requirements may address replacement-cost coverage, deductibles, fidelity or crime coverage, and reserve funding. They are not identical across all mortgages, and Insurance is only part of project eligibility. We check the Insurance against the requirements identified for the review and flag questions for the lender, which determines loan eligibility." },
 ];
 
 const faqJsonLd = faqPageSchema(PAGE_URL, FAQS);
@@ -65,12 +67,18 @@ const faqJsonLd = faqPageSchema(PAGE_URL, FAQS);
 >
   {/* ═══ Hero — same treatment as /what-we-do ═══════════════════════ */}
   <Hero
-    eyebrow="ProtectMyHOA™"
-    title="Condo Association Insurance"
-    subtitle="Insurance Built for Associations™. We place the condominium's master policy, set the owners' HO-6 against it, and write down why, so the board can explain the decision later."
+    eyebrow="Condominium Association Insurance · Licensed Nationwide"
+    title="Condo Association Insurance for Condominium Boards and Managers."
+    subtitle="Insurance Built for Associations™. We place your condominium’s master policy, from condo building Insurance to liability, D&O and crime, with Insurance companies that write condo risks, and document every recommendation so your board can stand behind it."
     backgroundImage="/images/modern-building.jpg"
+    short
   >
-    <HeroLookup slot="action" />
+    <HeroLookup
+      slot="action"
+      placeholder="Condominium address"
+      buttonText="Estimate my condo premium"
+      microcopy="Licensed nationwide · No broker fee · Non-binding indication, subject to underwriting"
+    />
   </Hero>
 
   {/* Keep condo-specific styling scoped away from the HOA coverage page. */}
@@ -82,28 +90,35 @@ const faqJsonLd = faqPageSchema(PAGE_URL, FAQS);
         <p class="eyebrow">The master policy</p>
         <h2 class="section-title" id="define-h">What is a condo master policy?</h2>
         <p class="wwd-lead">
-          A condo master policy is the association's own insurance, paid for from member
-          dues. Its coverage can address shared buildings and common areas, the association's
-          legal liability, and theft of its funds. The board purchases the program for the
-          association and reviews its limits, deductibles and exclusions.
+          A condo master policy, also called condominium master Insurance, is the association’s
+          own policy, paid for through owners’ dues. It can cover the condominium’s shared
+          buildings and common elements, the association’s legal liability, and theft of
+          association funds. The board purchases it on the association’s behalf and is
+          responsible for reviewing its limits, deductibles and exclusions each year.
         </p>
         <p class="wwd-lead">
-          Where it stops needs a closer look. The governing documents and applicable law
-          establish responsibilities; the issued policy, forms and endorsements define the
-          coverage purchased. An owner's HO-6 may cover portions of a unit outside the master
-          policy, subject to its own terms. When the two are out of step, a gap can remain.
+          Where it stops deserves a closer look. Your condominium declaration, bylaws and
+          applicable state law set who is responsible for what, while the issued policy and its
+          endorsements define what is actually covered. Anything the master policy leaves out
+          typically falls to unit owners and their own Insurance, so a mismatch between the
+          documents and the policy can leave a gap.
         </p>
         <p class="wwd-lead">
-          We place the master policy, coordinate the HO-6 against it, and write down why we
-          chose what we chose, so the board can explain the decision a year later.
+          That’s where we come in. Our licensed agents read your condo association master
+          Insurance policy against your governing documents, address the gaps we can at renewal,
+          and put our reasoning in writing so your board can explain the decision a year from now.
         </p>
         <div class="condo-lead__cta condo-lead__cta--center">
           <a href={QUOTE_URL} class="btn btn-navy">Request Insurance Review</a>
           <span class="condo-lead__note">No broker fee</span>
         </div>
+        <CondoIndicationCta />
       </div>
     </div>
   </section>
+
+  {/* ═══ Our standards — shared with /what-we-do ═══════════════════ */}
+  <AgencyStandards />
 
   {/* ═══ 02 · Coverages ════════════════════════════════════════════ */}
   <section class="section" id="coverage" aria-labelledby="cov-h">
@@ -127,23 +142,31 @@ const faqJsonLd = faqPageSchema(PAGE_URL, FAQS);
         decoding="async"
       />
 
-      <div class="cov-grid reveal">
+      {/* One hairline table, a row per coverage: what it covers, and what we
+           check on review. Scans in one pass instead of seven paragraphs. */}
+      <div class="cov-table reveal" role="table" aria-label="Condo master policy coverages">
+        <div class="cov-table__head" role="row">
+          <span role="columnheader">Coverage</span>
+          <span role="columnheader">What it covers</span>
+          <span role="columnheader">What we check</span>
+        </div>
         {MASTER_COVERAGES.map((c) => (
-          <article class="cov-card">
-            <span class="cov-card__mark" aria-hidden="true">
-              {c.icon === "building" && <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="18" rx="1"/><path d="M8 7h.01M12 7h.01M16 7h.01M8 11h.01M12 11h.01M16 11h.01"/><path d="M10 21v-3h4v3"/></svg>}
-              {c.icon === "shield" && <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l8 4v6c0 5-3.5 9.5-8 10-4.5-.5-8-5-8-10V6l8-4z"/></svg>}
-              {c.icon === "umbrella" && <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v2"/><path d="M2 12a10 10 0 0120 0H2z"/><path d="M12 12v7a3 3 0 01-6 0"/></svg>}
-              {c.icon === "briefcase" && <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M9 7V5a2 2 0 012-2h2a2 2 0 012 2v2"/><path d="M3 13h18"/></svg>}
-              {c.icon === "lock" && <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 018 0v4"/></svg>}
-              {c.icon === "scale" && <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18"/><path d="M5 7h14"/><path d="M5 7l-2 6a4 4 0 008 0L9 7"/><path d="M17 7l-2 6a4 4 0 008 0l-2-6"/></svg>}
-              {c.icon === "worker" && <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0118 0"/><path d="M2 12h20"/><path d="M9 12V6.5a3 3 0 016 0V12"/><path d="M5 16.5A7.5 7.5 0 0112 21a7.5 7.5 0 017-4.5"/></svg>}
+          <div class="cov-table__row" role="row">
+            <div class="cov-table__name" role="rowheader">
+              <span class="cov-table__mark" aria-hidden="true">
+                {c.icon === "building" && <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="18" rx="1"/><path d="M8 7h.01M12 7h.01M16 7h.01M8 11h.01M12 11h.01M16 11h.01"/><path d="M10 21v-3h4v3"/></svg>}
+                {c.icon === "shield" && <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l8 4v6c0 5-3.5 9.5-8 10-4.5-.5-8-5-8-10V6l8-4z"/></svg>}
+                {c.icon === "umbrella" && <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v2"/><path d="M2 12a10 10 0 0120 0H2z"/><path d="M12 12v7a3 3 0 01-6 0"/></svg>}
+                {c.icon === "briefcase" && <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M9 7V5a2 2 0 012-2h2a2 2 0 012 2v2"/><path d="M3 13h18"/></svg>}
+                {c.icon === "lock" && <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 018 0v4"/></svg>}
+                {c.icon === "scale" && <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18"/><path d="M5 7h14"/><path d="M5 7l-2 6a4 4 0 008 0L9 7"/><path d="M17 7l-2 6a4 4 0 008 0l-2-6"/></svg>}
+                {c.icon === "worker" && <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0118 0"/><path d="M2 12h20"/><path d="M9 12V6.5a3 3 0 016 0V12"/><path d="M5 16.5A7.5 7.5 0 0112 21a7.5 7.5 0 017-4.5"/></svg>}
             </span>
-            <div class="cov-card__body">
               <h3>{c.title}</h3>
-              <p>{c.desc}</p>
             </div>
-          </article>
+            <p class="cov-table__covers" role="cell"><span class="cov-table__label">What it covers</span>{c.covers}</p>
+            <p class="cov-table__check" role="cell"><span class="cov-table__label">What we check</span>{c.check}</p>
+          </div>
         ))}
       </div>
       <p class="cov-note">
@@ -151,6 +174,7 @@ const faqJsonLd = faqPageSchema(PAGE_URL, FAQS);
         exclusions. Earthquake and flood are reviewed alongside the program where needed;
         availability depends on the condominium and market.
       </p>
+      <CondoIndicationCta />
       <div class="condo-lead__cta condo-lead__cta--center">
         <a href={QUOTE_URL} class="btn btn-navy">Request Insurance Review</a>
         <span class="condo-lead__note">No broker fee</span>
@@ -164,11 +188,11 @@ const faqJsonLd = faqPageSchema(PAGE_URL, FAQS);
       <div class="sec-head sec-head--center reveal">
         <p class="eyebrow eyebrow--gold">What we find</p>
         <h2 class="section-title wwd-invert" id="issues-h">
-          Every gap has a name. We find it before the adjuster does.
+          Every condo Insurance gap has a name. We find it before the adjuster does.
         </h2>
         <p class="section-subtitle wwd-invert-sub">
-          Six conditions we check on a first review. Each one can be considered
-          now rather than after a claim.
+          Six issues we check on every first review of a condominium association’s Insurance.
+          Each one can be considered now rather than after a claim.
         </p>
       </div>
       <div class="issues-acc reveal">
@@ -187,10 +211,10 @@ const faqJsonLd = faqPageSchema(PAGE_URL, FAQS);
       </div>
       <div class="issues-foot">
         <p class="issues-foot__text">
-          We name which of the six apply to your condominium, and put the findings in
-          writing. Don't renew — review.
+          We’ll tell you which of the six apply to your condominium and put the findings in
+          writing. Don’t just renew. Review.
         </p>
-        <a href={QUOTE_URL} class="btn btn-gold issues-foot__cta">Request Insurance Review</a>
+        <a href={QUOTE_URL} class="btn btn-gold issues-foot__cta">Start my condominium review</a>
       </div>
     </div>
   </section>
@@ -200,11 +224,11 @@ const faqJsonLd = faqPageSchema(PAGE_URL, FAQS);
     <div class="container">
       <div class="sec-head sec-head--center reveal">
         <p class="eyebrow">Who pays</p>
-        <h2 class="section-title" id="stops-h">Bare walls, single entity, or all-in</h2>
+        <h2 class="section-title" id="stops-h">Bare walls, single entity or all-in: who pays for what in a condominium</h2>
         <p class="section-subtitle">
-          Three common structures with different unit boundaries. These are typical
-          descriptions, not coverage guarantees: applicable law, governing documents, and
-          the issued policy's forms, endorsements, limits and exclusions control.
+          Your condo master policy form decides where the association’s coverage ends and each
+          owner’s begins. These are typical descriptions, not coverage guarantees; your
+          condominium declaration, state law and the issued policy control.
         </p>
       </div>
 
@@ -212,9 +236,9 @@ const faqJsonLd = faqPageSchema(PAGE_URL, FAQS);
         <table class="types-table">
           <thead>
             <tr>
-              <th scope="col">Master policy type</th>
-              <th scope="col">Typical master-policy scope</th>
-              <th scope="col">Common unit-owner gap</th>
+              <th scope="col">Master policy form</th>
+              <th scope="col">The association typically insures</th>
+              <th scope="col">Typically left to the owner</th>
               <th scope="col" class="types-table__owner-col">Owner carries</th>
             </tr>
           </thead>
@@ -233,34 +257,31 @@ const faqJsonLd = faqPageSchema(PAGE_URL, FAQS);
 
       <div class="stops-pair reveal">
         <div class="stops-item">
-          <h3>Warrantability is now a coverage question</h3>
+          <h3>Warrantability and lender requirements</h3>
           <p>
-            Warrantability describes whether a project meets the requirements of a particular
-            loan program. Depending on the lender, project and review type, those requirements
-            may address replacement-cost coverage, deductibles, fidelity or crime coverage,
-            and reserve funding. Insurance is only part of the review, and requirements can
-            change. We flag insurance questions for the lender; the lender determines loan eligibility.
+            Lenders following Fannie Mae, Freddie Mac or FHA guidelines may review a
+            condominium’s replacement-cost coverage, deductibles, fidelity coverage and reserves
+            before approving a loan. Requirements vary and can change. We flag Insurance
+            questions for the board and lender; the lender decides loan eligibility.
           </p>
         </div>
         <div class="stops-item">
           <h3>The deductible and the assessment</h3>
           <p>
-            A deductible is the portion of a covered loss not paid by the insurer under the
-            policy. Whether the association may allocate it or another shortfall to owners
-            depends on applicable law, governing documents, policy provisions and the loss.
-            An assessment is not automatic, and HO-6 loss-assessment coverage may respond only
-            subject to its own terms, exclusions and limits. The premium is what you budget.
-            The deductible is what you risk.
+            The deductible is the part of a covered loss the insurer doesn’t pay. Depending on
+            state law, the declaration and the facts of the loss, the association may allocate
+            it, or another shortfall, to owners as an assessment. The premium is what you
+            budget. The deductible is what you risk.
           </p>
         </div>
       </div>
 
       <div class="stops-foot">
         <p class="stops-foot__text">
-          We compare the governing documents with the issued policy on every review, identify
-          the unit boundary, and record any mismatch for the board.
+          On every review, we map your condominium declaration against the issued policy,
+          confirm where the unit boundary falls, and record any mismatch for the board.
         </p>
-        <a href={QUOTE_URL} class="btn btn-primary stops-foot__cta">Request Insurance Review</a>
+        <a href={QUOTE_URL} class="btn btn-primary stops-foot__cta">Confirm my condo policy form</a>
       </div>
     </div>
   </section>
@@ -305,7 +326,7 @@ const faqJsonLd = faqPageSchema(PAGE_URL, FAQS);
     <div class="container">
       <div class="sec-head sec-head--center reveal">
         <p class="eyebrow">Questions</p>
-        <h2 class="section-title" id="faq-h">Condo insurance questions</h2>
+        <h2 class="section-title" id="faq-h">Condo Insurance questions</h2>
       </div>
       <div class="faq-list reveal">
         {FAQS.map((f) => (

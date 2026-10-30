@@ -189,3 +189,96 @@
     padding: calc(var(--nav-height) + 32px) 20px 48px;
   }
 }
+
+/* Short hero (homepage, why-choose-us). Height follows the content rather than
+   a fixed minimum, so it stays well under half the screen on desktop and never
+   grows past its content on phones. `.hero.hero--short` outranks the
+   component-scoped HeroLookup rules ([data-astro-cid] adds one attribute). */
+.hero.hero--short {
+  min-height: 0;
+}
+
+.hero--short.hero--action .hero-content {
+  padding: calc(var(--nav-height) + 28px) 24px 40px;
+}
+
+/* Heroes without the address form (about, city, legal, blog). */
+.hero--short:not(.hero--action) .hero-content {
+  padding: calc(var(--nav-height) + 40px) 24px 48px;
+}
+
+.hero--short .hero-eyebrow {
+  margin-bottom: 14px;
+  padding: 6px 18px;
+  font-size: 12px;
+}
+
+.hero.hero--short .hero-title {
+  font-size: clamp(24px, 2.7vw, 34px);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  margin-bottom: 12px;
+}
+
+.hero--short .hero-subtitle {
+  font-size: clamp(15px, 1.6vw, 17px);
+  line-height: 1.55;
+}
+
+.hero.hero--short .hero-lookup {
+  margin-top: 22px;
+}
+
+.hero.hero--short .hero-lookup__input,
+.hero.hero--short .hero-lookup__btn {
+  padding-top: 15px;
+  padding-bottom: 15px;
+}
+
+.hero.hero--short .hero-lookup__note {
+  margin-top: 12px;
+}
+
+@media (max-width: 768px) {
+  .hero.hero--short {
+    min-height: 0;
+  }
+
+  .hero--short.hero--action .hero-content {
+    padding: calc(var(--nav-height) + 24px) 20px 32px;
+  }
+}
+
+@media (max-width: 520px) {
+  .hero--short.hero--action .hero-content {
+    padding: calc(var(--nav-height) + 16px) 16px 24px;
+  }
+
+  .hero--short .hero-eyebrow {
+    margin-bottom: 12px;
+  }
+
+  .hero.hero--short .hero-title {
+    font-size: 22px;
+    margin-bottom: 10px;
+  }
+
+  .hero--short .hero-subtitle {
+    font-size: 15px;
+    line-height: 1.5;
+  }
+
+  .hero.hero--short .hero-lookup {
+    margin-top: 18px;
+  }
+
+  .hero.hero--short .hero-lookup__note {
+    margin-top: 10px;
+  }
+
+  .hero.hero--short .hero-lookup__input,
+  .hero.hero--short .hero-lookup__btn {
+    padding-top: 14px;
+    padding-bottom: 14px;
+  }
+}

@@ -21,9 +21,8 @@ const { currentPath, solid = false } = Astro.props;
 const norm = (p: string) => p.replace(/\/+$/, "") || "/";
 const current = norm(currentPath);
 
-/* Only the first matching link is highlighted. About Us points at the homepage,
-   so comparing each link independently would mark both Home and About Us active
-   on "/" — two highlighted items reads as a bug. Hash links never match. */
+/* Only the first matching link is highlighted, so a path listed in two places
+   never lights two items at once. Hash links never match. */
 /* A dropdown entry has no path of its own, so it counts as active when any of
    its children is the current route. That is what lights "Coverage" on both
    /what-we-do and /condo-insurance. */
@@ -67,7 +66,9 @@ const activeIndex = NAV_LINKS.findIndex(
               </button>
               <div class="navbar-group__menu" id={`navbar-submenu-${i}`} hidden>
                 {l.children.map((c) => {
-                  const childActive = isCurrent(c.path);
+                  // Only inside the active group, so "/" under Company does
+                  // not light alongside Home.
+                  const childActive = isActive && isCurrent(c.path);
                   return (
                     <a
                       href={c.path}
@@ -158,7 +159,7 @@ const activeIndex = NAV_LINKS.findIndex(
 
   .navbar-logo img {
     display: block;
-    height: 44px;
+    height: 38px;
     width: auto;
     transition: opacity 0.3s ease;
   }
@@ -196,7 +197,10 @@ const activeIndex = NAV_LINKS.findIndex(
     gap: 4px;
   }
 
+  /* nowrap: a wrapped label would overflow the 60px bar. The hamburger takes
+     over at 1023px, before the desktop row runs out of room. */
   .navbar-link {
+    white-space: nowrap;
     padding: 8px 14px;
     font-size: 14px;
     font-weight: 500;
@@ -230,7 +234,8 @@ const activeIndex = NAV_LINKS.findIndex(
 
   .navbar-cta {
     margin-left: 8px;
-    padding: 10px 20px;
+    padding: 8px 18px;
+    white-space: nowrap;
     font-size: 14px;
   }
 
@@ -355,7 +360,7 @@ const activeIndex = NAV_LINKS.findIndex(
   }
 
   /* ── Mobile ── */
-  @media (max-width: 768px) {
+  @media (max-width: 1023px) {
 
     .navbar-group {
       width: 100%;

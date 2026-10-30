@@ -24,7 +24,7 @@ import { AGENCY, AGENCY_FMT } from "../../../shared/agency";
         <a href={AGENCY_FMT.phoneHref}>{AGENCY.phone}</a>
       </span>
     </p>
-    <p class="site-footer__footprint">Licensed in {AGENCY.areaServed}.</p>
+    <p class="site-footer__footprint">Licensed nationwide. Indications are non-binding and subject to underwriting.</p>
     <div class="site-footer__social">
       <a href={SOCIAL.instagram} target="_blank" rel="noopener noreferrer" aria-label="Instagram">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="20" rx="5"/><circle cx="12" cy="12" r="5"/><circle cx="17.5" cy="6.5" r="1.2" fill="currentColor" stroke="none"/></svg>
@@ -48,14 +48,14 @@ import { AGENCY, AGENCY_FMT } from "../../../shared/agency";
     {/* ™ claims the visible mark; trade-name approval is a separate question. */}
     <span class="site-footer__mark">
       <strong>{AGENCY_FMT.brandMarkedName}</strong> is the consumer-facing brand of
-      {" "}{AGENCY.name}. All insurance is placed by that licensed agency.
+      {" "}{AGENCY.name}. All Insurance is placed by that licensed agency.
     </span>
   </div>
 </footer>
 
 <style>
   .site-footer {
-    background: #1a365d;
+    background: var(--brand-blend);
     color: rgba(255, 255, 255, 0.7);
     width: 100%;
     box-sizing: border-box;
