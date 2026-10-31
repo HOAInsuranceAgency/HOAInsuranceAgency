@@ -1,3 +1,4 @@
+import { migrationProbeScopes } from "./migration-probe-scopes";
 import { installTransactionalMail } from "./transactional-mail";
 import { mailFeedback } from "./functions/mail-feedback/resource";
 import { mailVerification, mailRecovery } from "./functions/transactional-mail/resource";
@@ -16,7 +17,7 @@ import { SnsAction } from "aws-cdk-lib/aws-cloudwatch-actions";
 import { Topic } from "aws-cdk-lib/aws-sns";
 import { defineBackend } from "@aws-amplify/backend";
 import { CfnWebACL, CfnWebACLAssociation } from "aws-cdk-lib/aws-wafv2";
-import { ArnFormat, CustomResource, Duration, Fn, Names, Stack, TimeZone } from "aws-cdk-lib";
+import { ArnFormat, CustomResource, Duration, Names, Stack, TimeZone } from "aws-cdk-lib";
 import { Provider } from "aws-cdk-lib/custom-resources";
 import { Schedule, ScheduleExpression, ScheduleTargetInput, ContextAttribute } from "aws-cdk-lib/aws-scheduler";
 import { LambdaInvoke } from "aws-cdk-lib/aws-scheduler-targets";
@@ -1065,14 +1066,8 @@ installCommissions(backend, communicationTable);
 
 // Apply preview isolation after all normal resources exist, preserving their identities.
 if (migrationDestination) {
-  const probeScope = (models: readonly string[]) => !migrationExecution.streamProbeEnabled ? "[]" : Stack.of(backend.data.resources.graphqlApi).toJsonString(models.map(model => {
-    const table = backend.data.resources.tables[model];
-    return [table.tableName, Fn.select(3, Fn.split("/", table.tableStreamArn!)), model === "AccountFinancials" ? "accountId" : "id"];
-  }));
-  backend.activityLog.addEnvironment("HOA_MIGRATION_STREAM_PROBE_SCOPES", probeScope(STREAMED_MODELS));
-  backend.communicationWorker.addEnvironment("HOA_MIGRATION_STREAM_PROBE_SCOPES", probeScope(["Account", "Quote", "Policy", "Certificate", "Document"]));
-  backend.honeycombWorker.addEnvironment("HOA_MIGRATION_STREAM_PROBE_SCOPES", probeScope(["HoneycombEstimate"]));
-  backend.honeycombSubmissionWorker.addEnvironment("HOA_MIGRATION_STREAM_PROBE_SCOPES", probeScope(["HoneycombSubmission"]));
+  const scopes = migrationProbeScopes(migrationExecution.streamProbeEnabled, process.env.HOA_MIGRATION_STREAM_PROBE_SCOPE_MANIFEST, process.env.HOA_MIGRATION_PREPARE_RECEIPT);
+  for (const worker of ["activityLog", "communicationWorker", "honeycombWorker", "honeycombSubmissionWorker"] as const) backend[worker].addEnvironment("HOA_MIGRATION_STREAM_PROBE_SCOPES", scopes[worker]);
 }
 installTransactionalMail(backend, communicationAlerts);
 installMigrationPreview(backend);

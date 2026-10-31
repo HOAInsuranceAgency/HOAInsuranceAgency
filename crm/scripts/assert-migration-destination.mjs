@@ -1,3 +1,4 @@
+import { verifyMigrationProbe } from "./verify-migration-probe.mjs";
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 const targets = JSON.parse(readFileSync(new URL("../amplify/migration-targets.json", import.meta.url), "utf8"));
@@ -46,6 +47,7 @@ if (binding) {
       if (receipt.schema !== 1 || receipt.phase !== "writers-held" || receipt.account !== targets.account || receipt.app !== app || receipt.branch !== branch || receipt.backendBranch !== binding.backendBranch
         || !receipt.reviewedBy || hashes.some(v => !/^[a-f0-9]{64}$/.test(v ?? ""))
         || ordered.some((v, i) => !Number.isFinite(v) || v > Date.now() || (i > 0 && v < ordered[i - 1])) || Date.now() - ordered[3] > 2 * 60 * 60_000) throw new Error("The API priming receipt does not prove a fresh reviewed copy with both write fences.");
+      if (process.env.HOA_MIGRATION_STREAM_PROBE_ENABLED === "true") verifyMigrationProbe(process.env.HOA_MIGRATION_STREAM_PROBE_SCOPE_MANIFEST, receipt, namespaceBranch?.backend?.stackArn, targets, binding.backendBranch, aws);
     }
   }
   if (app === targets.crmApp && process.env.HOA_MIGRATION_PREVIEW === "false" && process.env.HOA_MIGRATION_WORKERS_ENABLED === "true") {
