@@ -1,8 +1,9 @@
-import { SESv2Client, SendEmailCommand } from "@aws-sdk/client-sesv2";
+import { TransactionalMailClient } from "../transactional-mail/client";
+import { SendEmailCommand } from "@aws-sdk/client-sesv2";
 import { getSigningSecret, mintToken } from "./token";
 import { migrationPreview } from "./migration";
 
-const ses = new SESv2Client();
+const ses = new TransactionalMailClient("login");
 
 /** Called only after the destination guard and an explicit link request. */
 export async function sendDestinationLink(email: string) {

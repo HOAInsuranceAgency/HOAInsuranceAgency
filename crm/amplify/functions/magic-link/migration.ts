@@ -42,7 +42,7 @@ export function assertMigrationAuth(event: AuthEvent, context: Invocation) {
     || event.request.userAttributes.email?.toLowerCase() !== env.HOA_PREVIEW_ADMIN_EMAIL
     || env.MAGIC_LINK_BASE_URL !== `https://migration.${app}.amplifyapp.com`
     || env.MAGIC_LINK_FROM !== "HOA Insurance Agency <noreply@protectmyhoa.com>"
-    || env.HOA_PREVIEW_SES_CONFIGURATION_SET !== "hoa-migration-preview-20261029") {
+    || (env.HOA_TRANSACTIONAL_MAIL_PROVIDER === "resend" ? env.HOA_RESEND_PREVIEW_ENABLED !== "true" : env.HOA_PREVIEW_SES_CONFIGURATION_SET !== "hoa-migration-preview-20261029")) {
     throw new Error("Administrator sign-in is disabled in this migration preview.");
   }
 }

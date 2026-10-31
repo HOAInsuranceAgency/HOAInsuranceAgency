@@ -136,7 +136,7 @@ try {
   // Imported for its side effects first: this is where construct constructors
   // run, and where the W7 bug threw.
   const { backend } = await import("../amplify/backend");
-  const { migrationPreview, providerBranch, businessBranch } = await import("../amplify/migration-config");
+  const { migrationPreview, migrationExecution, providerBranch, businessBranch } = await import("../amplify/migration-config");
 
   // Then the assembly itself, which is the half an import alone would miss.
   const app = backend.stack.node.root as App;
@@ -160,7 +160,7 @@ try {
   }
   for (const fn of [backend.teamAdmin, backend.communicationWorker, backend.leadReply, backend.portalSweep, backend.marketingReportWorker]) {
     const resource = fn.resources.lambda.node.defaultChild as CfnFunction;
-    if (Stack.of(resource).resolve(resource.reservedConcurrentExecutions) !== (migrationPreview ? 0 : 1)) throw new Error(`${resource.node.path} must retain reserved concurrency 1`);
+    if (Stack.of(resource).resolve(resource.reservedConcurrentExecutions) !== (migrationExecution.holdBusinessExecution ? (migrationExecution.streamProbeEnabled && fn === backend.communicationWorker ? 1 : 0) : 1)) throw new Error(`${resource.node.path} must retain reserved concurrency 1`);
   }
   const intakeEnv = Stack.of(backend.leadIntake.resources.lambda).resolve((backend.leadIntake.resources.lambda.node.defaultChild as CfnFunction).environment);
   const environment = providerBranch === "main" ? "production" : providerBranch === "staging" ? "staging" : "disabled";

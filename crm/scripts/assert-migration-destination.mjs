@@ -36,12 +36,25 @@ if (binding) {
     }
   }
   if (app === targets.crmApp && process.env.HOA_MIGRATION_PREVIEW === "false") {
+    if (!["true", "false"].includes(process.env.HOA_MIGRATION_WORKERS_ENABLED ?? "")) throw new Error("Choose an explicit held or active worker phase.");
+    if (process.env.HOA_MIGRATION_WORKERS_ENABLED === "false") {
+      if (process.env.HOA_MIGRATION_STREAM_PHASE !== "armed" || process.env.HOA_MIGRATION_SCHEDULES_ENABLED === "true" || process.env.HOA_TRANSACTIONAL_MAIL_RELEASE === "true") throw new Error("Primed APIs must retain worker, schedule and mail fences.");
+      let receipt;
+      try { receipt = JSON.parse(process.env.HOA_MIGRATION_PREPARE_RECEIPT ?? ""); } catch { throw new Error("API priming requires reviewed source/destination fences and a final-copy receipt."); }
+      const ordered = [receipt.sourceQuiescedAt, receipt.finalSyncCompletedAt, receipt.pendingWorkReconciledAt, receipt.reviewedAt].map(v => Date.parse(v ?? ""));
+      const hashes = [receipt.sourceFenceReceiptSha256, receipt.destinationFenceReceiptSha256, receipt.finalSyncReceiptSha256, receipt.pendingWorkReceiptSha256];
+      if (receipt.schema !== 1 || receipt.phase !== "writers-held" || receipt.account !== targets.account || receipt.app !== app || receipt.branch !== branch || receipt.backendBranch !== binding.backendBranch
+        || !receipt.reviewedBy || hashes.some(v => !/^[a-f0-9]{64}$/.test(v ?? ""))
+        || ordered.some((v, i) => !Number.isFinite(v) || v > Date.now() || (i > 0 && v < ordered[i - 1])) || Date.now() - ordered[3] > 2 * 60 * 60_000) throw new Error("The API priming receipt does not prove a fresh reviewed copy with both write fences.");
+    }
+  }
+  if (app === targets.crmApp && process.env.HOA_MIGRATION_PREVIEW === "false" && process.env.HOA_MIGRATION_WORKERS_ENABLED === "true") {
     if (process.env.HOA_MIGRATION_STREAM_PHASE !== "armed") throw new Error("Release requires separately armed streams.");
     let receipt;
     try { receipt = JSON.parse(process.env.HOA_MIGRATION_RELEASE_RECEIPT ?? ""); } catch { throw new Error("Release needs a reviewed final-copy and pending-work receipt."); }
     const ordered = [receipt.sourceQuiescedAt, receipt.finalSyncCompletedAt, receipt.pendingWorkReconciledAt, receipt.pollingVerifiedAt, receipt.reviewedAt].map(value => Date.parse(value ?? ""));
     if (receipt.schema !== 1 || receipt.account !== targets.account || receipt.app !== app || receipt.branch !== branch || receipt.backendBranch !== binding.backendBranch
-      || !/^[a-f0-9]{64}$/.test(receipt.finalSyncReceiptSha256 ?? "") || !receipt.reviewedBy
+      || !/^[a-f0-9]{64}$/.test(receipt.finalSyncReceiptSha256 ?? "") || !/^[a-f0-9]{64}$/.test(receipt.pollingProofSha256 ?? "") || (receipt.mappingProofCount !== 22 || receipt.eventProofCount !== 44) || !receipt.reviewedBy
       || ordered.some((v, i) => !Number.isFinite(v) || v > Date.now() || (i > 0 && v < ordered[i - 1]))
       || Date.now() - ordered[4] > 2 * 60 * 60_000 || !Array.isArray(receipt.mappingUuids) || receipt.mappingUuids.length !== 22) {
       throw new Error("Release receipt does not prove reviewed final sync, pending work and polling readiness for this backend.");

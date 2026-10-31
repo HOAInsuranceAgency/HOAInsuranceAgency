@@ -14,7 +14,7 @@ else process.exit(4);\n`);
 chmodSync(command, 0o755);
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 const receipt = {
-  schema: 1, account: "917680434255", app: "d1nuh9rw1hcuxo", branch: "codex-hoa-account-migration", backendBranch: "main",
+  schema: 1, pollingProofSha256: "b".repeat(64), mappingProofCount: 22, eventProofCount: 44, account: "917680434255", app: "d1nuh9rw1hcuxo", branch: "codex-hoa-account-migration", backendBranch: "main",
   sourceQuiescedAt: new Date(Date.now()-600000).toISOString(), finalSyncCompletedAt: new Date(Date.now()-540000).toISOString(),
   pendingWorkReconciledAt: new Date(Date.now()-480000).toISOString(), pollingVerifiedAt: new Date(Date.now()-420000).toISOString(),
   reviewedAt: new Date(Date.now()-360000).toISOString(), reviewedBy: "test fixture", finalSyncReceiptSha256: "a".repeat(64), mappingUuids: Array.from({length:22},(_,i)=>`uuid-${i}`),
@@ -26,7 +26,7 @@ const baseline = {
   HOA_MIGRATION_STREAM_PHASE: "quarantine", VITE_HOA_MIGRATION_PREVIEW: "true", PUBLIC_GOOGLE_PLACES_KEY: "", VITE_GOOGLE_PLACES_KEY: "",
 };
 function run(env: Record<string, string | undefined> = {}) {
-  return execFileSync(process.execPath, [resolve("scripts/assert-migration-destination.mjs")], { env: { ...baseline, ...env }, stdio: "pipe", encoding: "utf8" });
+  return execFileSync(process.execPath, [resolve("scripts/assert-migration-destination.mjs")], { env: { ...baseline, ...(env.HOA_MIGRATION_PREVIEW === "false" ? { HOA_MIGRATION_WORKERS_ENABLED: "true" } : {}), ...env }, stdio: "pipe", encoding: "utf8" });
 }
 describe("destination deployment and replay barrier", () => {
   it("accepts the isolated quarantine build", () => expect(run()).toContain("read-only preview"));
@@ -49,4 +49,14 @@ describe("destination deployment and replay barrier", () => {
   it("requires all 22 already-existing fresh cursors before release", () => {
     expect(run({ HOA_MIGRATION_PREVIEW: "false", HOA_MIGRATION_STREAM_PHASE: "armed" })).toContain("release");
   });
+  it("permits held API priming only with reviewed source and destination fences", () => {
+    const prepare = { ...receipt, phase: "writers-held", sourceFenceReceiptSha256: "c".repeat(64), destinationFenceReceiptSha256: "d".repeat(64), pendingWorkReceiptSha256: "e".repeat(64) };
+    const held = { HOA_MIGRATION_PREVIEW: "false", HOA_MIGRATION_WORKERS_ENABLED: "false", HOA_MIGRATION_STREAM_PHASE: "armed", HOA_MIGRATION_SCHEDULES_ENABLED: "false", HOA_TRANSACTIONAL_MAIL_RELEASE: "false", HOA_MIGRATION_PREPARE_RECEIPT: JSON.stringify(prepare), HOA_MIGRATION_RELEASE_RECEIPT: "" };
+    expect(run(held)).toContain("release");
+    for (const patch of [{ HOA_MIGRATION_PREPARE_RECEIPT: "" }, { HOA_MIGRATION_SCHEDULES_ENABLED: "true" }, { HOA_TRANSACTIONAL_MAIL_RELEASE: "true" }, { HOA_MIGRATION_PREPARE_RECEIPT: JSON.stringify({ ...prepare, destinationFenceReceiptSha256: "" }) }]) expect(() => run({ ...held, ...patch })).toThrow();
+  });
+  it("requires a real marker proof hash and all mapping insert/remove proofs", () => {
+    for (const patch of [{ pollingProofSha256: "" }, { eventProofCount: 22 }]) expect(() => run({ HOA_MIGRATION_PREVIEW: "false", HOA_MIGRATION_STREAM_PHASE: "armed", HOA_MIGRATION_RELEASE_RECEIPT: JSON.stringify({ ...receipt, ...patch }) })).toThrow();
+  });
+
 });

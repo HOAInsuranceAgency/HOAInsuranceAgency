@@ -1,12 +1,13 @@
+import { MIGRATION_STREAM_WORKERS } from "./migration-release";
 import { CfnResource, RemovalPolicy, Stack } from "aws-cdk-lib";
 import { CfnResolver } from "aws-cdk-lib/aws-appsync";
 import { Effect, ManagedPolicy, PolicyStatement } from "aws-cdk-lib/aws-iam";
 import { CfnFunction } from "aws-cdk-lib/aws-lambda";
-import { migrationDestination, migrationPreview, migrationTargets, migrationStreamPhase, migrationSchedulesEnabled } from "./migration-config";
+import { migrationDestination, migrationPreview, migrationTargets, migrationStreamPhase, migrationSchedulesEnabled, migrationExecution } from "./migration-config";
 import { disableBucketNotifications } from "./migration-notifications";
 
 const READ_FUNCTIONS = new Set(["crmAccess", "communications", "commissions", "ownerProfitability"]);
-const AUTH_FUNCTIONS = new Set(["magicLinkDefine", "magicLinkCreate", "magicLinkVerify", "migrationNativeMessage"]);
+const AUTH_FUNCTIONS = new Set(["magicLinkDefine", "magicLinkCreate", "magicLinkVerify", "migrationNativeMessage", "mailFeedback", "mailVerification"]);
 export const PREVIEW_DENIED_ACTIONS = [
   "dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:DeleteItem", "dynamodb:BatchWriteItem", "dynamodb:TransactWriteItems",
   "dynamodb:PartiQLInsert", "dynamodb:PartiQLUpdate", "dynamodb:PartiQLDelete",
@@ -23,7 +24,7 @@ export function installMigrationPreview(backend: any) {
   if (!migrationDestination) return;
   // A single shared deny avoids duplicating a large policy in the already dense
   // data template. Its dependency is one-way: functions depend on this policy.
-  const guard = migrationPreview ? new ManagedPolicy(backend.createStack("MigrationSafety"), "ReadOnlyBusinessFunctions", {
+  const guard = migrationExecution.holdBusinessExecution ? new ManagedPolicy(backend.createStack("MigrationSafety"), "ReadOnlyBusinessFunctions", {
     statements: [new PolicyStatement({ effect: Effect.DENY, actions: PREVIEW_DENIED_ACTIONS, resources: ["*"] })],
   }) : undefined;
   for (const [name, resource] of Object.entries(backend) as [string, any][]) {
@@ -31,10 +32,18 @@ export function installMigrationPreview(backend: any) {
     resource.addEnvironment("HOA_MIGRATION_PREVIEW", String(migrationPreview));
     resource.addEnvironment("HOA_MIGRATION_APP_ID", migrationTargets.crmApp);
     resource.addEnvironment("HOA_MIGRATION_BRANCH", process.env.AWS_BRANCH!);
-    if (!migrationPreview || AUTH_FUNCTIONS.has(name)) continue;
+    if (MIGRATION_STREAM_WORKERS.has(name) || ["magicLinkVerify", "teamAdmin", "sendInvoice", "marketingReportWorker", "stripeWebhook", "mailVerification", "mailRecovery"].includes(name)) resource.addEnvironment("HOA_MIGRATION_WORKERS_ENABLED", String(migrationExecution.workersEnabled));
+    if (READ_FUNCTIONS.has(name) || name === "migrateProducerLicenses") resource.addEnvironment("HOA_MIGRATION_BUSINESS_HELD", String(migrationExecution.holdBusinessExecution));
+    if (MIGRATION_STREAM_WORKERS.has(name)) {
+      resource.addEnvironment("HOA_MIGRATION_STREAM_PROBE_ENABLED", String(migrationExecution.streamProbeEnabled));
+      resource.addEnvironment("HOA_MIGRATION_STREAM_PROBE_TOKEN", process.env.HOA_MIGRATION_STREAM_PROBE_TOKEN ?? "");
+      resource.addEnvironment("HOA_MIGRATION_STREAM_PROBE_EXPIRES_AT", process.env.HOA_MIGRATION_STREAM_PROBE_EXPIRES_AT ?? "");
+    }
+    if (name === "mailVerification" && !migrationPreview) (resource.resources.lambda.node.defaultChild as CfnFunction).reservedConcurrentExecutions = 0;
+    if (!migrationExecution.holdBusinessExecution || name === "mailFeedback" || (migrationPreview && AUTH_FUNCTIONS.has(name))) continue;
     resource.resources.lambda.role!.addManagedPolicy(guard!);
-    if (!READ_FUNCTIONS.has(name) && name !== "migrateProducerLicenses") {
-      (resource.resources.lambda.node.defaultChild as CfnFunction).reservedConcurrentExecutions = 0;
+    if ((!migrationPreview || !READ_FUNCTIONS.has(name)) && name !== "migrateProducerLicenses") {
+      (resource.resources.lambda.node.defaultChild as CfnFunction).reservedConcurrentExecutions = migrationExecution.streamProbeEnabled && MIGRATION_STREAM_WORKERS.has(name) ? 1 : 0;
     }
   }
   for (const node of backend.stack.node.root.node.findAll()) {
@@ -53,6 +62,10 @@ export function installMigrationPreview(backend: any) {
       if (node.cfnResourceType === "AWS::Cognito::UserPool") node.addPropertyOverride("DeletionProtection", "ACTIVE");
     }
     if (node instanceof CfnResource && node.cfnResourceType === "AWS::Lambda::EventSourceMapping") {
+      if (migrationExecution.holdBusinessExecution) {
+        node.addPropertyOverride("MaximumRetryAttempts", -1);
+        node.addPropertyOverride("MaximumRecordAgeInSeconds", -1);
+      }
       if (migrationStreamPhase === "armed") {
         node.overrideLogicalId(`${Stack.of(node).getLogicalId(node)}MigrationLiveV1`);
         node.addPropertyOverride("StartingPosition", "LATEST");
@@ -60,8 +73,8 @@ export function installMigrationPreview(backend: any) {
       } else node.addPropertyOverride("Enabled", false);
     }
     if (node instanceof CfnResource && ["AWS::Scheduler::Schedule", "AWS::Events::Rule"].includes(node.cfnResourceType) && !migrationSchedulesEnabled) node.addPropertyOverride("State", "DISABLED");
-    if (!migrationPreview) continue;
-    if (node instanceof CfnResolver && node.typeName === "Mutation") {
+    if (!migrationExecution.holdBusinessExecution) continue;
+    if (migrationPreview && node instanceof CfnResolver && node.typeName === "Mutation") {
       // Fail before the original pipeline. Keeping that pipeline and its IDs lets
       // release activation restore behavior without replacing data resources.
       if (node.runtime) {

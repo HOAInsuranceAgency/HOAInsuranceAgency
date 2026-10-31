@@ -1,4 +1,7 @@
-import { migrationDestination, migrationPreview, migrationTargets, businessBranch, providerBranch, migrationCrmOrigin, migrationWebOrigin } from "./migration-config";
+import { installTransactionalMail } from "./transactional-mail";
+import { mailFeedback } from "./functions/mail-feedback/resource";
+import { mailVerification, mailRecovery } from "./functions/transactional-mail/resource";
+import { migrationDestination, migrationPreview, migrationTargets, businessBranch, providerBranch, migrationCrmOrigin, migrationWebOrigin, migrationExecution } from "./migration-config";
 import { installMigrationPreview } from "./migration-preview";
 import { commissions } from './functions/commissions/resource';
 import { installCommissions } from './commissions';
@@ -13,7 +16,7 @@ import { SnsAction } from "aws-cdk-lib/aws-cloudwatch-actions";
 import { Topic } from "aws-cdk-lib/aws-sns";
 import { defineBackend } from "@aws-amplify/backend";
 import { CfnWebACL, CfnWebACLAssociation } from "aws-cdk-lib/aws-wafv2";
-import { ArnFormat, CustomResource, Duration, Names, Stack, TimeZone } from "aws-cdk-lib";
+import { ArnFormat, CustomResource, Duration, Fn, Names, Stack, TimeZone } from "aws-cdk-lib";
 import { Provider } from "aws-cdk-lib/custom-resources";
 import { Schedule, ScheduleExpression, ScheduleTargetInput, ContextAttribute } from "aws-cdk-lib/aws-scheduler";
 import { LambdaInvoke } from "aws-cdk-lib/aws-scheduler-targets";
@@ -74,6 +77,9 @@ import {
 // real synth. Nothing else imports it; `ampx` uses this file for its side
 // effects, as it always has.
 export const backend = defineBackend({
+  mailFeedback,
+  mailVerification,
+  mailRecovery,
   auth,
   crmAccess,
   ownerProfitability,
@@ -522,7 +528,7 @@ for (const [name, metricName, threshold, comparisonOperator] of [
 });
   alarm.addAlarmAction(new SnsAction(communicationAlerts));
 }
-const communicationWebhookUrl = backend.communicationWebhook.resources.lambda.addFunctionUrl({ authType: migrationPreview ? FunctionUrlAuthType.AWS_IAM : FunctionUrlAuthType.NONE });
+const communicationWebhookUrl = backend.communicationWebhook.resources.lambda.addFunctionUrl({ authType: migrationExecution.holdBusinessExecution ? FunctionUrlAuthType.AWS_IAM : FunctionUrlAuthType.NONE });
 backend.communications.addEnvironment("COMMUNICATION_WEBHOOK_URL", communicationWebhookUrl.url);
 backend.addOutput({ custom: { communicationWebhookUrl: communicationWebhookUrl.url, frontSidebarUrl: `${magicLinkBaseUrl}/front-sidebar` } });
 
@@ -534,7 +540,7 @@ for (const fn of [backend.magicLinkCreate, backend.magicLinkVerify]) {
 if (migrationDestination) {
   for (const fn of [backend.magicLinkDefine, backend.magicLinkCreate, backend.magicLinkVerify, backend.migrationNativeMessage]) {
     fn.addEnvironment("HOA_MIGRATION_AUTH", "true");
-    for (const key of ["HOA_PREVIEW_ADMIN_LOGIN", "HOA_PREVIEW_ADMIN_USER_POOL_ID", "HOA_PREVIEW_ADMIN_CLIENT_ID", "HOA_PREVIEW_ADMIN_USERNAME", "HOA_PREVIEW_ADMIN_EMAIL", "HOA_PREVIEW_ADMIN_LOGIN_EXPIRES_AT", "HOA_PREVIEW_SES_CONFIGURATION_SET"]) {
+    for (const key of ["HOA_PREVIEW_ADMIN_LOGIN", "HOA_PREVIEW_ADMIN_USER_POOL_ID", "HOA_PREVIEW_ADMIN_CLIENT_ID", "HOA_PREVIEW_ADMIN_USERNAME", "HOA_PREVIEW_ADMIN_EMAIL", "HOA_PREVIEW_ADMIN_LOGIN_EXPIRES_AT", "HOA_PREVIEW_SES_CONFIGURATION_SET", "HOA_RESEND_PREVIEW_ENABLED"]) {
       fn.addEnvironment(key, process.env[key] ?? "");
     }
     fn.addEnvironment("MAGIC_LINK_BASE_URL", magicLinkBaseUrl);
@@ -936,7 +942,7 @@ backend.data.resources.tables.PfLoanPayment.grantReadWriteData(
 );
 
 const stripeWebhookUrl = backend.stripeWebhook.resources.lambda.addFunctionUrl({
-  authType: migrationPreview ? FunctionUrlAuthType.AWS_IAM : FunctionUrlAuthType.NONE,
+  authType: migrationExecution.holdBusinessExecution ? FunctionUrlAuthType.AWS_IAM : FunctionUrlAuthType.NONE,
 });
 backend.addOutput({
   custom: { stripeWebhookUrl: stripeWebhookUrl.url },
@@ -1058,6 +1064,17 @@ installCommissions(backend, communicationTable);
 // Amplify requires branchName to match the branch encoded in the stack ARN.
 
 // Apply preview isolation after all normal resources exist, preserving their identities.
+if (migrationDestination) {
+  const probeScope = (models: readonly string[]) => !migrationExecution.streamProbeEnabled ? "[]" : Stack.of(backend.data.resources.graphqlApi).toJsonString(models.map(model => {
+    const table = backend.data.resources.tables[model];
+    return [table.tableName, Fn.select(3, Fn.split("/", table.tableStreamArn!)), model === "AccountFinancials" ? "accountId" : "id"];
+  }));
+  backend.activityLog.addEnvironment("HOA_MIGRATION_STREAM_PROBE_SCOPES", probeScope(STREAMED_MODELS));
+  backend.communicationWorker.addEnvironment("HOA_MIGRATION_STREAM_PROBE_SCOPES", probeScope(["Account", "Quote", "Policy", "Certificate", "Document"]));
+  backend.honeycombWorker.addEnvironment("HOA_MIGRATION_STREAM_PROBE_SCOPES", probeScope(["HoneycombEstimate"]));
+  backend.honeycombSubmissionWorker.addEnvironment("HOA_MIGRATION_STREAM_PROBE_SCOPES", probeScope(["HoneycombSubmission"]));
+}
+installTransactionalMail(backend, communicationAlerts);
 installMigrationPreview(backend);
 
 if (migrationDestination) backend.addOutput({ custom: { migration: {
