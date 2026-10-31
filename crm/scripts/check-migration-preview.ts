@@ -11,6 +11,10 @@ export function checkMigrationPreview(backend: any, outdir: string) {
     .map(name => JSON.parse(readFileSync(join(outdir, String(name)), "utf8")));
   const resources: Resource[] = templates.flatMap(t => Object.values(t.Resources ?? {}) as Resource[]);
   const require = (ok: unknown, reason: string) => { if (!ok) throw new Error(`Unsafe migration preview: ${reason}`); };
+  const feedback = backend.mailFeedback.resources.lambda;
+  const feedbackStack = Stack.of(feedback);
+  const feedbackRefs = [feedbackStack.resolve(feedback.functionArn), feedbackStack.resolve(feedback.functionName)].map(value => JSON.stringify(value));
+  const isFeedback = (value: unknown) => feedbackRefs.includes(JSON.stringify(value));
   let mutations = 0, mappings = 0, schedules = 0;
   for (const r of resources) {
     const p = r.Properties ?? {};
@@ -23,8 +27,8 @@ export function checkMigrationPreview(backend: any, outdir: string) {
     if (["AWS::Scheduler::Schedule", "AWS::Events::Rule"].includes(r.Type)) { schedules++; require(p.State === "DISABLED", "enabled schedule"); }
     if (r.Type === "Custom::S3BucketNotifications") require(hasNoBucketNotifications(p.NotificationConfiguration), "S3 notification provider configuration missing or events enabled");
     if (r.Type === "AWS::S3::Bucket") require(p.NotificationConfiguration === undefined || hasNoBucketNotifications(p.NotificationConfiguration), "S3 events enabled");
-    if (r.Type === "AWS::Lambda::Url") require(p.AuthType === "AWS_IAM", "public webhook URL");
-    if (r.Type === "AWS::Lambda::Permission" && p.Principal === "*") require(false, "public Lambda permission");
+    if (r.Type === "AWS::Lambda::Url") require(p.AuthType === "AWS_IAM" || (p.AuthType === "NONE" && isFeedback(p.TargetFunctionArn)), "unexpected public webhook URL");
+    if (r.Type === "AWS::Lambda::Permission" && p.Principal === "*") require(isFeedback(p.FunctionName) && ((p.Action === "lambda:InvokeFunctionUrl" && p.FunctionUrlAuthType === "NONE") || (p.Action === "lambda:InvokeFunction" && p.InvokedViaFunctionUrl === true)), "unexpected public Lambda permission");
     if (r.Type === "AWS::CloudWatch::Alarm") require(p.ActionsEnabled === false, "alarm notifications enabled");
     if (r.Type === "AWS::Lambda::Function") {
       const env = p.Environment?.Variables ?? {};
@@ -32,7 +36,7 @@ export function checkMigrationPreview(backend: any, outdir: string) {
     }
   }
   require(mutations > 100 && mappings >= 22 && schedules >= 8, "expected writer inventory missing from synth");
-  const auth = new Set(["magicLinkDefine", "magicLinkCreate", "magicLinkVerify", "migrationNativeMessage"]);
+  const auth = new Set(["magicLinkDefine", "magicLinkCreate", "magicLinkVerify", "migrationNativeMessage", "mailFeedback", "mailVerification"]);
   const reads = new Set(["crmAccess", "communications", "commissions", "ownerProfitability", "migrateProducerLicenses"]);
   const guard = backend.stack.node.root.node.findAll().find((n: any) => n.node.id === "ReadOnlyBusinessFunctions");
   require(guard, "missing shared preview deny policy");

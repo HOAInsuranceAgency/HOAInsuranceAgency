@@ -126,9 +126,9 @@ export default function MagicLinkSignIn({ embedded = false }: { embedded?: boole
         ) : phase === "sent" ? (
           <>
             <p className="muted small">
-              If <strong>{email.trim()}</strong> has an account, a sign-in link
-              is on its way. Open the email on this device and click the link —
-              it's valid for 15 minutes.
+              Check <strong>{email.trim()}</strong> for a sign-in link. If it
+              doesn't arrive, try again later or contact an administrator.
+              Open the email on this device; links are valid for 15 minutes.
             </p>
             {embedded && <form onSubmit={e => {
               e.preventDefault();

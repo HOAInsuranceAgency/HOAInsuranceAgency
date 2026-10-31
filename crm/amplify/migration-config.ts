@@ -1,3 +1,4 @@
+import { resolveMigrationRelease } from "./migration-release";
 import targets from "./migration-targets.json";
 
 const branch = process.env.AWS_BRANCH ?? "";
@@ -9,7 +10,8 @@ export const migrationCrmOrigin = retained ? `https://${retained.alias}.${target
 export const migrationWebOrigin = retained ? `https://${retained.alias}.${targets.webApp}.amplifyapp.com` : "";
 export const migrationStreamPhase = process.env.HOA_MIGRATION_STREAM_PHASE ?? "quarantine";
 export const migrationSchedulesEnabled = process.env.HOA_MIGRATION_SCHEDULES_ENABLED === "true";
-export const providerBranch = migrationPreview ? "migration-disabled" : businessBranch;
+export const migrationExecution = resolveMigrationRelease({ destination: migrationDestination, preview: migrationPreview, streamPhase: migrationStreamPhase, schedulesEnabled: migrationSchedulesEnabled, workersEnabled: process.env.HOA_MIGRATION_WORKERS_ENABLED, streamProbeEnabled: process.env.HOA_MIGRATION_STREAM_PROBE_ENABLED, probeToken: process.env.HOA_MIGRATION_STREAM_PROBE_TOKEN, probeExpiresAt: process.env.HOA_MIGRATION_STREAM_PROBE_EXPIRES_AT });
+export const providerBranch = migrationDestination && migrationExecution.holdBusinessExecution ? "migration-disabled" : businessBranch;
 export { targets as migrationTargets };
 
 if (migrationDestination) {
