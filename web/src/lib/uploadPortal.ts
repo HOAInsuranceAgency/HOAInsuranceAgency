@@ -1,3 +1,4 @@
+import { assertWebsiteActionsEnabled } from "./migrationPreview";
 /**
  * The lead document portal's two calls against the CRM's public AppSync API.
  *
@@ -49,6 +50,7 @@ async function call(
   if (!API_URL || !API_KEY) {
     throw new Error("Uploads are not configured on this build.");
   }
+  assertWebsiteActionsEnabled();
   const res = await fetch(API_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-api-key": API_KEY },
@@ -123,6 +125,7 @@ export async function uploadPortalFile(
   const uploadUrl = String(r.uploadUrl ?? "");
   if (!uploadUrl) throw new Error("The server didn't give us anywhere to put it.");
 
+  assertWebsiteActionsEnabled();
   const put = await fetch(uploadUrl, {
     method: "PUT",
     // Must match the Content-Type the presign was signed with, or S3 rejects

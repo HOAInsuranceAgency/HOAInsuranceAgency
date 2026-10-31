@@ -1,3 +1,4 @@
+import { TransactionalMailClient } from "../transactional-mail/client";
 import { randomUUID } from "node:crypto";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import {
@@ -7,7 +8,7 @@ import {
   ScanCommand,
   UpdateCommand,
 } from "@aws-sdk/lib-dynamodb";
-import { SESv2Client, SendEmailCommand } from "@aws-sdk/client-sesv2";
+import { SendEmailCommand } from "@aws-sdk/client-sesv2";
 import { PF_CONFIG_SHA256 } from "../../../src/lib/premiumFinance/jurisdictions";
 import { postInstallment, type PostableLoan } from "../pfPosting";
 import type { PfEventDecision } from "./decide";
@@ -28,7 +29,7 @@ import { activateSettledElection } from "../pfAutomaticActivation";
  */
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient());
-const ses = new SESv2Client();
+const ses = new TransactionalMailClient("accounting");
 
 interface LoanRow extends PostableLoan {
   status: string | null;

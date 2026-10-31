@@ -121,7 +121,7 @@ assertNoEscapingImports();
 const outdir = mkdtempSync(join(tmpdir(), "amplify-synth-"));
 process.env.CDK_CONTEXT_JSON = JSON.stringify({
   "amplify-backend-namespace": process.env.AWS_APP_ID ?? "synth-check",
-  "amplify-backend-name": process.env.AWS_BRANCH ?? "local",
+  "amplify-backend-name": process.env.AWS_BRANCH === "codex-hoa-account-migration" ? "main" : process.env.AWS_BRANCH === "codex-hoa-staging-migration" ? "staging" : process.env.AWS_BRANCH ?? "local",
   "amplify-backend-type": "branch",
   // Toolkit.fromAssemblyBuilder supplies these defaults during pipeline-deploy.
   // Include its resource metadata so this byte-size gate measures the same output.
@@ -136,6 +136,7 @@ try {
   // Imported for its side effects first: this is where construct constructors
   // run, and where the W7 bug threw.
   const { backend } = await import("../amplify/backend");
+  const { migrationPreview, migrationExecution, providerBranch, businessBranch } = await import("../amplify/migration-config");
 
   // Then the assembly itself, which is the half an import alone would miss.
   const app = backend.stack.node.root as App;
@@ -155,14 +156,14 @@ try {
   if (defaultSweepEnv.variables.ACCOUNTING_MAILBOX || defaultSweepEnv.variables.AGENCY_MAILBOX) throw new Error("Default detection must not configure daily staff email recipients");
   for (const node of backend.pfDefaultSweep.resources.lambda.role!.node.findAll()) {
     const resource = node as unknown as { cfnResourceType?: string; policyDocument?: unknown };
-    if (resource.cfnResourceType === "AWS::IAM::Policy" && JSON.stringify(Stack.of(node).resolve(resource.policyDocument)).includes("ses:Send")) throw new Error("Default detection must not retain staff-email send permissions");
+    if (resource.cfnResourceType === "AWS::IAM::Policy" && (Stack.of(node).resolve(resource.policyDocument).Statement ?? []).some((statement: { Effect?: string; Action?: string | string[] }) => statement.Effect === "Allow" && JSON.stringify(statement.Action).includes("ses:Send"))) throw new Error("Default detection must not retain staff-email send permissions");
   }
   for (const fn of [backend.teamAdmin, backend.communicationWorker, backend.leadReply, backend.portalSweep, backend.marketingReportWorker]) {
     const resource = fn.resources.lambda.node.defaultChild as CfnFunction;
-    if (Stack.of(resource).resolve(resource.reservedConcurrentExecutions) !== 1) throw new Error(`${resource.node.path} must retain reserved concurrency 1`);
+    if (Stack.of(resource).resolve(resource.reservedConcurrentExecutions) !== (migrationExecution.holdBusinessExecution ? (migrationExecution.streamProbeEnabled && fn === backend.communicationWorker ? 1 : 0) : 1)) throw new Error(`${resource.node.path} must retain reserved concurrency 1`);
   }
   const intakeEnv = Stack.of(backend.leadIntake.resources.lambda).resolve((backend.leadIntake.resources.lambda.node.defaultChild as CfnFunction).environment);
-  const environment = process.env.AWS_BRANCH === "main" ? "production" : process.env.AWS_BRANCH === "staging" ? "staging" : "disabled";
+  const environment = providerBranch === "main" ? "production" : providerBranch === "staging" ? "staging" : "disabled";
   const enabled = environment !== "disabled";
   if (intakeEnv.variables.HONEYCOMB_ENABLED !== String(enabled)) throw new Error("Honeycomb intake enablement does not match the release branch");
   for (const fn of [backend.honeycombWorker, backend.honeycombSubmissions, backend.honeycombSubmissionWorker]) {
@@ -312,7 +313,7 @@ try {
   const marketingSchedule = Stack.of(marketingWorker).node.findChild("WeeklyMarketingReportSchedule").node.defaultChild as CfnSchedule;
   const scheduleStack = Stack.of(marketingSchedule);
   if (scheduleStack.resolve(marketingSchedule.scheduleExpression) !== "cron(0 8 ? * FRI *)" || scheduleStack.resolve(marketingSchedule.scheduleExpressionTimezone) !== "America/New_York") throw new Error("Marketing report must run Friday at 08:00 America/New_York, including DST");
-  if (scheduleStack.resolve(marketingSchedule.state) !== (process.env.AWS_BRANCH === "main" ? "ENABLED" : "DISABLED")) throw new Error("Marketing schedule must be enabled only in production");
+  if (scheduleStack.resolve(marketingSchedule.state) !== (businessBranch === "main" ? "ENABLED" : "DISABLED")) throw new Error("Marketing schedule must be enabled only in production");
   const expectedArn = scheduleStack.resolve(scheduleStack.formatArn({ service: "scheduler", resource: "schedule", resourceName: `default/${marketingSchedule.name}` }));
   if (JSON.stringify(marketingEnv.variables.MARKETING_REPORT_SCHEDULE_ARN) !== JSON.stringify(expectedArn)) throw new Error("Worker must verify the actual marketing schedule ARN");
   const scheduleInput = JSON.parse(scheduleStack.resolve(marketingSchedule.target).input);
@@ -325,6 +326,10 @@ try {
     .map(name => ({ name, bytes: readFileSync(join(outdir, name)).byteLength })).sort((a, b) => b.bytes - a.bytes);
   for (const template of templates) if (template.bytes > 1_000_000) throw new Error(`CloudFormation template exceeds 1,000,000 bytes: ${template.name} (${template.bytes})`);
   console.log(`Largest CloudFormation template: ${templates[0]?.bytes ?? 0} bytes (${templates[0]?.name ?? "none"}).`);
+  if (migrationPreview) {
+    const { checkMigrationPreview } = await import("./check-migration-preview");
+    checkMigrationPreview(backend, outdir);
+  }
   const stacks = assembly.stacks.length;
 
   console.log(`✔ Backend synthesised — ${stacks} stack${stacks === 1 ? "" : "s"}.`);
@@ -336,5 +341,11 @@ try {
   );
   process.exitCode = 1;
 } finally {
+  if (process.env.HOA_SYNTH_EVIDENCE_DIR) {
+    const { cpSync, mkdirSync } = await import("node:fs");
+    mkdirSync(process.env.HOA_SYNTH_EVIDENCE_DIR, { recursive: true });
+    // Templates only: avoid copying private build assets or dependency bundles.
+    for (const name of readdirSync(outdir).filter(name => name.endsWith(".template.json"))) cpSync(join(outdir, name), join(process.env.HOA_SYNTH_EVIDENCE_DIR, name));
+  }
   rmSync(outdir, { recursive: true, force: true });
 }

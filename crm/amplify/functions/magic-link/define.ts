@@ -1,7 +1,9 @@
 import type { DefineAuthChallengeTriggerHandler } from "aws-lambda";
+import { assertMigrationAuth } from "./migration";
 
 /** Orchestrates the custom flow: one CUSTOM_CHALLENGE, max 3 attempts. */
-export const handler: DefineAuthChallengeTriggerHandler = async (event) => {
+export const handler: DefineAuthChallengeTriggerHandler = async (event, context) => {
+  assertMigrationAuth(event, context);
   const session = event.request.session ?? [];
   const last = session[session.length - 1];
 
