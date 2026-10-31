@@ -1,3 +1,6 @@
+import { TransactionalMailClient } from "../transactional-mail/client";
+import { MailDeliveryError } from "../transactional-mail/contract";
+import { randomUUID } from "node:crypto";
 import type { AppSyncResolverEvent } from "aws-lambda";
 import {
   CognitoIdentityProviderClient,
@@ -12,7 +15,7 @@ import {
   AdminListGroupsForUserCommand,
   UsernameExistsException,
 } from "@aws-sdk/client-cognito-identity-provider";
-import { SESv2Client, SendEmailCommand } from "@aws-sdk/client-sesv2";
+import { SendEmailCommand } from "@aws-sdk/client-sesv2";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 // Role names are the schema's `UserRole` and the Cognito group names both —
@@ -33,7 +36,7 @@ import { assertUserSession, readUserAccess } from "../crm-access/user-status";
  */
 
 const cognito = new CognitoIdentityProviderClient();
-const ses = new SESv2Client();
+const ses = new TransactionalMailClient("invite");
 const db = DynamoDBDocumentClient.from(new DynamoDBClient());
 
 const POOL_ID = process.env.USER_POOL_ID!;
@@ -79,6 +82,7 @@ async function inviteUser(args: InviteArgs, invitedBy: string, owner: boolean) {
   if (!roles) return { ok: false, error: ROLE_ERROR };
   if (roles.includes("OWNER") && !owner) return { ok: false, error: OWNER_ERROR };
   let username: string;
+  let invitationGeneration: string;
 
   try {
     const created = await cognito.send(
@@ -95,6 +99,7 @@ async function inviteUser(args: InviteArgs, invitedBy: string, owner: boolean) {
       })
     );
     username = created.User?.Username ?? email;
+    invitationGeneration = created.User?.Attributes?.find(attribute => attribute.Name === "sub")?.Value ?? randomUUID();
   } catch (err) {
     if (err instanceof UsernameExistsException) {
       return { ok: false, error: "That email is already on the team." };
@@ -134,9 +139,13 @@ async function inviteUser(args: InviteArgs, invitedBy: string, owner: boolean) {
             },
           },
         },
-      })
+      }),
+      { idempotencyKey: `invite:${invitationGeneration}` }
     );
   } catch (error) {
+    if (error instanceof MailDeliveryError && error.state === "UNKNOWN") {
+      return { ok: false, error: "The member was created, but invitation delivery is uncertain. Review the saved email delivery record before resending; the member can request a sign-in link." };
+    }
     // Only a successful creation enters this block. Existing team members
     // are never removed by a failed or repeated invitation.
     try {

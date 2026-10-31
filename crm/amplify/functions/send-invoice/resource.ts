@@ -1,3 +1,4 @@
+import { migrationPreview } from "../../migration-config";
 import { defineFunction, secret } from "@aws-amplify/backend";
 
 /**
@@ -26,6 +27,6 @@ export const sendInvoice = defineFunction({
      * main with a live one and neither this file nor backend.ts needs to know
      * which. Unset, the invoice still sends — with no Pay button.
      */
-    STRIPE_SECRET_KEY: secret("STRIPE_SECRET_KEY"),
+    ...(migrationPreview ? {} : { STRIPE_SECRET_KEY: secret("STRIPE_SECRET_KEY") }),
   },
 });

@@ -1,3 +1,8 @@
+import { installTransactionalMail } from "./transactional-mail";
+import { mailFeedback } from "./functions/mail-feedback/resource";
+import { mailVerification, mailRecovery } from "./functions/transactional-mail/resource";
+import { migrationDestination, migrationPreview, migrationTargets, businessBranch, providerBranch, migrationCrmOrigin, migrationWebOrigin, migrationExecution } from "./migration-config";
+import { installMigrationPreview } from "./migration-preview";
 import { commissions } from './functions/commissions/resource';
 import { installCommissions } from './commissions';
 import { installAccountAccess } from "./account-access";
@@ -11,7 +16,7 @@ import { SnsAction } from "aws-cdk-lib/aws-cloudwatch-actions";
 import { Topic } from "aws-cdk-lib/aws-sns";
 import { defineBackend } from "@aws-amplify/backend";
 import { CfnWebACL, CfnWebACLAssociation } from "aws-cdk-lib/aws-wafv2";
-import { ArnFormat, CustomResource, Duration, Names, Stack, TimeZone } from "aws-cdk-lib";
+import { ArnFormat, CustomResource, Duration, Fn, Names, Stack, TimeZone } from "aws-cdk-lib";
 import { Provider } from "aws-cdk-lib/custom-resources";
 import { Schedule, ScheduleExpression, ScheduleTargetInput, ContextAttribute } from "aws-cdk-lib/aws-scheduler";
 import { LambdaInvoke } from "aws-cdk-lib/aws-scheduler-targets";
@@ -65,12 +70,16 @@ import {
   magicLinkDefine,
   magicLinkCreate,
   magicLinkVerify,
+  migrationNativeMessage,
 } from "./functions/magic-link/resource";
 
 // Exported only so `scripts/synth-check.ts` can reach the CDK app and force a
 // real synth. Nothing else imports it; `ampx` uses this file for its side
 // effects, as it always has.
 export const backend = defineBackend({
+  mailFeedback,
+  mailVerification,
+  mailRecovery,
   auth,
   crmAccess,
   ownerProfitability,
@@ -114,6 +123,7 @@ export const backend = defineBackend({
   magicLinkDefine,
   magicLinkCreate,
   magicLinkVerify,
+  migrationNativeMessage,
 });
 
 // The OCR function drives async Textract jobs over uploaded documents.
@@ -254,6 +264,7 @@ const { cfnUserPool, cfnUserPoolClient } = backend.auth.resources.cfnResources;
 
 // Magic-link only: the custom auth flow is the sole sign-in path.
 cfnUserPool.userPoolTier = "ESSENTIALS";
+if (migrationDestination) cfnUserPool.adminCreateUserConfig = { allowAdminCreateUserOnly: true };
 cfnUserPoolClient.explicitAuthFlows = [
   "ALLOW_CUSTOM_AUTH",
   "ALLOW_REFRESH_TOKEN_AUTH",
@@ -279,7 +290,7 @@ const BRANCH_URLS: Record<string, string> = {
   main: "https://app.protectmyhoa.com",
 };
 const magicLinkBaseUrl =
-  BRANCH_URLS[process.env.AWS_BRANCH ?? ""] ?? "http://localhost:5173";
+  migrationDestination ? (migrationPreview || businessBranch === "staging" ? migrationCrmOrigin : BRANCH_URLS.main) : BRANCH_URLS[process.env.AWS_BRANCH ?? ""] ?? "http://localhost:5173";
 
 /**
  * The marketing site's host, per branch. Where a lead's upload link points.
@@ -299,7 +310,7 @@ const SITE_BRANCH_URLS: Record<string, string> = {
   main: "https://www.protectmyhoa.com",
 };
 const siteBaseUrl =
-  SITE_BRANCH_URLS[process.env.AWS_BRANCH ?? ""] ?? "http://localhost:4321";
+  migrationDestination ? (migrationPreview || businessBranch === "staging" ? migrationWebOrigin : SITE_BRANCH_URLS.main) : SITE_BRANCH_URLS[process.env.AWS_BRANCH ?? ""] ?? "http://localhost:4321";
 // Sender must be SES-verified (protectmyhoa.com domain, DKIM verified).
 const magicLinkFrom = "HOA Insurance Agency <noreply@protectmyhoa.com>";
 
@@ -316,7 +327,7 @@ const magicLinkFrom = "HOA Insurance Agency <noreply@protectmyhoa.com>";
  * of that default is unit tested rather than asserted here. `internal` is the
  * general inbox: a digest or a licence deadline is not a sales conversation.
  */
-const branch = process.env.AWS_BRANCH;
+const branch = businessBranch;
 const leadReplyMailbox = resolveMailbox("lead", branch);
 const internalMailbox = resolveMailbox("internal", branch);
 
@@ -351,7 +362,7 @@ for (const fn of [backend.leadIntake, backend.honeycombWorker]) {
 }
 estimateTable.grantReadData(backend.honeycombStatus.resources.lambda);
 backend.honeycombStatus.addEnvironment("HONEYCOMB_ESTIMATE_TABLE", estimateTable.tableName);
-backend.leadIntake.addEnvironment("HONEYCOMB_ENABLED", String(honeycombEnvironmentForBranch(branch) !== "disabled"));
+backend.leadIntake.addEnvironment("HONEYCOMB_ENABLED", String(honeycombEnvironmentForBranch(providerBranch) !== "disabled"));
 backend.data.resources.cfnResources.amplifyDynamoDbTables.HoneycombEstimate.streamSpecification = { streamViewType: StreamViewType.NEW_IMAGE };
 backend.honeycombWorker.resources.lambda.addEventSource(new DynamoEventSource(estimateTable, {
   // Include jobs captured while the new event mapping is still being deployed.
@@ -517,21 +528,40 @@ for (const [name, metricName, threshold, comparisonOperator] of [
 });
   alarm.addAlarmAction(new SnsAction(communicationAlerts));
 }
-const communicationWebhookUrl = backend.communicationWebhook.resources.lambda.addFunctionUrl({ authType: FunctionUrlAuthType.NONE });
+const communicationWebhookUrl = backend.communicationWebhook.resources.lambda.addFunctionUrl({ authType: migrationExecution.holdBusinessExecution ? FunctionUrlAuthType.AWS_IAM : FunctionUrlAuthType.NONE });
 backend.communications.addEnvironment("COMMUNICATION_WEBHOOK_URL", communicationWebhookUrl.url);
 backend.addOutput({ custom: { communicationWebhookUrl: communicationWebhookUrl.url, frontSidebarUrl: `${magicLinkBaseUrl}/front-sidebar` } });
 
-backend.magicLinkCreate.addEnvironment("MAGIC_LINK_SECRET_ARN", magicLinkSecret.secretArn);
-backend.magicLinkVerify.addEnvironment("MAGIC_LINK_SECRET_ARN", magicLinkSecret.secretArn);
-backend.magicLinkCreate.addEnvironment("MAGIC_LINK_BASE_URL", magicLinkBaseUrl);
-backend.magicLinkCreate.addEnvironment("MAGIC_LINK_FROM", magicLinkFrom);
-
-backend.magicLinkCreate.resources.lambda.addToRolePolicy(
-  new PolicyStatement({
-    actions: ["ses:SendEmail"],
-    resources: ["*"],
-  })
-);
+for (const fn of [backend.magicLinkCreate, backend.magicLinkVerify]) {
+  fn.addEnvironment("MAGIC_LINK_SECRET_ARN", magicLinkSecret.secretArn);
+  fn.addEnvironment("MAGIC_LINK_BASE_URL", magicLinkBaseUrl);
+  fn.addEnvironment("MAGIC_LINK_FROM", magicLinkFrom);
+}
+if (migrationDestination) {
+  for (const fn of [backend.magicLinkDefine, backend.magicLinkCreate, backend.magicLinkVerify, backend.migrationNativeMessage]) {
+    fn.addEnvironment("HOA_MIGRATION_AUTH", "true");
+    for (const key of ["HOA_PREVIEW_ADMIN_LOGIN", "HOA_PREVIEW_ADMIN_USER_POOL_ID", "HOA_PREVIEW_ADMIN_CLIENT_ID", "HOA_PREVIEW_ADMIN_USERNAME", "HOA_PREVIEW_ADMIN_EMAIL", "HOA_PREVIEW_ADMIN_LOGIN_EXPIRES_AT", "HOA_PREVIEW_SES_CONFIGURATION_SET", "HOA_RESEND_PREVIEW_ENABLED"]) {
+      fn.addEnvironment(key, process.env[key] ?? "");
+    }
+    fn.addEnvironment("MAGIC_LINK_BASE_URL", magicLinkBaseUrl);
+    fn.addEnvironment("MAGIC_LINK_FROM", magicLinkFrom);
+  }
+  if (!migrationPreview || process.env.HOA_PREVIEW_ADMIN_LOGIN === "true") {
+    const expiry = process.env.HOA_PREVIEW_ADMIN_LOGIN_EXPIRES_AT;
+    if (migrationPreview && (!expiry || !Number.isFinite(Date.parse(expiry)))) throw new Error("An owner login test requires an exact expiry.");
+    backend.magicLinkVerify.resources.lambda.addToRolePolicy(new PolicyStatement({
+      actions: ["ses:SendEmail"],
+      resources: [Stack.of(backend.magicLinkVerify.resources.lambda).formatArn({ service: "ses", resource: "identity", resourceName: "protectmyhoa.com" }),
+        ...(migrationPreview ? [Stack.of(backend.magicLinkVerify.resources.lambda).formatArn({ service: "ses", resource: "configuration-set", resourceName: "hoa-migration-preview-20261029" })] : [])],
+      conditions: {
+        StringEquals: { "ses:FromAddress": "noreply@protectmyhoa.com" },
+        ...(migrationPreview ? { "ForAllValues:StringEquals": { "ses:Recipients": ["jake@getgim.com"] }, DateLessThan: { "aws:CurrentTime": expiry! } } : {}),
+      },
+    }));
+  }
+} else {
+  backend.magicLinkCreate.resources.lambda.addToRolePolicy(new PolicyStatement({ actions: ["ses:SendEmail"], resources: ["*"] }));
+}
 
 // ── Team admin (in-app invites) ──────────────────────────────────────
 backend.teamAdmin.addEnvironment(
@@ -912,7 +942,7 @@ backend.data.resources.tables.PfLoanPayment.grantReadWriteData(
 );
 
 const stripeWebhookUrl = backend.stripeWebhook.resources.lambda.addFunctionUrl({
-  authType: FunctionUrlAuthType.NONE,
+  authType: migrationExecution.holdBusinessExecution ? FunctionUrlAuthType.AWS_IAM : FunctionUrlAuthType.NONE,
 });
 backend.addOutput({
   custom: { stripeWebhookUrl: stripeWebhookUrl.url },
@@ -1028,3 +1058,26 @@ installAccountAccess(backend, communicationTable);
 installDashboardReads(backend);
 installOwnerProfitability(backend, communicationTable);
 installCommissions(backend, communicationTable);
+
+// The backend's main/staging namespace is linked to an equally named dormant
+// destination branch. Hosted migration branches consume the generated outputs;
+// Amplify requires branchName to match the branch encoded in the stack ARN.
+
+// Apply preview isolation after all normal resources exist, preserving their identities.
+if (migrationDestination) {
+  const probeScope = (models: readonly string[]) => !migrationExecution.streamProbeEnabled ? "[]" : Stack.of(backend.data.resources.graphqlApi).toJsonString(models.map(model => {
+    const table = backend.data.resources.tables[model];
+    return [table.tableName, Fn.select(3, Fn.split("/", table.tableStreamArn!)), model === "AccountFinancials" ? "accountId" : "id"];
+  }));
+  backend.activityLog.addEnvironment("HOA_MIGRATION_STREAM_PROBE_SCOPES", probeScope(STREAMED_MODELS));
+  backend.communicationWorker.addEnvironment("HOA_MIGRATION_STREAM_PROBE_SCOPES", probeScope(["Account", "Quote", "Policy", "Certificate", "Document"]));
+  backend.honeycombWorker.addEnvironment("HOA_MIGRATION_STREAM_PROBE_SCOPES", probeScope(["HoneycombEstimate"]));
+  backend.honeycombSubmissionWorker.addEnvironment("HOA_MIGRATION_STREAM_PROBE_SCOPES", probeScope(["HoneycombSubmission"]));
+}
+installTransactionalMail(backend, communicationAlerts);
+installMigrationPreview(backend);
+
+if (migrationDestination) backend.addOutput({ custom: { migration: {
+  account: migrationTargets.account, appId: migrationTargets.crmApp,
+  branch: process.env.AWS_BRANCH!, preview: String(migrationPreview),
+} } });

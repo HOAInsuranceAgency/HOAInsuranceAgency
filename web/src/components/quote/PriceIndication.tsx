@@ -1,8 +1,10 @@
+import { assertWebsiteActionsEnabled } from "../../lib/migrationPreview";
 import { useEffect, useState } from "react";
 export type PublicEstimate = { status: string; price?: number; currency?: string; staging?: boolean };
 export async function readEstimate(token: string, signal: AbortSignal): Promise<PublicEstimate> {
   const url = import.meta.env.PUBLIC_CRM_API_URL, key = import.meta.env.PUBLIC_CRM_API_KEY;
   if (!url || !key) return { status: "unavailable" };
+  assertWebsiteActionsEnabled();
   const response = await fetch(url, {
     method: "POST", headers: { "Content-Type": "application/json", "x-api-key": key }, signal,
     body: JSON.stringify({ query: "query WebLeadEstimate($estimateToken: String!) { webLeadEstimate(estimateToken: $estimateToken) }", variables: { estimateToken: token } }),

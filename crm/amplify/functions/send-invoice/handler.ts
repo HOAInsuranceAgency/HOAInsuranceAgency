@@ -1,6 +1,8 @@
+import { TransactionalMailClient } from "../transactional-mail/client";
+import { MailDeliveryError } from "../transactional-mail/contract";
 import { currentContacts, billingContact } from "../../../src/lib/contacts";
 import { randomUUID } from "node:crypto";
-import { SESv2Client, SendEmailCommand } from "@aws-sdk/client-sesv2";
+import { SendEmailCommand } from "@aws-sdk/client-sesv2";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, GetCommand, PutCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { Amplify } from "aws-amplify";
@@ -46,7 +48,7 @@ async function getDataClient() {
   return dataClient;
 }
 
-const ses = new SESv2Client();
+const ses = new TransactionalMailClient("invoice");
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient());
 
 /**
@@ -961,7 +963,8 @@ export const handler = async (event: {
           ...(selfAddressed ? {} : { BccAddresses: [MAILBOX] }),
         },
         Content: { Raw: { Data: Buffer.from(raw, "utf8") } },
-      })
+      }),
+      { idempotencyKey: `invoice:${invoiceId}:${invoice.updatedAt ?? invoice.sentAt ?? "initial"}:${to.join(",")}`, subject, text, html, replyTo: MAILBOX, attachments: attachment ? [attachment] : [] }
     );
 
     /**
@@ -1016,7 +1019,7 @@ export const handler = async (event: {
     console.log(`send-invoice sent ${invoice.number ?? invoiceId} to ${to.join(", ")}`);
     return { ok: true, sentTo: to.join(", "), subject };
   } catch (err) {
-    if (err instanceof SendBlocked) {
+    if (err instanceof SendBlocked || err instanceof MailDeliveryError) {
       return { ok: false, error: err.message };
     }
     console.error("send-invoice failed", err);

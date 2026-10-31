@@ -1,6 +1,7 @@
+import { TransactionalMailClient } from "../transactional-mail/client";
 import Stripe from "stripe";
 import { randomUUID } from "node:crypto";
-import { SESv2Client, SendEmailCommand } from "@aws-sdk/client-sesv2";
+import { SendEmailCommand } from "@aws-sdk/client-sesv2";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, PutCommand, ScanCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { AGENCY } from "../../../../shared/agency";
@@ -25,7 +26,7 @@ import { PF_CONFIG_SHA256 } from "../../../src/lib/premiumFinance/jurisdictions"
  * below terminate.
  */
 
-const ses = new SESv2Client();
+const ses = new TransactionalMailClient("accounting");
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient());
 
 /**

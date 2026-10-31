@@ -18,6 +18,12 @@ export async function contractReady(url, key, request = fetch) {
   return ready?.ready === true && ready.contractVersion >= 3;
 }
 export async function waitForContract() {
+  if (process.env.HOA_MIGRATION_PREVIEW === "true") {
+    // The mandatory deployment guard runs first; preview business Lambdas are
+    // deliberately throttled and cannot satisfy a live intake readiness probe.
+    console.log("Preview business actions are disabled; skipping live intake readiness.");
+    return;
+  }
   const url = process.env.PUBLIC_CRM_API_URL, key = process.env.PUBLIC_CRM_API_KEY;
   if (!url || !key) throw new Error("The website deployment needs its CRM endpoint and public API key.");
   const deadline = Date.now() + 20 * 60_000;

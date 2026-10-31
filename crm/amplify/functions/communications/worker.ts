@@ -1,4 +1,5 @@
 import type { DynamoDBStreamEvent } from "aws-lambda";
+import { holdMigrationStream } from "../migration-stream-hold";
 import { get, query, row, save, issue, conflict, type Row } from "./store";
 import { config } from "./config";
 import { runOperation, type Operation } from "./operations";
@@ -61,6 +62,7 @@ export async function refreshCommunication(candidate: Row<Communication>) {
     { accountId: comm.accountId, previous: comm, dueAt: stopAutomatic ? undefined : new Date(Date.now() + (age < 2 * 86400_000 ? 900_000 : 3600_000)).toISOString() }), comm);
 }
 export const handler = async (event?: Partial<DynamoDBStreamEvent>) => {
+  if (holdMigrationStream(event, "communicationWorker")) return { batchItemFailures: [] };
   if (event?.Records) {
     const batchItemFailures = [];
     for (const record of event.Records) {

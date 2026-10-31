@@ -3,6 +3,7 @@ import {
   magicLinkDefine,
   magicLinkCreate,
   magicLinkVerify,
+  migrationNativeMessage,
 } from "../functions/magic-link/resource";
 
 /**
@@ -22,5 +23,6 @@ export const auth = defineAuth({
     defineAuthChallenge: magicLinkDefine,
     createAuthChallenge: magicLinkCreate,
     verifyAuthChallengeResponse: magicLinkVerify,
+    ...(process.env.HOA_MIGRATION_PREVIEW === "true" ? { customMessage: migrationNativeMessage } : {}),
   },
 });
