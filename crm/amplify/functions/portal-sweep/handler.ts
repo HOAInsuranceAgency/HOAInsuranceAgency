@@ -1,4 +1,5 @@
 import { LambdaClient, InvokeCommand } from "@aws-sdk/client-lambda";
+import { migrationProviderHeld, migrationPendingHeld } from "../migration-pending";
 import { HeadObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { enqueueOperation } from "../communications/operations";
 import { Amplify } from "aws-amplify";
@@ -141,6 +142,9 @@ export const handler = async () => {
   summary.open = portals.length;
 
   for (const portal of portals) {
+    // Existing portals can receive genuine new uploads. Use the upload event,
+    // not the portal's original creation date, as the work's provenance.
+    if (migrationProviderHeld(portal.lastUploadAt, "iso")) continue;
     try {
       const [account, documents] = await Promise.all([
         client.models.Account.get({ id: portal.accountId }),
@@ -166,7 +170,7 @@ export const handler = async () => {
 
       const decision = decideSweep({
         portal,
-        documents,
+        documents: documents.filter(doc => !migrationPendingHeld(doc)),
         account: {
           extractionStatus: account.data.extractionStatus,
           extractedAt: extractedAt(account.data.aiExtraction),
@@ -208,7 +212,7 @@ export const handler = async () => {
        * with no object under it.
        */
       const fresh = await landed(
-        documents.filter((d) => !decision.since || (d.createdAt ?? "") > decision.since)
+        documents.filter((d) => !migrationPendingHeld(d) && (!decision.since || (d.createdAt ?? "") > decision.since))
       );
       const arrived = arrivedSections(fresh);
       if (arrived.length === 0) {

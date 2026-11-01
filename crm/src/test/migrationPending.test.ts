@@ -1,0 +1,20 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { migrationPendingCutoff, migrationPendingHeld, migrationProviderHeld, migrationPendingKey, migrationOperationReview } from "../../amplify/functions/migration-pending";
+const cutoff = '2026-11-01T19:30:00.000Z', now = '2026-11-01T20:00:00.000Z';
+function destination() {
+  for (const [key,value] of Object.entries({ HOA_MIGRATION_APP_ID:'d1nuh9rw1hcuxo', HOA_MIGRATION_PENDING_ACCOUNT:'917680434255', AWS_REGION:'us-east-1', HOA_MIGRATION_BRANCH:'codex-hoa-account-migration', AWS_LAMBDA_FUNCTION_NAME:'amplify-d1nuh9rw1hcuxo-main-branch-worker', HOA_MIGRATION_PREVIEW:'false', HOA_MIGRATION_PENDING_CUTOFF:cutoff })) vi.stubEnv(key,value);
+}
+beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(now); });
+afterEach(() => { vi.unstubAllEnvs(); vi.useRealTimers(); });
+describe('immutable inherited-work boundary', () => {
+  it('preserves source behavior without migration configuration', () => { expect(migrationPendingHeld({})).toBe(false); expect(migrationProviderHeld(undefined,'iso')).toBe(false); expect(migrationPendingKey('cursor')).toBe('cursor'); });
+  it.each([undefined,'bad','2026-11-01',cutoff,'2026-10-29T12:00:00.000Z','2026-11-02T00:00:00.000Z'])('holds missing, malformed, inherited and future provenance %s', createdAt => { destination(); expect(migrationPendingHeld({createdAt})).toBe(true); });
+  it('allows genuine new work on old accounts but never treats updatedAt as provenance', () => { destination(); expect(migrationPendingHeld({createdAt:now})).toBe(false); expect(migrationPendingHeld({createdAt:cutoff, ...{updatedAt:now}})).toBe(true); });
+  it.each([{HOA_MIGRATION_APP_ID:'old'}, {HOA_MIGRATION_PENDING_ACCOUNT:'637423611040'}, {AWS_REGION:'us-west-2'}, {HOA_MIGRATION_BRANCH:'main'}, {AWS_LAMBDA_FUNCTION_NAME:'foreign'}, {HOA_MIGRATION_PENDING_CUTOFF:''}])('fails closed for wrong runtime binding %j', patch => { destination(); for(const [k,v] of Object.entries(patch))vi.stubEnv(k,v); expect(()=>migrationPendingHeld({createdAt:now})).toThrow(); });
+  it('keeps every inherited status and source row unchanged', () => { destination(); for(const state of ['READY','RETRY_WAIT','LEASED','ACCEPTED','UNKNOWN']) { const old={kind:'OPERATION',createdAt:cutoff,version:3,data:{state,uid:'existing',text:'unchanged'}}; const copy=structuredClone(old); expect(migrationPendingHeld(old)).toBe(true);expect(old).toEqual(copy); } });
+  it('only releases an exact operation after the audited review stamp', () => { destination(); const old={kind:'OPERATION',createdAt:cutoff,version:3,data:{state:'UNKNOWN'}}; const stamp=migrationOperationReview(old,'owner','retry','Verified not sent'); const next={...old,version:4,data:{state:'READY',migrationReview:stamp}}; expect(migrationPendingHeld(next)).toBe(false); for(const patch of [{cutoff:now},{at:cutoff},{actor:''},{reason:''},{sourceVersion:4},{action:'updated'}]) expect(migrationPendingHeld({...next,data:{...next.data,migrationReview:{...stamp,...patch}}})).toBe(true);expect(migrationPendingHeld({...next,kind:'EVENT'})).toBe(true); });
+  it('does not release malformed historical provenance via an audit stamp', () => { destination();expect(()=>migrationOperationReview({createdAt:'bad',version:1},'owner','retry','reason')).toThrow(); });
+  it('checks original provider time even on a newly captured row', () => { destination(); expect(migrationProviderHeld(Date.parse(cutoff)/1000,'seconds')).toBe(true); expect(migrationProviderHeld(Date.parse(now),'milliseconds')).toBe(false); expect(migrationProviderHeld(undefined,'seconds')).toBe(true); expect(migrationProviderHeld('','milliseconds')).toBe(true); });
+  it('uses distinct repair cursors without rewriting inherited checkpoints', () => { destination();expect(migrationPendingKey('cursor:front')).toBe('cursor:front:migration:'+cutoff); });
+  it('holds all work in a closed preview before final sync exists', () => { destination();vi.stubEnv('HOA_MIGRATION_PREVIEW','true');vi.stubEnv('HOA_MIGRATION_PENDING_CUTOFF','');expect(migrationPendingCutoff()).toBe(Infinity);expect(migrationPendingHeld({createdAt:now})).toBe(true); });
+});

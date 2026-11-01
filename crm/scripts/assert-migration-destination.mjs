@@ -47,6 +47,7 @@ if (binding) {
       if (receipt.schema !== 1 || receipt.phase !== "writers-held" || receipt.account !== targets.account || receipt.app !== app || receipt.branch !== branch || receipt.backendBranch !== binding.backendBranch
         || !receipt.reviewedBy || hashes.some(v => !/^[a-f0-9]{64}$/.test(v ?? ""))
         || ordered.some((v, i) => !Number.isFinite(v) || v > Date.now() || (i > 0 && v < ordered[i - 1])) || Date.now() - ordered[3] > 2 * 60 * 60_000) throw new Error("The API priming receipt does not prove a fresh reviewed copy with both write fences.");
+      if (process.env.HOA_MIGRATION_PENDING_CUTOFF !== new Date(ordered[1]).toISOString()) throw new Error("Inherited-work cutoff differs from the reviewed final copy.");
       if (process.env.HOA_MIGRATION_STREAM_PROBE_ENABLED === "true") verifyMigrationProbe(process.env.HOA_MIGRATION_STREAM_PROBE_SCOPE_MANIFEST, receipt, namespaceBranch?.backend?.stackArn, targets, binding.backendBranch, aws);
     }
   }
@@ -61,6 +62,7 @@ if (binding) {
       || Date.now() - ordered[4] > 2 * 60 * 60_000 || !Array.isArray(receipt.mappingUuids) || receipt.mappingUuids.length !== 22) {
       throw new Error("Release receipt does not prove reviewed final sync, pending work and polling readiness for this backend.");
     }
+    if (process.env.HOA_MIGRATION_PENDING_CUTOFF !== new Date(ordered[1]).toISOString()) throw new Error("Inherited-work cutoff differs from the reviewed final copy.");
     const hosted = namespaceBranch;
     if (!hosted?.backend?.stackArn?.startsWith(`arn:aws:cloudformation:${targets.region}:${targets.account}:stack/amplify-${app}-${binding.backendBranch}-branch-`)) throw new Error("The stable namespace branch has no matching existing backend to release.");
     const inventory = [];

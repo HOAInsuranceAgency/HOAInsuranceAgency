@@ -22,6 +22,7 @@ const receipt = {
 const baseline = {
   ...process.env, PATH: `${dir}:${process.env.PATH}`, AWS_APP_ID: "d1nuh9rw1hcuxo", AWS_BRANCH: "codex-hoa-account-migration",
   HOA_MIGRATION_RELEASE_RECEIPT: JSON.stringify(receipt),
+  HOA_MIGRATION_PENDING_CUTOFF: receipt.finalSyncCompletedAt,
   HOA_DEPLOY_ACCOUNT_ID: "917680434255", HOA_MIGRATION_AUTH: "true", HOA_MIGRATION_PREVIEW: "true",
   HOA_MIGRATION_STREAM_PHASE: "quarantine", VITE_HOA_MIGRATION_PREVIEW: "true", PUBLIC_GOOGLE_PLACES_KEY: "", VITE_GOOGLE_PLACES_KEY: "",
 };
@@ -48,6 +49,9 @@ describe("destination deployment and replay barrier", () => {
   it("rejects cursor UUIDs different from the reviewed receipt", () => expect(() => run({ HOA_MIGRATION_PREVIEW: "false", HOA_MIGRATION_STREAM_PHASE: "armed", HOA_MIGRATION_RELEASE_RECEIPT: JSON.stringify({ ...receipt, mappingUuids: receipt.mappingUuids.map(x => `${x}-old`) }) })).toThrow());
   it("requires all 22 already-existing fresh cursors before release", () => {
     expect(run({ HOA_MIGRATION_PREVIEW: "false", HOA_MIGRATION_STREAM_PHASE: "armed" })).toContain("release");
+  });
+  it.each(["", receipt.sourceQuiescedAt, receipt.pendingWorkReconciledAt])("rejects a cutoff not equal to final-copy completion: %s", cutoff => {
+    expect(() => run({ HOA_MIGRATION_PREVIEW: "false", HOA_MIGRATION_STREAM_PHASE: "armed", HOA_MIGRATION_PENDING_CUTOFF: cutoff })).toThrow();
   });
   it("permits held API priming only with reviewed source and destination fences", () => {
     const prepare = { ...receipt, phase: "writers-held", sourceFenceReceiptSha256: "c".repeat(64), destinationFenceReceiptSha256: "d".repeat(64), pendingWorkReceiptSha256: "e".repeat(64) };
