@@ -11,10 +11,20 @@ export const migrationWebOrigin = retained ? `https://${retained.alias}.${target
 export const migrationStreamPhase = process.env.HOA_MIGRATION_STREAM_PHASE ?? "quarantine";
 export const migrationSchedulesEnabled = process.env.HOA_MIGRATION_SCHEDULES_ENABLED === "true";
 export const migrationExecution = resolveMigrationRelease({ destination: migrationDestination, preview: migrationPreview, streamPhase: migrationStreamPhase, schedulesEnabled: migrationSchedulesEnabled, workersEnabled: process.env.HOA_MIGRATION_WORKERS_ENABLED, streamProbeEnabled: process.env.HOA_MIGRATION_STREAM_PROBE_ENABLED, probeToken: process.env.HOA_MIGRATION_STREAM_PROBE_TOKEN, probeExpiresAt: process.env.HOA_MIGRATION_STREAM_PROBE_EXPIRES_AT });
+export const migrationPendingCutoff = process.env.HOA_MIGRATION_PENDING_CUTOFF ?? "";
 export const providerBranch = migrationDestination && migrationExecution.holdBusinessExecution ? "migration-disabled" : businessBranch;
 export { targets as migrationTargets };
 
 if (migrationDestination) {
+  if (!migrationPreview) {
+    const receipt = JSON.parse(process.env[migrationExecution.workersEnabled ? "HOA_MIGRATION_RELEASE_RECEIPT" : "HOA_MIGRATION_PREPARE_RECEIPT"] ?? "null");
+    const cutoff = Date.parse(receipt?.finalSyncCompletedAt ?? "");
+    if (receipt?.account !== targets.account || receipt?.app !== targets.crmApp || receipt?.branch !== branch
+      || receipt?.backendBranch !== retained.backendBranch || !/^[a-f0-9]{64}$/.test(receipt?.finalSyncReceiptSha256 ?? "")
+      || !Number.isFinite(cutoff) || cutoff > Date.now() || migrationPendingCutoff !== new Date(cutoff).toISOString()) {
+      throw new Error("Inherited work requires the immutable cutoff from this backend's reviewed final-copy receipt.");
+    }
+  }
   if (!["quarantine", "armed"].includes(migrationStreamPhase) || (!migrationPreview && migrationStreamPhase !== "armed")) {
     throw new Error("Migration release requires separately armed stream cursors after the final data sync.");
   }

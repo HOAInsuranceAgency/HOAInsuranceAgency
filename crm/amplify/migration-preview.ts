@@ -3,7 +3,7 @@ import { CfnResource, RemovalPolicy, Stack } from "aws-cdk-lib";
 import { CfnResolver } from "aws-cdk-lib/aws-appsync";
 import { Effect, ManagedPolicy, PolicyStatement } from "aws-cdk-lib/aws-iam";
 import { CfnFunction } from "aws-cdk-lib/aws-lambda";
-import { migrationDestination, migrationPreview, migrationTargets, migrationStreamPhase, migrationSchedulesEnabled, migrationExecution } from "./migration-config";
+import { migrationDestination, migrationPreview, migrationTargets, migrationStreamPhase, migrationSchedulesEnabled, migrationExecution, migrationPendingCutoff } from "./migration-config";
 import { disableBucketNotifications } from "./migration-notifications";
 
 const READ_FUNCTIONS = new Set(["crmAccess", "communications", "commissions", "ownerProfitability"]);
@@ -32,6 +32,8 @@ export function installMigrationPreview(backend: any) {
     resource.addEnvironment("HOA_MIGRATION_PREVIEW", String(migrationPreview));
     resource.addEnvironment("HOA_MIGRATION_APP_ID", migrationTargets.crmApp);
     resource.addEnvironment("HOA_MIGRATION_BRANCH", process.env.AWS_BRANCH!);
+    resource.addEnvironment("HOA_MIGRATION_PENDING_CUTOFF", migrationPendingCutoff);
+    resource.addEnvironment("HOA_MIGRATION_PENDING_ACCOUNT", Stack.of(resource.resources.lambda).account);
     if (MIGRATION_STREAM_WORKERS.has(name) || ["magicLinkVerify", "teamAdmin", "sendInvoice", "marketingReportWorker", "stripeWebhook", "mailVerification", "mailRecovery"].includes(name)) resource.addEnvironment("HOA_MIGRATION_WORKERS_ENABLED", String(migrationExecution.workersEnabled));
     if (READ_FUNCTIONS.has(name) || name === "migrateProducerLicenses") resource.addEnvironment("HOA_MIGRATION_BUSINESS_HELD", String(migrationExecution.holdBusinessExecution));
     if (MIGRATION_STREAM_WORKERS.has(name)) {

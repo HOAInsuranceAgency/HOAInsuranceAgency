@@ -67,12 +67,12 @@ export async function commit(writes: Write[]) {
   if (writes.length) await db.send(new TransactWriteCommand({ TransactItems: writes }));
 }
 export async function save<T>(next: Row<T>, previous?: Row<unknown>) { await commit([put(next, previous)]); return next; }
-export async function query<T = Record<string, unknown>>(index: "kind" | "account" | "due" | "work", key: string, nextToken?: string, limit = 100, prefix?: string) {
+export async function query<T = Record<string, unknown>>(index: "kind" | "account" | "due" | "work", key: string, nextToken?: string, limit = 100, prefix?: string, dueAfter?: string) {
   const attr = index === "kind" ? "kind" : index === "work" ? "workKind" : index === "account" ? "accountId" : "dueGroup";
   let cursor: Record<string, unknown> | undefined;
   if (nextToken) { try { cursor = JSON.parse(Buffer.from(nextToken, "base64url").toString()); } catch { throw new Error("Invalid page token"); } }
-  const out = await db.send(new QueryCommand({ TableName: table(), IndexName: index, KeyConditionExpression: `#k = :k${index === "due" ? " AND dueAt <= :now" : ""}${index === "account" && prefix ? " AND begins_with(accountSort, :prefix)" : ""}`,
-    ExpressionAttributeNames: { "#k": attr }, ExpressionAttributeValues: { ":k": key, ...(index === "due" ? { ":now": new Date().toISOString() } : {}), ...(index === "account" && prefix ? { ":prefix": prefix } : {}) },
+  const out = await db.send(new QueryCommand({ TableName: table(), IndexName: index, KeyConditionExpression: `#k = :k${index === "due" ? dueAfter ? " AND dueAt BETWEEN :afterDue AND :now" : " AND dueAt <= :now" : ""}${index === "account" && prefix ? " AND begins_with(accountSort, :prefix)" : ""}`,
+    ExpressionAttributeNames: { "#k": attr }, ExpressionAttributeValues: { ":k": key, ...(index === "due" ? { ":now": new Date().toISOString(), ...(dueAfter ? { ":afterDue": dueAfter } : {}) } : {}), ...(index === "account" && prefix ? { ":prefix": prefix } : {}) },
     ExclusiveStartKey: cursor, Limit: Math.min(limit, 100), ScanIndexForward: index !== "account" }));
   return { items: (out.Items ?? []) as Row<T>[], nextToken: out.LastEvaluatedKey ? Buffer.from(JSON.stringify(out.LastEvaluatedKey)).toString("base64url") : undefined };
 }

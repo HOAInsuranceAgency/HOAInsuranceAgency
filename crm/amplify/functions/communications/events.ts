@@ -1,4 +1,5 @@
 import { config } from "./config";
+import { migrationPendingHeld, migrationProviderHeld } from "../migration-pending";
 import type { HistoryJob } from "./history";
 import { uniteCalls, combineLegs, callStatus, queueCallSync, type Call } from "./calls";
 import { front, permittedConversation, messageConversation, FrontScopeError, type FrontMessage } from "./providers";
@@ -26,6 +27,7 @@ export function classifyEmail(message: Pick<FrontMessage, "text" | "subject" | "
   return message.text?.trim() || message.attachments?.length ? "SUBSTANTIVE" : "REVIEW";
 }
 export async function ingestFrontMessage(message: FrontMessage, conversationId?: string) {
+  if (migrationProviderHeld(message.created_at, "seconds")) return false;
   const cnv = conversationId ?? messageConversation(message);
   if (cnv && await get(`report-conversation:${cnv}`)) return;
   if (!cnv || !message.id) return;
@@ -94,6 +96,7 @@ export async function ingestFrontMessage(message: FrontMessage, conversationId?:
   }
 }
 async function frontEvent(event: Json, type: string) {
+  if (migrationProviderHeld(event.emitted_at, "seconds")) return { migrationHeld: true };
   if (!/inbound|outbound|message|delivery_failed|bounce/.test(type) && !["assignee_changed", "assign"].includes(type)) return;
   const conv = object(event.conversation), target = object(event.target);
   const cnv = str(conv.id) || str(object(event.payload).conversation_id);
@@ -127,11 +130,13 @@ async function frontEvent(event: Json, type: string) {
   }
   if (!/inbound|outbound|message/.test(type)) return; // Archive and snooze are never business-date inputs.
   const msg = object(target.data).id ?? object(event.message).id;
-  if (typeof msg === "string" && /^msg_/.test(msg)) { await ingestFrontMessage(await front<FrontMessage>(`/messages/${msg}`), cnv); return; }
+  if (typeof msg === "string" && /^msg_/.test(msg)) { if (await ingestFrontMessage(await front<FrontMessage>(`/messages/${msg}`), cnv) === false) return { migrationHeld: true }; return; }
   const messages = await front<{ _results: FrontMessage[] }>(`/conversations/${cnv}/messages`);
   for (const message of messages._results.slice().reverse()) await ingestFrontMessage(message, cnv);
 }
 export async function dialpadEvent(p: Json) {
+  const originalAt = p.date_started ?? p.created_date ?? p.event_timestamp;
+  if (migrationProviderHeld(originalAt, Number(originalAt) > 10_000_000_000 ? "milliseconds" : "seconds")) return { migrationHeld: true };
   const c = await config();
   const target = object(p.target), contact = object(p.contact);
   const inbound = p.direction === "inbound";
@@ -197,9 +202,11 @@ export function smsStatus(previous: string | undefined, incoming: string, inboun
   return (rank[previous ?? ""] ?? 0) >= (rank[incoming] ?? 0) ? previous ?? "PENDING" : incoming;
 }
 export async function processEvent(record: Row<EventRecord>) {
+  if (migrationPendingHeld(record)) return;
   const p = record.data.payload;
-  let outcome: { ignored: string; line?: string } | undefined;
+  let outcome: { ignored?: string; line?: string; migrationHeld?: boolean } | undefined;
   if (record.data.snapshot) {
+    if (migrationProviderHeld(record.data.snapshot.message.created_at, "seconds")) return;
     await permittedConversation(record.data.snapshot.conversationId);
     const snapshot = record.data.snapshot.message;
     // Old receipts predate the draft flag. Verify instead of guessing on replay.
@@ -207,12 +214,14 @@ export async function processEvent(record: Row<EventRecord>) {
     await ingestFrontMessage(message, record.data.snapshot.conversationId);
   } else if (record.data.provider === "front") outcome = await frontEvent(object(p.payload), str(p.type));
   else outcome = await dialpadEvent(p);
+  if (outcome?.migrationHeld) return;
   await save(row("EVENT", record.id, { ...record.data, outcome, attempts: 0, processedAt: new Date().toISOString() }, { previous: record }), record);
 }
 
 /** Linking old conversations imports history in bounded, replayable pages. */
 export async function backfillConversation(candidate: Row<HistoryJob>) {
   const job = await get<typeof candidate.data>(candidate.id); if (!job?.dueAt) return;
+  if (migrationPendingHeld(job)) return;
   const cnv = (await permittedConversation(job.data.conversationId)).id;
   const page = await front<{ _results: FrontMessage[]; _pagination?: { next?: string } }>(job.data.next ?? `/conversations/${cnv}/messages?limit=25`);
   if (!Array.isArray(page._results)) throw new Error("Front message history needs review");
@@ -232,7 +241,9 @@ export async function backfillConversation(candidate: Row<HistoryJob>) {
     const key = `front-history:${cnv}:${message.id}:${linkVersion}:draft-v2:${message.is_draft ? "draft" : "sent"}`, old = await get<EventRecord>(key);
     // Persist the exact item before projection. A poisonous message remains
     // replayable while the rest of the page and subsequent pages progress.
-    const event = old ?? await save(row<EventRecord>("EVENT", key, { provider: "front", payload: {}, snapshot: { message, conversationId: cnv }, attempts: 0 }, { dueAt: new Date().toISOString() }));
+    const heldMessage = migrationProviderHeld(message.created_at, "seconds");
+    const event = old ?? await save(row<EventRecord>("EVENT", key, { provider: "front", payload: {}, snapshot: { message, conversationId: cnv }, attempts: 0 }, { dueAt: heldMessage ? undefined : new Date().toISOString() }));
+    if (heldMessage || migrationPendingHeld(event)) continue;
     if (!event.data.processedAt) {
       try {
         // The conversation was already verified once for this page.

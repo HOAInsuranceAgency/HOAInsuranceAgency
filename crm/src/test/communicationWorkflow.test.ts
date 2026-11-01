@@ -2792,3 +2792,39 @@ describe("batched issue-source visibility", () => {
     expect(sourceBatches()).toHaveLength(failure === "outage" ? 1 : 4);
   });
 });
+
+describe('destination inherited communications remain review-only', () => {
+  const cutoff = '2026-09-08T13:59:00.000Z';
+  beforeEach(() => {
+    for (const [key,value] of Object.entries({ HOA_MIGRATION_APP_ID:'d1nuh9rw1hcuxo', HOA_MIGRATION_PENDING_ACCOUNT:'917680434255', AWS_REGION:'us-east-1', HOA_MIGRATION_BRANCH:'codex-hoa-account-migration', AWS_LAMBDA_FUNCTION_NAME:'amplify-d1nuh9rw1hcuxo-main-branch-worker', HOA_MIGRATION_PREVIEW:'false', HOA_MIGRATION_WORKERS_ENABLED:'true', HOA_MIGRATION_PENDING_CUTOFF:cutoff })) vi.stubEnv(key,value);
+  });
+  afterEach(() => vi.unstubAllEnvs());
+  function inherited<T extends {id:string}>(r:T) { const old={...r,createdAt:cutoff,updatedAt:NOW};h.records.set('comms:'+r.id,structuredClone(old));return old; }
+  it.each(['READY','RETRY_WAIT','ACCEPTED','UNKNOWN','LEASED'] as const)('does not mutate or send an inherited %s operation through direct dispatch', async state => {
+    await lead();const op=inherited(await save(row<Operation>('OPERATION','op:old',{type:'COMMENT',state,accountId:'a1',attempts:1,uid:'existing-uid',text:'Preserved'},{accountId:'a1',dueAt:NOW})));const before=structuredClone(op);h.front.mockClear();h.transactions.length=0;
+    await runOperation(op);expect(record(op.id)).toEqual(before);expect(h.transactions).toHaveLength(0);expect(h.front).not.toHaveBeenCalled();
+  });
+  it('holds old EVENT/TASK/TRIAGE and operations in the scheduled sweep', async () => {
+    await lead();h.c.paused=true;
+    const snapshots=['EVENT','TASK','TRIAGE','OPERATION'].map(kind=>inherited({...row(kind,'held:'+kind,{type:'COMMENT',state:'RETRY_WAIT',accountId:'a1',provider:'front',payload:{},attempts:0},{dueAt:NOW}),dueAt:NOW,dueGroup:'DUE'}));
+    const worker=await import('../../amplify/functions/communications/worker');await worker.handler();
+    for(const old of snapshots)expect(record(old.id)).toEqual(old);
+    expect(h.front.mock.calls.filter(c=>c[1]==='POST'||c[1]==='PATCH')).toHaveLength(0);
+    expect(h.queries.find(q=>q.IndexName==='due').KeyConditionExpression).toContain('BETWEEN');
+  });
+  it('does not let direct old events or newly captured old provider messages create actions', async () => {
+    const event=inherited(await save(row('EVENT','event:old',{provider:'front' as const,payload:{type:'inbound_received'},attempts:0},{dueAt:NOW})));h.transactions.length=0;h.front.mockClear();
+    await processEvent(event);await ingestFrontMessage({id:'msg_old',created_at:Date.parse(cutoff)/1000,is_inbound:true,text:'Old'},'cnv_a');
+    await dialpadEvent({call_id:'1',date_started:Date.parse(cutoff),direction:'inbound'});
+    expect(h.transactions).toHaveLength(0);expect(h.front).not.toHaveBeenCalled();expect(record(event.id)).toEqual(event);
+  });
+  it('leaves inherited backfill jobs and inherited event receipts untouched', async () => {
+    const {backfillConversation}=await import('../../amplify/functions/communications/events');const old=inherited(await save(row('CONVERSATION_BACKFILL','history:old',{conversationId:'cnv_a'},{dueAt:NOW})));h.front.mockClear();await backfillConversation(old);expect(h.front).not.toHaveBeenCalled();expect(record(old.id)).toEqual(old);
+    const fresh=await save(row('CONVERSATION_BACKFILL','history:new',{conversationId:'cnv_a'},{dueAt:NOW}));const message={id:'msg_new',created_at:Date.parse(NOW)/1000,is_inbound:true,text:'New'};const event=inherited(await save(row('EVENT','front-history:cnv_a:msg_new:0:draft-v2:sent',{provider:'front',payload:{},snapshot:{message,conversationId:'cnv_a'},attempts:0},{dueAt:NOW})));h.front.mockResolvedValue({_results:[message]});await backfillConversation(fresh);expect(record(event.id)).toEqual(event);expect(entries('COMMUNICATION')).toHaveLength(0);
+  });
+  it('allows fresh operations and requires explicit reviewed retry for an old one', async () => {
+    await lead();h.front.mockResolvedValue({id:'comment_new'});const fresh=await enqueueOperation('op:new',{type:'COMMENT',accountId:'a1',text:'New deliberate comment'});await runOperation(fresh);expect(record(fresh.id).data.state).toBe('CONFIRMED');
+    const old=inherited(await save(row<Operation>('OPERATION','op:review',{type:'COMMENT',state:'UNKNOWN',accountId:'a1',attempts:1,text:'Held'},{accountId:'a1'})));const {reviewOperation}=await import('../../amplify/functions/communications/review');await expect(reviewOperation({id:old.id,version:old.version,action:'retry',reason:'Reviewed'},'owner')).rejects.toThrow('confirm');
+    await reviewOperation({id:old.id,version:old.version,action:'retry',reason:'Confirmed no send',verifiedNotSent:true},'owner');expect(record(old.id).data.migrationReview).toMatchObject({cutoff,actor:'owner',action:'retry',sourceVersion:old.version});await runOperation(record(old.id) as any);expect(record(old.id).data.state).toBe('CONFIRMED');
+  });
+});

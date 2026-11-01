@@ -18,6 +18,9 @@ export function scopedFrontReceipt(envelope: Json, allowedInboxIds: string[]): J
     authorization: { id: identifier(object(envelope.authorization).id) },
     payload: {
       id: identifier(event.id),
+      // Preserve signed event provenance in the isolated destination. Source
+      // receipt/dedup identities remain unchanged during migration.
+      ...(process.env.HOA_MIGRATION_APP_ID === "d1nuh9rw1hcuxo" ? { emitted_at: typeof event.emitted_at === "number" && Number.isFinite(event.emitted_at) ? event.emitted_at : undefined } : {}),
       conversation: { id: identifier(conversation.id), assignee: { id: identifier(object(conversation.assignee).id) } },
       payload: { conversation_id: identifier(object(event.payload).conversation_id) },
       target: { data: { id: identifier(object(target.data).id) } },
