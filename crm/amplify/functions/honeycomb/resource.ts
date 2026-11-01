@@ -1,8 +1,9 @@
+import { providerBranch } from "../../migration-config";
 import { defineFunction, secret } from "@aws-amplify/backend";
 import { honeycombEnvironmentForBranch } from "./environment";
 
 // Each release branch resolves its own credentials. Previews and sandboxes stay disabled.
-const environment = honeycombEnvironmentForBranch(process.env.AWS_BRANCH);
+const environment = honeycombEnvironmentForBranch(providerBranch);
 const enabled = environment !== "disabled";
 const runtimeEnvironment = {
   HONEYCOMB_ENABLED: String(enabled),

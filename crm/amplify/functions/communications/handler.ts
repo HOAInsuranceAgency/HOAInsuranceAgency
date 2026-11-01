@@ -1,3 +1,4 @@
+import { assertPreviewRead } from "../migration-readonly";
 import { currentContacts } from "../../../src/lib/contacts";
 import { RELATIONSHIP_READS, RELATIONSHIP_WRITES, relationshipOperation } from "./relationships";
 import { receivesNewLeads, salespersonEligibility, salespersonWorkflow } from "../../../../shared/salespersonOwnership";
@@ -54,6 +55,8 @@ function safeCommunication(data: Communication): Communication {
 }
 export const handler = async (event: { arguments: { operation?: string; readOperation?: string; input?: unknown }; identity?: AppSyncIdentityCognito; request?: RoleRequest }) => {
   try {
+    const previewReads = new Set(["searchAccounts", "dashboardOpenQuotesPage", "dashboardBoundPoliciesPage", "dashboardQuotesPage", "dashboardQuoteStates", "dashboardInvoiceAnchors", "dashboardAssignments", "dashboardInterestPage", "dashboardPolicyAnchors", "dashboardLeadPlansPage", "commercialTable", "lastContacts", "accountSummary", "activity", "team", "teamSettings"]);
+    assertPreviewRead(!!event.arguments.readOperation && previewReads.has(event.arguments.readOperation));
     const actor = event.identity?.sub;
     if (!actor) throw new Error("Sign in to the CRM to continue");
     const admin = isActiveAdmin(event.identity, event.request);

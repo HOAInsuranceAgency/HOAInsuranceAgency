@@ -1,4 +1,5 @@
 import { retiredReminderOperation } from "./retiredTasks";
+import { migrationPendingHeld } from "../migration-pending";
 import { archiveAllowed } from "./cleanup";
 import { contactCleanupSource, isInitialAiCleanup, isInitialAiCommunication } from "./initialAi";
 import { config } from "./config";
@@ -71,6 +72,7 @@ async function transition(old: Row<Operation>, patch: Partial<Operation>, delay?
 }
 export async function runOperation(candidate: Row<Operation>) {
   let op = await get<Operation>(candidate.id);
+  if (op && migrationPendingHeld(op)) return;
   if (!op || ["CONFIRMED", "FAILED", "SUPPRESSED", "UNKNOWN"].includes(op.data.state)) return;
   // Retire reminders queued by earlier deployments, including retries and old
   // per-task formats. This must run before pause, routing, or provider checks.

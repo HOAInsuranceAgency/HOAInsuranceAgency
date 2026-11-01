@@ -1,3 +1,4 @@
+import { assertWebsiteActionsEnabled } from "./migrationPreview";
 /** Durable website lead capture. A success means the CRM saved the enquiry. */
 import { captureLeadAttribution } from "./leadAttribution";
 import { useRef } from "react";
@@ -101,6 +102,7 @@ export async function submitCrmLead(input: CrmLeadInput, identity: SubmissionIde
   const url = import.meta.env.PUBLIC_CRM_API_URL;
   const key = import.meta.env.PUBLIC_CRM_API_KEY;
   if (!url || !key) throw new Error("The enquiry form is temporarily unavailable. Please call us.");
+  assertWebsiteActionsEnabled();
   const response = await fetch(url, {
     method: "POST", headers: { "Content-Type": "application/json", "x-api-key": key },
     body: JSON.stringify({ query: MUTATION, variables: { ...input, ...identity } }),
@@ -180,6 +182,7 @@ async function crmMutation(
   const url = import.meta.env.PUBLIC_CRM_API_URL;
   const key = import.meta.env.PUBLIC_CRM_API_KEY;
   if (!url || !key) return null;
+  assertWebsiteActionsEnabled();
   const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-api-key": key },
@@ -218,6 +221,7 @@ export async function uploadLeadFile(
         : "We couldn't accept that file."
     );
   }
+  assertWebsiteActionsEnabled();
   const put = await fetch(String(result.uploadUrl), {
     method: "PUT",
     // Must match the type the URL was signed with, or S3 rejects it.

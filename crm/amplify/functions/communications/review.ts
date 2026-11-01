@@ -1,4 +1,5 @@
 import { tasksRemoved } from "./retiredTasks";
+import { migrationOperationReview } from "../migration-pending";
 import { randomUUID } from "node:crypto";
 import { get, put, row, commit, audit } from "./store";
 import { ensureWorkflow, expected, recordInbound, recordOutbound } from "./workflow";
@@ -27,7 +28,8 @@ export async function reviewOperation(input: { id: string; version: number; acti
     if (["ACCEPTED", "UNKNOWN"].includes(old.data.state) && !input.verifiedNotSent) throw new Error("Inspect Front first and confirm this message was not sent. An uncertain delivery must not be blindly resent.");
     state = "READY"; uid = undefined;
   } else if (input.action !== "suppress") throw new Error("Unknown review action");
-  await commit([put(row("OPERATION", old.id, { ...old.data, state, uid, error: undefined, leaseUntil: undefined }, { accountId: old.accountId, previous: old, dueAt: state === "SUPPRESSED" ? undefined : new Date().toISOString() }), old), audit(old.data.accountId, actor, "Delivery reviewed", input)]);
+  const migrationReview = migrationOperationReview(old, actor, input.action, input.reason);
+  await commit([put(row("OPERATION", old.id, { ...old.data, ...(migrationReview ? { migrationReview } : {}), state, uid, error: undefined, leaseUntil: undefined }, { accountId: old.accountId, previous: old, dueAt: state === "SUPPRESSED" ? undefined : new Date().toISOString() }), old), audit(old.data.accountId, actor, "Delivery reviewed", { ...input, ...(migrationReview ? { migrationReview } : {}) })]);
 }
 
 export async function recordCallOutcome(input: { id: string; version: number; outcome: string; note: string; nextAction?: { title: string; dueAt: string }; taskId?: string; taskVersion?: number }, actor: string) {

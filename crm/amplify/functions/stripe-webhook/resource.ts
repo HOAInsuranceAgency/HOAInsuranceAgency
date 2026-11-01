@@ -1,3 +1,4 @@
+import { migrationPreview } from "../../migration-config";
 import { defineFunction, secret } from "@aws-amplify/backend";
 
 /**
@@ -21,8 +22,8 @@ export const stripeWebhook = defineFunction({
   memoryMB: 512,
   resourceGroupName: "data",
   environment: {
-    STRIPE_SECRET_KEY: secret("STRIPE_SECRET_KEY"),
+    ...(migrationPreview ? {} : { STRIPE_SECRET_KEY: secret("STRIPE_SECRET_KEY") }),
     // Stripe shows this once, when the endpoint is created in their dashboard.
-    STRIPE_WEBHOOK_SECRET: secret("STRIPE_WEBHOOK_SECRET"),
+    ...(migrationPreview ? {} : { STRIPE_WEBHOOK_SECRET: secret("STRIPE_WEBHOOK_SECRET") }),
   },
 });

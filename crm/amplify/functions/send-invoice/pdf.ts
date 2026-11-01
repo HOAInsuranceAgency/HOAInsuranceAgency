@@ -99,6 +99,12 @@ async function loadLogo(): Promise<Uint8Array | null> {
 
 export async function renderInvoicePdf(inv: InvoiceView): Promise<Uint8Array> {
   const doc = await PDFDocument.create();
+  if (process.env.HOA_MIGRATION_APP_ID === "d1nuh9rw1hcuxo") {
+    // A safe retry of the same invoice must reproduce the saved PDF byte-for-byte.
+    const issued = Date.parse(inv.issuedAt ?? "");
+    const stamp = new Date(Number.isFinite(issued) ? issued : 0);
+    doc.setCreationDate(stamp); doc.setModificationDate(stamp);
+  }
   doc.setTitle(inv.number ? `Invoice ${inv.number}` : "Invoice");
   doc.setAuthor(AGENCY.name);
   doc.setSubject(`Insurance premium for ${inv.associationName}`);
