@@ -71,9 +71,13 @@ describe("migration stream probes fail closed before business handlers", () => {
     expect(proof).toMatchObject({ worker, eventName: "INSERT", streamArn: stream, sequenceNumber: "123456789" });
     expect(proof).not.toHaveProperty("NewImage");
   });
-  it("supports actual accountId-only keys without treating them as business data", () => {
-    probe(); vi.stubEnv("HOA_MIGRATION_STREAM_PROBE_SCOPES", JSON.stringify([["Account-reviewed-NONE", "2026-10-30T18:00:00.000", "accountId"]]));
-    expect(holdMigrationStream(event(record("INSERT", "accountId")), "activityLog")).toBe(true);
+  it.each(["GlApplication", "DoApplication"])("supports actual %s accountId-only markers without acknowledging business rows", model => {
+    probe(); const name = `${model}-reviewed-NONE`;
+    vi.stubEnv("HOA_MIGRATION_STREAM_PROBE_SCOPES", JSON.stringify([[name, "2026-10-30T18:00:00.000", "accountId"]]));
+    const rows = [record("INSERT", "accountId"), record("REMOVE", "accountId")].map(r => ({ ...r, eventSourceARN: stream.replace("Account-reviewed-NONE", name) }));
+    expect(holdMigrationStream(event(...rows), "activityLog")).toBe(true);
+    const wrong = { ...record("INSERT", "id"), eventSourceARN: rows[0].eventSourceARN };
+    expect(() => holdMigrationStream(event(wrong), "activityLog")).toThrow("retained");
   });
   it("can prove an exact cleanup REMOVE on NEW_IMAGE-only streams", () => {
     probe(); const removal = record("REMOVE"); delete (removal.dynamodb as { OldImage?: unknown }).OldImage;
