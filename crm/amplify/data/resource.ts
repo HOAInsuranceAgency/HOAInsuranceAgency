@@ -2315,7 +2315,7 @@ const schema = a
      */
     sendInvoice: a
       .mutation()
-      .arguments({ invoiceId: a.string().required(), toEmail: a.string() })
+      .arguments({ invoiceId: a.string().required(), toEmail: a.string(), expectedSentAt: a.string() })
       .returns(a.json())
       .authorization((allow) => [allow.authenticated()])
       .handler(a.handler.function(sendInvoice)),

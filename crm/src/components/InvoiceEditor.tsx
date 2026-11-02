@@ -204,6 +204,9 @@ function InvoiceEditorContent({
   const lineDraftsRef = useRef(lineDrafts);
   const queue = useRef(Promise.resolve());
   const actionPending = useRef(false);
+  // Preserve the observed send across a failed/lost response. Only a confirmed
+  // action clears it; retrying must not turn a newly persisted sentAt into a resend.
+  const sendAttempt = useRef<{ expectedSentAt: string; toEmail: string } | null>(null);
   const [pending, setPending] = useState(0);
   const [actionBusy, setActionBusy] = useState(false);
   useEffect(() => { onBusyChange?.(pending > 0); }, [pending, onBusyChange]);
@@ -413,12 +416,19 @@ function InvoiceEditorContent({
   async function send() {
     await enqueue(
       async () => {
+        const selected = toEmails.join(",");
+        const recipientSet = (value: string) => value.split(",").map(email => email.trim().toLowerCase()).sort().join(",");
+        if (sendAttempt.current && recipientSet(sendAttempt.current.toEmail) !== recipientSet(selected)) {
+          throw new Error("The previous send used different recipients. Reopen the invoice and review its delivery before starting another send.");
+        }
+        sendAttempt.current ??= { expectedSentAt: acknowledgedInvoice.current.sentAt ?? "", toEmail: selected };
         const { data, errors } = await client.mutations.sendInvoice({
           invoiceId: invoice.id,
           // Always explicit now that the recipients are chosen rather than
           // typed. The Lambda still falls back to the primary contact when
           // this is absent, which is what a resend from anywhere else does.
-          toEmail: toEmails.join(","),
+          toEmail: sendAttempt.current.toEmail,
+          expectedSentAt: sendAttempt.current.expectedSentAt,
         });
         if (errors?.length) throw new Error(errors[0].message);
         // `a.json()` arrives as an AWSJSON string — see lib/aiExtraction.ts for
@@ -426,12 +436,14 @@ function InvoiceEditorContent({
         const result =
           typeof data === "string" ? JSON.parse(data) : (data as Record<string, unknown>);
         if (!result?.ok) throw new Error(String(result?.error ?? "Send failed."));
+        sendAttempt.current = null;
         const previousSentAt = acknowledgedInvoice.current.sentAt;
+        const acceptedSentAt = typeof result.sentAt === "string" ? result.sentAt : undefined;
         const sentTo = typeof result.sentTo === "string" ? result.sentTo : toEmails.join(",");
         const recipients = (value: string | null | undefined) => (value ?? "").split(",").map(email => email.trim().toLowerCase()).sort().join(",");
         const refreshed = await refreshAfterAction(
-          { ...acknowledgedInvoice.current, sentAt: new Date().toISOString(), sentTo },
-          row => Boolean(row.sentAt && row.sentAt !== previousSentAt) && recipients(row.sentTo) === recipients(sentTo)
+          { ...acknowledgedInvoice.current, sentAt: acceptedSentAt ?? new Date().toISOString(), sentTo },
+          row => Boolean(row.sentAt && (acceptedSentAt ? row.sentAt === acceptedSentAt : row.sentAt !== previousSentAt)) && recipients(row.sentTo) === recipients(sentTo)
         );
         return `Sent to ${result.sentTo}.${!refreshed ? " Reopen the invoice to refresh its details." : ""}`;
       },

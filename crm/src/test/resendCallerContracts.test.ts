@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { payload, MailDeliveryError } from "../../amplify/functions/transactional-mail/contract";
+import { payload, MailDeliveryError, hash } from "../../amplify/functions/transactional-mail/contract";
+import { INVOICE_SEND_GENERATION } from "../../amplify/functions/send-invoice/sendOperation";
 
 // These are offline caller contracts. AWS, Stripe, and the sending boundary are
 // mocked; the actual five callers still assemble their own production messages.
@@ -7,6 +8,7 @@ const h = vi.hoisted(() => ({
   mail: vi.fn(), cognito: vi.fn(), db: vi.fn(), models: {} as Record<string, any>,
   order: [] as string[], run: undefined as any, reportUpdates: [] as any[],
   invoice: {} as any, writePayment: vi.fn(), createdSub: "synthetic-member-1",
+  price: vi.fn(), link: vi.fn(),
 }));
 vi.mock("../../amplify/functions/transactional-mail/client", () => ({ TransactionalMailClient: class {
   constructor(private readonly kind: string) {}
@@ -26,7 +28,10 @@ vi.mock("../../amplify/functions/marketing-report/store", () => ({
   readRun: async () => h.run, reserveRun: async () => ({ record: h.run }), conflict: () => false,
   updateRun: async (record: any, patch: any) => { h.reportUpdates.push(patch); h.run = { ...record, data: { ...record.data, ...patch } }; return h.run; },
 }));
-vi.mock("stripe", () => ({ default: class { webhooks = { constructEvent: () => ({ type: "payment_intent.succeeded", data: { object: {} } }) }; } }));
+vi.mock("stripe", () => ({ default: class {
+  webhooks = { constructEvent: () => ({ type: "payment_intent.succeeded", data: { object: {} } }) };
+  prices = { create: h.price }; paymentLinks = { create: h.link };
+} }));
 vi.mock("../../amplify/functions/stripe-webhook/decide", () => ({
   decidePfEvent: () => null,
   decideEvent: () => ({ invoiceId: "synthetic-invoice", outcome: "PAID", paymentIntentId: "pi_synthetic" }),
@@ -41,6 +46,7 @@ beforeEach(() => {
   vi.spyOn(console, "log").mockImplementation(() => {}); vi.spyOn(console, "warn").mockImplementation(() => {}); vi.spyOn(console, "error").mockImplementation(() => {});
   h.mail.mockReset().mockImplementation(async () => { h.order.push("mail"); return { MessageId: "synthetic-provider-receipt" }; });
   h.order.length = 0; h.reportUpdates.length = 0; h.createdSub = "synthetic-member-1";
+  h.price.mockReset().mockResolvedValue({ id: "price_synthetic" }); h.link.mockReset().mockResolvedValue({ id: "plink_synthetic", url: "https://pay.example.com/synthetic" });
   h.db.mockReset().mockImplementation(async () => { h.order.push("business-write"); return {}; });
   h.cognito.mockReset().mockImplementation(async command => command.constructor.name === "AdminCreateUserCommand" ? { User: { Username: "synthetic-member", Attributes: [{ Name: "sub", Value: h.createdSub }] } } : {});
   h.writePayment.mockReset().mockImplementation(async () => { h.order.push("payment-write"); return true; });
@@ -114,6 +120,43 @@ describe("real sender to Resend adapter contracts", () => {
     h.mail.mockRejectedValue(new MailDeliveryError("DEFERRED", "OP#synthetic"));
     expect(await handler({ arguments: { invoiceId: h.invoice.id, toEmail: "board@example.com" } })).toMatchObject({ ok: false });
     expect(h.db).not.toHaveBeenCalled();
+  });
+  it("real invoice handler reserves before storeLink and never resends a lost acceptance using the newer updatedAt", async () => {
+    vi.setSystemTime(new Date("2026-11-02T14:00:00Z"));
+    vi.stubEnv("HOA_TRANSACTIONAL_MAIL_PROVIDER", "resend"); vi.stubEnv("HOA_MIGRATION_BRANCH", "codex-hoa-account-migration");
+    vi.stubEnv("HOA_TRANSACTIONAL_MAIL_TABLE", "HOA-TransactionalMail"); vi.stubEnv("AWS_LAMBDA_FUNCTION_NAME", "amplify-d1nuh9rw1hcuxo-main-sendInvoice");
+    vi.stubEnv("STRIPE_SECRET_KEY", "sk_test_synthetic");
+    const deliveries = new Map<string, any>();
+    const proof = { schema: 1, status: "ROOT_REVIEWED_ZERO_LEGACY_INVOICE_OPERATIONS", generation: INVOICE_SEND_GENERATION,
+      account: "917680434255", app: "d1nuh9rw1hcuxo", environment: "main", runtimeBranch: "codex-hoa-account-migration",
+      functionName: process.env.AWS_LAMBDA_FUNCTION_NAME, deployedCodeSha256: `${"A".repeat(43)}=`, inventorySha256: "a".repeat(64),
+      deploymentVerifiedAt: "2026-11-02T13:00:00Z", scanStartedAt: "2026-11-02T13:01:01Z", observedAt: "2026-11-02T13:01:10Z",
+      invoiceOperationCount: 0, consistentRead: true, completePagination: true };
+    h.models.Invoice.get = async () => ({ data: structuredClone(h.invoice) });
+    h.db.mockImplementation(async command => {
+      const a = command.input;
+      if (command.constructor.name === "GetCommand") return { Item: structuredClone(a.TableName === "synthetic-invoice-table" ? h.invoice : a.Key.pk.startsWith("CONTROL#") ? proof : deliveries.get(a.Key.pk)) };
+      const v = a.ExpressionAttributeValues;
+      if (a.UpdateExpression === "SET #op = :op") { h.order.push("reserved"); h.invoice.invoiceSendOperation = structuredClone(v[":op"]); }
+      else if (a.UpdateExpression.startsWith("SET paymentUrl")) {
+        expect(h.invoice.invoiceSendOperation).toBeDefined(); h.order.push("link-stored");
+        Object.assign(h.invoice, { paymentUrl: v[":url"], stripePaymentLinkId: v[":link"], stripeLinkAmountCents: v[":cents"], updatedAt: v[":now"], lastWriteBy: "send-invoice" });
+      } else throw new Error("Unexpected business write after uncertain send");
+      return {};
+    });
+    h.mail.mockImplementation(async (_kind, _command, details) => {
+      h.order.push("mail"); const pk = `OP#hoa/main/invoice/${hash(details.idempotencyKey)}`;
+      deliveries.set(pk, { state: "UNKNOWN" }); throw new MailDeliveryError("UNKNOWN", pk);
+    });
+    const { handler } = await import("../../amplify/functions/send-invoice/handler");
+    const event = { arguments: { invoiceId: h.invoice.id, toEmail: "board@example.com", expectedSentAt: "" } };
+    const before = h.invoice.updatedAt;
+    expect(await handler(event)).toMatchObject({ ok: false, error: expect.stringContaining("uncertain") });
+    expect(h.invoice.updatedAt).not.toBe(before); expect(h.order).toEqual(["reserved", "link-stored", "mail"]);
+    vi.advanceTimersByTime(180_000);
+    expect(await handler(event)).toMatchObject({ ok: false, error: expect.stringContaining("uncertain") });
+    expect(h.mail).toHaveBeenCalledTimes(1); expect(h.price).toHaveBeenCalledTimes(1); expect(h.link).toHaveBeenCalledTimes(1);
+    expect(h.invoice.sentAt).toBeUndefined();
   });
   it("report preserves the reserved recipient/run key and real XLSX attachment", async () => {
     const { handler } = await import("../../amplify/functions/marketing-report/worker");
