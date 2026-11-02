@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const h = vi.hoisted(() => ({ cutoff: Date.parse("2026-11-01T19:30:00Z") as number | null,
-  query: vi.fn(), update: vi.fn(), get: vi.fn(), issue: vi.fn(), resolve: vi.fn(), db: vi.fn(), model: vi.fn(), invoke: vi.fn(), queue: vi.fn(), producer: vi.fn() }));
+  query: vi.fn(), update: vi.fn(), get: vi.fn(), issue: vi.fn(), resolve: vi.fn(), db: vi.fn(), model: vi.fn(), invoke: vi.fn(), queue: vi.fn(), producer: vi.fn(), cursors: new Map<string, {nextToken?: string; through?: string}>() }));
 vi.mock("../../amplify/functions/migration-pending", () => ({
   migrationPendingCutoff: () => h.cutoff,
   migrationPendingHeld: (r: { createdAt?: string }) => h.cutoff !== null && (!r.createdAt || !Number.isFinite(Date.parse(r.createdAt)) || Date.parse(r.createdAt) <= h.cutoff),
@@ -11,6 +11,10 @@ vi.mock("aws-amplify/data", () => ({ generateClient: () => ({ models: { LeadRepl
 vi.mock("@anthropic-ai/sdk", () => ({ default: class { messages = { create: h.model }; } }));
 vi.mock("@aws-sdk/client-lambda", () => ({ LambdaClient: class { send = h.invoke; }, InvokeCommand: class {} }));
 vi.mock("../../amplify/functions/communications/store", () => ({ get: h.get, issue: h.issue, db: { send: h.db } }));
+vi.mock("../../amplify/functions/communications/queueCursor", () => ({
+  openQueueCursor: async (id: string, now: string) => ({ id, nextToken: h.cursors.get(id)?.nextToken, through: h.cursors.get(id)?.through ?? now }),
+  saveQueueCursor: async (cursor: {id: string; through: string}, nextToken?: string) => h.cursors.set(cursor.id, { nextToken, through: nextToken ? cursor.through : undefined }),
+}));
 vi.mock("../../amplify/functions/communications/routing", () => ({ resolveIssue: h.resolve }));
 vi.mock("../../amplify/functions/communications/operations", () => ({ enqueueOperation: h.queue, assignedEmailProducer: h.producer }));
 import { handler } from "../../amplify/functions/lead-reply/handler";
@@ -18,7 +22,7 @@ const old = { id: "old", accountId: "account", submissionId: "submission", statu
 const fresh = { ...old, id: "fresh", createdAt: "2026-11-01T19:31:00Z" };
 function noBusinessEffects() { for (const fn of [h.update, h.get, h.issue, h.resolve, h.db, h.model, h.invoke, h.queue, h.producer]) expect(fn).not.toHaveBeenCalled(); }
 beforeEach(() => {
-  vi.clearAllMocks(); vi.useFakeTimers(); vi.setSystemTime(new Date("2026-11-01T20:00:00Z")); h.cutoff = Date.parse("2026-11-01T19:30:00Z");
+  vi.clearAllMocks(); h.cursors.clear(); vi.useFakeTimers(); vi.setSystemTime(new Date("2026-11-01T20:00:00Z")); h.cutoff = Date.parse("2026-11-01T19:30:00Z");
   h.query.mockReset().mockResolvedValue({ data: [] }); h.get.mockReset().mockResolvedValue({ data: { state: "ACCEPTED", uid: "existing-provider-uid" } });
   h.update.mockResolvedValue({ data: {} }); h.resolve.mockResolvedValue(undefined);
 });
@@ -49,6 +53,26 @@ describe("migrated LeadReply inherited-work hold", () => {
     h.query.mockImplementation(async ({ status }, opts) => status === "WAITING" ? { data: [old], nextToken: (opts.nextToken ?? "") + "x" } : { data: [] });
     const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
     await handler(); expect(h.query.mock.calls.filter(([q]) => q.status === "WAITING")).toHaveLength(25); noBusinessEffects(); expect(warning).toHaveBeenCalled(); warning.mockRestore();
+  });
+  it("resumes beyond 2500 held candidates and does not skip fresh rows left in that page", async () => {
+    const updated = new Set<string>();
+    const newRows = Array.from({ length: 11 }, (_, i) => ({ ...fresh, id: `fresh-${i}` }));
+    h.update.mockImplementation(async (r) => { updated.add(r.id); return { data: r }; });
+    h.query.mockImplementation(async ({ status }, opts) => {
+      if (status !== "WAITING") return { data: [] };
+      const page = Number((opts.nextToken ?? "page-0").slice(5));
+      if (page < 25) return { data: Array.from({ length: 100 }, (_, i) => ({ ...old, id: `held-${page * 100 + i}` })), nextToken: `page-${page + 1}` };
+      return { data: newRows.filter(r => !updated.has(r.id)) };
+    });
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    expect((await handler()).waiting).toBe(0); expect(updated.size).toBe(0);
+    vi.setSystemTime(new Date("2026-11-01T20:01:00Z")); h.query.mockClear();
+    expect((await handler()).waiting).toBe(8);
+    expect(h.query.mock.calls[0][1].nextToken).toBe("page-25");
+    expect(h.query.mock.calls[0][0].dueAt.between[1]).toBe("2026-11-01T20:00:00.000Z");
+    expect((await handler()).waiting).toBe(3);
+    expect([...updated].sort()).toEqual(newRows.map(r => r.id).sort());
+    expect(h.queue).not.toHaveBeenCalled(); expect(h.model).not.toHaveBeenCalled(); warning.mockRestore();
   });
   it("retains the source account's original index and legacy behavior", async () => {
     h.cutoff = null; h.query.mockImplementation(async ({ status }) => ({ data: status === "WAITING" ? [{ ...old, createdAt: undefined }] : [] }));

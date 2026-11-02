@@ -1,7 +1,7 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import type { Communication, IntegrationConfig, LeadWorkflow } from "../../../shared/leadWorkflow";
 const h = vi.hoisted(() => ({ records: new Map<string, Record<string, any>>(), transactions: [] as any[][], inFlight: 0, maxInFlight: 0, fail: false, failAt: undefined as number | undefined, writeError: undefined as Error | undefined, writeErrors: [] as Error[], accountError: false, userEnabled: true, disabledUsers: new Set<string>(), nonProducers: new Set<string>(), deactivatedUsers: new Set<string>(),
-  reads: [] as string[], readFailureId: undefined as string | undefined, beforeWrite: undefined as (() => void) | undefined, userReads: [] as string[], groupReads: [] as string[], userError: undefined as Error | undefined, queries: [] as any[], queryError: undefined as Error | undefined, cognitoList: vi.fn(), deletionQuery: vi.fn(), batch: vi.fn(), producerEmail: vi.fn(), front: vi.fn(), dialpad: vi.fn(), update: vi.fn(), accountList: vi.fn(), profileList: vi.fn(), profileByUser: vi.fn(), c: {} as IntegrationConfig }));
+  reads: [] as string[], readFailureId: undefined as string | undefined, beforeWrite: undefined as (() => void) | undefined, userReads: [] as string[], groupReads: [] as string[], userError: undefined as Error | undefined, queries: [] as any[], queryError: undefined as Error | undefined, dueQueryDelayMs: 0, cognitoList: vi.fn(), deletionQuery: vi.fn(), batch: vi.fn(), producerEmail: vi.fn(), front: vi.fn(), dialpad: vi.fn(), update: vi.fn(), accountList: vi.fn(), profileList: vi.fn(), profileByUser: vi.fn(), c: {} as IntegrationConfig }));
 vi.mock("@aws-sdk/lib-dynamodb", async importOriginal => {
   const actual = await importOriginal<typeof import("@aws-sdk/lib-dynamodb")>();
   return { ...actual, DynamoDBDocumentClient: { from: () => ({ send: async (command: any) => {
@@ -10,6 +10,7 @@ vi.mock("@aws-sdk/lib-dynamodb", async importOriginal => {
     if (command.constructor.name === "BatchGetCommand") return h.batch(p);
     if (command.constructor.name === "QueryCommand") {
       h.queries.push(p);
+      if (p.IndexName === "due" && h.dueQueryDelayMs) vi.setSystemTime(new Date(Date.now() + h.dueQueryDelayMs));
       if (p.Select === 'COUNT') {
         const override = await h.deletionQuery(p);
         if (override !== undefined) return override;
@@ -132,7 +133,7 @@ async function seedLegacyPromise(input: any, actor: string) {
   return data;
 }
 beforeEach(async () => {
-  vi.useFakeTimers(); vi.setSystemTime(NOW); h.records.clear(); h.transactions.length = 0; h.inFlight = 0; h.maxInFlight = 0; h.fail = false; h.failAt = undefined; h.accountError = false; h.userEnabled = true; h.writeError = undefined; vi.clearAllMocks();
+  vi.useFakeTimers(); vi.setSystemTime(NOW); h.records.clear(); h.transactions.length = 0; h.inFlight = 0; h.maxInFlight = 0; h.fail = false; h.failAt = undefined; h.accountError = false; h.userEnabled = true; h.writeError = undefined; h.dueQueryDelayMs = 0; vi.clearAllMocks();
   h.disabledUsers.clear(); h.nonProducers.clear(); h.deactivatedUsers.clear();
   h.groupReads.length = 0;
   h.writeErrors.length = 0;
@@ -2800,6 +2801,51 @@ describe('destination inherited communications remain review-only', () => {
   });
   afterEach(() => vi.unstubAllEnvs());
   function inherited<T extends {id:string}>(r:T) { const old={...r,createdAt:cutoff,updatedAt:NOW};h.records.set('comms:'+r.id,structuredClone(old));return old; }
+  it('resumes beyond held pages after the time budget without changing any held record', async () => {
+    h.c.paused = true;
+    const held = Array.from({length:120}, (_,i) => inherited(row('TRIAGE', `held:${String(i).padStart(3,'0')}`, { preserved: i }, {dueAt:NOW})));
+    const fresh = await save(row('TRIAGE','fresh:after-held',{ fresh: true },{dueAt:NOW}));
+    h.dueQueryDelayMs=25_000;
+    const {handler}=await import('../../amplify/functions/communications/worker');
+    expect((await handler() as {handled:number}).handled).toBe(0);
+    const progress=entries('QUEUE_CURSOR')[0];
+    h.queries.length=0;
+    expect((await handler() as {handled:number}).handled).toBe(1);
+    expect(progress.data.nextToken).toBeTruthy();
+    expect(h.queries.find(q=>q.IndexName==='due').ExclusiveStartKey.id).toBe('held:089');
+    expect(h.queries.find(q=>q.IndexName==='due').ExpressionAttributeValues[':now']).toBe(NOW);
+    expect(record(fresh.id).dueAt).toBeUndefined(); expect(record('issue:'+fresh.id)).toBeTruthy();
+    for(const r of held)expect(record(r.id)).toEqual(r);
+    expect(h.front).not.toHaveBeenCalled(); expect(h.dialpad).not.toHaveBeenCalled();
+  });
+  it('does not let an overlapping tick overwrite another cursor checkpoint', async () => {
+    const {openQueueCursor,saveQueueCursor}=await import('../../amplify/functions/communications/queueCursor');
+    const first=await openQueueCursor('test',NOW), concurrent=await openQueueCursor('test',NOW);
+    await saveQueueCursor(first,'page-one');
+    await expect(saveQueueCursor(concurrent,'stale-page')).rejects.toThrow('Conflict');
+    expect((await openQueueCursor('test',new Date(Date.parse(NOW)+60_000).toISOString()))).toMatchObject({nextToken:'page-one',through:NOW});
+  });
+  it('retries a partially processed page instead of advancing past untouched fresh work', async () => {
+    h.c.paused=true;
+    const fresh=await Promise.all(Array.from({length:31},(_,i)=>save(row('TRIAGE',`fresh:${i}`,{}, {dueAt:NOW}))));
+    const slowFirstWrite=()=>{
+      if(h.queries.some(q=>q.IndexName==='due'))vi.setSystemTime(new Date(Date.now()+76_000));
+      else h.beforeWrite=slowFirstWrite;
+    };
+    h.beforeWrite=slowFirstWrite;
+    const {handler}=await import('../../amplify/functions/communications/worker');
+    expect((await handler() as {handled:number}).handled).toBe(1);
+    expect(entries('QUEUE_CURSOR')[0].data.nextToken).toBeUndefined();
+    expect((await handler() as {handled:number}).handled).toBe(30);
+    for(const r of fresh)expect(record(r.id).dueAt).toBeUndefined();
+  });
+  it('rejects a cursor with inherited provenance instead of rewriting it', async () => {
+    const {openQueueCursor,saveQueueCursor}=await import('../../amplify/functions/communications/queueCursor');
+    const cursor=await openQueueCursor('test-held',NOW);const saved=await saveQueueCursor(cursor,'page-one');
+    const old=inherited(saved);h.transactions.length=0;
+    await expect(openQueueCursor('test-held',NOW)).rejects.toThrow('unreviewed migration provenance');
+    expect(record(old.id)).toEqual(old);expect(h.transactions).toHaveLength(0);
+  });
   it.each(['READY','RETRY_WAIT','ACCEPTED','UNKNOWN','LEASED'] as const)('does not mutate or send an inherited %s operation through direct dispatch', async state => {
     await lead();const op=inherited(await save(row<Operation>('OPERATION','op:old',{type:'COMMENT',state,accountId:'a1',attempts:1,uid:'existing-uid',text:'Preserved'},{accountId:'a1',dueAt:NOW})));const before=structuredClone(op);h.front.mockClear();h.transactions.length=0;
     await runOperation(op);expect(record(op.id)).toEqual(before);expect(h.transactions).toHaveLength(0);expect(h.front).not.toHaveBeenCalled();

@@ -6,6 +6,7 @@ import { LambdaClient, InvokeCommand } from "@aws-sdk/client-lambda";
 import { UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { resolveIssue } from "../communications/routing";
 import { db, get, issue } from "../communications/store";
+import { openQueueCursor, saveQueueCursor } from "../communications/queueCursor";
 import { assignedEmailProducer, enqueueOperation, type Operation } from "../communications/operations";
 import type { LeadWorkflow } from "../../../../shared/leadWorkflow";
 import { Amplify } from "aws-amplify";
@@ -66,20 +67,33 @@ export const handler = async () => {
   if (cutoff !== null && !Number.isFinite(cutoff)) return { waiting: 0, due: 0, queued: 0, extracting: 0, failed: 0 };
   const dueRows = async (status: "WAITING" | "SENDING") => {
     const eligible: Schema["LeadReply"]["type"][] = [];
-    let nextToken: string | undefined;
+    const progress = cutoff === null ? undefined : await openQueueCursor(`lead-reply:${status}`, now);
+    let nextToken = progress?.nextToken;
     for (let page = 0; page < (cutoff === null ? 1 : 25); page++) {
+      const pageStart = nextToken;
       const result = await client.models.LeadReply.leadRepliesByStatusAndDueAt(
-        { status, dueAt: cutoff === null ? { le: now } : { between: [new Date(cutoff).toISOString(), now] } },
+        { status, dueAt: cutoff === null ? { le: now } : { between: [new Date(cutoff).toISOString(), progress!.through] } },
         { limit: cutoff === null ? MAX_PER_TICK : 100, sortDirection: "ASC", nextToken }
       );
       if (result.errors?.length) throw new Error(result.errors[0].message);
       eligible.push(...result.data.filter(r => !migrationPendingHeld(r)));
       nextToken = result.nextToken ?? undefined;
-      if (eligible.length >= MAX_PER_TICK || !nextToken) return eligible.slice(0, MAX_PER_TICK);
+      // Preserve this page until its eligible rows leave WAITING/SENDING. The
+      // query can contain more than eight fresh rows, so advancing beyond it
+      // here would skip work that this tick never processed.
+      if (eligible.length) {
+        if (progress) await saveQueueCursor(progress, pageStart);
+        return eligible.slice(0, MAX_PER_TICK);
+      }
+      if (!nextToken) {
+        if (progress) await saveQueueCursor(progress);
+        return [];
+      }
     }
     // Old future-deadline rows stay untouched; no retry/generation is inferred
     // from a timestamp update. A large current-window backlog remains visible.
     if (nextToken) console.warn("lead-reply migration candidate page budget reached", status);
+    if (progress) await saveQueueCursor(progress, nextToken);
     return eligible.slice(0, MAX_PER_TICK);
   };
   const waiting = await dueRows("WAITING");

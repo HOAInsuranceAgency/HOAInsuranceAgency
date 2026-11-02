@@ -9,6 +9,7 @@ import { ensureWorkflow, accountRows, recordInbound } from "./workflow";
 import { front, dialpad, ProviderError, providerTimestamp } from "./providers";
 import type { LeadTask, Communication } from "../../../../shared/leadWorkflow";
 import { callRoot, syncCall } from "./calls";
+import { openQueueCursor, saveQueueCursor } from "./queueCursor";
 
 /** Drain only old queue indexes; retain each historical task and its evidence unchanged. */
 export async function dispatchTask(candidate: Row<LeadTask>) {
@@ -86,7 +87,8 @@ export const handler = async (event?: Partial<DynamoDBStreamEvent>) => {
   if (previousHealth && Date.now() - Date.parse(previousHealth.data.at) > 300_000 && (await config()).activatedAt) await issue("sync-gap", "Communication processing was interrupted. Review the missed interval, especially Dialpad SMS, before clearing sync health.");
   const cutoff = migrationPendingCutoff();
   const start = Date.now(), counters = { handled: 0, failed: 0, migrationHeld: 0 };
-  let cursor: string | undefined, lagging = false, callChecks = 0;
+  const progress = cutoff === null ? undefined : await openQueueCursor("communications-due", new Date(start).toISOString());
+  let cursor = progress?.nextToken, lagging = false, callChecks = 0;
   const c = await config();
   try {
     await (await import("./ownershipMigration")).migrateSalespersonOwnership();
@@ -104,12 +106,13 @@ export const handler = async (event?: Partial<DynamoDBStreamEvent>) => {
   }
   // Indexed due work only. Bound each run and resume naturally on the next tick.
   dueWork: do {
-    const page = await query("due", "DUE", cursor, 30, undefined, cutoff === null ? undefined : new Date(cutoff).toISOString()); cursor = page.nextToken;
+    const pageStart = cursor;
+    const page = await query("due", "DUE", cursor, 30, undefined, cutoff === null ? undefined : new Date(cutoff).toISOString(), progress?.through); cursor = page.nextToken;
     lagging ||= page.items.some(r => ["EVENT", "OPERATION"].includes(r.kind) && Date.now() - Date.parse(r.dueAt!) > 300_000);
     const work = page.items.sort((a,b) => Number(a.kind === "COMMUNICATION") - Number(b.kind === "COMMUNICATION"));
     for (const candidate of work) {
-      if (Date.now() - start > 75_000) { lagging = true; break dueWork; }
       if (migrationPendingHeld(candidate)) { counters.migrationHeld++; continue; }
+      if (Date.now() - start > 75_000) { cursor = pageStart; lagging = true; break dueWork; }
       try {
         if (candidate.kind === 'ACCOUNT_DELETE') { const { retireAccountPage } = await import('./deletion'); await retireAccountPage(candidate as unknown as Parameters<typeof retireAccountPage>[0]); }
         else if (candidate.kind === "WEB_LEAD_ASSIGNMENT") { const { runWebLeadAssignment } = await import("../lead-intake/assignment"); await runWebLeadAssignment(candidate as unknown as Parameters<typeof runWebLeadAssignment>[0]); }
@@ -146,6 +149,7 @@ export const handler = async (event?: Partial<DynamoDBStreamEvent>) => {
       }
     }
   } while (cursor && Date.now() - start < 75_000);
+  if (progress) await saveQueueCursor(progress, cursor);
   const oldHealth = await get("health:worker");
   await save(row("HEALTH", "health:worker", { at: new Date().toISOString(), lagging: lagging || counters.failed > 0 }, { previous: oldHealth }), oldHealth);
   return counters;
