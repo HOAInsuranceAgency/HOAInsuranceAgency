@@ -1,3 +1,4 @@
+import { migrationDestination } from "../migration-config";
 import { defineStorage } from "@aws-amplify/backend";
 import { processDocument } from "../functions/process-document/resource";
 
@@ -5,6 +6,7 @@ import { processDocument } from "../functions/process-document/resource";
 // operation. Giving Cognito roles prefix-wide access would bypass those checks.
 export const storage = defineStorage({
   name: "crmDocuments",
+  ...(migrationDestination ? { keepOnDelete: true, versioned: true } : {}),
   access: allow => ({ "documents/*": [allow.resource(processDocument).to(["read"])] }),
   triggers: { onUpload: processDocument },
 });

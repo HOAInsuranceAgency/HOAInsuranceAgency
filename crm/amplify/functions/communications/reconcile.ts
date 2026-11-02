@@ -1,4 +1,5 @@
 import { config } from "./config";
+import { migrationPendingCutoff, migrationPendingKey } from "../migration-pending";
 import { historyDue, restartHistory, type HistoryJob } from "./history";
 import { front, dialpad, dialpadCallItems } from "./providers";
 import { get, row, save, put, commit, canonical, hash, issue } from "./store";
@@ -7,9 +8,10 @@ import { dialpadBusinessLine, unidentifiedDialpadReceipt } from "./phoneScope";
 
 async function reconcileFront() {
   const c = await config(); if (!c.activatedAt) return;
-  const activation = Date.parse(c.activatedAt), inboxes = [...new Set([c.frontInboxId, ...c.allowedInboxIds].filter((x): x is string => !!x))];
+  const activation = Math.max(Date.parse(c.activatedAt), migrationPendingCutoff() ?? 0), inboxes = [...new Set([c.frontInboxId, ...c.allowedInboxIds].filter((x): x is string => !!x))];
   if (!inboxes.length) return;
-  const old = await get<{ next?: string; pending?: string[]; messageNext?: string; inbox?: number; after?: number; through?: number }>("cursor:front");
+  const cursorKey = migrationPendingKey("cursor:front");
+  const old = await get<{ next?: string; pending?: string[]; messageNext?: string; inbox?: number; after?: number; through?: number }>(cursorKey);
   const inbox = (old?.data.inbox ?? 0) % inboxes.length, after = old?.data.after ?? activation, through = old?.data.through ?? Date.now();
   let pending = old?.data.pending ?? [], next = old?.data.next;
   if (!pending.length) {
@@ -24,16 +26,16 @@ async function reconcileFront() {
     if (typeof cnv !== "string" || !/^cnv_[a-z0-9]+$/.test(cnv)) {
       await issue(`reconcile:front:${hash(canonical(cnv))}`, "Front history returned an invalid conversation ID"); continue;
     }
-    const key = `front-reconcile:${cnv}`, job = await get<HistoryJob>(key);
+    const key = migrationPendingKey(`front-reconcile:${cnv}`), job = await get<HistoryJob>(key);
     if (historyDue(job)) await save(restartHistory(key, cnv, job?.accountId, job), job);
   }
   const finishedInbox = !next, finishedCycle = finishedInbox && inbox + 1 >= inboxes.length;
-  await save(row("CURSOR", "cursor:front", { next, inbox: finishedInbox ? (inbox + 1) % inboxes.length : inbox,
+  await save(row("CURSOR", cursorKey, { next, inbox: finishedInbox ? (inbox + 1) % inboxes.length : inbox,
     after: finishedCycle ? Math.max(activation, through - 6 * 3600_000) : after, through: finishedCycle ? undefined : through, checkedAt: new Date().toISOString() }, { previous: old }), old);
 }
 async function reconcileDialpad() {
   const c = await config(); if (!c.activatedAt || !c.dialpadCompanyId || !c.dialpadNumbers.length) return;
-  const activation = Date.parse(c.activatedAt), old = await get<{ cursor?: string; after?: number; through?: number }>("cursor:dialpad");
+  const activation = Math.max(Date.parse(c.activatedAt), migrationPendingCutoff() ?? 0), cursorKey = migrationPendingKey("cursor:dialpad"), old = await get<{ cursor?: string; after?: number; through?: number }>(cursorKey);
   const after = old?.data.after ?? activation, through = old?.data.through ?? Date.now();
   const params = new URLSearchParams({ started_after: String(after), started_before: String(through) });
   if (old?.data.cursor) params.set("cursor", old.data.cursor);
@@ -53,7 +55,7 @@ async function reconcileDialpad() {
     await commit([put(row<EventRecord & { error?: string }>("EVENT", key, { provider: "dialpad", payload: line ? valid ? { ...p, call_id: id, state: "hangup" } : p : unidentifiedDialpadReceipt(p), attempts: 0, error }, { dueAt: !error ? new Date().toISOString() : undefined })),
       ...(error ? [put(row("ISSUE", `issue:${key}`, { sourceId: key, message: error, at: new Date().toISOString(), resolved: false }))] : [])]);
   }
-  await save(row("CURSOR", "cursor:dialpad", { cursor: page.cursor, after: page.cursor ? after : Math.max(activation, through - 86400_000), through: page.cursor ? through : undefined, checkedAt: new Date().toISOString() }, { previous: old }), old);
+  await save(row("CURSOR", cursorKey, { cursor: page.cursor, after: page.cursor ? after : Math.max(activation, through - 86400_000), through: page.cursor ? through : undefined, checkedAt: new Date().toISOString() }, { previous: old }), old);
 }
 /** Independent bounded capture, checkpointed only after durable per-item work. */
 export async function reconcile() {

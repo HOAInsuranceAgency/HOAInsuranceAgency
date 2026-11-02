@@ -1,7 +1,7 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import type { Communication, IntegrationConfig, LeadWorkflow } from "../../../shared/leadWorkflow";
 const h = vi.hoisted(() => ({ records: new Map<string, Record<string, any>>(), transactions: [] as any[][], inFlight: 0, maxInFlight: 0, fail: false, failAt: undefined as number | undefined, writeError: undefined as Error | undefined, writeErrors: [] as Error[], accountError: false, userEnabled: true, disabledUsers: new Set<string>(), nonProducers: new Set<string>(), deactivatedUsers: new Set<string>(),
-  reads: [] as string[], readFailureId: undefined as string | undefined, beforeWrite: undefined as (() => void) | undefined, userReads: [] as string[], groupReads: [] as string[], userError: undefined as Error | undefined, queries: [] as any[], queryError: undefined as Error | undefined, cognitoList: vi.fn(), deletionQuery: vi.fn(), batch: vi.fn(), producerEmail: vi.fn(), front: vi.fn(), dialpad: vi.fn(), update: vi.fn(), accountList: vi.fn(), profileList: vi.fn(), profileByUser: vi.fn(), c: {} as IntegrationConfig }));
+  reads: [] as string[], readFailureId: undefined as string | undefined, beforeWrite: undefined as (() => void) | undefined, userReads: [] as string[], groupReads: [] as string[], userError: undefined as Error | undefined, queries: [] as any[], queryError: undefined as Error | undefined, dueQueryDelayMs: 0, cognitoList: vi.fn(), deletionQuery: vi.fn(), batch: vi.fn(), producerEmail: vi.fn(), front: vi.fn(), dialpad: vi.fn(), update: vi.fn(), accountList: vi.fn(), profileList: vi.fn(), profileByUser: vi.fn(), c: {} as IntegrationConfig }));
 vi.mock("@aws-sdk/lib-dynamodb", async importOriginal => {
   const actual = await importOriginal<typeof import("@aws-sdk/lib-dynamodb")>();
   return { ...actual, DynamoDBDocumentClient: { from: () => ({ send: async (command: any) => {
@@ -10,6 +10,7 @@ vi.mock("@aws-sdk/lib-dynamodb", async importOriginal => {
     if (command.constructor.name === "BatchGetCommand") return h.batch(p);
     if (command.constructor.name === "QueryCommand") {
       h.queries.push(p);
+      if (p.IndexName === "due" && h.dueQueryDelayMs) vi.setSystemTime(new Date(Date.now() + h.dueQueryDelayMs));
       if (p.Select === 'COUNT') {
         const override = await h.deletionQuery(p);
         if (override !== undefined) return override;
@@ -132,7 +133,7 @@ async function seedLegacyPromise(input: any, actor: string) {
   return data;
 }
 beforeEach(async () => {
-  vi.useFakeTimers(); vi.setSystemTime(NOW); h.records.clear(); h.transactions.length = 0; h.inFlight = 0; h.maxInFlight = 0; h.fail = false; h.failAt = undefined; h.accountError = false; h.userEnabled = true; h.writeError = undefined; vi.clearAllMocks();
+  vi.useFakeTimers(); vi.setSystemTime(NOW); h.records.clear(); h.transactions.length = 0; h.inFlight = 0; h.maxInFlight = 0; h.fail = false; h.failAt = undefined; h.accountError = false; h.userEnabled = true; h.writeError = undefined; h.dueQueryDelayMs = 0; vi.clearAllMocks();
   h.disabledUsers.clear(); h.nonProducers.clear(); h.deactivatedUsers.clear();
   h.groupReads.length = 0;
   h.writeErrors.length = 0;
@@ -2790,5 +2791,100 @@ describe("batched issue-source visibility", () => {
     await vi.runAllTimersAsync(); await assertion;
     expect(h.front).not.toHaveBeenCalled();
     expect(sourceBatches()).toHaveLength(failure === "outage" ? 1 : 4);
+  });
+});
+
+describe('destination inherited communications remain review-only', () => {
+  const cutoff = '2026-09-08T13:59:00.000Z';
+  beforeEach(() => {
+    for (const [key,value] of Object.entries({ HOA_MIGRATION_APP_ID:'d1nuh9rw1hcuxo', HOA_MIGRATION_PENDING_ACCOUNT:'917680434255', AWS_REGION:'us-east-1', HOA_MIGRATION_BRANCH:'codex-hoa-account-migration', AWS_LAMBDA_FUNCTION_NAME:'amplify-d1nuh9rw1hcuxo-main-branch-worker', HOA_MIGRATION_PREVIEW:'false', HOA_MIGRATION_WORKERS_ENABLED:'true', HOA_MIGRATION_PENDING_CUTOFF:cutoff })) vi.stubEnv(key,value);
+  });
+  afterEach(() => vi.unstubAllEnvs());
+  function inherited<T extends {id:string}>(r:T) { const old={...r,createdAt:cutoff,updatedAt:NOW};h.records.set('comms:'+r.id,structuredClone(old));return old; }
+  it('resumes beyond held pages after the time budget without changing any held record', async () => {
+    h.c.paused = true;
+    const held = Array.from({length:120}, (_,i) => inherited(row('TRIAGE', `held:${String(i).padStart(3,'0')}`, { preserved: i }, {dueAt:NOW})));
+    const fresh = await save(row('TRIAGE','fresh:after-held',{ fresh: true },{dueAt:NOW}));
+    h.dueQueryDelayMs=25_000;
+    const {handler}=await import('../../amplify/functions/communications/worker');
+    expect((await handler() as {handled:number}).handled).toBe(0);
+    const progress=entries('QUEUE_CURSOR')[0];
+    h.queries.length=0;
+    expect((await handler() as {handled:number}).handled).toBe(1);
+    expect(progress.data.nextToken).toBeTruthy();
+    expect(h.queries.find(q=>q.IndexName==='due').ExclusiveStartKey.id).toBe('held:089');
+    expect(h.queries.find(q=>q.IndexName==='due').ExpressionAttributeValues[':now']).toBe(NOW);
+    expect(record(fresh.id).dueAt).toBeUndefined(); expect(record('issue:'+fresh.id)).toBeTruthy();
+    for(const r of held)expect(record(r.id)).toEqual(r);
+    expect(h.front).not.toHaveBeenCalled(); expect(h.dialpad).not.toHaveBeenCalled();
+  });
+  it('does not let an overlapping tick overwrite another cursor checkpoint', async () => {
+    const {openQueueCursor,saveQueueCursor}=await import('../../amplify/functions/communications/queueCursor');
+    const first=await openQueueCursor('test',NOW), concurrent=await openQueueCursor('test',NOW);
+    await saveQueueCursor(first,'page-one');
+    await expect(saveQueueCursor(concurrent,'stale-page')).rejects.toThrow('Conflict');
+    expect((await openQueueCursor('test',new Date(Date.parse(NOW)+60_000).toISOString()))).toMatchObject({nextToken:'page-one',through:NOW});
+  });
+  it('retains a fixed sweep window with seen first-page IDs and bounds that checkpoint', async () => {
+    const {openQueueCursor,saveQueueCursor}=await import('../../amplify/functions/communications/queueCursor');
+    const first=await openQueueCursor('seen-test',NOW);
+    await saveQueueCursor(first,undefined,['ocr-pending']);
+    const resumed=await openQueueCursor('seen-test',new Date(Date.parse(NOW)+60_000).toISOString());
+    expect(resumed).toMatchObject({nextToken:undefined,through:NOW,seenIds:['ocr-pending']});
+    const writes=h.transactions.length;
+    await expect(saveQueueCursor(resumed,undefined,Array.from({length:101},(_,i)=>`row-${i}`))).rejects.toThrow('bound');
+    await expect(saveQueueCursor(resumed,undefined,['duplicate','duplicate'])).rejects.toThrow('bound');
+    expect(h.transactions).toHaveLength(writes);
+    await saveQueueCursor(resumed);
+    const nextNow=new Date(Date.parse(NOW)+120_000).toISOString();
+    expect(await openQueueCursor('seen-test',nextNow)).toMatchObject({through:nextNow,seenIds:[]});
+  });
+  it('retries a partially processed page instead of advancing past untouched fresh work', async () => {
+    h.c.paused=true;
+    const fresh=await Promise.all(Array.from({length:31},(_,i)=>save(row('TRIAGE',`fresh:${i}`,{}, {dueAt:NOW}))));
+    const slowFirstWrite=()=>{
+      if(h.queries.some(q=>q.IndexName==='due'))vi.setSystemTime(new Date(Date.now()+76_000));
+      else h.beforeWrite=slowFirstWrite;
+    };
+    h.beforeWrite=slowFirstWrite;
+    const {handler}=await import('../../amplify/functions/communications/worker');
+    expect((await handler() as {handled:number}).handled).toBe(1);
+    expect(entries('QUEUE_CURSOR')[0].data.nextToken).toBeUndefined();
+    expect((await handler() as {handled:number}).handled).toBe(30);
+    for(const r of fresh)expect(record(r.id).dueAt).toBeUndefined();
+  });
+  it('rejects a cursor with inherited provenance instead of rewriting it', async () => {
+    const {openQueueCursor,saveQueueCursor}=await import('../../amplify/functions/communications/queueCursor');
+    const cursor=await openQueueCursor('test-held',NOW);const saved=await saveQueueCursor(cursor,'page-one');
+    const old=inherited(saved);h.transactions.length=0;
+    await expect(openQueueCursor('test-held',NOW)).rejects.toThrow('unreviewed migration provenance');
+    expect(record(old.id)).toEqual(old);expect(h.transactions).toHaveLength(0);
+  });
+  it.each(['READY','RETRY_WAIT','ACCEPTED','UNKNOWN','LEASED'] as const)('does not mutate or send an inherited %s operation through direct dispatch', async state => {
+    await lead();const op=inherited(await save(row<Operation>('OPERATION','op:old',{type:'COMMENT',state,accountId:'a1',attempts:1,uid:'existing-uid',text:'Preserved'},{accountId:'a1',dueAt:NOW})));const before=structuredClone(op);h.front.mockClear();h.transactions.length=0;
+    await runOperation(op);expect(record(op.id)).toEqual(before);expect(h.transactions).toHaveLength(0);expect(h.front).not.toHaveBeenCalled();
+  });
+  it('holds old EVENT/TASK/TRIAGE and operations in the scheduled sweep', async () => {
+    await lead();h.c.paused=true;
+    const snapshots=['EVENT','TASK','TRIAGE','OPERATION'].map(kind=>inherited({...row(kind,'held:'+kind,{type:'COMMENT',state:'RETRY_WAIT',accountId:'a1',provider:'front',payload:{},attempts:0},{dueAt:NOW}),dueAt:NOW,dueGroup:'DUE'}));
+    const worker=await import('../../amplify/functions/communications/worker');await worker.handler();
+    for(const old of snapshots)expect(record(old.id)).toEqual(old);
+    expect(h.front.mock.calls.filter(c=>c[1]==='POST'||c[1]==='PATCH')).toHaveLength(0);
+    expect(h.queries.find(q=>q.IndexName==='due').KeyConditionExpression).toContain('BETWEEN');
+  });
+  it('does not let direct old events or newly captured old provider messages create actions', async () => {
+    const event=inherited(await save(row('EVENT','event:old',{provider:'front' as const,payload:{type:'inbound_received'},attempts:0},{dueAt:NOW})));h.transactions.length=0;h.front.mockClear();
+    await processEvent(event);await ingestFrontMessage({id:'msg_old',created_at:Date.parse(cutoff)/1000,is_inbound:true,text:'Old'},'cnv_a');
+    await dialpadEvent({call_id:'1',date_started:Date.parse(cutoff),direction:'inbound'});
+    expect(h.transactions).toHaveLength(0);expect(h.front).not.toHaveBeenCalled();expect(record(event.id)).toEqual(event);
+  });
+  it('leaves inherited backfill jobs and inherited event receipts untouched', async () => {
+    const {backfillConversation}=await import('../../amplify/functions/communications/events');const old=inherited(await save(row('CONVERSATION_BACKFILL','history:old',{conversationId:'cnv_a'},{dueAt:NOW})));h.front.mockClear();await backfillConversation(old);expect(h.front).not.toHaveBeenCalled();expect(record(old.id)).toEqual(old);
+    const fresh=await save(row('CONVERSATION_BACKFILL','history:new',{conversationId:'cnv_a'},{dueAt:NOW}));const message={id:'msg_new',created_at:Date.parse(NOW)/1000,is_inbound:true,text:'New'};const event=inherited(await save(row('EVENT','front-history:cnv_a:msg_new:0:draft-v2:sent',{provider:'front',payload:{},snapshot:{message,conversationId:'cnv_a'},attempts:0},{dueAt:NOW})));h.front.mockResolvedValue({_results:[message]});await backfillConversation(fresh);expect(record(event.id)).toEqual(event);expect(entries('COMMUNICATION')).toHaveLength(0);
+  });
+  it('allows fresh operations and requires explicit reviewed retry for an old one', async () => {
+    await lead();h.front.mockResolvedValue({id:'comment_new'});const fresh=await enqueueOperation('op:new',{type:'COMMENT',accountId:'a1',text:'New deliberate comment'});await runOperation(fresh);expect(record(fresh.id).data.state).toBe('CONFIRMED');
+    const old=inherited(await save(row<Operation>('OPERATION','op:review',{type:'COMMENT',state:'UNKNOWN',accountId:'a1',attempts:1,text:'Held'},{accountId:'a1'})));const {reviewOperation}=await import('../../amplify/functions/communications/review');await expect(reviewOperation({id:old.id,version:old.version,action:'retry',reason:'Reviewed'},'owner')).rejects.toThrow('confirm');
+    await reviewOperation({id:old.id,version:old.version,action:'retry',reason:'Confirmed no send',verifiedNotSent:true},'owner');expect(record(old.id).data.migrationReview).toMatchObject({cutoff,actor:'owner',action:'retry',sourceVersion:old.version});await runOperation(record(old.id) as any);expect(record(old.id).data.state).toBe('CONFIRMED');
   });
 });

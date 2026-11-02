@@ -1,6 +1,7 @@
 import type { CreateAuthChallengeTriggerHandler } from "aws-lambda";
 import { SESv2Client, SendEmailCommand } from "@aws-sdk/client-sesv2";
 import { getSigningSecret, mintToken } from "./token";
+import { assertMigrationAuth, destinationAuth } from "./migration";
 
 const ses = new SESv2Client();
 
@@ -9,7 +10,16 @@ const ses = new SESv2Client();
  * mode="consume": the user arrived via the link in a fresh session — no
  * email; verification happens against the token they carry.
  */
-export const handler: CreateAuthChallengeTriggerHandler = async (event) => {
+export const handler: CreateAuthChallengeTriggerHandler = async (event, context) => {
+  assertMigrationAuth(event, context);
+  // Cognito does not forward InitiateAuth clientMetadata to this trigger.
+  // Destination requests therefore use an explicit answer in the verify leg.
+  if (destinationAuth()) {
+    event.response.challengeMetadata = "MAGIC_LINK";
+    event.response.publicChallengeParameters = { mode: "destination" };
+    event.response.privateChallengeParameters = { mode: "destination" };
+    return event;
+  }
   const mode = event.request.clientMetadata?.mode === "consume" ? "consume" : "request";
   const email = event.request.userAttributes.email;
 

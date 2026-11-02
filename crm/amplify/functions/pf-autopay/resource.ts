@@ -1,3 +1,4 @@
+import { migrationPreview } from "../../migration-config";
 import { defineFunction, secret } from "@aws-amplify/backend";
 
 /**
@@ -15,7 +16,7 @@ export const pfAutopay = defineFunction({
   name: "pf-autopay",
   entry: "./handler.ts",
   environment: {
-    STRIPE_SECRET_KEY: secret("STRIPE_SECRET_KEY"),
+    ...(migrationPreview ? {} : { STRIPE_SECRET_KEY: secret("STRIPE_SECRET_KEY") }),
   },
   schedule: {
     // Day-of-month `*`, day-of-week `?` — see pf-default-sweep.

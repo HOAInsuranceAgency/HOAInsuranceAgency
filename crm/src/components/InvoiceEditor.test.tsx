@@ -76,7 +76,7 @@ it("saves the focused field before sending and locks the submitted recipients", 
   await waitFor(() => expect(h.send).toHaveBeenCalledTimes(1));
   for (const checkbox of screen.getAllByRole("checkbox")) expect(checkbox).toBeDisabled();
   await act(async () => sending.resolve());
-  expect(h.send).toHaveBeenCalledWith({ invoiceId: initial.id, toEmail: "primary@example.com" });
+  expect(h.send).toHaveBeenCalledWith({ invoiceId: initial.id, toEmail: "primary@example.com", expectedSentAt: "" });
 });
 it.each(["12.50", "-12.50"])("preserves money typing %s and saves the intended amount", async value => {
   const user = userEvent.setup(); render(<Harness />);
@@ -140,4 +140,34 @@ it("preserves a concurrently confirmed void when send metadata has not caught up
   expect(screen.getByLabelText("Memo")).toBeDisabled();
   expect(screen.getByLabelText("Memo")).toHaveValue("Saved before sending");
   expect(h.change).toHaveBeenLastCalledWith(expect.objectContaining({ status: "VOID", memo: "Saved before sending", sentTo: "primary@example.com" }));
+});
+
+it("keeps the original send observation after a lost response even if a newer sentAt arrives", async () => {
+  const props = { policies: [], quotes: [], account: null, contacts, onChange: h.change, onLinesChange: h.linesChange, onDeleted: vi.fn() };
+  h.send.mockRejectedValueOnce(new Error("Connection lost"));
+  const view = render(<InvoiceEditor invoice={initial} {...props} />);
+  await screen.findByLabelText("Memo"); fireEvent.click(screen.getByRole("button", { name: "Send invoice" }));
+  await screen.findByText("Connection lost");
+  const acceptedAt = "2026-11-02T14:00:00.000Z";
+  stored = { ...initial, status: "SENT", sentAt: acceptedAt, sentTo: "primary@example.com" };
+  view.rerender(<InvoiceEditor invoice={stored} {...props} />);
+  h.send.mockResolvedValueOnce({ data: { ok: true, sentTo: stored.sentTo, sentAt: acceptedAt } });
+  fireEvent.click(screen.getByRole("button", { name: "Send again" }));
+  await waitFor(() => expect(h.send).toHaveBeenCalledTimes(2));
+  expect(h.send.mock.calls[1][0]).toMatchObject({ expectedSentAt: "", toEmail: "primary@example.com" });
+  await screen.findByText("Sent to primary@example.com.");
+  fireEvent.click(screen.getByRole("button", { name: "Send again" }));
+  await waitFor(() => expect(h.send).toHaveBeenCalledTimes(3));
+  expect(h.send.mock.calls[2][0]).toMatchObject({ expectedSentAt: acceptedAt });
+});
+
+it("refuses a changed recipient selection after a failed send instead of silently reusing the old address", async () => {
+  h.send.mockRejectedValueOnce(new Error("Connection lost"));
+  render(<Harness />);
+  await screen.findByLabelText("Memo"); fireEvent.click(screen.getByRole("button", { name: "Send invoice" }));
+  await screen.findByText("Connection lost");
+  fireEvent.click(screen.getByRole("checkbox", { name: /Treasurer/ }));
+  fireEvent.click(screen.getByRole("button", { name: "Send invoice" }));
+  await screen.findByText(/previous send used different recipients/);
+  expect(h.send).toHaveBeenCalledTimes(1);
 });

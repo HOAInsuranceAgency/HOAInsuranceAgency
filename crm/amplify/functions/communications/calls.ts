@@ -1,4 +1,5 @@
 import type { Communication } from "../../../../shared/leadWorkflow";
+import { migrationPendingHeld } from "../migration-pending";
 import { get, row, save, put, commit, issue, type Row } from "./store";
 
 export type Call = Communication & { legs?: Record<string, { connected: boolean; ended: boolean }>; relatedIds?: string[]; relatedConversationIds?: string[] };
@@ -72,6 +73,7 @@ export async function uniteCalls(ids: string[]) {
  * keep their dates; only duplicate automatic callbacks for this call collapse. */
 export async function syncCall(candidate: Row<{ providerId: string }>) {
   const job = await get<typeof candidate.data>(candidate.id); if (!job?.dueAt) return;
+  if (migrationPendingHeld(job)) return;
   await save(row("CALL_SYNC", job.id, job.data, { previous: job }), job);
 }
 export async function queueCallSync(providerId: string) {

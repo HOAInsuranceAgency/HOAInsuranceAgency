@@ -1,3 +1,4 @@
+import { migrationPreview } from "../../migration-config";
 import { defineFunction, secret } from "@aws-amplify/backend";
 
 /**
@@ -23,6 +24,6 @@ export const voidInvoice = defineFunction({
   timeoutSeconds: 30,
   resourceGroupName: "data",
   environment: {
-    STRIPE_SECRET_KEY: secret("STRIPE_SECRET_KEY"),
+    ...(migrationPreview ? {} : { STRIPE_SECRET_KEY: secret("STRIPE_SECRET_KEY") }),
   },
 });

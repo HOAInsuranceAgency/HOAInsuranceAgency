@@ -1,3 +1,4 @@
+import { assertPreviewRead } from "../migration-readonly";
 import { randomUUID } from 'node:crypto';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, GetCommand, QueryCommand, ScanCommand, TransactWriteCommand } from '@aws-sdk/lib-dynamodb';
@@ -150,6 +151,7 @@ export const repository: ProfitabilityRepository = {
 type Event = { fieldName?: string; info?: { fieldName?: string }; identity?: unknown; request?: RoleRequest; arguments?: RecordData };
 export function createHandler(store: ProfitabilityRepository) {
   return async (event: Event) => {
+    assertPreviewRead((event.fieldName ?? event.info?.fieldName) === "ownerProfitability");
     try {
       const actor = text((event.identity as { sub?: string } | undefined)?.sub);
       if (!actor || !isActiveOwner(event.identity, event.request)) throw new Error('Only Owners can access employee profitability and compensation.');

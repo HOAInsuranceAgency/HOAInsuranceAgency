@@ -1,6 +1,8 @@
+import { TransactionalMailClient } from "../transactional-mail/client";
+import { MailDeliveryError } from "../transactional-mail/contract";
 import { currentContacts, billingContact } from "../../../src/lib/contacts";
 import { randomUUID } from "node:crypto";
-import { SESv2Client, SendEmailCommand } from "@aws-sdk/client-sesv2";
+import { SendEmailCommand } from "@aws-sdk/client-sesv2";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, GetCommand, PutCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { Amplify } from "aws-amplify";
@@ -24,6 +26,7 @@ import { renderInvoice } from "./invoice";
 import { createPaymentLink, toCents } from "./stripeLink";
 import { buildMimeMessage } from "./mime";
 import { pdfFilename, renderInvoicePdf } from "./pdf";
+import { beginInvoiceSend, completeInvoiceSend, InvoiceSendBlocked } from "./sendOperation";
 
 /**
  * Custom mutation handler: sendInvoice. See resource.ts for the why.
@@ -46,7 +49,7 @@ async function getDataClient() {
   return dataClient;
 }
 
-const ses = new SESv2Client();
+const ses = new TransactionalMailClient("invoice");
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient());
 
 /**
@@ -644,12 +647,13 @@ async function recordSend(
 }
 
 export const handler = async (event: {
-  arguments?: { invoiceId?: string; toEmail?: string };
+  arguments?: { invoiceId?: string; toEmail?: string; expectedSentAt?: string | null };
 }) => {
   const invoiceId = event.arguments?.invoiceId;
   if (!invoiceId) return { ok: false, error: "No invoice was named." };
 
   const client = await getDataClient();
+  let acceptedForReview = false;
 
   try {
     const { data: invoice } = await client.models.Invoice.get({ id: invoiceId });
@@ -841,6 +845,12 @@ export const handler = async (event: {
      * the same `invoiceTotals` the screen ran, over rows read here rather than
      * over anything the caller posted.
      */
+    // Pin the legacy-compatible operation before storeLink can change updatedAt.
+    // The private reservation survives link/finance writes and lost mail responses.
+    const tracked = process.env.HOA_TRANSACTIONAL_MAIL_PROVIDER === "resend"
+      ? await beginInvoiceSend(invoice, to, event.arguments?.expectedSentAt, { database: ddb })
+      : undefined;
+    if (tracked?.completed) return tracked.completed;
     const paymentUrl = await ensurePaymentLink(
       invoice,
       account.data.name,
@@ -953,7 +963,7 @@ export const handler = async (event: {
       html,
       attachment,
     });
-    await ses.send(
+    const accepted = await ses.send(
       new SendEmailCommand({
         FromEmailAddress: FROM,
         Destination: {
@@ -961,8 +971,10 @@ export const handler = async (event: {
           ...(selfAddressed ? {} : { BccAddresses: [MAILBOX] }),
         },
         Content: { Raw: { Data: Buffer.from(raw, "utf8") } },
-      })
+      }),
+      { idempotencyKey: tracked?.operation.key ?? `invoice:${invoiceId}:${invoice.updatedAt ?? invoice.sentAt ?? "initial"}:${to.join(",")}`, subject, text, html, replyTo: MAILBOX, attachments: attachment ? [attachment] : [] }
     );
+    acceptedForReview = Boolean(tracked);
 
     /**
      * DRAFT becomes SENT; a resend of an already-SENT or PAID invoice leaves
@@ -1013,12 +1025,15 @@ export const handler = async (event: {
       );
     }
 
+    const result = { ok: true as const, sentTo: to.join(", "), subject, sentAt: sentFacts.sentAt };
+    if (tracked) await completeInvoiceSend(invoiceId, tracked.operation, accepted.MessageId, result, { database: ddb });
     console.log(`send-invoice sent ${invoice.number ?? invoiceId} to ${to.join(", ")}`);
-    return { ok: true, sentTo: to.join(", "), subject };
+    return result;
   } catch (err) {
-    if (err instanceof SendBlocked) {
+    if (err instanceof SendBlocked || err instanceof InvoiceSendBlocked || err instanceof MailDeliveryError) {
       return { ok: false, error: err.message };
     }
+    if (acceptedForReview) return { ok: false, error: "The invoice email was accepted, but its send details need review. Do not send a replacement." };
     console.error("send-invoice failed", err);
     return { ok: false, error: "We couldn't send that invoice. Please try again." };
   }
