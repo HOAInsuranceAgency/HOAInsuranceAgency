@@ -2825,6 +2825,20 @@ describe('destination inherited communications remain review-only', () => {
     await expect(saveQueueCursor(concurrent,'stale-page')).rejects.toThrow('Conflict');
     expect((await openQueueCursor('test',new Date(Date.parse(NOW)+60_000).toISOString()))).toMatchObject({nextToken:'page-one',through:NOW});
   });
+  it('retains a fixed sweep window with seen first-page IDs and bounds that checkpoint', async () => {
+    const {openQueueCursor,saveQueueCursor}=await import('../../amplify/functions/communications/queueCursor');
+    const first=await openQueueCursor('seen-test',NOW);
+    await saveQueueCursor(first,undefined,['ocr-pending']);
+    const resumed=await openQueueCursor('seen-test',new Date(Date.parse(NOW)+60_000).toISOString());
+    expect(resumed).toMatchObject({nextToken:undefined,through:NOW,seenIds:['ocr-pending']});
+    const writes=h.transactions.length;
+    await expect(saveQueueCursor(resumed,undefined,Array.from({length:101},(_,i)=>`row-${i}`))).rejects.toThrow('bound');
+    await expect(saveQueueCursor(resumed,undefined,['duplicate','duplicate'])).rejects.toThrow('bound');
+    expect(h.transactions).toHaveLength(writes);
+    await saveQueueCursor(resumed);
+    const nextNow=new Date(Date.parse(NOW)+120_000).toISOString();
+    expect(await openQueueCursor('seen-test',nextNow)).toMatchObject({through:nextNow,seenIds:[]});
+  });
   it('retries a partially processed page instead of advancing past untouched fresh work', async () => {
     h.c.paused=true;
     const fresh=await Promise.all(Array.from({length:31},(_,i)=>save(row('TRIAGE',`fresh:${i}`,{}, {dueAt:NOW}))));

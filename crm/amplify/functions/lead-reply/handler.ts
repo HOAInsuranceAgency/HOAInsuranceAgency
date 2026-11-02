@@ -69,6 +69,7 @@ export const handler = async () => {
     const eligible: Schema["LeadReply"]["type"][] = [];
     const progress = cutoff === null ? undefined : await openQueueCursor(`lead-reply:${status}`, now);
     let nextToken = progress?.nextToken;
+    let seenIds = new Set(progress?.seenIds ?? []);
     for (let page = 0; page < (cutoff === null ? 1 : 25); page++) {
       const pageStart = nextToken;
       const result = await client.models.LeadReply.leadRepliesByStatusAndDueAt(
@@ -76,15 +77,20 @@ export const handler = async () => {
         { limit: cutoff === null ? MAX_PER_TICK : 100, sortDirection: "ASC", nextToken }
       );
       if (result.errors?.length) throw new Error(result.errors[0].message);
-      eligible.push(...result.data.filter(r => !migrationPendingHeld(r)));
+      const currentIds = new Set(result.data.map(r => r.id));
+      seenIds = new Set([...seenIds].filter(id => currentIds.has(id)));
+      eligible.push(...result.data.filter(r => !migrationPendingHeld(r) && !seenIds.has(r.id)));
       nextToken = result.nextToken ?? undefined;
-      // Preserve this page until its eligible rows leave WAITING/SENDING. The
-      // query can contain more than eight fresh rows, so advancing beyond it
-      // here would skip work that this tick never processed.
+      // Remember only the current page's selected rows. OCR/extraction waits
+      // remain unchanged, but cannot block later pages forever. A crash after
+      // this checkpoint can delay selected rows until the next finite sweep;
+      // their existing business claims still prevent duplicate sends.
       if (eligible.length) {
-        if (progress) await saveQueueCursor(progress, pageStart);
-        return eligible.slice(0, MAX_PER_TICK);
+        const selected = eligible.slice(0, MAX_PER_TICK);
+        if (progress) await saveQueueCursor(progress, pageStart, [...new Set([...seenIds, ...selected.map(r => r.id)])]);
+        return selected;
       }
+      seenIds.clear();
       if (!nextToken) {
         if (progress) await saveQueueCursor(progress);
         return [];
