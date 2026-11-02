@@ -1,0 +1,319 @@
+{
+  "schema": 1,
+  "account": "917680434255",
+  "region": "us-east-1",
+  "crmApp": "d1nuh9rw1hcuxo",
+  "webApp": "d1x0kxb71w6nvt",
+  "branch": "main",
+  "backendBranch": "main",
+  "runtimeBranch": "codex-hoa-account-migration",
+  "backendRoot": "arn:aws:cloudformation:us-east-1:917680434255:stack/amplify-d1nuh9rw1hcuxo-main-branch-0e4fdbd849/dad5c940-d3d3-11f1-a5d3-0e97a2fa656f",
+  "pool": "us-east-1_SzIUH4F67",
+  "client": "2nek9vpj42jis5ejcb5qaebhkh",
+  "graphqlUrl": "https://7n7x6zvx4ze7nixu2lkjcmkteq.appsync-api.us-east-1.amazonaws.com/graphql",
+  "finalSyncCompletedAt": "2026-11-01T22:17:39.654054+00:00",
+  "pendingCutoff": "2026-11-01T22:17:39.654Z",
+  "finalSyncReceiptSha256": "20e390d0654a1ee9dbcaa8d7af3c32174995a8552d79effe7b5d2880cda826dd",
+  "pollingProofSha256": "5841411e231fc73ed97a5debc14a430b16fa761e045dae2d3ed13e6d2f9490bf",
+  "statefulTypes": [
+    "Custom::AmplifyDynamoDBTable",
+    "AWS::DynamoDB::Table",
+    "AWS::S3::Bucket",
+    "AWS::SecretsManager::Secret",
+    "AWS::Cognito::UserPool",
+    "AWS::Cognito::UserPoolClient",
+    "AWS::Cognito::IdentityPool",
+    "AWS::Cognito::UserPoolGroup"
+  ],
+  "statefulCount": 57,
+  "statefulInventorySha256": "fb45417ff52a0b85eede59262d809647bba1393942ad274a35aaadfa481d9830",
+  "mappings": [
+    {
+      "logical": "honeycombsubmissionworkerlambdaDynamoDBEventSourceamplifyd1nuh9rw1hcuxomainbranch0e4fdbd849dataamplifyDataHoneycombSubmissionCustomTableHoneycombSubmissionTable006F96F6BE654957MigrationLiveV1",
+      "uuid": "0f2c1d00-d5f3-4501-9b26-45142afcf876",
+      "functionArn": "arn:aws:lambda:us-east-1:917680434255:function:amplify-d1nuh9rw1hcuxo-ma-honeycombsubmissionworke-Q1ViwkNr8luJ",
+      "streamArn": "arn:aws:dynamodb:us-east-1:917680434255:table/HoneycombSubmission-qtqwcovzhrfuddodg66avonjxy-NONE/stream/2026-10-29T20:08:40.097"
+    },
+    {
+      "logical": "activityloglambdaDynamoDBEventSourceamplifyd1nuh9rw1hcuxomainbranch0e4fdbd849dataamplifyDataQuoteCustomTableQuoteTable641730922A574E1CMigrationLiveV1",
+      "uuid": "18098897-9afb-4924-9d3f-fc6b4097a03b",
+      "functionArn": "arn:aws:lambda:us-east-1:917680434255:function:amplify-d1nuh9rw1hcuxo-ma-activityloglambda79E0521-AotWGxt7m05Y",
+      "streamArn": "arn:aws:dynamodb:us-east-1:917680434255:table/Quote-qtqwcovzhrfuddodg66avonjxy-NONE/stream/2026-10-29T20:08:44.715"
+    },
+    {
+      "logical": "activityloglambdaDynamoDBEventSourceamplifyd1nuh9rw1hcuxomainbranch0e4fdbd849dataamplifyDataBlanketCustomTableBlanketTableD6E78EE026D0D976MigrationLiveV1",
+      "uuid": "1a80f8da-f660-4711-9d08-1f209a654120",
+      "functionArn": "arn:aws:lambda:us-east-1:917680434255:function:amplify-d1nuh9rw1hcuxo-ma-activityloglambda79E0521-AotWGxt7m05Y",
+      "streamArn": "arn:aws:dynamodb:us-east-1:917680434255:table/Blanket-qtqwcovzhrfuddodg66avonjxy-NONE/stream/2026-10-29T20:08:38.928"
+    },
+    {
+      "logical": "honeycombestimateworkerlambdaDynamoDBEventSourceamplifyd1nuh9rw1hcuxomainbranch0e4fdbd849dataamplifyDataHoneycombEstimateCustomTableHoneycombEstimateTableA8B3219C973EBB52MigrationLiveV1",
+      "uuid": "1b7a5e4d-b516-4d6a-ae43-0ed1315ee1e0",
+      "functionArn": "arn:aws:lambda:us-east-1:917680434255:function:amplify-d1nuh9rw1hcuxo-ma-honeycombestimateworkerl-h2mdp7BWydaj",
+      "streamArn": "arn:aws:dynamodb:us-east-1:917680434255:table/HoneycombEstimate-qtqwcovzhrfuddodg66avonjxy-NONE/stream/2026-10-29T20:08:40.104"
+    },
+    {
+      "logical": "activityloglambdaDynamoDBEventSourceamplifyd1nuh9rw1hcuxomainbranch0e4fdbd849dataamplifyDataDoApplicationCustomTableDoApplicationTableD02DD52CB1C7B17AMigrationLiveV1",
+      "uuid": "201a7110-412a-4edf-b121-e0b874057e81",
+      "functionArn": "arn:aws:lambda:us-east-1:917680434255:function:amplify-d1nuh9rw1hcuxo-ma-activityloglambda79E0521-AotWGxt7m05Y",
+      "streamArn": "arn:aws:dynamodb:us-east-1:917680434255:table/DoApplication-qtqwcovzhrfuddodg66avonjxy-NONE/stream/2026-10-29T20:08:39.397"
+    },
+    {
+      "logical": "activityloglambdaDynamoDBEventSourceamplifyd1nuh9rw1hcuxomainbranch0e4fdbd849dataamplifyDataContactCustomTableContactTable0B53708892DC0EABMigrationLiveV1",
+      "uuid": "361dcad3-6cdb-472e-b719-36e51b47179a",
+      "functionArn": "arn:aws:lambda:us-east-1:917680434255:function:amplify-d1nuh9rw1hcuxo-ma-activityloglambda79E0521-AotWGxt7m05Y",
+      "streamArn": "arn:aws:dynamodb:us-east-1:917680434255:table/Contact-qtqwcovzhrfuddodg66avonjxy-NONE/stream/2026-10-29T20:09:39.835"
+    },
+    {
+      "logical": "activityloglambdaDynamoDBEventSourceamplifyd1nuh9rw1hcuxomainbranch0e4fdbd849dataamplifyDataPriorCarrierCustomTablePriorCarrierTable5740540CD9CAC96BMigrationLiveV1",
+      "uuid": "3ba11d35-fe24-4fa7-9448-8f44ec7834f6",
+      "functionArn": "arn:aws:lambda:us-east-1:917680434255:function:amplify-d1nuh9rw1hcuxo-ma-activityloglambda79E0521-AotWGxt7m05Y",
+      "streamArn": "arn:aws:dynamodb:us-east-1:917680434255:table/PriorCarrier-qtqwcovzhrfuddodg66avonjxy-NONE/stream/2026-10-29T20:08:39.263"
+    },
+    {
+      "logical": "activityloglambdaDynamoDBEventSourceamplifyd1nuh9rw1hcuxomainbranch0e4fdbd849dataamplifyDataCertificateCustomTableCertificateTable5F370BBF6F908134MigrationLiveV1",
+      "uuid": "46a422f1-afab-4ce0-bd06-f9708cf7de7e",
+      "functionArn": "arn:aws:lambda:us-east-1:917680434255:function:amplify-d1nuh9rw1hcuxo-ma-activityloglambda79E0521-AotWGxt7m05Y",
+      "streamArn": "arn:aws:dynamodb:us-east-1:917680434255:table/Certificate-qtqwcovzhrfuddodg66avonjxy-NONE/stream/2026-10-29T20:08:39.362"
+    },
+    {
+      "logical": "activityloglambdaDynamoDBEventSourceamplifyd1nuh9rw1hcuxomainbranch0e4fdbd849dataamplifyDataPolicyCustomTablePolicyTable21B44392A352FAD7MigrationLiveV1",
+      "uuid": "57c4eb4f-95ef-437d-863c-ecadc0a179ab",
+      "functionArn": "arn:aws:lambda:us-east-1:917680434255:function:amplify-d1nuh9rw1hcuxo-ma-activityloglambda79E0521-AotWGxt7m05Y",
+      "streamArn": "arn:aws:dynamodb:us-east-1:917680434255:table/Policy-qtqwcovzhrfuddodg66avonjxy-NONE/stream/2026-10-29T20:08:39.932"
+    },
+    {
+      "logical": "communicationworkerlambdaDynamoDBEventSourceamplifyd1nuh9rw1hcuxomainbranch0e4fdbd849dataamplifyDataQuoteCustomTableQuoteTable641730920A2920F5MigrationLiveV1",
+      "uuid": "59461e24-1d2b-48b9-b9ba-56d958f30310",
+      "functionArn": "arn:aws:lambda:us-east-1:917680434255:function:amplify-d1nuh9rw1hcuxo-ma-communicationworkerlambd-EJO1JN1iMSkI",
+      "streamArn": "arn:aws:dynamodb:us-east-1:917680434255:table/Quote-qtqwcovzhrfuddodg66avonjxy-NONE/stream/2026-10-29T20:08:44.715"
+    },
+    {
+      "logical": "activityloglambdaDynamoDBEventSourceamplifyd1nuh9rw1hcuxomainbranch0e4fdbd849dataamplifyDataBuildingCustomTableBuildingTable1D2DAE4CACFFD508MigrationLiveV1",
+      "uuid": "73cd2665-5cf1-47d3-85ea-1c748b7a0e79",
+      "functionArn": "arn:aws:lambda:us-east-1:917680434255:function:amplify-d1nuh9rw1hcuxo-ma-activityloglambda79E0521-AotWGxt7m05Y",
+      "streamArn": "arn:aws:dynamodb:us-east-1:917680434255:table/Building-qtqwcovzhrfuddodg66avonjxy-NONE/stream/2026-10-29T20:09:40.713"
+    },
+    {
+      "logical": "activityloglambdaDynamoDBEventSourceamplifyd1nuh9rw1hcuxomainbranch0e4fdbd849dataamplifyDataGlApplicationCustomTableGlApplicationTable2D3EEB06355C7074MigrationLiveV1",
+      "uuid": "77f89906-e4f7-498f-b541-b8dbb0d3b9bc",
+      "functionArn": "arn:aws:lambda:us-east-1:917680434255:function:amplify-d1nuh9rw1hcuxo-ma-activityloglambda79E0521-AotWGxt7m05Y",
+      "streamArn": "arn:aws:dynamodb:us-east-1:917680434255:table/GlApplication-qtqwcovzhrfuddodg66avonjxy-NONE/stream/2026-10-29T20:08:39.822"
+    },
+    {
+      "logical": "communicationworkerlambdaDynamoDBEventSourceamplifyd1nuh9rw1hcuxomainbranch0e4fdbd849dataamplifyDataPolicyCustomTablePolicyTable21B4439283E49621MigrationLiveV1",
+      "uuid": "7b8c225e-0de1-40e6-a92c-c6d213804a65",
+      "functionArn": "arn:aws:lambda:us-east-1:917680434255:function:amplify-d1nuh9rw1hcuxo-ma-communicationworkerlambd-EJO1JN1iMSkI",
+      "streamArn": "arn:aws:dynamodb:us-east-1:917680434255:table/Policy-qtqwcovzhrfuddodg66avonjxy-NONE/stream/2026-10-29T20:08:39.932"
+    },
+    {
+      "logical": "communicationworkerlambdaDynamoDBEventSourceamplifyd1nuh9rw1hcuxomainbranch0e4fdbd849dataamplifyDataDocumentCustomTableDocumentTableAE1D87A4EA8C9BB4MigrationLiveV1",
+      "uuid": "8324ebbb-694e-4d9e-a41f-ee2da6d31c72",
+      "functionArn": "arn:aws:lambda:us-east-1:917680434255:function:amplify-d1nuh9rw1hcuxo-ma-communicationworkerlambd-EJO1JN1iMSkI",
+      "streamArn": "arn:aws:dynamodb:us-east-1:917680434255:table/Document-qtqwcovzhrfuddodg66avonjxy-NONE/stream/2026-10-29T20:08:39.204"
+    },
+    {
+      "logical": "activityloglambdaDynamoDBEventSourceamplifyd1nuh9rw1hcuxomainbranch0e4fdbd849dataamplifyDataGlClassCodeCustomTableGlClassCodeTableE61E89BB1D3F237CMigrationLiveV1",
+      "uuid": "86761483-4c83-4cf9-b1bd-2e708d4ea5fd",
+      "functionArn": "arn:aws:lambda:us-east-1:917680434255:function:amplify-d1nuh9rw1hcuxo-ma-activityloglambda79E0521-AotWGxt7m05Y",
+      "streamArn": "arn:aws:dynamodb:us-east-1:917680434255:table/GlClassCode-qtqwcovzhrfuddodg66avonjxy-NONE/stream/2026-10-29T20:08:39.998"
+    },
+    {
+      "logical": "communicationworkerlambdaDynamoDBEventSourceamplifyd1nuh9rw1hcuxomainbranch0e4fdbd849dataamplifyDataCertificateCustomTableCertificateTable5F370BBF09044EC7MigrationLiveV1",
+      "uuid": "8e40b72c-89f4-4b51-9db5-45a97ef17723",
+      "functionArn": "arn:aws:lambda:us-east-1:917680434255:function:amplify-d1nuh9rw1hcuxo-ma-communicationworkerlambd-EJO1JN1iMSkI",
+      "streamArn": "arn:aws:dynamodb:us-east-1:917680434255:table/Certificate-qtqwcovzhrfuddodg66avonjxy-NONE/stream/2026-10-29T20:08:39.362"
+    },
+    {
+      "logical": "activityloglambdaDynamoDBEventSourceamplifyd1nuh9rw1hcuxomainbranch0e4fdbd849dataamplifyDataInvoiceCustomTableInvoiceTable7955C6FFD2D648B5MigrationLiveV1",
+      "uuid": "8e9ddc3d-a377-477a-aabc-0366e252421d",
+      "functionArn": "arn:aws:lambda:us-east-1:917680434255:function:amplify-d1nuh9rw1hcuxo-ma-activityloglambda79E0521-AotWGxt7m05Y",
+      "streamArn": "arn:aws:dynamodb:us-east-1:917680434255:table/Invoice-qtqwcovzhrfuddodg66avonjxy-NONE/stream/2026-10-29T20:08:39.631"
+    },
+    {
+      "logical": "activityloglambdaDynamoDBEventSourceamplifyd1nuh9rw1hcuxomainbranch0e4fdbd849dataamplifyDataDoCoveragePartCustomTableDoCoveragePartTableBFCE98331A2C6A95MigrationLiveV1",
+      "uuid": "9bb9588e-e84c-4f45-b891-aed7ae6aa593",
+      "functionArn": "arn:aws:lambda:us-east-1:917680434255:function:amplify-d1nuh9rw1hcuxo-ma-activityloglambda79E0521-AotWGxt7m05Y",
+      "streamArn": "arn:aws:dynamodb:us-east-1:917680434255:table/DoCoveragePart-qtqwcovzhrfuddodg66avonjxy-NONE/stream/2026-10-29T20:08:39.158"
+    },
+    {
+      "logical": "activityloglambdaDynamoDBEventSourceamplifyd1nuh9rw1hcuxomainbranch0e4fdbd849dataamplifyDataAccountCustomTableAccountTableA0901AF5D39C44E4MigrationLiveV1",
+      "uuid": "c4e7e978-77a0-4786-90bf-e0aed5eb22e7",
+      "functionArn": "arn:aws:lambda:us-east-1:917680434255:function:amplify-d1nuh9rw1hcuxo-ma-activityloglambda79E0521-AotWGxt7m05Y",
+      "streamArn": "arn:aws:dynamodb:us-east-1:917680434255:table/Account-qtqwcovzhrfuddodg66avonjxy-NONE/stream/2026-10-29T20:08:39.464"
+    },
+    {
+      "logical": "communicationworkerlambdaDynamoDBEventSourceamplifyd1nuh9rw1hcuxomainbranch0e4fdbd849dataamplifyDataAccountCustomTableAccountTableA0901AF5ACA208C7MigrationLiveV1",
+      "uuid": "cda04e98-232e-46e1-a80c-b5fb13fd3c18",
+      "functionArn": "arn:aws:lambda:us-east-1:917680434255:function:amplify-d1nuh9rw1hcuxo-ma-communicationworkerlambd-EJO1JN1iMSkI",
+      "streamArn": "arn:aws:dynamodb:us-east-1:917680434255:table/Account-qtqwcovzhrfuddodg66avonjxy-NONE/stream/2026-10-29T20:08:39.464"
+    },
+    {
+      "logical": "activityloglambdaDynamoDBEventSourceamplifyd1nuh9rw1hcuxomainbranch0e4fdbd849dataamplifyDataDocumentCustomTableDocumentTableAE1D87A4398AFB64MigrationLiveV1",
+      "uuid": "dda81349-568b-4436-bee6-a8e3d4108545",
+      "functionArn": "arn:aws:lambda:us-east-1:917680434255:function:amplify-d1nuh9rw1hcuxo-ma-activityloglambda79E0521-AotWGxt7m05Y",
+      "streamArn": "arn:aws:dynamodb:us-east-1:917680434255:table/Document-qtqwcovzhrfuddodg66avonjxy-NONE/stream/2026-10-29T20:08:39.204"
+    },
+    {
+      "logical": "activityloglambdaDynamoDBEventSourceamplifyd1nuh9rw1hcuxomainbranch0e4fdbd849dataamplifyDataLossCustomTableLossTableAE6074D671172228MigrationLiveV1",
+      "uuid": "f15ad4e5-ab9f-4a6d-93b9-73569c4b4862",
+      "functionArn": "arn:aws:lambda:us-east-1:917680434255:function:amplify-d1nuh9rw1hcuxo-ma-activityloglambda79E0521-AotWGxt7m05Y",
+      "streamArn": "arn:aws:dynamodb:us-east-1:917680434255:table/Loss-qtqwcovzhrfuddodg66avonjxy-NONE/stream/2026-10-29T20:08:39.963"
+    }
+  ],
+  "schedules": [
+    {
+      "logical": "assignmentindexworkerlambdaschedule00833DCD7",
+      "name": "amplify-d1nuh9rw1hcuxo-ma-assignmentindexworkerlam-1D7VBU8YC57J3",
+      "state": "ENABLED",
+      "functionArn": "arn:aws:lambda:us-east-1:917680434255:function:amplify-d1nuh9rw1hcuxo-ma-assignmentindexworkerlam-ovVzv5dQuWqQ",
+      "scheduleExpression": "cron(* * * * ? *)",
+      "scheduleExpressionTimezone": "America/New_York",
+      "flexibleTimeWindow": {
+        "Mode": "OFF"
+      },
+      "target": {
+        "Arn": "arn:aws:lambda:us-east-1:917680434255:function:amplify-d1nuh9rw1hcuxo-ma-assignmentindexworkerlam-ovVzv5dQuWqQ",
+        "RetryPolicy": {
+          "MaximumEventAgeInSeconds": 86400,
+          "MaximumRetryAttempts": 185
+        },
+        "RoleArn": "arn:aws:iam::917680434255:role/amplify-d1nuh9rw1hcuxo-ma-SchedulerRoleForTarget97a-J5OGHyPSUEAA"
+      }
+    },
+    {
+      "logical": "communicationmonitorlambdaschedule05BEDE96B",
+      "name": "amplify-d1nuh9rw1hcuxo-ma-communicationmonitorlamb-6QVHNUD9ZOYV",
+      "state": "ENABLED",
+      "functionArn": "arn:aws:lambda:us-east-1:917680434255:function:amplify-d1nuh9rw1hcuxo-ma-communicationmonitorlamb-YKo0m6ibNGov",
+      "scheduleExpression": "cron(0/5 * * * ? *)",
+      "scheduleExpressionTimezone": "America/New_York",
+      "flexibleTimeWindow": {
+        "Mode": "OFF"
+      },
+      "target": {
+        "Arn": "arn:aws:lambda:us-east-1:917680434255:function:amplify-d1nuh9rw1hcuxo-ma-communicationmonitorlamb-YKo0m6ibNGov",
+        "RetryPolicy": {
+          "MaximumEventAgeInSeconds": 86400,
+          "MaximumRetryAttempts": 185
+        },
+        "RoleArn": "arn:aws:iam::917680434255:role/amplify-d1nuh9rw1hcuxo-ma-SchedulerRoleForTargetdf1-Bp1jpzeAcPNW"
+      }
+    },
+    {
+      "logical": "communicationworkerlambdaschedule0280CB28A",
+      "name": "amplify-d1nuh9rw1hcuxo-ma-communicationworkerlambd-VTCE99L8RX65",
+      "state": "ENABLED",
+      "functionArn": "arn:aws:lambda:us-east-1:917680434255:function:amplify-d1nuh9rw1hcuxo-ma-communicationworkerlambd-EJO1JN1iMSkI",
+      "scheduleExpression": "cron(* * * * ? *)",
+      "scheduleExpressionTimezone": "America/New_York",
+      "flexibleTimeWindow": {
+        "Mode": "OFF"
+      },
+      "target": {
+        "Arn": "arn:aws:lambda:us-east-1:917680434255:function:amplify-d1nuh9rw1hcuxo-ma-communicationworkerlambd-EJO1JN1iMSkI",
+        "RetryPolicy": {
+          "MaximumEventAgeInSeconds": 86400,
+          "MaximumRetryAttempts": 185
+        },
+        "RoleArn": "arn:aws:iam::917680434255:role/amplify-d1nuh9rw1hcuxo-ma-SchedulerRoleForTargetc88-qlTv19On0Ftu"
+      }
+    },
+    {
+      "logical": "leadreplylambdaschedule082F21264",
+      "name": "amplify-d1nuh9rw1hcuxo-ma-leadreplylambdaschedule0-7YR2HU8L9VZO",
+      "state": "ENABLED",
+      "functionArn": "arn:aws:lambda:us-east-1:917680434255:function:amplify-d1nuh9rw1hcuxo-mai-leadreplylambda34723379-8VuS7J21ORmr",
+      "scheduleExpression": "cron(* * * * ? *)",
+      "scheduleExpressionTimezone": "America/New_York",
+      "flexibleTimeWindow": {
+        "Mode": "OFF"
+      },
+      "target": {
+        "Arn": "arn:aws:lambda:us-east-1:917680434255:function:amplify-d1nuh9rw1hcuxo-mai-leadreplylambda34723379-8VuS7J21ORmr",
+        "RetryPolicy": {
+          "MaximumEventAgeInSeconds": 86400,
+          "MaximumRetryAttempts": 185
+        },
+        "RoleArn": "arn:aws:iam::917680434255:role/amplify-d1nuh9rw1hcuxo-ma-SchedulerRoleForTarget433-HFm9dfRNth45"
+      }
+    },
+    {
+      "logical": "pfautopaylambdaschedule02EA392E2",
+      "name": "amplify-d1nuh9rw1hcuxo-ma-pfautopaylambdaschedule0-1W7QRPF4D8EX1",
+      "state": "ENABLED",
+      "functionArn": "arn:aws:lambda:us-east-1:917680434255:function:amplify-d1nuh9rw1hcuxo-mai-pfautopaylambda16FC737B-G24Lm0RsNXFo",
+      "scheduleExpression": "cron(15 6 * * ? *)",
+      "scheduleExpressionTimezone": "America/New_York",
+      "flexibleTimeWindow": {
+        "Mode": "OFF"
+      },
+      "target": {
+        "Arn": "arn:aws:lambda:us-east-1:917680434255:function:amplify-d1nuh9rw1hcuxo-mai-pfautopaylambda16FC737B-G24Lm0RsNXFo",
+        "RetryPolicy": {
+          "MaximumEventAgeInSeconds": 86400,
+          "MaximumRetryAttempts": 185
+        },
+        "RoleArn": "arn:aws:iam::917680434255:role/amplify-d1nuh9rw1hcuxo-ma-SchedulerRoleForTargetce8-j4IPSr1ZFeJe"
+      }
+    },
+    {
+      "logical": "pfdefaultsweeplambdaschedule0B509755F",
+      "name": "amplify-d1nuh9rw1hcuxo-ma-pfdefaultsweeplambdasche-2L0KSQ551BYH",
+      "state": "ENABLED",
+      "functionArn": "arn:aws:lambda:us-east-1:917680434255:function:amplify-d1nuh9rw1hcuxo-ma-pfdefaultsweeplambda04E9-EADehqLSAU3A",
+      "scheduleExpression": "cron(45 6 * * ? *)",
+      "scheduleExpressionTimezone": "America/New_York",
+      "flexibleTimeWindow": {
+        "Mode": "OFF"
+      },
+      "target": {
+        "Arn": "arn:aws:lambda:us-east-1:917680434255:function:amplify-d1nuh9rw1hcuxo-ma-pfdefaultsweeplambda04E9-EADehqLSAU3A",
+        "RetryPolicy": {
+          "MaximumEventAgeInSeconds": 86400,
+          "MaximumRetryAttempts": 185
+        },
+        "RoleArn": "arn:aws:iam::917680434255:role/amplify-d1nuh9rw1hcuxo-ma-SchedulerRoleForTarget0e4-8YXxcWjbSJ06"
+      }
+    },
+    {
+      "logical": "portalsweeplambdaschedule030644F35",
+      "name": "amplify-d1nuh9rw1hcuxo-ma-portalsweeplambdaschedul-O8IH2242MV0U",
+      "state": "ENABLED",
+      "functionArn": "arn:aws:lambda:us-east-1:917680434255:function:amplify-d1nuh9rw1hcuxo-ma-portalsweeplambdaD5D5E9E-dn1EiIvhndNF",
+      "scheduleExpression": "cron(*/10 * * * ? *)",
+      "scheduleExpressionTimezone": "America/New_York",
+      "flexibleTimeWindow": {
+        "Mode": "OFF"
+      },
+      "target": {
+        "Arn": "arn:aws:lambda:us-east-1:917680434255:function:amplify-d1nuh9rw1hcuxo-ma-portalsweeplambdaD5D5E9E-dn1EiIvhndNF",
+        "RetryPolicy": {
+          "MaximumEventAgeInSeconds": 86400,
+          "MaximumRetryAttempts": 185
+        },
+        "RoleArn": "arn:aws:iam::917680434255:role/amplify-d1nuh9rw1hcuxo-ma-SchedulerRoleForTarget436-89uiSnNzuQr2"
+      }
+    },
+    {
+      "logical": "WeeklyMarketingReportSchedule6899ACFF",
+      "name": "marketing-report-bd849dataamplifyDataL2GraphqlApi160B9952",
+      "state": "ENABLED",
+      "functionArn": "arn:aws:lambda:us-east-1:917680434255:function:marketing-report-mplifyd1nuh9rw1hcuxomainbranch0e4fdbd849",
+      "scheduleExpression": "cron(0 8 ? * FRI *)",
+      "scheduleExpressionTimezone": "America/New_York",
+      "flexibleTimeWindow": {
+        "Mode": "OFF"
+      },
+      "target": {
+        "Arn": "arn:aws:lambda:us-east-1:917680434255:function:marketing-report-mplifyd1nuh9rw1hcuxomainbranch0e4fdbd849",
+        "Input": "{\"trigger\":\"scheduled\",\"scheduleArn\":\"<aws.scheduler.schedule-arn>\",\"scheduledAt\":\"<aws.scheduler.scheduled-time>\"}",
+        "RetryPolicy": {
+          "MaximumEventAgeInSeconds": 3600,
+          "MaximumRetryAttempts": 2
+        },
+        "RoleArn": "arn:aws:iam::917680434255:role/amplify-d1nuh9rw1hcuxo-ma-SchedulerRoleForTargetaa5-Y2HWjv8Z0v2a"
+      }
+    }
+  ]
+}

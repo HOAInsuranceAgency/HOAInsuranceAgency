@@ -136,11 +136,12 @@ try {
   // Imported for its side effects first: this is where construct constructors
   // run, and where the W7 bug threw.
   const { backend } = await import("../amplify/backend");
-  const { migrationPreview, migrationExecution, providerBranch, businessBranch } = await import("../amplify/migration-config");
+  const { migrationDestination, migrationPreview, migrationExecution, providerBranch, businessBranch } = await import("../amplify/migration-config");
 
   // Then the assembly itself, which is the half an import alone would miss.
   const app = backend.stack.node.root as App;
   const assembly = app.synth();
+  if (migrationDestination && !backend.stack.terminationProtection) throw new Error("Destination backend root must retain termination protection");
   // Retirement must remove both deployment registration and scheduled delivery.
   // Historical tables remain available, but no old daily mail job is deployed.
   const retiredJobs = ["taskDigest", "opsRollup", "licenseAlerts", "communicationReports", "renewalTasks"];
@@ -344,7 +345,8 @@ try {
   if (process.env.HOA_SYNTH_EVIDENCE_DIR) {
     const { cpSync, mkdirSync } = await import("node:fs");
     mkdirSync(process.env.HOA_SYNTH_EVIDENCE_DIR, { recursive: true });
-    // Templates only: avoid copying private build assets or dependency bundles.
+    // Preserve assembly protection metadata and templates, never private build assets.
+    cpSync(join(outdir, "manifest.json"), join(process.env.HOA_SYNTH_EVIDENCE_DIR, "manifest.json"));
     for (const name of readdirSync(outdir).filter(name => name.endsWith(".template.json"))) cpSync(join(outdir, name), join(process.env.HOA_SYNTH_EVIDENCE_DIR, name));
   }
   rmSync(outdir, { recursive: true, force: true });

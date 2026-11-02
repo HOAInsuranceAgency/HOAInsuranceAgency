@@ -1,9 +1,13 @@
+import { assertSteadyState } from "../amplify/steady-state.mjs";
+import { verifySteadyState } from "./verify-steady-state.mjs";
 import { verifyMigrationProbe } from "./verify-migration-probe.mjs";
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 const targets = JSON.parse(readFileSync(new URL("../amplify/migration-targets.json", import.meta.url), "utf8"));
 const branch = process.env.AWS_BRANCH ?? "";
 const binding = targets.branches[branch];
+const steady = binding?.steadyState === true;
+const steadyContract = JSON.parse(readFileSync(new URL("../amplify/steady-state-main.json", import.meta.url), "utf8"));
 if (binding) {
   const app = process.env.AWS_APP_ID;
   if (!/^[a-z0-9]+$/.test(targets.crmApp) || !/^[a-z0-9]+$/.test(targets.webApp)
@@ -25,6 +29,10 @@ if (binding) {
       throw new Error("Backend namespace branches must stay dormant while migration previews are built separately.");
     }
   }
+  if (steady) {
+    assertSteadyState(process.env, steadyContract);
+    if (app === targets.crmApp) verifySteadyState(namespaceBranch, steadyContract, aws);
+  }
   if (app === targets.webApp && (!binding.graphqlUrl || process.env.PUBLIC_CRM_API_URL !== binding.graphqlUrl)) {
     throw new Error("The website must target its verified destination CRM API.");
   }
@@ -36,7 +44,7 @@ if (binding) {
       if (process.env[key]) throw new Error("Provider credentials must be absent from the migration preview.");
     }
   }
-  if (app === targets.crmApp && process.env.HOA_MIGRATION_PREVIEW === "false") {
+  if (!steady && app === targets.crmApp && process.env.HOA_MIGRATION_PREVIEW === "false") {
     if (!["true", "false"].includes(process.env.HOA_MIGRATION_WORKERS_ENABLED ?? "")) throw new Error("Choose an explicit held or active worker phase.");
     if (process.env.HOA_MIGRATION_WORKERS_ENABLED === "false") {
       if (process.env.HOA_MIGRATION_STREAM_PHASE !== "armed" || process.env.HOA_MIGRATION_SCHEDULES_ENABLED === "true" || process.env.HOA_TRANSACTIONAL_MAIL_RELEASE === "true") throw new Error("Primed APIs must retain worker, schedule and mail fences.");
@@ -51,7 +59,7 @@ if (binding) {
       if (process.env.HOA_MIGRATION_STREAM_PROBE_ENABLED === "true") verifyMigrationProbe(process.env.HOA_MIGRATION_STREAM_PROBE_SCOPE_MANIFEST, receipt, namespaceBranch?.backend?.stackArn, targets, binding.backendBranch, aws);
     }
   }
-  if (app === targets.crmApp && process.env.HOA_MIGRATION_PREVIEW === "false" && process.env.HOA_MIGRATION_WORKERS_ENABLED === "true") {
+  if (!steady && app === targets.crmApp && process.env.HOA_MIGRATION_PREVIEW === "false" && process.env.HOA_MIGRATION_WORKERS_ENABLED === "true") {
     if (process.env.HOA_MIGRATION_STREAM_PHASE !== "armed") throw new Error("Release requires separately armed streams.");
     let receipt;
     try { receipt = JSON.parse(process.env.HOA_MIGRATION_RELEASE_RECEIPT ?? ""); } catch { throw new Error("Release needs a reviewed final-copy and pending-work receipt."); }

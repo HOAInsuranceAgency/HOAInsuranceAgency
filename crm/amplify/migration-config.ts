@@ -1,9 +1,14 @@
 import { resolveMigrationRelease } from "./migration-release";
 import targets from "./migration-targets.json";
+import steadyStateMain from "./steady-state-main.json";
+import { assertSteadyState } from "./steady-state.mjs";
 
 const branch = process.env.AWS_BRANCH ?? "";
 const retained = targets.branches[branch as keyof typeof targets.branches];
 export const migrationDestination = !!retained;
+export const steadyStateDeployment = !!retained && "steadyState" in retained && retained.steadyState === true;
+export const migrationRuntimeBranch = retained && "runtimeBranch" in retained ? retained.runtimeBranch : branch;
+if (steadyStateDeployment) assertSteadyState(process.env, steadyStateMain);
 export const migrationPreview = migrationDestination && process.env.HOA_MIGRATION_PREVIEW === "true";
 export const businessBranch = retained?.businessEnvironment ?? branch;
 export const migrationCrmOrigin = retained ? `https://${retained.alias}.${targets.crmApp}.amplifyapp.com` : "";
@@ -16,7 +21,7 @@ export const providerBranch = migrationDestination && migrationExecution.holdBus
 export { targets as migrationTargets };
 
 if (migrationDestination) {
-  if (!migrationPreview) {
+  if (!migrationPreview && !steadyStateDeployment) {
     const receipt = JSON.parse(process.env[migrationExecution.workersEnabled ? "HOA_MIGRATION_RELEASE_RECEIPT" : "HOA_MIGRATION_PREPARE_RECEIPT"] ?? "null");
     const cutoff = Date.parse(receipt?.finalSyncCompletedAt ?? "");
     if (receipt?.account !== targets.account || receipt?.app !== targets.crmApp || receipt?.branch !== branch

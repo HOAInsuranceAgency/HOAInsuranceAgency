@@ -15,6 +15,14 @@
       "alias": "migration-staging",
       "graphqlUrl": "https://6ibyan35zrfixjwpspnoi6dc2q.appsync-api.us-east-1.amazonaws.com/graphql",
       "backendBranch": "staging"
+    },
+    "main": {
+      "businessEnvironment": "main",
+      "alias": "migration",
+      "graphqlUrl": "https://7n7x6zvx4ze7nixu2lkjcmkteq.appsync-api.us-east-1.amazonaws.com/graphql",
+      "backendBranch": "main",
+      "runtimeBranch": "codex-hoa-account-migration",
+      "steadyState": true
     }
   }
 }

@@ -2,7 +2,7 @@ import { migrationProbeScopes } from "./migration-probe-scopes";
 import { installTransactionalMail } from "./transactional-mail";
 import { mailFeedback } from "./functions/mail-feedback/resource";
 import { mailVerification, mailRecovery } from "./functions/transactional-mail/resource";
-import { migrationDestination, migrationPreview, migrationTargets, businessBranch, providerBranch, migrationCrmOrigin, migrationWebOrigin, migrationExecution } from "./migration-config";
+import { migrationDestination, migrationPreview, migrationTargets, businessBranch, providerBranch, migrationCrmOrigin, migrationWebOrigin, migrationExecution, migrationRuntimeBranch } from "./migration-config";
 import { installMigrationPreview } from "./migration-preview";
 import { commissions } from './functions/commissions/resource';
 import { installCommissions } from './commissions';
@@ -1064,6 +1064,9 @@ installCommissions(backend, communicationTable);
 // destination branch. Hosted migration branches consume the generated outputs;
 // Amplify requires branchName to match the branch encoded in the stack ARN.
 
+// Preserve the already-protected root on every destination pipeline update.
+if (migrationDestination) backend.stack.terminationProtection = true;
+
 // Apply preview isolation after all normal resources exist, preserving their identities.
 if (migrationDestination) {
   const scopes = migrationProbeScopes(migrationExecution.streamProbeEnabled, process.env.HOA_MIGRATION_STREAM_PROBE_SCOPE_MANIFEST, process.env.HOA_MIGRATION_PREPARE_RECEIPT);
@@ -1074,5 +1077,5 @@ installMigrationPreview(backend);
 
 if (migrationDestination) backend.addOutput({ custom: { migration: {
   account: migrationTargets.account, appId: migrationTargets.crmApp,
-  branch: process.env.AWS_BRANCH!, preview: String(migrationPreview),
+  branch: migrationRuntimeBranch, preview: String(migrationPreview),
 } } });
