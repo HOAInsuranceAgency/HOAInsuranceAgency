@@ -59,7 +59,11 @@ environment: `https://staging.d2d4g940z91vj4.amplifyapp.com/` on staging,
 `http://localhost:5173/` for a local sandbox. Update the auth URL configuration
 when changing CRM domains. Google returns users to the CRM root.
 
-The existing staging app is `d2d4g940z91vj4` in `us-east-1`. Its deterministic
+The staging Google Cloud project is `protectmyhoa-crm-staging` (HOA CRM Staging),
+managed by the business Google account. The older `hoas-448114` project is
+separate and is not used by this staging setup.
+
+The existing staging AWS app is `d2d4g940z91vj4` in `us-east-1`. Its deterministic
 Cognito origin is
 `https://231bd86184627538ae01.auth.us-east-1.amazoncognito.com`, and its Google
 redirect URI is
