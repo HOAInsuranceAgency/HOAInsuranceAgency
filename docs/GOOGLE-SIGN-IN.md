@@ -62,6 +62,9 @@ when changing CRM domains. Google returns users to the CRM root.
 The staging Google Cloud project is `protectmyhoa-crm-staging` (HOA CRM Staging),
 managed by the business Google account. The older `hoas-448114` project is
 separate and is not used by this staging setup.
+The Google client is named `HOA CRM Staging`. Its audience is **External /
+Testing**, with `jake@getgim.com` as the test user. Another staging tester must
+be added to Google's test-user list as well as invited to the CRM team.
 
 The existing staging AWS app is `d2d4g940z91vj4` in `us-east-1`. Its deterministic
 Cognito origin is

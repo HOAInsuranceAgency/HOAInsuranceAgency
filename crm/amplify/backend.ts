@@ -23,6 +23,7 @@ import { Schedule, ScheduleExpression, ScheduleTargetInput, ContextAttribute } f
 import { LambdaInvoke } from "aws-cdk-lib/aws-scheduler-targets";
 import { Policy, PolicyStatement } from "aws-cdk-lib/aws-iam";
 import { Secret } from "aws-cdk-lib/aws-secretsmanager";
+import { CfnUserPoolIdentityProvider } from "aws-cdk-lib/aws-cognito";
 import {
   AttributeType,
   BillingMode,
@@ -283,6 +284,15 @@ if (googleSignInEnabled) {
   // Managed login must offer only Google. This setting does not disable the
   // SDK custom-auth API used by our existing email links.
   cfnUserPoolClient.supportedIdentityProviders = ["Google"];
+  // The literal above replaces CDK's provider-name Ref, which otherwise
+  // orders provider creation before the client enables it. Retain that edge
+  // explicitly or Cognito can reject the client update during deployment.
+  const googleProvider = backend.auth.resources.userPool.identityProviders
+    .map(provider => provider.node.defaultChild)
+    .find((provider): provider is CfnUserPoolIdentityProvider =>
+      provider instanceof CfnUserPoolIdentityProvider && provider.providerType === "Google");
+  if (!googleProvider) throw new Error("Google sign-in requires a Google identity provider");
+  cfnUserPoolClient.addResourceDependency(googleProvider);
 }
 
 // Stay signed in for 7 days (refresh token lifetime).
