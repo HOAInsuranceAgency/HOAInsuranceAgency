@@ -142,6 +142,8 @@ try {
   const app = backend.stack.node.root as App;
   const assembly = app.synth();
   if (migrationDestination && !backend.stack.terminationProtection) throw new Error("Destination backend root must retain termination protection");
+  const { checkGoogleSignIn } = await import("./check-google-sign-in");
+  checkGoogleSignIn(backend);
   // Retirement must remove both deployment registration and scheduled delivery.
   // Historical tables remain available, but no old daily mail job is deployed.
   const retiredJobs = ["taskDigest", "opsRollup", "licenseAlerts", "communicationReports", "renewalTasks"];

@@ -36,7 +36,7 @@ export function checkMigrationPreview(backend: any, outdir: string) {
     }
   }
   require(mutations > 100 && mappings >= 22 && schedules >= 8, "expected writer inventory missing from synth");
-  const auth = new Set(["magicLinkDefine", "magicLinkCreate", "magicLinkVerify", "migrationNativeMessage", "mailFeedback", "mailVerification"]);
+  const auth = new Set(["magicLinkDefine", "magicLinkCreate", "magicLinkVerify", "migrationNativeMessage", "googleSignIn", "mailFeedback", "mailVerification"]);
   const reads = new Set(["crmAccess", "communications", "commissions", "ownerProfitability", "migrateProducerLicenses"]);
   const guard = backend.stack.node.root.node.findAll().find((n: any) => n.node.id === "ReadOnlyBusinessFunctions");
   require(guard, "missing shared preview deny policy");
@@ -53,7 +53,36 @@ export function checkMigrationPreview(backend: any, outdir: string) {
     const stack = Stack.of(cfn), template = JSON.parse(readFileSync(join(outdir, stack.templateFile), "utf8"));
     const deployed = template.Resources[stack.getLogicalId(cfn)];
     require(deployed.Properties.Environment.Variables.HOA_MIGRATION_PREVIEW === "true", `missing mode for ${name}`);
-    if (auth.has(name)) continue;
+    if (auth.has(name)) {
+      if (name === "googleSignIn") {
+        require(deployed.Properties.ReservedConcurrentExecutions !== 0, "invite-only signup guard is paused");
+        // It must handle AdminCreateUser, but Google account linking is a
+        // mutation and must have no execution grant while preview is held.
+        const role = fn.role.node.defaultChild as CfnResource, roleStack = Stack.of(role), roleId = roleStack.getLogicalId(role);
+        const roleTemplate = JSON.parse(readFileSync(join(outdir, roleStack.templateFile), "utf8"));
+        const roleProps = roleTemplate.Resources[roleId].Properties;
+        const roleRef = JSON.stringify({ Ref: roleId });
+        const referencesRole = (value: unknown) => JSON.stringify(value) === roleRef;
+        const documents = [
+          ...(roleProps.Policies ?? []).map((policy: any) => policy.PolicyDocument),
+          ...Object.entries(roleTemplate.Resources).flatMap(([id, resource]) => {
+            const policy = resource as Resource, props = policy.Properties ?? {};
+            const attached = policy.Type === "AWS::IAM::RolePolicy"
+              ? referencesRole(props.RoleName)
+              : ["AWS::IAM::Policy", "AWS::IAM::ManagedPolicy"].includes(policy.Type) &&
+                ((props.Roles ?? []).some(referencesRole) ||
+                  (roleProps.ManagedPolicyArns ?? []).some((arn: unknown) => JSON.stringify(arn) === JSON.stringify({ Ref: id })));
+            return attached ? [props.PolicyDocument] : [];
+          }),
+        ];
+        const grantsLinking = documents.flatMap(document => document?.Statement ?? []).some(statement =>
+          statement.Effect === "Allow" && [statement.Action].flat().some((action: unknown) =>
+            typeof action === "string" && new RegExp(`^${action.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\\\*/g, ".*").replace(/\\\?/g, ".")}$`, "i")
+              .test("cognito-idp:AdminLinkProviderForUser")));
+        require(!grantsLinking, "preview signup guard can link Google identities");
+      }
+      continue;
+    }
     if (!reads.has(name)) require(deployed.Properties.ReservedConcurrentExecutions === 0, `business function enabled: ${name}`);
     const role = fn.role.node.defaultChild as CfnResource, roleStack = Stack.of(role), roleId = roleStack.getLogicalId(role);
     const roleTemplate = JSON.parse(readFileSync(join(outdir, roleStack.templateFile), "utf8"));

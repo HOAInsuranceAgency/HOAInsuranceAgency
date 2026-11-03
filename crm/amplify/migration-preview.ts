@@ -7,7 +7,9 @@ import { migrationDestination, migrationPreview, migrationTargets, migrationStre
 import { disableBucketNotifications } from "./migration-notifications";
 
 const READ_FUNCTIONS = new Set(["crmAccess", "communications", "commissions", "ownerProfitability"]);
-const AUTH_FUNCTIONS = new Set(["magicLinkDefine", "magicLinkCreate", "magicLinkVerify", "migrationNativeMessage", "mailFeedback", "mailVerification"]);
+// The signup guard must remain callable for AdminCreateUser even while Google
+// OAuth is disabled; it rejects public signup without performing business work.
+const AUTH_FUNCTIONS = new Set(["magicLinkDefine", "magicLinkCreate", "magicLinkVerify", "migrationNativeMessage", "googleSignIn", "mailFeedback", "mailVerification"]);
 export const PREVIEW_DENIED_ACTIONS = [
   "dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:DeleteItem", "dynamodb:BatchWriteItem", "dynamodb:TransactWriteItems",
   "dynamodb:PartiQLInsert", "dynamodb:PartiQLUpdate", "dynamodb:PartiQLDelete",
