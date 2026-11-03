@@ -1,8 +1,15 @@
-import { useEffect, useRef, useState } from "react";
-import { signIn, confirmSignIn } from "aws-amplify/auth";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { signIn, confirmSignIn, signInWithRedirect } from "aws-amplify/auth";
+import {
+  clearGoogleSignInError,
+  getGoogleSignInError,
+  GOOGLE_SIGN_IN_ERROR,
+  isGoogleSignInConfigured,
+  subscribeGoogleSignInError,
+} from "../lib/googleSignIn";
 
 /**
- * Magic-link sign-in (the only sign-in path — no passwords).
+ * Passwordless sign-in for invited teammates, with Google when configured.
  *
  * Request: start a CUSTOM_WITHOUT_SRP sign-in with mode="request"; the
  * createAuthChallenge Lambda emails a link and this session is abandoned.
@@ -19,6 +26,19 @@ export default function MagicLinkSignIn({ embedded = false }: { embedded?: boole
   const consumed = useRef(false);
   const requesting = useRef(false);
   const [sending, setSending] = useState(false);
+  const [redirecting, setRedirecting] = useState(false);
+  const googleError = useSyncExternalStore(subscribeGoogleSignInError, getGoogleSignInError);
+  const googleEnabled = !embedded && isGoogleSignInConfigured();
+  const busy = sending || redirecting;
+
+  useEffect(() => {
+    // Amplify also emits this failure when pageshow restores a cancelled
+    // OAuth flow from bfcache, so browser Back unlocks both sign-in methods.
+    if (googleError) {
+      requesting.current = false;
+      setRedirecting(false);
+    }
+  }, [googleError]);
 
   useEffect(() => {
     const match = window.location.hash.match(/magic=([^&]+)/);
@@ -82,6 +102,7 @@ export default function MagicLinkSignIn({ embedded = false }: { embedded?: boole
     requesting.current = true;
     setSending(true);
     setError("");
+    clearGoogleSignInError();
     try {
       await signIn({
         username: addr,
@@ -98,6 +119,23 @@ export default function MagicLinkSignIn({ embedded = false }: { embedded?: boole
       setSending(false);
     }
     setPhase("sent");
+  }
+
+  async function signInWithGoogle() {
+    if (requesting.current || !googleEnabled) return;
+    requesting.current = true;
+    setRedirecting(true);
+    setError("");
+    clearGoogleSignInError();
+    try {
+      await signInWithRedirect({ provider: "Google" });
+      // A successful call navigates away. Keep both sign-in methods locked
+      // while the browser opens Google rather than starting another session.
+    } catch {
+      requesting.current = false;
+      setRedirecting(false);
+      setError(GOOGLE_SIGN_IN_ERROR);
+    }
   }
 
   return (
@@ -136,29 +174,37 @@ export default function MagicLinkSignIn({ embedded = false }: { embedded?: boole
           </>
         ) : (
           <>
+            {googleEnabled && <>
+              <button className="auth-google" disabled={busy} onClick={signInWithGoogle}>
+                <img src="/images/auth/google-g.png" alt="" width="20" height="20" />
+                {redirecting ? "Opening Google…" : "Continue with Google"}
+              </button>
+              <div className="auth-divider"><span>or use an email link</span></div>
+            </>}
             <p className="muted small" style={{ textAlign: "center" }}>
               Enter your work email and we'll send you a sign-in link.
               No password needed.
             </p>
             <div className="field">
-              <label>Email</label>
+              <label htmlFor="sign-in-email">Email</label>
               <input
+                id="sign-in-email"
                 type="email"
                 autoFocus
                 value={email}
-                disabled={sending}
+                disabled={busy}
                 onChange={(e) => setEmail(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && requestLink()}
               />
             </div>
             <div className="form-actions">
-              <button className="primary" disabled={sending || !email.trim()} onClick={requestLink}>
+              <button className="primary" disabled={busy || !email.trim()} onClick={requestLink}>
                 {sending ? 'Sending…' : 'Email me a sign-in link'}
               </button>
             </div>
           </>
         )}
-        {error && <p className="error-text">{error}</p>}
+        {(error || googleError) && <p className="error-text" role="alert">{error || googleError}</p>}
       </div>
       <div className="auth-tag">Agency CRM · ProtectMyHOA</div>
     </>

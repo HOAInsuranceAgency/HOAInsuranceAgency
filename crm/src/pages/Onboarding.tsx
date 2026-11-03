@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import type { AuthUser } from "aws-amplify/auth";
+import { fetchAuthSession, type AuthUser } from "aws-amplify/auth";
 import { client, friendlyError, US_STATES, type UserProfile } from "../lib/client";
 import type { Role } from "../lib/auth";
 import { loadProducerLicenses, type SavedProducerLicense } from "../lib/producerOnboarding";
@@ -84,8 +84,17 @@ export default function Onboarding({
     setSaving(true);
     setError("");
     try {
-      const email =
-        user.signInDetails?.loginId ?? existing?.email ?? "unknown@unknown";
+      // Redirect sign-in has no signInDetails.loginId. Read the mapped email
+      // from Cognito's ID token rather than saving a provider ID as an email.
+      let email = user.signInDetails?.loginId ?? existing?.email;
+      if (!email) {
+        const { tokens } = await fetchAuthSession();
+        const claim = tokens?.idToken?.payload.email;
+        if (typeof claim === "string") email = claim;
+      }
+      if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        throw new Error("Could not read your sign-in email. Sign out and sign in again.");
+      }
       const payload = {
         userId: user.userId,
         email,

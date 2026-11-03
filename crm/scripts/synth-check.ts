@@ -140,6 +140,8 @@ try {
   // Then the assembly itself, which is the half an import alone would miss.
   const app = backend.stack.node.root as App;
   const assembly = app.synth();
+  const { checkGoogleSignIn } = await import("./check-google-sign-in");
+  checkGoogleSignIn(backend);
   // Retirement must remove both deployment registration and scheduled delivery.
   // Historical tables remain available, but no old daily mail job is deployed.
   const retiredJobs = ["taskDigest", "opsRollup", "licenseAlerts", "communicationReports", "renewalTasks"];

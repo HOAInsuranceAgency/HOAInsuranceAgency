@@ -31,6 +31,8 @@ import {
 } from "aws-cdk-lib/aws-lambda";
 import { DynamoEventSource } from "aws-cdk-lib/aws-lambda-event-sources";
 import { auth } from "./auth/resource";
+import { crmBaseUrl, googleSignInEnabled } from "./auth/config";
+import { googleSignIn } from "./functions/google-sign-in/resource";
 import { data } from "./data/resource";
 import { storage } from "./storage/resource";
 import { processDocument } from "./functions/process-document/resource";
@@ -114,6 +116,7 @@ export const backend = defineBackend({
   magicLinkDefine,
   magicLinkCreate,
   magicLinkVerify,
+  googleSignIn,
 });
 
 // The OCR function drives async Textract jobs over uploaded documents.
@@ -252,16 +255,43 @@ for (const model of STREAMED_MODELS) {
 // ── Auth behavior ────────────────────────────────────────────────────
 const { cfnUserPool, cfnUserPoolClient } = backend.auth.resources.cfnResources;
 
-// Magic-link only: the custom auth flow is the sole sign-in path.
+// Email links use custom auth; Google uses the separate OAuth code flow.
+// Neither path enables password authentication or public self-signup.
 cfnUserPool.userPoolTier = "ESSENTIALS";
+cfnUserPool.adminCreateUserConfig = { allowAdminCreateUserOnly: true };
+if (process.env.AWS_BRANCH === "staging") {
+  // Preserve staging's existing passwordless invitation setting, previously
+  // configured in Cognito directly. API sign-in remains custom auth only.
+  cfnUserPool.addPropertyOverride("Policies.SignInPolicy.AllowedFirstAuthFactors", ["PASSWORD", "EMAIL_OTP"]);
+}
 cfnUserPoolClient.explicitAuthFlows = [
   "ALLOW_CUSTOM_AUTH",
   "ALLOW_REFRESH_TOKEN_AUTH",
 ];
+if (googleSignInEnabled) {
+  // Managed login must offer only Google. This setting does not disable the
+  // SDK custom-auth API used by our existing email links.
+  cfnUserPoolClient.supportedIdentityProviders = ["Google"];
+}
 
 // Stay signed in for 7 days (refresh token lifetime).
 cfnUserPoolClient.refreshTokenValidity = 7;
 cfnUserPoolClient.tokenValidityUnits = { refreshToken: "days" };
+
+// Keep the policy separate from the execution role: the user pool references
+// this trigger's Lambda, so an inline role policy referring back to the pool
+// would create a CloudFormation pool → Lambda → role → pool cycle.
+const googleLinkPolicy = new Policy(Stack.of(backend.auth.resources.userPool), "GoogleAccountLinkPolicy", {
+  statements: [new PolicyStatement({
+    actions: [
+      "cognito-idp:AdminGetUser",
+      "cognito-idp:AdminListGroupsForUser",
+      "cognito-idp:AdminLinkProviderForUser",
+    ],
+    resources: [backend.auth.resources.userPool.userPoolArn],
+  })],
+});
+googleLinkPolicy.attachToRole(backend.googleSignIn.resources.lambda.role!);
 
 // ── Magic link plumbing ──────────────────────────────────────────────
 // Signing secret shared by the create/verify triggers (generated once per
@@ -273,13 +303,8 @@ const magicLinkSecret = new Secret(magicLinkStack, "MagicLinkSigningSecret", {
 magicLinkSecret.grantRead(backend.magicLinkCreate.resources.lambda);
 magicLinkSecret.grantRead(backend.magicLinkVerify.resources.lambda);
 
-// Where the emailed link points, per branch (custom domains: update here).
-const BRANCH_URLS: Record<string, string> = {
-  staging: "https://staging.d2d4g940z91vj4.amplifyapp.com",
-  main: "https://app.protectmyhoa.com",
-};
-const magicLinkBaseUrl =
-  BRANCH_URLS[process.env.AWS_BRANCH ?? ""] ?? "http://localhost:5173";
+// Shared with OAuth so email and Google return to the same branch.
+const magicLinkBaseUrl = crmBaseUrl;
 
 /**
  * The marketing site's host, per branch. Where a lead's upload link points.

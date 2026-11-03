@@ -52,9 +52,8 @@ export default function App() {
 }
 
 /**
- * Magic-link only — no password UI. Authenticator.Provider supplies the
- * auth context headlessly; a successful confirmSignIn in MagicLinkSignIn
- * flips authStatus via the Amplify Hub.
+ * Passwordless email links and Google. Authenticator.Provider supplies the
+ * auth context headlessly and restores the session after the OAuth callback.
  */
 function AuthGate() {
   const { authStatus, user, signOut } = useAuthenticator((ctx) => [
