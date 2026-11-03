@@ -44,6 +44,14 @@ export function checkGoogleSignIn(backend: typeof Backend) {
     return;
   }
   if (providers.length !== 1) throw new Error("Google sign-in requires exactly one Google provider");
+  const clientResources = stack.resolve(client._toCloudFormation()).Resources as Record<string, {
+    DependsOn?: string | string[];
+  }>;
+  const clientDependencies = Object.values(clientResources)[0].DependsOn;
+  const dependencies = clientDependencies ? [clientDependencies].flat() : [];
+  if (!dependencies.includes(stack.getLogicalId(providers[0]))) {
+    throw new Error("The CRM client must depend on the Google provider so Cognito creates it before enabling Google sign-in");
+  }
   const mapping = stack.resolve(providers[0].attributeMapping) as Record<string, string>;
   if (mapping.email !== "email" || mapping.email_verified !== "email_verified" ||
       mapping["custom:googleHostedDomain"] !== "hd") {
