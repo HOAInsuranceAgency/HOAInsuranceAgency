@@ -1,0 +1,174 @@
+/* ── Our standards ────────────────────────────────────────────────────
+   Navy band. Left: heading, a two-column checklist and the indication CTA.
+   Right: four figures in a hairline 2×2 panel. Below: the appointed markets.
+   No boxed cards on the navy ground, only hairlines and gold accents, on the
+   site-wide type scale (32px heading, 16px standfirst, 15.5px list). */
+.std-layout {
+  display: grid;
+  grid-template-columns: 1.15fr 0.85fr;
+  gap: 56px;
+  align-items: center;
+}
+
+.std-lead .section-subtitle {
+  max-width: 56ch;
+}
+
+.std-list {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  column-gap: 32px;
+  margin: 28px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.std-list li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 1.4;
+  color: var(--color-white);
+}
+
+.std-list__mark {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1px solid rgba(229, 193, 106, 0.6);
+  color: var(--color-gold);
+}
+
+.std-cta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 28px;
+}
+
+.std-cta__note {
+  margin-top: 12px;
+  font-size: 13.5px;
+  color: rgba(255, 255, 255, 0.65);
+}
+
+.std-figs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 16px;
+  overflow: hidden;
+}
+
+.std-fig {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 32px 28px;
+  border-color: rgba(255, 255, 255, 0.14);
+  border-style: solid;
+  border-width: 0;
+}
+
+.std-fig:nth-child(odd) {
+  border-right-width: 1px;
+}
+
+.std-fig:nth-child(-n + 2) {
+  border-bottom-width: 1px;
+}
+
+.std-fig__v {
+  font-size: clamp(30px, 3vw, 40px);
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.03em;
+  color: var(--color-gold);
+}
+
+.std-fig__l {
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.72);
+}
+
+/* One slim white strip so the logos keep their own colours on the navy. */
+.std-markets {
+  margin-top: 48px;
+  padding: 14px 24px 10px;
+  background: var(--color-white);
+  border-radius: 14px;
+  text-align: center;
+}
+
+.std-markets__label {
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--color-gray-500);
+  margin-bottom: 6px;
+}
+
+.std-markets__list {
+  display: grid;
+  grid-template-columns: repeat(12, 1fr);
+  align-items: center;
+  gap: 4px 16px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.std-markets__list img {
+  display: block;
+  width: auto;
+  max-width: 100%;
+  height: auto;
+  max-height: 40px;
+  margin: 0 auto;
+  object-fit: contain;
+}
+
+.std-legal {
+  margin-top: 14px;
+  text-align: center;
+  font-size: 12.5px;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+@media (max-width: 1023px) {
+  .std-layout {
+    grid-template-columns: 1fr;
+    gap: 36px;
+  }
+
+  .std-markets__list {
+    grid-template-columns: repeat(6, 1fr);
+  }
+}
+
+@media (max-width: 600px) {
+  .std-list {
+    grid-template-columns: 1fr;
+  }
+
+  .std-fig {
+    padding: 24px 18px;
+  }
+
+  .std-markets__list {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}

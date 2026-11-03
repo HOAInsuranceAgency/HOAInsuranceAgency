@@ -1,0 +1,379 @@
+/* ═══════════════════════════════════════════════════════════════════════
+   /events
+
+   01 hero: the brand blend, copy beside one framed featured photo.
+   02 the events as a timeline: a gold spine with numbered nodes, each event a
+      photo card (zoom on hover, category chip) beside its summary, fading in
+      as it scrolls into view.
+   03 premium-indication CTA, a panel set apart from the footer.
+   Type follows the site-wide scale.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* ── 01 · Hero ── */
+.ev-hero {
+  position: relative;
+  padding: calc(var(--nav-height) + 48px) 0 64px;
+  background: var(--brand-blend);
+  overflow: hidden;
+}
+
+.ev-hero__inner {
+  display: grid;
+  grid-template-columns: 1.1fr 0.9fr;
+  gap: 56px;
+  align-items: center;
+}
+
+.ev-hero__tag {
+  display: inline-block;
+  padding: 6px 16px;
+  margin-bottom: 16px;
+  border: 1px solid rgba(229, 193, 106, 0.55);
+  border-radius: 999px;
+  background: rgba(229, 193, 106, 0.14);
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--color-gold-light);
+}
+
+.ev-hero__title {
+  max-width: 22ch;
+  font-size: clamp(28px, 3.4vw, 42px);
+  font-weight: 600;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  color: var(--color-white);
+  text-wrap: balance;
+}
+
+/* Trust badges under the heading. */
+.ev-hero__badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 24px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ev-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-white);
+}
+
+/* Unconfirmed claim: dashed so it reads as a draft in preview. */
+.ev-badge--draft {
+  border-style: dashed;
+  border-color: var(--color-gold);
+}
+
+/* A "G" in Google's four colours, drawn as a letter rather than Google's logo. */
+.ev-badge__g {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--color-white);
+}
+
+.ev-badge__g span {
+  font-family: Arial, Helvetica, sans-serif;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1;
+  color: #4285f4;
+  background: conic-gradient(from -45deg, #ea4335 0 25%, #4285f4 25% 50%, #34a853 50% 75%, #fbbc05 75% 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.ev-badge__stars {
+  color: #fbbc05;
+  letter-spacing: 1px;
+}
+
+/* One featured photo in a clean frame: thin gold keyline, soft shadow. */
+.ev-hero__media {
+  margin: 0;
+  padding: 8px;
+  border: 1px solid rgba(229, 193, 106, 0.45);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.06);
+  box-shadow: 0 30px 60px -30px rgba(0, 0, 0, 0.6);
+}
+
+.ev-hero__media img {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  border-radius: 14px;
+}
+
+/* ── Page wash ──
+   The hero's navy, blue and gold, washed very light and carried down the
+   timeline, fading to white before the CTA. */
+.ev-page {
+  background:
+    radial-gradient(900px 500px at 90% 0%, rgba(229, 193, 106, 0.10), transparent 70%),
+    radial-gradient(800px 600px at 0% 45%, rgba(43, 108, 176, 0.07), transparent 70%),
+    linear-gradient(180deg, #eef3f9 0%, #f8f6ef 55%, var(--color-white) 100%);
+}
+
+/* ── 02 · Timeline ── */
+.ev-timeline {
+  position: relative;
+  margin: 0 auto;
+  padding: 72px 24px 40px 92px;
+  list-style: none;
+}
+
+/* The gold spine the numbered nodes sit on. */
+.ev-timeline::before {
+  content: "";
+  position: absolute;
+  top: 72px;
+  bottom: 60px;
+  left: 47px;
+  width: 2px;
+  background: linear-gradient(180deg, var(--color-gold), rgba(229, 193, 106, 0.15));
+}
+
+.ev {
+  position: relative;
+  scroll-margin-top: calc(var(--nav-height) + 16px);
+}
+
+.ev + .ev {
+  margin-top: 64px;
+}
+
+.ev__node {
+  position: absolute;
+  left: -63px;
+  top: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--color-navy);
+  box-shadow: 0 0 0 4px #eef3f9, 0 0 0 6px var(--color-gold);
+  color: var(--color-gold-light);
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.ev__grid {
+  display: grid;
+  grid-template-columns: 1.1fr 0.9fr;
+  gap: 48px;
+  align-items: center;
+}
+
+.ev--reverse .ev__grid {
+  grid-template-columns: 0.9fr 1.1fr;
+}
+
+.ev--reverse .ev__media {
+  order: 2;
+}
+
+.ev__media {
+  position: relative;
+  margin: 0;
+  border-radius: 18px;
+  overflow: hidden;
+  box-shadow: 0 28px 56px -30px rgba(15, 23, 42, 0.55);
+}
+
+.ev__photo {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  transition: transform 0.6s ease;
+}
+
+.ev__media:hover .ev__photo {
+  transform: scale(1.05);
+}
+
+/* A soft navy fade at the foot of the photo, under the chip. */
+.ev__media::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 0 0;
+  height: 40%;
+  background: linear-gradient(180deg, transparent, rgba(19, 42, 74, 0.55));
+  pointer-events: none;
+}
+
+.ev__chip {
+  position: absolute;
+  left: 16px;
+  bottom: 16px;
+  z-index: 1;
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: var(--color-gold);
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--color-navy-dark);
+}
+
+.ev__body .section-title {
+  margin-bottom: 0;
+}
+
+/* A short gold rule under each title. */
+.ev__body .section-title::after {
+  content: "";
+  display: block;
+  width: 48px;
+  height: 3px;
+  margin-top: 14px;
+  border-radius: 2px;
+  background: var(--color-gold);
+}
+
+.ev__summary {
+  margin-top: 16px;
+  max-width: 60ch;
+  font-size: 15px;
+  line-height: 1.75;
+  color: var(--color-gray-600);
+}
+
+/* ── 03 · Premium-indication CTA ──
+   A navy panel on the light wash, with clear space below it, so it reads as
+   its own call to action rather than the top of the (also navy) footer. */
+.ev-cta {
+  padding: 32px 0 72px;
+}
+
+.ev-cta__panel {
+  padding: 48px 32px 32px;
+  border-radius: 20px;
+  text-align: center;
+  background: var(--brand-blend);
+  box-shadow: 0 30px 60px -30px rgba(15, 23, 42, 0.5);
+}
+
+.ev-cta__title {
+  font-family: var(--font-display);
+  font-size: clamp(23px, 2.4vw, 30px);
+  font-weight: 600;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+  color: var(--color-white);
+}
+
+.ev-cta__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 24px;
+}
+
+.ev-cta__terms {
+  max-width: 72ch;
+  margin: 28px auto 0;
+  padding-top: 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+  font-size: 12px;
+  line-height: 1.6;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+/* ── Responsive ── */
+@media (max-width: 900px) {
+  .ev-hero__inner {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 36px;
+    text-align: center;
+  }
+
+  .ev-hero__title {
+    margin: 0 auto;
+  }
+
+  .ev-hero__badges {
+    justify-content: center;
+  }
+
+  .ev-hero__media {
+    width: min(100%, 520px);
+    margin: 0 auto;
+  }
+
+  .ev__grid,
+  .ev--reverse .ev__grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 24px;
+  }
+
+  .ev--reverse .ev__media {
+    order: 0;
+  }
+}
+
+@media (max-width: 600px) {
+  .ev-hero {
+    padding: calc(var(--nav-height) + 32px) 0 44px;
+  }
+
+  .ev-timeline {
+    padding: 48px 16px 32px 56px;
+  }
+
+  .ev-timeline::before {
+    top: 48px;
+    left: 27px;
+  }
+
+  .ev__node {
+    left: -44px;
+    width: 30px;
+    height: 30px;
+    font-size: 11px;
+  }
+
+  .ev + .ev {
+    margin-top: 48px;
+  }
+
+  .ev-cta__panel {
+    padding: 36px 20px 24px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ev__photo {
+    transition: none;
+  }
+
+  .ev__media:hover .ev__photo {
+    transform: none;
+  }
+}

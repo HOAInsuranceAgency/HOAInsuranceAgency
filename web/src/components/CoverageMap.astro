@@ -238,7 +238,7 @@ const mapAriaLabel =
   >
     <g class="cmap__states">
       {tiles.map((s) => (
-        <a href={`/hoa-insurance-${s.slug}/`} aria-label={`HOA insurance in ${s.name}`}>
+        <a href={`/hoa-insurance-${s.slug}/`} aria-label={`HOA Insurance in ${s.name}`}>
           <path class="cmap__state" d={s.d} />
           <text
             class={"cmap__abbr" + (s.outside ? " cmap__abbr--out" : "")}
@@ -349,7 +349,7 @@ const mapAriaLabel =
   @media (max-width: 700px) {
     .cmap { padding: 24px 14px 22px; }
     .cmap__abbr--out { display: none; }
-    .cmap__abbr { font-size: 17px; }
+    .cmap__abbr { font-size: 16.5px; }
   }
 
   @media (prefers-reduced-motion: reduce) {

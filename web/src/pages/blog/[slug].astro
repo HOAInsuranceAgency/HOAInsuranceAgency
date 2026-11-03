@@ -37,7 +37,7 @@ const minutes = Math.max(1, Math.ceil(articleWordCount(article.body ?? "") / 220
       <div class="article-reading-main">
         <div class="article-prose"><Content /></div>
         <section class="article-sources" aria-labelledby="article-sources-title"><h2 id="article-sources-title">Sources &amp; further reading</h2><ol>{data.sources.map((source) => <li><a href={source.url} rel="noopener noreferrer">{source.title}</a><span>{source.publisher} · Accessed {articleDate(source.accessedAt)}</span></li>)}</ol></section>
-        <p class="article-disclaimer">This article is general information. Coverage depends on the policy, endorsements and facts of the association. Contact a licensed insurance professional for guidance about your community.</p>
+        <p class="article-disclaimer">This article is general information. Coverage depends on the policy, endorsements and facts of the association. Contact a licensed Insurance professional for guidance about your community.</p>
         <div class="article-end"><a href="/blog/" class="articles-text-link"><span aria-hidden="true">←</span> All articles</a><a href="/contact/" class="btn btn-primary">Talk with our team</a></div>
       </div>
     </div>

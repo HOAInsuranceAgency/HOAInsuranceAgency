@@ -26,7 +26,7 @@
 }
 
 .wwd-lead {
-  font-size: 17px;
+  font-size: 15px;
   line-height: 1.7;
   color: var(--color-gray-700);
   margin-bottom: 16px;
@@ -34,7 +34,7 @@
 }
 
 .wwd-body {
-  font-size: 16px;
+  font-size: 15px;
   line-height: 1.75;
   color: var(--color-gray-600);
   margin-bottom: 20px;
@@ -43,7 +43,7 @@
 
 /* The line each section lands on. Gold rule so the eye stops here. */
 .wwd-closer {
-  font-size: 17px;
+  font-size: 15px;
   font-weight: 700;
   color: var(--color-navy);
   border-left: 3px solid var(--color-gold);
@@ -74,7 +74,7 @@
 }
 
 .responds-inline h3 {
-  font-size: 15px;
+  font-size: 16.5px;
   font-weight: 700;
   color: var(--color-navy);
   margin-bottom: 4px;
@@ -82,7 +82,7 @@
 }
 
 .responds-inline p {
-  font-size: 13.5px;
+  font-size: 14px;
   line-height: 1.55;
   color: var(--color-gray-600);
 }
@@ -136,7 +136,7 @@
 .cov-card__body { min-width: 0; }
 
 .cov-card h3 {
-  font-size: 15.5px;
+  font-size: 16.5px;
   font-weight: 700;
   color: var(--color-navy);
   margin-bottom: 5px;
@@ -144,7 +144,7 @@
 }
 
 .cov-card p {
-  font-size: 13.5px;
+  font-size: 14px;
   line-height: 1.6;
   color: var(--color-gray-600);
 }
@@ -207,7 +207,7 @@
 
 .issue-acc__title {
   flex: 1 1 auto;
-  font-size: 15.5px;
+  font-size: 16.5px;
   font-weight: 700;
   color: var(--color-white);
   line-height: 1.35;
@@ -243,7 +243,7 @@
 }
 
 .issues-foot__text {
-  font-size: 14.5px;
+  font-size: 14px;
   line-height: 1.55;
   color: rgba(255, 255, 255, 0.7);
   margin: 0;
@@ -292,7 +292,7 @@
 
 /* The row header is the policy type — the thing being compared. */
 .types-table tbody th {
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 800;
   color: var(--color-navy);
   white-space: nowrap;
@@ -340,14 +340,14 @@
 }
 
 .stops-item h3 {
-  font-size: 16px;
+  font-size: 16.5px;
   font-weight: 700;
   color: var(--color-navy);
   margin-bottom: 6px;
 }
 
 .stops-item p {
-  font-size: 13.5px;
+  font-size: 14px;
   line-height: 1.6;
   color: var(--color-gray-600);
 }
@@ -364,7 +364,7 @@
 }
 
 .stops-foot__text {
-  font-size: 14.5px;
+  font-size: 14px;
   line-height: 1.55;
   color: var(--color-gray-600);
   margin: 0;
@@ -389,7 +389,7 @@
 
 .ho6-closer {
   margin: 0 0 6px;
-  font-size: 15.5px;
+  font-size: 15px;
   font-weight: 600;
   line-height: 1.6;
   color: var(--color-navy);
@@ -411,14 +411,14 @@
 }
 
 .ho6-list h3 {
-  font-size: 16px;
+  font-size: 16.5px;
   font-weight: 700;
   color: var(--color-navy);
   margin-bottom: 5px;
 }
 
 .ho6-list p {
-  font-size: 14.5px;
+  font-size: 14px;
   line-height: 1.65;
   color: var(--color-gray-600);
 }
@@ -441,7 +441,7 @@
 
 .faq-item summary {
   padding: 18px 24px;
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 600;
   color: var(--color-gray-900);
   cursor: pointer;
@@ -502,7 +502,13 @@
    default padding spent over 1,200px on whitespace alone, which is most of what
    made the page feel long. Scoped to .wwd so no other page is affected. */
 .wwd .section {
-  padding: 54px 0;
+  padding: 60px 0;
+}
+
+@media (max-width: 768px) {
+  .wwd .section {
+    padding: 44px 0;
+  }
 }
 
 .wwd .sec-head {

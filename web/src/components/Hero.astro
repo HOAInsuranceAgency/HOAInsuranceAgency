@@ -8,20 +8,24 @@ interface Props {
   /** Optional short line under the H1, above the subtitle. */
   note?: string;
   backgroundVideo?: string;
+  /** Start the video on load with no play/pause control (homepage, why-choose-us). */
+  autoplayVideo?: boolean;
   ctaText?: string;
   ctaHref?: string;
   compact?: boolean;
+  /** Content-height hero with tighter spacing, well under half the viewport. */
+  short?: boolean;
   eyebrow?: string;
 }
 
-const { title, subtitle, note, backgroundImage, backgroundVideo, ctaText, ctaHref, compact, eyebrow } = Astro.props;
+const { title, subtitle, note, backgroundImage, backgroundVideo, autoplayVideo, ctaText, ctaHref, compact, short, eyebrow } = Astro.props;
 
 // Action-slot heroes keep the lookup form above the fold.
 const hasAction = Astro.slots.has("action");
 ---
 
 <section
-  class={"hero" + (compact ? " hero--compact" : "") + (hasAction ? " hero--action" : "")}
+  class={"hero" + (compact ? " hero--compact" : "") + (hasAction ? " hero--action" : "") + (short ? " hero--short" : "")}
   data-hero
 >
   <img
@@ -39,6 +43,7 @@ const hasAction = Astro.slots.has("action");
         class="hero-video"
         data-hero-video
         data-src={backgroundVideo}
+        data-autoplay={autoplayVideo ? "" : undefined}
         muted
         loop
         playsinline
@@ -46,9 +51,11 @@ const hasAction = Astro.slots.has("action");
         aria-hidden="true"
         tabindex="-1"
       />
-      <button type="button" class="hero-motion-toggle" data-hero-video-toggle hidden>
-        Play background video
-      </button>
+      {!autoplayVideo && (
+        <button type="button" class="hero-motion-toggle" data-hero-video-toggle hidden>
+          Play background video
+        </button>
+      )}
     </>
   )}
   <div class="hero-overlay"></div>

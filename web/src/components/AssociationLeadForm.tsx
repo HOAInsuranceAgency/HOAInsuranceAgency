@@ -113,7 +113,7 @@ export function AssociationLeadForm({ property }: Props) {
             never happens costs nothing at this point. */}
         {uploadToken && <LeadUploadPanel uploadToken={uploadToken} />}
         <a href={PHONE_HREF} className="alf-phone-link">
-          Have questions? Call us — {PHONE}
+          Have questions? Call us: {PHONE}
         </a>
         <a href="/" className="alf-back-link">Visit ProtectMyHOA.com</a>
       </div>
@@ -243,11 +243,11 @@ export function AssociationLeadForm({ property }: Props) {
           </div>
           <div className="alf-signal">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2l8 4v6c0 5-3.5 9.5-8 10-4.5-.5-8-5-8-10V6l8-4z"/></svg>
-            <span>{AGENCY_FMT.displayName} is an independent insurance agency — we shop the market for you</span>
+            <span>{AGENCY_FMT.displayName} is an independent Insurance agency. We shop the market for you</span>
           </div>
           <div className="alf-signal">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2l8 4v6c0 5-3.5 9.5-8 10-4.5-.5-8-5-8-10V6l8-4z"/></svg>
-            <span>Based in {AGENCY.city}, {AGENCY.state} — you'll talk to a real person</span>
+            <span>Based in {AGENCY.city}, {AGENCY.state}. You'll talk to a real person</span>
           </div>
         </div>
 

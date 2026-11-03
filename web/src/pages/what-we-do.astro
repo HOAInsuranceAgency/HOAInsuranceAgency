@@ -4,6 +4,7 @@ import Layout from "../layouts/Layout.astro";
 import Hero from "../components/Hero.astro";
 import HeroLookup from "../components/HeroLookup.astro";
 import { ContactForm } from "../components/ContactForm";
+import AgencyStandards from "../components/AgencyStandards.astro";
 import { QUOTE_URL } from "../constants";
 import { canonicalUrl, faqPageSchema } from "../lib/seo";
 import { AGENCY } from "../../../shared/agency";
@@ -14,10 +15,10 @@ const PAGE_URL = canonicalUrl("/what-we-do/");
 
 /* 01 — What the master policy responds to. Definition first, four objects. */
 const RESPONDS_TO = [
-  { title: "The shared buildings", desc: "Roofs, structure, common elements and the shared systems inside them." },
-  { title: "The association's liability", desc: "Claims arising from the common areas and from the association's operations." },
-  { title: "The funds it holds", desc: "Reserves and operating accounts, against theft and fraud." },
-  { title: "The decisions its board makes", desc: "Allegations about governance, enforcement and the choices trustees make." },
+  { title: "Common areas and amenities", desc: "Clubhouses, pools, gates, fencing, entry signs and any structures the association owns or must insure under its governing documents." },
+  { title: "HOA general liability", desc: "Injury and property damage claims arising from common areas, community events and the association’s day-to-day operations." },
+  { title: "Association funds", desc: "Reserves and operating accounts, through crime and fidelity coverage against theft or fraud by anyone who handles the money." },
+  { title: "Board decisions", desc: "Directors and officers (D&O) coverage for allegations over governance, rule enforcement, architectural approvals and other board decisions." },
 ];
 
 /** Coverage summaries; issued terms, exclusions and endorsements control. */
@@ -25,36 +26,27 @@ const MASTER_COVERAGES = [
   { title: "Commercial Property", icon: "building", desc: "Rebuilds the shared buildings and common elements after a covered loss, typically at replacement cost rather than depreciated value. Equipment breakdown for shared boilers, elevators and HVAC can be written alongside it." },
   { title: "General Liability", icon: "shield", desc: "Responds when someone is hurt on common property, and under a standard form the carrier defends the association as well." },
   { title: "Umbrella / Excess Liability", icon: "umbrella", desc: "Sits above the primary liability limits, for the claim that exceeds them. An umbrella generally follows the underlying forms, so what the primary excludes it usually excludes too." },
-  { title: "Directors & Officers Liability", icon: "briefcase", desc: "Responds when a board member is personally named over a governance decision — defence costs are usually the largest part of it." },
-  { title: "Crime and Fidelity", icon: "lock", desc: "Covers theft of association funds by an employee or volunteer, and — where the form is extended for it — by a third party. Lender guidelines commonly set a minimum limit against the funds you hold." },
+  { title: "Directors & Officers Liability", icon: "briefcase", desc: "Responds when a board member is personally named over a governance decision. Defence costs are usually the largest part of it." },
+  { title: "Crime and Fidelity", icon: "lock", desc: "Covers theft of association funds by an employee or volunteer, and, where the form is extended for it, by a third party. Lender guidelines commonly set a minimum limit against the funds you hold." },
   { title: "Ordinance or Law", icon: "scale", desc: "Meets the extra cost of rebuilding to today's code after a covered loss, when the original construction no longer complies. It is bought in parts, each with its own limit, and matters most in older buildings." },
 ];
 
 /* 03 — The agitate step. Stated plainly, no alarm: each line is a condition a
    board can check, not a warning. */
 const COMMON_ISSUES = [
-  { title: "Underinsured buildings", desc: "The building limit was set years ago and construction costs have risen since. A total loss would not rebuild the property." },
-  { title: "Stale replacement-cost figures", desc: "The valuation on file predates the last renewal, so every limit derived from it is out of date as well." },
-  { title: "Per-unit deductibles nobody has read", desc: "The master policy applies a deductible to each unit. Owners discover the amount when they file a claim, not before." },
-  { title: "Missing fidelity bond limits", desc: "The bond is in force, but the limit does not reflect the funds the association actually holds." },
-  { title: "Lender warrantability failures", desc: "Something in the coverage places the project outside lender guidelines, and an owner discovers it at closing." },
-  { title: "Gaps between master and HO-6", desc: "Both policies are in force, and neither responds to the loss the association is looking at." },
+  { title: "Underinsured common-area buildings", desc: "The limit on the clubhouse, pool buildings and other common structures was set years ago, and construction costs have risen since. A total loss would not rebuild them." },
+  { title: "Outdated replacement-cost valuations", desc: "The valuation on file predates the last renewal, so every limit derived from it is out of date as well." },
+  { title: "Liability limits that haven’t kept pace", desc: "General liability and umbrella limits were set when the community was smaller or had fewer amenities, and no longer reflect the association’s exposure." },
+  { title: "Crime coverage that misses the manager", desc: "The crime or fidelity coverage protects board members and employees, but not the management company that handles the association’s money." },
+  { title: "D&O gaps when changing carriers", desc: "A new D&O policy without matching prior-acts or retroactive-date terms can leave earlier board decisions uncovered." },
+  { title: "Deductibles your reserves can’t absorb", desc: "The master policy deductible, or a percentage deductible for wind or hail, is larger than the reserves the association could draw on after a loss." },
 ];
 
 /* Common master-policy structures; the issued policy and documents control. */
 const POLICY_TYPES = [
-  { name: "Bare walls", covers: "Structure and common elements", stops: "Typically excludes unit interiors; the policy and governing documents control", owner: "Most" },
-  { name: "Single entity", covers: "Structure, common elements, and usually original fixtures and finishes", stops: "Typically excludes improvements added by an owner", owner: "Some" },
-  { name: "All-in", covers: "Structure, common elements, original finishes and usually owner improvements", stops: "Typically excludes belongings and personal liability", owner: "Least" },
-];
-
-/** Common HO-6 coverages; actual scope depends on the issued form. */
-const HO6_COVERAGES = [
-  { title: "Loss assessment", desc: "May respond when an association validly assesses a covered deductible or shortfall to owners, subject to the HO-6 terms and limit." },
-  { title: "Coverage A for improvements", desc: "The finishes and fixtures inside your unit, at a limit that reflects what is actually there." },
-  { title: "Water backup and seepage", desc: "Coverage for these causes of loss is not automatically included and depends on the form and endorsements." },
-  { title: "Personal property", desc: "Belongings — written at replacement cost rather than depreciated value where the form is endorsed for it." },
-  { title: "Personal liability and umbrella", desc: "Reviewed alongside the association's liability limits and the owner's broader exposures." },
+  { name: "Single-family HOA", covers: "Common areas, amenities, general liability, D&O and crime", stops: "The homes themselves; each owner insures their own house and belongings", owner: "Most" },
+  { name: "Townhome HOA, owner-insured buildings", covers: "Common areas and, under some governing documents, shared roofs or exteriors", stops: "Interiors, plus any exteriors the documents assign to owners even when the HOA maintains them", owner: "Some" },
+  { name: "Townhome HOA, association-insured buildings", covers: "Building structures, exteriors and common areas", stops: "Interiors, owner improvements, belongings and personal liability", owner: "Least" },
 ];
 
 /* 06 — Who we work with. Same four audiences and the same marks as the homepage
@@ -68,7 +60,7 @@ const AUDIENCES = [
 
 /** Shared by the visible FAQ and structured data. */
 const FAQS = [
-  { q: "What is the difference between an HOA master policy and an HO-6?", a: "The master policy is the association's insurance and generally addresses shared buildings, common elements, association liability and other association exposures. An HO-6 can cover belongings, personal liability, loss assessment and portions of a unit outside the master policy. The boundary depends on the master-policy form, governing documents, applicable law and endorsements." },
+  { q: "What is the difference between an HOA master policy and an HO-6?", a: "The master policy is the association's Insurance and generally addresses shared buildings, common elements, association liability and other association exposures. An HO-6 can cover belongings, personal liability, loss assessment and portions of a unit outside the master policy. The boundary depends on the master-policy form, governing documents, applicable law and endorsements." },
   { q: "Who pays for the HOA master policy?", a: "The association purchases the master policy and generally funds its premium through member assessments. The association is the named insured; claim procedures depend on the policy and the loss. An owner's HO-6 is a separate policy paid for by that owner." },
   { q: "What should a board review at renewal?", a: "Building valuation and limit adequacy, the deductible structure including any per-unit deductible, ordinance or law limits, general liability, umbrella, D&O, and the fidelity bond limit against the funds held. We review each of these and set out the findings in writing." },
 ];
@@ -84,12 +76,18 @@ const faqJsonLd = faqPageSchema(PAGE_URL, FAQS);
 >
   {/* ═══ Hero — same treatment as the homepage ══════════════════════ */}
   <Hero
-    eyebrow="ProtectMyHOA™"
-    title="HOA Insurance"
-    subtitle="Master insurance for the association, HO-6 for the unit owner, and a written record of why each was placed the way it was."
+    eyebrow="Homeowners Association Insurance · Licensed Nationwide"
+    title="HOA Insurance, Coordinated From the Clubhouse to the Boardroom."
+    subtitle="One Insurance program for your homeowners association’s common areas, general liability, directors and officers, and association funds, placed by an independent agency licensed nationwide."
     backgroundImage="/images/modern-building.jpg"
+    short
   >
-    <HeroLookup slot="action" />
+    <HeroLookup
+      slot="action"
+      placeholder="Community or HOA address"
+      buttonText="Estimate my HOA premium"
+      microcopy="No broker fee · Non-binding indication, subject to underwriting"
+    />
   </Hero>
 
   <div class="wwd">
@@ -101,10 +99,9 @@ const faqJsonLd = faqPageSchema(PAGE_URL, FAQS);
           <p class="eyebrow">The master policy</p>
           <h2 class="section-title" id="define-h">What is an HOA master policy?</h2>
           <p class="wwd-lead">
-            It is the association's own insurance, funded through member assessments rather
-            than by any individual owner. It responds to the shared buildings and common
-            elements, the association's liability, the funds it holds, and the decisions its
-            board makes.
+            It’s your homeowners association’s own Insurance, funded through member dues and
+            assessments rather than by any individual homeowner. A well-structured HOA master
+            Insurance policy responds to four areas your board is responsible for.
           </p>
           {/* The four objects it responds to, folded in here rather than given
                their own section: they are part of the definition, and a separate
@@ -118,12 +115,13 @@ const faqJsonLd = faqPageSchema(PAGE_URL, FAQS);
             ))}
           </ol>
           <p class="wwd-closer">
-            What it does not do is cover the inside of an individual unit. That is what an
-            HO-6 is for, and where the two policies meet is set by your governing documents.
+            What it typically doesn’t cover is each owner’s home and belongings, which owners
+            insure under their own policy. In some townhome communities the association insures
+            the buildings too, and your governing documents set where that line falls.
           </p>
           <div class="wwd-cta">
-            <a href={QUOTE_URL} class="btn btn-primary">Request Insurance Review</a>
-            <span class="wwd-cta__note">Free review. No broker fee, now or at renewal.</span>
+            <a href={QUOTE_URL} class="btn btn-primary">Check my HOA master policy</a>
+            <span class="wwd-cta__note">Free coverage review. No broker fee, now or at renewal.</span>
           </div>
         </div>
         <div class="wwd-split__media">
@@ -139,6 +137,9 @@ const faqJsonLd = faqPageSchema(PAGE_URL, FAQS);
       </div>
     </div>
   </section>
+
+  {/* ═══ 02 · Our standards ═══════════════════════════════════════ */}
+  <AgencyStandards />
 
   {/* ═══ 02 · Key master policy coverages ══════════════════════════ */}
   <section class="section" aria-labelledby="cov-h">
@@ -196,11 +197,11 @@ const faqJsonLd = faqPageSchema(PAGE_URL, FAQS);
     <div class="container">
       <div class="sec-head sec-head--center">
         <p class="eyebrow eyebrow--gold">What we find</p>
-        <h2 class="section-title wwd-invert" id="issues-h">Common HOA insurance issues</h2>
+        <h2 class="section-title wwd-invert" id="issues-h">Common HOA Insurance gaps we find on review</h2>
         <p class="section-subtitle wwd-invert-sub">
-          Six conditions we identify most often on a first review of an association's master
-          policy. None of them are unusual, and each can be verified before a claim rather
-          than after one.
+          Six issues we see most often when we first review a homeowners association’s
+          Insurance. Most are easy to miss at renewal, and each can be addressed before a
+          claim rather than after one.
         </p>
       </div>
       {/* Accordion rather than six open rows. The titles alone carry the agitate
@@ -223,10 +224,10 @@ const faqJsonLd = faqPageSchema(PAGE_URL, FAQS);
       </div>
       <div class="issues-foot">
         <p class="issues-foot__text">
-          We identify which of the six apply to your association, and put the findings in
-          writing.
+          We’ll show you which of these apply to your association and put every finding in
+          writing before your renewal.
         </p>
-        <a href={QUOTE_URL} class="btn btn-gold issues-foot__cta">Request Insurance Review</a>
+        <a href={QUOTE_URL} class="btn btn-gold issues-foot__cta">Find my HOA’s coverage gaps</a>
       </div>
     </div>
   </section>
@@ -236,10 +237,11 @@ const faqJsonLd = faqPageSchema(PAGE_URL, FAQS);
     <div class="container">
       <div class="sec-head sec-head--center">
         <p class="eyebrow">Who pays</p>
-        <h2 class="section-title" id="stops-h">Where the master policy and HO-6 meet</h2>
+        <h2 class="section-title" id="stops-h">What the HOA insures, and what homeowners insure</h2>
         <p class="section-subtitle">
-          Bare-walls, single-entity and all-in forms allocate unit property differently. The
-          issued policy, endorsements and governing documents determine which arrangement applies.
+          In a homeowners association, the line between association and owner coverage depends
+          on the type of community and what your governing documents assign to each. Here’s how
+          it typically falls.
         </p>
       </div>
 
@@ -247,10 +249,10 @@ const faqJsonLd = faqPageSchema(PAGE_URL, FAQS);
         <table class="types-table">
           <thead>
             <tr>
-              <th scope="col">Master policy type</th>
-              <th scope="col">The association covers</th>
-              <th scope="col">Common unit-owner gap</th>
-              <th scope="col" class="types-table__owner-col">Owner carries</th>
+              <th scope="col">Community type</th>
+              <th scope="col">The association typically insures</th>
+              <th scope="col">Common homeowner gap</th>
+              <th scope="col" class="types-table__owner-col">Homeowner carries</th>
             </tr>
           </thead>
           <tbody>
@@ -270,73 +272,28 @@ const faqJsonLd = faqPageSchema(PAGE_URL, FAQS);
         <div class="stops-item">
           <h3>The deductible</h3>
           <p>
-            A deductible may apply per occurrence or per unit. Whether any amount can be
-            allocated to an owner depends on the policy, governing documents, applicable law,
-            allocation provisions and the facts of the loss.
+            When a covered loss hits association property, the HOA generally pays the deductible
+            first, usually from its operating budget or reserves. Some governing documents may
+            allow part of it to be passed to an owner whose property or actions caused the loss.
           </p>
         </div>
         <div class="stops-item">
-          <h3>Loss assessment</h3>
+          <h3>Special assessments</h3>
           <p>
-            An association may be able to assess certain deductibles or shortfalls to owners.
-            HO-6 loss-assessment coverage may respond when the cause and assessment are covered,
-            subject to its own terms and limit.
+            If a loss exceeds the association’s coverage or reserves, the board may levy a
+            special assessment on owners. Many homeowners policies include limited loss
+            assessment coverage that may respond, subject to its own terms and limit.
           </p>
         </div>
       </div>
 
       <div class="stops-foot">
         <p class="stops-foot__text">
-          Plenty of boards could not say which of the three their association carries. It is
-          stated in the governing documents, and we identify it on every review.
+          Many boards aren’t sure exactly where their association’s responsibility ends. Your
+          governing documents spell it out, and we map it against your HOA Insurance on every
+          review.
         </p>
-        <a href={QUOTE_URL} class="btn btn-primary stops-foot__cta">Request Insurance Review</a>
-      </div>
-    </div>
-  </section>
-
-  {/* ═══ 05 · HO-6 for unit owners ═════════════════════════════════ */}
-  <section class="section section--alt" aria-labelledby="ho6-h">
-    <div class="container">
-      <div class="wwd-split wwd-split--reverse">
-        <div class="wwd-split__media">
-          <img
-            src="/images/ho6-unit-owner.jpg"
-            alt="A condominium unit owner reviewing an HO-6 quote at her dining table inside her own unit"
-            width="1200"
-            height="960"
-            loading="lazy"
-            decoding="async"
-          />
-        </div>
-        <div class="wwd-split__lead">
-          <p class="eyebrow">Unit owners</p>
-          <h2 class="section-title" id="ho6-h">HO-6 add-on coverage</h2>
-          <p class="wwd-lead">
-            HO-6 is the owner's side of the arrangement. It can cover belongings, personal
-            liability, loss assessment and portions of the unit outside the master policy.
-            The issued master policy and governing documents determine how the two fit together.
-          </p>
-          <blockquote class="ho6-pull">
-            A lender may require HO-6 coverage based on the loan type and project requirements.
-          </blockquote>
-          <ul class="ho6-list">
-            {HO6_COVERAGES.map((h) => (
-              <li>
-                <h3>{h.title}</h3>
-                <p>{h.desc}</p>
-              </li>
-            ))}
-          </ul>
-          <p class="ho6-closer">
-            We place both policies and set out in writing how the available documents and forms
-            allocate responsibility before a loss occurs.
-          </p>
-          <div class="wwd-cta">
-            <a href={QUOTE_URL} class="btn btn-primary">Request Insurance Review</a>
-            <span class="wwd-cta__note">Written against your association's actual master policy.</span>
-          </div>
-        </div>
+        <a href={QUOTE_URL} class="btn btn-primary stops-foot__cta">Map my HOA’s coverage</a>
       </div>
     </div>
   </section>

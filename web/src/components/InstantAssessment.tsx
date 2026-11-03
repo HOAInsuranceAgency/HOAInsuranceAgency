@@ -157,7 +157,7 @@ export function InstantAssessment({
             never happens costs nothing at this point. */}
         {uploadToken && <LeadUploadPanel uploadToken={uploadToken} />}
         <a href={PHONE_HREF} className="ia-phone-link">
-          Or call us now — {PHONE}
+          Or call us now: {PHONE}
         </a>
         <a href="/" className="ia-back-link">← Back to ProtectMyHOA.com</a>
       </div>

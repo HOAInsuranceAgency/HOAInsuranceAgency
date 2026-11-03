@@ -37,7 +37,7 @@
 }
 
 .st-lead {
-  font-size: 17px;
+  font-size: 15px;
   line-height: 1.7;
   color: var(--color-gray-700);
   margin-bottom: 16px;
@@ -45,7 +45,7 @@
 }
 
 .st-closer {
-  font-size: 17px;
+  font-size: 15px;
   font-weight: 700;
   color: var(--color-navy);
   border-left: 3px solid var(--color-gold);
@@ -121,7 +121,7 @@
 }
 
 .st-cov-card h3 {
-  font-size: 15.5px;
+  font-size: 16.5px;
   font-weight: 700;
   color: var(--color-navy);
   margin-bottom: 5px;
@@ -129,7 +129,7 @@
 }
 
 .st-cov-card p {
-  font-size: 13.5px;
+  font-size: 14px;
   line-height: 1.6;
   color: var(--color-gray-600);
 }
@@ -193,7 +193,7 @@
 
 .st-acc__title {
   flex: 1 1 auto;
-  font-size: 15.5px;
+  font-size: 16.5px;
   font-weight: 700;
   color: var(--color-white);
   line-height: 1.35;
@@ -228,7 +228,7 @@
 }
 
 .st-acc-foot__text {
-  font-size: 14.5px;
+  font-size: 14px;
   line-height: 1.55;
   color: rgba(255, 255, 255, 0.7);
   margin: 0;
@@ -257,7 +257,7 @@
   display: flex;
   align-items: center;
   gap: 14px;
-  font-size: 15.5px;
+  font-size: 15px;
   font-weight: 600;
   color: var(--color-navy);
 }
@@ -342,4 +342,10 @@
   .st-city:hover {
     transform: none;
   }
+}
+
+/* Condo premium-indication panel under the closing CTA, kept to a readable width. */
+.st-close-condo {
+  max-width: 720px;
+  margin: 0 auto;
 }

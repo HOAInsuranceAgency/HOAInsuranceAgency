@@ -6,7 +6,7 @@ export function initializeNavbar(navbar: HTMLElement): () => void {
   const view = doc.defaultView;
   if (!links || !hamburger || !view) return () => {};
 
-  const mobile = view.matchMedia("(max-width: 768px)");
+  const mobile = view.matchMedia("(max-width: 1023px)");
   const bars = hamburger.querySelectorAll(".hamburger-bar");
   const groups = Array.from(navbar.querySelectorAll<HTMLElement>(".navbar-group"))
     .flatMap((element) => {

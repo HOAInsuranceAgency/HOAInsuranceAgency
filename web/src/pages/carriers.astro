@@ -1,0 +1,188 @@
+---
+/**
+ * Carriers.
+ *
+ *   01 hero with the primary CTA
+ *   02 why it matters, beside a jump index of the three market groups
+ *   03–05 the twelve markets in three groups, logo cards
+ *   06 how it comes together (navy) with the second CTA
+ *   07 questions, then the availability and trademark notice
+ *
+ * Logos are the site's normalized copies in /images/carriers/, derived from
+ * crm/CREATIVE/HOME/insurance (see that folder's README). The FAQ answers are
+ * drafts for review.
+ */
+import Layout from "../layouts/Layout.astro";
+import CondoIndicationCta from "../components/CondoIndicationCta.astro";
+import Hero from "../components/Hero.astro";
+import { QUOTE_URL } from "../constants";
+import "./Carriers.css";
+
+type Carrier = { name: string; logo: string; alt: string; desc: string };
+
+const GROUPS: { id: string; eyebrow: string; title: string; carriers: Carrier[] }[] = [
+  {
+    id: "national",
+    eyebrow: "Insurance carriers",
+    title: "National and regional insurers",
+    carriers: [
+      { name: "Travelers", logo: "travelers", alt: "Travelers logo", desc: "One of the largest property and casualty insurers in the United States, with a long history of insuring residential and commercial buildings. A strong option for well maintained associations that want the stability of a national carrier, especially when a complete submission shows the community at its best." },
+      { name: "Greater New York", logo: "greater-new-york", alt: "Greater New York Insurance logo", desc: "A mutual insurer with deep roots in Northeast real estate, known for insuring apartment buildings, cooperatives and condominium associations. Often a natural fit for established Northeast condominiums whose building details and maintenance records are presented clearly." },
+      { name: "LIO Insurance", logo: "lio-insurance", alt: "LIO Insurance logo", desc: "A specialty commercial carrier offering condominium and homeowners association coverage, including property, general liability and crime, through a fully digital process. Useful when a board needs a quote quickly, as long as the coverage is reviewed as carefully as the price." },
+      { name: "Honeycomb", logo: "honeycomb", alt: "Honeycomb Insurance logo", desc: "A digital Insurance provider focused on residential buildings, offering property and liability coverage for condominium associations. Worth comparing against traditional markets to see whether a faster process also delivers the coverage an association needs." },
+    ],
+  },
+  {
+    id: "specialists",
+    eyebrow: "Community association specialists",
+    title: "Programs built for HOAs and condominiums",
+    carriers: [
+      { name: "Community Association Underwriters", logo: "community-association-underwriters", alt: "Community Association Underwriters logo", desc: "A long established specialist in community association Insurance, offering package programs, D&O and related coverages for condominium and homeowners associations. A good match for many communities because its programs are built around how associations are governed and insured." },
+      { name: "McGowan", logo: "mcgowan", alt: "McGowan Program Administrators logo", desc: "A program administrator focused on community association Insurance products, solutions and risk management. Helpful for boards looking to strengthen liability protection, with limits that work alongside the rest of the association’s coverage." },
+      { name: "CondoLogic", logo: "condologic", alt: "CondoLogic logo", desc: "A community association property and liability program with online quoting, binding, policy issuance and claims. Convenient for associations that value speed, with every option explained to the board in plain language before anything is bound." },
+      { name: "Distinguished Programs", logo: "distinguished", alt: "Distinguished Programs logo", desc: "A national Insurance program manager with more than 30 years of specialized programs for community associations and real estate. Can suit larger condominiums that need broader property and liability limits." },
+      { name: "CAIS", logo: "cais", alt: "CAIS logo", desc: "Community Association Insurance Solutions, a program administrator for HOAs, condominiums, townhomes and planned developments, offering D&O, crime, umbrella and workers’ compensation for board members and volunteers. These specialty lines help close the gaps a package policy can leave, especially protection for the people who serve on the board." },
+    ],
+  },
+  {
+    id: "wholesale",
+    eyebrow: "Wholesale and specialty access",
+    title: "Options when the standard market says no",
+    carriers: [
+      { name: "Amwins", logo: "amwins", alt: "Amwins logo", desc: "The largest independent wholesale distributor of specialty Insurance in the United States, with broad access to excess and surplus lines markets. Particularly valuable when an association has been non renewed or is hard to place, because it opens capacity the standard market may not offer." },
+      { name: "RPS", logo: "rps", alt: "RPS logo", desc: "Risk Placement Services, a national wholesale specialty broker providing access to excess and surplus lines for complex and hard to place risks. Helpful for coastal, older or high value buildings that need a more creative placement." },
+      { name: "Pathpoint", logo: "pathpoint", alt: "Pathpoint logo", desc: "A digital excess and surplus lines platform that gives agents fast access to specialty markets for smaller commercial risks. A practical route for smaller associations with unusual exposures that still need specialty quotes back quickly." },
+    ],
+  },
+];
+
+const STEPS = [
+  { title: "One submission", desc: "You complete it once." },
+  { title: "The right carriers", desc: "Sent only to markets whose appetite fits." },
+  { title: "A clear recommendation", desc: "Every quote compared, the best fit in writing." },
+];
+
+/* Draft answers for review. */
+const FAQS = [
+  { q: "Which Insurance companies write HOA and condo association Insurance?", a: "National and regional insurers, community association specialists and, for harder risks, wholesale and specialty markets all write association coverage. We work with the twelve markets on this page, and which of them fits depends on your state, association type, building and loss history." },
+  { q: "Do you send every association to all 12 markets?", a: "No. We send your submission only to the markets whose appetite fits your association, so underwriters see risks they want to write and your board gets serious quotes rather than a stack of declines. We bring back every quote we receive." },
+];
+---
+
+<Layout
+  title="Our Carriers — HOA Insurance Agency"
+  description="The Insurance companies HOA Insurance Agency is directly appointed with for homeowners and condominium associations."
+  canonicalPath="/carriers/"
+>
+  <Hero
+    eyebrow="Our Markets · Licensed Nationwide"
+    title="The HOA and Condominium Insurance Carriers We Work With"
+    subtitle="Twelve appointed markets, from national insurers to community association specialists. Because we work with these carriers every day, we know what each one looks for, where each one is strongest, and which ones fit your association."
+    backgroundImage="/images/modern-building.jpg"
+    ctaText="Put 12 markets to work for my association"
+    ctaHref={QUOTE_URL}
+    compact
+    short
+  />
+
+  {/* ═══ 02 · Why it matters ═════════════════════════════════════════ */}
+  <section class="section" aria-labelledby="why-h">
+    <div class="container cr-why">
+      <div>
+        <p class="eyebrow">Why it matters</p>
+        <h2 class="section-title" id="why-h">Strong carrier relationships lead to better placements</h2>
+        <p class="cr-why__body">
+          Underwriters respond faster and more favorably to submissions they trust. Our working
+          relationships with these HOA Insurance companies mean your association’s risk is
+          presented clearly, reviewed by the right underwriter, and compared fairly against the
+          alternatives.
+        </p>
+      </div>
+      <nav class="cr-index" aria-label="Market groups on this page">
+        {GROUPS.map((g) => (
+          <a class="cr-index__item" href={`#${g.id}`}>
+            <span class="cr-index__count">{g.carriers.length}</span>
+            <span class="cr-index__label">{g.eyebrow}</span>
+            <span class="cr-index__go" aria-hidden="true">→</span>
+          </a>
+        ))}
+      </nav>
+    </div>
+  </section>
+
+  {/* ═══ 03–05 · The twelve markets ═════════════════════════════════ */}
+  {GROUPS.map((g, gi) => (
+    <section class={"section cr-group" + (gi % 2 === 0 ? " section--alt" : "")} id={g.id} aria-labelledby={`${g.id}-h`}>
+      <div class="container">
+        <div class="sec-head">
+          <p class="eyebrow">{g.eyebrow}</p>
+          <h2 class="section-title" id={`${g.id}-h`}>{g.title}</h2>
+        </div>
+        <ul class={`cr-grid cr-grid--${g.carriers.length}`}>
+          {g.carriers.map((c) => (
+            <li class="cr-card">
+              <div class="cr-card__logo">
+                <img src={`/images/carriers/${c.logo}.png`} alt={c.alt} loading="lazy" decoding="async" />
+              </div>
+              <h3 class="cr-card__name">{c.name}</h3>
+              <p class="cr-card__desc">{c.desc}</p>
+            </li>
+          ))}
+        </ul>
+        {g.id === "specialists" && <CondoIndicationCta />}
+      </div>
+    </section>
+  ))}
+
+  {/* ═══ 06 · How it comes together ═════════════════════════════════ */}
+  <section class="section section--navy" aria-labelledby="how-h">
+    <div class="container cr-how">
+      <p class="eyebrow eyebrow--gold">How it comes together</p>
+      <h2 class="section-title" id="how-h">One submission. The right carriers. A clear recommendation.</h2>
+      <p class="cr-how__body">
+        You complete one submission. We send it only to the markets whose appetite fits your
+        association, bring back every quote we receive, and recommend the best fit in writing.
+        Your board never has to chase carriers on its own.
+      </p>
+      <ol class="cr-steps">
+        {STEPS.map((st, i) => (
+          <li class="cr-step">
+            <span class="cr-step__num" aria-hidden="true">{String(i + 1).padStart(2, "0")}</span>
+            <h3>{st.title}</h3>
+            <p>{st.desc}</p>
+          </li>
+        ))}
+      </ol>
+      <div class="cr-how__cta">
+        <a href={QUOTE_URL} class="btn btn-gold">Match my association to the right carrier</a>
+      </div>
+    </div>
+  </section>
+
+  {/* ═══ 07 · Questions ═════════════════════════════════════════════ */}
+  <section class="section" aria-labelledby="faq-h">
+    <div class="container cr-faq-wrap">
+      <div class="sec-head sec-head--center">
+        <p class="eyebrow">Questions</p>
+        <h2 class="section-title" id="faq-h">HOA and condo Insurance carriers: common questions</h2>
+      </div>
+      <div class="cr-faq">
+        {FAQS.map((f) => (
+          <details class="cr-faq__item">
+            <summary>{f.q}</summary>
+            <p>{f.a}</p>
+          </details>
+        ))}
+      </div>
+      <div class="cr-faq__cta">
+        <a href="/contact/" class="btn btn-primary">Ask a licensed agent</a>
+      </div>
+      <p class="cr-notice">
+        Carrier availability varies by state, association type and risk profile, and coverage is
+        subject to underwriting and policy terms. Carrier names and logos are trademarks of their
+        respective owners, shown to identify markets we work with, and do not imply endorsement
+        of ProtectMyHOA.
+      </p>
+    </div>
+  </section>
+</Layout>

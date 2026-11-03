@@ -1,10 +1,10 @@
 ---
 import Layout from "../layouts/Layout.astro";
+import CondoIndicationCta from "../components/CondoIndicationCta.astro";
 import Hero from "../components/Hero.astro";
 import HeroLookup from "../components/HeroLookup.astro";
 import CoverageMap from "../components/CoverageMap.astro";
 import { CoverageCalculator } from "../components/CoverageCalculator";
-import { reviewedStateSlugs } from "../data/states";
 import { STAGES } from "../data/process";
 import { MARKETS } from "../data/markets";
 import { PHONE, QUOTE_URL } from "../constants";
@@ -21,23 +21,23 @@ const ASSOC_FIGURES: { img: string; value: string; label?: string }[] = [
 const PRACTICE_CARDS = [
   {
     icon: "compass",
-    title: "Independent, not captive",
-    desc: "Your association's risk decides where the coverage goes. You see what each market returned, including the ones that declined and the reason they gave.",
+    title: "Independent, so you’re never tied to one insurer",
+    desc: "A captive agent can offer only one company’s policy. As an independent HOA Insurance agency, we’re appointed with multiple providers, so if your current carrier raises rates or non-renews, your board has other markets to approach.",
   },
   {
     icon: "layers",
-    title: "Twelve markets, one submission",
-    desc: "Your risk is presented to the markets that write it. The responses come back to you set side by side on coverage, deductibles and limits.",
+    title: "Up to 12 markets, one submission",
+    desc: "You complete one submission instead of chasing carriers one by one. We present it to the appointed markets that write condo and HOA risks like yours and bring every quote we receive back to you.",
   },
   {
     icon: "clipboard",
-    title: "Board-facing by design",
-    desc: "Boards have to explain insurance decisions to owners. Our documents are written to be read aloud in a meeting and filed with the minutes.",
+    title: "Specialists, not generalists",
+    desc: "Condo and HOA association Insurance is all we do, so we already know the questions that come up at renewal: master policy forms, deductibles, valuations and lender requirements.",
   },
   {
     icon: "nofee",
     title: "No broker fee",
-    desc: "Reviewing the coverage your association already has costs nothing, and so does the market comparison that follows it. Nothing is placed until the board has seen the options and chosen one.",
+    desc: "Your preliminary premium indication, coverage review and market comparison cost your association nothing. Our compensation is disclosed on every option, and nothing is bound until your board chooses.",
   },
 ];
 
@@ -45,16 +45,13 @@ const PRACTICE_CARDS = [
    Numbered because these are the document's own contents in order, not a
    decorative sequence. */
 const BOARD_RECORD = [
-  { num: "01", title: "What we reviewed", desc: "The current policy, the loss history and the governing documents." },
-  { num: "02", title: "Which insurers we approached", desc: "Named, with what each one returned." },
-  { num: "03", title: "What each option cost", desc: "Premium, deductible and limits, side by side." },
-  { num: "04", title: "Why we recommended this one", desc: "Our reasoning, stated in plain language." },
-  { num: "05", title: "What is still not covered", desc: "Every gap has a name. We put it in writing rather than leaving it out of the proposal." },
-  { num: "06", title: "What to look at again next year", desc: "The items that will need attention before the next renewal." },
+  { num: "01", title: "What we reviewed", desc: "Your current master policy, loss runs and governing documents, read together so the coverage matches what your documents require." },
+  { num: "02", title: "Which Insurance companies we approached", desc: "Each one named, with the response it gave, so owners can see the market was genuinely tested." },
+  { num: "03", title: "What each option costs", desc: "Premium, deductible and limits for every option in one table, so you see the full HOA Insurance cost, not just the lowest premium." },
+  { num: "04", title: "Why we recommended it", desc: "Our reasoning in plain language, free of jargon, so any board member can present it to owners." },
+  { num: "05", title: "What is still not covered", desc: "Every gap named in writing, including deductible and special assessment exposure owners may face, not left out of the proposal." },
+  { num: "06", title: "What to revisit next year", desc: "Items like building valuations and deductibles that need attention before your next renewal." },
 ];
-
-/** Only reviewed state routes count as published guides. */
-const withGuides = reviewedStateSlugs;
 
 /* 09 — Who we work with.
    Descriptions removed by request: each card is now a mark, a title and its CTA.
@@ -70,10 +67,10 @@ const AUDIENCES = [
 
 /* Shared by the visible accordion and FAQ structured data. */
 const FAQS = [
-  { q: "What does an HOA master policy cover?", a: "The association's master policy generally covers shared buildings, common elements, association liability and other association exposures. How far property coverage extends into each unit depends on whether the form is bare walls, single entity or all-in, together with the governing documents and endorsements." },
-  { q: "What type of master policy does our association have?", a: "The common structures are bare walls, single entity and all-in, and each allocates unit property differently. The policy, endorsements and governing documents determine which structure applies and who is responsible for particular property after a loss." },
-  { q: "A pipe leaked into my unit. Does the association pay, or do I?", a: "It depends on the master-policy form, governing documents, applicable law, deductible-allocation provisions, endorsements and the facts of the loss. The association deductible alone does not determine whether a cost may be allocated to a unit owner." },
-  { q: "If the association has a master policy, does an owner still need an HO-6?", a: "An HO-6 can cover belongings, personal liability, loss assessment and portions of the unit that the association's master policy does not cover. The appropriate coverage depends on the master-policy form and governing documents, and lender requirements vary by lender and loan type." },
+  { q: "What is master Insurance on a condo?", a: "Master Insurance is the condo association’s own policy, paid for through member assessments. It typically covers the building structure and common elements, such as roofs, hallways, elevators and grounds, along with the association’s general liability. Many associations carry D&O, crime and umbrella coverage alongside it. How far the master policy reaches inside each unit depends on whether it is written as bare walls, single entity or all-in." },
+  { q: "Does condo Insurance cover water damage?", a: "Often, but which policy responds depends on where the water came from and what it damaged. Sudden, accidental leaks, such as a burst pipe, are commonly covered. Gradual leaks, flooding and sewer backup usually are not unless specifically added. Damage to common elements generally falls to the master policy, while your belongings and interior finishes generally fall to your HO-6. The master policy form, deductible and governing documents decide the rest." },
+  { q: "How much does condo Insurance cost?", a: "It depends on the policy. A condo association’s master policy premium is driven by the building’s replacement cost, location, construction, age, loss history, deductible and the limits your governing documents require. A unit owner’s HO-6 premium is usually much lower because it covers only the owner’s share. Because these factors vary so widely, the most reliable starting point is a preliminary premium indication for your property, followed by bindable quotes from the Insurance companies that write it." },
+  { q: "How much condo Insurance do I need?", a: "Start with your association’s master policy. Under a bare walls form, you may need dwelling coverage for interior walls, fixtures, cabinets and flooring. Under an all-in form, you may need it only for upgrades you’ve made. Add personal property coverage for your belongings, personal liability, and loss assessment coverage at least equal to your share of the association’s deductible. Your lender may also set minimum requirements." },
 ];
 
 const HOME_CANONICAL = canonicalUrl("/");
@@ -88,35 +85,46 @@ const faqJsonLd = faqPageSchema(HOME_CANONICAL, FAQS);
 >
   {/* ═══ 01 · Hero ═══════════════════════════════════════════════════ */}
   <Hero
-    eyebrow="ProtectMyHOA™"
-    title="HOA Insurance, Built for Associations"
-    subtitle="The independent insurance agency focused on community associations: twelve markets compared side by side on coverage, deductibles and limits."
+    eyebrow="Licensed Nationwide · Independent HOA & Condo Insurance Agency"
+    title="Insurance Built for Associations"
+    subtitle="Enter your association’s address for a preliminary premium indication on your master policy. Then receive bindable quotes from up to 12 appointed Insurance companies, compared side by side on coverage, deductibles and limits."
     backgroundImage="/images/hero-people.jpg"
     backgroundVideo="/images/hero-video.mp4"
+    autoplayVideo
+    short
   >
-    <HeroLookup slot="action" />
+    <HeroLookup
+      slot="action"
+      placeholder="Association address"
+      buttonText="Get My Premium Indication"
+      microcopy="Free and available today. No broker fee."
+    />
   </Hero>
 
   {/* ═══ 02 · Association insurance ══════════════════════════════════ */}
   <section class="section band-assoc" aria-labelledby="assoc-h">
     <div class="container band-assoc__grid">
       <div class="band-assoc__lead">
-        <p class="eyebrow eyebrow--gold">Association insurance</p>
+        <p class="eyebrow eyebrow--gold">Condo association Insurance</p>
         <h2 class="section-title band-assoc__title" id="assoc-h">
-          What an HOA or condo association master policy covers.
+          What does a condo association Insurance policy cover?
         </h2>
         <div class="band-assoc__body">
           <p>
-            The master policy is the association's own insurance, funded through member
-            assessments. It responds to the shared buildings and common elements, the
-            association's liability, the funds it holds, and the decisions its board makes.
+            The master policy is the association’s own Insurance, funded through member
+            assessments. It typically includes condo building Insurance for the shared
+            structures and common elements, general liability, directors and officers (D&amp;O)
+            liability for board decisions, and crime coverage for the funds the association
+            holds.
           </p>
           <p>
-            Where the master policy ends and a unit owner's HO-6 begins depends on the
-            master-policy form, governing documents, applicable law and endorsements.
+            Whether your policy is bare walls, single entity or all-in (also called walls-in)
+            helps decide where the master policy ends and a unit owner’s HO-6 begins. The
+            governing documents, applicable law and endorsements decide the rest.
           </p>
         </div>
-        <a href="/what-we-do/" class="btn btn-gold">See what a master policy covers</a>
+        <a href="/condo-insurance/" class="btn btn-gold">See what a master policy covers</a>
+        <CondoIndicationCta tone="dark" />
       </div>
       <ul class="assoc-figs">
         {ASSOC_FIGURES.map((f) => (
@@ -145,27 +153,35 @@ const faqJsonLd = faqPageSchema(HOME_CANONICAL, FAQS);
     <div class="container">
       <div class="what-grid">
         <div class="what-lead">
-          <p class="eyebrow">The practice</p>
-          <h2 class="section-title" id="what-h">An insurance agency built around community associations.</h2>
+          <p class="eyebrow">Your HOA Insurance agency</p>
+          <h2 class="section-title" id="what-h">The right HOA Insurance company for your association, not just the one available.</h2>
           <p class="section-subtitle">
-            Community association insurance is our focus, so the coverage questions a board
-            asks shape how we review, compare and document each placement.
+            Non-renewals, rising premiums and carriers that are hard to reach can leave a board
+            feeling stuck. ProtectMyHOA is the brand of HOA Insurance Agency, a professional
+            condo and HOA Insurance agency, licensed nationwide, that does the shopping for you.
+            Our agents take your association to the HOA Insurance providers that write your
+            risk and bring the options back to your board.
           </p>
           {/* CTA sits with the lead copy, not only after the four cards. A visitor
                reaching this section can act on it without scrolling past the grid. */}
           <div class="what-actions">
-            <a href={QUOTE_URL} class="btn btn-gold">Request Insurance Review</a>
-            <a href="/about-us/" class="text-link">About our insurance agency &gt;</a>
+            <a href={QUOTE_URL} class="btn btn-gold">Compare HOA Insurance companies</a>
+            <a href="/about-us/" class="text-link">Meet the agency behind ProtectMyHOA &gt;</a>
           </div>
         </div>
         <div class="what-media">
-          <img
-            src="/images/practice-team.jpg"
-            alt="Insurance professionals and an association board reviewing master policy documents across a boardroom table"
-            width="1200"
-            height="800"
-            loading="lazy"
-            decoding="async"
+          {/* Decorative and muted, so it autoplays; the poster shows until it starts. */}
+          <video
+            src="/images/hoa-intro.mp4"
+            poster="/images/practice-team.jpg"
+            width="1920"
+            height="1080"
+            autoplay
+            muted
+            loop
+            playsinline
+            preload="metadata"
+            aria-hidden="true"
           />
         </div>
       </div>
@@ -186,7 +202,7 @@ const faqJsonLd = faqPageSchema(HOME_CANONICAL, FAQS);
       </div>
 
       <div class="section-cta-wrap">
-        <a href={QUOTE_URL} class="btn btn-primary">Request Insurance Review</a>
+        <a href={QUOTE_URL} class="btn btn-primary">Start my premium indication</a>
       </div>
     </div>
   </section>
@@ -196,23 +212,28 @@ const faqJsonLd = faqPageSchema(HOME_CANONICAL, FAQS);
     <div class="container">
       <div class="record-grid">
         <div class="record-lead">
-          <p class="eyebrow eyebrow--gold">The Board Record</p>
+          <p class="eyebrow eyebrow--gold">The ProtectMyHOA Board Record</p>
           <h2 class="section-title record-h2" id="record-h">
-            We place the coverage. Then we write down why.
+            You serve your association. We put every HOA Insurance decision in writing.
           </h2>
           <div class="record-body">
             <p>
-              A quote alone does not explain the decision. Every policy we arrange comes with a
-              short written summary, meant to be filed with your meeting minutes.
+              We know how renewal season feels: premiums rising, owners asking questions, and a
+              board expected to make a decision it will have to explain. A quote alone doesn’t
+              make that case. That’s why every condo association policy we place comes with the
+              ProtectMyHOA Board Record, a short written summary built to be filed with your
+              meeting minutes.
             </p>
             <p>
-              Board members may face questions or claims about their decisions. The written
-              summary records the information and reasoning used at renewal.
+              Board members can face personal questions, and sometimes claims, over the
+              decisions they make. Alongside your HOA liability Insurance and D&amp;O coverage,
+              the Board Record documents the information you had and the reasoning behind your
+              choice.
             </p>
           </div>
           {/* Lead-capture CTA sits with the copy as well as at the close, so a
                visitor can act before scrolling the six items. */}
-          <a href={QUOTE_URL} class="btn btn-gold record-lead__cta">Request your insurance review</a>
+          <a href={QUOTE_URL} class="btn btn-gold record-lead__cta">Get a board-ready recommendation</a>
         </div>
         <div class="record-media">
           <img
@@ -237,10 +258,10 @@ const faqJsonLd = faqPageSchema(HOME_CANONICAL, FAQS);
       </ol>
 
       <div class="record-close">
-        <p class="record-close__line">Insurance your board can defend.</p>
+        <p class="record-close__line">Coverage your board can defend, and owners can understand.</p>
         <div class="record-close__actions">
-          <a href={QUOTE_URL} class="btn btn-gold">Request your insurance review</a>
-          <a href="/contact/" class="btn btn-outline">Speak to an insurance professional</a>
+          <a href={QUOTE_URL} class="btn btn-gold">Protect my HOA at renewal</a>
+          <a href="/contact/" class="btn btn-outline">Talk to a licensed HOA agent</a>
         </div>
       </div>
     </div>
@@ -277,7 +298,7 @@ const faqJsonLd = faqPageSchema(HOME_CANONICAL, FAQS);
       <div class="sec-head sec-head--center">
         <p class="eyebrow">Our markets</p>
         <h2 class="section-title" id="markets-h">Markets a board will recognize</h2>
-        <p class="section-subtitle">Direct appointments with twelve markets — national insurers alongside the specialists.</p>
+        <p class="section-subtitle">Direct appointments with twelve markets, national insurers alongside the specialists.</p>
       </div>
 
       {/* Single-line logo marquee, scrolling right to left.
@@ -338,7 +359,7 @@ const faqJsonLd = faqPageSchema(HOME_CANONICAL, FAQS);
       <div class="band-fee__media">
         <img
           src="/images/no-broker-fee.jpg"
-          alt="Yard sign outside a condominium community reading zero dollar broker fee, HOA insurance with transparency you can trust"
+          alt="Yard sign outside a condominium community reading zero dollar broker fee, HOA Insurance with transparency you can trust"
           width="1200"
           height="800"
           loading="lazy"
@@ -356,7 +377,7 @@ const faqJsonLd = faqPageSchema(HOME_CANONICAL, FAQS);
           <li>What we are paid is disclosed for every option, so you can weigh the recommendation against it</li>
         </ul>
         <div class="band-fee__actions">
-          <a href={QUOTE_URL} class="btn btn-gold">Request your insurance review</a>
+          <a href={QUOTE_URL} class="btn btn-gold">Request your Insurance review</a>
           <a href="#states" class="btn btn-outline">See the states we cover</a>
         </div>
       </div>
@@ -413,19 +434,22 @@ const faqJsonLd = faqPageSchema(HOME_CANONICAL, FAQS);
     <div class="container">
       <aside class="ho6-card">
         <div class="ho6-card__body">
-          <p class="eyebrow">Unit owners</p>
-          <h2 class="ho6-card__title" id="ho6-h">Own a unit in an association?</h2>
-          <p class="ho6-card__sub">For unit owners, not just boards</p>
+          <p class="eyebrow">Condo Insurance for unit owners</p>
+          <h2 class="ho6-card__title" id="ho6-h">Your condo Insurance policy should start where the master policy ends.</h2>
+          <p class="ho6-card__sub">HO-6 condo Insurance, matched to your association’s master policy</p>
           <p class="ho6-card__lead">
-            A lender may require HO-6 coverage based on the loan type and project requirements.
+            Your lender may require HO-6 coverage, and a leak from the unit above or a special
+            assessment after a building claim can arrive without warning.
           </p>
           <p>
-            An HO-6 can cover belongings, personal liability, loss assessment and portions of
-            the unit not covered by the master policy. It should be reviewed against the
-            association's actual policy and governing documents, not a generic template.
+            An HO-6 condo Insurance policy can cover your belongings, personal liability, loss
+            assessment and the parts of your unit the master policy doesn’t, such as interior
+            walls, fixtures and improvements under a bare walls form. Licensed nationwide, our
+            agents review it against your association’s actual master policy and governing
+            documents, not a generic template, so the two policies are coordinated.
           </p>
         </div>
-        <a href="/what-we-do/" class="btn btn-primary ho6-card__cta">HO-6 condo coverage</a>
+        <a href="/what-we-do/" class="btn btn-primary ho6-card__cta">Review my condo Insurance policy</a>
       </aside>
     </div>
   </section>
@@ -442,9 +466,8 @@ const faqJsonLd = faqPageSchema(HOME_CANONICAL, FAQS);
         <p class="eyebrow">Coverage area</p>
         <h2 class="section-title" id="states-h">HOA Insurance by State</h2>
         <p class="section-subtitle">
-          Licensed in all 50 states and the District of Columbia, with dedicated guides
-          for {withGuides.length} of them so far. Carrier availability varies by state,
-          association type and risk profile.
+          Licensed in all 50 states and the District of Columbia. Carrier availability varies
+          by state, association type and risk profile.
         </p>
       </div>
 
@@ -459,7 +482,7 @@ const faqJsonLd = faqPageSchema(HOME_CANONICAL, FAQS);
     <div class="container">
       <div class="sec-head sec-head--center">
         <p class="eyebrow">Questions</p>
-        <h2 class="section-title" id="faq-h">Frequently Asked Questions About HOA Insurance</h2>
+        <h2 class="section-title" id="faq-h">Frequently Asked Questions About Condo &amp; HOA Insurance</h2>
       </div>
       <div class="faq-list">
         {FAQS.map((f) => (
@@ -470,7 +493,7 @@ const faqJsonLd = faqPageSchema(HOME_CANONICAL, FAQS);
         ))}
       </div>
       <div class="section-cta-wrap">
-        <a href={QUOTE_URL} class="btn btn-primary">Ask us your question</a>
+        <a href={QUOTE_URL} class="btn btn-primary">Ask a licensed agent</a>
       </div>
     </div>
   </section>

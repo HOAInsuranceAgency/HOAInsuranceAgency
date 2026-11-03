@@ -23,45 +23,113 @@
 
 
 /* ── 02 · Coverages ──
-   /what-we-do packs six into a hairline-joined 3-up grid. Here they are separate
-   cards, two across, each with a gold left edge — same six cards, different
-   object. */
-.condo .cov-grid {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
-  background: none;
-  border: 0;
-  border-radius: 0;
-  overflow: visible;
-}
-
-.condo .cov-card {
-  padding: 24px 24px 26px;
+   A single hairline table, one row per coverage: name, what it covers, what we
+   check. /what-we-do uses a 3-up card grid; this reads as a reference table. */
+.condo .cov-table {
   border: 1px solid var(--color-gray-200);
-  border-left: 3px solid var(--color-gold);
-  border-radius: 12px;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
-  transition: box-shadow 0.22s ease, transform 0.22s ease;
-}
-
-.condo .cov-card:hover {
+  border-radius: 16px;
+  overflow: hidden;
   background: var(--color-white);
-  transform: translateY(-2px);
-  box-shadow: 0 14px 32px -16px rgba(15, 23, 42, 0.18);
 }
 
-/* Chip becomes a plain gold mark — the card's own left edge already carries the
-   accent, and two gold elements per card is one too many. */
-.condo .cov-card__mark {
-  width: auto;
-  height: auto;
-  border-radius: 0;
-  background: none;
+.condo .cov-table__head,
+.condo .cov-table__row {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.8fr) 1.4fr 1fr;
+  gap: 28px;
+  padding: 18px 26px;
 }
 
-.condo .cov-card:hover .cov-card__mark {
-  background: none;
+.condo .cov-table__head {
+  background: var(--color-navy);
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-gold-light);
+  padding-top: 14px;
+  padding-bottom: 14px;
+}
+
+.condo .cov-table__row {
+  align-items: start;
+  border-top: 1px solid var(--color-gray-200);
+  transition: background 0.2s ease;
+}
+
+.condo .cov-table__row:nth-child(even) {
+  background: var(--color-gray-50);
+}
+
+.condo .cov-table__row:hover {
+  background: rgba(229, 193, 106, 0.08);
+}
+
+.condo .cov-table__name {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.condo .cov-table__mark {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  background: var(--color-gold-dim);
   color: var(--color-gold);
+}
+
+.condo .cov-table__name h3 {
+  font-size: 16.5px;
+  font-weight: 700;
+  line-height: 1.3;
+  color: var(--color-navy);
+}
+
+.condo .cov-table__covers,
+.condo .cov-table__check {
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--color-gray-600);
+}
+
+.condo .cov-table__check {
+  color: var(--color-gray-700);
+}
+
+/* Column labels repeat inside each cell only once the table stacks. */
+.condo .cov-table__label {
+  display: none;
+}
+
+@media (max-width: 900px) {
+  .condo .cov-table__head {
+    display: none;
+  }
+
+  .condo .cov-table__row {
+    grid-template-columns: 1fr;
+    gap: 10px;
+    padding: 18px 20px;
+  }
+
+  .condo .cov-table__row:first-of-type {
+    border-top: 0;
+  }
+
+  .condo .cov-table__label {
+    display: block;
+    margin-bottom: 2px;
+    font-size: 11.5px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--color-gray-500);
+  }
 }
 
 /* ── 03 · What we find ──
@@ -151,34 +219,10 @@
   max-width: 84ch;
 }
 
-/* ── Section rhythm ──
-   Slightly roomier than /what-we-do, so scrolling the two pages back to back
-   does not feel like the same page twice. */
-.condo .section {
-  padding-top: 92px;
-  padding-bottom: 92px;
-}
-
-@media (max-width: 900px) {
-
-  .condo .cov-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .condo .section {
-    padding-top: 64px;
-    padding-bottom: 64px;
-  }
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .condo .cov-card,
+  .condo .cov-table__row,
   .condo .faq-item {
     transition: none;
-  }
-
-  .condo .cov-card:hover {
-    transform: none;
   }
 }
 
@@ -190,7 +234,7 @@
   display: block;
   width: 100%;
   height: auto;
-  max-height: 420px;
+  max-height: 300px;
   object-fit: cover;
   object-position: center;
   border-radius: 18px;
@@ -267,12 +311,6 @@
   align-items: center;
   text-align: center;
   margin-top: 38px;
-}
-
-/* Seven cards in a two-column grid leaves one on its own row. Letting the last
-   one span both keeps the block rectangular instead of ending on a stub. */
-.condo .cov-grid > .cov-card:last-child:nth-child(odd) {
-  grid-column: 1 / -1;
 }
 
 

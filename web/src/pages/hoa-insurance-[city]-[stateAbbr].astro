@@ -34,18 +34,17 @@ const canonicalPath = "/hoa-insurance-" + city.slug + "-" + city.stateAbbr + "/"
 >
   <Hero
     title={city.heroTitle}
-    subtitle={`HOA master insurance and HO-6 condo coverage for ${city.name}, ${city.stateName} associations.`}
+    subtitle={`HOA master Insurance and HO-6 condo coverage for ${city.name}, ${city.stateName} associations.`}
     backgroundImage="/images/modern-building.jpg"
     backgroundVideo="/images/hero-video.mp4"
     ctaText="Request Insurance Review"
     ctaHref={`${QUOTE_URL}?state=${city.stateAbbr.toUpperCase()}`}
-    compact
-  />
+    compact short />
 
   <section class="section">
     <div class="container reveal" style="max-width: 800px">
       <h2 class="section-title">HOA Insurance in {city.name}, {city.stateAbbr.toUpperCase()}</h2>
-      <p style="font-size: 17px; color: var(--color-gray-600); line-height: 1.7; margin-bottom: 32px">{city.intro}</p>
+      <p style="font-size: 15px; color: var(--color-gray-600); line-height: 1.7; margin-bottom: 32px">{city.intro}</p>
     </div>
   </section>
 
@@ -68,7 +67,7 @@ const canonicalPath = "/hoa-insurance-" + city.slug + "-" + city.stateAbbr + "/"
           the completeness claim is gone and the sentence now carries the site's
           own availability qualifier instead. */}
       <p style="font-size: 16px; color: var(--color-gray-600); line-height: 1.7; margin-bottom: 24px">
-        We place the core HOA lines for {city.name} associations — master property, general liability, umbrella, D&O, crime/fidelity, and ordinance or law. We also help unit owners with HO-6 policies aligned to the master policy. Carrier availability varies by state, association type and risk profile, and coverage is subject to underwriting, policy terms, and eligibility.
+        We place the core HOA lines for {city.name} associations: master property, general liability, umbrella, D&O, crime/fidelity, and ordinance or law. We also help unit owners with HO-6 policies aligned to the master policy. Carrier availability varies by state, association type and risk profile, and coverage is subject to underwriting, policy terms, and eligibility.
       </p>
       <div style="display: flex; gap: 12px; flex-wrap: wrap">
         <a href="/what-we-do/" class="btn btn-primary">Our Coverages</a>
@@ -79,11 +78,11 @@ const canonicalPath = "/hoa-insurance-" + city.slug + "-" + city.stateAbbr + "/"
 
   <section class="section section--navy" style="text-align: center">
     <div class="container">
-      <h2 class="section-title">Need HOA insurance in {city.name}?</h2>
+      <h2 class="section-title">Need HOA Insurance in {city.name}?</h2>
       {/* Was "takes about 2 minutes", a duration nothing in the funnel measures
           and that the review itself does not take. Replaced with the wording the
           state template's own closing section uses, so the two say it alike. */}
-      <p class="section-subtitle" style="margin: 0 auto 32px">Start with a free insurance review — no commitment, no pressure.</p>
+      <p class="section-subtitle" style="margin: 0 auto 32px">Start with a free Insurance review. No commitment, no pressure.</p>
       <a href={QUOTE_URL} class="btn btn-gold">Request Insurance Review</a>
     </div>
   </section>
@@ -102,7 +101,7 @@ const canonicalPath = "/hoa-insurance-" + city.slug + "-" + city.stateAbbr + "/"
     display: flex;
     align-items: flex-start;
     gap: 12px;
-    font-size: 16px;
+    font-size: 15px;
     color: var(--color-gray-700);
     line-height: 1.6;
     padding: 16px 20px;

@@ -113,9 +113,9 @@
 }
 
 .contact-heading {
-  font-size: clamp(24px, 4vw, 32px);
-  font-weight: 700;
-  letter-spacing: -0.02em;
+  font-size: clamp(24px, 2.6vw, 32px);
+  font-weight: 600;
+  letter-spacing: -0.015em;
   line-height: 1.2;
   margin-bottom: 24px;
   color: var(--color-gray-900);
