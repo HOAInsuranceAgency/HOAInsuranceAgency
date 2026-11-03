@@ -75,6 +75,36 @@ These values can be registered with the Google client before deploying the
 provider. Staging's existing `EMAIL_OTP` invitation setting is explicitly
 preserved in the backend; production's sign-in factor policy is unchanged.
 
+## Production
+
+Production uses the business AWS account `917680434255`, CRM Amplify app
+`d1nuh9rw1hcuxo`, and its retained `main` backend in `us-east-1`. The existing
+pool is `us-east-1_SzIUH4F67` and client is `2nek9vpj42jis5ejcb5qaebhkh`.
+Keep the steady-state deployment wrapper and destination guards: the retired
+source account's `d2d4g940z91vj4/main` backend is not the production target.
+
+Create a separate production Google Web OAuth client under the business
+Google account. Its origin is
+`https://129992aadbeacee939dd.auth.us-east-1.amazoncognito.com`, and its redirect
+URI is
+`https://129992aadbeacee939dd.auth.us-east-1.amazoncognito.com/oauth2/idpresponse`.
+The CRM callback and logout destination are `https://app.protectmyhoa.com/`.
+Use only OpenID, email, and basic profile scopes. Production needs an External
+audience published for normal invited-team use; keep staging's testing client
+and credentials separate.
+
+Save `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` in this production backend's
+Amplify secrets, under
+`/amplify/d1nuh9rw1hcuxo/main-branch-0e4fdbd849/`. Merge
+`GOOGLE_SIGN_IN_ENABLED=true` into the existing main branch environment without
+replacing its steady-state, mail, or migration settings. Main automatically
+builds after merge, so complete this configuration before merging the reviewed
+release. Preserve existing user access states and sign-in factors.
+
+Google OAuth remains disabled in read-only migration previews. Their signup
+guard still runs for administrator-created accounts, with no Google linking
+permissions; their existing preview login restrictions remain enforced.
+
 ## Local sandbox
 
 From `crm/`, set each sandbox secret interactively:
