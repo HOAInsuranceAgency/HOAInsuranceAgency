@@ -35,6 +35,7 @@ describe("completed HOA main deployment", () => {
     const web = { ...env, AWS_APP_ID: contract.webApp, PUBLIC_HOA_MIGRATION_PREVIEW: "false", PUBLIC_ANALYTICS_DISABLED: "false", PUBLIC_CRM_API_URL: contract.graphqlUrl };
     expect(() => assertSteadyState(web, contract)).not.toThrow();
     expect(() => assertSteadyState({ ...web, PUBLIC_CRM_API_URL: "https://source.invalid/graphql" }, contract)).toThrow();
+    expect(() => assertSteadyState({ ...web, PUBLIC_ANALYTICS_DISABLED: "true" }, contract)).toThrow();
   });
   it("retains the current auth/mail/pending runtime identity without changing handlers", () => {
     const config = readFileSync("amplify/migration-config.ts", "utf8");
@@ -138,6 +139,13 @@ describe("completed HOA staging deployment", () => {
     expect(stagingContract.schedules.filter(s => s.state === "DISABLED").map(s => s.logical)).toEqual(["WeeklyMarketingReportSchedule6899ACFF"]);
     const f = liveFixture("", stagingContract); verifySteadyState(f.namespace, f.c, f.aws);
     expect(f.calls.every(a => ["describe-stacks", "list-stack-resources", "get-event-source-mapping", "get-schedule"].includes(a[1]))).toBe(true);
+  });
+  it("requires staging website analytics to stay disabled with its retained staging API binding", () => {
+    const web = { ...stageEnv, AWS_APP_ID: stagingContract.webApp, PUBLIC_HOA_MIGRATION_PREVIEW: "false",
+      PUBLIC_ANALYTICS_DISABLED: "true", PUBLIC_CRM_API_URL: stagingContract.graphqlUrl };
+    expect(() => assertSteadyState(web, stagingContract)).not.toThrow();
+    expect(() => assertSteadyState({ ...web, PUBLIC_ANALYTICS_DISABLED: "false" }, stagingContract)).toThrow();
+    expect(() => assertSteadyState({ ...web, PUBLIC_CRM_API_URL: contract.graphqlUrl }, stagingContract)).toThrow();
   });
   it.each([
     { AWS_BRANCH: "staging" }, { AWS_BRANCH: "main" }, { HOA_DEPLOYMENT_MODE: "" },
