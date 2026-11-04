@@ -83,6 +83,31 @@ function liveFixture(failure = "", source = contract, withLedger = false, stackS
   return { c, aws, calls, resources, ledger, ledgerResource, namespace: { branchName: c.backendBranch, enableAutoBuild: false, enablePullRequestPreview: false, backend: { stackArn: failure === "root" ? "wrong" : c.backendRoot } } };
 }
 describe("read-only existing backend admission", () => {
+  it.each([contract, stagingContract])('validates separate retained child inventories after a completed nested rollback', source => {
+    const f = liveFixture('', source, false, 'UPDATE_ROLLBACK_COMPLETE');
+    const childArn = `arn:aws:cloudformation:${f.c.region}:${f.c.account}:stack/retained-child/retained-id`;
+    const childResources = f.resources.slice(0, 57);
+    const child = { LogicalResourceId: 'RetainedChild', ResourceType: 'AWS::CloudFormation::Stack', PhysicalResourceId: childArn, ResourceStatus: 'UPDATE_ROLLBACK_COMPLETE' };
+    const rootResources = [...f.resources.slice(57), child];
+    const inventory = childResources.map(r => [childArn, r.LogicalResourceId, r.ResourceType, r.PhysicalResourceId]);
+    f.c.statefulInventorySha256 = createHash('sha256').update(JSON.stringify(inventory)).digest('hex');
+    const aws = (...args: string[]) => args[1] === 'list-stack-resources'
+      ? { StackResourceSummaries: args[3] === childArn ? childResources : rootResources }
+      : f.aws(...args);
+    expect(() => verifySteadyState(f.namespace, f.c, aws)).not.toThrow();
+    expect(f.calls.filter(a => a[1] === 'get-event-source-mapping')).toHaveLength(22);
+    expect(f.calls.filter(a => a[1] === 'get-schedule')).toHaveLength(8);
+    for (const status of ['UPDATE_ROLLBACK_IN_PROGRESS', 'UPDATE_ROLLBACK_FAILED', 'UPDATE_FAILED']) {
+      child.ResourceStatus = status;
+      expect(() => verifySteadyState(f.namespace, f.c, aws)).toThrow('resource update is not complete');
+    }
+    child.ResourceStatus = 'UPDATE_ROLLBACK_COMPLETE';
+    childResources[0].ResourceStatus = 'UPDATE_ROLLBACK_COMPLETE';
+    expect(() => verifySteadyState(f.namespace, f.c, aws)).toThrow('resource update is not complete');
+    childResources[0].ResourceStatus = 'CREATE_COMPLETE';
+    childResources[0].PhysicalResourceId = 'replacement';
+    expect(() => verifySteadyState(f.namespace, f.c, aws)).toThrow('stateful physical identities differ');
+  });
   it.each([contract, stagingContract])('admits a completed update rollback only with the original retained identities and controls', source => {
     const valid = liveFixture('', source, false, 'UPDATE_ROLLBACK_COMPLETE');
     expect(() => verifySteadyState(valid.namespace, valid.c, valid.aws)).not.toThrow();

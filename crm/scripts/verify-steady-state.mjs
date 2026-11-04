@@ -25,7 +25,9 @@ export function verifySteadyState(namespace, contract, aws) {
     seen.add(stack);
     for (const r of aws("cloudformation", "list-stack-resources", "--stack-name", stack).StackResourceSummaries) {
       if (r.ResourceStatus === "DELETE_COMPLETE") continue;
-      need(["CREATE_COMPLETE", "UPDATE_COMPLETE"].includes(r.ResourceStatus), "resource update is not complete");
+      need(["CREATE_COMPLETE", "UPDATE_COMPLETE"].includes(r.ResourceStatus)
+        || r.ResourceType === "AWS::CloudFormation::Stack" && r.ResourceStatus === "UPDATE_ROLLBACK_COMPLETE",
+      "resource update is not complete");
       inventory.push({ ...r, stack });
       if (r.ResourceType === "AWS::CloudFormation::Stack") collect(r.PhysicalResourceId);
     }
