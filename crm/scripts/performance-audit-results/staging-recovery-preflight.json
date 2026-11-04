@@ -1,0 +1,30 @@
+{
+  "commit": "904fe92f896fdb043d64d21d5a93857996e08ea0",
+  "results": [
+    {
+      "mode": "strict",
+      "command": [
+        "node",
+        "scripts/assert-migration-destination.mjs",
+        "--staging-only"
+      ],
+      "exitCode": 1,
+      "elapsedSeconds": 2.33,
+      "stdout": "",
+      "stderr": "file:///Users/jake/.codex/worktrees/crm-latency-first-three/HOAInsuranceAgency/crm/scripts/verify-steady-state.mjs:9\n  const need = (ok, reason) => { if (!ok) throw new Error(`HOA steady-state live guard: ${reason}`); };\n                                                ^\n\nError: HOA steady-state live guard: backend is unstable or unprotected\n    at need (file:///Users/jake/.codex/worktrees/crm-latency-first-three/HOAInsuranceAgency/crm/scripts/verify-steady-state.mjs:9:49)\n    at verifySteadyState (file:///Users/jake/.codex/worktrees/crm-latency-first-three/HOAInsuranceAgency/crm/scripts/verify-steady-state.mjs:23:3)\n    at file:///Users/jake/.codex/worktrees/crm-latency-first-three/HOAInsuranceAgency/crm/scripts/assert-migration-destination.mjs:46:23\n    at ModuleJob.run (node:internal/modules/esm/module_job:430:25)\n    at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:639:26)\n    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5)\n\nNode.js v25.8.1\n"
+    },
+    {
+      "mode": "recovery",
+      "command": [
+        "node",
+        "scripts/assert-migration-destination.mjs",
+        "--staging-only",
+        "--recover-staging-rollback"
+      ],
+      "exitCode": 0,
+      "elapsedSeconds": 58.72,
+      "stdout": "Verified retained staging rollback recovery: {\"schema\":1,\"verifiedAt\":\"2026-11-04T19:29:31.167Z\",\"backendRoot\":\"arn:aws:cloudformation:us-east-1:917680434255:stack/amplify-d1nuh9rw1hcuxo-staging-branch-3787a09124/eaa4dff0-d3d3-11f1-ab1d-0edee65f4629\",\"observedRootStatus\":\"UPDATE_ROLLBACK_COMPLETE\",\"stagingRollbackRecovery\":true,\"observedRolledBackNestedStacks\":[],\"originalStatefulCount\":57,\"originalStatefulInventorySha256\":\"7f64fb4e870e5c157f2817fb70946c19fd869175c404b35a29640c599c3a2f45\",\"originalCursorCount\":22,\"originalScheduleCount\":8,\"accountListExtensionPresent\":false,\"brokerFeeLedgerPresent\":false}\nVerified isolated HOA staging deployment (release).\n",
+      "stderr": ""
+    }
+  ]
+}

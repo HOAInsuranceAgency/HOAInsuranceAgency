@@ -85,5 +85,16 @@
   },
   "unknownReferences": [],
   "boundNote": "AccountListReadAccess uses maximum legal 255-character future table name; all other new managed references and communications default policy use actual staging ARNs.",
-  "reviewedAt": "2026-11-04"
+  "reviewedAt": "2026-11-04",
+  "proposedManagedAttachmentCountsByAffectedRole": {
+    "brokerfees": 2,
+    "communications": 5,
+    "commissions": 2,
+    "stripewebhook": 3,
+    "sendinvoice": 3,
+    "voidinvoice": 2,
+    "pfelection": 2,
+    "crmaccess": 7,
+    "accountlistworker": 1
+  }
 }
