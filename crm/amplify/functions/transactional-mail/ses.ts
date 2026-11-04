@@ -1,11 +1,11 @@
 import { SendEmailCommand, type SendEmailCommandInput } from "@aws-sdk/client-sesv2";
-import { hash, type MailKind, type Payload } from "./contract";
+import { hash, SES_IDENTITY_ARN, type MailKind, type Payload } from "./contract";
 
 /** Build from the canonical saved envelope; the SDK encodes attachment bytes once. */
 export function sesCommand(body: Payload, configurationSet: string, environment: string, kind: MailKind, operationKey: string): SendEmailCommand {
   const input: SendEmailCommandInput = {
     FromEmailAddress: body.from,
-    FromEmailAddressIdentityArn: "arn:aws:ses:us-east-1:917680434255:identity/protectmyhoa.com",
+    FromEmailAddressIdentityArn: SES_IDENTITY_ARN,
     Destination: { ToAddresses: body.to, ...(body.cc?.length ? { CcAddresses: body.cc } : {}), ...(body.bcc?.length ? { BccAddresses: body.bcc } : {}) },
     ...(body.reply_to ? { ReplyToAddresses: [body.reply_to] } : {}),
     ConfigurationSetName: configurationSet,

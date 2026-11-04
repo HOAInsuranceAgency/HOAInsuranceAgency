@@ -1,125 +1,57 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SendEmailCommand } from "@aws-sdk/client-sesv2";
-import { TransactionalMailClient, quotaPolicy, type TransportDependencies } from "../../amplify/functions/transactional-mail/client";
+import { TransactionalMailClient, quotaPolicy } from "../../amplify/functions/transactional-mail/client";
 import { hash, payload } from "../../amplify/functions/transactional-mail/contract";
 import { sesCommand } from "../../amplify/functions/transactional-mail/ses";
+import { now, bound, command, harness } from "./helpers/transactionalMail";
 
-const now = Date.parse("2026-11-04T02:00:00Z");
-const bound = {
-  HOA_MIGRATION_AUTH: "true", HOA_MIGRATION_APP_ID: "d1nuh9rw1hcuxo", HOA_MIGRATION_BRANCH: "codex-hoa-account-migration",
-  HOA_MIGRATION_PREVIEW: "false", HOA_TRANSACTIONAL_MAIL_RELEASE: "true", HOA_MIGRATION_WORKERS_ENABLED: "true",
-  HOA_TRANSACTIONAL_MAIL_PROVIDER: "resend", HOA_TRANSACTIONAL_MAIL_TABLE: "HOA-TransactionalMail",
-  HOA_TRANSACTIONAL_MAIL_BUCKET: "hoa-transactional-mail-917680434255-us-east-1",
-  HOA_RESEND_SECRET_ARN: "arn:aws:secretsmanager:us-east-1:917680434255:secret:hoa/resend/sending-Fixture",
-  HOA_SES_CONFIGURATION_SET: "hoa-transactional-main", HOA_SES_CANARY_EXPIRES_AT: "2026-11-04T02:30:00Z", AWS_REGION: "us-east-1",
-  AWS_LAMBDA_FUNCTION_NAME: "amplify-d1nuh9rw1hcuxo-main-magicLinkVerify",
-};
-const command = (to = "jake@getgim.com") => new SendEmailCommand({ FromEmailAddress: "HOA Insurance Agency <noreply@protectmyhoa.com>", Destination: { ToAddresses: [to] }, Content: { Simple: { Subject: { Data: "SES verification" }, Body: { Text: { Data: "Synthetic only" }, Html: { Data: "<p>Synthetic only</p>" } } } } });
-type Options = { sesError?: unknown; missingReceipt?: boolean; receiptFailure?: boolean; earlyFeedback?: boolean; wrongEarlyProvider?: boolean; wrongEarlyKind?: boolean; quota?: boolean; beforeClaim?: () => void };
-function harness(options: Options = {}) {
-  const rows = new Map<string, any>(); const objects = new Map<string, string>(); const transactions: any[] = [];
-  const conditional = () => Object.assign(new Error("conflict"), { name: "TransactionCanceledException" });
-  const database = { send: vi.fn(async (c: any) => {
-    const i = c.input;
-    if (c.constructor.name === "GetCommand") return { Item: structuredClone(rows.get(i.Key.pk)) };
-    if (c.constructor.name === "PutCommand") {
-      if (rows.has(i.Item.pk)) throw Object.assign(new Error("exists"), { name: "ConditionalCheckFailedException" });
-      rows.set(i.Item.pk, structuredClone(i.Item)); return {};
-    }
-    if (c.constructor.name === "UpdateCommand") {
-      const row = rows.get(i.Key.pk); const v = i.ExpressionAttributeValues;
-      if (row?.attempt === v[":attempt"] && (v[":sending"] ? row.state === "SENDING" : ["RESERVED", "DEFERRED"].includes(row.state))) Object.assign(row, { state: v[":state"], failureReason: v[":reason"], nextRetryAt: v[":retry"] });
-      return {};
-    }
-    if (c.constructor.name === "TransactWriteCommand") {
-      transactions.push(i); const op = i.TransactItems[0].Update; const v = op.ExpressionAttributeValues; const row = rows.get(op.Key.pk);
-      if (v[":sending"] && !v[":accepted"]) {
-        options.beforeClaim?.();
-        if (options.quota || !["RESERVED", "DEFERRED"].includes(row?.state) || row.attempt !== v[":oldAttempt"] || (row.provider && row.provider !== v[":provider"])) throw conditional();
-        Object.assign(row, { state: "SENDING", attempt: v[":attempt"], provider: v[":provider"] });
-      } else {
-        if (options.receiptFailure) throw new Error("receipt failure");
-        const receipt = i.TransactItems[1].Update; const rv = receipt.ExpressionAttributeValues; const prior = rows.get(receipt.Key.pk);
-        if (row.state !== "SENDING" || row.provider !== v[":provider"] || (prior?.provider && prior.provider !== rv[":provider"]) || (prior?.operationHash && prior.operationHash !== rv[":operationHash"]) || (prior?.mailKind && prior.mailKind !== rv[":mailKind"])) throw conditional();
-        Object.assign(row, { state: "ACCEPTED", providerId: v[":id"] });
-        rows.set(receipt.Key.pk, { ...prior, kind: "RECEIPT", provider: rv[":provider"], providerId: rv[":id"], operationKey: rv[":operation"], operationHash: rv[":operationHash"], environment: rv[":environment"], mailKind: rv[":mailKind"], status: receipt.UpdateExpression.includes("#status = if_not_exists(#status, :accepted)") ? prior?.status ?? "ACCEPTED" : "ACCEPTED" });
-      }
-      return {};
-    }
-    throw new Error("Unexpected command");
-  }) };
-  const storage = { send: vi.fn(async (c: any) => {
-    if (c.constructor.name === "GetObjectCommand") return { Body: { transformToString: async () => objects.get(c.input.Key)! }, ContentLength: objects.get(c.input.Key)?.length };
-    objects.set(c.input.Key, c.input.Body); return {};
-  }) };
-  const secrets = { send: vi.fn(async () => ({ SecretString: JSON.stringify({ apiKey: "re_fixture" }) })) };
-  const fetchMock = vi.fn(async () => new Response(JSON.stringify({ id: "resend-receipt-12345" }), { status: 200 }));
-  const sesMock = vi.fn(async (c: any) => {
-    if (options.sesError) throw options.sesError;
-    if (options.earlyFeedback) {
-      const operationHash = c.input.EmailTags.find((t: any) => t.Name === "HOAOperation").Value;
-      rows.set("RECEIPT#ses#ses-receipt-12345", { kind: "RECEIPT", provider: options.wrongEarlyProvider ? "resend" : "ses", environment: "main", operationHash, mailKind: options.wrongEarlyKind ? "invoice" : c.input.EmailTags.find((t: any) => t.Name === "HOAMailKind").Value, status: "DELIVERED", deliveredAt: "2026-11-04T02:00:00Z" });
-    }
-    return options.missingReceipt ? {} : { MessageId: "ses-receipt-12345" };
-  });
-  const deps = { database, storage, secrets, ses: { send: sesMock }, fetch: fetchMock, now: () => now } as unknown as TransportDependencies;
-  return { rows, transactions, database, storage, secrets, fetchMock, sesMock, deps, objects };
-}
-beforeEach(() => { for (const [k, v] of Object.entries(bound)) vi.stubEnv(k, v); vi.stubEnv("HOA_SES_DAILY_LIMIT", "100"); vi.stubEnv("HOA_SES_MONTHLY_LIMIT", "3000"); vi.spyOn(console, "error").mockImplementation(() => {}); });
-afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks(); });
+beforeEach(() => {
+  for (const [k, v] of Object.entries(bound)) vi.stubEnv(k, v);
+  vi.stubEnv("HOA_SES_DAILY_LIMIT", "1000"); vi.stubEnv("HOA_SES_MONTHLY_LIMIT", "30000");
+  vi.spyOn(console, "error").mockImplementation(() => {});
+  vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("HTTP email is retired"));
+});
+afterEach(() => { expect(globalThis.fetch).not.toHaveBeenCalled(); vi.unstubAllEnvs(); vi.restoreAllMocks(); });
 
-describe("SES pre-switch owner canary", () => {
-  it("sends only the exact owner login or test through SES while Resend remains primary", async () => {
-    for (const kind of ["login", "test"] as const) {
-      const h = harness(); await new TransactionalMailClient(kind, h.deps).send(command());
-      expect(h.sesMock).toHaveBeenCalledOnce(); expect(h.fetchMock).not.toHaveBeenCalled(); expect(h.secrets.send).not.toHaveBeenCalled();
-      expect([...h.rows.values()].find(r => r.kind === "OPERATION").provider).toBe("ses");
-      expect(h.sesMock.mock.calls[0][0].input.ConfigurationSetName).toBe("hoa-transactional-main");
-    }
+describe("per-environment SES transport", () => {
+  it.each(["login", "invite", "invoice", "report", "accounting", "test"] as const)("sends new %s mail through SES only", async kind => {
+    const h = harness(); await new TransactionalMailClient(kind, h.deps).send(command());
+    expect(h.sesMock).toHaveBeenCalledOnce();
+    expect([...h.rows.values()].find(r => r.kind === "OPERATION").provider).toBe("ses");
+    expect(h.sesMock.mock.calls[0][0].input.ConfigurationSetName).toBe("hoa-transactional-main");
   });
-  it("keeps customer logins, other send kinds and hidden recipients on the primary provider", async () => {
-    for (const [kind, c] of [["login", command("member@example.com")], ["invoice", command()], ["test", new SendEmailCommand({ ...command().input, Destination: { ToAddresses: ["jake@getgim.com"], BccAddresses: ["jake@getgim.com"] } })]] as const) {
-      const h = harness(); await new TransactionalMailClient(kind, h.deps).send(c);
-      expect(h.fetchMock).toHaveBeenCalledOnce(); expect(h.sesMock).not.toHaveBeenCalled();
-    }
-  });
-  it("allows insurance only for synthetic owner tests; real login and other business kinds keep the primary", async () => {
-    const insurance = new SendEmailCommand({ ...command().input, FromEmailAddress: "HOA Insurance Agency <insurance@protectmyhoa.com>" });
-    const h = harness(); await new TransactionalMailClient("test", h.deps).send(insurance); expect(h.sesMock).toHaveBeenCalledOnce(); expect(h.fetchMock).not.toHaveBeenCalled();
-    for (const kind of ["login", "invite", "invoice", "report", "accounting"] as const) {
-      const other = harness(); await new TransactionalMailClient(kind, other.deps).send(insurance); expect(other.sesMock).not.toHaveBeenCalled(); expect(other.fetchMock).toHaveBeenCalledOnce();
-    }
-  });
-  it("rejects an unknown destination sender before any credential, storage or provider call", async () => {
-    const h = harness(); const unknown = new SendEmailCommand({ ...command().input, FromEmailAddress: "unknown@protectmyhoa.com" });
-    await expect(new TransactionalMailClient("test", h.deps).send(unknown)).rejects.toThrow("sender"); expect(h.database.send).not.toHaveBeenCalled(); expect(h.storage.send).not.toHaveBeenCalled(); expect(h.sesMock).not.toHaveBeenCalled(); expect(h.fetchMock).not.toHaveBeenCalled();
-  });
-  it.each(["invoice", "report", "accounting"] as const)("preserves the staging %s mailbox while retaining owner-only delivery", async kind => {
-    vi.stubEnv("HOA_MIGRATION_BRANCH", "codex-hoa-staging-migration"); vi.stubEnv("HOA_SES_CANARY_EXPIRES_AT", "");
-    vi.stubEnv("AWS_LAMBDA_FUNCTION_NAME", kind === "report" ? "marketing-report-ifyd1nuh9rw1hcuxostagingbranch3787a09124" : "amplify-d1nuh9rw1hcuxo-staging-businessSender");
+  it.each(["invoice", "report", "accounting"] as const)("preserves the staging %s test mailbox and blocks customers in every envelope field", async kind => {
+    vi.stubEnv("HOA_MIGRATION_BRANCH", "codex-hoa-staging-migration"); vi.stubEnv("HOA_SES_CONFIGURATION_SET", "hoa-transactional-staging");
     const owner = new SendEmailCommand({ ...command().input, FromEmailAddress: "HOA Insurance Agency <jake+testing@protectmyhoa.com>" });
     const h = harness(); await new TransactionalMailClient(kind, h.deps).send(owner);
-    expect(h.fetchMock).toHaveBeenCalledOnce(); expect(h.sesMock).not.toHaveBeenCalled();
-    const [url, request] = h.fetchMock.mock.calls[0] as unknown as [string, { body: string }];
-    expect(url).toBe("https://api.resend.com/emails"); expect(JSON.parse(request.body)).toMatchObject({ from: "HOA Insurance Agency <jake+testing@protectmyhoa.com>", to: ["jake@getgim.com"] });
-    const customer = new SendEmailCommand({ ...owner.input, Destination: { ToAddresses: ["customer@example.com"] } });
-    const blocked = harness(); await expect(new TransactionalMailClient(kind, blocked.deps).send(customer)).rejects.toThrow("Staging");
-    expect(blocked.database.send).not.toHaveBeenCalled(); expect(blocked.fetchMock).not.toHaveBeenCalled(); expect(blocked.sesMock).not.toHaveBeenCalled();
+    expect(h.sesMock).toHaveBeenCalledOnce(); expect(h.sesMock.mock.calls[0][0].input.FromEmailAddress).toContain("jake+testing@protectmyhoa.com");
+    expect(h.sesMock.mock.calls[0][0].input.EmailTags).toContainEqual({ Name: "HOAEnvironment", Value: "staging" });
+    for (const field of ["ToAddresses", "CcAddresses", "BccAddresses"] as const) {
+      const customer = new SendEmailCommand({ ...owner.input, Destination: { ToAddresses: ["jake@getgim.com"], [field]: ["customer@example.com"] } });
+      const blocked = harness(); await expect(new TransactionalMailClient(kind, blocked.deps).send(customer)).rejects.toThrow("Staging");
+      expect(blocked.database.send).not.toHaveBeenCalled(); expect(blocked.sesMock).not.toHaveBeenCalled();
+    }
   });
-  it("expires the owner canary without changing other primary delivery", async () => {
-    vi.stubEnv("HOA_SES_CANARY_EXPIRES_AT", "2026-11-04T01:59:59Z"); const h = harness();
-    await new TransactionalMailClient("login", h.deps).send(command()); expect(h.fetchMock).toHaveBeenCalledOnce(); expect(h.sesMock).not.toHaveBeenCalled();
+  it.each(["main", "staging"])("rejects senders from the other environment in %s", async environment => {
+    const stage = environment === "staging";
+    vi.stubEnv("HOA_MIGRATION_BRANCH", stage ? "codex-hoa-staging-migration" : "codex-hoa-account-migration");
+    vi.stubEnv("HOA_SES_CONFIGURATION_SET", stage ? "hoa-transactional-staging" : "hoa-transactional-main");
+    const h = harness(); const wrong = new SendEmailCommand({ ...command().input, FromEmailAddress: `HOA Insurance Agency <${stage ? "insurance" : "jake+testing"}@protectmyhoa.com>` });
+    await expect(new TransactionalMailClient("invoice", h.deps).send(wrong)).rejects.toThrow("sender"); expect(h.database.send).not.toHaveBeenCalled();
   });
-  it.each([{ AWS_REGION: "us-west-2" }, { HOA_SES_CONFIGURATION_SET: "unreviewed" }])("blocks mismatched SES binding before persistence or provider calls: %o", async patch => {
-    for (const [k, v] of Object.entries(patch)) vi.stubEnv(k, v);
-    const h = harness(); await expect(new TransactionalMailClient("login", h.deps).send(command())).rejects.toThrow();
-    expect(h.database.send).not.toHaveBeenCalled(); expect(h.storage.send).not.toHaveBeenCalled(); expect(h.sesMock).not.toHaveBeenCalled(); expect(h.fetchMock).not.toHaveBeenCalled();
+  it("rechecks a verification deadline after slow persistence and defers before SES", async () => {
+    const h = harness({ beforeClaim: () => { h.deps.now = () => Date.parse(bound.HOA_SES_VERIFICATION_EXPIRES_AT) + 1; } });
+    await expect(new TransactionalMailClient("test", h.deps).send(command())).rejects.toMatchObject({ state: "DEFERRED" });
+    expect(h.sesMock).not.toHaveBeenCalled(); expect([...h.rows.values()].find(r => r.kind === "OPERATION")).toMatchObject({ provider: "ses", state: "DEFERRED", attempt: 1 });
   });
-  it("rechecks canary expiry after slow persistence without switching the reserved provider", async () => {
-    const h = harness({ beforeClaim: () => { h.deps.now = () => Date.parse(bound.HOA_SES_CANARY_EXPIRES_AT) + 1; } });
-    await expect(new TransactionalMailClient("login", h.deps).send(command())).rejects.toMatchObject({ state: "DEFERRED" });
-    expect(h.sesMock).not.toHaveBeenCalled(); expect(h.fetchMock).not.toHaveBeenCalled();
-    expect([...h.rows.values()].find(r => r.kind === "OPERATION")).toMatchObject({ provider: "ses", state: "DEFERRED" });
+  it("keeps main quotas and old Resend counters intact while stage uses its own cap", async () => {
+    vi.stubEnv("HOA_MIGRATION_BRANCH", "codex-hoa-staging-migration"); vi.stubEnv("HOA_SES_CONFIGURATION_SET", "hoa-transactional-staging");
+    vi.stubEnv("HOA_SES_DAILY_LIMIT", "100"); vi.stubEnv("HOA_SES_MONTHLY_LIMIT", "3000");
+    const h = harness(); h.rows.set("QUOTA#SES#DAY#2026-11-04", { count: 1000 }); h.rows.set("QUOTA#DAY#2026-11-04", { count: 100 });
+    await new TransactionalMailClient("login", h.deps).send(command());
+    expect(h.rows.get("QUOTA#SES#STAGING#DAY#2026-11-04").count).toBe(1); expect(h.rows.get("QUOTA#SES#STAGING#MONTH#2026-11").count).toBe(1);
+    expect(h.rows.get("QUOTA#SES#DAY#2026-11-04")).toEqual({ count: 1000 }); expect(h.rows.get("QUOTA#DAY#2026-11-04")).toEqual({ count: 100 });
+    expect(quotaPolicy("invoice", "2026-11-04T02:00:00Z")).toMatchObject({ dayLimit: 95, monthLimit: 2950 });
   });
 });
 
@@ -127,21 +59,24 @@ describe("provider pinning and uncertainty", () => {
   it("uses a separate SES receipt namespace and reuses the accepted original operation", async () => {
     const h = harness(); const client = new TransactionalMailClient("login", h.deps);
     expect(await client.send(command())).toEqual({ MessageId: "ses-receipt-12345" });
-    vi.stubEnv("HOA_TRANSACTIONAL_MAIL_PROVIDER", "resend"); vi.stubEnv("HOA_SES_CANARY_EXPIRES_AT", "");
     expect(await client.send(command())).toEqual({ MessageId: "ses-receipt-12345" });
-    expect(h.sesMock).toHaveBeenCalledOnce(); expect(h.fetchMock).not.toHaveBeenCalled();
+    expect(h.sesMock).toHaveBeenCalledOnce();
     expect(h.rows.get("RECEIPT#ses#ses-receipt-12345")).toMatchObject({ provider: "ses", environment: "main" });
   });
-  it("returns accepted Resend history after a primary SES switch, without sending again", async () => {
-    vi.stubEnv("HOA_SES_CANARY_EXPIRES_AT", ""); const h = harness(); const client = new TransactionalMailClient("invoice", h.deps);
-    await client.send(command()); vi.stubEnv("HOA_TRANSACTIONAL_MAIL_PROVIDER", "ses");
-    expect(await client.send(command())).toEqual({ MessageId: "resend-receipt-12345" }); expect(h.fetchMock).toHaveBeenCalledOnce(); expect(h.sesMock).not.toHaveBeenCalled();
+  it.each(["main", "staging"])("returns accepted Resend history in %s without rewriting receipts or sending", async environment => {
+    if (environment === "staging") { vi.stubEnv("HOA_MIGRATION_BRANCH", "codex-hoa-staging-migration"); vi.stubEnv("HOA_SES_CONFIGURATION_SET", "hoa-transactional-staging"); }
+    const h = harness(); const body = payload(command().input, {}); const key = `OP#hoa/${environment}/invoice/${hash(hash(JSON.stringify(body)))}`;
+    h.rows.set(key, { pk: key, kind: "OPERATION", provider: "resend", state: "ACCEPTED", payloadHash: hash(JSON.stringify(body)), providerId: "old-resend-receipt", attempt: 1 });
+    h.rows.set("RECEIPT#old-resend-receipt", { kind: "RECEIPT", provider: "resend", operationKey: key, status: "DELIVERED" });
+    const prior = structuredClone([...h.rows]);
+    expect(await new TransactionalMailClient("invoice", h.deps).send(command())).toEqual({ MessageId: "old-resend-receipt" });
+    expect([...h.rows]).toEqual(prior); expect(h.sesMock).not.toHaveBeenCalled(); expect(h.storage.send).not.toHaveBeenCalled(); expect(h.transactions).toHaveLength(0);
   });
   it.each(["RESERVED", "DEFERRED"])("holds old Resend %s work instead of replacing it with an SES operation", async state => {
     vi.stubEnv("HOA_TRANSACTIONAL_MAIL_PROVIDER", "ses"); const h = harness(); const body = payload(command().input, {}); const key = `OP#hoa/main/invoice/${hash(hash(JSON.stringify(body)))}`;
     const prior = { pk: key, kind: "OPERATION", provider: "resend", state, payloadHash: hash(JSON.stringify(body)), attempt: 0, nextRetryAt: new Date(now - 1).toISOString() }; h.rows.set(key, structuredClone(prior));
     await expect(new TransactionalMailClient("invoice", h.deps).send(command())).rejects.toMatchObject({ state: "DEFERRED" });
-    expect(h.rows.get(key)).toEqual(prior); expect(h.sesMock).not.toHaveBeenCalled(); expect(h.fetchMock).not.toHaveBeenCalled(); expect(h.storage.send).not.toHaveBeenCalled();
+    expect(h.rows.get(key)).toEqual(prior); expect(h.sesMock).not.toHaveBeenCalled();  expect(h.storage.send).not.toHaveBeenCalled();
   });
   it("treats legacy missing-provider unsent rows as Resend and holds them across the switch", async () => {
     vi.stubEnv("HOA_TRANSACTIONAL_MAIL_PROVIDER", "ses"); const h = harness(); const body = payload(command().input, {}); const key = `OP#hoa/main/invoice/${hash(hash(JSON.stringify(body)))}`;
@@ -158,16 +93,16 @@ describe("provider pinning and uncertainty", () => {
   ] as const)("classifies SES failures conservatively and never falls back: %s", async (sesError, state) => {
     const h = harness({ sesError }); const client = new TransactionalMailClient("login", h.deps);
     await expect(client.send(command())).rejects.toMatchObject({ state }); await expect(client.send(command())).rejects.toMatchObject({ state });
-    expect(h.sesMock).toHaveBeenCalledOnce(); expect(h.fetchMock).not.toHaveBeenCalled(); expect(h.secrets.send).not.toHaveBeenCalled();
+    expect(h.sesMock).toHaveBeenCalledOnce();
   });
   it.each([{ missingReceipt: true }, { receiptFailure: true }])("holds missing/persistence-lost SES receipts: %o", async options => {
     const h = harness(options); const client = new TransactionalMailClient("login", h.deps);
     await expect(client.send(command())).rejects.toMatchObject({ state: "UNKNOWN" }); await expect(client.send(command())).rejects.toMatchObject({ state: "UNKNOWN" }); expect(h.sesMock).toHaveBeenCalledOnce();
   });
-  it("cannot route an uncertain SES operation through Resend after rollback", async () => {
+  it("never retries an uncertain SES operation or uses retired HTTP", async () => {
     const h = harness({ sesError: new TypeError("network") }); const client = new TransactionalMailClient("login", h.deps);
-    await expect(client.send(command())).rejects.toMatchObject({ state: "UNKNOWN" }); vi.stubEnv("HOA_SES_CANARY_EXPIRES_AT", "");
-    await expect(client.send(command())).rejects.toMatchObject({ state: "UNKNOWN" }); expect(h.fetchMock).not.toHaveBeenCalled(); expect(h.sesMock).toHaveBeenCalledOnce();
+    await expect(client.send(command())).rejects.toMatchObject({ state: "UNKNOWN" });
+    await expect(client.send(command())).rejects.toMatchObject({ state: "UNKNOWN" });  expect(h.sesMock).toHaveBeenCalledOnce();
   });
   it("merges feedback arriving before send acknowledgement without erasing delivered facts", async () => {
     const h = harness({ earlyFeedback: true }); await new TransactionalMailClient("login", h.deps).send(command());
@@ -204,7 +139,7 @@ describe("SES envelope fidelity and independent application caps", () => {
     const [day, month] = h.transactions[0].TransactItems.slice(1).map((x: any) => x.Update);
     expect(day.Key.pk).toBe("QUOTA#SES#DAY#2026-11-04"); expect(day.ExpressionAttributeValues[":remaining"]).toBe(994);
     expect(month.Key.pk).toBe("QUOTA#SES#MONTH#2026-11"); expect(month.ExpressionAttributeValues[":remaining"]).toBe(29949);
-    expect(quotaPolicy("resend", "login", "2026-11-04T02:00:00Z")).toMatchObject({ dayKey: "QUOTA#DAY#2026-11-04", dayLimit: 100, monthLimit: 3000 });
+    expect(quotaPolicy("login", "2026-11-04T02:00:00Z")).toMatchObject({ dayKey: "QUOTA#SES#DAY#2026-11-04", dayLimit: 1000, monthLimit: 30000 });
   });
   it.each([
     { kind: "login", daily: "1", monthly: "3000", reason: "daily_quota_exceeded", retry: "2026-11-05T00:00:00.000Z" },
@@ -220,7 +155,7 @@ describe("SES envelope fidelity and independent application caps", () => {
     expect(h.objects.size).toBe(1); expect(JSON.parse([...h.objects.values()][0])).toMatchObject({ to: ["jake@getgim.com"], cc: ["member@example.com"] });
     expect(h.transactions).toHaveLength(0);
     expect(h.database.send.mock.calls.some(([c]) => c.input.Key?.pk?.startsWith("QUOTA#"))).toBe(false);
-    expect(h.sesMock).not.toHaveBeenCalled(); expect(h.fetchMock).not.toHaveBeenCalled(); expect(h.secrets.send).not.toHaveBeenCalled();
+    expect(h.sesMock).not.toHaveBeenCalled();
   });
   it("permits a fresh send whose recipient cost exactly equals both effective caps", async () => {
     vi.stubEnv("HOA_TRANSACTIONAL_MAIL_PROVIDER", "ses"); vi.stubEnv("HOA_SES_DAILY_LIMIT", "2"); vi.stubEnv("HOA_SES_MONTHLY_LIMIT", "2");
@@ -229,7 +164,7 @@ describe("SES envelope fidelity and independent application caps", () => {
     expect(h.sesMock).toHaveBeenCalledOnce();
     for (const { Update: counter } of h.transactions[0].TransactItems.slice(1)) expect(counter.ExpressionAttributeValues).toMatchObject({ ":cost": 2, ":remaining": 0 });
   });
-  it.each([{ HOA_SES_DAILY_LIMIT: "50001" }, { HOA_SES_DAILY_LIMIT: "1.5" }, { HOA_SES_MONTHLY_LIMIT: "0" }])("rejects unsafe SES application caps before persistence: %o", async patch => {
+  it.each([{ HOA_SES_DAILY_LIMIT: "50001" }, { HOA_SES_DAILY_LIMIT: "1.5" }, { HOA_SES_MONTHLY_LIMIT: "0" }, { HOA_SES_MONTHLY_LIMIT: "1500001" }])("rejects unsafe SES application caps before persistence: %o", async patch => {
     for (const [k, v] of Object.entries(patch)) vi.stubEnv(k, v); const h = harness(); await expect(new TransactionalMailClient("login", h.deps).send(command())).rejects.toThrow("limits"); expect(h.database.send).not.toHaveBeenCalled(); expect(h.sesMock).not.toHaveBeenCalled();
   });
 });

@@ -13,10 +13,10 @@ beforeEach(() => {
   h.send.mockReset().mockResolvedValue({ MessageId: "synthetic-ses-receipt" });
   for (const [k, v] of Object.entries({
     HOA_MIGRATION_APP_ID: "d1nuh9rw1hcuxo", HOA_MIGRATION_BRANCH: "codex-hoa-account-migration", HOA_MIGRATION_PREVIEW: "false",
-    HOA_TRANSACTIONAL_MAIL_PROVIDER: "resend", HOA_TRANSACTIONAL_MAIL_RELEASE: "true", HOA_MIGRATION_WORKERS_ENABLED: "true",
+    HOA_TRANSACTIONAL_MAIL_PROVIDER: "ses", HOA_TRANSACTIONAL_MAIL_RELEASE: "true", HOA_MIGRATION_WORKERS_ENABLED: "true",
     HOA_TRANSACTIONAL_MAIL_TABLE: "HOA-TransactionalMail", HOA_TRANSACTIONAL_MAIL_BUCKET: "hoa-transactional-mail-917680434255-us-east-1",
-    HOA_RESEND_SECRET_ARN: "arn:aws:secretsmanager:us-east-1:917680434255:secret:hoa/resend/sending-fixture",
-    HOA_SES_CANARY_EXPIRES_AT: "2026-11-04T02:30:00Z", HOA_SES_CONFIGURATION_SET: "hoa-transactional-main", AWS_REGION: "us-east-1", AWS_LAMBDA_FUNCTION_NAME: runtime,
+    HOA_SES_IDENTITY_ARN: "arn:aws:ses:us-east-1:917680434255:identity/protectmyhoa.com",
+    HOA_SES_VERIFICATION_EXPIRES_AT: "2026-11-04T02:30:00.000Z", HOA_SES_CONFIGURATION_SET: "hoa-transactional-main", AWS_REGION: "us-east-1", AWS_LAMBDA_FUNCTION_NAME: runtime,
   })) vi.stubEnv(k, v);
 });
 afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); vi.restoreAllMocks(); });
@@ -37,14 +37,24 @@ describe("operator-only combined SES verification", () => {
     expect(command.input.FromEmailAddress).toBe("HOA Insurance Agency <insurance@protectmyhoa.com>"); expect(command.input.Destination).toEqual({ ToAddresses: ["jake@getgim.com"] });
     expect(details.idempotencyKey).toBe(`verification:${event.runId}:complete:insurance`); expect(details.attachments).toHaveLength(2);
   });
+  it("supports the stage test mailbox but preserves its config and sender isolation", async () => {
+    vi.stubEnv("HOA_MIGRATION_BRANCH", "codex-hoa-staging-migration"); vi.stubEnv("HOA_SES_CONFIGURATION_SET", "hoa-transactional-staging");
+    expect(await handler({ ...event, sender: "testing" }, context)).toMatchObject({ provider: "ses" });
+    const [command, details] = h.send.mock.calls[0];
+    expect(command.input.FromEmailAddress).toBe("HOA Insurance Agency <jake+testing@protectmyhoa.com>");
+    expect(command.input.Destination).toEqual({ ToAddresses: ["jake@getgim.com"] });
+    expect(details.idempotencyKey).toBe(`verification:${event.runId}:complete:testing`);
+    await expect(handler({ ...event, sender: "insurance" }, context)).rejects.toThrow("sender");
+    expect(h.send).toHaveBeenCalledOnce();
+  });
   it("rejects unknown or address-shaped sender overrides before transport", async () => {
     for (const sender of ["other", "noreply@protectmyhoa.com", "insurance@other.example"]) await expect(handler({ ...event, sender }, context)).rejects.toThrow("sender");
     expect(h.send).not.toHaveBeenCalled();
   });
   it.each([
-    { HOA_SES_CANARY_EXPIRES_AT: "" }, { HOA_SES_CANARY_EXPIRES_AT: "2026-11-04T01:59:59Z" }, { HOA_TRANSACTIONAL_MAIL_PROVIDER: "ses" },
+    { HOA_SES_VERIFICATION_EXPIRES_AT: "" }, { HOA_SES_VERIFICATION_EXPIRES_AT: "2026-11-04T01:59:59.000Z" }, { HOA_SES_VERIFICATION_EXPIRES_AT: "2026-11-04T04:00:00.000Z" }, { HOA_TRANSACTIONAL_MAIL_PROVIDER: "resend" },
     { HOA_MIGRATION_PREVIEW: "true" }, { HOA_MIGRATION_BRANCH: "codex-hoa-staging-migration" }, { AWS_REGION: "us-west-2" }, { AWS_LAMBDA_FUNCTION_NAME: runtime.replace("mailverification", "other") },
-  ])("refuses a missing/expired or incorrectly scoped canary before sending: %o", async patch => {
+  ])("refuses a missing/expired or incorrectly scoped verification before sending: %o", async patch => {
     for (const [k, v] of Object.entries(patch)) vi.stubEnv(k, v); await expect(handler(event, context)).rejects.toThrow(); expect(h.send).not.toHaveBeenCalled();
   });
   it("rejects an unbound run ID, function and separate multiple-message fixtures", async () => {
