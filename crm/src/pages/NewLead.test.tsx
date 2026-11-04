@@ -9,6 +9,7 @@ const h = vi.hoisted(() => ({
   documentCreate: vi.fn(),
   documentUpdate: vi.fn(),
   upload: vi.fn(),
+  accountGet: vi.fn(),
 }));
 vi.mock("react-router-dom", () => ({ useNavigate: () => h.navigate, useSearchParams: () => [new URLSearchParams()] }));
 vi.mock("../lib/relationships", () => ({ loadPartyIds: async () => [], searchParties: async () => ({ items: [] }) }));
@@ -24,6 +25,7 @@ vi.mock("aws-amplify/auth", () => ({ getCurrentUser: async () => ({ userId: "act
 vi.mock("aws-amplify/data", () => ({
   generateClient: () => ({ models: {
     Contact: { create: h.contactCreate },
+    Account: { get: h.accountGet },
     Document: { create: h.documentCreate, update: h.documentUpdate },
   } }),
 }));
@@ -37,6 +39,10 @@ beforeEach(() => {
   h.documentCreate.mockReset().mockResolvedValue({ data: { id: "document-1" } });
   h.documentUpdate.mockReset().mockResolvedValue({});
   h.upload.mockReset().mockReturnValue({ result: Promise.resolve() });
+  h.accountGet.mockReset().mockImplementation(async () => {
+    const fields = h.request.mock.calls.filter(([operation]) => operation === "createLead").at(-1)?.[1]?.fields ?? {};
+    return { data: { id: "new-lead", ...fields, propertyType: fields.propertyType ?? (fields.type === "PERSONAL" ? "INDIVIDUAL_UNIT_OWNER" : null) } };
+  });
 });
 
 it("recovers from a rejected contact write after creation without offering another create", async () => {
@@ -228,7 +234,7 @@ describe("new lead form", () => {
     });
   });
 
-  it("prevents edits and duplicate submissions while saving, then allows a failed request to be retried", async () => {
+  it("prevents duplicate submissions and requires review after retrying an uncertain creation", async () => {
     let failRequest!: (error: Error) => void;
     h.request.mockImplementation((operation: string) => operation === "team"
       ? Promise.resolve({ team: [] })
@@ -246,7 +252,11 @@ describe("new lead form", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("Unable to create the lead right now.");
     expect(screen.getByLabelText("Name (association / insured) *")).toBeEnabled();
     h.request.mockImplementation(async (operation: string) => operation === "team" ? { team: [] } : { id: "new-lead" });
-    await submit();
+    fireEvent.click(screen.getByRole("button", { name: "Create lead" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("latest draft details have not been confirmed as saved");
+    expect(h.navigate).not.toHaveBeenCalled();
     expect(h.request.mock.calls.filter(([operation]) => operation === "createLead")).toHaveLength(2);
+    const attempts = h.request.mock.calls.filter(([operation]) => operation === "createLead");
+    expect(attempts[1][1].requestId).toBe(attempts[0][1].requestId);
   });
 });

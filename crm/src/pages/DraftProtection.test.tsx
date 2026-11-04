@@ -1,11 +1,11 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { createMemoryRouter, Link, Outlet, RouterProvider, useLocation, useNavigate, useSearchParams } from "react-router-dom";
-import { beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { EditProtectionProvider, useEditProtection } from "../lib/editProtection";
 import { LeadDraftScope } from "../lib/newLeadDraft";
 import type { Account } from "../lib/client";
 
-const mocks = vi.hoisted(() => ({ request: vi.fn(), update: vi.fn(), upload: vi.fn(), leaveSession: vi.fn() }));
+const mocks = vi.hoisted(() => ({ request: vi.fn(), update: vi.fn(), accountGet: vi.fn(), contactCreate: vi.fn(), upload: vi.fn(), leaveSession: vi.fn() }));
 vi.mock("../lib/relationships", () => ({ loadPartyIds: async () => [], searchParties: async () => ({ items: [] }) }));
 vi.mock("../lib/communications", () => ({ communicationRequest: mocks.request }));
 vi.mock("../components/LeadWorkflowPanel", () => ({ ResponsibilitySelect: () => null }));
@@ -13,7 +13,7 @@ vi.mock("../lib/googlePlaces", () => ({ AddressAutocomplete: () => null }));
 vi.mock("../lib/scopedStorage", () => ({ uploadData: mocks.upload }));
 vi.mock("aws-amplify/auth", () => ({ getCurrentUser: async () => ({ userId: "actor" }) }));
 vi.mock("aws-amplify/data", () => ({ generateClient: () => ({ models: {
-  Account: { update: mocks.update }, Contact: { create: async () => ({ data: { id: "contact" } }) },
+  Account: { update: mocks.update, get: mocks.accountGet }, Contact: { create: mocks.contactCreate },
   Document: { create: async () => ({ data: { id: "document" } }), update: async () => ({}) },
 } }) }));
 import NewLead from "./NewLead";
@@ -56,7 +56,13 @@ beforeEach(() => {
   mocks.update.mockReset().mockImplementation(async fields => ({ data: { ...account, ...fields } }));
   mocks.upload.mockReset().mockReturnValue({ result: Promise.resolve() });
   mocks.leaveSession.mockReset();
+  mocks.contactCreate.mockReset().mockResolvedValue({ data: { id: "contact" } });
+  mocks.accountGet.mockReset().mockImplementation(async () => {
+    const fields = mocks.request.mock.calls.filter(([operation]) => operation === "createLead").at(-1)?.[1]?.fields ?? {};
+    return { data: { id: "new-lead", ...fields, propertyType: fields.propertyType ?? (fields.type === "PERSONAL" ? "INDIVIDUAL_UNIT_OWNER" : null) } };
+  });
 });
+afterEach(() => vi.restoreAllMocks());
 
 it("blocks route navigation and browser Back for an edited lead; Keep editing retains it and discard clears recovery", async () => {
   const view = mount();
@@ -260,4 +266,78 @@ it.each(["review", "continue", "session"])("requires acknowledgement of a failed
     else await screen.findByRole("heading", { name: "Other page" });
   }
   expect(mocks.request.mock.calls.filter(([operation]) => operation === "createLead")).toHaveLength(1);
+});
+
+it("preserves recovered edits when a lost creation response is replayed against the original existing lead", async () => {
+  let savedFields: Record<string, unknown>;
+  mocks.request.mockImplementation(async (operation, input) => {
+    if (operation === "team") return { team: [] };
+    if (!savedFields) { savedFields = { ...input.fields }; throw new Error("Response lost"); }
+    return { id: "new-lead" };
+  });
+  mocks.accountGet.mockImplementation(async () => ({ data: { id: "new-lead", ...savedFields, propertyType: null } }));
+  const first = mount(); typeName("Original saved name");
+  fireEvent.change(screen.getByLabelText("Lead source *"), { target: { value: "ORGANIC_WEBSITE" } });
+  fireEvent.click(screen.getByRole("button", { name: "Create lead" }));
+  await screen.findByText("Response lost");
+  const requestId = mocks.request.mock.calls.find(([op]) => op === "createLead")![1].requestId;
+  expect(JSON.parse(sessionStorage.getItem(drafts()[0])!).attempted).toBe(true);
+  first.unmount();
+  const second = mount();
+  fireEvent.click(screen.getByRole("button", { name: "Recover lead details" }));
+  typeName("Later recovered edit");
+  fireEvent.change(screen.getByLabelText("Contact name"), { target: { value: "Later contact" } });
+  fireEvent.click(screen.getByRole("button", { name: "Create lead" }));
+  await screen.findByText(/latest draft details have not been confirmed as saved/);
+  expect(second.router.state.location.pathname).toBe("/leads/new");
+  expect(mocks.request.mock.calls.filter(([op]) => op === "createLead").map(([, input]) => input.requestId)).toEqual([requestId, requestId]);
+  expect(mocks.contactCreate).not.toHaveBeenCalled();
+  expect(mocks.upload).not.toHaveBeenCalled();
+  const preserved = JSON.parse(sessionStorage.getItem(drafts()[0])!);
+  expect(preserved).toMatchObject({ existingId: "new-lead", requestId, fields: { name: "Later recovered edit", contactName: "Later contact" } });
+  const open = vi.spyOn(window, "open").mockReturnValue(null);
+  fireEvent.click(screen.getByRole("button", { name: "Review saved lead in new tab" }));
+  expect(open).toHaveBeenCalledWith("/accounts/new-lead?tab=overview", "_blank", "noopener,noreferrer");
+  expect(name()).toHaveValue("Later recovered edit");
+  expect(drafts()).toHaveLength(1);
+  second.unmount();
+  const third = mount();
+  fireEvent.click(screen.getByRole("button", { name: "Recover lead details" }));
+  expect(name()).toHaveValue("Later recovered edit");
+  expect(screen.getByLabelText("Contact name")).toHaveValue("Later contact");
+  expect(screen.queryByRole("button", { name: "Create lead" })).not.toBeInTheDocument();
+  expect(drafts()).toHaveLength(1);
+  fireEvent.click(screen.getByRole("button", { name: "I reviewed the lead — discard this draft" }));
+  await screen.findByRole("heading", { name: "Created account" });
+  expect(third.router.state.location.pathname).toBe("/accounts/new-lead");
+  expect(drafts()).toEqual([]);
+  expect(mocks.request.mock.calls.filter(([op]) => op === "createLead")).toHaveLength(2);
+});
+
+it("reports an oversized latest draft honestly and retains the last valid details for recovery", async () => {
+  const first = mount(); typeName("Last recoverable name");
+  typeName("x".repeat(2001));
+  await screen.findByText(/Your latest details could not be backed up/);
+  expect(JSON.parse(sessionStorage.getItem(drafts()[0])!).fields.name).toBe("Last recoverable name");
+  first.unmount(); mount();
+  fireEvent.click(screen.getByRole("button", { name: "Recover lead details" }));
+  expect(name()).toHaveValue("Last recoverable name");
+});
+
+it.each(["creation", "verification"])("does not restore an old user's draft or start secondary writes after unmount during %s", async phase => {
+  let finish!: (result: unknown) => void;
+  if (phase === "creation") mocks.request.mockImplementation(operation => operation === "team" ? Promise.resolve({ team: [] }) : new Promise(resolve => { finish = resolve; }));
+  else mocks.accountGet.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+  const view = mount(); typeName("Old user's draft");
+  fireEvent.change(screen.getByLabelText("Lead source *"), { target: { value: "ORGANIC_WEBSITE" } });
+  fireEvent.change(screen.getByLabelText("Contact name"), { target: { value: "Old user's contact" } });
+  fireEvent.click(screen.getByRole("button", { name: "Create lead" }));
+  await waitFor(() => expect(phase === "creation" ? mocks.request.mock.calls.some(([op]) => op === "createLead") : mocks.accountGet.mock.calls.length > 0).toBe(true));
+  const fields = mocks.request.mock.calls.find(([op]) => op === "createLead")![1].fields;
+  view.unmount(); sessionStorage.clear();
+  await act(async () => finish(phase === "creation" ? { id: "new-lead" } : { data: { id: "new-lead", ...fields, propertyType: null } }));
+  expect(drafts()).toEqual([]);
+  expect(mocks.contactCreate).not.toHaveBeenCalled();
+  expect(mocks.upload).not.toHaveBeenCalled();
+  if (phase === "creation") expect(mocks.accountGet).not.toHaveBeenCalled();
 });
