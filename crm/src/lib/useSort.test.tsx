@@ -38,6 +38,21 @@ function rowNames() {
 }
 
 describe("shared table sorting", () => {
+  it("accepts URL-controlled sort changes while leaving ownership with the caller", () => {
+    const onChange = vi.fn();
+    const { result, rerender } = renderHook(({ sortKey, dir }: { sortKey: string; dir: 'asc' | 'desc' }) =>
+      useSort(ITEMS, { name: item => item.name, score: item => item.score }, 'name', 'asc', { sortKey, dir, onChange }),
+    { initialProps: { sortKey: 'score', dir: 'desc' } });
+    expect(result.current.sorted.map(item => item.name)).toEqual(['Charlie', 'Bravo', 'Alpha']);
+    act(() => result.current.toggle('score'));
+    expect(onChange).toHaveBeenLastCalledWith('score', 'asc');
+    expect(result.current.dir).toBe('desc');
+    rerender({ sortKey: 'name', dir: 'asc' });
+    expect(result.current.sorted.map(item => item.name)).toEqual(['Alpha', 'Bravo', 'Charlie']);
+    act(() => result.current.toggle('score'));
+    expect(onChange).toHaveBeenLastCalledWith('score', 'asc');
+  });
+
   it("sorts with Enter and Space, announces direction, and does not submit an enclosing form", async () => {
     const user = userEvent.setup();
     const onToggle = vi.fn();

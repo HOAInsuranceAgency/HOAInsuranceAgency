@@ -429,10 +429,10 @@ function Shell({ profile, signOut, activeRole, roles, onRoleChange }: {
             <Route path="/owner" element={isOwner ? <OwnerProfitability /> : <Navigate to={homePath} replace />} />
             <Route path="/relationships" element={<Relationships />} />
             <Route path="/relationships/:id" element={<RelationshipDetail />} />
-            <Route path="/leads" element={<AccountsList stage="LEAD" />} />
+            <Route path="/leads" element={<AccountsList stage="LEAD" viewScope={`${profile.userId}:${activeRole}`} />} />
             <Route path="/leads/new" element={<NewLead />} />
             <Route path="/lead-work" element={<Navigate to="/leads" replace />} />
-            <Route path="/clients" element={<AccountsList stage="CLIENT" />} />
+            <Route path="/clients" element={<AccountsList stage="CLIENT" viewScope={`${profile.userId}:${activeRole}`} />} />
             <Route path="/accounts/:id" element={<AccountDetail profile={profile} />} />
             <Route path="/carriers" element={<Carriers />} />
             <Route path="/carriers/:id" element={<CarrierDetail />} />
