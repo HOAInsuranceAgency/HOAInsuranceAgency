@@ -32,9 +32,10 @@ const b64url = (buf: Buffer) =>
 const sign = (payload: string, secret: string) =>
   b64url(createHmac("sha256", secret).update(payload).digest());
 
-export function mintToken(email: string, secret: string): string {
+export function mintToken(email: string, secret: string, issuedAt = Date.now()): string {
+  if (!Number.isSafeInteger(issuedAt) || issuedAt < 0) throw new Error("Invalid magic-link issuance time.");
   const payload = b64url(
-    Buffer.from(JSON.stringify({ email, exp: Date.now() + TOKEN_TTL_MS }))
+    Buffer.from(JSON.stringify({ email, exp: issuedAt + TOKEN_TTL_MS }))
   );
   return `${payload}.${sign(payload, secret)}`;
 }
