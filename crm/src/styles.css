@@ -715,6 +715,35 @@ mark.ocr-current { background: #f79b32; color: #fff; border-radius: 2px; }
 .auth-card .field { margin: 14px 0 4px; }
 .auth-card .form-actions { margin-top: 14px; }
 .auth-card .form-actions .primary { width: 100%; padding: 11px; }
+@font-face {
+  font-family: "Google Sans";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("/fonts/google-sans-medium-latin.woff2") format("woff2");
+}
+.auth-google {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  margin-top: 20px;
+  min-height: 44px;
+  padding: 11px 12px;
+  background: #fff;
+  color: #1f1f1f;
+  border: 1px solid #747775;
+  border-radius: 4px;
+  font: 500 14px/20px "Google Sans", Arial, sans-serif;
+  cursor: pointer;
+}
+.auth-google img { object-fit: contain; flex-shrink: 0; }
+.auth-google:hover:not(:disabled) { background: #f8fafc; }
+.auth-google:disabled { opacity: 0.55; cursor: default; }
+.auth-google:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.auth-divider { display: flex; align-items: center; gap: 12px; margin: 18px 0; color: var(--muted); font-size: 12px; }
+.auth-divider::before, .auth-divider::after { content: ""; flex: 1; height: 1px; background: var(--border); }
 .auth-tag {
   color: #8fa7cc;
   font-size: 12.5px;

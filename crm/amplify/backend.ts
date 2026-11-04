@@ -2,7 +2,7 @@ import { migrationProbeScopes } from "./migration-probe-scopes";
 import { installTransactionalMail } from "./transactional-mail";
 import { mailFeedback } from "./functions/mail-feedback/resource";
 import { mailVerification, mailRecovery } from "./functions/transactional-mail/resource";
-import { migrationDestination, migrationPreview, migrationTargets, businessBranch, providerBranch, migrationCrmOrigin, migrationWebOrigin, migrationExecution, migrationRuntimeBranch } from "./migration-config";
+import { migrationDestination, migrationPreview, migrationTargets, businessBranch, providerBranch, migrationWebOrigin, migrationExecution, migrationRuntimeBranch } from "./migration-config";
 import { installMigrationPreview } from "./migration-preview";
 import { commissions } from './functions/commissions/resource';
 import { installCommissions } from './commissions';
@@ -23,6 +23,7 @@ import { Schedule, ScheduleExpression, ScheduleTargetInput, ContextAttribute } f
 import { LambdaInvoke } from "aws-cdk-lib/aws-scheduler-targets";
 import { Policy, PolicyStatement } from "aws-cdk-lib/aws-iam";
 import { Secret } from "aws-cdk-lib/aws-secretsmanager";
+import { CfnUserPoolIdentityProvider } from "aws-cdk-lib/aws-cognito";
 import {
   AttributeType,
   BillingMode,
@@ -37,6 +38,8 @@ import {
 } from "aws-cdk-lib/aws-lambda";
 import { DynamoEventSource } from "aws-cdk-lib/aws-lambda-event-sources";
 import { auth } from "./auth/resource";
+import { crmBaseUrl, googleSignInEnabled } from "./auth/config";
+import { googleSignIn } from "./functions/google-sign-in/resource";
 import { data } from "./data/resource";
 import { storage } from "./storage/resource";
 import { processDocument } from "./functions/process-document/resource";
@@ -125,6 +128,7 @@ export const backend = defineBackend({
   magicLinkCreate,
   magicLinkVerify,
   migrationNativeMessage,
+  googleSignIn,
 });
 
 // The OCR function drives async Textract jobs over uploaded documents.
@@ -263,17 +267,54 @@ for (const model of STREAMED_MODELS) {
 // ── Auth behavior ────────────────────────────────────────────────────
 const { cfnUserPool, cfnUserPoolClient } = backend.auth.resources.cfnResources;
 
-// Magic-link only: the custom auth flow is the sole sign-in path.
+// Email links use custom auth; Google uses the separate OAuth code flow.
+// Neither path enables password authentication or public self-signup.
 cfnUserPool.userPoolTier = "ESSENTIALS";
-if (migrationDestination) cfnUserPool.adminCreateUserConfig = { allowAdminCreateUserOnly: true };
+cfnUserPool.adminCreateUserConfig = { allowAdminCreateUserOnly: true };
+if (!migrationDestination && process.env.AWS_BRANCH === "staging") {
+  // Preserve staging's existing passwordless invitation setting, previously
+  // configured in Cognito directly. API sign-in remains custom auth only.
+  cfnUserPool.addPropertyOverride("Policies.SignInPolicy.AllowedFirstAuthFactors", ["PASSWORD", "EMAIL_OTP"]);
+}
 cfnUserPoolClient.explicitAuthFlows = [
   "ALLOW_CUSTOM_AUTH",
   "ALLOW_REFRESH_TOKEN_AUTH",
 ];
+if (googleSignInEnabled) {
+  // Managed login must offer only Google. This setting does not disable the
+  // SDK custom-auth API used by our existing email links.
+  cfnUserPoolClient.supportedIdentityProviders = ["Google"];
+  // The literal above replaces CDK's provider-name Ref, which otherwise
+  // orders provider creation before the client enables it. Retain that edge
+  // explicitly or Cognito can reject the client update during deployment.
+  const googleProvider = backend.auth.resources.userPool.identityProviders
+    .map(provider => provider.node.defaultChild)
+    .find((provider): provider is CfnUserPoolIdentityProvider =>
+      provider instanceof CfnUserPoolIdentityProvider && provider.providerType === "Google");
+  if (!googleProvider) throw new Error("Google sign-in requires a Google identity provider");
+  cfnUserPoolClient.addResourceDependency(googleProvider);
+}
 
 // Stay signed in for 7 days (refresh token lifetime).
 cfnUserPoolClient.refreshTokenValidity = 7;
 cfnUserPoolClient.tokenValidityUnits = { refreshToken: "days" };
+
+// Keep the policy separate from the execution role: the user pool references
+// this trigger's Lambda, so an inline role policy referring back to the pool
+// would create a CloudFormation pool → Lambda → role → pool cycle.
+if (googleSignInEnabled) {
+  const googleLinkPolicy = new Policy(Stack.of(backend.auth.resources.userPool), "GoogleAccountLinkPolicy", {
+    statements: [new PolicyStatement({
+      actions: [
+        "cognito-idp:AdminGetUser",
+        "cognito-idp:AdminListGroupsForUser",
+        "cognito-idp:AdminLinkProviderForUser",
+      ],
+      resources: [backend.auth.resources.userPool.userPoolArn],
+    })],
+  });
+  googleLinkPolicy.attachToRole(backend.googleSignIn.resources.lambda.role!);
+}
 
 // ── Magic link plumbing ──────────────────────────────────────────────
 // Signing secret shared by the create/verify triggers (generated once per
@@ -285,13 +326,8 @@ const magicLinkSecret = new Secret(magicLinkStack, "MagicLinkSigningSecret", {
 magicLinkSecret.grantRead(backend.magicLinkCreate.resources.lambda);
 magicLinkSecret.grantRead(backend.magicLinkVerify.resources.lambda);
 
-// Where the emailed link points, per branch (custom domains: update here).
-const BRANCH_URLS: Record<string, string> = {
-  staging: "https://staging.d2d4g940z91vj4.amplifyapp.com",
-  main: "https://app.protectmyhoa.com",
-};
-const magicLinkBaseUrl =
-  migrationDestination ? (migrationPreview || businessBranch === "staging" ? migrationCrmOrigin : BRANCH_URLS.main) : BRANCH_URLS[process.env.AWS_BRANCH ?? ""] ?? "http://localhost:5173";
+// Shared with OAuth so email and Google return to the same branch.
+const magicLinkBaseUrl = crmBaseUrl;
 
 /**
  * The marketing site's host, per branch. Where a lead's upload link points.
