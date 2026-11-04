@@ -214,7 +214,7 @@ describe("an edited invoice cannot charge its old total", () => {
     // INV-2026-00007's link read "no longer active" while its payment was
     // still Incomplete awaiting microdeposit verification.
     expect(SEND).toMatch(/paymentLinks\.retrieve\(existingLinkId\)/);
-    expect(SEND).toMatch(/if \(link\.active\) return existingUrl/);
+    expect(SEND).toMatch(/if \(link\.active && link\.url === existingUrl\) return existingUrl/);
     expect(SEND).not.toMatch(
       /if \(invoice\.stripeLinkAmountCents === wantedCents\) return existingUrl/
     );

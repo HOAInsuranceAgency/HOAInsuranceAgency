@@ -158,7 +158,7 @@ function pending(name: string, abbr: string, slug: string): StateData {
     abbr,
     slug,
     title: `HOA Insurance in ${name} — ProtectMyHOA`,
-    description: `HOA master insurance, liability, D&O and crime coverage for ${name} homeowners and condominium associations. Independent insurance agency with no broker fee.`,
+    description: `HOA master insurance, liability, D&O and crime coverage for ${name} homeowners and condominium associations. Independent insurance agency with transparent fee disclosure.`,
     heroTitle: `HOA Insurance in ${name}`,
     intro: `We place master Insurance programs for community associations in ${name}: property and general liability on the shared buildings and common elements, plus the directors and officers, crime and umbrella cover a board needs alongside them. Every review sets the responses from the markets we approach side by side on coverage, deductibles and limits, and ends in a written record your board can file with its minutes.`,
     regulations: [

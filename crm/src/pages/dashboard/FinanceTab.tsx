@@ -22,6 +22,7 @@ import { salespersonKey, salespersonSeries } from "../../lib/dashboardPeople";
 import { interestIncomeBySalesperson, hasFinancingReceivable, nonBilledReceivables, outstandingPrincipal } from "../../lib/dashboardFinance";
 import { StackedBars } from "../../components/StackedBars";
 import type { Schema } from "../../../amplify/data/resource";
+import { brokerFeeBalances, type ReportBrokerFeePolicy } from "../../lib/brokerFeeReporting";
 
 type InvoiceRow = Schema["Invoice"]["type"];
 type PfLoanRow = Schema["PfLoan"]["type"];
@@ -33,6 +34,7 @@ interface FinanceData {
   payments: FinancePaymentReceipt[];
   policies: FinancePolicyAnchor[];
   invoiceLines: FinanceLineAnchor[];
+  brokerFeePolicies?: ReportBrokerFeePolicy[];
   commercial: CommercialData;
   asOf: Date;
 }
@@ -51,6 +53,8 @@ export default function FinanceTab() {
     { initialData: EMPTY, errorMessage: "Failed to load the finance view", clearDataOnError: isAuthorizationError }
   );
   const { invoices, pfLoans, accounts, payments, policies, invoiceLines, commercial, asOf } = res.data;
+  const feePolicies = res.data.brokerFeePolicies ?? [];
+  const fees = useMemo(() => brokerFeeBalances(feePolicies), [feePolicies]);
 
   const accountName = useMemo(
     () => new Map(accounts.map((a) => [a.id, a.name])),
@@ -124,6 +128,14 @@ export default function FinanceTab() {
       </div>
       <p className="muted small">{nonBilledNote}</p>
       {gapNote && <p className="error-text small" role="status">{gapNote}</p>}
+
+      <div className="card">
+        <div className="card-head"><h2>Broker fee collections</h2><ReportDownload report={{ title: "Broker fee collections", filters: `All-time bound policy fees as of ${today}; confirmed successful receipts less actual refunds; retained fees include cancelled policies; current account salesperson. Fee balances are components of billing, not additional A/R to add to invoice totals.`, sections: [{ title: "Fee balances", columns: ["Measure", "Amount (USD)"], rows: [["Booked broker fees", fees.booked], ["Gross fee receipts", fees.grossCollected], ["Actual fee refunds", fees.refunded], ["Net fees collected", fees.netCollected], ["Net fee revenue", fees.netRevenue], ["Fee balance awaiting collection", fees.uncollected]] }, { title: "By current salesperson", columns: ["Salesperson", "Booked fees (USD)", "Gross collected (USD)", "Refunds (USD)", "Net collected (USD)", "Uncollected fee balance (USD)"], rows: series.map(person => { const amounts = brokerFeeBalances(feePolicies.filter(policy => salespersonKey(policy.accountId, commercial.entries) === person.key)); return [person.label, amounts.booked, amounts.grossCollected, amounts.refunded, amounts.netCollected, amounts.uncollected]; }) }] }} /></div>
+        <div className="stat-row"><Tile n={fmtMoney(fees.booked)} label="Booked broker fees" /><Tile n={fmtMoney(fees.netCollected)} label="Net fees collected" /><Tile n={fmtMoney(fees.uncollected)} label="Fee balance awaiting collection" /></div>
+        <p className="muted small">All-time bound policies · {fmtMoney(fees.refunded)} actually refunded. Includes retained fees on cancelled coverage. Refunds reduce fee revenue and do not create a new charge. These balances are part of billing and must not be added to invoice A/R.</p>
+        <StackedBars label="Broker fees collected by current salesperson" rows={series.map(person => { const amount = brokerFeeBalances(feePolicies.filter(policy => salespersonKey(policy.accountId, commercial.entries) === person.key)); return { key: person.key, label: person.label, values: { [person.key]: amount.netCollected } }; })} series={series} formatValue={fmtMoney} />
+        <p className="muted small">Current account salesperson, matching the dashboard’s production basis. Actual producer earnings retain the producer and rate frozen at bind in Commissions.</p>
+      </div>
 
       <div className="card">
         <div className="card-head">

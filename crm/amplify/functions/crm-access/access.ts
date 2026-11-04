@@ -1,3 +1,6 @@
+import { brokerFeeCents } from '../../../../shared/brokerFees';
+import { getFee, getAgreement, getModel } from '../broker-fees/store';
+import { authorizedQuoteTerms } from '../../../../shared/quoteAuthorization';
 import { relationshipCurrent } from "../../../../shared/relationships";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, GetCommand, BatchGetCommand } from "@aws-sdk/lib-dynamodb";
@@ -139,13 +142,66 @@ export class AccountAccess {
       if (existing?.relationshipId && input.accountId != null && input.accountId !== existing.accountId) throw new AccessDenied();
       if (existing && ((!relationshipCurrent(existing) && operation === "update") || (existing.relationshipId || existing.validUntil) && operation === "delete") && !(operation === "delete" && this.admin && await this.get("Communication", `deleted-account:${id(existing.accountId)}`))) throw new AccessDenied();
     }
+    if(!this.admin&&operation!=="create"&&["Quote","Policy","Invoice","InvoiceLine","Document","AgencySettings"].includes(model)) {
+      const existing=await this.get(model,id(input.id));
+      if(!existing||!await this.canRecord(model,existing))throw new AccessDenied();
+    }
+    if(model==="Account"&&Object.hasOwn(input,"brokerFeeHistory"))throw new Error("Signed disclosure retention history is server-owned.");
+    if(model==="Account"&&operation==="delete"&&(await this.get("Account",id(input.id)))?.brokerFeeHistory)throw new Error("Accounts with signed fee disclosures must retain their document history.");
+    if (model === "Document") {
+      const previous = input.id ? await this.get("Document", id(input.id)) : undefined;
+      if (input.category === "BROKER_FEE_DISCLOSURE" || previous?.category === "BROKER_FEE_DISCLOSURE") throw new Error("Signed broker fee disclosures are preserved by the signing service and cannot be replaced or deleted.");
+    }
+    if (model === "AgencySettings" && ["brokerFeeJurisdictions","brokerFeeJurisdictionsVersion"].some(key=>Object.hasOwn(input,key))) throw new Error("Save reviewed broker fee rules through Agency settings.");
+    if (model === "Quote" && operation === "delete") {
+      const fee=await getFee(id(input.id));
+      if(fee&&(fee.signedAt||fee.submittedCents>0||fee.collectedCents>0||fee.policyId))throw new Error("Quotes with signed fee or payment history cannot be deleted. Preserve the record and its adjustments.");
+    }
+    if (model === "Quote" && ["create","update"].includes(operation)) {
+      if (Object.hasOwn(input,"brokerFee")) brokerFeeCents(input.brokerFee as number|null);
+      const previous = input.id ? await this.get("Quote",id(input.id)) : undefined;
+      if (previous && (brokerFeeCents(previous.brokerFee as number|undefined)>0 || brokerFeeCents(input.brokerFee as number|undefined)>0)) {
+        const fee = await getFee(String(previous.id));
+        const agreement=fee?.agreementId?await getAgreement(fee.agreementId):undefined;
+        const disclosed=agreement?.quotes.find(q=>q.id===previous.id)?.agencyCommissionPct!==undefined;
+        const changed=authorizedQuoteTerms(previous)!==authorizedQuoteTerms({...previous,...input}) || disclosed&&Object.hasOwn(input,"commissionPct")&&input.commissionPct!==previous.commissionPct;
+        if(changed&&previous.status==="BOUND")throw new Error("Bound policy fee terms cannot be changed.");
+        if(changed&&fee&&(fee.submittedCents>0||fee.collectedCents>0)&&(authorizedQuoteTerms({...previous,...input})!==fee.terms||disclosed&&({...previous,...input}).commissionPct!==agreement?.quotes.find(q=>q.id===previous.id)?.agencyCommissionPct))throw new Error("This fee already has a payment. Review the existing payment before changing the accepted terms.");
+        if(fee&&(changed||["LOST","DECLINED"].includes(String(input.status))))for(const loanId of fee.issuedLoanIds??[]) {
+          const loan=await getModel<Record<string,unknown>>("PfLoan",loanId);
+          if(loan&&(loan.downPaymentIntentId||["ACCEPTED","ACTIVE","DEFAULTED","PAID"].includes(String(loan.status))||loan.electionCheckoutUrl&&Date.parse(String(loan.electionCheckoutExpiresAt))>Date.now()))throw new Error("The financing checkout already holds these fee terms. Wait for its payment to settle or the checkout to expire before changing the quote.");
+        }
+        if(fee&&(changed||["LOST","DECLINED"].includes(String(input.status))))for(const invoiceId of fee.issuedInvoiceIds??[]) {
+          const invoice=await getModel<Record<string,unknown>>("Invoice",invoiceId);
+          if(invoice&&["DRAFT","SENT","PROCESSING"].includes(String(invoice.status)))throw new Error("Void the existing fee invoice before changing or withdrawing its accepted quote terms.");
+        }
+      }
+    }
+    if (model === "Invoice" && ["create","update"].includes(operation)) {
+      const previous = input.id ? await this.get("Invoice",id(input.id)) : undefined;
+      if (previous&&["PAID","PROCESSING"].includes(String(previous.status))&&Object.hasOwn(input,"status")&&input.status!==previous.status) throw new Error("Submitted payment status is controlled by payment reconciliation.");
+      if ((["PAID","PROCESSING"].includes(String(input.status)) && input.status!==previous?.status) || Object.hasOwn(input,"paidAt") && input.paidAt!==previous?.paidAt) throw new Error("Record payment through the invoice payment action.");
+      if (["paymentUrl","stripePaymentLinkId","stripeLinkAmountCents","stripePaymentIntentId","stripeEventAt","stripeIntentCreatedAt","remittanceCarrierCents","remittanceCommissionCents","remittanceInterestCents","remittanceBrokerFeeCents","brokerFeeAllocations","brokerFeeFinanceUrl"].some(key=>Object.hasOwn(input,key) && JSON.stringify(input[key]??null)!==JSON.stringify(previous?.[key]??null))) throw new Error("Issued fee payment allocations are server-owned.");
+    }
+    if (model === "InvoiceLine") {
+      const previous = input.id ? await this.get("InvoiceLine",id(input.id)) : undefined;
+      const candidate = {...previous,...input};
+      const invoice = await this.get("Invoice",id(candidate.invoiceId));
+      if (invoice && ["PAID","PROCESSING"].includes(String(invoice.status))) throw new Error("Payment allocation lines cannot change after payment is submitted.");
+      if(invoice?.status==="SENT"&&invoice.brokerFeeAllocations&&JSON.parse(typeof invoice.brokerFeeAllocations==='string'?invoice.brokerFeeAllocations:JSON.stringify(invoice.brokerFeeAllocations)).length)throw new Error("Void the issued fee invoice before changing its payment lines.");
+      if (candidate.kind === "BROKER_FEE" && operation!=="delete") {
+        const quote = await this.get("Quote",id(candidate.brokerFeeQuoteId));
+        if (!quote || quote.accountId!==invoice?.accountId || Number(candidate.costAmount??0)!==0 || brokerFeeCents(candidate.retailAmount as number)!==brokerFeeCents(quote.brokerFee as number|undefined)) throw new Error("The broker fee line must match its accepted quote and have no carrier cost.");
+      }
+    }
     // Financial provenance is server-owned, including in the Owner view.
     if (model === "Policy" && operation === "create") throw new Error("Bind the quote through the commission-aware bind workflow.");
     if (model === "Quote" && input.status === "BOUND" && (operation === "create" || (await this.get("Quote", id(input.id)))?.status !== "BOUND")) throw new Error("Use the bind workflow to mark a quote bound.");
     if (model === "Policy" && operation === "update") {
       const prior = await this.get("Policy", id(input.id));
       if (Object.hasOwn(input, "commissionSnapshotId") && input.commissionSnapshotId !== prior?.commissionSnapshotId) throw new Error("Commission provenance is server-owned.");
-      if (prior && ["accountId", "quoteId", "carrierId", "premium", "commissionPct", "effectiveDate", "expirationDate", "datePolicyBound"].some(f => Object.hasOwn(input, f) && (input[f] ?? null) !== (prior[f] ?? null))) throw new Error("Bound financial terms are immutable. Record a reviewed adjustment instead.");
+      if (prior && ["brokerFee", "accountId", "quoteId", "carrierId", "premium", "commissionPct", "effectiveDate", "expirationDate", "datePolicyBound"].some(f => Object.hasOwn(input, f) && (input[f] ?? null) !== (prior[f] ?? null))) throw new Error("Bound financial terms are immutable. Record a reviewed adjustment instead.");
+      if (["brokerFeeCollected","brokerFeeRefunded","brokerFeeCollectedAt"].some(key=>Object.hasOwn(input,key) && input[key]!==prior?.[key])) throw new Error("Actual broker fee receipts are server-owned.");
       if (prior?.commissionSnapshotId && Object.hasOwn(input, "policyNumber") && (input.policyNumber ?? null) !== (prior.policyNumber ?? null)) throw new Error("The Owner must update tracked policy numbers through Commissions so both records stay in sync.");
     }
     if (model === "Policy" && operation === "delete") throw new Error("Bound policies retain commission history and cannot be deleted.");
@@ -165,6 +221,10 @@ export class AccountAccess {
       if (!candidate[field]) continue;
       const target = await this.requireRecord(targetModel, id(candidate[field]));
       if (root && await this.root(targetModel, target) !== root) throw new AccessDenied();
+    }
+    if (Array.isArray(candidate.quoteIds)) for (const quoteId of candidate.quoteIds) {
+      const quote = await this.requireRecord("Quote", id(quoteId));
+      if (root !== await this.root("Quote", quote)) throw new AccessDenied();
     }
     if (Array.isArray(candidate.policyIds)) for (const policyId of candidate.policyIds) {
       const policy = await this.requireRecord("Policy", id(policyId));
@@ -190,6 +250,7 @@ export class AccountAccess {
       if (operation === "delete" && !document) return; // Failed uploads and deletion cleanup.
       if (!document || document.entityType !== first || document.entityId !== second) throw new AccessDenied();
       if (operation === "read" && document.s3Key !== path) throw new AccessDenied();
+      if (["write","delete"].includes(operation) && document.category === "BROKER_FEE_DISCLOSURE") throw new Error("Signed disclosures cannot be replaced or deleted.");
       return;
     }
     if (prefix === "generated" && first === "pf") {

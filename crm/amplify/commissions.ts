@@ -67,4 +67,5 @@ export function installCommissions(backend: typeof Backend, communicationTable: 
       resources: [communicationTable.tableArn],
     }),
   );
+  return { table, bucket };
 }

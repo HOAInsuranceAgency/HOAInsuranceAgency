@@ -1,3 +1,4 @@
+import { brokerFeeCents } from './brokerFees';
 /** Owner-only compensation contracts. Never include these in public team data. */
 export interface CompensationTerm {
   from: string;
@@ -19,10 +20,15 @@ export interface ProfitabilityPolicy {
   effectiveDate?: string | null;
   premium?: number | null;
   commissionPct?: number | null;
+  brokerFee?: number | null;
+  brokerFeeRefunded?: number | null;
   status?: string | null;
 }
 export interface ProfitabilityAmounts {
   grossCommissionCents: number | null;
+  brokerFeeCents: number | null;
+  brokerFeeRefundedCents: number | null;
+  totalAgencyRevenueCents: number | null;
   producerShareCents: number | null;
   netRevenueCents: number | null;
   salaryCents: number | null;
@@ -32,10 +38,14 @@ export interface ProfitabilityRow extends ProfitabilityAmounts {
   userId: string | null;
   name: string;
   policyCount: number;
+  feePolicyCount: number;
   missingCommissionCount: number;
   /** Policies without a compensation term on their effective date. */
   missingCompensationCount: number;
   knownGrossCommissionCents: number;
+  knownBrokerFeeCents: number;
+  knownBrokerFeeRefundedCents: number;
+  knownTotalAgencyRevenueCents: number;
   knownProducerShareCents: number;
   knownNetRevenueCents: number;
   complete: boolean;
@@ -43,10 +53,14 @@ export interface ProfitabilityRow extends ProfitabilityAmounts {
 }
 export interface ProfitabilityTotals extends ProfitabilityAmounts {
   policyCount: number;
+  feePolicyCount: number;
   missingCommissionCount: number;
   missingCompensationCount: number;
   incompleteEmployeeCount: number;
   knownGrossCommissionCents: number;
+  knownBrokerFeeCents: number;
+  knownBrokerFeeRefundedCents: number;
+  knownTotalAgencyRevenueCents: number;
   knownProducerShareCents: number;
   knownNetRevenueCents: number;
   /** Sum only rows with a complete salary/contribution calculation. */
@@ -167,10 +181,10 @@ export function calculateEmployeeProfitability(input: EmployeeProfitabilityInput
       const terms = userId ? compensation.get(userId)?.terms ?? [] : [];
       const salary = userId ? salaryFor(terms, from, to) : { cents: null, gap: false };
       row = { userId, name: userId ? names.get(userId) ?? `Unavailable teammate (${userId.slice(-8)})` : 'Unassigned',
-        grossCommissionCents: 0, producerShareCents: userId && terms.length ? 0 : null,
+        grossCommissionCents: 0, brokerFeeCents: 0, brokerFeeRefundedCents: 0, totalAgencyRevenueCents: 0, producerShareCents: userId && terms.length ? 0 : null,
         netRevenueCents: userId && terms.length ? 0 : null, salaryCents: salary.cents, contributionCents: null,
-        policyCount: 0, missingCommissionCount: 0, missingCompensationCount: 0,
-        knownGrossCommissionCents: 0, knownProducerShareCents: 0, knownNetRevenueCents: 0, complete: false,
+        policyCount: 0, feePolicyCount: 0, missingCommissionCount: 0, missingCompensationCount: 0,
+        knownGrossCommissionCents: 0, knownBrokerFeeCents: 0, knownBrokerFeeRefundedCents: 0, knownTotalAgencyRevenueCents: 0, knownProducerShareCents: 0, knownNetRevenueCents: 0, complete: false,
         warnings: !userId ? ['Assign these policies to an employee to calculate their contribution.'] : !terms.length ? ['Compensation is not configured.'] : salary.gap ? ['Salary history has a gap during this period.'] : [] };
       rows.set(userId, row);
     }
@@ -184,12 +198,16 @@ export function calculateEmployeeProfitability(input: EmployeeProfitabilityInput
     if (!validId(policy.id) || seen.has(policy.id)) throw new Error('Policy data contains a missing or duplicate policy ID.');
     seen.add(policy.id);
     const dated = isProfitabilityDate(policy.effectiveDate);
+    const fee = brokerFeeCents(policy.brokerFee), refundedFee = brokerFeeCents(policy.brokerFeeRefunded);
+    if (refundedFee > fee) throw new Error('A broker fee refund exceeds the booked fee.');
     // Cancellation is excluded regardless of whether its effective date was
     // recorded. It must not make an otherwise complete revenue estimate unknown.
     if (policy.status === 'CANCELLED') {
       if (!dated) undatedCancelledPolicyCount++;
       else if (policy.effectiveDate! >= from && policy.effectiveDate! <= to) cancelledPolicyCount++;
-      continue;
+      // The earned fee survives cancellation; only an actual fee refund
+      // reduces it. Fee-free cancellations keep the existing exclusion.
+      if (!fee) continue;
     }
     if (!dated) {
       undatedPolicyCount++;
@@ -201,21 +219,35 @@ export function calculateEmployeeProfitability(input: EmployeeProfitabilityInput
     if (!policy.effectiveDate) continue;
     if (policy.effectiveDate < from || policy.effectiveDate > to) continue;
     const id = input.assignments[policy.accountId]?.salespersonId || null;
-    const row = rowFor(id), gross = policyCommissionCents(policy);
+    const row = rowFor(id), gross = policy.status === 'CANCELLED' ? 0 : policyCommissionCents(policy);
     const term = id ? compensation.get(id)?.terms.find(value => value.from <= policy.effectiveDate! && (!value.to || value.to >= policy.effectiveDate!)) : undefined;
-    row.policyCount++;
+    if (policy.status !== 'CANCELLED') row.policyCount++;
+    if (fee > 0) row.feePolicyCount++;
+    row.knownBrokerFeeCents = add(row.knownBrokerFeeCents, fee);
+    row.knownBrokerFeeRefundedCents = add(row.knownBrokerFeeRefundedCents, refundedFee);
+    const netFee = fee - refundedFee;
+    row.knownTotalAgencyRevenueCents = add(row.knownTotalAgencyRevenueCents, netFee);
     if (gross == null) row.missingCommissionCount++;
-    else row.knownGrossCommissionCents = add(row.knownGrossCommissionCents, gross);
+    else {
+      row.knownGrossCommissionCents = add(row.knownGrossCommissionCents, gross);
+      row.knownTotalAgencyRevenueCents = add(row.knownTotalAgencyRevenueCents, gross);
+    }
     if (!term) row.missingCompensationCount++;
-    if (gross != null && term) {
-      const share = roundedRatio(BigInt(gross) * BigInt(term.producerShareBps), 10000n);
+    if (term) {
+      // The two revenue sources stay independently knowable and round as
+      // distinct earnings, matching the separate carrier/fee ledger entries.
+      const revenue = (gross ?? 0) + netFee;
+      const share = roundedRatio(BigInt(gross ?? 0) * BigInt(term.producerShareBps), 10000n) + roundedRatio(BigInt(netFee) * BigInt(term.producerShareBps), 10000n);
       row.knownProducerShareCents = add(row.knownProducerShareCents, share);
-      row.knownNetRevenueCents = add(row.knownNetRevenueCents, gross - share);
+      row.knownNetRevenueCents = add(row.knownNetRevenueCents, revenue - share);
     }
   }
   for (const row of rows.values()) {
     const undated = undatedByEmployee.get(row.userId) ?? 0;
     row.grossCommissionCents = row.missingCommissionCount || undated ? null : row.knownGrossCommissionCents;
+    row.brokerFeeCents = undated ? null : row.knownBrokerFeeCents;
+    row.brokerFeeRefundedCents = undated ? null : row.knownBrokerFeeRefundedCents;
+    row.totalAgencyRevenueCents = row.missingCommissionCount || undated ? null : row.knownTotalAgencyRevenueCents;
     const shareKnown = row.producerShareCents != null && !row.missingCommissionCount && !row.missingCompensationCount && !undated;
     row.producerShareCents = shareKnown ? row.knownProducerShareCents : null;
     row.netRevenueCents = shareKnown ? row.knownNetRevenueCents : null;
@@ -230,14 +262,14 @@ export function calculateEmployeeProfitability(input: EmployeeProfitabilityInput
   const completeAmount = (field: keyof ProfitabilityAmounts) => undatedPolicyCount || sortedRows.some(row => row[field] == null) ? null : sum(field);
   const warnings = [];
   if (undatedPolicyCount) warnings.push(`${undatedPolicyCount} policies have no valid effective date and cannot be placed in this period.`);
-  if (cancelledPolicyCount) warnings.push(`${cancelledPolicyCount} cancelled policies are excluded; cancellation adjustments are not recorded in this estimate.`);
+  if (cancelledPolicyCount) warnings.push(`${cancelledPolicyCount} cancelled policies are excluded from carrier commission; earned broker fees less recorded fee refunds remain included.`);
   if (undatedCancelledPolicyCount) warnings.push(`${undatedCancelledPolicyCount} cancelled policies with no valid effective date are also excluded.`);
   return { from, to, rows: sortedRows, cancelledPolicyCount, undatedPolicyCount, warnings,
-    totals: { grossCommissionCents: completeAmount('grossCommissionCents'), producerShareCents: completeAmount('producerShareCents'),
+    totals: { grossCommissionCents: completeAmount('grossCommissionCents'), brokerFeeCents: completeAmount('brokerFeeCents'), brokerFeeRefundedCents: completeAmount('brokerFeeRefundedCents'), totalAgencyRevenueCents: completeAmount('totalAgencyRevenueCents'), producerShareCents: completeAmount('producerShareCents'),
       netRevenueCents: completeAmount('netRevenueCents'), salaryCents: sortedRows.some(row => row.salaryCents == null) ? null : sum('salaryCents'),
-      contributionCents: completeAmount('contributionCents'), policyCount: sum('policyCount'), missingCommissionCount: sum('missingCommissionCount'),
+      contributionCents: completeAmount('contributionCents'), policyCount: sum('policyCount'), feePolicyCount: sum('feePolicyCount'), missingCommissionCount: sum('missingCommissionCount'),
       missingCompensationCount: sum('missingCompensationCount'), incompleteEmployeeCount: sortedRows.filter(row => row.userId && !row.complete).length,
-      knownGrossCommissionCents: sum('knownGrossCommissionCents'), knownProducerShareCents: sum('knownProducerShareCents'),
+      knownGrossCommissionCents: sum('knownGrossCommissionCents'), knownBrokerFeeCents: sum('knownBrokerFeeCents'), knownBrokerFeeRefundedCents: sum('knownBrokerFeeRefundedCents'), knownTotalAgencyRevenueCents: sum('knownTotalAgencyRevenueCents'), knownProducerShareCents: sum('knownProducerShareCents'),
       knownNetRevenueCents: sum('knownNetRevenueCents'), knownSalaryCents: sum('salaryCents'), knownContributionCents: sum('contributionCents'),
       complete: !undatedPolicyCount && sortedRows.every(row => row.complete) } };
 }

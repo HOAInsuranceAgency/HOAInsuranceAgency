@@ -509,7 +509,7 @@ function DocumentsPanelContent({
                     </td>
                     <td>
                       <span className="badge gray">
-                        {CATEGORIES.find((c) => c.value === d.category)?.label ?? "—"}
+                        {d.category === "BROKER_FEE_DISCLOSURE" ? "Signed broker fee disclosure" : CATEGORIES.find((c) => c.value === d.category)?.label ?? "—"}
                       </span>
                     </td>
                     {linkAccountId && (
@@ -518,7 +518,7 @@ function DocumentsPanelContent({
                             policy rows: linking existing paper is the whole
                             point — a scan often arrives before the policy
                             it belongs to exists. */}
-                        <select
+                        {(d.quoteIds?.length || d.policyIds?.length) ? <div className="small">{[...(d.policyIds ?? []).filter(Boolean).map(id => linkLabel(`policy:${id}`)), ...(d.quoteIds ?? []).filter(Boolean).map(id => linkLabel(`quote:${id}`))].join(" · ")}</div> : <select
                           aria-label={`Link ${d.name}`}
                           value={linkKeyOf(d)}
                           disabled={rowStatus.busy || linkTargets.loading || !!linkTargets.error}
@@ -534,7 +534,7 @@ function DocumentsPanelContent({
                             !linkOptions.some((o) => o.key === linkKeyOf(d)) && (
                               <option value={linkKeyOf(d)}>(deleted record)</option>
                             )}
-                        </select>
+                        </select>}
                       </td>
                     )}
                     <td>
@@ -585,7 +585,7 @@ function DocumentsPanelContent({
                           {entityType === "ACCOUNT" && d.s3Key !== "pending" && isBusinessDeliveryFile(d) && <BusinessDraftButton accountId={entityId} kind="DOCUMENT" recordId={d.id} label="Prepare email in Front" disabled={rowStatus.busy || uploading} />}
                           <button
                             className="link"
-                            disabled={rowStatus.busy}
+                            disabled={rowStatus.busy || d.category === "BROKER_FEE_DISCLOSURE"}
                             onClick={() => startRename(d)}
                           >
                             Rename
@@ -601,7 +601,7 @@ function DocumentsPanelContent({
                             </button>
                           )}
                           <ConfirmButton
-                            disabled={rowStatus.busy}
+                            disabled={rowStatus.busy || d.category === "BROKER_FEE_DISCLOSURE"}
                             confirmLabel="Confirm delete"
                             cancelLabel="Keep"
                             onConfirm={() => deleteDoc(d)}

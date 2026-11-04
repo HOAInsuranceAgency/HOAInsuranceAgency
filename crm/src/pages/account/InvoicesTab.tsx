@@ -18,6 +18,7 @@ import { SaveStatus, useSaveStatus } from "../../components/SaveStatus";
 import { InvoiceEditor } from "../../components/InvoiceEditor";
 import { invoiceTotals, premiumLineFromPolicy } from "../../lib/invoiceTotals";
 import {
+  brokerFeeLineFromSource,
   invoiceableQuotes,
   liveAnchorIds,
   seededLineDescription,
@@ -148,6 +149,10 @@ function InvoicesTabContent({ accountId }: { accountId: string }) {
     const [kind, anchorId] = anchorKey.split(":", 2);
     await createStatus.run(
       async () => {
+        const policy = kind === "policy" ? loaded.policies.find((p) => p.id === anchorId) : null;
+        const quote = kind === "quote" ? loaded.quotes.find((q) => q.id === anchorId) : null;
+        const source = policy ?? quote;
+        if ((source?.brokerFee ?? 0) > 0 && !["AGENCY", "DIRECT"].includes(source?.billType ?? "")) throw new Error("Choose the billing method on the quote before invoicing its broker fee.");
         /**
          * The number is reserved before the row exists, so two producers
          * clicking at once cannot collide. If the create then fails the number
@@ -180,11 +185,8 @@ function InvoicesTabContent({ accountId }: { accountId: string }) {
 
         // One anchor, one seeded premium line: the number the record actually
         // knows is the cost; what to bill for it stays the producer's call.
-        const policy = kind === "policy" ? loaded.policies.find((p) => p.id === anchorId) : null;
-        const quote = kind === "quote" ? loaded.quotes.find((q) => q.id === anchorId) : null;
-        const source = policy ?? quote;
         const created: InvoiceLine[] = [];
-        if (source) {
+        if (source && source.billType !== "DIRECT") {
           const { retailAmount, costAmount } = premiumLineFromPolicy(source);
           try {
           const line = await client.models.InvoiceLine.create({
@@ -209,6 +211,20 @@ function InvoicesTabContent({ accountId }: { accountId: string }) {
           }
         }
 
+        if (source) {
+          const feeLine = brokerFeeLineFromSource(source, policy?.id);
+          const paidInvoices = new Set(loaded.invoices.filter(i => i.status === "PAID").map(i => i.id));
+          const alreadyCollected = feeLine && (Number(policy?.brokerFeeCollected ?? 0) > 0 || loaded.lines.some(l => l.brokerFeeQuoteId === feeLine.brokerFeeQuoteId && paidInvoices.has(l.invoiceId)));
+          if (feeLine && !alreadyCollected) {
+            const fee = await client.models.InvoiceLine.create({ invoiceId: data.id, accountId, ...feeLine, sortOrder: created.length });
+            if (fee.errors?.length || !fee.data) {
+              setOpenId(data.id);
+              await res.refetch();
+              throw new Error("Invoice created, but its broker fee line could not be saved. Reopen the invoice before sending.");
+            }
+            created.push(fee.data);
+          }
+        }
         res.setData((cur) =>
           cur
             ? {
@@ -218,7 +234,7 @@ function InvoicesTabContent({ accountId }: { accountId: string }) {
             : cur
         );
         setOpenId(data.id);
-        return "Invoice created — price the premium line.";
+        return source?.billType === "DIRECT" ? "Broker fee invoice created." : "Invoice created — price the premium line.";
       },
       { errorMessage: "Couldn't create an invoice." }
     );

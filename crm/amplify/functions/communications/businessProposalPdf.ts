@@ -1,6 +1,7 @@
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from 'pdf-lib';
 import type { PublicProposalQuote } from '../../../../shared/frontBusinessDelivery';
 import { validCalendarDate } from '../../../../shared/renewalPolicy';
+import { brokerFeeCents } from '../../../../shared/brokerFees';
 
 export interface BusinessProposalInput {
   account: { name: string; legalName?: string | null; address?: string | null; city?: string | null; state?: string | null; zip?: string | null };
@@ -89,7 +90,7 @@ export async function createBusinessProposalPdf(input: BusinessProposalInput) {
   if (issueTime) line(`Prepared ${new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', dateStyle: 'long' }).format(issueTime)}`, 9, false, true);
   if (reference) line(`Proposal reference: ${reference}`, 9, false, true);
   gap(8); rule();
-  let subtotal = 0;
+  let subtotal = 0, feeSubtotal = 0;
   for (const [index, quote] of input.quotes.entries()) {
     if (!validCalendarDate(quote.effectiveDate) || !validCalendarDate(quote.expirationDate) || quote.expirationDate <= quote.effectiveDate || (quote.offerExpiresAt && !validCalendarDate(quote.offerExpiresAt))) throw new Error('Review the recorded quote dates before preparing the proposal.');
     const premium = number(quote.premium, 'Quoted premium');
@@ -101,6 +102,8 @@ export async function createBusinessProposalPdf(input: BusinessProposalInput) {
     room(100); line(`${index + 1}. ${carrier}`, 13, true);
     line(quote.lines.map(value => text(value, 'Quoted coverage')).join(', '), 10);
     line(`Quoted premium: ${premium}`, 11, true);
+    const fee = brokerFeeCents(quote.brokerFee); feeSubtotal += fee;
+    if (fee) line(`Agency broker fee: ${dollars(fee / 100)}`, 11, true);
     line(`Policy term: ${quote.effectiveDate} to ${quote.expirationDate}`, 10);
     line(`Offer valid through: ${quote.offerExpiresAt || 'Not recorded - confirm with the carrier'}`, 10, false, true);
     const terms: [string, unknown, boolean?][] = [
@@ -120,7 +123,9 @@ export async function createBusinessProposalPdf(input: BusinessProposalInput) {
     if (quote.glAggregateAppliesTo) line(`GL aggregate applies to: ${text(words(quote.glAggregateAppliesTo), 'GL aggregate basis')}`, 9);
     gap(9); rule();
   }
-  room(150); line(`Recorded premium subtotal: ${dollars(subtotal / 100)}`, 13, true); gap(8);
+  room(180); line(`Recorded premium subtotal: ${dollars(subtotal / 100)}`, 13, true);
+  if (feeSubtotal) { line(`Agency broker fees: ${dollars(feeSubtotal / 100)}`, 13, true); line(`Premium and broker fees: ${dollars((subtotal + feeSubtotal) / 100)}`, 15, true); line('Broker fees require a separate signed fee agreement and are payable upfront. They are excluded from premium financing.', 9, false, true); }
+  gap(8);
   line('Review the carrier quotations for full terms, taxes, fees, exclusions, conditions, and payment requirements. Values not recorded here are not represented as included coverage.', 9, false, true);
   gap(5); line('This proposal and its email do not bind insurance. Client authorization and carrier confirmation remain separate steps.', 9, false, true);
   const pages = pdf.getPages();

@@ -368,7 +368,7 @@ export async function renderInvoicePdf(inv: InvoiceView): Promise<Uint8Array> {
         ? [
             // In full, not as a masked link: this is a printed document, and a
             // hyperlink nobody can read is no use on paper.
-            `To pay by bank transfer, visit ${inv.paymentUrl.trim()}`,
+            `${inv.paymentLabel ?? "To pay by bank transfer"}, visit ${inv.paymentUrl.trim()}`,
           ]
         : [
             `For secure ACH or electronic payment instructions, contact ${AGENCY.email} or ${AGENCY.phone}.`,

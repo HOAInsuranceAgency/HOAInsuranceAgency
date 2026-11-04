@@ -1,6 +1,7 @@
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, GetCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import Stripe from "stripe";
+import { feeAllocations } from "../../../../shared/brokerFees";
 
 /**
  * Custom mutation handler: voidInvoice. See resource.ts for the why.
@@ -31,6 +32,7 @@ interface Row {
   status: string | null;
   number: string | null;
   stripePaymentLinkId: string | null;
+  hasBrokerFee: boolean;
 }
 
 async function readRow(tableName: string, id: string): Promise<Row | null> {
@@ -43,6 +45,7 @@ async function readRow(tableName: string, id: string): Promise<Row | null> {
     status: str(res.Item.status),
     number: str(res.Item.number),
     stripePaymentLinkId: str(res.Item.stripePaymentLinkId),
+    hasBrokerFee: feeAllocations(res.Item.brokerFeeAllocations).length > 0 || Number(res.Item.remittanceBrokerFeeCents ?? 0) > 0,
   };
 }
 
@@ -170,8 +173,9 @@ export const handler = async (event: {
             error: "Payments are not configured, so the payment link cannot be closed.",
           };
         }
+        const stripe = new Stripe(key);
         try {
-          await new Stripe(key).paymentLinks.update(linkId, { active: false });
+          await stripe.paymentLinks.update(linkId, { active: false });
         } catch (err) {
           /**
            * A link Stripe has never heard of is already unpayable, so that is
@@ -187,6 +191,22 @@ export const handler = async (event: {
             };
           }
           console.warn(`[void-invoice] link ${linkId} already gone at Stripe`);
+        }
+        if (invoice.hasBrokerFee) {
+          // Deactivating a Payment Link does not close sessions already opened
+          // from it. Close every unsubmitted fee checkout before releasing its
+          // accepted terms for an updated quote and invoice.
+          let count = 0;
+          for await (const session of stripe.checkout.sessions.list({ payment_link: linkId, limit: 100 })) {
+            if (++count > 500) return { ok: false, error: "This invoice has too many payment sessions to close automatically. Review its payments before voiding." };
+            if (session.payment_status === "paid" || session.status === "complete") {
+              const intentId = typeof session.payment_intent === "string" ? session.payment_intent : session.payment_intent?.id;
+              const intent = intentId ? await stripe.paymentIntents.retrieve(intentId) : null;
+              // A failed/expired verification is no longer a submitted debit.
+              if (session.payment_status === "paid" || !intent || !["canceled", "requires_payment_method"].includes(intent.status)) return { ok: false, error: "A payment on this invoice has already been submitted. Wait for it to settle or fail before voiding." };
+            }
+            if (session.status === "open") await stripe.checkout.sessions.expire(session.id);
+          }
         }
       }
 

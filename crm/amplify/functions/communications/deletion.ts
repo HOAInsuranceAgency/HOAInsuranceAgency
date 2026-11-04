@@ -64,6 +64,8 @@ export async function prepareLeadDeletion(
     account.data.name !== name
   )
     throw new Error('Refresh and confirm the lead before deleting');
+  if (account.data.brokerFeeHistory)
+    throw new Error('This lead has a signed broker fee disclosure and must be retained with its quote and document history.');
   if (await hasAccountRecords(accountId, 'POLICY'))
     throw new Error('An account with policies cannot be deleted as a lead');
   if (await hasAccountRecords(accountId, 'INVOICE'))
@@ -86,9 +88,12 @@ export async function retireAccount(accountId: string, actor: string) {
   const id = `deleted-account:${accountId}`,
     old = await get(id);
   if (!old) {
+    const accountTable = process.env.ACCOUNT_TABLE;
+    if (!accountTable) throw new Error('Lead retention checks are not configured.');
     const wf = await get<LeadWorkflow>(`workflow:${accountId}`),
       at = new Date().toISOString();
     await commit([
+      { ConditionCheck: { TableName: accountTable, Key: { id: accountId }, ConditionExpression: 'attribute_not_exists(brokerFeeHistory) OR brokerFeeHistory = :clear', ExpressionAttributeValues: { ':clear': false } } },
       put(row('DELETED_ACCOUNT', id, { accountId, at, actor })),
       ...(wf
         ? [

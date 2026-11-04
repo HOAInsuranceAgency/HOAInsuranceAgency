@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { LineLike } from "./invoiceTotals";
 import {
   directBillWarning,
+  financeableInvoiceTotal,
   formatMoney,
   invoiceTotals,
   isPassThrough,
@@ -294,6 +295,7 @@ describe("remittanceSplit", () => {
       { kind: "PREMIUM", retailAmount: 25000, costAmount: 21250 },
     ]);
     expect(s).toEqual({
+      brokerFeeCents: 0,
       carrierCents: 2_125_000,
       commissionCents: 375_000,
       interestCents: 0,
@@ -349,7 +351,7 @@ describe("remittanceSplit", () => {
     for (const lines of cases) {
       const s = remittanceSplit(lines);
       expect(
-        s.carrierCents + s.commissionCents + s.interestCents,
+        s.carrierCents + s.commissionCents + s.interestCents + s.brokerFeeCents,
         JSON.stringify(lines)
       ).toBe(s.totalCents);
     }
@@ -374,5 +376,19 @@ describe("remittanceSplit", () => {
     expect(s.totalCents).toBe(0);
     expect(s.carrierCents).toBe(850_000);
     expect(s.commissionCents).toBe(-850_000);
+  });
+});
+
+describe("broker fee separation", () => {
+  it("collects the full fee separately while financing only premium and existing pass-throughs", () => {
+    const lines = [{kind:"PREMIUM",retailAmount:10000,costAmount:8500}, {kind:"BROKER_FEE",retailAmount:500,costAmount:0}, {kind:"TAX",retailAmount:100,costAmount:100}];
+    expect(financeableInvoiceTotal(lines)).toBe(10100);
+    expect(remittanceSplit(lines)).toEqual({carrierCents:860000,commissionCents:150000,brokerFeeCents:50000,interestCents:0,totalCents:1060000});
+    expect(marginWarnings([lines[1]])).toEqual([]);
+  });
+  it("does not finance a fee-only direct-bill invoice", () => {
+    const lines = [{kind:"BROKER_FEE",retailAmount:500,costAmount:0}];
+    expect(financeableInvoiceTotal(lines)).toBe(0);
+    expect(directBillWarning("DIRECT", lines)).toBeNull();
   });
 });

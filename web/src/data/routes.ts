@@ -4,6 +4,8 @@ export const NOINDEX_ROUTE_PREFIXES = [
   "/documents/",
   /** Tokenised premium-finance election. Same reason. */
   "/finance/",
+  /** Tokenised client broker-fee consent and signed records. */
+  "/broker-fee/",
   /** Private per-association lead pages, distributed by property managers. */
   "/associations/",
   /** Paid-traffic landing pages that duplicate reviewed organic routes. */

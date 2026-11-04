@@ -1,3 +1,4 @@
+import type { BrokerFeeAllocation } from "../../../../shared/brokerFees";
 import Stripe from "stripe";
 
 /**
@@ -35,6 +36,8 @@ export interface LinkRequest {
   associationName: string;
   /** Retail total, in dollars. */
   total: number;
+  accountId?: string;
+  brokerFeeAllocations?: BrokerFeeAllocation[];
 }
 
 /**
@@ -62,6 +65,7 @@ export async function createPaymentLink(
   const metadata = {
     invoiceId: req.invoiceId,
     invoiceNumber: req.invoiceNumber ?? "",
+    ...(req.brokerFeeAllocations?.length ? { brokerFeeAllocations: JSON.stringify(req.brokerFeeAllocations), brokerFeeAccountId: req.accountId ?? "", invoiceTotalCents: String(toCents(req.total)) } : {}),
   };
 
   const link = await stripe.paymentLinks.create({
