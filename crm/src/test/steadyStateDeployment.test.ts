@@ -45,7 +45,7 @@ describe("completed HOA main deployment", () => {
   });
 });
 
-function liveFixture(failure = "", source = contract, withLedger = false) {
+function liveFixture(failure = "", source = contract, withLedger = false, stackStatus = "UPDATE_COMPLETE") {
   const c = structuredClone(source);
   const stateful = Array.from({ length: 57 }, (_, i) => [c.backendRoot, `State${String(i).padStart(2,"0")}`, c.statefulTypes[0], `existing-${i}`]);
   c.statefulInventorySha256 = createHash("sha256").update(JSON.stringify(stateful)).digest("hex");
@@ -65,7 +65,7 @@ function liveFixture(failure = "", source = contract, withLedger = false) {
   const calls: string[][] = [];
   const aws = (...a: string[]) => {
     calls.push(a);
-    if (a[1] === "describe-stacks") return { Stacks: [{ StackId: c.backendRoot, StackStatus: failure === "updating" ? "UPDATE_IN_PROGRESS" : "UPDATE_COMPLETE", EnableTerminationProtection: failure !== "unprotected" }] };
+    if (a[1] === "describe-stacks") return { Stacks: [{ StackId: c.backendRoot, StackStatus: failure === "updating" ? "UPDATE_IN_PROGRESS" : stackStatus, EnableTerminationProtection: failure !== "unprotected" }] };
     if (a[1] === "list-stack-resources") return { StackResourceSummaries: resources };
     if (a[1] === "describe-table") return { Table: ledger };
     if (a[1] === "get-event-source-mapping") {
@@ -83,6 +83,18 @@ function liveFixture(failure = "", source = contract, withLedger = false) {
   return { c, aws, calls, resources, ledger, ledgerResource, namespace: { branchName: c.backendBranch, enableAutoBuild: false, enablePullRequestPreview: false, backend: { stackArn: failure === "root" ? "wrong" : c.backendRoot } } };
 }
 describe("read-only existing backend admission", () => {
+  it.each([contract, stagingContract])('admits a completed update rollback only with the original retained identities and controls', source => {
+    const valid = liveFixture('', source, false, 'UPDATE_ROLLBACK_COMPLETE');
+    expect(() => verifySteadyState(valid.namespace, valid.c, valid.aws)).not.toThrow();
+    for (const failure of ['identity', 'stream', 'schedule', 'unprotected']) {
+      const invalid = liveFixture(failure, source, false, 'UPDATE_ROLLBACK_COMPLETE');
+      expect(() => verifySteadyState(invalid.namespace, invalid.c, invalid.aws)).toThrow();
+    }
+  });
+  it.each(['UPDATE_ROLLBACK_IN_PROGRESS', 'UPDATE_ROLLBACK_FAILED', 'ROLLBACK_COMPLETE', 'UPDATE_FAILED'])('rejects an unrecovered %s backend', status => {
+    const f = liveFixture('', contract, false, status);
+    expect(() => verifySteadyState(f.namespace, f.c, f.aws)).toThrow('backend is unstable or unprotected');
+  });
   it("requires all57 stateful identities,22 existing cursors and8 enabled main schedules", () => {
     const f = liveFixture(); verifySteadyState(f.namespace, f.c, f.aws);
     expect(f.calls.filter(a => a[1] === "get-event-source-mapping")).toHaveLength(22);
