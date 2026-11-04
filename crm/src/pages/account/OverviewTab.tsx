@@ -8,6 +8,7 @@ import {
 } from "../../lib/client";
 import { SaveStatus, useSaveStatus } from "../../components/SaveStatus";
 import { useFormState } from "../../lib/useFormState";
+import { useUnsavedChanges } from "../../lib/editProtection";
 import { inputValue, num, str } from "../../lib/formCodec";
 import { DateInput, FeinInput, MoneyInput } from "../../components/inputs";
 import { LEGAL_ENTITY_OPTIONS } from "../../lib/enums";
@@ -26,7 +27,7 @@ export function OverviewTab({
   // answering "is the confirmation still true" is the bug this replaces.
   const fieldId = useId();
   const saveStatus = useSaveStatus();
-  const { form, setF } = useFormState({
+  const { form, setF, dirty, markSaved, reset } = useFormState({
     name: account.legalName?.trim() || account.name,
     fein: inputValue(account.fein),
     sicCode: inputValue(account.sicCode),
@@ -38,6 +39,7 @@ export function OverviewTab({
     currentPolicyExpiration: inputValue(account.currentPolicyExpiration),
     notes: inputValue(account.notes),
   }, { onEdit: saveStatus.markDirty });
+  useUnsavedChanges(dirty || saveStatus.busy, { busy: saveStatus.busy, onDiscard: reset });
 
   async function save() {
     const name = str(form.name);
@@ -52,6 +54,7 @@ export function OverviewTab({
     }
     await saveStatus.run(
       async () => {
+        const submitted = { ...form };
         onChange(
           unwrap(
             await client.models.Account.update({
@@ -72,6 +75,8 @@ export function OverviewTab({
             })
           )
         );
+        // Only the submitted snapshot is saved; edits made while waiting stay dirty.
+        markSaved(submitted);
       },
       { errorMessage: "Save failed" }
     );

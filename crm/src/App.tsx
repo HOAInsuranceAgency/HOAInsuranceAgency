@@ -42,6 +42,8 @@ import SearchResults from "./pages/SearchResults";
 import UniversalSearch from "./components/UniversalSearch";
 import QuotesList from "./pages/QuotesList";
 import PoliciesList from "./pages/PoliciesList";
+import { useEditProtection } from "./lib/editProtection";
+import { clearNewLeadDrafts, clearOtherUsersLeadDrafts, LeadDraftScope } from "./lib/newLeadDraft";
 
 export default function App() {
   return (
@@ -85,13 +87,25 @@ function AuthGate() {
 
 function ProfileGate({ user, signOut }: { user: AuthUser; signOut: () => void }) {
   const navigate = useNavigate();
+  const { requestLeave, cancelPending } = useEditProtection();
+  useEffect(() => { clearOtherUsersLeadDrafts(user.userId); }, [user.userId]);
   const roleSessionVersion = useRef(0);
+  const sessionMounted = useRef(true);
+  const guardedSignOut = () => {
+    const version = roleSessionVersion.current;
+    requestLeave(() => {
+      if (!sessionMounted.current || version !== roleSessionVersion.current) return;
+      clearNewLeadDrafts(); signOut();
+    });
+  };
   // Profile and Cognito groups resolve behind ONE loading gate: settling
   // admin status after first paint would flash the admin-only controls
   // into (or out of) a page that's already on screen. That is why this is a
   // single hook over a tuple rather than one hook per read.
   const { data, loading, error, refetch, setData } = useAsyncResource(
     async () => {
+      // A queued action belongs to the membership snapshot that requested it.
+      cancelPending();
       const version = ++roleSessionVersion.current;
       clearActiveRole();
       const [rows, gs] = await Promise.all([
@@ -124,23 +138,35 @@ function ProfileGate({ user, signOut }: { user: AuthUser; signOut: () => void })
     }
   );
   const { profile, groups, activeRole, producerLicenses } = data;
+  const latestMembership = useRef(data);
+  latestMembership.current = data;
   useEffect(() => {
+    sessionMounted.current = true;
     const refreshRoles = () => { void refetch(); };
     window.addEventListener("team-roles-changed", refreshRoles);
     return () => {
+      sessionMounted.current = false;
       roleSessionVersion.current++;
+      cancelPending();
       window.removeEventListener("team-roles-changed", refreshRoles);
       clearActiveRole();
     };
-  }, [refetch]);
+  }, [refetch, cancelPending]);
 
   function switchRole(role: Role) {
     if (!groups.includes(role) || role === activeRole) return;
-    setActiveRole(user.userId, role, groups);
-    setData(current => ({ ...current, activeRole: role }));
-    // A record or settings page from the previous view may be inaccessible.
-    // Remounting the shell also discards its old results and subscriptions.
-    navigate(role === "ADMIN" || role === "OWNER" ? "/" : "/leads", { replace: true });
+    const version = roleSessionVersion.current;
+    requestLeave(() => {
+      if (!sessionMounted.current || version !== roleSessionVersion.current) return;
+      const current = latestMembership.current;
+      if (!current.groups.includes(role) || role === current.activeRole) return;
+      clearNewLeadDrafts(user.userId);
+      setActiveRole(user.userId, role, current.groups);
+      setData(current => ({ ...current, activeRole: role }));
+      // A record or settings page from the previous view may be inaccessible.
+      // Remounting the shell also discards its old results and subscriptions.
+      navigate(role === "ADMIN" || role === "OWNER" ? "/" : "/leads", { replace: true });
+    });
   }
 
   // This read used to have no catch at all: a failed profile/groups fetch
@@ -160,7 +186,7 @@ function ProfileGate({ user, signOut }: { user: AuthUser; signOut: () => void })
             <button className="primary" onClick={() => void refetch()}>
               Try again
             </button>
-            <button className="secondary" onClick={signOut}>
+            <button className="secondary" onClick={guardedSignOut}>
               Sign out
             </button>
           </div>
@@ -189,7 +215,9 @@ function ProfileGate({ user, signOut }: { user: AuthUser; signOut: () => void })
   return (
     <OwnerContext.Provider value={activeRole === "OWNER" && groups.includes("OWNER")}>
       <AdminContext.Provider value={(activeRole === "OWNER" || activeRole === "ADMIN") && groups.includes(activeRole)}>
-        <Shell key={activeRole} profile={profile} signOut={signOut} activeRole={activeRole} roles={rolesFromGroups(groups)} onRoleChange={switchRole} />
+        <LeadDraftScope key={`${user.userId}:${activeRole}`} userId={user.userId} role={activeRole}>
+          <Shell key={activeRole} profile={profile} signOut={guardedSignOut} activeRole={activeRole} roles={rolesFromGroups(groups)} onRoleChange={switchRole} />
+        </LeadDraftScope>
       </AdminContext.Provider>
     </OwnerContext.Provider>
   );
