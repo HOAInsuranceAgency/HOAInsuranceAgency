@@ -1,6 +1,6 @@
 import { StrictMode, useState, type ReactNode } from "react";
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { createMemoryRouter, MemoryRouter, RouterProvider } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const auth = vi.hoisted(() => ({
@@ -43,6 +43,7 @@ vi.mock("./pages/AccountsList", () => ({
   default: function AccountsList() {
     const isAdmin = useIsAdmin();
     const [note, setNote] = useState("");
+    useUnsavedChanges(!!note, { onDiscard: () => setNote("") });
     return (
       <section>
         <h1>{isAdmin ? "All leads" : "My leads"}</h1>
@@ -82,6 +83,7 @@ vi.mock("./components/MagicLinkSignIn", () => ({ default: () => null }));
 import App from "./App";
 import { useIsAdmin, useIsOwner } from "./lib/auth";
 import { activeRoleHeaders } from "./lib/activeRole";
+import { EditProtectionProvider, useUnsavedChanges } from "./lib/editProtection";
 
 const savedLicense = {
   id: "license-one", userProfileId: "profile-one", holderType: "PRODUCER",
@@ -90,6 +92,10 @@ const savedLicense = {
 
 const renderApp = (path = "/") =>
   render(<MemoryRouter initialEntries={[path]}><App /></MemoryRouter>);
+
+const renderProtectedApp = () => render(<RouterProvider router={createMemoryRouter([
+  { path: "*", element: <EditProtectionProvider><App /></EditProtectionProvider> },
+], { initialEntries: ["/leads"] })} />);
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -115,6 +121,44 @@ beforeEach(() => {
       npn: "12345678",
       onboardingComplete: true,
     }],
+  });
+});
+
+describe("session actions with unsaved changes", () => {
+  it("keeps the session and recovery draft on cancel, then clears drafts before explicit sign-out", async () => {
+    renderProtectedApp();
+    const note = await screen.findByRole("textbox", { name: "Page note" });
+    sessionStorage.setItem("hoa-crm:new-lead-draft:v1:user-one:ADMIN", "saved draft");
+    fireEvent.change(note, { target: { value: "Unfinished" } });
+    fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
+    await screen.findByRole("dialog");
+    expect(auth.signOut).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Keep editing" }));
+    expect(note).toHaveValue("Unfinished");
+    expect(sessionStorage.getItem("hoa-crm:new-lead-draft:v1:user-one:ADMIN")).toBe("saved draft");
+    fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
+    await screen.findByRole("dialog");
+    fireEvent.click(screen.getByRole("button", { name: "Discard changes and continue" }));
+    expect(auth.signOut).toHaveBeenCalledTimes(1);
+    expect(sessionStorage.getItem("hoa-crm:new-lead-draft:v1:user-one:ADMIN")).toBeNull();
+  });
+
+  it("holds the active role until discard, and clears that user's drafts before changing role", async () => {
+    renderProtectedApp();
+    const note = await screen.findByRole("textbox", { name: "Page note" });
+    sessionStorage.setItem("hoa-crm:new-lead-draft:v1:user-one:ADMIN", "saved draft");
+    fireEvent.change(note, { target: { value: "Unfinished" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "Active role" }), { target: { value: "PRODUCER" } });
+    await screen.findByRole("dialog");
+    expect(await activeRoleHeaders()).toEqual({ "x-crm-role": "ADMIN" });
+    fireEvent.click(screen.getByRole("button", { name: "Keep editing" }));
+    expect(screen.getByRole("combobox", { name: "Active role" })).toHaveValue("ADMIN");
+    fireEvent.change(screen.getByRole("combobox", { name: "Active role" }), { target: { value: "PRODUCER" } });
+    await screen.findByRole("dialog");
+    fireEvent.click(screen.getByRole("button", { name: "Discard changes and continue" }));
+    await screen.findByRole("heading", { name: "My leads" });
+    expect(await activeRoleHeaders()).toEqual({ "x-crm-role": "PRODUCER" });
+    expect(sessionStorage.getItem("hoa-crm:new-lead-draft:v1:user-one:ADMIN")).toBeNull();
   });
 });
 

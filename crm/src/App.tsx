@@ -42,6 +42,8 @@ import SearchResults from "./pages/SearchResults";
 import UniversalSearch from "./components/UniversalSearch";
 import QuotesList from "./pages/QuotesList";
 import PoliciesList from "./pages/PoliciesList";
+import { useEditProtection } from "./lib/editProtection";
+import { clearNewLeadDrafts, clearOtherUsersLeadDrafts, LeadDraftScope } from "./lib/newLeadDraft";
 
 export default function App() {
   return (
@@ -85,6 +87,9 @@ function AuthGate() {
 
 function ProfileGate({ user, signOut }: { user: AuthUser; signOut: () => void }) {
   const navigate = useNavigate();
+  const { requestLeave } = useEditProtection();
+  useEffect(() => { clearOtherUsersLeadDrafts(user.userId); }, [user.userId]);
+  const guardedSignOut = () => requestLeave(() => { clearNewLeadDrafts(); signOut(); });
   const roleSessionVersion = useRef(0);
   // Profile and Cognito groups resolve behind ONE loading gate: settling
   // admin status after first paint would flash the admin-only controls
@@ -136,11 +141,14 @@ function ProfileGate({ user, signOut }: { user: AuthUser; signOut: () => void })
 
   function switchRole(role: Role) {
     if (!groups.includes(role) || role === activeRole) return;
-    setActiveRole(user.userId, role, groups);
-    setData(current => ({ ...current, activeRole: role }));
-    // A record or settings page from the previous view may be inaccessible.
-    // Remounting the shell also discards its old results and subscriptions.
-    navigate(role === "ADMIN" || role === "OWNER" ? "/" : "/leads", { replace: true });
+    requestLeave(() => {
+      clearNewLeadDrafts(user.userId);
+      setActiveRole(user.userId, role, groups);
+      setData(current => ({ ...current, activeRole: role }));
+      // A record or settings page from the previous view may be inaccessible.
+      // Remounting the shell also discards its old results and subscriptions.
+      navigate(role === "ADMIN" || role === "OWNER" ? "/" : "/leads", { replace: true });
+    });
   }
 
   // This read used to have no catch at all: a failed profile/groups fetch
@@ -160,7 +168,7 @@ function ProfileGate({ user, signOut }: { user: AuthUser; signOut: () => void })
             <button className="primary" onClick={() => void refetch()}>
               Try again
             </button>
-            <button className="secondary" onClick={signOut}>
+            <button className="secondary" onClick={guardedSignOut}>
               Sign out
             </button>
           </div>
@@ -189,7 +197,9 @@ function ProfileGate({ user, signOut }: { user: AuthUser; signOut: () => void })
   return (
     <OwnerContext.Provider value={activeRole === "OWNER" && groups.includes("OWNER")}>
       <AdminContext.Provider value={(activeRole === "OWNER" || activeRole === "ADMIN") && groups.includes(activeRole)}>
-        <Shell key={activeRole} profile={profile} signOut={signOut} activeRole={activeRole} roles={rolesFromGroups(groups)} onRoleChange={switchRole} />
+        <LeadDraftScope key={`${user.userId}:${activeRole}`} userId={user.userId} role={activeRole}>
+          <Shell key={activeRole} profile={profile} signOut={guardedSignOut} activeRole={activeRole} roles={rolesFromGroups(groups)} onRoleChange={switchRole} />
+        </LeadDraftScope>
       </AdminContext.Provider>
     </OwnerContext.Provider>
   );

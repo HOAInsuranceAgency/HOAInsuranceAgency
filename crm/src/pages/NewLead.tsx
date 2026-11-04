@@ -26,6 +26,8 @@ import {
   PhoneInput,
 } from "../components/inputs";
 import { useFormState } from "../lib/useFormState";
+import { useUnsavedChanges } from "../lib/editProtection";
+import { useNewLeadDraft } from "../lib/newLeadDraft";
 import { str } from "../lib/formCodec";
 import { contactKey } from "../lib/extractionKeys";
 import {
@@ -40,25 +42,29 @@ export default function NewLead() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const [relatedParty, setRelatedParty] = useState(searchParams.get('relatedParty') ?? '');
+  const initialRelatedParty = useRef(relatedParty);
   const [relationshipRole, setRelationshipRole] = useState<RelationshipRole>('MANAGER');
   const formRef = useRef<HTMLFormElement>(null);
-  const requestId = useRef(crypto.randomUUID());
+  const requestId = useRef<string>(crypto.randomUUID());
   const savingNow = useRef(false);
   const created = useRef<string | null>(null);
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const [salespersonId, setSalesperson] = useState("");
+  const initialSalesperson = useRef("");
+  const salespersonEdited = useRef(false);
   const members = useAsyncResource(() => communicationRequest<{ team: TeamEligibility[]; actorId?: string }>("team"), [], { initialData: { team: [] } });
   useEffect(() => {
     const self = members.data.team.find(t => t.userId === members.data.actorId && isAssignableSalesperson(t));
-    if (self) setSalesperson(s => s || self.userId);
+    if (self && !salespersonEdited.current) { initialSalesperson.current = self.userId; setSalesperson(s => s || self.userId); }
   }, [members.data]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [stagedFiles, setStagedFiles] = useState<File[]>([]);
   // Set once the lead exists — pressing Create again would duplicate it.
   const [createdId, setCreatedId] = useState<string | null>(null);
-  const { form, setF, patch } = useFormState({
+  const [recovered, setRecovered] = useState(false);
+  const { form, setF, patch, dirty, reset } = useFormState({
     type: DEFAULT_ACCOUNT_TYPE as string,
     propertyType: "",
     name: "",
@@ -76,6 +82,17 @@ export default function NewLead() {
     currentPolicyExpiration: "",
     leadSource: "",
     notes: "",
+  });
+  const extraDirty = relatedParty !== initialRelatedParty.current || relationshipRole !== "MANAGER" ||
+    salespersonEdited.current && salespersonId !== initialSalesperson.current;
+  const draft = useNewLeadDraft(form, requestId.current, stagedFiles.length, (dirty || stagedFiles.length > 0) && !created.current);
+  const { markClean, isLeaving } = useUnsavedChanges(saving || (!created.current && (dirty || extraDirty || stagedFiles.length > 0)), {
+    busy: saving,
+    onDiscard: () => {
+      reset(); setStagedFiles([]); setRelatedParty(initialRelatedParty.current);
+      setRelationshipRole("MANAGER"); setSalesperson(initialSalesperson.current);
+      salespersonEdited.current = false; setRecovered(false); draft.clear();
+    },
   });
 
   function focusField(id: string) {
@@ -139,6 +156,8 @@ export default function NewLead() {
       return;
     }
     created.current = data.id;
+    // The business record now exists. Never offer this as an uncreated draft.
+    draft.clear();
 
     // The primary contact, as a row rather than four columns on the Account.
     // Not fatal, for the same reason it isn't in `lead-intake`: the lead
@@ -207,6 +226,7 @@ export default function NewLead() {
     savingNow.current = false;
     if (!mounted.current) return;
     setSaving(false);
+    markClean();
     const afterCreate: string[] = [];
     if (failedUploads.length) {
       const many = failedUploads.length > 1;
@@ -227,6 +247,7 @@ export default function NewLead() {
       return;
     }
     // Land on Documents so OCR completes and AI extraction is the next step.
+    if (isLeaving()) return;
     navigate(relatedParty && relationshipRole === 'MANAGER'
       ? `/accounts/${data.id}?management=1&partyId=${encodeURIComponent(relatedParty)}`
       : `/accounts/${data.id}?tab=documents`);
@@ -253,11 +274,27 @@ export default function NewLead() {
         <p>Add the basics now. You can fill in the rest later.</p>
       </header>
 
+      {draft.available && <section className="card" aria-label="Unfinished lead">
+        <p>An unfinished lead was saved in this tab. Recover its basic details or discard it to start fresh.</p>
+        <p className="muted small">Salesperson and relationship selections, notes, financial values and documents are not backed up. Review the selections, re-enter the missing details and reattach any files.</p>
+        <div className="form-actions">
+          <button type="button" className="secondary" onClick={() => {
+            requestId.current = draft.available!.requestId;
+            patch(draft.available!.fields); setRecovered(true); draft.recovered();
+          }}>Recover lead details</button>
+          <button type="button" className="secondary" onClick={draft.clear}>Discard saved draft</button>
+        </div>
+      </section>}
+      {recovered && <p role="status" className="muted small">Basic details recovered. Review salesperson and relationship selections, re-enter notes and financial values, and reattach documents before creating the lead.</p>}
+      {draft.scoped && dirty && !draft.available && !created.current && <p role="status" className="muted small">{draft.unavailable
+        ? "Draft recovery is unavailable in this browser. Keep this tab open until you create the lead."
+        : draft.backedUp ? "Basic details are backed up in this tab. Salesperson and relationship selections, notes, financial values and files are not backed up." : "Backing up basic details in this tab…"}</p>}
+
       <form ref={formRef} className="card new-lead-form" aria-label="New lead" noValidate onSubmit={event => { event.preventDefault(); void save(); }}>
-        <fieldset className="new-lead-fields" disabled={saving || !!createdId} aria-label="Lead information">
+        <fieldset className="new-lead-fields" disabled={saving || !!createdId || !!draft.available} aria-label="Lead information">
           <details className="new-lead-section" open={!!relatedParty}>
             <summary>Related person or organization {relatedParty ? '· Selected' : '(optional)'}</summary>
-            <PartyPicker label="Relationship" value={relatedParty} onChange={id => setRelatedParty(id)} emptyLabel="No relationship selected" />
+            <PartyPicker label="Relationship" value={relatedParty} onChange={setRelatedParty} emptyLabel="No relationship selected" />
             {relatedParty && <><label className="field">Role<select value={relationshipRole} onChange={e => setRelationshipRole(e.target.value as RelationshipRole)}>{RELATIONSHIP_ROLES.map(r => <option key={r} value={r}>{RELATIONSHIP_LABELS[r]}</option>)}</select></label>{relationshipRole === 'MANAGER' && <p className="muted small">After creating the lead, review the effective date and management contacts.</p>}</>}
           </details>
           <div className="new-lead-essentials">
@@ -289,7 +326,7 @@ export default function NewLead() {
                     {LEAD_SOURCES.map(value => <option key={value} value={value}>{LEAD_SOURCE_LABELS[value]}</option>)}
                   </select>
                 </div>
-                <ResponsibilitySelect label="Salesperson" value={salespersonId} team={members.data.team} onChange={setSalesperson} disabled={saving || members.loading} />
+                <ResponsibilitySelect label="Salesperson" value={salespersonId} team={members.data.team} onChange={id => { salespersonEdited.current = true; setSalesperson(id); }} disabled={saving || members.loading} />
               </div>
               {members.error && <p className="error-text small" role="alert">{members.error} <button type="button" className="link" onClick={() => void members.refetch()}>Retry</button></p>}
             </section>
