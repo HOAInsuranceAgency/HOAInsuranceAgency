@@ -1,60 +1,24 @@
+# TEMPORARY: staging integration branch only. Do not include in production PRs.
+# The backend phase only reads outputs from the retained staging backend.
+# No pipeline-deploy, synth, backend construction or migration release occurs.
 version: 1
 applications:
-  # ── Marketing site (protectmyhoa.com) ──────────────────────────────
-  - appRoot: web
-    frontend:
-      phases:
-        preBuild:
-          commands:
-            - export HOA_DEPLOY_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-            - node ../crm/scripts/assert-migration-destination.mjs
-            - nvm install 22
-            - nvm use 22
-            - npm ci --cache .npm --prefer-offline
-        build:
-          commands:
-            # A push starts two independent apps. Keep the currently deployed
-            # website until the CRM accepts this bundle's submission contract.
-            - node scripts/wait-for-intake-contract.mjs
-            - npm run build
-            - node ../crm/scripts/prepare-migration-preview.mjs
-      artifacts:
-        baseDirectory: dist
-        files:
-          - '**/*'
-      cache:
-        paths:
-          - .npm/**/*
-          - node_modules/**/*
-
-  # ── CRM (Amplify Gen 2 backend + Vite SPA) ─────────────────────────
   - appRoot: crm
     backend:
       phases:
         build:
           commands:
-            - export HOA_DEPLOY_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-            - node scripts/assert-migration-destination.mjs
             - nvm install 22
             - nvm use 22
             - npm ci --cache .npm --prefer-offline
-            # `ampx` bundles the handlers with esbuild, which strips types
-            # without checking them, and the frontend's `tsc -b` covers only
-            # `src`. Without this line nothing type-checks amplify/ — a broken
-            # handler deploys clean and fails in production. Runs before
-            # pipeline-deploy so a type error stops the deploy rather than
-            # being reported after it.
-            - npm run typecheck:backend
-            # Validate generated IAM policy sizes and CloudFormation structure
-            # before applying any backend changes.
-            - npm run synth:check
-            - node scripts/deploy-migration-backend.mjs
+            - node scripts/assert-staging-frontend.mjs --before-outputs
+            - npx ampx generate outputs --branch staging --app-id d1nuh9rw1hcuxo
+            - node scripts/assert-staging-frontend.mjs --outputs amplify_outputs.json
     frontend:
       phases:
         build:
           commands:
             - npm run build
-            - node ../crm/scripts/prepare-migration-preview.mjs
       artifacts:
         baseDirectory: dist
         files:
