@@ -26,6 +26,7 @@ function mergeAttemptEvidence(previous: BusinessDeliveryAttempt | undefined, inc
   return { ...current,
     sentWithChanges: previous.sentWithChanges || incoming.sentWithChanges ? true : current.sentWithChanges,
     sentAt: current.sentAt ?? previous.sentAt ?? incoming.sentAt,
+    reference: current.reference ?? previous.reference ?? incoming.reference,
     frontDraftId: current.frontDraftId ?? previous.frontDraftId ?? incoming.frontDraftId,
     frontUrl: current.frontUrl ?? previous.frontUrl ?? incoming.frontUrl,
     messageUrl: current.messageUrl ?? previous.messageUrl ?? incoming.messageUrl,
@@ -225,6 +226,7 @@ function BusinessDeliveryComposerContent({ accountId, conversationId, kind, reco
   function attemptRow(item: BusinessDeliveryAttempt) {
     const url = safeFrontUrl(item.messageUrl) ?? safeFrontUrl(item.frontUrl);
     return <li key={item.id} className="business-delivery-attempt"><div><strong>{item.state === "SENT" && item.sentWithChanges ? "Sent with changes" : STATE_LABELS[item.state]}</strong> · {item.kind === "QUOTE" ? "Quote" : KIND_LABELS[item.kind]} · {fmtDateTime(item.sentAt ?? item.preparedAt)}</div>
+      {item.reference && <p className="small">Email reference: <code>{item.reference}</code></p>}
       <p className="small">From {item.from} · {item.sentWithChanges ? "Originally prepared for To: " : "To "}{item.to.join(", ")}{item.cc.length ? ` · ${item.sentWithChanges ? "Originally prepared CC:" : "CC"} ${item.cc.join(", ")}` : ""}</p>
       {item.failure && <p className="error-text">{item.failure}</p>}
       {item.sentWithChanges && <p className="business-delivery-notice">The message was sent with changes in Front. Open Front to verify the actual recipients, message and attachments. The recipients above are the original preparation, and this send did not mark current quotes as presented.</p>}
@@ -232,6 +234,7 @@ function BusinessDeliveryComposerContent({ accountId, conversationId, kind, reco
       {item.state === "SENT" && <p className="muted small">Sent via Front. This does not confirm receipt or reading.</p>}
       {item.state === "UNKNOWN" && <p className="small">The draft result needs review. Check Front before preparing another copy. Ask an administrator for help if the teammate who prepared it is unavailable.</p>}
       {item.state === "UNKNOWN" && item.conversationId === "NEW" && <form className="business-delivery-recovery" aria-label="Recover unconfirmed Front draft" onSubmit={event => { event.preventDefault(); recover(item); }}>
+        {item.reference && <p className="small">Search Front for the email reference shown above to find this draft.</p>}
         <p className="small">Find the exact draft or sent message in Front. Check this account, sender, recipients and attachments, then paste its message ID or direct message link. The CRM will verify it before linking it to this attempt.</p>
         <label className="field" htmlFor={`${id}-recover-${item.id}`}>Front draft/message ID or message link<input id={`${id}-recover-${item.id}`} type="text" autoComplete="off" placeholder="msg_… or https://app.frontapp.com/open/msg_…" value={recoveryValues[item.id] ?? ""} disabled={!!busy} aria-invalid={!!recoveryErrors[item.id]} onChange={event => { setRecoveryValues(values => ({ ...values, [item.id]: event.target.value })); setRecoveryErrors(values => ({ ...values, [item.id]: "" })); }} /></label>
         {recoveryErrors[item.id] && <p className="error-text" role="alert">{recoveryErrors[item.id]}</p>}

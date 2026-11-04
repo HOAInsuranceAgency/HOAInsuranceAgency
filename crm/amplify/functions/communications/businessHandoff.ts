@@ -100,7 +100,7 @@ export function deliveryRecipients(to:unknown,cc:unknown) {
   return result;
 }
 function attemptDto(d:AttemptRecord):BusinessDeliveryAttempt {
-  return {id:d.id,requestId:d.requestId,accountId:d.accountId,kind:d.kind,recordId:d.recordId,state:d.state,from:d.from,to:d.to,cc:d.cc,conversationId:d.conversationId,frontDraftId:d.frontDraftId,frontUrl:d.frontUrl,messageUrl:d.messageUrl,preparedAt:d.preparedAt,sentAt:d.sentAt,failure:d.failure,sentWithChanges:d.sentWithChanges};
+  return {id:d.id,requestId:d.requestId,accountId:d.accountId,kind:d.kind,recordId:d.recordId,state:d.state,from:d.from,to:d.to,cc:d.cc,conversationId:d.conversationId,frontDraftId:d.frontDraftId,frontUrl:d.frontUrl,messageUrl:d.messageUrl,preparedAt:d.preparedAt,sentAt:d.sentAt,failure:d.failure,sentWithChanges:d.sentWithChanges,reference:d.reference};
 }
 /** Missing personal mailbox setup must not hide available sources or account history. */
 export async function businessDeliveryContext(input:{accountId:string},actor:string,access:ServerAccess={admin:false}):Promise<BusinessDeliveryContext> {
