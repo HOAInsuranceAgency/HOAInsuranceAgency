@@ -33,7 +33,7 @@ export function harness(options: Options = {}) {
       transactions.push(i); const op = i.TransactItems[0].Update; const v = op.ExpressionAttributeValues; const row = rows.get(op.Key.pk);
       if (v[":sending"] && !v[":accepted"]) {
         options.beforeClaim?.();
-        if (options.quota || !["RESERVED", "DEFERRED"].includes(row?.state) || row.attempt !== v[":oldAttempt"] || (row.provider && row.provider !== v[":provider"])) throw conditional();
+        if (options.quota || row?.retiredAt || !["RESERVED", "DEFERRED"].includes(row?.state) || row.attempt !== v[":oldAttempt"] || (row.provider && row.provider !== v[":provider"])) throw conditional();
         const counters = i.TransactItems.slice(1).map((x: any) => x.Update);
         if (counters.some((x: any) => (rows.get(x.Key.pk)?.count ?? 0) > x.ExpressionAttributeValues[":remaining"])) throw conditional();
         Object.assign(row, { state: "SENDING", attempt: v[":attempt"], provider: v[":provider"] });

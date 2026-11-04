@@ -5,7 +5,7 @@ const h = vi.hoisted(() => ({ list: vi.fn(), retiredTasks: vi.fn() }));
 vi.mock('../lib/client', async original => ({
   ...await original<typeof import('../lib/client')>(),
   client: { models: Object.fromEntries([
-    ...['Account', 'Quote', 'Policy', 'Carrier', 'Invoice', 'PfLoan', 'InvoiceLine', 'PfLoanPayment'].map(name => [name, { list: h.list, listAccountByStageAndName: h.list }]),
+    ...['Account', 'Quote', 'Policy', 'Carrier', 'Invoice', 'PfLoan', 'InvoiceLine', 'PfLoanPayment'].map(name => [name, { list: h.list, listAccountByStageAndName: h.list, listPolicyByBrokerFeeReportingKey: h.list }]),
     ['MarketingTask', { list: h.retiredTasks }],
   ]) },
 }));

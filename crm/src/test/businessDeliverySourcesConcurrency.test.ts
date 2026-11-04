@@ -86,7 +86,7 @@ describe('bounded package source reads', () => {
     expect(source.versions).toHaveLength(27); // Account, 25 quotes, one carrier.
     expect(deliverySourceChecks(source)).toHaveLength(28); // Plus commercial-plan version.
     const fields = h.quote.mock.calls[0][1].selectionSet;
-    expect(fields).toEqual(expect.arrayContaining(['id', 'accountId', 'updatedAt', 'status', 'commissionPct', 'notes', 'offerExpiresAt', 'renewalPolicyId', 'perOccurrenceDeductible', 'minimumEarnedPremiumPct']));
+    expect(fields).toEqual(expect.arrayContaining(['id', 'accountId', 'updatedAt', 'status', 'commissionPct', 'notes', 'offerExpiresAt', 'renewalPolicyId', 'perOccurrenceDeductible', 'minimumEarnedPremiumPct', 'passThroughCharges', 'clientConditions']));
     expect(fields).not.toContain('account'); expect(fields).not.toContain('invoices');
     expect(JSON.stringify({ facts: source.facts, quotes: source.quotes })).not.toContain('Private review note');
     expect(source.quotes[0]).not.toHaveProperty('commissionPct');
@@ -115,6 +115,29 @@ describe('bounded package source reads', () => {
       { model: 'QUOTE', id: quoteIds[0], updatedAt: NOW }, { model: 'CARRIER', id: 'c0', updatedAt: NOW },
       { model: 'QUOTE', id: quoteIds[1], updatedAt: NOW }, { model: 'CARRIER', id: 'c1', updatedAt: NOW },
     ]);
+  });
+
+  it('projects reviewed supplier charges and public conditions without private commission or notes', async () => {
+    const quote = h.records.get(`Quote:${quoteIds[0]}`);
+    quote.passThroughCharges = JSON.stringify([{ id: 'rt', kind: 'WHOLESALER_FEE', description: 'RT brokerage fee', amountCents: 25000 }]);
+    quote.clientConditions = 'Signed statement of values required.';
+    review();
+    const source = await load();
+    expect(source.quotes[0].passThroughCharges).toEqual([{ id: 'rt', kind: 'WHOLESALER_FEE', description: 'RT brokerage fee', amountCents: 25000 }]);
+    expect(source.quotes[0].clientConditions).toBe('Signed statement of values required.');
+    expect(source.facts).toContain('RT brokerage fee: $250.00');
+    expect(source.facts).toContain('Supplier fees and taxes: $250.00');
+    const base = quoteIds.reduce((sum, _, i) => sum + 1000 + i, 0);
+    expect(source.facts).toContain(`Total quoted policy cost: $${(base + 250).toLocaleString('en-US')}.00`);
+    expect(JSON.stringify(source.quotes)).not.toContain('commissionPct');
+    expect(JSON.stringify(source.quotes)).not.toContain('Private review note');
+  });
+
+  it.each(['passThroughCharges', 'clientConditions'])('requires another review after %s changes', async field => {
+    const quote = h.records.get(`Quote:${quoteIds[0]}`);
+    quote[field] = field === 'clientConditions' ? 'New binding requirement.' : [{ id: 'rt', kind: 'WHOLESALER_FEE', description: 'RT brokerage fee', amountCents: 25000 }];
+    await expect(load()).rejects.toMatchObject({ code: 'BUSINESS_DRAFT_NOT_DISPATCHED' });
+    expect(h.carrier).not.toHaveBeenCalled();
   });
 
   it.each(['missing', 'wrong-account', 'wrong-id', 'partial-error'])('fails closed for a %s quote read', async variant => {

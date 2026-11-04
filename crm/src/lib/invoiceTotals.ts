@@ -72,7 +72,7 @@ export function invoiceTotals(lines: readonly LineLike[]): InvoiceTotals {
  * and passed straight through. Their margin is zero because it is supposed to
  * be, which is what `marginWarnings` needs to know so it does not flag them.
  */
-const PASS_THROUGH = new Set(["TAX", "SURPLUS_LINES", "STAMPING_FEE"]);
+const PASS_THROUGH = new Set(["CARRIER_FEE", "WHOLESALER_FEE", "TAX", "SURPLUS_LINES", "STAMPING_FEE"]);
 
 export const isPassThrough = (kind: string | null | undefined): boolean =>
   PASS_THROUGH.has(kind ?? "");
@@ -91,6 +91,7 @@ export function marginWarnings(lines: readonly LineLike[]): string[] {
     const retail = amount(line.retailAmount);
     const cost = amount(line.costAmount);
     const where = `Line ${i + 1}`;
+    if (line.kind === "BROKER_FEE" && retail > 0 && cost === 0) continue;
     if (retail < 0 || cost < 0) {
       out.push(`${where} has a negative amount.`);
       continue;
@@ -139,6 +140,8 @@ export interface RemittanceSplit {
   commissionCents: number;
   /** Earned for financing it. Zero until in-house financing is offered. */
   interestCents: number;
+  /** Agency broker fee, kept separate from carrier commission. */
+  brokerFeeCents: number;
   /** What the association paid. Always the sum of the three above. */
   totalCents: number;
 }
@@ -176,13 +179,17 @@ export function remittanceSplit(lines: readonly LineLike[]): RemittanceSplit {
     .filter((l) => INTEREST_KINDS.has(l.kind ?? ""))
     .reduce((sum, l) => sum + cents(amount(l.retailAmount) - amount(l.costAmount)), 0);
 
+  const brokerFeeCents = lines.filter(l => l.kind === "BROKER_FEE")
+    .reduce((sum, l) => sum + cents(amount(l.retailAmount)), 0);
+
   return {
     carrierCents,
     interestCents,
+    brokerFeeCents,
     // The remainder, so the three always add up to what was charged. Deriving
     // it instead of summing margins is what makes that guarantee hold when a
     // line rounds against the total.
-    commissionCents: totalCents - carrierCents - interestCents,
+    commissionCents: totalCents - carrierCents - interestCents - brokerFeeCents,
     totalCents,
   };
 }
@@ -247,19 +254,9 @@ export function formatMoney(n: number | null | undefined): string {
 /**
  * A premium line, seeded from the policy.
  *
- * The premium goes in the **cost** box and the amount billed is left empty.
- *
- * That is the opposite of what this did, and the change is deliberate. It used
- * to put the gross premium in the amount and derive the cost from
- * `commissionPct`, which meant every seeded line arrived already claiming to
- * know both halves — and a derived cost is a guess: a carrier applies different
- * rates per line, and the remittance is whatever the statement says, not
- * whatever the percentage implies. A producer who trusted the prefill sent
- * invoices whose margin was arithmetic rather than fact.
- *
- * The premium is the one number the policy actually knows, and it is what the
- * agency owes. So it is filled in, and what to bill for it is left blank —
- * which is also the only field the producer has to think about.
+ * Premium is the gross amount billed to the client before fees and taxes.
+ * Actual supplier remittance is entered separately; it is never inferred from
+ * the commission percentage. Existing invoice rows are not recomputed.
  */
 export function premiumLineFromPolicy(policy: {
   premium?: number | null;
@@ -268,5 +265,16 @@ export function premiumLineFromPolicy(policy: {
   if (typeof premium !== "number" || !Number.isFinite(premium)) {
     return { retailAmount: null, costAmount: null };
   }
-  return { retailAmount: null, costAmount: cents(premium) };
+  return { retailAmount: cents(premium), costAmount: null };
+}
+
+/** Missing is different from a reviewed zero-dollar supplier remittance. */
+export function missingRemittanceCost(lines: readonly LineLike[]): boolean {
+  return lines.some(line => ["PREMIUM", "ENDORSEMENT"].includes(line.kind ?? "")
+    && (line.costAmount == null || !Number.isFinite(line.costAmount)));
+}
+
+/** Broker fees are due in full at inception and never financed. */
+export function financeableInvoiceTotal(lines: readonly LineLike[]): number {
+  return invoiceTotals(lines.filter(line => line.kind !== "BROKER_FEE")).retail;
 }

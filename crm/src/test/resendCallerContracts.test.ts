@@ -65,7 +65,7 @@ beforeEach(() => {
     Account: { get: async () => ({ data: { id: "synthetic-account", name: "Synthetic HOA", state: "NH", address: "1 Test Way" } }) },
     InvoiceLine: { list: async () => ({ data: lines }) },
     Contact: { list: async () => ({ data: [{ id: "synthetic-contact", email: "board@example.com", name: "Synthetic Board", isPrimary: true }] }) },
-    Policy: { get: async () => ({ data: { id: "synthetic-policy", policyNumber: "SYN-001", lines: ["Property"] } }) },
+    Policy: { get: async () => ({ data: { id: "synthetic-policy", accountId: "synthetic-account", policyNumber: "SYN-001", lines: ["Property"] } }) },
   };
   const runId = `marketing-report:run:manual:${"a".repeat(64)}`;
   h.run = { id: runId, version: 1, data: { id: runId, kind: "manual", actor: "synthetic-admin", status: "queued", recipient: "reports@example.com", asOf: "2026-10-30T12:00:00Z" } };

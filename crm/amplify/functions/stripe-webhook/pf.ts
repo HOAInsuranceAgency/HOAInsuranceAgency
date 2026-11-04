@@ -1,3 +1,6 @@
+import { agencyDay } from "../../../../shared/leadActionGuidance";
+import { feeAllocations, type BrokerFeeAllocation } from "../../../../shared/brokerFees";
+import { syncBrokerFeePayment } from "../broker-fees/payments";
 import { TransactionalMailClient } from "../transactional-mail/client";
 import { randomUUID } from "node:crypto";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
@@ -39,6 +42,8 @@ interface LoanRow extends PostableLoan {
   months: number;
   downPayment: number;
   originationFee: number;
+  brokerFeeCents?: number;
+  brokerFeeAllocations?: BrokerFeeAllocation[];
   electedAt: string | null;
   agreementSignedAt: string | null;
   downPaidAt: string | null;
@@ -72,6 +77,8 @@ async function readLoan(loanId: string): Promise<LoanRow | null> {
     months: typeof item.months === "number" ? item.months : 11,
     downPayment: typeof item.downPayment === "number" ? item.downPayment : 0,
     originationFee: typeof item.originationFee === "number" ? item.originationFee : 0,
+    brokerFeeCents: typeof item.brokerFeeCents === "number" ? item.brokerFeeCents : 0,
+    brokerFeeAllocations: feeAllocations(item.brokerFeeAllocations),
     electedAt: typeof item.electedAt === "string" ? item.electedAt : null,
     agreementSignedAt: typeof item.agreementSignedAt === "string" ? item.agreementSignedAt : null,
     downPaidAt: typeof item.downPaidAt === "string" ? item.downPaidAt : null,
@@ -172,6 +179,15 @@ async function dealNames(loan: LoanRow): Promise<{ name: string; policy: string 
   }
 }
 
+/** No earnings while ACH clears; retries recover a hook after the loan state was recorded. */
+async function syncLoanBrokerFee(d: PfEventDecision, loan: LoanRow, status: "PROCESSING" | "PAID" | "FAILED") {
+  const allocations = feeAllocations(loan.brokerFeeAllocations);
+  if (!allocations.length || d.billingVersion !== 3) return;
+  if (allocations.reduce((sum, part) => sum + part.amountCents, 0) !== (loan.brokerFeeCents ?? 0)) throw new Error("Broker fee loan allocation is incomplete.");
+  if (status !== "FAILED") initialPaymentReceipt(loan, d.amount, d.billingVersion);
+  await syncBrokerFeePayment({ sourceId: d.paymentIntentId, accountId: loan.accountId, allocations, status, receivedOn: agencyDay(d.occurredAt) });
+}
+
 /** The down payment cleared: QUOTED → ACCEPTED, mandate stored. */
 async function applyDownPayment(d: PfEventDecision, loan: LoanRow): Promise<string> {
   const table = process.env.PF_LOAN_TABLE as string;
@@ -203,6 +219,7 @@ async function applyDownPayment(d: PfEventDecision, loan: LoanRow): Promise<stri
    */
   if (loan.downPaymentIntentId === d.paymentIntentId && loan.status !== "QUOTED") {
     await activateSettledElection(ddb, table, loan);
+    await syncLoanBrokerFee(d, loan, "PAID");
     return "already accepted";
   }
   // A customer election is the activation authorization. Never mark a pending
@@ -244,7 +261,7 @@ async function applyDownPayment(d: PfEventDecision, loan: LoanRow): Promise<stri
      * is recorded and there is nothing to say.
      */
     const fresh = await readLoan(loan.id);
-    if (fresh?.downPaymentIntentId === d.paymentIntentId) return "already accepted";
+    if (fresh?.downPaymentIntentId === d.paymentIntentId) { await syncLoanBrokerFee(d, fresh, "PAID"); return "already accepted"; }
     /**
      * Genuinely stray: a second checkout session, a cancellation that raced
      * the payment, a full payment that superseded the quote while the down
@@ -377,6 +394,7 @@ async function applyDownPayment(d: PfEventDecision, loan: LoanRow): Promise<stri
     // Best effort after the money record; a failure never un-accepts.
     console.error(`stripe-webhook: could not supersede sibling quotes for ${loan.id}`, err);
   }
+  await syncLoanBrokerFee(d, loan, "PAID");
   try {
     const deal = await dealNames(loan);
     await mailAccounting(
@@ -388,6 +406,8 @@ async function applyDownPayment(d: PfEventDecision, loan: LoanRow): Promise<stri
         `Total received: ${money(receipt.initialPaymentAmount)}`,
         `Premium down payment: ${money(loan.downPayment)}`,
         `Origination fee collected: ${money(receipt.originationFeeCollected)}`,
+        `Broker fee collected: ${money(receipt.brokerFeeCollectedCents / 100)}`,
+        `Broker fee is separate agency revenue and does not reduce financed principal.`,
         `Loan principal repayment: ${money(0)}`,
         `Interest received: ${money(0)}`,
         ...(receipt.originationFeeCollected < loan.originationFee
@@ -712,6 +732,8 @@ export async function applyPfEvent(d: PfEventDecision): Promise<string> {
         if ((err as { name?: string }).name !== "ConditionalCheckFailedException") throw err;
         // The loan moved; whatever won knows more than this event does.
       }
+      const current = await readLoan(loan.id);
+      if (current?.downPaymentIntentId === d.paymentIntentId && current.status === "QUOTED") await syncLoanBrokerFee(d, current, "PROCESSING");
       return "down payment clearing; marked";
     }
     // Money in flight moves nothing else — the pending marker already says
@@ -763,6 +785,7 @@ export async function applyPfEvent(d: PfEventDecision): Promise<string> {
     } catch (err) {
       if ((err as { name?: string }).name !== "ConditionalCheckFailedException") throw err;
     }
+    if (!loan.downPaymentIntentId || loan.downPaymentIntentId === d.paymentIntentId) await syncLoanBrokerFee(d, loan, "FAILED");
     console.log(`stripe-webhook: down payment ${d.paymentIntentId} failed for ${loan.id}`);
     return "down payment failed";
   }

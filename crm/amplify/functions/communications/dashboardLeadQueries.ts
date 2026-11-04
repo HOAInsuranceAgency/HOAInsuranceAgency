@@ -9,7 +9,7 @@ const QUOTE_FIELDS = ['id', 'accountId', 'status'];
 // Exact inputs to shared packageTerms/authorizedQuoteTerms. Keep signing
 // snapshots and unrelated quote metadata out of the work-list response.
 const QUOTE_TERM_FIELDS = [
-  ...QUOTE_FIELDS, 'carrierId', 'premium', 'effectiveDate', 'expirationDate',
+  ...QUOTE_FIELDS, 'carrierId', 'premium', 'brokerFee', 'billType', 'passThroughCharges', 'clientConditions', 'effectiveDate', 'expirationDate',
   'perOccurrenceDeductible', 'perUnitDeductible', 'blanketLimit', 'coinsurancePct',
   'replacementCostType', 'glEachOccurrence', 'glDamageToRentedPremises',
   'glMedicalExpense', 'glPersonalAdvInjury', 'glGeneralAggregate',

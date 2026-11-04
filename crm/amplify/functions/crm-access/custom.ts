@@ -20,6 +20,13 @@ async function communicationAccount(access: AccountAccess, key: string, expected
 }
 export async function authorizeCustom(access: AccountAccess, field: string, args: RecordData) {
   if (["communicationRead", "communicationWrite"].includes(field) && retiredTaskOperation(id(args.readOperation ?? args.operation), object(args.input))) throw new AccessDenied();
+  if (field === "brokerFeeAction") {
+    const input = object(args.input);
+    if (input.op === "saveJurisdiction") { if (!access.admin) throw new AccessDenied(); return; }
+    if (input.op === "confirmInvoicePayment") await access.requireRecord("Invoice", id(input.invoiceId));
+    else await access.requireAccount(id(input.accountId));
+    return;
+  }
   if (field === "commissionOverview") return; // Handler returns only the caller’s own financial records.
   if (field === "carrierPaymentPreview") { await access.requireRecord("Quote", id(args.quoteId)); return; }
   if (field === "bindCommissionPolicy") { await access.requireRecord("Quote", id(object(args.input).quoteId)); return; }

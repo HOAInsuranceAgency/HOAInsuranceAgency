@@ -53,7 +53,12 @@ export function installTransactionalMail(backend: any, alerts: any) {
   const bucket = "hoa-transactional-mail-917680434255-us-east-1";
   // The data template is near CloudFormation's limit. One independent policy
   // shares the complete boundary without referencing roles, alerts or topics.
-  const sendPermissions = !migrationPreview ? new ManagedPolicy(backend.createStack("TransactionalMailSendPermissions"), "SesSendPermissions", { statements: sesSendPermissions(configurationSet, staging) }) : undefined;
+  const permissionsStack = !migrationPreview ? backend.createStack("TransactionalMailSendPermissions") : undefined;
+  const sendPermissions = permissionsStack ? new ManagedPolicy(permissionsStack, "SesSendPermissions", { statements: sesSendPermissions(configurationSet, staging) }) : undefined;
+  // Void may retire only invoice OP keys in its own environment. It cannot
+  // send mail, edit counters/receipts, or access saved envelopes.
+  for(const fn of [backend.voidInvoice,backend.crmAccess,backend.pfElection])fn.addEnvironment('HOA_TRANSACTIONAL_MAIL_TABLE',table);
+  if(permissionsStack)new ManagedPolicy(backend.createStack('InvoiceSendRetirementPermissions'),'InvoiceVoidMailRetirement',{roles:[backend.voidInvoice.resources.lambda.role!,backend.crmAccess.resources.lambda.role!,backend.pfElection.resources.lambda.role!],statements:[new PolicyStatement({actions:['dynamodb:GetItem','dynamodb:UpdateItem'],resources:[tableArn],conditions:{'ForAllValues:StringLike':{'dynamodb:LeadingKeys':[`OP#hoa/${businessBranch}/invoice/*`]}}})]});
   const senderNames = ["magicLinkVerify", "teamAdmin", "sendInvoice", "marketingReportWorker", "stripeWebhook", "mailVerification", "mailRecovery"];
   for (const name of senderNames) {
     const fn = backend[name];

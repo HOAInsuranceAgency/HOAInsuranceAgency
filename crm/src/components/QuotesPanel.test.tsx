@@ -3,13 +3,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { listAllPages } from "../lib/pagination";
 import type { Account } from "../lib/client";
 
-const h = vi.hoisted(() => ({ preview: vi.fn(), bind: vi.fn(), quotes: vi.fn(), update: vi.fn(), carriers: vi.fn(), getQuote: vi.fn(), policies: vi.fn(), createPolicy: vi.fn(), accountUpdate: vi.fn(), request: vi.fn(), children: vi.fn() }));
+const h = vi.hoisted(() => ({ preview: vi.fn(), fee: vi.fn(), bind: vi.fn(), quotes: vi.fn(), update: vi.fn(), carriers: vi.fn(), getQuote: vi.fn(), policies: vi.fn(), createPolicy: vi.fn(), accountUpdate: vi.fn(), request: vi.fn(), children: vi.fn() }));
 vi.mock("./QuotePackages", () => ({ default: () => null }));
 vi.mock("./CoverageForm", () => ({ default: () => null }));
 vi.mock("../lib/useAgencyDay", () => ({ useAgencyDay: () => "2026-11-03" }));
 vi.mock("../lib/communications", () => ({ communicationRequest: h.request }));
 vi.mock("../lib/client", () => ({
-  client: { queries: { carrierPaymentPreview: h.preview }, mutations: { bindCommissionPolicy: h.bind }, models: { Quote: { list: h.quotes, update: h.update, get: h.getQuote }, Carrier: { list: h.carriers }, Policy: { list: h.policies, create: h.createPolicy }, Account: { update: h.accountUpdate }, Invoice: { list: h.children }, Document: { list: h.children }, PfLoan: { list: h.children } } },
+  client: { queries: { carrierPaymentPreview: h.preview }, mutations: { bindCommissionPolicy: h.bind, brokerFeeAction: h.fee }, models: { Quote: { list: h.quotes, update: h.update, get: h.getQuote }, Carrier: { list: h.carriers }, Policy: { list: h.policies, create: h.createPolicy }, Account: { update: h.accountUpdate }, Invoice: { list: h.children }, Document: { list: h.children }, PfLoan: { list: h.children } } },
   listAllPages: (...args: Parameters<typeof listAllPages>) => listAllPages(...args),
   friendlyError: (error: unknown, fallback: string) => error instanceof Error ? error.message : fallback,
   fmtDate: (value: string) => value || "—",
@@ -17,6 +17,7 @@ vi.mock("../lib/client", () => ({
 }));
 import QuotesPanel from "./QuotesPanel";
 import { emptyCommercialPlan } from "../../../shared/quotePackages";
+import { authorizedQuoteTerms } from "../../../shared/quoteAuthorization";
 
 const account = { id: "account-a", stage: "LEAD" } as Account;
 const quote = {
@@ -33,6 +34,7 @@ function pendingQuotes() {
 beforeEach(() => {
   vi.resetAllMocks();
   h.preview.mockResolvedValue({ data: { ok: true, carrierTermsVersion: 4, basis: 'COLLECTED' } });
+  h.fee.mockResolvedValue({ data: { ok: true, fees: [] } });
   h.bind.mockResolvedValue({ data: { ok: true, policy: { id: "policy-a" }, account: { ...account, stage: "CLIENT" } } });
   h.carriers.mockResolvedValue({ data: [{ id: "carrier-a", name: "Harbor Mutual" }] });
   h.update.mockResolvedValue({ data: quote });
@@ -130,6 +132,44 @@ async function openBind() {
   await screen.findByText(/Legacy carrier terms: receipt timing is unconfirmed/);
 }
 describe("binding recovery", () => {
+  it('keeps a fee quote agency billed while requiring the current carrier payment arrangement review', async () => {
+    const feeQuote = { ...quote, brokerFee: 500, billType: 'AGENCY' as const };
+    h.quotes.mockResolvedValue({ data: [feeQuote] });
+    h.fee.mockResolvedValue({ data: { ok: true, fees: [{
+      quoteId: quote.id, amountCents: 50000, collectedCents: 50000, submittedCents: 50000,
+      signedAt: '2026-09-30T12:00:00Z', terms: authorizedQuoteTerms(feeQuote),
+    }] } });
+    h.preview.mockResolvedValue({ data: { ok: true, carrierTermsVersion: 8, basis: 'COLLECTED', payment: {
+      id: 'agency-2026', payor: 'Harbor MGA', trigger: 'COLLECTION', cadence: 'ONCE', lagDays: 0,
+    } } });
+    render(<QuotesPanel account={account} onAccountChange={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Bind' }));
+    expect(screen.getByLabelText('Bill type (required)')).toHaveValue('AGENCY');
+    expect(screen.getByLabelText('Bill type (required)')).toBeDisabled();
+    expect(within(screen.getByLabelText('Bill type (required)')).getByRole('option', { name: /^Direct bill/ })).toBeDisabled();
+    await screen.findByText('Disclosure signed · payment received.');
+    fireEvent.click(screen.getByLabelText('I confirmed the exact premium and agency commission percentage.'));
+    const review = await screen.findByLabelText('I reviewed the carrier commission payment arrangement.');
+    expect(screen.getByRole('button', { name: 'Confirm bind' })).toBeDisabled();
+    fireEvent.click(review);
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm bind' }));
+    await waitFor(() => expect(h.bind).toHaveBeenCalledTimes(1));
+    expect(JSON.parse(h.bind.mock.calls[0][0].input)).toMatchObject({
+      billType: 'AGENCY', carrierTermsVersion: 8, carrierArrangementId: 'agency-2026',
+    });
+    expect(h.preview).toHaveBeenCalledWith({ quoteId: quote.id, billType: 'AGENCY' });
+  });
+
+  it('requires editing an invalid direct-billed fee quote before the bind dialog can submit', async () => {
+    h.quotes.mockResolvedValue({ data: [{ ...quote, brokerFee: 500, billType: 'DIRECT' }] });
+    render(<QuotesPanel account={account} onAccountChange={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Bind' }));
+    expect(screen.getByText(/it needs agency billing for the broker fee/)).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Confirm bind' })).toBeNull();
+    expect(h.preview).not.toHaveBeenCalled();
+    expect(h.bind).not.toHaveBeenCalled();
+  });
+
   it('requires review of structured terms and sends the exact selected carrier version', async () => {
     h.quotes.mockResolvedValue({ data: [quote] });
     h.preview.mockResolvedValue({ data: { ok: true, carrierTermsVersion: 7, basis: 'WRITTEN', payment: {

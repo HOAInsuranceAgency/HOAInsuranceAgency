@@ -114,7 +114,7 @@ export default function PoliciesList() {
                     </td>
                     <td>{p.carrierId ? carrierName.get(p.carrierId) ?? "—" : "—"}</td>
                     <td>{p.policyNumber ?? "—"}</td>
-                    <td>{fmtMoney(p.premium)}</td>
+                    <td>{fmtMoney(p.premium)}{(p.brokerFee ?? 0) > 0 && <div className="small muted">+ {fmtMoney(p.brokerFee)} broker fee</div>}</td>
                     <td>{fmtDate(p.effectiveDate)}</td>
                     <td>{fmtDate(p.expirationDate)}</td>
                     <td>{fmtDate(p.datePolicyBound?.slice(0, 10))}</td>

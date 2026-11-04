@@ -18,6 +18,10 @@ import { SaveStatus, useSaveStatus } from "../../components/SaveStatus";
 import { InvoiceEditor } from "../../components/InvoiceEditor";
 import { invoiceTotals, premiumLineFromPolicy } from "../../lib/invoiceTotals";
 import {
+  brokerFeeLineFromSource,
+  findAdjustmentOriginal,
+  passThroughLinesFromSource,
+  sourceChargeLineId,
   invoiceableQuotes,
   liveAnchorIds,
   seededLineDescription,
@@ -148,6 +152,11 @@ function InvoicesTabContent({ accountId }: { accountId: string }) {
     const [kind, anchorId] = anchorKey.split(":", 2);
     await createStatus.run(
       async () => {
+        const policy = kind === "policy" ? loaded.policies.find((p) => p.id === anchorId) : null;
+        const quote = kind === "quote" ? loaded.quotes.find((q) => q.id === anchorId) : null;
+        const source = policy ?? quote;
+        const adjustment = policy ? findAdjustmentOriginal(policy, loaded.invoices, loaded.lines) : null;
+        if ((source?.brokerFee ?? 0) > 0 && source?.billType !== "AGENCY") throw new Error("Broker fees require agency billing. Correct the source quote before invoicing.");
         /**
          * The number is reserved before the row exists, so two producers
          * clicking at once cannot collide. If the create then fails the number
@@ -168,8 +177,10 @@ function InvoicesTabContent({ accountId }: { accountId: string }) {
           accountId,
           number,
           status: "DRAFT",
+          sourcePricingVersion: adjustment ? 2 : 1,
+          ...(adjustment ?? {}),
           issuedAt: today,
-          dueAt: addDays(today, DEFAULT_TERM_DAYS),
+          dueAt: !adjustment && (source?.brokerFee ?? 0) > 0 ? today : addDays(today, DEFAULT_TERM_DAYS),
           ...(kind === "policy" ? { policyId: anchorId } : { quoteId: anchorId }),
         });
         if (errors?.length || !data) throw new Error(errors?.[0]?.message ?? "Couldn't create the invoice.");
@@ -178,13 +189,21 @@ function InvoicesTabContent({ accountId }: { accountId: string }) {
         res.setData(cur => cur ? { ...cur, invoices: [data, ...cur.invoices] } : cur);
         setAnchorKey("");
 
-        // One anchor, one seeded premium line: the number the record actually
-        // knows is the cost; what to bill for it stays the producer's call.
-        const policy = kind === "policy" ? loaded.policies.find((p) => p.id === anchorId) : null;
-        const quote = kind === "quote" ? loaded.quotes.find((q) => q.id === anchorId) : null;
-        const source = policy ?? quote;
+        // Seed the client's recorded premium; actual supplier remittance stays
+        // blank until reviewed in the existing cost column.
         const created: InvoiceLine[] = [];
-        if (source) {
+        if (adjustment) {
+          try {
+            const line = await client.models.InvoiceLine.create({ id: `invoice:${data.id}:adjustment`, invoiceId: data.id,
+              accountId, policyId: policy!.id, kind: "ENDORSEMENT", description: "Endorsement or audit adjustment",
+              retailAmount: null, costAmount: null, sortOrder: 0 });
+            if (line.errors?.length || !line.data) throw new Error("Adjustment line was not saved.");
+            created.push(line.data);
+          } catch {
+            setOpenId(data.id);
+            throw new Error("Adjustment invoice created, but its blank adjustment line could not be saved. Reopen this invoice before sending; do not create another invoice.");
+          }
+        } else if (source && source.billType !== "DIRECT") {
           const { retailAmount, costAmount } = premiumLineFromPolicy(source);
           try {
           const line = await client.models.InvoiceLine.create({
@@ -192,6 +211,7 @@ function InvoicesTabContent({ accountId }: { accountId: string }) {
             accountId,
             ...(policy ? { policyId: policy.id } : {}),
             kind: "PREMIUM",
+            id: `invoice:${data.id}:premium`,
             description: policy
               ? seededLineDescription(policy)
               : seededQuoteLineDescription(quote!),
@@ -205,10 +225,35 @@ function InvoicesTabContent({ accountId }: { accountId: string }) {
           created.push(line.data);
           } catch {
             setOpenId(data.id);
-            throw new Error("Invoice created, but its premium line couldn't be added. Open this invoice and add the line there; do not create another invoice.");
+            throw new Error("Invoice created, but its premium line couldn't be added. Reopen this invoice to refresh its source charges; do not create another invoice.");
           }
         }
 
+        if (source && !adjustment) {
+          try {
+            for (const charge of passThroughLinesFromSource(source, policy?.id)) {
+              const line = await client.models.InvoiceLine.create({ id: sourceChargeLineId(data.id, charge.sourceQuoteChargeId), invoiceId: data.id, accountId, ...charge, sortOrder: created.length });
+              if (line.errors?.length || !line.data) throw new Error("Supplier charge was not saved.");
+              created.push(line.data);
+            }
+          } catch {
+            setOpenId(data.id);
+            await res.refetch();
+            throw new Error("Invoice created, but its supplier charges and taxes could not all be saved. Reopen this invoice before sending; do not create another invoice.");
+          }
+          const feeLine = brokerFeeLineFromSource(source, policy?.id);
+          const paidInvoices = new Set(loaded.invoices.filter(i => i.status === "PAID").map(i => i.id));
+          const alreadyCollected = feeLine && (Number(policy?.brokerFeeCollected ?? 0) > 0 || loaded.lines.some(l => l.brokerFeeQuoteId === feeLine.brokerFeeQuoteId && paidInvoices.has(l.invoiceId)));
+          if (feeLine && !alreadyCollected) {
+            const fee = await client.models.InvoiceLine.create({ id: `invoice:${data.id}:broker-fee`, invoiceId: data.id, accountId, ...feeLine, sortOrder: created.length });
+            if (fee.errors?.length || !fee.data) {
+              setOpenId(data.id);
+              await res.refetch();
+              throw new Error("Invoice created, but its broker fee line could not be saved. Reopen the invoice before sending.");
+            }
+            created.push(fee.data);
+          }
+        }
         res.setData((cur) =>
           cur
             ? {
@@ -218,7 +263,8 @@ function InvoicesTabContent({ accountId }: { accountId: string }) {
             : cur
         );
         setOpenId(data.id);
-        return "Invoice created — price the premium line.";
+        return adjustment ? "Adjustment invoice created — enter only the endorsement or audit change and its actual supplier cost."
+          : source?.billType === "DIRECT" ? "HOA broker fee invoice created." : "Invoice created — enter actual carrier/wholesaler remittance cost.";
       },
       { errorMessage: "Couldn't create an invoice." }
     );
@@ -239,7 +285,11 @@ function InvoicesTabContent({ accountId }: { accountId: string }) {
   // PAID and VOID free the slot — voiding a bill is how a policy gets
   // billed again. The rule itself is the pure module's, with its tests.
   const busyAnchors = liveAnchorIds(invoices, lines);
-  const openPolicies = unbilledAgencyPolicies(policies, busyAnchors);
+  const adjustmentOriginals = new Map(policies.map(policy => [policy.id, findAdjustmentOriginal(policy, invoices, lines)]));
+  const initialPolicyIds = new Set(unbilledAgencyPolicies(policies, busyAnchors).map(policy => policy.id));
+  const openPolicies = policies.filter(policy => policy.billType !== "DIRECT" && !busyAnchors.has(policy.id)
+    && (!policy.quoteId || !busyAnchors.has(policy.quoteId))
+    && (initialPolicyIds.has(policy.id) || adjustmentOriginals.get(policy.id)));
   const openQuotes = invoiceableQuotes(quotes, busyAnchors, isOpenQuoteStatus);
 
   return (
@@ -264,6 +314,8 @@ function InvoicesTabContent({ accountId }: { accountId: string }) {
                     "Policy"}
                   {p.effectiveDate ? ` (${p.effectiveDate})` : ""}
                   {p.billType ? "" : " — bill type not recorded"}
+                  {p.status && p.status !== "ACTIVE" ? ` — ${p.status.replaceAll("_", " ").toLowerCase()}` : ""}
+                  {adjustmentOriginals.get(p.id) ? " — endorsement/audit adjustment" : ""}
                 </option>
               ))}
               {openQuotes.map((q) => (

@@ -1,3 +1,4 @@
+import { feeAllocations, type BrokerFeeAllocation } from "../../../../shared/brokerFees";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, GetCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 
@@ -145,6 +146,10 @@ export interface InvoiceRow extends PaymentSnapshot {
   remittanceCarrierCents: number | null;
   remittanceCommissionCents: number | null;
   remittanceInterestCents: number | null;
+  remittanceBrokerFeeCents?: number | null;
+  brokerFeeAllocations?: BrokerFeeAllocation[];
+  stripeLinkAmountCents?: number | null;
+  stripePaymentLinkId?: string | null;
 }
 
 /**
@@ -188,6 +193,10 @@ export async function readInvoice(
     remittanceCarrierCents: int(item.remittanceCarrierCents),
     remittanceCommissionCents: int(item.remittanceCommissionCents),
     remittanceInterestCents: int(item.remittanceInterestCents),
+    remittanceBrokerFeeCents: int(item.remittanceBrokerFeeCents),
+    brokerFeeAllocations: feeAllocations(item.brokerFeeAllocations),
+    stripeLinkAmountCents: int(item.stripeLinkAmountCents),
+    stripePaymentLinkId: str(item.stripePaymentLinkId),
     status: str(item.status),
     stripeEventAt: str(item.stripeEventAt),
     stripePaymentIntentId: str(item.stripePaymentIntentId),

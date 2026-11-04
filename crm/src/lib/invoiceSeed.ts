@@ -1,3 +1,7 @@
+import { brokerFeeCents } from "../../../shared/brokerFees";
+import { normalizePassThroughCharges } from "../../../shared/passThroughCharges";
+import { isPaidOriginalPremium } from "../../../shared/invoiceAdjustments";
+import { isNonpayableAdjustmentStatement, type InvoicePaymentStatus } from "../../../shared/invoicePaymentStatus";
 /**
  * What a new invoice should already contain.
  *
@@ -16,6 +20,9 @@ export interface PolicyLike {
   status?: string | null;
   billType?: string | null;
   premium?: number | null;
+  brokerFee?: number | null;
+  brokerFeeCollected?: number | null;
+  quoteId?: string | null;
   policyNumber?: string | null;
   lines?: (string | null)[] | null;
 }
@@ -59,7 +66,7 @@ export function unbilledAgencyPolicies<T extends PolicyLike>(
 }
 
 /** The invoice fields the busy-anchor rule reads. */
-export interface InvoiceAnchorLike {
+export interface InvoiceAnchorLike extends InvoicePaymentStatus {
   id: string;
   status?: string | null;
   policyId?: string | null;
@@ -80,7 +87,7 @@ export function liveAnchorIds(
 ): Set<string> {
   const live = new Set(
     invoices
-      .filter((i) => ["DRAFT", "SENT", "PROCESSING"].includes(i.status ?? ""))
+      .filter((i) => ["DRAFT", "SENT", "PROCESSING"].includes(i.status ?? "") && !isNonpayableAdjustmentStatement(i))
       .map((i) => i.id)
   );
   const busy = new Set<string>();
@@ -147,4 +154,48 @@ export function invoiceableQuotes<T extends QuoteLike>(
 export function seededQuoteLineDescription(quote: QuoteLike): string {
   const lines = (quote.lines ?? []).filter(Boolean).join(", ");
   return lines ? `${lines} — quoted coverage` : "Quoted coverage";
+}
+
+/** A fee is sourced from its policy term; invoice editing cannot invent another one. */
+export function brokerFeeLineFromSource(source: { id: string; quoteId?: string | null; brokerFee?: number | null; billType?: string | null }, policyId?: string) {
+  const amountCents = brokerFeeCents(source.brokerFee);
+  if (!amountCents) return null;
+  if (source.billType === "DIRECT") throw new Error("Broker fees require agency billing.");
+  const quoteId = policyId ? source.quoteId : source.id;
+  if (!quoteId) throw new Error("This broker fee needs its original quote before it can be billed.");
+  return { kind: "BROKER_FEE" as const, description: "HOA broker fee", retailAmount: amountCents / 100, costAmount: 0,
+    brokerFeeQuoteId: quoteId, ...(policyId ? { policyId } : {}) };
+}
+
+/** Supplier charges and taxes are collected at cost, never agency fee income. */
+export function passThroughLinesFromSource(source: { billType?: string | null; passThroughCharges?: unknown }, policyId?: string) {
+  if (source.billType === "DIRECT") return [];
+  return normalizePassThroughCharges(source.passThroughCharges).map(charge => ({
+    sourceQuoteChargeId: charge.id, kind: charge.kind, description: charge.description,
+    retailAmount: charge.amountCents / 100, costAmount: charge.amountCents / 100,
+    ...(policyId ? { policyId } : {}),
+  }));
+}
+
+/** Retrying partial seeding addresses the same row instead of adding a duplicate. */
+export const sourceChargeLineId = (invoiceId: string, chargeId: string) => `invoice:${invoiceId}:charge:${chargeId}`;
+
+/** The same policy picker creates later adjustments after its original bill is paid. */
+export function findAdjustmentOriginal(
+  policy: Parameters<typeof isPaidOriginalPremium>[0],
+  invoices: readonly (Parameters<typeof isPaidOriginalPremium>[1] & { createdAt?: string | null; issuedAt?: string | null })[],
+  lines: readonly Parameters<typeof isPaidOriginalPremium>[2][],
+) {
+  const premiumsByInvoice = new Map<string, Parameters<typeof isPaidOriginalPremium>[2][]>();
+  for (const line of lines) {
+    if (line.kind !== "PREMIUM") continue;
+    const own = premiumsByInvoice.get(line.invoiceId) ?? [];
+    own.push(line); premiumsByInvoice.set(line.invoiceId, own);
+  }
+  const ordered = [...invoices].sort((a, b) => (a.issuedAt ?? a.createdAt ?? '').localeCompare(b.issuedAt ?? b.createdAt ?? '') || a.id.localeCompare(b.id));
+  for (const invoice of ordered) {
+    const premium = (premiumsByInvoice.get(invoice.id) ?? []).filter(line => isPaidOriginalPremium(policy, invoice, line)).sort((a, b) => a.id.localeCompare(b.id))[0];
+    if (premium) return { adjustsInvoiceId: invoice.id, adjustsPremiumLineId: premium.id };
+  }
+  return null;
 }

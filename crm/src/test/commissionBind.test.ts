@@ -14,6 +14,10 @@ vi.mock('../../amplify/functions/commissions/store', () => ({
   db: { send: h.send },
   table: () => 'commissions',
 }));
+vi.mock('../../amplify/functions/broker-fees/store', async original => ({
+  ...await original<typeof import('../../amplify/functions/broker-fees/store')>(),
+  accountAgreements: async () => [],
+}));
 vi.mock('../../amplify/functions/crm-access/user-status', () => ({
   activeTeamUserCheck: (id: string) => ({
     ConditionCheck: { TableName: 'users', Key: { userId: id } },
@@ -34,6 +38,7 @@ vi.mock('../../amplify/functions/crm-access/access', () => ({
   },
 }));
 import { bindPolicy } from '../../amplify/functions/commissions/bind';
+import { validateInvoiceSourceCharges } from '../../amplify/functions/send-invoice/passThroughInvoice';
 const quote = {
   id: 'q',
   accountId: 'a',
@@ -99,6 +104,8 @@ beforeEach(() => {
 });
 it('atomically binds, converts the lead, and freezes the original producer rate without a receipt', async () => {
   const result = await bindPolicy(event, input());
+  expect(result.policy.passThroughCharges).toEqual([]);
+  expect(()=>validateInvoiceSourceCharges({invoice:{accountId:'a',policyId:String(result.policy.id),sourcePricingVersion:1},source:{id:String(result.policy.id),accountId:String(result.policy.accountId),premium:Number((result.policy as Record<string,unknown>).premium),billType:String(result.policy.billType),passThroughCharges:result.policy.passThroughCharges},lines:[{accountId:'a',kind:'TAX',retailAmount:100,costAmount:100}]})).toThrow('reviewed source quote');
   expect(result.account).toMatchObject({ stage: 'CLIENT' });
   const [changes, actor, extras] = h.commit.mock.calls[0];
   expect(actor).toBe('owner');
@@ -128,6 +135,14 @@ it('atomically binds, converts the lead, and freezes the original producer rate 
     ]),
   );
   expect(h.send.mock.calls[0][0].input.IndexName).toBe('verified-account-index');
+});
+it('copies reviewed supplier charges and client conditions without changing premium or producer earnings', async () => {
+  const charges = [{ id: 'rt-fee', kind: 'WHOLESALER_FEE', description: 'RT brokerage fee', amountCents: 25000 }];
+  const reviewed = { ...quote, passThroughCharges: JSON.stringify(charges), clientConditions: 'No flat cancellations.' };
+  h.rows.set('Quote:q', reviewed);
+  const result = await bindPolicy(event, { ...input(), terms: packageTerms(reviewed) });
+  expect(result.policy).toMatchObject({ passThroughCharges: charges, clientConditions: 'No flat cancellations.', premium: 100000 });
+  expect(h.commit.mock.calls[0][0][0].value).toMatchObject({ premiumCents: 10000000, agencyRateUnits: 120000, entries: [] });
 });
 it.each([
   { billType: '' },

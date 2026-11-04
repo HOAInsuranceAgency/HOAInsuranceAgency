@@ -49,6 +49,9 @@ applications:
             # before applying any backend changes.
             - npm run synth:check
             - node scripts/deploy-migration-backend.mjs
+            # Verify retained resources, stream cursors and schedules after the
+            # backend update, even if the separate frontend build later fails.
+            - node scripts/assert-migration-destination.mjs
     frontend:
       phases:
         build:

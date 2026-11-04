@@ -247,6 +247,47 @@ describe('contractual timing forecasts', () => {
 });
 
 describe('manual receipt forecasts and actual reconciliation', () => {
+  it('keeps broker-fee receipts out of carrier received and overdue balances while preserving agency totals and producer earnings', () => {
+    let p = policy(arrangement(), { premiumCents: 1_000_000, agencyRateUnits: 100_000, brokerFeeCents: 50_000 });
+    p = appendEntry(p, line({ revenueKind: 'BROKER_FEE', agencyCents: 50_000, lineRef: 'FEE' }), { ...statement(), receivedOn: '2026-01-05' }, 'fee');
+    // Missing revenueKind is a historical carrier commission receipt.
+    p = appendEntry(p, line({ agencyCents: 25_000, lineRef: 'CARRIER' }), { ...statement(), receivedOn: '2026-01-20' }, 'carrier');
+    const ledger = JSON.stringify(p.entries), totals = policyTotals(p);
+    expect(carrierReconciliationBalances(p, '2026-02-16')).toMatchObject({
+      fullTermEstimate: 100_000, expectedToDate: 100_000, receivedToDate: 25_000,
+      overdue: 75_000, futureForecast: 0, adjustmentReview: false, status: 'CONFIRMED',
+    });
+    expect(totals).toMatchObject({ expectedAgency: 150_000, receivedAgency: 75_000, earned: 12_000 });
+    expect(policyTotals(p)).toEqual(totals);
+    expect(JSON.stringify(p.entries)).toBe(ledger);
+  });
+
+  it('does not apply an upfront broker fee to future carrier installments', () => {
+    let p = policy();
+    p.receiptForecast = { items: [{ dueOn: '2026-01-15', agencyCents: 50_000 }, { dueOn: '2026-02-15', agencyCents: 50_000 }],
+      evidence: 'Carrier installment schedule', confirmed: true, complete: true };
+    p = appendEntry(p, line({ revenueKind: 'BROKER_FEE', agencyCents: 50_000, lineRef: 'FEE' }), { ...statement(), receivedOn: '2026-01-05' }, 'fee');
+    p = appendEntry(p, line({ revenueKind: 'CARRIER_COMMISSION', agencyCents: 10_000, lineRef: 'CARRIER' }), { ...statement(), receivedOn: '2026-01-15' }, 'carrier');
+    expect(carrierReconciliationBalances(p, '2026-02-01')).toMatchObject({
+      receivedToDate: 10_000, overdue: 40_000, futureForecast: 50_000,
+    });
+  });
+
+  it('ignores fee refunds for carrier review but uses full-ledger indexes to detect a later carrier reversal', () => {
+    let p = appendEntry(policy(), line({ agencyCents: 100_000 }), { ...statement(), receivedOn: '2026-01-05' }, 'carrier');
+    p = appendEntry(p, line({ revenueKind: 'BROKER_FEE', agencyCents: 50_000, lineRef: 'FEE' }), { ...statement(), receivedOn: '2026-01-06' }, 'fee');
+    p.receiptForecast = { items: [{ dueOn: '2026-01-15', agencyCents: 100_000 }], evidence: 'Reviewed carrier receipt',
+      confirmed: true, complete: true, reviewedEntryCount: p.entries.length };
+    p = appendEntry(p, line({ revenueKind: 'BROKER_FEE', kind: 'REVERSAL', agencyCents: -10_000, originalId: 'fee', lineRef: 'FEE-REFUND' }), { ...statement(), receivedOn: '2026-02-01' }, 'fee-refund');
+    expect(carrierReconciliationBalances(p, '2026-02-02')).toMatchObject({
+      receivedToDate: 100_000, adjustmentReview: false, overdue: 0, status: 'CONFIRMED',
+    });
+    p = appendEntry(p, line({ kind: 'REVERSAL', agencyCents: -20_000, originalId: 'carrier', lineRef: 'CARRIER-REVERSAL' }), { ...statement(), receivedOn: '2026-02-03' }, 'carrier-reversal');
+    expect(carrierReconciliationBalances(p, '2026-02-03')).toMatchObject({
+      receivedToDate: 80_000, adjustmentReview: true, overdue: null, status: 'ADJUSTMENT_REVIEW',
+    });
+  });
+
   it('retains an unknown remainder on an incomplete forecast', () => {
     const p = policy();
     p.receiptForecast = {

@@ -15,6 +15,12 @@ export function normalizePhone(value: string) {
   return text.startsWith('+') || /[A-Za-z]/.test(text) || digits.length !== 10 ? text : `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`;
 }
 export const fmtDate = (value?: string | null) => value ? new Date(`${value.slice(0, 10)}T12:00:00Z`).toLocaleDateString('en-US') : '—';
+export const fmtDateTime = (value?: string | null) => {
+  if (!value?.trim()) return '—';
+  if (value.trim().length === 10) return fmtDate(value);
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? '—' : date.toLocaleString('en-US', { month: 'numeric', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+};
 export const friendlyError = (error: unknown, fallback = 'Please try again.') => error instanceof Error && error.message ? error.message : fallback;
 const params = new URLSearchParams(window.location.search);
 export const scenario = params.get('scenario') || 'empty';
@@ -36,7 +42,11 @@ const quote = (id: string, carrierId: string, lines: string[], premium: number) 
   createdAt: `${future(-2)}T13:00:00Z`, updatedAt: `${today}T13:00:00Z`,
 }) as Quote;
 export const quotes: Quote[] = ['populated', 'selected', 'estimates'].includes(scenario) ? [
-  quote('bundle', 'harbor', ['Commercial Property', 'General Liability', 'D&O'], 18000),
+  { ...quote('bundle', 'harbor', ['Commercial Property', 'General Liability', 'D&O'], 55541), brokerFee: 500, billType: 'AGENCY',
+    passThroughCharges: JSON.stringify([
+      { id: 'fictional-wholesaler', kind: 'WHOLESALER_FEE', description: 'Wholesaler brokerage fee', amountCents: 25000 },
+      { id: 'fictional-tax', kind: 'SURPLUS_LINES', description: 'Surplus lines tax', amountCents: 222164 },
+    ]), clientConditions: '25% minimum earned premium. No flat cancellations.' },
   quote('property', 'pine', ['Commercial Property', 'General Liability'], 14200),
   quote('do', 'summit', ['D&O'], 2200),
 ] : [];
@@ -79,7 +89,19 @@ export const client = {
     Account: store([account as unknown as Row]), Policy: store([]), Invoice: store([]), Document: store([]), PfLoan: store([]),
     HoneycombEstimate: { async listHoneycombEstimateByAccountId() { await readReady(); return { data: structuredClone(estimateRows) }; } },
   },
-  mutations: { async servicePfLoan() { return { data: JSON.stringify({ ok: true }) }; } },
+  mutations: {
+    async servicePfLoan() { return { data: JSON.stringify({ ok: true }) }; },
+    async brokerFeeAction({ input }: { input: string }) {
+      const request = JSON.parse(input);
+      if (request.op !== 'status' || request.accountId !== account.id) throw new Error('This fictional preview only supports checking fee status.');
+      const fees = quotes.filter(row => request.quoteIds?.includes(row.id) && (row.brokerFee ?? 0) > 0).map(row => ({
+        id: `fee:${row.id}`, kind: 'FEE', accountId: account.id, quoteId: row.id, amountCents: Math.round(row.brokerFee! * 100),
+        terms: authorizedQuoteTerms(row), version: 1, agreementId: 'fictional-agreement', signedAt: `${today}T13:00:00Z`,
+        submittedCents: Math.round(row.brokerFee! * 100), collectedCents: 0, refundedCents: 0,
+      }));
+      return { data: JSON.stringify({ ok: true, fees }) };
+    },
+  },
 };
 export async function communicationRequest<T>(operation: string, input: Record<string, unknown> = {}, _mutation?: boolean): Promise<T> {
   await readReady();

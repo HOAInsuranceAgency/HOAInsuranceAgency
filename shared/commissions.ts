@@ -101,6 +101,7 @@ export interface CommissionEntry {
   lineRef: string;
   receivedOn: string;
   kind: 'RECEIPT' | 'REVERSAL' | 'RESTORATION';
+  revenueKind?: 'CARRIER_COMMISSION' | 'BROKER_FEE';
   agencyCents: number;
   producerCents: number;
   originalId?: string;
@@ -125,6 +126,7 @@ export interface CommissionPolicy {
   transaction: 'NEW' | 'RENEWAL';
   premiumCents: number;
   agencyRateUnits: number;
+  brokerFeeCents?: number;
   producerBps: number;
   agreement: string;
   planVersion: number;
@@ -150,6 +152,7 @@ export interface StatementLine {
   policyId: string;
   lineRef: string;
   kind: CommissionEntry['kind'];
+  revenueKind?: CommissionEntry['revenueKind'];
   agencyCents: number;
   originalId?: string;
   eligible: boolean;
@@ -387,7 +390,7 @@ export function appendEntry(
       throw new Error(
         `Agency commission received before ${policy.receiptsFrom} is not eligible under this agreement.`,
       );
-    const prior = policy.entries.filter((e) => e.kind === 'RECEIPT' && e.eligible);
+    const prior = policy.entries.filter((e) => e.kind === 'RECEIPT' && e.eligible && (e.revenueKind ?? 'CARRIER_COMMISSION') === (line.revenueKind ?? 'CARRIER_COMMISSION'));
     const received = sum(prior.map((e) => e.agencyCents));
     producerCents = line.eligible
       ? ratio(sum([received, line.agencyCents]), policy.producerBps, 10000) -
@@ -429,6 +432,7 @@ export function appendEntry(
         lineRef: line.lineRef,
         receivedOn: statement.receivedOn,
         kind: line.kind,
+        ...(line.revenueKind ? { revenueKind: line.revenueKind } : {}),
         agencyCents: line.agencyCents,
         producerCents,
         ...(line.originalId ? { originalId: line.originalId } : {}),
@@ -445,7 +449,7 @@ export function policyTotals(policy: CommissionPolicy) {
   const recovery =
     0 - sum(policy.entries.filter((e) => e.kind !== 'RECEIPT').map((e) => e.producerCents));
   return {
-    expectedAgency: ratio(policy.premiumCents, policy.agencyRateUnits, 1_000_000),
+    expectedAgency: ratio(policy.premiumCents, policy.agencyRateUnits, 1_000_000) + (policy.brokerFeeCents ?? 0),
     receivedAgency: sum(policy.entries.map((e) => e.agencyCents)),
     earned,
     proposedRecovery: recovery,
@@ -778,14 +782,16 @@ export function carrierReconciliationBalances(
 ): CommissionReconciliationBalances {
   day(asOf);
   const fullTermEstimate = ratio(policy.premiumCents, policy.agencyRateUnits, 1_000_000);
-  const receivedEntries = policy.entries.filter((entry) => entry.receivedOn <= asOf);
+  const receivedEntries = policy.entries.filter((entry) => entry.revenueKind !== 'BROKER_FEE' && entry.receivedOn <= asOf);
   const receivedToDate = sum(receivedEntries.map((entry) => entry.agencyCents));
   const forecast = policy.receiptForecast
     ? validateReceiptForecast(policy.receiptForecast)
     : automaticReceiptItems(policy, fullTermEstimate);
   const reviewedEntryCount = policy.receiptForecast?.reviewedEntryCount ?? 0;
+  // The review watermark counts the complete immutable ledger, including fees.
+  // Preserve those indexes while excluding fee reversals from carrier review.
   const adjustmentReview = policy.entries.some((entry, index) =>
-    entry.receivedOn <= asOf && entry.kind !== 'RECEIPT' && index >= reviewedEntryCount);
+    entry.revenueKind !== 'BROKER_FEE' && entry.receivedOn <= asOf && entry.kind !== 'RECEIPT' && index >= reviewedEntryCount);
   if (!forecast) return {
     asOf, fullTermEstimate, forecastTotal: null, expectedToDate: null, receivedToDate,
     overdue: null, futureForecast: null, unallocatedForecast: null, confirmed: false,

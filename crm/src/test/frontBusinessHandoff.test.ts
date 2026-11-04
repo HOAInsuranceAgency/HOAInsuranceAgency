@@ -2,6 +2,10 @@ import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { createHash } from 'node:crypto';
 import type { Communication } from '../../../shared/leadWorkflow';
 import type { BusinessDeliveryPreview, PrepareBusinessDraftInput } from '../../../shared/frontBusinessDelivery';
+const fee = vi.hoisted(() => ({ prepare: vi.fn(), disclosure: vi.fn() }));
+vi.mock('../../amplify/functions/broker-fees/agreements', () => ({ prepareBrokerFeeAgreement: fee.prepare }));
+vi.mock('../../amplify/functions/broker-fees/store', () => ({ getAgreement: async () => ({ id: 'bfa_test', quotes: [], stateForms: [] }) }));
+vi.mock('../../amplify/functions/broker-fees/disclosurePdf', () => ({ createBrokerFeeDisclosurePdf: fee.disclosure }));
 const h=vi.hoisted(()=>({rows:new Map<string,any>(),models:new Map<string,any>(),objects:new Map<string,Uint8Array>(),messages:new Map<string,any>(),front:vi.fn(),pdf:vi.fn(),identity:vi.fn(),enabled:vi.fn(),recipients:vi.fn(),attachment:vi.fn(),beforeCommit:undefined as undefined|(()=>void),posts:0,signatureHtml:'',threadSubject:undefined as string|undefined,conversationResolver:undefined as undefined|((id:string)=>Promise<{id:string;subject?:string}>)}));
 vi.mock('@aws-sdk/client-s3',()=>({S3Client:class{async send(command:any){const p=command.input;if(command.constructor.name==='PutObjectCommand'){h.objects.set(p.Key,new Uint8Array(p.Body));return{};}const body=h.objects.get(p.Key);if(!body)throw new Error('Missing object');return{ContentLength:body.length,Body:{transformToByteArray:async()=>body}};}},GetObjectCommand:class GetObjectCommand{constructor(public input:any){}},PutObjectCommand:class PutObjectCommand{constructor(public input:any){}}}));
 vi.mock('../../amplify/functions/communications/config',()=>({config:async()=>({environment:'main'})}));
@@ -32,6 +36,7 @@ vi.mock('../../amplify/functions/communications/store',async original=>{
 });
 import { row } from '../../amplify/functions/communications/store';
 import { packageTerms } from '../../../shared/quotePackages';
+import { authorizedQuoteTerms } from '../../../shared/quoteAuthorization';
 import { allowedDocument } from '../../amplify/functions/communications/businessDeliverySources';
 import { businessDeliveryContext, previewBusinessDelivery, prepareBusinessDraft, reconcileBusinessDraft, historyBusinessDeliveries, applyBusinessAttempt, deliveryRecipients } from '../../amplify/functions/communications/businessHandoff';
 import { ProviderError } from '../../amplify/functions/communications/providers';
@@ -49,6 +54,8 @@ beforeEach(()=>{
   vi.useFakeTimers();vi.setSystemTime(new Date(NOW));vi.clearAllMocks();h.rows.clear();h.models.clear();h.objects.clear();h.messages.clear();h.posts=0;h.beforeCommit=undefined;h.threadSubject=undefined;h.conversationResolver=undefined;
   for(const model of ['ACCOUNT','QUOTE','CARRIER','CERTIFICATE','DOCUMENT'])process.env[`${model}_TABLE`]=model[0]+model.slice(1).toLowerCase();
   process.env.COMMUNICATION_TABLE='Communication';process.env.DOCUMENT_BUCKET='test';
+  fee.prepare.mockResolvedValue({ url: 'https://agency.example.test/broker-fee/?t=client-fee-token', agreementId: 'bfa_test' });
+  fee.disclosure.mockResolvedValue({ bytes: PDF, filename: 'Broker fee disclosure.pdf', contentType: 'application/pdf' });
   const account={id:'a1',name:'Willow HOA',updatedAt:NOW,contacts:async()=>({data:[{name:'Current manager',email:'client@example.com',isPrimary:true},{name:'Former manager',email:'former@example.com',validUntil:'2026-11-01'}]}),quotes:async()=>({data:[h.models.get('Quote:q1')]}),certificates:async()=>({data:[...h.models.entries()].filter(([k])=>k.startsWith('Certificate:')).map(([,v])=>v)})};
   h.models.set('Account:a1',account);h.models.set('Quote:q1',{id:'q1',accountId:'a1',carrierId:'c1',status:'QUOTED',premium:1200,commissionPct:15,notes:'PRIVATE NOTES',lines:['Property'],effectiveDate:'2026-12-01',expirationDate:'2027-12-01',updatedAt:NOW});h.models.set('Carrier:c1',{id:'c1',name:'Test Carrier',updatedAt:NOW});
   h.rows.set('workflow:a1',row('WORKFLOW','workflow:a1',{accountId:'a1',salespersonId:'actor'},{accountId:'a1'}));
@@ -70,6 +77,19 @@ beforeEach(()=>{
 });
 afterEach(()=>{vi.useRealTimers();});
 describe('reviewed Front business handoff',()=>{
+  it.each([false, true])('includes the fee disclosure in the same quote email and verifies its signature link (changed: %s)', async changed => {
+    const quote = h.models.get('Quote:q1'); quote.brokerFee = 250; quote.billType = 'AGENCY';
+    h.rows.get('commercial:a1').data.options[0].reviewed.terms.q1 = packageTerms(quote);
+    const preview = await previewBusinessDelivery(selection, 'actor');
+    expect(preview.body).toContain('Review and sign the broker fee disclosure'); expect(preview.body).toContain('Total quoted policy cost: $1,450.00');
+    expect(preview.attachments.map(file => file.name)).toContain('Broker fee disclosure.pdf');
+    expect(fee.prepare).toHaveBeenCalledWith('a1', [expect.objectContaining({ id: 'q1', brokerFee: 250, billType: 'AGENCY', terms: authorizedQuoteTerms(quote) })]);
+    const attempt = await prepareBusinessDraft(prepareInput(preview), 'actor'); sent();
+    if (changed) h.messages.get(attempt.frontDraftId!).body = h.messages.get(attempt.frontDraftId!).body.replace('client-fee-token', 'different-token');
+    expect(await reconcileBusinessDraft({ accountId: 'a1', attemptId: attempt.id }, 'actor')).toMatchObject({ state: 'SENT', sentWithChanges: changed });
+    expect(h.models.get('Quote:q1').status).toBe(changed ? 'QUOTED' : 'PRESENTED');
+    expect(h.models.get('Quote:q1').bindAuthorizedAt).toBeUndefined();
+  });
   it('invalidates a preview when verified signature content changes without changing its identity',async()=>{
     const p=await previewBusinessDelivery(selection,'actor');h.signatureHtml='<div>Changed signature</div>';
     await expect(prepareBusinessDraft(prepareInput(p),'actor')).rejects.toMatchObject({code:'BUSINESS_DRAFT_NOT_DISPATCHED',message:expect.stringContaining('signature changed')});expect(h.posts).toBe(0);expect(readRows('BUSINESS_DELIVERY')).toHaveLength(0);

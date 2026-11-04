@@ -126,8 +126,8 @@ describe("condominium page release integration", () => {
     expect(paths).toEqual(["/contact/", "/contact/", "/contact/"]);
   });
 
-  it("preserves the confirmed no-fee offer and keeps market availability distinct from licensing", () => {
-    expect(source.match(/<span class="condo-lead__note">No broker fee<\/span>/g))
+  it("discloses fees before purchase and keeps market availability distinct from licensing", () => {
+    expect(source.match(/<span class="condo-lead__note">Fees disclosed before purchase<\/span>/g))
       .toHaveLength(2);
     expect(source).toContain("all 50 states and the District of Columbia");
     expect(source).toContain("Coverage availability depends on the");

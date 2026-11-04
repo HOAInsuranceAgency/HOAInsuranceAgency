@@ -18,6 +18,11 @@ import {
   REPLACEMENT_COST_OPTIONS,
 } from "../lib/enums";
 import { DateInput, MoneyInput, PercentInput } from "./inputs";
+import { brokerFeeCents } from "../../../shared/brokerFees";
+import { normalizeClientConditions, normalizePassThroughCharges, type PassThroughCharge } from "../../../shared/passThroughCharges";
+import { formatMoney } from "../lib/invoiceTotals";
+
+const CHARGE_KINDS = [["CARRIER_FEE", "Carrier fee"], ["WHOLESALER_FEE", "Wholesaler fee"], ["TAX", "Tax"], ["SURPLUS_LINES", "Surplus lines tax"], ["STAMPING_FEE", "Stamping fee"]] as const;
 
 /**
  * Shared create/edit form for quotes and policies.
@@ -70,6 +75,9 @@ export default function CoverageForm({
     lines: (existing?.lines ?? []).filter((l): l is string => !!l),
     premium: str(existing?.premium),
     commissionPct: str(existing?.commissionPct),
+    brokerFee: str(existing?.brokerFee ?? 0),
+    passThroughCharges: normalizePassThroughCharges(existing?.passThroughCharges).map(charge => ({ ...charge, amount: String(charge.amountCents / 100) })),
+    clientConditions: existing?.clientConditions ?? "",
     perOccDed: str(existing?.perOccurrenceDeductible),
     perUnitDed: str(existing?.perUnitDeductible),
     blanketLimit: str(existing?.blanketLimit),
@@ -115,6 +123,17 @@ export default function CoverageForm({
 
   async function save() {
     if (savingNow.current) return;
+    let brokerFee: number, passThroughCharges: PassThroughCharge[], clientConditions: string;
+    try {
+      brokerFee = brokerFeeCents(form.brokerFee.trim() === "" ? 0 : Number(form.brokerFee)) / 100;
+      passThroughCharges = normalizePassThroughCharges(form.passThroughCharges.map(({ id, kind, description, amount }) => ({ id, kind, description, amountCents: brokerFeeCents(Number(amount)) })));
+      clientConditions = normalizeClientConditions(form.clientConditions);
+    }
+    catch (error) { setError(error instanceof Error ? error.message : "Check the broker fee."); return; }
+    if (brokerFee > 0 && form.billType !== "AGENCY") {
+      setError("HOA broker fees require agency billing. Choose Agency bill before saving.");
+      return;
+    }
     if (
       form.effectiveDate &&
       form.expirationDate &&
@@ -132,6 +151,9 @@ export default function CoverageForm({
       lines: form.lines,
       premium: num(form.premium),
       commissionPct: num(form.commissionPct),
+      ...(!isPolicy && existing?.status !== "BOUND" ? { brokerFee, billType: (form.billType || null) as Quote["billType"],
+        ...(!existing || existing.passThroughCharges != null || passThroughCharges.length > 0 ? { passThroughCharges: JSON.stringify(passThroughCharges) } : {}),
+        clientConditions: clientConditions || null } : {}),
       perOccurrenceDeductible: num(form.perOccDed),
       perUnitDeductible: num(form.perUnitDed),
       blanketLimit: num(form.blanketLimit),
@@ -252,23 +274,25 @@ export default function CoverageForm({
             </div>
           </>
         )}
-        {/* Set at bind and correctable here — a placement can move from direct
-            to agency bill mid-term, and the answer decides whether the agency
-            invoices the premium at all. */}
-        {isPolicy && (
+        {/* Fee-bearing quotes need this existing billing answer before the
+            client payment request; fee-free quotes still answer it at bind. */}
+        {(isPolicy || Number(form.brokerFee) > 0) && (
           <div className="field">
-            <label>Bill type</label>
+            <label htmlFor="coverage-bill-type">Bill type</label>
             <select
+              id="coverage-bill-type"
+              disabled={!isPolicy && existing?.status === "BOUND"}
               value={form.billType}
               onChange={(e) => setF("billType", e.target.value)}
             >
               <option value="">Not recorded</option>
               {BILL_TYPE_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>
+                <option key={o.value} value={o.value} disabled={o.value === "DIRECT" && Number(form.brokerFee) > 0}>
                   {o.label}
                 </option>
               ))}
             </select>
+            {!isPolicy && <p className="small muted">{Number(form.brokerFee) > 0 ? "HOA broker fees require agency billing." : "Choose who collects the premium so the client’s payment request includes only the amount the agency collects."}</p>}
           </div>
         )}
         {!isPolicy && policies.data.length > 0 && <label className="field">Renewal of<select value={form.renewalPolicyId} onChange={e => { const p = policies.data.find(p => p.id === e.target.value); setF("renewalPolicyId", e.target.value); if (p?.expirationDate && !form.effectiveDate) setF("effectiveDate", p.expirationDate); }}><option value="">New business</option>{policies.data.map(p => <option value={p.id} key={p.id}>{p.policyNumber || "Policy"} · {p.lines?.join(", ")} · expires {p.expirationDate}</option>)}</select></label>}
@@ -286,11 +310,13 @@ export default function CoverageForm({
           </select>
         </div>
         <div className="field">
-          <label>Premium ($)</label>
+          <label htmlFor="coverage-premium">Premium ($)</label>
           <MoneyInput
+            id="coverage-premium"
             value={form.premium}
             onChange={(v) => setF("premium", v)}
           />
+          <p className="small muted">Client premium before fees and taxes. Actual carrier or wholesaler remittance is recorded separately on the invoice.</p>
         </div>
         <div className="field">
           <label>Commission % (baked into premium)</label>
@@ -301,6 +327,28 @@ export default function CoverageForm({
               setF("commissionPct", v);
             }}
           />
+        </div>
+        <div className="field">
+          <label htmlFor="coverage-broker-fee">HOA broker fee ($)</label>
+          <MoneyInput id="coverage-broker-fee" value={form.brokerFee} disabled={isPolicy || existing?.status === "BOUND"} onChange={v => patch({ brokerFee: v, ...(Number(v) > 0 ? { billType: "AGENCY" } : {}) })} />
+          <p className="small muted">Optional agency fee, separate from premium. Disclosed before purchase; the producer’s usual share applies.{(isPolicy || existing?.status === "BOUND") ? " The bound fee is preserved with its signed agreement." : " New and renewal quotes start at $0."}</p>
+        </div>
+        <div className="field full">
+          <h4 style={{ margin: "6px 0" }}>Supplier charges and taxes</h4>
+          <p className="small muted">Itemize charges from the carrier or wholesaler. These pass through at cost and do not increase agency revenue.</p>
+          {form.passThroughCharges.map((charge, index) => <fieldset key={charge.id} disabled={isPolicy || existing?.status === "BOUND"} style={{ border: 0, padding: "8px 0", margin: 0 }}>
+            <legend className="small">Charge {index + 1}</legend>
+            <div className="form-grid">
+              <label className="field">Charge type<select aria-label={`Charge ${index + 1} type`} value={charge.kind} onChange={e => setF("passThroughCharges", rows => rows.map(row => row.id === charge.id ? { ...row, kind: e.target.value as PassThroughCharge["kind"] } : row))}>{CHARGE_KINDS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+              <label className="field">Description<input aria-label={`Charge ${index + 1} description`} maxLength={160} value={charge.description} onChange={e => setF("passThroughCharges", rows => rows.map(row => row.id === charge.id ? { ...row, description: e.target.value } : row))} /></label>
+              <label className="field" htmlFor={`charge-amount-${charge.id}`}>Charge {index + 1} amount<MoneyInput id={`charge-amount-${charge.id}`} value={charge.amount} onChange={amount => setF("passThroughCharges", rows => rows.map(row => row.id === charge.id ? { ...row, amount } : row))} /></label>
+            </div>
+            <button type="button" className="link danger" onClick={() => setF("passThroughCharges", rows => rows.filter(row => row.id !== charge.id))}>Remove charge {index + 1}</button>
+          </fieldset>)}
+          {!isPolicy && existing?.status !== "BOUND" && <button type="button" className="secondary" disabled={form.passThroughCharges.length >= 30} onClick={() => setF("passThroughCharges", rows => [...rows, { id: `charge-${crypto.randomUUID()}`, kind: "WHOLESALER_FEE", description: "", amountCents: 0, amount: "" }])}>Add supplier charge or tax</button>}
+          <p className="small"><strong>Client policy total: {formatMoney((Number(form.premium) || 0) + form.passThroughCharges.reduce((sum, charge) => sum + (Number(charge.amount) || 0), 0) + (Number(form.brokerFee) || 0))}</strong> · Premium + supplier charges and taxes + HOA broker fee</p>
+          <label className="field">Client conditions<textarea aria-label="Client conditions" maxLength={6000} rows={3} disabled={isPolicy || existing?.status === "BOUND"} value={form.clientConditions} onChange={e => setF("clientConditions", e.target.value)} /></label>
+          <p className="small muted">Reviewed wording shown to the client with the quote, such as minimum earned premium, cancellation terms or coverage conditions. Keep internal notes below.</p>
         </div>
         <div className="field">
           <label>Effective date</label>
