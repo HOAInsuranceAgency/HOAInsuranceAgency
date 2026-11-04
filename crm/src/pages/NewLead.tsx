@@ -347,7 +347,7 @@ export default function NewLead() {
         </div>
       </section>}
       {recovered && <p role="status" className="muted small">Basic details recovered. Review salesperson and relationship selections, re-enter notes and financial values, and reattach documents before creating the lead.</p>}
-      {draft.scoped && dirty && !draft.available && !created.current && <p role="status" className="muted small">{draft.unavailable
+      {draft.scoped && dirty && !draft.available && (!created.current || reconciling) && <p role="status" className="muted small">{draft.unavailable
         ? "Your latest details could not be backed up. Keep this tab open until you create or reconcile the lead. Any earlier backup contains only its last saved details."
         : draft.backedUp ? "Basic details are backed up in this tab. Salesperson and relationship selections, notes, financial values and files are not backed up." : "Backing up basic details in this tab…"}</p>}
 
