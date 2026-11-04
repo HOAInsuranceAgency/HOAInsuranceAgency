@@ -37,6 +37,7 @@ function add(id: string, owner = 'alice', extra: Partial<AccountListIndex> = {},
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date(now));
   h.rows.clear(); h.send.mockReset();
+  delete process.env.ACCESS_API_ID;
   process.env.ACCOUNT_LIST_TABLE = 'List'; process.env.COMMUNICATION_TABLE = 'Communication';
   process.env.ACCOUNT_LIST_SOURCE_TABLES = JSON.stringify(Object.fromEntries(['Account', 'Contact', 'Quote', 'Policy', 'UserProfile', 'Communication'].map(model => [model, model])));
   save('List', { pk: 'CONTROL', sk: 'READY', version: ACCOUNT_LIST_VERSION, complete: true, day });
@@ -58,6 +59,27 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers());
 
 describe('account list read endpoint', () => {
+  it('reads the identical sources through existing API/table variables without the redundant source map', async () => {
+    const snapshot = add('a');
+    for (const model of ['Quote', 'Policy', 'UserProfile'] as const) {
+      const id = `${model}-a`;
+      save(model, { id, accountId: 'a', updatedAt: 'source-v1' });
+      snapshot.dependencies.push({ model, id, revision: 'source-v1' });
+    }
+    const before = await page();
+    const apiId = 'fixture-api-id';
+    for (const [stored, row] of [...h.rows]) {
+      const [model, ...suffix] = stored.split('|');
+      if (!['Account', 'Contact', 'Quote', 'Policy', 'UserProfile'].includes(model)) continue;
+      h.rows.delete(stored); h.rows.set(`${model}-${apiId}-NONE|${suffix.join('|')}`, row);
+    }
+    process.env.ACCESS_API_ID = apiId;
+    delete process.env.ACCOUNT_LIST_SOURCE_TABLES;
+    h.send.mockClear();
+    expect(await page()).toEqual(before);
+    const tables = h.send.mock.calls.flatMap(([command]) => Object.keys(command.input.RequestItems ?? {}));
+    expect(new Set(tables)).toEqual(new Set(['List', 'Communication', ...['Account', 'Contact', 'Quote', 'Policy', 'UserProfile'].map(model => `${model}-${apiId}-NONE`)]));
+  });
   it.each(['ADMIN', 'OWNER', 'PRODUCER', 'STAFF'])('uses only the current %s partition and consistent reads', async role => {
     add('a'); add('b', 'bob');
     const result = await page({}, role);

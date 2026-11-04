@@ -248,7 +248,11 @@ try {
   if (!receiptIndex || JSON.stringify(receiptIndex.keySchema) !== JSON.stringify([{ attributeName: "__typename", keyType: "HASH" }, { attributeName: "postedAt", keyType: "RANGE" }]) || receiptIndex.projection.projectionType !== "INCLUDE" || !["accountId", "interest"].every(field => receiptIndex.projection.nonKeyAttributes?.includes(field))) throw new Error("Dashboard receipts must have a projected date index");
   if (!paymentIndexes.some(index => index.indexName === "crmBy_loanId") || !paymentIndexes.some(index => index.indexName !== "crmBy_loanId" && index.keySchema.some(key => key.attributeName === "loanId"))) throw new Error("Dashboard index must preserve existing payment relation and access indexes");
   const reportEnv = Stack.of(backend.communications.resources.lambda).resolve((backend.communications.resources.lambda.node.defaultChild as CfnFunction).environment);
-  if (reportEnv.variables.DASHBOARD_PAYMENT_INDEX !== "dashboardPaymentsByDate" || !reportEnv.variables.DASHBOARD_PAYMENT_TABLE || !reportEnv.variables.DASHBOARD_POLICY_TABLE) throw new Error("Dashboard reads must use the configured payment index and policy table");
+  if (reportEnv.variables.DASHBOARD_PAYMENT_INDEX !== "dashboardPaymentsByDate" ||
+      JSON.stringify(reportEnv.variables.ACCESS_API_ID) !== JSON.stringify(Stack.of(backend.communications.resources.lambda).resolve(backend.data.resources.graphqlApi.apiId))) throw new Error("Dashboard reads must use the configured payment index and canonical API model tables");
+  for (const alias of ["DASHBOARD_PAYMENT_TABLE", "DASHBOARD_POLICY_TABLE", "DASHBOARD_QUOTE_TABLE", "DASHBOARD_INVOICE_LINE_TABLE", "LEAD_DELETION_POLICY_TABLE", "LEAD_DELETION_INVOICE_TABLE"]) {
+    if (reportEnv.variables[alias] !== undefined) throw new Error(`Redundant communications table alias exceeds the environment budget: ${alias}`);
+  }
   for (const [model, expectedIndex, hash, range] of [["Quote", "dashboardQuotesByStatus", "status", ""], ["Policy", "dashboardPoliciesByBindDate", "__typename", "datePolicyBound"]]) {
     const table = app.node.findAll().find((node): node is CfnResource => node instanceof CfnResource && node.cfnResourceType === "Custom::AmplifyDynamoDBTable" && node.node.path.endsWith(`/${model}/${model}Table/Default/Default`));
     if (!table) throw new Error(`Missing dashboard ${model} table`);
@@ -294,8 +298,6 @@ try {
     const indexName = reportEnv.variables[`LEAD_DELETION_${model.toUpperCase()}_INDEX`];
     const index = props.globalSecondaryIndexes.find(item => item.indexName === indexName);
     if (!index || index.keySchema.length !== 1 || index.keySchema[0].attributeName !== "accountId" || index.keySchema[0].keyType !== "HASH" || index.projection.projectionType !== "ALL") throw new Error(`Lead deletion must use the existing ${model} account relation index`);
-    const expectedTable = reportRoleStack.resolve(`${model}-${backend.data.resources.graphqlApi.apiId}-NONE`);
-    if (JSON.stringify(reportEnv.variables[`LEAD_DELETION_${model.toUpperCase()}_TABLE`]) !== JSON.stringify(expectedTable)) throw new Error(`Lead deletion must use the configured ${model} table`);
     const queryResources = reportDocuments.flatMap(document => document.Statement ?? [])
       .filter(statement => statement.Effect === "Allow" && [statement.Action].flat().includes("dynamodb:Query"))
       .flatMap(statement => [statement.Resource].flat()).map(resource => JSON.stringify(resource));

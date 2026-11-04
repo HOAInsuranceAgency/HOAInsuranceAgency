@@ -43,10 +43,10 @@ export function installDashboardReads(backend: typeof Backend) {
   const name = (model: string) => `${model}-${api.apiId}-NONE`;
   const arn = (model: string) => Stack.of(api).formatArn({ service: 'dynamodb', resource: 'table', resourceName: name(model) });
   const env: Record<string, string> = {
-    DASHBOARD_PAYMENT_TABLE: name('PfLoanPayment'), DASHBOARD_PAYMENT_INDEX: paymentIndex,
-    DASHBOARD_POLICY_TABLE: name('Policy'), DASHBOARD_POLICY_DATE_INDEX: boundIndex,
-    DASHBOARD_QUOTE_TABLE: name('Quote'), DASHBOARD_QUOTE_STATUS_INDEX: quoteStatusIndex, DASHBOARD_QUOTE_ACCOUNT_INDEX: quoteAccountIndex,
-    DASHBOARD_INVOICE_LINE_TABLE: name('InvoiceLine'), DASHBOARD_INVOICE_LINE_INDEX: invoiceLineIndex,
+    DASHBOARD_PAYMENT_INDEX: paymentIndex,
+    DASHBOARD_POLICY_DATE_INDEX: boundIndex,
+    DASHBOARD_QUOTE_STATUS_INDEX: quoteStatusIndex, DASHBOARD_QUOTE_ACCOUNT_INDEX: quoteAccountIndex,
+    DASHBOARD_INVOICE_LINE_INDEX: invoiceLineIndex,
   };
   for (const [key, value] of Object.entries(env)) backend.communications.addEnvironment(key, value);
   const lambda = backend.communications.resources.lambda;

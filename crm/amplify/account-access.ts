@@ -55,7 +55,6 @@ export function installAccountAccess(backend: typeof Backend, communicationTable
   const deletionIndexes = ["Policy", "Invoice"].map(model => {
     const table = tables[model], index = indexes[`${model}.accountId`];
     if (!table || !index) throw new Error(`Missing ${model}.accountId index for lead deletion`);
-    backend.communications.addEnvironment(`LEAD_DELETION_${model.toUpperCase()}_TABLE`, table);
     backend.communications.addEnvironment(`LEAD_DELETION_${model.toUpperCase()}_INDEX`, index);
     return `${Stack.of(api).formatArn({ service: "dynamodb", resource: "table", resourceName: table })}/index/${index}`;
   });

@@ -1,0 +1,34 @@
+{
+  "measuredAt": "2026-11-04T20:55:41.145873+00:00",
+  "phase": "local-recovery-b7f623c-rollback",
+  "sourceCommit": "b7f623c958182404544916a0e6dad18e61da4365",
+  "method": "Read actual live Lambda environment in memory. Measure compact serialized Variables object UTF8 bytes, including JSON quotes, delimiters and escaping. No values persisted. Resolve prospective table name from latest retained projection metadata.",
+  "serviceFailureMeasuredBytes": 4234,
+  "serviceFailureRequestId": "b3440780-acb6-42ec-a2ac-500be5027e20",
+  "environmentLimitBytes": 4096,
+  "current": {
+    "serializedVariablesBytes": 4072,
+    "variableCount": 49
+  },
+  "b7fProposed": {
+    "serializedVariablesBytes": 4234,
+    "newTableNameBytes": 138,
+    "matchesServiceFailureMeasurement": true
+  },
+  "candidateRemoveSixAliases": {
+    "keys": [
+      "DASHBOARD_POLICY_TABLE",
+      "DASHBOARD_QUOTE_TABLE",
+      "DASHBOARD_PAYMENT_TABLE",
+      "DASHBOARD_INVOICE_LINE_TABLE",
+      "LEAD_DELETION_POLICY_TABLE",
+      "LEAD_DELETION_INVOICE_TABLE"
+    ],
+    "serializedVariablesBytes": 3811,
+    "savedSerializedBytes": 423,
+    "headroomBytes": 285
+  },
+  "retainedProjectionTableCount": 2,
+  "noEnvironmentValuesPersisted": true,
+  "measurementValidatedAgainstServiceError": true
+}

@@ -49,9 +49,9 @@ export function installAccountList(backend: typeof Backend, communicationTable: 
     maxRecordAge: Duration.hours(2), reportBatchItemFailures: true,
   }));
   worker.addEnvironment('ACCOUNT_LIST_SOURCE_INDEXES', JSON.stringify(indexes));
+  worker.addEnvironment('ACCOUNT_LIST_SOURCE_TABLES', JSON.stringify(sourceTables));
   for (const fn of [worker, reader]) {
     fn.addEnvironment('ACCOUNT_LIST_TABLE', table.tableName);
-    fn.addEnvironment('ACCOUNT_LIST_SOURCE_TABLES', JSON.stringify(sourceTables));
   }
   // Scheduled sweeps and all source streams share one owner. Source writes
   // remain concurrent; the endpoint's dependency fences reject outdated rows.

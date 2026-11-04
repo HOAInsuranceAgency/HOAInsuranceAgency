@@ -39,6 +39,17 @@ function cursor(raw: unknown, scope: string): Cursor {
 }
 const encode = (c: Cursor) => Buffer.from(JSON.stringify(c)).toString('base64url');
 
+function sourceTables(): Record<string, string> {
+  const apiId = process.env.ACCESS_API_ID, communication = process.env.COMMUNICATION_TABLE;
+  if (apiId && communication) return { Communication: communication, ...Object.fromEntries(
+    ['Account', 'Contact', 'Quote', 'Policy', 'UserProfile'].map(model => [model, `${model}-${apiId}-NONE`]),
+  ) };
+  // Standalone fixtures use short table names. Deployed readers derive the
+  // identical names from configuration already present on this function.
+  if (process.env.NODE_ENV === 'test' && process.env.ACCOUNT_LIST_SOURCE_TABLES) return JSON.parse(process.env.ACCOUNT_LIST_SOURCE_TABLES);
+  throw new Error('Account list source tables are not configured.');
+}
+
 /** Unprocessed keys and failed reads must never be interpreted as missing/access-denied records. */
 async function batch(table: string, keys: RecordData[], model?: string) {
   if (!table) throw new Error('Account list storage is not configured.');
@@ -78,9 +89,9 @@ export async function validatedAccountListItems(index: AccountListIndex[], acces
     const ids = keys.get(dep.model) ?? new Set<string>(); ids.add(dep.id); keys.set(dep.model, ids);
   }
   if ([...keys.values()].reduce((total, ids) => total + ids.size, 0) > 2000) throw new ProjectionNeedsFallback();
-  const sourceTables = JSON.parse(process.env.ACCOUNT_LIST_SOURCE_TABLES ?? '{}') as Record<string, string>;
+  const tables = sourceTables();
   const current = new Map(await Promise.all([...keys].map(async ([model, ids]) => [model,
-    await batch(sourceTables[model], [...ids].map(id => ({ id })), model),
+    await batch(tables[model], [...ids].map(id => ({ id })), model),
   ] as const)));
   const items: AccountListItem[] = [];
   for (const { entry, snapshot } of candidates) {
