@@ -285,6 +285,7 @@ function AccountSavedViews({ storageKey, current, stage, admin, onApply, onReset
 }) {
   const [initial] = useState(() => readNamedAccountViews(storageKey, stage, admin));
   const [views, setViews] = useState(initial.views);
+  const [available, setAvailable] = useState(initial.available);
   const [selectedId, setSelectedId] = useState(() => initial.views.find(item => JSON.stringify(item.view) === JSON.stringify(current))?.id ?? '');
   const [mode, setMode] = useState<'new' | 'rename' | ''>('');
   const [name, setName] = useState('');
@@ -292,10 +293,31 @@ function AccountSavedViews({ storageKey, current, stage, admin, onApply, onReset
   const selected = views.find(item => item.id === selectedId);
   const modified = !!selected && JSON.stringify(selected.view) !== JSON.stringify(current);
   const custom = current.leadView !== 'Active' || current.salesperson || current.state || current.sortKey !== 'renewal' || current.dir !== 'asc';
+  useEffect(() => {
+    if (!storageKey) return;
+    const refresh = () => {
+      const latest = readNamedAccountViews(storageKey, stage, admin);
+      setViews(latest.views); setAvailable(latest.available); setMessage('');
+      if (selectedId && !latest.views.some(item => item.id === selectedId)) {
+        setSelectedId('');
+        if (mode === 'rename') { setMode(''); setError('This saved view is no longer available.'); }
+      }
+      // Refresh choices only. Another tab never changes this tab's work filters.
+    };
+    const onStorage = (event: StorageEvent) => {
+      if (event.key !== null && event.key !== `${storageKey}:named`) return;
+      try { if (event.storageArea && event.storageArea !== window.localStorage) return; }
+      catch { refresh(); return; }
+      refresh();
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, [storageKey, stage, admin, selectedId, mode]);
   function persist(change: (latest: NamedAccountView[]) => NamedAccountView[]) {
     setError(''); setMessage('');
     try {
       const latest = readNamedAccountViews(storageKey, stage, admin);
+      setAvailable(latest.available);
       if (!latest.available) throw new Error('Saved views are unavailable in this browser. Your current filters still work in the URL.');
       const next = change(latest.views);
       writeNamedAccountViews(storageKey, next, stage, admin);
@@ -305,12 +327,23 @@ function AccountSavedViews({ storageKey, current, stage, admin, onApply, onReset
   }
   return <section aria-label="Saved account views">
     <div className="toolbar">
-      <label className="field">Saved view<select value={selected?.id ?? ''} disabled={!initial.available} onChange={event => {
-        const item = views.find(candidate => candidate.id === event.target.value);
-        setSelectedId(item?.id ?? ''); setMode(''); setError(''); setMessage('');
-        if (item) onApply(item.view);
+      <label className="field">Saved view<select value={selected?.id ?? ''} disabled={!available} onChange={event => {
+        const id = event.target.value;
+        setMode(''); setError(''); setMessage('');
+        if (!id) { setSelectedId(''); return; }
+        // Storage events can arrive after a click. Apply the current saved
+        // record, never a cached copy of another tab's earlier filters.
+        const latest = readNamedAccountViews(storageKey, stage, admin);
+        setViews(latest.views); setAvailable(latest.available);
+        const item = latest.views.find(candidate => candidate.id === id);
+        if (!item) {
+          setSelectedId('');
+          setError(latest.available ? 'This saved view is no longer available.' : 'Saved views are unavailable in this browser. Your current filters still work in the URL.');
+          return;
+        }
+        setSelectedId(item.id); onApply(item.view);
       }}><option value="">Current view</option>{views.map(item => <option key={item.id} value={item.id}>{item.name}{item.id === selectedId && modified ? ' (modified)' : ''}</option>)}</select></label>
-      <button type="button" className="secondary" disabled={!initial.available || views.length >= MAX_NAMED_VIEWS} onClick={() => { setMode('new'); setName(''); setError(''); setMessage(''); }}>Save current view</button>
+      <button type="button" className="secondary" disabled={!available || views.length >= MAX_NAMED_VIEWS} onClick={() => { setMode('new'); setName(''); setError(''); setMessage(''); }}>Save current view</button>
       {selected && <>
         {modified && <button type="button" className="secondary" onClick={() => {
           if (persist(latest => putNamedAccountView(latest, { id: selected.id, name: latest.find(item => item.id === selected.id)?.name ?? selected.name, view: current }, stage, admin))) setMessage('Saved view updated.');
@@ -324,6 +357,7 @@ function AccountSavedViews({ storageKey, current, stage, admin, onApply, onReset
     </div>
     {mode && <form className="toolbar" aria-label={mode === 'rename' ? 'Rename saved view' : 'Save current view'} onSubmit={event => {
       event.preventDefault();
+      if (mode === 'rename' && !selected) { setError('This saved view is no longer available.'); return; }
       const next = persist(latest => putNamedAccountView(latest, { ...(mode === 'rename' && selected ? { id: selected.id } : {}), name, view: mode === 'rename' && selected ? latest.find(item => item.id === selected.id)?.view ?? selected.view : current }, stage, admin));
       if (!next) return;
       setSelectedId(mode === 'rename' && selected ? selected.id : next[next.length - 1].id);
@@ -333,8 +367,8 @@ function AccountSavedViews({ storageKey, current, stage, admin, onApply, onReset
       <button type="submit" className="primary">{mode === 'rename' ? 'Save name' : 'Save view'}</button>
       <button type="button" className="secondary" onClick={() => { setMode(''); setError(''); }}>Cancel naming</button>
     </form>}
-    {!initial.available && <p className="muted small">Saved views are unavailable in this browser. Current filters still work in the URL.</p>}
-    {initial.available && <p className="muted small">Saved views stay in this browser for your current role.{views.length >= MAX_NAMED_VIEWS ? ` You have ${MAX_NAMED_VIEWS} saved views; delete one to add another.` : ''}</p>}
+    {!available && <p className="muted small">Saved views are unavailable in this browser. Current filters still work in the URL.</p>}
+    {available && <p className="muted small">Saved views stay in this browser for your current role.{views.length >= MAX_NAMED_VIEWS ? ` You have ${MAX_NAMED_VIEWS} saved views; delete one to add another.` : ''}</p>}
     {error && <p className="error-text" role="alert">{error}</p>}
     {message && <p className="muted small" role="status">{message}</p>}
   </section>;
