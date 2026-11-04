@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createHash } from 'node:crypto';
-const h = vi.hoisted(() => ({ rows: new Map<string, any>(), models: new Map<string, any>(), objects: new Map<string, Uint8Array>(), beforeCommit: undefined as (() => void) | undefined }));
+const h = vi.hoisted(() => ({ rows: new Map<string, any>(), models: new Map<string, any>(), objects: new Map<string, Uint8Array>(), beforeCommit: undefined as (() => void) | undefined, modelReads: [] as [string, string][], indexInvoices: undefined as any[] | undefined, invoiceInFlight: 0, maxInvoiceInFlight: 0, failedInvoice: undefined as string | undefined }));
 vi.mock('@aws-sdk/client-s3', () => ({ S3Client: class { async send(command: any) { if (command.constructor.name === 'PutObjectCommand') h.objects.set(command.input.Key, command.input.Body); return {}; } }, PutObjectCommand: class PutObjectCommand { constructor(public input: any) {} }, GetObjectCommand: class GetObjectCommand { constructor(public input: any) {} } }));
 vi.mock('@aws-sdk/s3-request-presigner', () => ({ getSignedUrl: async () => 'https://documents.example.test/signed.pdf' }));
 vi.mock('../../amplify/functions/broker-fees/disclosurePdf', () => ({ createBrokerFeeDisclosurePdf: async () => ({ bytes: new TextEncoder().encode('%PDF-1.7 signed test fixture') }) }));
@@ -8,8 +8,14 @@ vi.mock('../../amplify/functions/broker-fees/store', async original => {
   const actual = await original<typeof import('../../amplify/functions/broker-fees/store')>();
   return { ...actual, table: () => 'Fees', modelTable: (model: string) => model,
     getRow: async (id: string) => h.rows.get(id), getFee: async (id: string) => h.rows.get(`fee:${id}`), getAgreement: async (id: string) => h.rows.get(id),
-    getModel: async (model: string, id: string) => h.models.get(`${model}:${id}`),
-    accountModels: async (model: string, accountId: string) => [...h.models.entries()].filter(([key, value]) => key.startsWith(`${model}:`) && value.accountId === accountId).map(([, value]) => value),
+    getModel: async (model: string, id: string) => {
+      h.modelReads.push([model, id]);
+      if (model !== 'Invoice') return h.models.get(`${model}:${id}`);
+      h.invoiceInFlight++; h.maxInvoiceInFlight = Math.max(h.maxInvoiceInFlight, h.invoiceInFlight);
+      try { await Promise.resolve(); if (h.failedInvoice === id) throw new Error('Temporary invoice read failure'); return h.models.get(`${model}:${id}`); }
+      finally { h.invoiceInFlight--; }
+    },
+    accountModels: async (model: string, accountId: string) => model === 'Invoice' && h.indexInvoices ? h.indexInvoices : [...h.models.entries()].filter(([key, value]) => key.startsWith(`${model}:`) && value.accountId === accountId).map(([, value]) => value),
     transact: async (writes: any[]) => {
       const before = h.beforeCommit; h.beforeCommit = undefined; before?.();
       for (const write of writes) {
@@ -31,7 +37,7 @@ const snapshot = (id = 'q1'): BrokerFeeQuote => { const quote = h.models.get(`Qu
 const signer = { signerName: 'Pat Manager', signerEmail: 'pat@example.com', signerRole: 'Property Manager', consent: true };
 const prepared = async (quotes = [snapshot()]) => { const value = await prepareBrokerFeeAgreement('a1', quotes); return { ...value, token: new URL(value.url).searchParams.get('t')! }; };
 beforeEach(() => {
-  vi.useFakeTimers(); vi.setSystemTime(new Date(NOW)); h.rows.clear(); h.models.clear(); h.objects.clear(); h.beforeCommit = undefined;
+  vi.useFakeTimers(); vi.setSystemTime(new Date(NOW)); h.rows.clear(); h.models.clear(); h.objects.clear(); h.beforeCommit = undefined; h.modelReads = []; h.indexInvoices = undefined; h.invoiceInFlight = 0; h.maxInvoiceInFlight = 0; h.failedInvoice = undefined;
   process.env.BROKER_FEE_TABLE = 'Fees'; process.env.SITE_URL = 'https://agency.example.test'; process.env.DOCUMENT_BUCKET = 'Documents';
   h.models.set('Account:a1', { id: 'a1', name: 'Maple HOA', state: 'MA', updatedAt: NOW });
   h.models.set('AgencySettings:AGENCY', { id: 'AGENCY', updatedAt: NOW, brokerFeeJurisdictions: { MA: rule() } });
@@ -109,6 +115,41 @@ describe('broker fee client disclosure', () => {
   it('does not expose an invoice that also collects an unsigned second fee', async () => {
     const p = await prepared(); h.models.set('Invoice:i1', { id: 'i1', accountId: 'a1', status: 'SENT', paymentUrl: 'https://buy.stripe.com/example', brokerFeeAllocations: [{ quoteId: 'q1', amountCents: 25000 }, { quoteId: 'q2', amountCents: 10000 }] });
     expect((await signBrokerFeeDisclosure(p.token, signer)).payments).toEqual([]);
+  });
+  it('strongly reads only plausible covered invoices in bounded batches and rechecks stale index facts', async () => {
+    h.models.set('Quote:q2', { ...h.models.get('Quote:q1'), id: 'q2', brokerFee: 100 });
+    const p = await prepared([snapshot(), snapshot('q2')]); await signBrokerFeeDisclosure(p.token, signer);
+    const base = { accountId: 'a1', status: 'SENT', quoteId: 'q1', paymentUrl: 'https://buy.stripe.com/live', brokerFeeAllocations: [{ quoteId: 'q1', amountCents: 25000 }] };
+    const indexed: any[] = [];
+    for (let i = 0; i < 400; i++) {
+      const row = { ...base, id: `unrelated-${i}`, ...(i < 150 ? { status: 'PAID' } : i < 300 ? { quoteId: 'other-quote', brokerFeeAllocations: [{ quoteId: 'other-quote', amountCents: 25000 }] } : i < 350 ? { paymentUrl: 'https://unapproved.example.test/pay' } : { brokerFeeAllocations: '{invalid-index-projection' }) };
+      indexed.push(row); h.models.set(`Invoice:${row.id}`, row);
+    }
+    const add = (id: string, current: Record<string, unknown> = {}, index: Record<string, unknown> = {}) => {
+      h.models.set(`Invoice:${id}`, { ...base, id, ...current }); indexed.push({ ...base, id, ...index });
+    };
+    // A rollover can retain an older quote anchor; frozen fee allocations
+    // identify the covered quote even when only the policy anchor is current.
+    add('live', { quoteId: 'old-quote-anchor', policyId: 'bound-q1', paymentUrl: 'https://buy.stripe.com/live', brokerFeeFinanceUrl: 'https://agency.example.test/finance/?t=existing-one' });
+    add('finance-only', { quoteId: undefined, policyId: 'bound-q2', brokerFeeAllocations: [{ quoteId: 'q2', policyId: 'bound-q2', amountCents: 10000 }], paymentUrl: undefined, brokerFeeFinanceUrl: 'https://agency.example.test/finance/?t=existing-two' }, { quoteId: undefined, policyId: 'bound-q2', brokerFeeAllocations: [{ quoteId: 'q2', policyId: 'bound-q2', amountCents: 10000 }], paymentUrl: undefined, brokerFeeFinanceUrl: 'https://agency.example.test/finance/?t=existing-two' });
+    add('retry-after-failure', { paymentUrl: 'https://buy.stripe.com/retry' }, { status: 'PROCESSING' });
+    add('now-paid', { status: 'PAID' }); add('now-void', { status: 'VOID' }); add('still-clearing', { status: 'PROCESSING' });
+    add('changed-url', { paymentUrl: 'https://unapproved.example.test/pay' }); add('changed-account', { accountId: 'other-account' });
+    add('changed-allocation', { brokerFeeAllocations: [{ quoteId: 'other-quote', amountCents: 25000 }] });
+    add('unsigned-other-fee', { brokerFeeAllocations: [{ quoteId: 'q1', amountCents: 25000 }, { quoteId: 'unsigned-quote', amountCents: 1000 }] });
+    add('missing'); h.models.delete('Invoice:missing');
+    const candidateIds = indexed.slice(400).map(invoice => invoice.id); indexed.push({ ...indexed[400] }); // Duplicate GSI appearance needs only one strong read.
+    h.indexInvoices = indexed; h.modelReads = []; h.maxInvoiceInFlight = 0;
+    const dto = await brokerFeeDisclosure(p.token);
+    expect(h.modelReads.filter(([model]) => model === 'Invoice').map(([, id]) => id)).toEqual(candidateIds);
+    expect(h.maxInvoiceInFlight).toBe(5); expect(h.invoiceInFlight).toBe(0);
+    expect(dto.payments?.map(payment => payment.url)).toEqual(['https://buy.stripe.com/live', 'https://agency.example.test/finance/?t=existing-one', 'https://agency.example.test/finance/?t=existing-two', 'https://buy.stripe.com/retry']);
+  });
+  it('propagates a candidate invoice read failure instead of presenting an incomplete payment list', async () => {
+    const p = await prepared(); await signBrokerFeeDisclosure(p.token, signer);
+    h.indexInvoices = [{ id: 'unavailable', accountId: 'a1', status: 'SENT', paymentUrl: 'https://buy.stripe.com/live', brokerFeeAllocations: [{ quoteId: 'q1', amountCents: 25000 }] }];
+    h.failedInvoice = 'unavailable';
+    await expect(brokerFeeDisclosure(p.token)).rejects.toThrow('Temporary invoice read failure');
   });
   it('does not discard a prior signature when preparing another email for the same quote terms', async () => {
     const p = await prepared(); await signBrokerFeeDisclosure(p.token, signer); const original = structuredClone(h.rows.get('fee:q1'));

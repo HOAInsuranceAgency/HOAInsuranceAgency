@@ -130,6 +130,45 @@ afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
 const sync = (status: 'PROCESSING' | 'PAID' | 'FAILED' | 'REFUNDED', extra: Row = {}) => syncBrokerFeePayment({ sourceId: 'pi-one', accountId: 'a', allocations: [{ quoteId: 'q', amountCents: 50000 }], status, ...extra });
 
 describe('broker fee receipt and compensation ledger', () => {
+  it('does not revive failed submission or permit binding when a delayed PROCESSING event arrives for the same payment', async () => {
+    seedSigned(false);
+    await sync('PROCESSING', { receivedOn: '2026-10-01' });
+    await expect(brokerFeeBindWrites(quote, 'p', 'AGENCY')).resolves.toBeInstanceOf(Array);
+    await sync('FAILED', { receivedOn: '2026-10-02' });
+    await sync('PROCESSING', { receivedOn: '2026-10-01' });
+    expect(fee()).toMatchObject({ submittedCents: 0, collectedCents: 0 });
+    expect(payment()).toMatchObject({ status: 'FAILED' });
+    expect(payment().pending).toBeUndefined();
+    expect(entries()).toHaveLength(0);
+    await expect(brokerFeeBindWrites(quote, 'p', 'AGENCY')).rejects.toThrow('submitted');
+  });
+
+  it('accepts a verified PAID recovery after failure and posts its earnings exactly once', async () => {
+    await sync('PROCESSING', { receivedOn: '2026-10-01' });
+    await sync('FAILED', { receivedOn: '2026-10-02' });
+    await sync('PAID', { receivedOn: '2026-10-04' });
+    await sync('PAID', { receivedOn: '2026-10-05' });
+    await sync('PROCESSING', { receivedOn: '2026-10-01' });
+    expect(fee()).toMatchObject({ submittedCents: 50000, collectedCents: 50000 });
+    expect(payment()).toMatchObject({ status: 'PAID', receivedOn: '2026-10-04' });
+    expect(entries()).toHaveLength(1);
+    expect(entries()[0]).toMatchObject({ agencyCents: 50000, producerCents: 20000, receivedOn: '2026-10-04' });
+  });
+
+  it('ignores stale PROCESSING from a failed attempt after the fee term has been revised', async () => {
+    seedSigned(false);
+    await sync('PROCESSING', { receivedOn: '2026-10-01' });
+    await sync('FAILED', { receivedOn: '2026-10-02' });
+    const edited = { ...quote, brokerFee: 600, updatedAt: '2026-10-03T12:00:00Z' };
+    h.models.set('Quote:q', edited);
+    const revised = { ...fee(), amountCents: 60000, terms: authorizedQuoteTerms(edited), version: fee().version + 1, paymentSources: {}, signedAt: undefined };
+    h.rows.set('fee:q', clone(revised));
+    await expect(sync('PROCESSING', { receivedOn: '2026-10-01' })).resolves.toBeUndefined();
+    expect(fee()).toEqual(revised);
+    expect(payment()).toMatchObject({ status: 'FAILED' });
+    expect(entries()).toHaveLength(0);
+  });
+
   it('records submission without earnings, then uses actual settlement date and frozen producer rate once', async () => {
     await sync('PROCESSING', { receivedOn: '2026-10-01' });
     expect(fee()).toMatchObject({ submittedCents: 50000, collectedCents: 0 }); expect(entries()).toHaveLength(0);

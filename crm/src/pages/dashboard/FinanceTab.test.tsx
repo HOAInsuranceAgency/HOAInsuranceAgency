@@ -10,7 +10,10 @@ const h = vi.hoisted(() => ({
 vi.mock('../../lib/client', async original => ({
   ...await original<typeof import('../../lib/client')>(),
   client: { models: Object.fromEntries(['Account', 'Invoice', 'InvoiceLine', 'PfLoan', 'Policy', 'PfLoanPayment']
-    .map(model => [model, { list: vi.fn(async () => ({ data: (h.rows[model] ?? []).map(row => model === 'Invoice' ? { ...row, lines: async () => ({ data: [] }) } : row) })) }])) },
+    .map(model => [model, {
+      list: vi.fn(async () => ({ data: (h.rows[model] ?? []).map(row => model === 'Invoice' ? { ...row, lines: async () => ({ data: [] }) } : row) })),
+      ...(model === 'Policy' ? { listPolicyByBrokerFeeReportingKey: vi.fn(async () => ({ data: h.rows.Policy ?? [] })) } : {}),
+    }])) },
 }));
 vi.mock('../../lib/dashboardAssignments', () => ({ loadAssignments: h.loadAssignments }));
 vi.mock('../../lib/communications', () => ({ communicationRequest: async (operation: string, input: { policyIds?: string[] }) => {

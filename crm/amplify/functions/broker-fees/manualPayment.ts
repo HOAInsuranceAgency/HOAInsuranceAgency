@@ -51,7 +51,12 @@ export async function confirmInvoicePayment(event:{identity?:Identity;request?:R
     let count=0;
     for await(const session of stripe.checkout.sessions.list({payment_link:String(invoice.stripePaymentLinkId),limit:100})) {
       if(++count>500)throw new Error('The payment session history needs review before recording an outside payment.');
-      if(session.payment_status==='paid'||session.status==='complete')throw new Error('An online payment has already been submitted. Wait for its payment status to update.');
+      if(session.payment_status==='paid')throw new Error('An online payment has already been submitted. Wait for its payment status to update.');
+      if(session.status==='complete'){
+        const intentId=typeof session.payment_intent==='string'?session.payment_intent:session.payment_intent?.id;
+        const intent=intentId?await stripe.paymentIntents.retrieve(intentId):undefined;
+        if(!intent||!['requires_payment_method','canceled'].includes(intent.status))throw new Error('An online payment has already been submitted. Wait for its payment status to update.');
+      }
       if(session.status==='open')await stripe.checkout.sessions.expire(session.id);
     }
   }

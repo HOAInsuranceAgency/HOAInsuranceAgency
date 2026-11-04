@@ -1,4 +1,5 @@
 import { assertBrokerFeeSigned } from "../broker-fees/bindValidation";
+import { getFee } from "../broker-fees/store";
 import { brokerFeeCents, feeAllocations } from "../../../../shared/brokerFees";
 import { randomUUID } from "node:crypto";
 import { Amplify } from "aws-amplify";
@@ -345,12 +346,20 @@ async function handleAccept(
   }
   const feeParts = feeAllocations(loan.brokerFeeAllocations);
   if (feeParts.reduce((sum, part) => sum + part.amountCents, 0) !== (loan.brokerFeeCents ?? 0)) throw new Error("The broker fee payment allocation is incomplete.");
+  const feeAlreadyPaid = () => ({ ok: true, state: "closed", reason: "This broker fee has already been paid or submitted. Ask your agent to reissue premium financing without the already paid fee." });
+  if (feeParts.length && invoices.some(invoice => !premiumInvoices.includes(invoice) && ["PAID", "PROCESSING"].includes(invoice.status ?? ""))) return feeAlreadyPaid();
   for (const part of feeParts) {
     const source = part.policyId ? await client.models.Policy.get({ id: part.policyId }) : await client.models.Quote.get({ id: part.quoteId });
     if (source.errors?.length || !source.data || source.data.accountId !== loan.accountId || brokerFeeCents(source.data.brokerFee) !== part.amountCents) return { ok: true, state: "closed", reason: "The broker fee changed. Use the updated invoice from your agent." };
     const currentQuote = await client.models.Quote.get({ id: part.quoteId });
     if (currentQuote.errors?.length || !currentQuote.data) throw new Error("The current broker fee quote could not be verified.");
     await assertBrokerFeeSigned(currentQuote.data);
+    // A voided combined invoice can leave an old QUOTED financing token
+    // behind. The fee may since have been collected on its own invoice.
+    // Check before returning a cached session as well as creating a new one.
+    const fee = await getFee(part.quoteId);
+    if (!fee || fee.accountId !== loan.accountId || fee.amountCents !== part.amountCents) throw new Error("The broker fee payment balance could not be verified.");
+    if (fee.submittedCents > 0 || fee.collectedCents > 0 || fee.refundedCents > 0) return feeAlreadyPaid();
   }
   const loanTable = process.env.PF_LOAN_TABLE;
   const settingsTable = process.env.AGENCY_SETTINGS_TABLE;
