@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   client,
@@ -13,9 +13,14 @@ import { Badge, statusBadge, QUOTE_STATUS_BADGE } from "../lib/badges";
 import { useSort, SortTh } from "../lib/useSort";
 import { isOpenQuoteStatus } from "../lib/quoteStatus";
 import { useAsyncResource } from "../lib/useAsyncResource";
+import { useAgencyDay } from "../lib/useAgencyDay";
+import { matchesQuoteOfferFilter, quoteOfferDate, type QuoteOfferFilter } from "../lib/quoteOfferExpiry";
+import QuoteOfferExpiry from "../components/QuoteOfferExpiry";
 
 export default function QuotesList() {
   const [openOnly, setOpenOnly] = useState(true);
+  const [offerExpiry, setOfferExpiry] = useState<QuoteOfferFilter>("all");
+  const today = useAgencyDay(), filterId = useId();
   const navigate = useNavigate();
 
   // Paginated: a bare .list() returns one ~100-row page and stops — this
@@ -55,9 +60,9 @@ export default function QuotesList() {
     [carriers]
   );
 
-  const visible = openOnly
-    ? quotes.filter((q) => isOpenQuoteStatus(q.status))
-    : quotes;
+  const visible = quotes.filter(q => (!openOnly || isOpenQuoteStatus(q.status)) && matchesQuoteOfferFilter(q, offerExpiry, today));
+  const expiringCount = quotes.filter(q => matchesQuoteOfferFilter(q, "expiring", today)).length;
+  const expiredCount = quotes.filter(q => matchesQuoteOfferFilter(q, "expired", today)).length;
 
   const { sorted, sortKey, dir, toggle } = useSort(
     visible,
@@ -66,6 +71,7 @@ export default function QuotesList() {
       carrier: (q) => (q.carrierId ? carrierName.get(q.carrierId) ?? "" : null),
       premium: (q) => q.premium,
       effective: (q) => q.effectiveDate,
+      offerExpiry: quoteOfferDate,
       status: (q) => q.status,
     },
     "account"
@@ -76,15 +82,23 @@ export default function QuotesList() {
       <h1>Quotes</h1>
       <p className="sub">All quotes across leads and clients</p>
 
-      <div className="toolbar">
-        <div className="chip-row">
-          <button className={openOnly ? "on" : ""} onClick={() => setOpenOnly(true)}>
+      <div className="toolbar quote-offer-filters">
+        <div className="chip-row" role="group" aria-label="Quote status views">
+          <button className={openOnly ? "on" : ""} aria-pressed={openOnly} onClick={() => setOpenOnly(true)}>
             In flight
           </button>
-          <button className={!openOnly ? "on" : ""} onClick={() => setOpenOnly(false)}>
+          <button className={!openOnly ? "on" : ""} aria-pressed={!openOnly} onClick={() => setOpenOnly(false)}>
             All
           </button>
         </div>
+        <label className="field" htmlFor={`${filterId}-expiry`}>Offer expiry
+          <select id={`${filterId}-expiry`} value={offerExpiry} aria-describedby={`${filterId}-help`} onChange={e => setOfferExpiry(e.target.value as QuoteOfferFilter)}>
+            <option value="all">Any offer expiry</option>
+            <option value="expiring">Expiring within 7 days ({expiringCount})</option>
+            <option value="expired">Expired ({expiredCount})</option>
+          </select>
+        </label>
+        <p id={`${filterId}-help`} className="quote-offer-filter-help">Expiry filters include quoted and presented offers. An offer remains valid through the recorded date, including today.</p>
       </div>
 
       {accountRes.error && <p className="error-text" role="alert">{accountRes.error} <button disabled={accountRes.loading} onClick={() => void accountRes.refetch()}>Retry account names</button></p>}
@@ -96,16 +110,17 @@ export default function QuotesList() {
         ) : quoteRes.error ? (
           <p className="error-text" role="alert">{quoteRes.error} <button disabled={quoteRes.loading} onClick={() => void quoteRes.refetch()}>Retry quotes</button></p>
         ) : sorted.length === 0 ? (
-          <p className="muted small">No quotes.</p>
+          <p className="muted small">{quotes.length ? "No quotes match these filters." : "No quotes."}</p>
         ) : (
           <div className="table-wrap">
-            <table>
+            <table aria-label="All carrier quotes">
               <thead>
                 <tr>
                   <SortTh label="Account" colKey="account" sortKey={sortKey} dir={dir} onToggle={toggle} />
                   <SortTh label="Carrier" colKey="carrier" sortKey={sortKey} dir={dir} onToggle={toggle} />
                   <SortTh label="Premium" colKey="premium" sortKey={sortKey} dir={dir} onToggle={toggle} />
                   <SortTh label="Effective" colKey="effective" sortKey={sortKey} dir={dir} onToggle={toggle} />
+                  <SortTh label="Offer valid through" colKey="offerExpiry" sortKey={sortKey} dir={dir} onToggle={toggle} />
                   <SortTh label="Status" colKey="status" sortKey={sortKey} dir={dir} onToggle={toggle} />
                 </tr>
               </thead>
@@ -122,6 +137,7 @@ export default function QuotesList() {
                     <td>{q.carrierId ? carrierName.get(q.carrierId) ?? "—" : "—"}</td>
                     <td>{fmtMoney(q.premium)}</td>
                     <td>{fmtDate(q.effectiveDate)}</td>
+                    <td><QuoteOfferExpiry quote={q} today={today} /></td>
                     <td>
                       <Badge {...statusBadge(QUOTE_STATUS_BADGE, q.status)} />
                     </td>
