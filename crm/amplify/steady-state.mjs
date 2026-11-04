@@ -1,11 +1,17 @@
 // The completed cutover is historical evidence, not a renewable deployment lease.
-// Normal main builds retain the same backend, cursor generation and runtime identity.
+// Normal builds retain the same backend, cursor generation and runtime identity.
 export function assertSteadyState(env, contract) {
   const need = (ok, reason) => { if (!ok) throw new Error(`HOA steady-state deployment: ${reason}`); };
+  const main = contract.branch === "main" && contract.backendBranch === "main"
+    && contract.runtimeBranch === "codex-hoa-account-migration";
+  const staging = contract.branch === "codex-hoa-staging-migration" && contract.backendBranch === "staging"
+    && contract.runtimeBranch === "codex-hoa-staging-migration"
+    && contract.backendRoot === "arn:aws:cloudformation:us-east-1:917680434255:stack/amplify-d1nuh9rw1hcuxo-staging-branch-3787a09124/eaa4dff0-d3d3-11f1-ab1d-0edee65f4629"
+    && contract.pool === "us-east-1_6tQkvfLuD" && contract.client === "3vssvrvmdglqcoh6e1r133k6ln"
+    && contract.graphqlUrl === "https://6ibyan35zrfixjwpspnoi6dc2q.appsync-api.us-east-1.amazonaws.com/graphql";
   need(contract.schema === 1 && contract.account === "917680434255" && contract.region === "us-east-1"
     && contract.crmApp === "d1nuh9rw1hcuxo" && contract.webApp === "d1x0kxb71w6nvt"
-    && contract.branch === "main" && contract.backendBranch === "main"
-    && contract.runtimeBranch === "codex-hoa-account-migration", "unreviewed destination contract");
+    && (main || staging), "unreviewed destination contract");
   need(env.AWS_BRANCH === contract.branch && env.HOA_DEPLOY_ACCOUNT_ID === contract.account
     && [contract.crmApp, contract.webApp].includes(env.AWS_APP_ID), "wrong account, app or branch");
   need(env.HOA_DEPLOYMENT_MODE === "steady-state" && env.HOA_MIGRATION_AUTH === "true"

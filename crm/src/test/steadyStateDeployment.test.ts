@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { assertSteadyState } from "../../amplify/steady-state.mjs";
 import contract from "../../amplify/steady-state-main.json";
+import stagingContract from "../../amplify/steady-state-staging.json";
 // CI preflight is JavaScript so it can run before npm ci on Amplify.
 // @ts-expect-error the deployment-only reader is exercised directly with a fake AWS boundary
 import { verifySteadyState } from "../../scripts/verify-steady-state.mjs";
@@ -43,8 +44,8 @@ describe("completed HOA main deployment", () => {
   });
 });
 
-function liveFixture(failure = "") {
-  const c = structuredClone(contract);
+function liveFixture(failure = "", source = contract) {
+  const c = structuredClone(source);
   const stateful = Array.from({ length: 57 }, (_, i) => [c.backendRoot, `State${String(i).padStart(2,"0")}`, c.statefulTypes[0], `existing-${i}`]);
   c.statefulInventorySha256 = createHash("sha256").update(JSON.stringify(stateful)).digest("hex");
   const resources = [
@@ -67,11 +68,11 @@ function liveFixture(failure = "") {
     }
     if (a[1] === "get-schedule") {
       const s = c.schedules.find(x => x.name === a[3])!;
-      return { Name: s.name, State: failure === "schedule" ? "DISABLED" : "ENABLED", Target: { ...s.target, ...(failure === "target-input" ? { Input: "{\"unexpected\":true}" } : {}) }, ScheduleExpression: s.scheduleExpression, ScheduleExpressionTimezone: s.scheduleExpressionTimezone, FlexibleTimeWindow: s.flexibleTimeWindow };
+      return { Name: s.name, State: failure === "schedule" ? s.state === "ENABLED" ? "DISABLED" : "ENABLED" : s.state, Target: { ...s.target, ...(failure === "target-input" ? { Input: "{\"unexpected\":true}" } : {}) }, ScheduleExpression: s.scheduleExpression, ScheduleExpressionTimezone: s.scheduleExpressionTimezone, FlexibleTimeWindow: s.flexibleTimeWindow };
     }
     throw new Error("Unexpected AWS operation");
   };
-  return { c, aws, calls, namespace: { branchName: "main", backend: { stackArn: failure === "root" ? "wrong" : c.backendRoot } } };
+  return { c, aws, calls, namespace: { branchName: c.backendBranch, enableAutoBuild: false, enablePullRequestPreview: false, backend: { stackArn: failure === "root" ? "wrong" : c.backendRoot } } };
 }
 describe("read-only existing backend admission", () => {
   it("requires all57 stateful identities,22 existing cursors and8 enabled main schedules", () => {
@@ -82,5 +83,53 @@ describe("read-only existing backend admission", () => {
   });
   it.each(["root", "unprotected", "updating", "identity", "extra", "stream", "disabled", "replay", "errors", "filter", "schedule", "target-input"])("rejects %s before a deploy", failure => {
     const f = liveFixture(failure); expect(() => verifySteadyState(f.namespace, f.c, f.aws)).toThrow();
+  });
+});
+
+describe("completed HOA staging deployment", () => {
+  const stageEnv = { ...env, AWS_BRANCH: stagingContract.branch,
+    HOA_MIGRATION_PENDING_CUTOFF: stagingContract.pendingCutoff,
+    HOA_PREVIEW_ADMIN_USER_POOL_ID: stagingContract.pool, HOA_PREVIEW_ADMIN_CLIENT_ID: stagingContract.client };
+  it("admits the retained staging backend using its historical receipt without renewing the cutover", () => {
+    expect(() => assertSteadyState(stageEnv, stagingContract)).not.toThrow();
+    expect(stagingContract.pendingCutoff).toBe("2026-11-01T22:17:39.654Z");
+    expect(stagingContract.backendBranch).toBe("staging");
+    expect(stagingContract.schedules.filter(s => s.state === "ENABLED")).toHaveLength(7);
+    expect(stagingContract.schedules.filter(s => s.state === "DISABLED").map(s => s.logical)).toEqual(["WeeklyMarketingReportSchedule6899ACFF"]);
+    const f = liveFixture("", stagingContract); verifySteadyState(f.namespace, f.c, f.aws);
+    expect(f.calls.every(a => ["describe-stacks", "list-stack-resources", "get-event-source-mapping", "get-schedule"].includes(a[1]))).toBe(true);
+  });
+  it.each([
+    { AWS_BRANCH: "staging" }, { AWS_BRANCH: "main" }, { HOA_DEPLOYMENT_MODE: "" },
+    { HOA_DEPLOY_ACCOUNT_ID: "637423611040" }, { HOA_PREVIEW_ADMIN_USER_POOL_ID: contract.pool },
+    { HOA_PREVIEW_ADMIN_CLIENT_ID: contract.client }, { HOA_MIGRATION_PREVIEW: "true" },
+    { HOA_MIGRATION_STREAM_PHASE: "quarantine" }, { HOA_MIGRATION_SCHEDULES_ENABLED: "false" },
+    { HOA_MIGRATION_PENDING_CUTOFF: "2026-11-02T00:00:00.000Z" }, { HOA_MIGRATION_STREAM_PROBE_TOKEN: "temporary" },
+  ])("rejects a foreign or unsafe staging configuration %j", delta => {
+    expect(() => assertSteadyState({ ...stageEnv, ...delta }, stagingContract)).toThrow();
+  });
+  it("rejects a staging contract with a foreign root, auth or runtime identity", () => {
+    for (const delta of [{ backendRoot: contract.backendRoot }, { pool: contract.pool }, { client: contract.client },
+      { graphqlUrl: contract.graphqlUrl }, { runtimeBranch: "main" }, { backendBranch: "main" }]) {
+      expect(() => assertSteadyState(stageEnv, { ...stagingContract, ...delta })).toThrow();
+    }
+    expect(() => assertSteadyState(stageEnv, contract)).toThrow();
+    expect(() => assertSteadyState(env, stagingContract)).toThrow();
+  });
+  it.each(["root", "unprotected", "updating", "identity", "extra", "stream", "disabled", "replay", "errors", "filter", "schedule", "target-input"])("rejects staging %s before deploy", failure => {
+    const f = liveFixture(failure, stagingContract); expect(() => verifySteadyState(f.namespace, f.c, f.aws)).toThrow();
+  });
+  it("keeps the namespace dormant and preserves the disabled staging marketing schedule", () => {
+    const f = liveFixture("", stagingContract);
+    expect(() => verifySteadyState({ ...f.namespace, enableAutoBuild: true }, f.c, f.aws)).toThrow();
+    expect(() => verifySteadyState({ ...f.namespace, enablePullRequestPreview: true }, f.c, f.aws)).toThrow();
+    const marketing = f.c.schedules.find(s => s.state === "DISABLED")!;
+    const read = (...args: string[]) => args[1] === "get-schedule" && args[3] === marketing.name
+      ? { ...f.aws(...args), State: "ENABLED" } : f.aws(...args);
+    expect(() => verifySteadyState(f.namespace, f.c, read)).toThrow();
+  });
+  it("does not weaken main's requirement that all eight schedules remain enabled", () => {
+    const f = liveFixture(); f.c.schedules[0].state = "DISABLED";
+    expect(() => verifySteadyState(f.namespace, f.c, f.aws)).toThrow();
   });
 });

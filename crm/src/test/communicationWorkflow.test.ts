@@ -62,8 +62,10 @@ vi.mock("@aws-sdk/lib-dynamodb", async importOriginal => {
       for (const { Put: w } of writes.filter((w: any) => w.Put)) h.records.set(`${w.TableName}:${w.Item.id}`, structuredClone(w.Item));
       for (const { Update: u } of writes.filter((w: any) => w.Update)) {
         const key = `${u.TableName}:${u.Key.id}`, record = { ...h.records.get(key) };
-        for (const assignment of u.UpdateExpression.replace(/^SET /, "").split(", ")) {
-          const [raw, variable] = assignment.split(" = "); record[u.ExpressionAttributeNames?.[raw] ?? raw] = u.ExpressionAttributeValues[variable];
+        for (const assignment of u.UpdateExpression.replace(/^SET /, "").split(/, (?![^()]*\))/)) {
+          const [raw, variable] = assignment.split(" = "), field = u.ExpressionAttributeNames?.[raw] ?? raw;
+          const fallback = /^if_not_exists\(([^,]+), (:[^)]+)\)$/.exec(variable);
+          record[field] = fallback ? record[fallback[1]] ?? u.ExpressionAttributeValues[fallback[2]] : u.ExpressionAttributeValues[variable];
         }
         h.records.set(key, record);
       }
@@ -2234,8 +2236,10 @@ describe("native Front quote presentation", () => {
     h.records.set("Quote:q1", { id: "q1", accountId: "a1", carrierId: "c1", status: "QUOTED", premium: 1000, effectiveDate: "2026-10-01", expirationDate: "2027-10-01", lines: ["Property"], createdAt: NOW, updatedAt: NOW });
     h.records.set("Carrier:c1", { id: "c1", name: "Example Carrier" });
     h.front.mockResolvedValue({ _results: [{ id: "msg_original", is_inbound: true, recipients: [{ role: "from", handle: "jane@example.com" }] }] });
-    const { prepareBusinessDraft } = await import("../../amplify/functions/communications/businessDelivery");
-    return prepareBusinessDraft({ accountId: "a1", conversationId: "cnv_a", kind: "QUOTE", recordId: "q1" }, "brian");
+    // Legacy prepared proofs remain readable after new drafting moves to reviewed packages.
+    const reference = "HOA-ABCDEF012345", facts = ["Carrier: Example Carrier", "Premium: $1,000.00", "Coverage: Property", "Term: 2026-10-01 to 2027-10-01"];
+    await save(row("BUSINESS_DELIVERY", `delivery:${reference}`, { accountId: "a1", conversationId: "cnv_a", kind: "QUOTE", recordId: "q1", recordVersion: NOW, recipient: "jane@example.com", reference, facts, files: [], state: "PREPARED", preparedBy: "brian" }, { accountId: "a1" }));
+    return { body: facts.map(f => `<p>${f}</p>`).join("") + `<p>Reference: ${reference}</p>` };
   }
   it("a draft is not presentation; the actual matching sent quote is", async () => {
     const draft = await prepare(); expect(h.records.get("Quote:q1")!.status).toBe("QUOTED");
@@ -2264,6 +2268,20 @@ describe("native Front quote presentation", () => {
     await expect(applyBusinessDelivery(comm)).rejects.toThrow("changed");
     expect(h.records.get("Quote:q1")).toMatchObject({ status: "QUOTED", premium: 2000 });
     expect(entries("ISSUE").some(i => String(i.data.message).includes("changed after"))).toBe(true);
+  });
+  it('preserves the first presentation time when reconciling a historical resend', async () => {
+    const draft = await prepare(), original = '2026-09-07T15:00:00Z'; h.records.get('Quote:q1')!.presentedAt = original;
+    const comm = await inbound('resend', '2026-09-08T15:00:00Z', { direction:'OUTBOUND', to:['jane@example.com'], text:draft.body.replace(/<[^>]*>/g,'\n') });
+    await (await import('../../amplify/functions/communications/businessDelivery')).applyBusinessDelivery(comm);
+    expect(h.records.get('Quote:q1')!.presentedAt).toBe(original); expect(entries('BUSINESS_DELIVERY')[0].data.sentAt).toBe(comm.at);
+    expect(Date.parse(h.records.get('Quote:q1')!.updatedAt)).toBeGreaterThan(Date.parse(NOW));
+  });
+  it.each(['CERTIFICATE','DOCUMENT'])('records historical %s sending without asserting recipient delivery', async kind => {
+    const draft=await prepare(),proof=entries('BUSINESS_DELIVERY')[0]; proof.data.kind=kind;
+    const comm=await inbound('document-send','2026-09-08T15:00:00Z',{direction:'OUTBOUND',to:['jane@example.com'],text:draft.body.replace(/<[^>]*>/g,'\n')});
+    await (await import('../../amplify/functions/communications/businessDelivery')).applyBusinessDelivery(comm);
+    expect(entries('BUSINESS_DELIVERY')[0].data).toMatchObject({state:'SENT',sentAt:comm.at});
+    expect(h.transactions.flat().filter(w=>w.Update && [process.env.CERTIFICATE_TABLE,process.env.DOCUMENT_TABLE].includes(w.Update.TableName))).toHaveLength(0);
   });
 });
 

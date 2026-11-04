@@ -67,7 +67,10 @@ const renderPage = () => render(<Team profile={profile} />);
 const pending = () => new Promise<never>(() => {});
 beforeEach(() => {
   vi.clearAllMocks();
-  communicationRequest.mockResolvedValue({ team: [] });
+  // Clear queued one-shot responses as well as calls, so a failed interaction
+  // cannot shift the next test's roster or teammate-settings fixtures.
+  listTeamUsers.mockReset().mockResolvedValue({ data: { users: [], profiles: [] } });
+  communicationRequest.mockReset().mockResolvedValue({ team: [] });
 });
 
 describe("Team roster read states", () => {
@@ -164,13 +167,18 @@ describe("paged team roster", () => {
   const laterProfile = { ...teammateProfile, id: "p-later", userId: later.userId, email: later.email, firstName: "Later", lastName: "Member" };
 
   it("loads the next roster page only on request, with profile decorations in the same response", async () => {
+    let finishSettings!: (value: unknown) => void;
+    communicationRequest.mockImplementationOnce(() => new Promise(resolve => { finishSettings = resolve; }));
     listTeamUsers.mockResolvedValueOnce({ data: { users: [teammate], profiles: [teammateProfile], nextToken: "page-2" } })
       .mockResolvedValueOnce({ data: JSON.stringify({ ok: true, users: [later], profiles: [laterProfile], nextToken: null }) });
     renderPage();
     expect(await screen.findByText("Casey Staff")).toBeVisible();
     expect(listTeamUsers).toHaveBeenCalledTimes(1);
     expect(UserProfile.listUserProfileByUserId).not.toHaveBeenCalled();
-    await waitFor(() => expect(screen.getByRole("button", { name: "Load more team members" })).toBeEnabled());
+    const more = screen.getByRole("button", { name: "Load more team members" });
+    await waitFor(() => expect(more).toBeDisabled());
+    await act(async () => finishSettings({ team: [] }));
+    await waitFor(() => expect(more).toBeEnabled());
     fireEvent.click(screen.getByRole("button", { name: "Load more team members" }));
     expect(await screen.findByText("Later Member")).toBeVisible();
     expect(listTeamUsers).toHaveBeenLastCalledWith({ nextToken: "page-2" });
@@ -190,6 +198,7 @@ describe("paged team roster", () => {
     fireEvent.click(within(modal).getByRole("checkbox", { name: "Producer" }));
     fireEvent.click(within(modal).getByRole("button", { name: "Save roles" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(screen.getByRole("button", { name: "Load more team members" })).toBeEnabled());
     fireEvent.click(screen.getByRole("button", { name: "Load more team members" }));
     expect(await screen.findByText("Cognito throttled")).toBeVisible();
     const row = screen.getByText(teammate.email).closest("tr")!;
@@ -197,6 +206,7 @@ describe("paged team roster", () => {
 
     let finish!: (result: unknown) => void;
     listTeamUsers.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Retry loading more" })).toBeEnabled());
     fireEvent.click(screen.getByRole("button", { name: "Retry loading more" }));
     expect(screen.getByRole("button", { name: "Loading more…" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Refresh team" })).toBeDisabled();

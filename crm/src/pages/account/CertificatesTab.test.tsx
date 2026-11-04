@@ -31,6 +31,14 @@ beforeEach(() => {
   api.upload.mockReturnValue({ result: Promise.resolve({}) });
   api.models.Certificate.update.mockResolvedValue({ data: { ...cert, s3Key: "certificates/a1/cert1.pdf" } });
 });
+it("offers certificate handoff only after the generated PDF exists", async () => {
+  api.models.Certificate.list.mockResolvedValue({ data: [cert, { ...cert, id: "generated-cert", holderName: "Bank", s3Key: "certificates/a1/generated-cert.pdf" }] });
+  render(<CertificatesTab account={account} profile={profile} />);
+  expect(await screen.findByRole("button", { name: "Prepare email in Front" })).toBeEnabled();
+  expect(screen.getAllByRole("button", { name: "Prepare email in Front" })).toHaveLength(1);
+  expect(screen.getByRole("button", { name: "Generate PDF" })).toBeInTheDocument();
+  expect(api.models.Certificate.create).not.toHaveBeenCalled();
+});
 async function form() {
   render(<CertificatesTab account={account} profile={profile} />);
   await screen.findByText("No certificates issued.");

@@ -67,6 +67,8 @@ export const handler = async (event: { arguments: { operation?: string; readOper
     }
     const requireAdmin = () => { if (!admin) throw new Error("Only an admin can change integration or team settings"); };
     if (event.arguments.readOperation) {
+      if (op === 'businessDeliveryContext') return { ok: true, context: await (await import('./businessDelivery')).businessDeliveryContext({ accountId: text(input, 'accountId') }, actor, { admin }) };
+      if (op === 'historyBusinessDeliveries') return { ok: true, ...await (await import('./businessDelivery')).historyBusinessDeliveries(input as unknown as Parameters<typeof import('./businessDelivery').historyBusinessDeliveries>[0], actor, { admin }) };
       if (op === "searchAccounts") return { ok: true, ...await (await import("./accountSearch")).searchAccounts(input, { actor, role: activeRole(event.identity, event.request) }) };
       if (op === 'dashboardOpenQuotesPage') { requireAdmin(); return { ok: true, ...await (await import('./dashboardLeadQueries')).dashboardOpenQuotesPage(input) }; }
       if (op === 'dashboardBoundPoliciesPage') { requireAdmin(); return { ok: true, ...await (await import('./dashboardLeadQueries')).dashboardBoundPoliciesPage(input) }; }
@@ -173,7 +175,9 @@ export const handler = async (event: { arguments: { operation?: string; readOper
     if (op === "saveCommercial") return { ok: true, plan: await (await import("./commercial")).saveCommercial(input, actor) };
     if (op === "saveLeadSnooze") return { ok: true, snooze: await saveLeadSnooze(input, actor, admin) };
     if (op === 'prepareLeadDeletion') { requireAdmin(); await (await import('./deletion')).prepareLeadDeletion(text(input, 'accountId'), text(input, 'name'), actor); return { ok: true }; }
-    if (op === "prepareBusinessDraft") return { ok: true, draft: await (await import("./businessDelivery")).prepareBusinessDraft(input as unknown as Parameters<typeof import("./businessDelivery").prepareBusinessDraft>[0], actor) };
+    if (op === 'previewBusinessDelivery') return { ok: true, preview: await (await import('./businessDelivery')).previewBusinessDelivery(input as unknown as Parameters<typeof import('./businessDelivery').previewBusinessDelivery>[0], actor, { admin }) };
+    if (op === 'prepareBusinessDraft') return { ok: true, attempt: await (await import('./businessDelivery')).prepareBusinessDraft(input as unknown as Parameters<typeof import('./businessDelivery').prepareBusinessDraft>[0], actor, { admin }) };
+    if (op === 'reconcileBusinessDraft') return { ok: true, attempt: await (await import('./businessDelivery')).reconcileBusinessDraft({ accountId: text(input, 'accountId'), attemptId: text(input, 'attemptId'), recoveryMessageId: text(input, 'recoveryMessageId') || undefined }, actor, { admin }) };
     if (op === "authorizeBind") {
       if (input.clientAuthorized !== true) throw new Error("Client authorization is required before requesting binding");
       const q = await (await dataClient()).models.Quote.get({ id: text(input, "quoteId") });
@@ -431,6 +435,7 @@ export const handler = async (event: { arguments: { operation?: string; readOper
     }
     throw new Error("Unknown operation");
   } catch (e) {
-    return { ok: false, error: conflict(e) ? "This record changed. Refresh and try again." : e instanceof Error ? e.message : "The change could not be saved" };
+    return { ok: false, error: conflict(e) ? "This record changed. Refresh and try again." : e instanceof Error ? e.message : "The change could not be saved",
+      ...(e instanceof Error && 'code' in e && e.code === 'BUSINESS_DRAFT_NOT_DISPATCHED' ? { code: e.code } : {}) };
   }
 };

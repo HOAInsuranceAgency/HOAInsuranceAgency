@@ -1,27 +1,25 @@
-import { useEffect, useRef, useState } from "react";
-import { communicationRequest as request } from "../lib/communications";
+import { useState } from "react";
+import type { BusinessDeliveryKind } from "../../../shared/frontBusinessDelivery";
+import BusinessDeliveryComposer from "./BusinessDeliveryComposer";
 
-type Draft = { channelId: string; originalMessageId: string; recipient: string; subject: string; body: string; attachments: { filename: string; url: string; contentType: string }[] };
-export default function BusinessDraftButton(props: Parameters<typeof BusinessDraftButtonContent>[0]) {
-  return <BusinessDraftButtonContent key={`${props.accountId}:${props.conversationId}:${props.kind}:${props.recordId}`} {...props} />;
+export interface BusinessDraftButtonProps {
+  accountId: string;
+  conversationId?: string;
+  kind?: BusinessDeliveryKind;
+  recordId?: string;
+  label?: string;
+  disabled?: boolean;
 }
-function BusinessDraftButtonContent({ accountId, conversationId, kind, recordId, label }: { accountId: string; conversationId: string; kind: "QUOTE" | "CERTIFICATE" | "DOCUMENT"; recordId: string; label: string }) {
-  const [busy, setBusy] = useState(false), [error, setError] = useState("");
-  const lock = useRef(false);
-  const live = useRef(true); useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
-  return <><button className="secondary" disabled={busy} onClick={async () => {
-    if (lock.current) return;
-    lock.current = true;
-    setBusy(true); setError("");
-    try {
-      const { draft } = await request<{ draft: Draft }>("prepareBusinessDraft", { accountId, conversationId, kind, recordId }, true);
-      const files = await Promise.all(draft.attachments.map(async a => { const r = await fetch(a.url); if (!r.ok) throw new Error("Could not load the document for delivery"); return new File([await r.blob()], a.filename, { type: a.contentType }); }));
-      if (!live.current) return;
-      // The account page also imports this component. Initialize Front's bridge
-      // only inside its sidebar when someone actually prepares a draft.
-      const { default: Front } = await import("@frontapp/plugin-sdk");
-      if (!live.current) return;
-      await Front.createDraft({ channelId: draft.channelId as Parameters<typeof Front.createDraft>[0]["channelId"], replyOptions: { type: "reply", originalMessageId: draft.originalMessageId as NonNullable<Parameters<typeof Front.createDraft>[0]["replyOptions"]>["originalMessageId"] }, to: [draft.recipient], cc: [], bcc: [], subject: draft.subject, content: { type: "html", body: draft.body }, attachments: files });
-    } catch (e) { if (live.current) setError(e instanceof Error ? e.message : "Could not prepare the Front draft"); } finally { lock.current = false; if (live.current) setBusy(false); }
-  }}>{busy ? "Preparing…" : label}</button>{error && <p className="error-text" role="alert">{error}</p>}</>;
+
+/** The same server-backed handoff works in the CRM and Front's sidebar. */
+export default function BusinessDraftButton(props: BusinessDraftButtonProps) {
+  return <BusinessDraftButtonContent key={`${props.accountId}:${props.conversationId ?? ""}:${props.kind ?? ""}:${props.recordId ?? ""}`} {...props} />;
+}
+
+function BusinessDraftButtonContent({ label = "Prepare email in Front", disabled, ...selection }: BusinessDraftButtonProps) {
+  const [open, setOpen] = useState(false);
+  return <>
+    <button type="button" className="secondary" disabled={disabled} onClick={() => setOpen(true)}>{label}</button>
+    {open && <BusinessDeliveryComposer {...selection} onClose={() => setOpen(false)} />}
+  </>;
 }

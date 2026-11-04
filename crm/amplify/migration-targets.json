@@ -14,7 +14,9 @@
       "businessEnvironment": "staging",
       "alias": "migration-staging",
       "graphqlUrl": "https://6ibyan35zrfixjwpspnoi6dc2q.appsync-api.us-east-1.amazonaws.com/graphql",
-      "backendBranch": "staging"
+      "backendBranch": "staging",
+      "runtimeBranch": "codex-hoa-staging-migration",
+      "steadyState": true
     },
     "main": {
       "businessEnvironment": "main",

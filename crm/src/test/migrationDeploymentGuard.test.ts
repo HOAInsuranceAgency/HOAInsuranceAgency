@@ -26,8 +26,8 @@ const baseline = {
   HOA_DEPLOY_ACCOUNT_ID: "917680434255", HOA_MIGRATION_AUTH: "true", HOA_MIGRATION_PREVIEW: "true",
   HOA_MIGRATION_STREAM_PHASE: "quarantine", VITE_HOA_MIGRATION_PREVIEW: "true", PUBLIC_GOOGLE_PLACES_KEY: "", VITE_GOOGLE_PLACES_KEY: "",
 };
-function run(env: Record<string, string | undefined> = {}) {
-  return execFileSync(process.execPath, [resolve("scripts/assert-migration-destination.mjs")], { env: { ...baseline, ...(env.HOA_MIGRATION_PREVIEW === "false" ? { HOA_MIGRATION_WORKERS_ENABLED: "true" } : {}), ...env }, stdio: "pipe", encoding: "utf8" });
+function run(env: Record<string, string | undefined> = {}, args: string[] = []) {
+  return execFileSync(process.execPath, [resolve("scripts/assert-migration-destination.mjs"), ...args], { env: { ...baseline, ...(env.HOA_MIGRATION_PREVIEW === "false" ? { HOA_MIGRATION_WORKERS_ENABLED: "true" } : {}), ...env }, stdio: "pipe", encoding: "utf8" });
 }
 describe("destination deployment and replay barrier", () => {
   it("accepts the isolated quarantine build", () => expect(run()).toContain("read-only preview"));
@@ -41,6 +41,14 @@ describe("destination deployment and replay barrier", () => {
     { VITE_HOA_MIGRATION_PREVIEW: "false" },
   ])("rejects a wrong destination or missing frontend fence: %j", env => expect(() => run(env)).toThrow());
   it("uses the staging namespace for its separate hosted preview", () => expect(run({ AWS_BRANCH: "codex-hoa-staging-migration" })).toContain("staging"));
+  it("rejects the staging-only backend spec on main, another app, preview or a missing steady-state mode", () => {
+    for (const delta of [{ AWS_BRANCH: "main" }, { AWS_APP_ID: "d2d4g940z91vj4" },
+      { AWS_BRANCH: "codex-hoa-staging-migration", HOA_DEPLOYMENT_MODE: "steady-state" },
+      { AWS_BRANCH: "codex-hoa-staging-migration", HOA_MIGRATION_PREVIEW: "false" }]) {
+      expect(() => run(delta, ["--staging-only"])).toThrow();
+    }
+    expect(() => run({}, ["--skip-guard"])).toThrow();
+  });
   it("rejects release directly from quarantine", () => expect(() => run({ HOA_MIGRATION_PREVIEW: "false" })).toThrow());
   it.each(["old", "disabled", "replay", "polling", "recent"])("rejects a release while stream state is %s", failure => {
     expect(() => run({ HOA_MIGRATION_PREVIEW: "false", HOA_MIGRATION_STREAM_PHASE: "armed", HOA_TEST_FAILURE: failure })).toThrow();

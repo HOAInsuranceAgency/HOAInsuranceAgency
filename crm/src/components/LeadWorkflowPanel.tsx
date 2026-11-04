@@ -13,6 +13,7 @@ import { useAgencyDay } from '../lib/useAgencyDay';
 import type { LeadSnooze } from '../../../shared/leadSnooze';
 import { isAuthorizationError } from '../lib/authorizationError';
 import { useIsAdmin } from '../lib/auth';
+import BusinessDraftButton from './BusinessDraftButton';
 
 const EMPTY: WorkflowContext = { workflow: null, tasks: [], communications: [], team: [], issues: [] };
 export function ResponsibilitySelect({ label, value, team, onChange, disabled = false }: {
@@ -126,6 +127,7 @@ export default function LeadWorkflowPanel({ accountId, conversationId, onOpen }:
     <label className="workflow-note-publish"><input type="checkbox" disabled={busy} checked={publish} onChange={e => setPublish(e.target.checked)} /> Also post as a Front comment</label>
     <div className="toolbar"><button className="primary" disabled={busy || !note.trim()} onClick={async () => { if (await run("addNote", { accountId: workflow.accountId, text: note, publishToFront: publish, requestId: noteId.current })) { setNote(""); noteId.current = crypto.randomUUID(); } }}>Save note</button></div></div>  </>;
   const conversationTools = <>
+    <BusinessDraftButton accountId={workflow.accountId} conversationId={conversationId ?? workflow.conversationId} />
     {(conversationId ?? workflow.conversationId) && <ConversationContext accountId={workflow.accountId} conversationId={(conversationId ?? workflow.conversationId)!} bound={workflow.disposition === "BOUND"} saved={resource.data.frontContext} onSaved={() => void resource.refetch()} />}
     {workflow.disposition !== "BOUND" && <details className="front-disclosure"><summary>Lead status</summary>
       {workflow.disposition === "ACTIVE" ? <><label className="field">Status<select disabled={busy} value={leadStatus} onChange={e => setLeadStatus(e.target.value)}><option value="LOST">Lost</option><option value="DISQUALIFIED">Not a fit</option></select></label><button className="secondary" disabled={busy} onClick={() => void run("setLeadDisposition", { accountId: workflow.accountId, version: workflow.version, disposition: leadStatus })}>Update lead status</button></>

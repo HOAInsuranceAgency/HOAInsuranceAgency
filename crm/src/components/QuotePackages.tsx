@@ -17,6 +17,7 @@ import {
   type PackageOption,
 } from '../../../shared/quotePackages';
 import { OpportunityEstimate } from './OpportunityEstimate';
+import BusinessDraftButton from './BusinessDraftButton';
 import './QuotePackages.css';
 
 export default function QuotePackages(props: Parameters<typeof QuotePackagesContent>[0]) {
@@ -221,6 +222,7 @@ function QuotePackagesContent({
                     </p>
                   )}
                   <div className="form-actions">
+                    <BusinessDraftButton accountId={accountId} kind="PACKAGE" recordId={option.id} label="Prepare proposal in Front" disabled={saving || !assessment.complete} />
                     {(!plan.selectedOptionId || chosen) && (
                       <>
                         <button

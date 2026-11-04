@@ -40,6 +40,21 @@ beforeEach(() => {
 });
 afterEach(() => vi.useRealTimers());
 
+it('opens the shared server handoff with the current sidebar account and conversation', async () => {
+  request.mockImplementation(async operation => {
+    if (operation === 'context') return context();
+    if (operation === 'businessDeliveryContext') return { context: { accountId: 'a', accountName: 'Example lead', choices: [], documents: [], recipientSuggestions: [], conversations: [{ id: 'cnv_current', label: 'Current client thread' }], senderError: 'Connect your personal Front mailbox' } };
+    if (operation === 'historyBusinessDeliveries') return { items: [] };
+    throw new Error(`Unexpected operation: ${operation}`);
+  });
+  render(<LeadWorkflowPanel conversationId="cnv_current" onOpen={vi.fn()} />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Prepare email in Front', hidden: true }));
+  await screen.findByRole('dialog', { name: 'Prepare email in Front' });
+  expect(request).toHaveBeenCalledWith('businessDeliveryContext', { accountId: 'a' });
+  expect(screen.getByLabelText('Front conversation')).toHaveValue('cnv_current');
+  expect(request.mock.calls.some(([, , write]) => write === true)).toBe(false);
+});
+
 it('keeps a follow-up draft mounted while another account action refreshes the workspace', async () => {
   const refresh = deferred<unknown>();
   let reads = 0;

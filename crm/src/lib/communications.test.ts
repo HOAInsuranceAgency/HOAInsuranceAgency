@@ -56,3 +56,26 @@ it('still decodes successful communication responses', async () => {
   api.read.mockResolvedValue({ data: JSON.stringify({ ok: true, workflow: null }) });
   await expect(communicationRequest('context')).resolves.toEqual({ ok: true, workflow: null });
 });
+
+it.each([false, true])('preserves only the explicit pre-dispatch code from a Lambda application response (JSON: %s)', async encoded => {
+  const result = { ok: false, error: 'The quote changed. Review a new preview', code: 'BUSINESS_DRAFT_NOT_DISPATCHED' };
+  api.write.mockResolvedValue({ data: encoded ? JSON.stringify(result) : result });
+  const error = await communicationRequest('prepareBusinessDraft', { accountId: 'a' }, true).catch(error => error);
+  expect(error).toBeInstanceOf(Error);
+  expect(error).toMatchObject({ message: result.error, code: 'BUSINESS_DRAFT_NOT_DISPATCHED' });
+  expect(isAuthorizationError(error)).toBe(false);
+});
+
+it.each(['BUSINESS_DRAFT_CONFLICT', 'NETWORK_FAILURE', 'business_draft_not_dispatched'])('does not promote unrelated application code %s into an editable draft rejection', async code => {
+  api.write.mockResolvedValue({ data: JSON.stringify({ ok: false, error: 'This request needs review', code }) });
+  const error = await communicationRequest('prepareBusinessDraft', {}, true).catch(error => error);
+  expect(error).toBeInstanceOf(Error);
+  expect(error).not.toHaveProperty('code');
+});
+
+it('does not copy a pre-dispatch-looking code from a GraphQL transport error', async () => {
+  api.write.mockResolvedValue({ errors: [{ message: 'Transport failed', code: 'BUSINESS_DRAFT_NOT_DISPATCHED' }] });
+  const error = await communicationRequest('prepareBusinessDraft', {}, true).catch(error => error);
+  expect(error).toMatchObject({ message: 'Transport failed' });
+  expect(error).not.toHaveProperty('code');
+});

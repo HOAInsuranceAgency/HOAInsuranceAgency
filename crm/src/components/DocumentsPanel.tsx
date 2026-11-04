@@ -24,6 +24,8 @@ import type { Schema } from "../../amplify/data/resource";
 import FilePreviewModal, { canPreview } from "./FilePreview";
 import FileButton from "./FileButton";
 import ConfirmButton from "./ConfirmButton";
+import BusinessDraftButton from "./BusinessDraftButton";
+import { isBusinessDeliveryFile } from "../../../shared/frontBusinessDelivery";
 import { SaveStatus, useSaveStatus } from "./SaveStatus";
 import { Badge, statusBadge, OCR_STATUS_BADGE } from "../lib/badges";
 import { useSort, SortTh } from "../lib/useSort";
@@ -580,6 +582,7 @@ function DocumentsPanelContent({
                           <button className="link" onClick={() => download(d)}>
                             Download
                           </button>
+                          {entityType === "ACCOUNT" && d.s3Key !== "pending" && isBusinessDeliveryFile(d) && <BusinessDraftButton accountId={entityId} kind="DOCUMENT" recordId={d.id} label="Prepare email in Front" disabled={rowStatus.busy || uploading} />}
                           <button
                             className="link"
                             disabled={rowStatus.busy}

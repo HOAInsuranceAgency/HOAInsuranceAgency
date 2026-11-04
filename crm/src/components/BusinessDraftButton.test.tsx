@@ -1,35 +1,34 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
-const h = vi.hoisted(() => ({ request: vi.fn(), createDraft: vi.fn() }));
-vi.mock("../lib/communications", () => ({ communicationRequest: h.request }));
-vi.mock("@frontapp/plugin-sdk", () => ({ default: { createDraft: h.createDraft } }));
+const h = vi.hoisted(() => ({ mounted: vi.fn() }));
+vi.mock("./BusinessDeliveryComposer", () => ({ default: (props: { accountId: string; conversationId?: string; kind?: string; recordId?: string; onClose: () => void }) => {
+  h.mounted(props);
+  return <div role="dialog" aria-label="Delivery composer"><span>{props.accountId}:{props.conversationId}:{props.kind}:{props.recordId}</span><button onClick={props.onClose}>Close composer</button></div>;
+} }));
 import BusinessDraftButton from "./BusinessDraftButton";
-const draft = { channelId: "channel", originalMessageId: "message", recipient: "client@example.com", subject: "Quote", body: "Terms", attachments: [] };
-const props = { accountId: "a1", conversationId: "c1", kind: "QUOTE" as const, recordId: "q1", label: "Prepare quote draft" };
-beforeEach(() => { vi.resetAllMocks(); h.createDraft.mockResolvedValue(undefined); });
-it("prepares only one draft for repeated clicks while the request is pending", async () => {
-  let finish!: (result: unknown) => void;
-  h.request.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+const props = { accountId: "a1", conversationId: "cnv_one", kind: "PACKAGE" as const, recordId: "option-one", label: "Prepare proposal in Front" };
+beforeEach(() => { vi.clearAllMocks(); });
+it("opens one shared composer without contacting Front when the launcher renders", () => {
   render(<BusinessDraftButton {...props} />);
-  fireEvent.click(screen.getByRole("button")); fireEvent.click(screen.getByRole("button"));
-  expect(h.request).toHaveBeenCalledTimes(1);
-  await act(async () => finish({ draft }));
-  await waitFor(() => expect(h.createDraft).toHaveBeenCalledTimes(1));
+  expect(h.mounted).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button"));
+  expect(screen.getAllByRole("dialog")).toHaveLength(1);
+  expect(h.mounted).toHaveBeenLastCalledWith(expect.objectContaining({ accountId: props.accountId, conversationId: props.conversationId, kind: props.kind, recordId: props.recordId }));
+  fireEvent.click(screen.getByRole("button", { name: "Close composer" }));
+  expect(screen.queryByRole("dialog")).toBeNull();
 });
-it("does not insert an old account's prepared draft after the conversation changes", async () => {
-  let finish!: (result: unknown) => void;
-  h.request.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+it("closes the old composer when account or Front conversation changes", () => {
   const view = render(<BusinessDraftButton {...props} />);
   fireEvent.click(screen.getByRole("button"));
-  view.rerender(<BusinessDraftButton {...props} accountId="a2" conversationId="c2" recordId="q2" />);
-  expect(screen.getByRole("button")).toBeEnabled();
-  await act(async () => finish({ draft }));
-  expect(h.createDraft).not.toHaveBeenCalled();
+  view.rerender(<BusinessDraftButton {...props} accountId="a2" conversationId="cnv_two" />);
+  expect(screen.queryByRole("dialog")).toBeNull();
+  fireEvent.click(screen.getByRole("button"));
+  expect(screen.getByText("a2:cnv_two:PACKAGE:option-one")).toBeInTheDocument();
 });
-it("allows retry after a preparation failure", async () => {
-  h.request.mockRejectedValueOnce(new Error("Could not prepare attachment")).mockResolvedValueOnce({ draft });
-  render(<BusinessDraftButton {...props} />); fireEvent.click(screen.getByRole("button"));
-  await screen.findByRole("alert"); fireEvent.click(screen.getByRole("button"));
-  await waitFor(() => expect(h.createDraft).toHaveBeenCalledTimes(1));
-  expect(screen.queryByRole("alert")).toBeNull();
+it("supports a disabled generated-record entry and a generic account entry", () => {
+  const view = render(<BusinessDraftButton {...props} disabled />);
+  expect(screen.getByRole("button")).toBeDisabled();
+  view.rerender(<BusinessDraftButton accountId="a1" />);
+  fireEvent.click(screen.getByRole("button", { name: "Prepare email in Front" }));
+  expect(h.mounted).toHaveBeenLastCalledWith(expect.objectContaining({ accountId: "a1" }));
 });

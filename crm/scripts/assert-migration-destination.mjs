@@ -6,8 +6,17 @@ import { readFileSync } from "node:fs";
 const targets = JSON.parse(readFileSync(new URL("../amplify/migration-targets.json", import.meta.url), "utf8"));
 const branch = process.env.AWS_BRANCH ?? "";
 const binding = targets.branches[branch];
-const steady = binding?.steadyState === true;
-const steadyContract = JSON.parse(readFileSync(new URL("../amplify/steady-state-main.json", import.meta.url), "utf8"));
+const args = process.argv.slice(2);
+if (args.length && (args.length !== 1 || args[0] !== "--staging-only")) throw new Error("Unexpected deployment guard argument.");
+if (args[0] === "--staging-only" && (branch !== "codex-hoa-staging-migration"
+  || process.env.AWS_APP_ID !== targets.crmApp || process.env.HOA_DEPLOY_ACCOUNT_ID !== targets.account
+  || process.env.HOA_DEPLOYMENT_MODE !== "steady-state" || process.env.HOA_MIGRATION_PREVIEW !== "false")) {
+  throw new Error("The staging backend build spec can deploy only the retained business staging backend.");
+}
+const steady = binding?.steadyState === true
+  && (binding.businessEnvironment === "main" || process.env.HOA_MIGRATION_PREVIEW !== "true");
+const steadyContract = JSON.parse(readFileSync(new URL(binding?.businessEnvironment === "staging"
+  ? "../amplify/steady-state-staging.json" : "../amplify/steady-state-main.json", import.meta.url), "utf8"));
 if (binding) {
   const app = process.env.AWS_APP_ID;
   if (!/^[a-z0-9]+$/.test(targets.crmApp) || !/^[a-z0-9]+$/.test(targets.webApp)

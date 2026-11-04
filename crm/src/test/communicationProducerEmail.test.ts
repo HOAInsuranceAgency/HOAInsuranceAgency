@@ -29,6 +29,10 @@ describe("assigned salesperson's Front email identity", () => {
     expect(h.fetch.mock.calls.map(([url]) => url.pathname)).toEqual(["/teammates/tea_jake/channels", "/teammates/tea_jake/signatures"]);
     expect(h.fetch.mock.calls.every(([, request]) => request.method === "GET")).toBe(true);
   });
+  it("exposes verified signature HTML only to the explicit server-side handoff caller", async () => {
+    expect(await resolveProducerEmail(member,{includeVerifiedSignatureHtml:true})).toMatchObject({signatureId:'sig_jake',verifiedSignatureHtml:'<div>Jake Greasley</div>'});
+    expect(await resolveProducerEmail(member)).not.toHaveProperty('verifiedSignatureHtml');
+  });
   it("prefers Front's verified send-as address", async () => {
     responses([channel({ send_as: "JAKE@protectmyhoa.com", address: "underlying@other.example" })]);
     await expect(resolveProducerEmail(member)).resolves.toMatchObject({ senderEmail: "jake@protectmyhoa.com" });
