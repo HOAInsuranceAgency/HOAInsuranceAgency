@@ -14,7 +14,9 @@ export function verifySteadyState(namespace, contract, aws) {
   }
   const root = aws("cloudformation", "describe-stacks", "--stack-name", contract.backendRoot).Stacks;
   need(root.length === 1 && root[0].StackId === contract.backendRoot
-    && ["CREATE_COMPLETE", "UPDATE_COMPLETE"].includes(root[0].StackStatus)
+    // A successful update rollback is a stable prior deployment. Admit a
+    // retry only after all the same identity, cursor and schedule checks below.
+    && ["CREATE_COMPLETE", "UPDATE_COMPLETE", "UPDATE_ROLLBACK_COMPLETE"].includes(root[0].StackStatus)
     && root[0].EnableTerminationProtection === true, "backend is unstable or unprotected");
   const inventory = [], seen = new Set();
   const collect = stack => {
@@ -23,7 +25,9 @@ export function verifySteadyState(namespace, contract, aws) {
     seen.add(stack);
     for (const r of aws("cloudformation", "list-stack-resources", "--stack-name", stack).StackResourceSummaries) {
       if (r.ResourceStatus === "DELETE_COMPLETE") continue;
-      need(["CREATE_COMPLETE", "UPDATE_COMPLETE"].includes(r.ResourceStatus), "resource update is not complete");
+      need(["CREATE_COMPLETE", "UPDATE_COMPLETE"].includes(r.ResourceStatus)
+        || r.ResourceType === "AWS::CloudFormation::Stack" && r.ResourceStatus === "UPDATE_ROLLBACK_COMPLETE",
+      "resource update is not complete");
       inventory.push({ ...r, stack });
       if (r.ResourceType === "AWS::CloudFormation::Stack") collect(r.PhysicalResourceId);
     }

@@ -1,6 +1,6 @@
 import { RemovalPolicy, Stack, Duration } from 'aws-cdk-lib';
 import { AttributeType, BillingMode, Table, TableEncryption, type Table as DynamoTable } from 'aws-cdk-lib/aws-dynamodb';
-import { Policy, PolicyStatement } from 'aws-cdk-lib/aws-iam';
+import { ManagedPolicy, PolicyStatement } from 'aws-cdk-lib/aws-iam';
 import { Rule, Schedule } from 'aws-cdk-lib/aws-events';
 import { LambdaFunction } from 'aws-cdk-lib/aws-events-targets';
 import type { backend as Backend } from './backend';
@@ -18,6 +18,7 @@ export function installBrokerFees(backend: typeof Backend, communicationTable: D
     fees.addGlobalSecondaryIndex({ indexName, partitionKey: { name: field, type: AttributeType.STRING }, sortKey: { name: 'id', type: AttributeType.STRING } });
   }
   // Keep IAM attachments outside the nearly-full generated data template.
+  // Managed policies also preserve the callers' 10 KB inline-policy budget.
   // This stack depends on the roles/tables; neither depends on these policies.
   const permissions = backend.createStack('BrokerFeePermissions');
   const api = backend.data.resources.graphqlApi;
@@ -59,7 +60,7 @@ export function installBrokerFees(backend: typeof Backend, communicationTable: D
     if(writable.length)add(fn,writes,writable.map(modelArn));
   }
   let index=0;
-  for(const [fn,statements]of grants)new Policy(permissions,`BrokerFeeAccess${index++}`,{roles:[fn.resources.lambda.role!],statements});
+  for(const [fn,statements]of grants)new ManagedPolicy(permissions,`BrokerFeeAccess${index++}`,{roles:[fn.resources.lambda.role!],statements});
   new Rule(Stack.of(backend.brokerFees.resources.lambda),'BrokerFeeReceiptRecovery',{
     schedule:Schedule.rate(Duration.minutes(5)),targets:[new LambdaFunction(backend.brokerFees.resources.lambda)],
     description:'Retry broker-fee allocations after settlement, binding, or temporary ledger failures.',
