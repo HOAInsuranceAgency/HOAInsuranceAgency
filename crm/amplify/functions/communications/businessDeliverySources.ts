@@ -39,6 +39,15 @@ function version(model: SourceVersion['model'], record: { id: string; updatedAt:
   return { model, id: record.id, updatedAt: record.updatedAt };
 }
 const publicFields = ['perOccurrenceDeductible', 'perUnitDeductible', 'blanketLimit', 'coinsurancePct', 'replacementCostType', 'glEachOccurrence', 'glDamageToRentedPremises', 'glMedicalExpense', 'glPersonalAdvInjury', 'glGeneralAggregate', 'glProductsCompletedOps', 'glClaimsMade', 'glAggregateAppliesTo', 'minimumEarnedPremiumPct'] as const;
+// Include private review inputs only in the server-side terms comparison, never
+// in public output. Fetching a partial review input would invalidate its fence.
+const quoteSourceFields = ['id', 'accountId', 'carrierId', 'status', 'premium', 'commissionPct', 'lines', 'effectiveDate', 'expirationDate', 'offerExpiresAt', 'renewalPolicyId', 'notes', 'updatedAt', ...publicFields] as const;
+async function sourceReads<T, R>(items: readonly T[], read: (item: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = [];
+  // Bounded batches retain input order regardless of request completion order.
+  for (let i = 0; i < items.length; i += 5) results.push(...await Promise.all(items.slice(i, i + 5).map(read)));
+  return results;
+}
 export async function loadDeliverySource(input: BusinessDeliverySelection): Promise<DeliverySource> {
   const account = await deliveryAccount(input.accountId), client = await dataClient();
   deliveryId(input.recordId);
@@ -54,24 +63,29 @@ export async function loadDeliverySource(input: BusinessDeliverySelection): Prom
     commercial = await get<CommercialPlan>(`commercial:${input.accountId}`);
     const option = commercial?.data.options.find(option => option.id === input.recordId);
     if (!commercial || commercial.data.accountId !== input.accountId || !option || !option.reviewed || option.quoteIds.length > 25) throw businessValidation('Choose a reviewed package option on this account');
-    const sourceQuotes: Quote[] = [];
-    for (const id of option.quoteIds) {
-      const result = await client.models.Quote.get({ id });
-      if (result.errors?.length || !result.data || result.data.accountId !== input.accountId) throw businessValidation('A package quote is unavailable on this account');
-      sourceQuotes.push(result.data);
-    }
+    const sourceQuotes = await sourceReads(option.quoteIds, async id => {
+      const result = await client.models.Quote.get({ id }, { selectionSet: quoteSourceFields });
+      if (result.errors?.length || !result.data || result.data.id !== id || result.data.accountId !== input.accountId) throw businessValidation('A package quote is unavailable on this account');
+      return result.data;
+    });
     const assessment = packageAssessment(commercial.data, option, sourceQuotes, agencyDay(new Date().toISOString()));
     if (!assessment.complete) throw businessValidation(`Review the package before presenting it: ${assessment.problems.join('. ')}`);
     if (sourceQuotes.some(q => !['QUOTED', 'PRESENTED'].includes(q.status))) throw businessValidation('Only open reviewed offers can be presented');
     packageName = option.name; requiredLines = commercial.data.requiredLines;
     title = `Insurance proposal — ${account.name}`;
     facts.push(`Package: ${option.name}`, `Coverage needed: ${requiredLines.join(', ')}`);
+    const carrierIds = [...new Set(sourceQuotes.map(q => q.carrierId!))];
+    const sourceCarriers = await sourceReads(carrierIds, async id => {
+      const result = await client.models.Carrier.get({ id }, { selectionSet: ['id', 'name', 'updatedAt'] });
+      if (result.errors?.length || !result.data || result.data.id !== id) throw businessValidation('The quoted carrier is unavailable');
+      return result.data;
+    });
+    const carriers = new Map(sourceCarriers.map(carrier => [carrier.id, carrier]));
     for (const q of sourceQuotes) {
-      const carrier = await client.models.Carrier.get({ id: q.carrierId! });
-      if (carrier.errors?.length || !carrier.data) throw businessValidation('The quoted carrier is unavailable');
-      versions.push(version('QUOTE', q), version('CARRIER', carrier.data));
+      const carrier = carriers.get(q.carrierId!)!;
+      versions.push(version('QUOTE', q), version('CARRIER', carrier));
       quoteTerms[q.id] = packageTerms(q);
-      const publicQuote: PublicProposalQuote = { id: q.id, carrierName: carrier.data.name, premium: q.premium!, lines: q.lines!.filter((line): line is string => !!line), effectiveDate: q.effectiveDate!, expirationDate: q.expirationDate!, offerExpiresAt: q.offerExpiresAt,
+      const publicQuote: PublicProposalQuote = { id: q.id, carrierName: carrier.name, premium: q.premium!, lines: q.lines!.filter((line): line is string => !!line), effectiveDate: q.effectiveDate!, expirationDate: q.expirationDate!, offerExpiresAt: q.offerExpiresAt,
         ...Object.fromEntries(publicFields.map(field => [field, q[field] ?? null])) };
       quotes.push(publicQuote);
       facts.push(`Carrier: ${publicQuote.carrierName}`, `Coverage: ${publicQuote.lines.join(', ')}`, `Premium: ${new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(publicQuote.premium)}`, `Term: ${publicQuote.effectiveDate} to ${publicQuote.expirationDate}`);

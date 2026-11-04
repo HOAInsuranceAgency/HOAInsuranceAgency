@@ -4,6 +4,8 @@ import { frontPersonalResource, ProviderError } from "./providers";
 
 export interface ProducerEmailIdentity {
   frontId: string; channelId: string; senderEmail: string; signatureId: string; signatureMode: "FRONT";
+  /** Server-only opt-in for frozen handoff proof; never part of the public sender DTO. */
+  verifiedSignatureHtml?: string;
 }
 interface OwnedResource { id?: unknown; _links?: { related?: { owner?: unknown } } }
 interface Channel extends OwnedResource { type?: unknown; address?: unknown; send_as?: unknown; is_valid?: unknown; is_private?: unknown }
@@ -67,7 +69,7 @@ async function resources<T extends OwnedResource>(frontId: string, kind: "channe
 }
 
 /** Resolve the actual From mailbox and Front signature; CRM login email is not a mailbox mapping. */
-export async function resolveProducerEmail(member: TeamEligibility): Promise<ProducerEmailIdentity> {
+export async function resolveProducerEmail(member: TeamEligibility, options: { includeVerifiedSignatureHtml?: boolean } = {}): Promise<ProducerEmailIdentity> {
   const frontId = member.frontId;
   if (!frontId || !/^tea_[a-z0-9]+$/.test(frontId)) throw setup("Connect the salesperson's Front teammate");
   if (member.frontChannelId && !/^cha_[a-z0-9]+$/.test(member.frontChannelId)) throw setup("The salesperson's Front email channel ID is invalid");
@@ -99,5 +101,6 @@ export async function resolveProducerEmail(member: TeamEligibility): Promise<Pro
   }
   if (!signature) throw setup(member.frontSignatureId ? "The selected Front signature is not an applicable personal signature owned by this salesperson" :
     applicable.length ? "Choose the salesperson's Front signature because more than one is available" : "Add a personal Front email signature for the salesperson's mailbox");
-  return { frontId, channelId: channel.id as string, senderEmail: sender(channel)!, signatureId: signature.id as string, signatureMode: "FRONT" };
+  return { frontId, channelId: channel.id as string, senderEmail: sender(channel)!, signatureId: signature.id as string, signatureMode: "FRONT",
+    ...(options.includeVerifiedSignatureHtml ? { verifiedSignatureHtml: signature.body as string } : {}) };
 }

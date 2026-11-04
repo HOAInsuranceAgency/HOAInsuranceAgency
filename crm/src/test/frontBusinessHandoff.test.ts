@@ -2,7 +2,7 @@ import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { createHash } from 'node:crypto';
 import type { Communication } from '../../../shared/leadWorkflow';
 import type { BusinessDeliveryPreview, PrepareBusinessDraftInput } from '../../../shared/frontBusinessDelivery';
-const h=vi.hoisted(()=>({rows:new Map<string,any>(),models:new Map<string,any>(),objects:new Map<string,Uint8Array>(),messages:new Map<string,any>(),front:vi.fn(),pdf:vi.fn(),identity:vi.fn(),enabled:vi.fn(),recipients:vi.fn(),attachment:vi.fn(),beforeCommit:undefined as undefined|(()=>void),posts:0}));
+const h=vi.hoisted(()=>({rows:new Map<string,any>(),models:new Map<string,any>(),objects:new Map<string,Uint8Array>(),messages:new Map<string,any>(),front:vi.fn(),pdf:vi.fn(),identity:vi.fn(),enabled:vi.fn(),recipients:vi.fn(),attachment:vi.fn(),beforeCommit:undefined as undefined|(()=>void),posts:0,signatureHtml:'',threadSubject:undefined as string|undefined,conversationResolver:undefined as undefined|((id:string)=>Promise<{id:string;subject?:string}>)}));
 vi.mock('@aws-sdk/client-s3',()=>({S3Client:class{async send(command:any){const p=command.input;if(command.constructor.name==='PutObjectCommand'){h.objects.set(p.Key,new Uint8Array(p.Body));return{};}const body=h.objects.get(p.Key);if(!body)throw new Error('Missing object');return{ContentLength:body.length,Body:{transformToByteArray:async()=>body}};}},GetObjectCommand:class GetObjectCommand{constructor(public input:any){}},PutObjectCommand:class PutObjectCommand{constructor(public input:any){}}}));
 vi.mock('../../amplify/functions/communications/config',()=>({config:async()=>({environment:'main'})}));
 vi.mock('../../amplify/functions/communications/producerEmail',()=>({resolveProducerEmail:h.identity}));
@@ -10,7 +10,7 @@ vi.mock('../../amplify/functions/communications/workflow',()=>({enabledUser:h.en
 vi.mock('../../amplify/functions/crm-access/user-status',()=>({activeTeamUserCheck:(id:string)=>({ConditionCheck:{TableName:'UserAccess',Key:{userId:id}}})}));
 vi.mock('../../amplify/functions/communications/businessProposalPdf',()=>({createBusinessProposalPdf:h.pdf}));
 vi.mock('../../amplify/functions/communications/attachments',()=>({downloadFrontAttachment:h.attachment}));
-vi.mock('../../amplify/functions/communications/providers',async original=>({...await original<typeof import('../../amplify/functions/communications/providers')>(),front:h.front,assertRecipient:h.recipients,permittedConversation:async(id:string)=>({id:id==='cnv_old'?'cnv_client':id})}));
+vi.mock('../../amplify/functions/communications/providers',async original=>({...await original<typeof import('../../amplify/functions/communications/providers')>(),front:h.front,assertRecipient:h.recipients,permittedConversation:async(id:string)=>h.conversationResolver?h.conversationResolver(id):({id:id==='cnv_old'?'cnv_client':id,subject:h.threadSubject})}));
 vi.mock('../../amplify/functions/communications/data',()=>({dataClient:async()=>({models:Object.fromEntries(['Account','Quote','Carrier','Document','Certificate'].map(model=>[model,{get:async({id}:{id:string})=>({data:h.models.get(`${model}:${id}`)}),listDocumentByEntityId:async({entityId}:{entityId:string})=>({data:[...h.models.entries()].filter(([key,value])=>key.startsWith('Document:') && value.entityId===entityId).map(([,v])=>v)})}]))})}));
 vi.mock('../../amplify/functions/communications/store',async original=>{
   const actual=await original<typeof import('../../amplify/functions/communications/store')>();
@@ -35,6 +35,7 @@ import { packageTerms } from '../../../shared/quotePackages';
 import { allowedDocument } from '../../amplify/functions/communications/businessDeliverySources';
 import { businessDeliveryContext, previewBusinessDelivery, prepareBusinessDraft, reconcileBusinessDraft, historyBusinessDeliveries, applyBusinessAttempt, deliveryRecipients } from '../../amplify/functions/communications/businessHandoff';
 import { ProviderError } from '../../amplify/functions/communications/providers';
+const SIGNATURE='<div>Actor Example</div>';
 const NOW='2026-11-03T16:00:00.000Z',PDF=new TextEncoder().encode('%PDF-1.7 synthetic test artifact');
 const sha=(data:Uint8Array)=>createHash('sha256').update(data).digest('hex');
 const selection={accountId:'a1',kind:'PACKAGE' as const,recordId:'option',conversationId:'NEW'};
@@ -45,7 +46,7 @@ function sent(commId='msg_draft',at='2026-11-03T17:00:00.000Z'):Communication {
   return{id:`comm:front:${commId}`,provider:'front',providerId:commId,accountId:'a1',conversationId:m.conversation.id,channel:'EMAIL',direction:'OUTBOUND',at,text:m.text,from:'actor@example.com',to:['client@example.com'],actorId:'tea_actor',status:'SENT',frontDraft:false,classification:'SUBSTANTIVE',version:1};
 }
 beforeEach(()=>{
-  vi.useFakeTimers();vi.setSystemTime(new Date(NOW));vi.clearAllMocks();h.rows.clear();h.models.clear();h.objects.clear();h.messages.clear();h.posts=0;h.beforeCommit=undefined;
+  vi.useFakeTimers();vi.setSystemTime(new Date(NOW));vi.clearAllMocks();h.rows.clear();h.models.clear();h.objects.clear();h.messages.clear();h.posts=0;h.beforeCommit=undefined;h.threadSubject=undefined;h.conversationResolver=undefined;
   for(const model of ['ACCOUNT','QUOTE','CARRIER','CERTIFICATE','DOCUMENT'])process.env[`${model}_TABLE`]=model[0]+model.slice(1).toLowerCase();
   process.env.COMMUNICATION_TABLE='Communication';process.env.DOCUMENT_BUCKET='test';
   const account={id:'a1',name:'Willow HOA',updatedAt:NOW,contacts:async()=>({data:[{name:'Current manager',email:'client@example.com',isPrimary:true},{name:'Former manager',email:'former@example.com',validUntil:'2026-11-01'}]}),quotes:async()=>({data:[h.models.get('Quote:q1')]}),certificates:async()=>({data:[...h.models.entries()].filter(([k])=>k.startsWith('Certificate:')).map(([,v])=>v)})};
@@ -54,11 +55,11 @@ beforeEach(()=>{
   h.rows.set('eligibility:actor',row('ELIGIBILITY','eligibility:actor',{userId:'actor',enabled:true,salesperson:false,frontId:'tea_actor'}));
   h.rows.set('commercial:a1',row('COMMERCIAL_PLAN','commercial:a1',{accountId:'a1',version:1,estimatedCents:null,requiredLines:['Property'],options:[{id:'option',name:'Reviewed option',quoteIds:['q1'],reviewed:{at:NOW,by:'actor',terms:{q1:packageTerms(h.models.get('Quote:q1'))}}}],selectedOptionId:null},{accountId:'a1'}));
   h.rows.set('front-link:cnv_client',row('LINK','front-link:cnv_client',{accountId:'a1',purpose:'PROSPECT',conversationId:'cnv_client'},{accountId:'a1'}));
-  h.enabled.mockResolvedValue({Enabled:true});h.identity.mockResolvedValue({frontId:'tea_actor',channelId:'cha_personal',senderEmail:'actor@example.com',signatureId:'sig_actor',signatureMode:'FRONT'});h.pdf.mockResolvedValue({bytes:PDF,filename:'Proposal.pdf',contentType:'application/pdf'});h.recipients.mockResolvedValue(undefined);h.attachment.mockResolvedValue(PDF);
+  h.signatureHtml=SIGNATURE;h.enabled.mockResolvedValue({Enabled:true});h.identity.mockImplementation(async()=>({frontId:'tea_actor',channelId:'cha_personal',senderEmail:'actor@example.com',signatureId:'sig_actor',signatureMode:'FRONT',verifiedSignatureHtml:h.signatureHtml}));h.pdf.mockResolvedValue({bytes:PDF,filename:'Proposal.pdf',contentType:'application/pdf'});h.recipients.mockResolvedValue(undefined);h.attachment.mockResolvedValue(PDF);
   h.front.mockImplementation(async(path:string,method='GET',body?:FormData)=>{
     if(method==='POST'){
       h.posts++;expect(readRows('BUSINESS_DELIVERY').some(r=>r.data.state==='PREPARING')).toBe(true);expect(body).toBeInstanceOf(FormData);
-      const data=body!,messageId=h.posts===1?'msg_draft':`msg_draft${h.posts}`,message={id:messageId,conversation:{id:path.startsWith('/channels/')?'cnv_private':'cnv_client'},is_draft:true,is_inbound:false,type:'email',author:{id:data.get('author_id')},text:String(data.get('body')).replace(/<[^>]*>/g,'\n'),body:data.get('body'),created_at:Date.now()/1000,recipients:[{role:'from',handle:'actor@example.com'},...data.getAll('to[]').map(handle=>({role:'to',handle})),...data.getAll('cc[]').map(handle=>({role:'cc',handle}))],attachments:readRows('BUSINESS_PREVIEW').at(-1)!.data.files.map((f:any,i:number)=>({id:`fil_${i}`,filename:f.name,size:f.size}))};h.messages.set(messageId,message);return message;
+      const data=body!,messageId=h.posts===1?'msg_draft':`msg_draft${h.posts}`,message={id:messageId,conversation:{id:path.startsWith('/channels/')?'cnv_private':'cnv_client'},is_draft:true,is_inbound:false,type:'email',author:{id:data.get('author_id')},subject:String(data.get('subject')),text:String(data.get('body')).replace(/<[^>]*>/g,'\n'),body:String(data.get('body'))+'<div class="front-signature">'+h.signatureHtml+'</div>',created_at:Date.now()/1000,recipients:[{role:'from',handle:'actor@example.com'},...data.getAll('to[]').map(handle=>({role:'to',handle})),...data.getAll('cc[]').map(handle=>({role:'cc',handle}))],attachments:readRows('BUSINESS_PREVIEW').at(-1)!.data.files.map((f:any,i:number)=>({id:`fil_${i}`,filename:f.name,size:f.size}))};h.messages.set(messageId,message);return message;
     }
     if(path.startsWith('/messages/'))return h.messages.get(path.split('/').pop()!);
     if(path.endsWith('/drafts'))return{_results:[...h.messages.values()].filter(m=>m.is_draft)};
@@ -69,6 +70,98 @@ beforeEach(()=>{
 });
 afterEach(()=>{vi.useRealTimers();});
 describe('reviewed Front business handoff',()=>{
+  it('invalidates a preview when verified signature content changes without changing its identity',async()=>{
+    const p=await previewBusinessDelivery(selection,'actor');h.signatureHtml='<div>Changed signature</div>';
+    await expect(prepareBusinessDraft(prepareInput(p),'actor')).rejects.toMatchObject({code:'BUSINESS_DRAFT_NOT_DISPATCHED',message:expect.stringContaining('signature changed')});expect(h.posts).toBe(0);expect(readRows('BUSINESS_DELIVERY')).toHaveLength(0);
+  });
+  it.each(['unchanged','href edit','image edit','forged proxy','extra signature text','marker injection'])('verifies complete native rich-text signature semantics: %s',async edit=>{
+    const logo='https://agency.example/logo.png',proxy=`https://ext.frontusercontent.com/v1/proxy/EXACT_NATIVE_IMAGE#${logo}`;
+    h.signatureHtml='<div><br></div><table style="font-family: Arial; color: #111; border-collapse: collapse"><tbody><tr><td><a href="https://agency.example/"><img src="'+logo+'" alt="Example Agency" style="display:block"></a></td><td><div>Pat Producer</div><div><a href="tel:+15555550123">555-555-0123</a></div></td></tr></tbody></table>';
+    const p=await previewBusinessDelivery(selection,'actor'),implementation=h.front.getMockImplementation()!;
+    h.front.mockImplementation(async(path:string,method='GET',body?:FormData)=>{const m=await implementation(path,method,body);if(method==='POST')m.body='<div>'+String(body!.get('body')).replace(/<(h2|p)>/g,'<div><div>').replace(/<\/(h2|p)>/g,'</div><br></div>')+'<br><div class="front-signature">'+h.signatureHtml.replace(logo,proxy).replace('font-family: Arial; color: #111; ','')+'</div></div>';return m;});
+    const a=await prepareBusinessDraft(prepareInput(p),'actor');expect(a.state).toBe('DRAFT');expect(h.rows.get(a.id).data.nativeImageAliases).toEqual([{native:proxy,source:logo}]);sent();const m=h.messages.get(a.frontDraftId!);
+    if(edit==='href edit')m.body=m.body.replace('href="https://agency.example/"','href="https://different.example/"');
+    if(edit==='image edit')m.body=m.body.replace(proxy,'https://different.example/withdrawn.png');
+    if(edit==='forged proxy')m.body=m.body.replace('EXACT_NATIVE_IMAGE','DIFFERENT_SIGNED_IMAGE');
+    if(edit==='extra signature text')m.body=m.body.replace('Pat Producer','Pat Producer - Proposal withdrawn');
+    if(edit==='marker injection'){const fake=createHash('sha256').update(JSON.stringify(['a','href','https://agency.example/'])).digest('hex');m.body=m.body.replace('<a href="https://agency.example/">',`&#1;${fake}&#2;<a>`);}
+    const result=await reconcileBusinessDraft({accountId:'a1',attemptId:a.id},'actor');expect(result).toMatchObject({state:'SENT',sentWithChanges:edit!=='unchanged'});expect(h.models.get('Quote:q1').status).toBe(edit==='unchanged'?'PRESENTED':'QUOTED');
+  });
+  it('does not learn image-proxy translations when adopting a lost-response message',async()=>{
+    const logo='https://agency.example/logo.png';h.signatureHtml='<div>Pat Producer<img src="'+logo+'" alt="Agency"></div>';
+    const p=await previewBusinessDelivery(selection,'actor'),implementation=h.front.getMockImplementation()!;h.front.mockImplementation(async(path:string,method='GET',body?:FormData)=>{const m=await implementation(path,method,body);if(method==='POST'){m.body=m.body.replace(logo,`https://ext.frontusercontent.com/v1/proxy/UNKNOWN_IMAGE#${logo}`);throw new ProviderError('Lost response',0,true);}return m;});
+    const a=await prepareBusinessDraft(prepareInput(p),'actor');await expect(reconcileBusinessDraft({accountId:'a1',attemptId:a.id,recoveryMessageId:'msg_draft'},'actor')).rejects.toThrow('does not match');expect(h.rows.get(a.id).data).toMatchObject({state:'UNKNOWN'});expect(h.rows.get(a.id).data.nativeImageAliases).toBeUndefined();expect(h.rows.get(a.id).data.frontDraftId).toBeUndefined();expect(h.posts).toBe(1);
+  });
+  it.each(['wrapper overlay','table overlay','nested body','nested html','negative margin','inset','z-index','transform','CSS escape','CSS comment','CSS variable','direction','event attribute'])('rejects signature layout that could obscure authored terms: %s',async edit=>{
+    h.signatureHtml='<table style="border-collapse:collapse"><tbody><tr><td>Pat Producer</td></tr></tbody></table>';
+    const p=await previewBusinessDelivery(selection,'actor'),a=await prepareBusinessDraft(prepareInput(p),'actor');sent();const m=h.messages.get(a.frontDraftId!);
+    if(edit==='wrapper overlay')m.body=m.body.replace('class="front-signature"','class="front-signature" style="position:fixed;inset:0;background:white;z-index:9999"');
+    else if(edit==='nested body')m.body=m.body.replace('<table','<body style="color:white;background:white"><table').replace('</table>','</table></body>');
+    else if(edit==='nested html')m.body=m.body.replace('<table','<html><table').replace('</table>','</table></html>');
+    else if(edit==='direction')m.body=m.body.replace('<td>','<td dir="rtl">');
+    else if(edit==='event attribute')m.body=m.body.replace('<table','<table onclick="document.body.hidden=true"');
+    else {const css:Record<string,string>={'table overlay':'position:fixed;inset:0;background:white;z-index:9999','negative margin':'margin-top:-900px','inset':'inset:0','z-index':'z-index:9999','transform':'transform:translateY(-900px)','CSS escape':'pos\\69tion:fixed','CSS comment':'pos/**/ition:fixed','CSS variable':'margin:var(--escape)'};m.body=m.body.replace('border-collapse:collapse',`border-collapse:collapse;${css[edit]}`);}
+    expect(await reconcileBusinessDraft({accountId:'a1',attemptId:a.id},'actor')).toMatchObject({state:'SENT',sentWithChanges:true});expect(h.models.get('Quote:q1').status).toBe('QUOTED');
+  });
+  it('accepts harmless native whitespace, entity and inline formatting conversions',async()=>{
+    h.models.get('Account:a1').name='Willow & Oak HOA';const p=await previewBusinessDelivery(selection,'actor'),implementation=h.front.getMockImplementation()!;
+    h.front.mockImplementation(async(path:string,method='GET',body?:FormData)=>{const m=await implementation(path,method,body);if(method==='POST'){m.body=m.body.replace(/&amp;/g,'&#38;').replace('Please review','Please <strong>review</strong>');m.text=m.text.replace(/&amp;/g,'&').replace(/\n/g,'\r\n');}return m;});
+    const a=await prepareBusinessDraft(prepareInput(p),'actor');expect(a.state).toBe('DRAFT');sent();expect(await reconcileBusinessDraft({accountId:'a1',attemptId:a.id},'actor')).toMatchObject({state:'SENT',sentWithChanges:false});expect(h.models.get('Quote:q1').status).toBe('PRESENTED');
+  });
+  it('records an unchanged NEW draft merged into its canonical conversation as exact presentation',async()=>{
+    const p=await previewBusinessDelivery(selection,'actor'),a=await prepareBusinessDraft(prepareInput(p),'actor'),implementation=h.front.getMockImplementation()!;sent();h.messages.get(a.frontDraftId!).conversation.id='cnv_merged';
+    h.front.mockImplementation(async(path:string,method='GET',body?:FormData)=>path==='/conversations/cnv_private'?{id:'cnv_merged'}:implementation(path,method,body));
+    expect(await reconcileBusinessDraft({accountId:'a1',attemptId:a.id},'actor')).toMatchObject({state:'SENT',sentWithChanges:false,conversationId:'cnv_merged'});expect(h.models.get('Quote:q1').status).toBe('PRESENTED');expect([...h.rows.keys()].filter(k=>k.startsWith('front-link:cnv_merged'))).toEqual([]);
+  });
+  it('freezes an existing reply subject before creation and preserves unchanged native reply content',async()=>{
+    h.threadSubject='Existing association enquiry';const p=await previewBusinessDelivery({...selection,conversationId:'cnv_old'},'actor');expect(p.subject).toBe(h.threadSubject);
+    const a=await prepareBusinessDraft(prepareInput(p),'actor');expect(a.state).toBe('DRAFT');const form=h.front.mock.calls.find(c=>c[1]==='POST')![2] as FormData;expect(form.get('subject')).toBe('Existing association enquiry');sent();expect(await reconcileBusinessDraft({accountId:'a1',attemptId:a.id},'actor')).toMatchObject({state:'SENT',sentWithChanges:false});expect(h.models.get('Quote:q1').status).toBe('PRESENTED');
+  });
+  it('invalidates a preview when the verified existing thread subject changes',async()=>{
+    h.threadSubject='Existing association enquiry';const p=await previewBusinessDelivery({...selection,conversationId:'cnv_client'},'actor');h.threadSubject='A different enquiry';await expect(prepareBusinessDraft(prepareInput(p),'actor')).rejects.toThrow('thread');expect(h.posts).toBe(0);
+  });
+  it('fences an existing merged shared thread after canonical link materialization',async()=>{
+    const p=await previewBusinessDelivery({...selection,conversationId:'cnv_client'},'actor'),a=await prepareBusinessDraft(prepareInput(p),'actor'),implementation=h.front.getMockImplementation()!;sent();h.messages.get(a.frontDraftId!).conversation.id='cnv_merged';
+    h.front.mockImplementation(async(path:string,method='GET',body?:FormData)=>path==='/conversations/cnv_client'?{id:'cnv_merged'}:implementation(path,method,body));
+    h.conversationResolver=async id=>{expect(id).toBe('cnv_client');h.rows.set('front-link:cnv_merged',row('LINK','front-link:cnv_merged',{accountId:'a1',purpose:'PROSPECT',conversationId:'cnv_merged'},{accountId:'a1'}));return{id:'cnv_merged'};};
+    expect(await reconcileBusinessDraft({accountId:'a1',attemptId:a.id},'actor')).toMatchObject({state:'SENT',sentWithChanges:false,conversationId:'cnv_merged'});expect(h.models.get('Quote:q1').status).toBe('PRESENTED');
+  });
+  it('uses one verified provider message snapshot for canonical reconciliation',async()=>{
+    const p=await previewBusinessDelivery(selection,'actor'),a=await prepareBusinessDraft(prepareInput(p),'actor');sent();const implementation=h.front.getMockImplementation()!;let reads=0;
+    h.front.mockImplementation(async(path:string,method='GET',body?:FormData)=>{if(path==='/messages/msg_draft'&&++reads>1)throw new Error('A second snapshot must not be combined with the first conversation proof');return implementation(path,method,body);});
+    expect(await reconcileBusinessDraft({accountId:'a1',attemptId:a.id},'actor')).toMatchObject({state:'SENT',sentWithChanges:false});expect(reads).toBe(1);
+  });
+  it.each(['stored','actual','canonical'])('holds merged NEW presentation if the %s conversation is foreign',async where=>{
+    const p=await previewBusinessDelivery(selection,'actor'),a=await prepareBusinessDraft(prepareInput(p),'actor'),implementation=h.front.getMockImplementation()!;sent();h.messages.get(a.frontDraftId!).conversation.id='cnv_actualalias';
+    const id=where==='stored'?'cnv_private':where==='actual'?'cnv_actualalias':'cnv_merged';h.rows.set(`front-link:${id}`,row('LINK',`front-link:${id}`,{accountId:'foreign',purpose:'PROSPECT'}));
+    h.front.mockImplementation(async(path:string,method='GET',body?:FormData)=>['/conversations/cnv_private','/conversations/cnv_actualalias'].includes(path)?{id:'cnv_merged'}:implementation(path,method,body));
+    expect((await reconcileBusinessDraft({accountId:'a1',attemptId:a.id},'actor')).state).toBe('UNKNOWN');expect(h.models.get('Quote:q1').status).toBe('QUOTED');
+  });
+  it.each(['subject','withdrawal','quoted withdrawal','hidden facts','hidden color','font color','direction'])('does not project a sent %s edit even when all original facts/reference remain',async edit=>{
+    const p=await previewBusinessDelivery(selection,'actor'),a=await prepareBusinessDraft(prepareInput(p),'actor');sent();const m=h.messages.get(a.frontDraftId!);
+    if(edit==='subject')m.subject+=' - WITHDRAWN';
+    else if(edit==='hidden facts')m.body=m.body.replace('Premium: $1,200.00','<span style="display:none">Premium: $1,200.00</span>');
+    else if(edit==='font color')m.body=m.body.replace('Coverage is subject to','<font color="white">Coverage is subject to</font>');
+    else if(edit==='direction')m.body=m.body.replace('Premium: $1,200.00','<span dir="rtl">Premium: $1,200.00</span>');
+    else if(edit==='hidden color')m.body=m.body.replace('Premium: $1,200.00','<span style="color:white;background:white">Premium: $1,200.00</span>');
+    else {m.body+=`<p>${edit==='quoted withdrawal'?'On Tuesday someone wrote: ':''}The attached proposal is withdrawn. Do not accept it.</p>`;m.text+='\nThe attached proposal is withdrawn. Do not accept it.';}
+    expect(p.facts.every(f=>m.text.includes(f))).toBe(true);expect(m.body).toContain(a.reference);expect(await reconcileBusinessDraft({accountId:'a1',attemptId:a.id},'actor')).toMatchObject({state:'SENT',sentWithChanges:true});expect(h.models.get('Quote:q1').status).toBe('QUOTED');
+  });
+  it.each([true,false])('holds a known non-draft inbound self-copy without unlocking another send (legacy=%s)',async legacy=>{
+    const p=await previewBusinessDelivery(selection,'actor'),a=await prepareBusinessDraft(prepareInput(p),'actor');sent();const m=h.messages.get(a.frontDraftId!);delete m.is_draft;m.draft_mode=null;m.is_inbound=true;
+    if(legacy){delete h.rows.get(a.id).data.contentProof;delete h.rows.get(p.previewId).data.contentProof;}
+    expect(await reconcileBusinessDraft({accountId:'a1',attemptId:a.id},'actor')).toMatchObject({state:'UNKNOWN',frontDraftId:a.frontDraftId});expect(h.models.get('Quote:q1').status).toBe('QUOTED');const next=await previewBusinessDelivery(selection,'actor');await expect(prepareBusinessDraft(prepareInput(next,'repeat'),'actor')).rejects.toThrow('earlier draft attempt');expect(h.posts).toBe(1);
+  });
+  it('never learns missing legacy content proof from a current known message',async()=>{
+    const p=await previewBusinessDelivery(selection,'actor'),a=await prepareBusinessDraft(prepareInput(p),'actor');delete h.rows.get(a.id).data.contentProof;delete h.rows.get(p.previewId).data.contentProof;
+    expect((await reconcileBusinessDraft({accountId:'a1',attemptId:a.id},'actor')).state).toBe('DRAFT');expect(h.rows.get(a.id).data.contentProof).toBeUndefined();sent();expect(await reconcileBusinessDraft({accountId:'a1',attemptId:a.id},'actor')).toMatchObject({state:'SENT',sentWithChanges:true});expect(h.models.get('Quote:q1').status).toBe('QUOTED');
+  });
+  it.each(['subject','withdrawal','missing legacy proof'])('does not adopt an unknown NEW message with %s',async edit=>{
+    const p=await previewBusinessDelivery(selection,'actor'),implementation=h.front.getMockImplementation()!;h.front.mockImplementation(async(path:string,method='GET',body?:FormData)=>{const m=await implementation(path,method,body);if(method==='POST')throw new ProviderError('Lost response',0,true);return m;});
+    const a=await prepareBusinessDraft(prepareInput(p),'actor'),m=h.messages.get('msg_draft');
+    if(edit==='subject')m.subject+=' - WITHDRAWN';else if(edit==='withdrawal')m.body+='<p>The proposal is withdrawn.</p>';else {delete h.rows.get(a.id).data.contentProof;delete h.rows.get(p.previewId).data.contentProof;}
+    await expect(reconcileBusinessDraft({accountId:'a1',attemptId:a.id,recoveryMessageId:'msg_draft'},'actor')).rejects.toThrow('does not match');expect(h.rows.get(a.id).data).toMatchObject({state:'UNKNOWN'});expect(h.rows.get(a.id).data.frontDraftId).toBeUndefined();expect(h.posts).toBe(1);expect(h.models.get('Quote:q1').status).toBe('QUOTED');
+  });
   it('offers current contacts and PDFs even when the preparing actor mailbox is unavailable',async()=>{
     h.identity.mockRejectedValue(new Error('Personal mailbox needs setup'));
     const result=await businessDeliveryContext({accountId:'a1'},'actor');
@@ -115,8 +208,8 @@ describe('reviewed Front business handoff',()=>{
   it('records definite Front rejection as a failed attempt without a sent timestamp',async()=>{
     const p=await previewBusinessDelivery(selection,'actor');h.front.mockRejectedValue(new ProviderError('Front returned 403',403,false));const a=await prepareBusinessDraft(prepareInput(p),'actor');expect(a).toMatchObject({state:'FAILED'});expect(a.sentAt).toBeUndefined();
   });
-  it('requires actual actor, recipient and exact file evidence, then preserves first presentation on resend',async()=>{
-    const p=await previewBusinessDelivery(selection,'actor'),a=await prepareBusinessDraft(prepareInput(p),'actor');const comm=sent();h.messages.get('msg_draft').recipients.push({role:'cc',handle:'unexpected@example.com'});await applyBusinessAttempt(comm);expect(h.models.get('Quote:q1').status).toBe('QUOTED');h.messages.get('msg_draft').recipients.pop();await applyBusinessAttempt(comm);expect(h.models.get('Quote:q1')).toMatchObject({status:'PRESENTED',presentedAt:comm.at});expect((await historyBusinessDeliveries({accountId:'a1'},'actor')).items[0]).toMatchObject({state:'SENT',sentAt:comm.at});
+  it('preserves first presentation after exact complete evidence and a reviewed resend',async()=>{
+    const p=await previewBusinessDelivery(selection,'actor'),a=await prepareBusinessDraft(prepareInput(p),'actor');const comm=sent();await applyBusinessAttempt(comm);expect(h.models.get('Quote:q1')).toMatchObject({status:'PRESENTED',presentedAt:comm.at});expect((await historyBusinessDeliveries({accountId:'a1'},'actor')).items[0]).toMatchObject({state:'SENT',sentAt:comm.at});
     vi.setSystemTime(new Date('2026-11-04T16:00:00Z'));const next=await previewBusinessDelivery(selection,'actor'),second=await prepareBusinessDraft(prepareInput(next,'request_2'),'actor');expect(second.state).toBe('DRAFT');const resend=sent(second.frontDraftId!,'2026-11-04T17:00:00Z');await applyBusinessAttempt(resend);expect(h.models.get('Quote:q1').presentedAt).toBe(comm.at);expect((await historyBusinessDeliveries({accountId:'a1'},'actor')).items.filter(a=>a.state==='SENT')).toHaveLength(2);expect(a.frontUrl).toBe('https://app.frontapp.com/open/cnv_private');
   });
   it('marks late failure per attempt while preserving the historical sent timestamp',async()=>{
@@ -199,8 +292,9 @@ describe('reviewed Front business handoff',()=>{
     for(const id of ['d1','d2']){const key=`documents/ACCOUNT/a1/${id}/carrier.pdf`;h.models.set(`Document:${id}`,{id,entityType:'ACCOUNT',entityId:'a1',name:'Carrier.pdf',contentType:'application/pdf',s3Key:key,updatedAt:NOW});h.objects.set(key,PDF);}
     const p=await previewBusinessDelivery({...selection,documentIds:['d1','d2']},'actor');await prepareBusinessDraft(prepareInput(p),'actor');
     const comm=sent();h.attachment.mockImplementation(async(id:string)=>id==='fil_2'?new TextEncoder().encode('%PDF-1.7 replaced test artifact'):PDF);
-    await applyBusinessAttempt(comm);expect(h.models.get('Quote:q1').status).toBe('QUOTED');expect((await historyBusinessDeliveries({accountId:'a1'},'actor')).items[0].state).toBe('DRAFT');
-    h.attachment.mockResolvedValue(PDF);await applyBusinessAttempt(comm);expect(h.models.get('Quote:q1').status).toBe('PRESENTED');
+    await applyBusinessAttempt(comm);expect(h.models.get('Quote:q1').status).toBe('QUOTED');expect((await historyBusinessDeliveries({accountId:'a1'},'actor')).items[0]).toMatchObject({state:'SENT',sentWithChanges:true});
+    h.attachment.mockResolvedValue(PDF);await applyBusinessAttempt(comm);expect(h.models.get('Quote:q1').status).toBe('QUOTED');
+    const next=await previewBusinessDelivery({...selection,documentIds:['d1','d2']},'actor'),resend=await prepareBusinessDraft(prepareInput(next,'clean_resend'),'actor');await applyBusinessAttempt(sent(resend.frontDraftId!));expect(h.models.get('Quote:q1').status).toBe('PRESENTED');
   });
   it('reconciles an ambiguous reply using only the known conversation without creating another draft',async()=>{
     const p=await previewBusinessDelivery({...selection,conversationId:'cnv_client'},'actor'),implementation=h.front.getMockImplementation()!;
@@ -260,7 +354,7 @@ describe('reviewed Front business handoff',()=>{
     await expect(reconcileBusinessDraft({accountId:'a1',attemptId:a.id,recoveryMessageId:'msg_draft'},'actor')).rejects.toThrow('assignment changed');
     await expect(reconcileBusinessDraft({accountId:'a1',attemptId:a.id,recoveryMessageId:'msg_draft',admin:true} as any,'other')).rejects.toThrow('unavailable');
     h.front.mockClear();const recovered=await reconcileBusinessDraft({accountId:'a1',attemptId:a.id,recoveryMessageId:'msg_draft'},'owner',{admin:true});expect(recovered).toMatchObject({state:'DRAFT',from:'actor@example.com'});expect(h.front.mock.calls.every(c=>c[0]==='/messages/msg_draft')).toBe(true);expect(h.identity.mock.calls.at(-1)![0]).toMatchObject({userId:'actor',frontId:'tea_actor',frontChannelId:'cha_personal'});expect(h.rows.get(a.id).data).toMatchObject({actor:'actor',lastCheckedBy:'owner'});
-    h.rows.set('eligibility:other',row('ELIGIBILITY','eligibility:other',{userId:'other',enabled:true,frontId:'tea_other'}));h.identity.mockResolvedValue({frontId:'tea_other',channelId:'cha_other',senderEmail:'other@example.com',signatureId:'sig_other'});
+    h.rows.set('eligibility:other',row('ELIGIBILITY','eligibility:other',{userId:'other',enabled:true,frontId:'tea_other'}));h.identity.mockResolvedValue({frontId:'tea_other',channelId:'cha_other',senderEmail:'other@example.com',signatureId:'sig_other',verifiedSignatureHtml:SIGNATURE});
     h.front.mockImplementation(async(path:string,method='GET',body?:FormData)=>{const result=await implementation(path,method,body);if(method==='POST')result.recipients[0].handle='other@example.com';return result;});
     const p2=await previewBusinessDelivery(selection,'other');expect((await prepareBusinessDraft(prepareInput(p2,'other_request'),'other')).state).toBe('DRAFT');expect(h.posts).toBe(2);
   });
