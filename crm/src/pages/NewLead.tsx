@@ -38,6 +38,17 @@ import {
 } from "../lib/enums";
 import "./NewLead.css";
 
+const PRIMARY_TEXT_LIMITS = [
+  ["name", "Name", 200, "new-lead-name"],
+  ["address", "Street address", 500, "new-lead-address"],
+  ["city", "City", 500, "new-lead-city"],
+  ["state", "State", 500, "new-lead-state"],
+  ["zip", "ZIP", 500, "new-lead-zip"],
+  ["currentAgent", "Current agent / broker", 500, "new-lead-current-agent"],
+  ["currentPolicyExpiration", "Current policy expiration", 500, "new-lead-expiration"],
+  ["notes", "Notes", 10000, "new-lead-notes"],
+] as const;
+
 export default function NewLead() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -119,9 +130,10 @@ export default function NewLead() {
 
   function focusField(id: string) {
     const field = formRef.current?.querySelector<HTMLElement>(`#${id}`);
-    const section = field?.closest('details');
+    const input = field?.matches('input, select, textarea') ? field : field?.querySelector<HTMLElement>('input, select, textarea');
+    const section = (input ?? field)?.closest('details');
     if (section) section.open = true;
-    field?.focus();
+    input?.focus();
   }
 
   async function save() {
@@ -129,6 +141,13 @@ export default function NewLead() {
     if (!form.name.trim()) {
       setError("Name is required.");
       focusField('new-lead-name');
+      return;
+    }
+    const tooLong = PRIMARY_TEXT_LIMITS.find(([key, , limit]) => form[key].trim().length > limit);
+    if (tooLong) {
+      const [, label, limit, id] = tooLong;
+      setError(`${label} must be ${limit.toLocaleString("en-US")} characters or fewer.`);
+      focusField(id);
       return;
     }
     const problems = validateAccountFields(form);
@@ -422,7 +441,7 @@ export default function NewLead() {
             <summary><span className="new-lead-disclosure-copy"><span className="new-lead-disclosure-title">Property & current coverage</span><span className="new-lead-hint">{propertySummary || "Address, units, insured value and renewal details"}</span></span><span className="new-lead-optional">Optional</span></summary>
             <div className="new-lead-disclosure-body">
               <div className="new-lead-grid new-lead-property-grid">
-                <label className="field new-lead-address-field" onKeyDown={event => {
+                <label id="new-lead-address" className="field new-lead-address-field" onKeyDown={event => {
                   // Enter selects a Places suggestion; it must not create the lead.
                   if (event.key === 'Enter') event.preventDefault();
                 }}>

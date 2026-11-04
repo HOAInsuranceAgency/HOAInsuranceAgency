@@ -9,6 +9,9 @@ export function LeadDraftScope({ userId, role, children }: Scope & { children: R
 const PREFIX = "hoa-crm:new-lead-draft:v1:";
 const MAX_AGE = 24 * 60 * 60 * 1000;
 export const MAX_DRAFT_CHARS = 40000, MAX_DRAFT_FIELD_CHARS = 2000, MAX_DRAFT_ATTACHMENTS = 1000;
+// A known record ID must fit even when the existing basic snapshot is full.
+// The fixed JSON key/quotes take 16 characters; IDs contain no escaped text.
+export const MAX_DRAFT_ENVELOPE_CHARS = MAX_DRAFT_CHARS + 128 + 16;
 // Deliberately exclude notes, financial values and file contents from recovery.
 export const DRAFT_FIELDS = ["type", "propertyType", "name", "contactName", "contactType", "contactEmail", "contactPhone", "address", "city", "state", "zip", "unitCount", "currentAgent", "currentPolicyExpiration", "leadSource"] as const;
 type Fields = Record<typeof DRAFT_FIELDS[number], string>;
@@ -44,13 +47,14 @@ function validDraft(candidate: unknown): Draft | null {
     // Older snapshots did not record whether a request reached the server.
     attempted: value.attempted ?? true, ...(value.existingId ? { existingId: value.existingId } : {}),
   };
-  return JSON.stringify(result).length <= MAX_DRAFT_CHARS ? result : null;
+  const baseLength = JSON.stringify({ ...result, existingId: undefined }).length;
+  return baseLength <= MAX_DRAFT_CHARS && JSON.stringify(result).length <= MAX_DRAFT_ENVELOPE_CHARS ? result : null;
 }
 function read(key: string | null): Draft | null {
   if (!key) return null;
   try {
     const raw = sessionStorage.getItem(key);
-    if (!raw || raw.length > MAX_DRAFT_CHARS) return null;
+    if (!raw || raw.length > MAX_DRAFT_ENVELOPE_CHARS) return null;
     return validDraft(JSON.parse(raw));
   } catch { return null; }
 }
@@ -77,20 +81,28 @@ export function useNewLeadDraft(fields: Fields, requestId: string, attachmentCou
       setBackedUp(true); setUnavailable(false);
     } catch { setBackedUp(false); setUnavailable(true); }
   }
-  function markAttempted() {
-    metadata.current.attempted = true;
-    // Mark a recoverable prior snapshot too when the newest fields are too
-    // large. Preserve its valid fields instead of replacing it with bad data.
+  function persistMetadata() {
+    // Keep known creation metadata with the previous valid same-request
+    // snapshot when newer fields cannot be backed up. The metadata must fit
+    // the same reader limits; never replace a valid snapshot with bad JSON.
     if (key) {
       const previous = read(key);
       if (previous?.requestId === requestId) {
-        try { sessionStorage.setItem(key, JSON.stringify({ ...previous, attempted: true })); } catch { /* persist reports unavailable below. */ }
+        const fallback = validDraft({ ...previous, ...metadata.current });
+        if (fallback) {
+          try { sessionStorage.setItem(key, JSON.stringify(fallback)); } catch { /* persist reports unavailable below. */ }
+        }
       }
     }
+  }
+  function markAttempted() {
+    metadata.current.attempted = true;
+    persistMetadata();
     persist();
   }
   function rememberCreated(existingId: string) {
     metadata.current = { attempted: true, existingId };
+    persistMetadata();
     persist();
   }
   useEffect(() => {

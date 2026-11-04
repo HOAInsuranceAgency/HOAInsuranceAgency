@@ -326,18 +326,25 @@ it("reports an oversized latest draft honestly and retains the last valid detail
 
 it("keeps the unavailable-backup warning visible while reconciling an oversized latest draft", async () => {
   mocks.accountGet.mockResolvedValue({ data: { ...account, id: "new-lead", name: "Earlier stored name" } });
-  mount(); typeName("Last recoverable name");
+  const first = mount(); typeName("Last recoverable name");
   fireEvent.change(screen.getByLabelText("Lead source *"), { target: { value: "ORGANIC_WEBSITE" } });
-  typeName("x".repeat(2001));
+  fireEvent.change(screen.getByLabelText("Contact name"), { target: { value: "Last recoverable contact" } });
+  fireEvent.change(screen.getByLabelText("Contact name"), { target: { value: "x".repeat(2001) } });
   await screen.findByText(/Your latest details could not be backed up/);
   fireEvent.click(screen.getByRole("button", { name: "Create lead" }));
   await screen.findByText(/latest draft details have not been confirmed as saved/);
   expect(screen.getByRole("button", { name: "Review saved lead in new tab" })).toBeInTheDocument();
   expect(screen.getByText(/Your latest details could not be backed up/)).toBeVisible();
-  expect(JSON.parse(sessionStorage.getItem(drafts()[0])!).fields.name).toBe("Last recoverable name");
-  expect(name()).toHaveValue("x".repeat(2001));
+  expect(JSON.parse(sessionStorage.getItem(drafts()[0])!)).toMatchObject({ existingId: "new-lead", fields: { name: "Last recoverable name", contactName: "Last recoverable contact" } });
+  expect(screen.getByLabelText("Contact name")).toHaveValue("x".repeat(2001));
   expect(mocks.contactCreate).not.toHaveBeenCalled();
   expect(mocks.upload).not.toHaveBeenCalled();
+  first.unmount(); mount();
+  fireEvent.click(screen.getByRole("button", { name: "Recover lead details" }));
+  expect(screen.getByRole("button", { name: "Review saved lead in new tab" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Create lead" })).not.toBeInTheDocument();
+  expect(screen.getByLabelText("Contact name")).toHaveValue("Last recoverable contact");
+  expect(mocks.request.mock.calls.filter(([op]) => op === "createLead")).toHaveLength(1);
 });
 
 it.each(["creation", "verification"])("does not restore an old user's draft or start secondary writes after unmount during %s", async phase => {
