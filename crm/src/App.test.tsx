@@ -40,12 +40,12 @@ vi.mock("./lib/client", async () => ({
 // with local state makes retained admin-page state visible when the active
 // role changes while the route remains /leads.
 vi.mock("./pages/AccountsList", () => ({
-  default: function AccountsList() {
+  default: function AccountsList({ stage, viewScope }: { stage: string; viewScope?: string }) {
     const isAdmin = useIsAdmin();
     const [note, setNote] = useState("");
     useUnsavedChanges(!!note, { onDiscard: () => setNote("") });
     return (
-      <section>
+      <section data-view-scope={viewScope} data-stage={stage}>
         <h1>{isAdmin ? "All leads" : "My leads"}</h1>
         {isAdmin && <button>Admin control</button>}
         {useIsOwner() && <span>Owner access</span>}
@@ -96,6 +96,20 @@ const renderApp = (path = "/") =>
 const renderProtectedApp = () => render(<RouterProvider router={createMemoryRouter([
   { path: "*", element: <EditProtectionProvider><App /></EditProtectionProvider> },
 ], { initialEntries: ["/leads"] })} />);
+
+it("scopes lead and client preferences to the current user's exact active role", async () => {
+  renderApp("/leads");
+  let page = (await screen.findByRole("heading", { name: "All leads" })).closest("section")!;
+  expect(page).toHaveAttribute("data-view-scope", "user-one:ADMIN");
+  expect(page).toHaveAttribute("data-stage", "LEAD");
+  fireEvent.change(screen.getByRole("combobox", { name: "Active role" }), { target: { value: "PRODUCER" } });
+  page = (await screen.findByRole("heading", { name: "My leads" })).closest("section")!;
+  expect(page).toHaveAttribute("data-view-scope", "user-one:PRODUCER");
+  fireEvent.click(screen.getByRole("link", { name: "Clients" }));
+  page = (await screen.findByRole("heading", { name: "My leads" })).closest("section")!;
+  expect(page).toHaveAttribute("data-view-scope", "user-one:PRODUCER");
+  expect(page).toHaveAttribute("data-stage", "CLIENT");
+});
 
 function deferred<T>() {
   let resolve!: (value: T) => void;

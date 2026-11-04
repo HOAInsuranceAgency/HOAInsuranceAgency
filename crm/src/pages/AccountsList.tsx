@@ -22,14 +22,21 @@ import { useAgencyDay } from '../lib/useAgencyDay';
 import { useRefreshOnReturn } from '../lib/useRefreshOnReturn';
 import { acquisitionLabel, websiteFormLabel } from '../../../shared/leadSource';
 import { formatCommission, pendingCommission } from '../../../shared/quotePackages';
+import { LEAD_VIEWS, type LeadView } from '../lib/accountListView';
+import { useAccountListPosition, useAccountListView } from '../lib/useAccountListView';
 
-const LEAD_VIEWS = ['Active', 'Snoozed', 'Follow-up due', 'All leads'] as const;
-type LeadView = typeof LEAD_VIEWS[number];
-
-export default function AccountsList({ stage }: { stage: "LEAD" | "CLIENT" }) {
+type AccountsListProps = { stage: 'LEAD' | 'CLIENT'; viewScope?: string };
+export default function AccountsList(props: AccountsListProps) {
   const isAdmin = useIsAdmin();
-  const [salesperson, setSalesperson] = useState('');
-  const [leadView, setLeadView] = useState<LeadView>('Active');
+  return <AccountList key={`${props.viewScope ?? 'session'}:${props.stage}:${isAdmin}`} {...props} />;
+}
+
+function AccountList({ stage, viewScope }: AccountsListProps) {
+  const isAdmin = useIsAdmin();
+  const view = useAccountListView(stage, isAdmin, viewScope);
+  const { leadView } = view;
+  const setLeadView = (leadView: LeadView) => view.update({ leadView });
+  const setSalesperson = (salesperson: string) => view.update({ salesperson });
   const [notice, setNotice] = useState('');
   const viewId = useId();
   const navigate = useNavigate();
@@ -43,9 +50,13 @@ export default function AccountsList({ stage }: { stage: "LEAD" | "CLIENT" }) {
     setData: resource.setCommercial,
   };
   const quoteResource = { data: resource.data.quotes, error: resource.data.quoteError };
+  const salespersonAvailable = !loaded || loading || !!error || commercial.data.team.some(teammate => teammate.salesperson && teammate.userId === view.salesperson);
+  // A stale shared filter must not leave a hidden selection or an empty work list.
+  const salesperson = salespersonAvailable ? view.salesperson : '';
   useEffect(() => {
-    if (loaded && !loading && !error && salesperson && !commercial.data.team.some(teammate => teammate.salesperson && teammate.userId === salesperson)) setSalesperson('');
-  }, [loaded, loading, error, salesperson, commercial.data.team]);
+    if (!salespersonAvailable && view.salesperson) view.update({ salesperson: '' });
+  }, [salespersonAvailable, view.salesperson]);
+  useAccountListPosition(view.storageKey, { leadView, salesperson, sortKey: view.sortKey, dir: view.dir }, loaded && !error);
   // Keep authorized rows on screen while checking for changes.
   // Native selects and other row editors still defer focus-triggered refreshes.
   const onInteractionChange = useRefreshOnReturn(refetchAccounts, true, loading);
@@ -116,7 +127,7 @@ export default function AccountsList({ stage }: { stage: "LEAD" | "CLIENT" }) {
       renewal: (a) => renewalOf(a),
       followUp: (a) => a.stage === 'LEAD' ? snoozeOf(a)?.followUpOn : null,
     },
-    "renewal"
+    "renewal", "asc", { sortKey: view.sortKey, dir: view.dir, onChange: (sortKey, dir) => view.update({ sortKey, dir }) },
   );
 
   const label = stage === "LEAD" ? "Leads" : "Clients";
@@ -143,6 +154,7 @@ export default function AccountsList({ stage }: { stage: "LEAD" | "CLIENT" }) {
 
       <div className="toolbar">
         <button className="secondary" disabled={loading} onClick={() => void refetchAccounts()} aria-label={`Refresh ${label.toLowerCase()}`}>{loading && loaded ? 'Refreshing…' : 'Refresh'}</button>
+        {(leadView !== 'Active' || salesperson || sortKey !== 'renewal' || dir !== 'asc') && <button className="secondary" onClick={view.reset}>Reset view</button>}
         {isAdmin && <label className="field">Salesperson<select value={salesperson} onChange={e => setSalesperson(e.target.value)}><option value="">All salespeople</option>{commercial.data.team.filter(t => t.salesperson).map(t => <option key={t.userId} value={t.userId}>{t.name}</option>)}</select></label>}
         <ReportDownload disabled={loading || !loaded || !!error || !!refreshError || stage === 'LEAD' && !!quoteResource.error} report={{ title: label, filters: [isAdmin ? `Salesperson: ${commercial.data.team.find(t => t.userId === salesperson)?.name ?? 'All'}` : 'All displayed data', ...(stage === 'LEAD' ? [`View: ${leadView}`] : [])].join(' · '), sections: [{ title: label, columns: ['Name', 'Type', 'Contact', 'City', 'State', ...(isAdmin ? ['Salesperson'] : []), ...(stage === 'LEAD' ? [ 'Lead source', 'Website form', 'Estimated opportunity (USD)', 'Pending commission (USD)', 'Commission basis', 'Entered', 'Follow-up date', 'Follow-up note'] : []), 'Units', 'TIV (USD)', stage === 'LEAD' ? 'Incumbent expires' : 'Renewal'], rows: sorted.map(a => { const f = forecastOf(a), estimate = commercial.data.entries[a.id]?.plan.estimatedCents; return [a.name, a.type, contactOf(a)?.name, a.city, a.state, ...(isAdmin ? [assignee(a, 'salespersonId')] : []), ...(stage === 'LEAD' ? [ acquisitionLabel(a.leadSource, a.source), websiteFormLabel(a.source), estimate == null ? null : estimate / 100, f?.cents == null ? null : f.cents / 100, f?.label, a.createdAt?.slice(0,10), a.stage === 'LEAD' ? snoozeOf(a)?.followUpOn : null, a.stage === 'LEAD' ? snoozeOf(a)?.note : null] : []), a.unitCount, a.totalInsuredValue, renewalOf(a)]; }) }] }} />
         {stage === "LEAD" && (
