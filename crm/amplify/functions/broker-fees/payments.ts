@@ -1,6 +1,6 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { QueryCommand, PutCommand } from '@aws-sdk/lib-dynamodb';
-import { brokerFeeCents, feeAllocations, type BrokerFeeAllocation, type BrokerFeeRecord } from '../../../../shared/brokerFees';
+import { brokerFeeCents, feeAllocations, type BrokerFeeAllocation, type BrokerFeeRecord, type BrokerFeeInvoiceSendClaim } from '../../../../shared/brokerFees';
 import { authorizedQuoteTerms } from '../../../../shared/quoteAuthorization';
 import { appendEntry, type CommissionPolicy, type CommissionStatement, type StatementLine } from '../../../../shared/commissions';
 import * as commissions from '../commissions/store';
@@ -47,7 +47,7 @@ export async function assertNoFeeLoanCheckout(fee: BrokerFeeRecord): Promise<Wri
 }
 
 /** Pin the accepted fee before creating any external collection link. */
-export async function reserveFeeInvoice(source:Record<string,unknown>|string,invoiceId:string) {
+export async function reserveFeeInvoice(source:Record<string,unknown>|string,invoiceId:string,totalCents?:number):Promise<BrokerFeeInvoiceSendClaim|undefined> {
   const quoteId=typeof source==='string'?source:String(source.id);
   for(let attempt=0;attempt<5;attempt++) {
     const quote=await getModel<Record<string,unknown>>('Quote',quoteId);
@@ -59,15 +59,77 @@ export async function reserveFeeInvoice(source:Record<string,unknown>|string,inv
     if(!amount)return;
     if(typeof source!=='string'&&authorizedQuoteTerms(source)!==authorizedQuoteTerms(quote))throw new Error('The fee quote changed. Refresh the invoice before sending.');
     const old=await getFee(quoteId);
+    if(old&&(old.submittedCents>0||old.collectedCents>0||old.refundedCents>0))throw new Error('This broker fee already has a submitted or received payment. Review it before preparing another payment link.');
     if(old&&(old.amountCents!==amount||old.terms!==authorizedQuoteTerms(quote))&&(old.submittedCents>0||old.collectedCents>0||old.policyId))throw new Error('The existing fee payment must be reviewed before changing its terms.');
     const unchanged=old?.terms===authorizedQuoteTerms(quote)&&old.amountCents===amount;
     const base:BrokerFeeRecord=unchanged?old!:{id:`fee:${quoteId}`,kind:'FEE',accountId:String(quote.accountId),quoteId,amountCents:amount,terms:authorizedQuoteTerms(quote),version:0,submittedCents:0,collectedCents:0,refundedCents:0};
     const loanGuards = await assertNoFeeLoanCheckout(base);
+    const previousClaim=old?.invoiceSendClaim;
+    if(previousClaim&&previousClaim.invoiceId!==invoiceId){
+      const priorInvoice=await getModel<Record<string,unknown>>('Invoice',previousClaim.invoiceId);
+      if(!priorInvoice||priorInvoice.status!=='VOID'||previousClaim.phase==='PREPARING'&&!previousClaim.linkId)throw new Error('Finish or void the existing broker fee invoice before preparing another payment link.');
+      loanGuards.push(versionCheck(modelTable('Invoice'),priorInvoice as {id:string;updatedAt:string}));
+    }
+    const wantedTotal=totalCents??Number(invoice.stripeLinkAmountCents??amount);
+    if(!Number.isSafeInteger(wantedTotal)||wantedTotal<amount)throw new Error('The broker fee invoice total could not be verified.');
+    const resume=previousClaim?.invoiceId===invoiceId&&previousClaim.phase==='PREPARING';
+    if(resume&&previousClaim.totalCents!==wantedTotal)throw new Error('Payment setup already began with different invoice charges. Resume that send before voiding and reissuing it.');
+    // Stripe retains idempotency keys for at least 24 hours. An uncertain old
+    // creation must be reviewed, rather than minting another perpetual link.
+    if(resume&&!previousClaim.linkId&&(!Number.isFinite(Date.parse(previousClaim.createdAt))||Date.now()-Date.parse(previousClaim.createdAt)>20*60*60*1000))throw new Error('This interrupted payment setup is too old to retry automatically. Review its processor link before issuing another invoice.');
+    const claim:BrokerFeeInvoiceSendClaim=resume?previousClaim:{invoiceId,token:randomUUID(),createdAt:new Date().toISOString(),phase:'PREPARING',totalCents:wantedTotal,previousLinkId:typeof invoice.stripePaymentLinkId==='string'?invoice.stripePaymentLinkId:null};
     const ids=[...new Set([...(base.issuedInvoiceIds??[]),invoiceId])];
     if(ids.length>100)throw new Error('This fee invoice history needs review before another payment is prepared.');
-    try {await transact([feePut({...base,issuedInvoiceIds:ids},old),versionCheck(modelTable('Quote'),quote as {id:string;updatedAt:string}),versionCheck(modelTable('Invoice'),invoice as {id:string;updatedAt:string}),...loanGuards]);return;}
+    try {await transact([feePut({...base,issuedInvoiceIds:ids,invoiceSendClaim:claim},old),versionCheck(modelTable('Quote'),quote as {id:string;updatedAt:string}),versionCheck(modelTable('Invoice'),invoice as {id:string;updatedAt:string}),...loanGuards]);return claim;}
     catch(error){if(!retryable(error)||attempt===4)throw error;}
   }
+}
+
+/** Bind a processor link to the durable owner before it can be delivered. */
+export async function publishFeeInvoiceLink(invoiceId:string,allocations:BrokerFeeAllocation[],token:string,linkId:string,invoiceWrite:Write):Promise<boolean>{
+  if(!allocations.length||allocations.length>25||!linkId)return false;
+  for(let attempt=0;attempt<5;attempt++){
+    const fees=await Promise.all(allocations.map(part=>getFee(part.quoteId)));
+    if(fees.some(fee=>fee?.invoiceSendClaim?.invoiceId!==invoiceId||fee.invoiceSendClaim.token!==token))return false;
+    const invoice=await getModel<Record<string,unknown>>('Invoice',invoiceId);
+    if(invoice?.stripePaymentLinkId===linkId&&['DRAFT','SENT','PROCESSING','PAID'].includes(String(invoice.status))&&fees.every(fee=>fee!.invoiceSendClaim!.linkId===linkId))return true;
+    if(fees.some(fee=>fee!.invoiceSendClaim!.phase!=='PREPARING'))return false;
+    try{await transact([invoiceWrite,...fees.map(fee=>feePut({...fee!,invoiceSendClaim:{...fee!.invoiceSendClaim!,linkId}},fee))]);return true;}
+    catch(error){if(!retryable(error))throw error;if(attempt===4)return false;}
+  }
+  return false;
+}
+
+/** Keep PREPARING through mail/status publication; no clock-based release. */
+export async function completeFeeInvoiceSend(invoiceId:string,allocations:BrokerFeeAllocation[],token:string){
+  if(!allocations.length||allocations.length>25)throw new Error('The broker fee payment allocation needs review.');
+  for(let attempt=0;attempt<5;attempt++){
+    const invoice=await getModel<Record<string,unknown>>('Invoice',invoiceId);
+    if(!invoice||!invoice.stripePaymentLinkId||!['SENT','PROCESSING','PAID'].includes(String(invoice.status)))throw new Error('The invoice changed before its payment setup completed.');
+    const fees=await Promise.all(allocations.map(part=>getFee(part.quoteId)));
+    if(fees.some(fee=>fee?.invoiceSendClaim?.invoiceId!==invoiceId||fee.invoiceSendClaim.token!==token||fee.invoiceSendClaim.linkId!==invoice.stripePaymentLinkId))throw new Error('The broker fee payment setup changed. Review the existing invoice before sending again.');
+    if(fees.every(fee=>fee!.invoiceSendClaim!.phase==='PUBLISHED'))return;
+    try{await transact([...fees.map(fee=>feePut({...fee!,invoiceSendClaim:{...fee!.invoiceSendClaim!,phase:'PUBLISHED' as const}},fee)),versionCheck(modelTable('Invoice'),invoice as {id:string;updatedAt:string})]);return;}
+    catch(error){if(!retryable(error)||attempt===4)throw error;}
+  }
+}
+
+/** Void closes all known Stripe paths first, then atomically releases ownership. */
+export async function feeInvoiceVoidWrites(invoice:Record<string,unknown>):Promise<Write[]>{
+  const parts=feeAllocations(invoice.brokerFeeAllocations),ids=new Set(parts.map(part=>part.quoteId));
+  if(typeof invoice.quoteId==='string')ids.add(invoice.quoteId);
+  if(!ids.size&&invoice.policyId){const policy=await getModel<Record<string,unknown>>('Policy',String(invoice.policyId));if(policy?.quoteId)ids.add(String(policy.quoteId));}
+  if(ids.size>25)throw new Error('The invoice fee history needs review.');
+  const writes:Write[]=[];
+  for(const id of ids){
+    const fee=await getFee(id);if(!fee)continue;
+    const claim=fee.invoiceSendClaim;
+    if(claim&&claim.invoiceId===invoice.id){
+      if(!claim.linkId||claim.linkId!==invoice.stripePaymentLinkId)throw new Error('Payment setup has not finished. Retry Send to recover its payment link before voiding this invoice.');
+      const {invoiceSendClaim:_claim,...next}=fee;writes.push(feePut(next,fee));
+    }else writes.push(versionCheck(table(),fee));
+  }
+  return writes;
 }
 
 /** Keep financing checkout reservations visible even after its invoice is voided. */

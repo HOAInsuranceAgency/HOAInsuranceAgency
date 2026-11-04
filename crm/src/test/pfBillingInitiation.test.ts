@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const m = vi.hoisted(() => ({ send: vi.fn(), list: vi.fn(), lookup: vi.fn(), checkout: vi.fn(), debit: vi.fn(), source: vi.fn(), signed: vi.fn(), fee: vi.fn(), invoices: vi.fn() }));
+const m = vi.hoisted(() => ({ send: vi.fn(), list: vi.fn(), lookup: vi.fn(), checkout: vi.fn(), debit: vi.fn(), source: vi.fn(), signed: vi.fn(), fee: vi.fn(), invoices: vi.fn(), model: vi.fn(), void: vi.fn() }));
 vi.mock("aws-amplify", () => ({ Amplify: { configure: vi.fn() } }));
 vi.mock("@aws-amplify/backend/function/runtime", () => ({
   getAmplifyDataClientConfig: async () => ({ resourceConfig: {}, libraryOptions: {} }),
@@ -20,8 +20,8 @@ vi.mock("stripe", () => ({ default: class {
   checkout = { sessions: { create: m.checkout } };
   paymentIntents = { create: m.debit };
 } }));
-vi.mock("../../amplify/functions/void-invoice/handler", () => ({ handler: vi.fn() }));
-vi.mock("../../amplify/functions/broker-fees/store", async original => ({ ...await original<typeof import("../../amplify/functions/broker-fees/store")>(), getFee: m.fee }));
+vi.mock("../../amplify/functions/void-invoice/handler", () => ({ handler: m.void }));
+vi.mock("../../amplify/functions/broker-fees/store", async original => ({ ...await original<typeof import("../../amplify/functions/broker-fees/store")>(), getFee: m.fee, getModel: m.model }));
 vi.mock("../../amplify/functions/broker-fees/bindValidation", () => ({ assertBrokerFeeSigned: m.signed }));
 import { handler as elect } from "../../amplify/functions/pf-election/handler";
 import { handler as collect } from "../../amplify/functions/pf-autopay/handler";
@@ -40,6 +40,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   process.env.PF_LOAN_TABLE = "Loans";
   process.env.BROKER_FEE_TABLE = "Fees";
+  process.env.ACCESS_TABLES = JSON.stringify({Invoice:"Invoices"});
   process.env.AGENCY_SETTINGS_TABLE = "Settings";
   process.env.STRIPE_SECRET_KEY = "test-placeholder";
   process.env.SITE_URL = "https://example.test";
@@ -52,6 +53,8 @@ beforeEach(() => {
   m.source.mockResolvedValue({ data: {id:"q1",accountId:"account-1",brokerFee:500} });
   m.signed.mockResolvedValue({});
   m.invoices.mockResolvedValue({data:[]});
+  m.model.mockResolvedValue(undefined);
+  m.void.mockResolvedValue({ok:true});
   m.fee.mockResolvedValue({id:"fee:q1",version:1,issuedLoanIds:[loan.id],accountId:"account-1",quoteId:"q1",amountCents:50000,submittedCents:0,collectedCents:0,refundedCents:0});
 });
 
@@ -179,6 +182,53 @@ describe("atomic fee source checks when claiming a financing checkout",()=>{
       return {Item:{premiumFinanceEnabled:true}};
     });
     expect(await elect({arguments:{accept:true,token:loan.electionToken}})).toMatchObject({state:'closed'});
+    expect(m.checkout).not.toHaveBeenCalled();
+  });
+});
+
+
+describe('financing excludes every durably reserved fee invoice',()=>{
+  const parts=[{quoteId:'q1',policyId:'policy-1',amountCents:50000}];
+  const balance={id:'fee:q1',version:3,issuedLoanIds:[loan.id],issuedInvoiceIds:['replacement'],accountId:'account-1',quoteId:'q1',amountCents:50000,submittedCents:0,collectedCents:0,refundedCents:0};
+  const published={id:'replacement',accountId:'account-1',policyId:'policy-1',quoteId:'q1',status:'SENT',updatedAt:'published',stripePaymentLinkId:'plink_replacement',stripeLinkAmountCents:3424208,brokerFeeAllocations:JSON.stringify(parts)};
+  function setup(extra:Record<string,unknown>={}){
+    m.lookup.mockResolvedValue({data:[{...loan,brokerFeeCents:50000,brokerFeeAllocations:JSON.stringify(parts),...extra}]});
+    m.fee.mockResolvedValue({...balance});
+  }
+  it('blocks a paused send after fee reservation even when the GSI has no replacement invoice',async()=>{
+    setup();m.fee.mockResolvedValue({...balance,invoiceSendClaim:{invoiceId:'replacement',token:'owner',phase:'PREPARING',totalCents:3424208,previousLinkId:null}});
+    expect(await elect({arguments:{accept:true,token:loan.electionToken}})).toMatchObject({state:'closed',reason:expect.stringContaining('preparing')});
+    expect(m.checkout).not.toHaveBeenCalled();expect(m.send).not.toHaveBeenCalled();
+  });
+  it('does not reuse a cached checkout while a send remains PREPARING after link storage',async()=>{
+    setup({electionCheckoutUrl:'https://checkout.stripe.test/old',electionCheckoutExpiresAt:'2099-01-01T00:00:00Z',electionCheckoutBillingVersion:3});
+    m.invoices.mockResolvedValue({data:[published]});
+    m.fee.mockResolvedValue({...balance,invoiceSendClaim:{invoiceId:'replacement',token:'owner',phase:'PREPARING',totalCents:3424208,previousLinkId:null,linkId:'plink_replacement'}});
+    expect(await elect({arguments:{accept:true,token:loan.electionToken}})).toMatchObject({state:'closed',reason:expect.stringContaining('preparing')});
+    expect(m.checkout).not.toHaveBeenCalled();expect(m.void).not.toHaveBeenCalled();
+  });
+  it('fails closed for an unpublished DRAFT reservation or missing invoice reference',async()=>{
+    setup();m.model.mockResolvedValue({...published,status:'DRAFT'});
+    expect(await elect({arguments:{accept:true,token:loan.electionToken}})).toMatchObject({state:'closed'});
+    m.model.mockResolvedValue(undefined);
+    expect(await elect({arguments:{accept:true,token:loan.electionToken}})).toMatchObject({ok:false});
+    expect(m.checkout).not.toHaveBeenCalled();
+  });
+  it('strongly closes a published replacement missed by a stale VOID GSI row and fences fresh versions',async()=>{
+    setup();let invoice={...published};let fee={...balance};
+    m.invoices.mockResolvedValue({data:[{...published,status:'VOID'}]});
+    m.model.mockImplementation(async()=>({...invoice}));m.fee.mockImplementation(async()=>({...fee}));
+    m.void.mockImplementation(async()=>{invoice={...invoice,status:'VOID',updatedAt:'closed'};fee={...fee,version:4};return {ok:true};});
+    expect(await elect({arguments:{accept:true,token:loan.electionToken}})).toMatchObject({state:'checkout'});
+    expect(m.void).toHaveBeenCalledWith({arguments:{invoiceId:'replacement'}});
+    const claim=m.send.mock.calls.map(([command])=>command.input).find(input=>input.TransactItems?.some((item:{Update?:{UpdateExpression?:string}})=>item.Update?.UpdateExpression?.includes('electionCheckoutUrl = :claim')));
+    expect(claim.TransactItems).toContainEqual(expect.objectContaining({ConditionCheck:expect.objectContaining({TableName:'Invoices',Key:{id:'replacement'},ExpressionAttributeValues:{':v':'closed'}})}));
+    expect(claim.TransactItems).toContainEqual(expect.objectContaining({ConditionCheck:expect.objectContaining({TableName:'Fees',Key:{id:'fee:q1'},ExpressionAttributeValues:{':v':4}})}));
+  });
+  it('rejects another invoice reservation that appears while the old payment link is closing',async()=>{
+    setup();m.model.mockResolvedValue({...published,status:'VOID'});
+    m.fee.mockResolvedValueOnce({...balance}).mockResolvedValue({...balance,version:4,issuedInvoiceIds:['replacement','next'],invoiceSendClaim:{invoiceId:'next',token:'next',phase:'PREPARING',totalCents:3424208}});
+    expect(await elect({arguments:{accept:true,token:loan.electionToken}})).toMatchObject({state:'closed',reason:expect.stringContaining('preparing')});
     expect(m.checkout).not.toHaveBeenCalled();
   });
 });

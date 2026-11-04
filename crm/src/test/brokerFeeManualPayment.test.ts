@@ -27,6 +27,9 @@ function issuedLoan(fields: Row = {}) {
   h.models.set('PfLoan:loan', loan);
   return loan;
 }
+function issuedInvoiceClaim(invoiceId = 'i', phase = 'PUBLISHED') {
+  Object.assign(h.rows.get('fee:q')!, { issuedInvoiceIds: [invoiceId], invoiceSendClaim: { invoiceId, token: 'invoice-send-token', phase, totalCents: 50000, previousLinkId: null, ...(phase === 'PUBLISHED' ? { linkId: invoiceId === 'i' ? 'plink' : 'prior-plink' } : {}) } });
+}
 
 /** Stage the entire real receipt transaction before publishing any test writes. */
 function applyTransaction(writes: Row[]) {
@@ -157,5 +160,62 @@ describe('outside invoice payment beside an issued financing offer', () => {
     });
     await expect(confirmInvoicePayment(actor, { invoiceId: 'i' })).rejects.toThrow(/changed|version|refresh|payment/i);
     expect(paymentRows()).toHaveLength(0); expect(h.rows.get('fee:q')?.collectedCents).toBe(0); expect(h.models.get('Invoice:i')?.status).toBe('SENT');
+  });
+});
+
+describe('outside payment while an invoice send owns the fee', () => {
+  it('refuses an unpublished preparing send before any processor link has been stored', async () => {
+    issuedInvoiceClaim('i', 'PREPARING');
+    const invoice = h.models.get('Invoice:i')!; invoice.status = 'DRAFT'; delete invoice.stripePaymentLinkId; delete invoice.paymentUrl; delete invoice.brokerFeeAllocations;
+    await expect(confirmInvoicePayment(actor, { invoiceId: 'i' })).rejects.toThrow('still being prepared');
+    expect(h.deactivate).not.toHaveBeenCalled(); expect(h.transact).not.toHaveBeenCalled(); expect(paymentRows()).toHaveLength(0); expect(invoice.status).toBe('DRAFT');
+  });
+  it('refuses a preparing claim owned by another invoice even if that prior row appears void', async () => {
+    issuedInvoiceClaim('prior', 'PREPARING');
+    h.models.set('Invoice:prior', { id: 'prior', accountId: 'a', status: 'VOID', updatedAt: NOW });
+    await expect(confirmInvoicePayment(actor, { invoiceId: 'i' })).rejects.toThrow('still being prepared');
+    expect(h.deactivate).not.toHaveBeenCalled(); expect(h.transact).not.toHaveBeenCalled(); expect(paymentRows()).toHaveLength(0);
+  });
+  it.each(['SENT', 'DRAFT', 'PROCESSING', 'PAID'])('refuses a second invoice while the published owner is %s', async status => {
+    issuedInvoiceClaim('prior');
+    h.models.set('Invoice:prior', { id: 'prior', accountId: 'a', status, stripePaymentLinkId: 'prior-plink', updatedAt: NOW });
+    await expect(confirmInvoicePayment(actor, { invoiceId: 'i' })).rejects.toThrow('Void the other issued broker fee invoice');
+    expect(h.deactivate).not.toHaveBeenCalled(); expect(h.transact).not.toHaveBeenCalled(); expect(paymentRows()).toHaveLength(0);
+  });
+  it.each(['missing', 'foreign'])('fails closed when the previous invoice is %s', async state => {
+    issuedInvoiceClaim('prior');
+    if (state === 'foreign') h.models.set('Invoice:prior', { id: 'prior', accountId: 'another-account', status: 'VOID', updatedAt: NOW });
+    await expect(confirmInvoicePayment(actor, { invoiceId: 'i' })).rejects.toThrow('Void the other issued broker fee invoice');
+    expect(h.deactivate).not.toHaveBeenCalled(); expect(h.transact).not.toHaveBeenCalled(); expect(paymentRows()).toHaveLength(0);
+  });
+  it('allows collection after strongly verifying a prior published invoice is void and fences that version', async () => {
+    issuedInvoiceClaim('prior');
+    h.models.set('Invoice:prior', { id: 'prior', accountId: 'a', status: 'VOID', stripePaymentLinkId: 'prior-plink', updatedAt: NOW });
+    await confirmInvoicePayment(actor, { invoiceId: 'i' });
+    expect(paymentRows()).toHaveLength(1); expect(h.models.get('Invoice:i')?.status).toBe('PAID');
+    expect(h.transact.mock.calls[0][0]).toEqual(expect.arrayContaining([expect.objectContaining({ ConditionCheck: expect.objectContaining({ TableName: 'Invoice', Key: { id: 'prior' }, ExpressionAttributeValues: { ':v': NOW } }) })]));
+  });
+  it('closes the published owner invoice link and its open sessions before recording the receipt', async () => {
+    issuedInvoiceClaim(); h.sessions = [{ id: 'open', status: 'open', payment_status: 'unpaid' }];
+    await confirmInvoicePayment(actor, { invoiceId: 'i' });
+    expect(h.events).toEqual(['deactivate', 'expire:open', 'commit']); expect(paymentRows()).toHaveLength(1);
+  });
+  it('refuses an owner invoice whose stored link differs from the published claim', async () => {
+    issuedInvoiceClaim(); h.rows.get('fee:q')!.invoiceSendClaim.linkId = 'another-link';
+    await expect(confirmInvoicePayment(actor, { invoiceId: 'i' })).rejects.toThrow('could not be verified');
+    expect(h.deactivate).not.toHaveBeenCalled(); expect(h.transact).not.toHaveBeenCalled(); expect(paymentRows()).toHaveLength(0);
+  });
+  it('cannot commit if a new invoice send is reserved while the current link closes', async () => {
+    h.deactivate.mockImplementation(async () => {
+      issuedInvoiceClaim('other', 'PREPARING'); h.rows.get('fee:q')!.version = 2; return { active: false };
+    });
+    await expect(confirmInvoicePayment(actor, { invoiceId: 'i' })).rejects.toThrow('payment source changed');
+    expect(paymentRows()).toHaveLength(0); expect(h.models.get('Invoice:i')?.status).toBe('SENT'); expect(h.rows.get('fee:q')?.collectedCents).toBe(0);
+  });
+  it('cannot commit if the closed previous invoice changes after validation', async () => {
+    issuedInvoiceClaim('prior'); h.models.set('Invoice:prior', { id: 'prior', accountId: 'a', status: 'VOID', updatedAt: NOW });
+    h.deactivate.mockImplementation(async () => { h.models.get('Invoice:prior')!.updatedAt = '2026-11-04T15:00:01Z'; return { active: false }; });
+    await expect(confirmInvoicePayment(actor, { invoiceId: 'i' })).rejects.toThrow('transaction condition failed');
+    expect(paymentRows()).toHaveLength(0); expect(h.models.get('Invoice:i')?.status).toBe('SENT'); expect(h.rows.get('fee:q')?.collectedCents).toBe(0);
   });
 });

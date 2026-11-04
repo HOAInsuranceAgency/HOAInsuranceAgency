@@ -63,4 +63,6 @@ Payments are reconciled in integer cents using frozen charge allocations and the
 
 Once an invoice fee payment is issued, its quote terms and charge lines are protected. Use the existing void/reissue action to revise an unpaid offer; voiding closes open fee checkouts first. Submitted payments and live financing checkouts preserve their terms until resolved. The existing manual Mark paid action uses the same source validation and receipt allocation as processor payments.
 
+Payment preparation reserves the fee through link creation and invoice delivery. Financing and manual receipts cannot bypass an unfinished send. Retry an interrupted send using the existing Send action; it resumes the same payment setup. If the processor link remains unknown after 20 hours, automatic creation stays blocked until the original processor payment setup is reviewed. Voiding releases the reservation together with the invoice status after known checkout sessions are closed.
+
 Deploy first to the retained staging branch `codex-hoa-staging-migration` using its existing staging build-spec override. Preserve the retained namespace and stateful resources; do not deploy the retired source backend. Promote only the broker-fee commits to `main` after review and staging verification.

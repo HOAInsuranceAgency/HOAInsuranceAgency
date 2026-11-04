@@ -38,6 +38,7 @@ export interface LinkRequest {
   total: number;
   accountId?: string;
   brokerFeeAllocations?: BrokerFeeAllocation[];
+  idempotencyToken?: string;
 }
 
 /**
@@ -60,7 +61,7 @@ export async function createPaymentLink(
     currency: "usd",
     unit_amount: toCents(req.total),
     product_data: { name: label },
-  });
+  }, ...(req.idempotencyToken ? [{ idempotencyKey: `broker-fee:${req.idempotencyToken}:price` }] : []));
 
   const metadata = {
     invoiceId: req.invoiceId,
@@ -86,7 +87,7 @@ export async function createPaymentLink(
           "within a few business days. We'll email a receipt once it settles.",
       },
     },
-  });
+  }, ...(req.idempotencyToken ? [{ idempotencyKey: `broker-fee:${req.idempotencyToken}:link` }] : []));
 
   if (!link.url) throw new Error("Stripe returned a link with no URL.");
   return { id: link.id, url: link.url };

@@ -1,10 +1,11 @@
-import { reserveFeeInvoice, reserveFeeLoan } from "../broker-fees/payments";
+import { reserveFeeInvoice, reserveFeeLoan, publishFeeInvoiceLink, completeFeeInvoiceSend } from "../broker-fees/payments";
+import { closeInvoiceCheckoutSessions } from "../invoiceCheckout";
 import { assertBrokerFeeSigned } from "../broker-fees/bindValidation";
 import { invoiceBrokerFeeAllocations, brokerFeeInvoiceRefresh } from "./brokerFeeInvoice";
 import { prepareBrokerFeeAgreement } from "../broker-fees/agreements";
 import { authorizedQuoteTerms } from "../../../../shared/quoteAuthorization";
-import { brokerFeeCents, feeAllocations, type BrokerFeeAllocation } from "../../../../shared/brokerFees";
-import { getFee } from "../broker-fees/store";
+import { brokerFeeCents, feeAllocations, type BrokerFeeAllocation, type BrokerFeeInvoiceSendClaim } from "../../../../shared/brokerFees";
+import { getFee, getModel } from "../broker-fees/store";
 import { TransactionalMailClient } from "../transactional-mail/client";
 import { MailDeliveryError } from "../transactional-mail/contract";
 import { currentContacts, billingContact } from "../../../src/lib/contacts";
@@ -374,7 +375,8 @@ async function ensurePaymentLink(
   associationName: string,
   total: number,
   split: RemittanceSplit,
-  allocations: BrokerFeeAllocation[]
+  allocations: BrokerFeeAllocation[],
+  claim?: BrokerFeeInvoiceSendClaim
 ): Promise<string | null> {
   const existingUrl = invoice.paymentUrl?.trim() || null;
   const existingLinkId = invoice.stripePaymentLinkId?.trim() || null;
@@ -437,11 +439,15 @@ async function ensurePaymentLink(
   ) {
     try {
       const link = await new Stripe(key).paymentLinks.retrieve(existingLinkId);
-      if (link.active && link.url === existingUrl) return existingUrl;
+      if (link.active && link.url === existingUrl) {
+        if (claim && !await storeLink(invoice.id, { linkId: existingLinkId, status: invoice.status ?? null }, { url: existingUrl, linkId: existingLinkId, amountCents: wantedCents, split, allocations, claim })) throw new SendBlocked("The invoice payment setup changed. Retry its existing Send action.");
+        return existingUrl;
+      }
       console.warn(
         `[send-invoice] link ${existingLinkId} on ${invoice.number ?? invoice.id} is no longer active; minting a fresh one`
       );
     } catch (err) {
+      if (err instanceof SendBlocked) throw err;
       console.warn(
         "[send-invoice] could not confirm the old link is live; minting a fresh one",
         err
@@ -450,6 +456,7 @@ async function ensurePaymentLink(
   }
 
   if (!key) {
+    if (allocations.length) throw new SendBlocked("Payments are not configured. Configure payments, then retry this invoice's Send action.");
     console.warn("[send-invoice] STRIPE_SECRET_KEY unset; sending without a link");
     return null;
   }
@@ -483,6 +490,12 @@ async function ensurePaymentLink(
       }
       console.warn(`[send-invoice] old link ${existingLinkId} already gone at Stripe`);
     }
+    // Missing session/intent state cannot be treated as a missing Payment Link.
+    // Existing sessions remain payable even after that link was deactivated.
+    if (allocations.length) {
+      try { await closeInvoiceCheckoutSessions(stripe, existingLinkId); }
+      catch { throw new SendBlocked("Couldn't close the previous payment sessions, so the invoice was not sent. Review its payment before trying again."); }
+    }
   }
 
   let minted: { id: string; url: string };
@@ -494,8 +507,10 @@ async function ensurePaymentLink(
       total,
       accountId: invoice.accountId,
       brokerFeeAllocations: allocations,
+      ...(claim ? { idempotencyToken: claim.token } : {}),
     });
   } catch (err) {
+    if (allocations.length) throw new SendBlocked("Payment setup was interrupted. Retry Send on this same invoice to recover its existing payment link.");
     // No link minted, nothing untracked. A bill without a Pay button is still
     // a working bill, so this failure alone does not stop the send.
     console.error("[send-invoice] could not create a payment link", err);
@@ -515,11 +530,17 @@ async function ensurePaymentLink(
   const stored = await storeLink(
     invoice.id,
     { linkId: existingLinkId, status: invoice.status ?? null },
-    { url: minted.url, linkId: minted.id, amountCents: wantedCents, split, allocations }
+    { url: minted.url, linkId: minted.id, amountCents: wantedCents, split, allocations, claim }
   );
   if (!stored) {
+    // Stable fee retries can receive the same processor link. A late caller
+    // must never deactivate a link another invocation already published.
+    const current = claim ? await getModel<Record<string, unknown>>("Invoice", invoice.id) : undefined;
     try {
-      await stripe.paymentLinks.update(minted.id, { active: false });
+      if (!claim || current?.stripePaymentLinkId !== minted.id) {
+        await stripe.paymentLinks.update(minted.id, { active: false });
+        if (claim) await closeInvoiceCheckoutSessions(stripe, minted.id);
+      }
     } catch (err) {
       // The orphan survives, but now loudly: someone can kill it by hand.
       console.error(
@@ -546,7 +567,7 @@ async function ensurePaymentLink(
 async function storeLink(
   invoiceId: string,
   seen: { linkId: string | null; status: string | null },
-  next: { url: string; linkId: string; amountCents: number | null; split: RemittanceSplit; allocations: BrokerFeeAllocation[] }
+  next: { url: string; linkId: string; amountCents: number | null; split: RemittanceSplit; allocations: BrokerFeeAllocation[]; claim?: BrokerFeeInvoiceSendClaim }
 ): Promise<boolean> {
   const tableName = process.env.INVOICE_TABLE;
   if (!tableName) {
@@ -587,8 +608,7 @@ async function storeLink(
     values[":seen"] = seen.linkId;
   }
   try {
-    await ddb.send(
-      new UpdateCommand({
+    const update = {
         TableName: tableName,
         Key: { id: invoiceId },
         UpdateExpression:
@@ -596,8 +616,12 @@ async function storeLink(
         ConditionExpression: clauses.join(" AND "),
         ExpressionAttributeNames: names,
         ExpressionAttributeValues: values,
-      })
-    );
+      };
+    if (next.allocations.length) {
+      if (!next.claim) throw new SendBlocked("The broker fee invoice has no payment setup reservation.");
+      return await publishFeeInvoiceLink(invoiceId, next.allocations, next.claim.token, next.linkId, { Update: update });
+    }
+    await ddb.send(new UpdateCommand(update));
     return true;
   } catch (err) {
     if ((err as { name?: string }).name === "ConditionalCheckFailedException") {
@@ -893,8 +917,16 @@ export const handler = async (event: {
       ? (await client.models.Carrier.get({ id: carrierId })).data
       : null;
 
+    // Completed retries must return before starting another fee link claim.
+    // This lease also serializes same-invoice Stripe retries in production.
+    const tracked = ["resend", "ses"].includes(process.env.HOA_TRANSACTIONAL_MAIL_PROVIDER ?? "")
+      ? await beginInvoiceSend(invoice, to, event.arguments?.expectedSentAt, { database: ddb })
+      : undefined;
+    if (tracked?.completed) return tracked.completed;
+
     let disclosureUrl: string | undefined;
     let paymentLabel: string | undefined;
+    let feeSendClaim: BrokerFeeInvoiceSendClaim | undefined;
     if (allocations.length && invoice.status !== "PAID" && invoice.status !== "PROCESSING") {
       const sourceQuote = quoteAnchor ?? (sourceQuoteId ? (await client.models.Quote.get({ id: sourceQuoteId })).data : null);
       if (!sourceQuote) return { ok: false, error: "The original quote is required for this broker fee disclosure." };
@@ -906,7 +938,7 @@ export const handler = async (event: {
         disclosureUrl = agreement.url;
         paymentLabel = "Review and sign broker fee disclosure";
       }
-      await reserveFeeInvoice(sourceQuote, invoice.id);
+      feeSendClaim = await reserveFeeInvoice(sourceQuote, invoice.id, Math.round(invoiceTotals(lines).retail * 100));
     }
 
     /**
@@ -914,18 +946,13 @@ export const handler = async (event: {
      * the same `invoiceTotals` the screen ran, over rows read here rather than
      * over anything the caller posted.
      */
-    // Pin the legacy-compatible operation before storeLink can change updatedAt.
-    // The private reservation survives link/finance writes and lost mail responses.
-    const tracked = ["resend", "ses"].includes(process.env.HOA_TRANSACTIONAL_MAIL_PROVIDER ?? "")
-      ? await beginInvoiceSend(invoice, to, event.arguments?.expectedSentAt, { database: ddb })
-      : undefined;
-    if (tracked?.completed) return tracked.completed;
     const paymentUrl = invoice.status === "PAID" || invoice.status === "PROCESSING" ? null : await ensurePaymentLink(
       invoice,
       account.data.name,
       invoiceTotals(lines).retail,
       split,
-      allocations
+      allocations,
+      feeSendClaim
     );
 
     // W8: the other side of the fork originates HERE, at fixed terms on
@@ -1096,6 +1123,7 @@ export const handler = async (event: {
         `send-invoice: ${invoice.number ?? invoiceId} changed mid-send; recorded the send without touching its status`
       );
     }
+    if (feeSendClaim) await completeFeeInvoiceSend(invoiceId, allocations, feeSendClaim.token);
 
     const result = { ok: true as const, sentTo: to.join(", "), subject, sentAt: sentFacts.sentAt };
     if (tracked) await completeInvoiceSend(invoiceId, tracked.operation, accepted.MessageId, result, { database: ddb });

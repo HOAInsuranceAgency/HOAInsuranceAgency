@@ -1,5 +1,5 @@
 import { assertBrokerFeeSigned } from "../broker-fees/bindValidation";
-import { getFee, table as brokerFeeTable, versionCheck, type Write } from "../broker-fees/store";
+import { getFee, getModel, modelTable, table as brokerFeeTable, versionCheck, type Write } from "../broker-fees/store";
 import { brokerFeeCents, feeAllocations } from "../../../../shared/brokerFees";
 import { randomUUID } from "node:crypto";
 import { Amplify } from "aws-amplify";
@@ -314,6 +314,37 @@ async function handleAccept(
       nextToken,
     })
   );
+  const feeParts = feeAllocations(loan.brokerFeeAllocations);
+  const feeClaimGuards: Write[] = [];
+  const feeInvoiceIds = new Set<string>();
+  const initialFeeInvoices = new Map<string, string[]>();
+  const preparingInvoice = () => ({ ok: true, state: "closed", reason: "Your agent is preparing an updated fee invoice. Use the latest invoice after it is sent, or try this financing link again once that invoice is resolved." });
+  const feeAlreadyPaid = () => ({ ok: true, state: "closed", reason: "This broker fee has already been paid or submitted. Ask your agent to reissue premium financing without the already paid fee." });
+  if (feeParts.reduce((sum, part) => sum + part.amountCents, 0) !== (loan.brokerFeeCents ?? 0)) throw new Error("The broker fee payment allocation is incomplete.");
+  // The invoice GSI can lag a send. Private reservations name every invoice
+  // that could publish a fee link, including a DRAFT send still in progress.
+  const strongInvoices = new Map(invoices.map(invoice => [invoice.id, invoice]));
+  for (const part of feeParts) {
+    const fee = await getFee(part.quoteId);
+    if (!fee || fee.accountId !== loan.accountId || fee.amountCents !== part.amountCents) throw new Error("The broker fee payment balance could not be verified.");
+    if (fee.submittedCents > 0 || fee.collectedCents > 0 || fee.refundedCents > 0) return feeAlreadyPaid();
+    if (fee.invoiceSendClaim?.phase === 'PREPARING') return preparingInvoice();
+    if (!fee.issuedLoanIds?.includes(loan.id)) throw new Error("This fee financing offer needs to be reissued by your agent before payment.");
+    const ids = [...new Set(fee.issuedInvoiceIds ?? [])];
+    initialFeeInvoices.set(part.quoteId, ids);
+    for (const invoiceId of ids) feeInvoiceIds.add(invoiceId);
+  }
+  if (feeInvoiceIds.size > 60) throw new Error("This fee invoice history needs review before financing can start.");
+  const referencedIds = [...feeInvoiceIds];
+  for (let offset = 0; offset < referencedIds.length; offset += 5) {
+    const rows = await Promise.all(referencedIds.slice(offset, offset + 5).map(id => getModel<(typeof invoices)[number]>('Invoice', id)));
+    for (const invoice of rows) {
+      if (!invoice || invoice.accountId !== loan.accountId) throw new Error("A reserved fee invoice could not be verified.");
+      if (invoice.status === 'DRAFT' || invoice.status === 'SENT' && !invoice.stripePaymentLinkId) return preparingInvoice();
+      strongInvoices.set(invoice.id, invoice);
+    }
+  }
+  invoices.splice(0, invoices.length, ...strongInvoices.values());
   const premiumInvoices = invoices.filter(i => !(i.remittanceBrokerFeeCents && i.remittanceCarrierCents === 0 && i.remittanceCommissionCents === 0 && (i.remittanceInterestCents ?? 0) === 0));
   if (premiumInvoices.some((i) => i.status === "PAID")) {
     return {
@@ -344,10 +375,6 @@ async function handleAccept(
         "This policy has other open billing beside the premium. Your agent needs to resolve it before financing can start.",
     };
   }
-  const feeParts = feeAllocations(loan.brokerFeeAllocations);
-  const feeClaimGuards: Write[] = [];
-  if (feeParts.reduce((sum, part) => sum + part.amountCents, 0) !== (loan.brokerFeeCents ?? 0)) throw new Error("The broker fee payment allocation is incomplete.");
-  const feeAlreadyPaid = () => ({ ok: true, state: "closed", reason: "This broker fee has already been paid or submitted. Ask your agent to reissue premium financing without the already paid fee." });
   if (feeParts.length && invoices.some(invoice => !premiumInvoices.includes(invoice) && ["PAID", "PROCESSING"].includes(invoice.status ?? ""))) return feeAlreadyPaid();
   for (const part of feeParts) {
     const source = part.policyId ? await client.models.Policy.get({ id: part.policyId }) : await client.models.Quote.get({ id: part.quoteId });
@@ -355,14 +382,6 @@ async function handleAccept(
     const currentQuote = await client.models.Quote.get({ id: part.quoteId });
     if (currentQuote.errors?.length || !currentQuote.data) throw new Error("The current broker fee quote could not be verified.");
     await assertBrokerFeeSigned(currentQuote.data);
-    // A voided combined invoice can leave an old QUOTED financing token
-    // behind. The fee may since have been collected on its own invoice.
-    // Check before returning a cached session as well as creating a new one.
-    const fee = await getFee(part.quoteId);
-    if (!fee || fee.accountId !== loan.accountId || fee.amountCents !== part.amountCents) throw new Error("The broker fee payment balance could not be verified.");
-    if (fee.submittedCents > 0 || fee.collectedCents > 0 || fee.refundedCents > 0) return feeAlreadyPaid();
-    if (!fee.issuedLoanIds?.includes(loan.id)) throw new Error("This fee financing offer needs to be reissued by your agent before payment.");
-    feeClaimGuards.push(versionCheck(brokerFeeTable(), fee));
   }
   const loanTable = process.env.PF_LOAN_TABLE;
   const settingsTable = process.env.AGENCY_SETTINGS_TABLE;
@@ -485,6 +504,23 @@ async function handleAccept(
     });
   }
 
+  // Voiding releases a published invoice's private send claim. Refresh after
+  // those writes, then fence the exact fee and closed-invoice versions so a
+  // replacement send cannot publish beside this checkout.
+  for (const part of feeParts) {
+    const fee = await getFee(part.quoteId);
+    if (!fee || fee.accountId !== loan.accountId || fee.amountCents !== part.amountCents || !fee.issuedLoanIds?.includes(loan.id)) throw new Error("The broker fee financing reservation changed.");
+    if (fee.submittedCents > 0 || fee.collectedCents > 0 || fee.refundedCents > 0) return feeAlreadyPaid();
+    if (fee.invoiceSendClaim?.phase === 'PREPARING' || JSON.stringify([...new Set(fee.issuedInvoiceIds ?? [])]) !== JSON.stringify(initialFeeInvoices.get(part.quoteId))) return preparingInvoice();
+    feeClaimGuards.push(versionCheck(brokerFeeTable(), fee));
+  }
+  for (const invoiceId of referencedIds) {
+    const invoice = await getModel<(typeof invoices)[number]>('Invoice', invoiceId);
+    if (!invoice || invoice.accountId !== loan.accountId) throw new Error("A reserved fee invoice could not be verified.");
+    if (invoice.status !== 'VOID') return preparingInvoice();
+    feeClaimGuards.push(versionCheck(modelTable('Invoice'), invoice));
+  }
+
   // One election event, one audit row — a public button must not be able to
   // write the log by holding the retry key down.
   if (firstElection) {
@@ -556,6 +592,7 @@ async function handleAccept(
   const sessionClaim = `claim-${randomUUID()}`;
   const claimExpiry = new Date(Date.now() + 36 * 60 * 1000).toISOString();
   const quotedSiblings = siblings.filter((s) => s.id !== loan.id && s.status === "QUOTED");
+  if (quotedSiblings.length + feeClaimGuards.length > 98) throw new Error("This financing payment history needs review before another checkout can open.");
   try {
     /**
      * The claim carries the kill switch AND the siblings' slots. The mint
