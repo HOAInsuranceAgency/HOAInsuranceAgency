@@ -1,3 +1,4 @@
+import { initialQuotePublicationWrites } from "../quote-source-billing";
 import { reserveFeeInvoice, reserveFeeLoan, publishFeeInvoiceLink, completeFeeInvoiceSend } from "../broker-fees/payments";
 import { closeInvoiceCheckoutSessions } from "../invoiceCheckout";
 import { assertBrokerFeeSigned } from "../broker-fees/bindValidation";
@@ -978,7 +979,7 @@ export const handler = async (event: {
       split,
       allocations,
       feeSendClaim,
-      adjustmentProof?[...adjustmentProof.guards,versionCheck(modelTable('Policy'),adjustmentProof.policy as {id:string;updatedAt:string})]:[]
+      adjustmentProof?[...adjustmentProof.guards,versionCheck(modelTable('Policy'),adjustmentProof.policy as {id:string;updatedAt:string})]:invoice.sourcePricingVersion===1&&quoteAnchor&&!allocations.length?await initialQuotePublicationWrites(invoice,quoteAnchor):[]
     );
 
     // W8: the other side of the fork originates HERE, at fixed terms on

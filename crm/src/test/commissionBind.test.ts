@@ -14,6 +14,10 @@ vi.mock('../../amplify/functions/commissions/store', () => ({
   db: { send: h.send },
   table: () => 'commissions',
 }));
+vi.mock('../../amplify/functions/broker-fees/store', async original => ({
+  ...await original<typeof import('../../amplify/functions/broker-fees/store')>(),
+  accountAgreements: async () => [],
+}));
 vi.mock('../../amplify/functions/crm-access/user-status', () => ({
   activeTeamUserCheck: (id: string) => ({
     ConditionCheck: { TableName: 'users', Key: { userId: id } },

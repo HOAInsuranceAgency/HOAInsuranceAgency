@@ -5,6 +5,7 @@ import { BROKER_FEE_PURPOSE, BROKER_FEE_REFUND_TERMS, BROKER_FEE_TERMS_VERSION, 
 import { authorizedQuoteTerms } from '../../../../shared/quoteAuthorization';
 import { assertBrokerFeeAgencyBilling, feeAllocations } from '../../../../shared/brokerFees';
 import { getRow, getFee, getAgreement, getModel, modelTable, table, feePut, versionCheck, transact, accountModels, type Write } from './store';
+import { assertNoFeeLoanCheckout, feeIssuedHistory } from './payments';
 import { createBrokerFeeDisclosurePdf } from './disclosurePdf';
 
 const s3 = new S3Client();
@@ -91,6 +92,7 @@ export async function prepareBrokerFeeAgreement(accountId: string, quotes: Broke
   const agreement: BrokerFeeAgreement = reused ?? { id: agreementId, kind: 'AGREEMENT', accountId, accountName: String(account.legalName || account.name), createdAt, expiresAt, quotes, totalCents, termsVersion: `${BROKER_FEE_TERMS_VERSION}:${rule.version}`, purpose: BROKER_FEE_PURPOSE, refundTerms: BROKER_FEE_REFUND_TERMS, jurisdiction: state, stateForms: rule.forms, ...(frozenAgencySigner(rule) ? { agencySigner: frozenAgencySigner(rule) } : {}), version: 1 };
   const writes: Write[] = [reused ? versionCheck(table(), reused) : feePut(agreement), feePut({ id: `token:${sha(token)}`, agreementId, expiresAt, version: 1 } as TokenRecord), versionCheck(modelTable('Account'), account), deletedCheck(accountId), ...[...fencedSources.values()].map(source => versionCheck(modelTable('Quote'), source))];
   if (settings) writes.push(versionCheck(modelTable('AgencySettings'), settings));
+  const loanFences = new Map<string, Write>();
   for (const [index, quote] of quotes.entries()) {
     const amountCents = brokerFeeCents(quote.brokerFee); if (!amountCents) continue;
     const previous = fees[index];
@@ -99,8 +101,12 @@ export async function prepareBrokerFeeAgreement(accountId: string, quotes: Broke
     const unchanged = previous?.terms === quote.terms && previous.amountCents === amountCents;
     if (unchanged && !previous!.signedAt && previous!.agreementId !== agreementId) writes.push(feePut({ ...previous!, agreementId }, previous));
     else if (unchanged) writes.push(versionCheck(table(), previous!));
-    else writes.push(feePut({ id: `fee:${quote.id}`, kind: 'FEE', accountId, quoteId: quote.id, amountCents, terms: quote.terms, agreementId, version: 1, submittedCents: 0, collectedCents: 0, refundedCents: 0 } as BrokerFeeRecord, previous));
+    else {
+      if (previous) for (const guard of await assertNoFeeLoanCheckout(previous)) loanFences.set(JSON.stringify([guard.ConditionCheck?.TableName, guard.ConditionCheck?.Key]), guard);
+      writes.push(feePut({ id: `fee:${quote.id}`, kind: 'FEE', accountId, quoteId: quote.id, amountCents, terms: quote.terms, agreementId, version: 1, submittedCents: 0, collectedCents: 0, refundedCents: 0, ...feeIssuedHistory(previous) } as BrokerFeeRecord, previous));
+    }
   }
+  writes.push(...loanFences.values());
   await transact(writes);
   site.pathname = '/broker-fee/'; site.search = ''; site.hash = ''; site.searchParams.set('t', token);
   return { url: site.toString(), agreementId };

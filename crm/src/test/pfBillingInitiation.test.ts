@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { authorizedQuoteTerms } from '../../../shared/quoteAuthorization';
 
 const m = vi.hoisted(() => ({ send: vi.fn(), list: vi.fn(), lookup: vi.fn(), checkout: vi.fn(), debit: vi.fn(), source: vi.fn(), signed: vi.fn(), fee: vi.fn(), invoices: vi.fn(), model: vi.fn(), void: vi.fn() }));
 vi.mock("aws-amplify", () => ({ Amplify: { configure: vi.fn() } }));
@@ -183,6 +184,81 @@ describe("atomic fee source checks when claiming a financing checkout",()=>{
     });
     expect(await elect({arguments:{accept:true,token:loan.electionToken}})).toMatchObject({state:'closed'});
     expect(m.checkout).not.toHaveBeenCalled();
+  });
+});
+
+describe('fee-free prebind financing serializes with first-fee quote edits',()=>{
+  const sourceTime='2026-11-04T16:00:00.000Z';
+  const quoteLoan=()=>({...loan,policyId:undefined,quoteId:'q1',brokerFeeCents:0,brokerFeeAllocations:[]});
+  const quoteSource=(extra:Record<string,unknown>={})=>({id:'q1',accountId:'account-1',status:'QUOTED',billType:'AGENCY',premium:loan.premium,brokerFee:0,updatedAt:sourceTime,...extra});
+  const checkoutClaim=()=>m.send.mock.calls.map(([command])=>command.input).find(input=>input.TransactItems?.some((item:{Update?:{UpdateExpression?:string}})=>item.Update?.UpdateExpression?.includes('electionCheckoutUrl = :claim')));
+  function setup(source:Record<string,unknown>=quoteSource()) {
+    process.env.ACCESS_TABLES=JSON.stringify({Invoice:'Invoices',Quote:'Quotes',PfLoan:'Loans'});
+    m.lookup.mockResolvedValue({data:[quoteLoan()]});
+    m.model.mockImplementation(async(model,id)=>model==='Quote'&&id==='q1'?{...source}:undefined);
+  }
+  it('refuses the old fee-free finance link after an unpaid first fee was added',async()=>{
+    setup(quoteSource({brokerFee:500}));
+    expect(await elect({arguments:{accept:true,token:loan.electionToken}})).toMatchObject({ok:false});
+    expect(m.fee).toHaveBeenCalledWith('q1');expect(checkoutClaim()).toBeUndefined();expect(m.checkout).not.toHaveBeenCalled();
+  });
+  it('publishes the private source-loan pointer in the transaction that claims the real checkout',async()=>{
+    setup();
+    expect(await elect({arguments:{accept:true,token:loan.electionToken}})).toMatchObject({state:'checkout'});
+    const claim=checkoutClaim();
+    expect(claim.TransactItems).toContainEqual(expect.objectContaining({Update:expect.objectContaining({TableName:'Quotes',Key:{id:'q1'},UpdateExpression:'SET #pointer = :id, updatedAt = :now',ConditionExpression:expect.stringContaining('updatedAt = :old'),ExpressionAttributeNames:expect.objectContaining({'#pointer':'sourcePricingLoanId'}),ExpressionAttributeValues:expect.objectContaining({':old':sourceTime,':id':loan.id})})}));
+    expect(claim.TransactItems.some((item:{Put?:{TableName?:string}})=>item.Put?.TableName==='Fees')).toBe(false);
+    expect(m.checkout.mock.calls[0][0].line_items.map((row:{price_data:{unit_amount:number}})=>row.price_data.unit_amount)).toEqual([843552,1000]);
+    expect(m.fee).not.toHaveBeenCalled();
+  });
+  it.each([null,undefined])('preserves existing fee-free financing when the quote billing choice is %s',async billType=>{
+    setup(quoteSource({billType}));
+    expect(await elect({arguments:{accept:true,token:loan.electionToken}})).toMatchObject({state:'checkout'});
+    expect(checkoutClaim().TransactItems).toContainEqual(expect.objectContaining({Update:expect.objectContaining({TableName:'Quotes',ExpressionAttributeNames:expect.objectContaining({'#pointer':'sourcePricingLoanId'})})}));
+    expect(m.checkout).toHaveBeenCalledTimes(1);expect(m.fee).not.toHaveBeenCalled();
+  });
+  it('does not create Checkout when the fee edit wins after the source read but before the atomic claim',async()=>{
+    setup();
+    m.send.mockImplementation(async command=>{
+      const items=command.input.TransactItems;
+      if(items?.some((item:{Update?:{UpdateExpression?:string}})=>item.Update?.UpdateExpression?.includes('electionCheckoutUrl = :claim'))) {
+        // The edited source has a later timestamp; the quote pointer update
+        // must cancel the entire transaction, including the loan slot claim.
+        const sourceWrite=items.find((item:{Update?:{TableName?:string}})=>item.Update?.TableName==='Quotes');
+        expect(sourceWrite.Update.ExpressionAttributeValues[':old']).toBe(sourceTime);
+        throw Object.assign(new Error('Quote changed'),{name:'TransactionCanceledException',CancellationReasons:items.map((item:{Update?:{TableName?:string}})=>({Code:item.Update?.TableName==='Quotes'?'ConditionalCheckFailed':'None'}))});
+      }
+      return {Item:{premiumFinanceEnabled:true}};
+    });
+    expect(await elect({arguments:{accept:true,token:loan.electionToken}})).toMatchObject({state:'closed'});
+    expect(m.checkout).not.toHaveBeenCalled();
+  });
+  it('preserves premium-only financing when the source fee was already paid and guards that receipt version',async()=>{
+    const source=quoteSource({brokerFee:500});setup(source);
+    m.fee.mockResolvedValue({id:'fee:q1',version:9,accountId:'account-1',quoteId:'q1',signedAt:sourceTime,amountCents:50000,terms:authorizedQuoteTerms(source),submittedCents:50000,collectedCents:50000,refundedCents:0});
+    expect(await elect({arguments:{accept:true,token:loan.electionToken}})).toMatchObject({state:'checkout'});
+    expect(checkoutClaim().TransactItems).toContainEqual(expect.objectContaining({ConditionCheck:expect.objectContaining({TableName:'Fees',Key:{id:'fee:q1'},ExpressionAttributeValues:{':v':9}})}));
+    expect(m.checkout.mock.calls[0][0].line_items.map((row:{price_data:{unit_amount:number}})=>row.price_data.unit_amount)).toEqual([843552,1000]);
+  });
+  it('can replace an expired quoted sibling without targeting its loan twice in the checkout transaction',async()=>{
+    const source=quoteSource({sourcePricingLoanId:'older-loan'});setup(source);
+    const prior={...quoteLoan(),id:'older-loan',quotedAt:'2026-10-01T12:00:00Z',updatedAt:sourceTime,electionCheckoutUrl:'https://checkout.stripe.test/expired',electionCheckoutExpiresAt:'2026-10-01T13:00:00Z'};
+    m.lookup.mockResolvedValue({data:[{...quoteLoan(),quotedAt:'2026-11-04T12:00:00Z'}]});
+    m.list.mockResolvedValue({data:[prior]});
+    m.model.mockImplementation(async(model,id)=>model==='Quote'&&id==='q1'?source:model==='PfLoan'&&id===prior.id?prior:undefined);
+    m.send.mockImplementation(async command=>{
+      if(command.input.TransactItems){
+        const keys=command.input.TransactItems.map((item:{Update?:{TableName?:string;Key?:unknown};ConditionCheck?:{TableName?:string;Key?:unknown};Put?:{TableName?:string;Item?:{id?:string}}})=>{
+          const action=item.Update??item.ConditionCheck;
+          return action?JSON.stringify([action.TableName,action.Key]):JSON.stringify([item.Put?.TableName,{id:item.Put?.Item?.id}]);
+        });
+        if(new Set(keys).size!==keys.length)throw Object.assign(new Error('Transaction cannot include multiple operations on one item'),{name:'ValidationException'});
+      }
+      return {Item:{premiumFinanceEnabled:true}};
+    });
+    expect(await elect({arguments:{accept:true,token:loan.electionToken}})).toMatchObject({state:'checkout'});
+    const guards=checkoutClaim().TransactItems.filter((item:{ConditionCheck?:{TableName?:string;Key?:{id?:string}}})=>item.ConditionCheck?.TableName==='Loans'&&item.ConditionCheck.Key?.id===prior.id);
+    expect(guards).toHaveLength(1);expect(m.checkout).toHaveBeenCalledTimes(1);
   });
 });
 

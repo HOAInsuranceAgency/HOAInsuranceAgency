@@ -44,6 +44,22 @@ beforeEach(() => {
   h.models.set('Quote:q1', { id: 'q1', accountId: 'a1', carrierId: 'carrier1', lines: ['Property'], premium: 12000, commissionPct: 15, notes: 'PRIVATE NOTES', brokerFee: 250, billType: 'AGENCY', status: 'QUOTED', effectiveDate: '2027-01-01', expirationDate: '2028-01-01', updatedAt: NOW });
 });
 describe('broker fee client disclosure', () => {
+  it('retains all issued payment references when replacing stale fee terms', async () => {
+    await prepared();
+    Object.assign(h.rows.get('fee:q1'), { issuedInvoiceIds:['old-invoice'],issuedLoanIds:['old-loan'] });
+    h.models.set('PfLoan:old-loan',{id:'old-loan',accountId:'a1',status:'QUOTED',updatedAt:NOW,brokerFeeAllocations:[{quoteId:'q1',amountCents:25000}]});
+    h.models.get('Quote:q1').premium=13000;
+    await prepared();
+    expect(h.rows.get('fee:q1')).toMatchObject({issuedInvoiceIds:['old-invoice'],issuedLoanIds:['old-loan'],terms:authorizedQuoteTerms(h.models.get('Quote:q1'))});
+  });
+  it('cannot replace stale disclosure terms around a live financing checkout', async () => {
+    await prepared();
+    Object.assign(h.rows.get('fee:q1'),{issuedLoanIds:['old-loan']});
+    h.models.set('PfLoan:old-loan',{id:'old-loan',accountId:'a1',status:'QUOTED',updatedAt:NOW,brokerFeeAllocations:[{quoteId:'q1',amountCents:25000}],electionCheckoutUrl:'https://checkout.stripe.com/c/pay',electionCheckoutExpiresAt:'2099-01-01'});
+    h.models.get('Quote:q1').premium=13000;
+    await expect(prepared()).rejects.toThrow('financing payment');
+    expect(h.rows.get('fee:q1').issuedLoanIds).toEqual(['old-loan']);
+  });
   it('rejects direct-bill broker fees before preparing an agreement', async () => {
     h.models.get('Quote:q1').billType = 'DIRECT';
     await expect(prepared()).rejects.toThrow('Broker fees require agency billing.');

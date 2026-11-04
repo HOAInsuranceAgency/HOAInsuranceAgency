@@ -32,7 +32,7 @@ export function installBrokerFees(backend: typeof Backend, communicationTable: D
   const writes=['dynamodb:PutItem','dynamodb:UpdateItem'];
   for(const fn of functions) {
     fn.addEnvironment('BROKER_FEE_TABLE',fees.tableName);
-    add(fn,[...reads,...(writers.includes(fn as typeof writers[number])?writes:[])],[fees.tableArn,`${fees.tableArn}/index/*`]);
+    add(fn,[...reads,...(writers.includes(fn as typeof writers[number])?writes:fn===backend.crmAccess?['dynamodb:PutItem']:[])],[fees.tableArn,`${fees.tableArn}/index/*`]);
   }
   for(const fn of [backend.brokerFees,backend.stripeWebhook]) {
     fn.addEnvironment('COMMISSION_TABLE',commissionTable.tableName);
@@ -59,6 +59,12 @@ export function installBrokerFees(backend: typeof Backend, communicationTable: D
     const writable=fn===backend.brokerFees?['Account','Invoice','Document','Policy','AgencySettings']:fn===backend.stripeWebhook?['Policy']:fn===backend.commissions?['Document']:fn===backend.voidInvoice?['Invoice']:[];
     if(writable.length)add(fn,writes,writable.map(modelArn));
   }
+  // Native Quote financial edits share a transaction with fee/loan checkout
+  // fences. No browser or public signing role receives these mutation grants.
+  add(backend.crmAccess,['dynamodb:UpdateItem','dynamodb:ConditionCheckItem'],['Quote','PfLoan'].map(modelArn));
+  add(backend.crmAccess,['dynamodb:ConditionCheckItem'],[modelArn('Invoice'),communicationTable.tableArn]);
+  add(backend.crmAccess,['dynamodb:UpdateItem'],[modelArn('Invoice')]);
+  for(const fn of [backend.sendInvoice,backend.pfElection])add(fn,['dynamodb:UpdateItem'],[modelArn('Quote')]);
   let index=0;
   for(const [fn,statements]of grants)new ManagedPolicy(permissions,`BrokerFeeAccess${index++}`,{roles:[fn.resources.lambda.role!],statements});
   new Rule(Stack.of(backend.brokerFees.resources.lambda),'BrokerFeeReceiptRecovery',{

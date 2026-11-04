@@ -26,24 +26,68 @@ const paymentId = (sourceId: string) => `payment:${digest(sourceId)}`;
 /** Pair fee-version checks on checkout claims with loan-version checks on a
  * competing invoice/manual receipt. A known checkout URL stays payable even
  * when its original invoice has been voided. */
-export async function assertNoFeeLoanCheckout(fee: BrokerFeeRecord): Promise<Write[]> {
+async function feeLoansWithoutCheckout(fee: BrokerFeeRecord): Promise<Record<string, unknown>[]> {
   const ids = [...new Set(fee.issuedLoanIds ?? [])];
   if (ids.length > 100 || ids.some(id => typeof id !== 'string' || !id)) throw new Error('The financing payment history needs review.');
-  const guards: Write[] = [];
+  const quoted: Record<string, unknown>[] = [];
   for (let offset = 0; offset < ids.length; offset += 10) {
     const loans = await Promise.all(ids.slice(offset, offset + 10).map(id => getModel<Record<string, unknown>>('PfLoan', id)));
     for (const loan of loans) {
       if (!loan) throw new Error('A referenced financing offer could not be verified. Review its payment session before collecting this fee another way.');
       if (loan.accountId !== fee.accountId) throw new Error('The financing payment source could not be verified.');
       if (!feeAllocations(loan.brokerFeeAllocations).some(part => part.quoteId === fee.quoteId && part.amountCents > 0)) throw new Error('The financing offer no longer matches its recorded broker fee source.');
-      const expiry = Date.parse(String(loan.electionCheckoutExpiresAt ?? ''));
-      const liveCheckout = !!loan.electionCheckoutUrl && (!Number.isFinite(expiry) || expiry > Date.now());
-      if (loan.downPaymentIntentId || liveCheckout || ['ACCEPTED', 'ACTIVE', 'DEFAULTED', 'PAID'].includes(String(loan.status))) throw new Error('A financing payment is already open or submitted for this broker fee. Complete it or wait for the payment session to expire before collecting the fee another way.');
-      if (loan.status === 'QUOTED') guards.push(versionCheck(modelTable('PfLoan'), loan as { id: string; updatedAt: string }));
-      if (guards.length > 20) throw new Error('Too many financing offers need review before another fee payment can be prepared.');
+      assertLoanWithoutCheckout(loan);
+      if (loan.status === 'QUOTED') quoted.push(loan);
+      if (quoted.length > 20) throw new Error('Too many financing offers need review before another fee payment can be prepared.');
     }
   }
-  return guards;
+  return quoted;
+}
+export function assertLoanWithoutCheckout(loan: Record<string, unknown>) {
+  const expiry = Date.parse(String(loan.electionCheckoutExpiresAt ?? ''));
+  const liveCheckout = !!loan.electionCheckoutUrl && (!Number.isFinite(expiry) || expiry > Date.now());
+  if (loan.downPaymentIntentId || liveCheckout || ['ACCEPTED','ACTIVE','DEFAULTED','PAID'].includes(String(loan.status))) throw new Error('A financing payment is already open or submitted for this broker fee. Complete it or wait for the payment session to expire before collecting the fee another way.');
+  if (!['QUOTED','CANCELLED'].includes(String(loan.status))) throw new Error('The financing offer status could not be verified.');
+}
+function unclaimedLoanCondition(loan: Record<string, unknown>) {
+  if (typeof loan.updatedAt !== 'string' || !loan.updatedAt) throw new Error('The current financing offer version could not be verified.');
+  // Check the slot itself as well as updatedAt. Two writes may share the same
+  // millisecond, and a PF claim checks the fee version without incrementing it.
+  const names: Record<string, string> = { '#status': 'status', '#v': 'updatedAt' };
+  const values: Record<string, unknown> = { ':quoted': 'QUOTED', ':v': loan.updatedAt };
+  let slot = 'attribute_not_exists(electionCheckoutUrl)';
+  if (Object.hasOwn(loan, 'electionCheckoutUrl')) { slot = 'electionCheckoutUrl = :url'; values[':url'] = loan.electionCheckoutUrl; }
+  return { ConditionExpression: `#status = :quoted AND #v = :v AND attribute_not_exists(downPaymentIntentId) AND ${slot}`, ExpressionAttributeNames: names, ExpressionAttributeValues: values };
+}
+export function loanWithoutCheckoutGuard(loan: Record<string, unknown>): Write {
+  assertLoanWithoutCheckout(loan);
+  return loan.status === 'QUOTED'
+    ? { ConditionCheck: { TableName: modelTable('PfLoan'), Key: { id: loan.id }, ...unclaimedLoanCondition(loan) } }
+    : versionCheck(modelTable('PfLoan'), loan as {id:string;updatedAt:string});
+}
+export async function assertNoFeeLoanCheckout(fee: BrokerFeeRecord): Promise<Write[]> {
+  return (await feeLoansWithoutCheckout(fee)).map(loanWithoutCheckoutGuard);
+}
+/** Changing accepted terms invalidates every unaccepted old offer in the same
+ * transaction as the Quote and fee version. Checkout claims fence both rows. */
+export function invalidateUnclaimedLoan(loan: Record<string, unknown>, now: string): Write | undefined {
+  assertLoanWithoutCheckout(loan);
+  if (loan.status !== 'QUOTED') return undefined;
+  const guard = unclaimedLoanCondition(loan);
+  const updatedAt = new Date(Math.max(Date.parse(now), Date.parse(String(loan.updatedAt)) + 1)).toISOString();
+  return { Update: { TableName: modelTable('PfLoan'), Key: { id: loan.id },
+    UpdateExpression: 'SET #status = :cancelled, updatedAt = :now', ...guard,
+    ExpressionAttributeValues: { ...guard.ExpressionAttributeValues, ':cancelled': 'CANCELLED', ':now': updatedAt },
+  } };
+}
+/** References survive consent/price resets: a processor URL can outlive an
+ * invoice, an agreement, or its originally quoted price. */
+export function feeIssuedHistory(previous: BrokerFeeRecord | undefined) {
+  return {
+    ...(previous?.issuedInvoiceIds ? { issuedInvoiceIds: [...previous.issuedInvoiceIds] } : {}),
+    ...(previous?.issuedLoanIds ? { issuedLoanIds: [...previous.issuedLoanIds] } : {}),
+    ...(previous?.invoiceSendClaim ? { invoiceSendClaim: previous.invoiceSendClaim } : {}),
+  };
 }
 
 /** Pin the accepted fee before creating any external collection link. */
@@ -63,7 +107,7 @@ export async function reserveFeeInvoice(source:Record<string,unknown>|string,inv
     if(old&&(old.submittedCents>0||old.collectedCents>0||old.refundedCents>0))throw new Error('This broker fee already has a submitted or received payment. Review it before preparing another payment link.');
     if(old&&(old.amountCents!==amount||old.terms!==authorizedQuoteTerms(quote))&&(old.submittedCents>0||old.collectedCents>0||old.policyId))throw new Error('The existing fee payment must be reviewed before changing its terms.');
     const unchanged=old?.terms===authorizedQuoteTerms(quote)&&old.amountCents===amount;
-    const base:BrokerFeeRecord=unchanged?old!:{id:`fee:${quoteId}`,kind:'FEE',accountId:String(quote.accountId),quoteId,amountCents:amount,terms:authorizedQuoteTerms(quote),version:0,submittedCents:0,collectedCents:0,refundedCents:0};
+    const base:BrokerFeeRecord=unchanged?old!:{id:`fee:${quoteId}`,kind:'FEE',accountId:String(quote.accountId),quoteId,amountCents:amount,terms:authorizedQuoteTerms(quote),version:0,submittedCents:0,collectedCents:0,refundedCents:0,...feeIssuedHistory(old)};
     const loanGuards = await assertNoFeeLoanCheckout(base);
     const previousClaim=old?.invoiceSendClaim;
     if(previousClaim&&previousClaim.invoiceId!==invoiceId){

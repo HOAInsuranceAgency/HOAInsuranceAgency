@@ -51,6 +51,12 @@ function applyTransaction(writes: Row[]) {
     const fail = () => { throw new Error('Atomic payment transaction condition failed'); };
     if (action.ConditionExpression === 'attribute_not_exists(id)' && old) fail();
     if (action.ConditionExpression?.includes('#v = :v') && old?.[action.ExpressionAttributeNames['#v']] !== values[':v']) fail();
+    if (action.TableName === 'PfLoan') for (const term of (action.ConditionExpression ?? '').split(' AND ')) {
+      const equality = /^(#[A-Za-z0-9]+|[A-Za-z0-9]+) = (:[A-Za-z0-9]+)$/.exec(term);
+      if (equality && JSON.stringify(old?.[action.ExpressionAttributeNames?.[equality[1]] ?? equality[1]]) !== JSON.stringify(values[equality[2]])) fail();
+      const absent = /^attribute_not_exists\(([A-Za-z0-9]+)\)$/.exec(term);
+      if (absent && old && Object.hasOwn(old, absent[1])) fail();
+    }
     if (action.ConditionExpression === '#data = :data' && JSON.stringify(old?.data) !== JSON.stringify(values[':data'])) fail();
     if (action.TableName === 'TeamUser' && old?.disabled) fail();
     if (write.Update && action.TableName === 'Invoice' && (old?.updatedAt !== values[':old'] || old?.status !== values[':status'])) fail();
@@ -112,6 +118,20 @@ describe('outside invoice payment after an unsuccessful online checkout', () => 
     await confirmInvoicePayment(actor, { invoiceId: 'i' });
     expect(h.events).toEqual(['deactivate', 'intent:pi-failed', 'expire:cs-open-one', 'expire:cs-open-two', 'commit']); expect(paymentRows()).toHaveLength(1);
   });
+  it.each(['unknown', undefined, null])('refuses an unverifiable checkout status %s before recording any receipt', async status => {
+    h.sessions = [{ id: 'cs-unverified', status, payment_status: 'unpaid' }];
+    await expect(confirmInvoicePayment(actor, { invoiceId: 'i' })).rejects.toThrow('The invoice payment session could not be verified. Retry before recording an outside payment.');
+    expect(h.events).toEqual(['deactivate']);
+    expect(h.transact).not.toHaveBeenCalled(); expect(h.retrieve).not.toHaveBeenCalled(); expect(h.expire).not.toHaveBeenCalled();
+    expect(paymentRows()).toHaveLength(0); expect(h.rows.get('fee:q')).toMatchObject({ submittedCents: 0, collectedCents: 0 });
+    expect(h.models.get('Invoice:i')?.status).toBe('SENT');
+  });
+  it('allows an expired unpaid session without another processor action', async () => {
+    h.sessions = [{ id: 'cs-expired', status: 'expired', payment_status: 'unpaid' }];
+    await confirmInvoicePayment(actor, { invoiceId: 'i' });
+    expect(h.events).toEqual(['deactivate', 'commit']); expect(h.retrieve).not.toHaveBeenCalled(); expect(h.expire).not.toHaveBeenCalled();
+    expect(paymentRows()).toHaveLength(1); expect(h.models.get('Invoice:i')?.status).toBe('PAID');
+  });
   it('refuses a completed unpaid session whose payment intent cannot be identified', async () => {
     h.sessions = [{ id: 'cs-missing-intent', status: 'complete', payment_status: 'unpaid' }];
     await expect(confirmInvoicePayment(actor, { invoiceId: 'i' })).rejects.toThrow('already been submitted');
@@ -150,7 +170,9 @@ describe('outside invoice payment beside an issued financing offer', () => {
     issuedLoan({ electionCheckoutUrl: 'https://checkout.stripe.com/c/pay/expired', electionCheckoutExpiresAt: '2026-11-04T14:00:00Z' });
     await confirmInvoicePayment(actor, { invoiceId: 'i' });
     expect(paymentRows()).toHaveLength(1); expect(h.rows.get('fee:q')?.collectedCents).toBe(50000);
-    expect(h.transact.mock.calls[0][0]).toEqual(expect.arrayContaining([expect.objectContaining({ ConditionCheck: expect.objectContaining({ TableName: 'PfLoan', Key: { id: 'loan' }, ExpressionAttributeValues: { ':v': NOW } }) })]));
+    const loanGuard = h.transact.mock.calls[0][0].find((write: Row) => write.ConditionCheck?.TableName === 'PfLoan').ConditionCheck;
+    expect(loanGuard).toMatchObject({ Key: { id: 'loan' }, ConditionExpression: expect.stringContaining('attribute_not_exists(downPaymentIntentId)'), ExpressionAttributeValues: { ':quoted': 'QUOTED', ':url': 'https://checkout.stripe.com/c/pay/expired' } });
+    expect(Object.values(loanGuard.ExpressionAttributeValues)).toContain(NOW);
   });
   it('does not record a manual receipt if a financing checkout wins after the initial check', async () => {
     issuedLoan();
@@ -170,6 +192,16 @@ describe('outside invoice payment beside an issued financing offer', () => {
     });
     await expect(confirmInvoicePayment(actor, { invoiceId: 'i' })).rejects.toThrow(/changed|version|refresh|payment/i);
     expect(paymentRows()).toHaveLength(0); expect(h.rows.get('fee:q')?.collectedCents).toBe(0); expect(h.models.get('Invoice:i')?.status).toBe('SENT');
+  });
+  it.each(['electionCheckoutUrl', 'downPaymentIntentId'])('refuses a competing %s even when both writes share the same timestamp', async field => {
+    issuedLoan();
+    h.deactivate.mockImplementation(async () => {
+      Object.assign(h.models.get('PfLoan:loan')!, { [field]: field === 'electionCheckoutUrl' ? 'claim-concurrent' : 'pi-concurrent' });
+      return { active: false };
+    });
+    await expect(confirmInvoicePayment(actor, { invoiceId: 'i' })).rejects.toThrow('transaction condition failed');
+    expect(paymentRows()).toHaveLength(0); expect(h.rows.get('fee:q')).toMatchObject({ collectedCents: 0, submittedCents: 0 });
+    expect(h.models.get('Invoice:i')?.status).toBe('SENT');
   });
 });
 

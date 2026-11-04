@@ -41,7 +41,7 @@ beforeEach(() => {
   vi.stubEnv('ACCESS_INDEXES', JSON.stringify({ 'Invoice.accountId': 'by-account', 'InvoiceLine.invoiceId': 'by-invoice' }));
   h.order.length = 0;
   h.records.clear();
-  h.quote = { id: 'q', accountId: 'a', carrierId: 'c', premium: 10000, brokerFee: 500, billType: 'AGENCY', lines: ['Property'], status: 'QUOTED', updatedAt: 'q1' };
+  h.quote = { id: 'q', accountId: 'a', carrierId: 'c', premium: 10000, brokerFee: 500, billType: 'AGENCY', lines: ['Property'], status: 'QUOTED', updatedAt: '2026-11-04T14:00:00.000Z' };
   h.invoice = { id: 'i', accountId: 'a', quoteId: 'q', number: 'INV1', status: 'DRAFT', updatedAt: 'i1' };
   const lines = [{ id: 'fee', invoiceId: 'i', accountId: 'a', brokerFeeQuoteId: 'q', kind: 'BROKER_FEE', description: 'Broker fee', retailAmount: 500, costAmount: 0 }];
   for (const key of Object.keys(h.models)) delete h.models[key];
@@ -81,6 +81,12 @@ beforeEach(() => {
       for (const item of command.input.TransactItems) if (item.ConditionCheck) {
         const action = item.ConditionCheck, row = await h.model(action.TableName, action.Key.id);
         if (row?.[action.ExpressionAttributeNames['#v']] !== action.ExpressionAttributeValues[':v']) throw Object.assign(new Error('Proof changed'), { name: 'TransactionCanceledException' });
+      }
+      const quoteUpdate=command.input.TransactItems.find((item:any)=>item.Update?.TableName==='Quote')?.Update;
+      if(quoteUpdate){
+        const values=quoteUpdate.ExpressionAttributeValues, pointer=quoteUpdate.ExpressionAttributeNames['#pointer'];
+        if(h.quote.updatedAt!==values[':old'] || ['sourcePricingInvoiceId','sourcePricingLoanId'].some((field,index)=>Object.hasOwn(values,`:source${index}`)?h.quote[field]!==values[`:source${index}`]:Object.hasOwn(h.quote,field)))throw Object.assign(new Error('Source changed'),{name:'TransactionCanceledException'});
+        Object.assign(h.quote,{[pointer]:values[':id'],updatedAt:values[':now']});
       }
       const update = command.input.TransactItems.find((item: any) => item.Update)?.Update;
       if (!update) throw new Error('Expected atomic link publication');
@@ -402,5 +408,33 @@ describe('real adjustment Send proof and source protection', () => {
     expect(h.model).toHaveBeenCalledWith('InvoiceLine', 'original-premium');
     expect(h.storeDb.mock.calls.some(([command]) => command.constructor.name === 'QueryCommand')).toBe(true);
     expect(h.price).not.toHaveBeenCalled(); expect(h.mail).not.toHaveBeenCalled(); expect(h.begin).not.toHaveBeenCalled();
+  });
+});
+
+describe('actual fee-free initial quote publication',()=>{
+  function initialPacket(){
+    h.quote.brokerFee=0;h.invoice.sourcePricingVersion=1;
+    h.models.InvoiceLine.list=async()=>({data:[{id:'premium',accountId:'a',invoiceId:'i',kind:'PREMIUM',retailAmount:10000,costAmount:8000}]});
+  }
+  it('publishes a server-owned Quote pointer with the payment link in the same transaction',async()=>{
+    initialPacket();const prior=h.quote.updatedAt;
+    expect(await send()).toMatchObject({ok:true});
+    expect(h.quote).toMatchObject({sourcePricingInvoiceId:'i'});expect(h.quote.updatedAt>prior).toBe(true);
+    const transaction=h.db.mock.calls.map(([command])=>command).find(command=>command.constructor.name==='TransactWriteCommand');
+    expect(transaction.input.TransactItems).toEqual(expect.arrayContaining([
+      expect.objectContaining({Update:expect.objectContaining({TableName:'Quote',Key:{id:'q'},ExpressionAttributeNames:expect.objectContaining({'#pointer':'sourcePricingInvoiceId'})})}),
+      expect.objectContaining({Update:expect.objectContaining({TableName:'Invoice',Key:{id:'i'}})}),
+    ]));
+  });
+  it('an edit that wins during Stripe creation prevents publishing or emailing the stale fee-free link',async()=>{
+    initialPacket();h.link.mockImplementation(async()=>{h.quote.brokerFee=500;h.quote.updatedAt='2026-11-04T16:00:00.000Z';return {id:'stale-link',url:'https://buy.stripe.com/stale'};});
+    expect(await send()).toMatchObject({ok:false});
+    expect(h.mail).not.toHaveBeenCalled();expect(h.deactivate).toHaveBeenCalledWith('stale-link',{active:false});
+    expect(h.invoice.stripePaymentLinkId).toBeUndefined();expect(h.quote.sourcePricingInvoiceId).toBeUndefined();
+  });
+  it('does not replace another live published invoice even when the account index omits it',async()=>{
+    initialPacket();h.quote.sourcePricingInvoiceId='other';
+    h.records.set('Invoice:other',{id:'other',accountId:'a',quoteId:'q',sourcePricingVersion:1,status:'SENT',updatedAt:'2026-11-04T13:00:00Z',stripePaymentLinkId:'other-link'});
+    expect(await send()).toMatchObject({ok:false});expect(h.link).not.toHaveBeenCalled();expect(h.mail).not.toHaveBeenCalled();
   });
 });
