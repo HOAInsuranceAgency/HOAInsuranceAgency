@@ -1,6 +1,6 @@
 {
   "AWSTemplateFormatVersion": "2010-09-09",
-  "Description": "HOA independent transactional email ledger, private payloads and quarantined Resend credentials",
+  "Description": "HOA independent transactional email ledger and retained private payloads",
   "Resources": {
     "MailLedger": {
       "Type": "AWS::DynamoDB::Table",
@@ -117,38 +117,6 @@
           ]
         }
       }
-    },
-    "SendingCredential": {
-      "Type": "AWS::SecretsManager::Secret",
-      "DeletionPolicy": "Retain",
-      "UpdateReplacePolicy": "Retain",
-      "Properties": {
-        "Name": "hoa/resend/sending",
-        "Description": "HOA Resend domain-scoped sending API key; empty until account verified",
-        "SecretString": "{}",
-        "Tags": [
-          {
-            "Key": "Business",
-            "Value": "HOA Insurance"
-          }
-        ]
-      }
-    },
-    "WebhookCredential": {
-      "Type": "AWS::SecretsManager::Secret",
-      "DeletionPolicy": "Retain",
-      "UpdateReplacePolicy": "Retain",
-      "Properties": {
-        "Name": "hoa/resend/webhook",
-        "Description": "HOA Resend webhook signing secret; empty until endpoint configured",
-        "SecretString": "{}",
-        "Tags": [
-          {
-            "Key": "Business",
-            "Value": "HOA Insurance"
-          }
-        ]
-      }
     }
   },
   "Outputs": {
@@ -168,16 +136,6 @@
     "MailBucket": {
       "Value": {
         "Ref": "MailPayloads"
-      }
-    },
-    "SendingSecretArn": {
-      "Value": {
-        "Ref": "SendingCredential"
-      }
-    },
-    "WebhookSecretArn": {
-      "Value": {
-        "Ref": "WebhookCredential"
       }
     }
   }

@@ -1,4 +1,5 @@
 import type { CreateAuthChallengeTriggerHandler } from "aws-lambda";
+import { randomUUID } from "node:crypto";
 import { SESv2Client, SendEmailCommand } from "@aws-sdk/client-sesv2";
 import { getSigningSecret, mintToken } from "./token";
 import { assertMigrationAuth, destinationAuth } from "./migration";
@@ -17,7 +18,14 @@ export const handler: CreateAuthChallengeTriggerHandler = async (event, context)
   if (destinationAuth()) {
     event.response.challengeMetadata = "MAGIC_LINK";
     event.response.publicChallengeParameters = { mode: "destination" };
-    event.response.privateChallengeParameters = { mode: "destination" };
+    // Cognito may retry the verify trigger. Keep one request identity and
+    // issuance time in its private challenge so those retries cannot mint a
+    // different email/token and reserve another provider operation.
+    event.response.privateChallengeParameters = {
+      mode: "destination",
+      requestId: randomUUID(),
+      issuedAt: String(Date.now()),
+    };
     return event;
   }
   const mode = event.request.clientMetadata?.mode === "consume" ? "consume" : "request";

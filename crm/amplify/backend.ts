@@ -1,6 +1,6 @@
 import { migrationProbeScopes } from "./migration-probe-scopes";
 import { installTransactionalMail } from "./transactional-mail";
-import { mailFeedback } from "./functions/mail-feedback/resource";
+import { sesMailFeedback } from "./functions/ses-mail-feedback/resource";
 import { mailVerification, mailRecovery } from "./functions/transactional-mail/resource";
 import { migrationDestination, migrationPreview, migrationTargets, businessBranch, providerBranch, migrationWebOrigin, migrationExecution, migrationRuntimeBranch } from "./migration-config";
 import { installMigrationPreview } from "./migration-preview";
@@ -38,7 +38,7 @@ import {
 } from "aws-cdk-lib/aws-lambda";
 import { DynamoEventSource } from "aws-cdk-lib/aws-lambda-event-sources";
 import { auth } from "./auth/resource";
-import { crmBaseUrl, googleSignInEnabled } from "./auth/config";
+import { crmBaseUrl, destinationStagingNativeAuth, googleSignInEnabled } from "./auth/config";
 import { googleSignIn } from "./functions/google-sign-in/resource";
 import { data } from "./data/resource";
 import { storage } from "./storage/resource";
@@ -81,7 +81,7 @@ import {
 // real synth. Nothing else imports it; `ampx` uses this file for its side
 // effects, as it always has.
 export const backend = defineBackend({
-  mailFeedback,
+  ...Object.fromEntries(migrationDestination && !migrationPreview ? [["sesMailFeedback", sesMailFeedback]] : []),
   mailVerification,
   mailRecovery,
   auth,
@@ -128,7 +128,7 @@ export const backend = defineBackend({
   magicLinkCreate,
   magicLinkVerify,
   migrationNativeMessage,
-  googleSignIn,
+  ...Object.fromEntries(destinationStagingNativeAuth ? [] : [["googleSignIn", googleSignIn]]),
 });
 
 // The OCR function drives async Textract jobs over uploaded documents.
@@ -303,6 +303,8 @@ cfnUserPoolClient.tokenValidityUnits = { refreshToken: "days" };
 // this trigger's Lambda, so an inline role policy referring back to the pool
 // would create a CloudFormation pool → Lambda → role → pool cycle.
 if (googleSignInEnabled) {
+  const googleLinkFunction = Reflect.get(backend, "googleSignIn") as typeof backend.magicLinkVerify | undefined;
+  if (!googleLinkFunction) throw new Error("Google sign-in is enabled without its linking function.");
   const googleLinkPolicy = new Policy(Stack.of(backend.auth.resources.userPool), "GoogleAccountLinkPolicy", {
     statements: [new PolicyStatement({
       actions: [
@@ -313,7 +315,7 @@ if (googleSignInEnabled) {
       resources: [backend.auth.resources.userPool.userPoolArn],
     })],
   });
-  googleLinkPolicy.attachToRole(backend.googleSignIn.resources.lambda.role!);
+  googleLinkPolicy.attachToRole(googleLinkFunction.resources.lambda.role!);
 }
 
 // ── Magic link plumbing ──────────────────────────────────────────────
