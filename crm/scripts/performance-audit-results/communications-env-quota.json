@@ -1,0 +1,48 @@
+{
+  "measuredAt": "2026-11-04T20:45:01.334283+00:00",
+  "phase": "job23-complete-rollback-before-env-quota-fix",
+  "account": "917680434255",
+  "region": "us-east-1",
+  "sourceCommit": "99394f370404d01f6f347cf38c0f4957099e6848",
+  "functionName": "amplify-d1nuh9rw1hcuxo-st-communicationslambda6A59-i3I7PfkdzagK",
+  "lambdaCodeSha256AfterRollback": "Zvr0lf48CzXEyU2HAKE8If/mk5m2JdzoXrdpoyZT5dQ=",
+  "functionLastModified": "2026-11-04T20:36:57.000+0000",
+  "method": "Read actual live Lambda config in memory; count UTF8 key+value bytes without persisting or displaying environment values. Resolve new table name from failed deployment CFN identity; derive source names identically to installer using existing API ID and Communication table.",
+  "lambdaEnvironmentLimitBytes": 4096,
+  "currentEnvironmentRawBytes": 3753,
+  "currentEnvironmentJSONBytes": 4086,
+  "failedProposedEnvironmentRawBytes": 4355,
+  "fixedProposedEnvironmentRawBytes": 3908,
+  "fixedEnvironmentHeadroomBytes": 188,
+  "removedSourceMap": {
+    "key": "ACCOUNT_LIST_SOURCE_TABLES",
+    "valueBytes": 421,
+    "keyAndValueBytes": 447
+  },
+  "remainingNewTable": {
+    "key": "ACCOUNT_LIST_TABLE",
+    "valueBytes": 137,
+    "keyAndValueBytes": 155
+  },
+  "existingDerivationInputs": [
+    "ACCESS_API_ID",
+    "COMMUNICATION_TABLE"
+  ],
+  "modelNames": [
+    "Account",
+    "Contact",
+    "Quote",
+    "Policy",
+    "UserProfile"
+  ],
+  "failures": {
+    "updateFunctionConfigurationRequestLimitBytes": 5120,
+    "httpStatus": 413,
+    "requestId": "a1f39095-e3ea-4b2a-992b-8b45ef9d3faf"
+  },
+  "limitations": [
+    "188-byte environment headroom depends on the deployed namespace and current config; future variables must be budgeted.",
+    "Next auto-named projection table has an equivalent-length generated suffix.",
+    "This artifact contains no environment values or credentials."
+  ]
+}
