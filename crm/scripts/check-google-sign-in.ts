@@ -1,6 +1,6 @@
 import { Stack } from "aws-cdk-lib";
 import { CfnUserPoolIdentityProvider } from "aws-cdk-lib/aws-cognito";
-import { googleRedirectUrls, googleSignInEnabled } from "../amplify/auth/config";
+import { destinationStagingNativeAuth, googleRedirectUrls, googleSignInEnabled } from "../amplify/auth/config";
 import { migrationDestination } from "../amplify/migration-config";
 import type { backend as Backend } from "../amplify/backend";
 
@@ -21,20 +21,30 @@ export function checkGoogleSignIn(backend: typeof Backend) {
     }
   }
   const triggers = stack.resolve(pool.lambdaConfig) as { preSignUp?: unknown };
-  if (json(triggers?.preSignUp) !== json(backend.googleSignIn.resources.lambda.functionArn)) {
-    throw new Error("Invite-only account linking must remain installed, including when Google is disabled");
-  }
+  const googleLinkFunction = Reflect.get(backend, "googleSignIn") as typeof backend.magicLinkVerify | undefined;
   if (json(client.explicitAuthFlows) !== json(["ALLOW_CUSTOM_AUTH", "ALLOW_REFRESH_TOKEN_AUTH"])) {
     throw new Error("Magic links must retain custom auth without enabling password API flows");
   }
-  const schema = stack.resolve(pool.schema) as { name?: string; mutable?: boolean }[];
+  const schema = (stack.resolve(pool.schema) ?? []) as { name?: string; mutable?: boolean }[];
+  const providers = backend.stack.node.root.node.findAll().filter(
+    (node): node is CfnUserPoolIdentityProvider => node instanceof CfnUserPoolIdentityProvider && node.providerType === "Google",
+  );
+  if (destinationStagingNativeAuth) {
+    if (schema.some(attribute => attribute.name === "googleHostedDomain") || triggers?.preSignUp !== undefined || googleLinkFunction) {
+      throw new Error("Destination staging must retain its native pool schema without a Google linking trigger or function");
+    }
+    if (providers.length || (stack.resolve(client.supportedIdentityProviders) as string[] | undefined)?.includes("Google")) {
+      throw new Error("Destination staging must not add a Google provider to its historical native pool");
+    }
+    return;
+  }
+  if (!googleLinkFunction || json(triggers?.preSignUp) !== json(googleLinkFunction.resources.lambda.functionArn)) {
+    throw new Error("Invite-only account linking must remain installed, including when Google is disabled");
+  }
   if (!schema.some(attribute => attribute.name === "googleHostedDomain" && attribute.mutable === true)) {
     throw new Error("Google's optional hosted-domain attribute must stay mutable and survive disabling Google");
   }
 
-  const providers = backend.stack.node.root.node.findAll().filter(
-    (node): node is CfnUserPoolIdentityProvider => node instanceof CfnUserPoolIdentityProvider && node.providerType === "Google",
-  );
   if (!googleSignInEnabled) {
     // CDK retains OAuth defaults even without an external provider. Check the
     // actual provider resources and client association rather than those defaults.

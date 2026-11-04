@@ -1,137 +1,78 @@
-HOA transactional mail: deployment and recovery
+HOA transactional mail: SES operations and recovery
 
-Scope and ownership
--------------------
-The destination is AWS account 917680434255, us-east-1, CRM Amplify app
-d1nuh9rw1hcuxo. Source AWS resources and the existing Front communication
-pipeline are separate from this mail transport. This setup does not authorize
-source changes, customer test emails, a paid plan, or production cutover.
+Destination and active transport
+--------------------------------
+AWS account 917680434255, us-east-1, CRM Amplify app d1nuh9rw1hcuxo.
+SES is the only active transactional transport. Main uses configuration set
+hoa-transactional-main; staging uses hoa-transactional-staging. The verified
+identity is protectmyhoa.com. Main senders are noreply@protectmyhoa.com and
+insurance@protectmyhoa.com. Staging uses noreply@protectmyhoa.com or
+jake+testing@protectmyhoa.com and is permanently restricted to jake@getgim.com
+by both runtime validation and IAM. Never remove that staging boundary.
 
-Deploy shared-stack.json once as hoa-transactional-mail in this account, with
-CloudFormation termination protection enabled. It is already deployed for this
-migration; inspect the existing stack and change set before any update. Never
-deploy one copy per environment. Both backends use the same retained ledger,
-versioned private payload bucket, sending secret and webhook secret. The fixed
-resource names intentionally prevent accidental duplicates. Do not replace or
-delete the ledger/outbox: they contain delivery/idempotency and recovery state.
+Each environment has a private SNS-bound feedback Lambda and a retained,
+encrypted failure queue. There is no public email-feedback URL, external
+provider API key, or automatic provider fallback. Feedback records independent
+receipt facts and suppressions; it never sends or replays mail.
 
-The template contains empty secret placeholders only. Store the sending-only,
-domain-restricted Resend key as {"apiKey":"..."} in hoa/resend/sending, and the
-endpoint signing secret as {"webhookSecret":"..."} in hoa/resend/webhook through
-a secure operator path. Never commit values, put them in frontend variables, or
-print them. Check an update will not overwrite populated values with {}. Use
-the deployed stack outputs and verify the exact bindings in
-amplify/transactional-mail.ts; a different deployment's secret suffixes must be
-reviewed explicitly. Empty credentials fail closed.
+The independent hoa-transactional-mail stack retains the shared DynamoDB ledger
+HOA-TransactionalMail and versioned private bucket
+hoa-transactional-mail-917680434255-us-east-1. Do not replace or delete these.
+Old Resend operations, receipts, counters, suppressions and payloads remain
+historical evidence. Retiring credentials does not authorize replaying them.
+The shared template no longer declares Resend credentials. Existing secrets
+are retained when detached from CloudFormation, then separately scheduled for
+deletion after both backends and provider credentials have been retired.
 
-Backend identity and deployment
--------------------------------
-codex-hoa-account-migration owns the existing main backend namespace;
-codex-hoa-staging-migration owns staging. Dormant Amplify main/staging branches
-provide the matching backend association. Keep these retained branches and the
-existing stateful resources. Do not deploy a replacement backend. Promoting a
-frontend to main later requires an explicit existing-backend reuse plan; merely
-merging this code into source main or enabling its backend build is unsafe.
+Deployment and safeguards
+-------------------------
+Main is the production source branch with automatic builds. The retained
+codex-hoa-staging-migration branch uses the existing staging backend namespace;
+its frontend-only build specification must not be mistaken for a backend
+release. A reviewed mail-only backend update must explicitly target that same
+namespace and preserve its existing resources and stream UUIDs. Do not promote
+the unrelated normal staging branch or create a replacement backend.
 
-Initial isolated settings are:
-  HOA_MIGRATION_PREVIEW=true
-  HOA_MIGRATION_WORKERS_ENABLED=false
-  HOA_MIGRATION_STREAM_PROBE_ENABLED=false
-  HOA_MIGRATION_STREAM_PHASE=quarantine
-  HOA_MIGRATION_SCHEDULES_ENABLED=false
-  HOA_PREVIEW_ADMIN_LOGIN=false
-  HOA_RESEND_PREVIEW_ENABLED=false
-  HOA_TRANSACTIONAL_MAIL_RELEASE=false
-  HOA_TRANSACTIONAL_MAIL_RECOVERY_ENABLED=false
-Keep source service live and destination business writers blocked while checking
-the provider. Signed feedback alone can write its isolated mail-ledger prefixes.
-mailVerification and mailRecovery have no URL, schedule or public API route.
+Keep HOA_TRANSACTIONAL_MAIL_PROVIDER=ses, the exact SES identity/configuration
+bindings, transactional mail release and existing worker controls. Preview=true
+cannot send. Main application limits remain 1,000 recipient slots/day and
+30,000/calendar month; staging has separate 100/day and 3,000/month counters.
+UTC boundaries apply. Main counter keys are unchanged; staging uses its own
+namespace. CC/BCC slots count; login reserves five daily and fifty monthly
+slots. AWS limits and recipient suppressions still apply.
 
-Provider setup and acceptance
------------------------------
-Use a dedicated HOA Resend Free account/team. Verify protectmyhoa.com using the
-provider's exact DNS proof without replacing existing MX, Google, Front or other
-verification records. Configure signed delivery/bounce/complaint/failure feedback
-to the intended mailFeedback Function URL; preserve its raw body for signature
-validation. The webhook secret belongs only to that function. Verify the correct
-main/staging endpoint arrangement before sending; do not assume one endpoint
-proves both environments' event handling.
+Verification and monitoring
+---------------------------
+mailVerification has no URL, schedule or API route and normally has reserved
+concurrency zero. A deliberate, reviewed fixture check requires an unexpired
+canonical UTC HOA_SES_VERIFICATION_EXPIRES_AT window of at most one hour and a
+temporary concurrency allowance. The complete fixture is fixed to the owner,
+contains synthetic labeled text/HTML plus PDF/XLSX, and never creates business
+records. Use a unique reviewed runId; repeating it reuses the same operation.
+Close the window and restore concurrency zero immediately after verification.
+Verify a real administrator login separately; a login-request UI message alone
+does not prove delivery. Never print tokens, links or mail payloads in logs.
 
-Import the reviewed source hard-bounce suppressions into both the provider and
-the local SUPPRESSION ledger before customer mail. Confirm the operational
-DeliveryNeedsReview alarm subscription. Seed the shared day/month counters for
-any provider-console or direct API sends outside this adapter. All sending in
-the dedicated team must be accounted for; do not bypass the shared quota guard.
-
-An owner test requires an explicitly approved, bounded main-only window with
-the exact existing Cognito pool/client/Jake identity bindings,
-HOA_PREVIEW_ADMIN_LOGIN=true, HOA_RESEND_PREVIEW_ENABLED=true and a future
-HOA_PREVIEW_ADMIN_LOGIN_EXPIRES_AT. The scoped secret grant and runtime guard
-must expire together. Staging cannot send customer test mail.
-
-mailVerification accepts {"fixture":"login|invite|invoice|report|accounting",
-"runId":"reviewed UUID"}; invoke each approved fixture separately. They send
-synthetic, labeled messages only to jake@getgim.com, including PDF/XLSX fixtures.
-Reusing a runId/fixture reuses its durable delivery operation. These fixtures do
-not create customers, invoices, invitations or payments. Check actual provider
-receipt, signed event and inbox delivery. Verify real Cognito owner login
-separately; the anti-enumeration UI is not evidence of email delivery.
-
-After testing, restore the closed preview settings and remove temporary owner
-grants. Disable the preview owner and request global sign-out through the
-reviewed cleanup. Grant expiry alone does not revoke already issued sessions.
-
-Free quota and delivery states
-------------------------------
-Main and staging share 100 recipient slots/day and 3,000/calendar month, with
-UTC boundaries. Non-login sends stop at 95/day or 2,950/month, reserving the
-remaining capacity for login. CC/BCC slots also count. Attempts are reserved
-atomically and conservatively; ambiguous sends do not return quota. Verify
-provider limits still match before release. No paid upgrade is automatic.
-
-DEFERRED means a definite unsent operation retained its original private
-envelope and retry deadline. UNKNOWN or SENDING means delivery is uncertain:
-never retry blindly or after the provider's 24-hour idempotency retention has
-expired. Inspect provider receipt/logs and reconcile explicitly. ACCEPTED means
-the provider accepted it, not that the recipient read it. Signed feedback adds
-independent event timestamps and suppressions without changing operation state.
-No suppression clears automatically after an external list change.
-
-There is no scheduled automatic recovery worker. Confirm alerts are subscribed
-before release and assign an operator to deferred/uncertain mail. Never replay
-a Stripe/payment/business webhook just to resend its email.
+Inspect DeliveryNeedsReview, feedback processing/notification failures and the
+private feedback queue. Preserve failure events for investigation. Keep the
+confirmed operational-alert route. No automatic recovery worker is scheduled.
 
 Mail-only recovery
 ------------------
-For a reviewed invoice/report/accounting operation, first verify its recipients,
-payload hash, current business relevance and nextRetryAt. A delayed invoice must
-still be valid and its original payment link appropriate. Leave stale or changed
-content held for separate review.
+ACCEPTED means provider acceptance; independent delivery/bounce timestamps show
+later outcomes. ACCEPTED historical Resend rows remain accepted and must never
+be replayed through SES. UNKNOWN/SENDING are held for explicit reconciliation,
+not retried after a timeout or provider switch. No suppression clears itself.
 
-Enable HOA_TRANSACTIONAL_MAIL_RECOVERY_ENABLED=true only in an approved active
-release (preview=false, workers=true, transactional-mail release=true). Invoke
-the IAM-only mailRecovery with {"operationKey":"...",
-"expectedPayloadHash":"..."}, then disable recovery again and verify the live
-setting. It accepts only RESERVED/DEFERRED states and loads the exact original
-outbox bytes, attachments and idempotency key. It rechecks quota and suppression.
-It rejects login/invitation, ACCEPTED, UNKNOWN/SENDING, wrong-environment and
-changed-payload operations. It cannot resolve an uncertain provider outcome.
+For an existing RESERVED/DEFERRED operation, first verify its original provider,
+recipients, payload hash, retry deadline and business relevance. Recovery is
+normally disabled. The IAM-only mailRecovery requires explicit enablement,
+active release/workers and the exact operation key/hash. It loads the original
+private envelope and rechecks quota/suppression. A historical provider mismatch
+stays held; it is not converted to a new SES operation. Login/invitation,
+ACCEPTED, UNKNOWN/SENDING, wrong-environment and changed-payload operations are
+not recoverable through this route. Never replay a Stripe/payment/business
+webhook merely to resend email.
 
-Recovery changes only the mail ledger. Reconcile invoice sentAt/report-run
-delivery status separately after acceptance, without rerunning a financial
-operation or generating a second email. Preserve original accepted/unknown
-Front operations; they do not become Resend retries during this migration.
-
-Release remains a separate reviewed operation
---------------------------------------------
-Before opening writes, apply source/destination writer fences, refresh users and
-data/files, reconcile pending/provider work, and preserve the existing backend
-identities. Use the held API phase before worker release. Hash-bound live stream
-scope metadata must pass the deployment preflight; synthetic test scopes are
-never deployment input. Polling proof requires 22 fresh LATEST mappings and
-44 INSERT/REMOVE observations per environment with no unexpected-record loss.
-Schedules, mail release and recovery have independent explicit controls.
-
-After any new destination writes, rollback requires a destination freeze and
-reviewed reverse reconciliation of records, files, identities and provider/mail
-outcomes. Pointing DNS to a stale source is not a safe rollback.
+Rollback after new destination writes requires a destination freeze and a
+reviewed reverse reconciliation. Do not point DNS to stale source data.

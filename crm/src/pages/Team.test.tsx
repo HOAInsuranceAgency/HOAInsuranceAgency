@@ -170,6 +170,7 @@ describe("paged team roster", () => {
     expect(await screen.findByText("Casey Staff")).toBeVisible();
     expect(listTeamUsers).toHaveBeenCalledTimes(1);
     expect(UserProfile.listUserProfileByUserId).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Load more team members" })).toBeEnabled());
     fireEvent.click(screen.getByRole("button", { name: "Load more team members" }));
     expect(await screen.findByText("Later Member")).toBeVisible();
     expect(listTeamUsers).toHaveBeenLastCalledWith({ nextToken: "page-2" });
