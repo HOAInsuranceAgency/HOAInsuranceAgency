@@ -83,8 +83,8 @@ it("loads assignments only for selected policies and decided quotes, with projec
   expect(h.assignments).toHaveBeenLastCalledWith(["a", "quote-only"]);
   expect(h.accounts).not.toHaveBeenCalled();
   expect(h.policies).toHaveBeenLastCalledWith(expect.objectContaining({
-    filter: { effectiveDate: { ge: "2026-09-01", le: "2026-09-30" }, status: { ne: "CANCELLED" } },
-    selectionSet: ["id", "accountId", "carrierId", "effectiveDate", "premium", "commissionPct", "status"],
+    filter: { effectiveDate: { ge: "2026-09-01", le: "2026-09-30" }, or: [{ status: { ne: "CANCELLED" } }, { brokerFee: { gt: 0 } }] },
+    selectionSet: ["id", "accountId", "carrierId", "effectiveDate", "premium", "commissionPct", "brokerFee", "brokerFeeRefunded", "status"],
   }));
   expect(h.quotes).toHaveBeenLastCalledWith(expect.objectContaining({
     filter: { effectiveDate: { ge: "2026-09-01", le: "2026-09-30" }, or: [{ status: { eq: "BOUND" } }, { status: { eq: "LOST" } }, { status: { eq: "DECLINED" } }] },

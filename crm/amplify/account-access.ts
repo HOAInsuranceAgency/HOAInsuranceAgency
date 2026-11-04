@@ -64,6 +64,7 @@ export function installAccountAccess(backend: typeof Backend, communicationTable
   }));
   guard.addEnvironment("ACCESS_API_ID", api.apiId);
   guard.addEnvironment("ACCESS_INDEXES", JSON.stringify(indexes));
+  backend.brokerFees.addEnvironment("ACCESS_INDEXES", JSON.stringify(indexes));
   guard.addEnvironment("COMMUNICATION_TABLE", communicationTable.tableName);
   communicationTable.grantReadData(guard.resources.lambda);
   const tableArns = Object.values(tables).map(tableName => Stack.of(api).formatArn({ service: "dynamodb", resource: "table", resourceName: tableName }));

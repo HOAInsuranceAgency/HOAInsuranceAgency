@@ -1,3 +1,5 @@
+import { brokerFees } from './functions/broker-fees/resource';
+import { installBrokerFees } from './broker-fees';
 import { migrationProbeScopes } from "./migration-probe-scopes";
 import { installTransactionalMail } from "./transactional-mail";
 import { sesMailFeedback } from "./functions/ses-mail-feedback/resource";
@@ -90,6 +92,7 @@ export const backend = defineBackend({
   crmAccess,
   ownerProfitability,
   commissions,
+  brokerFees,
   assignmentIndexWorker,
   accountListWorker,
   data,
@@ -443,7 +446,7 @@ const userAccessTable = new Table(backend.data.resources.graphqlApi, "TeamUserAc
   partitionKey: { name: "userId", type: AttributeType.STRING }, billingMode: BillingMode.PAY_PER_REQUEST,
   encryption: TableEncryption.AWS_MANAGED, pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true },
 });
-for (const fn of [backend.crmAccess, backend.commissions, backend.teamAdmin, backend.communications, backend.communicationWorker, backend.leadIntake, backend.leadReply, backend.assignmentIndexWorker]) {
+for (const fn of [backend.crmAccess, backend.commissions, backend.brokerFees, backend.teamAdmin, backend.communications, backend.communicationWorker, backend.leadIntake, backend.leadReply, backend.assignmentIndexWorker]) {
   fn.addEnvironment("USER_ACCESS_TABLE", userAccessTable.tableName);
   fn.resources.lambda.addToRolePolicy(new PolicyStatement({ actions: ["dynamodb:GetItem", "dynamodb:ConditionCheckItem"], resources: [userAccessTable.tableArn] }));
 }
@@ -1123,7 +1126,14 @@ installAccountAccess(backend, communicationTable);
 installAccountList(backend, communicationTable);
 installDashboardReads(backend);
 installOwnerProfitability(backend, communicationTable);
-installCommissions(backend, communicationTable);
+const commissionStorage = installCommissions(backend, communicationTable);
+installBrokerFees(backend, communicationTable, commissionStorage.table, siteBaseUrl);
+
+// Generated data resolvers approach CloudFormation's template-size limit.
+// Drop diagnostic construct paths, preserving all resource identities and behavior.
+for (const node of backend.stack.node.root.node.findAll()) {
+  if (node instanceof CfnResource) node.addDeletionOverride('Metadata.aws:cdk:path');
+}
 
 // The backend's main/staging namespace is linked to an equally named dormant
 // destination branch. Hosted migration branches consume the generated outputs;
@@ -1144,11 +1154,3 @@ if (migrationDestination) backend.addOutput({ custom: { migration: {
   account: migrationTargets.account, appId: migrationTargets.crmApp,
   branch: migrationRuntimeBranch, preview: String(migrationPreview),
 } } });
-
-// Production's longer stack paths otherwise push the dense data template over
-// CloudFormation's byte limit. Omit only diagnostic construct paths in that
-// stack; preserve all logical IDs, asset metadata, policies, and runtime values.
-const dataStack = Stack.of(backend.data.resources.graphqlApi);
-for (const node of backend.stack.node.root.node.findAll()) {
-  if (node instanceof CfnResource && Stack.of(node) === dataStack) node.addDeletionOverride('Metadata.aws:cdk:path');
-}

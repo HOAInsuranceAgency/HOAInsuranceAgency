@@ -18,6 +18,7 @@ import {
   REPLACEMENT_COST_OPTIONS,
 } from "../lib/enums";
 import { DateInput, MoneyInput, PercentInput } from "./inputs";
+import { brokerFeeCents } from "../../../shared/brokerFees";
 
 /**
  * Shared create/edit form for quotes and policies.
@@ -70,6 +71,7 @@ export default function CoverageForm({
     lines: (existing?.lines ?? []).filter((l): l is string => !!l),
     premium: str(existing?.premium),
     commissionPct: str(existing?.commissionPct),
+    brokerFee: str(existing?.brokerFee ?? 0),
     perOccDed: str(existing?.perOccurrenceDeductible),
     perUnitDed: str(existing?.perUnitDeductible),
     blanketLimit: str(existing?.blanketLimit),
@@ -115,6 +117,13 @@ export default function CoverageForm({
 
   async function save() {
     if (savingNow.current) return;
+    let brokerFee: number;
+    try { brokerFee = brokerFeeCents(form.brokerFee.trim() === "" ? 0 : Number(form.brokerFee)) / 100; }
+    catch (error) { setError(error instanceof Error ? error.message : "Check the broker fee."); return; }
+    if (!isPolicy && brokerFee > 0 && ["QUOTED", "PRESENTED"].includes(form.status) && !form.billType) {
+      setError("Choose who bills the premium before presenting a quote with a broker fee.");
+      return;
+    }
     if (
       form.effectiveDate &&
       form.expirationDate &&
@@ -132,6 +141,7 @@ export default function CoverageForm({
       lines: form.lines,
       premium: num(form.premium),
       commissionPct: num(form.commissionPct),
+      ...(!isPolicy && existing?.status !== "BOUND" ? { brokerFee, billType: (form.billType || null) as Quote["billType"] } : {}),
       perOccurrenceDeductible: num(form.perOccDed),
       perUnitDeductible: num(form.perUnitDed),
       blanketLimit: num(form.blanketLimit),
@@ -252,13 +262,14 @@ export default function CoverageForm({
             </div>
           </>
         )}
-        {/* Set at bind and correctable here — a placement can move from direct
-            to agency bill mid-term, and the answer decides whether the agency
-            invoices the premium at all. */}
-        {isPolicy && (
+        {/* Fee-bearing quotes need this existing billing answer before the
+            client payment request; fee-free quotes still answer it at bind. */}
+        {(isPolicy || Number(form.brokerFee) > 0) && (
           <div className="field">
-            <label>Bill type</label>
+            <label htmlFor="coverage-bill-type">Bill type</label>
             <select
+              id="coverage-bill-type"
+              disabled={!isPolicy && existing?.status === "BOUND"}
               value={form.billType}
               onChange={(e) => setF("billType", e.target.value)}
             >
@@ -269,6 +280,7 @@ export default function CoverageForm({
                 </option>
               ))}
             </select>
+            {!isPolicy && <p className="small muted">Choose who collects the premium so the client’s payment request includes only the amount the agency collects.</p>}
           </div>
         )}
         {!isPolicy && policies.data.length > 0 && <label className="field">Renewal of<select value={form.renewalPolicyId} onChange={e => { const p = policies.data.find(p => p.id === e.target.value); setF("renewalPolicyId", e.target.value); if (p?.expirationDate && !form.effectiveDate) setF("effectiveDate", p.expirationDate); }}><option value="">New business</option>{policies.data.map(p => <option value={p.id} key={p.id}>{p.policyNumber || "Policy"} · {p.lines?.join(", ")} · expires {p.expirationDate}</option>)}</select></label>}
@@ -301,6 +313,11 @@ export default function CoverageForm({
               setF("commissionPct", v);
             }}
           />
+        </div>
+        <div className="field">
+          <label htmlFor="coverage-broker-fee">Broker fee ($)</label>
+          <MoneyInput id="coverage-broker-fee" value={form.brokerFee} disabled={isPolicy || existing?.status === "BOUND"} onChange={(v) => setF("brokerFee", v)} />
+          <p className="small muted">Optional agency fee, separate from premium. Disclosed before purchase; the producer’s usual share applies.{(isPolicy || existing?.status === "BOUND") ? " The bound fee is preserved with its signed agreement." : " New and renewal quotes start at $0."}</p>
         </div>
         <div className="field">
           <label>Effective date</label>

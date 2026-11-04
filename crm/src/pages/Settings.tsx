@@ -1,3 +1,4 @@
+import BrokerFeeSettings from '../components/BrokerFeeSettings';
 import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { list, uploadData } from "../lib/scopedStorage";
@@ -78,7 +79,7 @@ export default function Settings({ profile }: { profile: UserProfile }) {
       {tab === "templates" && <TemplatesPanel />}
       {tab === "licensing" && <Licensing />}
       {tab === "signature" && <MySignature profile={profile} />}
-      {tab === "agency" && isAdmin && <AgencyPanel profile={profile} />}
+      {tab === "agency" && isAdmin && <><AgencyPanel profile={profile} /><BrokerFeeSettings /></>}
       {tab === "team" && isAdmin && <Team profile={profile} />}
       {tab === "integrations" && isAdmin && <CommunicationSettings />}
       {tab === "reports" && isAdmin && <MarketingReportSettings />}

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  brokerFeeLineFromSource,
   invoiceableQuotes,
   liveAnchorIds,
   seededLineDescription,
@@ -240,5 +241,17 @@ describe("addDays", () => {
     } finally {
       process.env.TZ = original;
     }
+  });
+});
+
+describe("policy-sourced broker fees", () => {
+  it("allows an unpaid fee on direct bill without making carrier premium billable", () => {
+    expect(unbilledAgencyPolicies([agency("p",{billType:"DIRECT",brokerFee:500})],new Set())).toHaveLength(1);
+    expect(unbilledAgencyPolicies([agency("p",{billType:"DIRECT",brokerFee:500,brokerFeeCollected:500})],new Set())).toHaveLength(0);
+    expect(brokerFeeLineFromSource({id:"p",quoteId:"q",brokerFee:500},"p")).toEqual({kind:"BROKER_FEE",description:"Broker fee",retailAmount:500,costAmount:0,brokerFeeQuoteId:"q",policyId:"p"});
+  });
+  it("requires the source quote and leaves zero-fee terms unchanged", () => {
+    expect(brokerFeeLineFromSource({id:"q",brokerFee:0})).toBeNull();
+    expect(()=>brokerFeeLineFromSource({id:"p",brokerFee:500},"p")).toThrow("original quote");
   });
 });

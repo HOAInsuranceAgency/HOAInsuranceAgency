@@ -1,6 +1,5 @@
 {
   "kind": "offline CDK synthesis with exact retained destination staging naming context; no AWS deployment or live-state reads",
-  "sourceRevision": "5d3c3dd700732e0a6bdbbdf305321d4d9bb1f4cc",
   "account": "917680434255",
   "region": "us-east-1",
   "app": "d1nuh9rw1hcuxo",
@@ -8,13 +7,14 @@
   "backendBranch": "staging",
   "maxTemplate": {
     "file": "amplifyd1nuh9rw1hcuxostagingbranch3787a09124dataAED7FBB2.nested.template.json",
-    "bytes": 979142,
+    "bytes": 987655,
     "limit": 1000000
   },
   "resourceTotals": {
-    "stateful": 58,
+    "stateful": 59,
     "eventSourceMappings": 28,
-    "schedules": 9
+    "schedules": 9,
+    "eventBridgeRules": 1
   },
   "addedWorkerStack": {
     "AWS::IAM::Role": 2,
@@ -46,5 +46,14 @@
     "schedulesEnabled": true,
     "googleSignInEnabled": false
   },
-  "note": "Execution controls are synthesis input only. Existing staging eight schedule states/targets and57/22 source identities remain pinned by the unchanged staging contract; weekly marketing remains disabled."
+  "note": "Execution controls are synthesis input only. The original57/22/8 identities remain pinned by the unchanged staging contract; weekly marketing remains disabled. Stateful59 includes the separately protected broker-fee ledger and rebuildable account-list table. This offline synthesis does not admit the live rolled-back root for deployment.",
+  "sourceParents": [
+    "53329017a73f6decd3d9e8e0e0a60aff6dfd2753",
+    "2e99253a5c76f613ae5dbc428ee97dab78c9f81b"
+  ],
+  "integrationChanges": [
+    "Retain staging broker fees and analytics fence",
+    "Preserve positive-fee quote authorization through compact projection reads",
+    "Attach identical additive fee/list grants as managed policies outside inline-role quotas"
+  ]
 }

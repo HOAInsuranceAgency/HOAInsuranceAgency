@@ -1,0 +1,89 @@
+{
+  "newManagedPolicies": [
+    {
+      "policy": "BrokerFeeAccess08BC147A1",
+      "characters": 3805,
+      "limit": 6144,
+      "withinLimit": true,
+      "rolesReference": "[{'Ref': 'referencetoamplifyd1nuh9rw1hcuxostagingbranch3787a09124dataNestedStackdataNestedStackResource1071BAFEOutputsamplifyd1nuh9rw1hcuxostagingbranch3787a09124databrokerfeeslambdaServiceRoleC40B86A2Ref'}]",
+      "bound": false
+    },
+    {
+      "policy": "BrokerFeeAccess197A602A5",
+      "characters": 2198,
+      "limit": 6144,
+      "withinLimit": true,
+      "rolesReference": "[{'Ref': 'referencetoamplifyd1nuh9rw1hcuxostagingbranch3787a09124dataNestedStackdataNestedStackResource1071BAFEOutputsamplifyd1nuh9rw1hcuxostagingbranch3787a09124datacommunicationslambdaServiceRole3ED56174Ref'}]",
+      "bound": false
+    },
+    {
+      "policy": "BrokerFeeAccess2D47656E8",
+      "characters": 1488,
+      "limit": 6144,
+      "withinLimit": true,
+      "rolesReference": "[{'Ref': 'referencetoamplifyd1nuh9rw1hcuxostagingbranch3787a09124dataNestedStackdataNestedStackResource1071BAFEOutputsamplifyd1nuh9rw1hcuxostagingbranch3787a09124datacommissionslambdaServiceRoleAB70CED9Ref'}]",
+      "bound": false
+    },
+    {
+      "policy": "BrokerFeeAccess35ACD9939",
+      "characters": 2022,
+      "limit": 6144,
+      "withinLimit": true,
+      "rolesReference": "[{'Ref': 'referencetoamplifyd1nuh9rw1hcuxostagingbranch3787a09124dataNestedStackdataNestedStackResource1071BAFEOutputsamplifyd1nuh9rw1hcuxostagingbranch3787a09124datastripewebhooklambdaServiceRoleF63ECABBRef'}]",
+      "bound": false
+    },
+    {
+      "policy": "BrokerFeeAccess4CB755F18",
+      "characters": 2198,
+      "limit": 6144,
+      "withinLimit": true,
+      "rolesReference": "[{'Ref': 'referencetoamplifyd1nuh9rw1hcuxostagingbranch3787a09124dataNestedStackdataNestedStackResource1071BAFEOutputsamplifyd1nuh9rw1hcuxostagingbranch3787a09124datasendinvoicelambdaServiceRole7A340239Ref'}]",
+      "bound": false
+    },
+    {
+      "policy": "BrokerFeeAccess53223237E",
+      "characters": 1287,
+      "limit": 6144,
+      "withinLimit": true,
+      "rolesReference": "[{'Ref': 'referencetoamplifyd1nuh9rw1hcuxostagingbranch3787a09124dataNestedStackdataNestedStackResource1071BAFEOutputsamplifyd1nuh9rw1hcuxostagingbranch3787a09124datavoidinvoicelambdaServiceRoleA73E73F7Ref'}]",
+      "bound": false
+    },
+    {
+      "policy": "BrokerFeeAccess6E586E35E",
+      "characters": 2198,
+      "limit": 6144,
+      "withinLimit": true,
+      "rolesReference": "[{'Ref': 'referencetoamplifyd1nuh9rw1hcuxostagingbranch3787a09124dataNestedStackdataNestedStackResource1071BAFEOutputsamplifyd1nuh9rw1hcuxostagingbranch3787a09124datapfelectionlambdaServiceRoleE61C8F52Ref'}]",
+      "bound": false
+    },
+    {
+      "policy": "BrokerFeeAccess77F52A93E",
+      "characters": 397,
+      "limit": 6144,
+      "withinLimit": true,
+      "rolesReference": "[{'Ref': 'referencetoamplifyd1nuh9rw1hcuxostagingbranch3787a09124dataNestedStackdataNestedStackResource1071BAFEOutputsamplifyd1nuh9rw1hcuxostagingbranch3787a09124datacrmaccesslambdaServiceRoleBFC8800DRef'}]",
+      "bound": false
+    },
+    {
+      "policy": "AccountListReadAccess4F41C389",
+      "characters": 2234,
+      "limit": 6144,
+      "withinLimit": true,
+      "rolesReference": "[{'Ref': 'referencetoamplifyd1nuh9rw1hcuxostagingbranch3787a09124dataNestedStackdataNestedStackResource1071BAFEOutputsamplifyd1nuh9rw1hcuxostagingbranch3787a09124datacommunicationslambdaServiceRole3ED56174Ref'}]",
+      "bound": true
+    }
+  ],
+  "communications": {
+    "existingAggregateInline": 8285,
+    "proposedDefaultInline": 7410,
+    "unchangedOtherInline": 1211,
+    "proposedAggregateInline": 8621,
+    "inlineLimit": 10240,
+    "existingManagedAttachments": 3,
+    "proposedManagedAttachments": 5,
+    "managedAttachmentLimit": 10
+  },
+  "unknownReferences": [],
+  "boundNote": "AccountListReadAccess uses maximum legal 255-character future table name; all other new managed references and communications default policy use actual staging ARNs.",
+  "reviewedAt": "2026-11-04"
+}

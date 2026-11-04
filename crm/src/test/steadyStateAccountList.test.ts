@@ -9,7 +9,7 @@ import { verifySteadyState } from '../../scripts/verify-steady-state.mjs';
 import { ACCOUNT_LIST_EXTENSION, ACCOUNT_LIST_STAGING_EXTENSION } from '../../scripts/steady-state-account-list.mjs';
 
 type Resource = { LogicalResourceId: string; PhysicalResourceId: string; ResourceType: string; ResourceStatus: string };
-function fixture(failure = '', staging = false) {
+function fixture(failure = '', staging = false, withLedger = false) {
   const c = structuredClone(staging ? stagingContract : contract), calls: string[][] = [];
   const e = staging ? ACCOUNT_LIST_STAGING_EXTENSION : ACCOUNT_LIST_EXTENSION;
   const row = (logical: string, type: string, physical: string): Resource => ({ LogicalResourceId: logical, ResourceType: type, PhysicalResourceId: physical, ResourceStatus: 'CREATE_COMPLETE' });
@@ -40,6 +40,8 @@ function fixture(failure = '', staging = false) {
     row(e.table, 'AWS::DynamoDB::Table', 'main-account-list-records'),
     row(e.workerStack, 'AWS::CloudFormation::Stack', workerStack),
   ];
+  const ledgerName = `${c.backendRoot.split('/')[1]}-broker-fees`;
+  if (withLedger) root.push(row('BrokerFeeLedger1234ABCD', 'AWS::DynamoDB::Table', ledgerName));
   const worker = [
     row(e.worker, 'AWS::Lambda::Function', workerName), row(e.schedulerRole, 'AWS::IAM::Role', schedulerRole),
     row(e.schedule, 'AWS::Scheduler::Schedule', scheduleName),
@@ -65,6 +67,9 @@ function fixture(failure = '', staging = false) {
     if (args[1] === 'list-stack-resources') return { StackResourceSummaries: args[3] === c.backendRoot ? root : worker };
     if (args[1] === 'describe-table') {
       const name = args[3], model = Object.keys(sourceNames).find(model => sourceNames[model] === name);
+      if (name === ledgerName) return { Table: { TableName: name, TableArn: tableArn(name), TableStatus: 'ACTIVE', DeletionProtectionEnabled: failure !== 'unprotected-ledger',
+        KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }], AttributeDefinitions: ['id', 'accountId', 'kind', 'pending'].map(AttributeName => ({ AttributeName, AttributeType: 'S' })),
+        GlobalSecondaryIndexes: Object.entries({ account: 'accountId', kind: 'kind', pending: 'pending' }).map(([IndexName, key]) => ({ IndexName, IndexStatus: 'ACTIVE', Projection: { ProjectionType: 'ALL' }, KeySchema: [{ AttributeName: key, KeyType: 'HASH' }, { AttributeName: 'id', KeyType: 'RANGE' }] })) } };
       if (!model) return { Table: { TableName: name, TableArn: tableArn(name), TableStatus: 'ACTIVE', KeySchema: [{ AttributeName: 'pk', KeyType: 'HASH' }, { AttributeName: failure === 'private-schema' ? 'wrong' : 'sk', KeyType: 'RANGE' }] } };
       return { Table: { TableName: name, TableArn: failure === 'foreign-source' && model === 'UserProfile' ? tableArn('foreign') : tableArn(name), TableStatus: 'ACTIVE',
         LatestStreamArn: failure === 'source-generation' && model === 'Account' ? `${tableArn(name)}/stream/replaced` : streams[model],
@@ -101,6 +106,19 @@ describe('narrow additive account-list steady-state admission', () => {
     expect(f.calls.every(call => ['describe-stacks', 'list-stack-resources', 'get-event-source-mapping', 'get-schedule', 'describe-table'].includes(call[1]))).toBe(true);
     expect(contract.statefulCount).toBe(57); expect(contract.mappings).toHaveLength(22); expect(contract.schedules).toHaveLength(8);
   });
+  it.each([false, true])('admits both independently protected additions without changing the original inventory (staging=%s)', staging => {
+    const f = fixture('', staging, true);
+    expect(() => verifySteadyState(f.namespace, f.c, f.aws)).not.toThrow();
+    expect(f.calls.filter(call => call[1] === 'get-event-source-mapping')).toHaveLength(28);
+    expect(f.calls.filter(call => call[1] === 'get-schedule')).toHaveLength(9);
+    expect(f.calls.filter(call => call[1] === 'describe-table')).toHaveLength(8);
+  });
+  it.each(['unprotected-ledger', 'extra-table', 'old-stateful-change', 'old-cursor-change', 'old-schedule-change', 'foreign-stream', 'schedule-input'])(
+    'rejects %s when the ledger and account-list additions coexist', failure => {
+      const f = fixture(failure, true, true);
+      expect(() => verifySteadyState(f.namespace, f.c, f.aws)).toThrow();
+    },
+  );
   it.each(['missing-table', 'missing-mapping', 'missing-schedule', 'missing-worker', 'wrong-type', 'duplicate-id', 'extra-table', 'extra-mapping', 'extra-schedule', 'old-stateful-change', 'old-cursor-change', 'old-schedule-change', 'foreign-table-stack', 'foreign-worker-stack', 'private-schema', 'foreign-source', 'source-generation', 'source-view', 'foreign-function', 'foreign-stream', 'disabled-mapping', 'replay', 'mapping-errors', 'batch-size', 'mapping-filter', 'disabled-schedule', 'schedule-timing', 'foreign-role', 'schedule-input'])(
     'rejects %s without broadening the original inventory contract', failure => {
       const f = fixture(failure); expect(() => verifySteadyState(f.namespace, f.c, f.aws)).toThrow();
@@ -124,6 +142,55 @@ describe('narrow additive account-list steady-state admission', () => {
     const f = fixture('', staging), foreign = staging ? contract : stagingContract;
     for (const change of [{ backendRoot: foreign.backendRoot }, { branch: foreign.branch }, { runtimeBranch: foreign.runtimeBranch }, { backendBranch: foreign.backendBranch }]) {
       expect(() => verifySteadyState({ ...f.namespace, branchName: change.backendBranch ?? f.namespace.branchName, backend: { stackArn: change.backendRoot ?? f.c.backendRoot } }, { ...f.c, ...change }, f.aws)).toThrow();
+    }
+  });
+});
+
+
+describe('explicit retained staging rollback recovery', () => {
+  const options = { recoverStagingRollback: true };
+  function rolledBackReads(f: ReturnType<typeof fixture>, rootStatus = 'UPDATE_ROLLBACK_COMPLETE', resourceType = 'AWS::CloudFormation::Stack') {
+    return (...args: string[]) => {
+      const response = f.aws(...args) as { Stacks?: Record<string, unknown>[]; StackResourceSummaries?: Resource[] };
+      if (args[1] === 'describe-stacks') return { Stacks: response.Stacks!.map(stack => ({ ...stack, StackStatus: rootStatus })) };
+      if (args[1] === 'list-stack-resources' && args[3] === f.c.backendRoot) return { StackResourceSummaries: response.StackResourceSummaries!.map(resource =>
+        resource.ResourceType === resourceType ? { ...resource, ResourceStatus: 'UPDATE_ROLLBACK_COMPLETE' } : resource) };
+      return response;
+    };
+  }
+  it('keeps the default guard strict for a fully rolled-back staging root', () => {
+    const f = fixture('', true, true);
+    expect(() => verifySteadyState(f.namespace, f.c, rolledBackReads(f))).toThrow(/unstable/);
+  });
+  it('records observed rollback statuses while checking both additions and every original control', () => {
+    const f = fixture('', true, true);
+    const receipt = verifySteadyState(f.namespace, f.c, rolledBackReads(f), options);
+    expect(receipt).toMatchObject({ backendRoot: stagingContract.backendRoot, observedRootStatus: 'UPDATE_ROLLBACK_COMPLETE', stagingRollbackRecovery: true,
+      originalStatefulCount: 57, originalStatefulInventorySha256: f.c.statefulInventorySha256, originalCursorCount: 22, originalScheduleCount: 8, accountListExtensionPresent: true, brokerFeeLedgerPresent: true });
+    expect(receipt.observedRolledBackNestedStacks).toEqual([{ logicalId: ACCOUNT_LIST_STAGING_EXTENSION.workerStack,
+      stackArn: `arn:aws:cloudformation:${f.c.region}:${f.c.account}:stack/account-list-owned/12345678`, observedStatus: 'UPDATE_ROLLBACK_COMPLETE' }]);
+    expect(f.calls.filter(call => call[1] === 'get-event-source-mapping')).toHaveLength(28);
+    expect(f.calls.filter(call => call[1] === 'get-schedule')).toHaveLength(9);
+    expect(f.calls.filter(call => call[1] === 'describe-table')).toHaveLength(8);
+  });
+  it.each(['UPDATE_ROLLBACK_FAILED', 'UPDATE_ROLLBACK_IN_PROGRESS', 'UPDATE_IN_PROGRESS', 'ROLLBACK_COMPLETE'])(
+    'rejects an incomplete or different root status %s', status => {
+      const f = fixture('', true); expect(() => verifySteadyState(f.namespace, f.c, rolledBackReads(f, status), options)).toThrow(/unstable/);
+    },
+  );
+  it('rejects a rolled-back non-stack resource even in recovery mode', () => {
+    const f = fixture('', true); expect(() => verifySteadyState(f.namespace, f.c, rolledBackReads(f, 'UPDATE_ROLLBACK_COMPLETE', 'AWS::DynamoDB::Table'), options)).toThrow(/resource update/);
+  });
+  it.each(['old-stateful-change', 'old-cursor-change', 'old-schedule-change', 'extra-table', 'extra-mapping', 'extra-schedule', 'unprotected-ledger', 'foreign-stream', 'schedule-input'])(
+    'retains the existing rejection of %s during recovery', failure => {
+      const f = fixture(failure, true, true); expect(() => verifySteadyState(f.namespace, f.c, rolledBackReads(f), options)).toThrow();
+    },
+  );
+  it('rejects recovery for main or a different staging identity', () => {
+    const main = fixture(); expect(() => verifySteadyState(main.namespace, main.c, main.aws, options)).toThrow(/restricted/);
+    const f = fixture('', true);
+    for (const delta of [{ backendRoot: f.c.backendRoot + '-other' }, { account: '637423611040' }, { branch: 'staging' }, { backendBranch: 'main' }, { runtimeBranch: 'main' }, { region: 'us-west-2' }, { crmApp: 'other' }]) {
+      expect(() => verifySteadyState(f.namespace, { ...f.c, ...delta }, f.aws, options)).toThrow(/restricted/);
     }
   });
 });

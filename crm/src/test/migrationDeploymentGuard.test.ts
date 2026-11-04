@@ -49,6 +49,13 @@ describe("destination deployment and replay barrier", () => {
     }
     expect(() => run({}, ["--skip-guard"])).toThrow();
   });
+  it('requires explicit staging-only steady-state context for rollback recovery', () => {
+    const flag = '--recover-staging-rollback';
+    expect(() => run({}, [flag])).toThrow();
+    expect(() => run({}, ['--staging-only', flag])).toThrow();
+    expect(() => run({ AWS_BRANCH: 'main', HOA_DEPLOYMENT_MODE: 'steady-state', HOA_MIGRATION_PREVIEW: 'false' }, ['--staging-only', flag])).toThrow();
+    expect(() => run({}, ['--staging-only', flag, flag])).toThrow();
+  });
   it("rejects release directly from quarantine", () => expect(() => run({ HOA_MIGRATION_PREVIEW: "false" })).toThrow());
   it.each(["old", "disabled", "replay", "polling", "recent"])("rejects a release while stream state is %s", failure => {
     expect(() => run({ HOA_MIGRATION_PREVIEW: "false", HOA_MIGRATION_STREAM_PHASE: "armed", HOA_TEST_FAILURE: failure })).toThrow();

@@ -4,6 +4,7 @@ import { packageAssessment, packageTerms, type CommercialPlan } from '../../../.
 import { agencyDay } from '../../../../shared/leadActionGuidance';
 import { dataClient } from './data';
 import { canonical, check, get, hash, type Row, type Write } from './store';
+import { brokerFeeCents } from '../../../../shared/brokerFees';
 
 export function businessValidation(message: string) { return Object.assign(new Error(message), { code: 'BUSINESS_DRAFT_NOT_DISPATCHED' }); }
 export type Quote = Schema['Quote']['type'];
@@ -41,7 +42,7 @@ function version(model: SourceVersion['model'], record: { id: string; updatedAt:
 const publicFields = ['perOccurrenceDeductible', 'perUnitDeductible', 'blanketLimit', 'coinsurancePct', 'replacementCostType', 'glEachOccurrence', 'glDamageToRentedPremises', 'glMedicalExpense', 'glPersonalAdvInjury', 'glGeneralAggregate', 'glProductsCompletedOps', 'glClaimsMade', 'glAggregateAppliesTo', 'minimumEarnedPremiumPct'] as const;
 // Include private review inputs only in the server-side terms comparison, never
 // in public output. Fetching a partial review input would invalidate its fence.
-const quoteSourceFields = ['id', 'accountId', 'carrierId', 'status', 'premium', 'commissionPct', 'lines', 'effectiveDate', 'expirationDate', 'offerExpiresAt', 'renewalPolicyId', 'notes', 'updatedAt', ...publicFields] as const;
+const quoteSourceFields = ['id', 'accountId', 'carrierId', 'status', 'premium', 'brokerFee', 'billType', 'commissionPct', 'lines', 'effectiveDate', 'expirationDate', 'offerExpiresAt', 'renewalPolicyId', 'notes', 'updatedAt', ...publicFields] as const;
 async function sourceReads<T, R>(items: readonly T[], read: (item: T) => Promise<R>): Promise<R[]> {
   const results: R[] = [];
   // Bounded batches retain input order regardless of request completion order.
@@ -85,11 +86,14 @@ export async function loadDeliverySource(input: BusinessDeliverySelection): Prom
       const carrier = carriers.get(q.carrierId!)!;
       versions.push(version('QUOTE', q), version('CARRIER', carrier));
       quoteTerms[q.id] = packageTerms(q);
-      const publicQuote: PublicProposalQuote = { id: q.id, carrierName: carrier.name, premium: q.premium!, lines: q.lines!.filter((line): line is string => !!line), effectiveDate: q.effectiveDate!, expirationDate: q.expirationDate!, offerExpiresAt: q.offerExpiresAt,
+      const publicQuote: PublicProposalQuote = { id: q.id, carrierName: carrier.name, premium: q.premium!, brokerFee: q.brokerFee ?? 0, billType: q.billType, lines: q.lines!.filter((line): line is string => !!line), effectiveDate: q.effectiveDate!, expirationDate: q.expirationDate!, offerExpiresAt: q.offerExpiresAt,
         ...Object.fromEntries(publicFields.map(field => [field, q[field] ?? null])) };
       quotes.push(publicQuote);
       facts.push(`Carrier: ${publicQuote.carrierName}`, `Coverage: ${publicQuote.lines.join(', ')}`, `Premium: ${new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(publicQuote.premium)}`, `Term: ${publicQuote.effectiveDate} to ${publicQuote.expirationDate}`);
+      if (brokerFeeCents(publicQuote.brokerFee)) facts.push(`Broker fee: ${new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(publicQuote.brokerFee!)}`);
     }
+    const totalFees = quotes.reduce((sum, quote) => sum + brokerFeeCents(quote.brokerFee), 0);
+    if (totalFees) facts.push(`Total broker fees: ${new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(totalFees / 100)}`, `Premium and broker fees: ${new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(quotes.reduce((sum, quote) => sum + Math.round(quote.premium * 100), totalFees) / 100)}`);
   } else if (input.kind === 'CERTIFICATE') {
     const result = await client.models.Certificate.get({ id: input.recordId }), cert = result.data;
     if (result.errors?.length || !cert || cert.accountId !== input.accountId || cert.s3Key !== `certificates/${input.accountId}/${cert.id}.pdf`) throw businessValidation('Generate a certificate on this account before preparing it');

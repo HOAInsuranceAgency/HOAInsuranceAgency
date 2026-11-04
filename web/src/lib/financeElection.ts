@@ -74,6 +74,7 @@ export interface ElectionTerms {
   payment: number;
   totalInterest: number;
   originationFee: number;
+  brokerFee: number;
   effectiveDate: string | null;
   /** The agreement paragraphs the customer signs — served, never copied. */
   agreementTerms: string[];
@@ -92,11 +93,12 @@ export async function fetchElectionTerms(token: string): Promise<ElectionTerms> 
     months: Number(r.months ?? 0),
     apr: Number(r.apr ?? 0),
     downPayment: Number(r.downPayment ?? 0),
-    initialPaymentAmount: Number(r.initialPaymentAmount ?? (Number(r.downPayment ?? 0) + Number(r.originationFee ?? 0))),
+    initialPaymentAmount: Number(r.initialPaymentAmount ?? (Number(r.downPayment ?? 0) + Number(r.originationFee ?? 0) + Number(r.brokerFee ?? 0))),
     amountFinanced: Number(r.amountFinanced ?? 0),
     payment: Number(r.payment ?? 0),
     totalInterest: Number(r.totalInterest ?? 0),
     originationFee: Number(r.originationFee ?? 0),
+    brokerFee: Number(r.brokerFee ?? 0),
     effectiveDate: typeof r.effectiveDate === "string" ? r.effectiveDate : null,
     agreementTerms: Array.isArray(r.agreementTerms)
       ? r.agreementTerms.filter((p): p is string => typeof p === "string")

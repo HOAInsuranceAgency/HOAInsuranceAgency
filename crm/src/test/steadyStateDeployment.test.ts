@@ -35,6 +35,7 @@ describe("completed HOA main deployment", () => {
     const web = { ...env, AWS_APP_ID: contract.webApp, PUBLIC_HOA_MIGRATION_PREVIEW: "false", PUBLIC_ANALYTICS_DISABLED: "false", PUBLIC_CRM_API_URL: contract.graphqlUrl };
     expect(() => assertSteadyState(web, contract)).not.toThrow();
     expect(() => assertSteadyState({ ...web, PUBLIC_CRM_API_URL: "https://source.invalid/graphql" }, contract)).toThrow();
+    expect(() => assertSteadyState({ ...web, PUBLIC_ANALYTICS_DISABLED: "true" }, contract)).toThrow();
   });
   it("retains the current auth/mail/pending runtime identity without changing handlers", () => {
     const config = readFileSync("amplify/migration-config.ts", "utf8");
@@ -44,7 +45,7 @@ describe("completed HOA main deployment", () => {
   });
 });
 
-function liveFixture(failure = "", source = contract) {
+function liveFixture(failure = "", source = contract, withLedger = false) {
   const c = structuredClone(source);
   const stateful = Array.from({ length: 57 }, (_, i) => [c.backendRoot, `State${String(i).padStart(2,"0")}`, c.statefulTypes[0], `existing-${i}`]);
   c.statefulInventorySha256 = createHash("sha256").update(JSON.stringify(stateful)).digest("hex");
@@ -55,11 +56,18 @@ function liveFixture(failure = "", source = contract) {
   ].map(r => ({ ...r, ResourceStatus: "CREATE_COMPLETE" }));
   if (failure === "identity") resources[0].PhysicalResourceId = "replacement";
   if (failure === "extra") resources.push({ ...resources[57], PhysicalResourceId: "old-cursor" });
+  const ledgerName = `${c.backendRoot.split('/')[1]}-broker-fees`;
+  const ledgerResource = { LogicalResourceId: 'BrokerFeeLedger1234ABCD', ResourceType: 'AWS::DynamoDB::Table', PhysicalResourceId: ledgerName, ResourceStatus: 'CREATE_COMPLETE' };
+  if (withLedger) resources.push(ledgerResource);
+  const ledger = { TableName: ledgerName, TableArn: `arn:aws:dynamodb:${c.region}:${c.account}:table/${ledgerName}`, TableStatus: 'ACTIVE', DeletionProtectionEnabled: true,
+    KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }], AttributeDefinitions: ['id', 'accountId', 'kind', 'pending'].map(AttributeName => ({ AttributeName, AttributeType: 'S' })),
+    GlobalSecondaryIndexes: Object.entries({ account: 'accountId', kind: 'kind', pending: 'pending' }).map(([IndexName, key]) => ({ IndexName, IndexStatus: 'ACTIVE', Projection: { ProjectionType: 'ALL' }, KeySchema: [{ AttributeName: key, KeyType: 'HASH' }, { AttributeName: 'id', KeyType: 'RANGE' }] })) };
   const calls: string[][] = [];
   const aws = (...a: string[]) => {
     calls.push(a);
     if (a[1] === "describe-stacks") return { Stacks: [{ StackId: c.backendRoot, StackStatus: failure === "updating" ? "UPDATE_IN_PROGRESS" : "UPDATE_COMPLETE", EnableTerminationProtection: failure !== "unprotected" }] };
     if (a[1] === "list-stack-resources") return { StackResourceSummaries: resources };
+    if (a[1] === "describe-table") return { Table: ledger };
     if (a[1] === "get-event-source-mapping") {
       const m = c.mappings.find(x => x.uuid === a[3])!;
       return { UUID: m.uuid, FunctionArn: m.functionArn, EventSourceArn: failure === "stream" ? "different" : m.streamArn,
@@ -72,7 +80,7 @@ function liveFixture(failure = "", source = contract) {
     }
     throw new Error("Unexpected AWS operation");
   };
-  return { c, aws, calls, namespace: { branchName: c.backendBranch, enableAutoBuild: false, enablePullRequestPreview: false, backend: { stackArn: failure === "root" ? "wrong" : c.backendRoot } } };
+  return { c, aws, calls, resources, ledger, ledgerResource, namespace: { branchName: c.backendBranch, enableAutoBuild: false, enablePullRequestPreview: false, backend: { stackArn: failure === "root" ? "wrong" : c.backendRoot } } };
 }
 describe("read-only existing backend admission", () => {
   it("requires all57 stateful identities,22 existing cursors and8 enabled main schedules", () => {
@@ -83,6 +91,39 @@ describe("read-only existing backend admission", () => {
   });
   it.each(["root", "unprotected", "updating", "identity", "extra", "stream", "disabled", "replay", "errors", "filter", "schedule", "target-input"])("rejects %s before a deploy", failure => {
     const f = liveFixture(failure); expect(() => verifySteadyState(f.namespace, f.c, f.aws)).toThrow();
+  });
+});
+
+describe('scoped broker fee ledger addition', () => {
+  it.each([contract, stagingContract])('allows exactly the new protected ledger while retaining the original $backendBranch inventory hash', source => {
+    const f = liveFixture('', source, true), originalHash = f.c.statefulInventorySha256;
+    expect(() => verifySteadyState(f.namespace, f.c, f.aws)).not.toThrow();
+    expect(f.c.statefulCount).toBe(57); expect(f.c.statefulInventorySha256).toBe(originalHash);
+    expect(f.calls.filter(call => call[0] === 'dynamodb')).toEqual([['dynamodb', 'describe-table', '--table-name', f.ledger.TableName]]);
+  });
+  it.each(['renamed ledger', 'unexpected logical ID', 'unexpected table', 'two ledgers', 'baseline replaced', 'baseline missing'])('rejects %s without changing the cutover baseline', failure => {
+    const f = liveFixture('', contract, true);
+    if (failure === 'renamed ledger') f.ledgerResource.PhysicalResourceId += '-replacement';
+    if (failure === 'unexpected logical ID') f.ledgerResource.LogicalResourceId = 'UnreviewedTable1234ABCD';
+    if (failure === 'unexpected table') f.resources.push({ ...f.ledgerResource, PhysicalResourceId: 'unreviewed-stateful-table', LogicalResourceId: 'OtherTable1234ABCD' });
+    if (failure === 'two ledgers') f.resources.push({ ...f.ledgerResource, LogicalResourceId: 'BrokerFeeLedgerABCD1234' });
+    if (failure === 'baseline replaced') f.resources[0].PhysicalResourceId = 'replacement-original';
+    if (failure === 'baseline missing') f.resources.splice(0, 1);
+    expect(() => verifySteadyState(f.namespace, f.c, f.aws)).toThrow();
+  });
+  it.each(['foreign ARN', 'inactive', 'unprotected', 'wrong key', 'wrong key type', 'missing index', 'extra index', 'wrong index key', 'wrong projection', 'building index'])('rejects an approved-name table with %s', failure => {
+    const f = liveFixture('', contract, true);
+    if (failure === 'foreign ARN') f.ledger.TableArn = f.ledger.TableArn.replace(contract.account, '000000000000');
+    if (failure === 'inactive') f.ledger.TableStatus = 'UPDATING';
+    if (failure === 'unprotected') f.ledger.DeletionProtectionEnabled = false;
+    if (failure === 'wrong key') f.ledger.KeySchema[0].AttributeName = 'accountId';
+    if (failure === 'wrong key type') f.ledger.AttributeDefinitions[0].AttributeType = 'N';
+    if (failure === 'missing index') f.ledger.GlobalSecondaryIndexes.pop();
+    if (failure === 'extra index') f.ledger.GlobalSecondaryIndexes.push({ ...f.ledger.GlobalSecondaryIndexes[0], IndexName: 'unreviewed' });
+    if (failure === 'wrong index key') f.ledger.GlobalSecondaryIndexes[0].KeySchema[0].AttributeName = 'kind';
+    if (failure === 'wrong projection') f.ledger.GlobalSecondaryIndexes[0].Projection.ProjectionType = 'KEYS_ONLY';
+    if (failure === 'building index') f.ledger.GlobalSecondaryIndexes[0].IndexStatus = 'CREATING';
+    expect(() => verifySteadyState(f.namespace, f.c, f.aws)).toThrow(/broker fee ledger/);
   });
 });
 
@@ -98,6 +139,13 @@ describe("completed HOA staging deployment", () => {
     expect(stagingContract.schedules.filter(s => s.state === "DISABLED").map(s => s.logical)).toEqual(["WeeklyMarketingReportSchedule6899ACFF"]);
     const f = liveFixture("", stagingContract); verifySteadyState(f.namespace, f.c, f.aws);
     expect(f.calls.every(a => ["describe-stacks", "list-stack-resources", "get-event-source-mapping", "get-schedule"].includes(a[1]))).toBe(true);
+  });
+  it("requires staging website analytics to stay disabled with its retained staging API binding", () => {
+    const web = { ...stageEnv, AWS_APP_ID: stagingContract.webApp, PUBLIC_HOA_MIGRATION_PREVIEW: "false",
+      PUBLIC_ANALYTICS_DISABLED: "true", PUBLIC_CRM_API_URL: stagingContract.graphqlUrl };
+    expect(() => assertSteadyState(web, stagingContract)).not.toThrow();
+    expect(() => assertSteadyState({ ...web, PUBLIC_ANALYTICS_DISABLED: "false" }, stagingContract)).toThrow();
+    expect(() => assertSteadyState({ ...web, PUBLIC_CRM_API_URL: contract.graphqlUrl }, stagingContract)).toThrow();
   });
   it.each([
     { AWS_BRANCH: "staging" }, { AWS_BRANCH: "main" }, { HOA_DEPLOYMENT_MODE: "" },

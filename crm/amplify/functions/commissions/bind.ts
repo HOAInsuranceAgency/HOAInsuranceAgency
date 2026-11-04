@@ -1,3 +1,7 @@
+import { getFee } from '../broker-fees/store';
+import { brokerFeeCents } from '../../../../shared/brokerFees';
+import { brokerFeeBindWrites } from '../broker-fees/bindValidation';
+import { reconcileQuotePayments } from '../broker-fees/payments';
 import { bindDay, firstBindDate } from './account-history';
 import { createHash } from 'node:crypto';
 import { QueryCommand } from '@aws-sdk/lib-dynamodb';
@@ -41,6 +45,7 @@ export async function bindPolicy(event: Event, input: Data) {
       throw new Error(
         'The quote account changed after binding. Review the original policy before continuing.',
       );
+    if (previous.brokerFeeCents) await reconcileQuotePayments(quoteId);
     return { policy, account, replayed: true };
   }
   if (!['DRAFT', 'SUBMITTED', 'QUOTED', 'PRESENTED'].includes(String(quote.status)))
@@ -155,6 +160,7 @@ export async function bindPolicy(event: Event, input: Data) {
   );
   const firstBinding = commissionAccount?.neverBound === true;
   const fields = [
+    'brokerFee',
     'carrierId',
     'lines',
     'premium',
@@ -176,8 +182,10 @@ export async function bindPolicy(event: Event, input: Data) {
     'replacementCostType',
     'minimumEarnedPremiumPct',
   ];
+  const initialFee=brokerFeeCents(quote.brokerFee as number|undefined)>0?await getFee(quoteId):undefined;
   const policy = {
     commissionSnapshotId: policyId,
+    ...(initialFee?{brokerFeeReportingKey:"BROKER_FEE",brokerFeeCollected:initialFee.collectedCents/100,brokerFeeRefunded:initialFee.refundedCents/100}:{}),
     ...Object.fromEntries(fields.filter((f) => quote[f] != null).map((f) => [f, quote[f]])),
     id: policyId,
     __typename: 'Policy',
@@ -208,12 +216,14 @@ export async function bindPolicy(event: Event, input: Data) {
     transaction,
     premiumCents,
     agencyRateUnits,
+    brokerFeeCents: brokerFeeCents(quote.brokerFee as number|undefined),
     ...selectedTerms,
     planVersion: plan.version,
     carrierTerms,
     entries: [],
   };
   const guards: Transaction = [
+    ...await brokerFeeBindWrites(quote,policyId,String(input.billType),initialFee?.version),
     {
       Put: {
         TableName: tableName('Policy'),
@@ -341,5 +351,9 @@ export async function bindPolicy(event: Event, input: Data) {
     access.actor,
     guards,
   );
+  if (snapshot.brokerFeeCents) {
+    try { await reconcileQuotePayments(quoteId); }
+    catch(error) { console.error("Broker fee allocation queued for durable recovery",error); }
+  }
   return { policy, account: updatedAccount, replayed: false };
 }

@@ -82,3 +82,34 @@ describe("invoice creation reliability", () => {
     expect(await screen.findByRole("combobox")).toBeInTheDocument();
   });
 });
+
+describe("broker fee invoice seeding",()=>{
+  it("seeds only the broker fee for a direct-bill policy",async()=>{
+    api.models.Policy.list.mockResolvedValue({data:[{...policy,quoteId:"q1",billType:"DIRECT",brokerFee:500}]});
+    await selectPolicy();
+    await userEvent.click(screen.getByRole("button",{name:"New invoice"}));
+    await screen.findByText("Editing inv1");
+    expect(api.models.InvoiceLine.create).toHaveBeenCalledTimes(1);
+    expect(api.models.InvoiceLine.create).toHaveBeenCalledWith(expect.objectContaining({kind:"BROKER_FEE",retailAmount:500,costAmount:0,brokerFeeQuoteId:"q1",policyId:"p1"}));
+  });
+  it("does not seed the same fee onto a later premium invoice after collection",async()=>{
+    api.models.Policy.list.mockResolvedValue({data:[{...policy,quoteId:"q1",brokerFee:500,brokerFeeCollected:500}]});
+    await selectPolicy();
+    await userEvent.click(screen.getByRole("button",{name:"New invoice"}));
+    await screen.findByText("Editing inv1");
+    expect(api.models.InvoiceLine.create).toHaveBeenCalledTimes(1);
+    expect(api.models.InvoiceLine.create).toHaveBeenCalledWith(expect.objectContaining({kind:"PREMIUM"}));
+  });
+});
+
+it("collects only the fee when direct bill is chosen on the existing quote before bind",async()=>{
+  api.models.Policy.list.mockResolvedValue({data:[]});
+  api.models.Quote.list.mockResolvedValue({data:[{id:"q1",accountId:"a1",status:"QUOTED",billType:"DIRECT",premium:100,brokerFee:500}]});
+  api.models.Invoice.create.mockResolvedValue({data:{id:"inv1",accountId:"a1",quoteId:"q1",status:"DRAFT",number:"INV-1"}});
+  render(<InvoicesTab accountId="a1" />);
+  await userEvent.selectOptions(await screen.findByRole("combobox"),"quote:q1");
+  await userEvent.click(screen.getByRole("button",{name:"New invoice"}));
+  await screen.findByText("Editing inv1");
+  expect(api.models.InvoiceLine.create).toHaveBeenCalledTimes(1);
+  expect(api.models.InvoiceLine.create).toHaveBeenCalledWith(expect.objectContaining({kind:"BROKER_FEE",brokerFeeQuoteId:"q1",retailAmount:500,costAmount:0}));
+});

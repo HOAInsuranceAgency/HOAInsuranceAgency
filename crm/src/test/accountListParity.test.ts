@@ -191,6 +191,40 @@ describe('real projector and reader semantic parity', () => {
     expect((await pages()).map(item => item.account.id)).not.toContain('f');
     expect((await pages({ stage: 'CLIENT' })).map(item => item.account.id)).toEqual(['e', 'f']);
   });
+  function feeBearingPartialClient() {
+    const row = sources.find(row => row.account.id === 'e')!;
+    Object.assign(row.quotes[0], { brokerFee: 125.50, billType: 'AGENCY' });
+    Object.assign(row.quotes[1], { brokerFee: 250, billType: 'DIRECT' });
+    const approvedTerms = Object.fromEntries(row.quotes.map(quote => [quote.id, packageTerms(quote)]));
+    row.plan.options[0].reviewed!.terms = approvedTerms;
+    row.plan.selectedTerms = approvedTerms;
+    return row;
+  }
+  it('retains reviewed agency/direct broker-fee terms through compact source reads without adding fees to pending commission', async () => {
+    const row = feeBearingPartialClient(); persist(row); await projectAccount(row.account.id, day, at);
+    const expected = pendingCommission(row.plan, row.quotes, day);
+    expect(expected).toMatchObject({ cents: 50_000, label: 'Partially bound', unfinished: true });
+    expect((await pages()).find(item => item.account.id === row.account.id)?.forecast).toEqual(expected);
+    expect((await pages({ stage: 'CLIENT' })).find(item => item.account.id === row.account.id)?.forecast).toEqual(expected);
+  });
+  it.each(['brokerFee', 'billType'])('invalidates an earlier package review when the current positive-fee %s changes', async field => {
+    const row = feeBearingPartialClient(); persist(row); await projectAccount(row.account.id, day, at);
+    expect((await pages()).find(item => item.account.id === row.account.id)?.forecast.cents).toBe(50_000);
+    Object.assign(row.quotes[1], field === 'brokerFee' ? { brokerFee: 250.01 } : { billType: 'AGENCY' });
+    row.quotes[1].updatedAt = '2026-11-04T16:00:00.000Z';
+    persist(row); await projectAccount(row.account.id, day, at);
+    const expected = pendingCommission(row.plan, row.quotes, day);
+    expect(expected).toMatchObject({ cents: null, label: 'Selected package needs review', unfinished: true });
+    expect((await pages()).find(item => item.account.id === row.account.id)?.forecast).toEqual(expected);
+  });
+  it('retains the legacy approval fingerprint for a fee-free quote when its premium billing method changes', async () => {
+    const row = sources.find(row => row.account.id === 'e')!;
+    Object.assign(row.quotes[1], { brokerFee: 0, billType: 'DIRECT', updatedAt: '2026-11-04T16:00:00.000Z' });
+    persist(row); await projectAccount(row.account.id, day, at);
+    const expected = pendingCommission(row.plan, row.quotes, day);
+    expect(expected).toMatchObject({ cents: 50_000, label: 'Partially bound' });
+    expect((await pages()).find(item => item.account.id === row.account.id)?.forecast).toEqual(expected);
+  });
   it.each(['ADMIN', 'OWNER', 'PRODUCER', 'STAFF'])('matches all stage/view/state/salesperson filters and paged counts in %s', async role => {
     for (const stage of ['LEAD', 'CLIENT'] as const) for (const state of [undefined, 'MA', 'TX']) for (const salespersonId of ['ADMIN', 'OWNER'].includes(role) ? [undefined, 'alice', 'bob'] : [undefined, 'alice']) {
       const input = { stage, state, salespersonId };

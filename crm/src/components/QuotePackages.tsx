@@ -209,6 +209,9 @@ function QuotePackagesContent({
                           : '—'}
                       </dd>
                     </div>
+                    <div><dt>Broker fees</dt><dd>{fmtMoney(assessment.brokerFeeCents / 100)}</dd></div>
+                    <div><dt>Premium + broker fees</dt><dd>{fmtMoney(assessment.clientTotalCents / 100)}</dd></div>
+                    <div><dt>Total agency revenue</dt><dd>{assessment.complete ? fmtMoney(assessment.agencyRevenueCents / 100) : '—'}</dd></div>
                   </dl>
                   {assessment.problems.length ? (
                     <p className="muted small">

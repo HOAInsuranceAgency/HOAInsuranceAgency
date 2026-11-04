@@ -1,3 +1,6 @@
+import { agencyDay } from "../../../../shared/leadActionGuidance";
+import { feeAllocations } from "../../../../shared/brokerFees";
+import { syncBrokerFeePayment } from "../broker-fees/payments";
 import { TransactionalMailClient } from "../transactional-mail/client";
 import Stripe from "stripe";
 import { randomUUID } from "node:crypto";
@@ -70,8 +73,9 @@ async function notifyAccounting(invoice: InvoiceRow, update: { paidAt: string | 
     carrierCents: carrierCents ?? 0,
     commissionCents: commissionCents ?? 0,
     interestCents: interestCents ?? 0,
+    brokerFeeCents: invoice.remittanceBrokerFeeCents ?? 0,
     totalCents:
-      (carrierCents ?? 0) + (commissionCents ?? 0) + (interestCents ?? 0),
+      (carrierCents ?? 0) + (commissionCents ?? 0) + (interestCents ?? 0) + (invoice.remittanceBrokerFeeCents ?? 0),
   };
 
   await ses.send(
@@ -187,6 +191,7 @@ async function alertPaymentOnVoid(invoice: InvoiceRow, paymentIntentId: string) 
  * rows a year and the webhook has no GSI name to hold onto.
  */
 async function cancelQuotedLoans(invoice: InvoiceRow) {
+  if ((invoice.remittanceBrokerFeeCents ?? 0) > 0 && invoice.remittanceCarrierCents === 0 && invoice.remittanceCommissionCents === 0 && (invoice.remittanceInterestCents ?? 0) === 0) return;
   const loanTable = process.env.PF_LOAN_TABLE;
   const logTable = process.env.PF_COMPLIANCE_LOG_TABLE;
   if (!loanTable || (!invoice.policyId && !invoice.quoteId)) return;
@@ -337,6 +342,88 @@ const getStripe = () => (stripe ??= new Stripe(process.env.STRIPE_SECRET_KEY as 
 const ok = (body: string) => ({ statusCode: 200, body });
 const refused = (body: string) => ({ statusCode: 400, body });
 
+/** The processor metadata preserves the allocation of the charge even after an invoice is resent. */
+async function syncInvoiceBrokerFee(invoice: InvoiceRow, decision: ReturnType<typeof decideEvent> & {}, object: Record<string, unknown>, validateOnly = false) {
+  const metadata = object.metadata as Record<string, unknown> | undefined;
+  const allocations = feeAllocations(metadata?.brokerFeeAllocations ?? invoice.brokerFeeAllocations);
+  if (!allocations.length) return;
+  const amount = decision.outcome === "PAID" ? (object.amount_received ?? object.amount) : object.amount;
+  const frozen = metadata?.invoiceTotalCents;
+  if (frozen != null && (typeof frozen !== "string" || !/^\d+$/.test(frozen))) throw new Error("Invalid frozen broker fee charge amount.");
+  // Processor amounts and issued metadata describe the actual charge. Current
+  // invoice display fields can never redefine an older, real payment.
+  const chargeCents = frozen == null ? object.amount : Number(frozen);
+  if (decision.outcome !== "FAILED" && (typeof amount !== "number" || !Number.isSafeInteger(amount) || !Number.isSafeInteger(chargeCents) || amount !== chargeCents || allocations.reduce((sum, part) => sum + part.amountCents, 0) > Number(chargeCents))) throw new Error("Broker fee charge does not match the frozen invoice amount.");
+  if (!invoice.accountId) throw new Error("Broker fee payment is missing its account.");
+  if (validateOnly) return;
+  await syncBrokerFeePayment({ sourceId: decision.paymentIntentId, accountId: invoice.accountId, allocations, status: decision.outcome, receivedOn: agencyDay(decision.occurredAt) });
+}
+
+/** Gross partial refunds do not identify the refunded broker fee; require an explicit fee allocation. */
+async function syncRefund(event: Stripe.Event) {
+  const charge = event.data.object as Stripe.Charge;
+  const intentId = typeof charge.payment_intent === "string" ? charge.payment_intent : charge.payment_intent?.id;
+  if (!intentId) return;
+  const intent = await getStripe().paymentIntents.retrieve(intentId);
+  const allocations = feeAllocations(intent.metadata.brokerFeeAllocations);
+  if (!allocations.length) return;
+  const totalFee = allocations.reduce((sum, part) => sum + part.amountCents, 0);
+  let refundedCents = charge.refunded && charge.amount_refunded === charge.amount ? totalFee : 0;
+  if (!refundedCents) {
+    const refunds: Stripe.Refund[] = [];
+    if (charge.refunds?.has_more) {
+      for await (const refund of getStripe().refunds.list({ charge: charge.id, limit: 100 })) refunds.push(refund);
+    } else refunds.push(...(charge.refunds?.data ?? []));
+    for (const refund of refunds) {
+      const amount = refund.metadata?.brokerFeeRefundCents;
+      if (refund.status === "succeeded" && amount != null) {
+        if (!/^\d+$/.test(amount) || Number(amount) > refund.amount) throw new Error("Invalid verified broker fee refund allocation.");
+        refundedCents += Number(amount);
+      }
+    }
+  }
+  if (!refundedCents) return;
+  if (!Number.isSafeInteger(refundedCents) || refundedCents > totalFee || refundedCents > charge.amount_refunded) throw new Error("Broker fee refund exceeds the verified refund.");
+  const accountId = intent.metadata.brokerFeeAccountId;
+  if (!accountId) throw new Error("Broker fee refund is missing its account.");
+  // A refund can precede success delivery. The ledger waits for the verified settlement date.
+  await syncBrokerFeePayment({ sourceId: intentId, accountId, allocations, status: "REFUNDED", refundedCents, receivedOn: agencyDay(new Date(event.created * 1000).toISOString()) });
+}
+
+/** A final lost dispute is an actual loss; opening or winning one is not. */
+async function syncLostDispute(event: Stripe.Event) {
+  const dispute = event.data.object as Stripe.Dispute;
+  if (dispute.status !== "lost") return;
+  const chargeId = typeof dispute.charge === "string" ? dispute.charge : dispute.charge?.id;
+  if (!chargeId) throw new Error("The lost dispute is missing its original charge.");
+  const charge = await getStripe().charges.retrieve(chargeId);
+  const intentId = typeof charge.payment_intent === "string" ? charge.payment_intent : charge.payment_intent?.id;
+  if (!intentId) return;
+  const intent = await getStripe().paymentIntents.retrieve(intentId);
+  const allocations = feeAllocations(intent.metadata.brokerFeeAllocations);
+  if (!allocations.length) return;
+  const disputeIntent = typeof dispute.payment_intent === "string" ? dispute.payment_intent : dispute.payment_intent?.id;
+  if (charge.id !== chargeId || intent.id !== intentId || intent.amount !== charge.amount || !charge.paid || charge.currency !== "usd" || intent.currency !== "usd" || dispute.currency !== "usd" || !Number.isSafeInteger(dispute.amount) || dispute.amount <= 0 || dispute.amount > charge.amount || (disputeIntent && disputeIntent !== intentId)) throw new Error("The lost broker fee dispute does not match its verified charge.");
+  const totalFee = allocations.reduce((sum, part) => sum + part.amountCents, 0);
+  const fullLoss = dispute.amount === charge.amount || dispute.amount === charge.amount - charge.amount_refunded;
+  let refundedCents = fullLoss ? totalFee : 0;
+  if (!fullLoss && dispute.metadata?.brokerFeeRefundCents != null) {
+    // On a dispute this is the reviewed cumulative fee loss on the original
+    // payment, including prior fee refunds. Gross partial losses are ambiguous.
+    const amount = dispute.metadata.brokerFeeRefundCents;
+    if (!/^\d+$/.test(amount)) throw new Error("Invalid broker fee dispute allocation.");
+    refundedCents = Number(amount);
+  }
+  if (!refundedCents) {
+    console.warn(`Broker fee allocation needs review for partial lost dispute ${dispute.id}`);
+    return;
+  }
+  if (!Number.isSafeInteger(refundedCents) || refundedCents > totalFee || refundedCents > dispute.amount + charge.amount_refunded) throw new Error("The broker fee dispute allocation exceeds the verified loss.");
+  const accountId = intent.metadata.brokerFeeAccountId;
+  if (!accountId) throw new Error("The disputed broker fee is missing its account.");
+  await syncBrokerFeePayment({ sourceId: intentId, accountId, allocations, status: "REFUNDED", refundedCents, receivedOn: agencyDay(new Date(event.created * 1000).toISOString()) });
+}
+
 export const handler = async (event: {
   body?: string | null;
   isBase64Encoded?: boolean;
@@ -401,9 +488,29 @@ export const handler = async (event: {
    * `pfLoanId` (never `invoiceId`) on their PaymentIntents, so an event is
    * loan traffic or invoice traffic by metadata alone.
    */
+  if (parsed.type === "charge.refunded") {
+    try { await syncRefund(parsed); return ok("refund recorded"); }
+    catch (err) { console.error("stripe-webhook: broker fee refund failed", err); return { statusCode: 500, body: "retry" }; }
+  }
+  if (parsed.type === "charge.dispute.closed") {
+    try { await syncLostDispute(parsed); return ok("dispute reviewed"); }
+    catch (error) { console.error("stripe-webhook: broker fee dispute failed", error); return { statusCode: 500, body: "retry" }; }
+  }
   const pfDecision = decidePfEvent(parsed as never);
   if (pfDecision) {
     try {
+      if (pfDecision.outcome === "COMMITTED" && pfDecision.kind === "down") {
+        const session = parsed.data.object as Stripe.Checkout.Session;
+        if (feeAllocations(session.metadata?.brokerFeeAllocations).length) {
+          const intent = await getStripe().paymentIntents.retrieve(pfDecision.paymentIntentId);
+          if (session.mode !== "payment" || session.status !== "complete" || session.amount_total !== intent.amount || session.currency !== "usd" || intent.currency !== "usd" || intent.metadata.pfLoanId !== pfDecision.loanId || intent.metadata.pfKind !== "down" || JSON.stringify(feeAllocations(session.metadata?.brokerFeeAllocations)) !== JSON.stringify(feeAllocations(intent.metadata.brokerFeeAllocations))) throw new Error("The completed financing fee checkout does not match its payment intent.");
+          if (["canceled", "requires_payment_method"].includes(intent.status)) return ok("financing payment is no longer submitted");
+          const pending = decidePfEvent({ type: "payment_intent.processing", created: parsed.created, data: { object: intent as unknown as Record<string, unknown> } });
+          if (!pending) throw new Error("The completed financing fee checkout is missing its payment metadata.");
+          await applyPfEvent(pfDecision);
+          return ok(await applyPfEvent(pending));
+        }
+      }
       return ok(await applyPfEvent(pfDecision));
     } catch (err) {
       console.error(`stripe-webhook: pf event ${parsed.type} failed`, err);
@@ -413,7 +520,29 @@ export const handler = async (event: {
     }
   }
 
-  const decision = decideEvent(parsed as never);
+  let paymentObject = parsed.data.object as unknown as Record<string, unknown>;
+  let decision = decideEvent(parsed as never);
+  let completedLinkId: string | undefined;
+  // ACH checkout can wait for microdeposit verification before the intent
+  // starts processing. Record its authorized fee, without recording cash.
+  if (parsed.type === "checkout.session.completed") {
+    const session = parsed.data.object as Stripe.Checkout.Session;
+    const intentId = typeof session.payment_intent === "string" ? session.payment_intent : session.payment_intent?.id;
+    if (!intentId || session.mode !== "payment" || session.status !== "complete") return ok("ignored checkout");
+    try {
+      const intent = await getStripe().paymentIntents.retrieve(intentId);
+      if (!feeAllocations(intent.metadata.brokerFeeAllocations).length) return ok("checkout without broker fee");
+      if (session.amount_total !== intent.amount || session.currency !== "usd" || intent.currency !== "usd" || (session.metadata?.invoiceId && session.metadata.invoiceId !== intent.metadata.invoiceId)) throw new Error("The completed fee checkout does not match its payment intent.");
+      if (["canceled", "requires_payment_method"].includes(intent.status)) return ok("checkout payment is no longer submitted");
+      completedLinkId = typeof session.payment_link === "string" ? session.payment_link : session.payment_link?.id;
+      if (!completedLinkId) throw new Error("The fee checkout is missing its issued payment link.");
+      paymentObject = intent as unknown as Record<string, unknown>;
+      decision = decideEvent({ type: "payment_intent.processing", created: parsed.created, data: { object: paymentObject } });
+    } catch (error) {
+      console.error("stripe-webhook: submitted broker fee checkout could not be recorded", error);
+      return { statusCode: 500, body: "retry" };
+    }
+  }
   if (!decision) {
     // An event we do not act on is still an event we received. 200, or Stripe
     // retries it forever.
@@ -447,9 +576,13 @@ export const handler = async (event: {
         console.warn(`stripe-webhook: no invoice ${decision.invoiceId}`);
         return ok("unknown invoice");
       }
-
+      if (completedLinkId && invoice.stripePaymentLinkId !== completedLinkId && !(paymentObject.metadata as Record<string, unknown> | undefined)?.invoiceTotalCents) throw new Error("The completed fee checkout belongs to a different invoice payment link.");
+      await syncInvoiceBrokerFee(invoice, decision, paymentObject, true);
       const update = decideUpdate(invoice, decision, today);
       if (update.action === "skip") {
+        if (invoice.stripePaymentIntentId === decision.paymentIntentId && ((decision.outcome === "PAID" && invoice.status === "PAID") || (decision.outcome === "PROCESSING" && invoice.status === "PROCESSING") || (decision.outcome === "FAILED" && invoice.status === "SENT"))) {
+          await syncInvoiceBrokerFee(invoice, decision, paymentObject);
+        }
         /**
          * Money arriving on a voided bill is not a skip, it is an alarm.
          *
@@ -490,6 +623,8 @@ export const handler = async (event: {
       });
 
       if (written) {
+        // Durable hook failures return 500. Replays above finish this even after PAID was saved.
+        await syncInvoiceBrokerFee(invoice, decision, paymentObject);
         console.log(
           `stripe-webhook ${parsed.type} → ${update.status} on ${invoice.number ?? invoice.id}`
         );

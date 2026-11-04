@@ -3,12 +3,12 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 import type { Contact, Invoice, InvoiceLine } from "../lib/client";
-const h = vi.hoisted(() => ({ list: vi.fn(), update: vi.fn(), lineUpdate: vi.fn(), get: vi.fn(), send: vi.fn(), voidInvoice: vi.fn(), change: vi.fn(), linesChange: vi.fn() }));
+const h = vi.hoisted(() => ({ list: vi.fn(), update: vi.fn(), lineUpdate: vi.fn(), get: vi.fn(), send: vi.fn(), voidInvoice: vi.fn(), change: vi.fn(), linesChange: vi.fn(), feeAction: vi.fn() }));
 vi.mock("../lib/client", () => ({
   client: { models: {
     Invoice: { update: h.update, get: h.get, delete: vi.fn() },
     InvoiceLine: { list: h.list, update: h.lineUpdate, create: vi.fn(), delete: vi.fn() },
-  }, mutations: { sendInvoice: h.send, voidInvoice: h.voidInvoice } },
+  }, mutations: { sendInvoice: h.send, voidInvoice: h.voidInvoice, brokerFeeAction: h.feeAction } },
   friendlyError: (e: unknown, fallback: string) => e instanceof Error ? e.message || fallback : fallback,
 }));
 vi.mock("./FinanceOfferHint", () => ({ FinanceOfferHint: () => null }));
@@ -31,6 +31,7 @@ beforeEach(() => {
   h.get.mockImplementation(async () => ({ data: { ...stored } }));
   h.send.mockResolvedValue({ data: { ok: true, sentTo: "primary@example.com" } });
   h.voidInvoice.mockResolvedValue({ data: { ok: true } });
+  h.feeAction.mockImplementation(async () => { stored = {...stored,status:"PAID"}; return {data:{ok:true}}; });
 });
 it("serializes independent blur saves and preserves a newer edit while the first request is pending", async () => {
   const first = deferred();
@@ -170,4 +171,32 @@ it("refuses a changed recipient selection after a failed send instead of silentl
   fireEvent.click(screen.getByRole("button", { name: "Send invoice" }));
   await screen.findByText(/previous send used different recipients/);
   expect(h.send).toHaveBeenCalledTimes(1);
+});
+
+it("confirms manual payment through the server fee ledger instead of directly changing invoice status", async () => {
+  stored={...initial,status:"SENT"};
+  render(<InvoiceEditor invoice={stored} policies={[]} quotes={[]} account={null} contacts={contacts} onChange={h.change} onLinesChange={h.linesChange} onDeleted={vi.fn()} />);
+  await screen.findByLabelText("Description");
+  await userEvent.click(screen.getByRole("button",{name:"Mark paid"}));
+  await waitFor(()=>expect(h.change).toHaveBeenCalledWith(expect.objectContaining({status:"PAID"})));
+  expect(h.feeAction).toHaveBeenCalledWith({input:JSON.stringify({op:"confirmInvoicePayment",invoiceId:initial.id})});
+  expect(h.update).not.toHaveBeenCalled();
+});
+it("keeps the policy-sourced broker fee amount and kind read only", async () => {
+  h.list.mockResolvedValue({data:[{...line,kind:"BROKER_FEE",brokerFeeQuoteId:"q1",description:"Broker fee",costAmount:0}]});
+  render(<Harness />);
+  expect(await screen.findByLabelText("Description")).toBeDisabled();
+  expect(screen.getByLabelText("Kind")).toBeDisabled();
+  expect(screen.getByLabelText("Bills the association")).toBeDisabled();
+  expect(screen.getByLabelText("Costs the agency")).toBeDisabled();
+  expect(screen.getByRole("button",{name:"Remove"})).toBeDisabled();
+});
+
+it("keeps every issued fee invoice charge read only until the existing invoice is voided",async()=>{
+ const issued={...initial,status:'SENT',brokerFeeAllocations:JSON.stringify([{quoteId:'q1',amountCents:50000}])} as Invoice;
+ render(<InvoiceEditor invoice={issued} policies={[]} quotes={[]} account={null} contacts={contacts} onChange={h.change} onLinesChange={h.linesChange} onDeleted={vi.fn()} />);
+ expect(await screen.findByLabelText('Bills the association')).toBeDisabled();
+ expect(screen.getByLabelText('Costs the agency')).toBeDisabled();
+ expect(screen.queryByRole('button',{name:'Add line at the end'})).not.toBeInTheDocument();
+ expect(screen.getByText('Void this invoice before changing its charges.')).toBeInTheDocument();
 });

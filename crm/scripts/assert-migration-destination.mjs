@@ -7,8 +7,10 @@ const targets = JSON.parse(readFileSync(new URL("../amplify/migration-targets.js
 const branch = process.env.AWS_BRANCH ?? "";
 const binding = targets.branches[branch];
 const args = process.argv.slice(2);
-if (args.length && (args.length !== 1 || args[0] !== "--staging-only")) throw new Error("Unexpected deployment guard argument.");
-if (args[0] === "--staging-only" && (branch !== "codex-hoa-staging-migration"
+if (new Set(args).size !== args.length || args.some(arg => !["--staging-only", "--recover-staging-rollback"].includes(arg))) throw new Error("Unexpected deployment guard argument.");
+const recoverStagingRollback = args.includes("--recover-staging-rollback");
+if (recoverStagingRollback && !args.includes("--staging-only")) throw new Error("Rollback recovery requires the explicit staging-only deployment guard.");
+if (args.includes("--staging-only") && (branch !== "codex-hoa-staging-migration"
   || process.env.AWS_APP_ID !== targets.crmApp || process.env.HOA_DEPLOY_ACCOUNT_ID !== targets.account
   || process.env.HOA_DEPLOYMENT_MODE !== "steady-state" || process.env.HOA_MIGRATION_PREVIEW !== "false")) {
   throw new Error("The staging backend build spec can deploy only the retained business staging backend.");
@@ -40,7 +42,10 @@ if (binding) {
   }
   if (steady) {
     assertSteadyState(process.env, steadyContract);
-    if (app === targets.crmApp) verifySteadyState(namespaceBranch, steadyContract, aws);
+    if (app === targets.crmApp) {
+      const receipt = verifySteadyState(namespaceBranch, steadyContract, aws, { recoverStagingRollback });
+      if (recoverStagingRollback) console.log(`Verified retained staging rollback recovery: ${JSON.stringify(receipt)}`);
+    }
   }
   if (app === targets.webApp && (!binding.graphqlUrl || process.env.PUBLIC_CRM_API_URL !== binding.graphqlUrl)) {
     throw new Error("The website must target its verified destination CRM API.");
