@@ -3,7 +3,7 @@ import { S3Client, PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { BROKER_FEE_PURPOSE, BROKER_FEE_REFUND_TERMS, BROKER_FEE_TERMS_VERSION, brokerFeeCents, type BrokerFeeAgreement, type BrokerFeePublicTerms, type BrokerFeeQuote, type BrokerFeeRecord, type BrokerFeeSignature } from '../../../../shared/brokerFees';
 import { authorizedQuoteTerms } from '../../../../shared/quoteAuthorization';
-import { feeAllocations } from '../../../../shared/brokerFees';
+import { assertBrokerFeeAgencyBilling, feeAllocations } from '../../../../shared/brokerFees';
 import { getRow, getFee, getAgreement, getModel, modelTable, table, feePut, versionCheck, transact, accountModels, type Write } from './store';
 import { createBrokerFeeDisclosurePdf } from './disclosurePdf';
 
@@ -23,6 +23,7 @@ export interface BrokerFeeJurisdictionRule {
   agencySigner?: { name: string; title: string; licenseNumber: string; authorized: true; authorizedBy?: string; authorizedAt?: string };
 }
 export function jurisdictionRule(raw: unknown, state: string, quotes: Pick<BrokerFeeQuote, 'lines' | 'brokerFee' | 'billType'>[], billType?: string): BrokerFeeJurisdictionRule {
+  for(const quote of quotes)assertBrokerFeeAgencyBilling({...quote,billType:billType||quote.billType});
   let settings: unknown = raw;
   if (typeof settings === 'string') { try { settings = JSON.parse(settings); } catch { throw new Error('Broker fee jurisdiction settings need review.'); } }
   const rule = settings && typeof settings === 'object' ? (settings as Record<string, BrokerFeeJurisdictionRule>)[state] : undefined;
@@ -165,7 +166,7 @@ async function termsDto(agreement: BrokerFeeAgreement): Promise<BrokerFeePublicT
 }
 export async function brokerFeeDisclosure(token: string): Promise<BrokerFeePublicTerms> {
   try { return await termsDto((await currentAgreement(token)).agreement); }
-  catch (error) { if (error instanceof Error && error.message.startsWith('This fee disclosure')) return { ok: true, state: 'closed', reason: error.message }; throw error; }
+  catch (error) { if (error instanceof Error && (error.message.startsWith('This fee disclosure')||error.message==='Broker fees require agency billing.')) return { ok: true, state: 'closed', reason: error.message }; throw error; }
 }
 export async function signBrokerFeeDisclosure(token: string, signer: { signerName: unknown; signerEmail: unknown; signerRole: unknown; consent: unknown }, ip?: string): Promise<BrokerFeePublicTerms> {
   const current = await currentAgreement(token), { agreement, account, settings, quotes, link } = current;

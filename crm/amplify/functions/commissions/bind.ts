@@ -1,5 +1,6 @@
 import { getFee } from '../broker-fees/store';
 import { brokerFeeCents } from '../../../../shared/brokerFees';
+import { normalizeClientConditions, normalizePassThroughCharges } from '../../../../shared/passThroughCharges';
 import { brokerFeeBindWrites } from '../broker-fees/bindValidation';
 import { reconcileQuotePayments } from '../broker-fees/payments';
 import { bindDay, firstBindDate } from './account-history';
@@ -187,6 +188,8 @@ export async function bindPolicy(event: Event, input: Data) {
     commissionSnapshotId: policyId,
     ...(initialFee?{brokerFeeReportingKey:"BROKER_FEE",brokerFeeCollected:initialFee.collectedCents/100,brokerFeeRefunded:initialFee.refundedCents/100}:{}),
     ...Object.fromEntries(fields.filter((f) => quote[f] != null).map((f) => [f, quote[f]])),
+    passThroughCharges: normalizePassThroughCharges(quote.passThroughCharges),
+    ...(quote.clientConditions != null ? { clientConditions: normalizeClientConditions(quote.clientConditions) } : {}),
     id: policyId,
     __typename: 'Policy',
     accountId,

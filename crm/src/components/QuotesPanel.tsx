@@ -30,6 +30,7 @@ import QuoteOfferExpiry from "./QuoteOfferExpiry";
 import { quoteOfferDate } from "../lib/quoteOfferExpiry";
 import { useAgencyDay } from "../lib/useAgencyDay";
 import { brokerFeeCents, type BrokerFeeRecord } from "../../../shared/brokerFees";
+import PolicyCharges from "./PolicyCharges";
 
 /** Commission is baked into the premium — the $ figure is the agency's cut,
  * never an addition on top. */
@@ -305,7 +306,7 @@ function QuotesPanelContent({
                     <td className="small">
                       {(qt.lines ?? []).filter(Boolean).join(", ") || "—"}
                     </td>
-                    <td>{fmtMoney(qt.premium)}{(qt.brokerFee ?? 0) > 0 && <div className="small muted">+ {fmtMoney(qt.brokerFee)} broker fee · {fmtMoney((qt.premium ?? 0) + (qt.brokerFee ?? 0))} total</div>}</td>
+                    <td>{fmtMoney(qt.premium)}<PolicyCharges source={qt} /></td>
                     <td className="small">{commissionCell(qt)}</td>
                     <td className="small">{termsSummary(qt)}</td>
                     <td>{fmtDate(qt.effectiveDate)}</td>
@@ -386,9 +387,11 @@ function QuotesPanelContent({
             <h3>Request binding</h3>
             <p className="quote-flow-summary">
               {carrierName(authorization.carrierId)} ·{" "}
-              {fmtMoney(authorization.premium)} premium{(authorization.brokerFee ?? 0) > 0 ? ` + ${fmtMoney(authorization.brokerFee)} broker fee` : ""} · Effective{" "}
+              {fmtMoney(authorization.premium)} premium · Effective{" "}
               {fmtDate(authorization.effectiveDate)}
             </p>
+            <PolicyCharges source={authorization} />
+            {authorization.clientConditions && <p className="small" style={{ whiteSpace: "pre-wrap" }}>{authorization.clientConditions}</p>}
             <p className="muted small">
               This records the client's approval of these quoted terms. Carrier
               confirmation is still required before recording coverage as bound.

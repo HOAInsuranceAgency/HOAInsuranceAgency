@@ -38,6 +38,30 @@ it('never exports extra model fields containing commissions, internal notes, or 
   const { all } = await contents((await createBusinessProposalPdf(input)).bytes);
   for (const privateValue of ['88.876543', '9876543', '456789', 'PRIVATE UNDERWRITING NOTE', 'PRIVATE STAFF IDENTIFIER', 'PRIVATE PACKAGE NOTE', 'Commission']) expect(all).not.toContain(privateValue);
 });
+it.each([
+  { premium: 55541, charges: [{ id: 'rt', kind: 'WHOLESALER_FEE' as const, description: 'RT brokerage fee', amountCents: 25000 }, { id: 'tax', kind: 'SURPLUS_LINES' as const, description: 'Surplus lines tax', amountCents: 222164 }], expected: '$58,012.64' },
+  { premium: 50000, charges: [{ id: 'carrier', kind: 'CARRIER_FEE' as const, description: 'Carrier fee', amountCents: 50000 }, { id: 'rt', kind: 'WHOLESALER_FEE' as const, description: 'RT brokerage fee', amountCents: 25000 }, { id: 'tax', kind: 'SURPLUS_LINES' as const, description: 'Surplus lines tax', amountCents: 200000 }], expected: '$52,750.00' },
+  { premium: 21628, charges: [{ id: 'rt', kind: 'WHOLESALER_FEE' as const, description: 'RT program broker fee', amountCents: 246300 }, { id: 'carrier', kind: 'CARRIER_FEE' as const, description: 'Membership management fee', amountCents: 30000 }, { id: 'tax', kind: 'SURPLUS_LINES' as const, description: 'Surplus lines tax', amountCents: 86512 }], expected: '$25,256.12' },
+])('reconciles the reference agency-billed cost $expected without inventing an HOA fee', async ({ premium, charges, expected }) => {
+  const input = fixture();
+  Object.assign(input.quotes[0], { premium, passThroughCharges: charges, billType: 'AGENCY', clientConditions: 'Carrier conditions: signed statement of values required before binding.' });
+  const { all } = await contents((await createBusinessProposalPdf(input)).bytes);
+  expect(all).toContain(expected);
+  for (const charge of charges) expect(all).toContain(charge.description);
+  expect(all).toContain('Conditions and requirements');
+  expect(all).toContain('signed statement of values required before binding');
+  expect(all).toContain('Agency billed - pay HOA Insurance Agency');
+  expect(all).not.toContain('HOA broker fee:');
+  expect(all).not.toContain('separate signed fee agreement');
+});
+it('adds only the HOA fee to the complete policy cost while keeping third-party charges itemized', async () => {
+  const input = fixture();
+  Object.assign(input.quotes[0], { premium: 50000, brokerFee: 400, billType: 'AGENCY', passThroughCharges: [{ id: 'rt', kind: 'WHOLESALER_FEE', description: 'RT brokerage fee', amountCents: 25000 }, { id: 'tax', kind: 'SURPLUS_LINES', description: 'Surplus lines tax', amountCents: 200000 }] });
+  const { all } = await contents((await createBusinessProposalPdf(input)).bytes);
+  for (const value of ['$50,000.00', 'RT brokerage fee: $250.00', 'Surplus lines tax: $2,000.00', 'HOA broker fee: $400.00', '$52,650.00', 'Your HOA Insurance Agency invoice']) expect(all).toContain(value);
+  expect(all).toContain('excluded from premium financing');
+  expect(all).not.toContain('Carrier commission');
+});
 it('paginates long multi-carrier proposals with every quote, subtotal, and page footer intact', async () => {
   const input = fixture();
   input.quotes = Array.from({ length: 12 }, (_, index) => ({ ...input.quotes[0], id: `q${index}`, carrierName: `Carrier ${index + 1} with a long but readable association insurance name`, premium: 100.01 + index }));
@@ -53,6 +77,8 @@ it.each<[string, (input: BusinessProposalInput) => void]>([
   ['invalid percentages', (input: BusinessProposalInput) => { input.quotes[0].coinsurancePct = 101; }],
   ['missing carrier', (input: BusinessProposalInput) => { input.quotes[0].carrierName = ''; }],
   ['nonpositive premium', (input: BusinessProposalInput) => { input.quotes[0].premium = 0; }],
+  ['malformed supplier charges', (input: BusinessProposalInput) => { input.quotes[0].passThroughCharges = [{ id: 'rt', kind: 'WHOLESALER_FEE', description: 'RT fee', amountCents: -100 }]; }],
+  ['direct-billed broker fee', (input: BusinessProposalInput) => { input.quotes[0].billType = 'DIRECT'; input.quotes[0].brokerFee = 100; }],
   ['unsupported account glyphs', (input: BusinessProposalInput) => { input.account.legalName = '東京 Condominium'; }],
 ])('refuses %s rather than generating a misleading PDF', async (_, change) => {
   const input = fixture(); change(input);

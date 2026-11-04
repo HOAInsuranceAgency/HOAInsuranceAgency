@@ -6,6 +6,7 @@ import { id, type Identity } from '../crm-access/policy';
 import type { RoleRequest } from '../crm-access/active-role';
 import { feeAllocations } from '../../../../shared/brokerFees';
 import { invoiceBrokerFeeAllocations } from '../send-invoice/brokerFeeInvoice';
+import { validateInvoiceSourceCharges } from '../send-invoice/passThroughInvoice';
 import { db, getFee, getModel, modelTable, versionCheck, type Write } from './store';
 import { assertBrokerFeeSigned } from './bindValidation';
 import { assertNoFeeLoanCheckout, syncBrokerFeePayment } from './payments';
@@ -33,6 +34,7 @@ export async function confirmInvoicePayment(event:{identity?:Identity;request?:R
     if(lines.length>70)throw new Error('This invoice needs a smaller reviewed payment allocation.');
   }while(cursor);
   const fee=quoteId?await getFee(quoteId):undefined;
+  validateInvoiceSourceCharges({invoice:{accountId:String(invoice.accountId),policyId:invoice.policyId as string|undefined,status:invoice.status as string|undefined,sourcePricingVersion:invoice.sourcePricingVersion as number|undefined},source:source?{id:String(source.id),accountId:String(source.accountId),premium:source.premium as number|undefined,billType:source.billType as string|undefined,passThroughCharges:source.passThroughCharges}:null,lines});
   const allocations=invoiceBrokerFeeAllocations({invoice:{accountId:String(invoice.accountId),status:String(invoice.status)},source:source?{accountId:String(source.accountId),brokerFee:source.brokerFee as number|undefined,billType:source.billType as string|undefined}:null,quoteId,policyId:policy?String(policy.id):undefined,lines,alreadySubmitted:!!fee&&(fee.submittedCents>0||fee.collectedCents>0)});
   const frozen=feeAllocations(invoice.brokerFeeAllocations);
   const comparable=(a:typeof allocations)=>a.map(row=>({quoteId:row.quoteId,amountCents:row.amountCents}));

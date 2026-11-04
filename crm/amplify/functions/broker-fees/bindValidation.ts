@@ -1,9 +1,10 @@
-import { BROKER_FEE_TERMS_VERSION, brokerFeeCents } from '../../../../shared/brokerFees';
+import { BROKER_FEE_TERMS_VERSION, assertBrokerFeeAgencyBilling, brokerFeeCents } from '../../../../shared/brokerFees';
 import { authorizedQuoteTerms } from '../../../../shared/quoteAuthorization';
 import { jurisdictionRule } from './agreements';
 import { getFee, getAgreement, getModel, modelTable, table, versionCheck, feePut, type Write } from './store';
 
 export async function assertBrokerFeeSigned(quote:Record<string,unknown>) {
+  assertBrokerFeeAgencyBilling(quote as {brokerFee?:number|null;billType?:string|null});
   const amount=brokerFeeCents(quote.brokerFee as number|undefined);
   if(!amount)return undefined;
   const fee=await getFee(String(quote.id));
@@ -23,6 +24,7 @@ export async function assertBrokerFeeSigned(quote:Record<string,unknown>) {
 
 /** Bind and fee attribution share the policy/commission snapshot transaction. */
 export async function brokerFeeBindWrites(quote:Record<string,unknown>,policyId:string,billType:string,expectedFeeVersion?:number):Promise<Write[]> {
+  assertBrokerFeeAgencyBilling({brokerFee:quote.brokerFee as number|undefined,billType});
   if(brokerFeeCents(quote.brokerFee as number|undefined)>0 && quote.billType!==billType) throw new Error("The premium billing method must match the signed fee quote.");
   const signed=await assertBrokerFeeSigned(quote);
   if(!signed)return[];

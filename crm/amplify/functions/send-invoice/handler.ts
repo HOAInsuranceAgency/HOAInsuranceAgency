@@ -2,6 +2,7 @@ import { reserveFeeInvoice, reserveFeeLoan, publishFeeInvoiceLink, completeFeeIn
 import { closeInvoiceCheckoutSessions } from "../invoiceCheckout";
 import { assertBrokerFeeSigned } from "../broker-fees/bindValidation";
 import { invoiceBrokerFeeAllocations, brokerFeeInvoiceRefresh } from "./brokerFeeInvoice";
+import { validateInvoiceSourceCharges } from "./passThroughInvoice";
 import { prepareBrokerFeeAgreement } from "../broker-fees/agreements";
 import { authorizedQuoteTerms } from "../../../../shared/quoteAuthorization";
 import { brokerFeeCents, feeAllocations, type BrokerFeeAllocation, type BrokerFeeInvoiceSendClaim } from "../../../../shared/brokerFees";
@@ -371,6 +372,7 @@ async function ensurePaymentLink(
     stripeLinkAmountCents?: number | null;
     remittanceBrokerFeeCents?: number | null;
     brokerFeeAllocations?: unknown;
+    sourcePricingVersion?: number | null;
   },
   associationName: string,
   total: number,
@@ -492,7 +494,7 @@ async function ensurePaymentLink(
     }
     // Missing session/intent state cannot be treated as a missing Payment Link.
     // Existing sessions remain payable even after that link was deactivated.
-    if (allocations.length) {
+    if (allocations.length || invoice.sourcePricingVersion === 1) {
       try { await closeInvoiceCheckoutSessions(stripe, existingLinkId); }
       catch { throw new SendBlocked("Couldn't close the previous payment sessions, so the invoice was not sent. Review its payment before trying again."); }
     }
@@ -918,11 +920,21 @@ export const handler = async (event: {
     let allocations: BrokerFeeAllocation[];
     try { allocations = invoiceBrokerFeeAllocations({ invoice, source: feeSource, quoteId: sourceQuoteId, policyId: headerPolicyId, lines, alreadySubmitted: feeAlreadySubmitted }); }
     catch (error) { return { ok: false, error: error instanceof Error ? error.message : "The broker fee invoice could not be verified." }; }
+    validateInvoiceSourceCharges({ invoice, source: feeSource, lines });
     const split = remittanceSplit(lines);
     const carrierId = policy?.carrierId ?? quoteAnchor?.carrierId ?? null;
     const carrier = carrierId
       ? (await client.models.Carrier.get({ id: carrierId })).data
       : null;
+
+    // Known-local payment failures must not create an unknown processor hold.
+    // A missing key or unsupported amount created no external link to recover.
+    let feeChargeCents: number | undefined;
+    if (allocations.length && invoice.status !== "PAID" && invoice.status !== "PROCESSING") {
+      if (!process.env.STRIPE_SECRET_KEY) throw new SendBlocked("Payments are not configured. Configure payments, then retry this invoice's Send action.");
+      try { feeChargeCents = toCents(invoiceTotals(lines).retail); }
+      catch (error) { throw new SendBlocked(error instanceof Error ? error.message : "This invoice total cannot be collected online."); }
+    }
 
     // Completed retries must return before starting another fee link claim.
     // This lease also serializes same-invoice Stripe retries in production.
@@ -945,7 +957,7 @@ export const handler = async (event: {
         disclosureUrl = agreement.url;
         paymentLabel = "Review and sign broker fee disclosure";
       }
-      feeSendClaim = await reserveFeeInvoice(sourceQuote, invoice.id, Math.round(invoiceTotals(lines).retail * 100));
+      feeSendClaim = await reserveFeeInvoice(sourceQuote, invoice.id, feeChargeCents!);
     }
 
     /**
@@ -1018,6 +1030,7 @@ export const handler = async (event: {
       riskLocation: [account.data.address ?? "", cityStateZip].filter((l) => l.trim()),
       effectiveDate: policy?.effectiveDate ?? quoteAnchor?.effectiveDate ?? null,
       expirationDate: policy?.expirationDate ?? quoteAnchor?.expirationDate ?? null,
+      coverageBound: Boolean(policy?.datePolicyBound),
       issuedAt: invoice.issuedAt,
       dueAt: invoice.dueAt,
       memo: invoice.memo,

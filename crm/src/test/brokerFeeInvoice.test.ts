@@ -17,12 +17,13 @@ describe('source-backed broker fee invoice validation',()=>{
     expect(()=>invoiceBrokerFeeAllocations({...valid,alreadySubmitted:true})).toThrow('already submitted');
     expect(invoiceBrokerFeeAllocations({...valid,lines:[],alreadySubmitted:true})).toEqual([]);
   });
-  it('does not turn a direct-bill placement into a carrier premium invoice',()=>{
-    expect(invoiceBrokerFeeAllocations({...valid,source:{...source,billType:'DIRECT'}})).toHaveLength(1);
-    expect(()=>invoiceBrokerFeeAllocations({...valid,source:{...source,billType:'DIRECT'},lines:[line,{kind:'PREMIUM',retailAmount:10000}]})).toThrow('direct bill');
+  it('requires agency billing for every positive broker fee while direct bill without a fee remains valid',()=>{
+    expect(()=>invoiceBrokerFeeAllocations({...valid,source:{...source,billType:'DIRECT'}})).toThrow('Broker fees require agency billing.');
+    expect(()=>invoiceBrokerFeeAllocations({...valid,source:{...source,billType:'DIRECT'},lines:[line,{kind:'PREMIUM',retailAmount:10000}]})).toThrow('Broker fees require agency billing.');
+    expect(invoiceBrokerFeeAllocations({...valid,source:{...source,brokerFee:0,billType:'DIRECT'},lines:[]})).toEqual([]);
   });
   it('requires the existing billing choice before payment is prepared',()=>{
-    expect(()=>invoiceBrokerFeeAllocations({...valid,source:{...source,billType:null}})).toThrow('billing method');
+    expect(()=>invoiceBrokerFeeAllocations({...valid,source:{...source,billType:null}})).toThrow('Broker fees require agency billing.');
   });
 });
 
@@ -39,7 +40,7 @@ describe("derived fee refresh before sending",()=>{
   it("never rewrites an amount after payment is submitted",()=>{
     expect(brokerFeeInvoiceRefresh({...draft,source:{...source,brokerFee:600},alreadySubmitted:true})).toEqual({remove:[],upsert:undefined});
   });
-  it("removes carrier premium when the quoted billing method becomes direct",()=>{
-    expect(brokerFeeInvoiceRefresh({...draft,source:{...source,billType:'DIRECT'},lines:[...draft.lines,{id:'premium1',kind:'PREMIUM',retailAmount:10000}]}).remove).toEqual(['premium1']);
+  it("does not silently convert an invalid direct-bill fee into a separate fee-only invoice",()=>{
+    expect(()=>brokerFeeInvoiceRefresh({...draft,source:{...source,billType:'DIRECT'},lines:[...draft.lines,{id:'premium1',kind:'PREMIUM',retailAmount:10000}]})).toThrow('Broker fees require agency billing.');
   });
 });

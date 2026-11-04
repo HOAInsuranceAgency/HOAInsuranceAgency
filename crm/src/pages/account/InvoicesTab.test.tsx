@@ -84,13 +84,13 @@ describe("invoice creation reliability", () => {
 });
 
 describe("broker fee invoice seeding",()=>{
-  it("seeds only the broker fee for a direct-bill policy",async()=>{
+  it("does not offer direct-bill policies for collecting an HOA fee",async()=>{
     api.models.Policy.list.mockResolvedValue({data:[{...policy,quoteId:"q1",billType:"DIRECT",brokerFee:500}]});
-    await selectPolicy();
-    await userEvent.click(screen.getByRole("button",{name:"New invoice"}));
-    await screen.findByText("Editing inv1");
-    expect(api.models.InvoiceLine.create).toHaveBeenCalledTimes(1);
-    expect(api.models.InvoiceLine.create).toHaveBeenCalledWith(expect.objectContaining({kind:"BROKER_FEE",retailAmount:500,costAmount:0,brokerFeeQuoteId:"q1",policyId:"p1"}));
+    render(<InvoicesTab accountId="a1" />);
+    await screen.findByRole('combobox');
+    expect(screen.queryByRole('option', { name: /POL-1/ })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'New invoice' })).toBeDisabled();
+    expect(api.models.Invoice.create).not.toHaveBeenCalled();
   });
   it("does not seed the same fee onto a later premium invoice after collection",async()=>{
     api.models.Policy.list.mockResolvedValue({data:[{...policy,quoteId:"q1",brokerFee:500,brokerFeeCollected:500}]});
@@ -102,14 +102,30 @@ describe("broker fee invoice seeding",()=>{
   });
 });
 
-it("collects only the fee when direct bill is chosen on the existing quote before bind",async()=>{
+it("rejects a legacy direct-bill fee quote before reserving or creating an invoice",async()=>{
   api.models.Policy.list.mockResolvedValue({data:[]});
   api.models.Quote.list.mockResolvedValue({data:[{id:"q1",accountId:"a1",status:"QUOTED",billType:"DIRECT",premium:100,brokerFee:500}]});
   api.models.Invoice.create.mockResolvedValue({data:{id:"inv1",accountId:"a1",quoteId:"q1",status:"DRAFT",number:"INV-1"}});
   render(<InvoicesTab accountId="a1" />);
   await userEvent.selectOptions(await screen.findByRole("combobox"),"quote:q1");
   await userEvent.click(screen.getByRole("button",{name:"New invoice"}));
-  await screen.findByText("Editing inv1");
-  expect(api.models.InvoiceLine.create).toHaveBeenCalledTimes(1);
-  expect(api.models.InvoiceLine.create).toHaveBeenCalledWith(expect.objectContaining({kind:"BROKER_FEE",brokerFeeQuoteId:"q1",retailAmount:500,costAmount:0}));
+  expect(await screen.findByRole('alert')).toHaveTextContent('Broker fees require agency billing');
+  expect(api.mutations.reserveInvoiceNumber).not.toHaveBeenCalled();
+  expect(api.models.Invoice.create).not.toHaveBeenCalled();
+});
+
+it.each([0, 500])('seeds every supplier charge and tax alongside a $%s HOA broker fee', async brokerFee => {
+  api.models.Policy.list.mockResolvedValue({ data: [{ ...policy, premium: 55541, quoteId: 'q1', brokerFee, passThroughCharges: JSON.stringify([
+    { id: 'rt', kind: 'WHOLESALER_FEE', description: 'RT brokerage fee', amountCents: 25000 },
+    { id: 'tax', kind: 'SURPLUS_LINES', description: 'MA surplus lines tax', amountCents: 222164 },
+  ]) }] });
+  await selectPolicy(); await userEvent.click(screen.getByRole('button', { name: 'New invoice' }));
+  await screen.findByText('Editing inv1');
+  const rows = api.models.InvoiceLine.create.mock.calls.map(([row]) => row);
+  expect(rows).toEqual([
+    expect.objectContaining({ kind: 'PREMIUM', retailAmount: 55541, costAmount: null }),
+    expect.objectContaining({ kind: 'WHOLESALER_FEE', sourceQuoteChargeId: 'rt', retailAmount: 250, costAmount: 250 }),
+    expect.objectContaining({ kind: 'SURPLUS_LINES', sourceQuoteChargeId: 'tax', retailAmount: 2221.64, costAmount: 2221.64 }),
+    ...(brokerFee ? [expect.objectContaining({ kind: 'BROKER_FEE', description: 'HOA broker fee', retailAmount: brokerFee, costAmount: 0 })] : []),
+  ]);
 });

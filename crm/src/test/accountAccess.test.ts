@@ -214,6 +214,68 @@ describe("model writes", () => {
     await expect(user().write("InvoiceLine", "update", { id: "line", retailAmount: 200 })).resolves.toBeUndefined();
     await expect(user().write("InvoiceLine", "delete", { id: "line" })).resolves.toBeUndefined();
   });
+  it('requires agency billing when creating or updating a positive broker fee', async () => {
+    await expect(admin().write('Quote', 'create', { id: 'new', accountId: 'a', brokerFee: 500, billType: 'DIRECT' })).rejects.toThrow('Broker fees require agency billing.');
+    records['Quote:qa'] = { id: 'qa', accountId: 'a', brokerFee: 500, billType: 'AGENCY' };
+    await expect(user().write('Quote', 'update', { id: 'qa', billType: 'DIRECT' })).rejects.toThrow('Broker fees require agency billing.');
+    await expect(admin().write('Quote', 'create', { id: 'no-fee', accountId: 'a', brokerFee: 0, billType: 'DIRECT' })).resolves.toBeUndefined();
+  });
+  it('validates recorded supplier charges and protects bound financial terms with or without HOA fees', async () => {
+    const charges = [{ id: 'rt', kind: 'WHOLESALER_FEE', description: 'RT brokerage fee', amountCents: 25000 }];
+    await expect(admin().write('Quote', 'update', { id: 'qa', passThroughCharges: '{bad' })).rejects.toThrow();
+    records['Quote:qa'] = { id: 'qa', accountId: 'a', status: 'BOUND', passThroughCharges: charges, clientConditions: 'No flat cancellations.' };
+    await expect(admin().write('Quote', 'update', { id: 'qa', passThroughCharges: [] })).rejects.toThrow('Bound policy charges');
+    records['Policy:pa'] = { id: 'pa', accountId: 'a', passThroughCharges: charges, clientConditions: 'No flat cancellations.' };
+    await expect(admin().write('Policy', 'update', { id: 'pa', passThroughCharges: [] })).rejects.toThrow('immutable');
+    await expect(admin().write('Policy', 'update', { id: 'pa', clientConditions: 'Different conditions' })).rejects.toThrow('immutable');
+    await expect(admin().write('Policy', 'update', { id: 'pa', passThroughCharges: JSON.stringify(charges), clientConditions: 'No flat cancellations.' })).resolves.toBeUndefined();
+  });
+  it('validates source-backed invoice rows and prevents removing their provenance', async () => {
+    const charges = [{ id: 'rt', kind: 'WHOLESALER_FEE', description: 'RT brokerage fee', amountCents: 25000 }];
+    records['Quote:qa'] = { id: 'qa', accountId: 'a', passThroughCharges: charges };
+    records['Invoice:ia'] = { id: 'ia', accountId: 'a', quoteId: 'qa', status: 'DRAFT' };
+    records['InvoiceLine:source'] = { id: 'source', invoiceId: 'ia', accountId: 'a', sourceQuoteChargeId: 'rt', kind: 'WHOLESALER_FEE', description: 'RT brokerage fee', retailAmount: 250, costAmount: 250 };
+    await expect(user().write('InvoiceLine', 'update', { id: 'source', retailAmount: 300 })).rejects.toThrow('without agency markup');
+    await expect(user().write('InvoiceLine', 'update', { id: 'source', sourceQuoteChargeId: null })).rejects.toThrow('cannot be detached');
+    await expect(user().write('InvoiceLine', 'delete', { id: 'source' })).rejects.toThrow('source quote');
+    await expect(user().write('InvoiceLine', 'create', { ...records['InvoiceLine:source'], id: 'new' })).resolves.toBeUndefined();
+  });
+  it('requires provenance on new initial invoices and never lets a browser downgrade or detach it', async () => {
+    await expect(admin().write('Invoice', 'create', { id: 'new', accountId: 'a', quoteId: 'qa', status: 'DRAFT' })).rejects.toThrow('source-priced');
+    await expect(admin().write('Invoice', 'create', { id: 'new', accountId: 'a', quoteId: 'qa', status: 'DRAFT', sourcePricingVersion: 1 })).resolves.toBeUndefined();
+    records['Invoice:ia'] = { id: 'ia', accountId: 'a', quoteId: 'qa', status: 'SENT', sourcePricingVersion: 1, stripePaymentLinkId: 'live' };
+    for(const patch of [{ sourcePricingVersion: null }, { sourcePricingVersion: 0 }, { quoteId: null }, { accountId: 'b' }, { status: 'VOID' }])await expect(admin().write('Invoice', 'update', { id: 'ia', ...patch })).rejects.toThrow();
+    await expect(admin().write('Invoice', 'delete', { id: 'ia' })).rejects.toThrow('payment history');
+    records['InvoiceLine:premium'] = { id: 'premium', invoiceId: 'ia', accountId: 'a', kind: 'PREMIUM', retailAmount: 1000, costAmount: 800 };
+    await expect(admin().write('InvoiceLine', 'update', { id: 'premium', retailAmount: 2000 })).rejects.toThrow('Void the issued source-priced invoice');
+    await expect(admin().write('InvoiceLine', 'delete', { id: 'premium' })).rejects.toThrow('Void the issued source-priced invoice');
+  });
+  it('recovers obsolete unissued draft supplier rows without permitting deletion of current charges', async () => {
+    records['Quote:qa'] = { id: 'qa', accountId: 'a', passThroughCharges: [] };
+    records['Invoice:ia'] = { id: 'ia', accountId: 'a', quoteId: 'qa', status: 'DRAFT', sourcePricingVersion: 1 };
+    records['InvoiceLine:obsolete'] = { id: 'obsolete', invoiceId: 'ia', accountId: 'a', sourceQuoteChargeId: 'removed', kind: 'TAX', retailAmount: 10, costAmount: 10 };
+    await expect(user().write('InvoiceLine', 'delete', { id: 'obsolete' })).resolves.toBeUndefined();
+  });
+  it('keeps a published checkout immutable even if invoice email failed and its status remains draft', async () => {
+    records['Invoice:ia'] = { id: 'ia', accountId: 'a', quoteId: 'qa', status: 'DRAFT', sourcePricingVersion: 1, stripePaymentLinkId: 'live' };
+    records['InvoiceLine:premium'] = { id: 'premium', invoiceId: 'ia', accountId: 'a', kind: 'PREMIUM', retailAmount: 1000, costAmount: 800 };
+    await expect(admin().write('InvoiceLine', 'update', { id: 'premium', costAmount: 700 })).rejects.toThrow('Void the issued source-priced invoice');
+    await expect(admin().write('InvoiceLine', 'delete', { id: 'premium' })).rejects.toThrow('Void the issued source-priced invoice');
+    await expect(admin().write('Invoice', 'delete', { id: 'ia' })).rejects.toThrow('payment history');
+  });
+  it('allows the existing supplier-charge editor on a legacy bound policy without permitting markup or quote bypass', async () => {
+    records['Policy:pa']={id:'pa',accountId:'a',premium:50000,billType:'AGENCY'};
+    records['Invoice:ia']={id:'ia',accountId:'a',policyId:'pa',status:'DRAFT',sourcePricingVersion:1};
+    const line={id:'manual-tax',invoiceId:'ia',accountId:'a',kind:'WHOLESALER_FEE',description:'RT brokerage fee',retailAmount:250,costAmount:250};
+    await expect(user().write('InvoiceLine','create',line)).resolves.toBeUndefined();
+    await expect(user().write('InvoiceLine','create',{...line,costAmount:0})).rejects.toThrow('without agency markup');
+    records['Policy:pa'].passThroughCharges=[];
+    await expect(user().write('InvoiceLine','create',line)).rejects.toThrow('reviewed source quote');
+    await expect(admin().write('Policy','update',{id:'pa',passThroughCharges:null})).rejects.toThrow('immutable');
+    records['Invoice:ia']={id:'ia',accountId:'a',quoteId:'qa',status:'DRAFT',sourcePricingVersion:1};
+    records['Quote:qa']={id:'qa',accountId:'a',premium:50000};
+    await expect(user().write('InvoiceLine','create',line)).rejects.toThrow('reviewed source quote');
+  });
 });
 describe("files", () => {
   it("denies former managers copied document, generated, policy, certificate and photo URLs", async () => {

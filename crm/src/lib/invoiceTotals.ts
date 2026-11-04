@@ -72,7 +72,7 @@ export function invoiceTotals(lines: readonly LineLike[]): InvoiceTotals {
  * and passed straight through. Their margin is zero because it is supposed to
  * be, which is what `marginWarnings` needs to know so it does not flag them.
  */
-const PASS_THROUGH = new Set(["TAX", "SURPLUS_LINES", "STAMPING_FEE"]);
+const PASS_THROUGH = new Set(["CARRIER_FEE", "WHOLESALER_FEE", "TAX", "SURPLUS_LINES", "STAMPING_FEE"]);
 
 export const isPassThrough = (kind: string | null | undefined): boolean =>
   PASS_THROUGH.has(kind ?? "");
@@ -254,19 +254,9 @@ export function formatMoney(n: number | null | undefined): string {
 /**
  * A premium line, seeded from the policy.
  *
- * The premium goes in the **cost** box and the amount billed is left empty.
- *
- * That is the opposite of what this did, and the change is deliberate. It used
- * to put the gross premium in the amount and derive the cost from
- * `commissionPct`, which meant every seeded line arrived already claiming to
- * know both halves — and a derived cost is a guess: a carrier applies different
- * rates per line, and the remittance is whatever the statement says, not
- * whatever the percentage implies. A producer who trusted the prefill sent
- * invoices whose margin was arithmetic rather than fact.
- *
- * The premium is the one number the policy actually knows, and it is what the
- * agency owes. So it is filled in, and what to bill for it is left blank —
- * which is also the only field the producer has to think about.
+ * Premium is the gross amount billed to the client before fees and taxes.
+ * Actual supplier remittance is entered separately; it is never inferred from
+ * the commission percentage. Existing invoice rows are not recomputed.
  */
 export function premiumLineFromPolicy(policy: {
   premium?: number | null;
@@ -275,7 +265,13 @@ export function premiumLineFromPolicy(policy: {
   if (typeof premium !== "number" || !Number.isFinite(premium)) {
     return { retailAmount: null, costAmount: null };
   }
-  return { retailAmount: null, costAmount: cents(premium) };
+  return { retailAmount: cents(premium), costAmount: null };
+}
+
+/** Missing is different from a reviewed zero-dollar supplier remittance. */
+export function missingRemittanceCost(lines: readonly LineLike[]): boolean {
+  return lines.some(line => ["PREMIUM", "ENDORSEMENT"].includes(line.kind ?? "")
+    && (line.costAmount == null || !Number.isFinite(line.costAmount)));
 }
 
 /** Broker fees are due in full at inception and never financed. */

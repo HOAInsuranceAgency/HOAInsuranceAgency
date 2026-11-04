@@ -44,6 +44,44 @@ describe('voiding an issued broker fee invoice',()=>{
  });
 });
 
+describe('voiding source-priced packets without an HOA broker fee',()=>{
+ beforeEach(()=>{
+  row.brokerFeeAllocations=[];
+  row.remittanceBrokerFeeCents=0;
+  row.sourcePricingVersion=1;
+  row.quoteId='q1';
+ });
+ it('expires already-open payment sessions before VOID without writing a fee ledger',async()=>{
+  sessions=[{id:'old1',status:'open',payment_status:'unpaid'},{id:'old2',status:'open',payment_status:'unpaid'}];
+  m.expire.mockImplementation(async id=>{sessions.find(session=>session.id===id)!.status='expired';return{};});
+  expect(await handler({arguments:{invoiceId:'i1'}})).toEqual({ok:true});
+  expect(sessions.every(session=>session.status==='expired')).toBe(true);
+  expect(m.expire.mock.calls).toEqual([['old1'],['old2']]);
+  expect(m.expire.mock.invocationCallOrder.at(-1)!).toBeLessThan(m.send.mock.invocationCallOrder.at(-1)!);
+  expect(row.status).toBe('VOID');
+  expect(m.send.mock.calls.some(([command])=>command.constructor.name==='TransactWriteCommand')).toBe(false);
+  expect(m.send.mock.calls.filter(([command])=>command.constructor.name==='UpdateCommand')).toHaveLength(1);
+ });
+ it.each(['processing','requires_action'])('refuses an already-completed checkout whose debit is %s',async status=>{
+  sessions=[{id:'old1',status:'complete',payment_status:'unpaid',payment_intent:'pi1'}];
+  m.intent.mockResolvedValue({status});
+  expect(await handler({arguments:{invoiceId:'i1'}})).toMatchObject({ok:false,error:expect.stringContaining('submitted')});
+  expect(row.status).toBe('SENT');
+  expect(m.send.mock.calls.some(([command])=>command.constructor.name==='UpdateCommand')).toBe(false);
+ });
+ it('refuses unknown session state instead of leaving an unverified old checkout payable',async()=>{
+  sessions=[{id:'old1',status:'unknown',payment_status:'unpaid'}];
+  expect(await handler({arguments:{invoiceId:'i1'}})).toMatchObject({ok:false,error:expect.stringContaining('verified')});
+  expect(row.status).toBe('SENT');
+ });
+ it('retains SENT if an old checkout cannot be expired',async()=>{
+  sessions=[{id:'old1',status:'open',payment_status:'unpaid'}];
+  m.expire.mockRejectedValue(new Error('Processor unavailable'));
+  expect(await handler({arguments:{invoiceId:'i1'}})).toMatchObject({ok:false});
+  expect(row.status).toBe('SENT');
+ });
+});
+
 
 describe('atomic release of the fee invoice send owner',()=>{
  const release={Put:{TableName:'Fees',Item:{id:'fee:q1',version:4},ConditionExpression:'#v = :v',ExpressionAttributeNames:{'#v':'version'},ExpressionAttributeValues:{':v':3}}};
