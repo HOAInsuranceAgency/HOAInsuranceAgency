@@ -14,7 +14,7 @@ export const ADMIN_MODEL_OPERATIONS: Record<string, readonly string[]> = {
   UserProfile: ["delete"], PfCounselOpinion: ["create"], License: ["update", "delete"],
   AgencySettings: ["create", "update", "delete"], LeadReply: ["read"], UploadPortal: ["read", "update"],
 };
-export const CUSTOM_OPERATIONS = ["commissionOverview", "bindCommissionPolicy", "communicationRead", "communicationWrite", "honeycombSubmissionSettings", "startHoneycombSubmission", "resolveHoneycombSubmission", "startLeadExtraction", "suggestFormFields", "reserveCertificateNumber", "reserveInvoiceNumber", "sendInvoice", "voidInvoice", "issueFinanceQuote", "generatePfAgreement", "servicePfLoan", "crmAccess", "crmFile"];
+export const CUSTOM_OPERATIONS = ["commissionOverview", "carrierPaymentPreview", "bindCommissionPolicy", "communicationRead", "communicationWrite", "honeycombSubmissionSettings", "startHoneycombSubmission", "resolveHoneycombSubmission", "startLeadExtraction", "suggestFormFields", "reserveCertificateNumber", "reserveInvoiceNumber", "sendInvoice", "voidInvoice", "issueFinanceQuote", "generatePfAgreement", "servicePfLoan", "crmAccess", "crmFile"];
 export const ACCOUNT_REFERENCES: Record<string, Record<string, string>> = {
   Quote: { renewalPolicyId: "Policy" }, Policy: { quoteId: "Quote" }, Invoice: { policyId: "Policy", quoteId: "Quote" },
   InvoiceLine: { invoiceId: "Invoice", policyId: "Policy" }, PfLoan: { policyId: "Policy", quoteId: "Quote", boardResolutionDocumentId: "Document" },
