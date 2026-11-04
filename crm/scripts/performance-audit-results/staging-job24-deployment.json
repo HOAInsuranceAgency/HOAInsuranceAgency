@@ -1,0 +1,411 @@
+{
+  "schema": 1,
+  "capturedAt": "2026-11-04T22:05:47.166016+00:00",
+  "deployedSourceCommit": "b3de7a81ffad93fd2be0cb243ef09e6fed4bd7fd",
+  "account": "917680434255",
+  "region": "us-east-1",
+  "appId": "d1nuh9rw1hcuxo",
+  "hostedBranch": "codex-hoa-staging-migration",
+  "backendNamespace": "staging",
+  "hostedJob": {
+    "id": "24",
+    "status": "SUCCEED",
+    "sourceCommit": "b3de7a81ffad93fd2be0cb243ef09e6fed4bd7fd",
+    "startedAt": "2026-11-04T21:12:58.580000Z",
+    "completedAt": "2026-11-04T21:25:57.231000Z",
+    "steps": [
+      {
+        "stepName": "BUILD",
+        "status": "SUCCEED",
+        "startTime": "2026-11-04T21:12:58.597000Z",
+        "endTime": "2026-11-04T21:25:48.017000Z"
+      },
+      {
+        "stepName": "DEPLOY",
+        "status": "SUCCEED",
+        "startTime": "2026-11-04T21:25:48.282000Z",
+        "endTime": "2026-11-04T21:25:56.656000Z"
+      },
+      {
+        "stepName": "VERIFY",
+        "status": "SUCCEED",
+        "startTime": "2026-11-04T21:25:57.012000Z",
+        "endTime": "2026-11-04T21:25:57.032000Z"
+      }
+    ]
+  },
+  "postRunVerification": {
+    "captureStartedAt": "2026-11-04T22:03:32.654241+00:00",
+    "captureCompletedAt": "2026-11-04T22:05:14.083367+00:00",
+    "guardCommand": "node scripts/assert-migration-destination.mjs --staging-only",
+    "guardMode": "normal strict; no rollback recovery exception",
+    "guardExitCode": 0,
+    "guardOutput": "Verified isolated HOA staging deployment (release).",
+    "guardValidationCodeCommit": "b3de7a81ffad93fd2be0cb243ef09e6fed4bd7fd",
+    "originalProtectedStatefulCount": 57,
+    "originalProtectedStatefulInventorySha256": "7f64fb4e870e5c157f2817fb70946c19fd869175c404b35a29640c599c3a2f45",
+    "originalStreamCursorCount": 22,
+    "originalScheduleCount": 8,
+    "additiveStreamCursorCount": 6,
+    "additiveScheduleCount": 1,
+    "brokerFeeLedgerVerified": true
+  },
+  "root": {
+    "StackId": "arn:aws:cloudformation:us-east-1:917680434255:stack/amplify-d1nuh9rw1hcuxo-staging-branch-3787a09124/eaa4dff0-d3d3-11f1-ab1d-0edee65f4629",
+    "StackStatus": "UPDATE_COMPLETE",
+    "LastUpdatedTime": "2026-11-04T21:21:38.581000+00:00",
+    "EnableTerminationProtection": true
+  },
+  "worker": {
+    "FunctionName": "amplify-d1nuh9rw1hcuxo-st-accountlistworkerlambdaD-QcKiE6wTbSLH",
+    "FunctionArn": "arn:aws:lambda:us-east-1:917680434255:function:amplify-d1nuh9rw1hcuxo-st-accountlistworkerlambdaD-QcKiE6wTbSLH",
+    "Runtime": "nodejs22.x",
+    "LastModified": "2026-11-04T21:23:23.000+0000",
+    "CodeSha256": "jxlENPQlz4SbJsMi2UP1Z/YxiEx6HjVuntYkWX4JACc=",
+    "RevisionId": "3e931140-180f-479c-abd4-07c230687190",
+    "Role": "arn:aws:iam::917680434255:role/amplify-d1nuh9rw1hcuxo-st-accountlistworkerlambdaSe-7vSNEh62cNxF",
+    "State": "Active",
+    "LastUpdateStatus": "Successful",
+    "reservedConcurrency": 1,
+    "guardFlags": {
+      "HOA_MIGRATION_PREVIEW": "false",
+      "HOA_MIGRATION_BRANCH": "codex-hoa-staging-migration"
+    }
+  },
+  "mappings": [
+    {
+      "model": "Account",
+      "UUID": "2d52d1d4-e494-460c-9eb3-7e1466e7e716",
+      "FunctionArn": "arn:aws:lambda:us-east-1:917680434255:function:amplify-d1nuh9rw1hcuxo-st-accountlistworkerlambdaD-QcKiE6wTbSLH",
+      "EventSourceArn": "arn:aws:dynamodb:us-east-1:917680434255:table/Account-sia4nrstvrarlosh3oki3kka2m-NONE/stream/2026-10-29T20:09:06.005",
+      "State": "Enabled",
+      "LastProcessingResult": "No records processed",
+      "LastModified": "2026-11-04T16:09:00-05:00",
+      "StartingPosition": "LATEST",
+      "BatchSize": 25,
+      "MaximumBatchingWindowInSeconds": 1,
+      "MaximumRetryAttempts": 10,
+      "MaximumRecordAgeInSeconds": 7200,
+      "FunctionResponseTypes": [
+        "ReportBatchItemFailures"
+      ]
+    },
+    {
+      "model": "Contact",
+      "UUID": "2e3de79f-1be7-41c2-832e-2597b6ce0cc9",
+      "FunctionArn": "arn:aws:lambda:us-east-1:917680434255:function:amplify-d1nuh9rw1hcuxo-st-accountlistworkerlambdaD-QcKiE6wTbSLH",
+      "EventSourceArn": "arn:aws:dynamodb:us-east-1:917680434255:table/Contact-sia4nrstvrarlosh3oki3kka2m-NONE/stream/2026-10-29T20:09:06.630",
+      "State": "Enabled",
+      "LastProcessingResult": "No records processed",
+      "LastModified": "2026-11-04T16:08:00-05:00",
+      "StartingPosition": "LATEST",
+      "BatchSize": 25,
+      "MaximumBatchingWindowInSeconds": 1,
+      "MaximumRetryAttempts": 10,
+      "MaximumRecordAgeInSeconds": 7200,
+      "FunctionResponseTypes": [
+        "ReportBatchItemFailures"
+      ]
+    },
+    {
+      "model": "Quote",
+      "UUID": "52652e92-3e27-4647-922d-846e9914bdd3",
+      "FunctionArn": "arn:aws:lambda:us-east-1:917680434255:function:amplify-d1nuh9rw1hcuxo-st-accountlistworkerlambdaD-QcKiE6wTbSLH",
+      "EventSourceArn": "arn:aws:dynamodb:us-east-1:917680434255:table/Quote-sia4nrstvrarlosh3oki3kka2m-NONE/stream/2026-10-29T20:09:05.709",
+      "State": "Enabled",
+      "LastProcessingResult": "No records processed",
+      "LastModified": "2026-11-04T16:09:00-05:00",
+      "StartingPosition": "LATEST",
+      "BatchSize": 25,
+      "MaximumBatchingWindowInSeconds": 1,
+      "MaximumRetryAttempts": 10,
+      "MaximumRecordAgeInSeconds": 7200,
+      "FunctionResponseTypes": [
+        "ReportBatchItemFailures"
+      ]
+    },
+    {
+      "model": "Policy",
+      "UUID": "107ad101-f1e1-4704-baa3-5d7c0f89fcd2",
+      "FunctionArn": "arn:aws:lambda:us-east-1:917680434255:function:amplify-d1nuh9rw1hcuxo-st-accountlistworkerlambdaD-QcKiE6wTbSLH",
+      "EventSourceArn": "arn:aws:dynamodb:us-east-1:917680434255:table/Policy-sia4nrstvrarlosh3oki3kka2m-NONE/stream/2026-10-29T20:09:06.322",
+      "State": "Enabled",
+      "LastProcessingResult": "No records processed",
+      "LastModified": "2026-11-04T16:09:00-05:00",
+      "StartingPosition": "LATEST",
+      "BatchSize": 25,
+      "MaximumBatchingWindowInSeconds": 1,
+      "MaximumRetryAttempts": 10,
+      "MaximumRecordAgeInSeconds": 7200,
+      "FunctionResponseTypes": [
+        "ReportBatchItemFailures"
+      ]
+    },
+    {
+      "model": "UserProfile",
+      "UUID": "5d68566d-999e-40bb-b4f0-ab6f37ff1196",
+      "FunctionArn": "arn:aws:lambda:us-east-1:917680434255:function:amplify-d1nuh9rw1hcuxo-st-accountlistworkerlambdaD-QcKiE6wTbSLH",
+      "EventSourceArn": "arn:aws:dynamodb:us-east-1:917680434255:table/UserProfile-sia4nrstvrarlosh3oki3kka2m-NONE/stream/2026-10-29T20:09:05.172",
+      "State": "Enabled",
+      "LastProcessingResult": "No records processed",
+      "LastModified": "2026-11-04T16:09:00-05:00",
+      "StartingPosition": "LATEST",
+      "BatchSize": 25,
+      "MaximumBatchingWindowInSeconds": 1,
+      "MaximumRetryAttempts": 10,
+      "MaximumRecordAgeInSeconds": 7200,
+      "FunctionResponseTypes": [
+        "ReportBatchItemFailures"
+      ]
+    },
+    {
+      "model": "Communication",
+      "UUID": "a654874f-fd8d-4e0b-a966-ca12619c6dd9",
+      "FunctionArn": "arn:aws:lambda:us-east-1:917680434255:function:amplify-d1nuh9rw1hcuxo-st-accountlistworkerlambdaD-QcKiE6wTbSLH",
+      "EventSourceArn": "arn:aws:dynamodb:us-east-1:917680434255:table/amplify-d1nuh9rw1hcuxo-staging-branch-3787a09124-data7552DF31-L28GCPFHW3X7-amplifyDataL2GraphqlApiCommunicationRecords8E155369-DL1V4R87WT37/stream/2026-11-04T21:06:05.446",
+      "State": "Enabled",
+      "LastProcessingResult": "OK",
+      "LastModified": "2026-11-04T16:09:00-05:00",
+      "StartingPosition": "LATEST",
+      "BatchSize": 25,
+      "MaximumBatchingWindowInSeconds": 1,
+      "MaximumRetryAttempts": 10,
+      "MaximumRecordAgeInSeconds": 7200,
+      "FunctionResponseTypes": [
+        "ReportBatchItemFailures"
+      ]
+    }
+  ],
+  "projection": {
+    "TableName": "amplify-d1nuh9rw1hcuxo-staging-branch-3787a09124-data7552DF31-L28GCPFHW3X7-amplifyDataL2GraphqlApiAccountListRecordsADED7554-G3T78O0LZA13",
+    "TableArn": "arn:aws:dynamodb:us-east-1:917680434255:table/amplify-d1nuh9rw1hcuxo-staging-branch-3787a09124-data7552DF31-L28GCPFHW3X7-amplifyDataL2GraphqlApiAccountListRecordsADED7554-G3T78O0LZA13",
+    "TableStatus": "ACTIVE",
+    "CreationDateTime": "2026-11-04T16:06:05.842000-05:00",
+    "ItemCount": 0,
+    "DeletionProtectionEnabled": true,
+    "KeySchema": [
+      {
+        "AttributeName": "pk",
+        "KeyType": "HASH"
+      },
+      {
+        "AttributeName": "sk",
+        "KeyType": "RANGE"
+      }
+    ],
+    "ready": {
+      "version": 1,
+      "day": "2026-11-04",
+      "complete": true,
+      "pk": "CONTROL",
+      "processed": 33,
+      "builtAt": "2026-11-04T21:57:37.781Z",
+      "sk": "READY"
+    },
+    "readyForToday": true,
+    "buildProgress": {
+      "day": "2026-11-04",
+      "complete": true,
+      "processed": 33,
+      "completedAt": "2026-11-04T21:57:37.777Z",
+      "pendingCount": 0
+    },
+    "ItemCountIsDelayedApproximateMetadata": true,
+    "readinessEvidence": "Consistent-read CONTROL/READY and CONTROL/BUILD complete for current agency day, processed33; DescribeTable ItemCount is not used to infer live projection emptiness."
+  },
+  "recentWorkerErrorMetadataCount": 0,
+  "environmentQuota": {
+    "actualObservedAt": "2026-11-04T22:07:28.443537+00:00",
+    "actualSerializedVariablesBytes": 3810,
+    "limitBytes": 4096,
+    "localConservativeProofBytes": 3811,
+    "localProofArtifact": "communications-env-quota.json",
+    "actualMeasurementMethod": "Compact UTF8 JSON of live Lambda Environment.Variables; no values persisted.",
+    "differenceExplanation": "Auto-generated physical table suffix length varies; final live table is one byte shorter than the table used for the local conservative proof."
+  },
+  "ciVerificationMetadataScope": {
+    "roleArn": "arn:aws:iam::917680434255:role/AmplifyBackendDeploy-HOAInsurance",
+    "initialExistingTableMetadataAdditions": {
+      "action": "dynamodb:DescribeTable",
+      "resources": [
+        "arn:aws:dynamodb:us-east-1:917680434255:table/amplify-d1nuh9rw1hcuxo-staging-branch-3787a09124-broker-fees",
+        "arn:aws:dynamodb:us-east-1:917680434255:table/UserProfile-sia4nrstvrarlosh3oki3kka2m-NONE",
+        "arn:aws:dynamodb:us-east-1:917680434255:table/amplify-d1nuh9rw1hcuxo-staging-branch-3787a09124-data7552DF31-L28GCPFHW3X7-amplifyDataL2GraphqlApiCommunicationRecords8E155369-DL1V4R87WT37"
+      ]
+    },
+    "extensionMetadataAdditions": [
+      {
+        "policy": "ReadHOAMigrationVerificationMetadata",
+        "existingAction": "dynamodb:DescribeTable",
+        "resourceAdded": "arn:aws:dynamodb:us-east-1:917680434255:table/amplify-d1nuh9rw1hcuxo-staging-branch-3787a09124-data7552DF31-L28GCPFHW3X7-amplifyDataL2GraphqlApiAccountListRecordsADED7554-G3T78O0LZA13"
+      },
+      {
+        "policy": "ReadHOAMigrationVerificationMetadata",
+        "existingAction": "lambda:GetEventSourceMapping",
+        "unchangedResourceScope": "arn:aws:lambda:us-east-1:917680434255:event-source-mapping:*",
+        "conditionValueAdded": {
+          "ArnEquals": {
+            "lambda:FunctionArn": "arn:aws:lambda:us-east-1:917680434255:function:amplify-d1nuh9rw1hcuxo-st-accountlistworkerlambdaD-QcKiE6wTbSLH"
+          }
+        }
+      },
+      {
+        "policy": "HOAStagingScheduleGuardRead",
+        "existingAction": "scheduler:GetSchedule",
+        "resourceAdded": "arn:aws:scheduler:us-east-1:917680434255:schedule/default/amplify-d1nuh9rw1hcuxo-st-accountlistworkerlambdas-14L17P1S9LOIL"
+      }
+    ],
+    "actionsAdded": [],
+    "wildcardResourceScopesAdded": [],
+    "existingActionsResourcesAndConditionsRetained": true,
+    "inlineCharactersAfterUpdate": 7704,
+    "inlineCharacterLimit": 10240,
+    "verification": {
+      "checkedAt": "2026-11-04T21:14:21.388720+00:00",
+      "sourceCommit": "b3de7a81ffad93fd2be0cb243ef09e6fed4bd7fd",
+      "roleArn": "arn:aws:iam::917680434255:role/AmplifyBackendDeploy-HOAInsurance",
+      "method": "Read-only actual principal-policy simulation with exact live resource ARNs and newworker lambda:FunctionArn context.",
+      "cases": [
+        {
+          "name": "privateProjectionDescribe",
+          "action": "dynamodb:DescribeTable",
+          "resources": [
+            {
+              "resource": "arn:aws:dynamodb:us-east-1:917680434255:table/amplify-d1nuh9rw1hcuxo-staging-branch-3787a09124-data7552DF31-L28GCPFHW3X7-amplifyDataL2GraphqlApiAccountListRecordsADED7554-G3T78O0LZA13",
+              "decision": "allowed",
+              "missingContext": []
+            }
+          ],
+          "allAllowed": true
+        },
+        {
+          "name": "newRepairScheduleRead",
+          "action": "scheduler:GetSchedule",
+          "resources": [
+            {
+              "resource": "arn:aws:scheduler:us-east-1:917680434255:schedule/default/amplify-d1nuh9rw1hcuxo-st-accountlistworkerlambdas-14L17P1S9LOIL",
+              "decision": "allowed",
+              "missingContext": []
+            }
+          ],
+          "allAllowed": true
+        },
+        {
+          "name": "sixNewMappingReads",
+          "action": "lambda:GetEventSourceMapping",
+          "resources": [
+            {
+              "resource": "arn:aws:lambda:us-east-1:917680434255:event-source-mapping:2d52d1d4-e494-460c-9eb3-7e1466e7e716",
+              "decision": "allowed",
+              "missingContext": []
+            },
+            {
+              "resource": "arn:aws:lambda:us-east-1:917680434255:event-source-mapping:2e3de79f-1be7-41c2-832e-2597b6ce0cc9",
+              "decision": "allowed",
+              "missingContext": []
+            },
+            {
+              "resource": "arn:aws:lambda:us-east-1:917680434255:event-source-mapping:52652e92-3e27-4647-922d-846e9914bdd3",
+              "decision": "allowed",
+              "missingContext": []
+            },
+            {
+              "resource": "arn:aws:lambda:us-east-1:917680434255:event-source-mapping:107ad101-f1e1-4704-baa3-5d7c0f89fcd2",
+              "decision": "allowed",
+              "missingContext": []
+            },
+            {
+              "resource": "arn:aws:lambda:us-east-1:917680434255:event-source-mapping:5d68566d-999e-40bb-b4f0-ab6f37ff1196",
+              "decision": "allowed",
+              "missingContext": []
+            },
+            {
+              "resource": "arn:aws:lambda:us-east-1:917680434255:event-source-mapping:a654874f-fd8d-4e0b-a966-ca12619c6dd9",
+              "decision": "allowed",
+              "missingContext": []
+            }
+          ],
+          "allAllowed": true
+        }
+      ],
+      "allAllowed": true
+    }
+  },
+  "actualRuntimeIamSummary": {
+    "affectedRoleCount": 9,
+    "maxAggregateInlineChars": 8285,
+    "maxAttachedManagedCount": 7,
+    "distinctCustomerManagedPolicyCount": 17,
+    "maxCustomerManagedDocumentChars": 3888,
+    "allCustomerManagedWithin6144": true
+  },
+  "relatedEvidence": [
+    "staging-job24-iam.json",
+    "staging-job24-runtime-diagnostics.json"
+  ],
+  "retainedFailedDeploymentCaches": {
+    "capturedAt": "2026-11-04T22:06:43.326232+00:00",
+    "count": 2,
+    "outsideCurrentStackInventory": true,
+    "verificationMethod": "Exact cache-name prefix, excluding current stack-owned table; metadata plus consistent CONTROL-key reads and bounded consistent Scan COUNT-only reads. No record values read or returned.",
+    "tables": [
+      {
+        "TableName": "amplify-d1nuh9rw1hcuxo-staging-branch-3787a09124-data7552DF31-L28GCPFHW3X7-amplifyDataL2GraphqlApiAccountListRecordsADED7554-1KBRXGZ8S91TU",
+        "TableArn": "arn:aws:dynamodb:us-east-1:917680434255:table/amplify-d1nuh9rw1hcuxo-staging-branch-3787a09124-data7552DF31-L28GCPFHW3X7-amplifyDataL2GraphqlApiAccountListRecordsADED7554-1KBRXGZ8S91TU",
+        "CreationDateTime": "2026-11-04T15:49:55.721000-05:00",
+        "TableStatus": "ACTIVE",
+        "DeletionProtectionEnabled": true,
+        "approximateReportedItemCount": 0,
+        "approximateReportedSizeBytes": 0,
+        "controlKeysPresent": {
+          "READY": false,
+          "BUILD": false
+        },
+        "boundedConsistentCountRead": {
+          "limit": 1,
+          "count": 0,
+          "scannedCount": 0,
+          "hasContinuation": false
+        },
+        "emptyAtReadTime": true,
+        "deleted": false
+      },
+      {
+        "TableName": "amplify-d1nuh9rw1hcuxo-staging-branch-3787a09124-data7552DF31-L28GCPFHW3X7-amplifyDataL2GraphqlApiAccountListRecordsADED7554-LYHERN3UV1U2",
+        "TableArn": "arn:aws:dynamodb:us-east-1:917680434255:table/amplify-d1nuh9rw1hcuxo-staging-branch-3787a09124-data7552DF31-L28GCPFHW3X7-amplifyDataL2GraphqlApiAccountListRecordsADED7554-LYHERN3UV1U2",
+        "CreationDateTime": "2026-11-04T15:34:48.293000-05:00",
+        "TableStatus": "ACTIVE",
+        "DeletionProtectionEnabled": true,
+        "approximateReportedItemCount": 0,
+        "approximateReportedSizeBytes": 0,
+        "controlKeysPresent": {
+          "READY": false,
+          "BUILD": false
+        },
+        "boundedConsistentCountRead": {
+          "limit": 1,
+          "count": 0,
+          "scannedCount": 0,
+          "hasContinuation": false
+        },
+        "emptyAtReadTime": true,
+        "deleted": false
+      }
+    ],
+    "deleted": false
+  },
+  "sanitization": {
+    "containsCredentials": false,
+    "containsEnvironmentValues": false,
+    "containsRequestOrResponseBodies": false
+  },
+  "communicationsFunction": {
+    "FunctionName": "amplify-d1nuh9rw1hcuxo-st-communicationslambda6A59-i3I7PfkdzagK",
+    "FunctionArn": "arn:aws:lambda:us-east-1:917680434255:function:amplify-d1nuh9rw1hcuxo-st-communicationslambda6A59-i3I7PfkdzagK",
+    "Runtime": "nodejs22.x",
+    "LastModified": "2026-11-04T21:22:44.000+0000",
+    "CodeSha256": "dESewqL+Rxz5kuTaVR6eD0SSVJ+Qyoyb7ImdFGlVQno=",
+    "State": "Active",
+    "LastUpdateStatus": "Successful"
+  }
+}

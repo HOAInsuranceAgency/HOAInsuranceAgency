@@ -1,0 +1,371 @@
+{
+  "schema": 1,
+  "capturedAt": "2026-11-04T22:05:47.166016+00:00",
+  "deployedSourceCommit": "b3de7a81ffad93fd2be0cb243ef09e6fed4bd7fd",
+  "browserFailureWindow": {
+    "start": "2026-11-04T21:57:55.366Z",
+    "end": "2026-11-04T21:58:16.393Z",
+    "observed": "accountListPage and team native fetch calls had no completed response/status in the20-second observation window.",
+    "retainedAttemptArtifact": "live-after-job24-attempt1-failed.json"
+  },
+  "serverLogWindow": {
+    "start": "2026-11-04T21:57:40Z",
+    "end": "2026-11-04T22:01:00Z"
+  },
+  "cloudWatchMetricWindow": {
+    "start": "2026-11-04T21:57:00Z",
+    "end": "2026-11-04T22:01:00Z",
+    "periodSeconds": 60,
+    "capturedAt": "2026-11-04T22:00:48.654360+00:00"
+  },
+  "communicationsTimeCorrelatedRequests": [
+    {
+      "requestId": "88c610ff-b120-4a65-a336-c56639f6f886",
+      "startAt": "2026-11-04T21:58:03.359000+00:00",
+      "endAt": "2026-11-04T21:58:04.047000+00:00",
+      "reportAt": "2026-11-04T21:58:04.047000+00:00",
+      "handlerDurationMs": 686.99,
+      "initDurationMs": 937.05,
+      "billedDurationMs": 1625.0,
+      "maxMemoryUsedMb": 168.0
+    },
+    {
+      "requestId": "c52b7479-2d52-4c9c-95c0-f8a414be9528",
+      "startAt": "2026-11-04T21:58:03.452000+00:00",
+      "endAt": "2026-11-04T21:58:04.564000+00:00",
+      "reportAt": "2026-11-04T21:58:04.564000+00:00",
+      "handlerDurationMs": 1111.54,
+      "initDurationMs": 1029.84,
+      "billedDurationMs": 2142.0,
+      "maxMemoryUsedMb": 168.0
+    },
+    {
+      "requestId": "6bb64a27-ecb6-45bf-afdf-a7f5c19e3764",
+      "startAt": "2026-11-04T21:59:08.056000+00:00",
+      "endAt": "2026-11-04T21:59:08.554000+00:00",
+      "reportAt": "2026-11-04T21:59:08.554000+00:00",
+      "handlerDurationMs": 496.63,
+      "billedDurationMs": 497.0,
+      "maxMemoryUsedMb": 168.0
+    },
+    {
+      "requestId": "9af80875-bc89-4966-a942-8086c3656571",
+      "startAt": "2026-11-04T21:59:08.073000+00:00",
+      "endAt": "2026-11-04T21:59:08.913000+00:00",
+      "reportAt": "2026-11-04T21:59:08.913000+00:00",
+      "handlerDurationMs": 839.61,
+      "billedDurationMs": 840.0,
+      "maxMemoryUsedMb": 168.0
+    },
+    {
+      "requestId": "340de4fe-e3b7-4ce3-b37d-e1503180105e",
+      "startAt": "2026-11-04T21:59:11.465000+00:00",
+      "endAt": "2026-11-04T21:59:11.613000+00:00",
+      "reportAt": "2026-11-04T21:59:11.613000+00:00",
+      "handlerDurationMs": 148.15,
+      "billedDurationMs": 149.0,
+      "maxMemoryUsedMb": 168.0
+    }
+  ],
+  "logCollectionSummary": {
+    "projectionWorker": {
+      "collectedEventCount": 78,
+      "reportCount": 26,
+      "collectionPages": 3,
+      "completeForRequestedWindow": true,
+      "errorOrTimeoutEventCount": 0
+    },
+    "communications": {
+      "collectedEventCount": 17,
+      "reportCount": 5,
+      "collectionPages": 2,
+      "completeForRequestedWindow": true,
+      "errorOrTimeoutEventCount": 0
+    }
+  },
+  "metrics": [
+    {
+      "id": "commcalls",
+      "label": "AWS/Lambda amplify-d1nuh9rw1hcuxo-st-communicationslambda6A59-i3I7PfkdzagK Invocations",
+      "points": [
+        {
+          "at": "2026-11-04T21:58:00Z",
+          "value": 2.0
+        },
+        {
+          "at": "2026-11-04T21:59:00Z",
+          "value": 3.0
+        }
+      ],
+      "status": "Complete"
+    },
+    {
+      "id": "commerrors",
+      "label": "AWS/Lambda amplify-d1nuh9rw1hcuxo-st-communicationslambda6A59-i3I7PfkdzagK Errors",
+      "points": [
+        {
+          "at": "2026-11-04T21:58:00Z",
+          "value": 0.0
+        },
+        {
+          "at": "2026-11-04T21:59:00Z",
+          "value": 0.0
+        }
+      ],
+      "status": "Complete"
+    },
+    {
+      "id": "commthrottles",
+      "label": "AWS/Lambda amplify-d1nuh9rw1hcuxo-st-communicationslambda6A59-i3I7PfkdzagK Throttles",
+      "points": [
+        {
+          "at": "2026-11-04T21:58:00Z",
+          "value": 0.0
+        },
+        {
+          "at": "2026-11-04T21:59:00Z",
+          "value": 0.0
+        }
+      ],
+      "status": "Complete"
+    },
+    {
+      "id": "commdurationmax",
+      "label": "AWS/Lambda amplify-d1nuh9rw1hcuxo-st-communicationslambda6A59-i3I7PfkdzagK Duration",
+      "points": [
+        {
+          "at": "2026-11-04T21:58:00Z",
+          "value": 1111.54
+        },
+        {
+          "at": "2026-11-04T21:59:00Z",
+          "value": 839.61
+        }
+      ],
+      "status": "Complete"
+    },
+    {
+      "id": "commconcurrentmax",
+      "label": "AWS/Lambda amplify-d1nuh9rw1hcuxo-st-communicationslambda6A59-i3I7PfkdzagK ConcurrentExecutions",
+      "points": [
+        {
+          "at": "2026-11-04T21:58:00Z",
+          "value": 2.0
+        },
+        {
+          "at": "2026-11-04T21:59:00Z",
+          "value": 2.0
+        }
+      ],
+      "status": "Complete"
+    },
+    {
+      "id": "workercalls",
+      "label": "AWS/Lambda amplify-d1nuh9rw1hcuxo-st-accountlistworkerlambdaD-QcKiE6wTbSLH Invocations",
+      "points": [
+        {
+          "at": "2026-11-04T21:57:00Z",
+          "value": 6.0
+        },
+        {
+          "at": "2026-11-04T21:58:00Z",
+          "value": 8.0
+        },
+        {
+          "at": "2026-11-04T21:59:00Z",
+          "value": 6.0
+        },
+        {
+          "at": "2026-11-04T22:00:00Z",
+          "value": 2.0
+        }
+      ],
+      "status": "Complete"
+    },
+    {
+      "id": "workererrors",
+      "label": "AWS/Lambda amplify-d1nuh9rw1hcuxo-st-accountlistworkerlambdaD-QcKiE6wTbSLH Errors",
+      "points": [
+        {
+          "at": "2026-11-04T21:57:00Z",
+          "value": 0.0
+        },
+        {
+          "at": "2026-11-04T21:58:00Z",
+          "value": 0.0
+        },
+        {
+          "at": "2026-11-04T21:59:00Z",
+          "value": 0.0
+        },
+        {
+          "at": "2026-11-04T22:00:00Z",
+          "value": 0.0
+        }
+      ],
+      "status": "Complete"
+    },
+    {
+      "id": "workerthrottles",
+      "label": "AWS/Lambda amplify-d1nuh9rw1hcuxo-st-accountlistworkerlambdaD-QcKiE6wTbSLH Throttles",
+      "points": [
+        {
+          "at": "2026-11-04T21:57:00Z",
+          "value": 1.0
+        },
+        {
+          "at": "2026-11-04T21:58:00Z",
+          "value": 0.0
+        },
+        {
+          "at": "2026-11-04T21:59:00Z",
+          "value": 0.0
+        },
+        {
+          "at": "2026-11-04T22:00:00Z",
+          "value": 0.0
+        }
+      ],
+      "status": "Complete"
+    },
+    {
+      "id": "workerdurationmax",
+      "label": "AWS/Lambda amplify-d1nuh9rw1hcuxo-st-accountlistworkerlambdaD-QcKiE6wTbSLH Duration",
+      "points": [
+        {
+          "at": "2026-11-04T21:57:00Z",
+          "value": 2625.93
+        },
+        {
+          "at": "2026-11-04T21:58:00Z",
+          "value": 21.65
+        },
+        {
+          "at": "2026-11-04T21:59:00Z",
+          "value": 27.48
+        },
+        {
+          "at": "2026-11-04T22:00:00Z",
+          "value": 2.9
+        }
+      ],
+      "status": "Complete"
+    },
+    {
+      "id": "workerconcurrentmax",
+      "label": "AWS/Lambda amplify-d1nuh9rw1hcuxo-st-accountlistworkerlambdaD-QcKiE6wTbSLH ConcurrentExecutions",
+      "points": [
+        {
+          "at": "2026-11-04T21:57:00Z",
+          "value": 1.0
+        },
+        {
+          "at": "2026-11-04T21:58:00Z",
+          "value": 1.0
+        },
+        {
+          "at": "2026-11-04T21:59:00Z",
+          "value": 1.0
+        },
+        {
+          "at": "2026-11-04T22:00:00Z",
+          "value": 1.0
+        }
+      ],
+      "status": "Complete"
+    },
+    {
+      "id": "appsynclatencymax",
+      "label": "AWS/AppSync sia4nrstvrarlosh3oki3kka2m Latency Maximum",
+      "points": [
+        {
+          "at": "2026-11-04T21:57:00Z",
+          "value": 365.0
+        },
+        {
+          "at": "2026-11-04T21:58:00Z",
+          "value": 2759.0
+        },
+        {
+          "at": "2026-11-04T21:59:00Z",
+          "value": 1212.0
+        }
+      ],
+      "status": "Complete"
+    },
+    {
+      "id": "appsynclatencyavg",
+      "label": "AWS/AppSync sia4nrstvrarlosh3oki3kka2m Latency Average",
+      "points": [
+        {
+          "at": "2026-11-04T21:57:00Z",
+          "value": 349.5
+        },
+        {
+          "at": "2026-11-04T21:58:00Z",
+          "value": 1173.8
+        },
+        {
+          "at": "2026-11-04T21:59:00Z",
+          "value": 601.0
+        }
+      ],
+      "status": "Complete"
+    },
+    {
+      "id": "appsyncerrors4",
+      "label": "AWS/AppSync sia4nrstvrarlosh3oki3kka2m 4XXError",
+      "points": [
+        {
+          "at": "2026-11-04T21:57:00Z",
+          "value": 0.0
+        },
+        {
+          "at": "2026-11-04T21:58:00Z",
+          "value": 0.0
+        },
+        {
+          "at": "2026-11-04T21:59:00Z",
+          "value": 0.0
+        }
+      ],
+      "status": "Complete"
+    },
+    {
+      "id": "appsyncerrors5",
+      "label": "AWS/AppSync sia4nrstvrarlosh3oki3kka2m 5XXError",
+      "points": [
+        {
+          "at": "2026-11-04T21:57:00Z",
+          "value": 0.0
+        },
+        {
+          "at": "2026-11-04T21:58:00Z",
+          "value": 0.0
+        },
+        {
+          "at": "2026-11-04T21:59:00Z",
+          "value": 0.0
+        }
+      ],
+      "status": "Complete"
+    }
+  ],
+  "appSyncFieldLoggingEnabled": false,
+  "findings": [
+    "The two communications cold invocations in the time window completed normally by21:58:04.564Z; handler durations686.99ms/1111.54ms and initialization937.05ms/1029.84ms.",
+    "Communications Lambda error and throttle metrics were zero in21:58 and21:59. AppSync max latency was2759ms in21:58 and1212ms in21:59;4XX/5XX metrics were zero.",
+    "Projection worker reported one throttle in the21:57 minute at reserved concurrency1, zero in later captured minutes, and zero error metrics."
+  ],
+  "correlationLimits": [
+    "No browser response request ID was captured, so these AWS request IDs cannot be joined to the two browser operation names.",
+    "Metrics aggregate all requests to the function/API per minute; they do not prove the cause of the browser stall.",
+    "The observations do not identify a long-running Lambda or AppSync error in this window; the browser/network/observer cause remains unproven."
+  ],
+  "sanitization": {
+    "containsCredentials": false,
+    "containsEnvironmentValues": false,
+    "containsRequestOrResponseBodies": false,
+    "rawLogsIncluded": false
+  }
+}
