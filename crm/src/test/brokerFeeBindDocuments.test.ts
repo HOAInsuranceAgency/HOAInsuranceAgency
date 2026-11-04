@@ -73,6 +73,7 @@ describe('combined signed disclosure policy links', () => {
     // Fee-free coverage can still bind when broker-fee settings have since been disabled.
     h.rows.delete('AgencySettings:AGENCY');
     const writes = await brokerFeeBindWrites(zero, 'policy-zero', 'DIRECT');
+    expect(h.agreements).toHaveBeenCalledWith('a', 'zero');
     expect(writes).toHaveLength(2);
     expect(writes[0]).toMatchObject({ ConditionCheck: { TableName: 'Fees', Key: { id: 'bfa_combined' }, ExpressionAttributeValues: { ':v': 1 } } });
     expect(writes[1]).toMatchObject({ Update: { ExpressionAttributeValues: { ':account': 'a', ':agreement': 'bfa_combined', ':category': 'BROKER_FEE_DISCLOSURE' } } });

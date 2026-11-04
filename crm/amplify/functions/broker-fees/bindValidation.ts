@@ -26,7 +26,7 @@ export async function assertBrokerFeeSigned(quote:Record<string,unknown>) {
  * Linking that evidence never creates a fee or makes consent/payment a bind requirement. */
 async function feeFreeDisclosureBindWrites(quote:Record<string,unknown>,policyId:string):Promise<Write[]> {
   const accountId=String(quote.accountId),terms=authorizedQuoteTerms(quote);
-  const agreements=(await accountAgreements(accountId)).filter(agreement=>
+  const agreements=(await accountAgreements(accountId,String(quote.id))).filter(agreement=>
     agreement.accountId===accountId && agreement.signature?.consent===true && Number.isFinite(Date.parse(agreement.signature.signedAt)) && agreement.signedDocumentId &&
     agreement.quotes.some(frozen=>frozen.id===quote.id && frozen.accountId===accountId && (frozen.brokerFee??0)===0 && frozen.terms===terms &&
       (frozen.agencyCommissionPct===undefined || frozen.agencyCommissionPct===quote.commissionPct))

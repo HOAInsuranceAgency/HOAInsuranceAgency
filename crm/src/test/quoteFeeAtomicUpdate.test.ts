@@ -5,7 +5,7 @@ type Row = Record<string, any>;
 const h = vi.hoisted(() => ({ models: new Map<string, Row>(), fees: new Map<string, Row>(), beforeCommit: undefined as undefined | (() => void), omitIndex:false, transactions: [] as any[][] }));
 vi.mock('../../amplify/functions/broker-fees/store', async load => {
   const actual = await load<typeof import('../../amplify/functions/broker-fees/store')>();
-  return { ...actual, modelTable: (model:string) => model, table: () => 'Fees',
+  return { ...actual, db:{send:async(command:any)=>({Item:structuredClone(h.models.get(`${command.input.TableName}:${command.input.Key.pk}`))})}, modelTable: (model:string) => model, table: () => 'Fees',
     accountModels: async (model:string,accountId:string) => h.omitIndex ? [] : structuredClone([...h.models.entries()].filter(([key,row])=>key.startsWith(`${model}:`)&&row.accountId===accountId).map(([,row])=>row)),
     getModel: async (model:string,key:string) => structuredClone(h.models.get(`${model}:${key}`)),
     getFee: async (key:string) => structuredClone(h.fees.get(`fee:${key}`)),
@@ -16,7 +16,7 @@ vi.mock('../../amplify/functions/broker-fees/store', async load => {
       const stagedModels = structuredClone(h.models), stagedFees = structuredClone(h.fees);
       for (const write of writes) {
         const item = write.Update ?? write.Put ?? write.ConditionCheck;
-        const key = item.Key?.id ?? item.Key?.userId ?? item.Item?.id;
+        const key = item.Key?.id ?? item.Key?.userId ?? item.Key?.pk ?? item.Item?.id;
         const store = item.TableName === 'Fees' ? stagedFees : stagedModels;
         const recordKey = item.TableName === 'Fees' ? key : `${item.TableName}:${key}`;
         const prior = store.get(recordKey), names = item.ExpressionAttributeNames ?? {}, values = item.ExpressionAttributeValues ?? {};
@@ -53,6 +53,7 @@ const access = (actor='alice',groups:string[] = []) => new AccountAccess({sub:ac
 const save = (input:Row = {id:'q',premium:12000}, context:Row = {}) => updateFeeQuoteAtomically(access(), {model:'Quote',field:'updateQuote',operation:'update',nativeConditions:[],arguments:{input},...context});
 beforeEach(() => {
   h.models.clear(); h.fees.clear(); h.transactions = []; h.beforeCommit = undefined; h.omitIndex=false;
+  process.env.HOA_TRANSACTIONAL_MAIL_TABLE='HOA-TransactionalMail';process.env.HOA_MIGRATION_APP_ID='d1nuh9rw1hcuxo';process.env.HOA_MIGRATION_BRANCH='codex-hoa-account-migration';
   process.env.USER_ACCESS_TABLE = 'Team'; process.env.BROKER_FEE_TABLE = 'Fees';
   h.models.set('Quote:q',{id:'q',__typename:'Quote',accountId:'a',status:'QUOTED',premium:10000,brokerFee:500,billType:'AGENCY',lines:['Property'],notes:'private',createdAt:NOW,updatedAt:NOW});
   h.models.set('Communication:workflow:a',{id:'workflow:a',data:{salespersonId:'alice'}});
@@ -251,4 +252,31 @@ describe('private Quote publication pointers serialize both race orders',()=>{
     const {initialQuotePublicationWrites}=await import('../../amplify/functions/quote-source-billing');const writes=await initialQuotePublicationWrites(invoice,structuredClone(quote()));
     expect(writes).toEqual(expect.arrayContaining([expect.objectContaining({ConditionCheck:expect.objectContaining({TableName:'Invoice',Key:{id:'other'}})})]));
   });
+});
+
+describe('all source-priced financial quote edits without a broker fee',()=>{
+ const free=()=>{h.fees.clear();quote().brokerFee=0;h.models.delete('Invoice:old');h.models.delete('PfLoan:loan');};
+ const charges=[{id:'tax',kind:'TAX',description:'Surplus lines tax',amountCents:5000}];
+ it.each([{premium:12000},{passThroughCharges:charges},{clientConditions:'Inspection required'},{billType:'DIRECT'}])('does not bypass an existing live source invoice on %j',async change=>{
+  free();h.models.set('Invoice:published',{id:'published',accountId:'a',quoteId:'q',status:'SENT',sourcePricingVersion:1,stripePaymentLinkId:'live',updatedAt:NOW});
+  await expect(save({id:'q',...change})).rejects.toThrow('existing quote invoice');expect(h.transactions).toHaveLength(0);
+ });
+ it('cancels safely quoted finance offers on a supplier-charge edit while creating no FeeRecord',async()=>{
+  free();h.models.set('PfLoan:free',{id:'free',accountId:'a',quoteId:'q',status:'QUOTED',updatedAt:NOW});
+  expect(await save({id:'q',passThroughCharges:charges})).toMatchObject({committed:true});
+  expect(h.models.get('PfLoan:free')?.status).toBe('CANCELLED');expect(h.fees.size).toBe(0);
+ });
+ it('allows financial edits with no billing history and preserves private-only native saves',async()=>{
+  free();expect(await save({id:'q',passThroughCharges:charges})).toMatchObject({committed:true});expect(h.fees.size).toBe(0);
+  h.transactions=[];expect(await save({id:'q',notes:'Private notes'})).toEqual({committed:false});expect(h.transactions).toHaveLength(0);
+ });
+ it('automatically retires an expired interrupted VOID send in the financial edit transaction',async()=>{
+  free();const expired=Date.now()-1;
+  h.models.set('Invoice:withdrawn',{id:'withdrawn',accountId:'a',quoteId:'q',status:'VOID',sourcePricingVersion:1,stripePaymentLinkId:'closed',updatedAt:NOW,invoiceSendOperation:{version:1,key:'invoice:withdrawn:old-send',recipients:'a'.repeat(64),previousSentAt:null,leaseId:'expired-worker',leaseUntil:expired}});
+  expect(await save({id:'q',passThroughCharges:charges})).toMatchObject({committed:true});
+  const invoice=h.models.get('Invoice:withdrawn')!;
+  expect(invoice.invoiceSendOperation.retired).toMatchObject({reason:'VOID',invoiceId:'withdrawn',closedLinkId:'closed'});
+  const actions=h.transactions[0];expect(actions.filter(write=>write.Update?.TableName==='Invoice')).toHaveLength(1);
+  expect(actions.some(write=>write.Update?.TableName==='HOA-TransactionalMail')).toBe(true);
+ });
 });

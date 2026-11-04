@@ -16,13 +16,13 @@ function infra() {
   const sesStack = new Stack(app, "NewSesMail", { env: { account: "917680434255", region: "us-east-1" } });
   const shared = new Map<string, Stack>();
   const backend: any = { createStack: (name: string) => { const s = new Stack(app, name, { env: { account: "917680434255", region: "us-east-1" } }); shared.set(name, s); return s; }, addOutput: vi.fn() };
-  for (const name of [...senders, ...(config.migrationPreview ? [] : ["sesMailFeedback"])]) {
+  for (const name of [...senders,"voidInvoice","crmAccess","pfElection", ...(config.migrationPreview ? [] : ["sesMailFeedback"])]) {
     const fn = new Function(name === "sesMailFeedback" ? sesStack : stack, name, { runtime: Runtime.NODEJS_22_X, handler: "index.handler", code: Code.fromInline("exports.handler=async()=>({});") });
     if (senders.includes(name)) fn.addToRolePolicy(new PolicyStatement({ actions: ["ses:SendEmail", "ses:SendRawEmail"], resources: ["*"] }));
     backend[name] = { resources: { lambda: fn }, addEnvironment: (key: string, value: string) => fn.addEnvironment(key, value) };
   }
   installTransactionalMail(backend, new Topic(stack, "ExistingAlertTopic"));
-  return { backend, existing: Template.fromStack(stack).toJSON(), ses: Template.fromStack(sesStack).toJSON(), shared: shared.has("TransactionalMail") ? Template.fromStack(shared.get("TransactionalMail")!).toJSON() : undefined, permissions: shared.has("TransactionalMailSendPermissions") ? Template.fromStack(shared.get("TransactionalMailSendPermissions")!).toJSON() : undefined };
+  return { backend, existing: Template.fromStack(stack).toJSON(), ses: Template.fromStack(sesStack).toJSON(), shared: shared.has("TransactionalMail") ? Template.fromStack(shared.get("TransactionalMail")!).toJSON() : undefined, retirement: shared.has("InvoiceSendRetirementPermissions") ? Template.fromStack(shared.get("InvoiceSendRetirementPermissions")!).toJSON() : undefined, permissions: shared.has("TransactionalMailSendPermissions") ? Template.fromStack(shared.get("TransactionalMailSendPermissions")!).toJSON() : undefined };
 }
 function resources(template: any): any[] { return Object.values(template.Resources ?? {}); }
 function statements(template: any): any[] { return resources(template).filter(r => ["AWS::IAM::Policy", "AWS::IAM::ManagedPolicy"].includes(r.Type)).flatMap(r => r.Properties.PolicyDocument.Statement); }
@@ -80,7 +80,7 @@ describe("SES-only transactional mail infrastructure", () => {
     const { existing, permissions } = infra();
     expect(resources(permissions).filter(r => r.Type === "AWS::IAM::ManagedPolicy")).toHaveLength(1);
     expect(resources(permissions).every(r => ["AWS::IAM::ManagedPolicy", "AWS::CDK::Metadata"].includes(r.Type))).toBe(true);
-    const policy = resources(permissions).find(r => r.Type === "AWS::IAM::ManagedPolicy");
+    const policy = resources(permissions).find(r => r.Type === "AWS::IAM::ManagedPolicy" && !r.Properties.Roles);
     expect(policy.Properties.Roles).toBeUndefined();
     expect(JSON.stringify(policy)).not.toContain("Fn::GetAtt"); expect(JSON.stringify(policy)).not.toContain("Ref");
     expect(JSON.stringify(policy)).not.toContain("FeedbackTopic"); expect(JSON.stringify(policy)).not.toContain("ExistingAlertTopic");
@@ -117,4 +117,20 @@ describe("SES-only transactional mail infrastructure", () => {
   it.each(["0", "-1", "100x", "50001", "1.5"])("rejects invalid SES daily limit %s", value => {
     vi.stubEnv("HOA_SES_DAILY_LIMIT", value); expect(() => infra()).toThrow("application limit");
   });
+});
+
+it.each(['main','staging'])('grants %s Void/edit/PF only invoice mail OP retirement in an independent managed policy',branch=>{
+ config.businessBranch=branch;
+ const {retirement,existing}=infra();
+ const policies=resources(retirement).filter(row=>row.Type==='AWS::IAM::ManagedPolicy');expect(policies).toHaveLength(1);
+ expect(policies[0].Properties.Roles).toHaveLength(3);
+ expect(policies[0].Properties.PolicyDocument.Statement).toEqual([{
+  Action:['dynamodb:GetItem','dynamodb:UpdateItem'],Effect:'Allow',Resource:'arn:aws:dynamodb:us-east-1:917680434255:table/HOA-TransactionalMail',
+  Condition:{'ForAllValues:StringLike':{'dynamodb:LeadingKeys':[`OP#hoa/${branch}/invoice/*`]}},
+ }]);
+ for(const name of ['voidInvoice','crmAccess','pfElection']){
+  expect(mailFunction(existing,name).Properties.Environment.Variables.HOA_TRANSACTIONAL_MAIL_TABLE).toBe('HOA-TransactionalMail');
+  expect(JSON.stringify(policies[0].Properties.Roles)).toContain(name);
+ }
+ expect(JSON.stringify(retirement)).not.toContain('ses:');expect(JSON.stringify(retirement)).not.toContain('s3:');expect(JSON.stringify(retirement)).not.toContain('TransactionalMailSendPermissions');
 });
