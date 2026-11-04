@@ -121,6 +121,33 @@ describe('reviewed Front business handoff',()=>{
   it('reconciles a known private draft without traversing or importing its private inbox',async()=>{
     const p=await previewBusinessDelivery(selection,'actor'),a=await prepareBusinessDraft(prepareInput(p),'actor');h.front.mockClear();expect((await reconcileBusinessDraft({accountId:'a1',attemptId:a.id},'actor')).state).toBe('DRAFT');expect(h.front.mock.calls.map(c=>c[0])).toEqual(['/messages/msg_draft']);await expect(reconcileBusinessDraft({accountId:'a1',attemptId:a.id},'other')).rejects.toThrow('assignment changed');sent();expect((await reconcileBusinessDraft({accountId:'a1',attemptId:a.id},'actor')).state).toBe('SENT');
   });
+  it.each(['To','CC','facts','files','reference'])('holds a known sent message with changed %s for review and blocks another target attempt',async changed=>{
+    const p=await previewBusinessDelivery(selection,'actor'),a=await prepareBusinessDraft(prepareInput(p),'actor');sent();const message=h.messages.get(a.frontDraftId!);
+    if(changed==='To')message.recipients.find((r:any)=>r.role==='to').handle='different@example.com';
+    if(changed==='CC')message.recipients.push({role:'cc',handle:'newcc@example.com'});
+    if(changed==='facts')message.text=message.text.replace('Premium: $1,200.00','Premium: $9,999.00');
+    if(changed==='files')h.attachment.mockResolvedValue(new TextEncoder().encode('%PDF-1.7 changed by sender'));
+    if(changed==='reference')message.text=message.text.replace(/HOA-[A-F0-9]{12}/,'different reference');
+    const result=await reconcileBusinessDraft({accountId:'a1',attemptId:a.id},'actor');expect(result).toMatchObject({state:'UNKNOWN',frontDraftId:a.frontDraftId});expect(result.failure).toContain('records this message as sent');expect(result.failure).toContain('differs from the prepared preview');expect(h.models.get('Quote:q1').status).toBe('QUOTED');expect(result.sentAt).toBeUndefined();
+    const p2=await previewBusinessDelivery(selection,'actor');await expect(prepareBusinessDraft(prepareInput(p2,'another_request'),'actor')).rejects.toThrow('earlier draft attempt');expect(h.posts).toBe(1);
+  });
+  it('keeps an observed sent message unresolved if attachment verification temporarily fails',async()=>{
+    const p=await previewBusinessDelivery(selection,'actor'),a=await prepareBusinessDraft(prepareInput(p),'actor');sent();h.attachment.mockRejectedValue(new Error('Temporary attachment read failure'));
+    await expect(reconcileBusinessDraft({accountId:'a1',attemptId:a.id},'actor')).rejects.toThrow('Temporary attachment');expect(h.rows.get(a.id).data).toMatchObject({state:'UNKNOWN',failure:expect.stringContaining('Verification')});const p2=await previewBusinessDelivery(selection,'actor');await expect(prepareBusinessDraft(prepareInput(p2,'retry_new_request'),'actor')).rejects.toThrow('earlier draft attempt');
+  });
+  it.each(['SENT','FAILED'])('retains terminal %s when a sent-message review races another receipt writer',async state=>{
+    const p=await previewBusinessDelivery(selection,'actor'),a=await prepareBusinessDraft(prepareInput(p),'actor');sent();h.messages.get(a.frontDraftId!).text='Human-edited sent content';
+    h.beforeCommit=()=>{const current=h.rows.get(a.id);h.rows.set(a.id,{...current,version:current.version+1,data:{...current.data,state,sentAt:NOW}});};
+    expect(await reconcileBusinessDraft({accountId:'a1',attemptId:a.id},'actor')).toMatchObject({state,sentAt:NOW});expect(h.rows.get(a.id).data.state).toBe(state);
+  });
+  it('accepts a whole-second Front sent timestamp in the same second as its millisecond intent',async()=>{
+    vi.setSystemTime(new Date('2026-11-03T16:00:00.750Z'));const p=await previewBusinessDelivery(selection,'actor'),a=await prepareBusinessDraft(prepareInput(p),'actor');sent(a.frontDraftId!,'2026-11-03T16:00:00.000Z');
+    expect(await reconcileBusinessDraft({accountId:'a1',attemptId:a.id},'actor')).toMatchObject({state:'SENT',sentAt:'2026-11-03T16:00:00.000Z'});expect(h.models.get('Quote:q1').status).toBe('PRESENTED');
+  });
+  it('rejects a Front message from a preceding second without projecting current quote presentation',async()=>{
+    vi.setSystemTime(new Date('2026-11-03T16:00:01.750Z'));const p=await previewBusinessDelivery(selection,'actor'),a=await prepareBusinessDraft(prepareInput(p),'actor');sent(a.frontDraftId!,'2026-11-03T16:00:00.000Z');
+    expect((await reconcileBusinessDraft({accountId:'a1',attemptId:a.id},'actor')).state).toBe('UNKNOWN');expect(h.models.get('Quote:q1').status).toBe('QUOTED');
+  });
   it('does not reuse one attachment to verify two equal-name/equal-size carrier files',async()=>{
     for(const id of ['d1','d2']){const key=`documents/ACCOUNT/a1/${id}/carrier.pdf`;h.models.set(`Document:${id}`,{id,entityType:'ACCOUNT',entityId:'a1',name:'Carrier.pdf',contentType:'application/pdf',s3Key:key,updatedAt:NOW});h.objects.set(key,PDF);}
     const p=await previewBusinessDelivery({...selection,documentIds:['d1','d2']},'actor');await prepareBusinessDraft(prepareInput(p),'actor');
