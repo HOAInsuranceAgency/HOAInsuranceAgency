@@ -1,6 +1,7 @@
 import { migrationProbeScopes } from "./migration-probe-scopes";
 import { installTransactionalMail } from "./transactional-mail";
 import { mailFeedback } from "./functions/mail-feedback/resource";
+import { sesMailFeedback } from "./functions/ses-mail-feedback/resource";
 import { mailVerification, mailRecovery } from "./functions/transactional-mail/resource";
 import { migrationDestination, migrationPreview, migrationTargets, businessBranch, providerBranch, migrationWebOrigin, migrationExecution, migrationRuntimeBranch } from "./migration-config";
 import { installMigrationPreview } from "./migration-preview";
@@ -81,6 +82,7 @@ import {
 // real synth. Nothing else imports it; `ampx` uses this file for its side
 // effects, as it always has.
 export const backend = defineBackend({
+  ...Object.fromEntries(migrationDestination && businessBranch === "main" && !migrationPreview ? [["sesMailFeedback", sesMailFeedback]] : []),
   mailFeedback,
   mailVerification,
   mailRecovery,

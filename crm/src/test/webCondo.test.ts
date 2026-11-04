@@ -69,7 +69,9 @@ describe("condominium page release integration", () => {
     ]) {
       expect(source.replace(/\s+/g, " ")).not.toContain(unqualifiedClaim);
     }
-    expect(source).toContain("An assessment is not automatic");
+    expect(source.replace(/\s+/g, " ")).toContain(
+      "Depending on state law, the declaration and the facts of the loss, the association may allocate"
+    );
   });
 
   it("requires actual policy review instead of relying on the master-policy label", () => {
@@ -82,8 +84,19 @@ describe("condominium page release integration", () => {
     }
     expect(source).not.toContain("The governing documents decide, not the policy");
     expect(source).not.toContain("The governing documents decide it, not the insurance policy");
-    for (const policy of POLICY_TYPES) expect(policy.stops).toMatch(/Typically excludes/);
+    // The shared column heading now qualifies every row, rather than repeating
+    // "Typically excludes" in each individual cell.
+    expect(source).toContain('<th scope="col">Typically left to the owner</th>');
+    expect(source).toContain("{POLICY_TYPES.map((t) => (");
+    expect(source).toContain("<td>{t.stops}</td>");
+    expect(POLICY_TYPES.map((policy) => policy.name)).toEqual([
+      "Bare walls", "Single entity", "All-in (walls-in)",
+    ]);
+    for (const policy of POLICY_TYPES) expect(policy.stops).not.toBe("");
     expect(source).toContain("descriptions, not coverage guarantees");
+    expect(source.replace(/\s+/g, " ")).toContain(
+      "your condominium declaration, state law and the issued policy control."
+    );
   });
 
   it("qualifies financing guidance by lender, program, project and review type", () => {
@@ -93,12 +106,15 @@ describe("condominium page release integration", () => {
     expect(answer).toContain("not identical across all mortgages");
     expect(answer).toContain("lender, which determines loan eligibility");
     expect(source.replace(/\s+/g, " ")).not.toContain("cannot get a normal mortgage");
-    expect(COMMON_ISSUES.find((issue) => issue.title.includes("Reserves"))?.desc)
-      .toContain("insurance alone does not establish loan eligibility");
+    expect(COMMON_ISSUES.find((issue) => issue.title.includes("affect financing"))?.desc)
+      .toContain("we review it against the project and loan requirements that apply");
+    expect(source.replace(/\s+/g, " ")).toContain(
+      "Requirements vary and can change. We flag Insurance questions for the board and lender; the lender decides loan eligibility."
+    );
   });
 
   it("renders literal trademarks in Astro string props", () => {
-    expect(source).toContain('eyebrow="ProtectMyHOA™"');
+    expect(source).toContain('eyebrow="Condominium Association Insurance · Licensed Nationwide"');
     expect(source).toContain('subtitle="Insurance Built for Associations™.');
     expect(source).not.toMatch(/&(?:trade|#8482|#x2122);/i);
   });

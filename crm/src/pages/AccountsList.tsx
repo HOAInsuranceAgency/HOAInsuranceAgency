@@ -22,14 +22,22 @@ import { useAgencyDay } from '../lib/useAgencyDay';
 import { useRefreshOnReturn } from '../lib/useRefreshOnReturn';
 import { acquisitionLabel, websiteFormLabel } from '../../../shared/leadSource';
 import { formatCommission, pendingCommission } from '../../../shared/quotePackages';
+import { accountStateCode, LEAD_VIEWS, US_STATE_NAMES, type AccountListStage, type AccountListView, type LeadView } from '../lib/accountListView';
+import { useAccountListPosition, useAccountListView } from '../lib/useAccountListView';
+import { MAX_NAMED_VIEWS, putNamedAccountView, readNamedAccountViews, writeNamedAccountViews, type NamedAccountView } from '../lib/namedAccountViews';
 
-const LEAD_VIEWS = ['Active', 'Snoozed', 'Follow-up due', 'All leads'] as const;
-type LeadView = typeof LEAD_VIEWS[number];
-
-export default function AccountsList({ stage }: { stage: "LEAD" | "CLIENT" }) {
+type AccountsListProps = { stage: 'LEAD' | 'CLIENT'; viewScope?: string };
+export default function AccountsList(props: AccountsListProps) {
   const isAdmin = useIsAdmin();
-  const [salesperson, setSalesperson] = useState('');
-  const [leadView, setLeadView] = useState<LeadView>('Active');
+  return <AccountList key={`${props.viewScope ?? 'session'}:${props.stage}:${isAdmin}`} {...props} />;
+}
+
+function AccountList({ stage, viewScope }: AccountsListProps) {
+  const isAdmin = useIsAdmin();
+  const view = useAccountListView(stage, isAdmin, viewScope);
+  const { leadView } = view;
+  const setLeadView = (leadView: LeadView) => view.update({ leadView });
+  const setSalesperson = (salesperson: string) => view.update({ salesperson });
   const [notice, setNotice] = useState('');
   const viewId = useId();
   const navigate = useNavigate();
@@ -43,9 +51,14 @@ export default function AccountsList({ stage }: { stage: "LEAD" | "CLIENT" }) {
     setData: resource.setCommercial,
   };
   const quoteResource = { data: resource.data.quotes, error: resource.data.quoteError };
+  const salespersonAvailable = !loaded || loading || !!error || commercial.data.team.some(teammate => teammate.salesperson && teammate.userId === view.salesperson);
+  // A stale shared filter must not leave a hidden selection or an empty work list.
+  const salesperson = salespersonAvailable ? view.salesperson : '';
   useEffect(() => {
-    if (loaded && !loading && !error && salesperson && !commercial.data.team.some(teammate => teammate.salesperson && teammate.userId === salesperson)) setSalesperson('');
-  }, [loaded, loading, error, salesperson, commercial.data.team]);
+    if (!salespersonAvailable && view.salesperson) view.update({ salesperson: '' });
+  }, [salespersonAvailable, view.salesperson]);
+  const currentView = { leadView, salesperson, state: view.state, sortKey: view.sortKey, dir: view.dir };
+  useAccountListPosition(view.storageKey, currentView, loaded && !error);
   // Keep authorized rows on screen while checking for changes.
   // Native selects and other row editors still defer focus-triggered refreshes.
   const onInteractionChange = useRefreshOnReturn(refetchAccounts, true, loading);
@@ -88,7 +101,8 @@ export default function AccountsList({ stage }: { stage: "LEAD" | "CLIENT" }) {
       : a.currentPolicyExpiration ?? null;
 
   const matching = accounts.filter(a => (a.stage === stage || stage === 'LEAD' && a.stage === 'CLIENT' && forecastOf(a)?.unfinished)
-    && (!isAdmin || !salesperson || assignmentOf(a)?.salespersonId === salesperson));
+    && (!isAdmin || !salesperson || assignmentOf(a)?.salespersonId === salesperson)
+    && (!view.state || accountStateCode(a.state) === view.state));
   const inView = (a: Account, view: LeadView) => view === 'All leads' || (a.stage === 'CLIENT' || isOpenLead(a, commercial.data.entries)) && (view === 'Snoozed' ? snoozeStatus(a) === 'SNOOZED' : view === 'Follow-up due' ? snoozeStatus(a) === 'DUE' : snoozeStatus(a) !== 'SNOOZED');
   const visible = stage === 'LEAD' ? matching.filter(a => inView(a, leadView)) : matching;
   const dueCount = matching.filter(a => isOpenLead(a, commercial.data.entries) && snoozeStatus(a) === 'DUE').length;
@@ -116,7 +130,7 @@ export default function AccountsList({ stage }: { stage: "LEAD" | "CLIENT" }) {
       renewal: (a) => renewalOf(a),
       followUp: (a) => a.stage === 'LEAD' ? snoozeOf(a)?.followUpOn : null,
     },
-    "renewal"
+    "renewal", "asc", { sortKey: view.sortKey, dir: view.dir, onChange: (sortKey, dir) => view.update({ sortKey, dir }) },
   );
 
   const label = stage === "LEAD" ? "Leads" : "Clients";
@@ -141,10 +155,13 @@ export default function AccountsList({ stage }: { stage: "LEAD" | "CLIENT" }) {
       </div>}
       {stage === 'LEAD' && notice && <p className="muted small" role="status">{notice}</p>}
 
+      <AccountSavedViews storageKey={view.storageKey} current={currentView} stage={stage} admin={isAdmin} onApply={view.update} onReset={view.reset} />
+
       <div className="toolbar">
         <button className="secondary" disabled={loading} onClick={() => void refetchAccounts()} aria-label={`Refresh ${label.toLowerCase()}`}>{loading && loaded ? 'Refreshing…' : 'Refresh'}</button>
+        <label className="field">State<select value={view.state} onChange={event => view.update({ state: event.target.value })}><option value="">All states</option>{Object.entries(US_STATE_NAMES).sort((a, b) => a[1].localeCompare(b[1])).map(([code, name]) => <option key={code} value={code}>{name} ({code})</option>)}</select></label>
         {isAdmin && <label className="field">Salesperson<select value={salesperson} onChange={e => setSalesperson(e.target.value)}><option value="">All salespeople</option>{commercial.data.team.filter(t => t.salesperson).map(t => <option key={t.userId} value={t.userId}>{t.name}</option>)}</select></label>}
-        <ReportDownload disabled={loading || !loaded || !!error || !!refreshError || stage === 'LEAD' && !!quoteResource.error} report={{ title: label, filters: [isAdmin ? `Salesperson: ${commercial.data.team.find(t => t.userId === salesperson)?.name ?? 'All'}` : 'All displayed data', ...(stage === 'LEAD' ? [`View: ${leadView}`] : [])].join(' · '), sections: [{ title: label, columns: ['Name', 'Type', 'Contact', 'City', 'State', ...(isAdmin ? ['Salesperson'] : []), ...(stage === 'LEAD' ? [ 'Lead source', 'Website form', 'Estimated opportunity (USD)', 'Pending commission (USD)', 'Commission basis', 'Entered', 'Follow-up date', 'Follow-up note'] : []), 'Units', 'TIV (USD)', stage === 'LEAD' ? 'Incumbent expires' : 'Renewal'], rows: sorted.map(a => { const f = forecastOf(a), estimate = commercial.data.entries[a.id]?.plan.estimatedCents; return [a.name, a.type, contactOf(a)?.name, a.city, a.state, ...(isAdmin ? [assignee(a, 'salespersonId')] : []), ...(stage === 'LEAD' ? [ acquisitionLabel(a.leadSource, a.source), websiteFormLabel(a.source), estimate == null ? null : estimate / 100, f?.cents == null ? null : f.cents / 100, f?.label, a.createdAt?.slice(0,10), a.stage === 'LEAD' ? snoozeOf(a)?.followUpOn : null, a.stage === 'LEAD' ? snoozeOf(a)?.note : null] : []), a.unitCount, a.totalInsuredValue, renewalOf(a)]; }) }] }} />
+        <ReportDownload disabled={loading || !loaded || !!error || !!refreshError || stage === 'LEAD' && !!quoteResource.error} report={{ title: label, filters: [isAdmin ? `Salesperson: ${commercial.data.team.find(t => t.userId === salesperson)?.name ?? 'All'}` : 'All displayed data', ...(stage === 'LEAD' ? [`View: ${leadView}`] : []), ...(view.state ? [`State: ${US_STATE_NAMES[view.state]}`] : [])].join(' · '), sections: [{ title: label, columns: ['Name', 'Type', 'Contact', 'City', 'State', ...(isAdmin ? ['Salesperson'] : []), ...(stage === 'LEAD' ? [ 'Lead source', 'Website form', 'Estimated opportunity (USD)', 'Pending commission (USD)', 'Commission basis', 'Entered', 'Follow-up date', 'Follow-up note'] : []), 'Units', 'TIV (USD)', stage === 'LEAD' ? 'Incumbent expires' : 'Renewal'], rows: sorted.map(a => { const f = forecastOf(a), estimate = commercial.data.entries[a.id]?.plan.estimatedCents; return [a.name, a.type, contactOf(a)?.name, a.city, a.state, ...(isAdmin ? [assignee(a, 'salespersonId')] : []), ...(stage === 'LEAD' ? [ acquisitionLabel(a.leadSource, a.source), websiteFormLabel(a.source), estimate == null ? null : estimate / 100, f?.cents == null ? null : f.cents / 100, f?.label, a.createdAt?.slice(0,10), a.stage === 'LEAD' ? snoozeOf(a)?.followUpOn : null, a.stage === 'LEAD' ? snoozeOf(a)?.note : null] : []), a.unitCount, a.totalInsuredValue, renewalOf(a)]; }) }] }} />
         {stage === "LEAD" && (
           <Link to="/leads/new">
             <button className="primary">+ New lead</button>
@@ -260,4 +277,99 @@ export default function AccountsList({ stage }: { stage: "LEAD" | "CLIENT" }) {
       </div>
     </>
   );
+}
+
+function AccountSavedViews({ storageKey, current, stage, admin, onApply, onReset }: {
+  storageKey: string | null; current: AccountListView; stage: AccountListStage; admin: boolean;
+  onApply: (view: AccountListView) => void; onReset: () => void;
+}) {
+  const [initial] = useState(() => readNamedAccountViews(storageKey, stage, admin));
+  const [views, setViews] = useState(initial.views);
+  const [available, setAvailable] = useState(initial.available);
+  const [selectedId, setSelectedId] = useState(() => initial.views.find(item => JSON.stringify(item.view) === JSON.stringify(current))?.id ?? '');
+  const [mode, setMode] = useState<'new' | 'rename' | ''>('');
+  const [name, setName] = useState('');
+  const [error, setError] = useState(''), [message, setMessage] = useState('');
+  const selected = views.find(item => item.id === selectedId);
+  const modified = !!selected && JSON.stringify(selected.view) !== JSON.stringify(current);
+  const custom = current.leadView !== 'Active' || current.salesperson || current.state || current.sortKey !== 'renewal' || current.dir !== 'asc';
+  useEffect(() => {
+    if (!storageKey) return;
+    const refresh = () => {
+      const latest = readNamedAccountViews(storageKey, stage, admin);
+      setViews(latest.views); setAvailable(latest.available); setMessage('');
+      if (selectedId && !latest.views.some(item => item.id === selectedId)) {
+        setSelectedId('');
+        if (mode === 'rename') { setMode(''); setError('This saved view is no longer available.'); }
+      }
+      // Refresh choices only. Another tab never changes this tab's work filters.
+    };
+    const onStorage = (event: StorageEvent) => {
+      if (event.key !== null && event.key !== `${storageKey}:named`) return;
+      try { if (event.storageArea && event.storageArea !== window.localStorage) return; }
+      catch { refresh(); return; }
+      refresh();
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, [storageKey, stage, admin, selectedId, mode]);
+  function persist(change: (latest: NamedAccountView[]) => NamedAccountView[]) {
+    setError(''); setMessage('');
+    try {
+      const latest = readNamedAccountViews(storageKey, stage, admin);
+      setAvailable(latest.available);
+      if (!latest.available) throw new Error('Saved views are unavailable in this browser. Your current filters still work in the URL.');
+      const next = change(latest.views);
+      writeNamedAccountViews(storageKey, next, stage, admin);
+      setViews(next);
+      return next;
+    } catch (failure) { setError(failure instanceof Error ? failure.message : 'Could not save this view.'); return null; }
+  }
+  return <section aria-label="Saved account views">
+    <div className="toolbar">
+      <label className="field">Saved view<select value={selected?.id ?? ''} disabled={!available} onChange={event => {
+        const id = event.target.value;
+        setMode(''); setError(''); setMessage('');
+        if (!id) { setSelectedId(''); return; }
+        // Storage events can arrive after a click. Apply the current saved
+        // record, never a cached copy of another tab's earlier filters.
+        const latest = readNamedAccountViews(storageKey, stage, admin);
+        setViews(latest.views); setAvailable(latest.available);
+        const item = latest.views.find(candidate => candidate.id === id);
+        if (!item) {
+          setSelectedId('');
+          setError(latest.available ? 'This saved view is no longer available.' : 'Saved views are unavailable in this browser. Your current filters still work in the URL.');
+          return;
+        }
+        setSelectedId(item.id); onApply(item.view);
+      }}><option value="">Current view</option>{views.map(item => <option key={item.id} value={item.id}>{item.name}{item.id === selectedId && modified ? ' (modified)' : ''}</option>)}</select></label>
+      <button type="button" className="secondary" disabled={!available || views.length >= MAX_NAMED_VIEWS} onClick={() => { setMode('new'); setName(''); setError(''); setMessage(''); }}>Save current view</button>
+      {selected && <>
+        {modified && <button type="button" className="secondary" onClick={() => {
+          if (persist(latest => putNamedAccountView(latest, { id: selected.id, name: latest.find(item => item.id === selected.id)?.name ?? selected.name, view: current }, stage, admin))) setMessage('Saved view updated.');
+        }}>Update saved view</button>}
+        <button type="button" className="secondary" onClick={() => { setMode('rename'); setName(selected.name); setError(''); setMessage(''); }}>Rename view</button>
+        <button type="button" className="secondary" onClick={() => {
+          if (persist(latest => latest.filter(item => item.id !== selected.id))) { setSelectedId(''); setMode(''); setMessage('Saved view deleted.'); }
+        }}>Delete view</button>
+      </>}
+      {(custom || selected) && <button type="button" className="secondary" onClick={() => { setSelectedId(''); setMode(''); setError(''); setMessage(''); onReset(); }}>Reset view</button>}
+    </div>
+    {mode && <form className="toolbar" aria-label={mode === 'rename' ? 'Rename saved view' : 'Save current view'} onSubmit={event => {
+      event.preventDefault();
+      if (mode === 'rename' && !selected) { setError('This saved view is no longer available.'); return; }
+      const next = persist(latest => putNamedAccountView(latest, { ...(mode === 'rename' && selected ? { id: selected.id } : {}), name, view: mode === 'rename' && selected ? latest.find(item => item.id === selected.id)?.view ?? selected.view : current }, stage, admin));
+      if (!next) return;
+      setSelectedId(mode === 'rename' && selected ? selected.id : next[next.length - 1].id);
+      setMode(''); setName(''); setMessage(mode === 'rename' ? 'Saved view renamed.' : 'View saved in this browser.');
+    }}>
+      <label className="field">View name<input value={name} maxLength={80} onChange={event => { setName(event.target.value); setError(''); }} autoFocus /></label>
+      <button type="submit" className="primary">{mode === 'rename' ? 'Save name' : 'Save view'}</button>
+      <button type="button" className="secondary" onClick={() => { setMode(''); setError(''); }}>Cancel naming</button>
+    </form>}
+    {!available && <p className="muted small">Saved views are unavailable in this browser. Current filters still work in the URL.</p>}
+    {available && <p className="muted small">Saved views stay in this browser for your current role.{views.length >= MAX_NAMED_VIEWS ? ` You have ${MAX_NAMED_VIEWS} saved views; delete one to add another.` : ''}</p>}
+    {error && <p className="error-text" role="alert">{error}</p>}
+    {message && <p className="muted small" role="status">{message}</p>}
+  </section>;
 }

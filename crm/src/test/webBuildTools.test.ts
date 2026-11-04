@@ -75,11 +75,17 @@ describe("Astro 7 build compatibility", () => {
     }
   });
 
-  it("passes visible trademark text to Hero without double-encoding it", () => {
-    for (const page of ["index", "what-we-do", "why-choose-us", "hoa-insurance-[state]"]) {
+  it("passes the approved plain-text Hero eyebrows without double-encoding trademarks", () => {
+    const eyebrows = {
+      index: "Licensed Nationwide · Independent HOA & Condo Insurance Agency",
+      "what-we-do": "Homeowners Association Insurance · Licensed Nationwide",
+      "why-choose-us": "ProtectMyHOA™ · Licensed Nationwide",
+      "hoa-insurance-[state]": "ProtectMyHOA™ · Licensed Nationwide",
+    };
+    for (const [page, eyebrow] of Object.entries(eyebrows)) {
       const source = read(`../../../web/src/pages/${page}.astro`);
-      expect(source).toContain('eyebrow="ProtectMyHOA™"');
-      expect(source).not.toContain('eyebrow="ProtectMyHOA&trade;"');
+      expect(source).toContain(`eyebrow="${eyebrow}"`);
+      expect(source).not.toContain('eyebrow="ProtectMyHOA&trade;');
     }
   });
 

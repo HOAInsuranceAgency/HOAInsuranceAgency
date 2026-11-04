@@ -9,7 +9,7 @@ export const handler: VerifyAuthChallengeResponseTriggerHandler = async (event, 
   const email = event.request.userAttributes.email;
   const answer = event.request.challengeAnswer;
   if (destinationAuth() && answer === REQUEST_LINK) {
-    await sendDestinationLink(email);
+    await sendDestinationLink(email, event.request.privateChallengeParameters);
     event.response.answerCorrect = false;
     return event;
   }

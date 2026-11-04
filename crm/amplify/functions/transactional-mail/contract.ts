@@ -2,11 +2,13 @@ import { createHash } from "node:crypto";
 import type { SendEmailCommandInput } from "@aws-sdk/client-sesv2";
 
 export type MailKind = "login" | "invite" | "invoice" | "report" | "accounting" | "test";
+export type MailProvider = "resend" | "ses";
 export type Attachment = { filename: string; contentType: string; content: Uint8Array };
 export type MailDetails = { idempotencyKey?: string; subject?: string; text?: string; html?: string; replyTo?: string; attachments?: Attachment[] };
 export type Payload = { from: string; to: string[]; cc?: string[]; bcc?: string[]; reply_to?: string; subject: string; text?: string; html?: string; attachments?: { filename: string; content_type: string; content: string }[] };
 export const hash = (value: string) => createHash("sha256").update(value).digest("hex");
 export const ADDRESS = /^[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+$/;
+export const trackedMailProvider = (value: string | undefined): value is MailProvider => value === "resend" || value === "ses";
 export function email(value: string) {
   if (/[\r\n]/.test(value)) throw new Error("Invalid email address.");
   const address = (value.match(/<([^<>]+)>$/)?.[1] ?? value).trim().toLowerCase();
@@ -45,12 +47,30 @@ export function payload(input: SendEmailCommandInput, details: MailDetails): Pay
   if (Buffer.byteLength(JSON.stringify(result)) > 12 * 1024 * 1024) throw new Error("Email exceeds the approved attachment size limit.");
   return result;
 }
+/** A recipient-restricted canary never changes the default provider for customer mail. */
+export function selectedProvider(kind: MailKind, body: Payload, env = process.env, now = Date.now()): MailProvider {
+  const primary = env.HOA_TRANSACTIONAL_MAIL_PROVIDER;
+  if (!trackedMailProvider(primary)) throw new Error("Transactional email provider is not configured.");
+  const expiry = Date.parse(env.HOA_SES_CANARY_EXPIRES_AT ?? "");
+  const recipients = [...body.to, ...(body.cc ?? []), ...(body.bcc ?? [])];
+  const sender = email(body.from);
+  const canarySender = sender === "noreply@protectmyhoa.com" || (kind === "test" && sender === "insurance@protectmyhoa.com");
+  if (primary === "resend" && ["login", "test"].includes(kind) && Number.isFinite(expiry) && now < expiry
+    && recipients.length === 1 && recipients[0] === "jake@getgim.com" && !body.cc?.length && !body.bcc?.length
+    && canarySender) return "ses";
+  return primary;
+}
+export function sesConfigurationSet(env = process.env): string {
+  const expected = env.HOA_MIGRATION_BRANCH === "codex-hoa-account-migration" ? "hoa-transactional-main" : "hoa-transactional-staging";
+  if (env.AWS_REGION !== "us-east-1" || env.HOA_SES_CONFIGURATION_SET !== expected) throw new Error("SES email is not bound to its reviewed configuration set.");
+  return expected;
+}
 export function assertDestination(kind: MailKind, body: Payload, env = process.env, now = Date.now()) {
   const secret = env.HOA_RESEND_SECRET_ARN ?? "";
   const branch = env.HOA_MIGRATION_BRANCH;
   const reportRuntime = branch === "codex-hoa-account-migration" ? "marketing-report-mplifyd1nuh9rw1hcuxomainbranch0e4fdbd849" : "marketing-report-ifyd1nuh9rw1hcuxostagingbranch3787a09124";
   const runtimeMatches = env.AWS_LAMBDA_FUNCTION_NAME?.startsWith("amplify-d1nuh9rw1hcuxo-") || (kind === "report" && env.AWS_LAMBDA_FUNCTION_NAME === reportRuntime);
-  if (env.HOA_TRANSACTIONAL_MAIL_PROVIDER !== "resend" || env.HOA_MIGRATION_APP_ID !== "d1nuh9rw1hcuxo"
+  if (!trackedMailProvider(env.HOA_TRANSACTIONAL_MAIL_PROVIDER) || env.HOA_MIGRATION_APP_ID !== "d1nuh9rw1hcuxo"
     || !["codex-hoa-account-migration", "codex-hoa-staging-migration"].includes(branch ?? "")
     || !["true", "false"].includes(env.HOA_MIGRATION_PREVIEW ?? "")
     || !secret.startsWith("arn:aws:secretsmanager:us-east-1:917680434255:secret:hoa/resend/sending-")
@@ -58,6 +78,7 @@ export function assertDestination(kind: MailKind, body: Payload, env = process.e
     || env.HOA_TRANSACTIONAL_MAIL_BUCKET !== "hoa-transactional-mail-917680434255-us-east-1"
     || !runtimeMatches) throw new Error("Transactional email is not bound to the HOA destination.");
   const recipients = [...body.to, ...(body.cc ?? []), ...(body.bcc ?? [])];
+  if (branch === "codex-hoa-account-migration" && !["noreply@protectmyhoa.com", "insurance@protectmyhoa.com"].includes(email(body.from))) throw new Error("Transactional sender is not configured for this destination.");
   if (env.HOA_MIGRATION_PREVIEW === "true") {
     const expiry = Date.parse(env.HOA_PREVIEW_ADMIN_LOGIN_EXPIRES_AT ?? "");
     if (branch !== "codex-hoa-account-migration" || !["login", "test"].includes(kind)
@@ -66,4 +87,5 @@ export function assertDestination(kind: MailKind, body: Payload, env = process.e
       || email(body.from) !== "noreply@protectmyhoa.com" || !body.subject.startsWith("[Migration test]")) throw new Error("Email is disabled in this migration preview.");
   } else if ((env.HOA_TRANSACTIONAL_MAIL_RELEASE !== "true" || env.HOA_MIGRATION_WORKERS_ENABLED !== "true")) throw new Error("Transactional email release has not been approved.");
   if (branch === "codex-hoa-staging-migration" && recipients.some(a => a !== "jake@getgim.com")) throw new Error("Staging transactional email is restricted to the verified owner.");
+  if (selectedProvider(kind, body, env, now) === "ses") sesConfigurationSet(env);
 }

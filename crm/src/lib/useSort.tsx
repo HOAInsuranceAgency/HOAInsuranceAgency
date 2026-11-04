@@ -1,7 +1,8 @@
 import { useMemo, useState } from "react";
 
-type SortDir = "asc" | "desc";
+export type SortDir = "asc" | "desc";
 type SortAccessor<T> = (item: T) => string | number | null | undefined;
+export type ControlledSort = { sortKey: string; dir: SortDir; onChange: (sortKey: string, dir: SortDir) => void };
 
 /**
  * Column sorting for tables. Null/undefined values always sort last
@@ -11,18 +12,19 @@ export function useSort<T>(
   items: T[],
   accessors: Record<string, SortAccessor<T>>,
   defaultKey: string,
-  defaultDir: SortDir = "asc"
+  defaultDir: SortDir = "asc",
+  controlled?: ControlledSort,
 ) {
-  const [sortKey, setSortKey] = useState(defaultKey);
-  const [dir, setDir] = useState<SortDir>(defaultDir);
+  const [internalKey, setSortKey] = useState(defaultKey);
+  const [internalDir, setDir] = useState<SortDir>(defaultDir);
+  const sortKey = controlled?.sortKey ?? internalKey;
+  const dir = controlled?.dir ?? internalDir;
 
   function toggle(key: string) {
-    if (key === sortKey) {
-      setDir((d) => (d === "asc" ? "desc" : "asc"));
-    } else {
-      setSortKey(key);
-      setDir("asc");
-    }
+    const nextDir = key === sortKey && dir === "asc" ? "desc" : "asc";
+    if (controlled) controlled.onChange(key, nextDir);
+    else if (key === sortKey) setDir(current => current === 'asc' ? 'desc' : 'asc');
+    else { setSortKey(key); setDir('asc'); }
   }
 
   const sorted = useMemo(() => {
