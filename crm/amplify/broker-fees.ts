@@ -21,8 +21,8 @@ export function installBrokerFees(backend: typeof Backend, communicationTable: D
   // This stack depends on the roles/tables; neither depends on these policies.
   const permissions = backend.createStack('BrokerFeePermissions');
   const api = backend.data.resources.graphqlApi;
-  const writers = [backend.brokerFees,backend.communications,backend.commissions,backend.stripeWebhook,backend.sendInvoice,backend.voidInvoice];
-  const functions = [...writers,backend.crmAccess,backend.pfElection];
+  const writers = [backend.brokerFees,backend.communications,backend.commissions,backend.stripeWebhook,backend.sendInvoice,backend.voidInvoice,backend.pfElection];
+  const functions = [...writers,backend.crmAccess];
   const grants = new Map<typeof functions[number],PolicyStatement[]>();
   const add = (fn:typeof functions[number],actions:string[],resources:string[]) => {
     grants.set(fn,[...(grants.get(fn)??[]),new PolicyStatement({actions,resources})]);

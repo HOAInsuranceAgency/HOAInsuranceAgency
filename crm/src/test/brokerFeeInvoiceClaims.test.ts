@@ -155,7 +155,7 @@ it('uses stable distinct idempotency keys for BOTH price and link when recoverin
     if (loseResponse) { loseResponse = false; throw new Error('Response lost'); }
     return links.get(options.idempotencyKey);
   });
-  const stripe = { prices: { create: createPrice }, paymentLinks: { create: createLink } };
+  const stripe = { prices: { create: createPrice }, paymentLinks: { create: createLink, retrieve: vi.fn().mockResolvedValue({ id: 'pl1', url: 'https://buy.stripe.com/known', active: true }) } };
   const request = { invoiceId: 'i', invoiceNumber: 'INV1', associationName: 'Cedar HOA', total: 10500, accountId: 'a', brokerFeeAllocations: parts, idempotencyToken: 'frozen-token' };
   await expect(createPaymentLink(stripe as any, request)).rejects.toThrow('Response lost');
   await expect(createPaymentLink(stripe as any, request)).resolves.toEqual({ id: 'pl1', url: 'https://buy.stripe.com/known' });

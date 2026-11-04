@@ -31,7 +31,7 @@ import {
 } from "../../../src/lib/premiumFinance/quote";
 import { PF_CONFIG_SHA256 } from "../../../src/lib/premiumFinance/jurisdictions";
 import { renderInvoice } from "./invoice";
-import { createPaymentLink, toCents } from "./stripeLink";
+import { createPaymentLink, InactivePaymentLink, toCents } from "./stripeLink";
 import { buildMimeMessage } from "./mime";
 import { pdfFilename, renderInvoicePdf } from "./pdf";
 import { beginInvoiceSend, completeInvoiceSend, InvoiceSendBlocked } from "./sendOperation";
@@ -510,6 +510,7 @@ async function ensurePaymentLink(
       ...(claim ? { idempotencyToken: claim.token } : {}),
     });
   } catch (err) {
+    if (err instanceof InactivePaymentLink) throw new SendBlocked(err.message);
     if (allocations.length) throw new SendBlocked("Payment setup was interrupted. Retry Send on this same invoice to recover its existing payment link.");
     // No link minted, nothing untracked. A bill without a Pay button is still
     // a working bill, so this failure alone does not stop the send.
@@ -536,8 +537,14 @@ async function ensurePaymentLink(
     // Stable fee retries can receive the same processor link. A late caller
     // must never deactivate a link another invocation already published.
     const current = claim ? await getModel<Record<string, unknown>>("Invoice", invoice.id) : undefined;
+    const currentFees = claim ? await Promise.all(allocations.map(part => getFee(part.quoteId))) : [];
+    // Failed publication can leave this same PREPARING owner intact. Its
+    // stable processor key must recover a live link on the next Send, rather
+    // than replaying an already-disabled link. Missing source state is also
+    // insufficient proof that it is safe to destroy the recoverable link.
+    const lostOwner = !!claim && currentFees.length > 0 && currentFees.every(fee => fee && (fee.invoiceSendClaim?.invoiceId !== invoice.id || fee.invoiceSendClaim.token !== claim.token));
     try {
-      if (!claim || current?.stripePaymentLinkId !== minted.id) {
+      if (!claim || lostOwner && current?.stripePaymentLinkId !== minted.id) {
         await stripe.paymentLinks.update(minted.id, { active: false });
         if (claim) await closeInvoiceCheckoutSessions(stripe, minted.id);
       }

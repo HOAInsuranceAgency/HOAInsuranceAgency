@@ -40,6 +40,7 @@ export interface LinkRequest {
   brokerFeeAllocations?: BrokerFeeAllocation[];
   idempotencyToken?: string;
 }
+export class InactivePaymentLink extends Error {}
 
 /**
  * Create the link. Returns its id and url.
@@ -90,5 +91,12 @@ export async function createPaymentLink(
   }, ...(req.idempotencyToken ? [{ idempotencyKey: `broker-fee:${req.idempotencyToken}:link` }] : []));
 
   if (!link.url) throw new Error("Stripe returned a link with no URL.");
+  if (req.brokerFeeAllocations?.length) {
+    // An idempotent create can replay its original response after the actual
+    // link has since been disabled. Verify current processor state before a
+    // fee link can be stored or delivered.
+    const current = await stripe.paymentLinks.retrieve(link.id);
+    if (!current.active || !current.url || current.url !== link.url) throw new InactivePaymentLink("The existing broker fee payment link is inactive. Review its payment before retrying or reissuing the invoice.");
+  }
   return { id: link.id, url: link.url };
 }
