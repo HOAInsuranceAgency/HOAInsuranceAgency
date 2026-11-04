@@ -1,0 +1,1351 @@
+{
+  "phase": "after",
+  "capturedAt": "2026-11-04T22:01:32.566Z–2026-11-04T22:02:14.946Z",
+  "origin": "https://migration-staging.d1nuh9rw1hcuxo.amplifyapp.com",
+  "awsAccount": "917680434255",
+  "hostedBranch": "codex-hoa-staging-migration",
+  "frontendJob": "24",
+  "frontendRevision": "b3de7a81ffad93fd2be0cb243ef09e6fed4bd7fd",
+  "frontendAsset": "index-IHeVRLo9.js",
+  "activeRole": "ADMIN",
+  "fixture": "TEST — W8 Quote Rail HOA",
+  "leads": 22,
+  "clients": 11,
+  "method": "Fresh dedicated staging Carriers document reload; identical temporary fetch and DOM observer; six read-only flows repeated three times, plus final warm Leads return. First suite visit N=1 per flow is not proof of cold HTTP or AWS caches; repeated returns N=2 per flow remain separate. Observer waits 750ms GraphQL quiet and bounds each flow to20s. No credential or response-body retention.",
+  "export": "Full redacted retry browser report downloaded locally via Blob after19-flow completion. First network-failed attempt retained separately in live-after-job24-attempt1-failed.json, including eventual network-error diagnostics. No claim the failure originated in application backend.",
+  "samples": [
+    {
+      "phase": "after",
+      "sample": 1,
+      "flow": "leads",
+      "cacheCondition": "first-suite-data-visit",
+      "role": "ADMIN",
+      "status": "complete",
+      "initialDomAlreadyUseful": false,
+      "firstUsefulDomFrameMs": 1185.5,
+      "lastGraphQLResponseMs": 1921.1,
+      "graphQLFetchCount": 3,
+      "graphQLResourceCount": 3,
+      "requestsStartedBeforeFirstUseful": 3,
+      "responseJsonBytes": 24339,
+      "visibleRowsAtFinish": 22,
+      "alertCount": 0,
+      "observerParseCpuMs": 0.3,
+      "origin": "https://migration-staging.d1nuh9rw1hcuxo.amplifyapp.com",
+      "originRoute": "/carriers",
+      "destinationRoute": "/leads",
+      "endpoints": [
+        "https://6ibyan35zrfixjwpspnoi6dc2q.appsync-api.us-east-1.amazonaws.com"
+      ],
+      "assets": [
+        "/assets/index-IHeVRLo9.js"
+      ],
+      "requests": [
+        {
+          "operation": "GraphQL:accountListPage",
+          "startMs": 9.2,
+          "endMs": 1170.5,
+          "bodyEndMs": 1170.4,
+          "jsonBytes": 23770,
+          "observerParseCpuMs": 0.1,
+          "status": 200,
+          "graphQLErrors": 0,
+          "requestId": "f73bb9a4-31c8-4866-b3ab-34b1a938425f"
+        },
+        {
+          "operation": "GraphQL:team",
+          "startMs": 9.6,
+          "endMs": 1046.9,
+          "bodyEndMs": 1046.8,
+          "jsonBytes": 446,
+          "observerParseCpuMs": 0.1,
+          "status": 200,
+          "graphQLErrors": 0,
+          "requestId": "4e30e355-5f47-4531-9342-d27c8cc76a84"
+        },
+        {
+          "operation": "GraphQL:accountListCounts",
+          "startMs": 1170.1,
+          "endMs": 1921.2,
+          "bodyEndMs": 1921.1,
+          "jsonBytes": 123,
+          "observerParseCpuMs": 0.1,
+          "status": 200,
+          "graphQLErrors": 0,
+          "requestId": "2e650140-68e6-4139-aea8-5e082cffe767"
+        }
+      ],
+      "method": "Live authenticated browser; next animation frame after useful DOM; 750ms GraphQL quiet period; bounded20s; no credential/body retention. Resource timing may include CORS-preflight or lack protected sizes."
+    },
+    {
+      "phase": "after",
+      "sample": 1,
+      "flow": "clients",
+      "cacheCondition": "first-suite-data-visit",
+      "role": "ADMIN",
+      "status": "complete",
+      "initialDomAlreadyUseful": false,
+      "firstUsefulDomFrameMs": 717.4,
+      "lastGraphQLResponseMs": 1576.9,
+      "graphQLFetchCount": 3,
+      "graphQLResourceCount": 3,
+      "requestsStartedBeforeFirstUseful": 3,
+      "responseJsonBytes": 10774,
+      "visibleRowsAtFinish": 11,
+      "alertCount": 0,
+      "observerParseCpuMs": 0,
+      "origin": "https://migration-staging.d1nuh9rw1hcuxo.amplifyapp.com",
+      "originRoute": "/leads",
+      "destinationRoute": "/clients",
+      "endpoints": [
+        "https://6ibyan35zrfixjwpspnoi6dc2q.appsync-api.us-east-1.amazonaws.com"
+      ],
+      "assets": [
+        "/assets/index-IHeVRLo9.js"
+      ],
+      "requests": [
+        {
+          "operation": "GraphQL:accountListPage",
+          "startMs": 12.4,
+          "endMs": 709,
+          "bodyEndMs": 709,
+          "jsonBytes": 10205,
+          "observerParseCpuMs": 0,
+          "status": 200,
+          "graphQLErrors": 0,
+          "requestId": "17c9e5c7-1aa5-4183-ac10-5950963d2951"
+        },
+        {
+          "operation": "GraphQL:team",
+          "startMs": 12.6,
+          "endMs": 1023.5,
+          "bodyEndMs": 1023.5,
+          "jsonBytes": 446,
+          "observerParseCpuMs": 0,
+          "status": 200,
+          "graphQLErrors": 0,
+          "requestId": "6633bda1-6b07-437b-9e2b-2251b3066e70"
+        },
+        {
+          "operation": "GraphQL:accountListCounts",
+          "startMs": 708.4,
+          "endMs": 1576.9,
+          "bodyEndMs": 1576.9,
+          "jsonBytes": 123,
+          "observerParseCpuMs": 0,
+          "status": 200,
+          "graphQLErrors": 0,
+          "requestId": "0aa3eb09-1b04-4c05-8278-e7d62782bf3c"
+        }
+      ],
+      "method": "Live authenticated browser; next animation frame after useful DOM; 750ms GraphQL quiet period; bounded20s; no credential/body retention. Resource timing may include CORS-preflight or lack protected sizes."
+    },
+    {
+      "phase": "after",
+      "sample": 1,
+      "flow": "overview",
+      "cacheCondition": "first-suite-data-visit",
+      "role": "ADMIN",
+      "status": "complete",
+      "initialDomAlreadyUseful": false,
+      "firstUsefulDomFrameMs": 528.3,
+      "lastGraphQLResponseMs": 1338.1,
+      "graphQLFetchCount": 4,
+      "graphQLResourceCount": 4,
+      "requestsStartedBeforeFirstUseful": 1,
+      "responseJsonBytes": 2647,
+      "visibleRowsAtFinish": 1,
+      "alertCount": 0,
+      "observerParseCpuMs": 0,
+      "origin": "https://migration-staging.d1nuh9rw1hcuxo.amplifyapp.com",
+      "originRoute": "/clients",
+      "destinationRoute": "account",
+      "endpoints": [
+        "https://6ibyan35zrfixjwpspnoi6dc2q.appsync-api.us-east-1.amazonaws.com"
+      ],
+      "assets": [
+        "/assets/index-IHeVRLo9.js"
+      ],
+      "requests": [
+        {
+          "operation": "GraphQL",
+          "startMs": 9.5,
+          "endMs": 517.6,
+          "bodyEndMs": 517.6,
+          "jsonBytes": 1452,
+          "observerParseCpuMs": 0,
+          "status": 200,
+          "graphQLErrors": 0,
+          "requestId": "3dfcb40e-28c9-40fb-850b-6574d545e2c2"
+        },
+        {
+          "operation": "GraphQL:relationshipContext",
+          "startMs": 534.5,
+          "endMs": 1338.1,
+          "bodyEndMs": 1338.1,
+          "jsonBytes": 81,
+          "observerParseCpuMs": 0,
+          "status": 200,
+          "graphQLErrors": 0,
+          "requestId": "e64def05-9a7d-4b4a-a796-52c76e1bcfde"
+        },
+        {
+          "operation": "GraphQL",
+          "startMs": 534.7,
+          "endMs": 885.9,
+          "bodyEndMs": 885.9,
+          "jsonBytes": 557,
+          "observerParseCpuMs": 0,
+          "status": 200,
+          "graphQLErrors": 0,
+          "requestId": "04f90f90-b870-4100-814f-be0173d4d1e2"
+        },
+        {
+          "operation": "GraphQL",
+          "startMs": 534.8,
+          "endMs": 912,
+          "bodyEndMs": 912,
+          "jsonBytes": 557,
+          "observerParseCpuMs": 0,
+          "status": 200,
+          "graphQLErrors": 0,
+          "requestId": "5327cfdf-7a9d-41b4-a615-ce551e87c5b2"
+        }
+      ],
+      "method": "Live authenticated browser; next animation frame after useful DOM; 750ms GraphQL quiet period; bounded20s; no credential/body retention. Resource timing may include CORS-preflight or lack protected sizes."
+    },
+    {
+      "phase": "after",
+      "sample": 1,
+      "flow": "policies",
+      "cacheCondition": "first-suite-data-visit",
+      "role": "ADMIN",
+      "status": "complete",
+      "initialDomAlreadyUseful": false,
+      "firstUsefulDomFrameMs": 535.6,
+      "lastGraphQLResponseMs": 531.6,
+      "graphQLFetchCount": 2,
+      "graphQLResourceCount": 2,
+      "requestsStartedBeforeFirstUseful": 2,
+      "responseJsonBytes": 3309,
+      "visibleRowsAtFinish": 2,
+      "alertCount": 0,
+      "observerParseCpuMs": 0,
+      "origin": "https://migration-staging.d1nuh9rw1hcuxo.amplifyapp.com",
+      "originRoute": "account",
+      "destinationRoute": "account",
+      "endpoints": [
+        "https://6ibyan35zrfixjwpspnoi6dc2q.appsync-api.us-east-1.amazonaws.com"
+      ],
+      "assets": [
+        "/assets/index-IHeVRLo9.js"
+      ],
+      "requests": [
+        {
+          "operation": "GraphQL",
+          "startMs": 10.3,
+          "endMs": 531.6,
+          "bodyEndMs": 531.6,
+          "jsonBytes": 2620,
+          "observerParseCpuMs": 0,
+          "status": 200,
+          "graphQLErrors": 0,
+          "requestId": "81728c3a-0632-4203-a52b-8120b0931577"
+        },
+        {
+          "operation": "GraphQL",
+          "startMs": 10.7,
+          "endMs": 531.5,
+          "bodyEndMs": 531.5,
+          "jsonBytes": 689,
+          "observerParseCpuMs": 0,
+          "status": 200,
+          "graphQLErrors": 0,
+          "requestId": "395d245d-588f-4537-9be5-06d3455017bf"
+        }
+      ],
+      "method": "Live authenticated browser; next animation frame after useful DOM; 750ms GraphQL quiet period; bounded20s; no credential/body retention. Resource timing may include CORS-preflight or lack protected sizes."
+    },
+    {
+      "phase": "after",
+      "sample": 1,
+      "flow": "documents",
+      "cacheCondition": "first-suite-data-visit",
+      "role": "ADMIN",
+      "status": "complete",
+      "initialDomAlreadyUseful": false,
+      "firstUsefulDomFrameMs": 526.5,
+      "lastGraphQLResponseMs": 724,
+      "graphQLFetchCount": 7,
+      "graphQLResourceCount": 7,
+      "requestsStartedBeforeFirstUseful": 7,
+      "responseJsonBytes": 8115,
+      "visibleRowsAtFinish": 3,
+      "alertCount": 0,
+      "observerParseCpuMs": 0.1,
+      "origin": "https://migration-staging.d1nuh9rw1hcuxo.amplifyapp.com",
+      "originRoute": "account",
+      "destinationRoute": "account",
+      "endpoints": [
+        "https://6ibyan35zrfixjwpspnoi6dc2q.appsync-api.us-east-1.amazonaws.com"
+      ],
+      "assets": [
+        "/assets/index-IHeVRLo9.js"
+      ],
+      "requests": [
+        {
+          "operation": "GraphQL",
+          "startMs": 18.9,
+          "endMs": 573.3,
+          "bodyEndMs": 573.3,
+          "jsonBytes": 2620,
+          "observerParseCpuMs": 0,
+          "status": 200,
+          "graphQLErrors": 0,
+          "requestId": "dbb9b889-bf91-4eb9-88e7-9342dd1f18f7"
+        },
+        {
+          "operation": "GraphQL",
+          "startMs": 19.3,
+          "endMs": 588.1,
+          "bodyEndMs": 588.1,
+          "jsonBytes": 2175,
+          "observerParseCpuMs": 0,
+          "status": 200,
+          "graphQLErrors": 0,
+          "requestId": "bb532bfd-9f59-4fed-834e-ae43298ba603"
+        },
+        {
+          "operation": "GraphQL",
+          "startMs": 19.6,
+          "endMs": 524.2,
+          "bodyEndMs": 524.1,
+          "jsonBytes": 2485,
+          "observerParseCpuMs": 0.1,
+          "status": 200,
+          "graphQLErrors": 0,
+          "requestId": "ac0ab631-678d-4902-8038-4589f0152a05"
+        },
+        {
+          "operation": "GraphQL",
+          "startMs": 19.7,
+          "endMs": 528.4,
+          "bodyEndMs": 528.4,
+          "jsonBytes": 557,
+          "observerParseCpuMs": 0,
+          "status": 200,
+          "graphQLErrors": 0,
+          "requestId": "a26b0893-7d98-4e8d-a767-a838cb47dfe7"
+        },
+        {
+          "operation": "GraphQL",
+          "startMs": 19.8,
+          "endMs": 538.3,
+          "bodyEndMs": 538.3,
+          "jsonBytes": 88,
+          "observerParseCpuMs": 0,
+          "status": 200,
+          "graphQLErrors": 0,
+          "requestId": "9e85aa65-5875-4102-8723-2f4e795878ef"
+        },
+        {
+          "operation": "GraphQL",
+          "startMs": 19.9,
+          "endMs": 724,
+          "bodyEndMs": 724,
+          "jsonBytes": 95,
+          "observerParseCpuMs": 0,
+          "status": 200,
+          "graphQLErrors": 0,
+          "requestId": "e4766e9e-0e6e-435a-b55c-c50823a5e894"
+        },
+        {
+          "operation": "GraphQL",
+          "startMs": 19.9,
+          "endMs": 552.7,
+          "bodyEndMs": 552.7,
+          "jsonBytes": 95,
+          "observerParseCpuMs": 0,
+          "status": 200,
+          "graphQLErrors": 0,
+          "requestId": "8320604f-027c-48a6-a3a6-73cafba047ab"
+        }
+      ],
+      "method": "Live authenticated browser; next animation frame after useful DOM; 750ms GraphQL quiet period; bounded20s; no credential/body retention. Resource timing may include CORS-preflight or lack protected sizes."
+    },
+    {
+      "phase": "after",
+      "sample": 1,
+      "flow": "activity",
+      "cacheCondition": "first-suite-data-visit",
+      "role": "ADMIN",
+      "status": "complete",
+      "initialDomAlreadyUseful": false,
+      "firstUsefulDomFrameMs": 804.5,
+      "lastGraphQLResponseMs": 799.4,
+      "graphQLFetchCount": 2,
+      "graphQLResourceCount": 2,
+      "requestsStartedBeforeFirstUseful": 2,
+      "responseJsonBytes": 20289,
+      "visibleRowsAtFinish": 23,
+      "alertCount": 0,
+      "observerParseCpuMs": 0.1,
+      "origin": "https://migration-staging.d1nuh9rw1hcuxo.amplifyapp.com",
+      "originRoute": "account",
+      "destinationRoute": "account",
+      "endpoints": [
+        "https://6ibyan35zrfixjwpspnoi6dc2q.appsync-api.us-east-1.amazonaws.com"
+      ],
+      "assets": [
+        "/assets/index-IHeVRLo9.js"
+      ],
+      "requests": [
+        {
+          "operation": "GraphQL:context",
+          "startMs": 8.7,
+          "endMs": 799.4,
+          "bodyEndMs": 799.4,
+          "jsonBytes": 808,
+          "observerParseCpuMs": 0,
+          "status": 200,
+          "graphQLErrors": 0,
+          "requestId": "fdbc610d-ad46-43d0-8dc0-688d6a6839e4"
+        },
+        {
+          "operation": "GraphQL",
+          "startMs": 9.1,
+          "endMs": 413.5,
+          "bodyEndMs": 413.4,
+          "jsonBytes": 19481,
+          "observerParseCpuMs": 0.1,
+          "status": 200,
+          "graphQLErrors": 0,
+          "requestId": "48700c80-7d3c-4660-b276-42b606c7f793"
+        }
+      ],
+      "method": "Live authenticated browser; next animation frame after useful DOM; 750ms GraphQL quiet period; bounded20s; no credential/body retention. Resource timing may include CORS-preflight or lack protected sizes."
+    },
+    {
+      "phase": "after",
+      "sample": 2,
+      "flow": "leads",
+      "cacheCondition": "same-document-return",
+      "role": "ADMIN",
+      "status": "complete",
+      "initialDomAlreadyUseful": false,
+      "firstUsefulDomFrameMs": 26,
+      "lastGraphQLResponseMs": 1243.6,
+      "graphQLFetchCount": 3,
+      "graphQLResourceCount": 3,
+      "requestsStartedBeforeFirstUseful": 2,
+      "responseJsonBytes": 24339,
+      "visibleRowsAtFinish": 22,
+      "alertCount": 0,
+      "observerParseCpuMs": 0.2,
+      "origin": "https://migration-staging.d1nuh9rw1hcuxo.amplifyapp.com",
+      "originRoute": "/carriers",
+      "destinationRoute": "/leads",
+      "endpoints": [
+        "https://6ibyan35zrfixjwpspnoi6dc2q.appsync-api.us-east-1.amazonaws.com"
+      ],
+      "assets": [
+        "/assets/index-IHeVRLo9.js"
+      ],
+      "requests": [
+        {
+          "operation": "GraphQL:accountListPage",
+          "startMs": 25.4,
+          "endMs": 687.1,
+          "bodyEndMs": 687,
+          "jsonBytes": 23770,
+          "observerParseCpuMs": 0.1,
+          "status": 200,
+          "graphQLErrors": 0,
+          "requestId": "a35d9cd9-b573-4d42-9ec6-44057e6e42b3"
+        },
+        {
+          "operation": "GraphQL:team",
+          "startMs": 25.8,
+          "endMs": 576.5,
+          "bodyEndMs": 576.5,
+          "jsonBytes": 446,
+          "observerParseCpuMs": 0,
+          "status": 200,
+          "graphQLErrors": 0,
+          "requestId": "d21f92ff-eb66-4a10-8dff-1d4d66b2fa6e"
+        },
+        {
+          "operation": "GraphQL:accountListCounts",
+          "startMs": 686.7,
+          "endMs": 1243.7,
+          "bodyEndMs": 1243.6,
+          "jsonBytes": 123,
+          "observerParseCpuMs": 0.1,
+          "status": 200,
+          "graphQLErrors": 0,
+          "requestId": "bbc969f5-0fcc-4ea1-bd35-9ff1f062acaa"
+        }
+      ],
+      "method": "Live authenticated browser; next animation frame after useful DOM; 750ms GraphQL quiet period; bounded20s; no credential/body retention. Resource timing may include CORS-preflight or lack protected sizes."
+    },
+    {
+      "phase": "after",
+      "sample": 2,
+      "flow": "clients",
+      "cacheCondition": "same-document-return",
+      "role": "ADMIN",
+      "status": "complete",
+      "initialDomAlreadyUseful": false,
+      "firstUsefulDomFrameMs": 15.2,
+      "lastGraphQLResponseMs": 1913.5,
+      "graphQLFetchCount": 3,
+      "graphQLResourceCount": 3,
+      "requestsStartedBeforeFirstUseful": 2,
+      "responseJsonBytes": 10774,
+      "visibleRowsAtFinish": 11,
+      "alertCount": 0,
+      "observerParseCpuMs": 0.1,
+      "origin": "https://migration-staging.d1nuh9rw1hcuxo.amplifyapp.com",
+      "originRoute": "/leads",
+      "destinationRoute": "/clients",
+      "endpoints": [
+        "https://6ibyan35zrfixjwpspnoi6dc2q.appsync-api.us-east-1.amazonaws.com"
+      ],
+      "assets": [
+        "/assets/index-IHeVRLo9.js"
+      ],
+      "requests": [
+        {
+          "operation": "GraphQL:accountListPage",
+          "startMs": 14.4,
+          "endMs": 615.6,
+          "bodyEndMs": 615.5,
+          "jsonBytes": 10205,
+          "observerParseCpuMs": 0.1,
+          "status": 200,
+          "graphQLErrors": 0,
+          "requestId": "423605f8-23a5-4523-9525-ff993266e16a"
+        },
+        {
+          "operation": "GraphQL:team",
+          "startMs": 14.6,
+          "endMs": 742.7,
+          "bodyEndMs": 742.7,
+          "jsonBytes": 446,
+          "observerParseCpuMs": 0,
+          "status": 200,
+          "graphQLErrors": 0,
+          "requestId": "bb90d949-5021-4670-a603-2cc7e178a15c"
+        },
+        {
+          "operation": "GraphQL:accountListCounts",
+          "startMs": 615.1,
+          "endMs": 1913.5,
+          "bodyEndMs": 1913.5,
+          "jsonBytes": 123,
+          "observerParseCpuMs": 0,
+          "status": 200,
+          "graphQLErrors": 0,
+          "requestId": "8113ea8e-19be-45df-b198-08f55682ff0d"
+        }
+      ],
+      "method": "Live authenticated browser; next animation frame after useful DOM; 750ms GraphQL quiet period; bounded20s; no credential/body retention. Resource timing may include CORS-preflight or lack protected sizes."
+    },
+    {
+      "phase": "after",
+      "sample": 2,
+      "flow": "overview",
+      "cacheCondition": "same-document-return",
+      "role": "ADMIN",
+      "status": "complete",
+      "initialDomAlreadyUseful": false,
+      "firstUsefulDomFrameMs": 385.7,
+      "lastGraphQLResponseMs": 1163.8,
+      "graphQLFetchCount": 4,
+      "graphQLResourceCount": 4,
+      "requestsStartedBeforeFirstUseful": 4,
+      "responseJsonBytes": 2647,
+      "visibleRowsAtFinish": 1,
+      "alertCount": 0,
+      "observerParseCpuMs": 0.1,
+      "origin": "https://migration-staging.d1nuh9rw1hcuxo.amplifyapp.com",
+      "originRoute": "/clients",
+      "destinationRoute": "account",
+      "endpoints": [
+        "https://6ibyan35zrfixjwpspnoi6dc2q.appsync-api.us-east-1.amazonaws.com"
+      ],
+      "assets": [
+        "/assets/index-IHeVRLo9.js"
+      ],
+      "requests": [
+        {
+          "operation": "GraphQL",
+          "startMs": 8.5,
+          "endMs": 380.7,
+          "bodyEndMs": 380.7,
+          "jsonBytes": 1452,
+          "observerParseCpuMs": 0,
+          "status": 200,
+          "graphQLErrors": 0,
+          "requestId": "ffa56a94-fae8-4dcf-8586-b9b0c6fd634a"
+        },
+        {
+          "operation": "GraphQL:relationshipContext",
+          "startMs": 385.4,
+          "endMs": 1163.8,
+          "bodyEndMs": 1163.8,
+          "jsonBytes": 81,
+          "observerParseCpuMs": 0,
+          "status": 200,
+          "graphQLErrors": 0,
+          "requestId": "93ada5c6-8633-4253-a088-21a0ac7056c8"
+        },
+        {
+          "operation": "GraphQL",
+          "startMs": 385.5,
+          "endMs": 637.2,
+          "bodyEndMs": 637.2,
+          "jsonBytes": 557,
+          "observerParseCpuMs": 0,
+          "status": 200,
+          "graphQLErrors": 0,
+          "requestId": "6fb1f8db-fb63-497f-b528-4f1d9bfefcd2"
+        },
+        {
+          "operation": "GraphQL",
+          "startMs": 385.6,
+          "endMs": 757.1,
+          "bodyEndMs": 757,
+          "jsonBytes": 557,
+          "observerParseCpuMs": 0.1,
+          "status": 200,
+          "graphQLErrors": 0,
+          "requestId": "cbf92771-db11-4452-a122-c979a472317e"
+        }
+      ],
+      "method": "Live authenticated browser; next animation frame after useful DOM; 750ms GraphQL quiet period; bounded20s; no credential/body retention. Resource timing may include CORS-preflight or lack protected sizes."
+    },
+    {
+      "phase": "after",
+      "sample": 2,
+      "flow": "policies",
+      "cacheCondition": "same-document-return",
+      "role": "ADMIN",
+      "status": "complete",
+      "initialDomAlreadyUseful": false,
+      "firstUsefulDomFrameMs": 432.4,
+      "lastGraphQLResponseMs": 611.8,
+      "graphQLFetchCount": 2,
+      "graphQLResourceCount": 2,
+      "requestsStartedBeforeFirstUseful": 2,
+      "responseJsonBytes": 3309,
+      "visibleRowsAtFinish": 2,
+      "alertCount": 0,
+      "observerParseCpuMs": 0.1,
+      "origin": "https://migration-staging.d1nuh9rw1hcuxo.amplifyapp.com",
+      "originRoute": "account",
+      "destinationRoute": "account",
+      "endpoints": [
+        "https://6ibyan35zrfixjwpspnoi6dc2q.appsync-api.us-east-1.amazonaws.com"
+      ],
+      "assets": [
+        "/assets/index-IHeVRLo9.js"
+      ],
+      "requests": [
+        {
+          "operation": "GraphQL",
+          "startMs": 8,
+          "endMs": 430.2,
+          "bodyEndMs": 430.1,
+          "jsonBytes": 2620,
+          "observerParseCpuMs": 0.1,
+          "status": 200,
+          "graphQLErrors": 0,
+          "requestId": "ff96898d-1a50-4548-967f-267cb553c62f"
+        },
+        {
+          "operation": "GraphQL",
+          "startMs": 8.4,
+          "endMs": 611.9,
+          "bodyEndMs": 611.8,
+          "jsonBytes": 689,
+          "observerParseCpuMs": 0,
+          "status": 200,
+          "graphQLErrors": 0,
+          "requestId": "015df6bb-a59c-42f4-9ab7-111121e1f2b8"
+        }
+      ],
+      "method": "Live authenticated browser; next animation frame after useful DOM; 750ms GraphQL quiet period; bounded20s; no credential/body retention. Resource timing may include CORS-preflight or lack protected sizes."
+    },
+    {
+      "phase": "after",
+      "sample": 2,
+      "flow": "documents",
+      "cacheCondition": "same-document-return",
+      "role": "ADMIN",
+      "status": "complete",
+      "initialDomAlreadyUseful": false,
+      "firstUsefulDomFrameMs": 540.4,
+      "lastGraphQLResponseMs": 826,
+      "graphQLFetchCount": 7,
+      "graphQLResourceCount": 7,
+      "requestsStartedBeforeFirstUseful": 7,
+      "responseJsonBytes": 8115,
+      "visibleRowsAtFinish": 3,
+      "alertCount": 0,
+      "observerParseCpuMs": 0.2,
+      "origin": "https://migration-staging.d1nuh9rw1hcuxo.amplifyapp.com",
+      "originRoute": "account",
+      "destinationRoute": "account",
+      "endpoints": [
+        "https://6ibyan35zrfixjwpspnoi6dc2q.appsync-api.us-east-1.amazonaws.com"
+      ],
+      "assets": [
+        "/assets/index-IHeVRLo9.js"
+      ],
+      "requests": [
+        {
+          "operation": "GraphQL",
+          "startMs": 9.3,
+          "endMs": 555.3,
+          "bodyEndMs": 555.3,
+          "jsonBytes": 2620,
+          "observerParseCpuMs": 0,
+          "status": 200,
+          "graphQLErrors": 0,
+          "requestId": "548c35c7-df09-4857-bb8b-5fe7cfeb10bd"
+        },
+        {
+          "operation": "GraphQL",
+          "startMs": 9.5,
+          "endMs": 542,
+          "bodyEndMs": 541.9,
+          "jsonBytes": 2175,
+          "observerParseCpuMs": 0.1,
+          "status": 200,
+          "graphQLErrors": 0,
+          "requestId": "8db9ae13-492e-4113-bc25-66bc39d2e1d9"
+        },
+        {
+          "operation": "GraphQL",
+          "startMs": 9.6,
+          "endMs": 537.5,
+          "bodyEndMs": 537.5,
+          "jsonBytes": 2485,
+          "observerParseCpuMs": 0,
+          "status": 200,
+          "graphQLErrors": 0,
+          "requestId": "5e7b9712-51f9-4588-9056-9bfac4478067"
+        },
+        {
+          "operation": "GraphQL",
+          "startMs": 9.7,
+          "endMs": 413.2,
+          "bodyEndMs": 413.2,
+          "jsonBytes": 557,
+          "observerParseCpuMs": 0,
+          "status": 200,
+          "graphQLErrors": 0,
+          "requestId": "b67cbe70-650f-4447-84db-6d01ec72b375"
+        },
+        {
+          "operation": "GraphQL",
+          "startMs": 9.7,
+          "endMs": 516.1,
+          "bodyEndMs": 516,
+          "jsonBytes": 88,
+          "observerParseCpuMs": 0.1,
+          "status": 200,
+          "graphQLErrors": 0,
+          "requestId": "20b4a7c1-80a1-4fa0-8830-2a7d6abb0b76"
+        },
+        {
+          "operation": "GraphQL",
+          "startMs": 9.8,
+          "endMs": 826,
+          "bodyEndMs": 826,
+          "jsonBytes": 95,
+          "observerParseCpuMs": 0,
+          "status": 200,
+          "graphQLErrors": 0,
+          "requestId": "48b75d15-f1bf-4b2b-bf42-28f45e915ed8"
+        },
+        {
+          "operation": "GraphQL",
+          "startMs": 9.9,
+          "endMs": 511.3,
+          "bodyEndMs": 511.3,
+          "jsonBytes": 95,
+          "observerParseCpuMs": 0,
+          "status": 200,
+          "graphQLErrors": 0,
+          "requestId": "96de2f14-37e3-4e5f-bb3c-a2365608bd9b"
+        }
+      ],
+      "method": "Live authenticated browser; next animation frame after useful DOM; 750ms GraphQL quiet period; bounded20s; no credential/body retention. Resource timing may include CORS-preflight or lack protected sizes."
+    },
+    {
+      "phase": "after",
+      "sample": 2,
+      "flow": "activity",
+      "cacheCondition": "same-document-return",
+      "role": "ADMIN",
+      "status": "complete",
+      "initialDomAlreadyUseful": false,
+      "firstUsefulDomFrameMs": 816.1,
+      "lastGraphQLResponseMs": 811.8,
+      "graphQLFetchCount": 2,
+      "graphQLResourceCount": 2,
+      "requestsStartedBeforeFirstUseful": 2,
+      "responseJsonBytes": 20289,
+      "visibleRowsAtFinish": 23,
+      "alertCount": 0,
+      "observerParseCpuMs": 0.2,
+      "origin": "https://migration-staging.d1nuh9rw1hcuxo.amplifyapp.com",
+      "originRoute": "account",
+      "destinationRoute": "account",
+      "endpoints": [
+        "https://6ibyan35zrfixjwpspnoi6dc2q.appsync-api.us-east-1.amazonaws.com"
+      ],
+      "assets": [
+        "/assets/index-IHeVRLo9.js"
+      ],
+      "requests": [
+        {
+          "operation": "GraphQL:context",
+          "startMs": 7.6,
+          "endMs": 811.9,
+          "bodyEndMs": 811.8,
+          "jsonBytes": 808,
+          "observerParseCpuMs": 0.1,
+          "status": 200,
+          "graphQLErrors": 0,
+          "requestId": "272b4b02-4ae0-4b8f-bfa0-a7e383a72849"
+        },
+        {
+          "operation": "GraphQL",
+          "startMs": 8.1,
+          "endMs": 437.5,
+          "bodyEndMs": 437.4,
+          "jsonBytes": 19481,
+          "observerParseCpuMs": 0.1,
+          "status": 200,
+          "graphQLErrors": 0,
+          "requestId": "2ed0bb67-9957-43d5-bf77-2a2071b2ef54"
+        }
+      ],
+      "method": "Live authenticated browser; next animation frame after useful DOM; 750ms GraphQL quiet period; bounded20s; no credential/body retention. Resource timing may include CORS-preflight or lack protected sizes."
+    },
+    {
+      "phase": "after",
+      "sample": 3,
+      "flow": "leads",
+      "cacheCondition": "same-document-return",
+      "role": "ADMIN",
+      "status": "complete",
+      "initialDomAlreadyUseful": false,
+      "firstUsefulDomFrameMs": 24.5,
+      "lastGraphQLResponseMs": 1362.7,
+      "graphQLFetchCount": 3,
+      "graphQLResourceCount": 3,
+      "requestsStartedBeforeFirstUseful": 2,
+      "responseJsonBytes": 24339,
+      "visibleRowsAtFinish": 22,
+      "alertCount": 0,
+      "observerParseCpuMs": 0.1,
+      "origin": "https://migration-staging.d1nuh9rw1hcuxo.amplifyapp.com",
+      "originRoute": "/carriers",
+      "destinationRoute": "/leads",
+      "endpoints": [
+        "https://6ibyan35zrfixjwpspnoi6dc2q.appsync-api.us-east-1.amazonaws.com"
+      ],
+      "assets": [
+        "/assets/index-IHeVRLo9.js"
+      ],
+      "requests": [
+        {
+          "operation": "GraphQL:accountListPage",
+          "startMs": 24,
+          "endMs": 603.1,
+          "bodyEndMs": 603,
+          "jsonBytes": 23770,
+          "observerParseCpuMs": 0.1,
+          "status": 200,
+          "graphQLErrors": 0,
+          "requestId": "5de6116c-95fb-4f2e-869d-1042b6aaf4d9"
+        },
+        {
+          "operation": "GraphQL:team",
+          "startMs": 24.3,
+          "endMs": 587.3,
+          "bodyEndMs": 587.3,
+          "jsonBytes": 446,
+          "observerParseCpuMs": 0,
+          "status": 200,
+          "graphQLErrors": 0,
+          "requestId": "492cb8eb-694b-4530-99d3-07fd4a2cda36"
+        },
+        {
+          "operation": "GraphQL:accountListCounts",
+          "startMs": 602.7,
+          "endMs": 1362.7,
+          "bodyEndMs": 1362.7,
+          "jsonBytes": 123,
+          "observerParseCpuMs": 0,
+          "status": 200,
+          "graphQLErrors": 0,
+          "requestId": "2de4c742-5310-4832-8e65-5bb999315921"
+        }
+      ],
+      "method": "Live authenticated browser; next animation frame after useful DOM; 750ms GraphQL quiet period; bounded20s; no credential/body retention. Resource timing may include CORS-preflight or lack protected sizes."
+    },
+    {
+      "phase": "after",
+      "sample": 3,
+      "flow": "clients",
+      "cacheCondition": "same-document-return",
+      "role": "ADMIN",
+      "status": "complete",
+      "initialDomAlreadyUseful": false,
+      "firstUsefulDomFrameMs": 19.2,
+      "lastGraphQLResponseMs": 1631.3,
+      "graphQLFetchCount": 3,
+      "graphQLResourceCount": 3,
+      "requestsStartedBeforeFirstUseful": 2,
+      "responseJsonBytes": 10774,
+      "visibleRowsAtFinish": 11,
+      "alertCount": 0,
+      "observerParseCpuMs": 0.2,
+      "origin": "https://migration-staging.d1nuh9rw1hcuxo.amplifyapp.com",
+      "originRoute": "/leads",
+      "destinationRoute": "/clients",
+      "endpoints": [
+        "https://6ibyan35zrfixjwpspnoi6dc2q.appsync-api.us-east-1.amazonaws.com"
+      ],
+      "assets": [
+        "/assets/index-IHeVRLo9.js"
+      ],
+      "requests": [
+        {
+          "operation": "GraphQL:accountListPage",
+          "startMs": 18.8,
+          "endMs": 515,
+          "bodyEndMs": 514.9,
+          "jsonBytes": 10205,
+          "observerParseCpuMs": 0.1,
+          "status": 200,
+          "graphQLErrors": 0,
+          "requestId": "16252d54-ce90-48b7-892a-84185a1d4289"
+        },
+        {
+          "operation": "GraphQL:team",
+          "startMs": 19,
+          "endMs": 1596.1,
+          "bodyEndMs": 1596.1,
+          "jsonBytes": 446,
+          "observerParseCpuMs": 0,
+          "status": 200,
+          "graphQLErrors": 0,
+          "requestId": "9cb6fc99-60c1-4c21-bb5a-5750f82884f6"
+        },
+        {
+          "operation": "GraphQL:accountListCounts",
+          "startMs": 514.5,
+          "endMs": 1631.4,
+          "bodyEndMs": 1631.3,
+          "jsonBytes": 123,
+          "observerParseCpuMs": 0.1,
+          "status": 200,
+          "graphQLErrors": 0,
+          "requestId": "d64455cb-3a19-4528-bba9-73334c018203"
+        }
+      ],
+      "method": "Live authenticated browser; next animation frame after useful DOM; 750ms GraphQL quiet period; bounded20s; no credential/body retention. Resource timing may include CORS-preflight or lack protected sizes."
+    },
+    {
+      "phase": "after",
+      "sample": 3,
+      "flow": "overview",
+      "cacheCondition": "same-document-return",
+      "role": "ADMIN",
+      "status": "complete",
+      "initialDomAlreadyUseful": false,
+      "firstUsefulDomFrameMs": 384.4,
+      "lastGraphQLResponseMs": 1187.3,
+      "graphQLFetchCount": 4,
+      "graphQLResourceCount": 4,
+      "requestsStartedBeforeFirstUseful": 4,
+      "responseJsonBytes": 2647,
+      "visibleRowsAtFinish": 1,
+      "alertCount": 0,
+      "observerParseCpuMs": 0,
+      "origin": "https://migration-staging.d1nuh9rw1hcuxo.amplifyapp.com",
+      "originRoute": "/clients",
+      "destinationRoute": "account",
+      "endpoints": [
+        "https://6ibyan35zrfixjwpspnoi6dc2q.appsync-api.us-east-1.amazonaws.com"
+      ],
+      "assets": [
+        "/assets/index-IHeVRLo9.js"
+      ],
+      "requests": [
+        {
+          "operation": "GraphQL",
+          "startMs": 6.8,
+          "endMs": 376.4,
+          "bodyEndMs": 376.4,
+          "jsonBytes": 1452,
+          "observerParseCpuMs": 0,
+          "status": 200,
+          "graphQLErrors": 0,
+          "requestId": "8ab7b489-ad5d-4657-81b8-8696f2c6ec71"
+        },
+        {
+          "operation": "GraphQL:relationshipContext",
+          "startMs": 383.8,
+          "endMs": 1187.3,
+          "bodyEndMs": 1187.3,
+          "jsonBytes": 81,
+          "observerParseCpuMs": 0,
+          "status": 200,
+          "graphQLErrors": 0,
+          "requestId": "ae2e448d-989e-4374-be8e-0b581d279b67"
+        },
+        {
+          "operation": "GraphQL",
+          "startMs": 384.1,
+          "endMs": 750.7,
+          "bodyEndMs": 750.7,
+          "jsonBytes": 557,
+          "observerParseCpuMs": 0,
+          "status": 200,
+          "graphQLErrors": 0,
+          "requestId": "b64237ee-6227-48a7-8292-af2a7b8b4ae1"
+        },
+        {
+          "operation": "GraphQL",
+          "startMs": 384.2,
+          "endMs": 818.5,
+          "bodyEndMs": 818.5,
+          "jsonBytes": 557,
+          "observerParseCpuMs": 0,
+          "status": 200,
+          "graphQLErrors": 0,
+          "requestId": "8d1c9641-3fbe-4de4-a469-06c5d93ab2a7"
+        }
+      ],
+      "method": "Live authenticated browser; next animation frame after useful DOM; 750ms GraphQL quiet period; bounded20s; no credential/body retention. Resource timing may include CORS-preflight or lack protected sizes."
+    },
+    {
+      "phase": "after",
+      "sample": 3,
+      "flow": "policies",
+      "cacheCondition": "same-document-return",
+      "role": "ADMIN",
+      "status": "complete",
+      "initialDomAlreadyUseful": false,
+      "firstUsefulDomFrameMs": 366,
+      "lastGraphQLResponseMs": 520.4,
+      "graphQLFetchCount": 2,
+      "graphQLResourceCount": 2,
+      "requestsStartedBeforeFirstUseful": 2,
+      "responseJsonBytes": 3309,
+      "visibleRowsAtFinish": 2,
+      "alertCount": 0,
+      "observerParseCpuMs": 0.2,
+      "origin": "https://migration-staging.d1nuh9rw1hcuxo.amplifyapp.com",
+      "originRoute": "account",
+      "destinationRoute": "account",
+      "endpoints": [
+        "https://6ibyan35zrfixjwpspnoi6dc2q.appsync-api.us-east-1.amazonaws.com"
+      ],
+      "assets": [
+        "/assets/index-IHeVRLo9.js"
+      ],
+      "requests": [
+        {
+          "operation": "GraphQL",
+          "startMs": 8.2,
+          "endMs": 364.4,
+          "bodyEndMs": 364.3,
+          "jsonBytes": 2620,
+          "observerParseCpuMs": 0.1,
+          "status": 200,
+          "graphQLErrors": 0,
+          "requestId": "cb7e7fb2-17cc-4560-9ac2-e8963b294d45"
+        },
+        {
+          "operation": "GraphQL",
+          "startMs": 8.7,
+          "endMs": 520.5,
+          "bodyEndMs": 520.4,
+          "jsonBytes": 689,
+          "observerParseCpuMs": 0.1,
+          "status": 200,
+          "graphQLErrors": 0,
+          "requestId": "26f791b1-75fd-4147-85e5-6295815ba03e"
+        }
+      ],
+      "method": "Live authenticated browser; next animation frame after useful DOM; 750ms GraphQL quiet period; bounded20s; no credential/body retention. Resource timing may include CORS-preflight or lack protected sizes."
+    },
+    {
+      "phase": "after",
+      "sample": 3,
+      "flow": "documents",
+      "cacheCondition": "same-document-return",
+      "role": "ADMIN",
+      "status": "complete",
+      "initialDomAlreadyUseful": false,
+      "firstUsefulDomFrameMs": 500.9,
+      "lastGraphQLResponseMs": 499,
+      "graphQLFetchCount": 7,
+      "graphQLResourceCount": 7,
+      "requestsStartedBeforeFirstUseful": 7,
+      "responseJsonBytes": 8115,
+      "visibleRowsAtFinish": 3,
+      "alertCount": 0,
+      "observerParseCpuMs": 0.2,
+      "origin": "https://migration-staging.d1nuh9rw1hcuxo.amplifyapp.com",
+      "originRoute": "account",
+      "destinationRoute": "account",
+      "endpoints": [
+        "https://6ibyan35zrfixjwpspnoi6dc2q.appsync-api.us-east-1.amazonaws.com"
+      ],
+      "assets": [
+        "/assets/index-IHeVRLo9.js"
+      ],
+      "requests": [
+        {
+          "operation": "GraphQL",
+          "startMs": 16.5,
+          "endMs": 300.1,
+          "bodyEndMs": 300.1,
+          "jsonBytes": 2620,
+          "observerParseCpuMs": 0,
+          "status": 200,
+          "graphQLErrors": 0,
+          "requestId": "8c43b004-97d7-49cf-affe-6f6f3a90fd1d"
+        },
+        {
+          "operation": "GraphQL",
+          "startMs": 16.8,
+          "endMs": 435.6,
+          "bodyEndMs": 435.5,
+          "jsonBytes": 2175,
+          "observerParseCpuMs": 0.1,
+          "status": 200,
+          "graphQLErrors": 0,
+          "requestId": "19eb1600-f0d3-4373-a2dd-497fbb718bde"
+        },
+        {
+          "operation": "GraphQL",
+          "startMs": 16.9,
+          "endMs": 499,
+          "bodyEndMs": 499,
+          "jsonBytes": 2485,
+          "observerParseCpuMs": 0,
+          "status": 200,
+          "graphQLErrors": 0,
+          "requestId": "8d84a73f-e34a-4e33-965e-e1e7670129bf"
+        },
+        {
+          "operation": "GraphQL",
+          "startMs": 17,
+          "endMs": 472,
+          "bodyEndMs": 472,
+          "jsonBytes": 557,
+          "observerParseCpuMs": 0,
+          "status": 200,
+          "graphQLErrors": 0,
+          "requestId": "ed3b4071-1cb1-4c72-a3e5-64ec5300720d"
+        },
+        {
+          "operation": "GraphQL",
+          "startMs": 17.1,
+          "endMs": 342.4,
+          "bodyEndMs": 342.4,
+          "jsonBytes": 88,
+          "observerParseCpuMs": 0,
+          "status": 200,
+          "graphQLErrors": 0,
+          "requestId": "ff2add4f-c568-448b-9803-69929787cfd8"
+        },
+        {
+          "operation": "GraphQL",
+          "startMs": 17.2,
+          "endMs": 428.7,
+          "bodyEndMs": 428.6,
+          "jsonBytes": 95,
+          "observerParseCpuMs": 0.1,
+          "status": 200,
+          "graphQLErrors": 0,
+          "requestId": "f547c0c9-c349-48da-bc83-202b504bad4d"
+        },
+        {
+          "operation": "GraphQL",
+          "startMs": 17.2,
+          "endMs": 438.2,
+          "bodyEndMs": 438.2,
+          "jsonBytes": 95,
+          "observerParseCpuMs": 0,
+          "status": 200,
+          "graphQLErrors": 0,
+          "requestId": "09ab5395-2568-4c90-859c-b26747e564f9"
+        }
+      ],
+      "method": "Live authenticated browser; next animation frame after useful DOM; 750ms GraphQL quiet period; bounded20s; no credential/body retention. Resource timing may include CORS-preflight or lack protected sizes."
+    },
+    {
+      "phase": "after",
+      "sample": 3,
+      "flow": "activity",
+      "cacheCondition": "same-document-return",
+      "role": "ADMIN",
+      "status": "complete",
+      "initialDomAlreadyUseful": false,
+      "firstUsefulDomFrameMs": 682.8,
+      "lastGraphQLResponseMs": 679.8,
+      "graphQLFetchCount": 2,
+      "graphQLResourceCount": 2,
+      "requestsStartedBeforeFirstUseful": 2,
+      "responseJsonBytes": 20289,
+      "visibleRowsAtFinish": 23,
+      "alertCount": 0,
+      "observerParseCpuMs": 0.2,
+      "origin": "https://migration-staging.d1nuh9rw1hcuxo.amplifyapp.com",
+      "originRoute": "account",
+      "destinationRoute": "account",
+      "endpoints": [
+        "https://6ibyan35zrfixjwpspnoi6dc2q.appsync-api.us-east-1.amazonaws.com"
+      ],
+      "assets": [
+        "/assets/index-IHeVRLo9.js"
+      ],
+      "requests": [
+        {
+          "operation": "GraphQL:context",
+          "startMs": 6.3,
+          "endMs": 679.8,
+          "bodyEndMs": 679.8,
+          "jsonBytes": 808,
+          "observerParseCpuMs": 0,
+          "status": 200,
+          "graphQLErrors": 0,
+          "requestId": "d12dfd8d-6db9-4e4d-a2c8-34caa0001ad4"
+        },
+        {
+          "operation": "GraphQL",
+          "startMs": 6.8,
+          "endMs": 412.8,
+          "bodyEndMs": 412.6,
+          "jsonBytes": 19481,
+          "observerParseCpuMs": 0.2,
+          "status": 200,
+          "graphQLErrors": 0,
+          "requestId": "10d76d37-38ae-4fc9-9e6b-a9875508a4ce"
+        }
+      ],
+      "method": "Live authenticated browser; next animation frame after useful DOM; 750ms GraphQL quiet period; bounded20s; no credential/body retention. Resource timing may include CORS-preflight or lack protected sizes."
+    },
+    {
+      "phase": "after",
+      "sample": 4,
+      "flow": "leads",
+      "cacheCondition": "warm-return-after-suite",
+      "role": "ADMIN",
+      "status": "complete",
+      "initialDomAlreadyUseful": false,
+      "firstUsefulDomFrameMs": 24.3,
+      "lastGraphQLResponseMs": 2489.9,
+      "graphQLFetchCount": 3,
+      "graphQLResourceCount": 3,
+      "requestsStartedBeforeFirstUseful": 2,
+      "responseJsonBytes": 24339,
+      "visibleRowsAtFinish": 22,
+      "alertCount": 0,
+      "observerParseCpuMs": 0.2,
+      "origin": "https://migration-staging.d1nuh9rw1hcuxo.amplifyapp.com",
+      "originRoute": "/carriers",
+      "destinationRoute": "/leads",
+      "endpoints": [
+        "https://6ibyan35zrfixjwpspnoi6dc2q.appsync-api.us-east-1.amazonaws.com"
+      ],
+      "assets": [
+        "/assets/index-IHeVRLo9.js"
+      ],
+      "requests": [
+        {
+          "operation": "GraphQL:accountListPage",
+          "startMs": 23.9,
+          "endMs": 1051.6,
+          "bodyEndMs": 1051.5,
+          "jsonBytes": 23770,
+          "observerParseCpuMs": 0.1,
+          "status": 200,
+          "graphQLErrors": 0,
+          "requestId": "a6c9b10a-0550-4665-96f1-07196d8e0e17"
+        },
+        {
+          "operation": "GraphQL:team",
+          "startMs": 24.1,
+          "endMs": 1059.6,
+          "bodyEndMs": 1059.5,
+          "jsonBytes": 446,
+          "observerParseCpuMs": 0.1,
+          "status": 200,
+          "graphQLErrors": 0,
+          "requestId": "a5b37f13-69c8-44b0-8a04-89a441a22cfd"
+        },
+        {
+          "operation": "GraphQL:accountListCounts",
+          "startMs": 1051,
+          "endMs": 2489.9,
+          "bodyEndMs": 2489.9,
+          "jsonBytes": 123,
+          "observerParseCpuMs": 0,
+          "status": 200,
+          "graphQLErrors": 0,
+          "requestId": "5c90a61d-cb33-4df5-aec1-a75a46e6cdf0"
+        }
+      ],
+      "method": "Live authenticated browser; next animation frame after useful DOM; 750ms GraphQL quiet period; bounded20s; no credential/body retention. Resource timing may include CORS-preflight or lack protected sizes."
+    }
+  ],
+  "suiteStatus": "complete",
+  "allFlowsSucceeded": true,
+  "startedAt": "2026-11-04T22:01:32.566Z",
+  "assets": [
+    "/assets/index-IHeVRLo9.js"
+  ],
+  "navigation": {
+    "phase": "after",
+    "role": "ADMIN",
+    "navigation": [
+      {
+        "type": "reload",
+        "domContentLoadedMs": 564.6000000238419,
+        "loadMs": 661.3000000119209
+      }
+    ],
+    "paints": [
+      {
+        "name": "first-paint",
+        "ms": 584
+      },
+      {
+        "name": "first-contentful-paint",
+        "ms": 676
+      }
+    ],
+    "graphQLResourceCount": 5,
+    "lastGraphQLResponseMs": 2881.5,
+    "assets": [
+      "/assets/index-IHeVRLo9.js"
+    ]
+  },
+  "backendJob": "24",
+  "backendRevision": "b3de7a81ffad93fd2be0cb243ef09e6fed4bd7fd",
+  "releaseState": "Hosted job24 succeeded; backend and frontend latency release deployed. Root verified normal strict guard and health pass; current-day READYversion1 completeprocessed33 pending0 at21:41:38Z before measurement.",
+  "measurementAttempt": 2,
+  "priorAttemptArtifact": "live-after-job24-attempt1-failed.json"
+}

@@ -1,0 +1,121 @@
+{
+  "phase": "after",
+  "startedAt": "2026-11-04T21:57:55.366Z",
+  "capturedAt": "2026-11-04T21:58:16.393Z",
+  "origin": "https://migration-staging.d1nuh9rw1hcuxo.amplifyapp.com",
+  "activeRole": "ADMIN",
+  "assets": [
+    "/assets/index-IHeVRLo9.js"
+  ],
+  "navigation": {
+    "phase": "after",
+    "role": "ADMIN",
+    "navigation": [
+      {
+        "type": "reload",
+        "domContentLoadedMs": 1478.199999988079,
+        "loadMs": 1575
+      }
+    ],
+    "paints": [
+      {
+        "name": "first-paint",
+        "ms": 968
+      },
+      {
+        "name": "first-contentful-paint",
+        "ms": 1588
+      }
+    ],
+    "graphQLResourceCount": 5,
+    "lastGraphQLResponseMs": 3184.399999976158,
+    "assets": [
+      "/assets/index-IHeVRLo9.js"
+    ]
+  },
+  "samples": [
+    {
+      "phase": "after",
+      "sample": 1,
+      "flow": "leads",
+      "cacheCondition": "first-suite-data-visit",
+      "role": "ADMIN",
+      "status": "timeout",
+      "initialDomAlreadyUseful": false,
+      "firstUsefulDomFrameMs": null,
+      "lastGraphQLResponseMs": 0,
+      "graphQLFetchCount": 2,
+      "graphQLResourceCount": 0,
+      "requestsStartedBeforeFirstUseful": null,
+      "responseJsonBytes": null,
+      "visibleRowsAtFinish": 0,
+      "alertCount": 0,
+      "observerParseCpuMs": 0,
+      "origin": "https://migration-staging.d1nuh9rw1hcuxo.amplifyapp.com",
+      "originRoute": "/carriers",
+      "destinationRoute": "/leads",
+      "endpoints": [],
+      "assets": [
+        "/assets/index-IHeVRLo9.js"
+      ],
+      "requests": [
+        {
+          "operation": "GraphQL:accountListPage",
+          "startMs": 18.2,
+          "endMs": null,
+          "bodyEndMs": null,
+          "jsonBytes": null,
+          "observerParseCpuMs": null,
+          "status": null,
+          "graphQLErrors": null,
+          "requestId": null
+        },
+        {
+          "operation": "GraphQL:team",
+          "startMs": 18.7,
+          "endMs": null,
+          "bodyEndMs": null,
+          "jsonBytes": null,
+          "observerParseCpuMs": null,
+          "status": null,
+          "graphQLErrors": null,
+          "requestId": null
+        }
+      ],
+      "method": "Live authenticated browser; next animation frame after useful DOM; 750ms GraphQL quiet period; bounded20s; no credential/body retention. Resource timing may include CORS-preflight or lack protected sizes."
+    }
+  ],
+  "suiteStatus": "stopped",
+  "allFlowsSucceeded": false,
+  "frontendJob": "24",
+  "backendJob": "24",
+  "backendRevision": "b3de7a81ffad93fd2be0cb243ef09e6fed4bd7fd",
+  "frontendRevision": "b3de7a81ffad93fd2be0cb243ef09e6fed4bd7fd",
+  "note": "First matched attempt stopped at first Leads with20s timeout; no response completed during bound. Preserved as failed observation, excluded from successful-run comparison.",
+  "eventualDiagnostics": {
+    "observedAt": "2026-11-04T22:00:10.277Z",
+    "role": "ADMIN",
+    "visibleLeadsRows": 22,
+    "requests": [
+      {
+        "operation": "GraphQL:accountListPage",
+        "endMs": 21144.3,
+        "status": "network-error",
+        "httpStatus": null,
+        "requestId": null
+      },
+      {
+        "operation": "GraphQL:team",
+        "endMs": 21144.7,
+        "status": "network-error",
+        "httpStatus": null,
+        "requestId": null
+      }
+    ],
+    "devTools": {
+      "throttling": "No throttling",
+      "disableCache": false
+    },
+    "note": "Original bounded export retained above; temporary observer requests finalized after20s bound. Later UI retry rendered22 Leads outside measurement. No fetch/CORS console errors found; no offline/paused state observed. Cause under investigation."
+  }
+}
