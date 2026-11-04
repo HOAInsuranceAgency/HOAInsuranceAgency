@@ -11,6 +11,8 @@ vi.mock('../lib/accountsListData', () => ({ useAccountsListData: () => h.resourc
 vi.mock('../components/ReportDownload', () => ({ ReportDownload: () => null }));
 import { AdminContext } from '../lib/auth';
 import { accountViewKey } from '../lib/accountListView';
+import { putNamedAccountView, readNamedAccountViews, writeNamedAccountViews } from '../lib/namedAccountViews';
+import { normalizeAccountView } from '../lib/accountListView';
 import AccountsList from './AccountsList';
 
 beforeEach(() => {
@@ -19,9 +21,9 @@ beforeEach(() => {
     vi.stubGlobal(name, { getItem: (k: string) => values.get(k) ?? null, setItem: (k: string, v: string) => values.set(k, v) });
   }
   const accounts = [
-    { id: 'alpha', name: 'Alpha Condominium', stage: 'LEAD', type: 'ASSOCIATION', currentPolicyExpiration: '2099-03-01' },
-    { id: 'beta', name: 'Beta Condominium', stage: 'LEAD', type: 'ASSOCIATION', currentPolicyExpiration: '2099-04-01' },
-    { id: 'cedar', name: 'Cedar Client', stage: 'CLIENT', type: 'ASSOCIATION' },
+    { id: 'alpha', name: 'Alpha Condominium', state: 'MA', stage: 'LEAD', type: 'ASSOCIATION', currentPolicyExpiration: '2099-03-01' },
+    { id: 'beta', name: 'Beta Condominium', state: 'RI', stage: 'LEAD', type: 'ASSOCIATION', currentPolicyExpiration: '2099-04-01' },
+    { id: 'cedar', name: 'Cedar Client', state: 'MA', stage: 'CLIENT', type: 'ASSOCIATION' },
   ];
   h.resource = {
     loaded: true, loading: false, error: '', refreshError: '', refetch: vi.fn(), refreshCommercial: vi.fn(), setCommercial: vi.fn(),
@@ -153,8 +155,129 @@ it('keeps Lead and Client scroll positions separate when the same route componen
 it('restores a reloaded list position when React rehearses effect cleanup in StrictMode', async () => {
   const scrollTo = vi.spyOn(window, 'scrollTo').mockImplementation(() => {});
   window.sessionStorage.setItem(`${accountViewKey('user-1:ADMIN', 'LEAD')}:position`, JSON.stringify({
-    signature: JSON.stringify({ leadView: 'Active', salesperson: '', sortKey: 'renewal', dir: 'asc' }), y: 480,
+    signature: JSON.stringify({ leadView: 'Active', salesperson: '', state: '', sortKey: 'renewal', dir: 'asc' }), y: 480,
   }));
   render(<StrictMode>{page()}</StrictMode>);
   await waitFor(() => expect(scrollTo).toHaveBeenCalledWith({ top: 480, behavior: 'instant' }));
+});
+
+function saveNamed(name: string) {
+  fireEvent.click(screen.getByRole('button', { name: 'Save current view' }));
+  fireEvent.change(screen.getByRole('textbox', { name: 'View name' }), { target: { value: name } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save view' }));
+}
+
+it('filters Massachusetts records through a canonical state URL and restores the filter on reload', () => {
+  const first = render(page({ url: '/leads?view=all&state=ma&sort=name&dir=asc' }));
+  expect(screen.getByRole('combobox', { name: 'State' })).toHaveValue('MA');
+  expect(names()).toEqual(['Alpha Condominium']);
+  expect(screen.getByLabelText('View URL')).toHaveTextContent('view=all&state=MA&sort=name&dir=asc');
+  first.unmount();
+  const reloaded = render(page());
+  expect(screen.getByRole('combobox', { name: 'State' })).toHaveValue('MA');
+  expect(names()).toEqual(['Alpha Condominium']);
+  reloaded.unmount();
+  render(page({ url: '/leads?state=ZZ' }));
+  expect(screen.getByRole('combobox', { name: 'State' })).toHaveValue('');
+  expect(screen.getByLabelText('View URL')).not.toHaveTextContent('state=ZZ');
+});
+
+it('saves, selects, updates, renames and deletes a named view after reload', () => {
+  const first = render(page());
+  chooseView('All leads');
+  fireEvent.change(screen.getByRole('combobox', { name: 'State' }), { target: { value: 'MA' } });
+  saveNamed('Massachusetts leads');
+  expect(screen.getByText('View saved in this browser.')).toBeInTheDocument();
+  const id = (screen.getByRole('combobox', { name: 'Saved view' }) as HTMLSelectElement).value;
+  expect(id).not.toBe('');
+  first.unmount(); render(page());
+  expect(screen.getByRole('combobox', { name: 'Saved view' })).toHaveValue(id);
+  fireEvent.click(screen.getByRole('button', { name: 'Reset view' }));
+  expect(screen.getByRole('combobox', { name: 'State' })).toHaveValue('');
+  fireEvent.change(screen.getByRole('combobox', { name: 'Saved view' }), { target: { value: id } });
+  expect(screen.getByRole('combobox', { name: 'State' })).toHaveValue('MA');
+  expect(names()).toEqual(['Alpha Condominium']);
+  fireEvent.change(screen.getByRole('combobox', { name: 'State' }), { target: { value: 'RI' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Update saved view' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Rename view' }));
+  fireEvent.change(screen.getByRole('textbox', { name: 'View name' }), { target: { value: 'Rhode Island leads' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save name' }));
+  expect(screen.getByRole('option', { name: 'Rhode Island leads' })).toHaveValue(id);
+  expect(readNamedAccountViews(accountViewKey('user-1:ADMIN', 'LEAD'), 'LEAD', true).views[0].view.state).toBe('RI');
+  fireEvent.click(screen.getByRole('button', { name: 'Reset view' }));
+  fireEvent.change(screen.getByRole('combobox', { name: 'Saved view' }), { target: { value: id } });
+  expect(names()).toEqual(['Beta Condominium']);
+  fireEvent.click(screen.getByRole('button', { name: 'Delete view' }));
+  expect(screen.queryByRole('option', { name: 'Rhode Island leads' })).not.toBeInTheDocument();
+  expect(readNamedAccountViews(accountViewKey('user-1:ADMIN', 'LEAD'), 'LEAD', true).views).toEqual([]);
+});
+
+it('keeps named views isolated by user, exact role and Lead versus Client list', () => {
+  const mounted = render(page());
+  chooseView('Follow-up due'); saveNamed('My follow-ups');
+  fireEvent.click(screen.getByRole('link', { name: 'Clients link' }));
+  expect(screen.queryByRole('option', { name: 'My follow-ups' })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('link', { name: 'Leads link' }));
+  expect(screen.getByRole('option', { name: 'My follow-ups' })).toBeInTheDocument();
+  mounted.rerender(page({ scope: 'user-1:PRODUCER', admin: false }));
+  expect(screen.queryByRole('option', { name: 'My follow-ups' })).not.toBeInTheDocument();
+  mounted.rerender(page({ scope: 'user-2:ADMIN' }));
+  expect(screen.queryByRole('option', { name: 'My follow-ups' })).not.toBeInTheDocument();
+  mounted.rerender(page({ scope: 'user-1:ADMIN' }));
+  expect(screen.getByRole('option', { name: 'My follow-ups' })).toBeInTheDocument();
+});
+
+it('shows name validation, prevents duplicate names and renders entered names as text', () => {
+  render(page());
+  saveNamed('   ');
+  expect(screen.getByRole('alert')).toHaveTextContent('Enter a view name.');
+  fireEvent.change(screen.getByRole('textbox', { name: 'View name' }), { target: { value: 'x'.repeat(81) } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save view' }));
+  expect(screen.getByRole('alert')).toHaveTextContent('80 characters or fewer');
+  fireEvent.change(screen.getByRole('textbox', { name: 'View name' }), { target: { value: '<Massachusetts leads>' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save view' }));
+  expect(screen.getByRole('option', { name: '<Massachusetts leads>' })).toHaveTextContent('<Massachusetts leads>');
+  saveNamed('  <MASSACHUSETTS leads> ');
+  expect(screen.getByRole('alert')).toHaveTextContent('already in use');
+});
+
+it('honors the twenty-view limit while retaining rename and delete controls', () => {
+  const key = accountViewKey('user-1:ADMIN', 'LEAD');
+  let views = readNamedAccountViews(key, 'LEAD', true).views;
+  for (let i = 0; i < 20; i++) views = putNamedAccountView(views, { name: `View ${i + 1}`, view: normalizeAccountView({}, 'LEAD', true) }, 'LEAD', true);
+  writeNamedAccountViews(key, views, 'LEAD', true);
+  render(page());
+  expect(screen.getByRole('button', { name: 'Save current view' })).toBeDisabled();
+  expect(screen.getByText(/You have 20 saved views/)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Delete view' }));
+  expect(screen.getByRole('button', { name: 'Save current view' })).toBeEnabled();
+});
+
+it('reports failed browser storage without claiming a view was saved or deleted', () => {
+  render(page());
+  saveNamed('Original view');
+  vi.spyOn(window.localStorage, 'setItem').mockImplementation(() => { throw new Error('Quota exceeded'); });
+  fireEvent.click(screen.getByRole('button', { name: 'Delete view' }));
+  expect(screen.getByRole('alert')).toHaveTextContent('Could not save views in this browser');
+  expect(screen.getByRole('option', { name: 'Original view' })).toBeInTheDocument();
+  saveNamed('Another view');
+  expect(screen.getByRole('alert')).toHaveTextContent('Could not save views in this browser');
+  expect(screen.queryByRole('option', { name: 'Another view' })).not.toBeInTheDocument();
+});
+
+it('preserves fresh preferences when renaming and a fresh name when updating from another open tab', () => {
+  render(page()); saveNamed('Shared view');
+  const key = accountViewKey('user-1:ADMIN', 'LEAD');
+  let latest = readNamedAccountViews(key, 'LEAD', true).views;
+  const id = latest[0].id;
+  latest = putNamedAccountView(latest, { id, name: 'Shared view', view: { ...latest[0].view, state: 'MA' } }, 'LEAD', true);
+  writeNamedAccountViews(key, latest, 'LEAD', true);
+  fireEvent.click(screen.getByRole('button', { name: 'Rename view' }));
+  fireEvent.change(screen.getByRole('textbox', { name: 'View name' }), { target: { value: 'Renamed here' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save name' }));
+  expect(readNamedAccountViews(key, 'LEAD', true).views[0].view.state).toBe('MA');
+  latest = readNamedAccountViews(key, 'LEAD', true).views;
+  writeNamedAccountViews(key, putNamedAccountView(latest, { id, name: 'Fresh name', view: latest[0].view }, 'LEAD', true), 'LEAD', true);
+  fireEvent.click(screen.getByRole('button', { name: 'Update saved view' }));
+  expect(readNamedAccountViews(key, 'LEAD', true).views[0]).toMatchObject({ id, name: 'Fresh name', view: { state: '' } });
 });

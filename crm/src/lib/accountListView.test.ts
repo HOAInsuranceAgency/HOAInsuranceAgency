@@ -12,11 +12,11 @@ afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 it('validates URL preferences by stage and active privilege without retaining arbitrary data', () => {
   const malicious = new URLSearchParams('view=snoozed&salesperson=other%40example.com&sort=salary&dir=sideways');
-  expect(accountViewFromParams(malicious, 'LEAD', false)).toEqual({ leadView: 'Snoozed', salesperson: '', sortKey: 'renewal', dir: 'asc' });
+  expect(accountViewFromParams(malicious, 'LEAD', false)).toEqual({ leadView: 'Snoozed', salesperson: '', state: '', sortKey: 'renewal', dir: 'asc' });
   expect(accountViewFromParams(new URLSearchParams('view=all&salesperson=alice&sort=salesperson&dir=desc'), 'LEAD', false))
-    .toEqual({ leadView: 'All leads', salesperson: '', sortKey: 'renewal', dir: 'desc' });
+    .toEqual({ leadView: 'All leads', salesperson: '', state: '', sortKey: 'renewal', dir: 'desc' });
   expect(accountViewFromParams(new URLSearchParams('view=due&sort=followUp'), 'CLIENT', true))
-    .toEqual({ leadView: 'Active', salesperson: '', sortKey: 'renewal', dir: 'asc' });
+    .toEqual({ leadView: 'Active', salesperson: '', state: '', sortKey: 'renewal', dir: 'asc' });
 });
 
 it('keeps unrelated URL parameters and produces a complete shareable view', () => {
@@ -36,7 +36,7 @@ it('separates users, exact roles and lead/client preferences, and persists only 
     expect(readAccountView(accountViewKey(scope, 'LEAD'), 'LEAD', true).sortKey).toBe('renewal');
   }
   expect(readAccountView(accountViewKey('user-1:ADMIN', 'CLIENT'), 'CLIENT', true).sortKey).toBe('renewal');
-  expect(Object.keys(JSON.parse(window.localStorage.getItem(key)!)).sort()).toEqual(['version', 'leadView', 'salesperson', 'sortKey', 'dir'].sort());
+  expect(Object.keys(JSON.parse(window.localStorage.getItem(key)!)).sort()).toEqual(['version', 'leadView', 'salesperson', 'state', 'sortKey', 'dir'].sort());
   expect(accountViewKey('person@example.com:ADMIN', 'LEAD')).toBeNull();
   expect(accountViewKey(undefined, 'LEAD')).toBeNull();
 });
