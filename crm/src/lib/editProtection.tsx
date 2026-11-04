@@ -2,7 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { useBlocker } from "react-router-dom";
 import Modal from "../components/Modal";
 
-type Attention = { message: string; review: () => void };
+type Attention = { message: string; review: () => void; continueLabel?: string };
 type Editor = { dirty: () => boolean; busy: () => boolean; discard: () => void; attention: () => Attention | undefined };
 type PendingAction = { generation: number; run: () => void };
 const Context = createContext({
@@ -82,7 +82,7 @@ export function EditProtectionProvider({ children }: { children: ReactNode }) {
       <p>{saving ? "Wait for this save to finish before leaving this page." : attention?.message ?? "Your changes have not been saved. Stay here to finish, or discard them and continue."}</p>
       {!saving && <div className="form-actions">
         {attention && <button type="button" className="primary" onClick={() => { cancelPending(); attention.review(); }}>Review the lead</button>}
-        <button type="button" className="secondary" onClick={discard}>{attention ? "Continue without fixing" : "Discard changes and continue"}</button>
+        <button type="button" className="secondary" onClick={discard}>{attention?.continueLabel ?? (attention ? "Continue without fixing" : "Discard changes and continue")}</button>
       </div>}
     </Modal>}
   </Context.Provider>;
@@ -90,7 +90,7 @@ export function EditProtectionProvider({ children }: { children: ReactNode }) {
 
 export const useEditProtection = () => useContext(Context);
 
-export function useUnsavedChanges(dirty: boolean, options: { busy?: boolean; onDiscard?: () => void; notice?: string; onReview?: () => void } = {}) {
+export function useUnsavedChanges(dirty: boolean, options: { busy?: boolean; onDiscard?: () => void; notice?: string; onReview?: () => void; continueLabel?: string } = {}) {
   const context = useContext(Context);
   const key = useRef(Symbol("editor"));
   const latest = useRef({ dirty, ...options });
@@ -99,7 +99,7 @@ export function useUnsavedChanges(dirty: boolean, options: { busy?: boolean; onD
     dirty: () => latest.current.dirty,
     busy: () => !!latest.current.busy,
     discard: () => { latest.current.dirty = false; latest.current.onDiscard?.(); },
-    attention: () => latest.current.notice && latest.current.onReview ? { message: latest.current.notice, review: latest.current.onReview } : undefined,
+    attention: () => latest.current.notice && latest.current.onReview ? { message: latest.current.notice, review: latest.current.onReview, continueLabel: latest.current.continueLabel } : undefined,
   }), [context.register]);
   useEffect(context.changed, [dirty, options.busy, options.notice, context.changed]);
   const markClean = useCallback(() => { latest.current.dirty = false; context.changed(); }, [context.changed]);
