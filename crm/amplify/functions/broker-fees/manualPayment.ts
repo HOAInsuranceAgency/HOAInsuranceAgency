@@ -12,6 +12,7 @@ import { invoiceTotals } from '../../../src/lib/invoiceTotals';
 import { db, getFee, getModel, modelTable, versionCheck, type Write } from './store';
 import { assertBrokerFeeSigned } from './bindValidation';
 import { assertNoFeeLoanCheckout, syncBrokerFeePayment } from './payments';
+import { closeInvoiceCheckoutSessions } from '../invoiceCheckout';
 
 /** Preserve Mark paid, using the same source validation as online billing. */
 export async function confirmInvoicePayment(event:{identity?:Identity;request?:RoleRequest},input:Record<string,unknown>) {
@@ -67,16 +68,10 @@ export async function confirmInvoicePayment(event:{identity?:Identity;request?:R
     const key=process.env.STRIPE_SECRET_KEY;if(!key)throw new Error('Payment configuration is unavailable; the existing payment link cannot be closed.');
     const stripe=new Stripe(key);
     await stripe.paymentLinks.update(String(invoice.stripePaymentLinkId),{active:false});
-    let count=0;
-    for await(const session of stripe.checkout.sessions.list({payment_link:String(invoice.stripePaymentLinkId),limit:100})) {
-      if(++count>500)throw new Error('The payment session history needs review before recording an outside payment.');
-      if(session.payment_status==='paid')throw new Error('An online payment has already been submitted. Wait for its payment status to update.');
-      if(session.status==='complete'){
-        const intentId=typeof session.payment_intent==='string'?session.payment_intent:session.payment_intent?.id;
-        const intent=intentId?await stripe.paymentIntents.retrieve(intentId):undefined;
-        if(!intent||!['requires_payment_method','canceled'].includes(intent.status))throw new Error('An online payment has already been submitted. Wait for its payment status to update.');
-      }
-      if(session.status==='open')await stripe.checkout.sessions.expire(session.id);
+    try { await closeInvoiceCheckoutSessions(stripe,String(invoice.stripePaymentLinkId)); }
+    catch(error) {
+      if(error instanceof Error && error.message.includes('before replacing or voiding its link.'))throw new Error(error.message.replace('before replacing or voiding its link.','before recording an outside payment.'));
+      throw error;
     }
   }
   const now=new Date().toISOString(),paidAt=typeof invoice.paidAt==='string'?invoice.paidAt:new Intl.DateTimeFormat('en-CA',{timeZone:'America/New_York',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(now));

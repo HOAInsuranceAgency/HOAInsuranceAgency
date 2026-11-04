@@ -16,6 +16,7 @@ vi.mock('../../amplify/functions/broker-fees/store', async original => ({
   getRow: async (id: string) => structuredClone(h.rows.get(id)),
   getFee: async (id: string) => structuredClone(h.rows.get(`fee:${id}`)),
   getAgreement: async (id: string) => structuredClone(h.rows.get(id)),
+  accountAgreements: async (accountId: string) => structuredClone([...h.rows.values()].filter(row => row.kind === 'AGREEMENT' && row.accountId === accountId)),
   getModel: async (model: string, id: string) => structuredClone(h.models.get(`${model}:${id}`)),
   accountModels: async (model: string, accountId: string) => structuredClone([...h.models.entries()].filter(([key, value]) => key.startsWith(`${model}:`) && value.accountId === accountId).map(([, value]) => value)),
   transact: h.transact, db: { send: h.db },
@@ -395,7 +396,7 @@ describe('invoice reservations versus known financing checkout URLs',()=>{
   });
   it('includes the viable loan version in the invoice reservation transaction',async()=>{
     seedOffer();await reserveFeeInvoice(quote,'i');
-    expect(h.transact.mock.calls[0][0]).toContainEqual(expect.objectContaining({ConditionCheck:expect.objectContaining({TableName:'PfLoan',Key:{id:'loan'},ExpressionAttributeNames:{'#v':'updatedAt'},ExpressionAttributeValues:{':v':offer().updatedAt}})}));
+    expect(h.transact.mock.calls[0][0]).toContainEqual(expect.objectContaining({ConditionCheck:expect.objectContaining({TableName:'PfLoan',Key:{id:'loan'},ExpressionAttributeNames:expect.objectContaining({'#v':'updatedAt'}),ExpressionAttributeValues:expect.objectContaining({':v':offer().updatedAt})})}));
     expect(fee().issuedInvoiceIds).toContain('i');
   });
   it('loses safely when a financing claim is created between its read and reservation write',async()=>{

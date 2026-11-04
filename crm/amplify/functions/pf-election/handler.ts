@@ -1,3 +1,4 @@
+import { zeroFeeQuoteClaimWrites } from "../quote-source-billing";
 import { assertBrokerFeeSigned } from "../broker-fees/bindValidation";
 import { getFee, getModel, modelTable, table as brokerFeeTable, versionCheck, type Write } from "../broker-fees/store";
 import { brokerFeeCents, feeAllocations } from "../../../../shared/brokerFees";
@@ -589,9 +590,15 @@ async function handleAccept(
     return { ok: true, state: "closed", reason: "Your previous payment session is still open. Reopen this financing link after that session expires to see the updated initial payment." };
   }
 
+  // The source pointer and monotonic version serialize a fee-free pre-bind
+  // claim with financial Quote edits, even if the loan GSI has not caught up.
+  feeClaimGuards.push(...await zeroFeeQuoteClaimWrites(loan));
   const sessionClaim = `claim-${randomUUID()}`;
   const claimExpiry = new Date(Date.now() + 36 * 60 * 1000).toISOString();
-  const quotedSiblings = siblings.filter((s) => s.id !== loan.id && s.status === "QUOTED");
+  // A source-pointer guard already verifies this sibling's version AND free
+  // checkout slot. DynamoDB permits only one transaction action per item.
+  const guardedLoanIds = new Set(feeClaimGuards.flatMap(write => write.ConditionCheck?.TableName === loanTable ? [String(write.ConditionCheck.Key?.id)] : []));
+  const quotedSiblings = siblings.filter((s) => s.id !== loan.id && s.status === "QUOTED" && !guardedLoanIds.has(s.id));
   if (quotedSiblings.length + feeClaimGuards.length > 98) throw new Error("This financing payment history needs review before another checkout can open.");
   try {
     /**

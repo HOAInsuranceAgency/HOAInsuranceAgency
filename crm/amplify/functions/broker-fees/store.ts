@@ -55,3 +55,28 @@ export async function accountFees(accountId: string): Promise<BrokerFeeRecord[]>
   }
   throw new Error('The fee status list could not be loaded completely.');
 }
+
+/** The account index discovers agreement keys; consistent gets supply signed state. */
+export async function accountAgreements(accountId: string): Promise<BrokerFeeAgreement[]> {
+  const ids = new Set<string>(); let cursor: Record<string, unknown> | undefined;
+  for (let page = 0; page < 100; page++) {
+    const result = await db.send(new QueryCommand({
+      TableName: table(), IndexName: 'account',
+      KeyConditionExpression: 'accountId = :account AND begins_with(id, :agreement)',
+      ExpressionAttributeValues: { ':account': accountId, ':agreement': 'bfa_' },
+      ProjectionExpression: 'id', Limit: 100, ExclusiveStartKey: cursor,
+    }));
+    for (const row of result.Items ?? []) if (typeof row.id === 'string') ids.add(row.id);
+    if (ids.size > 5000) throw new Error('The signed agreement list could not be loaded completely.');
+    cursor = result.LastEvaluatedKey;
+    if (!cursor) {
+      const agreements: BrokerFeeAgreement[] = [], keys = [...ids];
+      for (let offset = 0; offset < keys.length; offset += 5) {
+        const rows = await Promise.all(keys.slice(offset, offset + 5).map(getAgreement));
+        agreements.push(...rows.filter((row): row is BrokerFeeAgreement => !!row && row.kind === 'AGREEMENT' && row.accountId === accountId));
+      }
+      return agreements;
+    }
+  }
+  throw new Error('The signed agreement list could not be loaded completely.');
+}

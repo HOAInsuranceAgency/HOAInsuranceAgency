@@ -1,4 +1,6 @@
 import { assertBrokerFeeAgencyBilling, brokerFeeCents, feeAllocations } from '../../../../shared/brokerFees';
+import { quoteSourceBillingHistory } from '../quote-source-billing';
+import { assertNoFeeLoanCheckout } from '../broker-fees/payments';
 import { getFee, getAgreement, getModel } from '../broker-fees/store';
 import { authorizedQuoteTerms } from '../../../../shared/quoteAuthorization';
 import { normalizeClientConditions, normalizePassThroughCharges } from '../../../../shared/passThroughCharges';
@@ -177,6 +179,12 @@ export class AccountAccess {
       if (Object.hasOwn(input,"brokerFee")) brokerFeeCents(input.brokerFee as number|null);
       const previous = input.id ? await this.get("Quote",id(input.id)) : undefined;
       assertBrokerFeeAgencyBilling({...previous,...input} as {brokerFee?:number|null;billType?:string|null});
+      if(previous&&Object.hasOwn(input,"accountId")&&input.accountId!==previous.accountId) {
+        const feeHistory=await getFee(id(previous.id));
+        if(brokerFeeCents(previous.brokerFee as number|undefined)>0||brokerFeeCents(input.brokerFee as number|undefined)>0||feeHistory)throw new Error("A quote with fee history must retain its original account.");
+        const billing=await quoteSourceBillingHistory(previous,undefined);
+        if(billing.invoices.length||billing.loans.length)throw new Error("A quote with billing history must retain its original account.");
+      }
       if(previous?.status==="BOUND"&&((Object.hasOwn(input,"passThroughCharges")&&JSON.stringify(normalizePassThroughCharges(input.passThroughCharges))!==JSON.stringify(normalizePassThroughCharges(previous.passThroughCharges)))||(Object.hasOwn(input,"clientConditions")&&normalizeClientConditions(input.clientConditions)!==normalizeClientConditions(previous.clientConditions))))throw new Error("Bound policy charges and client conditions cannot be changed.");
       if (previous && (brokerFeeCents(previous.brokerFee as number|undefined)>0 || brokerFeeCents(input.brokerFee as number|undefined)>0)) {
         const fee = await getFee(String(previous.id));
@@ -185,10 +193,7 @@ export class AccountAccess {
         const changed=authorizedQuoteTerms(previous)!==authorizedQuoteTerms({...previous,...input}) || disclosed&&Object.hasOwn(input,"commissionPct")&&input.commissionPct!==previous.commissionPct;
         if(changed&&previous.status==="BOUND")throw new Error("Bound policy fee terms cannot be changed.");
         if(changed&&fee&&(fee.submittedCents>0||fee.collectedCents>0)&&(authorizedQuoteTerms({...previous,...input})!==fee.terms||disclosed&&({...previous,...input}).commissionPct!==agreement?.quotes.find(q=>q.id===previous.id)?.agencyCommissionPct))throw new Error("This fee already has a payment. Review the existing payment before changing the accepted terms.");
-        if(fee&&(changed||["LOST","DECLINED"].includes(String(input.status))))for(const loanId of fee.issuedLoanIds??[]) {
-          const loan=await getModel<Record<string,unknown>>("PfLoan",loanId);
-          if(loan&&(loan.downPaymentIntentId||["ACCEPTED","ACTIVE","DEFAULTED","PAID"].includes(String(loan.status))||loan.electionCheckoutUrl&&Date.parse(String(loan.electionCheckoutExpiresAt))>Date.now()))throw new Error("The financing checkout already holds these fee terms. Wait for its payment to settle or the checkout to expire before changing the quote.");
-        }
+        if(fee&&(changed||["LOST","DECLINED"].includes(String(input.status))))await assertNoFeeLoanCheckout(fee);
         if(fee&&(changed||["LOST","DECLINED"].includes(String(input.status))))for(const invoiceId of fee.issuedInvoiceIds??[]) {
           const invoice=await getModel<Record<string,unknown>>("Invoice",invoiceId);
           if(invoice&&["DRAFT","SENT","PROCESSING"].includes(String(invoice.status)))throw new Error("Void the existing fee invoice before changing or withdrawing its accepted quote terms.");
