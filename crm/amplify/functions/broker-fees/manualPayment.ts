@@ -8,7 +8,7 @@ import { feeAllocations } from '../../../../shared/brokerFees';
 import { invoiceBrokerFeeAllocations } from '../send-invoice/brokerFeeInvoice';
 import { db, getFee, getModel, modelTable, versionCheck, type Write } from './store';
 import { assertBrokerFeeSigned } from './bindValidation';
-import { syncBrokerFeePayment } from './payments';
+import { assertNoFeeLoanCheckout, syncBrokerFeePayment } from './payments';
 
 /** Preserve Mark paid, using the same source validation as online billing. */
 export async function confirmInvoicePayment(event:{identity?:Identity;request?:RoleRequest},input:Record<string,unknown>) {
@@ -38,8 +38,9 @@ export async function confirmInvoicePayment(event:{identity?:Identity;request?:R
   const comparable=(a:typeof allocations)=>a.map(row=>({quoteId:row.quoteId,amountCents:row.amountCents}));
   if(frozen.length&&JSON.stringify(comparable(frozen))!==JSON.stringify(comparable(allocations)))throw new Error('The invoice differs from its issued fee payment allocation.');
   if(quote&&allocations.length)await assertBrokerFeeSigned(quote);
+  const loanGuards=fee&&allocations.length?await assertNoFeeLoanCheckout(fee):[];
   const workflow=await access.get('Communication',`workflow:${invoice.accountId}`);
-  const guards:Write[]=[activeTeamUserCheck(access.actor),...lines.map(line=>versionCheck(modelTable('InvoiceLine'),line as {id:string;updatedAt:string})),...(source?[versionCheck(modelTable(policy?'Policy':'Quote'),source as {id:string;updatedAt:string})]:[])];
+  const guards:Write[]=[activeTeamUserCheck(access.actor),...loanGuards,...lines.map(line=>versionCheck(modelTable('InvoiceLine'),line as {id:string;updatedAt:string})),...(source?[versionCheck(modelTable(policy?'Policy':'Quote'),source as {id:string;updatedAt:string})]:[])];
   if(!access.admin){
     if(!workflow)throw new Error('The account assignment could not be verified.');
     guards.push({ConditionCheck:{TableName:modelTable('Communication'),Key:{id:`workflow:${invoice.accountId}`},ConditionExpression:'#data = :data',ExpressionAttributeNames:{'#data':'data'},ExpressionAttributeValues:{':data':workflow.data}}});
@@ -62,6 +63,6 @@ export async function confirmInvoicePayment(event:{identity?:Identity;request?:R
   }
   const now=new Date().toISOString(),paidAt=typeof invoice.paidAt==='string'?invoice.paidAt:new Intl.DateTimeFormat('en-CA',{timeZone:'America/New_York',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(now));
   const update:Write={Update:{TableName:modelTable('Invoice'),Key:{id:invoice.id},UpdateExpression:'SET #status = :paid, paidAt = :date, updatedAt = :now, lastWriteBy = :actor REMOVE paymentUrl, brokerFeeFinanceUrl',ConditionExpression:'updatedAt = :old AND #status = :status',ExpressionAttributeNames:{'#status':'status'},ExpressionAttributeValues:{':paid':'PAID',':date':paidAt,':now':now,':actor':'broker-fee-manual-payment',':old':invoice.updatedAt,':status':invoice.status}}};
-  await syncBrokerFeePayment({sourceId:`manual-invoice:${invoice.id}`,accountId:String(invoice.accountId),allocations,status:'PAID',receivedOn:paidAt,confirmedBy:access.actor},[...guards,...(invoice.status==='PAID'?[]:[update])]);
+  await syncBrokerFeePayment({sourceId:`manual-invoice:${invoice.id}`,accountId:String(invoice.accountId),allocations,status:'PAID',receivedOn:paidAt,confirmedBy:access.actor},[...guards,...(invoice.status==='PAID'?[]:[update])],fee&&allocations.length?{[fee.quoteId]:fee.version}:undefined);
   return {ok:true,invoice:{...invoice,status:'PAID',paidAt}};
 }

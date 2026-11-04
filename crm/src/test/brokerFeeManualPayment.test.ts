@@ -21,6 +21,12 @@ const actor = { identity: { sub: 'producer', groups: ['PRODUCER'] }, request: { 
 const NOW = '2026-11-04T15:00:00Z';
 const quote: Row = { id: 'q', accountId: 'a', carrierId: 'carrier', premium: 10000, commissionPct: 15, brokerFee: 500, billType: 'AGENCY', lines: ['Property'], status: 'QUOTED', effectiveDate: '2027-01-01', expirationDate: '2028-01-01', updatedAt: NOW };
 const paymentRows = () => [...h.rows.values()].filter(row => row.kind === 'PAYMENT');
+function issuedLoan(fields: Row = {}) {
+  h.rows.get('fee:q')!.issuedLoanIds = ['loan'];
+  const loan = { id: 'loan', accountId: 'a', quoteId: 'q', status: 'QUOTED', updatedAt: NOW, brokerFeeCents: 50000, brokerFeeAllocations: [{ quoteId: 'q', amountCents: 50000 }], ...fields };
+  h.models.set('PfLoan:loan', loan);
+  return loan;
+}
 
 /** Stage the entire real receipt transaction before publishing any test writes. */
 function applyTransaction(writes: Row[]) {
@@ -107,5 +113,49 @@ describe('outside invoice payment after an unsuccessful online checkout', () => 
     h.models.set('Invoice:i', { ...h.models.get('Invoice:i'), accountId: 'other-account' });
     await expect(confirmInvoicePayment(actor, { invoiceId: 'i' })).rejects.toThrow('not available');
     expect(h.deactivate).not.toHaveBeenCalled(); expect(h.transact).not.toHaveBeenCalled(); expect(paymentRows()).toHaveLength(0);
+  });
+});
+
+describe('outside invoice payment beside an issued financing offer', () => {
+  it.each(['https://checkout.stripe.com/c/pay/live', 'claim-pending-session'])('refuses a live financing checkout %s before closing invoice links', async electionCheckoutUrl => {
+    issuedLoan({ electionCheckoutUrl, electionCheckoutExpiresAt: '2026-11-04T16:00:00Z' });
+    await expect(confirmInvoicePayment(actor, { invoiceId: 'i' })).rejects.toThrow(/financ|checkout/i);
+    expect(h.deactivate).not.toHaveBeenCalled(); expect(h.transact).not.toHaveBeenCalled();
+    expect(paymentRows()).toHaveLength(0); expect(h.models.get('Invoice:i')?.status).toBe('SENT');
+  });
+  it('refuses an already submitted financing down payment even after its checkout expires', async () => {
+    issuedLoan({ downPaymentIntentId: 'pi-financing', electionCheckoutUrl: 'https://checkout.stripe.com/c/pay/expired', electionCheckoutExpiresAt: '2026-11-04T14:00:00Z' });
+    await expect(confirmInvoicePayment(actor, { invoiceId: 'i' })).rejects.toThrow(/financ|checkout/i);
+    expect(h.deactivate).not.toHaveBeenCalled(); expect(h.transact).not.toHaveBeenCalled(); expect(paymentRows()).toHaveLength(0);
+  });
+  it('refuses committed financing even when its checkout URL is absent', async () => {
+    issuedLoan({ status: 'ACTIVE' });
+    await expect(confirmInvoicePayment(actor, { invoiceId: 'i' })).rejects.toThrow(/financ|checkout/i);
+    expect(h.deactivate).not.toHaveBeenCalled(); expect(h.transact).not.toHaveBeenCalled(); expect(paymentRows()).toHaveLength(0);
+  });
+  it('records an outside payment when a quoted financing checkout has expired and fences the loan version', async () => {
+    issuedLoan({ electionCheckoutUrl: 'https://checkout.stripe.com/c/pay/expired', electionCheckoutExpiresAt: '2026-11-04T14:00:00Z' });
+    await confirmInvoicePayment(actor, { invoiceId: 'i' });
+    expect(paymentRows()).toHaveLength(1); expect(h.rows.get('fee:q')?.collectedCents).toBe(50000);
+    expect(h.transact.mock.calls[0][0]).toEqual(expect.arrayContaining([expect.objectContaining({ ConditionCheck: expect.objectContaining({ TableName: 'PfLoan', Key: { id: 'loan' }, ExpressionAttributeValues: { ':v': NOW } }) })]));
+  });
+  it('does not record a manual receipt if a financing checkout wins after the initial check', async () => {
+    issuedLoan();
+    h.deactivate.mockImplementation(async () => {
+      h.events.push('deactivate');
+      Object.assign(h.models.get('PfLoan:loan')!, { electionCheckoutUrl: 'claim-concurrent', electionCheckoutExpiresAt: '2026-11-04T16:00:00Z', updatedAt: '2026-11-04T15:00:01Z' });
+      return { active: false };
+    });
+    await expect(confirmInvoicePayment(actor, { invoiceId: 'i' })).rejects.toThrow('transaction condition failed');
+    expect(paymentRows()).toHaveLength(0); expect(h.rows.get('fee:q')?.collectedCents).toBe(0); expect(h.models.get('Invoice:i')?.status).toBe('SENT');
+  });
+  it('does not record a manual receipt if another financing offer is reserved after the initial check', async () => {
+    h.deactivate.mockImplementation(async () => {
+      h.events.push('deactivate');
+      Object.assign(h.rows.get('fee:q')!, { issuedLoanIds: ['new-loan'], version: 2 });
+      return { active: false };
+    });
+    await expect(confirmInvoicePayment(actor, { invoiceId: 'i' })).rejects.toThrow(/changed|version|refresh|payment/i);
+    expect(paymentRows()).toHaveLength(0); expect(h.rows.get('fee:q')?.collectedCents).toBe(0); expect(h.models.get('Invoice:i')?.status).toBe('SENT');
   });
 });

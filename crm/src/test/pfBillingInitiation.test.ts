@@ -21,7 +21,7 @@ vi.mock("stripe", () => ({ default: class {
   paymentIntents = { create: m.debit };
 } }));
 vi.mock("../../amplify/functions/void-invoice/handler", () => ({ handler: vi.fn() }));
-vi.mock("../../amplify/functions/broker-fees/store", () => ({ getFee: m.fee }));
+vi.mock("../../amplify/functions/broker-fees/store", async original => ({ ...await original<typeof import("../../amplify/functions/broker-fees/store")>(), getFee: m.fee }));
 vi.mock("../../amplify/functions/broker-fees/bindValidation", () => ({ assertBrokerFeeSigned: m.signed }));
 import { handler as elect } from "../../amplify/functions/pf-election/handler";
 import { handler as collect } from "../../amplify/functions/pf-autopay/handler";
@@ -39,6 +39,7 @@ const loan = {
 beforeEach(() => {
   vi.clearAllMocks();
   process.env.PF_LOAN_TABLE = "Loans";
+  process.env.BROKER_FEE_TABLE = "Fees";
   process.env.AGENCY_SETTINGS_TABLE = "Settings";
   process.env.STRIPE_SECRET_KEY = "test-placeholder";
   process.env.SITE_URL = "https://example.test";
@@ -51,7 +52,7 @@ beforeEach(() => {
   m.source.mockResolvedValue({ data: {id:"q1",accountId:"account-1",brokerFee:500} });
   m.signed.mockResolvedValue({});
   m.invoices.mockResolvedValue({data:[]});
-  m.fee.mockResolvedValue({accountId:"account-1",quoteId:"q1",amountCents:50000,submittedCents:0,collectedCents:0,refundedCents:0});
+  m.fee.mockResolvedValue({id:"fee:q1",version:1,issuedLoanIds:[loan.id],accountId:"account-1",quoteId:"q1",amountCents:50000,submittedCents:0,collectedCents:0,refundedCents:0});
 });
 
 describe("billing initiation", () => {
@@ -147,7 +148,7 @@ describe("old financing offer after the broker fee was collected separately",()=
     expect(m.checkout).not.toHaveBeenCalled();expect(m.send).not.toHaveBeenCalled();
   });
   it('preserves retry after a definitively failed fee payment',async()=>{
-    oldOffer();m.fee.mockResolvedValue({accountId:'account-1',amountCents:50000,submittedCents:0,collectedCents:0,refundedCents:0,paymentSources:{old:{status:'FAILED',amountCents:50000,refundedCents:0}}});
+    oldOffer();m.fee.mockResolvedValue({id:'fee:q1',version:1,issuedLoanIds:[loan.id],accountId:'account-1',amountCents:50000,submittedCents:0,collectedCents:0,refundedCents:0,paymentSources:{old:{status:'FAILED',amountCents:50000,refundedCents:0}}});
     expect(await elect({arguments:{accept:true,token:loan.electionToken}})).toMatchObject({state:'checkout'});
     expect(m.checkout).toHaveBeenCalledTimes(1);
   });
@@ -157,5 +158,27 @@ describe("old financing offer after the broker fee was collected separately",()=
     const request=m.checkout.mock.calls[0][0];
     expect(request.line_items.map((row:{price_data:{unit_amount:number}})=>row.price_data.unit_amount)).toEqual([843552,1000]);
     expect(m.fee).not.toHaveBeenCalled();
+  });
+});
+
+describe("atomic fee source checks when claiming a financing checkout",()=>{
+  const feeLoan=()=>({...loan,brokerFeeCents:50000,brokerFeeAllocations:JSON.stringify([{quoteId:'q1',policyId:'policy-1',amountCents:50000}])});
+  it('guards the exact fee version in the same transaction that reserves the real checkout slot',async()=>{
+    m.lookup.mockResolvedValue({data:[feeLoan()]});
+    expect(await elect({arguments:{accept:true,token:loan.electionToken}})).toMatchObject({state:'checkout'});
+    const claim=m.send.mock.calls.map(([command])=>command.input).find(input=>input.TransactItems?.some((item:{Update?:{UpdateExpression?:string}})=>item.Update?.UpdateExpression?.includes('electionCheckoutUrl = :claim')));
+    expect(claim.TransactItems).toContainEqual(expect.objectContaining({ConditionCheck:expect.objectContaining({TableName:'Fees',Key:{id:'fee:q1'},ExpressionAttributeValues:{':v':1}})}));
+  });
+  it('does not create a Stripe checkout when another payment reservation wins the fee version race',async()=>{
+    m.lookup.mockResolvedValue({data:[feeLoan()]});
+    m.send.mockImplementation(async command=>{
+      const items=command.input.TransactItems;
+      if(items?.some((item:{Update?:{UpdateExpression?:string}})=>item.Update?.UpdateExpression?.includes('electionCheckoutUrl = :claim'))) {
+        throw Object.assign(new Error('Fee changed'),{name:'TransactionCanceledException',CancellationReasons:items.map((item:{ConditionCheck?:{TableName?:string}})=>({Code:item.ConditionCheck?.TableName==='Fees'?'ConditionalCheckFailed':'None'}))});
+      }
+      return {Item:{premiumFinanceEnabled:true}};
+    });
+    expect(await elect({arguments:{accept:true,token:loan.electionToken}})).toMatchObject({state:'closed'});
+    expect(m.checkout).not.toHaveBeenCalled();
   });
 });

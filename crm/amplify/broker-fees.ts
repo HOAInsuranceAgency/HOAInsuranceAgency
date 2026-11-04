@@ -49,7 +49,7 @@ export function installBrokerFees(backend: typeof Backend, communicationTable: D
   add(backend.brokerFees,['s3:GetObject','s3:PutObject'],[backend.storage.resources.bucket.arnForObjects('documents/*')]);
   const modelArn=(model:string)=>Stack.of(api).formatArn({service:'dynamodb',resource:'table',resourceName:`${model}-${api.apiId}-NONE`});
   for(const fn of [backend.brokerFees,backend.communications,backend.stripeWebhook,backend.commissions,backend.sendInvoice,backend.pfElection]) {
-    const models=fn===backend.brokerFees?['Account','Quote','Policy','Invoice','InvoiceLine','Document','AgencySettings']
+    const models=fn===backend.brokerFees?['Account','Quote','Policy','Invoice','InvoiceLine','Document','AgencySettings','PfLoan']
       :[backend.communications,backend.sendInvoice,backend.pfElection].includes(fn as typeof backend.communications)?['AgencySettings','Quote','Account','Policy','Invoice','PfLoan']
       :['Quote','Policy','Document','AgencySettings'];
     add(fn,reads,models.flatMap(model=>[modelArn(model),`${modelArn(model)}/index/*`]));
