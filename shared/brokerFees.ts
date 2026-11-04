@@ -3,6 +3,10 @@ export const BROKER_FEE_PURPOSE = 'Insurance placement and policy servicing';
 export const BROKER_FEE_TERMS_VERSION = '2026-11-04.v1';
 export const BROKER_FEE_REFUND_TERMS = 'Earned when coverage is bound and retained after binding, except refunds required by applicable law. If coverage is not bound, the fee is refundable.';
 export interface BrokerFeeAllocation { quoteId: string; amountCents: number; policyId?: string; }
+export interface BrokerFeeInvoiceSendClaim {
+  invoiceId: string; token: string; createdAt: string; phase: 'PREPARING' | 'PUBLISHED';
+  totalCents: number; previousLinkId: string | null; linkId?: string;
+}
 export interface BrokerFeeSignature { name: string; email: string; role: string; signedAt: string; consent: true; ip?: string; }
 export interface BrokerFeeQuote {
   id: string; accountId: string; carrierId?: string | null; carrierName?: string; lines?: (string | null)[] | null;
@@ -20,6 +24,7 @@ export interface BrokerFeeAgreement {
 export interface BrokerFeeRecord {
   id: string; kind: 'FEE'; accountId: string; quoteId: string; amountCents: number; terms: string; version: number;
   agreementId?: string; signedAt?: string; policyId?: string; issuedInvoiceIds?: string[]; issuedLoanIds?: string[];
+  invoiceSendClaim?: BrokerFeeInvoiceSendClaim;
   submittedCents: number; collectedCents: number; refundedCents: number;
   paymentSources?: Record<string, { status: 'PROCESSING' | 'PAID' | 'FAILED' | 'REFUNDED'; amountCents: number; refundedCents: number }>;
 }

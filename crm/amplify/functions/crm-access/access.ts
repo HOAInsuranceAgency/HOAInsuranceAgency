@@ -1,4 +1,4 @@
-import { brokerFeeCents } from '../../../../shared/brokerFees';
+import { brokerFeeCents, feeAllocations } from '../../../../shared/brokerFees';
 import { getFee, getAgreement, getModel } from '../broker-fees/store';
 import { authorizedQuoteTerms } from '../../../../shared/quoteAuthorization';
 import { relationshipCurrent } from "../../../../shared/relationships";
@@ -44,6 +44,12 @@ export class AccountAccess {
     const cacheKey = `${model}:${key}`;
     if (!this.records.has(cacheKey)) this.records.set(cacheKey, this.reader(model, key));
     return this.records.get(cacheKey)!;
+  }
+  private async issuedBrokerFeeInvoice(invoice: RecordData) {
+    if(feeAllocations(invoice.brokerFeeAllocations).length>0||Number(invoice.remittanceBrokerFeeCents??0)>0)return true;
+    const policy=invoice.policyId?await this.get("Policy",id(invoice.policyId)):undefined;
+    const quoteId=id(policy?.quoteId)||id(invoice.quoteId);
+    return !!quoteId&&!!(await getFee(quoteId))?.issuedInvoiceIds?.includes(id(invoice.id));
   }
   async prefetch(model: string, keys: string[]) {
     const missing = [...new Set(keys)].filter(key => key && !this.records.has(`${model}:${key}`));
@@ -177,18 +183,28 @@ export class AccountAccess {
         }
       }
     }
-    if (model === "Invoice" && ["create","update"].includes(operation)) {
+    if (model === "Invoice") {
       const previous = input.id ? await this.get("Invoice",id(input.id)) : undefined;
-      if (previous&&["PAID","PROCESSING"].includes(String(previous.status))&&Object.hasOwn(input,"status")&&input.status!==previous.status) throw new Error("Submitted payment status is controlled by payment reconciliation.");
-      if ((["PAID","PROCESSING"].includes(String(input.status)) && input.status!==previous?.status) || Object.hasOwn(input,"paidAt") && input.paidAt!==previous?.paidAt) throw new Error("Record payment through the invoice payment action.");
-      if (["paymentUrl","stripePaymentLinkId","stripeLinkAmountCents","stripePaymentIntentId","stripeEventAt","stripeIntentCreatedAt","remittanceCarrierCents","remittanceCommissionCents","remittanceInterestCents","remittanceBrokerFeeCents","brokerFeeAllocations","brokerFeeFinanceUrl"].some(key=>Object.hasOwn(input,key) && JSON.stringify(input[key]??null)!==JSON.stringify(previous?.[key]??null))) throw new Error("Issued fee payment allocations are server-owned.");
+      const changesIssuedIdentity=previous&&["accountId","quoteId","policyId"].some(field=>Object.hasOwn(input,field)&&(input[field]??null)!==(previous[field]??null));
+      const changesStatus=previous&&Object.hasOwn(input,"status")&&input.status!==previous.status;
+      if(previous&&(operation==="delete"||changesStatus||changesIssuedIdentity)) {
+        if(await this.issuedBrokerFeeInvoice(previous))throw new Error("Issued broker fee invoices retain their source and payment history. Use the invoice payment or void action to change their status.");
+      }
+      if(["create","update"].includes(operation)) {
+        if (previous&&["PAID","PROCESSING"].includes(String(previous.status))&&Object.hasOwn(input,"status")&&input.status!==previous.status) throw new Error("Submitted payment status is controlled by payment reconciliation.");
+        if ((["PAID","PROCESSING"].includes(String(input.status)) && input.status!==previous?.status) || Object.hasOwn(input,"paidAt") && input.paidAt!==previous?.paidAt) throw new Error("Record payment through the invoice payment action.");
+        if (["paymentUrl","stripePaymentLinkId","stripeLinkAmountCents","stripePaymentIntentId","stripeEventAt","stripeIntentCreatedAt","remittanceCarrierCents","remittanceCommissionCents","remittanceInterestCents","remittanceBrokerFeeCents","brokerFeeAllocations","brokerFeeFinanceUrl"].some(key=>Object.hasOwn(input,key) && JSON.stringify(input[key]??null)!==JSON.stringify(previous?.[key]??null))) throw new Error("Issued fee payment allocations are server-owned.");
+      }
     }
     if (model === "InvoiceLine") {
       const previous = input.id ? await this.get("InvoiceLine",id(input.id)) : undefined;
       const candidate = {...previous,...input};
       const invoice = await this.get("Invoice",id(candidate.invoiceId));
-      if (invoice && ["PAID","PROCESSING"].includes(String(invoice.status))) throw new Error("Payment allocation lines cannot change after payment is submitted.");
-      if(invoice?.status==="SENT"&&invoice.brokerFeeAllocations&&JSON.parse(typeof invoice.brokerFeeAllocations==='string'?invoice.brokerFeeAllocations:JSON.stringify(invoice.brokerFeeAllocations)).length)throw new Error("Void the issued fee invoice before changing its payment lines.");
+      const previousInvoice=previous?.invoiceId&&previous.invoiceId!==candidate.invoiceId?await this.get("Invoice",id(previous.invoiceId)):undefined;
+      for(const parent of [invoice,previousInvoice])if(parent) {
+        if (["PAID","PROCESSING"].includes(String(parent.status))) throw new Error("Payment allocation lines cannot change after payment is submitted.");
+        if(["DRAFT","SENT"].includes(String(parent.status))&&await this.issuedBrokerFeeInvoice(parent))throw new Error("Void the issued fee invoice before changing its payment lines.");
+      }
       if (candidate.kind === "BROKER_FEE" && operation!=="delete") {
         const quote = await this.get("Quote",id(candidate.brokerFeeQuoteId));
         if (!quote || quote.accountId!==invoice?.accountId || Number(candidate.costAmount??0)!==0 || brokerFeeCents(candidate.retailAmount as number)!==brokerFeeCents(quote.brokerFee as number|undefined)) throw new Error("The broker fee line must match its accepted quote and have no carrier cost.");

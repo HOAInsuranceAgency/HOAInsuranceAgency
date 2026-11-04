@@ -38,9 +38,19 @@ export async function confirmInvoicePayment(event:{identity?:Identity;request?:R
   const comparable=(a:typeof allocations)=>a.map(row=>({quoteId:row.quoteId,amountCents:row.amountCents}));
   if(frozen.length&&JSON.stringify(comparable(frozen))!==JSON.stringify(comparable(allocations)))throw new Error('The invoice differs from its issued fee payment allocation.');
   if(quote&&allocations.length)await assertBrokerFeeSigned(quote);
+  const invoiceGuards:Write[]=[];
+  if(fee&&allocations.length) {
+    const claim=fee.invoiceSendClaim;
+    if(claim?.phase==='PREPARING')throw new Error('The broker fee invoice payment link is still being prepared. Finish or recover its Send action before recording an outside payment.');
+    if(claim&&claim.invoiceId!==invoice.id) {
+      const previousInvoice=await getModel<Record<string,unknown>>('Invoice',claim.invoiceId);
+      if(!previousInvoice||previousInvoice.accountId!==invoice.accountId||previousInvoice.status!=='VOID')throw new Error('Void the other issued broker fee invoice before recording an outside payment on this invoice.');
+      invoiceGuards.push(versionCheck(modelTable('Invoice'),previousInvoice as {id:string;updatedAt:string}));
+    } else if(claim&&(!claim.linkId||claim.linkId!==invoice.stripePaymentLinkId))throw new Error('The issued broker fee payment link could not be verified. Review its Send action before recording an outside payment.');
+  }
   const loanGuards=fee&&allocations.length?await assertNoFeeLoanCheckout(fee):[];
   const workflow=await access.get('Communication',`workflow:${invoice.accountId}`);
-  const guards:Write[]=[activeTeamUserCheck(access.actor),...loanGuards,...lines.map(line=>versionCheck(modelTable('InvoiceLine'),line as {id:string;updatedAt:string})),...(source?[versionCheck(modelTable(policy?'Policy':'Quote'),source as {id:string;updatedAt:string})]:[])];
+  const guards:Write[]=[activeTeamUserCheck(access.actor),...invoiceGuards,...loanGuards,...lines.map(line=>versionCheck(modelTable('InvoiceLine'),line as {id:string;updatedAt:string})),...(source?[versionCheck(modelTable(policy?'Policy':'Quote'),source as {id:string;updatedAt:string})]:[])];
   if(!access.admin){
     if(!workflow)throw new Error('The account assignment could not be verified.');
     guards.push({ConditionCheck:{TableName:modelTable('Communication'),Key:{id:`workflow:${invoice.accountId}`},ConditionExpression:'#data = :data',ExpressionAttributeNames:{'#data':'data'},ExpressionAttributeValues:{':data':workflow.data}}});

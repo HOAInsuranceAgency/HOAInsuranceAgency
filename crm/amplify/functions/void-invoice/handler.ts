@@ -1,7 +1,10 @@
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, GetCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import { DynamoDBDocumentClient, GetCommand, UpdateCommand, TransactWriteCommand } from "@aws-sdk/lib-dynamodb";
 import Stripe from "stripe";
 import { feeAllocations } from "../../../../shared/brokerFees";
+import { feeInvoiceVoidWrites } from "../broker-fees/payments";
+import type { Write } from "../broker-fees/store";
+import { closeInvoiceCheckoutSessions } from "../invoiceCheckout";
 
 /**
  * Custom mutation handler: voidInvoice. See resource.ts for the why.
@@ -28,7 +31,8 @@ import { feeAllocations } from "../../../../shared/brokerFees";
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient());
 
-interface Row {
+interface Row extends Record<string, unknown> {
+  id: string;
   status: string | null;
   number: string | null;
   stripePaymentLinkId: string | null;
@@ -42,6 +46,8 @@ async function readRow(tableName: string, id: string): Promise<Row | null> {
   if (!res.Item) return null;
   const str = (v: unknown) => (typeof v === "string" && v ? v : null);
   return {
+    ...res.Item,
+    id,
     status: str(res.Item.status),
     number: str(res.Item.number),
     stripePaymentLinkId: str(res.Item.stripePaymentLinkId),
@@ -61,7 +67,8 @@ async function readRow(tableName: string, id: string): Promise<Row | null> {
 async function writeVoid(
   tableName: string,
   id: string,
-  seen: Row
+  seen: Row,
+  feeWrites: Write[]
 ): Promise<boolean> {
   const names: Record<string, string> = { "#s": "status", "#link": "stripePaymentLinkId" };
   const values: Record<string, unknown> = {
@@ -78,8 +85,7 @@ async function writeVoid(
     values[":seenLink"] = seen.stripePaymentLinkId;
   }
   try {
-    await ddb.send(
-      new UpdateCommand({
+    const update = {
         TableName: tableName,
         Key: { id },
         // The url is removed, not nulled: a dead link in an email is worse
@@ -91,11 +97,12 @@ async function writeVoid(
         ConditionExpression: clauses.join(" AND "),
         ExpressionAttributeNames: names,
         ExpressionAttributeValues: values,
-      })
-    );
+      };
+    if (feeWrites.length) await ddb.send(new TransactWriteCommand({ TransactItems: [{ Update: update }, ...feeWrites] }));
+    else await ddb.send(new UpdateCommand(update));
     return true;
   } catch (err) {
-    if ((err as { name?: string }).name === "ConditionalCheckFailedException") {
+    if (["ConditionalCheckFailedException", "TransactionCanceledException"].includes((err as { name?: string }).name ?? '')) {
       return false;
     }
     throw err;
@@ -153,6 +160,9 @@ export const handler = async (event: {
               : "A payment on that invoice is still clearing. Wait for it to land or fail.",
         };
       }
+      // Freeze the exact private send owner before touching Stripe. An
+      // unfinished send without a known link cannot safely release its fee.
+      const feeWrites = await feeInvoiceVoidWrites(invoice);
 
       /**
        * The link dies before the status changes.
@@ -196,21 +206,12 @@ export const handler = async (event: {
           // Deactivating a Payment Link does not close sessions already opened
           // from it. Close every unsubmitted fee checkout before releasing its
           // accepted terms for an updated quote and invoice.
-          let count = 0;
-          for await (const session of stripe.checkout.sessions.list({ payment_link: linkId, limit: 100 })) {
-            if (++count > 500) return { ok: false, error: "This invoice has too many payment sessions to close automatically. Review its payments before voiding." };
-            if (session.payment_status === "paid" || session.status === "complete") {
-              const intentId = typeof session.payment_intent === "string" ? session.payment_intent : session.payment_intent?.id;
-              const intent = intentId ? await stripe.paymentIntents.retrieve(intentId) : null;
-              // A failed/expired verification is no longer a submitted debit.
-              if (session.payment_status === "paid" || !intent || !["canceled", "requires_payment_method"].includes(intent.status)) return { ok: false, error: "A payment on this invoice has already been submitted. Wait for it to settle or fail before voiding." };
-            }
-            if (session.status === "open") await stripe.checkout.sessions.expire(session.id);
-          }
+          try { await closeInvoiceCheckoutSessions(stripe, linkId); }
+          catch (error) { return { ok: false, error: error instanceof Error ? error.message : "The payment sessions could not be closed." }; }
         }
       }
 
-      if (await writeVoid(tableName, invoiceId, invoice)) {
+      if (await writeVoid(tableName, invoiceId, invoice, feeWrites)) {
         console.log(`void-invoice voided ${invoice.number ?? invoiceId}`);
         return { ok: true };
       }
