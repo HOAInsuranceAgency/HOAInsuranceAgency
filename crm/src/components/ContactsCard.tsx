@@ -18,6 +18,7 @@ import ChildRowsCard from "./ChildRowsCard";
 import { SaveStatus, useSaveStatus } from "./SaveStatus";
 import { PhoneInput } from "./inputs";
 import "./ContactsCard.css";
+import ContactActions from "./ContactActions";
 
 /**
  * The people at an association.
@@ -213,13 +214,13 @@ export default function ContactsCard({ accountId }: { accountId: string }) {
           key: "email",
           label: "Email",
           sort: (contact) => contact.email,
-          cell: (contact) => contact.email ?? "—",
+          cell: (contact) => <ContactActions kind="email" value={contact.email} contactName={contact.name} />,
         },
         {
           key: "phone",
           label: "Phone",
           sort: (contact) => contact.phone,
-          cell: (contact) => fmtPhone(contact.phone),
+          cell: (contact) => <ContactActions kind="phone" value={contact.phone} display={fmtPhone(contact.phone)} contactName={contact.name} />,
         },
       ]}
     />
