@@ -185,7 +185,7 @@ export async function bindPolicy(event: Event, input: Data) {
   const initialFee=brokerFeeCents(quote.brokerFee as number|undefined)>0?await getFee(quoteId):undefined;
   const policy = {
     commissionSnapshotId: policyId,
-    ...(initialFee?{brokerFeeCollected:initialFee.collectedCents/100,brokerFeeRefunded:initialFee.refundedCents/100}:{}),
+    ...(initialFee?{brokerFeeReportingKey:"BROKER_FEE",brokerFeeCollected:initialFee.collectedCents/100,brokerFeeRefunded:initialFee.refundedCents/100}:{}),
     ...Object.fromEntries(fields.filter((f) => quote[f] != null).map((f) => [f, quote[f]])),
     id: policyId,
     __typename: 'Policy',

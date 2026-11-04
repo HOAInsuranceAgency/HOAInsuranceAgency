@@ -71,6 +71,8 @@ export async function syncBrokerFeePayment(input: BrokerFeePaymentInput, extraWr
   for (let attempt=0;attempt<5;attempt++) {
     const previous = await getRow<Payment>(id);
     if (previous && (previous.accountId !== input.accountId || JSON.stringify(previous.allocations) !== JSON.stringify(allocations))) throw new Error('The fee payment allocation changed after collection.');
+    // Delayed processing cannot revive a failed attempt. A real later success still records settlement.
+    if(previous?.status==='FAILED'&&input.status==='PROCESSING')return;
     // Processors can redeliver old pending/failure notifications after success.
     const status = previous?.status === 'REFUNDED' || previous?.status === 'PAID' && ['PROCESSING','FAILED'].includes(input.status) ? previous.status : input.status;
     const refundTotal = Math.max(previous?.refundedCents ?? 0, refunded);

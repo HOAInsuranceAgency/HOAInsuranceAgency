@@ -936,6 +936,7 @@ const schema = a
       premium: a.float(),
       brokerFee: a.float(),
       /** Server-owned actual fee receipts; independent of policy cancellation. */
+      brokerFeeReportingKey: a.string(), // Server-owned sparse reporting partition.
       brokerFeeCollected: a.float(),
       brokerFeeRefunded: a.float(),
       brokerFeeCollectedAt: a.datetime(),
@@ -969,6 +970,7 @@ const schema = a
       invoices: a.hasMany("Invoice", "policyId"),
       invoiceLines: a.hasMany("InvoiceLine", "policyId"),
     }).disableOperations(["subscriptions"])
+      .secondaryIndexes(index => [index("brokerFeeReportingKey")])
       .authorization((allow) => [
         allow.authenticated().to(["read", "create", "update"]),
         allow.groups(["ADMIN", "OWNER"]),

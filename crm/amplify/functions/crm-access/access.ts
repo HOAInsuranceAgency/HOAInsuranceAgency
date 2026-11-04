@@ -201,7 +201,7 @@ export class AccountAccess {
       const prior = await this.get("Policy", id(input.id));
       if (Object.hasOwn(input, "commissionSnapshotId") && input.commissionSnapshotId !== prior?.commissionSnapshotId) throw new Error("Commission provenance is server-owned.");
       if (prior && ["brokerFee", "accountId", "quoteId", "carrierId", "premium", "commissionPct", "effectiveDate", "expirationDate", "datePolicyBound"].some(f => Object.hasOwn(input, f) && (input[f] ?? null) !== (prior[f] ?? null))) throw new Error("Bound financial terms are immutable. Record a reviewed adjustment instead.");
-      if (["brokerFeeCollected","brokerFeeRefunded","brokerFeeCollectedAt"].some(key=>Object.hasOwn(input,key) && input[key]!==prior?.[key])) throw new Error("Actual broker fee receipts are server-owned.");
+      if (["brokerFeeReportingKey","brokerFeeCollected","brokerFeeRefunded","brokerFeeCollectedAt"].some(key=>Object.hasOwn(input,key) && input[key]!==prior?.[key])) throw new Error("Actual broker fee receipts are server-owned.");
       if (prior?.commissionSnapshotId && Object.hasOwn(input, "policyNumber") && (input.policyNumber ?? null) !== (prior.policyNumber ?? null)) throw new Error("The Owner must update tracked policy numbers through Commissions so both records stay in sync.");
     }
     if (model === "Policy" && operation === "delete") throw new Error("Bound policies retain commission history and cannot be deleted.");

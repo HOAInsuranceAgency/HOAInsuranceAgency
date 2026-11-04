@@ -81,6 +81,22 @@ export async function loadFinanceInvoiceAnchors(ids: readonly string[]): Promise
   return pages.flat();
 }
 
+/** Fee-bearing policies have a dedicated partition. Read every page without a
+ * status filter so retained fees on cancelled policies remain in the report. */
+export async function loadFinanceBrokerFeePolicies(): Promise<ReportBrokerFeePolicy[]> {
+  const tokens = new Set<string>();
+  return listAllPages(nextToken => {
+    if (nextToken) {
+      if (tokens.has(nextToken)) throw new Error('Broker fee policy pages did not advance; refresh to try again');
+      tokens.add(nextToken);
+    }
+    return client.models.Policy.listPolicyByBrokerFeeReportingKey({ brokerFeeReportingKey: 'BROKER_FEE' }, {
+      nextToken,
+      selectionSet: ['id', 'accountId', 'brokerFee', 'brokerFeeCollected', 'brokerFeeRefunded', 'status'],
+    });
+  });
+}
+
 /** Retain the existing invoice/loan snapshot, but read growing ledgers and
  * relations only for this report: recent receipts, open-bill line anchors,
  * referenced policies, and assignments for accounts represented here. */
@@ -92,10 +108,7 @@ export async function loadFinanceDashboard() {
     })),
     listAllPages(nextToken => client.models.PfLoan.list({ nextToken, filter: { status: { ne: 'PAID' } } })),
     loadRecentFinanceInterest(asOf),
-    listAllPages(nextToken => client.models.Policy.list({ nextToken,
-      filter: { brokerFee: { gt: 0 } },
-      selectionSet: ['id', 'accountId', 'brokerFee', 'brokerFeeCollected', 'brokerFeeRefunded', 'status'],
-    })),
+    loadFinanceBrokerFeePolicies(),
   ]);
   const outstanding = pfLoans.filter(loan => hasFinancingReceivable(loan) && outstandingPrincipal(loan) !== 0);
   const loanAccounts = new Set(outstanding.map(loan => loan.accountId));

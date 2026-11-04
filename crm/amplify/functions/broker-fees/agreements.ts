@@ -127,6 +127,11 @@ function safeFinanceUrl(value: unknown): value is string {
   if (typeof value !== 'string') return false;
   try { const url = new URL(value), site = new URL(process.env.SITE_URL ?? ''); return url.protocol === 'https:' && url.origin === site.origin && !url.username && !url.password && !url.hash && /^\/finance\/?$/.test(url.pathname) && !!url.searchParams.get('t'); } catch { return false; }
 }
+async function readInBatches<T, R>(values: readonly T[], read: (value: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = [];
+  for (let offset = 0; offset < values.length; offset += 5) results.push(...await Promise.all(values.slice(offset, offset + 5).map(read)));
+  return results;
+}
 async function termsDto(agreement: BrokerFeeAgreement): Promise<BrokerFeePublicTerms> {
   const dto: BrokerFeePublicTerms = { ok: true, state: agreement.signature ? 'signed' : 'open', accountName: agreement.accountName, agreementId: agreement.id, quotes: agreement.quotes.map(quote => ({ id: quote.id, carrierName: quote.carrierName, lines: quote.lines, premium: quote.premium, brokerFee: quote.brokerFee, billType: quote.billType, effectiveDate: quote.effectiveDate, expirationDate: quote.expirationDate, ...(quote.agencyCommissionPct !== undefined ? { agencyCommissionPct: quote.agencyCommissionPct, agencyCommissionCents: quote.agencyCommissionCents } : {}) })), totalCents: agreement.totalCents, purpose: agreement.purpose, refundTerms: agreement.refundTerms, stateForms: agreement.stateForms };
   if (agreement.agencySigner) dto.agencySigner = { name: agreement.agencySigner.name, title: agreement.agencySigner.title, licenseNumber: agreement.agencySigner.licenseNumber };
@@ -135,13 +140,20 @@ async function termsDto(agreement: BrokerFeeAgreement): Promise<BrokerFeePublicT
   if (agreement.signedDocumentKey) dto.downloadUrl = await getSignedUrl(s3, new GetObjectCommand({ Bucket: process.env.DOCUMENT_BUCKET!, Key: agreement.signedDocumentKey }), { expiresIn: 300 });
   const ids = new Set(agreement.quotes.map(quote => quote.id));
   const listed = await accountModels<Record<string, unknown>>('Invoice', agreement.accountId);
-  const invoices = await Promise.all(listed.map(invoice => getModel<Record<string, unknown>>('Invoice', String(invoice.id))));
+  // The GSI supplies candidates only. Frozen allocations retain the covered
+  // quote association when binding adds/replaces the invoice's policy anchor.
+  const candidateIds = [...new Set(listed.filter(invoice => {
+    if (invoice.accountId !== agreement.accountId || typeof invoice.id !== 'string' || !invoice.id || !['SENT', 'PROCESSING'].includes(String(invoice.status)) || !safePaymentUrl(invoice.paymentUrl) && !safeFinanceUrl(invoice.brokerFeeFinanceUrl)) return false;
+    try { return feeAllocations(invoice.brokerFeeAllocations).some(allocation => ids.has(allocation.quoteId)); }
+    catch { return false; } // An invalid index projection cannot authorize a payment link.
+  }).map(invoice => String(invoice.id)))];
+  const invoices = await readInBatches(candidateIds, invoiceId => getModel<Record<string, unknown>>('Invoice', invoiceId));
   const payable: Record<string, unknown>[] = [];
   for (const invoice of invoices) {
-    if (!invoice || invoice.accountId !== agreement.accountId || invoice.status !== 'SENT') continue;
+    if (!invoice || invoice.accountId !== agreement.accountId || invoice.status !== 'SENT' || !safePaymentUrl(invoice.paymentUrl) && !safeFinanceUrl(invoice.brokerFeeFinanceUrl)) continue;
     const allocations = feeAllocations(invoice.brokerFeeAllocations);
     if (!allocations.some(allocation => ids.has(allocation.quoteId))) continue;
-    const fees = await Promise.all(allocations.map(allocation => getFee(allocation.quoteId)));
+    const fees = await readInBatches(allocations, allocation => getFee(allocation.quoteId));
     if (fees.some((fee, index) => !fee?.signedAt || fee.accountId !== agreement.accountId || fee.amountCents !== allocations[index].amountCents)) continue;
     payable.push(invoice);
   }

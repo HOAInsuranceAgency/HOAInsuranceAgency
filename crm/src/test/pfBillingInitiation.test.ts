@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const m = vi.hoisted(() => ({ send: vi.fn(), list: vi.fn(), lookup: vi.fn(), checkout: vi.fn(), debit: vi.fn(), source: vi.fn(), signed: vi.fn() }));
+const m = vi.hoisted(() => ({ send: vi.fn(), list: vi.fn(), lookup: vi.fn(), checkout: vi.fn(), debit: vi.fn(), source: vi.fn(), signed: vi.fn(), fee: vi.fn(), invoices: vi.fn() }));
 vi.mock("aws-amplify", () => ({ Amplify: { configure: vi.fn() } }));
 vi.mock("@aws-amplify/backend/function/runtime", () => ({
   getAmplifyDataClientConfig: async () => ({ resourceConfig: {}, libraryOptions: {} }),
@@ -9,7 +9,7 @@ vi.mock("aws-amplify/data", () => ({ generateClient: () => ({ models: {
   PfLoan: { list: m.list, listPfLoanByElectionToken: m.lookup },
   AgencySettings: { get: async () => ({ data: { premiumFinanceEnabled: true } }) },
   Account: { get: async () => ({ data: { name: "Test HOA" } }) },
-  Invoice: { list: async () => ({ data: [] }) },
+  Invoice: { list: m.invoices },
   Quote: { get: m.source }, Policy: { get: m.source },
 } }) }));
 vi.mock("@aws-sdk/lib-dynamodb", async (original) => ({
@@ -21,6 +21,7 @@ vi.mock("stripe", () => ({ default: class {
   paymentIntents = { create: m.debit };
 } }));
 vi.mock("../../amplify/functions/void-invoice/handler", () => ({ handler: vi.fn() }));
+vi.mock("../../amplify/functions/broker-fees/store", () => ({ getFee: m.fee }));
 vi.mock("../../amplify/functions/broker-fees/bindValidation", () => ({ assertBrokerFeeSigned: m.signed }));
 import { handler as elect } from "../../amplify/functions/pf-election/handler";
 import { handler as collect } from "../../amplify/functions/pf-autopay/handler";
@@ -49,6 +50,8 @@ beforeEach(() => {
   m.debit.mockResolvedValue({ id: "pi_monthly" });
   m.source.mockResolvedValue({ data: {id:"q1",accountId:"account-1",brokerFee:500} });
   m.signed.mockResolvedValue({});
+  m.invoices.mockResolvedValue({data:[]});
+  m.fee.mockResolvedValue({accountId:"account-1",quoteId:"q1",amountCents:50000,submittedCents:0,collectedCents:0,refundedCents:0});
 });
 
 describe("billing initiation", () => {
@@ -123,5 +126,36 @@ describe("upfront broker fee in the existing financing checkout", () => {
     m.signed.mockRejectedValue(new Error("Sign the current broker fee disclosure."));
     expect(await elect({arguments:{accept:true,token:loan.electionToken}})).toMatchObject({ok:false});
     expect(m.checkout).not.toHaveBeenCalled();
+  });
+});
+
+describe("old financing offer after the broker fee was collected separately",()=>{
+  const allocations=[{quoteId:'q1',policyId:'policy-1',amountCents:50000}];
+  const feeOnlyInvoice={id:'fee-invoice',policyId:'policy-1',status:'PAID',remittanceBrokerFeeCents:50000,remittanceCarrierCents:0,remittanceCommissionCents:0,remittanceInterestCents:0};
+  function oldOffer(extra:Record<string,unknown>={}) {
+    m.lookup.mockResolvedValue({data:[{...loan,brokerFeeCents:50000,brokerFeeAllocations:JSON.stringify(allocations),...extra}]});
+  }
+  it('blocks an old combined offer after a fee-only invoice paid its fee',async()=>{
+    oldOffer();m.invoices.mockResolvedValue({data:[feeOnlyInvoice]});
+    expect(await elect({arguments:{accept:true,token:loan.electionToken}})).toMatchObject({state:'closed',reason:expect.stringContaining('reissue premium financing')});
+    expect(m.checkout).not.toHaveBeenCalled();expect(m.send).not.toHaveBeenCalled();
+  });
+  it.each([{submittedCents:50000,collectedCents:0},{submittedCents:50000,collectedCents:50000}])('blocks new and cached checkout when another fee payment is pending or paid: %j',async balance=>{
+    oldOffer({electionCheckoutUrl:'https://checkout.stripe.test/old',electionCheckoutExpiresAt:'2099-01-01T00:00:00Z',electionCheckoutBillingVersion:3});
+    m.fee.mockResolvedValue({accountId:'account-1',amountCents:50000,refundedCents:0,...balance});
+    expect(await elect({arguments:{accept:true,token:loan.electionToken}})).toMatchObject({state:'closed',reason:expect.stringContaining('already been paid or submitted')});
+    expect(m.checkout).not.toHaveBeenCalled();expect(m.send).not.toHaveBeenCalled();
+  });
+  it('preserves retry after a definitively failed fee payment',async()=>{
+    oldOffer();m.fee.mockResolvedValue({accountId:'account-1',amountCents:50000,submittedCents:0,collectedCents:0,refundedCents:0,paymentSources:{old:{status:'FAILED',amountCents:50000,refundedCents:0}}});
+    expect(await elect({arguments:{accept:true,token:loan.electionToken}})).toMatchObject({state:'checkout'});
+    expect(m.checkout).toHaveBeenCalledTimes(1);
+  });
+  it('allows a new premium-only financing offer after the fee was already collected',async()=>{
+    oldOffer({brokerFeeCents:0,brokerFeeAllocations:[]});m.invoices.mockResolvedValue({data:[feeOnlyInvoice]});
+    expect(await elect({arguments:{accept:true,token:loan.electionToken}})).toMatchObject({state:'checkout'});
+    const request=m.checkout.mock.calls[0][0];
+    expect(request.line_items.map((row:{price_data:{unit_amount:number}})=>row.price_data.unit_amount)).toEqual([843552,1000]);
+    expect(m.fee).not.toHaveBeenCalled();
   });
 });
