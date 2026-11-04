@@ -94,6 +94,18 @@ describe("SES pre-switch owner canary", () => {
     const h = harness(); const unknown = new SendEmailCommand({ ...command().input, FromEmailAddress: "unknown@protectmyhoa.com" });
     await expect(new TransactionalMailClient("test", h.deps).send(unknown)).rejects.toThrow("sender"); expect(h.database.send).not.toHaveBeenCalled(); expect(h.storage.send).not.toHaveBeenCalled(); expect(h.sesMock).not.toHaveBeenCalled(); expect(h.fetchMock).not.toHaveBeenCalled();
   });
+  it.each(["invoice", "report", "accounting"] as const)("preserves the staging %s mailbox while retaining owner-only delivery", async kind => {
+    vi.stubEnv("HOA_MIGRATION_BRANCH", "codex-hoa-staging-migration"); vi.stubEnv("HOA_SES_CANARY_EXPIRES_AT", "");
+    vi.stubEnv("AWS_LAMBDA_FUNCTION_NAME", kind === "report" ? "marketing-report-ifyd1nuh9rw1hcuxostagingbranch3787a09124" : "amplify-d1nuh9rw1hcuxo-staging-businessSender");
+    const owner = new SendEmailCommand({ ...command().input, FromEmailAddress: "HOA Insurance Agency <jake+testing@protectmyhoa.com>" });
+    const h = harness(); await new TransactionalMailClient(kind, h.deps).send(owner);
+    expect(h.fetchMock).toHaveBeenCalledOnce(); expect(h.sesMock).not.toHaveBeenCalled();
+    const [url, request] = h.fetchMock.mock.calls[0] as unknown as [string, { body: string }];
+    expect(url).toBe("https://api.resend.com/emails"); expect(JSON.parse(request.body)).toMatchObject({ from: "HOA Insurance Agency <jake+testing@protectmyhoa.com>", to: ["jake@getgim.com"] });
+    const customer = new SendEmailCommand({ ...owner.input, Destination: { ToAddresses: ["customer@example.com"] } });
+    const blocked = harness(); await expect(new TransactionalMailClient(kind, blocked.deps).send(customer)).rejects.toThrow("Staging");
+    expect(blocked.database.send).not.toHaveBeenCalled(); expect(blocked.fetchMock).not.toHaveBeenCalled(); expect(blocked.sesMock).not.toHaveBeenCalled();
+  });
   it("expires the owner canary without changing other primary delivery", async () => {
     vi.stubEnv("HOA_SES_CANARY_EXPIRES_AT", "2026-11-04T01:59:59Z"); const h = harness();
     await new TransactionalMailClient("login", h.deps).send(command()); expect(h.fetchMock).toHaveBeenCalledOnce(); expect(h.sesMock).not.toHaveBeenCalled();
