@@ -121,8 +121,32 @@ durations and errors. Use repeated samples and report p50/p95 only with a stated
 sample size. Check a scoped Producer/Staff view as well as Owner/Admin, and
 confirm reassignment/deactivation still rejects the next request.
 
-Live deployment and before/after production timings have not been performed in
-this session: the available AWS credentials identify the former account
-`637423611040`, while the checked-in current CRM destination is `917680434255`.
-Current-account staging access is required to complete that comparison. No cloud
-resources or application data were changed by the audit/implementation checks.
+On November 4, 2026, the `hoa-crm` AWS profile authenticated to the current CRM
+account `917680434255` through its existing organization access role. The default
+profile was left unchanged. Amplify staging job **24** successfully deployed
+`b3de7a81ffad93fd2be0cb243ef09e6fed4bd7fd` to the retained
+`codex-hoa-staging-migration` branch. The normal strict postdeployment guard
+passed, all six projection mappings were healthy, and `CONTROL/READY` reported
+today's complete 33-account build. The original 57 stateful identities, 22 stream
+cursors and eight schedules remain protected. Production and the public site
+were not deployed.
+
+The live baseline uses the actual stable staging state before this release:
+frontend job 19 (`205bf8f`, `index-BWEoqmE0.js`) with backend job 21 (`01980f0`).
+Job 21's backend succeeded while its frontend build exhausted memory. Job 24
+therefore also delivers the pending upstream broker-fee UI. The comparison is
+an observed staging release comparison, not an isolated causal experiment for
+the latency changes alone. The matched browser protocol uses the same Admin,
+22 Leads, 11 Clients, fixed synthetic W8 Client, browser and 19 navigations.
+First visits (one observation) and same-document returns (two observations)
+remain separate; neither supports a p95 or production performance claim.
+
+The [live comparison](../crm/scripts/performance-audit-results/live-comparison.md)
+records all 19 matched successful navigations, separately from the preserved
+first network-failed after attempt. First-visit Leads improved 4,290 → 1,186 ms,
+Clients 1,611 → 717 ms, and Activity 1,168 → 805 ms. Browser requests fell
+93 → 66 and response JSON bytes 1,044,080 → 232,758. Detail results were mixed:
+Policies rose 270 → 536 ms and Documents 195 → 527 ms. Their repeated returns
+were also slower. Indexed-detail scaling tests do not establish a live speedup
+on this small staging book; the next investigation should time query and
+canonical-validation stages separately while retaining all authorization checks.

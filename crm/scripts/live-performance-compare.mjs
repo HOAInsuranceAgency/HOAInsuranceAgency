@@ -61,6 +61,27 @@ export function compareLiveRuns(beforeInput, afterInput) {
   if (before.metadata.origin) lines.push(`Target: [staging CRM](${before.metadata.origin}). Role: ${before.metadata.activeRole ?? 'see sample rows'}. Dataset: ${before.metadata.leads ?? '?'} Leads and ${before.metadata.clients ?? '?'} Clients.`, '');
   if (before.metadata.frontendAsset || after.metadata.frontendAsset) lines.push(`Frontend asset: \`${before.metadata.frontendAsset ?? 'not recorded'}\` → \`${after.metadata.frontendAsset ?? 'not recorded'}\`.`, '');
   if (before.metadata.capturedAt || after.metadata.capturedAt) lines.push(`Capture windows: before ${before.metadata.capturedAt ?? 'not recorded'}; after ${after.metadata.capturedAt ?? 'not recorded'}.`, '');
+  for (const [label, run] of [['Before', before], ['After', after]]) {
+    if (run.metadata.releaseState) lines.push(`${label} release: ${run.metadata.releaseState}`, '');
+  }
+  if (after.metadata.priorAttemptArtifact) lines.push(`**Prior failed after attempt retained:** [${after.metadata.priorAttemptArtifact}](${after.metadata.priorAttemptArtifact}). The successful matched run below is a retry. See the README and deployment evidence for the observed network errors and limits of the server-side correlation.`, '');
+  const total = (run, name) => run.samples.reduce((sum, sample) => sum + sample[name], 0);
+  lines.push(`Across the ${before.samples.length} matched successful navigations: **${number(total(before, 'graphQLFetchCount'))} → ${number(total(after, 'graphQLFetchCount'))} GraphQL requests**, and **${number(total(before, 'responseJsonBytes'))} → ${number(total(after, 'responseJsonBytes'))} response JSON bytes**. These totals exclude the separately retained failed attempt; they do not pool timing distributions.`, '');
+  const reloadBefore = before.metadata.navigation, reloadAfter = after.metadata.navigation;
+  if (reloadBefore?.navigation?.length === 1 && reloadAfter?.navigation?.length === 1) {
+    const paint = run => run.paints?.find(entry => entry.name === 'first-contentful-paint')?.ms;
+    lines.push('## Carriers document reload — single observation per release', '',
+      'This is the common suite setup page, measured separately from route entry. It does not establish a cold HTTP or service cache.', '',
+      '| Metric | Before → after |', '| --- | ---: |');
+    for (const [label, a, b] of [
+      ['DOMContentLoaded ms', reloadBefore.navigation[0].domContentLoadedMs, reloadAfter.navigation[0].domContentLoadedMs],
+      ['Load event ms', reloadBefore.navigation[0].loadMs, reloadAfter.navigation[0].loadMs],
+      ['First contentful paint ms', paint(reloadBefore), paint(reloadAfter)],
+      ['Last initial GraphQL response ms', reloadBefore.lastGraphQLResponseMs, reloadAfter.lastGraphQLResponseMs],
+      ['GraphQL resources', reloadBefore.graphQLResourceCount, reloadAfter.graphQLResourceCount],
+    ]) if (Number.isFinite(a) && Number.isFinite(b)) lines.push(`| ${label} | ${number(a)} → ${number(b)} |`);
+    lines.push('');
+  }
   const conditions = [...new Set([...groups.values()].map(group => group.condition))];
   for (const condition of conditions) {
     lines.push(`## ${conditionNames[condition] ?? condition}`, '',
@@ -78,7 +99,7 @@ export function compareLiveRuns(beforeInput, afterInput) {
     }
     const repeated = [...groups.values()].filter(group => group.condition === condition && group.before.length > 1);
     if (repeated.length) {
-      lines.push('', 'Observed first-content ranges (ms; descriptive only):');
+      lines.push('', 'Observed first-content ranges (ms; descriptive only):', '');
       for (const group of repeated) {
         const a = metric(group.before, 'firstUsefulDomFrameMs'), b = metric(group.after, 'firstUsefulDomFrameMs');
         lines.push(`- ${group.flow} / ${group.role}: ${number(a.min)}–${number(a.max)} before; ${number(b.min)}–${number(b.max)} after.`);

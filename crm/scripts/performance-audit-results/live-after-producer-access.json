@@ -1,0 +1,72 @@
+{
+  "phase": "after-separate-access-check",
+  "capturedAt": "2026-11-04T22:04:15Z",
+  "observationWindow": {
+    "after": "2026-11-04T22:02:14.947Z",
+    "before": "2026-11-04T22:04:15Z",
+    "note": "Individual UI action timestamps were not instrumented; bounded by successful suite completion and current UTC verification."
+  },
+  "origin": "https://migration-staging.d1nuh9rw1hcuxo.amplifyapp.com",
+  "frontendJob": "24",
+  "backendJob": "24",
+  "revision": "b3de7a81ffad93fd2be0cb243ef09e6fed4bd7fd",
+  "fixture": "TEST — W8 Quote Rail HOA",
+  "identity": "Existing Jake session; switch through already-available active-role control",
+  "checks": [
+    {
+      "role": "PRODUCER",
+      "flow": "Leads",
+      "view": "Active",
+      "rows": 22,
+      "alerts": 0
+    },
+    {
+      "role": "PRODUCER",
+      "flow": "Clients",
+      "rows": 11,
+      "fixtureMatches": 1,
+      "alerts": 0
+    },
+    {
+      "role": "PRODUCER",
+      "flow": "Owned client Overview",
+      "detailsReady": true,
+      "alerts": 0
+    },
+    {
+      "role": "PRODUCER",
+      "flow": "Owned client Policies",
+      "rows": 2,
+      "alerts": 0
+    },
+    {
+      "role": "PRODUCER",
+      "flow": "Owned client Documents first visit",
+      "rows": 3,
+      "alerts": 1,
+      "note": "First visit retained alert count; exact text not captured before navigation."
+    },
+    {
+      "role": "PRODUCER",
+      "flow": "Owned client Activity",
+      "historyReady": true,
+      "alerts": 0
+    },
+    {
+      "role": "PRODUCER",
+      "flow": "Owned client Documents second visit",
+      "rows": 3,
+      "alerts": 1,
+      "warning": "Invalid FilterExpression: The expression has redundant parentheses;Retry generated forms"
+    },
+    {
+      "role": "ADMIN",
+      "flow": "Restoration verification",
+      "page": "Dashboard",
+      "alerts": 0
+    }
+  ],
+  "outcome": "Lists and owned client read panels render; generated-forms subpanel reports a DynamoDB filter error. Do not characterize the whole Producer flow as clean.",
+  "mutations": "No account, assignment, policy, document, form-generation, communication, or other app-data writes. Active role restored to ADMIN.",
+  "scope": "This does not establish denial for another producer, deactivation/reassignment handling, or complete authorization coverage; those have separate source/regression checks."
+}

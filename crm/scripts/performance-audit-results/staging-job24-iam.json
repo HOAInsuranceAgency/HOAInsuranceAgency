@@ -1,0 +1,543 @@
+{
+  "schema": 1,
+  "capturedAt": "2026-11-04T22:05:47.166016+00:00",
+  "deployedSourceCommit": "b3de7a81ffad93fd2be0cb243ef09e6fed4bd7fd",
+  "runtimeRoleMeasurements": {
+    "checkedAt": "2026-11-04T21:11:13.222645+00:00",
+    "account": "917680434255",
+    "region": "us-east-1",
+    "rootStack": "arn:aws:cloudformation:us-east-1:917680434255:stack/amplify-d1nuh9rw1hcuxo-staging-branch-3787a09124/eaa4dff0-d3d3-11f1-ab1d-0edee65f4629",
+    "measurement": "Actual live IAM policy documents compacted to non-whitespace JSON characters; no unresolved CloudFormation tokens.",
+    "newManagedPolicies": [
+      {
+        "logicalId": "AccountListReadAccess4F41C389",
+        "arn": "arn:aws:iam::917680434255:policy/amplify-d1nuh9rw1hcuxo-staging-branch-3787a09124-AccountListReadPermissions6BB190EE-S-AccountListReadAccess4F41C389-emwPFjAWFbVP",
+        "documentChars": 2116,
+        "limit": 6144,
+        "roles": [
+          "amplify-d1nuh9rw1hcuxo-st-communicationslambdaServi-9QEcw53TQncu"
+        ]
+      },
+      {
+        "logicalId": "BrokerFeeAccess08BC147A1",
+        "arn": "arn:aws:iam::917680434255:policy/amplify-d1nuh9rw1hcuxo-staging-branch-3787a09124-BrokerFeePermissions828C4A35-1KCODX3S69ZK-BrokerFeeAccess08BC147A1-lGAujHWRC2rz",
+        "documentChars": 3805,
+        "limit": 6144,
+        "roles": [
+          "amplify-d1nuh9rw1hcuxo-st-brokerfeeslambdaServiceRo-M4XuPswVKo7A"
+        ]
+      },
+      {
+        "logicalId": "BrokerFeeAccess197A602A5",
+        "arn": "arn:aws:iam::917680434255:policy/amplify-d1nuh9rw1hcuxo-staging-branch-3787a09124-BrokerFeePermissions828C4A35-1KCODX3S69ZK-BrokerFeeAccess197A602A5-Gus4gC2HeR4M",
+        "documentChars": 2198,
+        "limit": 6144,
+        "roles": [
+          "amplify-d1nuh9rw1hcuxo-st-communicationslambdaServi-9QEcw53TQncu"
+        ]
+      },
+      {
+        "logicalId": "BrokerFeeAccess2D47656E8",
+        "arn": "arn:aws:iam::917680434255:policy/amplify-d1nuh9rw1hcuxo-staging-branch-3787a09124-BrokerFeePermissions828C4A35-1KCODX3S69ZK-BrokerFeeAccess2D47656E8-pzQ33xp9ERfO",
+        "documentChars": 1488,
+        "limit": 6144,
+        "roles": [
+          "amplify-d1nuh9rw1hcuxo-st-commissionslambdaServiceR-S7PnjRXh6T9n"
+        ]
+      },
+      {
+        "logicalId": "BrokerFeeAccess35ACD9939",
+        "arn": "arn:aws:iam::917680434255:policy/amplify-d1nuh9rw1hcuxo-staging-branch-3787a09124-BrokerFeePermissions828C4A35-1KCODX3S69ZK-BrokerFeeAccess35ACD9939-QUGGhqpaFWXG",
+        "documentChars": 2022,
+        "limit": 6144,
+        "roles": [
+          "amplify-d1nuh9rw1hcuxo-st-stripewebhooklambdaServic-l7zcPRK75UpI"
+        ]
+      },
+      {
+        "logicalId": "BrokerFeeAccess4CB755F18",
+        "arn": "arn:aws:iam::917680434255:policy/amplify-d1nuh9rw1hcuxo-staging-branch-3787a09124-BrokerFeePermissions828C4A35-1KCODX3S69ZK-BrokerFeeAccess4CB755F18-YY7mmUbzllPL",
+        "documentChars": 2198,
+        "limit": 6144,
+        "roles": [
+          "amplify-d1nuh9rw1hcuxo-st-sendinvoicelambdaServiceR-ZgO0Hkvrj3Pw"
+        ]
+      },
+      {
+        "logicalId": "BrokerFeeAccess53223237E",
+        "arn": "arn:aws:iam::917680434255:policy/amplify-d1nuh9rw1hcuxo-staging-branch-3787a09124-BrokerFeePermissions828C4A35-1KCODX3S69ZK-BrokerFeeAccess53223237E-4Szz0fOQ2Wqj",
+        "documentChars": 1287,
+        "limit": 6144,
+        "roles": [
+          "amplify-d1nuh9rw1hcuxo-st-voidinvoicelambdaServiceR-9xeRsIKX3t1D"
+        ]
+      },
+      {
+        "logicalId": "BrokerFeeAccess6E586E35E",
+        "arn": "arn:aws:iam::917680434255:policy/amplify-d1nuh9rw1hcuxo-staging-branch-3787a09124-BrokerFeePermissions828C4A35-1KCODX3S69ZK-BrokerFeeAccess6E586E35E-82n8EVwos2nl",
+        "documentChars": 2198,
+        "limit": 6144,
+        "roles": [
+          "amplify-d1nuh9rw1hcuxo-st-pfelectionlambdaServiceRo-ElMJ70lMoMPw"
+        ]
+      },
+      {
+        "logicalId": "BrokerFeeAccess77F52A93E",
+        "arn": "arn:aws:iam::917680434255:policy/amplify-d1nuh9rw1hcuxo-staging-branch-3787a09124-BrokerFeePermissions828C4A35-1KCODX3S69ZK-BrokerFeeAccess77F52A93E-rkzP3IFZa1ZJ",
+        "documentChars": 397,
+        "limit": 6144,
+        "roles": [
+          "amplify-d1nuh9rw1hcuxo-st-crmaccesslambdaServiceRol-4v2PnU05xmGF"
+        ]
+      }
+    ],
+    "roles": [
+      {
+        "roleName": "amplify-d1nuh9rw1hcuxo-st-accountlistworkerlambdaSe-7vSNEh62cNxF",
+        "affectedBy": [
+          "account-list-worker"
+        ],
+        "aggregateInlineChars": 4944,
+        "inlineLimit": 10240,
+        "inlineHeadroom": 5296,
+        "inlinePolicies": [
+          {
+            "name": "accountlistworkerlambdaServiceRoleDefaultPolicyCEF684DC",
+            "documentChars": 4944
+          }
+        ],
+        "attachedManagedCount": 1,
+        "managedAttachmentLimit": 10,
+        "managedPolicies": [
+          {
+            "name": "AWSLambdaBasicExecutionRole",
+            "arn": "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole",
+            "documentChars": 148
+          }
+        ]
+      },
+      {
+        "roleName": "amplify-d1nuh9rw1hcuxo-st-brokerfeeslambdaServiceRo-M4XuPswVKo7A",
+        "affectedBy": [
+          "BrokerFeeAccess08BC147A1"
+        ],
+        "aggregateInlineChars": 580,
+        "inlineLimit": 10240,
+        "inlineHeadroom": 9660,
+        "inlinePolicies": [
+          {
+            "name": "brokerfeeslambdaServiceRoleDefaultPolicy26DAD576",
+            "documentChars": 580
+          }
+        ],
+        "attachedManagedCount": 2,
+        "managedAttachmentLimit": 10,
+        "managedPolicies": [
+          {
+            "name": "amplify-d1nuh9rw1hcuxo-staging-branch-3787a09124-BrokerFeePermissions828C4A35-1KCODX3S69ZK-BrokerFeeAccess08BC147A1-lGAujHWRC2rz",
+            "arn": "arn:aws:iam::917680434255:policy/amplify-d1nuh9rw1hcuxo-staging-branch-3787a09124-BrokerFeePermissions828C4A35-1KCODX3S69ZK-BrokerFeeAccess08BC147A1-lGAujHWRC2rz",
+            "documentChars": 3805
+          },
+          {
+            "name": "AWSLambdaBasicExecutionRole",
+            "arn": "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole",
+            "documentChars": 148
+          }
+        ]
+      },
+      {
+        "roleName": "amplify-d1nuh9rw1hcuxo-st-commissionslambdaServiceR-S7PnjRXh6T9n",
+        "affectedBy": [
+          "BrokerFeeAccess2D47656E8"
+        ],
+        "aggregateInlineChars": 4056,
+        "inlineLimit": 10240,
+        "inlineHeadroom": 6184,
+        "inlinePolicies": [
+          {
+            "name": "commissionslambdaServiceRoleDefaultPolicyAE4BCA6B",
+            "documentChars": 4056
+          }
+        ],
+        "attachedManagedCount": 2,
+        "managedAttachmentLimit": 10,
+        "managedPolicies": [
+          {
+            "name": "amplify-d1nuh9rw1hcuxo-staging-branch-3787a09124-BrokerFeePermissions828C4A35-1KCODX3S69ZK-BrokerFeeAccess2D47656E8-pzQ33xp9ERfO",
+            "arn": "arn:aws:iam::917680434255:policy/amplify-d1nuh9rw1hcuxo-staging-branch-3787a09124-BrokerFeePermissions828C4A35-1KCODX3S69ZK-BrokerFeeAccess2D47656E8-pzQ33xp9ERfO",
+            "documentChars": 1488
+          },
+          {
+            "name": "AWSLambdaBasicExecutionRole",
+            "arn": "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole",
+            "documentChars": 148
+          }
+        ]
+      },
+      {
+        "roleName": "amplify-d1nuh9rw1hcuxo-st-communicationslambdaServi-9QEcw53TQncu",
+        "affectedBy": [
+          "AccountListReadAccess4F41C389",
+          "BrokerFeeAccess197A602A5"
+        ],
+        "aggregateInlineChars": 8285,
+        "inlineLimit": 10240,
+        "inlineHeadroom": 1955,
+        "inlinePolicies": [
+          {
+            "name": "communicationslambdaServiceRoleDefaultPolicyE655D768",
+            "documentChars": 7074
+          },
+          {
+            "name": "GraphqlAccessPolicy3BD16E2F4",
+            "documentChars": 531
+          },
+          {
+            "name": "PreparingTeammateArtifacts16E43CDA",
+            "documentChars": 680
+          }
+        ],
+        "attachedManagedCount": 5,
+        "managedAttachmentLimit": 10,
+        "managedPolicies": [
+          {
+            "name": "amplify-d1nuh9rw1hcuxo-staging-branch-3787a09124-AccountListReadPermissions6BB190EE-S-AccountListReadAccess4F41C389-emwPFjAWFbVP",
+            "arn": "arn:aws:iam::917680434255:policy/amplify-d1nuh9rw1hcuxo-staging-branch-3787a09124-AccountListReadPermissions6BB190EE-S-AccountListReadAccess4F41C389-emwPFjAWFbVP",
+            "documentChars": 2116
+          },
+          {
+            "name": "amplify-d1nuh9rw1hcuxo-staging-branch-3787a09124-data7552DF3-communicationslambdaServiceRoleOverflowPolicy1E682F548-wPY8Ggyynzji",
+            "arn": "arn:aws:iam::917680434255:policy/amplify-d1nuh9rw1hcuxo-staging-branch-3787a09124-data7552DF3-communicationslambdaServiceRoleOverflowPolicy1E682F548-wPY8Ggyynzji",
+            "documentChars": 3888
+          },
+          {
+            "name": "amplify-d1nuh9rw1hcuxo-staging-branch-3787a09124-BrokerFeePermissions828C4A35-1KCODX3S69ZK-BrokerFeeAccess197A602A5-Gus4gC2HeR4M",
+            "arn": "arn:aws:iam::917680434255:policy/amplify-d1nuh9rw1hcuxo-staging-branch-3787a09124-BrokerFeePermissions828C4A35-1KCODX3S69ZK-BrokerFeeAccess197A602A5-Gus4gC2HeR4M",
+            "documentChars": 2198
+          },
+          {
+            "name": "amplify-d1nuh9rw1hcuxo-staging-branch-3787a09124-data7552DF3-communicationslambdaServiceRoleOverflowPolicy2E6ECFB24-7tYNo3BCtPZw",
+            "arn": "arn:aws:iam::917680434255:policy/amplify-d1nuh9rw1hcuxo-staging-branch-3787a09124-data7552DF3-communicationslambdaServiceRoleOverflowPolicy2E6ECFB24-7tYNo3BCtPZw",
+            "documentChars": 563
+          },
+          {
+            "name": "AWSLambdaBasicExecutionRole",
+            "arn": "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole",
+            "documentChars": 148
+          }
+        ]
+      },
+      {
+        "roleName": "amplify-d1nuh9rw1hcuxo-st-crmaccesslambdaServiceRol-4v2PnU05xmGF",
+        "affectedBy": [
+          "BrokerFeeAccess77F52A93E"
+        ],
+        "aggregateInlineChars": 1875,
+        "inlineLimit": 10240,
+        "inlineHeadroom": 8365,
+        "inlinePolicies": [
+          {
+            "name": "crmaccesslambdaServiceRoleDefaultPolicy249CF4E0",
+            "documentChars": 1875
+          }
+        ],
+        "attachedManagedCount": 7,
+        "managedAttachmentLimit": 10,
+        "managedPolicies": [
+          {
+            "name": "amplify-d1nuh9rw1hcuxo-staging-branch-3787a09124-data7552DF31-L28GCPFHW3X-crmaccesslambdaAccountTableReads26304C3EB-Oe78dajpwmrt",
+            "arn": "arn:aws:iam::917680434255:policy/amplify-d1nuh9rw1hcuxo-staging-branch-3787a09124-data7552DF31-L28GCPFHW3X-crmaccesslambdaAccountTableReads26304C3EB-Oe78dajpwmrt",
+            "documentChars": 1689
+          },
+          {
+            "name": "amplify-d1nuh9rw1hcuxo-staging-branch-3787a09124-data7552DF31-L28GCPFHW3X-crmaccesslambdaAccountTableReads41BA68755-VSP0jHi7cFUu",
+            "arn": "arn:aws:iam::917680434255:policy/amplify-d1nuh9rw1hcuxo-staging-branch-3787a09124-data7552DF31-L28GCPFHW3X-crmaccesslambdaAccountTableReads41BA68755-VSP0jHi7cFUu",
+            "documentChars": 1679
+          },
+          {
+            "name": "amplify-d1nuh9rw1hcuxo-staging-branch-3787a09124-data7552DF31-L28GCPFHW3X-crmaccesslambdaAccountTableReads12789DE40-W5l4Dn1BOO1V",
+            "arn": "arn:aws:iam::917680434255:policy/amplify-d1nuh9rw1hcuxo-staging-branch-3787a09124-data7552DF31-L28GCPFHW3X-crmaccesslambdaAccountTableReads12789DE40-W5l4Dn1BOO1V",
+            "documentChars": 1667
+          },
+          {
+            "name": "amplify-d1nuh9rw1hcuxo-staging-branch-3787a09124-BrokerFeePermissions828C4A35-1KCODX3S69ZK-BrokerFeeAccess77F52A93E-rkzP3IFZa1ZJ",
+            "arn": "arn:aws:iam::917680434255:policy/amplify-d1nuh9rw1hcuxo-staging-branch-3787a09124-BrokerFeePermissions828C4A35-1KCODX3S69ZK-BrokerFeeAccess77F52A93E-rkzP3IFZa1ZJ",
+            "documentChars": 397
+          },
+          {
+            "name": "amplify-d1nuh9rw1hcuxo-staging-branch-3787a09124-data7552DF31-L28GCPFHW3X-crmaccesslambdaAccountTableReads30481B3FD-3mKxVrk2rKm7",
+            "arn": "arn:aws:iam::917680434255:policy/amplify-d1nuh9rw1hcuxo-staging-branch-3787a09124-data7552DF31-L28GCPFHW3X-crmaccesslambdaAccountTableReads30481B3FD-3mKxVrk2rKm7",
+            "documentChars": 1671
+          },
+          {
+            "name": "amplify-d1nuh9rw1hcuxo-staging-branch-3787a09124-data7552DF31-L28GCPFHW3X-crmaccesslambdaAccountTableReads5312FA56F-Ruv4DYLHtIxd",
+            "arn": "arn:aws:iam::917680434255:policy/amplify-d1nuh9rw1hcuxo-staging-branch-3787a09124-data7552DF31-L28GCPFHW3X-crmaccesslambdaAccountTableReads5312FA56F-Ruv4DYLHtIxd",
+            "documentChars": 1283
+          },
+          {
+            "name": "AWSLambdaBasicExecutionRole",
+            "arn": "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole",
+            "documentChars": 148
+          }
+        ]
+      },
+      {
+        "roleName": "amplify-d1nuh9rw1hcuxo-st-pfelectionlambdaServiceRo-ElMJ70lMoMPw",
+        "affectedBy": [
+          "BrokerFeeAccess6E586E35E"
+        ],
+        "aggregateInlineChars": 3223,
+        "inlineLimit": 10240,
+        "inlineHeadroom": 7017,
+        "inlinePolicies": [
+          {
+            "name": "GraphqlAccessPolicy16765F31CC",
+            "documentChars": 531
+          },
+          {
+            "name": "pfelectionlambdaServiceRoleDefaultPolicy7F7C84FC",
+            "documentChars": 2692
+          }
+        ],
+        "attachedManagedCount": 2,
+        "managedAttachmentLimit": 10,
+        "managedPolicies": [
+          {
+            "name": "amplify-d1nuh9rw1hcuxo-staging-branch-3787a09124-BrokerFeePermissions828C4A35-1KCODX3S69ZK-BrokerFeeAccess6E586E35E-82n8EVwos2nl",
+            "arn": "arn:aws:iam::917680434255:policy/amplify-d1nuh9rw1hcuxo-staging-branch-3787a09124-BrokerFeePermissions828C4A35-1KCODX3S69ZK-BrokerFeeAccess6E586E35E-82n8EVwos2nl",
+            "documentChars": 2198
+          },
+          {
+            "name": "AWSLambdaBasicExecutionRole",
+            "arn": "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole",
+            "documentChars": 148
+          }
+        ]
+      },
+      {
+        "roleName": "amplify-d1nuh9rw1hcuxo-st-sendinvoicelambdaServiceR-ZgO0Hkvrj3Pw",
+        "affectedBy": [
+          "BrokerFeeAccess4CB755F18"
+        ],
+        "aggregateInlineChars": 3606,
+        "inlineLimit": 10240,
+        "inlineHeadroom": 6634,
+        "inlinePolicies": [
+          {
+            "name": "GraphqlAccessPolicy114D0C9041",
+            "documentChars": 531
+          },
+          {
+            "name": "sendinvoicelambdaServiceRoleDefaultPolicy17C29229",
+            "documentChars": 3075
+          }
+        ],
+        "attachedManagedCount": 3,
+        "managedAttachmentLimit": 10,
+        "managedPolicies": [
+          {
+            "name": "amplify-d1nuh9rw1hcuxo-staging-branch-3787a09124-BrokerFeePermissions828C4A35-1KCODX3S69ZK-BrokerFeeAccess4CB755F18-YY7mmUbzllPL",
+            "arn": "arn:aws:iam::917680434255:policy/amplify-d1nuh9rw1hcuxo-staging-branch-3787a09124-BrokerFeePermissions828C4A35-1KCODX3S69ZK-BrokerFeeAccess4CB755F18-YY7mmUbzllPL",
+            "documentChars": 2198
+          },
+          {
+            "name": "amplify-d1nuh9rw1hcuxo-staging-branch-3787a09-TransactionalMailSendPermissionsA46C345B-1-SesSendPermissions0DBD26CA-yaoeQ7xUd2OG",
+            "arn": "arn:aws:iam::917680434255:policy/amplify-d1nuh9rw1hcuxo-staging-branch-3787a09-TransactionalMailSendPermissionsA46C345B-1-SesSendPermissions0DBD26CA-yaoeQ7xUd2OG",
+            "documentChars": 1208
+          },
+          {
+            "name": "AWSLambdaBasicExecutionRole",
+            "arn": "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole",
+            "documentChars": 148
+          }
+        ]
+      },
+      {
+        "roleName": "amplify-d1nuh9rw1hcuxo-st-stripewebhooklambdaServic-l7zcPRK75UpI",
+        "affectedBy": [
+          "BrokerFeeAccess35ACD9939"
+        ],
+        "aggregateInlineChars": 4530,
+        "inlineLimit": 10240,
+        "inlineHeadroom": 5710,
+        "inlinePolicies": [
+          {
+            "name": "stripewebhooklambdaServiceRoleDefaultPolicyFADFAB76",
+            "documentChars": 4530
+          }
+        ],
+        "attachedManagedCount": 3,
+        "managedAttachmentLimit": 10,
+        "managedPolicies": [
+          {
+            "name": "amplify-d1nuh9rw1hcuxo-staging-branch-3787a09-TransactionalMailSendPermissionsA46C345B-1-SesSendPermissions0DBD26CA-yaoeQ7xUd2OG",
+            "arn": "arn:aws:iam::917680434255:policy/amplify-d1nuh9rw1hcuxo-staging-branch-3787a09-TransactionalMailSendPermissionsA46C345B-1-SesSendPermissions0DBD26CA-yaoeQ7xUd2OG",
+            "documentChars": 1208
+          },
+          {
+            "name": "amplify-d1nuh9rw1hcuxo-staging-branch-3787a09124-BrokerFeePermissions828C4A35-1KCODX3S69ZK-BrokerFeeAccess35ACD9939-QUGGhqpaFWXG",
+            "arn": "arn:aws:iam::917680434255:policy/amplify-d1nuh9rw1hcuxo-staging-branch-3787a09124-BrokerFeePermissions828C4A35-1KCODX3S69ZK-BrokerFeeAccess35ACD9939-QUGGhqpaFWXG",
+            "documentChars": 2022
+          },
+          {
+            "name": "AWSLambdaBasicExecutionRole",
+            "arn": "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole",
+            "documentChars": 148
+          }
+        ]
+      },
+      {
+        "roleName": "amplify-d1nuh9rw1hcuxo-st-voidinvoicelambdaServiceR-9xeRsIKX3t1D",
+        "affectedBy": [
+          "BrokerFeeAccess53223237E"
+        ],
+        "aggregateInlineChars": 840,
+        "inlineLimit": 10240,
+        "inlineHeadroom": 9400,
+        "inlinePolicies": [
+          {
+            "name": "voidinvoicelambdaServiceRoleDefaultPolicyC6140506",
+            "documentChars": 840
+          }
+        ],
+        "attachedManagedCount": 2,
+        "managedAttachmentLimit": 10,
+        "managedPolicies": [
+          {
+            "name": "amplify-d1nuh9rw1hcuxo-staging-branch-3787a09124-BrokerFeePermissions828C4A35-1KCODX3S69ZK-BrokerFeeAccess53223237E-4Szz0fOQ2Wqj",
+            "arn": "arn:aws:iam::917680434255:policy/amplify-d1nuh9rw1hcuxo-staging-branch-3787a09124-BrokerFeePermissions828C4A35-1KCODX3S69ZK-BrokerFeeAccess53223237E-4Szz0fOQ2Wqj",
+            "documentChars": 1287
+          },
+          {
+            "name": "AWSLambdaBasicExecutionRole",
+            "arn": "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole",
+            "documentChars": 148
+          }
+        ]
+      }
+    ],
+    "allWithinLimits": true,
+    "sourceCommit": "b3de7a81ffad93fd2be0cb243ef09e6fed4bd7fd",
+    "summary": {
+      "affectedRoleCount": 9,
+      "maxAggregateInlineChars": 8285,
+      "maxAttachedManagedCount": 7,
+      "distinctCustomerManagedPolicyCount": 17,
+      "maxCustomerManagedDocumentChars": 3888,
+      "allCustomerManagedWithin6144": true
+    }
+  },
+  "ciVerificationMetadata": {
+    "roleArn": "arn:aws:iam::917680434255:role/AmplifyBackendDeploy-HOAInsurance",
+    "initialExistingTableMetadataAdditions": {
+      "action": "dynamodb:DescribeTable",
+      "resources": [
+        "arn:aws:dynamodb:us-east-1:917680434255:table/amplify-d1nuh9rw1hcuxo-staging-branch-3787a09124-broker-fees",
+        "arn:aws:dynamodb:us-east-1:917680434255:table/UserProfile-sia4nrstvrarlosh3oki3kka2m-NONE",
+        "arn:aws:dynamodb:us-east-1:917680434255:table/amplify-d1nuh9rw1hcuxo-staging-branch-3787a09124-data7552DF31-L28GCPFHW3X7-amplifyDataL2GraphqlApiCommunicationRecords8E155369-DL1V4R87WT37"
+      ]
+    },
+    "extensionMetadataAdditions": [
+      {
+        "policy": "ReadHOAMigrationVerificationMetadata",
+        "existingAction": "dynamodb:DescribeTable",
+        "resourceAdded": "arn:aws:dynamodb:us-east-1:917680434255:table/amplify-d1nuh9rw1hcuxo-staging-branch-3787a09124-data7552DF31-L28GCPFHW3X7-amplifyDataL2GraphqlApiAccountListRecordsADED7554-G3T78O0LZA13"
+      },
+      {
+        "policy": "ReadHOAMigrationVerificationMetadata",
+        "existingAction": "lambda:GetEventSourceMapping",
+        "unchangedResourceScope": "arn:aws:lambda:us-east-1:917680434255:event-source-mapping:*",
+        "conditionValueAdded": {
+          "ArnEquals": {
+            "lambda:FunctionArn": "arn:aws:lambda:us-east-1:917680434255:function:amplify-d1nuh9rw1hcuxo-st-accountlistworkerlambdaD-QcKiE6wTbSLH"
+          }
+        }
+      },
+      {
+        "policy": "HOAStagingScheduleGuardRead",
+        "existingAction": "scheduler:GetSchedule",
+        "resourceAdded": "arn:aws:scheduler:us-east-1:917680434255:schedule/default/amplify-d1nuh9rw1hcuxo-st-accountlistworkerlambdas-14L17P1S9LOIL"
+      }
+    ],
+    "actionsAdded": [],
+    "wildcardResourceScopesAdded": [],
+    "existingActionsResourcesAndConditionsRetained": true,
+    "inlineCharactersAfterUpdate": 7704,
+    "inlineCharacterLimit": 10240,
+    "verification": {
+      "checkedAt": "2026-11-04T21:14:21.388720+00:00",
+      "sourceCommit": "b3de7a81ffad93fd2be0cb243ef09e6fed4bd7fd",
+      "roleArn": "arn:aws:iam::917680434255:role/AmplifyBackendDeploy-HOAInsurance",
+      "method": "Read-only actual principal-policy simulation with exact live resource ARNs and newworker lambda:FunctionArn context.",
+      "cases": [
+        {
+          "name": "privateProjectionDescribe",
+          "action": "dynamodb:DescribeTable",
+          "resources": [
+            {
+              "resource": "arn:aws:dynamodb:us-east-1:917680434255:table/amplify-d1nuh9rw1hcuxo-staging-branch-3787a09124-data7552DF31-L28GCPFHW3X7-amplifyDataL2GraphqlApiAccountListRecordsADED7554-G3T78O0LZA13",
+              "decision": "allowed",
+              "missingContext": []
+            }
+          ],
+          "allAllowed": true
+        },
+        {
+          "name": "newRepairScheduleRead",
+          "action": "scheduler:GetSchedule",
+          "resources": [
+            {
+              "resource": "arn:aws:scheduler:us-east-1:917680434255:schedule/default/amplify-d1nuh9rw1hcuxo-st-accountlistworkerlambdas-14L17P1S9LOIL",
+              "decision": "allowed",
+              "missingContext": []
+            }
+          ],
+          "allAllowed": true
+        },
+        {
+          "name": "sixNewMappingReads",
+          "action": "lambda:GetEventSourceMapping",
+          "resources": [
+            {
+              "resource": "arn:aws:lambda:us-east-1:917680434255:event-source-mapping:2d52d1d4-e494-460c-9eb3-7e1466e7e716",
+              "decision": "allowed",
+              "missingContext": []
+            },
+            {
+              "resource": "arn:aws:lambda:us-east-1:917680434255:event-source-mapping:2e3de79f-1be7-41c2-832e-2597b6ce0cc9",
+              "decision": "allowed",
+              "missingContext": []
+            },
+            {
+              "resource": "arn:aws:lambda:us-east-1:917680434255:event-source-mapping:52652e92-3e27-4647-922d-846e9914bdd3",
+              "decision": "allowed",
+              "missingContext": []
+            },
+            {
+              "resource": "arn:aws:lambda:us-east-1:917680434255:event-source-mapping:107ad101-f1e1-4704-baa3-5d7c0f89fcd2",
+              "decision": "allowed",
+              "missingContext": []
+            },
+            {
+              "resource": "arn:aws:lambda:us-east-1:917680434255:event-source-mapping:5d68566d-999e-40bb-b4f0-ab6f37ff1196",
+              "decision": "allowed",
+              "missingContext": []
+            },
+            {
+              "resource": "arn:aws:lambda:us-east-1:917680434255:event-source-mapping:a654874f-fd8d-4e0b-a966-ca12619c6dd9",
+              "decision": "allowed",
+              "missingContext": []
+            }
+          ],
+          "allAllowed": true
+        }
+      ],
+      "allAllowed": true
+    }
+  },
+  "sanitization": {
+    "containsCredentials": false,
+    "containsPolicyDocuments": false,
+    "containsBusinessRecords": false
+  }
+}
