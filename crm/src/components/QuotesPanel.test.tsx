@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { listAllPages } from "../lib/pagination";
 import type { Account } from "../lib/client";
@@ -6,6 +6,7 @@ import type { Account } from "../lib/client";
 const h = vi.hoisted(() => ({ bind: vi.fn(), quotes: vi.fn(), update: vi.fn(), carriers: vi.fn(), getQuote: vi.fn(), policies: vi.fn(), createPolicy: vi.fn(), accountUpdate: vi.fn(), request: vi.fn(), children: vi.fn() }));
 vi.mock("./QuotePackages", () => ({ default: () => null }));
 vi.mock("./CoverageForm", () => ({ default: () => null }));
+vi.mock("../lib/useAgencyDay", () => ({ useAgencyDay: () => "2026-11-03" }));
 vi.mock("../lib/communications", () => ({ communicationRequest: h.request }));
 vi.mock("../lib/client", () => ({
   client: { mutations: { bindCommissionPolicy: h.bind }, models: { Quote: { list: h.quotes, update: h.update, get: h.getQuote }, Carrier: { list: h.carriers }, Policy: { list: h.policies, create: h.createPolicy }, Account: { update: h.accountUpdate }, Invoice: { list: h.children }, Document: { list: h.children }, PfLoan: { list: h.children } } },
@@ -77,6 +78,45 @@ describe("quote loading and retries", () => {
     expect(screen.queryByText("No quotes yet")).toBeNull();
     await act(async () => refresh.resolve({ data: [{ ...quote, status: "PRESENTED" }] }));
     expect(screen.getByRole("combobox", { name: "Quote status" })).toHaveValue("PRESENTED");
+  });
+});
+
+describe("recorded carrier offer expiry", () => {
+  it("shows the valid-through date and urgency without marking closed quotes urgent", async () => {
+    h.quotes.mockResolvedValue({ data: [
+      { ...quote, id: "today", offerExpiresAt: "2026-11-03" },
+      { ...quote, id: "soon", status: "PRESENTED", offerExpiresAt: "2026-11-10" },
+      { ...quote, id: "expired", offerExpiresAt: "2026-11-02" },
+      { ...quote, id: "bound", status: "BOUND", offerExpiresAt: "2026-11-02" },
+      { ...quote, id: "invalid", offerExpiresAt: "2026-02-30" },
+      { ...quote, id: "missing" },
+    ] });
+    render(<QuotesPanel account={account} onAccountChange={vi.fn()} />);
+    const table = await screen.findByRole("table", { name: "Carrier quotes" });
+    expect(within(table).getByRole("columnheader", { name: "Offer valid through" })).toBeVisible();
+    expect(within(table).getByText("Expires today")).toBeVisible();
+    expect(within(table).getByText("Expires soon")).toBeVisible();
+    expect(within(table).getAllByText("Expired")).toHaveLength(1);
+    const bound = within(table).getByText("BOUND").closest("tr")!;
+    expect(within(bound).getByText("2026-11-02")).toHaveAttribute("dateTime", "2026-11-02");
+    expect(within(bound).queryByText("Expired")).toBeNull();
+    expect(within(table).getByText("Invalid date")).toBeVisible();
+    expect(within(table).getByText("Not recorded")).toBeVisible();
+  });
+
+  it("lets producers sort the account's quotes by recorded offer validity", async () => {
+    h.quotes.mockResolvedValue({ data: [
+      { ...quote, id: "later", premium: 2000, offerExpiresAt: "2026-11-10" },
+      { ...quote, id: "missing", premium: 3000 },
+      { ...quote, id: "earlier", premium: 1000, offerExpiresAt: "2026-11-02" },
+    ] });
+    render(<QuotesPanel account={account} onAccountChange={vi.fn()} />);
+    const table = await screen.findByRole("table", { name: "Carrier quotes" });
+    fireEvent.click(within(table).getByRole("button", { name: "Offer valid through" }));
+    const rows = within(table).getAllByRole("row").slice(1);
+    expect(rows.map(row => within(row).getAllByRole("cell")[2].textContent)).toEqual(["$1000", "$2000", "$3000"]);
+    expect(h.bind).not.toHaveBeenCalled();
+    expect(h.update).not.toHaveBeenCalled();
   });
 });
 

@@ -26,6 +26,9 @@ import {
   SELECTABLE_QUOTE_STATUSES,
 } from "../lib/quoteStatus";
 import { BILL_TYPE_OPTIONS, type BillType } from "../lib/enums";
+import QuoteOfferExpiry from "./QuoteOfferExpiry";
+import { quoteOfferDate } from "../lib/quoteOfferExpiry";
+import { useAgencyDay } from "../lib/useAgencyDay";
 
 /** Commission is baked into the premium — the $ figure is the agency's cut,
  * never an addition on top. */
@@ -71,6 +74,7 @@ function QuotesPanelContent({
   account: Account;
   onAccountChange: (a: Account) => void;
 }) {
+  const today = useAgencyDay();
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<Quote | null>(null);
   const [binding, setBinding] = useState<Quote | null>(null);
@@ -150,6 +154,7 @@ function QuotesPanelContent({
       premium: (q) => q.premium,
       commission: (q) => q.commissionPct,
       effective: (q) => q.effectiveDate,
+      offerExpiry: quoteOfferDate,
       status: (q) => q.status,
       created: (q) => q.createdAt,
     },
@@ -276,6 +281,13 @@ function QuotesPanelContent({
                     onToggle={toggle}
                   />
                   <SortTh
+                    label="Offer valid through"
+                    colKey="offerExpiry"
+                    sortKey={sortKey}
+                    dir={dir}
+                    onToggle={toggle}
+                  />
+                  <SortTh
                     label="Status"
                     colKey="status"
                     sortKey={sortKey}
@@ -296,6 +308,7 @@ function QuotesPanelContent({
                     <td className="small">{commissionCell(qt)}</td>
                     <td className="small">{termsSummary(qt)}</td>
                     <td>{fmtDate(qt.effectiveDate)}</td>
+                    <td><QuoteOfferExpiry quote={qt} today={today} /></td>
                     <td>
                       <Badge {...statusBadge(QUOTE_STATUS_BADGE, qt.status)} />
                     </td>

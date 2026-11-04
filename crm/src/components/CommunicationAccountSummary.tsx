@@ -3,6 +3,7 @@ import { communicationRequest as request } from "../lib/communications";
 import { useAsyncResource } from "../lib/useAsyncResource";
 import { fmtDate, fmtProviderPhone } from "../lib/client";
 import { leadSourceLabel } from "../lib/communicationLabels";
+import ContactActions from "./ContactActions";
 type Summary = { name: string; source?: string; leadSource?: string; notes?: string; currentPolicyExpiration?: string; url: string; more: boolean;
   contacts: { id: string; name?: string; email?: string; phone?: string }[]; quotes: { id: string; status: string; lines?: string[] }[]; documents: { id: string; name: string; status?: string }[] };
 export default function CommunicationAccountSummary({ accountId, open }: { accountId: string; open: (url: string) => void }) {
@@ -13,8 +14,8 @@ export default function CommunicationAccountSummary({ accountId, open }: { accou
     <p className="front-eyebrow">{s.leadSource ? acquisitionLabel(s.leadSource) : leadSourceLabel(s.source)}</p><h1>{s.name}</h1>
     {s.contacts.map(c => <div className="front-contact" key={c.id}>
       {c.name && c.name !== s.name && <strong>{c.name}</strong>}
-      {c.email && <a href={`mailto:${encodeURIComponent(c.email).replace(/%40/g, "@")}`}>{c.email}</a>}
-      {c.phone && <span className="front-contact-phone">{fmtProviderPhone(c.phone)}</span>}
+      {c.email && <ContactActions kind="email" value={c.email} contactName={c.name} />}
+      {c.phone && <ContactActions kind="phone" value={c.phone} display={fmtProviderPhone(c.phone)} contactName={c.name} />}
     </div>)}
     <button className="secondary front-open-account" onClick={() => open(s.url)}>Open CRM account <span aria-hidden="true">↗</span></button>
     <details className="front-account-details"><summary>Account details <span className="front-summary-hint">Notes, quotes & documents</span></summary>
