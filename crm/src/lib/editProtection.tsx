@@ -2,25 +2,31 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { useBlocker } from "react-router-dom";
 import Modal from "../components/Modal";
 
-type Editor = { dirty: () => boolean; busy: () => boolean; discard: () => void };
+type Attention = { message: string; review: () => void };
+type Editor = { dirty: () => boolean; busy: () => boolean; discard: () => void; attention: () => Attention | undefined };
+type PendingAction = { generation: number; run: () => void };
 const Context = createContext({
   register: (_key: symbol, _editor: Editor) => () => {},
   changed: () => {},
   requestLeave: (action: () => void) => action(),
   isLeaving: (): boolean => false,
+  cancelPending: () => {},
 });
 
 /** One data-router blocker also covers tabs, browser Back and session actions. */
 export function EditProtectionProvider({ children }: { children: ReactNode }) {
   const editors = useRef(new Map<symbol, Editor>());
   const [revision, setRevision] = useState(0);
-  const [action, setAction] = useState<(() => void) | null>(null);
+  const [action, setAction] = useState<PendingAction | null>(null);
+  const generation = useRef(0);
   const resolving = useRef(false);
   const changed = useCallback(() => setRevision(value => value + 1), []);
   const dirty = useCallback(() => [...editors.current.values()].some(editor => editor.dirty()), []);
   const blocker = useBlocker(({ currentLocation, nextLocation }) => dirty() &&
     `${currentLocation.pathname}${currentLocation.search}${currentLocation.hash}` !==
     `${nextLocation.pathname}${nextLocation.search}${nextLocation.hash}`);
+  const latestBlocker = useRef(blocker);
+  latestBlocker.current = blocker;
   const pending = useRef(false);
   pending.current = blocker.state === "blocked" || !!action;
   const isLeaving = useCallback(() => pending.current, []);
@@ -29,9 +35,17 @@ export function EditProtectionProvider({ children }: { children: ReactNode }) {
     return () => { editors.current.delete(key); };
   }, []);
   const requestLeave = useCallback((next: () => void) => {
-    if (dirty()) setAction(() => next);
+    if (dirty()) setAction({ generation: generation.current, run: next });
     else next();
   }, [dirty]);
+  const cancelPending = useCallback(() => {
+    generation.current++;
+    pending.current = false;
+    resolving.current = true;
+    setAction(null);
+    const current = latestBlocker.current;
+    if (current.state === "blocked") current.reset();
+  }, []);
   useEffect(() => {
     const beforeUnload = (event: BeforeUnloadEvent) => {
       if (!dirty()) return;
@@ -47,14 +61,11 @@ export function EditProtectionProvider({ children }: { children: ReactNode }) {
     if (dirty() || resolving.current) return;
     if (blocker.state === "blocked" || action) resolving.current = true;
     if (blocker.state === "blocked") blocker.proceed();
-    if (action) { setAction(null); action(); }
+    if (action) { setAction(null); if (action.generation === generation.current) action.run(); }
   }, [action, blocker, dirty, revision]);
-  const keepEditing = () => {
-    resolving.current = true;
-    if (blocker.state === "blocked") blocker.reset();
-    setAction(null);
-  };
+  const keepEditing = cancelPending;
   const saving = [...editors.current.values()].some(editor => editor.dirty() && editor.busy());
+  const attention = [...editors.current.values()].filter(editor => editor.dirty()).map(editor => editor.attention()).find(Boolean);
   const discard = () => {
     if (saving || resolving.current) return;
     resolving.current = true;
@@ -62,21 +73,24 @@ export function EditProtectionProvider({ children }: { children: ReactNode }) {
     const next = action;
     setAction(null);
     if (blocker.state === "blocked") blocker.proceed();
-    else next?.();
+    else if (next?.generation === generation.current) next.run();
   };
-  const value = useMemo(() => ({ register, changed, requestLeave, isLeaving }), [register, changed, requestLeave, isLeaving]);
+  const value = useMemo(() => ({ register, changed, requestLeave, isLeaving, cancelPending }), [register, changed, requestLeave, isLeaving, cancelPending]);
   return <Context.Provider value={value}>
     {children}
-    {(blocker.state === "blocked" || action) && <Modal title={saving ? "Saving is still in progress" : "Leave with unsaved changes?"} onClose={keepEditing} closeLabel="Keep editing">
-      <p>{saving ? "Wait for this save to finish before leaving this page." : "Your changes have not been saved. Stay here to finish, or discard them and continue."}</p>
-      {!saving && <button type="button" className="secondary" onClick={discard}>Discard changes and continue</button>}
+    {(blocker.state === "blocked" || action) && <Modal title={saving ? "Saving is still in progress" : attention ? "Lead created — review missing details" : "Leave with unsaved changes?"} onClose={keepEditing} closeLabel={attention && !saving ? "Stay here" : "Keep editing"}>
+      <p>{saving ? "Wait for this save to finish before leaving this page." : attention?.message ?? "Your changes have not been saved. Stay here to finish, or discard them and continue."}</p>
+      {!saving && <div className="form-actions">
+        {attention && <button type="button" className="primary" onClick={() => { cancelPending(); attention.review(); }}>Review the lead</button>}
+        <button type="button" className="secondary" onClick={discard}>{attention ? "Continue without fixing" : "Discard changes and continue"}</button>
+      </div>}
     </Modal>}
   </Context.Provider>;
 }
 
 export const useEditProtection = () => useContext(Context);
 
-export function useUnsavedChanges(dirty: boolean, options: { busy?: boolean; onDiscard?: () => void } = {}) {
+export function useUnsavedChanges(dirty: boolean, options: { busy?: boolean; onDiscard?: () => void; notice?: string; onReview?: () => void } = {}) {
   const context = useContext(Context);
   const key = useRef(Symbol("editor"));
   const latest = useRef({ dirty, ...options });
@@ -85,8 +99,9 @@ export function useUnsavedChanges(dirty: boolean, options: { busy?: boolean; onD
     dirty: () => latest.current.dirty,
     busy: () => !!latest.current.busy,
     discard: () => { latest.current.dirty = false; latest.current.onDiscard?.(); },
+    attention: () => latest.current.notice && latest.current.onReview ? { message: latest.current.notice, review: latest.current.onReview } : undefined,
   }), [context.register]);
-  useEffect(context.changed, [dirty, options.busy, context.changed]);
+  useEffect(context.changed, [dirty, options.busy, options.notice, context.changed]);
   const markClean = useCallback(() => { latest.current.dirty = false; context.changed(); }, [context.changed]);
   return { markClean, isLeaving: context.isLeaving };
 }

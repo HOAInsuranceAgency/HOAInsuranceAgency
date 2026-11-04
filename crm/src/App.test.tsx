@@ -1,4 +1,4 @@
-import { StrictMode, useState, type ReactNode } from "react";
+import { createContext, StrictMode, useContext, useState, type ReactNode } from "react";
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { createMemoryRouter, MemoryRouter, RouterProvider } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -15,7 +15,7 @@ const listLicenses = vi.hoisted(() => vi.fn());
 
 vi.mock("@aws-amplify/ui-react", () => ({
   Authenticator: { Provider: ({ children }: { children: ReactNode }) => children },
-  useAuthenticator: () => auth,
+  useAuthenticator: () => { useContext(AuthRerenderContext); return auth; },
 }));
 vi.mock("./lib/auth", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./lib/auth")>()),
@@ -84,6 +84,7 @@ import App from "./App";
 import { useIsAdmin, useIsOwner } from "./lib/auth";
 import { activeRoleHeaders } from "./lib/activeRole";
 import { EditProtectionProvider, useUnsavedChanges } from "./lib/editProtection";
+const AuthRerenderContext = createContext(0);
 
 const savedLicense = {
   id: "license-one", userProfileId: "profile-one", holderType: "PRODUCER",
@@ -93,9 +94,15 @@ const savedLicense = {
 const renderApp = (path = "/") =>
   render(<MemoryRouter initialEntries={[path]}><App /></MemoryRouter>);
 
-const renderProtectedApp = () => render(<RouterProvider router={createMemoryRouter([
-  { path: "*", element: <EditProtectionProvider><App /></EditProtectionProvider> },
-], { initialEntries: ["/leads"] })} />);
+const renderProtectedApp = () => {
+  const router = createMemoryRouter([
+    { path: "*", element: <EditProtectionProvider><App /></EditProtectionProvider> },
+  ], { initialEntries: ["/leads"] });
+  let version = 0;
+  const tree = () => <AuthRerenderContext.Provider value={version}><RouterProvider router={router} /></AuthRerenderContext.Provider>;
+  const view = render(tree());
+  return { ...view, refreshAuth: () => { version++; view.rerender(tree()); } };
+};
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -125,6 +132,38 @@ beforeEach(() => {
 });
 
 describe("session actions with unsaved changes", () => {
+  it.each(["sign-out", "role change"])("cancels a queued %s when a different user becomes authenticated", async kind => {
+    const view = renderProtectedApp();
+    const note = await screen.findByRole("textbox", { name: "Page note" });
+    fireEvent.change(note, { target: { value: "User one's draft" } });
+    if (kind === "sign-out") fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
+    else fireEvent.change(screen.getByRole("combobox", { name: "Active role" }), { target: { value: "PRODUCER" } });
+    await screen.findByRole("dialog");
+    auth.user = { userId: "user-two", username: "second@example.com" };
+    fetchUserGroups.mockResolvedValue(["STAFF"]);
+    listProfiles.mockResolvedValue({ data: [{ id: "profile-two", userId: "user-two", firstName: "Second", lastName: "User", npn: "12345678", onboardingComplete: true }] });
+    view.refreshAuth();
+    expect(await screen.findByRole("heading", { name: "My leads" })).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(auth.signOut).not.toHaveBeenCalled();
+    expect(sessionStorage.getItem("hoa-crm:active-role:user-one")).toBe("ADMIN");
+    expect(sessionStorage.getItem("hoa-crm:active-role:user-two")).toBe("STAFF");
+    expect(await activeRoleHeaders()).toEqual({ "x-crm-role": "STAFF" });
+  });
+
+  it("cancels a queued role change when fresh membership removes that role", async () => {
+    renderProtectedApp();
+    fireEvent.change(await screen.findByRole("textbox", { name: "Page note" }), { target: { value: "Draft" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "Active role" }), { target: { value: "PRODUCER" } });
+    await screen.findByRole("dialog");
+    fetchUserGroups.mockResolvedValue(["ADMIN"]);
+    act(() => window.dispatchEvent(new Event("team-roles-changed")));
+    expect(await screen.findByRole("heading", { name: "All leads" })).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Active role" })).not.toBeInTheDocument();
+    expect(await activeRoleHeaders()).toEqual({ "x-crm-role": "ADMIN" });
+  });
+
   it("keeps the session and recovery draft on cancel, then clears drafts before explicit sign-out", async () => {
     renderProtectedApp();
     const note = await screen.findByRole("textbox", { name: "Page note" });

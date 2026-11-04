@@ -26,7 +26,7 @@ import {
   PhoneInput,
 } from "../components/inputs";
 import { useFormState } from "../lib/useFormState";
-import { useUnsavedChanges } from "../lib/editProtection";
+import { useEditProtection, useUnsavedChanges } from "../lib/editProtection";
 import { useNewLeadDraft } from "../lib/newLeadDraft";
 import { str } from "../lib/formCodec";
 import { contactKey } from "../lib/extractionKeys";
@@ -63,6 +63,8 @@ export default function NewLead() {
   const [stagedFiles, setStagedFiles] = useState<File[]>([]);
   // Set once the lead exists — pressing Create again would duplicate it.
   const [createdId, setCreatedId] = useState<string | null>(null);
+  const [needsReview, setNeedsReview] = useState(false);
+  const { cancelPending } = useEditProtection();
   const [recovered, setRecovered] = useState(false);
   const { form, setF, patch, dirty, reset } = useFormState({
     type: DEFAULT_ACCOUNT_TYPE as string,
@@ -86,14 +88,24 @@ export default function NewLead() {
   const extraDirty = relatedParty !== initialRelatedParty.current || relationshipRole !== "MANAGER" ||
     salespersonEdited.current && salespersonId !== initialSalesperson.current;
   const draft = useNewLeadDraft(form, requestId.current, stagedFiles.length, (dirty || stagedFiles.length > 0) && !created.current);
-  const { markClean, isLeaving } = useUnsavedChanges(saving || (!created.current && (dirty || extraDirty || stagedFiles.length > 0)), {
+  const { markClean, isLeaving } = useUnsavedChanges(saving || needsReview || (!created.current && (dirty || extraDirty || stagedFiles.length > 0)), {
     busy: saving,
+    notice: needsReview ? error : undefined,
+    onReview: () => reviewCreatedLead(),
     onDiscard: () => {
+      setNeedsReview(false);
+      if (created.current) return;
       reset(); setStagedFiles([]); setRelatedParty(initialRelatedParty.current);
       setRelationshipRole("MANAGER"); setSalesperson(initialSalesperson.current);
       salespersonEdited.current = false; setRecovered(false); draft.clear();
     },
   });
+  function reviewCreatedLead() {
+    const id = created.current;
+    if (!id) return;
+    cancelPending(); setNeedsReview(false); markClean();
+    navigate(relatedParty && relationshipRole === 'MANAGER' ? `/accounts/${id}?management=1&partyId=${encodeURIComponent(relatedParty)}` : `/accounts/${id}?tab=documents`);
+  }
 
   function focusField(id: string) {
     const field = formRef.current?.querySelector<HTMLElement>(`#${id}`);
@@ -225,8 +237,6 @@ export default function NewLead() {
 
     savingNow.current = false;
     if (!mounted.current) return;
-    setSaving(false);
-    markClean();
     const afterCreate: string[] = [];
     if (failedUploads.length) {
       const many = failedUploads.length > 1;
@@ -243,9 +253,13 @@ export default function NewLead() {
     if (relationshipFailed) afterCreate.push("the relationship wasn't linked. Open the lead and use Link relationship to retry.");
     if (afterCreate.length) {
       setCreatedId(data.id);
+      setNeedsReview(true);
       setError(`The lead was created, but ${afterCreate.join(" Also, ")}`);
+      setSaving(false);
       return;
     }
+    setSaving(false);
+    markClean();
     // Land on Documents so OCR completes and AI extraction is the next step.
     if (isLeaving()) return;
     navigate(relatedParty && relationshipRole === 'MANAGER'
@@ -412,7 +426,7 @@ export default function NewLead() {
           <span className="new-lead-hint">{createdId ? "Your lead is ready to open." : "Only name and lead source are required."}</span>
           <div className="new-lead-action-buttons">
           {createdId ? (
-            <button type="button" className="primary" onClick={() => navigate(relatedParty && relationshipRole === 'MANAGER' ? `/accounts/${createdId}?management=1&partyId=${encodeURIComponent(relatedParty)}` : `/accounts/${createdId}?tab=documents`)}>
+            <button type="button" className="primary" onClick={reviewCreatedLead}>
               Go to the lead
             </button>
           ) : (

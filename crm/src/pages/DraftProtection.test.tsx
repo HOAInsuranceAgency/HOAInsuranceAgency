@@ -1,11 +1,11 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { createMemoryRouter, Link, Outlet, RouterProvider, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { beforeEach, expect, it, vi } from "vitest";
-import { EditProtectionProvider } from "../lib/editProtection";
+import { EditProtectionProvider, useEditProtection } from "../lib/editProtection";
 import { LeadDraftScope } from "../lib/newLeadDraft";
 import type { Account } from "../lib/client";
 
-const mocks = vi.hoisted(() => ({ request: vi.fn(), update: vi.fn(), upload: vi.fn() }));
+const mocks = vi.hoisted(() => ({ request: vi.fn(), update: vi.fn(), upload: vi.fn(), leaveSession: vi.fn() }));
 vi.mock("../lib/relationships", () => ({ loadPartyIds: async () => [], searchParties: async () => ({ items: [] }) }));
 vi.mock("../lib/communications", () => ({ communicationRequest: mocks.request }));
 vi.mock("../components/LeadWorkflowPanel", () => ({ ResponsibilitySelect: () => null }));
@@ -20,11 +20,15 @@ import NewLead from "./NewLead";
 import { OverviewTab } from "./account/OverviewTab";
 
 const account = { id: "one", name: "Harbor HOA", stage: "LEAD", type: "ASSOCIATION" } as Account;
+function SessionAction() {
+  const { requestLeave } = useEditProtection();
+  return <button onClick={() => requestLeave(mocks.leaveSession)}>Leave session</button>;
+}
 function Layout({ userId = "one", role = "ADMIN" }: { userId?: string; role?: "ADMIN" | "PRODUCER" }) {
   const navigate = useNavigate();
   const location = useLocation();
   return <EditProtectionProvider><LeadDraftScope userId={userId} role={role}>
-    <Link to="/elsewhere">Other page</Link><button onClick={() => navigate(-1)}>Browser Back</button>
+    <Link to="/elsewhere">Other page</Link><button onClick={() => navigate(-1)}>Browser Back</button><SessionAction />
     <output aria-label="Location">{location.pathname}{location.search}</output><Outlet />
   </LeadDraftScope></EditProtectionProvider>;
 }
@@ -51,6 +55,7 @@ beforeEach(() => {
   mocks.request.mockReset().mockImplementation(async operation => operation === "team" ? { team: [] } : { id: "new-lead" });
   mocks.update.mockReset().mockImplementation(async fields => ({ data: { ...account, ...fields } }));
   mocks.upload.mockReset().mockReturnValue({ result: Promise.resolve() });
+  mocks.leaveSession.mockReset();
 });
 
 it("blocks route navigation and browser Back for an edited lead; Keep editing retains it and discard clears recovery", async () => {
@@ -225,4 +230,34 @@ it("still holds navigation when Overview fields are reverted while an earlier sa
   fireEvent.click(screen.getByRole("button", { name: "Discard changes and continue" }));
   await screen.findByRole("heading", { name: "Other page" });
   expect(mocks.update).toHaveBeenCalledTimes(1);
+});
+
+it.each(["review", "continue", "session"])("requires acknowledgement of a failed attachment before completing a queued leave (%s)", async choice => {
+  let failUpload!: (error: Error) => void;
+  mocks.upload.mockReturnValue({ result: new Promise((_resolve, reject) => { failUpload = reject; }) });
+  const view = mount(); typeName("Harbor");
+  fireEvent.change(screen.getByLabelText("Lead source *"), { target: { value: "ORGANIC_WEBSITE" } });
+  fireEvent.change(screen.getByLabelText("Add documents…"), { target: { files: [new File(["contents"], "policy.pdf", { type: "application/pdf" })] } });
+  fireEvent.click(screen.getByRole("button", { name: /Create lead & upload/ }));
+  await waitFor(() => expect(mocks.upload).toHaveBeenCalled());
+  if (choice === "session") fireEvent.click(screen.getByRole("button", { name: "Leave session" }));
+  else fireEvent.click(screen.getByRole("link", { name: "Other page" }));
+  await screen.findByRole("dialog", { name: "Saving is still in progress" });
+  await act(async () => { failUpload(new Error("Upload failed")); });
+  const notice = await screen.findByRole("dialog", { name: "Lead created — review missing details" });
+  expect(notice).toHaveTextContent("The lead was created, but 1 document didn't upload: policy.pdf");
+  expect(view.router.state.location.pathname).toBe("/leads/new");
+  expect(mocks.leaveSession).not.toHaveBeenCalled();
+  expect(drafts()).toEqual([]);
+  expect(screen.queryByRole("button", { name: /Create lead/ })).not.toBeInTheDocument();
+  if (choice === "review") {
+    fireEvent.click(screen.getByRole("button", { name: "Review the lead" }));
+    await screen.findByRole("heading", { name: "Created account" });
+    expect(view.router.state.location.pathname).toBe("/accounts/new-lead");
+  } else {
+    fireEvent.click(screen.getByRole("button", { name: "Continue without fixing" }));
+    if (choice === "session") expect(mocks.leaveSession).toHaveBeenCalledTimes(1);
+    else await screen.findByRole("heading", { name: "Other page" });
+  }
+  expect(mocks.request.mock.calls.filter(([operation]) => operation === "createLead")).toHaveLength(1);
 });
