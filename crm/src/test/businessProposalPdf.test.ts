@@ -51,6 +51,7 @@ it.each([
   expect(all).toContain('Conditions and requirements');
   expect(all).toContain('signed statement of values required before binding');
   expect(all).toContain('Agency billed - pay HOA Insurance Agency');
+  expect(all).toContain('Agency compensation:');
   expect(all).not.toContain('HOA broker fee:');
   expect(all).not.toContain('separate signed fee agreement');
 });

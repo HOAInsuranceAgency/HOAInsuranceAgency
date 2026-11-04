@@ -202,7 +202,7 @@ export const handler = async (event: {
           }
           console.warn(`[void-invoice] link ${linkId} already gone at Stripe`);
         }
-        if (invoice.hasBrokerFee || invoice.sourcePricingVersion === 1) {
+        if (invoice.hasBrokerFee || [1,2].includes(Number(invoice.sourcePricingVersion))) {
           // Deactivating a Payment Link does not close sessions already opened
           // from it. Close every unsubmitted source-packet checkout before
           // releasing its accepted terms for an updated quote and invoice.

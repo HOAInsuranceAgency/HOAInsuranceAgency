@@ -4,7 +4,7 @@ import {
   encodeHeader,
 } from "../../amplify/functions/send-invoice/mime";
 import { pdfFilename } from "../../amplify/functions/send-invoice/pdf";
-import { invoiceTerms } from "../../amplify/functions/send-invoice/invoice";
+import { invoiceTerms, type InvoiceView } from "../../amplify/functions/send-invoice/invoice";
 
 const boundaries = { mixed: "MIXEDBOUNDARY", alternative: "ALTBOUNDARY" };
 
@@ -247,7 +247,7 @@ describe("the invoice PDF", () => {
    * writes every string as a hex literal — `<544f54414c>` rather than
    * `(TOTAL)` — so those are decoded too. What comes back is the text as drawn.
    */
-  const text = async (overrides: { coverageBound?: boolean } = {}) => {
+  const text = async (overrides: Partial<InvoiceView> = {}) => {
     const { inflateSync } = await import("node:zlib");
     const { renderInvoicePdf } = await import("../../amplify/functions/send-invoice/pdf");
     const buf = Buffer.from(await renderInvoicePdf({ ...view, ...overrides } as never));
@@ -290,6 +290,15 @@ describe("the invoice PDF", () => {
     for (const want of ["25,000.00", "1,000.00", "26,000.00", "TOTAL DUE"]) {
       expect(pdf, want).toContain(want);
     }
+  });
+  it.each([-500, 0])('does not request cash for a credit or zero balance PDF (%s)', async amount => {
+    const pdf = await text({ lines: [{ description: 'Audit premium adjustment', kind: 'ENDORSEMENT', retailAmount: amount, costAmount: amount }] });
+    expect(pdf).toContain(amount < 0 ? 'TOTAL CREDIT' : 'NO PAYMENT DUE');
+    expect(pdf).toContain('No payment');
+    expect(pdf).not.toContain('PAYMENT INSTRUCTIONS');
+    expect(pdf).not.toContain('Make checks payable');
+    expect(pdf).not.toContain('buy.stripe.com');
+    expect(pdf).not.toContain('Due Date:');
   });
 
   it("shows no cost and no margin, anywhere", async () => {

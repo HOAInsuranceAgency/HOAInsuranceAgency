@@ -64,7 +64,8 @@ describe('source-backed supplier invoice charges', () => {
   it('retains an unflagged issued manual invoice snapshot when source charges are recorded later', () => {
     const legacyRows = [{ kind: 'PREMIUM', retailAmount: 50000, costAmount: 45000 }, { accountId: 'a', kind: 'TAX', retailAmount: 2000, costAmount: 2000 }];
     expect(()=>validateInvoiceSourceCharges({invoice:{...invoice,status:'SENT'},source:{...source,premium:50000},lines:legacyRows})).not.toThrow();
-    expect(()=>validateInvoiceSourceCharges({invoice:{...invoice,status:'DRAFT'},source:{...source,premium:50000},lines:legacyRows})).toThrow();
+    expect(()=>validateInvoiceSourceCharges({invoice:{...invoice,status:'DRAFT'},source:{...source,premium:50000},lines:legacyRows})).not.toThrow();
+    expect(()=>validateInvoiceSourceCharges({invoice:{...invoice,status:'DRAFT',sourcePricingVersion:1},source:{...source,premium:50000},lines:legacyRows})).toThrow();
   });
   it('fences the full initial gross price, including the reported overcharge regression', () => {
     const initial = { ...invoice, sourcePricingVersion: 1 }, initialSource = { ...source, premium: 50000, billType: 'AGENCY' };
@@ -80,13 +81,13 @@ describe('source-backed supplier invoice charges', () => {
     expect(() => validateInvoiceSourceCharges({ invoice: { ...invoice, sourcePricingVersion: 1 }, source: { accountId: 'a', premium: 50000 }, lines: [{ kind: 'PREMIUM', retailAmount: 50000, costAmount: null }] })).toThrow('actual carrier or wholesaler');
   });
   it('accepts the exact gross premium with reviewed supplier remittance and sourced pass-through rows', () => {
-    expect(() => validateInvoiceSourceCharges({ invoice, source, lines: [{ accountId: 'a', kind: 'PREMIUM', retailAmount: 50000, costAmount: 45000 }, ...lines] })).not.toThrow();
+    expect(() => validateInvoiceSourceCharges({ invoice:{...invoice,sourcePricingVersion:1}, source:{...source,premium:50000}, lines: [{ accountId: 'a', kind: 'PREMIUM', retailAmount: 50000, costAmount: 45000 }, ...lines] })).not.toThrow();
   });
   it('rejects missing, duplicate, extra and stale source charges, including on a sent invoice retry', () => {
-    for (const altered of [lines.slice(1), [...lines, lines[0]], [...lines, { ...lines[0], sourceQuoteChargeId: 'unquoted' }], [{ ...lines[0], retailAmount: 600, costAmount: 600 }, ...lines.slice(1)]]) expect(() => validateInvoiceSourceCharges({ invoice, source, lines: altered })).toThrow();
+    for (const altered of [lines.slice(1), [...lines, lines[0]], [...lines, { ...lines[0], sourceQuoteChargeId: 'unquoted' }], [{ ...lines[0], retailAmount: 600, costAmount: 600 }, ...lines.slice(1)]]) expect(() => validateInvoiceSourceCharges({ invoice:{...invoice,sourcePricingVersion:1}, source:{...source,billType:'DIRECT'}, lines: altered })).toThrow();
   });
   it.each([{ accountId: 'other' }, { kind: 'OTHER' }, { description: 'Agency fee' }, { costAmount: 0 }, { sourceQuoteChargeId: null }])('rejects altered source line %j', patch => {
-    expect(() => validateInvoiceSourceCharges({ invoice, source, lines: [{ ...lines[0], ...patch }, ...lines.slice(1)] })).toThrow();
+    expect(() => validateInvoiceSourceCharges({ invoice:{...invoice,sourcePricingVersion:1}, source:{...source,billType:'DIRECT'}, lines: [{ ...lines[0], ...patch }, ...lines.slice(1)] })).toThrow();
   });
   it('rejects a source from a different account and a malformed stored charge list', () => {
     expect(() => validateInvoiceSourceCharges({ invoice, source: { ...source, accountId: 'other' }, lines })).toThrow('different account');
@@ -94,13 +95,20 @@ describe('source-backed supplier invoice charges', () => {
   });
   it('preserves legacy tax billing when saving an unchanged empty source list', () => {
     expect(() => validateInvoiceSourceCharges({ invoice, source: { ...source, passThroughCharges: [] }, lines: [{ accountId: 'a', kind: 'TAX', retailAmount: 100, costAmount: 100 }] })).not.toThrow();
-    expect(() => validateInvoiceSourceCharges({ invoice, source: { ...source, passThroughCharges: [] }, lines: [{ accountId: 'a', kind: 'CARRIER_FEE', retailAmount: 100, costAmount: 100 }] })).toThrow('reviewed source');
+    expect(() => validateInvoiceSourceCharges({ invoice, source: { ...source, passThroughCharges: [] }, lines: [{ accountId: 'a', kind: 'CARRIER_FEE', retailAmount: 100, costAmount: 100 }] })).not.toThrow();
+    expect(() => validateInvoiceSourceCharges({ invoice:{...invoice,sourcePricingVersion:1}, source: { ...source, billType:'DIRECT',passThroughCharges: [] }, lines: [{ accountId: 'a', kind: 'CARRIER_FEE', retailAmount: 100, costAmount: 100 }] })).toThrow('reviewed source');
   });
   it('retains legacy unanchored tax lines at actual cost without permitting supplier fee markup', () => {
     const legacyTax = { accountId: 'a', kind: 'TAX', retailAmount: 100, costAmount: 100 };
     expect(() => validateInvoiceSourceCharges({ invoice, source: { accountId: 'a' }, lines: [legacyTax] })).not.toThrow();
     expect(() => validateInvoiceSourceCharges({ invoice, source: { accountId: 'a' }, lines: [{ ...legacyTax, costAmount: 99 }] })).toThrow('without agency markup');
-    expect(() => validateInvoiceSourceCharges({ invoice, source: { accountId: 'a' }, lines: [{ ...legacyTax, kind: 'WHOLESALER_FEE' }] })).toThrow('reviewed source');
+    expect(() => validateInvoiceSourceCharges({ invoice, source: { accountId: 'a' }, lines: [{ ...legacyTax, kind: 'WHOLESALER_FEE' }] })).not.toThrow();
+    expect(() => validateInvoiceSourceCharges({ invoice, source: { accountId: 'a' }, lines: [{ ...legacyTax, kind: 'WHOLESALER_FEE',costAmount:0 }] })).toThrow('without agency markup');
+  });
+  it('checks each anchored legacy row independently without pulling the whole current source schedule into a draft adjustment',()=>{
+    const legacyLines=[{accountId:'a',kind:'ENDORSEMENT',retailAmount:1000,costAmount:800},lines[0],{accountId:'a',kind:'TAX',retailAmount:40,costAmount:40}];
+    expect(()=>validateInvoiceSourceCharges({invoice:{...invoice,status:'DRAFT'},source,lines:legacyLines})).not.toThrow();
+    expect(()=>validateInvoiceSourceCharges({invoice:{...invoice,status:'DRAFT'},source,lines:[{...lines[0],retailAmount:600,costAmount:600}]})).toThrow('differs');
   });
   it.each([null, undefined])('requires reviewed premium cost instead of treating %s as agency revenue', costAmount => {
     expect(() => validateInvoiceSourceCharges({ invoice, source: null, lines: [{ kind: 'PREMIUM', retailAmount: 50000, costAmount }] })).toThrow('actual carrier or wholesaler');

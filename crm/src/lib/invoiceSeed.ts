@@ -1,5 +1,7 @@
 import { brokerFeeCents } from "../../../shared/brokerFees";
 import { normalizePassThroughCharges } from "../../../shared/passThroughCharges";
+import { isPaidOriginalPremium } from "../../../shared/invoiceAdjustments";
+import { isNonpayableAdjustmentStatement, type InvoicePaymentStatus } from "../../../shared/invoicePaymentStatus";
 /**
  * What a new invoice should already contain.
  *
@@ -64,7 +66,7 @@ export function unbilledAgencyPolicies<T extends PolicyLike>(
 }
 
 /** The invoice fields the busy-anchor rule reads. */
-export interface InvoiceAnchorLike {
+export interface InvoiceAnchorLike extends InvoicePaymentStatus {
   id: string;
   status?: string | null;
   policyId?: string | null;
@@ -85,7 +87,7 @@ export function liveAnchorIds(
 ): Set<string> {
   const live = new Set(
     invoices
-      .filter((i) => ["DRAFT", "SENT", "PROCESSING"].includes(i.status ?? ""))
+      .filter((i) => ["DRAFT", "SENT", "PROCESSING"].includes(i.status ?? "") && !isNonpayableAdjustmentStatement(i))
       .map((i) => i.id)
   );
   const busy = new Set<string>();
@@ -177,3 +179,23 @@ export function passThroughLinesFromSource(source: { billType?: string | null; p
 
 /** Retrying partial seeding addresses the same row instead of adding a duplicate. */
 export const sourceChargeLineId = (invoiceId: string, chargeId: string) => `invoice:${invoiceId}:charge:${chargeId}`;
+
+/** The same policy picker creates later adjustments after its original bill is paid. */
+export function findAdjustmentOriginal(
+  policy: Parameters<typeof isPaidOriginalPremium>[0],
+  invoices: readonly (Parameters<typeof isPaidOriginalPremium>[1] & { createdAt?: string | null; issuedAt?: string | null })[],
+  lines: readonly Parameters<typeof isPaidOriginalPremium>[2][],
+) {
+  const premiumsByInvoice = new Map<string, Parameters<typeof isPaidOriginalPremium>[2][]>();
+  for (const line of lines) {
+    if (line.kind !== "PREMIUM") continue;
+    const own = premiumsByInvoice.get(line.invoiceId) ?? [];
+    own.push(line); premiumsByInvoice.set(line.invoiceId, own);
+  }
+  const ordered = [...invoices].sort((a, b) => (a.issuedAt ?? a.createdAt ?? '').localeCompare(b.issuedAt ?? b.createdAt ?? '') || a.id.localeCompare(b.id));
+  for (const invoice of ordered) {
+    const premium = (premiumsByInvoice.get(invoice.id) ?? []).filter(line => isPaidOriginalPremium(policy, invoice, line)).sort((a, b) => a.id.localeCompare(b.id))[0];
+    if (premium) return { adjustsInvoiceId: invoice.id, adjustsPremiumLineId: premium.id };
+  }
+  return null;
+}

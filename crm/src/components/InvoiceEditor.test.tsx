@@ -3,7 +3,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 import type { Contact, Invoice, InvoiceLine } from "../lib/client";
-const h = vi.hoisted(() => ({ list: vi.fn(), update: vi.fn(), lineUpdate: vi.fn(), lineCreate: vi.fn(), lineDelete: vi.fn(), sourceGet: vi.fn(), get: vi.fn(), send: vi.fn(), voidInvoice: vi.fn(), change: vi.fn(), linesChange: vi.fn(), feeAction: vi.fn() }));
+const h = vi.hoisted(() => ({ list: vi.fn(), update: vi.fn(), lineUpdate: vi.fn(), lineCreate: vi.fn(), lineDelete: vi.fn(), sourceGet: vi.fn(), get: vi.fn(), send: vi.fn(), voidInvoice: vi.fn(), change: vi.fn(), linesChange: vi.fn(), feeAction: vi.fn(), financeHint: vi.fn() }));
 vi.mock("../lib/client", () => ({
   client: { models: {
     Invoice: { update: h.update, get: h.get, delete: vi.fn() },
@@ -12,7 +12,7 @@ vi.mock("../lib/client", () => ({
   }, mutations: { sendInvoice: h.send, voidInvoice: h.voidInvoice, brokerFeeAction: h.feeAction } },
   friendlyError: (e: unknown, fallback: string) => e instanceof Error ? e.message || fallback : fallback,
 }));
-vi.mock("./FinanceOfferHint", () => ({ FinanceOfferHint: () => null }));
+vi.mock("./FinanceOfferHint", () => ({ FinanceOfferHint: h.financeHint }));
 import InvoiceEditor from "./InvoiceEditor";
 const initial = { id: "inv-1", accountId: "a1", number: "INV-1", status: "DRAFT", issuedAt: "2026-10-01", dueAt: "2026-10-15", memo: "Original memo" } as Invoice;
 const line = { id: "line-1", invoiceId: initial.id, accountId: "a1", kind: "PREMIUM", description: "Premium", retailAmount: 100, costAmount: 80, sortOrder: 0 } as InvoiceLine;
@@ -26,6 +26,7 @@ function Harness() {
 function deferred() { let resolve!: () => void; const promise = new Promise<void>(done => { resolve = done; }); return { promise, resolve }; }
 beforeEach(() => {
   vi.resetAllMocks(); stored = { ...initial }; storedLine = { ...line };
+  h.financeHint.mockReturnValue(null);
   h.list.mockResolvedValue({ data: [line] });
   h.update.mockImplementation(async patch => { stored = { ...stored, ...patch }; return { data: { ...stored } }; });
   h.lineUpdate.mockImplementation(async patch => { storedLine = { ...storedLine, ...patch }; return { data: { ...storedLine } }; });
@@ -245,12 +246,109 @@ it('reconciles a partial draft from fresh source charges and preserves reviewed 
   expect(h.linesChange).toHaveBeenLastCalledWith(initial.id, expect.arrayContaining([expect.objectContaining({ sourceQuoteChargeId: 'tax', retailAmount: 10, costAmount: 10 })]));
 });
 
-it.each([{ status: 'SENT' }, { status: 'DRAFT', stripePaymentLinkId: 'pl-issued' }])('preserves issued source-priced lines for $status invoices', async state => {
-  render(<InvoiceEditor invoice={{ ...initial, ...state, quoteId: 'q', sourcePricingVersion: 1 } as Invoice} policies={[]} quotes={[]} account={null} contacts={contacts} onChange={h.change} onLinesChange={h.linesChange} onDeleted={vi.fn()} />);
+it.each([{ status: 'SENT', sourcePricingVersion: 1 }, { status: 'DRAFT', stripePaymentLinkId: 'pl-issued', sourcePricingVersion: 1 },
+  { status: 'SENT', sourcePricingVersion: 2 }, { status: 'DRAFT', stripePaymentLinkId: 'pl-issued', sourcePricingVersion: 2 }])('preserves issued source-priced lines for $status version$sourcePricingVersion invoices', async state => {
+  render(<InvoiceEditor invoice={{ ...initial, ...state, quoteId: 'q' } as Invoice} policies={[]} quotes={[]} account={null} contacts={contacts} onChange={h.change} onLinesChange={h.linesChange} onDeleted={vi.fn()} />);
   expect(await screen.findByLabelText('Costs the agency')).toBeDisabled();
   expect(screen.getByText('Void this invoice before changing its charges.')).toBeVisible();
   expect(h.sourceGet).not.toHaveBeenCalled();
   expect(h.lineUpdate).not.toHaveBeenCalled();
+});
+
+it('edits only actual adjustment deltas and at-cost supplier amounts without refreshing original policy charges', async () => {
+  let rows = [{ ...line, kind: 'ENDORSEMENT', description: 'Endorsement or audit adjustment', retailAmount: null, costAmount: null }] as InvoiceLine[];
+  h.list.mockImplementation(async () => ({ data: structuredClone(rows) }));
+  h.lineCreate.mockImplementation(async input => { const row = { ...input, id: `delta-${rows.length}` }; rows.push(row); return { data: row }; });
+  h.lineUpdate.mockImplementation(async patch => { rows = rows.map(row => row.id === patch.id ? { ...row, ...patch } : row); return { data: rows.find(row => row.id === patch.id) }; });
+  render(<InvoiceEditor invoice={{ ...initial, policyId: 'p', sourcePricingVersion: 2, adjustsInvoiceId: 'paid', adjustsPremiumLineId: 'paid-premium' } as Invoice}
+    policies={[{ id: 'p', accountId: 'a1', premium: 55541, brokerFee: 500, billType: 'AGENCY', passThroughCharges: JSON.stringify([{ id: 'tax', kind: 'SURPLUS_LINES', description: 'Original tax', amountCents: 222164 }]) } as import('../lib/client').Policy]}
+    quotes={[]} account={{ id: 'a1', state: 'MA' } as import('../lib/client').Account} contacts={contacts} onChange={h.change} onLinesChange={h.linesChange} onDeleted={vi.fn()} />);
+  const amount = await screen.findByLabelText('Bills the association');
+  expect(amount).toBeEnabled();
+  expect(screen.getByLabelText('Kind')).toBeEnabled();
+  expect(screen.getAllByRole('option').map(option => option.getAttribute('value'))).toEqual(['ENDORSEMENT', 'CARRIER_FEE', 'WHOLESALER_FEE', 'TAX', 'SURPLUS_LINES', 'STAMPING_FEE']);
+  expect(screen.getByRole('button', { name: 'Send invoice' })).toBeDisabled();
+  fireEvent.change(amount, { target: { value: '1000' } });
+  fireEvent.change(screen.getByLabelText('Costs the agency'), { target: { value: '800' } });
+  fireEvent.blur(screen.getByLabelText('Costs the agency'));
+  await waitFor(() => expect(rows[0]).toMatchObject({ retailAmount: 1000, costAmount: 800 }));
+  await userEvent.click(screen.getByRole('button', { name: 'Add adjustment line' }));
+  await waitFor(() => expect(screen.getAllByLabelText('Description')).toHaveLength(2));
+  const added = screen.getAllByLabelText('Description')[1].closest('tr')! as HTMLElement;
+  await userEvent.selectOptions(within(added).getByLabelText('Kind'), 'TAX');
+  fireEvent.change(within(added).getByLabelText('Bills the association'), { target: { value: '100' } });
+  fireEvent.blur(within(added).getByLabelText('Bills the association'));
+  await waitFor(() => expect(rows.find(row => row.kind === 'TAX')).toMatchObject({ retailAmount: 100, costAmount: 100 }));
+  expect(within(added).getByLabelText('Costs the agency')).toBeDisabled();
+  expect(screen.getByText('$1,100.00')).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Send invoice' })).toBeEnabled();
+  expect(h.sourceGet).not.toHaveBeenCalled();
+  expect(h.feeAction).not.toHaveBeenCalled();
+  expect(h.financeHint).not.toHaveBeenCalled();
+  expect(rows.every(row => ['ENDORSEMENT', 'TAX'].includes(row.kind!))).toBe(true);
+});
+
+it('allows a signed credit adjustment with the matching actual supplier credit', async () => {
+  h.list.mockResolvedValue({ data: [{ ...line, kind: 'ENDORSEMENT', description: 'Audit credit', retailAmount: -100, costAmount: -80 }] });
+  render(<InvoiceEditor invoice={{ ...initial, policyId: 'p', sourcePricingVersion: 2 } as Invoice} policies={[]} quotes={[]} account={null} contacts={contacts} onChange={h.change} onLinesChange={h.linesChange} onDeleted={vi.fn()} />);
+  expect(await screen.findByDisplayValue('Audit credit')).toBeEnabled();
+  expect(screen.getByRole('button', { name: 'Send invoice' })).toBeEnabled();
+  expect(screen.getByText('-$100.00')).toBeVisible();
+  expect(h.sourceGet).not.toHaveBeenCalled();
+});
+
+it('repairs a missing adjustment seed without loading or copying original premium or fees', async () => {
+  h.list.mockResolvedValue({ data: [] });
+  h.lineCreate.mockImplementation(async row => ({ data: row }));
+  render(<InvoiceEditor invoice={{ ...initial, policyId: 'p', sourcePricingVersion: 2 } as Invoice} policies={[]} quotes={[]} account={null} contacts={contacts} onChange={h.change} onLinesChange={h.linesChange} onDeleted={vi.fn()} />);
+  expect(await screen.findByLabelText('Description')).toHaveValue('Endorsement or audit adjustment');
+  expect(h.lineCreate).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ id: 'invoice:inv-1:adjustment', kind: 'ENDORSEMENT', retailAmount: null, costAmount: null }));
+  expect(h.sourceGet).not.toHaveBeenCalled();
+  expect(h.feeAction).not.toHaveBeenCalled();
+});
+
+it('opens and sends an unflagged legacy adjustment draft without replacing it with current full-term charges', async () => {
+  const originalLines = [
+    { ...line, kind: 'ENDORSEMENT', policyId: 'p', description: 'Existing endorsement', retailAmount: 1000, costAmount: 800 },
+    { ...line, id: 'legacy-tax', kind: 'TAX', policyId: 'p', description: 'Existing tax adjustment', retailAmount: 40, costAmount: 40 },
+  ];
+  h.list.mockResolvedValue({ data: originalLines });
+  h.sourceGet.mockResolvedValue({ data: { id: 'p', accountId: 'a1', premium: 55541, billType: 'AGENCY', brokerFee: 500, passThroughCharges: JSON.stringify([
+    { id: 'whole-term-fee', kind: 'WHOLESALER_FEE', description: 'Current full-term supplier charge', amountCents: 25000 },
+    { id: 'whole-term-tax', kind: 'SURPLUS_LINES', description: 'Current full-term tax', amountCents: 222164 },
+  ]) } });
+  render(<InvoiceEditor invoice={{ ...initial, policyId: 'p' } as Invoice}
+    policies={[{ id: 'p', accountId: 'a1', premium: 55541, billType: 'AGENCY', brokerFee: 500 } as import('../lib/client').Policy]}
+    quotes={[]} account={null} contacts={contacts} onChange={h.change} onLinesChange={h.linesChange} onDeleted={vi.fn()} />);
+  expect(await screen.findByDisplayValue('Existing endorsement')).toBeEnabled();
+  expect(screen.getByText('$1,040.00')).toBeVisible();
+  expect(h.linesChange).toHaveBeenLastCalledWith(initial.id, originalLines);
+  expect(h.sourceGet).not.toHaveBeenCalled();
+  expect(h.lineCreate).not.toHaveBeenCalled();
+  expect(h.lineUpdate).not.toHaveBeenCalled();
+  expect(h.lineDelete).not.toHaveBeenCalled();
+  expect(h.feeAction).not.toHaveBeenCalled();
+  await userEvent.click(screen.getByRole('button', { name: 'Send invoice' }));
+  await waitFor(() => expect(h.send).toHaveBeenCalledTimes(1));
+  expect(h.sourceGet).not.toHaveBeenCalled();
+  expect(h.feeAction).not.toHaveBeenCalled();
+  expect(h.lineCreate).not.toHaveBeenCalled();
+  expect(h.lineUpdate).not.toHaveBeenCalled();
+});
+
+it.each([-100, 0])('does not offer an incoming cash receipt for a sent adjustment statement totaling $%s', async total => {
+  h.list.mockResolvedValue({ data: [
+    { ...line, kind: 'ENDORSEMENT', description: 'Audit credit', retailAmount: -100, costAmount: -80 },
+    ...(total === 0 ? [{ ...line, id: 'offset', kind: 'ENDORSEMENT', description: 'Offsetting premium', retailAmount: 100, costAmount: 80 }] : []),
+  ] });
+  render(<InvoiceEditor invoice={{ ...initial, status: 'SENT', sentAt: '2026-11-04T20:00:00Z', policyId: 'p', sourcePricingVersion: 2,
+    remittanceCarrierCents: total * 80, remittanceCommissionCents: total * 20, remittanceBrokerFeeCents: 0, remittanceInterestCents: 0 } as Invoice}
+    policies={[]} quotes={[]} account={null} contacts={contacts} onChange={h.change} onLinesChange={h.linesChange} onDeleted={vi.fn()} />);
+  await screen.findByDisplayValue('Audit credit');
+  expect(screen.queryByRole('button', { name: 'Mark paid' })).not.toBeInTheDocument();
+  expect(screen.getByText(/no incoming payment is due/)).toBeVisible();
+  expect(screen.getByText('SENT')).toBeVisible();
+  expect(h.feeAction).not.toHaveBeenCalled();
 });
 
 it.each([0, 50000])('repairs a missing HOA fee without charging a previously collected balance of %s cents again', async collectedCents => {

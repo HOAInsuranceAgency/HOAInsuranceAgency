@@ -1,12 +1,17 @@
 import { assertBrokerFeeAgencyBilling, brokerFeeCents, type BrokerFeeAllocation } from '../../../../shared/brokerFees';
 interface Source { accountId: string; brokerFee?: number | null; billType?: string | null }
 interface FeeLine { kind?: string | null; accountId?: string | null; policyId?: string | null; brokerFeeQuoteId?: string | null; retailAmount?: number | null; costAmount?: number | null }
+const legacyEndorsement=(invoice:{sourcePricingVersion?:number|null},lines:readonly FeeLine[])=>invoice.sourcePricingVersion==null&&lines.some(line=>line.kind==='ENDORSEMENT')&&!lines.some(line=>['PREMIUM','BROKER_FEE'].includes(line.kind??''));
 /** Invoice fees must represent the existing term's exact charge, never free-form invoice markup. */
 export function invoiceBrokerFeeAllocations(input: {
-  invoice: { accountId: string; status?: string | null }; source: Source | null;
+  invoice: { accountId: string; status?: string | null; sourcePricingVersion?: number | null }; source: Source | null;
   quoteId?: string | null; policyId?: string | null; lines: readonly FeeLine[]; alreadySubmitted: boolean;
 }): BrokerFeeAllocation[] {
   const { invoice, source, quoteId, policyId, lines, alreadySubmitted } = input;
+  if(invoice.sourcePricingVersion===2||legacyEndorsement(invoice,lines)) {
+    if(lines.some(line=>line.kind==='BROKER_FEE'))throw new Error('An adjustment cannot charge the original broker fee again.');
+    return [];
+  }
   const expected = brokerFeeCents(source?.brokerFee);
   const fees = lines.filter(line => line.kind === 'BROKER_FEE');
   if(source)assertBrokerFeeAgencyBilling(source);
@@ -19,12 +24,13 @@ export function invoiceBrokerFeeAllocations(input: {
 
 /** Refresh generated charges from the quote before sending an unpaid invoice. */
 export function brokerFeeInvoiceRefresh(input: {
-  invoice: {id:string;accountId:string;status?:string|null}; source:Source|null;
+  invoice: {id:string;accountId:string;status?:string|null;sourcePricingVersion?:number|null}; source:Source|null;
   quoteId?:string|null;policyId?:string|null;lines:readonly (FeeLine&{id:string})[];alreadySubmitted:boolean;
 }) {
   const {invoice,source,quoteId,policyId,lines,alreadySubmitted}=input;
-  if(source)assertBrokerFeeAgencyBilling(source);
   const unchanged={remove:[] as string[],upsert:undefined as undefined|{id:string;kind:'BROKER_FEE';description:string;accountId:string;invoiceId:string;brokerFeeQuoteId:string;policyId?:string;retailAmount:number;costAmount:number;sortOrder:number}};
+  if(invoice.sourcePricingVersion===2||legacyEndorsement(invoice,lines))return unchanged;
+  if(source)assertBrokerFeeAgencyBilling(source);
   if(alreadySubmitted || !source || source.accountId!==invoice.accountId || !['DRAFT','SENT'].includes(invoice.status??''))return unchanged;
   const fees=lines.filter(line=>line.kind==='BROKER_FEE'),amount=brokerFeeCents(source?.brokerFee);
   if(fees.length>1 || fees.some(line=>line.brokerFeeQuoteId!==quoteId || line.accountId!==invoice.accountId || line.policyId && line.policyId!==policyId))return unchanged;
