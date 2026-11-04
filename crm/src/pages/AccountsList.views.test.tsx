@@ -18,7 +18,7 @@ import AccountsList from './AccountsList';
 beforeEach(() => {
   for (const name of ['localStorage', 'sessionStorage']) {
     const values = new Map<string, string>();
-    vi.stubGlobal(name, { getItem: (k: string) => values.get(k) ?? null, setItem: (k: string, v: string) => values.set(k, v) });
+    vi.stubGlobal(name, { getItem: (k: string) => values.get(k) ?? null, setItem: (k: string, v: string) => values.set(k, v), removeItem: (k: string) => values.delete(k), clear: () => values.clear() });
   }
   const accounts = [
     { id: 'alpha', name: 'Alpha Condominium', state: 'MA', stage: 'LEAD', type: 'ASSOCIATION', currentPolicyExpiration: '2099-03-01' },
@@ -280,4 +280,76 @@ it('preserves fresh preferences when renaming and a fresh name when updating fro
   writeNamedAccountViews(key, putNamedAccountView(latest, { id, name: 'Fresh name', view: latest[0].view }, 'LEAD', true), 'LEAD', true);
   fireEvent.click(screen.getByRole('button', { name: 'Update saved view' }));
   expect(readNamedAccountViews(key, 'LEAD', true).views[0]).toMatchObject({ id, name: 'Fresh name', view: { state: '' } });
+});
+
+function namedStorageChange(key: string | null) { fireEvent(window, new StorageEvent('storage', { key })); }
+
+it('reads the newest saved view before applying a picker selection even before a storage event arrives', () => {
+  render(page()); saveNamed('Shared view');
+  const key = accountViewKey('user-1:ADMIN', 'LEAD');
+  const latest = readNamedAccountViews(key, 'LEAD', true).views, id = latest[0].id;
+  fireEvent.click(screen.getByRole('button', { name: 'Reset view' }));
+  writeNamedAccountViews(key, putNamedAccountView(latest, { id, name: 'Updated elsewhere', view: { ...latest[0].view, leadView: 'All leads', state: 'RI' } }, 'LEAD', true), 'LEAD', true);
+  fireEvent.change(screen.getByRole('combobox', { name: 'Saved view' }), { target: { value: id } });
+  expect(screen.getByRole('combobox', { name: 'State' })).toHaveValue('RI');
+  expect(names()).toEqual(['Beta Condominium']);
+  expect(screen.getByRole('option', { name: 'Updated elsewhere' })).toBeInTheDocument();
+});
+
+it('refreshes only this scope choices after another tab updates them without applying its filters', () => {
+  render(page()); chooseView('All leads');
+  fireEvent.change(screen.getByRole('combobox', { name: 'State' }), { target: { value: 'MA' } });
+  saveNamed('Massachusetts leads');
+  const key = accountViewKey('user-1:ADMIN', 'LEAD');
+  const latest = readNamedAccountViews(key, 'LEAD', true).views, id = latest[0].id;
+  writeNamedAccountViews(key, putNamedAccountView(latest, { id, name: 'Rhode Island leads', view: { ...latest[0].view, state: 'RI' } }, 'LEAD', true), 'LEAD', true);
+  for (const otherKey of [accountViewKey('user-2:ADMIN', 'LEAD'), accountViewKey('user-1:PRODUCER', 'LEAD'), accountViewKey('user-1:ADMIN', 'CLIENT')]) {
+    namedStorageChange(`${otherKey}:named`);
+    expect(screen.getByRole('option', { name: 'Massachusetts leads' })).toBeInTheDocument();
+  }
+  namedStorageChange(`${key}:named`);
+  expect(screen.getByRole('option', { name: 'Rhode Island leads (modified)' })).toBeInTheDocument();
+  expect(screen.getByRole('combobox', { name: 'State' })).toHaveValue('MA');
+  expect(names()).toEqual(['Alpha Condominium']);
+  fireEvent.change(screen.getByRole('combobox', { name: 'Saved view' }), { target: { value: id } });
+  expect(screen.getByRole('combobox', { name: 'State' })).toHaveValue('RI');
+  expect(names()).toEqual(['Beta Condominium']);
+});
+
+it('reenables saving and clears a removed selection when another tab deletes from the twenty-view limit', () => {
+  const key = accountViewKey('user-1:ADMIN', 'LEAD');
+  let views = readNamedAccountViews(key, 'LEAD', true).views;
+  for (let i = 0; i < 20; i++) views = putNamedAccountView(views, { name: `View ${i + 1}`, view: normalizeAccountView({}, 'LEAD', true) }, 'LEAD', true);
+  writeNamedAccountViews(key, views, 'LEAD', true);
+  render(page());
+  expect(screen.getByRole('button', { name: 'Save current view' })).toBeDisabled();
+  writeNamedAccountViews(key, views.slice(1), 'LEAD', true);
+  namedStorageChange(`${key}:named`);
+  expect(screen.getByRole('button', { name: 'Save current view' })).toBeEnabled();
+  expect(screen.getByRole('combobox', { name: 'Saved view' })).toHaveValue('');
+  expect(screen.queryByRole('option', { name: 'View 1' })).not.toBeInTheDocument();
+  expect(names()).toEqual(['Alpha Condominium']);
+});
+
+it('handles another tab clearing local storage without changing the current URL filters', () => {
+  render(page()); chooseView('All leads');
+  fireEvent.change(screen.getByRole('combobox', { name: 'State' }), { target: { value: 'MA' } });
+  saveNamed('Massachusetts leads');
+  window.localStorage.clear(); namedStorageChange(null);
+  expect(screen.queryByRole('option', { name: 'Massachusetts leads' })).not.toBeInTheDocument();
+  expect(screen.getByRole('combobox', { name: 'Saved view' })).toHaveValue('');
+  expect(screen.getByRole('button', { name: 'Save current view' })).toBeEnabled();
+  expect(screen.getByRole('combobox', { name: 'State' })).toHaveValue('MA');
+  expect(screen.getByLabelText('View URL')).toHaveTextContent('view=all&state=MA');
+  expect(names()).toEqual(['Alpha Condominium']);
+});
+
+it('refreshes storage availability without applying another tab preferences', () => {
+  const getItem = vi.spyOn(window.localStorage, 'getItem').mockImplementation(() => { throw new Error('Storage disabled'); });
+  render(page());
+  expect(screen.getByRole('button', { name: 'Save current view' })).toBeDisabled();
+  getItem.mockRestore();
+  namedStorageChange(`${accountViewKey('user-1:ADMIN', 'LEAD')}:named`);
+  expect(screen.getByRole('button', { name: 'Save current view' })).toBeEnabled();
+  expect(names()).toEqual(['Alpha Condominium']);
 });
