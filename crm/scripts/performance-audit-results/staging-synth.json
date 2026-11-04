@@ -7,7 +7,7 @@
   "backendBranch": "staging",
   "maxTemplate": {
     "file": "amplifyd1nuh9rw1hcuxostagingbranch3787a09124dataAED7FBB2.nested.template.json",
-    "bytes": 986566,
+    "bytes": 984943,
     "limit": 1000000
   },
   "resourceTotals": {
@@ -57,13 +57,25 @@
     "Attach identical additive fee/list grants as managed policies outside inline-role quotas"
   ],
   "environmentQuotaFix": {
-    "sourceParent": "99394f3",
+    "sourceParent": "b7f623c958182404544916a0e6dad18e61da4365",
     "readerRemoved": "ACCOUNT_LIST_SOURCE_TABLES",
     "workerRetainsMap": true,
     "readerDerivesFrom": [
       "ACCESS_API_ID",
       "COMMUNICATION_TABLE"
     ],
+    "removedDuplicateAliases": [
+      "DASHBOARD_POLICY_TABLE",
+      "DASHBOARD_QUOTE_TABLE",
+      "DASHBOARD_PAYMENT_TABLE",
+      "DASHBOARD_INVOICE_LINE_TABLE",
+      "LEAD_DELETION_POLICY_TABLE",
+      "LEAD_DELETION_INVOICE_TABLE"
+    ],
+    "serializedVariablesBytes": 3811,
+    "environmentLimitBytes": 4096,
+    "headroomBytes": 285,
+    "measurement": "compact Environment.Variables JSON UTF8 bytes; validated against service rejection",
     "node": "22.23.4"
   }
 }

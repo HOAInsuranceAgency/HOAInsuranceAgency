@@ -7,11 +7,38 @@ import { dashboardInterestPage, dashboardPolicyAnchors, dashboardInvoiceAnchors 
 const from = '2026-08-31T16:00:00.000Z', to = '2026-09-30T16:00:00.000Z';
 beforeEach(() => {
   send.mockReset();
+  vi.stubEnv('ACCESS_API_ID', 'trusted-api');
   vi.stubEnv('DASHBOARD_PAYMENT_TABLE', 'payments');
   vi.stubEnv('DASHBOARD_PAYMENT_INDEX', 'payments-by-date');
   vi.stubEnv('DASHBOARD_POLICY_TABLE', 'policies');
   vi.stubEnv('DASHBOARD_INVOICE_LINE_TABLE', 'invoice-lines');
   vi.stubEnv('DASHBOARD_INVOICE_LINE_INDEX', 'crmBy_invoiceId');
+});
+
+it('preserves finance reads and indexes when canonical table aliases are derived from the existing API ID', async () => {
+  const aliases = { DASHBOARD_PAYMENT_TABLE: 'PfLoanPayment-trusted-api-NONE', DASHBOARD_POLICY_TABLE: 'Policy-trusted-api-NONE', DASHBOARD_INVOICE_LINE_TABLE: 'InvoiceLine-trusted-api-NONE' };
+  const run = async (explicit: boolean) => {
+    for (const [alias, table] of Object.entries(aliases)) vi.stubEnv(alias, explicit ? table : undefined);
+    send.mockClear();
+    send.mockImplementation(async command => command.input.RequestItems
+      ? { Responses: { 'Policy-trusted-api-NONE': [{ id: 'p1', accountId: 'a', quoteId: 'q1' }] } }
+      : command.input.Statement ? { Items: [{ id: 'line', invoiceId: 'invoice-a', policyId: 'p1' }] }
+        : { Items: [{ id: 'receipt', accountId: 'a', postedAt: from, interest: 12 }] });
+    const results = [await dashboardInterestPage({ from, to }), await dashboardPolicyAnchors({ policyIds: ['p1'] }), await dashboardInvoiceAnchors({ invoiceIds: ['invoice-a'] })];
+    return { results, commands: send.mock.calls.map(([command]) => command.input) };
+  };
+  const explicit = await run(true), derived = await run(false);
+  expect(derived).toEqual(explicit);
+  expect(derived.commands[0]).toMatchObject({ TableName: 'PfLoanPayment-trusted-api-NONE', IndexName: 'payments-by-date' });
+  expect(derived.commands[2].Statement).toContain('"InvoiceLine-trusted-api-NONE"."crmBy_invoiceId"');
+});
+
+it('fails closed without an explicit table or API ID and never derives missing index configuration', async () => {
+  vi.stubEnv('DASHBOARD_PAYMENT_TABLE', undefined); vi.stubEnv('ACCESS_API_ID', undefined);
+  await expect(dashboardInterestPage({ from, to })).rejects.toThrow('not configured');
+  vi.stubEnv('ACCESS_API_ID', 'trusted-api'); vi.stubEnv('DASHBOARD_PAYMENT_INDEX', undefined);
+  await expect(dashboardInterestPage({ from, to })).rejects.toThrow('not configured');
+  expect(send).not.toHaveBeenCalled();
 });
 
 it('queries the indexed recent window in bounded pages and binds its cursor to the same window', async () => {

@@ -13,11 +13,40 @@ const from = '2026-08-31T16:00:00.000Z', to = '2026-09-30T16:00:00.000Z';
 const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString('base64url');
 beforeEach(() => {
   send.mockReset();
+  vi.stubEnv('ACCESS_API_ID', 'trusted-api');
   vi.stubEnv('DASHBOARD_QUOTE_TABLE', 'quotes');
   vi.stubEnv('DASHBOARD_QUOTE_STATUS_INDEX', 'quotes-by-status');
   vi.stubEnv('DASHBOARD_QUOTE_ACCOUNT_INDEX', 'crmBy_accountId');
   vi.stubEnv('DASHBOARD_POLICY_TABLE', 'policies');
   vi.stubEnv('DASHBOARD_POLICY_DATE_INDEX', 'policies-by-bind-date');
+});
+
+it('preserves quote discovery, date reads, partition queries and batch joins with derived model tables', async () => {
+  const run = async (explicit: boolean) => {
+    vi.stubEnv('DASHBOARD_QUOTE_TABLE', explicit ? 'Quote-trusted-api-NONE' : undefined);
+    vi.stubEnv('DASHBOARD_POLICY_TABLE', explicit ? 'Policy-trusted-api-NONE' : undefined);
+    send.mockClear();
+    send.mockImplementation(async command => command.input.RequestItems
+      ? { Responses: { 'Quote-trusted-api-NONE': [{ id: 'q1', accountId: 'a1', status: 'QUOTED' }] } }
+      : command.input.TableName === 'Policy-trusted-api-NONE' ? { Items: [{ id: 'p1', accountId: 'a1', datePolicyBound: from }] }
+        : { Items: [{ id: 'q1', accountId: 'a1', status: 'QUOTED' }] });
+    const results = [await dashboardOpenQuotesPage({ status: 'QUOTED' }), await dashboardBoundPoliciesPage({ from, to }),
+      await dashboardQuotesPage({ accountIds: ['a1'] }), await dashboardQuoteStates({ quoteIds: ['q1'] })];
+    return { results, commands: send.mock.calls.map(([command]) => command.input) };
+  };
+  const explicit = await run(true), derived = await run(false);
+  expect(derived).toEqual(explicit);
+  expect(derived.commands[0]).toMatchObject({ TableName: 'Quote-trusted-api-NONE', IndexName: 'quotes-by-status' });
+  expect(derived.commands[1]).toMatchObject({ TableName: 'Policy-trusted-api-NONE', IndexName: 'policies-by-bind-date' });
+  expect(derived.commands[2].Statement).toContain('"Quote-trusted-api-NONE"."crmBy_accountId"');
+});
+
+it('fails closed without an explicit quote table or API ID and preserves required index checks', async () => {
+  vi.stubEnv('DASHBOARD_QUOTE_TABLE', undefined); vi.stubEnv('ACCESS_API_ID', undefined);
+  await expect(dashboardOpenQuotesPage({ status: 'QUOTED' })).rejects.toThrow('not configured');
+  vi.stubEnv('ACCESS_API_ID', 'trusted-api'); vi.stubEnv('DASHBOARD_QUOTE_STATUS_INDEX', undefined);
+  await expect(dashboardOpenQuotesPage({ status: 'QUOTED' })).rejects.toThrow('not configured');
+  expect(send).not.toHaveBeenCalled();
 });
 
 describe('open quote discovery', () => {

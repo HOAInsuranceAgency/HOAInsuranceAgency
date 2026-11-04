@@ -11,7 +11,8 @@ import type { Operation } from './operations';
 async function hasAccountRecords(accountId: string, model: 'POLICY' | 'INVOICE') {
   const label = model === 'POLICY' ? 'policies' : 'billing records';
   try {
-    const table = process.env[`LEAD_DELETION_${model}_TABLE`];
+    const table = process.env[`LEAD_DELETION_${model}_TABLE`] || (process.env.ACCESS_API_ID
+      ? `${model === 'POLICY' ? 'Policy' : 'Invoice'}-${process.env.ACCESS_API_ID}-NONE` : undefined);
     const index = process.env[`LEAD_DELETION_${model}_INDEX`];
     if (!table || !index) throw new Error('Missing deletion lookup configuration');
     let cursor: Record<string, unknown> | undefined;
