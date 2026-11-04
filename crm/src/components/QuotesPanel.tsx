@@ -31,6 +31,8 @@ import { quoteOfferDate } from "../lib/quoteOfferExpiry";
 import { useAgencyDay } from "../lib/useAgencyDay";
 import { brokerFeeCents, type BrokerFeeRecord } from "../../../shared/brokerFees";
 import PolicyCharges from "./PolicyCharges";
+import { readCarrierPaymentPreview } from '../lib/commissions';
+import { COMMISSION_BASES } from '../../../shared/commissions';
 
 /** Commission is baked into the premium — the $ figure is the agency's cut,
  * never an addition on top. */
@@ -494,6 +496,16 @@ function BindForm({
    * association directly is an invoice sent for money already paid.
    */
   const [billType, setBillType] = useState<BillType | "">(quote.billType ?? "");
+  const hasBrokerFee = (quote.brokerFee ?? 0) > 0;
+  const [paymentConfirmation, setPaymentConfirmation] = useState('');
+  const paymentPreview = useAsyncResource(
+    () => readCarrierPaymentPreview(quote.id, billType),
+    [quote.id, quote.updatedAt, billType],
+    { manual: !billType || (hasBrokerFee && billType !== "AGENCY"), clearDataOnError: () => true },
+  );
+  const paymentKey = JSON.stringify({ billType, preview: paymentPreview.data });
+  const paymentReady = !!paymentPreview.data && !paymentPreview.loading && !paymentPreview.error &&
+    (!paymentPreview.data.payment || paymentConfirmation === paymentKey);
   const [saving, setSaving] = useState(false);
   const feeStatus = useAsyncResource(async () => {
     if (!(quote.brokerFee && quote.brokerFee > 0)) return null;
@@ -517,12 +529,13 @@ function BindForm({
     !quote.expirationDate && "an expiration date",
     quote.commissionPct == null && "the exact agency commission percentage",
     !(quote.lines ?? []).filter(Boolean).length && "at least one line",
+    hasBrokerFee && quote.billType !== "AGENCY" && "agency billing for the broker fee",
   ].filter(Boolean) as string[];
 
   async function bind() {
     // Belt and braces: the button is disabled without one, but `bind` is the
     // thing that writes the row and an unset bill type must never reach it.
-    if (!billType || !confirmed || bindLock.current) return;
+    if (!billType || (hasBrokerFee && billType !== "AGENCY") || !confirmed || !paymentReady || bindLock.current) return;
     bindLock.current = true;
     let policyCreated = false;
     setSaving(true);
@@ -530,6 +543,8 @@ function BindForm({
     try {
       const response = await client.mutations.bindCommissionPolicy({ input: JSON.stringify({
         quoteId: quote.id, terms: packageTerms(quote), premium, agencyRate, billType, policyNumber,
+        carrierTermsVersion: paymentPreview.data!.carrierTermsVersion,
+        carrierArrangementId: paymentPreview.data!.payment?.id,
       }) });
       if (response.errors?.length) throw new Error(response.errors[0].message);
       const result = (typeof response.data === "string" ? JSON.parse(response.data) : response.data) as { ok: boolean; error?: string; policy: Policy; account: Account };
@@ -620,6 +635,7 @@ function BindForm({
       const message = friendlyError(err, "Bind failed");
       if (live.current) onError(policyCreated ? `Policy created, but binding did not finish: ${message}. Check the policies and account before retrying.` : message);
       if (policyCreated && live.current) onDone(null);
+      if (!policyCreated && live.current) void paymentPreview.refetch();
     } finally {
       bindLock.current = false;
       setSaving(false);
@@ -665,12 +681,12 @@ function BindForm({
               >
                 <option value="">Choose…</option>
                 {BILL_TYPE_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>
+                  <option key={o.value} value={o.value} disabled={hasBrokerFee && o.value === "DIRECT"}>
                     {o.label}
                   </option>
                 ))}
               </select>
-              {(quote.brokerFee ?? 0) > 0 && <p className="small muted">Set on the accepted quote. Edit the quote to change who bills the premium.</p>}
+              {hasBrokerFee && <p className="small muted">Broker fees require agency billing, as set on the accepted quote.</p>}
             </div>
             <div className="field">
               <label htmlFor="bind-policy-number">
@@ -687,14 +703,39 @@ function BindForm({
           {billType === "DIRECT" && (
             <p className="small muted">
               The carrier bills the association and pays us commission
-              afterwards. Any disclosed broker fee is collected separately by the agency.
+              afterwards.
             </p>
+          )}
+          {billType && (
+            <div className="card" aria-label="Carrier commission payment arrangement">
+              {paymentPreview.loading && <p className="small muted">Loading carrier payment terms…</p>}
+              {paymentPreview.error && <p role="alert">{paymentPreview.error}</p>}
+              {paymentPreview.data && !paymentPreview.loading && !paymentPreview.error && (
+                <>
+                  <p><strong>{COMMISSION_BASES[paymentPreview.data.basis]}</strong></p>
+                  {paymentPreview.data.payment ? (
+                    <>
+                      <p className="small">
+                        Payor: {paymentPreview.data.payment.payor}. Remittance: {({ ONCE: 'once', MONTHLY: 'monthly', QUARTERLY: 'quarterly' })[paymentPreview.data.payment.cadence]}.
+                        {' '}Trigger: {({ BIND: 'bind date', EFFECTIVE: 'policy effective date', COLLECTION: 'premium collection', EARNED: 'coverage provided' })[paymentPreview.data.payment.trigger]}.
+                        {' '}Calendar-day lag: {paymentPreview.data.payment.lagDays}.
+                        {paymentPreview.data.payment.cutoffDay !== undefined && ` Statement cutoff day: ${paymentPreview.data.payment.cutoffDay} (clamped to month end).`}
+                        {paymentPreview.data.payment.paymentDay !== undefined && ` Payment day: ${paymentPreview.data.payment.paymentDay} (clamped to month end).`}
+                      </p>
+                      {paymentPreview.data.basis === 'COLLECTED' && <p className="small muted">Expected receipt amounts require collection information or an Owner-entered schedule.</p>}
+                      <label><input type="checkbox" checked={paymentConfirmation === paymentKey} disabled={saving} onChange={e => setPaymentConfirmation(e.target.checked ? paymentKey : '')} /> I reviewed the carrier commission payment arrangement.</label>
+                    </>
+                  ) : <p className="small muted">Legacy carrier terms: receipt timing is unconfirmed. An Owner can add structured terms; producer earnings continue to follow actual receipts.</p>}
+                </>
+              )}
+              <button type="button" className="secondary" disabled={saving || paymentPreview.loading} onClick={() => { setPaymentConfirmation(''); void paymentPreview.refetch(); }}>Refresh carrier payment terms</button>
+            </div>
           )}
           <label><input type="checkbox" checked={confirmed} disabled={saving} onChange={e => setConfirmed(e.target.checked)} /> I confirmed the exact premium and agency commission percentage.</label>
           <div className="form-actions quote-flow-actions">
             <button
               className="primary"
-              disabled={saving || !billType || !confirmed || !premium || !agencyRate}
+              disabled={saving || !billType || (hasBrokerFee && billType !== "AGENCY") || !confirmed || !paymentReady || !premium || !agencyRate}
               onClick={bind}
             >
               {saving ? "Binding…" : "Confirm bind"}

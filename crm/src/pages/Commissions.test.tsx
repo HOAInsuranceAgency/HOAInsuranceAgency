@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, expect, it, vi } from 'vitest';
 import { appendEntry } from '../../../shared/commissions';
 import { commissionPolicy, line, statement } from '../test/commissionFixtures';
@@ -7,6 +7,7 @@ const h = vi.hoisted(() => ({
   read: vi.fn(),
   action: vi.fn(),
   policies: vi.fn(),
+  carriers: vi.fn(),
   communications: vi.fn(),
 }));
 vi.mock('../lib/auth', () => ({ useIsOwner: () => h.owner }));
@@ -15,8 +16,11 @@ vi.mock('../lib/commissions', () => ({
   commissionAction: h.action,
 }));
 vi.mock('../lib/client', () => ({
-  client: { models: { Policy: { list: h.policies } } },
-  listAllPages: async () => [],
+  client: {
+    models: { Policy: { list: h.policies }, Carrier: { list: h.carriers } },
+  },
+  listAllPages: async (list: (token?: string) => Promise<{ data: unknown[] }>) =>
+    (await list()).data,
   fmtMoney: (n: number) => `$${n.toFixed(2)}`,
   friendlyError: (e: Error) => e.message,
 }));
@@ -35,12 +39,17 @@ const snapshot = () => ({
 beforeEach(() => {
   vi.resetAllMocks();
   h.owner = false;
+  h.carriers.mockResolvedValue({ data: [], nextToken: null });
   h.communications.mockResolvedValue({
     team: [{ userId: 'producer', name: 'Brian Cole' }],
     items: [{ id: 'a', name: 'Cedar HOA' }],
   });
   h.read.mockResolvedValue(snapshot());
-  h.action.mockResolvedValue({ ok: true, classification: null, accountName: 'Cedar HOA' });
+  h.action.mockResolvedValue({
+    ok: true,
+    classification: null,
+    accountName: 'Cedar HOA',
+  });
 });
 it('shows producer earnings without any reconciliation or payroll controls', async () => {
   render(<Commissions />);
@@ -325,7 +334,13 @@ it('does not offer an empty classification editor after a failed read and reload
       firstBoundOn: '2026-01-01',
       bindingEvidence: 'Original binder',
       name: 'Cedar HOA',
-      periods: [{ from: '2026-01-01', classification: 'GIM', evidence: 'Existing GIM evidence' }],
+      periods: [
+        {
+          from: '2026-01-01',
+          classification: 'GIM',
+          evidence: 'Existing GIM evidence',
+        },
+      ],
     },
     accountName: 'Cedar HOA',
   });
@@ -352,4 +367,224 @@ it('does not offer an empty classification editor after a failed read and reload
       expect.objectContaining({ id: 'a', version: 4 }),
     ),
   );
+});
+
+it('preserves unknown carrier receipt timing and recalculates actual receipts at the selected date', async () => {
+  h.owner = true;
+  render(<Commissions />);
+  await screen.findByLabelText('Receipt reconciliation as of');
+  fireEvent.change(screen.getByLabelText('Receipt reconciliation as of'), {
+    target: { value: '2026-09-30' },
+  });
+  const balances = screen.getByLabelText('Carrier receipt balances as of 2026-09-30');
+  expect(within(balances).getByText('Estimated through date').parentElement).toHaveTextContent(
+    'Unknown',
+  );
+  expect(within(balances).getByText('Estimated gap through date').parentElement).toHaveTextContent(
+    'Unknown',
+  );
+  expect(
+    within(balances).getByText('Actual received through date').parentElement,
+  ).toHaveTextContent('$0.00');
+  fireEvent.change(screen.getByLabelText('Receipt reconciliation as of'), {
+    target: { value: '2026-10-01' },
+  });
+  const next = screen.getByLabelText('Carrier receipt balances as of 2026-10-01');
+  expect(within(next).getByText('Actual received through date').parentElement).toHaveTextContent(
+    '$1000.00',
+  );
+  expect(within(next).getByText('Full-term agency estimate').parentElement).toHaveTextContent(
+    '$12000.00',
+  );
+  expect(h.action).not.toHaveBeenCalled();
+});
+
+it('saves scoped dated carrier payment arrangements without inferring legacy schedule facts', async () => {
+  h.owner = true;
+  h.read.mockResolvedValue({
+    ...snapshot(),
+    carriers: [commissionPolicy().carrierTerms],
+  });
+  h.carriers.mockResolvedValue({
+    data: [{ id: 'c', name: 'Carrier' }],
+    nextToken: null,
+  });
+  render(<Commissions />);
+  await screen.findByText('Producer earned');
+  fireEvent.click(screen.getByRole('tab', { name: 'Agreements & carriers' }));
+  fireEvent.change(await screen.findByLabelText('Carrier'), {
+    target: { value: 'c' },
+  });
+  expect(
+    screen.getByText('Legacy carrier terms need a structured payment arrangement.'),
+  ).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Save carrier payment terms' })).toBeDisabled();
+  fireEvent.click(screen.getByRole('button', { name: 'Add payment arrangement' }));
+  expect(screen.getByLabelText('Commission basis 1')).toHaveValue('');
+  expect(screen.getByLabelText('Receipt trigger 1')).toHaveValue('');
+  expect(screen.getByLabelText('Remittance frequency 1')).toHaveValue('');
+  expect(screen.getByLabelText('Additional lag days 1')).toHaveValue(null);
+  for (const [label, value] of [
+    ['Carrier terms effective from 1', '2026-01-01'],
+    ['Carrier terms through 1 (optional)', '2026-12-31'],
+    ['Lines of business 1 (blank = all)', 'Property, General Liability'],
+    ['Business type 1', 'NEW'],
+    ['Billing scope 1', 'DIRECT'],
+    ['Commission basis 1', 'WRITTEN'],
+    ['Commission payor 1', 'Wholesale Company'],
+    ['Receipt trigger 1', 'EFFECTIVE'],
+    ['Remittance frequency 1', 'MONTHLY'],
+    ['Additional lag days 1', '0'],
+    ['Statement cutoff day 1 (optional)', '25'],
+    ['Remittance day 1 (optional)', '15'],
+    ['Carrier agreement reference 1', 'Signed carrier schedule'],
+    [
+      'Original carrier wording / notes 1 (optional)',
+      'Upfront even for monthly client installments',
+    ],
+  ])
+    fireEvent.change(screen.getByLabelText(label), { target: { value } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save carrier payment terms' }));
+  await waitFor(() =>
+    expect(h.action).toHaveBeenCalledWith('saveCarrier', {
+      id: 'c',
+      version: 1,
+      basis: 'WRITTEN',
+      schedule: 'Monthly as collected',
+      evidence: 'Signed carrier schedule',
+      arrangements: [
+        {
+          id: expect.any(String),
+          from: '2026-01-01',
+          to: '2026-12-31',
+          lines: ['Property', 'General Liability'],
+          transaction: 'NEW',
+          billType: 'DIRECT',
+          basis: 'WRITTEN',
+          payor: 'Wholesale Company',
+          trigger: 'EFFECTIVE',
+          cadence: 'MONTHLY',
+          lagDays: 0,
+          cutoffDay: 25,
+          paymentDay: 15,
+          evidence: 'Signed carrier schedule',
+          notes: 'Upfront even for monthly client installments',
+        },
+      ],
+    }),
+  );
+});
+
+it('saves unequal estimated receipts as a partial forecast without posting earnings', async () => {
+  h.owner = true;
+  render(<Commissions />);
+  await screen.findByText('Producer earned');
+  fireEvent.click(screen.getByText('Manage expected receipts'));
+  expect(screen.getByLabelText('Receipt forecast certainty')).toHaveValue('');
+  expect(screen.getByLabelText('Receipt schedule coverage')).toHaveValue('');
+  fireEvent.change(screen.getByLabelText('Receipt forecast certainty'), {
+    target: { value: 'false' },
+  });
+  fireEvent.change(screen.getByLabelText('Receipt schedule coverage'), {
+    target: { value: 'false' },
+  });
+  fireEvent.change(screen.getByLabelText('Expected receipt date 1'), {
+    target: { value: '2026-11-15' },
+  });
+  fireEvent.change(screen.getByLabelText('Expected agency commission ($) 1'), {
+    target: { value: '500.25' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Add expected receipt' }));
+  fireEvent.change(screen.getByLabelText('Expected receipt date 2'), {
+    target: { value: '2026-12-15' },
+  });
+  fireEvent.change(screen.getByLabelText('Expected agency commission ($) 2'), {
+    target: { value: '1000' },
+  });
+  fireEvent.change(screen.getByLabelText('Receipt forecast evidence'), {
+    target: { value: 'Carrier installment projection' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Save receipt forecast' }));
+  await waitFor(() =>
+    expect(h.action).toHaveBeenCalledExactlyOnceWith('saveReceiptForecast', {
+      policyId: 'p',
+      version: 1,
+      receiptForecast: {
+        items: [
+          { dueOn: '2026-11-15', agencyCents: 50025 },
+          { dueOn: '2026-12-15', agencyCents: 100000 },
+        ],
+        evidence: 'Carrier installment projection',
+        confirmed: false,
+        complete: false,
+      },
+    }),
+  );
+});
+
+it('allows a confirmed complete empty receipt schedule after cancellation without reversing actual receipts', async () => {
+  h.owner = true;
+  render(<Commissions />);
+  await screen.findByText('Producer earned');
+  fireEvent.click(screen.getByText('Manage expected receipts'));
+  fireEvent.click(screen.getByRole('button', { name: 'Remove expected receipt 1' }));
+  fireEvent.change(screen.getByLabelText('Receipt forecast certainty'), {
+    target: { value: 'true' },
+  });
+  fireEvent.change(screen.getByLabelText('Receipt schedule coverage'), {
+    target: { value: 'true' },
+  });
+  fireEvent.change(screen.getByLabelText('Receipt forecast evidence'), {
+    target: { value: 'Final carrier cancellation statement' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Save receipt forecast' }));
+  await waitFor(() =>
+    expect(h.action).toHaveBeenCalledExactlyOnceWith('saveReceiptForecast', {
+      policyId: 'p',
+      version: 1,
+      receiptForecast: {
+        items: [],
+        evidence: 'Final carrier cancellation statement',
+        confirmed: true,
+        complete: true,
+      },
+    }),
+  );
+});
+
+it('shows the safe producer receipt summary without private carrier terms or forecast controls', async () => {
+  const p = appendEntry(commissionPolicy(), line(), statement(), 'e');
+  h.read.mockResolvedValue({
+    ...snapshot(),
+    carriers: [],
+    statements: [],
+    policies: [
+      {
+        ...p,
+        carrierTerms: undefined,
+        reconciliationBalances: {
+          asOf: '2026-11-04',
+          fullTermEstimate: 1200000,
+          forecastTotal: null,
+          expectedToDate: null,
+          receivedToDate: 100000,
+          overdue: null,
+          futureForecast: null,
+          unallocatedForecast: null,
+          confirmed: false,
+          status: 'UNKNOWN',
+          adjustmentReview: false,
+        },
+      },
+    ],
+  });
+  render(<Commissions />);
+  const balances = await screen.findByLabelText('Carrier receipt balances as of 2026-11-04');
+  expect(within(balances).getByText(/Receipt timing unknown/)).toBeVisible();
+  expect(
+    within(balances).getByText('Actual received through date').parentElement,
+  ).toHaveTextContent('$1000.00');
+  expect(screen.queryByText('Manage expected receipts')).toBeNull();
+  expect(screen.queryByLabelText('Receipt reconciliation as of')).toBeNull();
+  expect(h.action).not.toHaveBeenCalled();
 });

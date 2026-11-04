@@ -1,6 +1,10 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 import { commissionPolicy, commissionAccount, line, statement } from './commissionFixtures';
-import { appendEntry, type CommissionPolicy } from '../../../shared/commissions';
+import {
+  appendEntry,
+  type CarrierPaymentArrangement,
+  type CommissionPolicy,
+} from '../../../shared/commissions';
 const h = vi.hoisted(() => ({
   get: vi.fn(),
   getMany: vi.fn(),
@@ -56,6 +60,17 @@ const request = (
   identity: { sub: 'producer', groups },
   request: { headers: { 'x-crm-role': role } },
   arguments: { operation, input },
+});
+const paymentArrangement = (patch: Partial<CarrierPaymentArrangement> = {}): CarrierPaymentArrangement => ({
+  id: 'standard',
+  from: '2025-01-01',
+  basis: 'WRITTEN',
+  payor: 'Carrier payments',
+  trigger: 'EFFECTIVE',
+  cadence: 'MONTHLY',
+  lagDays: 15,
+  evidence: 'Carrier appointment schedule',
+  ...patch,
 });
 let records: Map<string, unknown>;
 beforeEach(() => {
@@ -120,6 +135,7 @@ it.each([
     'saveAccountClassification',
     'getAccountClassification',
     'saveCarrier',
+    'saveReceiptForecast',
     'file',
     'saveStatement',
     'postStatement',
@@ -693,5 +709,165 @@ it('preserves original history and the server policy link when only classificati
     bindingEvidence: 'Original binder',
     firstBindPolicyId: 'original-policy',
     periods: [{ classification: 'GIM' }],
+  });
+});
+
+it('saves structured carrier payment arrangements with authoritative identity and rejects a stale edit', async () => {
+  h.sources.set('Carrier:c', { id: 'c', name: 'Current carrier name' });
+  const input = {
+    id: 'c',
+    version: 0,
+    arrangements: [paymentArrangement(), paymentArrangement({
+      id: 'property',
+      lines: ['Property'],
+      basis: 'EARNED',
+      trigger: 'EARNED',
+      earningMethod: 'DAILY_PRORATA',
+    })],
+  };
+  expect(await handler(request('saveCarrier', input))).toEqual({ ok: true });
+  expect(records.get('CARRIER:c')).toMatchObject({
+    name: 'Current carrier name',
+    version: 1,
+    basis: 'WRITTEN',
+    evidence: 'Carrier appointment schedule',
+    schedule: '',
+    arrangements: [{ basis: 'WRITTEN' }, { id: 'property', basis: 'EARNED' }],
+  });
+  expect(h.commit.mock.calls[0][1]).toBe('producer');
+  expect(await handler(request('saveCarrier', input))).toMatchObject({
+    ok: false,
+    error: expect.stringMatching(/changed/),
+  });
+  expect(h.commit).toHaveBeenCalledTimes(1);
+});
+
+it.each([
+  undefined,
+  [],
+  [paymentArrangement({ lagDays: -1 })],
+  [paymentArrangement({ from: '2026-02-30' })],
+  [paymentArrangement({ from: '2026-01-01', to: '2025-12-31' })],
+  [paymentArrangement({ basis: 'EARNED', trigger: 'COLLECTION' })],
+  [paymentArrangement(), paymentArrangement({ id: 'overlapping' })],
+])('rejects unconfirmed or invalid carrier arrangements without writing %#', async (arrangements) => {
+  h.sources.set('Carrier:c', { id: 'c', name: 'Carrier' });
+  expect(await handler(request('saveCarrier', {
+    ...commissionPolicy().carrierTerms,
+    version: 0,
+    arrangements,
+  }))).toMatchObject({ ok: false });
+  expect(h.commit).not.toHaveBeenCalled();
+});
+
+it('revises only the receipt forecast and records which receipt history the Owner reviewed', async () => {
+  const original = appendEntry(commissionPolicy(), line(), statement(), 'received');
+  records.set('POLICY:p', original);
+  const receiptForecast = {
+    items: [],
+    evidence: 'Cancelled term; carrier confirms no future installments',
+    confirmed: true,
+    complete: true,
+    reviewedEntryCount: 900,
+  };
+  expect(await handler(request('saveReceiptForecast', {
+    policyId: 'p', version: 1, receiptForecast,
+  }))).toEqual({ ok: true });
+  expect(records.get('POLICY:p')).toEqual({
+    ...original,
+    version: 2,
+    receiptForecast: { ...receiptForecast, reviewedEntryCount: 1 },
+  });
+  expect(h.commit.mock.calls[0][0]).toHaveLength(1);
+  expect(h.commit.mock.calls[0][0][0].previous).toEqual(original);
+  expect(await handler(request('saveReceiptForecast', {
+    policyId: 'p', version: 1, receiptForecast,
+  }))).toMatchObject({ ok: false, error: expect.stringMatching(/changed/) });
+  expect(h.commit).toHaveBeenCalledTimes(1);
+  expect(await handler(request('preparePayroll', {
+    producerId: 'producer', cutoff: '2026-10-01', payDate: '2026-10-15', requestId: 'actual-earnings',
+  }))).toEqual({ ok: true });
+  expect(records.get('BATCH:actual-earnings')).toMatchObject({ totalCents: 16000 });
+});
+
+it.each([
+  undefined,
+  { items: [{ dueOn: '2026-02-30', agencyCents: 1 }], evidence: 'Source', confirmed: true, complete: true },
+  { items: [{ dueOn: '2026-10-01', agencyCents: -1 }], evidence: 'Source', confirmed: true, complete: true },
+  { items: [], evidence: '', confirmed: true, complete: true },
+])('rejects invalid receipt forecasts without modifying the policy %#', async (receiptForecast) => {
+  const policy = commissionPolicy();
+  records.set('POLICY:p', policy);
+  expect(await handler(request('saveReceiptForecast', { policyId: 'p', version: 1, receiptForecast })))
+    .toMatchObject({ ok: false });
+  expect(h.commit).not.toHaveBeenCalled();
+  expect(records.get('POLICY:p')).toEqual(policy);
+});
+
+it('returns safe receipt balances to producers while retaining legacy policy readability', async () => {
+  const policy = {
+    ...commissionPolicy(),
+    receiptForecast: {
+      items: [{ dueOn: '2026-10-01', agencyCents: 100000 }],
+      evidence: 'Private cancellation correspondence',
+      confirmed: true,
+      complete: true,
+    },
+  };
+  records.set('POLICY:p', policy);
+  records.set('POLICY:legacy', { ...commissionPolicy(), id: 'legacy' });
+  const producer = request('', {}, 'PRODUCER');
+  producer.fieldName = 'commissionOverview';
+  const response = await handler(producer);
+  expect(response).toMatchObject({
+    ok: true,
+    asOf: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
+    policies: [
+      { id: 'p', reconciliationBalances: { asOf: expect.any(String) } },
+      { id: 'legacy', reconciliationBalances: { asOf: expect.any(String) } },
+    ],
+  });
+  const serialized = JSON.stringify(response);
+  expect(serialized).not.toContain('carrierTerms');
+  expect(serialized).not.toContain('receiptForecast');
+  expect(serialized).not.toContain('Private cancellation correspondence');
+  expect(serialized).not.toContain('Carrier contract');
+});
+
+it('adopts the carrier arrangement applicable to historical term facts, not current defaults', async () => {
+  h.sources.set('Account:a', { id: 'a', name: 'Account' });
+  h.sources.set('Policy:old', {
+    id: 'old', accountId: 'a', carrierId: 'c', updatedAt: 'before',
+    lines: ['Property'], billType: 'DIRECT',
+  });
+  records.set('ACCOUNT:a', commissionAccount());
+  records.set('PLAN:producer', {
+    id: 'producer', name: 'Producer', version: 3,
+    terms: [{ from: '2020-01-01', newBps: 1600, renewalBps: 800, agreement: 'Original agreement' }],
+  });
+  const historical = paymentArrangement({
+    id: 'old-earned', to: '2026-12-31', lines: ['Property'], billType: 'DIRECT',
+    transaction: 'RENEWAL', basis: 'EARNED', trigger: 'EARNED', earningMethod: 'DAILY_PRORATA',
+  });
+  records.set('CARRIER:c', {
+    ...commissionPolicy().carrierTerms,
+    version: 7,
+    arrangements: [historical, paymentArrangement({ id: 'current', from: '2027-01-01' })],
+  });
+  expect(await handler(request('adoptPolicy', {
+    policyId: 'old', producerId: 'producer', transaction: 'RENEWAL',
+    boundOn: '2025-12-15', effectiveDate: '2026-01-01', expirationDate: '2027-01-01',
+    premium: '100000', agencyRate: '12', evidence: 'Original binder and carrier schedule',
+  }))).toEqual({ ok: true });
+  expect(records.get('POLICY:old')).toMatchObject({
+    carrierTerms: { version: 7, basis: 'EARNED', payment: { ...historical, lines: ['PROPERTY'] } }, entries: [],
+  });
+  expect((records.get('POLICY:old') as CommissionPolicy).carrierTerms).not.toHaveProperty('arrangements');
+  expect(h.commit.mock.calls[0][2]).toContainEqual({
+    ConditionCheck: {
+      TableName: 'private-ledger', Key: { kind: 'CARRIER', id: 'c' },
+      ConditionExpression: '#v = :v', ExpressionAttributeNames: { '#v': 'version' },
+      ExpressionAttributeValues: { ':v': 7 },
+    },
   });
 });

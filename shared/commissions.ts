@@ -4,7 +4,7 @@ export type CommissionBasis = 'WRITTEN' | 'EARNED' | 'COLLECTED';
 export const COMMISSION_BASES: Record<CommissionBasis, string> = {
   WRITTEN: 'Written premium',
   EARNED: 'Earned premium',
-  COLLECTED: 'Collected premium / installments',
+  COLLECTED: 'Collected premium',
 };
 export const ACCOUNT_COMMISSION_CLASSES = {
   STANDARD: 'Standard account',
@@ -44,6 +44,25 @@ export interface CommissionPlan {
     gim?: CommissionRates;
   })[];
 }
+/** Commission basis is independent of the frequency at which the payor remits it. */
+export interface CarrierPaymentArrangement {
+  id: string;
+  from: string;
+  to?: string;
+  lines?: string[];
+  transaction?: 'NEW' | 'RENEWAL';
+  billType?: 'AGENCY' | 'DIRECT';
+  basis: CommissionBasis;
+  payor: string;
+  trigger: 'BIND' | 'EFFECTIVE' | 'COLLECTION' | 'EARNED';
+  cadence: 'ONCE' | 'MONTHLY' | 'QUARTERLY';
+  lagDays: number;
+  cutoffDay?: number;
+  paymentDay?: number;
+  earningMethod?: 'DAILY_PRORATA' | 'MANUAL';
+  evidence: string;
+  notes?: string;
+}
 export interface CarrierCommissionTerms {
   id: string;
   version: number;
@@ -51,6 +70,30 @@ export interface CarrierCommissionTerms {
   basis: CommissionBasis;
   schedule: string;
   evidence: string;
+  arrangements?: CarrierPaymentArrangement[];
+  /** Immutable resolved arrangement on a policy term; absent on legacy terms. */
+  payment?: CarrierPaymentArrangement;
+}
+export interface CommissionReceiptForecast {
+  items: { dueOn: string; agencyCents: number }[];
+  evidence: string;
+  confirmed: boolean;
+  complete: boolean;
+  /** Written by the server when an Owner reviews the current receipt history. */
+  reviewedEntryCount?: number;
+}
+export interface CommissionReconciliationBalances {
+  asOf: string;
+  fullTermEstimate: number;
+  forecastTotal: number | null;
+  expectedToDate: number | null;
+  receivedToDate: number;
+  overdue: number | null;
+  futureForecast: number | null;
+  unallocatedForecast: number | null;
+  confirmed: boolean;
+  status: string;
+  adjustmentReview: boolean;
 }
 export interface CommissionEntry {
   id: string;
@@ -98,6 +141,9 @@ export interface CommissionPolicy {
   };
   receiptsFrom?: string;
   carrierTerms: CarrierCommissionTerms;
+  receiptForecast?: CommissionReceiptForecast;
+  /** Safe computed summary for a producer response, without private source terms. */
+  reconciliationBalances?: CommissionReconciliationBalances;
   entries: CommissionEntry[];
 }
 export interface StatementLine {
@@ -470,4 +516,303 @@ export function validateAllocationSnapshot(
       if (!e || e.batchId !== b.id || e.producerCents !== l.amountCents) fail();
     }
   }
+}
+
+function arrangementSpecificity(a: CarrierPaymentArrangement): number {
+  return Number(!!a.lines?.length) + Number(!!a.transaction) + Number(!!a.billType);
+}
+function arrangementsOverlap(a: CarrierPaymentArrangement, b: CarrierPaymentArrangement): boolean {
+  return (
+    a.from <= (b.to ?? '9999-12-31') &&
+    b.from <= (a.to ?? '9999-12-31') &&
+    (!a.transaction || !b.transaction || a.transaction === b.transaction) &&
+    (!a.billType || !b.billType || a.billType === b.billType) &&
+    (!a.lines?.length || !b.lines?.length || a.lines.some((line) => b.lines!.includes(line)))
+  );
+}
+/** New writes require structured, sourced terms. Legacy snapshots remain readable. */
+export function validateCarrierPaymentTerms(terms: CarrierCommissionTerms): CarrierCommissionTerms {
+  const name = required(terms.name, 'a carrier name', 200);
+  if (!Array.isArray(terms.arrangements) || !terms.arrangements.length || terms.arrangements.length > 100)
+    throw new Error('Enter 1–100 carrier payment arrangements.');
+  const arrangements = terms.arrangements.map((a): CarrierPaymentArrangement => {
+    if (!a || typeof a !== 'object') throw new Error('Enter a valid carrier payment arrangement.');
+    const from = day(a.from), to = a.to ? day(a.to) : undefined;
+    if (to && to < from) throw new Error('A carrier arrangement cannot end before it starts.');
+    if (!Object.hasOwn(COMMISSION_BASES, a.basis)) throw new Error('Choose a commission basis.');
+    if (!['BIND', 'EFFECTIVE', 'COLLECTION', 'EARNED'].includes(a.trigger))
+      throw new Error('Choose a carrier payment trigger.');
+    if ((a.basis === 'WRITTEN' && !['BIND', 'EFFECTIVE'].includes(a.trigger)) ||
+        (a.basis === 'EARNED' && a.trigger !== 'EARNED') ||
+        (a.basis === 'COLLECTED' && a.trigger !== 'COLLECTION'))
+      throw new Error('The carrier payment trigger must match its commission basis.');
+    if (!['ONCE', 'MONTHLY', 'QUARTERLY'].includes(a.cadence))
+      throw new Error('Choose a carrier remittance cadence.');
+    if (a.transaction !== undefined && !['NEW', 'RENEWAL'].includes(a.transaction))
+      throw new Error('Choose a new-business or renewal scope.');
+    if (a.billType !== undefined && !['AGENCY', 'DIRECT'].includes(a.billType))
+      throw new Error('Choose an agency-bill or direct-bill scope.');
+    if (a.basis === 'EARNED' && a.earningMethod === undefined)
+      throw new Error('Choose a daily pro-rata or manual earned-premium calculation method.');
+    if (a.earningMethod !== undefined &&
+        (a.basis !== 'EARNED' || !['DAILY_PRORATA', 'MANUAL'].includes(a.earningMethod)))
+      throw new Error('Choose an earned-premium calculation method only for earned-premium terms.');
+    if (a.cadence === 'ONCE' && a.cutoffDay !== undefined)
+      throw new Error('A one-time remittance does not have a statement cutoff.');
+    let lines: string[] | undefined;
+    if (a.lines !== undefined) {
+      if (!Array.isArray(a.lines) || !a.lines.length || a.lines.length > 50)
+        throw new Error('Choose 1–50 coverage lines or leave the scope unrestricted.');
+      lines = a.lines.map((line) => required(line, 'a coverage line', 100).toUpperCase());
+      if (new Set(lines).size !== lines.length) throw new Error('Coverage line scopes must be unique.');
+      lines.sort();
+    }
+    return {
+      id: required(a.id, 'an arrangement identifier', 128),
+      from,
+      ...(to ? { to } : {}),
+      ...(lines ? { lines } : {}),
+      ...(a.transaction ? { transaction: a.transaction } : {}),
+      ...(a.billType ? { billType: a.billType } : {}),
+      basis: a.basis,
+      payor: required(a.payor, 'the commission payor', 200),
+      trigger: a.trigger,
+      cadence: a.cadence,
+      lagDays: integer(a.lagDays, 0, 730, 'calendar-day payment lag'),
+      ...(a.cutoffDay !== undefined ? { cutoffDay: integer(a.cutoffDay, 1, 31, 'statement cutoff day') } : {}),
+      ...(a.paymentDay !== undefined ? { paymentDay: integer(a.paymentDay, 1, 31, 'payment day') } : {}),
+      ...(a.earningMethod ? { earningMethod: a.earningMethod } : {}),
+      evidence: required(a.evidence, 'the carrier agreement reference', 2000),
+      ...(a.notes?.trim() ? { notes: required(a.notes, 'carrier wording or notes', 2000) } : {}),
+    };
+  });
+  if (new Set(arrangements.map((a) => a.id)).size !== arrangements.length)
+    throw new Error('Carrier arrangement identifiers must be unique.');
+  for (let i = 0; i < arrangements.length; i++)
+    for (let j = i + 1; j < arrangements.length; j++)
+      if (arrangementSpecificity(arrangements[i]) === arrangementSpecificity(arrangements[j]) &&
+          arrangementsOverlap(arrangements[i], arrangements[j]))
+        throw new Error('Carrier payment arrangements with the same scope specificity cannot overlap.');
+  // Preserve legacy fields as a readable summary, never a second timing source.
+  const validated: CarrierCommissionTerms = {
+    id: required(terms.id, 'a carrier identifier', 128),
+    version: integer(terms.version, 0, Number.MAX_SAFE_INTEGER, 'carrier terms version'),
+    name,
+    basis: arrangements[0].basis,
+    schedule: typeof terms.schedule === 'string' ? terms.schedule.trim().slice(0, 2000) : '',
+    evidence: arrangements[0].evidence,
+    arrangements,
+  };
+  if (new TextEncoder().encode(JSON.stringify(validated)).length > 200_000)
+    throw new Error('Carrier payment terms are too large. Use shorter agreement references and notes.');
+  return validated;
+}
+export interface CarrierPaymentContext {
+  effectiveDate: string;
+  lines?: readonly string[];
+  billType?: 'AGENCY' | 'DIRECT';
+  transaction: 'NEW' | 'RENEWAL';
+}
+/** Select by policy effective date; scoped arrangements outrank carrierwide defaults.
+ * Equal-specificity matches are ambiguous even if they name disjoint policy lines. */
+export function selectCarrierPaymentTerms(
+  terms: CarrierCommissionTerms,
+  context: CarrierPaymentContext,
+): CarrierCommissionTerms {
+  const effectiveDate = day(context.effectiveDate);
+  if (!terms.arrangements?.length) {
+    const { payment: _payment, ...legacy } = terms;
+    return { ...legacy };
+  }
+  const validated = validateCarrierPaymentTerms(terms);
+  const lines = new Set((context.lines ?? []).map((line) => line.trim().toUpperCase()).filter(Boolean));
+  const knownBillType = context.billType === 'AGENCY' || context.billType === 'DIRECT';
+  const dated = validated.arrangements!.filter((a) =>
+    a.from <= effectiveDate && (!a.to || a.to >= effectiveDate) &&
+    (!a.transaction || a.transaction === context.transaction),
+  );
+  const applicable = dated.filter((a) =>
+    !a.billType || (knownBillType && a.billType === context.billType),
+  );
+  const matches = applicable.filter((a) =>
+    !a.lines?.length || (lines.size > 0 && [...lines].every((line) => a.lines!.includes(line))),
+  ).sort((a, b) => arrangementSpecificity(b) - arrangementSpecificity(a));
+  // Missing historical metadata is unknown, not proof that an override does not
+  // apply. A known contrary scope or a lower-priority exception cannot win.
+  const unresolvedScope = dated.some((a) =>
+    (!a.billType || !knownBillType || a.billType === context.billType) &&
+    (!a.lines?.length || !lines.size || a.lines.some((line) => lines.has(line))) &&
+    ((!!a.billType && !knownBillType) || (!!a.lines?.length && !lines.size)) &&
+    (!matches[0] || arrangementSpecificity(a) >= arrangementSpecificity(matches[0])));
+  if (unresolvedScope)
+    throw new Error('Confirm the policy’s billing type and coverage lines before selecting scoped carrier payment terms.');
+  const partial = applicable.some((a) => a.lines?.some((line) => lines.has(line)) &&
+    ![...lines].every((line) => a.lines!.includes(line)) &&
+    (!matches[0] || arrangementSpecificity(a) >= arrangementSpecificity(matches[0])));
+  if (partial)
+    throw new Error('Carrier payment terms differ across this policy’s coverage lines. Split the policy or configure one arrangement covering all its lines.');
+  if (!matches.length)
+    throw new Error('Configure carrier payment terms covering this policy effective date and scope.');
+  if (matches[1] && arrangementSpecificity(matches[0]) === arrangementSpecificity(matches[1]))
+    throw new Error('Carrier payment terms are ambiguous for this policy. Resolve the overlapping scopes.');
+  const payment = matches[0];
+  return { ...validated, basis: payment.basis, evidence: payment.evidence, payment };
+}
+export function validateReceiptForecast(forecast: CommissionReceiptForecast): CommissionReceiptForecast {
+  if (!forecast || typeof forecast !== 'object' || !Array.isArray(forecast.items) || forecast.items.length > 100)
+    throw new Error('Enter at most 100 expected receipt items.');
+  if (typeof forecast.confirmed !== 'boolean' || typeof forecast.complete !== 'boolean')
+    throw new Error('Review whether the receipt forecast is confirmed and complete.');
+  if (!forecast.complete && !forecast.items.length)
+    throw new Error('Enter an expected receipt or confirm a complete zero forecast.');
+  const items = forecast.items.map((item) => ({
+    dueOn: day(item.dueOn),
+    agencyCents: integer(item.agencyCents, 0, MONEY_MAX, 'expected agency commission'),
+  })).sort((a, b) => a.dueOn.localeCompare(b.dueOn));
+  sum(items.map((item) => item.agencyCents));
+  return {
+    items,
+    evidence: required(forecast.evidence, 'the receipt forecast source or review reference', 2000),
+    confirmed: forecast.confirmed,
+    complete: forecast.complete,
+    ...(forecast.reviewedEntryCount !== undefined
+      ? { reviewedEntryCount: integer(forecast.reviewedEntryCount, 0, 500, 'reviewed entry count') }
+      : {}),
+  };
+}
+
+const CALENDAR_DAY_MS = 86_400_000;
+function dateAt(value: string): Date { return new Date(`${day(value)}T00:00:00Z`); }
+function dateString(value: Date): string {
+  const result = value.toISOString().slice(0, 10);
+  return day(result);
+}
+function addCalendarDays(value: string, days: number): string {
+  return dateString(new Date(dateAt(value).getTime() + days * CALENDAR_DAY_MS));
+}
+function monthDate(year: number, month: number, dayOfMonth: number): string {
+  const last = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+  return dateString(new Date(Date.UTC(year, month, Math.min(dayOfMonth, last))));
+}
+function bindCalendarDate(boundAt: string): string {
+  // Historical adoption stores an original local date rather than an instant.
+  if (/^\d{4}-\d{2}-\d{2}$/.test(boundAt)) return day(boundAt);
+  const instant = new Date(boundAt);
+  if (!Number.isFinite(instant.getTime())) throw new Error('The original bind timestamp is invalid.');
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(instant);
+  const part = (type: string) => parts.find((p) => p.type === type)!.value;
+  return day(`${part('year')}-${part('month')}-${part('day')}`);
+}
+/** Calendar statement periods close on cutoffDay (default monthend). Monthly means
+ * every month; quarterly means Mar/Jun/Sep/Dec. A later trigger rolls a full period.
+ * paymentDay is in the month after the cutoff; days 29–31 clamp to monthend.
+ * lagDays are calendar days added after that payment day (or after the cutoff).
+ * ONCE has no cutoff: paymentDay is its next occurrence on/after the trigger. */
+function remittanceDue(trigger: string, payment: CarrierPaymentArrangement): string {
+  const date = dateAt(trigger), year = date.getUTCFullYear(), month = date.getUTCMonth();
+  let due: string;
+  if (payment.cadence === 'ONCE') {
+    due = trigger;
+    if (payment.paymentDay !== undefined) {
+      due = monthDate(year, month, payment.paymentDay);
+      if (due < trigger) due = monthDate(year, month + 1, payment.paymentDay);
+    }
+  } else {
+    const months = payment.cadence === 'MONTHLY' ? 1 : 3;
+    let closeMonth = Math.floor(month / months) * months + months - 1;
+    let close = monthDate(year, closeMonth, payment.cutoffDay ?? 31);
+    if (trigger > close) {
+      closeMonth += months;
+      close = monthDate(year, closeMonth, payment.cutoffDay ?? 31);
+    }
+    due = payment.paymentDay === undefined
+      ? close
+      : monthDate(year, closeMonth + 1, payment.paymentDay);
+  }
+  return addCalendarDays(due, payment.lagDays);
+}
+function automaticReceiptItems(policy: CommissionPolicy, total: number): CommissionReceiptForecast | null {
+  const payment = policy.carrierTerms.payment;
+  if (!payment) return null;
+  if (payment.basis === 'COLLECTED' || (payment.basis === 'EARNED' && payment.earningMethod !== 'DAILY_PRORATA'))
+    return null;
+  const evidence = payment.evidence;
+  if (payment.basis === 'WRITTEN') {
+    const trigger = payment.trigger === 'BIND' ? bindCalendarDate(policy.boundAt) : day(policy.effectiveDate);
+    return { items: [{ dueOn: remittanceDue(trigger, payment), agencyCents: total }], evidence, confirmed: true, complete: true };
+  }
+  const start = day(policy.effectiveDate), end = day(policy.expirationDate);
+  if (end <= start) throw new Error('The policy expiration date must follow its effective date.');
+  if (payment.cadence === 'ONCE')
+    return { items: [{ dueOn: remittanceDue(addCalendarDays(end, -1), payment), agencyCents: total }], evidence, confirmed: true, complete: true };
+  const totalDays = (dateAt(end).getTime() - dateAt(start).getTime()) / CALENDAR_DAY_MS;
+  const months = payment.cadence === 'MONTHLY' ? 1 : 3;
+  let periodStart = start, prior = 0;
+  const items: CommissionReceiptForecast['items'] = [];
+  while (periodStart < end) {
+    if (items.length >= 100) return null; // Long terms require an explicit bounded plan.
+    const date = dateAt(periodStart), month = date.getUTCMonth(), year = date.getUTCFullYear();
+    let closeMonth = Math.floor(month / months) * months + months - 1;
+    let close = monthDate(year, closeMonth, payment.cutoffDay ?? 31);
+    if (periodStart > close) {
+      closeMonth += months;
+      close = monthDate(year, closeMonth, payment.cutoffDay ?? 31);
+    }
+    const next = addCalendarDays(close, 1);
+    const periodEnd = next < end ? next : end;
+    const elapsed = (dateAt(periodEnd).getTime() - dateAt(start).getTime()) / CALENDAR_DAY_MS;
+    const cumulative = ratio(total, elapsed, totalDays);
+    items.push({ dueOn: remittanceDue(addCalendarDays(periodEnd, -1), payment), agencyCents: cumulative - prior });
+    prior = cumulative;
+    periodStart = periodEnd;
+  }
+  return { items, evidence, confirmed: true, complete: true };
+}
+/** Forecasts never post receipts or alter producer earnings. Unknown timing remains
+ * null. An incomplete manual plan reports only known items and an unknown remainder.
+ * Early receipts allocate to due items then future items; futureForecast is the
+ * remaining future scheduled balance rather than the original gross schedule.
+ * Due today contributes to expectedToDate, and becomes overdue tomorrow. Reversals
+ * require a forecast review before any overdue amount is reliable again. */
+export function carrierReconciliationBalances(
+  policy: CommissionPolicy,
+  asOf: string,
+): CommissionReconciliationBalances {
+  day(asOf);
+  const fullTermEstimate = ratio(policy.premiumCents, policy.agencyRateUnits, 1_000_000);
+  const receivedEntries = policy.entries.filter((entry) => entry.revenueKind !== 'BROKER_FEE' && entry.receivedOn <= asOf);
+  const receivedToDate = sum(receivedEntries.map((entry) => entry.agencyCents));
+  const forecast = policy.receiptForecast
+    ? validateReceiptForecast(policy.receiptForecast)
+    : automaticReceiptItems(policy, fullTermEstimate);
+  const reviewedEntryCount = policy.receiptForecast?.reviewedEntryCount ?? 0;
+  // The review watermark counts the complete immutable ledger, including fees.
+  // Preserve those indexes while excluding fee reversals from carrier review.
+  const adjustmentReview = policy.entries.some((entry, index) =>
+    entry.revenueKind !== 'BROKER_FEE' && entry.receivedOn <= asOf && entry.kind !== 'RECEIPT' && index >= reviewedEntryCount);
+  if (!forecast) return {
+    asOf, fullTermEstimate, forecastTotal: null, expectedToDate: null, receivedToDate,
+    overdue: null, futureForecast: null, unallocatedForecast: null, confirmed: false,
+    status: adjustmentReview ? 'ADJUSTMENT_REVIEW' : 'UNKNOWN', adjustmentReview,
+  };
+  const knownTotal = sum(forecast.items.map((item) => item.agencyCents));
+  const expectedToDate = sum(forecast.items.filter((item) => item.dueOn <= asOf).map((item) => item.agencyCents));
+  const pastDue = sum(forecast.items.filter((item) => item.dueOn < asOf).map((item) => item.agencyCents));
+  return {
+    asOf,
+    fullTermEstimate,
+    forecastTotal: forecast.complete ? knownTotal : null,
+    expectedToDate,
+    receivedToDate,
+    overdue: forecast.confirmed && !adjustmentReview ? Math.max(0, pastDue - receivedToDate) : null,
+    futureForecast: Math.max(0,
+      sum(forecast.items.filter((item) => item.dueOn > asOf).map((item) => item.agencyCents)) -
+      Math.max(0, receivedToDate - expectedToDate)),
+    unallocatedForecast: forecast.complete ? 0 : Math.max(0, fullTermEstimate - knownTotal),
+    confirmed: forecast.confirmed,
+    status: adjustmentReview ? 'ADJUSTMENT_REVIEW' : !forecast.complete ? 'PARTIAL_FORECAST' : forecast.confirmed ? 'CONFIRMED' : 'ESTIMATED',
+    adjustmentReview,
+  };
 }

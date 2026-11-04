@@ -41,6 +41,11 @@ beforeEach(() => {
   };
 });
 describe("current account assignment", () => {
+  it('authorizes carrier payment previews only through an accessible quote', async () => {
+    await expect(authorizeCustom(user(), 'carrierPaymentPreview', { quoteId: 'qa', billType: 'DIRECT' })).resolves.toBeUndefined();
+    await expect(authorizeCustom(user(), 'carrierPaymentPreview', { quoteId: 'qb', billType: 'DIRECT' })).rejects.toThrow(AccessDenied);
+    await expect(authorizeCustom(user(), 'carrierPaymentPreview', { quoteId: 'missing', billType: 'DIRECT' })).rejects.toThrow(AccessDenied);
+  });
   it("limits salespeople to their accounts, including direct guessed IDs", async () => {
     expect(await user().canAccount("a")).toBe(true);
     expect(await user().canAccount("b")).toBe(false);

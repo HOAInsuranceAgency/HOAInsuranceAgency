@@ -2255,6 +2255,11 @@ const schema = a
     commissionOverview: a.query().returns(a.json())
       .authorization(allow => [allow.authenticated()])
       .handler(a.handler.function(commissions)),
+    carrierPaymentPreview: a.query()
+      .arguments({ quoteId: a.string().required(), billType: a.string().required() })
+      .returns(a.json())
+      .authorization(allow => [allow.authenticated()])
+      .handler(a.handler.function(commissions)),
     commissionAction: a.mutation()
       .arguments({ operation: a.string().required(), input: a.json().required() }).returns(a.json())
       .authorization(allow => [allow.groups(["OWNER"])])
