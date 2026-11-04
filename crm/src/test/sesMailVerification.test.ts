@@ -31,6 +31,16 @@ describe("operator-only combined SES verification", () => {
     const workbook = unzipSync(details.attachments[1].content); expect(Object.keys(workbook)).toContain("xl/workbook.xml");
     expect(Object.entries(workbook).filter(([name]) => name.endsWith(".xml")).some(([, data]) => new TextDecoder().decode(data).includes("Migration test only"))).toBe(true);
   });
+  it("supports the insurance sender with the same fixed owner and a separate operation identity", async () => {
+    expect(await handler({ ...event, sender: "insurance" }, context)).toMatchObject({ provider: "ses", fixture: "complete" });
+    expect(h.send).toHaveBeenCalledOnce(); const [command, details] = h.send.mock.calls[0];
+    expect(command.input.FromEmailAddress).toBe("HOA Insurance Agency <insurance@protectmyhoa.com>"); expect(command.input.Destination).toEqual({ ToAddresses: ["jake@getgim.com"] });
+    expect(details.idempotencyKey).toBe(`verification:${event.runId}:complete:insurance`); expect(details.attachments).toHaveLength(2);
+  });
+  it("rejects unknown or address-shaped sender overrides before transport", async () => {
+    for (const sender of ["other", "noreply@protectmyhoa.com", "insurance@other.example"]) await expect(handler({ ...event, sender }, context)).rejects.toThrow("sender");
+    expect(h.send).not.toHaveBeenCalled();
+  });
   it.each([
     { HOA_SES_CANARY_EXPIRES_AT: "" }, { HOA_SES_CANARY_EXPIRES_AT: "2026-11-04T01:59:59Z" }, { HOA_TRANSACTIONAL_MAIL_PROVIDER: "ses" },
     { HOA_MIGRATION_PREVIEW: "true" }, { HOA_MIGRATION_BRANCH: "codex-hoa-staging-migration" }, { AWS_REGION: "us-west-2" }, { AWS_LAMBDA_FUNCTION_NAME: runtime.replace("mailverification", "other") },

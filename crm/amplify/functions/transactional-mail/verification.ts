@@ -7,9 +7,11 @@ import { MARKETING_REPORT_HEADERS } from "../../../../shared/marketingLeadReport
 import { buildMarketingReportWorkbook } from "../marketing-report/workbook";
 
 /** IAM-invoked synthetic transport checks. Never reads/writes business records. */
-export const handler = async (event: { fixture?: string; runId?: string }, context: Context) => {
+export const handler = async (event: { fixture?: string; runId?: string; sender?: string }, context: Context) => {
+  const sender = event.sender ?? "noreply";
+  if (!["noreply", "insurance"].includes(sender)) throw new Error("Unapproved verification sender.");
   const oldPreview = process.env.HOA_MIGRATION_PREVIEW === "true" && process.env.HOA_RESEND_PREVIEW_ENABLED === "true"
-    && ["login", "invite", "invoice", "report", "accounting"].includes(event.fixture ?? "");
+    && sender === "noreply" && ["login", "invite", "invoice", "report", "accounting"].includes(event.fixture ?? "");
   const expiry = Date.parse(process.env.HOA_SES_CANARY_EXPIRES_AT ?? "");
   const sesCanary = event.fixture === "complete" && process.env.HOA_MIGRATION_PREVIEW === "false"
     && process.env.HOA_TRANSACTIONAL_MAIL_PROVIDER === "resend" && process.env.HOA_MIGRATION_BRANCH === "codex-hoa-account-migration"
@@ -19,7 +21,7 @@ export const handler = async (event: { fixture?: string; runId?: string }, conte
     || !context.invokedFunctionArn.startsWith("arn:aws:lambda:us-east-1:917680434255:function:amplify-d1nuh9rw1hcuxo-")
     || (sesCanary && context.invokedFunctionArn.split(":")[6] !== process.env.AWS_LAMBDA_FUNCTION_NAME)
     || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(event.runId ?? "")) throw new Error("Unapproved migration email check.");
-  const from = "HOA Insurance Agency <noreply@protectmyhoa.com>";
+  const from = `HOA Insurance Agency <${sender}@protectmyhoa.com>`;
   const to = ["jake@getgim.com"];
   const subject = sesCanary ? "[Migration test] HOA SES email delivery" : `[Migration test] HOA ${event.fixture} email delivery`;
   const text = `Synthetic ${event.fixture} email for the HOA migration. This message contains no customer information, invitation, sign-in token, invoice, payment link, or business action.`;
@@ -33,6 +35,6 @@ export const handler = async (event: { fixture?: string; runId?: string }, conte
     attachments.push({ filename: "migration-test.pdf", contentType: "application/pdf", content: await pdf.save() });
   }
   if (event.fixture === "report" || sesCanary) attachments.push({ filename: "migration-test.xlsx", contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", content: buildMarketingReportWorkbook({ headers: MARKETING_REPORT_HEADERS, rows: [], warnings: ["Migration test only; no customer information."], asOf: "2026-10-30T00:00:00Z" }) });
-  const result = await new TransactionalMailClient("test").send(new SendEmailCommand({ FromEmailAddress: from, Destination: { ToAddresses: to }, Content: { Simple: { Subject: { Data: subject }, Body: { Text: { Data: text }, Html: { Data: `<p>${text}</p>` } } } } }), { idempotencyKey: `verification:${event.runId}:${event.fixture}`, attachments });
+  const result = await new TransactionalMailClient("test").send(new SendEmailCommand({ FromEmailAddress: from, Destination: { ToAddresses: to }, Content: { Simple: { Subject: { Data: subject }, Body: { Text: { Data: text }, Html: { Data: `<p>${text}</p>` } } } } }), { idempotencyKey: `verification:${event.runId}:${event.fixture}${sender === "insurance" ? ":insurance" : ""}`, attachments });
   return { fixture: event.fixture, provider, messageId: result.MessageId, synthetic: true };
 };

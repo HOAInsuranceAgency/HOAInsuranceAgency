@@ -83,6 +83,17 @@ describe("SES pre-switch owner canary", () => {
       expect(h.fetchMock).toHaveBeenCalledOnce(); expect(h.sesMock).not.toHaveBeenCalled();
     }
   });
+  it("allows insurance only for synthetic owner tests; real login and other business kinds keep the primary", async () => {
+    const insurance = new SendEmailCommand({ ...command().input, FromEmailAddress: "HOA Insurance Agency <insurance@protectmyhoa.com>" });
+    const h = harness(); await new TransactionalMailClient("test", h.deps).send(insurance); expect(h.sesMock).toHaveBeenCalledOnce(); expect(h.fetchMock).not.toHaveBeenCalled();
+    for (const kind of ["login", "invite", "invoice", "report", "accounting"] as const) {
+      const other = harness(); await new TransactionalMailClient(kind, other.deps).send(insurance); expect(other.sesMock).not.toHaveBeenCalled(); expect(other.fetchMock).toHaveBeenCalledOnce();
+    }
+  });
+  it("rejects an unknown destination sender before any credential, storage or provider call", async () => {
+    const h = harness(); const unknown = new SendEmailCommand({ ...command().input, FromEmailAddress: "unknown@protectmyhoa.com" });
+    await expect(new TransactionalMailClient("test", h.deps).send(unknown)).rejects.toThrow("sender"); expect(h.database.send).not.toHaveBeenCalled(); expect(h.storage.send).not.toHaveBeenCalled(); expect(h.sesMock).not.toHaveBeenCalled(); expect(h.fetchMock).not.toHaveBeenCalled();
+  });
   it("expires the owner canary without changing other primary delivery", async () => {
     vi.stubEnv("HOA_SES_CANARY_EXPIRES_AT", "2026-11-04T01:59:59Z"); const h = harness();
     await new TransactionalMailClient("login", h.deps).send(command()); expect(h.fetchMock).toHaveBeenCalledOnce(); expect(h.sesMock).not.toHaveBeenCalled();

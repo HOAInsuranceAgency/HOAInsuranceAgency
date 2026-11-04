@@ -53,9 +53,11 @@ export function selectedProvider(kind: MailKind, body: Payload, env = process.en
   if (!trackedMailProvider(primary)) throw new Error("Transactional email provider is not configured.");
   const expiry = Date.parse(env.HOA_SES_CANARY_EXPIRES_AT ?? "");
   const recipients = [...body.to, ...(body.cc ?? []), ...(body.bcc ?? [])];
+  const sender = email(body.from);
+  const canarySender = sender === "noreply@protectmyhoa.com" || (kind === "test" && sender === "insurance@protectmyhoa.com");
   if (primary === "resend" && ["login", "test"].includes(kind) && Number.isFinite(expiry) && now < expiry
     && recipients.length === 1 && recipients[0] === "jake@getgim.com" && !body.cc?.length && !body.bcc?.length
-    && email(body.from) === "noreply@protectmyhoa.com") return "ses";
+    && canarySender) return "ses";
   return primary;
 }
 export function sesConfigurationSet(env = process.env): string {
@@ -76,6 +78,7 @@ export function assertDestination(kind: MailKind, body: Payload, env = process.e
     || env.HOA_TRANSACTIONAL_MAIL_BUCKET !== "hoa-transactional-mail-917680434255-us-east-1"
     || !runtimeMatches) throw new Error("Transactional email is not bound to the HOA destination.");
   const recipients = [...body.to, ...(body.cc ?? []), ...(body.bcc ?? [])];
+  if (!["noreply@protectmyhoa.com", "insurance@protectmyhoa.com"].includes(email(body.from))) throw new Error("Transactional sender is not configured for this destination.");
   if (env.HOA_MIGRATION_PREVIEW === "true") {
     const expiry = Date.parse(env.HOA_PREVIEW_ADMIN_LOGIN_EXPIRES_AT ?? "");
     if (branch !== "codex-hoa-account-migration" || !["login", "test"].includes(kind)
