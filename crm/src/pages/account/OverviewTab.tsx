@@ -39,7 +39,7 @@ export function OverviewTab({
     currentPolicyExpiration: inputValue(account.currentPolicyExpiration),
     notes: inputValue(account.notes),
   }, { onEdit: saveStatus.markDirty });
-  useUnsavedChanges(dirty, { busy: saveStatus.busy, onDiscard: reset });
+  useUnsavedChanges(dirty || saveStatus.busy, { busy: saveStatus.busy, onDiscard: reset });
 
   async function save() {
     const name = str(form.name);

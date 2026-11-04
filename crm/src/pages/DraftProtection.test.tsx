@@ -205,3 +205,24 @@ it("rejects expired or malformed recovery snapshots", () => {
   expect(screen.queryByRole("button", { name: "Recover lead details" })).not.toBeInTheDocument();
   expect(sessionStorage.getItem(key)).toBeNull();
 });
+
+it("still holds navigation when Overview fields are reverted while an earlier save is in flight", async () => {
+  let finish!: (result: { data: Account }) => void;
+  mocks.update.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+  const view = mount("/accounts/one");
+  fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Submitted name" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+  await waitFor(() => expect(mocks.update).toHaveBeenCalled());
+  fireEvent.change(screen.getByLabelText("Name"), { target: { value: account.name } });
+  fireEvent.click(screen.getByRole("link", { name: "Other page" }));
+  await screen.findByRole("dialog", { name: "Saving is still in progress" });
+  expect(view.router.state.location.pathname).toBe("/accounts/one");
+  expect(screen.queryByRole("button", { name: "Discard changes and continue" })).not.toBeInTheDocument();
+  await act(async () => { finish({ data: { ...account, name: "Submitted name" } }); });
+  // The server now has the submitted name; reverting locally is another edit.
+  await screen.findByRole("dialog", { name: "Leave with unsaved changes?" });
+  expect(view.router.state.location.pathname).toBe("/accounts/one");
+  fireEvent.click(screen.getByRole("button", { name: "Discard changes and continue" }));
+  await screen.findByRole("heading", { name: "Other page" });
+  expect(mocks.update).toHaveBeenCalledTimes(1);
+});
