@@ -66,3 +66,18 @@ it("does not update after an in-flight clipboard write outlives the contact", as
   view.unmount();
   await act(async () => finish());
 });
+
+it("keeps the latest copy result when an older clipboard attempt finishes later", async () => {
+  userEvent.setup();
+  let rejectFirst!: (reason: Error) => void;
+  vi.spyOn(navigator.clipboard, "writeText")
+    .mockReturnValueOnce(new Promise<void>((_resolve, reject) => { rejectFirst = reject; }))
+    .mockResolvedValueOnce(undefined);
+  render(<ContactActions kind="email" value="pat@example.com" contactName="Pat" />);
+  const copy = screen.getByRole("button", { name: "Copy Pat's email address" });
+  fireEvent.click(copy);
+  await act(async () => { fireEvent.click(copy); });
+  expect(screen.getByRole("status")).toHaveTextContent("Copied");
+  await act(async () => rejectFirst(new Error("Old attempt failed")));
+  expect(screen.getByRole("status")).toHaveTextContent("Copied");
+});

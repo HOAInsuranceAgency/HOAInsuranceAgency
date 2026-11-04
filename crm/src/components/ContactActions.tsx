@@ -11,6 +11,7 @@ export default function ContactActions({ kind, value, display, contactName }: {
   const [feedback, setFeedback] = useState("");
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const mounted = useRef(true);
+  const copyAttempt = useRef(0);
   const currentValue = useRef(value);
   currentValue.current = value;
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; clearTimeout(timer.current); }; }, []);
@@ -23,13 +24,14 @@ export default function ContactActions({ kind, value, display, contactName }: {
   const label = kind === "email" ? "email address" : "phone number";
 
   async function copy() {
+    const attempt = ++copyAttempt.current;
     let message: string;
     try {
       if (!navigator.clipboard?.writeText) throw new Error("Clipboard unavailable");
       await navigator.clipboard.writeText(raw!);
       message = "Copied";
     } catch { message = "Select and copy the text"; }
-    if (!mounted.current || currentValue.current?.trim() !== raw) return;
+    if (!mounted.current || attempt !== copyAttempt.current || currentValue.current?.trim() !== raw) return;
     setFeedback(message);
     clearTimeout(timer.current);
     timer.current = setTimeout(() => setFeedback(""), 2200);
