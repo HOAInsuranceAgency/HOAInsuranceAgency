@@ -24,11 +24,26 @@ export function reportHtml(report: DashboardReport, snapshot: ReportSnapshot): s
   @page{size:landscape;margin:16mm}*{box-sizing:border-box}body{font:13px/1.5 Arial,sans-serif;color:#142d4e;margin:32px}header{border-bottom:3px solid #c3a566;padding-bottom:18px;margin-bottom:24px}h1{font-size:26px;margin:5px 0}h2{font-size:17px;margin-top:28px}p{margin:4px 0;color:#53657a}.brand{font-size:11px;text-transform:uppercase;letter-spacing:2px}table{width:100%;border-collapse:collapse;table-layout:fixed;margin:12px 0 24px}th{text-align:left;background:#edf2f8;font-size:11px}th,td{padding:8px;border-bottom:1px solid #dce3ed;overflow-wrap:anywhere;vertical-align:top}thead{display:table-header-group}tr{break-inside:avoid}h2{break-after:avoid}.print-help{background:#edf2f8;padding:12px;margin-bottom:20px}button{padding:8px 14px;cursor:pointer}@media print{body{margin:0}.print-help{display:none}}
   </style></head><body><div class="print-help"><button onclick="window.print()">Print / save PDF</button> Choose “Save as PDF” in the print destination.</div><header><div class="brand">HOA Insurance Agency · Dashboard report</div><h1>${escape(report.title)}</h1><p>${escape(report.filters ?? "All displayed data")}</p><p>Data as of ${escape(snapshot.asOf.toLocaleString())} · ${escape(snapshot.timezone)} · Amounts in USD</p></header>${report.sections.map(section => `<section><h2>${escape(section.title)}</h2><p>${section.rows.length} ${section.rows.length === 1 ? "row" : "rows"}</p><table><thead><tr>${section.columns.map(c => `<th>${escape(c)}</th>`).join("")}</tr></thead><tbody>${section.rows.length ? section.rows.map(row => `<tr>${row.map(c => `<td>${escape(c)}</td>`).join("")}</tr>`).join("") : `<tr><td colspan="${section.columns.length}">No matching records.</td></tr>`}</tbody></table></section>`).join("")}</body></html>`;
 }
-export function saveReport(report: DashboardReport, snapshot: ReportSnapshot, format: "csv" | "pdf") {
-  if (format === "pdf") {
-    const win = window.open("", "_blank");
-    if (!win) throw new Error("Allow this site's pop-up to open the printable report.");
+/** Called synchronously from the user's selection, before any asynchronous
+ * report reads, so browsers retain the gesture needed to allow the window. */
+export function openReportWindow(): Window {
+  const win = window.open("", "_blank");
+  if (!win) throw new Error("Allow this site's pop-up to open the printable report.");
+  // Setting opener synchronously retains our window handle without granting
+  // the printable page access to its parent. The noopener feature would make
+  // window.open return null even when opening successfully in some browsers.
+  try {
     win.opener = null;
+    win.document.open();
+    win.document.write('<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Preparing report</title></head><body><p role="status">Preparing your full report…</p></body></html>');
+    win.document.close();
+  } catch (error) { win.close(); throw error; }
+  return win;
+}
+export function saveReport(report: DashboardReport, snapshot: ReportSnapshot, format: "csv" | "pdf", preparedWindow?: Window) {
+  if (format === "pdf") {
+    const win = preparedWindow ?? openReportWindow();
+    if (win.closed) throw new Error("The report window was closed. Download the report again.");
     win.document.open(); win.document.write(reportHtml(report, snapshot)); win.document.close();
     win.focus();
     return;

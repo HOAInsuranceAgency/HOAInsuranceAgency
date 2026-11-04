@@ -29,6 +29,8 @@ beforeEach(() => {
   currentAccounts = structuredClone(accounts);
   h.listAccounts.mockImplementation(async () => ({ data: structuredClone(currentAccounts) }));
   h.request.mockImplementation(async (operation, input) => {
+    // Retain coverage of the complete legacy path during projection backfill.
+    if (operation === 'accountListPage') return { ready: false, items: [] };
     if (operation === 'team') return { team: [{ userId: 'sales', name: 'Avery Brooks', enabled: true, salesperson: true }] };
     if (operation === 'commercialTable') return { items: input.accountIds.map((accountId: string) => ({
       accountId, salespersonId: 'sales', plan: structuredClone(plans[accountId] ?? emptyCommercialPlan(accountId)),

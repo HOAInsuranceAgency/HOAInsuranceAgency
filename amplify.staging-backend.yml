@@ -21,7 +21,7 @@ applications:
       phases:
         build:
           commands:
-            - npm run build
+            - NODE_OPTIONS=--max-old-space-size=6144 npm run build
             - node scripts/prepare-migration-preview.mjs
       artifacts:
         baseDirectory: dist

@@ -55,6 +55,17 @@ it('opens the shared server handoff with the current sidebar account and convers
   expect(request.mock.calls.some(([, , write]) => write === true)).toBe(false);
 });
 
+it('refreshes compact history without reloading its directory display hints', async () => {
+  const { team: _team, ...polled } = context('Example lead', 'New activity');
+  request.mockResolvedValueOnce(context()).mockResolvedValueOnce(polled);
+  render(<LeadWorkflowPanel accountId="a" onOpen={vi.fn()} />);
+  await screen.findByText('Original salesperson');
+  await act(async () => { await vi.advanceTimersByTimeAsync(15_000); });
+  expect(request).toHaveBeenLastCalledWith('context', { accountId: 'a', conversationId: undefined, includeTeam: false });
+  expect(screen.getByText('Original salesperson')).toBeInTheDocument();
+  expect(screen.getByText('New activity')).toBeInTheDocument();
+});
+
 it('keeps a follow-up draft mounted while another account action refreshes the workspace', async () => {
   const refresh = deferred<unknown>();
   let reads = 0;

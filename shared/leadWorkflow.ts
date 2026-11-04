@@ -15,7 +15,8 @@ export interface TeamEligibility {
   userId: string; name: string; email: string; enabled: boolean;
   /** Response-only hint; never used as an authorization source. */
   canAccessAccount?: boolean;
-  /** Response-only current Cognito availability; saved eligibility stays separate. */
+  /** Response-only display hint from the eligibility snapshot. Assignment and
+   * delivery always validate current Cognito membership and access separately. */
   available?: boolean;
   /** Derived from current Producer membership, never an editable grant. */
   salesperson: boolean;

@@ -28,3 +28,19 @@ it('rejects partial assignment results instead of publishing missing owners', as
   h.request.mockImplementation(async operation => operation === 'team' ? { team: [] } : { items: [], accounts: [] });
   await expect(loadAssignments(['a'])).rejects.toThrow('incomplete');
 });
+
+it('starts attribution before the display roster resolves', async () => {
+  let finishRoster!: (value: unknown) => void;
+  h.request.mockImplementation(operation => operation === 'team'
+    ? new Promise(resolve => { finishRoster = resolve; })
+    : Promise.resolve({ items: [{ accountId: 'a' }], accounts: [{ id: 'a', name: 'A' }] }));
+  const pending = loadAssignments(['a']);
+  await vi.waitFor(() => expect(h.request.mock.calls.map(([operation]) => operation)).toEqual(['team', 'dashboardAssignments']));
+  finishRoster({ team: [] });
+  expect((await pending).accounts).toEqual([{ id: 'a', name: 'A' }]);
+});
+it('settles both branches and prioritizes authorization denial over a transient roster error', async () => {
+  const denied = Object.assign(new Error('Access denied'), { name: 'Unauthorized' });
+  h.request.mockImplementation(async operation => { throw operation === 'team' ? new Error('Temporary roster error') : denied; });
+  await expect(loadAssignments(['a'])).rejects.toBe(denied);
+});

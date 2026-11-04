@@ -7,6 +7,7 @@ import { grantAccountTableReads } from "./account-access-policies";
 import type { Table } from "aws-cdk-lib/aws-dynamodb";
 import type { backend as Backend } from "./backend";
 import { ACCOUNT_MODELS, SHARED_MODELS, PUBLIC_OPERATIONS, ADMIN_OPERATIONS, OWNER_OPERATIONS, ADMIN_MODEL_OPERATIONS, CUSTOM_OPERATIONS, listPartition } from "./functions/crm-access/policy";
+import { administratorListBypassTemplate } from "./functions/crm-access/list-scope";
 
 /** Retain Amplify's native authorization and add current-assignment checks to
  * every generated entry point, including secondary indexes and relationships.
@@ -80,9 +81,7 @@ export function installAccountAccess(backend: typeof Backend, communicationTable
   const makeGuard = (mode: string, model: string, operation = "") => {
     const key = `${mode}_${model}__${operation}`.replace(/-/g, "_");
     const cached = guards.get(key); if (cached) return cached.attrFunctionId;
-    const listAdminBypass = '#set($assignmentGroups = $util.defaultIfNull($ctx.identity.groups, $util.defaultIfNull($ctx.identity.claims.get("cognito:groups"), [])))\n'
-      + '#set($assignmentRole = "")\n#set($assignmentRoleCount = 0)\n#foreach($header in $ctx.request.headers.entrySet())\n#if($header.key.toLowerCase() == "x-crm-role")\n#set($assignmentRole = $header.value)\n#set($assignmentRoleCount = $assignmentRoleCount + 1)\n#end\n#end\n'
-      + '#if(($assignmentRoleCount == 0 && ($assignmentGroups.contains("OWNER") || $assignmentGroups.contains("ADMIN"))) || ($assignmentRoleCount == 1 && (($assignmentRole == "OWNER" && $assignmentGroups.contains("OWNER")) || ($assignmentRole == "ADMIN" && $assignmentGroups.contains("ADMIN")))))\n#return($ctx.prev.result)\n#end\n';
+    const listAdminBypass = administratorListBypassTemplate(model);
     const fn = new CfnFunctionConfiguration(api, `Access_${key}`, {
       apiId: api.apiId, name: `access_${key}`, dataSourceName: source.name, functionVersion: "2018-05-29",
       requestMappingTemplate: `#if($util.authType() == "IAM Authorization")\n#if(!$util.isNull($ctx.identity.cognitoIdentityId))\n$util.unauthorized()\n#end\n#return($ctx.prev.result)\n#end\n${mode === "list" ? listAdminBypass : mode === "read" ? '#if(!$util.isNull($ctx.stash.assignmentList))\n#return($ctx.prev.result)\n#end\n' : ''}{"version":"2018-05-29","operation":"Invoke","payload":{"mode":"${mode}","model":"${model}","field":$util.toJson($ctx.info.fieldName),"operation":"${operation}","identity":$util.toJson($ctx.identity),"request":$util.toJson($ctx.request),"arguments":$util.toJson($ctx.arguments),"previous":$util.toJson($ctx.prev.result)}}`,

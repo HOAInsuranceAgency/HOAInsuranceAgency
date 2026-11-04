@@ -13,6 +13,8 @@ import { client, friendlyError, listAllPages, type Account, type Contact, type P
 import { loadCommercial, type CommercialData, type CommercialEntry } from './commercial';
 import { isAuthorizationError } from './authorizationError';
 import { useIsAdmin } from './auth';
+import { PagedAccountListProvider, usePagedAccountsListData } from './pagedAccountsListData';
+import type { AccountListRequest } from '../../../shared/accountList';
 
 type Stage = 'LEAD' | 'CLIENT';
 export interface AccountsListData {
@@ -42,7 +44,7 @@ const CacheContext = createContext<ListCache | null>(null);
  * them; ordinary navigation can reuse them without storing CRM data on disk. */
 export function AccountsListDataProvider({ children }: { children: ReactNode }) {
   const [cache] = useState<ListCache>(() => new Map());
-  return <CacheContext.Provider value={cache}>{children}</CacheContext.Provider>;
+  return <CacheContext.Provider value={cache}><PagedAccountListProvider>{children}</PagedAccountListProvider></CacheContext.Provider>;
 }
 
 const emptyData = (): AccountsListData => ({
@@ -143,7 +145,7 @@ function mergeCommercial(fresh: CommercialData, previous: CommercialData, accoun
   return { ...fresh, entries };
 }
 
-export function useAccountsListData(stage: Stage) {
+function useLegacyAccountsListData(stage: Stage, enabled = true) {
   const isAdmin = useIsAdmin();
   const providedCache = useContext(CacheContext);
   const localCache = useRef<ListCache>(new Map());
@@ -235,13 +237,34 @@ export function useAccountsListData(stage: Stage) {
 
   useEffect(() => {
     mounted.current = true;
+    if (!enabled) return () => { mounted.current = false; ++ticket.current; };
     publish(initialState(stage, cache, isAdmin));
     void run('all');
     return () => { mounted.current = false; ++ticket.current; };
-  }, [stage, cache, isAdmin, run, publish]);
+  }, [stage, cache, isAdmin, run, publish, enabled]);
 
   // React may reuse the component between Leads and Clients or role views.
   // Never expose the previous scope while its effect is waiting to initialize.
   const visible = state.stage === stage && state.isAdmin === isAdmin ? state : initialState(stage, cache, isAdmin);
   return { data: visible.data, loading: visible.loading, loaded: visible.loaded, error: visible.error, refreshError: visible.refreshError, refetch, refreshCommercial, setCommercial };
+}
+
+export function useAccountsListData(stage: Stage, request?: AccountListRequest) {
+  const paged = usePagedAccountsListData(request);
+  const legacy = useLegacyAccountsListData(stage, !request || paged.fallback);
+  // A transient projection lag must not strand this mounted view on the full
+  // loader. Explicit/return refreshes probe the fast path while retaining the
+  // already authorized legacy rows until either response settles.
+  const refetch = useCallback(async () => {
+    await Promise.all([legacy.refetch(), ...(request ? [paged.refetch()] : [])]);
+  }, [legacy.refetch, paged.refetch, !!request]);
+  const refreshCommercial = useCallback(async () => {
+    await Promise.all([legacy.refreshCommercial(), ...(request ? [paged.refetch()] : [])]);
+  }, [legacy.refreshCommercial, paged.refetch, !!request]);
+  if (request && !paged.fallback) return paged;
+  return { ...legacy, refetch, refreshCommercial, paged: false as const, teamLoading: legacy.loading, teamError: '',
+    counts: { active: 0, snoozed: 0, due: 0, all: 0 }, countsLoaded: false,
+    forecasts: {} as Record<string, import('../../../shared/accountList').AccountListItem['forecast']>,
+    renewals: {} as Record<string, string | null>, nextToken: undefined, loadingMore: false,
+    loadMore: async () => {}, exportAll: async (): Promise<import('../../../shared/accountList').AccountListItem[]> => [] };
 }

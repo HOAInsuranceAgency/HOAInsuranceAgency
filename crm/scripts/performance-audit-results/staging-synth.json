@@ -1,0 +1,59 @@
+{
+  "kind": "offline CDK synthesis with exact retained destination staging naming context; no AWS deployment or live-state reads",
+  "account": "917680434255",
+  "region": "us-east-1",
+  "app": "d1nuh9rw1hcuxo",
+  "branch": "codex-hoa-staging-migration",
+  "backendBranch": "staging",
+  "maxTemplate": {
+    "file": "amplifyd1nuh9rw1hcuxostagingbranch3787a09124dataAED7FBB2.nested.template.json",
+    "bytes": 987655,
+    "limit": 1000000
+  },
+  "resourceTotals": {
+    "stateful": 59,
+    "eventSourceMappings": 28,
+    "schedules": 9,
+    "eventBridgeRules": 1
+  },
+  "addedWorkerStack": {
+    "AWS::IAM::Role": 2,
+    "AWS::IAM::Policy": 2,
+    "AWS::Lambda::Function": 1,
+    "AWS::Scheduler::Schedule": 1,
+    "AWS::Lambda::EventSourceMapping": 6,
+    "AWS::CDK::Metadata": 1
+  },
+  "exactAccountListExtensionLogicalIdsVerified": {
+    "table": "amplifyDataL2GraphqlApiAccountListRecordsADED7554",
+    "workerStack": "accountlist28FD5CD7",
+    "worker": "accountlistworkerlambdaD39EDB3D",
+    "schedulerRole": "SchedulerRoleForTarget27ecbf322044B4",
+    "schedule": "accountlistworkerlambdaschedule06EFA3E9C",
+    "communicationTable": "amplifyDataL2GraphqlApiCommunicationRecords8E155369",
+    "mappingAccount": "accountlistworkerlambdaDynamoDBEventSourceamplifyd1nuh9rw1hcuxostagingbranch3787a09124dataamplifyDataAccountCustomTableAccountTableB6D497DA3472F3E9MigrationLiveV1",
+    "mappingContact": "accountlistworkerlambdaDynamoDBEventSourceamplifyd1nuh9rw1hcuxostagingbranch3787a09124dataamplifyDataContactCustomTableContactTable47F0642E53B42C56MigrationLiveV1",
+    "mappingQuote": "accountlistworkerlambdaDynamoDBEventSourceamplifyd1nuh9rw1hcuxostagingbranch3787a09124dataamplifyDataQuoteCustomTableQuoteTable4E3B319C11C89C54MigrationLiveV1",
+    "mappingPolicy": "accountlistworkerlambdaDynamoDBEventSourceamplifyd1nuh9rw1hcuxostagingbranch3787a09124dataamplifyDataPolicyCustomTablePolicyTable6DB1FC131142CB59MigrationLiveV1",
+    "mappingUserProfile": "accountlistworkerlambdaDynamoDBEventSourceamplifyd1nuh9rw1hcuxostagingbranch3787a09124dataamplifyDataUserProfileCustomTableUserProfileTableE875524978F2700EMigrationLiveV1",
+    "mappingCommunication": "accountlistworkerlambdaDynamoDBEventSourceamplifyd1nuh9rw1hcuxostagingbranch3787a09124dataamplifyDataL2GraphqlApiCommunicationRecords4A7F416316EA1654MigrationLiveV1"
+  },
+  "executionControls": {
+    "mode": "steady-state",
+    "preview": false,
+    "streamPhase": "armed",
+    "workersEnabled": true,
+    "schedulesEnabled": true,
+    "googleSignInEnabled": false
+  },
+  "note": "Execution controls are synthesis input only. The original57/22/8 identities remain pinned by the unchanged staging contract; weekly marketing remains disabled. Stateful59 includes the separately protected broker-fee ledger and rebuildable account-list table. This offline synthesis does not admit the live rolled-back root for deployment.",
+  "sourceParents": [
+    "53329017a73f6decd3d9e8e0e0a60aff6dfd2753",
+    "2e99253a5c76f613ae5dbc428ee97dab78c9f81b"
+  ],
+  "integrationChanges": [
+    "Retain staging broker fees and analytics fence",
+    "Preserve positive-fee quote authorization through compact projection reads",
+    "Attach identical additive fee/list grants as managed policies outside inline-role quotas"
+  ]
+}

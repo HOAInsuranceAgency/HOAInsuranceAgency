@@ -4,6 +4,7 @@ vi.mock("@aws-sdk/lib-dynamodb", async load => ({ ...(await load<typeof import("
 import { AccountAccess } from "../../amplify/functions/crm-access/access";
 import { listAssigned, matchesFilter } from "../../amplify/functions/crm-access/listing";
 import { ACCOUNT_MODELS, listPartition, type RecordData } from "../../amplify/functions/crm-access/policy";
+import { hasExactListFilter } from "../../amplify/functions/crm-access/list-scope";
 const put = (model: string, key: string, data: RecordData) => h.records.set(`${model}:${key}`, data);
 const access = (sub = "alice") => new AccountAccess({ sub });
 function account(key: string, owner: string) {
@@ -319,6 +320,108 @@ describe("assignment-scoped listings", () => {
     for (const [sub, model, filter] of [["bob", "Account", {}], ["alice", "Contact", {}], ["alice", "Account", { stage: { eq: "CLIENT" } }]] as const) await expect(listAssigned(access(sub), model, { nextToken: first.nextToken, filter })).rejects.toThrow("Refresh");
     const forged = JSON.parse(Buffer.from(first.nextToken!, "base64url").toString()); forged.account = "b";
     expect((await listAssigned(access(), "Account", { nextToken: Buffer.from(JSON.stringify(forged)).toString("base64url") })).items).toMatchObject([{ id: "a2" }]);
+  });
+});
+describe("administrator exact-account listings", () => {
+  const admin = (role = "ADMIN") => new AccountAccess({ sub: "alice", groups: [role, "PRODUCER"] }, undefined, { headers: { "x-crm-role": role } });
+  it.each(["ADMIN", "OWNER"])("uses only the requested Contact, Policy, and Document partitions in the %s view", async role => {
+    for (const model of ["Contact", "Policy", "Document"]) {
+      h.db.mockClear();
+      const target = model === "Document" ? { entityId: "b", entityType: "ACCOUNT" } : { accountId: "b" };
+      for (let i = 0; i < 1000; i++) put(model, `unrelated-${i}`, { id: `unrelated-${i}`, ...(model === "Document" ? { entityId: `elsewhere-${i}`, entityType: "ACCOUNT" } : { accountId: `elsewhere-${i}` }) });
+      put(model, "wanted", { id: "wanted", ...target });
+      const filter = Object.fromEntries(Object.entries(target).map(([key, value]) => [key, { eq: value }]));
+      expect(await listAssigned(admin(role), model, { filter })).toEqual({ items: [{ id: "wanted", ...target }], nextToken: null });
+      expect(h.db.mock.calls.map(([command]) => command.constructor.name)).toEqual(["QueryCommand", "BatchGetCommand"]);
+      expect(h.db.mock.calls[0][0].input).toMatchObject({ TableName: model, ExpressionAttributeValues: { ":scope": "b" } });
+    }
+  });
+  it("does not route broad, OR-only, or ambiguous document filters into an administrator assignment traversal", async () => {
+    for (const [model, filter] of [["Contact", {}], ["Contact", { name: { contains: "a" } }], ["Contact", { or: [{ accountId: { eq: "a" } }, { accountId: { eq: "b" } }] }], ["Document", { entityId: { eq: "a" } }]] as const) {
+      expect(hasExactListFilter(model, filter)).toBe(false);
+      await expect(listAssigned(admin(), model, { filter })).rejects.toThrow("not available");
+    }
+    expect(h.db).not.toHaveBeenCalled();
+  });
+  it("preserves complete filters, pagination, and cursor scope across administrator reads", async () => {
+    for (const [key, name] of [["1", "Skip"], ["2", "Wanted first"], ["3", "Wanted next"]]) put("Contact", key, { id: key, accountId: "b", name, active: true });
+    const filter = { accountId: { eq: "b" }, and: [{ name: { beginsWith: "Wanted" } }, { not: { active: { eq: false } } }] };
+    const first = await listAssigned(admin(), "Contact", { filter, limit: 1 });
+    expect(first.items).toMatchObject([{ id: "2" }]); expect(first.nextToken).toBeTruthy();
+    expect(await listAssigned(admin(), "Contact", { filter, limit: 1, nextToken: first.nextToken })).toEqual({ items: [h.records.get("Contact:3")], nextToken: null });
+    for (const changed of [{ accountId: { eq: "a" } }, { ...filter, name: { eq: "Other" } }]) await expect(listAssigned(admin(), "Contact", { filter: changed, nextToken: first.nextToken })).rejects.toThrow("Refresh");
+    await expect(listAssigned(access(), "Contact", { filter, nextToken: first.nextToken })).rejects.toThrow("Refresh");
+    await expect(listAssigned(admin(), "Policy", { filter, nextToken: first.nextToken })).rejects.toThrow("Refresh");
+  });
+  it("retains fresh producer and staff checks and rejects a forged elevated role", async () => {
+    put("Contact", "private", { id: "private", accountId: "b" });
+    for (const role of ["PRODUCER", "STAFF"]) {
+      const scoped = () => new AccountAccess({ sub: "alice", groups: ["ADMIN", role] }, undefined, { headers: { "x-crm-role": role } });
+      await expect(listAssigned(scoped(), "Contact", { filter: { accountId: { eq: "b" } } })).rejects.toThrow("not available");
+      put("Communication", "workflow:b", { id: "workflow:b", data: { salespersonId: "alice" } });
+      expect((await listAssigned(scoped(), "Contact", { filter: { accountId: { eq: "b" } } })).items).toMatchObject([{ id: "private" }]);
+      put("Communication", "workflow:b", { id: "workflow:b", data: { salespersonId: "bob" } });
+      await expect(listAssigned(scoped(), "Contact", { filter: { accountId: { eq: "b" } } })).rejects.toThrow("not available");
+    }
+    expect(() => new AccountAccess({ sub: "alice", groups: ["PRODUCER"] }, undefined, { headers: { "x-crm-role": "OWNER" } })).toThrow("not available");
+  });
+  it("rechecks current document entity and type instead of trusting a stale index projection", async () => {
+    put("Document", "moved", { id: "moved", entityId: "b", entityType: "CARRIER" });
+    const normal = h.db.getMockImplementation()!;
+    h.db.mockImplementation(command => command.input.TableName === "Document" && command.input.IndexName
+      ? { Items: [{ id: "moved", entityId: "b", entityType: "ACCOUNT" }] } : normal(command));
+    expect((await listAssigned(admin("OWNER"), "Document", { filter: { entityId: { eq: "b" }, entityType: { eq: "ACCOUNT" } } })).items).toEqual([]);
+  });
+  it("queries indirect rows through current canonical parents without scanning or enumerating assignments", async () => {
+    put("Invoice", "ib", { id: "ib", accountId: "b" }); put("Invoice", "foreign", { id: "foreign", accountId: "a" });
+    put("InvoiceLine", "1", { id: "1", invoiceId: "ib", accountId: "b" });
+    put("InvoiceLine", "2", { id: "2", invoiceId: "ib", accountId: "b" });
+    put("InvoiceLine", "mirror", { id: "mirror", invoiceId: "foreign", accountId: "b" });
+    put("InvoiceLine", "mismatch", { id: "mismatch", invoiceId: "ib", accountId: "a" });
+    const filter = { accountId: { eq: "b" } };
+    const first = await listAssigned(admin(), "InvoiceLine", { filter, limit: 1 });
+    expect(first.items).toMatchObject([{ id: "1" }]);
+    expect((await listAssigned(admin(), "InvoiceLine", { filter, limit: 1, nextToken: first.nextToken })).items).toMatchObject([{ id: "2" }]);
+    expect(h.db.mock.calls.filter(([command]) => command.input.IndexName).every(([command]) => ["Invoice", "InvoiceLine"].includes(command.input.TableName))).toBe(true);
+    put("Invoice", "ib", { id: "ib", accountId: "a" });
+    expect((await listAssigned(admin(), "InvoiceLine", { filter, limit: 1, nextToken: first.nextToken })).items).toEqual([]);
+  });
+  it("does not trust injected parent queues or stale parent projections", async () => {
+    for (const parent of ["ib1", "ib2"]) {
+      put("Invoice", parent, { id: parent, accountId: "b" });
+      put("InvoiceLine", parent, { id: parent, invoiceId: parent, accountId: "b" });
+    }
+    put("Invoice", "foreign", { id: "foreign", accountId: "a" });
+    put("InvoiceLine", "foreign", { id: "foreign", invoiceId: "foreign", accountId: "b" });
+    const filter = { accountId: { eq: "b" } };
+    const first = await listAssigned(admin(), "InvoiceLine", { filter, limit: 1 });
+    const forged = JSON.parse(Buffer.from(first.nextToken!, "base64url").toString());
+    forged.parentIds.unshift("foreign");
+    expect((await listAssigned(admin(), "InvoiceLine", { filter, nextToken: Buffer.from(JSON.stringify(forged)).toString("base64url") })).items).toMatchObject([{ id: "ib2" }]);
+    const normal = h.db.getMockImplementation()!;
+    h.db.mockImplementation(command => command.input.TableName === "Invoice" && command.input.IndexName
+      ? { Items: [{ id: "foreign", accountId: "b" }] } : normal(command));
+    expect((await listAssigned(admin(), "InvoiceLine", { filter })).items).toEqual([]);
+  });
+  it("returns each consistently read row once even if an index response repeats its key", async () => {
+    put("Contact", "same", { id: "same", accountId: "b" });
+    const normal = h.db.getMockImplementation()!;
+    h.db.mockImplementation(command => command.input.TableName === "Contact" && command.input.IndexName
+      ? { Items: [{ id: "same", accountId: "b" }, { id: "same", accountId: "b" }] } : normal(command));
+    expect((await listAssigned(admin(), "Contact", { filter: { accountId: { eq: "b" } } })).items).toEqual([{ id: "same", accountId: "b" }]);
+  });
+  it("rejects injected account cursor roots and skips a line whose canonical parent moved after the index query", async () => {
+    put("Invoice", "ib", { id: "ib", accountId: "b" }); put("Invoice", "ia", { id: "ia", accountId: "a" });
+    put("InvoiceLine", "1", { id: "1", invoiceId: "ib", accountId: "b" }); put("InvoiceLine", "2", { id: "2", invoiceId: "ib", accountId: "b" });
+    const filter = { accountId: { eq: "b" } };
+    const first = await listAssigned(admin(), "InvoiceLine", { filter, limit: 1 });
+    const forged = JSON.parse(Buffer.from(first.nextToken!, "base64url").toString()); forged.account = "a";
+    await expect(listAssigned(admin(), "InvoiceLine", { filter, nextToken: Buffer.from(JSON.stringify(forged)).toString("base64url") })).rejects.toThrow("not available");
+    const normal = h.db.getMockImplementation()!;
+    h.db.mockImplementation(command => command.input.TableName === "InvoiceLine" && command.input.IndexName
+      ? { Items: [{ id: "2", invoiceId: "ib", accountId: "b" }] } : normal(command));
+    put("InvoiceLine", "2", { id: "2", invoiceId: "ia", accountId: "b" });
+    expect((await listAssigned(admin(), "InvoiceLine", { filter, nextToken: first.nextToken })).items).toEqual([]);
   });
 });
 it("retains search, date, numeric, boolean, and nested filter behavior", () => {

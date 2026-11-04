@@ -1,0 +1,824 @@
+{
+  "kind": "deterministic-fixture-waterfall",
+  "warning": "Injected delays and synthetic fixtures; not production AWS or browser latency. Response bytes count UTF-8 JSON payloads without transport headers. First content is sampled every 5 synthetic ms.",
+  "revision": "working-tree",
+  "results": [
+    {
+      "flow": "lead-list-cold",
+      "role": "ADMIN",
+      "fixtureAccounts": 600,
+      "injectedServiceDelayMs": 10,
+      "requests": 4,
+      "rowsTransferred": 26,
+      "responseBytes": 20944,
+      "firstContentMs": 10,
+      "requestsStartedBeforeFirstContent": 2,
+      "waterfallMs": 30,
+      "counts": {
+        "communication.accountListCounts": 2,
+        "communication.accountListPage": 1,
+        "communication.team": 1
+      },
+      "renderedTableRows": 26,
+      "calls": [
+        {
+          "operation": "communication.accountListPage",
+          "startMs": 0,
+          "endMs": 10,
+          "rows": 25,
+          "bytes": 20671
+        },
+        {
+          "operation": "communication.team",
+          "startMs": 0,
+          "endMs": 10,
+          "rows": 1,
+          "bytes": 119
+        },
+        {
+          "operation": "communication.accountListCounts",
+          "startMs": 10,
+          "endMs": 20,
+          "rows": 0,
+          "bytes": 86
+        },
+        {
+          "operation": "communication.accountListCounts",
+          "startMs": 20,
+          "endMs": 30,
+          "rows": 0,
+          "bytes": 68
+        }
+      ]
+    },
+    {
+      "flow": "lead-list-warm-return",
+      "role": "ADMIN",
+      "fixtureAccounts": 600,
+      "injectedServiceDelayMs": 10,
+      "requests": 4,
+      "rowsTransferred": 26,
+      "responseBytes": 20944,
+      "firstContentMs": 0,
+      "requestsStartedBeforeFirstContent": 0,
+      "waterfallMs": 30,
+      "counts": {
+        "communication.accountListCounts": 2,
+        "communication.accountListPage": 1,
+        "communication.team": 1
+      },
+      "renderedTableRows": 26,
+      "calls": [
+        {
+          "operation": "communication.accountListPage",
+          "startMs": 0,
+          "endMs": 10,
+          "rows": 25,
+          "bytes": 20671
+        },
+        {
+          "operation": "communication.team",
+          "startMs": 0,
+          "endMs": 10,
+          "rows": 1,
+          "bytes": 119
+        },
+        {
+          "operation": "communication.accountListCounts",
+          "startMs": 10,
+          "endMs": 20,
+          "rows": 0,
+          "bytes": 86
+        },
+        {
+          "operation": "communication.accountListCounts",
+          "startMs": 20,
+          "endMs": 30,
+          "rows": 0,
+          "bytes": 68
+        }
+      ]
+    },
+    {
+      "flow": "client-list-cold",
+      "role": "ADMIN",
+      "fixtureAccounts": 600,
+      "injectedServiceDelayMs": 10,
+      "requests": 4,
+      "rowsTransferred": 26,
+      "responseBytes": 20965,
+      "firstContentMs": 10,
+      "requestsStartedBeforeFirstContent": 2,
+      "waterfallMs": 30,
+      "counts": {
+        "communication.accountListCounts": 2,
+        "communication.accountListPage": 1,
+        "communication.team": 1
+      },
+      "renderedTableRows": 26,
+      "calls": [
+        {
+          "operation": "communication.accountListPage",
+          "startMs": 0,
+          "endMs": 10,
+          "rows": 25,
+          "bytes": 20696
+        },
+        {
+          "operation": "communication.team",
+          "startMs": 0,
+          "endMs": 10,
+          "rows": 1,
+          "bytes": 119
+        },
+        {
+          "operation": "communication.accountListCounts",
+          "startMs": 10,
+          "endMs": 20,
+          "rows": 0,
+          "bytes": 84
+        },
+        {
+          "operation": "communication.accountListCounts",
+          "startMs": 20,
+          "endMs": 30,
+          "rows": 0,
+          "bytes": 66
+        }
+      ]
+    },
+    {
+      "flow": "client-list-warm-return",
+      "role": "ADMIN",
+      "fixtureAccounts": 600,
+      "injectedServiceDelayMs": 10,
+      "requests": 4,
+      "rowsTransferred": 26,
+      "responseBytes": 20965,
+      "firstContentMs": 0,
+      "requestsStartedBeforeFirstContent": 0,
+      "waterfallMs": 30,
+      "counts": {
+        "communication.accountListCounts": 2,
+        "communication.accountListPage": 1,
+        "communication.team": 1
+      },
+      "renderedTableRows": 26,
+      "calls": [
+        {
+          "operation": "communication.accountListPage",
+          "startMs": 0,
+          "endMs": 10,
+          "rows": 25,
+          "bytes": 20696
+        },
+        {
+          "operation": "communication.team",
+          "startMs": 0,
+          "endMs": 10,
+          "rows": 1,
+          "bytes": 119
+        },
+        {
+          "operation": "communication.accountListCounts",
+          "startMs": 10,
+          "endMs": 20,
+          "rows": 0,
+          "bytes": 84
+        },
+        {
+          "operation": "communication.accountListCounts",
+          "startMs": 20,
+          "endMs": 30,
+          "rows": 0,
+          "bytes": 66
+        }
+      ]
+    },
+    {
+      "flow": "lead-list-all-pages",
+      "role": "ADMIN",
+      "fixtureAccounts": 600,
+      "injectedServiceDelayMs": 10,
+      "requests": 15,
+      "rowsTransferred": 301,
+      "responseBytes": 248316,
+      "firstContentMs": 10,
+      "requestsStartedBeforeFirstContent": 2,
+      "waterfallMs": 120,
+      "counts": {
+        "communication.accountListCounts": 2,
+        "communication.accountListPage": 12,
+        "communication.team": 1
+      },
+      "renderedTableRows": 301,
+      "calls": [
+        {
+          "operation": "communication.accountListPage",
+          "startMs": 0,
+          "endMs": 10,
+          "rows": 25,
+          "bytes": 20671
+        },
+        {
+          "operation": "communication.team",
+          "startMs": 0,
+          "endMs": 10,
+          "rows": 1,
+          "bytes": 119
+        },
+        {
+          "operation": "communication.accountListCounts",
+          "startMs": 10,
+          "endMs": 20,
+          "rows": 0,
+          "bytes": 86
+        },
+        {
+          "operation": "communication.accountListPage",
+          "startMs": 10,
+          "endMs": 20,
+          "rows": 25,
+          "bytes": 20671
+        },
+        {
+          "operation": "communication.accountListCounts",
+          "startMs": 20,
+          "endMs": 30,
+          "rows": 0,
+          "bytes": 68
+        },
+        {
+          "operation": "communication.accountListPage",
+          "startMs": 20,
+          "endMs": 30,
+          "rows": 25,
+          "bytes": 20671
+        },
+        {
+          "operation": "communication.accountListPage",
+          "startMs": 30,
+          "endMs": 40,
+          "rows": 25,
+          "bytes": 20672
+        },
+        {
+          "operation": "communication.accountListPage",
+          "startMs": 40,
+          "endMs": 50,
+          "rows": 25,
+          "bytes": 20672
+        },
+        {
+          "operation": "communication.accountListPage",
+          "startMs": 50,
+          "endMs": 60,
+          "rows": 25,
+          "bytes": 20672
+        },
+        {
+          "operation": "communication.accountListPage",
+          "startMs": 60,
+          "endMs": 70,
+          "rows": 25,
+          "bytes": 20672
+        },
+        {
+          "operation": "communication.accountListPage",
+          "startMs": 70,
+          "endMs": 80,
+          "rows": 25,
+          "bytes": 20672
+        },
+        {
+          "operation": "communication.accountListPage",
+          "startMs": 80,
+          "endMs": 90,
+          "rows": 25,
+          "bytes": 20672
+        },
+        {
+          "operation": "communication.accountListPage",
+          "startMs": 90,
+          "endMs": 100,
+          "rows": 25,
+          "bytes": 20672
+        },
+        {
+          "operation": "communication.accountListPage",
+          "startMs": 100,
+          "endMs": 110,
+          "rows": 25,
+          "bytes": 20672
+        },
+        {
+          "operation": "communication.accountListPage",
+          "startMs": 110,
+          "endMs": 120,
+          "rows": 25,
+          "bytes": 20654
+        }
+      ]
+    },
+    {
+      "flow": "client-list-all-pages",
+      "role": "ADMIN",
+      "fixtureAccounts": 600,
+      "injectedServiceDelayMs": 10,
+      "requests": 15,
+      "rowsTransferred": 301,
+      "responseBytes": 248612,
+      "firstContentMs": 10,
+      "requestsStartedBeforeFirstContent": 2,
+      "waterfallMs": 120,
+      "counts": {
+        "communication.accountListCounts": 2,
+        "communication.accountListPage": 12,
+        "communication.team": 1
+      },
+      "renderedTableRows": 301,
+      "calls": [
+        {
+          "operation": "communication.accountListPage",
+          "startMs": 0,
+          "endMs": 10,
+          "rows": 25,
+          "bytes": 20696
+        },
+        {
+          "operation": "communication.team",
+          "startMs": 0,
+          "endMs": 10,
+          "rows": 1,
+          "bytes": 119
+        },
+        {
+          "operation": "communication.accountListCounts",
+          "startMs": 10,
+          "endMs": 20,
+          "rows": 0,
+          "bytes": 84
+        },
+        {
+          "operation": "communication.accountListPage",
+          "startMs": 10,
+          "endMs": 20,
+          "rows": 25,
+          "bytes": 20696
+        },
+        {
+          "operation": "communication.accountListCounts",
+          "startMs": 20,
+          "endMs": 30,
+          "rows": 0,
+          "bytes": 66
+        },
+        {
+          "operation": "communication.accountListPage",
+          "startMs": 20,
+          "endMs": 30,
+          "rows": 25,
+          "bytes": 20696
+        },
+        {
+          "operation": "communication.accountListPage",
+          "startMs": 30,
+          "endMs": 40,
+          "rows": 25,
+          "bytes": 20697
+        },
+        {
+          "operation": "communication.accountListPage",
+          "startMs": 40,
+          "endMs": 50,
+          "rows": 25,
+          "bytes": 20697
+        },
+        {
+          "operation": "communication.accountListPage",
+          "startMs": 50,
+          "endMs": 60,
+          "rows": 25,
+          "bytes": 20697
+        },
+        {
+          "operation": "communication.accountListPage",
+          "startMs": 60,
+          "endMs": 70,
+          "rows": 25,
+          "bytes": 20697
+        },
+        {
+          "operation": "communication.accountListPage",
+          "startMs": 70,
+          "endMs": 80,
+          "rows": 25,
+          "bytes": 20697
+        },
+        {
+          "operation": "communication.accountListPage",
+          "startMs": 80,
+          "endMs": 90,
+          "rows": 25,
+          "bytes": 20697
+        },
+        {
+          "operation": "communication.accountListPage",
+          "startMs": 90,
+          "endMs": 100,
+          "rows": 25,
+          "bytes": 20697
+        },
+        {
+          "operation": "communication.accountListPage",
+          "startMs": 100,
+          "endMs": 110,
+          "rows": 25,
+          "bytes": 20697
+        },
+        {
+          "operation": "communication.accountListPage",
+          "startMs": 110,
+          "endMs": 120,
+          "rows": 25,
+          "bytes": 20679
+        }
+      ]
+    },
+    {
+      "flow": "lead-list-cold-then-export-all",
+      "role": "ADMIN",
+      "fixtureAccounts": 600,
+      "injectedServiceDelayMs": 10,
+      "requests": 10,
+      "rowsTransferred": 326,
+      "responseBytes": 268557,
+      "firstContentMs": 10,
+      "requestsStartedBeforeFirstContent": 2,
+      "waterfallMs": 90,
+      "counts": {
+        "communication.accountListCounts": 2,
+        "communication.accountListPage": 7,
+        "communication.team": 1
+      },
+      "renderedTableRows": 26,
+      "calls": [
+        {
+          "operation": "communication.accountListPage",
+          "startMs": 0,
+          "endMs": 10,
+          "rows": 25,
+          "bytes": 20671
+        },
+        {
+          "operation": "communication.team",
+          "startMs": 0,
+          "endMs": 10,
+          "rows": 1,
+          "bytes": 119
+        },
+        {
+          "operation": "communication.accountListCounts",
+          "startMs": 10,
+          "endMs": 20,
+          "rows": 0,
+          "bytes": 86
+        },
+        {
+          "operation": "communication.accountListCounts",
+          "startMs": 20,
+          "endMs": 30,
+          "rows": 0,
+          "bytes": 68
+        },
+        {
+          "operation": "communication.accountListPage",
+          "startMs": 30,
+          "endMs": 40,
+          "rows": 50,
+          "bytes": 41271
+        },
+        {
+          "operation": "communication.accountListPage",
+          "startMs": 40,
+          "endMs": 50,
+          "rows": 50,
+          "bytes": 41272
+        },
+        {
+          "operation": "communication.accountListPage",
+          "startMs": 50,
+          "endMs": 60,
+          "rows": 50,
+          "bytes": 41272
+        },
+        {
+          "operation": "communication.accountListPage",
+          "startMs": 60,
+          "endMs": 70,
+          "rows": 50,
+          "bytes": 41272
+        },
+        {
+          "operation": "communication.accountListPage",
+          "startMs": 70,
+          "endMs": 80,
+          "rows": 50,
+          "bytes": 41272
+        },
+        {
+          "operation": "communication.accountListPage",
+          "startMs": 80,
+          "endMs": 90,
+          "rows": 50,
+          "bytes": 41254
+        }
+      ]
+    },
+    {
+      "flow": "client-list-cold-then-export-all",
+      "role": "ADMIN",
+      "fixtureAccounts": 600,
+      "injectedServiceDelayMs": 10,
+      "requests": 10,
+      "rowsTransferred": 326,
+      "responseBytes": 268878,
+      "firstContentMs": 10,
+      "requestsStartedBeforeFirstContent": 2,
+      "waterfallMs": 90,
+      "counts": {
+        "communication.accountListCounts": 2,
+        "communication.accountListPage": 7,
+        "communication.team": 1
+      },
+      "renderedTableRows": 26,
+      "calls": [
+        {
+          "operation": "communication.accountListPage",
+          "startMs": 0,
+          "endMs": 10,
+          "rows": 25,
+          "bytes": 20696
+        },
+        {
+          "operation": "communication.team",
+          "startMs": 0,
+          "endMs": 10,
+          "rows": 1,
+          "bytes": 119
+        },
+        {
+          "operation": "communication.accountListCounts",
+          "startMs": 10,
+          "endMs": 20,
+          "rows": 0,
+          "bytes": 84
+        },
+        {
+          "operation": "communication.accountListCounts",
+          "startMs": 20,
+          "endMs": 30,
+          "rows": 0,
+          "bytes": 66
+        },
+        {
+          "operation": "communication.accountListPage",
+          "startMs": 30,
+          "endMs": 40,
+          "rows": 50,
+          "bytes": 41321
+        },
+        {
+          "operation": "communication.accountListPage",
+          "startMs": 40,
+          "endMs": 50,
+          "rows": 50,
+          "bytes": 41322
+        },
+        {
+          "operation": "communication.accountListPage",
+          "startMs": 50,
+          "endMs": 60,
+          "rows": 50,
+          "bytes": 41322
+        },
+        {
+          "operation": "communication.accountListPage",
+          "startMs": 60,
+          "endMs": 70,
+          "rows": 50,
+          "bytes": 41322
+        },
+        {
+          "operation": "communication.accountListPage",
+          "startMs": 70,
+          "endMs": 80,
+          "rows": 50,
+          "bytes": 41322
+        },
+        {
+          "operation": "communication.accountListPage",
+          "startMs": 80,
+          "endMs": 90,
+          "rows": 50,
+          "bytes": 41304
+        }
+      ]
+    },
+    {
+      "flow": "account-overview-cold",
+      "role": "ADMIN",
+      "fixtureAccounts": 600,
+      "injectedServiceDelayMs": 10,
+      "requests": 4,
+      "rowsTransferred": 3,
+      "responseBytes": 618,
+      "firstContentMs": 20,
+      "requestsStartedBeforeFirstContent": 4,
+      "waterfallMs": 20,
+      "counts": {
+        "Account.get": 1,
+        "Contact.list": 2,
+        "communication.relationshipContext": 1
+      },
+      "renderedTableRows": 2,
+      "calls": [
+        {
+          "operation": "Account.get",
+          "startMs": 0,
+          "endMs": 10,
+          "rows": 1,
+          "bytes": 304
+        },
+        {
+          "operation": "communication.relationshipContext",
+          "startMs": 10,
+          "endMs": 20,
+          "rows": 0,
+          "bytes": 32
+        },
+        {
+          "operation": "Contact.list",
+          "startMs": 10,
+          "endMs": 20,
+          "rows": 1,
+          "bytes": 141
+        },
+        {
+          "operation": "Contact.list",
+          "startMs": 10,
+          "endMs": 20,
+          "rows": 1,
+          "bytes": 141
+        }
+      ]
+    },
+    {
+      "flow": "account-policies-cold",
+      "role": "ADMIN",
+      "fixtureAccounts": 600,
+      "injectedServiceDelayMs": 10,
+      "requests": 3,
+      "rowsTransferred": 3,
+      "responseBytes": 608,
+      "firstContentMs": 20,
+      "requestsStartedBeforeFirstContent": 3,
+      "waterfallMs": 20,
+      "counts": {
+        "Account.get": 1,
+        "Carrier.list": 1,
+        "Policy.list": 1
+      },
+      "renderedTableRows": 2,
+      "calls": [
+        {
+          "operation": "Account.get",
+          "startMs": 0,
+          "endMs": 10,
+          "rows": 1,
+          "bytes": 304
+        },
+        {
+          "operation": "Policy.list",
+          "startMs": 10,
+          "endMs": 20,
+          "rows": 1,
+          "bytes": 234
+        },
+        {
+          "operation": "Carrier.list",
+          "startMs": 10,
+          "endMs": 20,
+          "rows": 1,
+          "bytes": 70
+        }
+      ]
+    },
+    {
+      "flow": "account-documents-cold",
+      "role": "ADMIN",
+      "fixtureAccounts": 600,
+      "injectedServiceDelayMs": 10,
+      "requests": 8,
+      "rowsTransferred": 17,
+      "responseBytes": 340427,
+      "firstContentMs": 20,
+      "requestsStartedBeforeFirstContent": 8,
+      "waterfallMs": 20,
+      "counts": {
+        "Account.get": 1,
+        "Building.list": 1,
+        "Contact.list": 1,
+        "Document.list": 1,
+        "Document.listDocumentByEntityId": 1,
+        "Loss.list": 1,
+        "Policy.list": 1,
+        "Quote.list": 1
+      },
+      "renderedTableRows": 16,
+      "calls": [
+        {
+          "operation": "Account.get",
+          "startMs": 0,
+          "endMs": 10,
+          "rows": 1,
+          "bytes": 304
+        },
+        {
+          "operation": "Policy.list",
+          "startMs": 10,
+          "endMs": 20,
+          "rows": 1,
+          "bytes": 234
+        },
+        {
+          "operation": "Quote.list",
+          "startMs": 10,
+          "endMs": 20,
+          "rows": 0,
+          "bytes": 28
+        },
+        {
+          "operation": "Document.listDocumentByEntityId",
+          "startMs": 10,
+          "endMs": 20,
+          "rows": 12,
+          "bytes": 291115
+        },
+        {
+          "operation": "Contact.list",
+          "startMs": 10,
+          "endMs": 20,
+          "rows": 1,
+          "bytes": 141
+        },
+        {
+          "operation": "Loss.list",
+          "startMs": 10,
+          "endMs": 20,
+          "rows": 0,
+          "bytes": 28
+        },
+        {
+          "operation": "Building.list",
+          "startMs": 10,
+          "endMs": 20,
+          "rows": 0,
+          "bytes": 28
+        },
+        {
+          "operation": "Document.list",
+          "startMs": 10,
+          "endMs": 20,
+          "rows": 2,
+          "bytes": 48549
+        }
+      ]
+    },
+    {
+      "flow": "communications-context-cold",
+      "role": "ADMIN",
+      "fixtureAccounts": 600,
+      "injectedServiceDelayMs": 10,
+      "requests": 1,
+      "rowsTransferred": 1,
+      "responseBytes": 272,
+      "firstContentMs": 10,
+      "requestsStartedBeforeFirstContent": 1,
+      "waterfallMs": 10,
+      "counts": {
+        "communication.context": 1
+      },
+      "renderedTableRows": 0,
+      "calls": [
+        {
+          "operation": "communication.context",
+          "startMs": 0,
+          "endMs": 10,
+          "rows": 1,
+          "bytes": 272
+        }
+      ]
+    }
+  ]
+}

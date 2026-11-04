@@ -1,0 +1,196 @@
+import { createHash } from 'node:crypto';
+import { describe, expect, it } from 'vitest';
+import contract from '../../amplify/steady-state-main.json';
+import stagingContract from '../../amplify/steady-state-staging.json';
+// Deployment preflight runs without npm dependencies on Amplify.
+// @ts-expect-error JavaScript deployment-only verifier
+import { verifySteadyState } from '../../scripts/verify-steady-state.mjs';
+// @ts-expect-error JavaScript deployment-only allowlist
+import { ACCOUNT_LIST_EXTENSION, ACCOUNT_LIST_STAGING_EXTENSION } from '../../scripts/steady-state-account-list.mjs';
+
+type Resource = { LogicalResourceId: string; PhysicalResourceId: string; ResourceType: string; ResourceStatus: string };
+function fixture(failure = '', staging = false, withLedger = false) {
+  const c = structuredClone(staging ? stagingContract : contract), calls: string[][] = [];
+  const e = staging ? ACCOUNT_LIST_STAGING_EXTENSION : ACCOUNT_LIST_EXTENSION;
+  const row = (logical: string, type: string, physical: string): Resource => ({ LogicalResourceId: logical, ResourceType: type, PhysicalResourceId: physical, ResourceStatus: 'CREATE_COMPLETE' });
+  const tableArn = (name: string) => `arn:aws:dynamodb:${c.region}:${c.account}:table/${name}`;
+  const sourceNames: Record<string, string> = {}, streams: Record<string, string> = {};
+  for (const model of ['Account', 'Contact', 'Quote', 'Policy']) {
+    streams[model] = c.mappings.find(m => m.streamArn.startsWith(tableArn(`${model}-`)))!.streamArn;
+    sourceNames[model] = streams[model].slice(tableArn('').length).split('/stream/')[0];
+  }
+  sourceNames.UserProfile = sourceNames.Account.replace(/^Account-/, 'UserProfile-');
+  sourceNames.Communication = 'main-communication-records';
+  streams.UserProfile = `${tableArn(sourceNames.UserProfile)}/stream/2026-11-04T12:00:00.000`;
+  streams.Communication = `${tableArn(sourceNames.Communication)}/stream/2026-10-29T20:00:00.000`;
+  const stateful = [
+    ...Object.entries(sourceNames).map(([model, name]) => row(model === 'Communication' ? e.communicationTable : `${model}OriginalTable`, model === 'Communication' ? 'AWS::DynamoDB::Table' : 'Custom::AmplifyDynamoDBTable', name)),
+    ...Array.from({ length: 51 }, (_, i) => row(`OriginalState${i}`, 'AWS::DynamoDB::Table', `original-table-${i}`)),
+  ];
+  const tuples = stateful.map(r => [c.backendRoot, r.LogicalResourceId, r.ResourceType, r.PhysicalResourceId]);
+  tuples.sort((a, b) => { for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return a[i] < b[i] ? -1 : 1; return 0; });
+  c.statefulInventorySha256 = createHash('sha256').update(JSON.stringify(tuples)).digest('hex');
+  const workerStack = `arn:aws:cloudformation:${c.region}:${c.account}:stack/account-list-owned/12345678`;
+  const workerName = 'main-account-list-worker', schedulerRole = 'main-account-list-scheduler-role', scheduleName = 'main-account-list-schedule';
+  const workerArn = `arn:aws:lambda:${c.region}:${c.account}:function:${workerName}`;
+  const root = [
+    ...stateful,
+    ...c.mappings.map(m => row(m.logical, 'AWS::Lambda::EventSourceMapping', m.uuid)),
+    ...c.schedules.map(s => row(s.logical, 'AWS::Scheduler::Schedule', s.name)),
+    row(e.table, 'AWS::DynamoDB::Table', 'main-account-list-records'),
+    row(e.workerStack, 'AWS::CloudFormation::Stack', workerStack),
+  ];
+  const ledgerName = `${c.backendRoot.split('/')[1]}-broker-fees`;
+  if (withLedger) root.push(row('BrokerFeeLedger1234ABCD', 'AWS::DynamoDB::Table', ledgerName));
+  const worker = [
+    row(e.worker, 'AWS::Lambda::Function', workerName), row(e.schedulerRole, 'AWS::IAM::Role', schedulerRole),
+    row(e.schedule, 'AWS::Scheduler::Schedule', scheduleName),
+    ...Object.entries(e.mappings as Record<string, string>).map(([model, logical]) => row(logical, 'AWS::Lambda::EventSourceMapping', `new-${model}-cursor`)),
+  ];
+  if (failure === 'missing-table') root.splice(root.findIndex(r => r.LogicalResourceId === e.table), 1);
+  if (failure === 'missing-mapping') worker.splice(worker.findIndex(r => r.LogicalResourceId === e.mappings.Contact), 1);
+  if (failure === 'missing-schedule') worker.splice(worker.findIndex(r => r.LogicalResourceId === e.schedule), 1);
+  if (failure === 'missing-worker') worker.splice(worker.findIndex(r => r.LogicalResourceId === e.worker), 1);
+  if (failure === 'wrong-type') root.find(r => r.LogicalResourceId === e.table)!.ResourceType = 'AWS::S3::Bucket';
+  if (failure === 'duplicate-id') root.push({ ...root.find(r => r.LogicalResourceId === e.table)! });
+  if (failure === 'extra-table') root.push(row('UnexpectedNewTable', 'AWS::DynamoDB::Table', 'foreign-table'));
+  if (failure === 'extra-mapping') worker.push(row('UnexpectedNewMapping', 'AWS::Lambda::EventSourceMapping', 'extra-cursor'));
+  if (failure === 'extra-schedule') worker.push(row('UnexpectedNewSchedule', 'AWS::Scheduler::Schedule', 'extra-schedule'));
+  if (failure === 'old-stateful-change') root[0].PhysicalResourceId = 'replacement-account';
+  if (failure === 'old-cursor-change') root.find(r => r.PhysicalResourceId === c.mappings[0].uuid)!.PhysicalResourceId = 'replacement-old-cursor';
+  if (failure === 'old-schedule-change') root.find(r => r.PhysicalResourceId === c.schedules[0].name)!.PhysicalResourceId = 'replacement-old-schedule';
+  if (failure === 'foreign-table-stack') { const table = root.splice(root.findIndex(r => r.LogicalResourceId === e.table), 1)[0]; worker.push(table); }
+  if (failure === 'foreign-worker-stack') { const fn = worker.splice(worker.findIndex(r => r.LogicalResourceId === e.worker), 1)[0]; root.push(fn); }
+  const aws = (...args: string[]): unknown => {
+    calls.push(args);
+    if (args[1] === 'describe-stacks') return { Stacks: [{ StackId: c.backendRoot, StackStatus: 'UPDATE_COMPLETE', EnableTerminationProtection: true }] };
+    if (args[1] === 'list-stack-resources') return { StackResourceSummaries: args[3] === c.backendRoot ? root : worker };
+    if (args[1] === 'describe-table') {
+      const name = args[3], model = Object.keys(sourceNames).find(model => sourceNames[model] === name);
+      if (name === ledgerName) return { Table: { TableName: name, TableArn: tableArn(name), TableStatus: 'ACTIVE', DeletionProtectionEnabled: failure !== 'unprotected-ledger',
+        KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }], AttributeDefinitions: ['id', 'accountId', 'kind', 'pending'].map(AttributeName => ({ AttributeName, AttributeType: 'S' })),
+        GlobalSecondaryIndexes: Object.entries({ account: 'accountId', kind: 'kind', pending: 'pending' }).map(([IndexName, key]) => ({ IndexName, IndexStatus: 'ACTIVE', Projection: { ProjectionType: 'ALL' }, KeySchema: [{ AttributeName: key, KeyType: 'HASH' }, { AttributeName: 'id', KeyType: 'RANGE' }] })) } };
+      if (!model) return { Table: { TableName: name, TableArn: tableArn(name), TableStatus: 'ACTIVE', KeySchema: [{ AttributeName: 'pk', KeyType: 'HASH' }, { AttributeName: failure === 'private-schema' ? 'wrong' : 'sk', KeyType: 'RANGE' }] } };
+      return { Table: { TableName: name, TableArn: failure === 'foreign-source' && model === 'UserProfile' ? tableArn('foreign') : tableArn(name), TableStatus: 'ACTIVE',
+        LatestStreamArn: failure === 'source-generation' && model === 'Account' ? `${tableArn(name)}/stream/replaced` : streams[model],
+        StreamSpecification: { StreamEnabled: true, StreamViewType: failure === 'source-view' ? 'KEYS_ONLY' : 'NEW_AND_OLD_IMAGES' }, KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }] } };
+    }
+    if (args[1] === 'get-event-source-mapping') {
+      const old = c.mappings.find(m => m.uuid === args[3]);
+      if (old) return { UUID: old.uuid, FunctionArn: old.functionArn, EventSourceArn: old.streamArn, State: 'Enabled', StartingPosition: 'LATEST', LastProcessingResult: 'OK' };
+      const model = Object.keys(e.mappings).find(model => `new-${model}-cursor` === args[3])!;
+      return { UUID: args[3], FunctionArn: failure === 'foreign-function' ? `${workerArn}-wrong` : workerArn,
+        EventSourceArn: failure === 'foreign-stream' ? `${tableArn('foreign')}/stream/other` : streams[model],
+        State: failure === 'disabled-mapping' ? 'Disabled' : 'Enabled', StartingPosition: failure === 'replay' ? 'TRIM_HORIZON' : 'LATEST', LastProcessingResult: failure === 'mapping-errors' ? 'PROBLEM: failure' : 'OK',
+        BatchSize: failure === 'batch-size' ? 100 : 25, MaximumBatchingWindowInSeconds: 1, MaximumRecordAgeInSeconds: 7200, MaximumRetryAttempts: 10,
+        FunctionResponseTypes: ['ReportBatchItemFailures'], ...(failure === 'mapping-filter' ? { FilterCriteria: { Filters: [{ Pattern: '{}' }] } } : {}) };
+    }
+    if (args[1] === 'get-schedule') {
+      const old = c.schedules.find(s => s.name === args[3]);
+      if (old) return { Name: old.name, State: old.state, Target: old.target, ScheduleExpression: old.scheduleExpression, ScheduleExpressionTimezone: old.scheduleExpressionTimezone, FlexibleTimeWindow: old.flexibleTimeWindow };
+      return { Name: scheduleName, State: failure === 'disabled-schedule' ? 'DISABLED' : 'ENABLED', ScheduleExpression: failure === 'schedule-timing' ? 'rate(1 minute)' : 'cron(* * * * ? *)', ScheduleExpressionTimezone: 'America/New_York', FlexibleTimeWindow: { Mode: 'OFF' },
+        Target: { Arn: workerArn, RoleArn: `arn:aws:iam::${failure === 'foreign-role' ? '000000000000' : c.account}:role/${schedulerRole}`,
+          RetryPolicy: { MaximumEventAgeInSeconds: 86400, MaximumRetryAttempts: 185 }, ...(failure === 'schedule-input' ? { Input: '{"unexpected":true}' } : {}) } };
+    }
+    throw new Error(`Unexpected read: ${args.join(' ')}`);
+  };
+  return { c, aws, calls, namespace: { branchName: c.backendBranch, enableAutoBuild: false, enablePullRequestPreview: false, backend: { stackArn: c.backendRoot } } };
+}
+
+describe('narrow additive account-list steady-state admission', () => {
+  it.each([false, true])('admits exactly one derived table, six current source mappings and one worker schedule while checking all original controls (staging=%s)', staging => {
+    const f = fixture('', staging); expect(() => verifySteadyState(f.namespace, f.c, f.aws)).not.toThrow();
+    expect(f.calls.filter(call => call[1] === 'get-event-source-mapping')).toHaveLength(28);
+    expect(f.calls.filter(call => call[1] === 'get-schedule')).toHaveLength(9);
+    expect(f.calls.filter(call => call[1] === 'describe-table')).toHaveLength(7);
+    expect(f.calls.every(call => ['describe-stacks', 'list-stack-resources', 'get-event-source-mapping', 'get-schedule', 'describe-table'].includes(call[1]))).toBe(true);
+    expect(contract.statefulCount).toBe(57); expect(contract.mappings).toHaveLength(22); expect(contract.schedules).toHaveLength(8);
+  });
+  it.each([false, true])('admits both independently protected additions without changing the original inventory (staging=%s)', staging => {
+    const f = fixture('', staging, true);
+    expect(() => verifySteadyState(f.namespace, f.c, f.aws)).not.toThrow();
+    expect(f.calls.filter(call => call[1] === 'get-event-source-mapping')).toHaveLength(28);
+    expect(f.calls.filter(call => call[1] === 'get-schedule')).toHaveLength(9);
+    expect(f.calls.filter(call => call[1] === 'describe-table')).toHaveLength(8);
+  });
+  it.each(['unprotected-ledger', 'extra-table', 'old-stateful-change', 'old-cursor-change', 'old-schedule-change', 'foreign-stream', 'schedule-input'])(
+    'rejects %s when the ledger and account-list additions coexist', failure => {
+      const f = fixture(failure, true, true);
+      expect(() => verifySteadyState(f.namespace, f.c, f.aws)).toThrow();
+    },
+  );
+  it.each(['missing-table', 'missing-mapping', 'missing-schedule', 'missing-worker', 'wrong-type', 'duplicate-id', 'extra-table', 'extra-mapping', 'extra-schedule', 'old-stateful-change', 'old-cursor-change', 'old-schedule-change', 'foreign-table-stack', 'foreign-worker-stack', 'private-schema', 'foreign-source', 'source-generation', 'source-view', 'foreign-function', 'foreign-stream', 'disabled-mapping', 'replay', 'mapping-errors', 'batch-size', 'mapping-filter', 'disabled-schedule', 'schedule-timing', 'foreign-role', 'schedule-input'])(
+    'rejects %s without broadening the original inventory contract', failure => {
+      const f = fixture(failure); expect(() => verifySteadyState(f.namespace, f.c, f.aws)).toThrow();
+    },
+  );
+  it.each(['missing-table', 'missing-mapping', 'extra-table', 'extra-mapping', 'extra-schedule', 'old-stateful-change', 'old-cursor-change', 'old-schedule-change', 'foreign-source', 'foreign-stream', 'foreign-function', 'source-generation', 'replay', 'schedule-input'])(
+    'rejects staging %s while preserving the original staging contract', failure => {
+      const f = fixture(failure, true); expect(() => verifySteadyState(f.namespace, f.c, f.aws)).toThrow();
+    },
+  );
+  it('keeps the staging namespace dormant and its original weekly marketing schedule disabled', () => {
+    const f = fixture('', true);
+    expect(() => verifySteadyState({ ...f.namespace, enableAutoBuild: true }, f.c, f.aws)).toThrow();
+    expect(() => verifySteadyState({ ...f.namespace, enablePullRequestPreview: true }, f.c, f.aws)).toThrow();
+    const marketing = f.c.schedules.find(schedule => schedule.state === 'DISABLED')!;
+    const reads = (...args: string[]) => args[1] === 'get-schedule' && args[3] === marketing.name
+      ? { ...(f.aws(...args) as object), State: 'ENABLED' } : f.aws(...args);
+    expect(() => verifySteadyState(f.namespace, f.c, reads)).toThrow();
+  });
+  it.each([false, true])('rejects swapping root, branch or runtime scope after adding the extension (staging=%s)', staging => {
+    const f = fixture('', staging), foreign = staging ? contract : stagingContract;
+    for (const change of [{ backendRoot: foreign.backendRoot }, { branch: foreign.branch }, { runtimeBranch: foreign.runtimeBranch }, { backendBranch: foreign.backendBranch }]) {
+      expect(() => verifySteadyState({ ...f.namespace, branchName: change.backendBranch ?? f.namespace.branchName, backend: { stackArn: change.backendRoot ?? f.c.backendRoot } }, { ...f.c, ...change }, f.aws)).toThrow();
+    }
+  });
+});
+
+
+describe('explicit retained staging rollback recovery', () => {
+  const options = { recoverStagingRollback: true };
+  function rolledBackReads(f: ReturnType<typeof fixture>, rootStatus = 'UPDATE_ROLLBACK_COMPLETE', resourceType = 'AWS::CloudFormation::Stack') {
+    return (...args: string[]) => {
+      const response = f.aws(...args) as { Stacks?: Record<string, unknown>[]; StackResourceSummaries?: Resource[] };
+      if (args[1] === 'describe-stacks') return { Stacks: response.Stacks!.map(stack => ({ ...stack, StackStatus: rootStatus })) };
+      if (args[1] === 'list-stack-resources' && args[3] === f.c.backendRoot) return { StackResourceSummaries: response.StackResourceSummaries!.map(resource =>
+        resource.ResourceType === resourceType ? { ...resource, ResourceStatus: 'UPDATE_ROLLBACK_COMPLETE' } : resource) };
+      return response;
+    };
+  }
+  it('keeps the default guard strict for a fully rolled-back staging root', () => {
+    const f = fixture('', true, true);
+    expect(() => verifySteadyState(f.namespace, f.c, rolledBackReads(f))).toThrow(/unstable/);
+  });
+  it('records observed rollback statuses while checking both additions and every original control', () => {
+    const f = fixture('', true, true);
+    const receipt = verifySteadyState(f.namespace, f.c, rolledBackReads(f), options);
+    expect(receipt).toMatchObject({ backendRoot: stagingContract.backendRoot, observedRootStatus: 'UPDATE_ROLLBACK_COMPLETE', stagingRollbackRecovery: true,
+      originalStatefulCount: 57, originalStatefulInventorySha256: f.c.statefulInventorySha256, originalCursorCount: 22, originalScheduleCount: 8, accountListExtensionPresent: true, brokerFeeLedgerPresent: true });
+    expect(receipt.observedRolledBackNestedStacks).toEqual([{ logicalId: ACCOUNT_LIST_STAGING_EXTENSION.workerStack,
+      stackArn: `arn:aws:cloudformation:${f.c.region}:${f.c.account}:stack/account-list-owned/12345678`, observedStatus: 'UPDATE_ROLLBACK_COMPLETE' }]);
+    expect(f.calls.filter(call => call[1] === 'get-event-source-mapping')).toHaveLength(28);
+    expect(f.calls.filter(call => call[1] === 'get-schedule')).toHaveLength(9);
+    expect(f.calls.filter(call => call[1] === 'describe-table')).toHaveLength(8);
+  });
+  it.each(['UPDATE_ROLLBACK_FAILED', 'UPDATE_ROLLBACK_IN_PROGRESS', 'UPDATE_IN_PROGRESS', 'ROLLBACK_COMPLETE'])(
+    'rejects an incomplete or different root status %s', status => {
+      const f = fixture('', true); expect(() => verifySteadyState(f.namespace, f.c, rolledBackReads(f, status), options)).toThrow(/unstable/);
+    },
+  );
+  it('rejects a rolled-back non-stack resource even in recovery mode', () => {
+    const f = fixture('', true); expect(() => verifySteadyState(f.namespace, f.c, rolledBackReads(f, 'UPDATE_ROLLBACK_COMPLETE', 'AWS::DynamoDB::Table'), options)).toThrow(/resource update/);
+  });
+  it.each(['old-stateful-change', 'old-cursor-change', 'old-schedule-change', 'extra-table', 'extra-mapping', 'extra-schedule', 'unprotected-ledger', 'foreign-stream', 'schedule-input'])(
+    'retains the existing rejection of %s during recovery', failure => {
+      const f = fixture(failure, true, true); expect(() => verifySteadyState(f.namespace, f.c, rolledBackReads(f), options)).toThrow();
+    },
+  );
+  it('rejects recovery for main or a different staging identity', () => {
+    const main = fixture(); expect(() => verifySteadyState(main.namespace, main.c, main.aws, options)).toThrow(/restricted/);
+    const f = fixture('', true);
+    for (const delta of [{ backendRoot: f.c.backendRoot + '-other' }, { account: '637423611040' }, { branch: 'staging' }, { backendBranch: 'main' }, { runtimeBranch: 'main' }, { region: 'us-west-2' }, { crmApp: 'other' }]) {
+      expect(() => verifySteadyState(f.namespace, { ...f.c, ...delta }, f.aws, options)).toThrow(/restricted/);
+    }
+  });
+});
