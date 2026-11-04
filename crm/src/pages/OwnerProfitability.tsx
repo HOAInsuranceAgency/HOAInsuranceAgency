@@ -15,7 +15,7 @@ type Snapshot = { ok: true; employees: Employee[]; compensations: Record<string,
 const money = (cents: number | null) => cents == null ? "Incomplete" : new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 }).format(cents / 100);
 const dollars = (cents: number | null) => cents == null ? null : cents / 100;
 const today = () => new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
-const basis = "Estimated insurance commission by policy effective date and current account salesperson. Producer commission share and prorated annual salary are deducted. Cancelled policies and other operating costs are excluded.";
+const basis = "Estimated carrier commission plus broker fees less recorded fee refunds, by policy effective date and current account salesperson. The estimated producer share applies to both revenue sources; prorated annual salary is deducted. Cancelled carrier commission and other operating costs are excluded; retained broker fees remain included.";
 
 function response<T>(result: { data?: unknown; errors?: readonly { message?: string }[] }): T {
   if (result.errors?.length) throw new Error(result.errors.map(error => error.message || "Request failed").join("; "));
@@ -106,16 +106,18 @@ function ProfitabilitySnapshot({ from, to }: { from: string; to: string }) {
     {snapshot.reportStale && <p className="owner-profitability-notice" role="status">Pay settings are saved, but the report is still catching up. {payOpen ? 'Close pay settings and refresh the report to update its totals.' : 'Refresh the report to update its totals.'}</p>}
     <div className="stat-row owner-profitability-summary">
       <Summary label="Agency commission" amount={totals.grossCommissionCents} known={totals.knownGrossCommissionCents} />
+      <Summary label="Booked broker fees" amount={totals.brokerFeeCents} known={totals.knownBrokerFeeCents} />
+      <Summary label="Total agency revenue" amount={totals.totalAgencyRevenueCents} known={totals.knownTotalAgencyRevenueCents} />
       <Summary label="After producer share" amount={totals.netRevenueCents} known={totals.knownNetRevenueCents} />
       <Summary label="Salary for period" amount={totals.salaryCents} known={totals.knownSalaryCents} />
       <Summary label="Estimated contribution" amount={totals.contributionCents} known={totals.knownContributionCents} />
     </div>
     {!totals.complete && <div className="owner-profitability-notice" role="status"><strong>This report is incomplete.</strong> Missing commission or pay details are not treated as zero. Known amounts are partial subtotals.</div>}
-    <div className="card"><div className="card-head"><h2>Revenue and salary by employee</h2></div><p className="muted small">Revenue is agency commission after the producer’s share. Compare it with salary for the selected period.</p><ComparisonChart rows={report.rows} /></div>
+    <div className="card"><div className="card-head"><h2>Revenue and salary by employee</h2></div><p className="muted small">Revenue includes carrier commission and net broker fees after the estimated producer’s share. Compare it with salary for the selected period.</p><ComparisonChart rows={report.rows} /></div>
     <div className="card">
       <div className="card-head"><h2>Employee breakdown</h2><span className="muted small">{totals.policyCount} policies</span></div>
-      {report.rows.length ? <div className="owner-profitability-table"><table><thead><tr><th>Employee</th><th>Agency commission</th><th>Producer share</th><th>Net revenue</th><th>Salary</th><th>Est. contribution</th><th>Policies</th><th>Data status</th></tr></thead><tbody>{report.rows.map(row => <tr key={row.userId ?? "unassigned"}>
-        <th scope="row">{row.name}</th><td>{money(row.grossCommissionCents)}</td><td>{money(row.producerShareCents)}</td><td>{money(row.netRevenueCents)}</td><td>{money(row.salaryCents)}</td><td className={row.contributionCents != null && row.contributionCents < 0 ? "owner-profitability-negative" : "owner-profitability-contribution"}>{money(row.contributionCents)}</td><td>{row.policyCount}</td>
+      {report.rows.length ? <div className="owner-profitability-table"><table><thead><tr><th>Employee</th><th>Agency commission</th><th>Broker fees</th><th>Fee refunds</th><th>Total agency revenue</th><th>Producer share</th><th>Net revenue</th><th>Salary</th><th>Est. contribution</th><th>Policies</th><th>Data status</th></tr></thead><tbody>{report.rows.map(row => <tr key={row.userId ?? "unassigned"}>
+        <th scope="row">{row.name}</th><td>{money(row.grossCommissionCents)}</td><td>{money(row.brokerFeeCents)}</td><td>{money(row.brokerFeeRefundedCents)}</td><td>{money(row.totalAgencyRevenueCents)}</td><td>{money(row.producerShareCents)}</td><td>{money(row.netRevenueCents)}</td><td>{money(row.salaryCents)}</td><td className={row.contributionCents != null && row.contributionCents < 0 ? "owner-profitability-negative" : "owner-profitability-contribution"}>{money(row.contributionCents)}</td><td>{row.policyCount}</td>
         <td className="owner-profitability-data-status">{row.complete ? <span>Complete</span> : <><strong>{row.userId && !compensations[row.userId]?.terms.length ? "Needs pay setup" : "Incomplete"}</strong>{row.warnings.length > 0 && <ul>{row.warnings.map((warning, i) => <li key={i}>{warning}</li>)}</ul>}{row.userId && employees.some(employee => employee.userId === row.userId) && <button className="secondary" disabled={payBusy || resource.loading} onClick={() => setup(row.userId!)} aria-label={`Edit pay settings for ${row.name}`}>Edit pay settings</button>}</>}</td>
       </tr>)}</tbody></table></div> : <p className="muted">No employees or policies found for this report.</p>}
     </div>
@@ -131,7 +133,7 @@ function ProfitabilitySnapshot({ from, to }: { from: string; to: string }) {
       {paySaved && <p role="status">Pay settings saved.</p>}
     </section>}
     <section className="card owner-profitability-basis" aria-label="Report calculation basis"><h2>How this estimate works</h2><p>{basis}</p><p>Annual salary is prorated by calendar day within each dated pay period. This is an estimate of employee contribution, not collected income or accounting net profit.</p>
-      <p>{report.cancelledPolicyCount} cancelled policies excluded · {report.undatedPolicyCount} policies excluded for missing or invalid effective dates.</p>
+      <p>{report.cancelledPolicyCount} cancelled policies excluded from carrier commission; retained fees remain · {report.undatedPolicyCount} policies excluded for missing or invalid effective dates.</p>
       {report.warnings.length > 0 && <ul>{report.warnings.map((warning, i) => <li key={i}>{warning}</li>)}</ul>}
     </section>
   </>;
@@ -155,9 +157,10 @@ function ComparisonChart({ rows }: { rows: ProfitabilityRow[] }) {
 
 export function exportReport(report: EmployeeProfitabilityResult): DashboardReport {
   return { title: "Estimated employee profitability", filters: `${report.from} through ${report.to}. ${basis} ${report.totals.complete ? "Complete data." : "INCOMPLETE: blank amounts are unknown, not zero; known totals are partial."} ${report.cancelledPolicyCount} cancelled and ${report.undatedPolicyCount} undated policies excluded. ${report.warnings.join(" ")}`, sections: [
-    { title: "Employees", columns: ["Employee", "Agency commission (USD)", "Producer share (USD)", "Net revenue (USD)", "Salary (USD)", "Estimated contribution (USD)", "Policy count", "Complete", "Missing commission policies", "Missing compensation policies", "Warnings"], rows: report.rows.map(row => [row.name, dollars(row.grossCommissionCents), dollars(row.producerShareCents), dollars(row.netRevenueCents), dollars(row.salaryCents), dollars(row.contributionCents), row.policyCount, row.complete ? "Yes" : "No", row.missingCommissionCount, row.missingCompensationCount, row.warnings.join("; ")]) },
+    { title: "Employees", columns: ["Employee", "Agency commission (USD)", "Producer share (USD)", "Net revenue (USD)", "Salary (USD)", "Estimated contribution (USD)", "Policy count", "Complete", "Missing commission policies", "Missing compensation policies", "Warnings", "Booked broker fees (USD)", "Broker fee refunds (USD)", "Total agency revenue (USD)", "Policies with fees"], rows: report.rows.map(row => [row.name, dollars(row.grossCommissionCents), dollars(row.producerShareCents), dollars(row.netRevenueCents), dollars(row.salaryCents), dollars(row.contributionCents), row.policyCount, row.complete ? "Yes" : "No", row.missingCommissionCount, row.missingCompensationCount, row.warnings.join("; "), dollars(row.brokerFeeCents), dollars(row.brokerFeeRefundedCents), dollars(row.totalAgencyRevenueCents), row.feePolicyCount]) },
     { title: "Totals", columns: ["Amount", "Total (USD)", "Known subtotal (USD)", "Complete"], rows: ([
       ["Agency commission", report.totals.grossCommissionCents, report.totals.knownGrossCommissionCents], ["Producer share", report.totals.producerShareCents, report.totals.knownProducerShareCents], ["Net revenue", report.totals.netRevenueCents, report.totals.knownNetRevenueCents], ["Salary", report.totals.salaryCents, report.totals.knownSalaryCents], ["Estimated contribution", report.totals.contributionCents, report.totals.knownContributionCents],
+      ["Booked broker fees", report.totals.brokerFeeCents, report.totals.knownBrokerFeeCents], ["Broker fee refunds", report.totals.brokerFeeRefundedCents, report.totals.knownBrokerFeeRefundedCents], ["Total agency revenue", report.totals.totalAgencyRevenueCents, report.totals.knownTotalAgencyRevenueCents],
     ] as const).map(([label, total, known]) => [label, dollars(total), dollars(known), total == null ? "No" : "Yes"]) },
   ] };
 }

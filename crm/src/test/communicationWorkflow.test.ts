@@ -42,6 +42,10 @@ vi.mock("@aws-sdk/lib-dynamodb", async importOriginal => {
           continue;
         }
         const old = h.records.get(`${w.TableName}:${w.Item?.id ?? w.Key?.id}`);
+        if (entry.ConditionCheck && w.ConditionExpression === 'attribute_not_exists(brokerFeeHistory) OR brokerFeeHistory = :clear') {
+          if (old?.brokerFeeHistory && old.brokerFeeHistory !== w.ExpressionAttributeValues[':clear']) throw Object.assign(new Error('Signed fee history must be retained'), { name: 'TransactionCanceledException' });
+          continue;
+        }
         if (entry.ConditionCheck && w.ConditionExpression === '#stage = :lead') {
           if (old?.stage !== w.ExpressionAttributeValues[':lead']) throw Object.assign(new Error('Lead stage changed'), { name: 'TransactionCanceledException', CancellationReasons: [{ Code: 'ConditionalCheckFailed' }] });
           continue;
@@ -537,6 +541,17 @@ describe('commercial package persistence', () => {
   });
 });
 describe('deleted lead cleanup', () => {
+  it('rejects a signed-fee lead before writing a deletion tombstone', async () => {
+    h.records.set('Account:a1', { id: 'a1', brokerFeeHistory: true });
+    await expect((await import('../../amplify/functions/communications/deletion')).prepareLeadDeletion('a1', 'Willow HOA', 'admin')).rejects.toThrow('signed broker fee disclosure');
+    expect(record('deleted-account:a1')).toBeUndefined(); expect(record('account-delete:a1')).toBeUndefined();
+  });
+  it('retains a fee signed concurrently after deletion preflight but before the tombstone commit', async () => {
+    h.records.set('Account:a1', { id: 'a1' });
+    h.beforeWrite = () => h.records.set('Account:a1', { id: 'a1', brokerFeeHistory: true });
+    await expect((await import('../../amplify/functions/communications/deletion')).prepareLeadDeletion('a1', 'Willow HOA', 'admin')).rejects.toThrow('must be retained');
+    expect(record('deleted-account:a1')).toBeUndefined(); expect(record('account-delete:a1')).toBeUndefined();
+  });
   it('requires admin permission at the API', async () => {
     const { handler } = await import('../../amplify/functions/communications/handler');
     expect(await handler({ arguments: { operation: 'prepareLeadDeletion', input: { accountId: 'a1', name: 'Willow HOA' } }, identity: { sub: 'staff', groups: ['STAFF'] } as never })).toMatchObject({ ok: false, error: 'Only an admin can change integration or team settings' });

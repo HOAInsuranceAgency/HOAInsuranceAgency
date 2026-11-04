@@ -613,6 +613,7 @@ const DOCUMENT_CATEGORY = {
   PF_BOARD_RESOLUTION: { label: null, extractionPriority: 9, extractable: false },
   // Historical records remain readable; new financing uses one agreement.
   PF_RESOLUTION_EXECUTED: { label: null, extractionPriority: 9, extractable: false },
+  BROKER_FEE_DISCLOSURE: { label: null, extractionPriority: 9, extractable: false },
   /**
    * Extractable, unlike the other three that are not.
    *

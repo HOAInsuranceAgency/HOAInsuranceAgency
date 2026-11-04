@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const m = vi.hoisted(() => ({ send: vi.fn(), list: vi.fn(), lookup: vi.fn(), checkout: vi.fn(), debit: vi.fn() }));
+const m = vi.hoisted(() => ({ send: vi.fn(), list: vi.fn(), lookup: vi.fn(), checkout: vi.fn(), debit: vi.fn(), source: vi.fn(), signed: vi.fn() }));
 vi.mock("aws-amplify", () => ({ Amplify: { configure: vi.fn() } }));
 vi.mock("@aws-amplify/backend/function/runtime", () => ({
   getAmplifyDataClientConfig: async () => ({ resourceConfig: {}, libraryOptions: {} }),
@@ -10,6 +10,7 @@ vi.mock("aws-amplify/data", () => ({ generateClient: () => ({ models: {
   AgencySettings: { get: async () => ({ data: { premiumFinanceEnabled: true } }) },
   Account: { get: async () => ({ data: { name: "Test HOA" } }) },
   Invoice: { list: async () => ({ data: [] }) },
+  Quote: { get: m.source }, Policy: { get: m.source },
 } }) }));
 vi.mock("@aws-sdk/lib-dynamodb", async (original) => ({
   ...await original<typeof import("@aws-sdk/lib-dynamodb")>(),
@@ -20,6 +21,7 @@ vi.mock("stripe", () => ({ default: class {
   paymentIntents = { create: m.debit };
 } }));
 vi.mock("../../amplify/functions/void-invoice/handler", () => ({ handler: vi.fn() }));
+vi.mock("../../amplify/functions/broker-fees/bindValidation", () => ({ assertBrokerFeeSigned: m.signed }));
 import { handler as elect } from "../../amplify/functions/pf-election/handler";
 import { handler as collect } from "../../amplify/functions/pf-autopay/handler";
 import { SECURITY_INTEREST_AND_AUTHORITY } from "../../amplify/functions/pf-agreement/agreementTerms";
@@ -45,6 +47,8 @@ beforeEach(() => {
   m.send.mockResolvedValue({ Item: { premiumFinanceEnabled: true } });
   m.checkout.mockResolvedValue({ id: "cs_1", url: "https://checkout.stripe.test/session", expires_at: 4070908800 });
   m.debit.mockResolvedValue({ id: "pi_monthly" });
+  m.source.mockResolvedValue({ data: {id:"q1",accountId:"account-1",brokerFee:500} });
+  m.signed.mockResolvedValue({});
 });
 
 describe("billing initiation", () => {
@@ -63,9 +67,9 @@ describe("billing initiation", () => {
     const params = m.checkout.mock.calls[0][0];
     expect(params.line_items.map((r: { price_data: { unit_amount: number } }) => r.price_data.unit_amount)).toEqual([843552, 1000]);
     expect(params.payment_intent_data).toEqual({ setup_future_usage: "off_session",
-      metadata: { pfLoanId: loan.id, pfKind: "down", pfBillingVersion: "2" } });
+      metadata: { pfLoanId: loan.id, pfKind: "down", pfBillingVersion: "3" } });
     expect(params.payment_method_types).toEqual(["us_bank_account"]);
-    expect(m.send.mock.calls.some(([c]) => c.input.ExpressionAttributeValues?.[":version"] === 2)).toBe(true);
+    expect(m.send.mock.calls.some(([c]) => c.input.ExpressionAttributeValues?.[":version"] === 3)).toBe(true);
   });
 
   it("does not reopen a still-payable legacy session without the fee", async () => {
@@ -100,5 +104,24 @@ describe("billing initiation", () => {
     m.send.mockRejectedValue(Object.assign(new Error("claimed"), { name: "ConditionalCheckFailedException" }));
     await collect();
     expect(m.debit).not.toHaveBeenCalled();
+  });
+});
+
+describe("upfront broker fee in the existing financing checkout", () => {
+  const allocations=[{quoteId:"q1",policyId:"policy-1",amountCents:50000}];
+  it("collects 100% of the fee alongside premium down payment and origination fee", async () => {
+    m.lookup.mockResolvedValue({data:[{...loan,brokerFeeCents:50000,brokerFeeAllocations:JSON.stringify(allocations)}]});
+    expect(await elect({arguments:{accept:true,token:loan.electionToken}})).toMatchObject({state:"checkout"});
+    const request=m.checkout.mock.calls[0][0];
+    expect(request.line_items.map((r:{price_data:{unit_amount:number}})=>r.price_data.unit_amount)).toEqual([843552,50000,1000]);
+    expect(request.payment_intent_data.metadata).toMatchObject({pfBillingVersion:"3",brokerFeeAccountId:"account-1",brokerFeeAllocations:expect.any(String)});
+    expect(JSON.parse(request.payment_intent_data.metadata.brokerFeeAllocations)).toEqual(allocations);
+    expect(m.signed).toHaveBeenCalledWith(expect.objectContaining({id:"q1",brokerFee:500}));
+  });
+  it("refuses a bookmarked financing token until the current fee disclosure is signed", async () => {
+    m.lookup.mockResolvedValue({data:[{...loan,brokerFeeCents:50000,brokerFeeAllocations:JSON.stringify(allocations)}]});
+    m.signed.mockRejectedValue(new Error("Sign the current broker fee disclosure."));
+    expect(await elect({arguments:{accept:true,token:loan.electionToken}})).toMatchObject({ok:false});
+    expect(m.checkout).not.toHaveBeenCalled();
   });
 });

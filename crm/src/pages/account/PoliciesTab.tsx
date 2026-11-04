@@ -162,7 +162,7 @@ function AccountPolicies({ accountId }: { accountId: string }) {
                   {/* Blank for anything bound before the field existed, which
                       is honest — "Direct" would be a guess about money. */}
                   <td className="small">{BILL_TYPE_SHORT[p.billType ?? ""] ?? "—"}</td>
-                  <td>{fmtMoney(p.premium)}</td>
+                  <td>{fmtMoney(p.premium)}{(p.brokerFee ?? 0) > 0 && <div className="small muted">Broker fee: {fmtMoney(p.brokerFee)}{(p.brokerFeeRefunded ?? 0) > 0 ? ` · ${fmtMoney(p.brokerFeeRefunded)} refunded` : ""}</div>}</td>
                   <td className="small">{commissionCell(p)}</td>
                   <td className="small">{termsSummary(p)}</td>
                   <td>{fmtDate(p.effectiveDate)}</td>

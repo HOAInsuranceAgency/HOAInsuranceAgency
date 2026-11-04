@@ -64,7 +64,7 @@ export const repository: ProfitabilityRepository = {
     const results = await Promise.allSettled([
       profiles(),
       collect(cursor => db.send(new ScanCommand({ TableName: configured('POLICY_TABLE'), ConsistentRead: true, Limit: 250, ExclusiveStartKey: cursor,
-        ...projection(['id', 'accountId', 'effectiveDate', 'premium', 'commissionPct', 'status']),
+        ...projection(['id', 'accountId', 'effectiveDate', 'premium', 'commissionPct', 'brokerFee', 'brokerFeeRefunded', 'status']),
       }))),
       // A strongly consistent partition query includes just-saved pay settings
       // without reading the growing private audit history or relying on a GSI.
@@ -159,7 +159,7 @@ export function createHandler(store: ProfitabilityRepository) {
       if (field === 'ownerProfitability') {
         const window = validateProfitabilityWindow(args.from, args.to);
         const source = await store.read();
-        const owners = new Set(source.policies.filter(policy => policy.status !== 'CANCELLED' &&
+        const owners = new Set(source.policies.filter(policy => (policy.status !== 'CANCELLED' || (policy.brokerFee ?? 0) > 0) &&
           (!isProfitabilityDate(policy.effectiveDate) || policy.effectiveDate >= window.from && policy.effectiveDate <= window.to))
           .map(policy => source.assignments[policy.accountId]?.salespersonId));
         const report = calculateEmployeeProfitability({ ...window, ...source,

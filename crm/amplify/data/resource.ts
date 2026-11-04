@@ -1,3 +1,4 @@
+import { brokerFees } from '../functions/broker-fees/resource';
 import { commissions } from '../functions/commissions/resource';
 import { ownerProfitability } from "../functions/owner-profitability/resource";
 import { crmAccess } from "../functions/crm-access/resource";
@@ -89,6 +90,7 @@ const schema = a
       "LICENSE",
     ]),
     DocumentCategory: a.enum([
+      "BROKER_FEE_DISCLOSURE",
       "PRIOR_POLICY",
       "CONDO_DOCS",
       "BUDGET",
@@ -144,6 +146,7 @@ const schema = a
      * than as someone forgetting to enter a cost.
      */
     InvoiceLineKind: a.enum([
+      "BROKER_FEE",
       "PREMIUM",
       "ENDORSEMENT",
       "TAX",
@@ -286,7 +289,8 @@ const schema = a
     // the note on `allow.resource` at the bottom of this file.
     Account: a
       .model({
-        stage: a.ref("AccountStage").required(),
+        brokerFeeHistory: a.boolean(), // Server-owned retention marker for signed disclosures.
+      stage: a.ref("AccountStage").required(),
         type: a.ref("AccountType").required(),
         // Confirmed reporting group; existing associations remain unknown.
         propertyType: a.ref("PropertyType"),
@@ -835,6 +839,9 @@ const schema = a
       offerExpiresAt: a.date(),
       lines: a.string().array(), // e.g. ["Commercial Property", "General Liability", "D&O", "Umbrella"]
       premium: a.float(),
+      /** Optional agency fee; never part of carrier premium. */
+      brokerFee: a.float(),
+      billType: a.ref("BillType"),
       // Agency commission, % of premium. NOTE: already baked into the
       // quoted premium — commission $ is informational, never additive.
       commissionPct: a.float(),
@@ -927,6 +934,11 @@ const schema = a
       isAuditable: a.boolean(),
       lines: a.string().array(),
       premium: a.float(),
+      brokerFee: a.float(),
+      /** Server-owned actual fee receipts; independent of policy cancellation. */
+      brokerFeeCollected: a.float(),
+      brokerFeeRefunded: a.float(),
+      brokerFeeCollectedAt: a.datetime(),
       commissionPct: a.float(), // carried from the bound quote; baked into premium
       // ── General liability limits (printed on the ACORD 25 COI) ──
       glEachOccurrence: a.float(),
@@ -1073,6 +1085,9 @@ const schema = a
       remittanceCarrierCents: a.integer(),
       remittanceCommissionCents: a.integer(),
       remittanceInterestCents: a.integer(),
+      remittanceBrokerFeeCents: a.integer(),
+      brokerFeeAllocations: a.json(),
+      brokerFeeFinanceUrl: a.string(),
       lines: a.hasMany("InvoiceLine", "invoiceId"),
       // Streamed. Money changing hands is the clearest case in the schema for
       // "who did this, and when" — see STREAMED_MODELS in backend.ts.
@@ -1116,6 +1131,8 @@ const schema = a
       policyId: a.id(),
       policy: a.belongsTo("Policy", "policyId"),
       description: a.string(),
+      /** Authoritative quote-term anchor for agency-owned fee revenue. */
+      brokerFeeQuoteId: a.string(),
       kind: a.ref("InvoiceLineKind"),
       /** What the association pays for this line. */
       retailAmount: a.float(),
@@ -1213,6 +1230,8 @@ const schema = a
         payment: a.float().required(),
         totalInterest: a.float().required(),
         originationFee: a.float().required(),
+        brokerFeeCents: a.integer(),
+        brokerFeeAllocations: a.json(),
         /** Actual initial receipt; legacy checkouts may have collected no originationFee. */
         initialPaymentAmount: a.float(),
         originationFeeCollected: a.float(),
@@ -1524,7 +1543,12 @@ const schema = a
          */
         policyId: a.id(),
         quoteId: a.id(),
+        policyIds: a.id().array(),
+        quoteIds: a.id().array(),
         sourceCommunicationId: a.string(),
+        brokerFeeAgreementId: a.string(),
+        sha256: a.string(),
+        signatureEvidenceSha256: a.string(),
         deliveredAt: a.datetime(),
         category: a.ref("DocumentCategory"),
         name: a.string().required(),
@@ -1776,6 +1800,9 @@ const schema = a
          * Absent means off: the module ships dark.
          */
         premiumFinanceEnabled: a.boolean(),
+        /** Reviewed jurisdiction eligibility and disclosure templates; no per-policy approval. */
+        brokerFeeJurisdictions: a.json(),
+        brokerFeeJurisdictionsVersion: a.integer(),
         /**
          * When the flag last changed — the serialization stamp. Enable writes
          * conditionally on it being unchanged since the invocation began, so
@@ -2197,6 +2224,19 @@ const schema = a
       .returns(a.json())
       .authorization((allow) => [allow.publicApiKey()])
       .handler(a.handler.function(pfElection)),
+
+    brokerFeeDisclosure: a.query()
+      .arguments({ token: a.string().required() }).returns(a.json())
+      .authorization(allow => [allow.publicApiKey()])
+      .handler(a.handler.function(brokerFees)),
+    signBrokerFeeDisclosure: a.mutation()
+      .arguments({ token: a.string().required(), signerName: a.string().required(), signerEmail: a.string().required(), signerRole: a.string().required(), consent: a.boolean().required() })
+      .returns(a.json()).authorization(allow => [allow.publicApiKey()])
+      .handler(a.handler.function(brokerFees)),
+    brokerFeeAction: a.mutation()
+      .arguments({ input: a.json().required() }).returns(a.json())
+      .authorization(allow => [allow.authenticated()])
+      .handler(a.handler.function(brokerFees)),
 
     commissionOverview: a.query().returns(a.json())
       .authorization(allow => [allow.authenticated()])

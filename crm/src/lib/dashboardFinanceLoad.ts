@@ -3,6 +3,7 @@ import { communicationRequest } from './communications';
 import { loadAssignments } from './dashboardAssignments';
 import { hasFinancingReceivable, outstandingPrincipal } from './dashboardFinance';
 import { allWithAuthorizationPriority } from './allWithAuthorizationPriority';
+import type { ReportBrokerFeePolicy } from './brokerFeeReporting';
 
 export interface FinancePaymentReceipt { id: string; accountId: string; postedAt: string; interest: number | null }
 export interface FinancePolicyAnchor { id: string; accountId: string; quoteId?: string | null }
@@ -85,12 +86,16 @@ export async function loadFinanceInvoiceAnchors(ids: readonly string[]): Promise
  * referenced policies, and assignments for accounts represented here. */
 export async function loadFinanceDashboard() {
   const asOf = new Date();
-  const [invoices, pfLoans, payments] = await allWithAuthorizationPriority([
+  const [invoices, pfLoans, payments, brokerFeePolicies] = await allWithAuthorizationPriority([
     listAllPages(nextToken => client.models.Invoice.list({ nextToken,
       filter: { or: [{ status: { eq: 'SENT' } }, { status: { eq: 'PROCESSING' } }] },
     })),
     listAllPages(nextToken => client.models.PfLoan.list({ nextToken, filter: { status: { ne: 'PAID' } } })),
     loadRecentFinanceInterest(asOf),
+    listAllPages(nextToken => client.models.Policy.list({ nextToken,
+      filter: { brokerFee: { gt: 0 } },
+      selectionSet: ['id', 'accountId', 'brokerFee', 'brokerFeeCollected', 'brokerFeeRefunded', 'status'],
+    })),
   ]);
   const outstanding = pfLoans.filter(loan => hasFinancingReceivable(loan) && outstandingPrincipal(loan) !== 0);
   const loanAccounts = new Set(outstanding.map(loan => loan.accountId));
@@ -98,11 +103,11 @@ export async function loadFinanceDashboard() {
     (invoice.status === 'SENT' || invoice.status === 'PROCESSING') && loanAccounts.has(invoice.accountId));
   const [invoiceLines, commercial] = await allWithAuthorizationPriority([
     loadFinanceInvoiceAnchors(overlapInvoices.map(invoice => invoice.id)),
-    loadAssignments([...new Set([...invoices, ...outstanding, ...payments].map(record => record.accountId))]),
+    loadAssignments([...new Set([...invoices, ...outstanding, ...payments, ...brokerFeePolicies].map(record => record.accountId))]),
   ]);
   const overlapAccounts = new Set(overlapInvoices.map(invoice => invoice.accountId));
   const policyIds = [...outstanding.filter(loan => overlapAccounts.has(loan.accountId)), ...overlapInvoices, ...invoiceLines]
     .map(row => row.policyId).filter((id): id is string => Boolean(id));
   const policies = await loadFinancePolicyAnchors(policyIds);
-  return { invoices, pfLoans, payments, policies, invoiceLines, commercial, accounts: commercial.accounts, asOf };
+  return { invoices, pfLoans, payments, policies, invoiceLines, brokerFeePolicies: brokerFeePolicies as ReportBrokerFeePolicy[], commercial, accounts: commercial.accounts, asOf };
 }

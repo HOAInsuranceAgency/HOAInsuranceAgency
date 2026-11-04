@@ -1,3 +1,5 @@
+import { assertBrokerFeeSigned } from "../broker-fees/bindValidation";
+import { brokerFeeCents, feeAllocations } from "../../../../shared/brokerFees";
 import { randomUUID } from "node:crypto";
 import { Amplify } from "aws-amplify";
 import { generateClient } from "aws-amplify/data";
@@ -130,6 +132,7 @@ function termsShape(loan: PfLoan, associationName: string, state: "open" | "done
     payment: loan.payment,
     totalInterest: loan.totalInterest,
     originationFee: loan.originationFee,
+    brokerFee: (loan.brokerFeeCents ?? 0) / 100,
     effectiveDate: loan.effectiveDate,
     /**
      * The paragraphs the customer signs — the same constants the agreement
@@ -310,14 +313,15 @@ async function handleAccept(
       nextToken,
     })
   );
-  if (invoices.some((i) => i.status === "PAID")) {
+  const premiumInvoices = invoices.filter(i => !(i.remittanceBrokerFeeCents && i.remittanceCarrierCents === 0 && i.remittanceCommissionCents === 0 && (i.remittanceInterestCents ?? 0) === 0));
+  if (premiumInvoices.some((i) => i.status === "PAID")) {
     return {
       ok: true,
       state: "closed",
       reason: "This premium has already been paid in full. There is nothing to finance.",
     };
   }
-  if (invoices.some((i) => i.status === "PROCESSING")) {
+  if (premiumInvoices.some((i) => i.status === "PROCESSING")) {
     return {
       ok: true,
       state: "closed",
@@ -325,7 +329,7 @@ async function handleAccept(
         "A pay-in-full bank transfer is already clearing for this premium. If it fails, this link will work again.",
     };
   }
-  const premiumCents = Math.round(loan.premium * 100);
+  const premiumCents = Math.round(loan.premium * 100) + (loan.brokerFeeCents ?? 0);
   const openLinked = invoices.filter((i) => i.status === "SENT" && i.stripePaymentLinkId);
   if (
     openLinked.some(
@@ -338,6 +342,15 @@ async function handleAccept(
       reason:
         "This policy has other open billing beside the premium. Your agent needs to resolve it before financing can start.",
     };
+  }
+  const feeParts = feeAllocations(loan.brokerFeeAllocations);
+  if (feeParts.reduce((sum, part) => sum + part.amountCents, 0) !== (loan.brokerFeeCents ?? 0)) throw new Error("The broker fee payment allocation is incomplete.");
+  for (const part of feeParts) {
+    const source = part.policyId ? await client.models.Policy.get({ id: part.policyId }) : await client.models.Quote.get({ id: part.quoteId });
+    if (source.errors?.length || !source.data || source.data.accountId !== loan.accountId || brokerFeeCents(source.data.brokerFee) !== part.amountCents) return { ok: true, state: "closed", reason: "The broker fee changed. Use the updated invoice from your agent." };
+    const currentQuote = await client.models.Quote.get({ id: part.quoteId });
+    if (currentQuote.errors?.length || !currentQuote.data) throw new Error("The current broker fee quote could not be verified.");
+    await assertBrokerFeeSigned(currentQuote.data);
   }
   const loanTable = process.env.PF_LOAN_TABLE;
   const settingsTable = process.env.AGENCY_SETTINGS_TABLE;
@@ -667,6 +680,11 @@ async function handleAccept(
           },
         },
       },
+      ...(initial.brokerFeeCents > 0 ? [{
+        quantity: 1,
+        price_data: { currency: "usd", unit_amount: initial.brokerFeeCents,
+          product_data: { name: "Broker fee (paid in full; not financed)" } },
+      }] : []),
       ...(initial.originationFeeCents > 0 ? [{
         quantity: 1,
         price_data: { currency: "usd", unit_amount: initial.originationFeeCents,
@@ -675,9 +693,9 @@ async function handleAccept(
     ],
     payment_intent_data: {
       setup_future_usage: "off_session",
-      metadata: { pfLoanId: loan.id, pfKind: "down", pfBillingVersion: String(PF_CHECKOUT_BILLING_VERSION) },
+      metadata: { pfLoanId: loan.id, pfKind: "down", pfBillingVersion: String(PF_CHECKOUT_BILLING_VERSION), ...(initial.brokerFeeCents > 0 ? { brokerFeeAllocations: JSON.stringify(feeAllocations(loan.brokerFeeAllocations)), brokerFeeAccountId: loan.accountId, invoiceTotalCents: String(initial.totalCents) } : {}) },
     },
-    metadata: { pfLoanId: loan.id, pfKind: "down", pfBillingVersion: String(PF_CHECKOUT_BILLING_VERSION) },
+    metadata: { pfLoanId: loan.id, pfKind: "down", pfBillingVersion: String(PF_CHECKOUT_BILLING_VERSION), ...(initial.brokerFeeCents > 0 ? { brokerFeeAllocations: JSON.stringify(feeAllocations(loan.brokerFeeAllocations)), brokerFeeAccountId: loan.accountId, invoiceTotalCents: String(initial.totalCents) } : {}) },
     success_url: `${siteUrl}/finance/?t=${loan.electionToken}&done=1`,
     cancel_url: `${siteUrl}/finance/?t=${loan.electionToken}`,
     });

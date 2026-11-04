@@ -1,3 +1,4 @@
+import { feeAllocations } from "../../../shared/brokerFees";
 import { currentContacts, billingContact } from "../lib/contacts";
 import { useEffect, useRef, useState } from "react";
 import {
@@ -17,6 +18,7 @@ import ConfirmButton from "./ConfirmButton";
 import { Badge, INVOICE_STATUS_BADGE, statusBadge } from "../lib/badges";
 import {
   directBillWarning,
+  financeableInvoiceTotal,
   formatMoney,
   invoiceTotals,
   marginWarnings,
@@ -145,6 +147,8 @@ function InvoiceEditorContent({
   const totals = invoiceTotals(lines);
   const warnings = marginWarnings(lines);
   const locked = invoice.status === "VOID";
+  const issuedFee = feeAllocations(invoice.brokerFeeAllocations).length > 0;
+  const linesLocked = locked || ["PAID", "PROCESSING"].includes(invoice.status) || invoice.status === "SENT" && issuedFee;
   /**
    * W8: the anchor was chosen at creation and does not change here — the
    * one-live-per-anchor rule is enforced against it, and re-pointing a bill
@@ -300,17 +304,6 @@ function InvoiceEditorContent({
     return job;
   }
   function saveEdits() { return enqueue(async () => {}); }
-  function patchInvoice(patch: Partial<Invoice>, savedMessage = "Saved.") {
-    return enqueue(async () => {
-      const { data, errors } = await client.models.Invoice.update({ id: invoice.id, ...patch });
-      if (errors?.length || !data) throw new Error(errors?.[0]?.message ?? "Couldn't save invoice.");
-      if (alive.current) {
-        acknowledgedInvoice.current = data;
-        acknowledgedChanges.current = { ...acknowledgedChanges.current, ...patch };
-        onChange(data);
-      }
-    }, savedMessage, false, true);
-  }
 
   /**
    * Add a line, optionally directly below an existing one.
@@ -437,6 +430,13 @@ function InvoiceEditorContent({
           typeof data === "string" ? JSON.parse(data) : (data as Record<string, unknown>);
         if (!result?.ok) throw new Error(String(result?.error ?? "Send failed."));
         sendAttempt.current = null;
+        // Generated fee lines can refresh from the quote at send; show the exact billed rows.
+        if ((policy?.brokerFee ?? quote?.brokerFee ?? 0) > 0 || lines.some(line => line.kind === "BROKER_FEE")) {
+          try {
+            const billedLines = await listAllPages(nextToken => client.models.InvoiceLine.list({ filter: { invoiceId: { eq: invoice.id } }, nextToken }));
+            if (alive.current) setLines(() => billedLines);
+          } catch { /* Sending succeeded; reopening can refresh the displayed rows. */ }
+        }
         const previousSentAt = acknowledgedInvoice.current.sentAt;
         const acceptedSentAt = typeof result.sentAt === "string" ? result.sentAt : undefined;
         const sentTo = typeof result.sentTo === "string" ? result.sentTo : toEmails.join(",");
@@ -541,7 +541,7 @@ function InvoiceEditorContent({
                       aria-label="Description"
                       placeholder="What this line is for"
                       value={l.description ?? ""}
-                      disabled={locked || actionBusy}
+                      disabled={linesLocked || actionBusy || l.kind === "BROKER_FEE"}
                       onChange={e => editLine(l.id, { description: e.target.value })}
                       onBlur={() => void saveEdits()}
                     />
@@ -550,12 +550,13 @@ function InvoiceEditorContent({
                     <select
                       aria-label="Kind"
                       value={l.kind ?? "PREMIUM"}
-                      disabled={locked || actionBusy}
+                      disabled={linesLocked || actionBusy || l.kind === "BROKER_FEE"}
                       onChange={e => {
                         editLine(l.id, { kind: e.target.value as InvoiceLine["kind"] });
                         void saveEdits();
                       }}
                     >
+                      {l.kind === "BROKER_FEE" && <option value="BROKER_FEE">Broker fee · from quote</option>}
                       {LINE_KINDS.map(([value, label]) => (
                         <option key={value} value={value}>
                           {label}
@@ -571,7 +572,7 @@ function InvoiceEditorContent({
                       inputMode="decimal"
                       placeholder="0.00"
                       value={moneyInputs[`${l.id}:retailAmount`] ?? toInput(l.retailAmount)}
-                      disabled={locked || actionBusy}
+                      disabled={linesLocked || actionBusy || l.kind === "BROKER_FEE"}
                       onChange={e => editMoney(l.id, "retailAmount", e.target.value)}
                       onBlur={() => void saveEdits()}
                     />
@@ -584,7 +585,7 @@ function InvoiceEditorContent({
                       inputMode="decimal"
                       placeholder="0.00"
                       value={moneyInputs[`${l.id}:costAmount`] ?? toInput(l.costAmount)}
-                      disabled={locked || actionBusy}
+                      disabled={linesLocked || actionBusy || l.kind === "BROKER_FEE"}
                       onChange={e => editMoney(l.id, "costAmount", e.target.value)}
                       onBlur={() => void saveEdits()}
                     />
@@ -593,7 +594,7 @@ function InvoiceEditorContent({
                     {margin === null ? "—" : formatMoney(margin)}
                   </td>
                   <td className="row-action">
-                    {!locked && (
+                    {!linesLocked && (
                       <div className="row-tools">
                         {/* On the row rather than under the table, so a line
                             lands where it is wanted instead of at the bottom
@@ -612,7 +613,7 @@ function InvoiceEditorContent({
                           label="Remove"
                           busyLabel="Removing…"
                           className="danger"
-                          disabled={actionBusy}
+                          disabled={actionBusy || l.kind === "BROKER_FEE"}
                           onConfirm={() => removeLine(l.id)}
                         />
                       </div>
@@ -653,7 +654,8 @@ function InvoiceEditorContent({
         </table>
       </div>
 
-      {!locked && (
+      {invoice.status === "SENT" && issuedFee && <p className="muted small">Void this invoice before changing its charges.</p>}
+      {!linesLocked && (
         <div className="inline-actions">
           {/* Every other row is added with its own +. This is the way in when
               there is no row to press one on, and the way to append. */}
@@ -820,7 +822,8 @@ function InvoiceEditorContent({
                       lines: quote!.lines ?? [],
                     }
               }
-              retailTotal={totals.retail}
+              retailTotal={financeableInvoiceTotal(lines)}
+              brokerFee={lines.filter(line => line.kind === "BROKER_FEE").reduce((total, line) => total + (line.retailAmount ?? 0), 0)}
             />
           )}
 
@@ -857,10 +860,15 @@ function InvoiceEditorContent({
             className="secondary"
             disabled={actionBusy}
             onClick={() =>
-              void patchInvoice(
-                { status: "PAID", paidAt: new Date().toISOString().slice(0, 10) },
-                "Marked paid."
-              )
+              void enqueue(async () => {
+                const response = await client.mutations.brokerFeeAction({ input: JSON.stringify({ op: "confirmInvoicePayment", invoiceId: invoice.id }) });
+                if (response.errors?.length) throw new Error(response.errors[0].message);
+                const result = typeof response.data === "string" ? JSON.parse(response.data) : response.data;
+                if (!result?.ok) throw new Error(result?.error ?? "Could not confirm payment.");
+                const refreshed = await client.models.Invoice.get({ id: invoice.id });
+                if (refreshed.errors?.length || !refreshed.data) throw new Error("Payment recorded. Refresh the invoice to see its status.");
+                if (alive.current) onChange(refreshed.data);
+              }, "Marked paid.", false, true)
             }
           >
             Mark paid

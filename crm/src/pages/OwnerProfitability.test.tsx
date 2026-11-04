@@ -50,15 +50,15 @@ describe("owner profitability privacy and report", () => {
     expect(screen.getByRole("status")).toHaveTextContent("Missing commission or pay details are not treated as zero");
     const row = within(table).getByRole("row", { name: /Casey Staff/ });
     expect(within(row).getByText("Needs pay setup")).toBeVisible();
-    expect(within(row).getAllByText("Incomplete")).toHaveLength(5);
-    expect(within(row).queryByText("$0.00")).toBeNull();
+    expect(within(row).getAllByText("Incomplete")).toHaveLength(6);
+    expect(within(row).getAllByText("$0.00")).toHaveLength(2);
     const total = screen.getByText("Agency commission", { selector: ".l" }).closest(".stat")!;
     expect(total).toHaveTextContent("Incomplete"); expect(total).toHaveTextContent("$2,000.00 known · partial");
     fireEvent.change(screen.getByRole("combobox", { name: "Download Estimated employee profitability" }), { target: { value: "csv" } });
     const report = h.download.mock.calls[0][0];
     expect(report.filters).toContain("policy effective date and current account salesperson");
     expect(report.filters).toContain("INCOMPLETE");
-    expect(report.sections[0].rows.find((r: unknown[]) => r[0] === "Casey Staff")).toEqual(["Casey Staff", null, null, null, null, null, 1, "No", 1, 1, expect.any(String)]);
+    expect(report.sections[0].rows.find((r: unknown[]) => r[0] === "Casey Staff")).toEqual(["Casey Staff", null, null, null, null, null, 1, "No", 1, 1, expect.any(String), 0, 0, null, 0]);
     fireEvent.click(within(row).getByRole("button", { name: "Edit pay settings for Casey Staff" }));
     expect(screen.getByRole("combobox", { name: "Employee" })).toHaveValue("casey");
   });

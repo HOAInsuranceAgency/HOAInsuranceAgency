@@ -49,6 +49,11 @@ describe("linkFields", () => {
 });
 
 describe("matchesLink", () => {
+  it("finds one combined agreement under every covered quote and policy", () => {
+    const document = { quoteIds: ['q1', 'q2'], policyIds: ['p1', 'p2'] };
+    for (const key of ['quote:q1', 'quote:q2', 'policy:p1', 'policy:p2']) expect(matchesLink(document, key)).toBe(true);
+    expect(matchesLink(document, 'policy:p3')).toBe(false);
+  });
   it("empty key shows everything; a key shows its own", () => {
     expect(matchesLink({ policyId: "p1" }, "")).toBe(true);
     expect(matchesLink({}, "")).toBe(true);

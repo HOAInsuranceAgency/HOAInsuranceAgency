@@ -10,6 +10,8 @@ interface PerformancePolicy {
   effectiveDate?: string | null;
   premium?: number | null;
   commissionPct?: number | null;
+  brokerFee?: number | null;
+  brokerFeeRefunded?: number | null;
   status?: string | null;
 }
 interface PerformanceQuote {
@@ -27,6 +29,11 @@ export interface PerformancePerson {
   key: string;
   label: string;
   commission: number;
+  brokerFees: number;
+  brokerFeeRefunds: number;
+  netBrokerFees: number;
+  agencyRevenue: number;
+  feePolicies: number;
   policies: number;
   missingCommissionPct: number;
   bound: number;
@@ -75,7 +82,7 @@ export function performanceBySalesperson({
 }) {
   const selected = policies.filter(p => (!excludeCancelled || p.status !== "CANCELLED") && effectiveInWindow(p.effectiveDate, from, to));
   const people = new Map<string, PerformancePerson>(series.map(s => [s.key, {
-    key: s.key, label: s.label, commission: 0, policies: 0, missingCommissionPct: 0,
+    key: s.key, label: s.label, commission: 0, brokerFees: 0, brokerFeeRefunds: 0, netBrokerFees: 0, agencyRevenue: 0, feePolicies: 0, policies: 0, missingCommissionPct: 0,
     bound: 0, decided: 0, winRate: null,
   }]));
   const carrierNames = new Map(carriers.map(c => [c.id, c.name?.trim() || "Unknown carrier"]));
@@ -88,11 +95,21 @@ export function performanceBySalesperson({
     const key = salespersonKey(accountId, entries);
     let person = people.get(key);
     if (!person) {
-      person = { key, label: "Unassigned", commission: 0, policies: 0, missingCommissionPct: 0, bound: 0, decided: 0, winRate: null };
+      person = { key, label: "Unassigned", commission: 0, brokerFees: 0, brokerFeeRefunds: 0, netBrokerFees: 0, agencyRevenue: 0, feePolicies: 0, policies: 0, missingCommissionPct: 0, bound: 0, decided: 0, winRate: null };
       people.set(key, person);
     }
     return person;
   };
+  // Cancellation removes premium production when requested, but does not
+  // erase an earned fee. Refunds are explicitly recorded, never prorated.
+  for (const policy of policies.filter(p => effectiveInWindow(p.effectiveDate, from, to))) {
+    const person = personFor(policy.accountId);
+    const fee = policy.brokerFee ?? 0, refunded = policy.brokerFeeRefunded ?? 0;
+    person.brokerFees += fee;
+    person.brokerFeeRefunds += refunded;
+    person.netBrokerFees += fee - refunded;
+    if (fee > 0) person.feePolicies++;
+  }
   const add = (groups: Map<string, PerformanceMoneyRow>, key: string, label: string, person: string, value: number) => {
     const row = groups.get(key) ?? { key, label, values: {}, total: 0, count: 0 };
     row.values[person] = (row.values[person] ?? 0) + value;
@@ -124,7 +141,10 @@ export function performanceBySalesperson({
       person.decided++;
     } else if (quote.status === "LOST" || quote.status === "DECLINED") person.decided++;
   }
-  for (const person of people.values()) person.winRate = person.decided ? person.bound / person.decided : null;
+  for (const person of people.values()) {
+    person.winRate = person.decided ? person.bound / person.decided : null;
+    person.agencyRevenue = person.commission + person.netBrokerFees;
+  }
 
   // Fill empty months between real dates (or explicit bounds). No 24-month
   // truncation: a chart marked All time must not silently lose old premium.

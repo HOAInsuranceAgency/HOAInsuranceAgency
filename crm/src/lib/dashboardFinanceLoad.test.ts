@@ -1,12 +1,12 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 const h = vi.hoisted(() => ({
-  invoiceList: vi.fn(), loanList: vi.fn(), request: vi.fn(), assignments: vi.fn(), forbidden: vi.fn(),
+  invoiceList: vi.fn(), loanList: vi.fn(), feePolicies: vi.fn(), request: vi.fn(), assignments: vi.fn(), forbidden: vi.fn(),
 }));
 vi.mock('./client', async () => ({
   listAllPages: (await import('./pagination')).listAllPages,
   client: { models: {
     Invoice: { list: h.invoiceList }, PfLoan: { list: h.loanList },
-    PfLoanPayment: { list: h.forbidden }, Policy: { list: h.forbidden },
+    PfLoanPayment: { list: h.forbidden }, Policy: { list: h.feePolicies },
     InvoiceLine: { list: h.forbidden }, Account: { list: h.forbidden },
   } },
 }));
@@ -19,6 +19,7 @@ beforeEach(() => {
   h.forbidden.mockRejectedValue(new Error('Whole-history/table read is forbidden'));
   h.invoiceList.mockResolvedValue({ data: [] });
   h.loanList.mockResolvedValue({ data: [] });
+  h.feePolicies.mockResolvedValue({ data: [] });
   h.assignments.mockResolvedValue({ entries: {}, team: [], accounts: [] });
 });
 

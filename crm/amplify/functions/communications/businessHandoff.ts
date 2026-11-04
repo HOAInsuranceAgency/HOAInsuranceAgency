@@ -16,6 +16,10 @@ import { activeTeamUserCheck } from '../crm-access/user-status';
 import { downloadFrontAttachment } from './attachments';
 import { allowedDocument, deliveryAccount, deliveryId, loadDeliverySource, deliverySourceChecks, businessValidation, type Quote, type Document } from './businessDeliverySources';
 import { createBusinessProposalPdf } from './businessProposalPdf';
+import { prepareBrokerFeeAgreement } from '../broker-fees/agreements';
+import { getAgreement } from '../broker-fees/store';
+import { createBrokerFeeDisclosurePdf } from '../broker-fees/disclosurePdf';
+import { brokerFeeCents } from '../../../../shared/brokerFees';
 
 const s3 = new S3Client(), MAX = 25 * 1024 * 1024;
 interface FrozenFile { id: string; name: string; key: string; contentType: string; size: number; sha256: string; sourceKey?: string; }
@@ -101,7 +105,7 @@ function semanticHtml(html:string,aliases:NativeImageAlias[]=[],authored=false):
       consumed+=attr[0];const key=attr[1].toLowerCase(),value=decodeHtml(attr[2]??attr[3]??attr[4]??'');if(attrs.has(key)||/[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(value))return;attrs.set(key,value);
     }
     if(tag[3].replace(/\s/g,'')!==consumed.replace(/\s/g,''))return;
-    if(authored&&(!/^(div|span|p|h[1-6]|br|b|strong|em|i|u)$/.test(name)||[...attrs.keys()].some(k=>k!=='class')))return;
+    if(authored&&(!/^(a|div|span|p|h[1-6]|br|b|strong|em|i|u)$/.test(name)||[...attrs.keys()].some(k=>k!=='class'&&!(name==='a'&&k==='href'))))return;
     if([...attrs.keys()].some(k=>!['class','style','href','src','srcset','poster','alt','title','rel','target','width','height','border','cellspacing','cellpadding','valign','data-editor-selected'].includes(k)))return;
     if((attrs.get('class')??'').split(/\s+/).includes('front-signature')&&(name!=='div'||attrs.size!==1||attrs.get('class')?.trim()!=='front-signature'))return;
     const style=attrs.get('style')??'';
@@ -225,9 +229,17 @@ export async function previewBusinessDelivery(input:BusinessDeliverySelection,ac
     await s3.send(new PutObjectCommand({Bucket:process.env.DOCUMENT_BUCKET,Key:key,Body:data,ContentType:contentType}));
     files.push({id:fileId,name:cleanName(name),key,contentType,size:data.length,sha256:fileHash(data),...(sourceKey?{sourceKey}:{})});
   };
-  if(input.kind==='PACKAGE'){const proposal=await createBusinessProposalPdf({account:source.account,packageName:source.packageName!,requiredLines:source.requiredLines,quotes:source.quotes,reference,preparedAt:new Date().toISOString()});await add(`proposal:${input.recordId}`,proposal.filename,proposal.bytes);}
+  let feeLink: string | undefined, feeSigned = false;
+  if(input.kind==='PACKAGE'){
+    const proposal=await createBusinessProposalPdf({account:source.account,packageName:source.packageName!,requiredLines:source.requiredLines,quotes:source.quotes,reference,preparedAt:new Date().toISOString()});await add(`proposal:${input.recordId}`,proposal.filename,proposal.bytes);
+    if(source.quotes.some(quote=>brokerFeeCents(quote.brokerFee)>0)) {
+      const prepared=await prepareBrokerFeeAgreement(input.accountId,source.quotes.map(quote=>({...quote,accountId:input.accountId,terms:JSON.parse(source.quoteTerms[quote.id]).terms})));
+      const agreement=await getAgreement(prepared.agreementId);if(!agreement)throw businessValidation('The fee agreement could not be loaded. Review a fresh proposal preview');
+      const disclosure=agreement.signature && agreement.signedDocumentKey ? {filename:'Signed broker fee disclosure.pdf',bytes:await bytes(agreement.signedDocumentKey)} : await createBrokerFeeDisclosurePdf(agreement);await add(`fee-disclosure:${agreement.id}`,disclosure.filename,disclosure.bytes);feeLink=prepared.url;feeSigned=!!agreement.signature;
+    }
+  }
   for(const file of source.files)await add(file.id,file.name,await bytes(file.key,file.contentType),file.key,file.contentType);
-  const body=`<h2>${htmlEscape(source.title)}</h2><p>${htmlEscape(source.account.name)}</p>${source.facts.map(f=>`<p>${htmlEscape(f)}</p>`).join('')}<p>${input.kind==='PACKAGE'?'Please review the attached insurance proposal and selected documents. Coverage is subject to the carrier’s terms and confirmation of binding.':'Please review the attached document.'}</p><p>Reference: ${reference}</p>`;
+  const body=`<h2>${htmlEscape(source.title)}</h2><p>${htmlEscape(source.account.name)}</p>${source.facts.map(f=>`<p>${htmlEscape(f)}</p>`).join('')}<p>${input.kind==='PACKAGE'?'Please review the attached insurance proposal and selected documents. Coverage is subject to the carrier’s terms and confirmation of binding.':'Please review the attached document.'}</p>${feeLink?`<p><a href="${htmlEscape(feeLink)}">${feeSigned?'Review your signed broker fee disclosure':'Review and sign the broker fee disclosure'}</a></p><p>Signing accepts the stated broker fees only. It does not authorize or bind insurance coverage.</p>`:''}<p>Reference: ${reference}</p>`;
   const subject=selected.subject??source.title,contentProof=freezeContent(subject,body,identity.signatureHtml);
   const preview:BusinessDeliveryPreview={id,previewId:id,previewHash:'',selection:{accountId:input.accountId,kind:input.kind,recordId:input.recordId,conversationId:selected.id,documentIds:input.documentIds ?? []},sender:identity.sender,conversationId:selected.id,conversationLabel:selected.label,subject,body,facts:source.facts,quotes:source.quotes,attachments:files.map(f=>({id:f.id,name:f.name,contentType:f.contentType,size:f.size,sha256:f.sha256})),warnings:['Nothing has been sent. Review every attachment and recipient in Front before sending.',...(input.kind==='PACKAGE' && source.files.length===0?['No carrier quotation PDFs are selected. The proposal contains recorded terms only; review the carrier quotations before sending.']:[])],expiresAt:new Date(Date.now()+600_000).toISOString()};
   preview.previewHash=hash(canonical({actor,preview,sourceFingerprint:source.fingerprint}));
