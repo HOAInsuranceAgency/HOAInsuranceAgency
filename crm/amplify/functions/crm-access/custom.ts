@@ -28,6 +28,7 @@ export async function authorizeCustom(access: AccountAccess, field: string, args
     return;
   }
   if (field === "commissionOverview") return; // Handler returns only the caller’s own financial records.
+  if (field === "carrierPaymentPreview") { await access.requireRecord("Quote", id(args.quoteId)); return; }
   if (field === "bindCommissionPolicy") { await access.requireRecord("Quote", id(object(args.input).quoteId)); return; }
   if (access.admin) return;
   if (["crmAccess", "crmFile", "honeycombSubmissionSettings", "reserveCertificateNumber", "reserveInvoiceNumber"].includes(field)) return;

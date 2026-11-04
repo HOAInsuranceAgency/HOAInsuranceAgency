@@ -7,6 +7,8 @@ import type { RoleRequest } from '../crm-access/active-role';
 import { feeAllocations } from '../../../../shared/brokerFees';
 import { invoiceBrokerFeeAllocations } from '../send-invoice/brokerFeeInvoice';
 import { validateInvoiceSourceCharges } from '../send-invoice/passThroughInvoice';
+import { assertAdjustmentInvoiceProof, assertInitialInvoiceAvailable } from '../send-invoice/adjustmentInvoice';
+import { invoiceTotals } from '../../../src/lib/invoiceTotals';
 import { db, getFee, getModel, modelTable, versionCheck, type Write } from './store';
 import { assertBrokerFeeSigned } from './bindValidation';
 import { assertNoFeeLoanCheckout, syncBrokerFeePayment } from './payments';
@@ -21,8 +23,11 @@ export async function confirmInvoicePayment(event:{identity?:Identity;request?:R
   const policy=invoice.policyId?await access.requireRecord('Policy',id(invoice.policyId)):undefined;
   const quoteId=id(policy?.quoteId)||id(invoice.quoteId);
   const quote=quoteId?await access.requireRecord('Quote',quoteId):undefined;
-  const source=policy??quote;
+  let source=policy??quote;
   if(source&&source.accountId!==invoice.accountId)throw new Error('The invoice source could not be verified.');
+  await assertInitialInvoiceAvailable(invoice);
+  const adjustmentProof=await assertAdjustmentInvoiceProof(invoice);
+  if(adjustmentProof)source=adjustmentProof.policy;
   const index=(JSON.parse(process.env.ACCESS_INDEXES??'{}') as Record<string,string>)['InvoiceLine.invoiceId'];
   if(!index)throw new Error('Invoice line access is not configured.');
   let cursor:Record<string,unknown>|undefined;
@@ -35,12 +40,13 @@ export async function confirmInvoicePayment(event:{identity?:Identity;request?:R
   }while(cursor);
   const fee=quoteId?await getFee(quoteId):undefined;
   validateInvoiceSourceCharges({invoice:{accountId:String(invoice.accountId),policyId:invoice.policyId as string|undefined,status:invoice.status as string|undefined,sourcePricingVersion:invoice.sourcePricingVersion as number|undefined},source:source?{id:String(source.id),accountId:String(source.accountId),premium:source.premium as number|undefined,billType:source.billType as string|undefined,passThroughCharges:source.passThroughCharges}:null,lines});
-  const allocations=invoiceBrokerFeeAllocations({invoice:{accountId:String(invoice.accountId),status:String(invoice.status)},source:source?{accountId:String(source.accountId),brokerFee:source.brokerFee as number|undefined,billType:source.billType as string|undefined}:null,quoteId,policyId:policy?String(policy.id):undefined,lines,alreadySubmitted:!!fee&&(fee.submittedCents>0||fee.collectedCents>0)});
+  if(invoice.sourcePricingVersion===2&&invoiceTotals(lines).retail<=0)throw new Error('A zero or credit adjustment is not an incoming payment and cannot be marked paid.');
+  const allocations=invoiceBrokerFeeAllocations({invoice:{accountId:String(invoice.accountId),status:String(invoice.status),sourcePricingVersion:invoice.sourcePricingVersion as number|undefined},source:source?{accountId:String(source.accountId),brokerFee:source.brokerFee as number|undefined,billType:source.billType as string|undefined}:null,quoteId,policyId:policy?String(policy.id):undefined,lines,alreadySubmitted:!!fee&&(fee.submittedCents>0||fee.collectedCents>0)});
   const frozen=feeAllocations(invoice.brokerFeeAllocations);
   const comparable=(a:typeof allocations)=>a.map(row=>({quoteId:row.quoteId,amountCents:row.amountCents}));
   if(frozen.length&&JSON.stringify(comparable(frozen))!==JSON.stringify(comparable(allocations)))throw new Error('The invoice differs from its issued fee payment allocation.');
   if(quote&&allocations.length)await assertBrokerFeeSigned(quote);
-  const invoiceGuards:Write[]=[];
+  const invoiceGuards:Write[]=[...(adjustmentProof?.guards??[])];
   if(fee&&allocations.length) {
     const claim=fee.invoiceSendClaim;
     if(claim?.phase==='PREPARING')throw new Error('The broker fee invoice payment link is still being prepared. Finish or recover its Send action before recording an outside payment.');

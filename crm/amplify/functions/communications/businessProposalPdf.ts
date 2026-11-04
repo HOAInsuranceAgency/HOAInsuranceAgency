@@ -149,6 +149,8 @@ export async function createBusinessProposalPdf(input: BusinessProposalInput) {
   line(`Total quoted policy cost: ${dollars((subtotal + passThroughSubtotal + feeSubtotal) / 100)}`, 15, true);
   if (feeSubtotal) line('HOA broker fees require a separate signed fee agreement and are payable upfront. They are excluded from premium financing.', 9, false, true);
   gap(8);
+  line('Agency compensation: HOA Insurance Agency may receive commissions from insurers for placing and servicing coverage. Any HOA broker fee is itemized separately. Contact the agency for additional compensation information.', 9, false, true);
+  gap(5);
   line('Payment: Your HOA Insurance Agency invoice identifies the amount payable to the agency and provides the payment link. Wholesaler payment instructions in source documents are for agency remittance; contact us before making a separate payment to avoid paying twice.', 9, false, true);
   gap(5);
   line('Review the carrier quotations for full terms, taxes, fees, exclusions, conditions, and payment requirements. Values not recorded here are not represented as included coverage.', 9, false, true);

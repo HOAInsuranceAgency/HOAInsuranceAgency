@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { QueryCommand, BatchGetCommand, ExecuteStatementCommand } from '@aws-sdk/lib-dynamodb';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { packageTerms } from '../../../shared/quotePackages';
+import { emptyCommercialPlan, packageTerms, pendingCommission } from '../../../shared/quotePackages';
 const send = vi.hoisted(() => vi.fn());
 vi.mock('../../amplify/functions/communications/store', () => ({ db: { send } }));
 import {
@@ -162,7 +162,7 @@ describe('scoped quote terms and states', () => {
     expect(send).toHaveBeenCalledTimes(1);
   });
 
-  it('projects every package assessment input while excluding signed snapshots and unrelated fields', async () => {
+  it.each([0, 125])('projects every package assessment input while excluding signed snapshots and unrelated fields (fee=%s)', async brokerFee => {
     const quote = {
       id: 'q1', accountId: 'a1', status: 'QUOTED', carrierId: 'carrier', premium: 800,
       effectiveDate: '2026-10-01', expirationDate: '2027-10-01', perOccurrenceDeductible: 1,
@@ -170,6 +170,8 @@ describe('scoped quote terms and states', () => {
       glEachOccurrence: 5, glDamageToRentedPremises: 6, glMedicalExpense: 7, glPersonalAdvInjury: 8,
       glGeneralAggregate: 9, glProductsCompletedOps: 10, glClaimsMade: true, glAggregateAppliesTo: 'POLICY',
       minimumEarnedPremiumPct: 11, lines: ['Property'], commissionPct: 12,
+      brokerFee, billType: 'AGENCY', passThroughCharges: JSON.stringify([{ id: 'rt', kind: 'WHOLESALER_FEE', description: 'Supplier fee', amountCents: 25000 }]),
+      clientConditions: 'Signed statement of values required.',
       offerExpiresAt: '2026-10-01', renewalPolicyId: 'p1', notes: 'Quote note',
       bindAuthorizedTerms: 'Large signed snapshot', lastWriteBy: 'private-user',
     };
@@ -179,6 +181,12 @@ describe('scoped quote terms and states', () => {
     });
     const page = await dashboardQuotesPage({ accountIds: ['a1'], details: true });
     expect(packageTerms(page.items[0] as typeof quote)).toBe(packageTerms(quote));
+    const businessQuote = { ...quote, renewalPolicyId: null };
+    const projectedBusiness = { ...page.items[0], renewalPolicyId: null } as typeof businessQuote;
+    const option = { id: 'o', name: 'Reviewed option', quoteIds: ['q1'], reviewed: { at: from, by: 'owner', terms: { q1: packageTerms(businessQuote) } } };
+    const plan = { ...emptyCommercialPlan('a1'), requiredLines: ['Property'], selectedOptionId: 'o', selectedTerms: option.reviewed.terms, options: [option] };
+    expect(pendingCommission(plan, [projectedBusiness], '2026-09-30').cents).toBe(9600);
+    for (const field of ['brokerFee', 'billType', 'passThroughCharges', 'clientConditions']) expect(send.mock.calls[0][0].input.Statement).toContain(`"${field}"`);
     expect(page.items[0]).not.toHaveProperty('bindAuthorizedTerms');
     expect(page.items[0]).not.toHaveProperty('lastWriteBy');
     expect(send.mock.calls[0][0].input.Limit).toBe(20);

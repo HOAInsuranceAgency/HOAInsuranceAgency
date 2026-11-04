@@ -1008,6 +1008,8 @@ const schema = a
     Invoice: a.model({
       /** Versioned initial source pricing; absent only on pre-feature legacy records. */
       sourcePricingVersion: a.integer(),
+      adjustsInvoiceId: a.id(),
+      adjustsPremiumLineId: a.id(),
       accountId: a.id().required(),
       account: a.belongsTo("Account", "accountId"),
       /** Optional: a policy can have several, and some bill no policy at all. */
@@ -2251,6 +2253,11 @@ const schema = a
       .handler(a.handler.function(brokerFees)),
 
     commissionOverview: a.query().returns(a.json())
+      .authorization(allow => [allow.authenticated()])
+      .handler(a.handler.function(commissions)),
+    carrierPaymentPreview: a.query()
+      .arguments({ quoteId: a.string().required(), billType: a.string().required() })
+      .returns(a.json())
       .authorization(allow => [allow.authenticated()])
       .handler(a.handler.function(commissions)),
     commissionAction: a.mutation()

@@ -7,8 +7,9 @@ vi.mock('../../amplify/functions/broker-fees/store', async original => ({
   ...await original<typeof import('../../amplify/functions/broker-fees/store')>(),
   modelTable: (model: string) => model,
   getModel: async (model: string, id: string) => structuredClone(h.models.get(`${model}:${id}`)),
+  accountModels: async (model:string,accountId:string)=>[...h.models.entries()].filter(([key,row])=>key.startsWith(`${model}:`)&&row.accountId===accountId).map(([,row])=>structuredClone(row)),
   getRow: async (id: string) => structuredClone(h.rows.get(id)), getFee: async (id: string) => structuredClone(h.rows.get(`fee:${id}`)), getAgreement: async (id: string) => structuredClone(h.rows.get(id)),
-  db: { send: async () => ({ Items: h.invoiceLineIds.map(id=>({id})) }) }, transact: h.transact,
+  db: { send: async (command:{input:{ExpressionAttributeValues:Record<string,unknown>}}) => ({ Items: command.input.ExpressionAttributeValues[':invoice']==='i'?h.invoiceLineIds.map(id=>({id})):[...h.models.entries()].filter(([key,row])=>key.startsWith('InvoiceLine:')&&row.invoiceId===command.input.ExpressionAttributeValues[':invoice']).map(([,row])=>({id:row.id})) }) }, transact: h.transact,
 }));
 vi.mock('../../amplify/functions/crm-access/user-status', async original => ({ ...await original<typeof import('../../amplify/functions/crm-access/user-status')>(), assertUserSession: h.session }));
 vi.mock('stripe', () => ({ default: class {
@@ -29,6 +30,15 @@ function issuedLoan(fields: Row = {}) {
 }
 function issuedInvoiceClaim(invoiceId = 'i', phase = 'PUBLISHED') {
   Object.assign(h.rows.get('fee:q')!, { issuedInvoiceIds: [invoiceId], invoiceSendClaim: { invoiceId, token: 'invoice-send-token', phase, totalCents: 50000, previousLinkId: null, ...(phase === 'PUBLISHED' ? { linkId: invoiceId === 'i' ? 'plink' : 'prior-plink' } : {}) } });
+}
+function adjustment(amount=1000,cost=800) {
+  h.models.set('Policy:p',{id:'p',accountId:'a',quoteId:'q',premium:10000,brokerFee:500,billType:'AGENCY',passThroughCharges:[],updatedAt:NOW});
+  h.models.set('Invoice:original',{id:'original',accountId:'a',policyId:'p',quoteId:'q',status:'PAID',sourcePricingVersion:1,updatedAt:NOW});
+  h.models.set('InvoiceLine:original-premium',{id:'original-premium',invoiceId:'original',accountId:'a',policyId:'p',kind:'PREMIUM',retailAmount:10000,costAmount:9000,updatedAt:NOW});
+  Object.assign(h.models.get('Invoice:i')!,{policyId:'p',quoteId:null,sourcePricingVersion:2,adjustsInvoiceId:'original',adjustsPremiumLineId:'original-premium',brokerFeeAllocations:[]});
+  Object.assign(h.rows.get('fee:q')!,{submittedCents:50000,collectedCents:50000});
+  h.invoiceLineIds=['endorsement'];
+  h.models.set('InvoiceLine:endorsement',{id:'endorsement',invoiceId:'i',accountId:'a',policyId:'p',kind:'ENDORSEMENT',description:'Additional audit premium',retailAmount:amount,costAmount:cost,updatedAt:NOW});
 }
 
 /** Stage the entire real receipt transaction before publishing any test writes. */
@@ -164,6 +174,35 @@ describe('outside invoice payment beside an issued financing offer', () => {
 });
 
 describe('outside payment while an invoice send owns the fee', () => {
+  it('records a proven adjustment receipt without charging or earning the original broker fee twice', async () => {
+    adjustment();const oldFee=structuredClone(h.rows.get('fee:q'));
+    await expect(confirmInvoicePayment(actor,{invoiceId:'i'})).resolves.toMatchObject({invoice:{status:'PAID'}});
+    expect(paymentRows()).toHaveLength(0);expect(h.rows.get('fee:q')).toEqual(oldFee);
+    expect(h.transact.mock.calls[0][0]).toEqual(expect.arrayContaining([expect.objectContaining({ConditionCheck:expect.objectContaining({TableName:'Invoice',Key:{id:'original'}})}),expect.objectContaining({ConditionCheck:expect.objectContaining({TableName:'InvoiceLine',Key:{id:'original-premium'}})})]));
+  });
+  it('rejects a forced initial invoice after its policy already has a paid original premium',async()=>{
+    adjustment();Object.assign(h.models.get('Invoice:i')!,{sourcePricingVersion:1,adjustsInvoiceId:null,adjustsPremiumLineId:null});
+    await expect(confirmInvoicePayment(actor,{invoiceId:'i'})).rejects.toThrow('already has a paid original');
+    expect(h.deactivate).not.toHaveBeenCalled();expect(h.transact).not.toHaveBeenCalled();
+  });
+  it.each([-1000,0])('cannot turn an adjustment total %s into an incoming cash receipt',async amount=>{
+    adjustment(amount,amount);if(amount===0)h.models.get('InvoiceLine:endorsement')!.retailAmount=1000;
+    if(amount===0){h.invoiceLineIds.push('credit-tax');h.models.set('InvoiceLine:credit-tax',{id:'credit-tax',invoiceId:'i',accountId:'a',kind:'TAX',description:'Return tax',retailAmount:-1000,costAmount:-1000,updatedAt:NOW});}
+    await expect(confirmInvoicePayment(actor,{invoiceId:'i'})).rejects.toThrow('not an incoming payment');
+    expect(h.deactivate).not.toHaveBeenCalled();expect(h.transact).not.toHaveBeenCalled();expect(h.models.get('Invoice:i')?.status).toBe('SENT');
+  });
+  it('revalidates actual paid originals and actual policy billing before taking an adjustment receipt',async()=>{
+    adjustment();h.models.get('Invoice:original')!.status='VOID';
+    await expect(confirmInvoicePayment(actor,{invoiceId:'i'})).rejects.toThrow('could not be verified');
+    h.models.get('Invoice:original')!.status='PAID';h.models.get('Policy:p')!.billType='DIRECT';
+    await expect(confirmInvoicePayment(actor,{invoiceId:'i'})).rejects.toThrow('carrier collects');
+    expect(h.deactivate).not.toHaveBeenCalled();expect(h.transact).not.toHaveBeenCalled();
+  });
+  it('cannot commit an adjustment receipt when its original proof changes during processor cleanup',async()=>{
+    adjustment();h.deactivate.mockImplementation(async()=>{h.models.get('Invoice:original')!.updatedAt='2026-11-04T15:00:01Z';return{active:false};});
+    await expect(confirmInvoicePayment(actor,{invoiceId:'i'})).rejects.toThrow('transaction condition failed');
+    expect(h.models.get('Invoice:i')?.status).toBe('SENT');expect(paymentRows()).toHaveLength(0);
+  });
   it('uses the persisted linked legacy policy to accept an at-cost supplier charge with an outside payment', async () => {
     h.models.set('Policy:legacy',{id:'legacy',accountId:'a',quoteId:'q',premium:10000,brokerFee:500,billType:'AGENCY',updatedAt:NOW});
     Object.assign(h.models.get('Invoice:i')!,{policyId:'legacy',sourcePricingVersion:1});

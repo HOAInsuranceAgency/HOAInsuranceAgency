@@ -18,9 +18,8 @@ export function installBrokerFees(backend: typeof Backend, communicationTable: D
     fees.addGlobalSecondaryIndex({ indexName, partitionKey: { name: field, type: AttributeType.STRING }, sortKey: { name: 'id', type: AttributeType.STRING } });
   }
   // Keep IAM attachments outside the nearly-full generated data template.
-  // Managed policies keep these identical grants outside the roles' aggregate
-  // 10,240-character inline limit. Attaching through the policy's Roles field
-  // keeps dependencies one-way from this stack to the unchanged roles/tables.
+  // Managed policies also preserve the callers' 10 KB inline-policy budget.
+  // This stack depends on the roles/tables; neither depends on these policies.
   const permissions = backend.createStack('BrokerFeePermissions');
   const api = backend.data.resources.graphqlApi;
   const writers = [backend.brokerFees,backend.communications,backend.commissions,backend.stripeWebhook,backend.sendInvoice,backend.voidInvoice,backend.pfElection];
@@ -54,7 +53,7 @@ export function installBrokerFees(backend: typeof Backend, communicationTable: D
     fn.addEnvironment('ACCESS_API_ID',api.apiId);
     const models=fn===backend.brokerFees?['Account','Quote','Policy','Invoice','InvoiceLine','Document','AgencySettings','PfLoan']
       :fn===backend.voidInvoice?['Quote','Policy','Invoice']
-      :[backend.communications,backend.sendInvoice,backend.pfElection].includes(fn as typeof backend.communications)?['AgencySettings','Quote','Account','Policy','Invoice','PfLoan']
+      :[backend.communications,backend.sendInvoice,backend.pfElection].includes(fn as typeof backend.communications)?['AgencySettings','Quote','Account','Policy','Invoice','PfLoan',...(fn===backend.sendInvoice?['InvoiceLine']:[])]
       :['Quote','Policy','Document','AgencySettings'];
     add(fn,reads,models.flatMap(model=>[modelArn(model),`${modelArn(model)}/index/*`]));
     const writable=fn===backend.brokerFees?['Account','Invoice','Document','Policy','AgencySettings']:fn===backend.stripeWebhook?['Policy']:fn===backend.commissions?['Document']:fn===backend.voidInvoice?['Invoice']:[];

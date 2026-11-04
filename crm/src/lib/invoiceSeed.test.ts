@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   brokerFeeLineFromSource,
+  findAdjustmentOriginal,
   passThroughLinesFromSource,
   invoiceableQuotes,
   liveAnchorIds,
@@ -126,6 +127,15 @@ describe("liveAnchorIds — void frees the slot", () => {
       [{ invoiceId: "i1", policyId: "p9" }]
     );
     expect([...busy]).toEqual(["p9"]);
+  });
+
+  it.each([-10000, 0])('releases only finalized nonpayable adjustment statements totaling %s cents', total => {
+    const statement = { id: 'credit', policyId: 'p', sourcePricingVersion: 2, status: 'SENT', sentAt: '2026-11-04T20:00:00Z',
+      remittanceCarrierCents: total, remittanceCommissionCents: 0, remittanceInterestCents: 0, remittanceBrokerFeeCents: 0 };
+    expect(liveAnchorIds([statement], [{ invoiceId: 'credit', policyId: 'p' }])).toEqual(new Set());
+    for (const delta of [{ status: 'DRAFT' }, { remittanceCarrierCents: undefined }, { paymentUrl: 'https://payments.example.test' }, { remittanceCarrierCents: 1 }]) {
+      expect(liveAnchorIds([{ ...statement, ...delta }], []).has('p')).toBe(true);
+    }
   });
 });
 
@@ -276,5 +286,23 @@ describe("supplier charges and taxes", () => {
   });
   it("rejects malformed recorded costs rather than omitting a charge", () => {
     expect(() => passThroughLinesFromSource({ passThroughCharges: [charges[0], { ...charges[1], amountCents: -1 }] })).toThrow();
+  });
+});
+
+describe('paid original invoice eligibility', () => {
+  const policy = { id: 'p', accountId: 'a', quoteId: 'q' };
+  const original = { id: 'paid', accountId: 'a', policyId: 'p', status: 'PAID', sourcePricingVersion: 1 };
+  const premium = { id: 'premium', invoiceId: 'paid', accountId: 'a', policyId: 'p', kind: 'PREMIUM', retailAmount: 55541 };
+  it('finds a paid original for policy and pre-bind quote billing, including legacy originals', () => {
+    expect(findAdjustmentOriginal(policy, [original], [premium])).toEqual({ adjustsInvoiceId: 'paid', adjustsPremiumLineId: 'premium' });
+    expect(findAdjustmentOriginal(policy, [{ ...original, policyId: undefined, quoteId: 'q', sourcePricingVersion: undefined }], [{ ...premium, policyId: undefined }])).toEqual({ adjustsInvoiceId: 'paid', adjustsPremiumLineId: 'premium' });
+  });
+  it('does not treat fee-only receipts, later adjustments, foreign records or unsettled bills as original premium proof', () => {
+    for (const row of [{ ...original, status: 'SENT' }, { ...original, sourcePricingVersion: 2 }, { ...original, accountId: 'foreign' }, { ...original, policyId: 'other' }]) {
+      expect(findAdjustmentOriginal(policy, [row], [premium])).toBeNull();
+    }
+    for (const row of [{ ...premium, kind: 'BROKER_FEE' }, { ...premium, retailAmount: 0 }, { ...premium, invoiceId: 'other' }]) {
+      expect(findAdjustmentOriginal(policy, [original], [row])).toBeNull();
+    }
   });
 });

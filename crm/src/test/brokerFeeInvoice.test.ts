@@ -43,4 +43,9 @@ describe("derived fee refresh before sending",()=>{
   it("does not silently convert an invalid direct-bill fee into a separate fee-only invoice",()=>{
     expect(()=>brokerFeeInvoiceRefresh({...draft,source:{...source,billType:'DIRECT'},lines:[...draft.lines,{id:'premium1',kind:'PREMIUM',retailAmount:10000}]})).toThrow('Broker fees require agency billing.');
   });
+  it('preserves an existing unflagged endorsement draft without adding the source term broker fee again',()=>{
+    const legacy={...draft,lines:[{id:'endorsement',accountId:'a1',kind:'ENDORSEMENT',retailAmount:1000,costAmount:800}],alreadySubmitted:false};
+    expect(brokerFeeInvoiceRefresh(legacy)).toEqual({remove:[],upsert:undefined});
+    expect(invoiceBrokerFeeAllocations({...valid,lines:legacy.lines,alreadySubmitted:false})).toEqual([]);
+  });
 });

@@ -19,6 +19,7 @@ import { InvoiceEditor } from "../../components/InvoiceEditor";
 import { invoiceTotals, premiumLineFromPolicy } from "../../lib/invoiceTotals";
 import {
   brokerFeeLineFromSource,
+  findAdjustmentOriginal,
   passThroughLinesFromSource,
   sourceChargeLineId,
   invoiceableQuotes,
@@ -154,6 +155,7 @@ function InvoicesTabContent({ accountId }: { accountId: string }) {
         const policy = kind === "policy" ? loaded.policies.find((p) => p.id === anchorId) : null;
         const quote = kind === "quote" ? loaded.quotes.find((q) => q.id === anchorId) : null;
         const source = policy ?? quote;
+        const adjustment = policy ? findAdjustmentOriginal(policy, loaded.invoices, loaded.lines) : null;
         if ((source?.brokerFee ?? 0) > 0 && source?.billType !== "AGENCY") throw new Error("Broker fees require agency billing. Correct the source quote before invoicing.");
         /**
          * The number is reserved before the row exists, so two producers
@@ -175,9 +177,10 @@ function InvoicesTabContent({ accountId }: { accountId: string }) {
           accountId,
           number,
           status: "DRAFT",
-          sourcePricingVersion: 1,
+          sourcePricingVersion: adjustment ? 2 : 1,
+          ...(adjustment ?? {}),
           issuedAt: today,
-          dueAt: addDays(today, DEFAULT_TERM_DAYS),
+          dueAt: !adjustment && (source?.brokerFee ?? 0) > 0 ? today : addDays(today, DEFAULT_TERM_DAYS),
           ...(kind === "policy" ? { policyId: anchorId } : { quoteId: anchorId }),
         });
         if (errors?.length || !data) throw new Error(errors?.[0]?.message ?? "Couldn't create the invoice.");
@@ -189,7 +192,18 @@ function InvoicesTabContent({ accountId }: { accountId: string }) {
         // Seed the client's recorded premium; actual supplier remittance stays
         // blank until reviewed in the existing cost column.
         const created: InvoiceLine[] = [];
-        if (source && source.billType !== "DIRECT") {
+        if (adjustment) {
+          try {
+            const line = await client.models.InvoiceLine.create({ id: `invoice:${data.id}:adjustment`, invoiceId: data.id,
+              accountId, policyId: policy!.id, kind: "ENDORSEMENT", description: "Endorsement or audit adjustment",
+              retailAmount: null, costAmount: null, sortOrder: 0 });
+            if (line.errors?.length || !line.data) throw new Error("Adjustment line was not saved.");
+            created.push(line.data);
+          } catch {
+            setOpenId(data.id);
+            throw new Error("Adjustment invoice created, but its blank adjustment line could not be saved. Reopen this invoice before sending; do not create another invoice.");
+          }
+        } else if (source && source.billType !== "DIRECT") {
           const { retailAmount, costAmount } = premiumLineFromPolicy(source);
           try {
           const line = await client.models.InvoiceLine.create({
@@ -215,7 +229,7 @@ function InvoicesTabContent({ accountId }: { accountId: string }) {
           }
         }
 
-        if (source) {
+        if (source && !adjustment) {
           try {
             for (const charge of passThroughLinesFromSource(source, policy?.id)) {
               const line = await client.models.InvoiceLine.create({ id: sourceChargeLineId(data.id, charge.sourceQuoteChargeId), invoiceId: data.id, accountId, ...charge, sortOrder: created.length });
@@ -249,7 +263,8 @@ function InvoicesTabContent({ accountId }: { accountId: string }) {
             : cur
         );
         setOpenId(data.id);
-        return source?.billType === "DIRECT" ? "HOA broker fee invoice created." : "Invoice created — enter actual carrier/wholesaler remittance cost.";
+        return adjustment ? "Adjustment invoice created — enter only the endorsement or audit change and its actual supplier cost."
+          : source?.billType === "DIRECT" ? "HOA broker fee invoice created." : "Invoice created — enter actual carrier/wholesaler remittance cost.";
       },
       { errorMessage: "Couldn't create an invoice." }
     );
@@ -270,7 +285,11 @@ function InvoicesTabContent({ accountId }: { accountId: string }) {
   // PAID and VOID free the slot — voiding a bill is how a policy gets
   // billed again. The rule itself is the pure module's, with its tests.
   const busyAnchors = liveAnchorIds(invoices, lines);
-  const openPolicies = unbilledAgencyPolicies(policies, busyAnchors);
+  const adjustmentOriginals = new Map(policies.map(policy => [policy.id, findAdjustmentOriginal(policy, invoices, lines)]));
+  const initialPolicyIds = new Set(unbilledAgencyPolicies(policies, busyAnchors).map(policy => policy.id));
+  const openPolicies = policies.filter(policy => policy.billType !== "DIRECT" && !busyAnchors.has(policy.id)
+    && (!policy.quoteId || !busyAnchors.has(policy.quoteId))
+    && (initialPolicyIds.has(policy.id) || adjustmentOriginals.get(policy.id)));
   const openQuotes = invoiceableQuotes(quotes, busyAnchors, isOpenQuoteStatus);
 
   return (
@@ -295,6 +314,8 @@ function InvoicesTabContent({ accountId }: { accountId: string }) {
                     "Policy"}
                   {p.effectiveDate ? ` (${p.effectiveDate})` : ""}
                   {p.billType ? "" : " — bill type not recorded"}
+                  {p.status && p.status !== "ACTIVE" ? ` — ${p.status.replaceAll("_", " ").toLowerCase()}` : ""}
+                  {adjustmentOriginals.get(p.id) ? " — endorsement/audit adjustment" : ""}
                 </option>
               ))}
               {openQuotes.map((q) => (
