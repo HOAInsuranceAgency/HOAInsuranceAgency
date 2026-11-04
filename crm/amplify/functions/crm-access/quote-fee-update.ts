@@ -1,7 +1,8 @@
+import { voidedInvoiceSendRetirementWrites, isRetiredInvoiceSend } from "../send-invoice/sendOperation";
 import { brokerFeeCents, type BrokerFeeRecord } from '../../../../shared/brokerFees';
 import { authorizedQuoteTerms } from '../../../../shared/quoteAuthorization';
 import { feeIssuedHistory, invalidateUnclaimedLoan } from '../broker-fees/payments';
-import { feePut, getAgreement, getFee, modelTable, table, transact, versionCheck, type Write } from '../broker-fees/store';
+import { db, feePut, getAgreement, getFee, modelTable, table, transact, versionCheck, type Write } from '../broker-fees/store';
 import { AccountAccess } from './access';
 import { AccessDenied, id, object, type RecordData } from './policy';
 import { quoteSourceBillingHistory } from '../quote-source-billing';
@@ -23,12 +24,11 @@ export async function updateFeeQuoteAtomically(access: AccountAccess, context: N
   await access.write('Quote', 'update', input);
   const previous = await access.requireRecord('Quote', id(input.id));
   const reparent = Object.hasOwn(input,'accountId') && input.accountId !== previous.accountId;
-  if (!brokerFeeCents(previous.brokerFee as number | undefined) && !brokerFeeCents(input.brokerFee as number | undefined) && !reparent) return { committed: false };
   const fee = await getFee(id(previous.id));
   const agreement = fee?.agreementId ? await getAgreement(fee.agreementId) : undefined;
   const disclosed = agreement?.quotes.find(quote => quote.id === previous.id)?.agencyCommissionPct !== undefined;
   const next = { ...previous, ...input };
-  const changed = reparent || authorizedQuoteTerms(previous) !== authorizedQuoteTerms(next) || disclosed && next.commissionPct !== previous.commissionPct;
+  const changed = reparent || Object.hasOwn(input,"billType") && input.billType !== previous.billType || authorizedQuoteTerms(previous) !== authorizedQuoteTerms(next) || disclosed && next.commissionPct !== previous.commissionPct;
   const withdrawn = ['LOST','DECLINED'].includes(String(input.status)) && input.status !== previous.status;
   if (!changed && !withdrawn) return { committed: false };
   if (Object.keys(input).some(key => !QUOTE_INPUT_FIELDS.has(key)) || Object.keys(args).some(key => !['input','condition'].includes(key))) throw new Error('This quote update contains unsupported fields. Refresh the quote and try again.');
@@ -55,9 +55,9 @@ export async function updateFeeQuoteAtomically(access: AccountAccess, context: N
   for (const loan of history.loans) { const update = invalidateUnclaimedLoan(loan,now); if (update) writes.push(update); }
   for (const invoice of history.invoices) {
     if (invoice.status === 'VOID') {
-      if (![1,2].includes(Number(invoice.sourcePricingVersion)) && (invoice.stripePaymentLinkId || invoice.paymentUrl)) throw new Error('The legacy invoice payment sessions need review before changing these quote terms.');
-      if (invoice.invoiceSendOperation && !object(invoice.invoiceSendOperation).completed) throw new Error('Finish the existing invoice delivery before changing its quote terms.');
-      writes.push(versionCheck(modelTable('Invoice'),invoice as {id:string;updatedAt:string}));
+      if (![1,2].includes(Number(invoice.sourcePricingVersion)) && (invoice.stripePaymentLinkId || invoice.paymentUrl) && !isRetiredInvoiceSend(invoice)) throw new Error('The legacy invoice payment sessions need review before changing these quote terms.');
+      const retirement=await voidedInvoiceSendRetirementWrites(invoice,{database:db,invoiceTable:modelTable('Invoice')});
+      if(retirement.length)writes.push(...retirement);else writes.push(versionCheck(modelTable('Invoice'),invoice as {id:string;updatedAt:string}));
     } else if (invoice.status === 'DRAFT' && !invoice.stripePaymentLinkId && !invoice.paymentUrl && !invoice.invoiceSendOperation) {
       // Touch draft headers so a sender with an old source snapshot cannot
       // reserve delivery after this financial edit. A prior send reservation

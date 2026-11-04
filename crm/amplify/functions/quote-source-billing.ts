@@ -1,8 +1,9 @@
+import { voidedInvoiceSendRetirementWrites } from "./send-invoice/sendOperation";
 import { brokerFeeCents, feeAllocations, type BrokerFeeRecord } from '../../../shared/brokerFees';
 import { authorizedQuoteTerms } from '../../../shared/quoteAuthorization';
 import { isOpenQuoteStatus } from '../../src/lib/quoteStatus';
 import { loanWithoutCheckoutGuard } from './broker-fees/payments';
-import { accountModels, getFee, getModel, modelTable, table, versionCheck, type Write } from './broker-fees/store';
+import { db, accountModels, getFee, getModel, modelTable, table, versionCheck, type Write } from './broker-fees/store';
 type RecordData = Record<string, unknown>;
 const SOURCE_INVOICE_POINTER = 'sourcePricingInvoiceId';
 const SOURCE_LOAN_POINTER = 'sourcePricingLoanId';
@@ -57,12 +58,13 @@ async function pointerSource(quote:RecordData, model:'Invoice'|'PfLoan', pointer
 export async function initialQuotePublicationWrites(invoice:RecordData, snapshot:RecordData):Promise<Write[]> {
   if(invoice.sourcePricingVersion!==1||invoice.quoteId!==snapshot.id||invoice.accountId!==snapshot.accountId)throw new Error('The initial quote invoice source could not be verified.');
   const quote=await getModel<RecordData>('Quote',String(snapshot.id));
-  if(!quote||quote.accountId!==invoice.accountId||!isOpenQuoteStatus(quote.status as string)||authorizedQuoteTerms(quote)!==authorizedQuoteTerms(snapshot))throw new Error('The quote changed. Refresh its invoice before sending.');
+  if(!quote||quote.accountId!==invoice.accountId||!isOpenQuoteStatus(quote.status as string)||authorizedQuoteTerms(quote)!==authorizedQuoteTerms(snapshot)||(quote.billType??null)!==(snapshot.billType??null))throw new Error('The quote changed. Refresh its invoice before sending.');
   const writes:Write[]=[];
   const owner=await pointerSource(quote,'Invoice',SOURCE_INVOICE_POINTER);
   if(owner&&owner.id!==invoice.id){
-    if(owner.sourcePricingVersion!==1||owner.status!=='VOID'||owner.invoiceSendOperation&&!((owner.invoiceSendOperation as RecordData).completed))throw new Error('Resolve the existing quote invoice before publishing another initial payment link.');
-    writes.push(versionCheck(modelTable('Invoice'),owner as {id:string;updatedAt:string}));
+    if(owner.sourcePricingVersion!==1||owner.status!=='VOID')throw new Error('Resolve the existing quote invoice before publishing another initial payment link.');
+    const retirement=await voidedInvoiceSendRetirementWrites(owner,{database:db,invoiceTable:modelTable('Invoice')});
+    if(retirement.length)writes.push(...retirement);else writes.push(versionCheck(modelTable('Invoice'),owner as {id:string;updatedAt:string}));
   }
   const loan=await pointerSource(quote,'PfLoan',SOURCE_LOAN_POINTER);
   if(loan)writes.push(loanWithoutCheckoutGuard(loan));
@@ -87,7 +89,7 @@ export async function zeroFeeQuoteClaimWrites(loan:RecordData):Promise<Write[]> 
   const prior=await pointerSource(quote,'PfLoan',SOURCE_LOAN_POINTER);
   if(prior&&prior.id!==loan.id)writes.push(loanWithoutCheckoutGuard(prior));
   const invoice=await pointerSource(quote,'Invoice',SOURCE_INVOICE_POINTER);
-  if(invoice){if(invoice.status!=='VOID')throw new Error('Resolve the existing quote invoice before opening financing.');writes.push(versionCheck(modelTable('Invoice'),invoice as {id:string;updatedAt:string}));}
+  if(invoice){if(invoice.status!=='VOID')throw new Error('Resolve the existing quote invoice before opening financing.');const retirement=await voidedInvoiceSendRetirementWrites(invoice,{database:db,invoiceTable:modelTable('Invoice')});if(retirement.length)writes.push(...retirement);else writes.push(versionCheck(modelTable('Invoice'),invoice as {id:string;updatedAt:string}));}
   writes.push(sourceQuoteTouch(quote,SOURCE_LOAN_POINTER,String(loan.id)));
   return writes;
 }

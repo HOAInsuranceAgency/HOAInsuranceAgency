@@ -432,6 +432,11 @@ describe('actual fee-free initial quote publication',()=>{
     expect(h.mail).not.toHaveBeenCalled();expect(h.deactivate).toHaveBeenCalledWith('stale-link',{active:false});
     expect(h.invoice.stripePaymentLinkId).toBeUndefined();expect(h.quote.sourcePricingInvoiceId).toBeUndefined();
   });
+  it('refuses a stale agency-bill snapshot after a fee-free quote switches to DIRECT',async()=>{
+    initialPacket();const oldSnapshot=structuredClone(h.quote);h.models.Quote.get=async()=>({data:oldSnapshot});
+    h.quote.billType='DIRECT';h.quote.updatedAt='2026-11-04T16:00:00.000Z';
+    expect(await send()).toMatchObject({ok:false});expect(h.link).not.toHaveBeenCalled();expect(h.mail).not.toHaveBeenCalled();
+  });
   it('does not replace another live published invoice even when the account index omits it',async()=>{
     initialPacket();h.quote.sourcePricingInvoiceId='other';
     h.records.set('Invoice:other',{id:'other',accountId:'a',quoteId:'q',sourcePricingVersion:1,status:'SENT',updatedAt:'2026-11-04T13:00:00Z',stripePaymentLinkId:'other-link'});
