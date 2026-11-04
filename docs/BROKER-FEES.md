@@ -1,5 +1,7 @@
 # Policy broker fees
 
+The deployment guard continues to verify the exact identities and hash of all 57 retained stateful resources. It separately permits one broker-fee ledger with a stable name derived from the retained backend root, and verifies that table's account, region, deletion protection, key and three indexes. Every other stateful addition or replacement remains blocked.
+
 Broker fees are optional agency revenue on an individual quote and policy term. New quotes, including renewals, start at $0. They are separate from carrier premium, carrier commission, taxes, carrier/wholesaler charges, and financing charges.
 
 ## Existing workflow

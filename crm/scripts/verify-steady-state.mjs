@@ -29,13 +29,41 @@ export function verifySteadyState(namespace, contract, aws) {
     }
   };
   collect(contract.backendRoot);
-  const stateful = inventory.filter(r => contract.statefulTypes.includes(r.ResourceType))
+  // Preserve the original cutover inventory byte for byte. The broker-fee
+  // feature may add exactly one separately protected, deterministically named
+  // ledger; that exception never permits replacing an original resource.
+  const ledgerName = `${contract.backendRoot.split('/')[1]}-broker-fees`;
+  const ledgers = inventory.filter(r => r.ResourceType === "AWS::DynamoDB::Table"
+    && /^BrokerFeeLedger[A-F0-9]{8}$/.test(r.LogicalResourceId)
+    && r.PhysicalResourceId === ledgerName);
+  need(ledgers.length <= 1, "more than one approved broker fee ledger exists");
+  const stateful = inventory.filter(r => contract.statefulTypes.includes(r.ResourceType) && !ledgers.includes(r))
     .map(r => [r.stack, r.LogicalResourceId, r.ResourceType, r.PhysicalResourceId]);
   // Ordinary lexical order is shared with the checked-in canonical inventory.
   stateful.sort((a,b) => { for (let i=0;i<a.length;i++) { if(a[i]!==b[i]) return a[i]<b[i]?-1:1; } return 0; });
   need(stateful.length === 57 && contract.statefulCount === 57
     && createHash("sha256").update(JSON.stringify(stateful)).digest("hex") === contract.statefulInventorySha256,
     "stateful physical identities differ");
+  if (ledgers.length) {
+    const ledger = aws("dynamodb", "describe-table", "--table-name", ledgerName).Table;
+    need(ledger?.TableName === ledgerName
+      && ledger.TableArn === `arn:aws:dynamodb:${contract.region}:${contract.account}:table/${ledgerName}`
+      && ledger.TableStatus === "ACTIVE" && ledger.DeletionProtectionEnabled === true,
+      "broker fee ledger identity, readiness or deletion protection differs");
+    need(canonical(ledger.KeySchema) === canonical([{ AttributeName: "id", KeyType: "HASH" }])
+      && ledger.AttributeDefinitions?.length === 4
+      && ["id", "accountId", "kind", "pending"].every(name => ledger.AttributeDefinitions.some(a => a.AttributeName === name && a.AttributeType === "S")),
+      "broker fee ledger key definition differs");
+    const expectedIndexes = { account: "accountId", kind: "kind", pending: "pending" };
+    need(ledger.GlobalSecondaryIndexes?.length === 3
+      && Object.entries(expectedIndexes).every(([name, key]) => {
+        const index = ledger.GlobalSecondaryIndexes.find(i => i.IndexName === name);
+        return index?.IndexStatus === "ACTIVE" && index.Projection?.ProjectionType === "ALL"
+          && !index.Projection.NonKeyAttributes?.length && index.KeySchema?.length === 2
+          && index.KeySchema.some(k => k.AttributeName === key && k.KeyType === "HASH")
+          && index.KeySchema.some(k => k.AttributeName === "id" && k.KeyType === "RANGE");
+      }), "broker fee ledger indexes differ");
+  }
   const mappings = inventory.filter(r => r.ResourceType === "AWS::Lambda::EventSourceMapping");
   need(mappings.length === 22 && contract.mappings.length === 22 && new Set(contract.mappings.map(m=>m.uuid)).size === 22,
     "exact existing cursor inventory required");
