@@ -125,6 +125,10 @@ export class TransactionalMailClient {
       }
     }
     const recipientCost = body.to.length + (body.cc?.length ?? 0) + (body.bcc?.length ?? 0);
+    // A fresh counter has no count attribute, so its transaction condition alone
+    // cannot reject an envelope that already exceeds the entire effective cap.
+    const impossibleQuota = recipientCost > policy.monthLimit ? "monthly_quota_exceeded" : recipientCost > policy.dayLimit ? "daily_quota_exceeded" : undefined;
+    if (impossibleQuota) throw await recordFailure(operationKey, "DEFERRED", this.kind, deps, operation.attempt ?? 0, false, impossibleQuota);
     const recipients = [...new Set([...body.to, ...(body.cc ?? []), ...(body.bcc ?? [])])];
     for (const recipient of recipients) {
       const suppression = await get(`SUPPRESSION#${hash(recipient)}`, deps);

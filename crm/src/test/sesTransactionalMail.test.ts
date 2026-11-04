@@ -28,7 +28,7 @@ function harness(options: Options = {}) {
     }
     if (c.constructor.name === "UpdateCommand") {
       const row = rows.get(i.Key.pk); const v = i.ExpressionAttributeValues;
-      if (row?.attempt === v[":attempt"] && (v[":sending"] ? row.state === "SENDING" : ["RESERVED", "DEFERRED"].includes(row.state))) Object.assign(row, { state: v[":state"], nextRetryAt: v[":retry"] });
+      if (row?.attempt === v[":attempt"] && (v[":sending"] ? row.state === "SENDING" : ["RESERVED", "DEFERRED"].includes(row.state))) Object.assign(row, { state: v[":state"], failureReason: v[":reason"], nextRetryAt: v[":retry"] });
       return {};
     }
     if (c.constructor.name === "TransactWriteCommand") {
@@ -205,6 +205,29 @@ describe("SES envelope fidelity and independent application caps", () => {
     expect(day.Key.pk).toBe("QUOTA#SES#DAY#2026-11-04"); expect(day.ExpressionAttributeValues[":remaining"]).toBe(994);
     expect(month.Key.pk).toBe("QUOTA#SES#MONTH#2026-11"); expect(month.ExpressionAttributeValues[":remaining"]).toBe(29949);
     expect(quotaPolicy("resend", "login", "2026-11-04T02:00:00Z")).toMatchObject({ dayKey: "QUOTA#DAY#2026-11-04", dayLimit: 100, monthLimit: 3000 });
+  });
+  it.each([
+    { kind: "login", daily: "1", monthly: "3000", reason: "daily_quota_exceeded", retry: "2026-11-05T00:00:00.000Z" },
+    { kind: "login", daily: "100", monthly: "1", reason: "monthly_quota_exceeded", retry: "2026-12-01T00:00:00.000Z" },
+    { kind: "invoice", daily: "6", monthly: "3000", reason: "daily_quota_exceeded", retry: "2026-11-05T00:00:00.000Z" },
+    { kind: "invoice", daily: "100", monthly: "51", reason: "monthly_quota_exceeded", retry: "2026-12-01T00:00:00.000Z" },
+  ] as const)("defers two recipients beyond a fresh effective cap without claiming or sending: %o", async ({ kind, daily, monthly, reason, retry }) => {
+    vi.stubEnv("HOA_TRANSACTIONAL_MAIL_PROVIDER", "ses"); vi.stubEnv("HOA_SES_DAILY_LIMIT", daily); vi.stubEnv("HOA_SES_MONTHLY_LIMIT", monthly);
+    const h = harness();
+    const c = new SendEmailCommand({ ...command().input, Destination: { ToAddresses: ["jake@getgim.com"], CcAddresses: ["member@example.com"] } });
+    await expect(new TransactionalMailClient(kind, h.deps).send(c)).rejects.toMatchObject({ state: "DEFERRED" });
+    expect([...h.rows.values()]).toEqual([expect.objectContaining({ kind: "OPERATION", provider: "ses", state: "DEFERRED", attempt: 0, failureReason: reason, nextRetryAt: retry })]);
+    expect(h.objects.size).toBe(1); expect(JSON.parse([...h.objects.values()][0])).toMatchObject({ to: ["jake@getgim.com"], cc: ["member@example.com"] });
+    expect(h.transactions).toHaveLength(0);
+    expect(h.database.send.mock.calls.some(([c]) => c.input.Key?.pk?.startsWith("QUOTA#"))).toBe(false);
+    expect(h.sesMock).not.toHaveBeenCalled(); expect(h.fetchMock).not.toHaveBeenCalled(); expect(h.secrets.send).not.toHaveBeenCalled();
+  });
+  it("permits a fresh send whose recipient cost exactly equals both effective caps", async () => {
+    vi.stubEnv("HOA_TRANSACTIONAL_MAIL_PROVIDER", "ses"); vi.stubEnv("HOA_SES_DAILY_LIMIT", "2"); vi.stubEnv("HOA_SES_MONTHLY_LIMIT", "2");
+    const h = harness(); const c = new SendEmailCommand({ ...command().input, Destination: { ToAddresses: ["jake@getgim.com"], BccAddresses: ["member@example.com"] } });
+    await expect(new TransactionalMailClient("login", h.deps).send(c)).resolves.toEqual({ MessageId: "ses-receipt-12345" });
+    expect(h.sesMock).toHaveBeenCalledOnce();
+    for (const { Update: counter } of h.transactions[0].TransactItems.slice(1)) expect(counter.ExpressionAttributeValues).toMatchObject({ ":cost": 2, ":remaining": 0 });
   });
   it.each([{ HOA_SES_DAILY_LIMIT: "50001" }, { HOA_SES_DAILY_LIMIT: "1.5" }, { HOA_SES_MONTHLY_LIMIT: "0" }])("rejects unsafe SES application caps before persistence: %o", async patch => {
     for (const [k, v] of Object.entries(patch)) vi.stubEnv(k, v); const h = harness(); await expect(new TransactionalMailClient("login", h.deps).send(command())).rejects.toThrow("limits"); expect(h.database.send).not.toHaveBeenCalled(); expect(h.sesMock).not.toHaveBeenCalled();
