@@ -303,6 +303,8 @@ cfnUserPoolClient.tokenValidityUnits = { refreshToken: "days" };
 // this trigger's Lambda, so an inline role policy referring back to the pool
 // would create a CloudFormation pool → Lambda → role → pool cycle.
 if (googleSignInEnabled) {
+  const googleLinkFunction = Reflect.get(backend, "googleSignIn") as typeof backend.magicLinkVerify | undefined;
+  if (!googleLinkFunction) throw new Error("Google sign-in is enabled without its linking function.");
   const googleLinkPolicy = new Policy(Stack.of(backend.auth.resources.userPool), "GoogleAccountLinkPolicy", {
     statements: [new PolicyStatement({
       actions: [
@@ -313,7 +315,7 @@ if (googleSignInEnabled) {
       resources: [backend.auth.resources.userPool.userPoolArn],
     })],
   });
-  googleLinkPolicy.attachToRole(backend.googleSignIn.resources.lambda.role!);
+  googleLinkPolicy.attachToRole(googleLinkFunction.resources.lambda.role!);
 }
 
 // ── Magic link plumbing ──────────────────────────────────────────────

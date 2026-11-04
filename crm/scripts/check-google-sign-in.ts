@@ -21,6 +21,7 @@ export function checkGoogleSignIn(backend: typeof Backend) {
     }
   }
   const triggers = stack.resolve(pool.lambdaConfig) as { preSignUp?: unknown };
+  const googleLinkFunction = Reflect.get(backend, "googleSignIn") as typeof backend.magicLinkVerify | undefined;
   if (json(client.explicitAuthFlows) !== json(["ALLOW_CUSTOM_AUTH", "ALLOW_REFRESH_TOKEN_AUTH"])) {
     throw new Error("Magic links must retain custom auth without enabling password API flows");
   }
@@ -29,7 +30,7 @@ export function checkGoogleSignIn(backend: typeof Backend) {
     (node): node is CfnUserPoolIdentityProvider => node instanceof CfnUserPoolIdentityProvider && node.providerType === "Google",
   );
   if (destinationStagingNativeAuth) {
-    if (schema.some(attribute => attribute.name === "googleHostedDomain") || triggers?.preSignUp !== undefined || backend.googleSignIn) {
+    if (schema.some(attribute => attribute.name === "googleHostedDomain") || triggers?.preSignUp !== undefined || googleLinkFunction) {
       throw new Error("Destination staging must retain its native pool schema without a Google linking trigger or function");
     }
     if (providers.length || (stack.resolve(client.supportedIdentityProviders) as string[] | undefined)?.includes("Google")) {
@@ -37,7 +38,7 @@ export function checkGoogleSignIn(backend: typeof Backend) {
     }
     return;
   }
-  if (json(triggers?.preSignUp) !== json(backend.googleSignIn.resources.lambda.functionArn)) {
+  if (!googleLinkFunction || json(triggers?.preSignUp) !== json(googleLinkFunction.resources.lambda.functionArn)) {
     throw new Error("Invite-only account linking must remain installed, including when Google is disabled");
   }
   if (!schema.some(attribute => attribute.name === "googleHostedDomain" && attribute.mutable === true)) {
