@@ -39,7 +39,7 @@ beforeEach(() => {
     InvoiceLine: { list: async () => ({ data: structuredClone(lines) }) },
     Contact: { list: async () => ({ data: [{ id: 'contact', email: 'board@example.test', isPrimary: true }] }) },
   };
-  h.getFee.mockImplementation(async () => ({ signedAt: 'signed', amountCents: 50000, terms: authorizedQuoteTerms(h.quote), submittedCents: 0, collectedCents: 0, refundedCents: 0 }));
+  h.getFee.mockImplementation(async () => ({ signedAt: 'signed', amountCents: 50000, terms: authorizedQuoteTerms(h.quote), submittedCents: 0, collectedCents: 0, refundedCents: 0, invoiceSendClaim: structuredClone(claim) }));
   h.begin.mockImplementation(async () => { h.order.push('begin'); return { operation: { key: 'mail-operation' } }; });
   h.reserve.mockImplementation(async () => { h.order.push('reserve'); return structuredClone(claim); });
   h.price.mockResolvedValue({ id: 'price1' }); h.link.mockResolvedValue({ id: 'pl1', url: 'https://buy.stripe.com/known' });
@@ -103,9 +103,43 @@ describe('real broker fee invoice send claim sequencing', () => {
     expect(h.deactivate).not.toHaveBeenCalled(); expect(h.mail).not.toHaveBeenCalled();
   });
 
+  it('retains its owned processor link when publication retries exhaust, then recovers the same live link on Send', async () => {
+    h.publish.mockResolvedValueOnce(false);
+    expect(await send()).toMatchObject({ ok: false });
+    expect(h.deactivate).not.toHaveBeenCalled(); expect(h.close).not.toHaveBeenCalled(); expect(h.mail).not.toHaveBeenCalled();
+    expect(h.invoice.stripePaymentLinkId).toBeUndefined();
+    expect(await send()).toMatchObject({ ok: true });
+    expect(h.link.mock.calls.map(call => call[1])).toEqual([{ idempotencyKey: 'broker-fee:stable:link' }, { idempotencyKey: 'broker-fee:stable:link' }]);
+    expect(h.retrieve).toHaveBeenCalledTimes(2); expect(h.retrieve).toHaveBeenCalledWith('pl1');
+    expect(h.invoice.stripePaymentLinkId).toBe('pl1'); expect(h.mail).toHaveBeenCalledOnce();
+  });
+
+  it('rejects an inactive current link even when the idempotent create response reports it active', async () => {
+    h.link.mockResolvedValue({ id: 'pl1', url: 'https://buy.stripe.com/known', active: true });
+    h.retrieve.mockResolvedValue({ id: 'pl1', url: 'https://buy.stripe.com/known', active: false });
+    expect(await send()).toMatchObject({ ok: false, error: expect.stringContaining('inactive') });
+    expect(h.publish).not.toHaveBeenCalled(); expect(h.mail).not.toHaveBeenCalled(); expect(h.complete).not.toHaveBeenCalled();
+  });
+
+  it('closes an orphan only after strongly read sources prove its claim ownership was lost', async () => {
+    h.publish.mockImplementation(async () => {
+      h.getFee.mockResolvedValue({ invoiceSendClaim: { invoiceId: 'other', token: 'replacement' } });
+      return false;
+    });
+    expect(await send()).toMatchObject({ ok: false });
+    expect(h.deactivate).toHaveBeenCalledWith('pl1', { active: false });
+    expect(h.close).toHaveBeenCalledWith(expect.anything(), 'pl1'); expect(h.mail).not.toHaveBeenCalled();
+  });
+
+  it('retains the recoverable link if source state cannot establish that ownership was lost', async () => {
+    h.publish.mockImplementation(async () => { h.getFee.mockResolvedValue(undefined); return false; });
+    expect(await send()).toMatchObject({ ok: false });
+    expect(h.deactivate).not.toHaveBeenCalled(); expect(h.mail).not.toHaveBeenCalled();
+  });
+
   it('closes already-open sessions before replacing a definitively failed previous link', async () => {
     Object.assign(h.invoice, { stripePaymentLinkId: 'old', paymentUrl: 'https://buy.stripe.com/old', stripeLinkAmountCents: 50000 });
-    h.retrieve.mockResolvedValue({ active: false, url: 'https://buy.stripe.com/old' });
+    h.retrieve.mockImplementation(async id => ({ active: id !== 'old', url: id === 'old' ? 'https://buy.stripe.com/old' : 'https://buy.stripe.com/known' }));
     expect(await send()).toMatchObject({ ok: true });
     expect(h.close).toHaveBeenCalledWith(expect.anything(), 'old');
     expect(h.close.mock.invocationCallOrder[0]).toBeLessThan(h.price.mock.invocationCallOrder[0]);
