@@ -50,6 +50,9 @@ export async function authorizeCustom(access: AccountAccess, field: string, args
   if (field === "communicationWrite" && ["relationshipSaveParty", "relationshipSaveAffiliation"].includes(op)) return;
   if (field === "communicationWrite" && ["relationshipLink", "relationshipEnd", "relationshipChangeManagement"].includes(op)) { await access.requireAccount(id(input.accountId)); return; }
   if (["team", "smsComposer", "searchAccounts"].includes(op) && field === "communicationRead") return;
+  // The list reader chooses an agency/own-salesperson partition from the
+  // verified active role and fences every returned row against current sources.
+  if (["accountListPage", "accountListCounts"].includes(op) && field === "communicationRead") return;
   if (op === "work" && field === "communicationRead") {
     if (!["WORKFLOW", "TRIAGE"].includes(id(input.kind))) throw new AccessDenied();
     return; // Returned pages are filtered by current assignment below.
@@ -155,10 +158,20 @@ export async function filterCustom(access: AccountAccess, field: string, args: R
     const permitted = await Promise.all(items.map(async item => await access.canAccount(item.id) ? item : undefined));
     return { ...result, items: permitted.filter(Boolean) };
   }
+  if (op === 'accountListPage') {
+    if (result.ok !== true || result.ready !== true) return original;
+    if (!Array.isArray(result.items) || result.items.length > 50) throw new AccessDenied();
+    const ids = result.items.map(value => id(object(object(value).account).id));
+    if (ids.some(key => !key)) throw new AccessDenied();
+    await access.prefetchAccounts(ids);
+    const items = await Promise.all(result.items.map(async (value, index) => await access.canAccount(ids[index]) ? value : undefined));
+    return { ...result, items: items.filter(Boolean) };
+  }
   if (op === "work") {
     return { ...result, items: await filterAccountItems(access, result.items) };
   }
   if (op === "team" || op === "context") {
+    if (op === 'context' && !Object.hasOwn(result, 'team')) return { ...result, actorId: access.actor };
     const allowed = await access.salespeople();
     const accountId = id(object(result.workflow).accountId);
     const team = await Promise.all((Array.isArray(result.team) ? result.team : []).map(async value => {

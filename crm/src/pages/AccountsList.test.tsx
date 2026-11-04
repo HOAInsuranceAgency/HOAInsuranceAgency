@@ -25,6 +25,8 @@ beforeEach(() => {
   vi.resetAllMocks();
   owner = 'alice'; version = 7;
   h.request.mockImplementation(async (operation, input) => {
+    // Retain coverage of the complete legacy path during projection backfill.
+    if (operation === 'accountListPage') return { ready: false, items: [] };
     if (operation === 'team') return { team };
     if (operation === 'commercialTable') return { items: input.accountIds.map((accountId: string) => ({
       accountId, salespersonId: owner, workflowVersion: version, plan: emptyCommercialPlan(accountId),

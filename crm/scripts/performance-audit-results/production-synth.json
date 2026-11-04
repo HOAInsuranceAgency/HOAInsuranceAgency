@@ -1,0 +1,34 @@
+{
+  "kind": "offline CDK synthesis with destination main naming context; no AWS deployment or live-state reads",
+  "account": "917680434255",
+  "region": "us-east-1",
+  "app": "d1nuh9rw1hcuxo",
+  "branch": "main",
+  "maxTemplate": {
+    "name": "amplifyd1nuh9rw1hcuxomainbranch0e4fdbd849dataCD029D4A.nested.template.json",
+    "bytes": 972324,
+    "limit": 1000000
+  },
+  "exactAccountListExtensionLogicalIdsVerified": {
+    "table": "amplifyDataL2GraphqlApiAccountListRecordsADED7554",
+    "workerStack": "accountlist28FD5CD7",
+    "worker": "accountlistworkerlambdaD39EDB3D",
+    "schedulerRole": "SchedulerRoleForTarget27ecbf322044B4",
+    "schedule": "accountlistworkerlambdaschedule06EFA3E9C",
+    "communicationTable": "amplifyDataL2GraphqlApiCommunicationRecords8E155369",
+    "mappings": {
+      "Account": "accountlistworkerlambdaDynamoDBEventSourceamplifyd1nuh9rw1hcuxomainbranch0e4fdbd849dataamplifyDataAccountCustomTableAccountTableA0901AF5528DAD5BMigrationLiveV1",
+      "Contact": "accountlistworkerlambdaDynamoDBEventSourceamplifyd1nuh9rw1hcuxomainbranch0e4fdbd849dataamplifyDataContactCustomTableContactTable0B537088872EB0ADMigrationLiveV1",
+      "Quote": "accountlistworkerlambdaDynamoDBEventSourceamplifyd1nuh9rw1hcuxomainbranch0e4fdbd849dataamplifyDataQuoteCustomTableQuoteTable6417309249C1D16AMigrationLiveV1",
+      "Policy": "accountlistworkerlambdaDynamoDBEventSourceamplifyd1nuh9rw1hcuxomainbranch0e4fdbd849dataamplifyDataPolicyCustomTablePolicyTable21B44392C28597ACMigrationLiveV1",
+      "UserProfile": "accountlistworkerlambdaDynamoDBEventSourceamplifyd1nuh9rw1hcuxomainbranch0e4fdbd849dataamplifyDataUserProfileCustomTableUserProfileTable777A3FDCDA40FC93MigrationLiveV1",
+      "Communication": "accountlistworkerlambdaDynamoDBEventSourceamplifyd1nuh9rw1hcuxomainbranch0e4fdbd849dataamplifyDataL2GraphqlApiCommunicationRecords6D9DF288CDFC4BDFMigrationLiveV1"
+    }
+  },
+  "legacyContractPreserved": {
+    "statefulCount": 57,
+    "mappingCount": 22,
+    "scheduleCount": 8
+  },
+  "note": "The original steady-state-main.json inventory hash and identities are unchanged. Added resource admission is structurally allowlisted and uses fresh read-only AWS checks during the real deployment preflight. Physical identities of new resources are not known from offline synthesis."
+}

@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { accountListExtension, verifyAccountListExtension } from "./steady-state-account-list.mjs";
 
 /** Fresh read-only checks of the retained backend before every deployment. */
 export function verifySteadyState(namespace, contract, aws) {
@@ -29,14 +30,15 @@ export function verifySteadyState(namespace, contract, aws) {
     }
   };
   collect(contract.backendRoot);
-  const stateful = inventory.filter(r => contract.statefulTypes.includes(r.ResourceType))
+  const { legacy, extension } = accountListExtension(inventory, contract);
+  const stateful = legacy.filter(r => contract.statefulTypes.includes(r.ResourceType))
     .map(r => [r.stack, r.LogicalResourceId, r.ResourceType, r.PhysicalResourceId]);
   // Ordinary lexical order is shared with the checked-in canonical inventory.
   stateful.sort((a,b) => { for (let i=0;i<a.length;i++) { if(a[i]!==b[i]) return a[i]<b[i]?-1:1; } return 0; });
   need(stateful.length === 57 && contract.statefulCount === 57
     && createHash("sha256").update(JSON.stringify(stateful)).digest("hex") === contract.statefulInventorySha256,
     "stateful physical identities differ");
-  const mappings = inventory.filter(r => r.ResourceType === "AWS::Lambda::EventSourceMapping");
+  const mappings = legacy.filter(r => r.ResourceType === "AWS::Lambda::EventSourceMapping");
   need(mappings.length === 22 && contract.mappings.length === 22 && new Set(contract.mappings.map(m=>m.uuid)).size === 22,
     "exact existing cursor inventory required");
   for (const expected of contract.mappings) {
@@ -48,7 +50,7 @@ export function verifySteadyState(namespace, contract, aws) {
       && !actual.FilterCriteria?.Filters?.length && ["OK", "No records processed"].includes(actual.LastProcessingResult),
       "existing stream cursor is not healthy or has changed scope");
   }
-  const schedules = inventory.filter(r => r.ResourceType === "AWS::Scheduler::Schedule");
+  const schedules = legacy.filter(r => r.ResourceType === "AWS::Scheduler::Schedule");
   need(schedules.length === 8 && contract.schedules.length === 8, "exact eight schedules required");
   for (const expected of contract.schedules) {
     need(schedules.some(r => r.LogicalResourceId === expected.logical && r.PhysicalResourceId === expected.name), "schedule identity changed");
@@ -61,4 +63,5 @@ export function verifySteadyState(namespace, contract, aws) {
       && actual.ScheduleExpressionTimezone === expected.scheduleExpressionTimezone
       && JSON.stringify(actual.FlexibleTimeWindow) === JSON.stringify(expected.flexibleTimeWindow), "schedule timing/target/eligibility changed");
   }
+  verifyAccountListExtension(extension, legacy, contract, aws);
 }

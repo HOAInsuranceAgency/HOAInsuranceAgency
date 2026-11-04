@@ -1,0 +1,104 @@
+{
+  "method": "AWS AppSync EvaluateMappingTemplate; actual installed bypass snippet, synthetic contexts only",
+  "region": "us-east-1",
+  "results": [
+    {
+      "name": "Owner broad",
+      "model": "Contact",
+      "expected": "bypass",
+      "observed": "bypass",
+      "passed": true
+    },
+    {
+      "name": "Admin broad",
+      "model": "Contact",
+      "expected": "bypass",
+      "observed": "bypass",
+      "passed": true
+    },
+    {
+      "name": "Owner exact account",
+      "model": "Contact",
+      "expected": "invoke",
+      "observed": "invoke",
+      "passed": true
+    },
+    {
+      "name": "Admin exact account",
+      "model": "Contact",
+      "expected": "invoke",
+      "observed": "invoke",
+      "passed": true
+    },
+    {
+      "name": "Owner empty equality",
+      "model": "Contact",
+      "expected": "bypass",
+      "observed": "bypass",
+      "passed": true
+    },
+    {
+      "name": "Owner OR only",
+      "model": "Contact",
+      "expected": "bypass",
+      "observed": "bypass",
+      "passed": true
+    },
+    {
+      "name": "Evaluator normalizes omitted groups to empty",
+      "model": "Contact",
+      "expected": "invoke",
+      "observed": "invoke",
+      "passed": true
+    },
+    {
+      "name": "Narrowed Producer broad",
+      "model": "Contact",
+      "expected": "invoke",
+      "observed": "invoke",
+      "passed": true
+    },
+    {
+      "name": "Spoofed Owner broad",
+      "model": "Contact",
+      "expected": "invoke",
+      "observed": "invoke",
+      "passed": true
+    },
+    {
+      "name": "Duplicate role headers",
+      "model": "Contact",
+      "expected": "invoke",
+      "observed": "invoke",
+      "passed": true
+    },
+    {
+      "name": "Owner document incomplete scope",
+      "model": "Document",
+      "expected": "bypass",
+      "observed": "bypass",
+      "passed": true
+    },
+    {
+      "name": "Owner document exact pair",
+      "model": "Document",
+      "expected": "invoke",
+      "observed": "invoke",
+      "passed": true
+    },
+    {
+      "name": "Owner indirect root",
+      "model": "InvoiceLine",
+      "expected": "invoke",
+      "observed": "invoke",
+      "passed": true
+    },
+    {
+      "name": "Owner indirect parent",
+      "model": "InvoiceLine",
+      "expected": "invoke",
+      "observed": "invoke",
+      "passed": true
+    }
+  ]
+}

@@ -28,6 +28,7 @@ import type { ConversationLink } from "./events";
 import { activeRole, isActiveAdmin, type RoleRequest } from "../crm-access/active-role";
 import { readLeadSnooze, saveLeadSnooze } from "./snooze";
 import { currentTeamRoles } from "./teamAvailability";
+import { displayRoster } from "./displayRoster";
 import { activeTeamUserCheck } from "../crm-access/user-status";
 
 type Input = Record<string, unknown>;
@@ -39,7 +40,7 @@ function object(value: unknown): Input {
 }
 const text = (input: Input, key: string, max = 500) => typeof input[key] === "string" ? (input[key] as string).trim().slice(0, max) : "";
 function version(input: Input) { if (!Number.isInteger(input.version)) throw new Error("Refresh this record before saving"); return Number(input.version); }
-async function roster() {
+async function liveRoster() {
   const client = await dataClient(), eligibility = await team();
   const profiles = []; let nextToken: string | null | undefined;
   do { const p = await client.models.UserProfile.list({ nextToken, limit: 100 }); if (p.errors?.length) throw new Error("Could not load teammates"); profiles.push(...p.data); nextToken = p.nextToken; } while (nextToken);
@@ -55,7 +56,7 @@ function safeCommunication(data: Communication): Communication {
 }
 export const handler = async (event: { arguments: { operation?: string; readOperation?: string; input?: unknown }; identity?: AppSyncIdentityCognito; request?: RoleRequest }) => {
   try {
-    const previewReads = new Set(["searchAccounts", "dashboardOpenQuotesPage", "dashboardBoundPoliciesPage", "dashboardQuotesPage", "dashboardQuoteStates", "dashboardInvoiceAnchors", "dashboardAssignments", "dashboardInterestPage", "dashboardPolicyAnchors", "dashboardLeadPlansPage", "commercialTable", "lastContacts", "accountSummary", "activity", "team", "teamSettings"]);
+    const previewReads = new Set(["accountListPage", "accountListCounts", "searchAccounts", "dashboardOpenQuotesPage", "dashboardBoundPoliciesPage", "dashboardQuotesPage", "dashboardQuoteStates", "dashboardInvoiceAnchors", "dashboardAssignments", "dashboardInterestPage", "dashboardPolicyAnchors", "dashboardLeadPlansPage", "commercialTable", "lastContacts", "accountSummary", "activity", "team", "teamSettings"]);
     assertPreviewRead(!!event.arguments.readOperation && previewReads.has(event.arguments.readOperation));
     const actor = event.identity?.sub;
     if (!actor) throw new Error("Sign in to the CRM to continue");
@@ -69,6 +70,7 @@ export const handler = async (event: { arguments: { operation?: string; readOper
     if (event.arguments.readOperation) {
       if (op === 'businessDeliveryContext') return { ok: true, context: await (await import('./businessDelivery')).businessDeliveryContext({ accountId: text(input, 'accountId') }, actor, { admin }) };
       if (op === 'historyBusinessDeliveries') return { ok: true, ...await (await import('./businessDelivery')).historyBusinessDeliveries(input as unknown as Parameters<typeof import('./businessDelivery').historyBusinessDeliveries>[0], actor, { admin }) };
+      if (op === 'accountListPage' || op === 'accountListCounts') return { ok: true, ...await (await import('./accountListRead')).accountListRead(input, { sub: actor, groups: event.identity?.groups ?? undefined, claims: event.identity?.claims }, event.request, op === 'accountListCounts') };
       if (op === "searchAccounts") return { ok: true, ...await (await import("./accountSearch")).searchAccounts(input, { actor, role: activeRole(event.identity, event.request) }) };
       if (op === 'dashboardOpenQuotesPage') { requireAdmin(); return { ok: true, ...await (await import('./dashboardLeadQueries')).dashboardOpenQuotesPage(input) }; }
       if (op === 'dashboardBoundPoliciesPage') { requireAdmin(); return { ok: true, ...await (await import('./dashboardLeadQueries')).dashboardBoundPoliciesPage(input) }; }
@@ -104,7 +106,7 @@ export const handler = async (event: { arguments: { operation?: string; readOper
       }
       if (op === "activity") { const r = await get<Communication>(text(input, "id")); if (!r || r.kind !== "COMMUNICATION") throw new Error("Communication not found"); return { ok: true, communication: safeCommunication({ ...r.data, version: r.version }) }; }
       if (op === "smsComposer") { const c = await config(); if (!c.frontSmsChannelId || !c.activatedAt || c.paused) throw new Error("Activate the shared-line text channel first"); await verifySmsChannel(); return { ok: true, channelId: c.frontSmsChannelId, sender: c.sharedSmsNumber }; }
-      if (op === "team") return { ok: true, team: await roster() };
+      if (op === "team") return { ok: true, team: await displayRoster() };
       if (op === "teamSettings") {
         requireAdmin();
         if (!Array.isArray(input.userIds) || input.userIds.length > 20 || input.userIds.some(id => typeof id !== "string" || !/^[a-zA-Z0-9_-]{1,128}$/.test(id))) {
@@ -129,15 +131,16 @@ export const handler = async (event: { arguments: { operation?: string; readOper
         return { ok: true, recovery, config: await config(), webhookUrl: process.env.COMMUNICATION_WEBHOOK_URL, alertTopicArn: process.env.COMMUNICATION_ALERT_TOPIC, sidebarUrl: `${process.env.CRM_BASE_URL}/front-sidebar`, health: (await get("health:worker"))?.data, credentialStatus: Object.fromEntries(Object.entries(keys).filter(([k]) => k !== "installationKey").map(([k,v]) => [k, !!v])) };
       }
       if (op === "context") {
+        const includeTeam = input.includeTeam !== false;
         let accountId = text(input, "accountId");
         let frontContext: import("../../../../shared/leadWorkflow").WorkflowContext["frontContext"] | undefined;
         const conversationId = text(input, "conversationId");
         if (conversationId) { const conversation = await permittedConversation(conversationId); const link = await get<ConversationLink>(`front-link:${conversation.id}`); accountId = link?.data.accountId ?? ""; frontContext = { conversationId: conversation.id, assigneeId: conversation.assignee?.id, routing: link?.data.routing, purpose: link?.data.purpose, context: link?.data.context, policyId: link?.data.policyId }; }
-        if (!accountId) return { ok: true, workflow: null, tasks: [], communications: [], issues: [], team: await roster() };
+        if (!accountId) return { ok: true, workflow: null, tasks: [], communications: [], issues: [], ...(includeTeam ? { team: await displayRoster() } : {}) };
         const [wf, communications, issues, members, settings, health, monitor, syncGap, { account, snooze }] = await Promise.all([
           get<LeadWorkflow>(`workflow:${accountId}`),
           query<Communication>("account", accountId, text(input, "nextToken") || undefined, 50, "COMMUNICATION#"),
-          accountRows<{ message: string; at: string; resolved?: boolean; sourceId?: string }>(accountId, "ISSUE"), roster(), config(),
+          accountRows<{ message: string; at: string; resolved?: boolean; sourceId?: string }>(accountId, "ISSUE"), includeTeam ? displayRoster() : Promise.resolve(undefined), config(),
           get("health:worker"), get("health:monitor"), get("issue:sync-gap"),
           (async () => {
             const result = await (await dataClient()).models.Account.get({ id: accountId });
@@ -156,7 +159,7 @@ export const handler = async (event: { arguments: { operation?: string; readOper
           && (!syncGap || syncGap.data.resolved === true);
         return { ok: true, actorId: actor, trackingHealthy, frontContext, ...(account.stage === "LEAD" ? { snooze } : {}), workflow: wf ? { ...salespersonWorkflow(wf.data), version: wf.version } : null,
           tasks: [], communications: communications.items.filter(r => r.data.status !== "DRAFT").map(r => safeCommunication({ ...r.data, version: r.version })),
-          communicationNextToken: communications.nextToken, issues: issues.filter((_, i) => issueVisibility[i]).map(r => ({ id: r.id, ...r.data })), team: members };
+          communicationNextToken: communications.nextToken, issues: issues.filter((_, i) => issueVisibility[i]).map(r => ({ id: r.id, ...r.data })), ...(members ? { team: members } : {}) };
       }
       if (op === "work") {
         const kind = text(input, "kind") || "TASK";
@@ -270,7 +273,7 @@ export const handler = async (event: { arguments: { operation?: string; readOper
       value.sharedSmsNumber = normalizePhone(value.sharedSmsNumber) ?? "";
       if (value.sharedSmsNumber !== "+15082332261") throw new Error("Prospect texts use the confirmed shared main line (508) 233-2261");
       for (const [id, role] of [[value.defaultSalespersonId ?? value.defaultUserId, "SALESPERSON"]] as const) {
-        if (id) { if (!(await roster()).some(member => member.userId === id)) throw new Error("Choose a current CRM teammate as the default"); await validRole(id, role); }
+        if (id) { if (!(await liveRoster()).some(member => member.userId === id)) throw new Error("Choose a current CRM teammate as the default"); await validRole(id, role); }
       }
       if (input.credentials && Object.values(object(input.credentials)).some(v => typeof v === "string" && v.trim())) value.paused = true;
       const credentialFields = Object.entries(object(input.credentials)).filter(([key, value]) => ["frontToken", "frontSigningKey", "dialpadToken", "dialpadSigningKey"].includes(key) && typeof value === "string" && !!value.trim()).map(([key]) => key);

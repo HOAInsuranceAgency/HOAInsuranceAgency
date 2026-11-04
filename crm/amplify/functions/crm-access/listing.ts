@@ -4,6 +4,7 @@ import { AccountAccess, db, tableName } from "./access";
 import { ACCOUNT_MODELS, RETIRED_MODELS, LIST_PARENTS, AccessDenied, id, listPartition, object, type RecordData } from "./policy";
 
 import { queryFilter, matchesFilter } from "./filters";
+import { hasExactListFilter } from "./list-scope";
 export { matchesFilter } from "./filters";
 
 type Key = Record<string, unknown>;
@@ -40,10 +41,15 @@ function decode(token: unknown, scope: string): Cursor {
  * query count and evaluated records, retaining every unfinished partition in
  * the cursor. Cursors are traversal hints, never proof of current access. */
 export async function listAssigned(access: AccountAccess, model: string, args: RecordData) {
-  if (RETIRED_MODELS.includes(model) || !(ACCOUNT_MODELS as readonly string[]).includes(model) || access.admin) throw new AccessDenied();
-  const filter = object(args.filter), owners = [...await access.salespeople()].sort();
-  const scope = createHash("sha256").update(JSON.stringify([access.actor, owners, model, filter])).digest("hex");
+  if (RETIRED_MODELS.includes(model) || !(ACCOUNT_MODELS as readonly string[]).includes(model)) throw new AccessDenied();
+  const filter = object(args.filter);
+  // Broad administrator lists still use Amplify's existing native resolver.
+  // An exact scope uses these same indexes for every active role.
+  if (access.admin && !hasExactListFilter(model, filter)) throw new AccessDenied();
+  const owners = access.admin ? [] : [...await access.salespeople()].sort();
+  const scope = createHash("sha256").update(JSON.stringify([access.actor, access.admin ? "admin-exact" : owners, model, filter])).digest("hex");
   const c = decode(args.nextToken, scope), limit = Math.min(100, Math.max(1, Math.floor(Number(args.limit) || 100)));
+  const exactAccount = access.admin && LIST_PARENTS[model] ? id(object(filter.accountId).eq) : "";
   const items: RecordData[] = [], seen = new Set<string>(), deadline = Date.now() + 8_000;
   let queries = 0, evaluated = 0, steps = 0, done = false;
   const withinBudget = () => items.length < limit && queries < 80 && evaluated < 1000 && steps++ < 250 && Date.now() < deadline;
@@ -62,20 +68,29 @@ export async function listAssigned(access: AccountAccess, model: string, args: R
     await access.prefetchRecordAccess(model, currentRecords);
     for (const key of keys) {
       const current = await access.get(model, key);
-      if (!seen.has(key) && current && matchesFilter(current, filter) && await access.canRecord(model, current)) { items.push(current); seen.add(key); }
+      if (seen.has(key) || !current || !matchesFilter(current, filter) || !await access.canRecord(model, current)) continue;
+      // Indirect account reads follow current canonical parents, including
+      // rows moved after the index query. accountId mirrors cannot widen it.
+      if (exactAccount) {
+        try { if (await access.root(model, current) !== exactAccount) continue; }
+        catch (error) { if (error instanceof AccessDenied) continue; throw error; }
+      }
+      items.push(current); seen.add(key);
     }
   };
   const finish = () => ({ items, nextToken: done ? null : Buffer.from(JSON.stringify(c)).toString("base64url") });
   const field = model === "Account" ? "id" : listPartition(model);
   const exact = id(object(filter[field]).eq);
   if (exact && (model !== "Document" || id(object(filter.entityType).eq))) {
-    if (model === "Document") {
-      const entityType = id(object(filter.entityType).eq);
-      const parent = ({ ACCOUNT: "Account", QUOTE: "Quote", POLICY: "Policy", CERTIFICATE: "Certificate", CARRIER: "Carrier", LICENSE: "License", USER_PROFILE: "UserProfile" } as Record<string, string>)[entityType];
-      if (!parent) throw new AccessDenied();
-      await access.requireRecord(parent, exact);
-    } else if (LIST_PARENTS[model]) await access.requireRecord(LIST_PARENTS[model].model, exact);
-    else await access.requireAccount(exact);
+    if (!access.admin) {
+      if (model === "Document") {
+        const entityType = id(object(filter.entityType).eq);
+        const parent = ({ ACCOUNT: "Account", QUOTE: "Quote", POLICY: "Policy", CERTIFICATE: "Certificate", CARRIER: "Carrier", LICENSE: "License", USER_PROFILE: "UserProfile" } as Record<string, string>)[entityType];
+        if (!parent) throw new AccessDenied();
+        await access.requireRecord(parent, exact);
+      } else if (LIST_PARENTS[model]) await access.requireRecord(LIST_PARENTS[model].model, exact);
+      else await access.requireAccount(exact);
+    }
     if (model === "Account" || naturalKey(model)) {
       const record = await access.get(model, exact); await append(record ? [record] : []); done = true;
     } else while (withinBudget()) {
@@ -85,8 +100,15 @@ export async function listAssigned(access: AccountAccess, model: string, args: R
     }
     return finish();
   }
-  const migration = await access.get("Communication", "migration:assignment-index:v1");
-  if (object(migration?.data).complete !== true) throw new Error("Account access is being prepared. Please try again shortly.");
+  if (exactAccount) {
+    // Start at the requested root without visiting assignments or unrelated
+    // accounts. Cursor positions never establish the root or parent access.
+    if (c.account && c.account !== exactAccount || c.accounts?.length || c.owner !== 0 || c.part !== 0 || c.shared !== 0) throw new AccessDenied();
+    if (args.nextToken == null) c.account = exactAccount;
+  } else {
+    const migration = await access.get("Communication", "migration:assignment-index:v1");
+    if (object(migration?.data).complete !== true) throw new Error("Account access is being prepared. Please try again shortly.");
+  }
   const advanceAccount = () => { delete c.account; delete c.parents; delete c.parent; delete c.parentIds; delete c.records; c.part = 0; };
   const advanceParent = () => {
     delete c.parent; delete c.records;

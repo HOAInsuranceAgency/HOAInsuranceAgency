@@ -42,7 +42,9 @@ function AccountList({ stage, viewScope }: AccountsListProps) {
   const viewId = useId();
   const navigate = useNavigate();
 
-  const resource = useAccountsListData(stage);
+  const viewIds = { Active: 'active', Snoozed: 'snoozed', 'Follow-up due': 'due', 'All leads': 'all' } as const;
+  const resource = useAccountsListData(stage, { stage, view: stage === 'LEAD' ? viewIds[leadView] : 'all',
+    salespersonId: view.salesperson || undefined, state: view.state || undefined, sort: view.sortKey as import('../../../shared/accountList').AccountListSort, dir: view.dir, limit: 25 });
   const { accounts, contacts, policies } = resource.data;
   const { loading, loaded, error, refreshError, refetch: refetchAccounts } = resource;
   const commercial = {
@@ -51,7 +53,7 @@ function AccountList({ stage, viewScope }: AccountsListProps) {
     setData: resource.setCommercial,
   };
   const quoteResource = { data: resource.data.quotes, error: resource.data.quoteError };
-  const salespersonAvailable = !loaded || loading || !!error || commercial.data.team.some(teammate => teammate.salesperson && teammate.userId === view.salesperson);
+  const salespersonAvailable = resource.teamLoading || !!resource.teamError || !loaded || loading || !!error || commercial.data.team.some(teammate => teammate.salesperson && teammate.userId === view.salesperson);
   // A stale shared filter must not leave a hidden selection or an empty work list.
   const salesperson = salespersonAvailable ? view.salesperson : '';
   useEffect(() => {
@@ -65,7 +67,7 @@ function AccountList({ stage, viewScope }: AccountsListProps) {
   const today = useAgencyDay();
   const snoozeOf = (a: Account) => commercial.data.entries[a.id]?.snooze;
   const snoozeStatus = (a: Account) => a.stage === 'LEAD' ? leadSnoozeStatus(snoozeOf(a), today) : 'ACTIVE';
-  const forecastOf = (a: Account) => { const plan = commercial.data.entries[a.id]?.plan; return plan ? pendingCommission(plan, quoteResource.data.filter(q => q.accountId === a.id), today) : null; };
+  const forecastOf = (a: Account) => { if (resource.paged) return resource.forecasts[a.id] ?? null; const plan = commercial.data.entries[a.id]?.plan; return plan ? pendingCommission(plan, quoteResource.data.filter(q => q.accountId === a.id), today) : null; };
   const assignmentOf = (a: Account) => commercial.data.entries[a.id];
   const assignee = (a: Account, role: 'salespersonId') => teammateName(assignmentOf(a)?.[role], commercial.data.team);
 
@@ -96,7 +98,7 @@ function AccountList({ stage, viewScope }: AccountsListProps) {
   }, [policies]);
 
   const renewalOf = (a: Account): string | null =>
-    stage === "CLIENT"
+    resource.paged ? resource.renewals[a.id] ?? null : stage === "CLIENT"
       ? renewalByAccount.get(a.id) ?? null
       : a.currentPolicyExpiration ?? null;
 
@@ -105,11 +107,11 @@ function AccountList({ stage, viewScope }: AccountsListProps) {
     && (!view.state || accountStateCode(a.state) === view.state));
   const inView = (a: Account, view: LeadView) => view === 'All leads' || (a.stage === 'CLIENT' || isOpenLead(a, commercial.data.entries)) && (view === 'Snoozed' ? snoozeStatus(a) === 'SNOOZED' : view === 'Follow-up due' ? snoozeStatus(a) === 'DUE' : snoozeStatus(a) !== 'SNOOZED');
   const visible = stage === 'LEAD' ? matching.filter(a => inView(a, leadView)) : matching;
-  const dueCount = matching.filter(a => isOpenLead(a, commercial.data.entries) && snoozeStatus(a) === 'DUE').length;
+  const dueCount = resource.paged ? resource.counts.due : matching.filter(a => isOpenLead(a, commercial.data.entries) && snoozeStatus(a) === 'DUE').length;
 
   // Default: policy end date ascending — next up / expired at the top,
   // accounts without a date after, alphabetically.
-  const { sorted, sortKey, dir, toggle } = useSort(
+  const { sorted: localSorted, sortKey, dir, toggle } = useSort(
     visible,
     {
       name: (a) => a.name,
@@ -133,7 +135,16 @@ function AccountList({ stage, viewScope }: AccountsListProps) {
     "renewal", "asc", { sortKey: view.sortKey, dir: view.dir, onChange: (sortKey, dir) => view.update({ sortKey, dir }) },
   );
 
+  const sorted = resource.paged ? visible : localSorted;
   const label = stage === "LEAD" ? "Leads" : "Clients";
+  const viewCount = (view: LeadView) => resource.paged ? resource.counts[viewIds[view]] : matching.filter(a => inView(a, view)).length;
+
+
+  function fullReport(items: import('../../../shared/accountList').AccountListItem[]): import('../lib/reportDownload').DashboardReport {
+    return { title: label, filters: [isAdmin ? `Salesperson: ${commercial.data.team.find(t => t.userId === salesperson)?.name ?? 'All'}` : 'All displayed data', ...(stage === 'LEAD' ? [`View: ${leadView}`] : []), ...(view.state ? [`State: ${US_STATE_NAMES[view.state]}`] : [])].join(' · '),
+      sections: [{ title: label, columns: ['Name', 'Type', 'Contact', 'City', 'State', ...(isAdmin ? ['Salesperson'] : []), ...(stage === 'LEAD' ? ['Lead source', 'Website form', 'Estimated opportunity (USD)', 'Pending commission (USD)', 'Commission basis', 'Entered', 'Follow-up date', 'Follow-up note'] : []), 'Units', 'TIV (USD)', stage === 'LEAD' ? 'Incumbent expires' : 'Renewal'],
+        rows: items.map(({ account: a, contact, commercial: entry, forecast: f, renewalDate }) => [a.name, a.type, contact?.name, a.city, a.state, ...(isAdmin ? [teammateName(entry.salespersonId, commercial.data.team)] : []), ...(stage === 'LEAD' ? [acquisitionLabel(a.leadSource, a.source), websiteFormLabel(a.source), entry.plan.estimatedCents == null ? null : entry.plan.estimatedCents / 100, f.cents == null ? null : f.cents / 100, f.label, a.createdAt?.slice(0, 10), a.stage === 'LEAD' ? entry.snooze?.followUpOn : null, a.stage === 'LEAD' ? entry.snooze?.note : null] : []), a.unitCount, a.totalInsuredValue, renewalDate]) }] };
+  }
 
   return (
     <>
@@ -146,7 +157,7 @@ function AccountList({ stage, viewScope }: AccountsListProps) {
             if (next < 0) return;
             event.preventDefault(); setLeadView(LEAD_VIEWS[next]);
             event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next]?.focus();
-          }}>{view}{loaded && !error && <span aria-hidden="true"> ({matching.filter(a => inView(a, view)).length})</span>}</button>)}
+          }}>{view}{loaded && !error && (!resource.paged || resource.countsLoaded) && <span aria-hidden="true"> ({viewCount(view)})</span>}</button>)}
       </div>}
 
       {stage === 'LEAD' && loaded && !error && dueCount > 0 && <div className="lead-follow-up-notice" role="status">
@@ -155,13 +166,14 @@ function AccountList({ stage, viewScope }: AccountsListProps) {
       </div>}
       {stage === 'LEAD' && notice && <p className="muted small" role="status">{notice}</p>}
 
+      {resource.teamError && <p className="error-text" role="alert">{resource.teamError}</p>}
       <AccountSavedViews storageKey={view.storageKey} current={currentView} stage={stage} admin={isAdmin} onApply={view.update} onReset={view.reset} />
 
       <div className="toolbar">
         <button className="secondary" disabled={loading} onClick={() => void refetchAccounts()} aria-label={`Refresh ${label.toLowerCase()}`}>{loading && loaded ? 'Refreshing…' : 'Refresh'}</button>
         <label className="field">State<select value={view.state} onChange={event => view.update({ state: event.target.value })}><option value="">All states</option>{Object.entries(US_STATE_NAMES).sort((a, b) => a[1].localeCompare(b[1])).map(([code, name]) => <option key={code} value={code}>{name} ({code})</option>)}</select></label>
         {isAdmin && <label className="field">Salesperson<select value={salesperson} onChange={e => setSalesperson(e.target.value)}><option value="">All salespeople</option>{commercial.data.team.filter(t => t.salesperson).map(t => <option key={t.userId} value={t.userId}>{t.name}</option>)}</select></label>}
-        <ReportDownload disabled={loading || !loaded || !!error || !!refreshError || stage === 'LEAD' && !!quoteResource.error} report={{ title: label, filters: [isAdmin ? `Salesperson: ${commercial.data.team.find(t => t.userId === salesperson)?.name ?? 'All'}` : 'All displayed data', ...(stage === 'LEAD' ? [`View: ${leadView}`] : []), ...(view.state ? [`State: ${US_STATE_NAMES[view.state]}`] : [])].join(' · '), sections: [{ title: label, columns: ['Name', 'Type', 'Contact', 'City', 'State', ...(isAdmin ? ['Salesperson'] : []), ...(stage === 'LEAD' ? [ 'Lead source', 'Website form', 'Estimated opportunity (USD)', 'Pending commission (USD)', 'Commission basis', 'Entered', 'Follow-up date', 'Follow-up note'] : []), 'Units', 'TIV (USD)', stage === 'LEAD' ? 'Incumbent expires' : 'Renewal'], rows: sorted.map(a => { const f = forecastOf(a), estimate = commercial.data.entries[a.id]?.plan.estimatedCents; return [a.name, a.type, contactOf(a)?.name, a.city, a.state, ...(isAdmin ? [assignee(a, 'salespersonId')] : []), ...(stage === 'LEAD' ? [ acquisitionLabel(a.leadSource, a.source), websiteFormLabel(a.source), estimate == null ? null : estimate / 100, f?.cents == null ? null : f.cents / 100, f?.label, a.createdAt?.slice(0,10), a.stage === 'LEAD' ? snoozeOf(a)?.followUpOn : null, a.stage === 'LEAD' ? snoozeOf(a)?.note : null] : []), a.unitCount, a.totalInsuredValue, renewalOf(a)]; }) }] }} />
+        <ReportDownload loadReport={resource.paged ? async () => fullReport(await resource.exportAll()) : undefined} disabled={loading || !loaded || !!error || !!refreshError || isAdmin && (resource.teamLoading || !!resource.teamError) || stage === 'LEAD' && !!quoteResource.error} report={{ title: label, filters: [isAdmin ? `Salesperson: ${commercial.data.team.find(t => t.userId === salesperson)?.name ?? 'All'}` : 'All displayed data', ...(stage === 'LEAD' ? [`View: ${leadView}`] : []), ...(view.state ? [`State: ${US_STATE_NAMES[view.state]}`] : [])].join(' · '), sections: [{ title: label, columns: ['Name', 'Type', 'Contact', 'City', 'State', ...(isAdmin ? ['Salesperson'] : []), ...(stage === 'LEAD' ? [ 'Lead source', 'Website form', 'Estimated opportunity (USD)', 'Pending commission (USD)', 'Commission basis', 'Entered', 'Follow-up date', 'Follow-up note'] : []), 'Units', 'TIV (USD)', stage === 'LEAD' ? 'Incumbent expires' : 'Renewal'], rows: sorted.map(a => { const f = forecastOf(a), estimate = commercial.data.entries[a.id]?.plan.estimatedCents; return [a.name, a.type, contactOf(a)?.name, a.city, a.state, ...(isAdmin ? [assignee(a, 'salespersonId')] : []), ...(stage === 'LEAD' ? [ acquisitionLabel(a.leadSource, a.source), websiteFormLabel(a.source), estimate == null ? null : estimate / 100, f?.cents == null ? null : f.cents / 100, f?.label, a.createdAt?.slice(0,10), a.stage === 'LEAD' ? snoozeOf(a)?.followUpOn : null, a.stage === 'LEAD' ? snoozeOf(a)?.note : null] : []), a.unitCount, a.totalInsuredValue, renewalOf(a)]; }) }] }} />
         {stage === "LEAD" && (
           <Link to="/leads/new">
             <button className="primary">+ New lead</button>
@@ -274,6 +286,8 @@ function AccountList({ stage, viewScope }: AccountsListProps) {
             </table>
           </div>
         )}
+        {resource.paged && loaded && !error && <p className="muted small" aria-live="polite">Showing {sorted.length}{resource.countsLoaded ? ` of ${stage === 'LEAD' ? resource.counts[viewIds[leadView]] : resource.counts.all}` : ''} {label.toLowerCase()}.</p>}
+        {resource.paged && resource.nextToken && !error && <button disabled={resource.loadingMore || loading} onClick={() => void resource.loadMore()}>{resource.loadingMore ? 'Loading more…' : `Load more ${label.toLowerCase()}`}</button>}
       </div>
     </>
   );

@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { csvCell, reportCsv, reportHtml, type DashboardReport } from "../lib/reportDownload";
+import { describe, expect, it, vi } from "vitest";
+import { csvCell, reportCsv, reportHtml, saveReport, type DashboardReport } from "../lib/reportDownload";
 const snapshot = { asOf: new Date("2026-09-10T15:00:00Z"), timezone: "America/New_York" };
 const report: DashboardReport = { title: "Lead work list", filters: "Open leads · sorted by last contact", sections: [{ title: "Leads", columns: ["Lead", "Source", "Amount"], rows: [["Oak, Pine & Maple", "Google Ad Website", 1250.25], ['=HYPERLINK("https://bad.test")', "Phone", -10], ["José 王 <script>alert(1)</script>", "Email", null]] }] };
 describe("dashboard exports", () => {
@@ -29,5 +29,17 @@ describe("dashboard exports", () => {
     const empty = { ...report, sections: [{ ...report.sections[0], rows: [] }] };
     expect(reportCsv(empty, snapshot)).toContain("No matching records");
     expect(reportHtml(empty, snapshot)).toContain("0 rows");
+  });
+  it("fills the already-open PDF window without attempting a second popup", () => {
+    const open = vi.spyOn(window, 'open');
+    const win = { closed: false, document: { open: vi.fn(), write: vi.fn(), close: vi.fn() }, focus: vi.fn() };
+    try {
+      saveReport(report, snapshot, 'pdf', win as unknown as Window);
+      expect(open).not.toHaveBeenCalled();
+      expect(win.document.write).toHaveBeenCalledWith(reportHtml(report, snapshot));
+      expect(win.focus).toHaveBeenCalledTimes(1);
+      win.closed = true;
+      expect(() => saveReport(report, snapshot, 'pdf', win as unknown as Window)).toThrow('window was closed');
+    } finally { open.mockRestore(); }
   });
 });

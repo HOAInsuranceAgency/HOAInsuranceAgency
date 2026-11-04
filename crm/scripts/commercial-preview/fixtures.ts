@@ -203,6 +203,7 @@ export async function communicationRequest<T>(
   op: string,
   input: Record<string, unknown> = {},
 ): Promise<T> {
+  if (op === 'accountListPage') return { ready: false, items: [] } as T;
   if (op === 'team') return { team } as T;
   if (op === 'lastContacts')
     return {

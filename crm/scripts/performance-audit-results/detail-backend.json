@@ -1,0 +1,316 @@
+{
+  "kind": "structural simulation; no AWS network or wall-clock latency measurements",
+  "fixture": {
+    "targetRowsPerTable": 30,
+    "unrelatedRowsPerTable": 200,
+    "nativeScanRowsPerPage": 100
+  },
+  "caveats": [
+    "Baseline native Scan behavior is modeled, not a deployment of the previous resolver.",
+    "Indexed reads execute the actual revised listAssigned/AccountAccess code with service stubs.",
+    "Session guards run before either path in production and are excluded here; those controls are unchanged.",
+    "Candidate evaluations and consistent key reads are shown separately, not as billed DynamoDB capacity."
+  ],
+  "results": [
+    {
+      "role": "ADMIN",
+      "model": "Contact",
+      "baselineMethod": "modeled former native Scan resolver",
+      "before": {
+        "apiPages": 3,
+        "scanCommands": 3,
+        "queryCommands": 0,
+        "batchGetCommands": 0,
+        "getCommands": 0,
+        "candidateRowsEvaluated": 230,
+        "consistentRecordKeyReads": 0,
+        "returnedRows": 30
+      },
+      "after": {
+        "apiPages": 1,
+        "scanCommands": 0,
+        "queryCommands": 1,
+        "batchGetCommands": 1,
+        "getCommands": 0,
+        "candidateRowsEvaluated": 30,
+        "consistentRecordKeyReads": 30,
+        "returnedRows": 30
+      }
+    },
+    {
+      "role": "OWNER",
+      "model": "Contact",
+      "baselineMethod": "modeled former native Scan resolver",
+      "before": {
+        "apiPages": 3,
+        "scanCommands": 3,
+        "queryCommands": 0,
+        "batchGetCommands": 0,
+        "getCommands": 0,
+        "candidateRowsEvaluated": 230,
+        "consistentRecordKeyReads": 0,
+        "returnedRows": 30
+      },
+      "after": {
+        "apiPages": 1,
+        "scanCommands": 0,
+        "queryCommands": 1,
+        "batchGetCommands": 1,
+        "getCommands": 0,
+        "candidateRowsEvaluated": 30,
+        "consistentRecordKeyReads": 30,
+        "returnedRows": 30
+      }
+    },
+    {
+      "role": "PRODUCER",
+      "model": "Contact",
+      "baselineMethod": "unchanged real indexed listing code",
+      "before": {
+        "apiPages": 1,
+        "scanCommands": 0,
+        "queryCommands": 1,
+        "batchGetCommands": 1,
+        "getCommands": 2,
+        "candidateRowsEvaluated": 30,
+        "consistentRecordKeyReads": 32,
+        "returnedRows": 30
+      },
+      "after": {
+        "apiPages": 1,
+        "scanCommands": 0,
+        "queryCommands": 1,
+        "batchGetCommands": 1,
+        "getCommands": 2,
+        "candidateRowsEvaluated": 30,
+        "consistentRecordKeyReads": 32,
+        "returnedRows": 30
+      }
+    },
+    {
+      "role": "STAFF",
+      "model": "Contact",
+      "baselineMethod": "unchanged real indexed listing code",
+      "before": {
+        "apiPages": 1,
+        "scanCommands": 0,
+        "queryCommands": 1,
+        "batchGetCommands": 1,
+        "getCommands": 2,
+        "candidateRowsEvaluated": 30,
+        "consistentRecordKeyReads": 32,
+        "returnedRows": 30
+      },
+      "after": {
+        "apiPages": 1,
+        "scanCommands": 0,
+        "queryCommands": 1,
+        "batchGetCommands": 1,
+        "getCommands": 2,
+        "candidateRowsEvaluated": 30,
+        "consistentRecordKeyReads": 32,
+        "returnedRows": 30
+      }
+    },
+    {
+      "role": "ADMIN",
+      "model": "Policy",
+      "baselineMethod": "modeled former native Scan resolver",
+      "before": {
+        "apiPages": 3,
+        "scanCommands": 3,
+        "queryCommands": 0,
+        "batchGetCommands": 0,
+        "getCommands": 0,
+        "candidateRowsEvaluated": 230,
+        "consistentRecordKeyReads": 0,
+        "returnedRows": 30
+      },
+      "after": {
+        "apiPages": 1,
+        "scanCommands": 0,
+        "queryCommands": 1,
+        "batchGetCommands": 1,
+        "getCommands": 0,
+        "candidateRowsEvaluated": 30,
+        "consistentRecordKeyReads": 30,
+        "returnedRows": 30
+      }
+    },
+    {
+      "role": "OWNER",
+      "model": "Policy",
+      "baselineMethod": "modeled former native Scan resolver",
+      "before": {
+        "apiPages": 3,
+        "scanCommands": 3,
+        "queryCommands": 0,
+        "batchGetCommands": 0,
+        "getCommands": 0,
+        "candidateRowsEvaluated": 230,
+        "consistentRecordKeyReads": 0,
+        "returnedRows": 30
+      },
+      "after": {
+        "apiPages": 1,
+        "scanCommands": 0,
+        "queryCommands": 1,
+        "batchGetCommands": 1,
+        "getCommands": 0,
+        "candidateRowsEvaluated": 30,
+        "consistentRecordKeyReads": 30,
+        "returnedRows": 30
+      }
+    },
+    {
+      "role": "PRODUCER",
+      "model": "Policy",
+      "baselineMethod": "unchanged real indexed listing code",
+      "before": {
+        "apiPages": 1,
+        "scanCommands": 0,
+        "queryCommands": 1,
+        "batchGetCommands": 1,
+        "getCommands": 2,
+        "candidateRowsEvaluated": 30,
+        "consistentRecordKeyReads": 32,
+        "returnedRows": 30
+      },
+      "after": {
+        "apiPages": 1,
+        "scanCommands": 0,
+        "queryCommands": 1,
+        "batchGetCommands": 1,
+        "getCommands": 2,
+        "candidateRowsEvaluated": 30,
+        "consistentRecordKeyReads": 32,
+        "returnedRows": 30
+      }
+    },
+    {
+      "role": "STAFF",
+      "model": "Policy",
+      "baselineMethod": "unchanged real indexed listing code",
+      "before": {
+        "apiPages": 1,
+        "scanCommands": 0,
+        "queryCommands": 1,
+        "batchGetCommands": 1,
+        "getCommands": 2,
+        "candidateRowsEvaluated": 30,
+        "consistentRecordKeyReads": 32,
+        "returnedRows": 30
+      },
+      "after": {
+        "apiPages": 1,
+        "scanCommands": 0,
+        "queryCommands": 1,
+        "batchGetCommands": 1,
+        "getCommands": 2,
+        "candidateRowsEvaluated": 30,
+        "consistentRecordKeyReads": 32,
+        "returnedRows": 30
+      }
+    },
+    {
+      "role": "ADMIN",
+      "model": "Document",
+      "baselineMethod": "modeled former native Scan resolver",
+      "before": {
+        "apiPages": 3,
+        "scanCommands": 3,
+        "queryCommands": 0,
+        "batchGetCommands": 0,
+        "getCommands": 0,
+        "candidateRowsEvaluated": 230,
+        "consistentRecordKeyReads": 0,
+        "returnedRows": 30
+      },
+      "after": {
+        "apiPages": 1,
+        "scanCommands": 0,
+        "queryCommands": 1,
+        "batchGetCommands": 1,
+        "getCommands": 0,
+        "candidateRowsEvaluated": 30,
+        "consistentRecordKeyReads": 30,
+        "returnedRows": 30
+      }
+    },
+    {
+      "role": "OWNER",
+      "model": "Document",
+      "baselineMethod": "modeled former native Scan resolver",
+      "before": {
+        "apiPages": 3,
+        "scanCommands": 3,
+        "queryCommands": 0,
+        "batchGetCommands": 0,
+        "getCommands": 0,
+        "candidateRowsEvaluated": 230,
+        "consistentRecordKeyReads": 0,
+        "returnedRows": 30
+      },
+      "after": {
+        "apiPages": 1,
+        "scanCommands": 0,
+        "queryCommands": 1,
+        "batchGetCommands": 1,
+        "getCommands": 0,
+        "candidateRowsEvaluated": 30,
+        "consistentRecordKeyReads": 30,
+        "returnedRows": 30
+      }
+    },
+    {
+      "role": "PRODUCER",
+      "model": "Document",
+      "baselineMethod": "unchanged real indexed listing code",
+      "before": {
+        "apiPages": 1,
+        "scanCommands": 0,
+        "queryCommands": 1,
+        "batchGetCommands": 1,
+        "getCommands": 3,
+        "candidateRowsEvaluated": 30,
+        "consistentRecordKeyReads": 33,
+        "returnedRows": 30
+      },
+      "after": {
+        "apiPages": 1,
+        "scanCommands": 0,
+        "queryCommands": 1,
+        "batchGetCommands": 1,
+        "getCommands": 3,
+        "candidateRowsEvaluated": 30,
+        "consistentRecordKeyReads": 33,
+        "returnedRows": 30
+      }
+    },
+    {
+      "role": "STAFF",
+      "model": "Document",
+      "baselineMethod": "unchanged real indexed listing code",
+      "before": {
+        "apiPages": 1,
+        "scanCommands": 0,
+        "queryCommands": 1,
+        "batchGetCommands": 1,
+        "getCommands": 3,
+        "candidateRowsEvaluated": 30,
+        "consistentRecordKeyReads": 33,
+        "returnedRows": 30
+      },
+      "after": {
+        "apiPages": 1,
+        "scanCommands": 0,
+        "queryCommands": 1,
+        "batchGetCommands": 1,
+        "getCommands": 3,
+        "candidateRowsEvaluated": 30,
+        "consistentRecordKeyReads": 33,
+        "returnedRows": 30
+      }
+    }
+  ]
+}

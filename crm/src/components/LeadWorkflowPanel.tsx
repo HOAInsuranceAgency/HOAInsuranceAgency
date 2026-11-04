@@ -44,19 +44,29 @@ export default function LeadWorkflowPanel({ accountId, conversationId, onOpen }:
   const noteId = useRef(crypto.randomUUID());
   const [channel, setChannel] = useState("ALL");
   const [note, setNote] = useState(""), [publish, setPublish] = useState(false);
-  const resource = useAsyncResource(() => request<WorkflowContext>("context", { accountId, conversationId }), [accountId, conversationId], { initialData: EMPTY, errorMessage: "Could not load account communications", clearDataOnError: isAuthorizationError });
+  const directory = useRef<{ scope: string; team: TeamEligibility[] }>();
+  const omitRosterNextRead = useRef(false);
+  const resource = useAsyncResource(async () => {
+    const scope = JSON.stringify([accountId, conversationId]);
+    const omitTeam = omitRosterNextRead.current && directory.current?.scope === scope;
+    omitRosterNextRead.current = false;
+    const result = await request<WorkflowContext>('context', { accountId, conversationId, ...(omitTeam ? { includeTeam: false } : {}) });
+    if (Array.isArray(result.team)) directory.current = { scope, team: result.team };
+    return { ...result, team: result.team ?? (directory.current?.scope === scope ? directory.current.team : []) };
+  }, [accountId, conversationId], { initialData: EMPTY, errorMessage: "Could not load account communications", clearDataOnError: isAuthorizationError });
   const { workflow, communications, team, issues } = resource.data;
   const currentData = useRef(resource.data);
   currentData.current = resource.data;
   useEffect(() => {
     if (resource.data !== EMPTY || !resource.error) return;
+    directory.current = undefined;
     setNote(''); setPublish(false); setNotice(''); setError('');
     setSavedSnooze(undefined); setEditingTeam(false); setSalesperson('');
     noteId.current = crypto.randomUUID();
   }, [resource.data, resource.error]);
   useEffect(() => {
     if (!compact || busy || editingTeam || note.trim() || resource.loading || snoozeInteracting || loadingOlder) return;
-    const refresh = () => { if (document.visibilityState === "visible") void resource.refetch(); };
+    const refresh = () => { if (document.visibilityState === "visible") { omitRosterNextRead.current = true; void resource.refetch(); } };
     const timer = window.setInterval(refresh, 15_000);
     document.addEventListener("visibilitychange", refresh);
     return () => { window.clearInterval(timer); document.removeEventListener("visibilitychange", refresh); };

@@ -4,6 +4,7 @@ import type { CommercialPlan } from '../../../shared/quotePackages';
 import type { LeadWorkflow } from '../../../shared/leadWorkflow';
 import type { LeadSnooze } from '../../../shared/leadSnooze';
 import { isAuthorizationError } from './authorizationError';
+import { allWithAuthorizationPriority } from './allWithAuthorizationPriority';
 export interface CommercialEntry {
   accountId: string;
   plan: CommercialPlan;
@@ -23,34 +24,43 @@ export async function loadCommercial(ids: string[], snoozeAccountIds: string[] =
   const accounts = [...new Set(ids)].sort();
   const snoozeIds = new Set(snoozeAccountIds);
   if (!accounts.length) return { entries: {}, team: [] };
-  const roster = await communicationRequest<{ team: TeamEligibility[] }>('team', {});
-  if (!Array.isArray(roster.team)) throw new Error('Could not load teammates');
-  const entries: Record<string, CommercialEntry> = {};
-  // Load up to four batches together; every batch must settle before a failed
-  // snapshot is rejected, so later failures cannot escape unhandled.
-  for (let offset = 0; offset < accounts.length; offset += 100) {
-    const results = await Promise.allSettled(Array.from({ length: Math.ceil(Math.min(100, accounts.length - offset) / 25) }, async (_, batchIndex) => {
-      const batch = accounts.slice(offset + batchIndex * 25, offset + (batchIndex + 1) * 25);
-      const followUps = batch.filter(id => snoozeIds.has(id));
-      const result = await communicationRequest<{ items: CommercialEntry[] }>(
-        'commercialTable', { accountIds: batch, ...(followUps.length ? { snoozeAccountIds: followUps } : {}) },
-      );
-      if (!Array.isArray(result.items) || result.items.length !== batch.length ||
-        batch.some(id => !result.items.some(item => item.accountId === id))) {
-        throw new Error('Account details are incomplete. Refresh to try again.');
+  const rosterRequest = (async () => {
+    const roster = await communicationRequest<{ team: TeamEligibility[] }>('team', {});
+    if (!Array.isArray(roster.team)) throw new Error('Could not load teammates');
+    return roster;
+  })();
+  // Names are independent of these account partitions. Start both now, but
+  // settle every branch before deciding whether a snapshot may be retained.
+  const entriesRequest = (async () => {
+    const entries: Record<string, CommercialEntry> = {};
+    // Load up to four batches together; every batch must settle before a failed
+    // snapshot is rejected, so later failures cannot escape unhandled.
+    for (let offset = 0; offset < accounts.length; offset += 100) {
+      const results = await Promise.allSettled(Array.from({ length: Math.ceil(Math.min(100, accounts.length - offset) / 25) }, async (_, batchIndex) => {
+        const batch = accounts.slice(offset + batchIndex * 25, offset + (batchIndex + 1) * 25);
+        const followUps = batch.filter(id => snoozeIds.has(id));
+        const result = await communicationRequest<{ items: CommercialEntry[] }>(
+          'commercialTable', { accountIds: batch, ...(followUps.length ? { snoozeAccountIds: followUps } : {}) },
+        );
+        if (!Array.isArray(result.items) || result.items.length !== batch.length ||
+          batch.some(id => !result.items.some(item => item.accountId === id))) {
+          throw new Error('Account details are incomplete. Refresh to try again.');
+        }
+        return result;
+      }));
+      const failed = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected');
+      // A timeout in an earlier batch must never conceal a later access denial:
+      // callers may retain stale rows after a transient failure, but not denial.
+      const failure = failed.find(result => isAuthorizationError(result.reason)) ?? failed[0];
+      if (failure) throw failure.reason;
+      for (const result of results) {
+        if (result.status !== 'fulfilled') continue;
+        for (const entry of result.value.items) entries[entry.accountId] = entry;
       }
-      return result;
-    }));
-    const failed = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected');
-    // A timeout in an earlier batch must never conceal a later access denial:
-    // callers may retain stale rows after a transient failure, but not denial.
-    const failure = failed.find(result => isAuthorizationError(result.reason)) ?? failed[0];
-    if (failure) throw failure.reason;
-    for (const result of results) {
-      if (result.status !== 'fulfilled') continue;
-      for (const entry of result.value.items) entries[entry.accountId] = entry;
     }
-  }
+    return entries;
+  })();
+  const [roster, entries] = await allWithAuthorizationPriority([rosterRequest, entriesRequest]);
   return { entries, team: roster.team };
 }
 export function useCommercial(ids: string[], revision?: unknown, snoozeAccountIds: string[] = []) {

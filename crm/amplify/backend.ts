@@ -7,6 +7,8 @@ import { installMigrationPreview } from "./migration-preview";
 import { commissions } from './functions/commissions/resource';
 import { installCommissions } from './commissions';
 import { installAccountAccess } from "./account-access";
+import { installAccountList } from "./account-list";
+import { accountListWorker } from "./functions/account-list/resource";
 import { modelIndex } from "./model-index";
 import { installDashboardReads } from "./dashboard-reports";
 import { installOwnerProfitability } from "./owner-profitability";
@@ -17,7 +19,7 @@ import { SnsAction } from "aws-cdk-lib/aws-cloudwatch-actions";
 import { Topic } from "aws-cdk-lib/aws-sns";
 import { defineBackend } from "@aws-amplify/backend";
 import { CfnWebACL, CfnWebACLAssociation } from "aws-cdk-lib/aws-wafv2";
-import { ArnFormat, CustomResource, Duration, Names, Stack, TimeZone } from "aws-cdk-lib";
+import { ArnFormat, CfnResource, CustomResource, Duration, Names, Stack, TimeZone } from "aws-cdk-lib";
 import { Provider } from "aws-cdk-lib/custom-resources";
 import { Schedule, ScheduleExpression, ScheduleTargetInput, ContextAttribute } from "aws-cdk-lib/aws-scheduler";
 import { LambdaInvoke } from "aws-cdk-lib/aws-scheduler-targets";
@@ -89,6 +91,7 @@ export const backend = defineBackend({
   ownerProfitability,
   commissions,
   assignmentIndexWorker,
+  accountListWorker,
   data,
   storage,
   processDocument,
@@ -430,6 +433,7 @@ backend.honeycombSubmissionWorker.resources.lambda.addEventSource(new DynamoEven
 // Workflow records are server-only. Custom resolvers enforce permissions and
 // transact communication state, audit records and delivery work atomically.
 const communicationTable = new Table(backend.data.resources.graphqlApi, "CommunicationRecords", {
+  stream: StreamViewType.NEW_AND_OLD_IMAGES,
   partitionKey: { name: "id", type: AttributeType.STRING }, billingMode: BillingMode.PAY_PER_REQUEST,
   encryption: TableEncryption.AWS_MANAGED, pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true },
 });
@@ -1116,6 +1120,7 @@ backend.extractLead.resources.lambda.grantInvoke(
 );
 
 installAccountAccess(backend, communicationTable);
+installAccountList(backend, communicationTable);
 installDashboardReads(backend);
 installOwnerProfitability(backend, communicationTable);
 installCommissions(backend, communicationTable);
@@ -1139,3 +1144,11 @@ if (migrationDestination) backend.addOutput({ custom: { migration: {
   account: migrationTargets.account, appId: migrationTargets.crmApp,
   branch: migrationRuntimeBranch, preview: String(migrationPreview),
 } } });
+
+// Production's longer stack paths otherwise push the dense data template over
+// CloudFormation's byte limit. Omit only diagnostic construct paths in that
+// stack; preserve all logical IDs, asset metadata, policies, and runtime values.
+const dataStack = Stack.of(backend.data.resources.graphqlApi);
+for (const node of backend.stack.node.root.node.findAll()) {
+  if (node instanceof CfnResource && Stack.of(node) === dataStack) node.addDeletionOverride('Metadata.aws:cdk:path');
+}

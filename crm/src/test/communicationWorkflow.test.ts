@@ -1854,7 +1854,17 @@ describe("round three: recoverable history capture", () => {
 
 
 describe('shared team availability', () => {
-  it('decorates team/context with current availability while preserving saved eligibility and versions', async () => {
+  it('omits directory reads and payload on lightweight context polls', async () => {
+    h.profileList.mockRejectedValue(new Error('A history poll must not load all profiles'));
+    const { handler } = await import('../../amplify/functions/communications/handler');
+    const result = await handler({ arguments: { readOperation: 'context', input: { accountId: 'a1', includeTeam: false } }, identity: { sub: 'admin', groups: ['ADMIN'] } as never });
+    expect(result).toMatchObject({ ok: true, communications: [] });
+    expect(result).not.toHaveProperty('team');
+    expect(h.profileList).not.toHaveBeenCalled();
+    expect(h.userReads).toEqual([]);
+    expect(h.groupReads).toEqual([]);
+  });
+  it('uses materialized team/context display hints without making those hints assignment authority', async () => {
     for (const id of ['active', 'disabled', 'deleted', 'staff', 'ineligible']) {
       h.records.set(`UserProfile:${id}`, { userId: id, firstName: id, lastName: 'Member', email: `${id}@example.com` });
       await save(row('ELIGIBILITY', `eligibility:${id}`, { userId: id, name: id, email: `${id}@example.com`, enabled: id !== 'ineligible', salesperson: id !== 'staff' }));
@@ -1870,17 +1880,23 @@ describe('shared team availability', () => {
       const result = await handler({ arguments: { readOperation, input: { accountId: 'a1' } }, identity });
       expect(result).toMatchObject({ ok: true, team: [
         { userId: 'active', available: true, enabled: true, salesperson: true, version: 1 },
-        { userId: 'disabled', available: false, enabled: false, salesperson: false, version: 1 },
-        { userId: 'deleted', available: false, enabled: false, salesperson: false, version: 1 },
+        { userId: 'disabled', available: true, enabled: true, salesperson: true, version: 1 },
+        { userId: 'deleted', available: true, enabled: true, salesperson: true, version: 1 },
         { userId: 'staff', available: true, enabled: true, salesperson: false, version: 1 },
-        { userId: 'ineligible', available: true, enabled: true, salesperson: true, version: 1 },
+        { userId: 'ineligible', available: false, enabled: false, salesperson: true, version: 1 },
       ] });
     }
     expect([...h.records]).toEqual(before);
-    expect(h.userReads).toEqual(['active', 'disabled', 'deleted', 'staff', 'ineligible', 'active', 'disabled', 'deleted', 'staff', 'ineligible']);
-    expect(h.cognitoList.mock.calls.every(([input]) => input.Limit === 1 && input.Filter.startsWith('sub = ') && !input.PaginationToken)).toBe(true);
+    expect(h.userReads).toEqual([]);
+    expect(h.groupReads).toEqual([]);
+    for (const id of ['disabled', 'deleted', 'staff']) {
+      await expect(setResponsibilities('a1', id, 0, 'admin')).rejects.toThrow();
+    }
+    h.deactivatedUsers.add('active');
+    await expect(setResponsibilities('a1', 'active', 0, 'admin')).rejects.toThrow('deactivated');
+    expect([...h.records]).toEqual(before);
     h.cognitoList.mockRejectedValue(new Error('Cognito temporarily unavailable'));
-    expect(await handler({ arguments: { readOperation: 'team' }, identity })).toMatchObject({ ok: false, error: 'Cognito temporarily unavailable' });
+    expect(await handler({ arguments: { readOperation: 'team' }, identity })).toMatchObject({ ok: true });
   });
 });
 
@@ -2717,7 +2733,7 @@ describe("CRM task retirement", () => {
     const { handler } = await import("../../amplify/functions/communications/handler");
     const context = await handler({ arguments: { readOperation: "context", input: { accountId: "a1" } }, identity: { sub: "brian", groups: [] } as never });
     expect(context.ok).toBe(true);
-    expect(context.issues?.map(r => r.id).sort()).toEqual(activeIds.map(id => `issue:${id}`).sort());
+    expect('issues' in context ? context.issues?.map((r: { id: string }) => r.id).sort() : undefined).toEqual(activeIds.map(id => `issue:${id}`).sort());
     const { workPage } = await import("../../amplify/functions/communications/work");
     const page = await workPage({ kind: "ISSUE", actor: "brian" });
     expect(page.items.map(r => r.id).sort()).toEqual(activeIds.map(id => `issue:${id}`).sort());

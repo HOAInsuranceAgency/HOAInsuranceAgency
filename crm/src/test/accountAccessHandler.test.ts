@@ -79,6 +79,23 @@ it("blocks every pipeline mode through the initial session stage, including an O
   h.records.delete("user-access:alice");
   await expect(handler({ mode: "session", identity, previous: "data" })).resolves.toBe("data");
 });
+it.each(["ADMIN", "OWNER"])("revokes the indexed %s list on the next request before accessing account records", async role => {
+  process.env.ACCESS_TABLES = JSON.stringify({ ...JSON.parse(process.env.ACCESS_TABLES!), Contact: "contacts" });
+  process.env.ACCESS_INDEXES = JSON.stringify({ "Contact.accountId": "by_accountId" });
+  h.records.set("contacts:private", { id: "private", accountId: "b" });
+  const normal = h.db.getMockImplementation()!;
+  h.db.mockImplementation(command => command.input.IndexName
+    ? { Items: [{ id: "private", accountId: "b" }] } : normal(command));
+  const identity = { sub: "alice", groups: [role] };
+  const read = async () => {
+    await handler({ mode: "session", identity });
+    return handler({ mode: "list", model: "Contact", identity, arguments: { filter: { accountId: { eq: "b" } } } });
+  };
+  expect(await read()).toEqual({ items: [{ id: "private", accountId: "b" }], nextToken: null });
+  h.records.set("user-access:alice", { userId: "alice", disabled: true }); h.db.mockClear();
+  await expect(read()).rejects.toThrow("Your access is inactive");
+  expect(h.db.mock.calls.map(([command]) => command.input.TableName)).toEqual(["user-access"]);
+});
 it("authorizes account search only as a read and filters names by current assignment with consistent batched reads", async () => {
   const args = { readOperation: "searchAccounts", input: { query: "community" } };
   await expect(handler({ mode: "custom-pre", field: "communicationRead", identity, arguments: args })).resolves.toBeUndefined();

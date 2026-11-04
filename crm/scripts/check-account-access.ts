@@ -6,6 +6,7 @@ import { crmPolicySize } from "./iam-policy-size";
 import { CfnFunctionConfiguration, type CfnResolver } from "aws-cdk-lib/aws-appsync";
 import type { CfnFunction } from "aws-cdk-lib/aws-lambda";
 import { ACCOUNT_MODELS, PUBLIC_OPERATIONS, ADMIN_OPERATIONS, OWNER_OPERATIONS, ADMIN_MODEL_OPERATIONS, CUSTOM_OPERATIONS } from "../amplify/functions/crm-access/policy";
+import { exactListFilterExpression } from "../amplify/functions/crm-access/list-scope";
 import type { backend as Backend } from "../amplify/backend";
 
 export function checkAccountAccess(backend: typeof Backend, outdir: string) {
@@ -90,6 +91,11 @@ export function checkAccountAccess(backend: typeof Backend, outdir: string) {
     if (!fn.requestMappingTemplate.includes('"request":$util.toJson($ctx.request)')) throw new Error("Assignment guards must receive the active-role header");
     if (fn.name.startsWith("access_list_") && !fn.requestMappingTemplate.includes('claims.get("cognito:groups")')) throw new Error("Scoped lists must recognize administrators from Cognito JWT claims");
     if (fn.name.startsWith("access_list_") && (!fn.requestMappingTemplate.includes('"x-crm-role"') || !fn.requestMappingTemplate.includes('$assignmentRole == "ADMIN"') || !fn.requestMappingTemplate.includes('$assignmentRole == "OWNER"'))) throw new Error("Scoped list bypass must require the active administrator role");
+    if (fn.name.startsWith("access_list_")) {
+      const model = fn.name.slice("access_list_".length, -2);
+      if (!fn.requestMappingTemplate.includes(`#set($assignmentExact = ${exactListFilterExpression(model)})`)
+        || !fn.requestMappingTemplate.includes("#if(!$assignmentExact &&")) throw new Error(`Exact administrator lists must use indexes: ${model}`);
+    }
   }
   const roles = [backend.auth.resources.authenticatedUserIamRole, backend.auth.resources.unauthenticatedUserIamRole, ...Object.values(backend.auth.resources.groups).map(group => group.role)];
   // Group policies must not retain direct bucket grants that bypass crmFile.

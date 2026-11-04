@@ -93,3 +93,16 @@ it('requests follow-ups only for the opted-in accounts in each bounded batch', a
   expect(batches[1][1]).toEqual({ accountIds: ids.slice(25, 50), snoozeAccountIds: [ids[25], ids[49]] });
   expect(batches[2][1]).toEqual({ accountIds: [ids[50]] });
 });
+
+it('starts account details while display names are still loading and prioritizes a later access denial', async () => {
+  let finishRoster!: (value: unknown) => void;
+  const denied = Object.assign(new Error('Access denied'), { name: 'Unauthorized' });
+  request.mockImplementation((operation) => operation === 'team'
+    ? new Promise(resolve => { finishRoster = resolve; })
+    : Promise.reject(denied));
+  const pending = loadCommercial(['a']);
+  const result = expect(pending).rejects.toBe(denied);
+  await vi.waitFor(() => expect(request.mock.calls.map(([operation]) => operation)).toEqual(['team', 'commercialTable']));
+  finishRoster({ team: [] });
+  await result;
+});
