@@ -241,10 +241,46 @@ it("recovers an UNKNOWN new-conversation attempt by verifying a normalized exact
   expect(within(result).getByRole("link", { name: "Open in Front ↗" })).toBeInTheDocument();
 });
 
-it("rejects conversation-only recovery links and keeps a mismatched message attempt locked", async () => {
+it.each(["PREPARING", "UNKNOWN"] as const)("recovers a sent reply after its draft response was lost (%s)", async state => {
   const base = h.request.getMockImplementation()!;
   h.request.mockImplementation((op, input) => {
-    if (op === "historyBusinessDeliveries") return Promise.resolve({ items: [attempt({ state: "UNKNOWN", conversationId: "NEW", frontUrl: undefined })] });
+    if (op === "historyBusinessDeliveries") return Promise.resolve({ items: [attempt({ state, conversationId: "cnv_client", frontDraftId: undefined, reference: "HOA-123456ABCDEF" })] });
+    if (op === "reconcileBusinessDraft") return Promise.resolve({ attempt: attempt({ state: "SENT", frontDraftId: "msg_sentreply", messageUrl: "https://app.frontapp.com/open/msg_sentreply", sentAt: "2026-11-01T15:01:00Z" }) });
+    return base(op, input);
+  });
+  await mount({ conversationId: "cnv_client" }); recipients(); await review(); acknowledge();
+  expect(screen.getByRole("button", { name: "Prepare Front draft" })).toBeDisabled();
+  const recovery = screen.getByRole("form", { name: "Recover unconfirmed Front draft" });
+  expect(recovery).toHaveTextContent("exact draft or sent message");
+  fireEvent.change(within(recovery).getByLabelText("Front draft/message ID or message link"), { target: { value: " https://app.frontapp.com/open/msg_sentreply " } });
+  fireEvent.submit(recovery);
+  const result = await screen.findByRole("region", { name: "Prepared draft result" });
+  expect(result).toHaveTextContent("Sent via Front. This does not confirm receipt or reading.");
+  expect(h.request).toHaveBeenCalledWith("reconcileBusinessDraft", { accountId: "a1", attemptId: "attempt-one", recoveryMessageId: "msg_sentreply" }, true);
+  expect(within(result).getByRole("link", { name: "Open in Front ↗" })).toHaveAttribute("href", "https://app.frontapp.com/open/msg_sentreply");
+  expect(h.request.mock.calls.filter(([op]) => op === "prepareBusinessDraft")).toHaveLength(0);
+  expect(screen.queryByRole("form", { name: "Recover unconfirmed Front draft" })).toBeNull();
+});
+
+it.each(["PREPARING", "UNKNOWN"] as const)("does not offer replacement-ID recovery for a known %s draft", async state => {
+  const base = h.request.getMockImplementation()!;
+  h.request.mockImplementation((op, input) => op === "historyBusinessDeliveries" ? Promise.resolve({ items: [attempt({ state, conversationId: "NEW", frontDraftId: "msg_known" })] }) : base(op, input));
+  await mount();
+  expect(screen.queryByRole("form", { name: "Recover unconfirmed Front draft" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Check Front status" })).toBeEnabled();
+  expect(h.request.mock.calls.filter(([op]) => ["prepareBusinessDraft", "reconcileBusinessDraft"].includes(op))).toHaveLength(0);
+});
+
+it.each(["DRAFT", "SENT", "FAILED"] as const)("does not expose missing-ID recovery for a resolved %s attempt", async state => {
+  const base = h.request.getMockImplementation()!;
+  h.request.mockImplementation((op, input) => op === "historyBusinessDeliveries" ? Promise.resolve({ items: [attempt({ state, frontDraftId: undefined })] }) : base(op, input));
+  await mount(); expect(screen.queryByRole("form", { name: "Recover unconfirmed Front draft" })).toBeNull();
+});
+
+it.each(["NEW", "cnv_client"])("rejects conversation-only recovery links and keeps a mismatched %s attempt locked", async conversationId => {
+  const base = h.request.getMockImplementation()!;
+  h.request.mockImplementation((op, input) => {
+    if (op === "historyBusinessDeliveries") return Promise.resolve({ items: [attempt({ state: "UNKNOWN", conversationId, frontUrl: undefined })] });
     if (op === "reconcileBusinessDraft") return Promise.reject(new Error("The Front message does not match this draft attempt"));
     return base(op, input);
   });
