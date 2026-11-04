@@ -1,4 +1,5 @@
 import { feeAllocations } from "../../../shared/brokerFees";
+import { validateAdjustmentLines } from "../../../shared/invoiceAdjustments";
 import { currentContacts, billingContact } from "../lib/contacts";
 import { useEffect, useRef, useState } from "react";
 import {
@@ -12,6 +13,7 @@ import {
 } from "../lib/client";
 import { FinanceOfferHint } from "./FinanceOfferHint";
 import { listAllPages } from "../lib/pagination";
+import { brokerFeeLineFromSource, passThroughLinesFromSource, sourceChargeLineId, seededLineDescription, seededQuoteLineDescription } from "../lib/invoiceSeed";
 import { useAsyncResource } from "../lib/useAsyncResource";
 import { SaveStatus, useSaveStatus } from "./SaveStatus";
 import ConfirmButton from "./ConfirmButton";
@@ -21,7 +23,9 @@ import {
   financeableInvoiceTotal,
   formatMoney,
   invoiceTotals,
+  isPassThrough,
   marginWarnings,
+  missingRemittanceCost,
   premiumLineFromPolicy,
 } from "../lib/invoiceTotals";
 
@@ -60,6 +64,11 @@ const LINE_KINDS = [
   ["INTEREST", "Interest"],
   ["OTHER", "Other"],
 ] as const;
+const SUPPLIER_LINE_KINDS = [
+  ["CARRIER_FEE", "Carrier fee"], ["WHOLESALER_FEE", "Wholesaler fee"],
+  ["TAX", "Tax"], ["SURPLUS_LINES", "Surplus lines tax"], ["STAMPING_FEE", "Stamping fee"],
+] as const;
+const ADJUSTMENT_LINE_KINDS = [["ENDORSEMENT", "Endorsement or audit adjustment"], ...SUPPLIER_LINE_KINDS] as const;
 
 /** `12480.5` → `"12480.5"` for an input, `null` → `""`. */
 const toInput = (n: number | null | undefined): string =>
@@ -111,20 +120,102 @@ function InvoiceEditorContent({
   onDeleted: () => void;
   onBusyChange?: (busy: boolean) => void;
 }) {
+  const [legacyPolicyCharges, setLegacyPolicyCharges] = useState(false);
   const linesRes = useAsyncResource(
-    () =>
-      listAllPages((nextToken) =>
+    async () => {
+      setLegacyPolicyCharges(false);
+      const loaded = await listAllPages((nextToken) =>
         client.models.InvoiceLine.list({
           filter: { invoiceId: { eq: invoice.id } },
           nextToken,
         })
-      ),
+      );
+      if (invoice.status !== "DRAFT" || invoice.stripePaymentLinkId || feeAllocations(invoice.brokerFeeAllocations).length || (!invoice.policyId && !invoice.quoteId)) return loaded;
+      if (invoice.sourcePricingVersion === 2) {
+        if (loaded.length) return loaded;
+        const seeded = await client.models.InvoiceLine.create({ id: `invoice:${invoice.id}:adjustment`, invoiceId: invoice.id,
+          accountId: invoice.accountId, policyId: invoice.policyId, kind: "ENDORSEMENT", description: "Endorsement or audit adjustment",
+          retailAmount: null, costAmount: null, sortOrder: 0 });
+        if (seeded.errors?.length || !seeded.data) throw new Error(seeded.errors?.[0]?.message ?? "The adjustment line could not be refreshed. Retry this invoice.");
+        return [seeded.data];
+      }
+      // Unflagged drafts may be older endorsement/audit bills. Their existing
+      // amounts are their snapshot; current full-term charges must not rewrite it.
+      if (invoice.sourcePricingVersion !== 1) return loaded;
+      const sourceResult = invoice.policyId
+        ? await client.models.Policy.get({ id: invoice.policyId })
+        : await client.models.Quote.get({ id: invoice.quoteId! });
+      if (sourceResult.errors?.length || !sourceResult.data) throw new Error(sourceResult.errors?.[0]?.message ?? "The invoice source could not be refreshed.");
+      setLegacyPolicyCharges(!!invoice.policyId && sourceResult.data.id === invoice.policyId && sourceResult.data.passThroughCharges == null);
+      const expected = passThroughLinesFromSource(sourceResult.data, invoice.policyId ?? undefined);
+      const expectedIds = new Set(expected.map(charge => charge.sourceQuoteChargeId));
+      const next = [...loaded];
+      if (invoice.sourcePricingVersion === 1 && sourceResult.data.billType !== "DIRECT") {
+        const source = sourceResult.data;
+        const premium = next.find(line => line.kind === "PREMIUM");
+        const values = { kind: "PREMIUM" as const, retailAmount: source.premium ?? null,
+          description: invoice.policyId ? seededLineDescription(source) : seededQuoteLineDescription(source) };
+        if (!premium || premium.retailAmount !== values.retailAmount || premium.description !== values.description) {
+          const result = premium
+            ? await client.models.InvoiceLine.update({ id: premium.id, ...values })
+            : await client.models.InvoiceLine.create({ id: `invoice:${invoice.id}:premium`, invoiceId: invoice.id, accountId: invoice.accountId,
+              ...(invoice.policyId ? { policyId: invoice.policyId } : {}), ...values, costAmount: null, sortOrder: 0 });
+          if (result.errors?.length || !result.data) throw new Error(result.errors?.[0]?.message ?? "The source premium could not be refreshed. Retry this invoice before sending.");
+          if (premium) next.splice(next.findIndex(line => line.id === premium.id), 1, result.data);
+          else next.unshift(result.data);
+        }
+      }
+      for (const line of loaded.filter(line => line.sourceQuoteChargeId && !expectedIds.has(line.sourceQuoteChargeId))) {
+        const result = await client.models.InvoiceLine.delete({ id: line.id });
+        if (result.errors?.length) throw new Error(result.errors[0].message);
+        next.splice(next.findIndex(row => row.id === line.id), 1);
+      }
+      for (const charge of expected) {
+        const previous = next.find(line => line.sourceQuoteChargeId === charge.sourceQuoteChargeId);
+        if (previous && previous.kind === charge.kind && previous.description === charge.description && previous.retailAmount === charge.retailAmount && previous.costAmount === charge.costAmount) continue;
+        const result = previous
+          ? await client.models.InvoiceLine.update({ id: previous.id, ...charge })
+          : await client.models.InvoiceLine.create({ id: sourceChargeLineId(invoice.id, charge.sourceQuoteChargeId), invoiceId: invoice.id, accountId: invoice.accountId, ...charge, sortOrder: next.length });
+        if (result.errors?.length || !result.data) throw new Error(result.errors?.[0]?.message ?? "Supplier charges could not be refreshed. Retry this invoice before sending.");
+        if (previous) next.splice(next.findIndex(line => line.id === previous.id), 1, result.data);
+        else next.push(result.data);
+      }
+      const expectedFee = brokerFeeLineFromSource(sourceResult.data, invoice.policyId ?? undefined);
+      const priorFee = next.find(line => line.kind === "BROKER_FEE");
+      if (!expectedFee && priorFee) {
+        const removed = await client.models.InvoiceLine.delete({ id: priorFee.id });
+        if (removed.errors?.length) throw new Error(removed.errors[0].message);
+        next.splice(next.findIndex(line => line.id === priorFee.id), 1);
+      } else if (expectedFee && (priorFee ? priorFee.retailAmount !== expectedFee.retailAmount || priorFee.brokerFeeQuoteId !== expectedFee.brokerFeeQuoteId : true)) {
+        let alreadyCollected = Number('brokerFeeCollected' in sourceResult.data ? sourceResult.data.brokerFeeCollected : 0) > 0;
+        if (!priorFee && !alreadyCollected) {
+          const response = await client.mutations.brokerFeeAction({ input: JSON.stringify({ op: "status", accountId: invoice.accountId, quoteIds: [expectedFee.brokerFeeQuoteId] }) });
+          if (response.errors?.length) throw new Error(response.errors[0].message);
+          const status = (typeof response.data === "string" ? JSON.parse(response.data) : response.data) as { ok?: boolean; error?: string; fees?: { quoteId: string; collectedCents: number }[] };
+          if (!status?.ok || !Array.isArray(status.fees)) throw new Error(status?.error ?? "The broker fee balance could not be refreshed.");
+          alreadyCollected = status.fees.some((fee: { quoteId: string; collectedCents: number }) => fee.quoteId === expectedFee.brokerFeeQuoteId && fee.collectedCents > 0);
+        }
+        if (!alreadyCollected) {
+          const saved = priorFee ? await client.models.InvoiceLine.update({ id: priorFee.id, ...expectedFee })
+            : await client.models.InvoiceLine.create({ id: `invoice:${invoice.id}:broker-fee`, invoiceId: invoice.id, accountId: invoice.accountId, ...expectedFee, sortOrder: next.length });
+          if (saved.errors?.length || !saved.data) throw new Error(saved.errors?.[0]?.message ?? "The HOA broker fee could not be refreshed. Retry this invoice before sending.");
+          if (priorFee) next.splice(next.findIndex(line => line.id === priorFee.id), 1, saved.data);
+          else next.push(saved.data);
+        }
+      }
+      return next;
+    },
     [invoice.id],
     { initialData: [] as InvoiceLine[], errorMessage: "Failed to load invoice lines" }
   );
   const lines = [...linesRes.data].sort(
     (a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0)
   );
+  const lineChangeCallback = useRef(onLinesChange);
+  lineChangeCallback.current = onLinesChange;
+  useEffect(() => {
+    if (linesRes.loaded && !linesRes.error) lineChangeCallback.current(invoice.id, linesRes.data);
+  }, [invoice.id, linesRes.data, linesRes.loaded, linesRes.error]);
 
   const saveStatus = useSaveStatus({ autoClearMs: 4000 });
   const sendStatus = useSaveStatus();
@@ -148,7 +239,10 @@ function InvoiceEditorContent({
   const warnings = marginWarnings(lines);
   const locked = invoice.status === "VOID";
   const issuedFee = feeAllocations(invoice.brokerFeeAllocations).length > 0;
-  const linesLocked = locked || ["PAID", "PROCESSING"].includes(invoice.status) || invoice.status === "SENT" && issuedFee;
+  const adjustment = invoice.sourcePricingVersion === 2;
+  const sourcePricing = invoice.sourcePricingVersion === 1 || adjustment;
+  const issuedPricing = sourcePricing && (invoice.status === "SENT" || !!invoice.stripePaymentLinkId);
+  const linesLocked = locked || ["PAID", "PROCESSING"].includes(invoice.status) || issuedFee || issuedPricing;
   /**
    * W8: the anchor was chosen at creation and does not change here — the
    * one-live-per-anchor rule is enforced against it, and re-pointing a bill
@@ -195,6 +289,19 @@ function InvoiceEditorContent({
   // text entered while it was in flight, and failed writes remain retryable.
   const [invoiceDraft, setInvoiceDraft] = useState<Partial<Invoice>>({});
   const [lineDrafts, setLineDrafts] = useState<Record<string, Partial<InvoiceLine>>>({});
+  const needsRemittanceCost = missingRemittanceCost(lines.map(line => ({ ...line, ...lineDrafts[line.id] })));
+  const needsSupplierAmount = !adjustment && sourcePricing && legacyPolicyCharges && lines.some(line => {
+    const current = { ...line, ...lineDrafts[line.id] };
+    if (current.sourceQuoteChargeId || !isPassThrough(current.kind)) return false;
+    const amount = current.retailAmount;
+    return typeof amount !== "number" || !Number.isFinite(amount) || amount <= 0 || amount !== current.costAmount
+      || Math.abs(amount * 100 - Math.round(amount * 100)) > .00001;
+  });
+  let adjustmentError = "";
+  if (adjustment) {
+    try { validateAdjustmentLines(lines.map(line => ({ ...line, ...lineDrafts[line.id] })), { billType: policy?.billType }); }
+    catch (error) { adjustmentError = error instanceof Error ? error.message : "Review the adjustment amounts before sending."; }
+  }
   const [moneyInputs, setMoneyInputs] = useState<Record<string, string>>({});
   const moneyInputsRef = useRef(moneyInputs);
   const acknowledgedInvoice = useRef(invoice);
@@ -230,9 +337,11 @@ function InvoiceEditorContent({
     saveStatus.markDirty();
   }
   function editMoney(id: string, field: "retailAmount" | "costAmount", raw: string) {
-    moneyInputsRef.current = { ...moneyInputsRef.current, [`${id}:${field}`]: raw };
+    const line = { ...linesRef.current.find(row => row.id === id), ...lineDraftsRef.current[id] };
+    const mirrorCost = (adjustment || sourcePricing && legacyPolicyCharges) && !line.sourceQuoteChargeId && isPassThrough(line.kind);
+    moneyInputsRef.current = { ...moneyInputsRef.current, [`${id}:${field}`]: raw, ...(mirrorCost ? { [`${id}:retailAmount`]: raw, [`${id}:costAmount`]: raw } : {}) };
     setMoneyInputs(moneyInputsRef.current);
-    editLine(id, { [field]: fromInput(raw) });
+    editLine(id, mirrorCost ? { retailAmount: fromInput(raw), costAmount: fromInput(raw) } : { [field]: fromInput(raw) });
   }
   function remaining<T extends object>(current: T, submitted: T): T {
     const next = { ...current };
@@ -409,6 +518,8 @@ function InvoiceEditorContent({
   async function send() {
     await enqueue(
       async () => {
+        if (missingRemittanceCost(linesRef.current)) throw new Error("Enter actual carrier/wholesaler remittance cost before sending.");
+        if (adjustment) validateAdjustmentLines(linesRef.current, { billType: policy?.billType });
         const selected = toEmails.join(",");
         const recipientSet = (value: string) => value.split(",").map(email => email.trim().toLowerCase()).sort().join(",");
         if (sendAttempt.current && recipientSet(sendAttempt.current.toEmail) !== recipientSet(selected)) {
@@ -481,7 +592,7 @@ function InvoiceEditorContent({
               onConfirm={() => voidThis()}
             />
           )}
-          {locked && lines.length === 0 && (
+          {locked && lines.length === 0 && !sourcePricing && !issuedFee && (
             <ConfirmButton
               label="Delete"
               busyLabel="Deleting…"
@@ -526,6 +637,9 @@ function InvoiceEditorContent({
               const l = { ...savedLine, ...lineDrafts[savedLine.id] };
               const retail = l.retailAmount ?? 0;
               const cost = l.costAmount ?? 0;
+              const sourceLocked = l.kind === "BROKER_FEE" || !!l.sourceQuoteChargeId;
+              const pricingLocked = sourceLocked || sourcePricing && l.kind === "PREMIUM";
+              const manualPassThrough = (adjustment || sourcePricing && legacyPolicyCharges) && !l.sourceQuoteChargeId && isPassThrough(l.kind);
               /**
                * A cost with nothing billed against it has no margin yet — it
                * is unpriced, not loss-making. Rendering the arithmetic would
@@ -541,7 +655,7 @@ function InvoiceEditorContent({
                       aria-label="Description"
                       placeholder="What this line is for"
                       value={l.description ?? ""}
-                      disabled={linesLocked || actionBusy || l.kind === "BROKER_FEE"}
+                      disabled={linesLocked || actionBusy || pricingLocked}
                       onChange={e => editLine(l.id, { description: e.target.value })}
                       onBlur={() => void saveEdits()}
                     />
@@ -550,14 +664,17 @@ function InvoiceEditorContent({
                     <select
                       aria-label="Kind"
                       value={l.kind ?? "PREMIUM"}
-                      disabled={linesLocked || actionBusy || l.kind === "BROKER_FEE"}
+                      disabled={linesLocked || actionBusy || pricingLocked}
                       onChange={e => {
-                        editLine(l.id, { kind: e.target.value as InvoiceLine["kind"] });
+                        const kind = e.target.value as InvoiceLine["kind"];
+                        editLine(l.id, { kind, ...((adjustment || sourcePricing && legacyPolicyCharges) && isPassThrough(kind)
+                          ? { retailAmount: l.retailAmount ?? 0, costAmount: l.retailAmount ?? 0 } : {}) });
                         void saveEdits();
                       }}
                     >
-                      {l.kind === "BROKER_FEE" && <option value="BROKER_FEE">Broker fee · from quote</option>}
-                      {LINE_KINDS.map(([value, label]) => (
+                      {l.kind === "BROKER_FEE" && <option value="BROKER_FEE">HOA broker fee · from quote</option>}
+                      {l.sourceQuoteChargeId && <option value={l.kind!}>{l.kind?.replaceAll("_", " ")} · supplier/tax from quote</option>}
+                      {!sourceLocked && (adjustment ? ADJUSTMENT_LINE_KINDS : manualPassThrough ? SUPPLIER_LINE_KINDS : LINE_KINDS).map(([value, label]) => (
                         <option key={value} value={value}>
                           {label}
                         </option>
@@ -572,7 +689,7 @@ function InvoiceEditorContent({
                       inputMode="decimal"
                       placeholder="0.00"
                       value={moneyInputs[`${l.id}:retailAmount`] ?? toInput(l.retailAmount)}
-                      disabled={linesLocked || actionBusy || l.kind === "BROKER_FEE"}
+                      disabled={linesLocked || actionBusy || pricingLocked}
                       onChange={e => editMoney(l.id, "retailAmount", e.target.value)}
                       onBlur={() => void saveEdits()}
                     />
@@ -583,9 +700,9 @@ function InvoiceEditorContent({
                       className="money"
                       type="text"
                       inputMode="decimal"
-                      placeholder="0.00"
+                      placeholder={["PREMIUM", "ENDORSEMENT"].includes(l.kind ?? "") && l.costAmount == null ? "Actual supplier cost" : "0.00"}
                       value={moneyInputs[`${l.id}:costAmount`] ?? toInput(l.costAmount)}
-                      disabled={linesLocked || actionBusy || l.kind === "BROKER_FEE"}
+                      disabled={linesLocked || actionBusy || sourceLocked || manualPassThrough}
                       onChange={e => editMoney(l.id, "costAmount", e.target.value)}
                       onBlur={() => void saveEdits()}
                     />
@@ -599,7 +716,7 @@ function InvoiceEditorContent({
                         {/* On the row rather than under the table, so a line
                             lands where it is wanted instead of at the bottom
                             and needing to be dragged up. */}
-                        <button
+                        {!sourcePricing && <button
                           type="button"
                           className="icon-btn"
                           title="Add a line below this one"
@@ -608,12 +725,12 @@ function InvoiceEditorContent({
                           onClick={() => void addLine(undefined, l)}
                         >
                           +
-                        </button>
+                        </button>}
                         <ConfirmButton
                           label="Remove"
                           busyLabel="Removing…"
                           className="danger"
-                          disabled={actionBusy || l.kind === "BROKER_FEE"}
+                          disabled={actionBusy || pricingLocked}
                           onConfirm={() => removeLine(l.id)}
                         />
                       </div>
@@ -654,15 +771,17 @@ function InvoiceEditorContent({
         </table>
       </div>
 
-      {invoice.status === "SENT" && issuedFee && <p className="muted small">Void this invoice before changing its charges.</p>}
-      {!linesLocked && (
+      {(issuedFee || issuedPricing) && <p className="muted small">Void this invoice before changing its charges.</p>}
+      {!linesLocked && (!sourcePricing || legacyPolicyCharges || adjustment) && (
         <div className="inline-actions">
           {/* Every other row is added with its own +. This is the way in when
               there is no row to press one on, and the way to append. */}
-          <button type="button" className="secondary" disabled={actionBusy} onClick={() => void addLine()}>
-            {lines.length === 0 ? "Add line" : "Add line at the end"}
+          <button type="button" className="secondary" disabled={actionBusy} onClick={() => void addLine(adjustment
+            ? { kind: "ENDORSEMENT", description: "Endorsement or audit adjustment", retailAmount: null, costAmount: null, policyId: invoice.policyId! }
+            : sourcePricing ? { kind: "TAX", description: "Supplier charge or tax", retailAmount: 0, costAmount: 0, policyId: invoice.policyId! } : undefined)}>
+            {adjustment ? "Add adjustment line" : sourcePricing ? "Add supplier/tax line" : lines.length === 0 ? "Add line" : "Add line at the end"}
           </button>
-          {policy && (
+          {policy && !sourcePricing && (
             <button
               type="button"
               className="secondary"
@@ -674,6 +793,8 @@ function InvoiceEditorContent({
           )}
         </div>
       )}
+      {!linesLocked && sourcePricing && legacyPolicyCharges && <p className="small muted">This older policy has no recorded supplier charges. Add only actual carrier or wholesaler fees and taxes. Each amount is billed at the same cost, with no agency markup; the gross premium stays fixed.</p>}
+      {adjustment && <p className="small muted">Endorsement or audit adjustment: enter only the change and its actual supplier remittance. Original premium, supplier charges and HOA broker fees are not billed again. Supplier fees and taxes pass through at cost.</p>}
 
       {warnings.length > 0 && (
         <ul className="warn-list">
@@ -804,9 +925,9 @@ function InvoiceEditorContent({
           <p className="muted small">
             The agency is copied on every invoice, so a sent copy is findable
             without opening the CRM. A branded PDF is attached automatically,
-            and a Stripe bank-transfer link is generated when it sends.
+            {adjustment && totals.retail <= 0 ? " with no payment link for a credit or zero-balance statement." : " and a Stripe bank-transfer link is generated when it sends."}
           </p>
-          {account && (policy || quote) && (
+          {!adjustment && account && (policy || quote) && (
             <FinanceOfferHint
               account={account}
               anchor={
@@ -831,13 +952,16 @@ function InvoiceEditorContent({
             <button
               type="button"
               className="primary"
-              disabled={actionBusy || lines.length === 0 || toEmails.length === 0}
+              disabled={actionBusy || lines.length === 0 || toEmails.length === 0 || needsRemittanceCost || needsSupplierAmount || !!adjustmentError}
               onClick={() => void send()}
             >
               {invoice.sentAt ? "Send again" : "Send invoice"}
             </button>
             <SaveStatus {...sendStatus.status} />
           </div>
+          {needsRemittanceCost && <p className="error-text">Enter actual carrier/wholesaler remittance cost in the cost cell before sending. Enter 0 only when the reviewed supplier amount is zero.</p>}
+          {needsSupplierAmount && <p className="error-text">Enter a positive supplier or tax amount in whole cents, or remove the unused line before sending.</p>}
+          {adjustmentError && <p className="error-text">{adjustmentError}</p>}
           {lines.length === 0 && (
             <p className="muted small">Add a line before sending.</p>
           )}
@@ -853,7 +977,10 @@ function InvoiceEditorContent({
         </div>
       )}
 
-      {(invoice.status === "SENT" || invoice.status === "PROCESSING") && (
+      {adjustment && invoice.status === "SENT" && totals.retail <= 0 && <p className="muted small" role="status">
+        {totals.retail < 0 ? "Credit statement" : "Zero-balance statement"}: no incoming payment is due. This remains sent as the statement record.
+      </p>}
+      {(invoice.status === "SENT" || invoice.status === "PROCESSING") && !(adjustment && totals.retail <= 0) && (
         <div className="inline-actions">
           <button
             type="button"

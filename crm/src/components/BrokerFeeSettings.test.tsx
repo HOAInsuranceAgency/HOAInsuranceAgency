@@ -61,7 +61,7 @@ describe('one-time broker fee jurisdiction configuration', () => {
     await waitFor(() => expect(h.get).toHaveBeenCalledTimes(2));
     const request = JSON.parse(h.save.mock.calls[0][0].input);
     expect(request).toMatchObject({ op: 'saveJurisdiction', state: 'MA', version: 0, rule: {
-      approved: true, version: 'MA-v1', maxFeeCents: 50025, allowedLines: ['Property', 'D&O'], allowedBillTypes: ['AGENCY', 'DIRECT'],
+      approved: true, version: 'MA-v1', maxFeeCents: 50025, allowedLines: ['Property', 'D&O'], allowedBillTypes: ['AGENCY'],
       forms: [{ title: 'State disclosure', paragraphs: ['First complete paragraph.', 'Second complete paragraph.'] }],
     } });
     await waitFor(() => expect(field('Review reference/version')).toHaveValue('MA-v1'));

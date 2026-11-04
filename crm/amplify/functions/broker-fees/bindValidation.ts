@@ -1,9 +1,10 @@
-import { BROKER_FEE_TERMS_VERSION, brokerFeeCents } from '../../../../shared/brokerFees';
+import { BROKER_FEE_TERMS_VERSION, assertBrokerFeeAgencyBilling, brokerFeeCents } from '../../../../shared/brokerFees';
 import { authorizedQuoteTerms } from '../../../../shared/quoteAuthorization';
 import { jurisdictionRule } from './agreements';
-import { getFee, getAgreement, getModel, modelTable, table, versionCheck, feePut, type Write } from './store';
+import { accountAgreements, getFee, getAgreement, getModel, modelTable, table, versionCheck, feePut, type Write } from './store';
 
 export async function assertBrokerFeeSigned(quote:Record<string,unknown>) {
+  assertBrokerFeeAgencyBilling(quote as {brokerFee?:number|null;billType?:string|null});
   const amount=brokerFeeCents(quote.brokerFee as number|undefined);
   if(!amount)return undefined;
   const fee=await getFee(String(quote.id));
@@ -21,11 +22,40 @@ export async function assertBrokerFeeSigned(quote:Record<string,unknown>) {
   return {fee,agreement,settings,rule};
 }
 
+/** A fee-free term can be covered by the same signed package as fee-bearing terms.
+ * Linking that evidence never creates a fee or makes consent/payment a bind requirement. */
+async function feeFreeDisclosureBindWrites(quote:Record<string,unknown>,policyId:string):Promise<Write[]> {
+  const accountId=String(quote.accountId),terms=authorizedQuoteTerms(quote);
+  const agreements=(await accountAgreements(accountId,String(quote.id))).filter(agreement=>
+    agreement.accountId===accountId && agreement.signature?.consent===true && Number.isFinite(Date.parse(agreement.signature.signedAt)) && agreement.signedDocumentId &&
+    agreement.quotes.some(frozen=>frozen.id===quote.id && frozen.accountId===accountId && (frozen.brokerFee??0)===0 && frozen.terms===terms &&
+      (frozen.agencyCommissionPct===undefined || frozen.agencyCommissionPct===quote.commissionPct))
+  ).sort((a,b)=>Date.parse(b.signature!.signedAt)-Date.parse(a.signature!.signedAt)||b.id.localeCompare(a.id));
+  if(!agreements.length)return[];
+  const account=await getModel<Record<string,unknown>>('Account',accountId);
+  if(!account)return[];
+  for(const agreement of agreements){
+    if(agreement.accountName!==String(account.legalName||account.name) || agreement.jurisdiction!==String(account.state??'').trim().toUpperCase())continue;
+    const doc=await getModel<Record<string,unknown>>('Document',agreement.signedDocumentId!);
+    if(!doc || doc.entityType!=='ACCOUNT' || doc.entityId!==accountId || doc.category!=='BROKER_FEE_DISCLOSURE' || doc.brokerFeeAgreementId!==agreement.id || !Array.isArray(doc.quoteIds) || !doc.quoteIds.includes(quote.id))continue;
+    const policyIds=[...new Set([...(Array.isArray(doc.policyIds)?doc.policyIds.map(String):[]),policyId])];
+    return [versionCheck(table(),agreement),{Update:{
+      TableName:modelTable('Document'),Key:{id:doc.id},
+      UpdateExpression:'SET policyIds = :ids, updatedAt = :now',
+      ConditionExpression:'updatedAt = :old AND entityId = :account AND #category = :category AND brokerFeeAgreementId = :agreement',
+      ExpressionAttributeNames:{'#category':'category'},
+      ExpressionAttributeValues:{':ids':policyIds,':now':new Date().toISOString(),':old':doc.updatedAt,':account':accountId,':category':'BROKER_FEE_DISCLOSURE',':agreement':agreement.id},
+    }}];
+  }
+  return[];
+}
+
 /** Bind and fee attribution share the policy/commission snapshot transaction. */
 export async function brokerFeeBindWrites(quote:Record<string,unknown>,policyId:string,billType:string,expectedFeeVersion?:number):Promise<Write[]> {
+  assertBrokerFeeAgencyBilling({brokerFee:quote.brokerFee as number|undefined,billType});
   if(brokerFeeCents(quote.brokerFee as number|undefined)>0 && quote.billType!==billType) throw new Error("The premium billing method must match the signed fee quote.");
   const signed=await assertBrokerFeeSigned(quote);
-  if(!signed)return[];
+  if(!signed)return feeFreeDisclosureBindWrites(quote,policyId);
   const {fee,agreement,settings}=signed;
   if(expectedFeeVersion!==undefined&&fee.version!==expectedFeeVersion)throw new Error("The fee payment changed while binding. Refresh and retry.");
   jurisdictionRule(settings?.brokerFeeJurisdictions,agreement.jurisdiction,agreement.quotes,billType);

@@ -14,11 +14,14 @@ import {
   decimal,
   policyTotals,
   recoveryBalances,
+  carrierReconciliationBalances,
   ratio,
   sum,
   type CommissionOverview,
   type CommissionPlan,
   type CarrierCommissionTerms,
+  type CarrierPaymentArrangement,
+  type CommissionReconciliationBalances,
   type CommissionStatement,
   type CommissionBatch,
   type CommissionPolicy,
@@ -114,6 +117,7 @@ function Ledger({
   owner: boolean;
   refresh: () => Promise<void>;
 }) {
+  const [asOf, setAsOf] = useState(today);
   const totals = data.policies.map(policyTotals),
     recoveries = data.policies.map((p) => recoveryBalances(p, data.batches)),
     paid = sum(data.batches.filter((b) => b.status === 'PAID').map((b) => b.totalCents));
@@ -187,6 +191,17 @@ function Ledger({
             : 'Your policy commission records will appear here after binding.'}
         </div>
       )}
+      {owner && (
+        <label className="field commission-asof">
+          Receipt reconciliation as of
+          <input
+            type="date"
+            required
+            value={asOf}
+            onChange={(e) => setAsOf(e.target.value || today())}
+          />
+        </label>
+      )}
       {data.policies.map((p) => {
         const t = policyTotals(p);
         return (
@@ -218,11 +233,26 @@ function Ledger({
               </p>
             )}
             <p className="small">
-              Expected agency revenue {money(t.expectedAgency)} · Received{' '}
+              Full-term agency estimate {money(t.expectedAgency)} · Agency received{' '}
               {money(t.receivedAgency)} · Producer earned {money(t.earned)} · Proposed adjustments{' '}
               {money(t.proposedRecovery)}
             </p>
-            {owner && <PolicyNumber key={`${p.id}:${p.version}`} policy={p} refresh={refresh} />}
+            {owner ? (
+              <>
+                <CarrierBalances balances={carrierReconciliationBalances(p, asOf)} />
+                <details className="commission-forecast-editor">
+                  <summary>Manage expected receipts</summary>
+                  <ReceiptForecastEditor
+                    key={`${p.id}:${p.version}`}
+                    policy={p}
+                    refresh={refresh}
+                  />
+                </details>
+                <PolicyNumber key={`${p.id}:${p.version}`} policy={p} refresh={refresh} />
+              </>
+            ) : p.reconciliationBalances ? (
+              <CarrierBalances balances={p.reconciliationBalances} />
+            ) : null}
             {p.entries.length ? (
               <div className="commission-scroll">
                 <table>
@@ -653,10 +683,10 @@ function AccountClassifications() {
 function AccountClassificationResource({ id }: { id: string }) {
   const resource = useAsyncResource(
     () =>
-      commissionAction<{ classification: CommissionAccount | null; accountName: string }>(
-        'getAccountClassification',
-        { id },
-      ),
+      commissionAction<{
+        classification: CommissionAccount | null;
+        accountName: string;
+      }>('getAccountClassification', { id }),
     [id],
     { clearDataOnError: () => true },
   );
@@ -829,6 +859,42 @@ function AccountClassificationEditor({
     </ActionForm>
   );
 }
+type ArrangementDraft = {
+  id: string;
+  from: string;
+  to: string;
+  lines: string;
+  transaction: CarrierPaymentArrangement['transaction'] | '';
+  billType: CarrierPaymentArrangement['billType'] | '';
+  basis: CarrierPaymentArrangement['basis'] | '';
+  payor: string;
+  trigger: CarrierPaymentArrangement['trigger'] | '';
+  cadence: CarrierPaymentArrangement['cadence'] | '';
+  lagDays: string;
+  cutoffDay: string;
+  paymentDay: string;
+  earningMethod: CarrierPaymentArrangement['earningMethod'] | '';
+  evidence: string;
+  notes: string;
+};
+const blankArrangement = (): ArrangementDraft => ({
+  id: crypto.randomUUID(),
+  from: '',
+  to: '',
+  lines: '',
+  transaction: '',
+  billType: '',
+  basis: '',
+  payor: '',
+  trigger: '',
+  cadence: '',
+  lagDays: '',
+  cutoffDay: '',
+  paymentDay: '',
+  earningMethod: '',
+  evidence: '',
+  notes: '',
+});
 function CarrierEditor({
   id,
   terms,
@@ -838,40 +904,464 @@ function CarrierEditor({
   terms?: CarrierCommissionTerms;
   refresh: () => Promise<void>;
 }) {
-  const [basis, setBasis] = useState(terms?.basis ?? ''),
-    [schedule, setSchedule] = useState(terms?.schedule ?? ''),
-    [evidence, setEvidence] = useState(terms?.evidence ?? '');
+  const [arrangements, setArrangements] = useState<ArrangementDraft[]>(
+    () =>
+      terms?.arrangements?.map((a) => ({
+        ...a,
+        to: a.to ?? '',
+        lines: a.lines?.join(', ') ?? '',
+        transaction: a.transaction ?? '',
+        billType: a.billType ?? '',
+        lagDays: String(a.lagDays),
+        cutoffDay: a.cutoffDay == null ? '' : String(a.cutoffDay),
+        paymentDay: a.paymentDay == null ? '' : String(a.paymentDay),
+        earningMethod: a.earningMethod ?? '',
+        notes: a.notes ?? '',
+      })) ?? [],
+  );
+  const update = (index: number, change: Partial<ArrangementDraft>) =>
+    setArrangements(arrangements.map((a, i) => (i === index ? { ...a, ...change } : a)));
   return (
     <ActionForm
       title="Carrier commission payment terms"
+      button="Save carrier payment terms"
+      disabled={!arrangements.length}
       onDone={refresh}
-      submit={() =>
-        commissionAction('saveCarrier', {
+      submit={() => {
+        const first = arrangements[0];
+        return commissionAction('saveCarrier', {
           id,
           version: terms?.version ?? 0,
-          basis,
-          schedule,
-          evidence,
+          basis: first?.basis ?? terms?.basis,
+          schedule:
+            terms?.schedule || `${first.cadence} · ${first.trigger} · ${first.lagDays} day lag`,
+          evidence: first?.evidence ?? terms?.evidence,
+          arrangements: arrangements.map((a) => ({
+            id: a.id,
+            from: a.from,
+            ...(a.to ? { to: a.to } : {}),
+            ...(a.lines.trim()
+              ? {
+                  lines: a.lines
+                    .split(',')
+                    .map((v) => v.trim())
+                    .filter(Boolean),
+                }
+              : {}),
+            ...(a.transaction ? { transaction: a.transaction } : {}),
+            ...(a.billType ? { billType: a.billType } : {}),
+            basis: a.basis,
+            payor: a.payor,
+            trigger: a.trigger,
+            cadence: a.cadence,
+            lagDays: Number(a.lagDays),
+            ...(a.cadence !== 'ONCE' && a.cutoffDay ? { cutoffDay: Number(a.cutoffDay) } : {}),
+            ...(a.paymentDay ? { paymentDay: Number(a.paymentDay) } : {}),
+            ...(a.basis === 'EARNED' && a.earningMethod ? { earningMethod: a.earningMethod } : {}),
+            evidence: a.evidence,
+            ...(a.notes ? { notes: a.notes } : {}),
+          })),
+        });
+      }}
+    >
+      <p className="small muted">
+        Commission basis, remittance timing, and the client’s premium payment plan are separate.
+        Terms apply by policy effective date; saved policy snapshots keep their original terms.
+      </p>
+      {terms && !terms.arrangements?.length && (
+        <div className="commission-notice">
+          <strong>Legacy carrier terms need a structured payment arrangement.</strong>
+          <p>
+            {COMMISSION_BASES[terms.basis]} · {terms.schedule} · Reference: {terms.evidence}
+          </p>
+          <p>
+            Review the carrier agreement before entering dates or payment rules. The legacy schedule
+            has not been converted into a forecast.
+          </p>
+        </div>
+      )}
+      {arrangements.map((a, i) => (
+        <div key={a.id} className="commission-period">
+          <h3>Payment arrangement {i + 1}</h3>
+          <div className="form-grid">
+            <Field
+              label={`Carrier terms effective from ${i + 1}`}
+              type="date"
+              value={a.from}
+              change={(v) => update(i, { from: v })}
+            />
+            <label className="field">
+              {`Carrier terms through ${i + 1} (optional)`}
+              <input type="date" value={a.to} onChange={(e) => update(i, { to: e.target.value })} />
+            </label>
+            <label className="field">
+              {`Lines of business ${i + 1} (blank = all)`}
+              <input
+                value={a.lines}
+                placeholder="Use the policy coverage line names"
+                onChange={(e) => update(i, { lines: e.target.value })}
+              />
+            </label>
+            <label className="field">
+              {`Business type ${i + 1}`}
+              <select
+                value={a.transaction}
+                onChange={(e) =>
+                  update(i, {
+                    transaction: e.target.value as ArrangementDraft['transaction'],
+                  })
+                }
+              >
+                <option value="">All business types</option>
+                <option value="NEW">New business</option>
+                <option value="RENEWAL">Renewal</option>
+              </select>
+            </label>
+            <label className="field">
+              {`Billing scope ${i + 1}`}
+              <select
+                value={a.billType}
+                onChange={(e) =>
+                  update(i, {
+                    billType: e.target.value as ArrangementDraft['billType'],
+                  })
+                }
+              >
+                <option value="">Agency and direct bill</option>
+                <option value="AGENCY">Agency bill</option>
+                <option value="DIRECT">Direct bill</option>
+              </select>
+            </label>
+            <label className="field">
+              {`Commission basis ${i + 1}`}
+              <select
+                required
+                value={a.basis}
+                onChange={(e) =>
+                  update(i, {
+                    basis: e.target.value as ArrangementDraft['basis'],
+                    trigger: '',
+                    earningMethod: '',
+                  })
+                }
+              >
+                <option value="">Confirm the premium basis…</option>
+                {Object.entries(COMMISSION_BASES).map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <Field
+              label={`Commission payor ${i + 1}`}
+              value={a.payor}
+              change={(v) => update(i, { payor: v })}
+            />
+            <label className="field">
+              {`Receipt trigger ${i + 1}`}
+              <select
+                required
+                value={a.trigger}
+                onChange={(e) =>
+                  update(i, {
+                    trigger: e.target.value as ArrangementDraft['trigger'],
+                  })
+                }
+              >
+                <option value="">Confirm the trigger…</option>
+                {a.basis === 'WRITTEN' && (
+                  <>
+                    <option value="BIND">Policy bound</option>
+                    <option value="EFFECTIVE">Policy effective</option>
+                  </>
+                )}
+                {a.basis === 'COLLECTED' && <option value="COLLECTION">Premium collected</option>}
+                {a.basis === 'EARNED' && <option value="EARNED">Coverage earned</option>}
+              </select>
+            </label>
+            <label className="field">
+              {`Remittance frequency ${i + 1}`}
+              <select
+                required
+                value={a.cadence}
+                onChange={(e) =>
+                  update(i, {
+                    cadence: e.target.value as ArrangementDraft['cadence'],
+                    ...(e.target.value === 'ONCE' ? { cutoffDay: '' } : {}),
+                  })
+                }
+              >
+                <option value="">Confirm the frequency…</option>
+                <option value="ONCE">Once per trigger</option>
+                <option value="MONTHLY">Monthly statement cycle</option>
+                <option value="QUARTERLY">Quarterly statement cycle</option>
+              </select>
+            </label>
+            <label className="field">
+              {`Additional lag days ${i + 1}`}
+              <input
+                required
+                type="number"
+                min="0"
+                max="730"
+                step="1"
+                value={a.lagDays}
+                onChange={(e) => update(i, { lagDays: e.target.value })}
+              />
+            </label>
+            <label className="field">
+              {`Statement cutoff day ${i + 1} (optional)`}
+              <input
+                type="number"
+                min="1"
+                max="31"
+                step="1"
+                disabled={a.cadence === 'ONCE'}
+                value={a.cutoffDay}
+                onChange={(e) => update(i, { cutoffDay: e.target.value })}
+              />
+            </label>
+            <label className="field">
+              {`Remittance day ${i + 1} (optional)`}
+              <input
+                type="number"
+                min="1"
+                max="31"
+                step="1"
+                value={a.paymentDay}
+                onChange={(e) => update(i, { paymentDay: e.target.value })}
+              />
+            </label>
+            {a.basis === 'EARNED' && (
+              <label className="field">
+                {`Earned premium method ${i + 1}`}
+                <select
+                  required
+                  value={a.earningMethod}
+                  onChange={(e) =>
+                    update(i, {
+                      earningMethod: e.target.value as ArrangementDraft['earningMethod'],
+                    })
+                  }
+                >
+                  <option value="">Confirm the method…</option>
+                  <option value="DAILY_PRORATA">Daily pro rata forecast</option>
+                  <option value="MANUAL">Carrier schedule entered manually</option>
+                </select>
+              </label>
+            )}
+          </div>
+          <Field
+            label={`Carrier agreement reference ${i + 1}`}
+            value={a.evidence}
+            change={(v) => update(i, { evidence: v })}
+          />
+          <label className="field">
+            {`Original carrier wording / notes ${i + 1} (optional)`}
+            <textarea value={a.notes} onChange={(e) => update(i, { notes: e.target.value })} />
+          </label>
+          <button
+            type="button"
+            className="secondary"
+            onClick={() => setArrangements(arrangements.filter((_, j) => i !== j))}
+          >
+            Remove payment arrangement {i + 1}
+          </button>
+        </div>
+      ))}
+      <button
+        type="button"
+        className="secondary"
+        disabled={arrangements.length >= 100}
+        onClick={() => setArrangements([...arrangements, blankArrangement()])}
+      >
+        Add payment arrangement
+      </button>
+      <p className="small muted">
+        Dates are inclusive. Separate lines of business with commas. Monthly cycles close each
+        month; quarterly cycles close in March, June, September, and December. Triggers after the
+        cutoff roll to the next cycle. A blank cutoff means month end. With a remittance day,
+        payment falls in the month after the cutoff; without one, payment falls on the cutoff.
+        Additional lag uses calendar days. Once per trigger uses the trigger date, or the next
+        remittance day on or after it, plus lag. Days 29–31 are limited to the last day of shorter
+        months.
+      </p>
+      <p className="small muted">
+        Collected premium follows actual client payments; “as earned” in a carrier agreement may
+        mean collected premium. Record the contract’s meaning explicitly. Forecasts never create
+        receipts or producer earnings.
+      </p>
+    </ActionForm>
+  );
+}
+function CarrierBalances({ balances: b }: { balances: CommissionReconciliationBalances }) {
+  const value = (amount: number | null) => (amount == null ? 'Unknown' : money(amount));
+  const gap = b.confirmed
+    ? b.overdue
+    : b.expectedToDate == null || b.adjustmentReview
+      ? null
+      : Math.max(0, b.expectedToDate - b.receivedToDate);
+  const certainty = b.adjustmentReview
+    ? 'Receipt schedule needs review'
+    : b.expectedToDate == null
+      ? 'Receipt timing unknown'
+      : b.confirmed
+        ? 'Confirmed receipt schedule'
+        : 'Estimated receipt forecast';
+  return (
+    <div className="commission-balances" aria-label={`Carrier receipt balances as of ${b.asOf}`}>
+      <p className="small">
+        <strong>Carrier receipts as of {b.asOf}</strong> · {certainty}
+      </p>
+      <dl>
+        <div>
+          <dt>Full-term agency estimate</dt>
+          <dd>{money(b.fullTermEstimate)}</dd>
+        </div>
+        <div>
+          <dt>{b.confirmed ? 'Expected through date' : 'Estimated through date'}</dt>
+          <dd>{value(b.expectedToDate)}</dd>
+        </div>
+        <div>
+          <dt>Actual received through date</dt>
+          <dd>{money(b.receivedToDate)}</dd>
+        </div>
+        <div>
+          <dt>{b.confirmed ? 'Overdue before date' : 'Estimated gap through date'}</dt>
+          <dd>{value(gap)}</dd>
+        </div>
+        <div>
+          <dt>Future scheduled balance</dt>
+          <dd>{value(b.futureForecast)}</dd>
+        </div>
+        <div>
+          <dt>Full receipt forecast</dt>
+          <dd>{value(b.forecastTotal)}</dd>
+        </div>
+        <div>
+          <dt>Forecast not yet allocated to dates</dt>
+          <dd>{value(b.unallocatedForecast)}</dd>
+        </div>
+      </dl>
+      {b.expectedToDate == null && (
+        <p className="small muted">
+          Receipt timing is unknown. A supported receipt schedule is needed before assessing overdue
+          commission.
+        </p>
+      )}
+      {b.forecastTotal == null && b.expectedToDate != null && (
+        <p className="small muted">
+          Only entered receipt dates are included. The remaining schedule is unknown; the full-term
+          estimate is not a current amount due.
+        </p>
+      )}
+      {b.adjustmentReview && (
+        <p className="small">
+          Carrier adjustments need schedule review. Preserve the original estimate and update the
+          forecast with supporting evidence.
+        </p>
+      )}
+      <p className="small muted">
+        Forecasts do not create payable producer commission. Earnings follow posted, reconciled
+        agency receipts.
+      </p>
+    </div>
+  );
+}
+function ReceiptForecastEditor({
+  policy,
+  refresh,
+}: {
+  policy: CommissionPolicy;
+  refresh: () => Promise<void>;
+}) {
+  const forecast = policy.receiptForecast;
+  const [items, setItems] = useState(
+    () =>
+      forecast?.items.map((item) => ({
+        dueOn: item.dueOn,
+        amount: String(item.agencyCents / 100),
+      })) ?? [{ dueOn: '', amount: '' }],
+  );
+  const [evidence, setEvidence] = useState(forecast?.evidence ?? '');
+  const [confirmed, setConfirmed] = useState(forecast ? String(forecast.confirmed) : '');
+  const [complete, setComplete] = useState(forecast ? String(forecast.complete) : '');
+  return (
+    <ActionForm
+      title="Expected carrier receipts"
+      button="Save receipt forecast"
+      onDone={refresh}
+      submit={() =>
+        commissionAction('saveReceiptForecast', {
+          policyId: policy.id,
+          version: policy.version,
+          receiptForecast: {
+            items: items.map((item) => ({
+              dueOn: item.dueOn,
+              agencyCents: decimal(item.amount),
+            })),
+            evidence,
+            confirmed: confirmed === 'true',
+            complete: complete === 'true',
+          },
         })
       }
     >
-      <label className="field">
-        Commission basis
-        <select required value={basis} onChange={(e) => setBasis(e.target.value as typeof basis)}>
-          <option value="">Choose…</option>
-          {Object.entries(COMMISSION_BASES).map(([id, label]) => (
-            <option key={id} value={id}>
-              {label}
-            </option>
-          ))}
-        </select>
-      </label>
-      <Field label="Remittance schedule / expected lag" value={schedule} change={setSchedule} />
-      <Field label="Carrier agreement reference" value={evidence} change={setEvidence} />
       <p className="small muted">
-        The schedule forecasts receipts; it does not generate earnings. Agency billing and direct
-        billing remain separate policy settings.
+        Enter carrier-supported receipt dates and agency commission amounts, including prior
+        expected receipts for the policy term. Unequal installments are supported. A complete
+        empty schedule forecasts zero total commission; posted receipts remain visible.
       </p>
+      <div className="form-grid">
+        <label className="field">
+          Receipt forecast certainty
+          <select required value={confirmed} onChange={(e) => setConfirmed(e.target.value)}>
+            <option value="">Choose…</option>
+            <option value="false">Estimate — timing or amounts not confirmed</option>
+            <option value="true">Confirmed by carrier evidence</option>
+          </select>
+        </label>
+        <label className="field">
+          Receipt schedule coverage
+          <select required value={complete} onChange={(e) => setComplete(e.target.value)}>
+            <option value="">Choose…</option>
+            <option value="false">Partial — remaining dates or amounts unknown</option>
+            <option value="true">Complete — all expected receipts included</option>
+          </select>
+        </label>
+      </div>
+      {items.map((item, i) => (
+        <div className="commission-forecast-row" key={i}>
+          <Field
+            label={`Expected receipt date ${i + 1}`}
+            type="date"
+            value={item.dueOn}
+            change={(v) => setItems(items.map((r, j) => (i === j ? { ...r, dueOn: v } : r)))}
+          />
+          <Field
+            label={`Expected agency commission ($) ${i + 1}`}
+            value={item.amount}
+            change={(v) => setItems(items.map((r, j) => (i === j ? { ...r, amount: v } : r)))}
+          />
+          <button
+            type="button"
+            className="secondary"
+            onClick={() => setItems(items.filter((_, j) => i !== j))}
+          >
+            Remove expected receipt {i + 1}
+          </button>
+        </div>
+      ))}
+      <button
+        type="button"
+        className="secondary"
+        disabled={items.length >= 100}
+        onClick={() => setItems([...items, { dueOn: '', amount: '' }])}
+      >
+        Add expected receipt
+      </button>
+      <Field label="Receipt forecast evidence" value={evidence} change={setEvidence} />
     </ActionForm>
   );
 }
@@ -1140,9 +1630,15 @@ function StatementEditor({
               <p className="small">
                 CRM expectation: {money(policyTotals(p).expectedAgency)} for the full term · Premium{' '}
                 {money(p.premiumCents)} at {p.agencyRateUnits / 10000}% · Received so far{' '}
-                {money(policyTotals(p).receivedAgency)} · {p.carrierTerms.basis.toLowerCase()}{' '}
-                premium · {p.carrierTerms.schedule}
+                {money(policyTotals(p).receivedAgency)} ·{' '}
+                {COMMISSION_BASES[p.carrierTerms.payment?.basis ?? p.carrierTerms.basis]} ·{' '}
+                {p.carrierTerms.payment
+                  ? `${p.carrierTerms.payment.payor} · ${p.carrierTerms.payment.cadence.toLowerCase()} remittance · ${p.carrierTerms.payment.lagDays} additional lag days`
+                  : `Legacy timing: ${p.carrierTerms.schedule}`}
               </p>
+            )}
+            {p && (
+              <CarrierBalances balances={carrierReconciliationBalances(p, receivedOn || today())} />
             )}
             <div className="form-grid">
               <label className="field">

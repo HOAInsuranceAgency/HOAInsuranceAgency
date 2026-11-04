@@ -1,3 +1,4 @@
+import { installQuoteFinancialStage, QUOTE_FINANCIAL_RESPONSE } from "./quote-financial-pipeline";
 import { readFileSync } from "node:fs";
 import { Asset } from "aws-cdk-lib/aws-s3-assets";
 import { Stack, CfnResource, AssetStaging } from "aws-cdk-lib";
@@ -64,6 +65,7 @@ export function installAccountAccess(backend: typeof Backend, communicationTable
   guard.addEnvironment("ACCESS_API_ID", api.apiId);
   guard.addEnvironment("ACCESS_INDEXES", JSON.stringify(indexes));
   backend.brokerFees.addEnvironment("ACCESS_INDEXES", JSON.stringify(indexes));
+  backend.sendInvoice.addEnvironment("ACCESS_INDEXES", JSON.stringify(Object.fromEntries(["Invoice.accountId","InvoiceLine.invoiceId"].map(key=>[key,indexes[key]]))));
   guard.addEnvironment("COMMUNICATION_TABLE", communicationTable.tableName);
   communicationTable.grantReadData(guard.resources.lambda);
   const tableArns = Object.values(tables).map(tableName => Stack.of(api).formatArn({ service: "dynamodb", resource: "table", resourceName: tableName }));
@@ -83,8 +85,8 @@ export function installAccountAccess(backend: typeof Backend, communicationTable
     const listAdminBypass = administratorListBypassTemplate(model);
     const fn = new CfnFunctionConfiguration(api, `Access_${key}`, {
       apiId: api.apiId, name: `access_${key}`, dataSourceName: source.name, functionVersion: "2018-05-29",
-      requestMappingTemplate: `#if($util.authType() == "IAM Authorization")\n#if(!$util.isNull($ctx.identity.cognitoIdentityId))\n$util.unauthorized()\n#end\n#return($ctx.prev.result)\n#end\n${mode === "list" ? listAdminBypass : mode === "read" ? '#if(!$util.isNull($ctx.stash.assignmentList))\n#return($ctx.prev.result)\n#end\n' : ''}{"version":"2018-05-29","operation":"Invoke","payload":{"mode":"${mode}","model":"${model}","field":$util.toJson($ctx.info.fieldName),"operation":"${operation}","identity":$util.toJson($ctx.identity),"request":$util.toJson($ctx.request),"arguments":$util.toJson($ctx.arguments),"previous":$util.toJson($ctx.prev.result)}}`,
-      responseMappingTemplate: `#if($ctx.error)\n$util.error($ctx.error.message, $ctx.error.type)\n#end\n${mode === "list" ? '$util.qr($ctx.stash.put("assignmentList", $ctx.result))\n' : ''}$util.toJson($ctx.result)`,
+      requestMappingTemplate: `#if($util.authType() == "IAM Authorization")\n#if(!$util.isNull($ctx.identity.cognitoIdentityId))\n$util.unauthorized()\n#end\n#return($ctx.prev.result)\n#end\n${mode === "list" ? listAdminBypass : mode === "read" ? '#if(!$util.isNull($ctx.stash.assignmentList))\n#return($ctx.prev.result)\n#end\n' : ''}{"version":"2018-05-29","operation":"Invoke","payload":{"mode":"${mode}","model":"${model}","field":$util.toJson($ctx.info.fieldName),"operation":"${operation}","identity":$util.toJson($ctx.identity),"request":$util.toJson($ctx.request),"arguments":$util.toJson($ctx.arguments),"previous":$util.toJson($ctx.prev.result)${mode === "quote-financial" ? ',"nativeConditions":$util.toJson($ctx.stash.conditions),"nativeAuthFilter":$util.toJson($ctx.stash.authFilter)' : ''}}}`,
+      responseMappingTemplate: `#if($ctx.error)\n$util.error($ctx.error.message, $ctx.error.type)\n#end\n${mode === "list" ? '$util.qr($ctx.stash.put("assignmentList", $ctx.result))\n' : ''}${mode === "quote-financial" ? QUOTE_FINANCIAL_RESPONSE : '$util.toJson($ctx.result)'}`,
     });
     // CDK's diagnostic construct paths duplicate these already descriptive
     // access_* names. Omit only that metadata to keep the staging data template
@@ -125,6 +127,20 @@ export function installAccountAccess(backend: typeof Backend, communicationTable
         if (!operation) throw new Error(`Unclassified model mutation: ${field}`);
         if (ADMIN_MODEL_OPERATIONS[model]?.includes(operation)) extend(resolver, [makeGuard("admin", "")], []);
         if (scoped || model === "UserProfile") extend(resolver, [makeGuard("write", model, operation)], []);
+        if (model === "Quote" && operation === "update") {
+          const pipeline = resolver.pipelineConfig as CfnResolver.PipelineConfigProperty;
+          const data = Object.values(resources.cfnFunctionConfigurations).find(fn => pipeline.functions?.includes(fn.attrFunctionId) && fn.name === 'MutationUpdateQuoteDataResolverFn');
+          if (!data) throw new Error('Missing native Quote update data stage');
+          let template = data.requestMappingTemplate;
+          if (data.requestMappingTemplateS3Location) {
+            const location = JSON.stringify(Stack.of(data).resolve(data.requestMappingTemplateS3Location));
+            const asset = backend.stack.node.root.node.findAll().find((node): node is Asset => node instanceof Asset && JSON.stringify(Stack.of(data).resolve(node.s3ObjectUrl)) === location);
+            if (!asset) throw new Error('Missing native Quote update request template');
+            template = readFileSync((asset.node.findChild('Stage') as AssetStaging).absoluteStagedPath, 'utf8');
+          }
+          if (!template) throw new Error('Empty native Quote update request template');
+          installQuoteFinancialStage(resolver, data, template, makeGuard('quote-financial', 'Quote', 'update'));
+        }
       } else if (scoped) {
         if (ADMIN_MODEL_OPERATIONS[model]?.includes("read")) extend(resolver, [makeGuard("admin", "")], []);
         const pipeline = resolver.pipelineConfig as CfnResolver.PipelineConfigProperty;

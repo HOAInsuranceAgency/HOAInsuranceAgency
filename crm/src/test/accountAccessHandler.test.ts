@@ -349,3 +349,10 @@ it("requires active Owner for the private profitability guard", async () => {
   await expect(handler({ identity: { sub: "admin", groups: ["ADMIN"] }, mode: "owner" })).rejects.toThrow("not available");
   await expect(handler({ identity: { sub: "admin", groups: ["ADMIN"] }, request: { headers: { "x-crm-role": "OWNER" } }, mode: "owner" })).rejects.toThrow("not available");
 });
+
+it("cannot select the native financial mutation or inject its committed result through public crmAccess arguments", async () => {
+  const result = await handler({fieldName:'crmAccess',identity,arguments:{mode:'quote-financial',model:'Quote',field:'updateQuote',operation:'update',input:{id:'q',premium:1,unknownAttribute:true},serverCommittedFeeQuote:{id:'q',premium:1},committed:true,quote:{id:'q',premium:1}}});
+  expect(result).toEqual({actorId:'alice',admin:false,salespersonIds:['alice']});
+  expect(h.db.mock.calls.every(([command])=>command.constructor.name==='GetCommand')).toBe(true);
+  await expect(handler({mode:'quote-financial',identity,field:'crmAccess',model:'Quote',operation:'update',arguments:{input:{id:'q',premium:1}}})).rejects.toThrow('not available');
+});

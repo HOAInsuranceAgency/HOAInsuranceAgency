@@ -6,9 +6,13 @@ import { id, type Identity } from '../crm-access/policy';
 import type { RoleRequest } from '../crm-access/active-role';
 import { feeAllocations } from '../../../../shared/brokerFees';
 import { invoiceBrokerFeeAllocations } from '../send-invoice/brokerFeeInvoice';
+import { validateInvoiceSourceCharges } from '../send-invoice/passThroughInvoice';
+import { assertAdjustmentInvoiceProof, assertInitialInvoiceAvailable } from '../send-invoice/adjustmentInvoice';
+import { invoiceTotals } from '../../../src/lib/invoiceTotals';
 import { db, getFee, getModel, modelTable, versionCheck, type Write } from './store';
 import { assertBrokerFeeSigned } from './bindValidation';
 import { assertNoFeeLoanCheckout, syncBrokerFeePayment } from './payments';
+import { closeInvoiceCheckoutSessions } from '../invoiceCheckout';
 
 /** Preserve Mark paid, using the same source validation as online billing. */
 export async function confirmInvoicePayment(event:{identity?:Identity;request?:RoleRequest},input:Record<string,unknown>) {
@@ -20,8 +24,11 @@ export async function confirmInvoicePayment(event:{identity?:Identity;request?:R
   const policy=invoice.policyId?await access.requireRecord('Policy',id(invoice.policyId)):undefined;
   const quoteId=id(policy?.quoteId)||id(invoice.quoteId);
   const quote=quoteId?await access.requireRecord('Quote',quoteId):undefined;
-  const source=policy??quote;
+  let source=policy??quote;
   if(source&&source.accountId!==invoice.accountId)throw new Error('The invoice source could not be verified.');
+  await assertInitialInvoiceAvailable(invoice);
+  const adjustmentProof=await assertAdjustmentInvoiceProof(invoice);
+  if(adjustmentProof)source=adjustmentProof.policy;
   const index=(JSON.parse(process.env.ACCESS_INDEXES??'{}') as Record<string,string>)['InvoiceLine.invoiceId'];
   if(!index)throw new Error('Invoice line access is not configured.');
   let cursor:Record<string,unknown>|undefined;
@@ -33,12 +40,14 @@ export async function confirmInvoicePayment(event:{identity?:Identity;request?:R
     if(lines.length>70)throw new Error('This invoice needs a smaller reviewed payment allocation.');
   }while(cursor);
   const fee=quoteId?await getFee(quoteId):undefined;
-  const allocations=invoiceBrokerFeeAllocations({invoice:{accountId:String(invoice.accountId),status:String(invoice.status)},source:source?{accountId:String(source.accountId),brokerFee:source.brokerFee as number|undefined,billType:source.billType as string|undefined}:null,quoteId,policyId:policy?String(policy.id):undefined,lines,alreadySubmitted:!!fee&&(fee.submittedCents>0||fee.collectedCents>0)});
+  validateInvoiceSourceCharges({invoice:{accountId:String(invoice.accountId),policyId:invoice.policyId as string|undefined,status:invoice.status as string|undefined,sourcePricingVersion:invoice.sourcePricingVersion as number|undefined},source:source?{id:String(source.id),accountId:String(source.accountId),premium:source.premium as number|undefined,billType:source.billType as string|undefined,passThroughCharges:source.passThroughCharges}:null,lines});
+  if(invoice.sourcePricingVersion===2&&invoiceTotals(lines).retail<=0)throw new Error('A zero or credit adjustment is not an incoming payment and cannot be marked paid.');
+  const allocations=invoiceBrokerFeeAllocations({invoice:{accountId:String(invoice.accountId),status:String(invoice.status),sourcePricingVersion:invoice.sourcePricingVersion as number|undefined},source:source?{accountId:String(source.accountId),brokerFee:source.brokerFee as number|undefined,billType:source.billType as string|undefined}:null,quoteId,policyId:policy?String(policy.id):undefined,lines,alreadySubmitted:!!fee&&(fee.submittedCents>0||fee.collectedCents>0)});
   const frozen=feeAllocations(invoice.brokerFeeAllocations);
   const comparable=(a:typeof allocations)=>a.map(row=>({quoteId:row.quoteId,amountCents:row.amountCents}));
   if(frozen.length&&JSON.stringify(comparable(frozen))!==JSON.stringify(comparable(allocations)))throw new Error('The invoice differs from its issued fee payment allocation.');
   if(quote&&allocations.length)await assertBrokerFeeSigned(quote);
-  const invoiceGuards:Write[]=[];
+  const invoiceGuards:Write[]=[...(adjustmentProof?.guards??[])];
   if(fee&&allocations.length) {
     const claim=fee.invoiceSendClaim;
     if(claim?.phase==='PREPARING')throw new Error('The broker fee invoice payment link is still being prepared. Finish or recover its Send action before recording an outside payment.');
@@ -59,16 +68,10 @@ export async function confirmInvoicePayment(event:{identity?:Identity;request?:R
     const key=process.env.STRIPE_SECRET_KEY;if(!key)throw new Error('Payment configuration is unavailable; the existing payment link cannot be closed.');
     const stripe=new Stripe(key);
     await stripe.paymentLinks.update(String(invoice.stripePaymentLinkId),{active:false});
-    let count=0;
-    for await(const session of stripe.checkout.sessions.list({payment_link:String(invoice.stripePaymentLinkId),limit:100})) {
-      if(++count>500)throw new Error('The payment session history needs review before recording an outside payment.');
-      if(session.payment_status==='paid')throw new Error('An online payment has already been submitted. Wait for its payment status to update.');
-      if(session.status==='complete'){
-        const intentId=typeof session.payment_intent==='string'?session.payment_intent:session.payment_intent?.id;
-        const intent=intentId?await stripe.paymentIntents.retrieve(intentId):undefined;
-        if(!intent||!['requires_payment_method','canceled'].includes(intent.status))throw new Error('An online payment has already been submitted. Wait for its payment status to update.');
-      }
-      if(session.status==='open')await stripe.checkout.sessions.expire(session.id);
+    try { await closeInvoiceCheckoutSessions(stripe,String(invoice.stripePaymentLinkId)); }
+    catch(error) {
+      if(error instanceof Error && error.message.includes('before replacing or voiding its link.'))throw new Error(error.message.replace('before replacing or voiding its link.','before recording an outside payment.'));
+      throw error;
     }
   }
   const now=new Date().toISOString(),paidAt=typeof invoice.paidAt==='string'?invoice.paidAt:new Intl.DateTimeFormat('en-CA',{timeZone:'America/New_York',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(now));

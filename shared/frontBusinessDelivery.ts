@@ -1,3 +1,4 @@
+import type { PassThroughCharge } from './passThroughCharges';
 /** Public CRM/Front handoff DTOs. Internal notes and commission never belong here. */
 export type BusinessDeliveryKind = 'PACKAGE' | 'CERTIFICATE' | 'DOCUMENT';
 export type BusinessDeliveryState = 'PREPARING' | 'DRAFT' | 'UNKNOWN' | 'FAILED' | 'SENT';
@@ -22,6 +23,9 @@ export interface BusinessDeliverySender {
 }
 export interface PublicProposalQuote {
   id: string; carrierName: string; lines: string[]; premium: number; brokerFee?: number | null; billType?: string | null;
+  passThroughCharges?: PassThroughCharge[];
+  /** Reviewed client-facing conditions; never the quote's internal notes. */
+  clientConditions?: string | null;
   effectiveDate: string; expirationDate: string; offerExpiresAt?: string | null;
   perOccurrenceDeductible?: number | null; perUnitDeductible?: number | null;
   blanketLimit?: number | null; coinsurancePct?: number | null;

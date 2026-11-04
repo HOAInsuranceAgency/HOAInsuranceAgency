@@ -1,6 +1,7 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 import { packageTerms } from '../../../shared/quotePackages';
 import { commissionPolicy, commissionAccount } from './commissionFixtures';
+import type { CarrierPaymentArrangement } from '../../../shared/commissions';
 const h = vi.hoisted(() => ({
   get: vi.fn(),
   commit: vi.fn(),
@@ -12,6 +13,10 @@ vi.mock('../../amplify/functions/commissions/store', () => ({
   commit: h.commit,
   db: { send: h.send },
   table: () => 'commissions',
+}));
+vi.mock('../../amplify/functions/broker-fees/store', async original => ({
+  ...await original<typeof import('../../amplify/functions/broker-fees/store')>(),
+  accountAgreements: async () => [],
 }));
 vi.mock('../../amplify/functions/crm-access/user-status', () => ({
   activeTeamUserCheck: (id: string) => ({
@@ -33,6 +38,7 @@ vi.mock('../../amplify/functions/crm-access/access', () => ({
   },
 }));
 import { bindPolicy } from '../../amplify/functions/commissions/bind';
+import { validateInvoiceSourceCharges } from '../../amplify/functions/send-invoice/passThroughInvoice';
 const quote = {
   id: 'q',
   accountId: 'a',
@@ -98,6 +104,8 @@ beforeEach(() => {
 });
 it('atomically binds, converts the lead, and freezes the original producer rate without a receipt', async () => {
   const result = await bindPolicy(event, input());
+  expect(result.policy.passThroughCharges).toEqual([]);
+  expect(()=>validateInvoiceSourceCharges({invoice:{accountId:'a',policyId:String(result.policy.id),sourcePricingVersion:1},source:{id:String(result.policy.id),accountId:String(result.policy.accountId),premium:Number((result.policy as Record<string,unknown>).premium),billType:String(result.policy.billType),passThroughCharges:result.policy.passThroughCharges},lines:[{accountId:'a',kind:'TAX',retailAmount:100,costAmount:100}]})).toThrow('reviewed source quote');
   expect(result.account).toMatchObject({ stage: 'CLIENT' });
   const [changes, actor, extras] = h.commit.mock.calls[0];
   expect(actor).toBe('owner');
@@ -109,6 +117,7 @@ it('atomically binds, converts the lead, and freezes the original producer rate 
     agencyRateUnits: 120000,
     entries: [],
   });
+  expect(changes[0].value.carrierTerms).not.toHaveProperty('arrangements');
   expect(extras).toEqual(
     expect.arrayContaining([
       expect.objectContaining({
@@ -126,6 +135,14 @@ it('atomically binds, converts the lead, and freezes the original producer rate 
     ]),
   );
   expect(h.send.mock.calls[0][0].input.IndexName).toBe('verified-account-index');
+});
+it('copies reviewed supplier charges and client conditions without changing premium or producer earnings', async () => {
+  const charges = [{ id: 'rt-fee', kind: 'WHOLESALER_FEE', description: 'RT brokerage fee', amountCents: 25000 }];
+  const reviewed = { ...quote, passThroughCharges: JSON.stringify(charges), clientConditions: 'No flat cancellations.' };
+  h.rows.set('Quote:q', reviewed);
+  const result = await bindPolicy(event, { ...input(), terms: packageTerms(reviewed) });
+  expect(result.policy).toMatchObject({ passThroughCharges: charges, clientConditions: 'No flat cancellations.', premium: 100000 });
+  expect(h.commit.mock.calls[0][0][0].value).toMatchObject({ premiumCents: 10000000, agencyRateUnits: 120000, entries: [] });
 });
 it.each([
   { billType: '' },
@@ -308,4 +325,56 @@ it('preserves the account exclusion on a later renewal', async () => {
     producerBps: 0,
     eligibility: { eligible: false, accountFirstBoundOn: '2026-09-30' },
   });
+});
+
+const scopedPayment = (): CarrierPaymentArrangement => ({
+  id: 'property-direct', from: '2026-01-01', to: '2026-12-31',
+  lines: ['Property'], billType: 'DIRECT', transaction: 'NEW',
+  basis: 'EARNED', payor: 'Carrier payments', trigger: 'EARNED', cadence: 'MONTHLY',
+  lagDays: 30, earningMethod: 'DAILY_PRORATA', evidence: 'Property commission agreement',
+});
+const configureStructuredCarrier = () => {
+  const fallback = h.get.getMockImplementation()!;
+  const payment = scopedPayment();
+  h.get.mockImplementation(async (kind, id) => kind === 'CARRIER'
+    ? { ...commissionPolicy().carrierTerms, version: 8, arrangements: [payment] }
+    : fallback(kind, id));
+  return payment;
+};
+it('freezes the confirmed applicable carrier arrangement and guards the parent version', async () => {
+  const payment = configureStructuredCarrier();
+  await bindPolicy(event, {
+    ...input(), carrierTermsVersion: 8, carrierArrangementId: payment.id,
+  });
+  const [changes, , guards] = h.commit.mock.calls[0];
+  expect(changes[0].value).toMatchObject({
+    carrierTerms: { version: 8, basis: 'EARNED', evidence: payment.evidence, payment: { ...payment, lines: ['PROPERTY'] } },
+    entries: [],
+  });
+  expect(changes[0].value.carrierTerms).not.toHaveProperty('arrangements');
+  expect(guards).toContainEqual({
+    ConditionCheck: {
+      TableName: 'commissions', Key: { kind: 'CARRIER', id: 'c' },
+      ConditionExpression: '#v = :v', ExpressionAttributeNames: { '#v': 'version' },
+      ExpressionAttributeValues: { ':v': 8 },
+    },
+  });
+});
+it.each([
+  {},
+  { carrierTermsVersion: 7, carrierArrangementId: 'property-direct' },
+  { carrierTermsVersion: 8, carrierArrangementId: 'other-scope' },
+])('blocks unconfirmed or changed structured carrier payment terms %#', async (confirmation) => {
+  configureStructuredCarrier();
+  await expect(bindPolicy(event, { ...input(), ...confirmation })).rejects.toThrow(/confirm/i);
+  expect(h.commit).not.toHaveBeenCalled();
+});
+it('requires an applicable carrier arrangement for the policy term rather than using an expired default', async () => {
+  configureStructuredCarrier();
+  const future = { ...quote, effectiveDate: '2027-01-01', expirationDate: '2028-01-01' };
+  h.rows.set('Quote:q', future);
+  await expect(bindPolicy(event, {
+    ...input(), terms: packageTerms(future), carrierTermsVersion: 8, carrierArrangementId: 'property-direct',
+  })).rejects.toThrow(/carrier|arrangement|terms/i);
+  expect(h.commit).not.toHaveBeenCalled();
 });

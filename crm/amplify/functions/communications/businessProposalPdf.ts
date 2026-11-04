@@ -2,6 +2,7 @@ import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from 'pdf
 import type { PublicProposalQuote } from '../../../../shared/frontBusinessDelivery';
 import { validCalendarDate } from '../../../../shared/renewalPolicy';
 import { brokerFeeCents } from '../../../../shared/brokerFees';
+import { normalizeClientConditions, normalizePassThroughCharges, passThroughTotalCents } from '../../../../shared/passThroughCharges';
 
 export interface BusinessProposalInput {
   account: { name: string; legalName?: string | null; address?: string | null; city?: string | null; state?: string | null; zip?: string | null };
@@ -21,8 +22,8 @@ export async function createBusinessProposalPdf(input: BusinessProposalInput) {
   if (!input.quotes.length || input.quotes.length > 50) throw new Error('Choose a reviewed package with 1 to 50 quotes.');
   const pdf = await PDFDocument.create({ updateMetadata: false });
   const regular = await pdf.embedFont(StandardFonts.Helvetica), bold = await pdf.embedFont(StandardFonts.HelveticaBold);
-  const text = (value: string, label = 'Proposal text') => {
-    if (typeof value !== 'string' || value.length > 4000 || /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(value)) throw new Error(`${label} needs review before preparing the proposal.`);
+  const text = (value: string, label = 'Proposal text', maxLength = 4000) => {
+    if (typeof value !== 'string' || value.length > maxLength || /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(value)) throw new Error(`${label} needs review before preparing the proposal.`);
     const clean = value.replace(/\r\n?/g, '\n').trim();
     try { regular.encodeText(clean.replace(/\n/g, ' ')); }
     catch { throw new Error(`${label} contains a character this proposal font cannot display. Review it before preparing the draft.`); }
@@ -69,7 +70,10 @@ export async function createBusinessProposalPdf(input: BusinessProposalInput) {
   }
   function line(value: string, size = 10, strong = false, muted = false) {
     const font = strong ? bold : regular;
-    for (const item of wrap(value, font, size, CONTENT)) {
+    const lines = wrap(value, font, size, CONTENT);
+    // Keep a paragraph together when it fits on one page.
+    if (lines.length * (size + 5) <= HEIGHT - 140) room(lines.length * (size + 5));
+    for (const item of lines) {
       room(size + 5); page.drawText(item, { x: MARGIN, y, font, size, color: muted ? MUTED : strong ? NAVY : INK }); y -= size + 5;
     }
   }
@@ -90,7 +94,7 @@ export async function createBusinessProposalPdf(input: BusinessProposalInput) {
   if (issueTime) line(`Prepared ${new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', dateStyle: 'long' }).format(issueTime)}`, 9, false, true);
   if (reference) line(`Proposal reference: ${reference}`, 9, false, true);
   gap(8); rule();
-  let subtotal = 0, feeSubtotal = 0;
+  let subtotal = 0, feeSubtotal = 0, passThroughSubtotal = 0;
   for (const [index, quote] of input.quotes.entries()) {
     if (!validCalendarDate(quote.effectiveDate) || !validCalendarDate(quote.expirationDate) || quote.expirationDate <= quote.effectiveDate || (quote.offerExpiresAt && !validCalendarDate(quote.offerExpiresAt))) throw new Error('Review the recorded quote dates before preparing the proposal.');
     const premium = number(quote.premium, 'Quoted premium');
@@ -102,8 +106,17 @@ export async function createBusinessProposalPdf(input: BusinessProposalInput) {
     room(100); line(`${index + 1}. ${carrier}`, 13, true);
     line(quote.lines.map(value => text(value, 'Quoted coverage')).join(', '), 10);
     line(`Quoted premium: ${premium}`, 11, true);
+    const charges = normalizePassThroughCharges(quote.passThroughCharges);
+    const passThroughCents = passThroughTotalCents(charges); passThroughSubtotal += passThroughCents;
+    for (const charge of charges) line(`${text(charge.description, 'Supplier charge')}: ${dollars(charge.amountCents / 100)}`, 10);
     const fee = brokerFeeCents(quote.brokerFee); feeSubtotal += fee;
-    if (fee) line(`Agency broker fee: ${dollars(fee / 100)}`, 11, true);
+    if (fee && quote.billType !== 'AGENCY') throw new Error('Broker fees require agency billing. Review this quote before preparing its proposal.');
+    if (fee) line(`HOA broker fee: ${dollars(fee / 100)}`, 11, true);
+    const policyTotal = Math.round(quote.premium * 100) + passThroughCents + fee;
+    if (!Number.isSafeInteger(policyTotal) || !Number.isSafeInteger(passThroughSubtotal) || !Number.isSafeInteger(feeSubtotal)) throw new Error('The quoted charges need review.');
+    line(`Total quoted policy cost: ${dollars(policyTotal / 100)}`, 11, true);
+    if (quote.billType === 'AGENCY') line('Agency billed - pay HOA Insurance Agency using your invoice payment link.', 9, false, true);
+    else if (quote.billType === 'DIRECT') line('Carrier billed premium - your HOA invoice identifies any charges payable separately to the agency.', 9, false, true);
     line(`Policy term: ${quote.effectiveDate} to ${quote.expirationDate}`, 10);
     line(`Offer valid through: ${quote.offerExpiresAt || 'Not recorded - confirm with the carrier'}`, 10, false, true);
     const terms: [string, unknown, boolean?][] = [
@@ -121,11 +134,25 @@ export async function createBusinessProposalPdf(input: BusinessProposalInput) {
     if (quote.replacementCostType) line(`Property valuation: ${text(words(quote.replacementCostType), 'Property valuation')}`, 9);
     if (quote.glClaimsMade != null) line(`GL coverage form: ${quote.glClaimsMade ? 'Claims made' : 'Occurrence'}`, 9);
     if (quote.glAggregateAppliesTo) line(`GL aggregate applies to: ${text(words(quote.glAggregateAppliesTo), 'GL aggregate basis')}`, 9);
+    const clientConditions = normalizeClientConditions(quote.clientConditions);
+    if (clientConditions) {
+      room(26 + Math.min(3, wrap(clientConditions, regular, 9, CONTENT).length) * 14);
+      gap(6); line('Conditions and requirements', 10, true);
+      line(text(clientConditions, 'Client conditions', 6000), 9);
+    }
     gap(9); rule();
   }
   room(180); line(`Recorded premium subtotal: ${dollars(subtotal / 100)}`, 13, true);
-  if (feeSubtotal) { line(`Agency broker fees: ${dollars(feeSubtotal / 100)}`, 13, true); line(`Premium and broker fees: ${dollars((subtotal + feeSubtotal) / 100)}`, 15, true); line('Broker fees require a separate signed fee agreement and are payable upfront. They are excluded from premium financing.', 9, false, true); }
+  if (passThroughSubtotal) line(`Supplier fees and taxes: ${dollars(passThroughSubtotal / 100)}`, 13, true);
+  if (feeSubtotal) line(`HOA broker fees: ${dollars(feeSubtotal / 100)}`, 13, true);
+  if (!Number.isSafeInteger(subtotal + passThroughSubtotal + feeSubtotal)) throw new Error('The package cost total needs review.');
+  line(`Total quoted policy cost: ${dollars((subtotal + passThroughSubtotal + feeSubtotal) / 100)}`, 15, true);
+  if (feeSubtotal) line('HOA broker fees require a separate signed fee agreement and are payable upfront. They are excluded from premium financing.', 9, false, true);
   gap(8);
+  line('Agency compensation: HOA Insurance Agency may receive commissions from insurers for placing and servicing coverage. Any HOA broker fee is itemized separately. Contact the agency for additional compensation information.', 9, false, true);
+  gap(5);
+  line('Payment: Your HOA Insurance Agency invoice identifies the amount payable to the agency and provides the payment link. Wholesaler payment instructions in source documents are for agency remittance; contact us before making a separate payment to avoid paying twice.', 9, false, true);
+  gap(5);
   line('Review the carrier quotations for full terms, taxes, fees, exclusions, conditions, and payment requirements. Values not recorded here are not represented as included coverage.', 9, false, true);
   gap(5); line('This proposal and its email do not bind insurance. Client authorization and carrier confirmation remain separate steps.', 9, false, true);
   const pages = pdf.getPages();

@@ -140,3 +140,43 @@ it('keeps approved coverage terms in compact quote reads so reviewed packages re
   expect(snapshot().item.forecast).toMatchObject({ cents: 10000, label: 'Lowest complete package' });
   expect(snapshot().item).not.toHaveProperty('quotes');
 });
+
+it('keeps optional packet terms in compact reads without counting supplier charges or HOA fees as pending premium commission', async () => {
+  const charges = [{ id: 'supplier', kind: 'WHOLESALER_FEE', description: 'Supplier charge marker', amountCents: 25000 }];
+  const quote = { id: 'q', accountId: 'a', status: 'QUOTED', carrierId: 'carrier', lines: ['GL'], premium: 1000, commissionPct: 10,
+    brokerFee: 125.50, billType: 'AGENCY', passThroughCharges: JSON.stringify(charges), clientConditions: 'Reviewed client condition marker',
+    effectiveDate: '2026-12-01', expirationDate: '2027-12-01', updatedAt: at };
+  const terms = { q: packageTerms(quote) }, plan = { ...emptyCommercialPlan('a'), requiredLines: ['GL'], selectedOptionId: 'chosen', selectedTerms: terms,
+    options: [{ id: 'chosen', name: 'Chosen', quoteIds: ['q'], reviewed: { at, by: 'sales', terms } }] };
+  h.records.set('quotes|q', quote); h.records.set('comms|commercial:a', { id: 'commercial:a', version: 1, data: plan });
+  const source = await readProjectionSource('a');
+  expect(source.quotes[0]).toMatchObject({ brokerFee: 125.50, billType: 'AGENCY', passThroughCharges: JSON.stringify(charges), clientConditions: quote.clientConditions });
+  expect(packageTerms(source.quotes[0] as never)).toBe(terms.q);
+  await projectAccount('a', today, at);
+  expect(snapshot().item.forecast).toMatchObject({ cents: 10000, label: 'Client-selected package' });
+  expect(JSON.stringify(snapshot().item)).not.toMatch(/Supplier charge marker|Reviewed client condition marker|passThroughCharges|clientConditions|selectedTerms/);
+});
+
+it.each(['passThroughCharges', 'clientConditions'])('fails closed when compact current %s are malformed instead of reusing a legacy approval', async field => {
+  const quote = { id: 'q', accountId: 'a', status: 'QUOTED', carrierId: 'carrier', lines: ['GL'], premium: 1000, commissionPct: 10,
+    effectiveDate: '2026-12-01', expirationDate: '2027-12-01', updatedAt: at };
+  const terms = { q: packageTerms(quote) }, plan = { ...emptyCommercialPlan('a'), requiredLines: ['GL'],
+    options: [{ id: 'chosen', name: 'Chosen', quoteIds: ['q'], reviewed: { at, by: 'sales', terms } }] };
+  h.records.set('quotes|q', quote); h.records.set('comms|commercial:a', { id: 'commercial:a', version: 1, data: plan });
+  await projectAccount('a', today, at); expect(snapshot().item.forecast.cents).toBe(10000);
+  Object.assign(quote, { [field]: field === 'passThroughCharges' ? '{bad' : 'invalid\0condition', updatedAt: '2026-11-04T16:00:00Z' });
+  await projectAccount('a', today, at);
+  expect(snapshot().item.forecast).toMatchObject({ cents: null, label: 'Incomplete package' });
+});
+
+it('preserves a legacy package approval when optional packet fields are saved empty', async () => {
+  const quote = { id: 'q', accountId: 'a', status: 'QUOTED', carrierId: 'carrier', lines: ['GL'], premium: 1000, commissionPct: 10,
+    effectiveDate: '2026-12-01', expirationDate: '2027-12-01', updatedAt: at };
+  const terms = { q: packageTerms(quote) }, plan = { ...emptyCommercialPlan('a'), requiredLines: ['GL'],
+    options: [{ id: 'chosen', name: 'Chosen', quoteIds: ['q'], reviewed: { at, by: 'sales', terms } }] };
+  Object.assign(quote, { passThroughCharges: [], clientConditions: '  ' });
+  h.records.set('quotes|q', quote); h.records.set('comms|commercial:a', { id: 'commercial:a', version: 1, data: plan });
+  expect(packageTerms((await readProjectionSource('a')).quotes[0] as never)).toBe(terms.q);
+  await projectAccount('a', today, at);
+  expect(snapshot().item.forecast).toMatchObject({ cents: 10000, label: 'Lowest complete package' });
+});

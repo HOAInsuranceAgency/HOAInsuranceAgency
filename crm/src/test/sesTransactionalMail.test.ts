@@ -168,3 +168,20 @@ describe("SES envelope fidelity and independent application caps", () => {
     for (const [k, v] of Object.entries(patch)) vi.stubEnv(k, v); const h = harness(); await expect(new TransactionalMailClient("login", h.deps).send(command())).rejects.toThrow("limits"); expect(h.database.send).not.toHaveBeenCalled(); expect(h.sesMock).not.toHaveBeenCalled();
   });
 });
+
+describe('withdrawn invoice mail remains retired across operator recovery',()=>{
+ it.each(['DEFERRED','RESERVED','ACCEPTED','UNKNOWN'])('never sends or replays retired %s evidence',async state=>{
+  const h=harness(),body=payload(command().input,{}),digest=hash(JSON.stringify(body)),pk=`OP#hoa/main/invoice/${hash(digest)}`;
+  h.rows.set(pk,{pk,state,payloadHash:digest,payloadKey:`outbox/main/${hash(pk.slice(3))}/${digest}.json`,attempt:1,provider:'ses',providerId:'historic-provider',retiredAt:new Date(now).toISOString()});
+  const client=new TransactionalMailClient('invoice',h.deps);
+  await expect(client.send(command())).rejects.toThrow('retired');
+  await expect(client.replay(pk,digest)).rejects.toThrow('retired');
+  expect(h.sesMock).not.toHaveBeenCalled();expect(h.rows.get(pk)).toMatchObject({state,providerId:'historic-provider'});
+ });
+ it('a retirement marker winning after replay reads stops its actual provider claim',async()=>{
+  const h=harness({beforeClaim:()=>{const op=[...h.rows.values()].find(row=>row.kind==='OPERATION');op.retiredAt=new Date(now).toISOString();}});
+  await expect(new TransactionalMailClient('invoice',h.deps).send(command())).rejects.toThrow('retired');
+  expect(h.sesMock).not.toHaveBeenCalled();
+  expect(h.transactions[0].TransactItems[0].Update.ConditionExpression).toContain('attribute_not_exists(retiredAt)');
+ });
+});

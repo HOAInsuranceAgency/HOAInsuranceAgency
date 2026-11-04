@@ -25,7 +25,9 @@ export async function readOne(TableName: string, Key: RecordData) {
 }
 const compactFields: Partial<Record<SourceModel, string[]>> = {
   Contact: ['id', 'accountId', 'name', 'email', 'isPrimary', 'validFrom', 'validUntil', 'updatedAt'],
-  Quote: ['id', 'accountId', 'status', 'lines', 'commissionPct', 'brokerFee', 'billType', 'offerExpiresAt', 'renewalPolicyId', 'notes', 'updatedAt', ...AUTHORIZED_QUOTE_TERM_FIELDS],
+  // Optional client terms must survive compact reads without becoming required
+  // keys in the legacy authorization fingerprint.
+  Quote: ['id', 'accountId', 'status', 'lines', 'commissionPct', 'brokerFee', 'billType', 'passThroughCharges', 'clientConditions', 'offerExpiresAt', 'renewalPolicyId', 'notes', 'updatedAt', ...AUTHORIZED_QUOTE_TERM_FIELDS],
   Policy: ['id', 'accountId', 'status', 'expirationDate', 'updatedAt'],
   UserProfile: ['id', 'userId', 'firstName', 'lastName', 'email', 'updatedAt'],
 };

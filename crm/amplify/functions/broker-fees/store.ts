@@ -1,5 +1,5 @@
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
-import { DynamoDBDocumentClient, GetCommand, QueryCommand, TransactWriteCommand, type TransactWriteCommandInput } from '@aws-sdk/lib-dynamodb';
+import { DynamoDBDocumentClient, BatchGetCommand, GetCommand, QueryCommand, TransactWriteCommand, type TransactWriteCommandInput } from '@aws-sdk/lib-dynamodb';
 import type { BrokerFeeAgreement, BrokerFeeRecord } from '../../../../shared/brokerFees';
 export type Write = NonNullable<TransactWriteCommandInput['TransactItems']>[number];
 export const db = DynamoDBDocumentClient.from(new DynamoDBClient(), { marshallOptions: { removeUndefinedValues: true } });
@@ -54,4 +54,45 @@ export async function accountFees(accountId: string): Promise<BrokerFeeRecord[]>
     cursor = result.LastEvaluatedKey; if (!cursor) return output;
   }
   throw new Error('The fee status list could not be loaded completely.');
+}
+
+/** Index discovery selects only agreements covering this quote. Consistent
+ * batches supply current signed state without one request per historical agreement. */
+export async function accountAgreements(accountId: string, quoteId: string): Promise<BrokerFeeAgreement[]> {
+  // Agreements contain at most 25 quotes. Filter their existing nested IDs;
+  // no new index, denormalized association, or browser-owned selector is needed.
+  const coversQuote = Array.from({ length: 25 }, (_, index) => `#quotes[${index}].#id = :quote`).join(' OR ');
+  const ids = new Set<string>(); let cursor: Record<string, unknown> | undefined;
+  for (let page = 0; page < 100; page++) {
+    const result = await db.send(new QueryCommand({
+      TableName: table(), IndexName: 'account',
+      KeyConditionExpression: 'accountId = :account AND begins_with(id, :agreement)',
+      FilterExpression: `#kind = :kind AND (${coversQuote})`,
+      ExpressionAttributeNames: { '#kind': 'kind', '#quotes': 'quotes', '#id': 'id' },
+      ExpressionAttributeValues: { ':account': accountId, ':agreement': 'bfa_', ':kind': 'AGREEMENT', ':quote': quoteId },
+      ProjectionExpression: 'id', Limit: 100, ExclusiveStartKey: cursor,
+    }));
+    for (const row of result.Items ?? []) if (typeof row.id === 'string') ids.add(row.id);
+    if (ids.size > 5000) throw new Error('The signed agreement list could not be loaded completely.');
+    cursor = result.LastEvaluatedKey;
+    if (!cursor) {
+      const agreements: BrokerFeeAgreement[] = [], keys = [...ids];
+      const name=table();
+      for (let offset = 0; offset < keys.length; offset += 100) {
+        let pending=keys.slice(offset,offset+100).map(id=>({id}));
+        const requested=new Set(pending.map(key=>key.id));
+        for(let attempt=0;pending.length&&attempt<5;attempt++){
+          const result=await db.send(new BatchGetCommand({RequestItems:{[name]:{Keys:pending,ConsistentRead:true}}}));
+          agreements.push(...(result.Responses?.[name]??[]).filter((row):row is BrokerFeeAgreement=>
+            requested.has(row.id) && row.kind==='AGREEMENT' && row.accountId===accountId &&
+            Array.isArray(row.quotes) && row.quotes.some(quote=>quote.id===quoteId && quote.accountId===accountId)));
+          pending=(result.UnprocessedKeys?.[name]?.Keys??[]).map(key=>({id:String(key.id)}));
+          if(pending.length&&attempt<4)await new Promise(resolve=>setTimeout(resolve,Math.min(25*2**attempt,200)));
+        }
+        if(pending.length)throw new Error('The signed agreement list could not be loaded completely.');
+      }
+      return agreements;
+    }
+  }
+  throw new Error('The signed agreement list could not be loaded completely.');
 }

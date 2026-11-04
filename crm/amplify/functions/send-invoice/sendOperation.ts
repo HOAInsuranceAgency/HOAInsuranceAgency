@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { GetCommand, UpdateCommand, type DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
+import type { Write } from "../broker-fees/store";
 import { hash, MailDeliveryError } from "../transactional-mail/contract";
 
 // Private DynamoDB attribute: deliberately absent from the public model, so a
@@ -15,8 +16,9 @@ export type InvoiceSendOperation = {
   version: 1; key: string; recipients: string; previousSentAt: string | null;
   leaseId: string; leaseUntil: number;
   completed?: { providerId: string; result: Result };
+  retired?: { reason: "VOID"; invoiceId: string; retiredAt: string; closedLinkId: string | null };
 };
-type Dependencies = { database: Pick<DynamoDBDocumentClient, "send">; now?: () => number; uuid?: () => string };
+type Dependencies = { database: Pick<DynamoDBDocumentClient, "send">; now?: () => number; uuid?: () => string; invoiceTable?: string };
 export class InvoiceSendBlocked extends Error {}
 const blocked = (message: string): never => { throw new InvoiceSendBlocked(message); };
 function environment() {
@@ -33,6 +35,61 @@ function valid(value: any): value is InvoiceSendOperation {
     && typeof value.leaseId === "string" && Number.isFinite(value.leaseUntil)
     && (!value.completed || (typeof value.completed.providerId === "string" && value.completed.result?.ok === true
       && typeof value.completed.result.sentAt === "string" && typeof value.completed.result.sentTo === "string" && typeof value.completed.result.subject === "string"));
+}
+
+/** Server-only proof is bound to this withdrawn invoice and the closed link.
+ * It preserves uncertain delivery history without treating it as a success. */
+export function isRetiredInvoiceSend(invoice: Record<string, unknown>): boolean {
+  const operation = invoice.invoiceSendOperation;
+  if (!valid(operation) || !operation.key.startsWith(`invoice:${invoice.id}:`) || invoice.status !== 'VOID') return false;
+  const retired = operation.retired, at = Date.parse(retired?.retiredAt ?? '');
+  return retired?.reason === 'VOID' && retired.invoiceId === invoice.id && Number.isFinite(at)
+    && (operation.completed !== undefined || operation.leaseUntil <= at)
+    && retired.closedLinkId === (invoice.stripePaymentLinkId || null);
+}
+export function invoiceSendSettled(invoice: Record<string, unknown>): boolean {
+  const operation = invoice.invoiceSendOperation;
+  return operation == null || isRetiredInvoiceSend(invoice) || valid(operation) && !operation.retired && !!operation.completed;
+}
+/** Void can retire the existing operation only after its worker has drained.
+ * This exceeds Send's hard 60-second timeout. A current operator recovery has
+ * its own mail-ledger SENDING timestamp and is fenced separately below. */
+export async function prepareInvoiceSendRetirement(invoice: Record<string, unknown>, deps: Dependencies): Promise<{ operation?: InvoiceSendOperation; writes: Write[] }> {
+  const previous = invoice.invoiceSendOperation;
+  if (previous === undefined) return { writes: [] };
+  if (!valid(previous) || !previous.key.startsWith(`invoice:${invoice.id}:`)) return blocked('The invoice delivery record needs review before it can be retired.');
+  if (isRetiredInvoiceSend(invoice)) return { operation: previous, writes: [] };
+  const now = (deps.now ?? Date.now)();
+  if (!previous.completed && previous.leaseUntil > now) return blocked('This invoice send is still in progress. Wait two minutes, then retry Void.');
+  const retiredAt = new Date(now).toISOString();
+  const operation: InvoiceSendOperation = { ...previous, retired: { reason: 'VOID', invoiceId: String(invoice.id), retiredAt, closedLinkId: typeof invoice.stripePaymentLinkId === 'string' && invoice.stripePaymentLinkId ? invoice.stripePaymentLinkId : null } };
+  const env = environment(), TableName = process.env.HOA_TRANSACTIONAL_MAIL_TABLE!;
+  const key = `OP#hoa/${env}/invoice/${hash(previous.key)}`;
+  const ledger = (await deps.database.send(new GetCommand({ TableName, Key: { pk: key }, ConsistentRead: true }))).Item;
+  if (ledger?.state === 'SENDING' && (!Number.isFinite(Date.parse(ledger.updatedAt)) || Date.parse(ledger.updatedAt) + LEASE_MS > now)) return blocked('This invoice email is still in progress. Wait two minutes, then retry Void.');
+  const names: Record<string,string> = {}, values: Record<string,unknown> = { ':retired':retiredAt, ':invoice':String(invoice.id), ':reason':'INVOICE_VOID' }, conditions:string[]=[];
+  if (!ledger) conditions.push('attribute_not_exists(pk)');
+  else for(const [index,field] of ['state','attempt','payloadHash','payloadKey','provider','providerId','updatedAt','retiredAt'].entries()) {
+    const name=`#l${index}`,value=`:l${index}`;names[name]=field;
+    if(Object.hasOwn(ledger,field)){conditions.push(`${name} = ${value}`);values[value]=ledger[field];}else conditions.push(`attribute_not_exists(${name})`);
+  }
+  // Keep ACCEPTED/UNKNOWN/REJECTED and provider evidence exactly as recorded.
+  // This terminal marker also tombstones an absent OP before an old replay can
+  // reserve it. The sender/recovery claim refuses retiredAt atomically.
+  const write:Write={Update:{TableName,Key:{pk:key},UpdateExpression:'SET retiredAt = :retired, retiredInvoiceId = :invoice, retirementReason = :reason',ConditionExpression:conditions.join(' AND '),...(Object.keys(names).length?{ExpressionAttributeNames:names}:{}),ExpressionAttributeValues:values}};
+  return { operation, writes:[write] };
+}
+
+/** Repair old VOID rows automatically inside the existing quote/publication
+ * transaction. V1/V2 Void verified its sessions; an unflagged linked legacy
+ * row still needs processor closure through Void before this proof is safe. */
+export async function voidedInvoiceSendRetirementWrites(invoice: Record<string, unknown>, deps: Dependencies): Promise<Write[]> {
+  if(invoiceSendSettled(invoice))return [];
+  if(invoice.status!=='VOID'||![1,2].includes(Number(invoice.sourcePricingVersion))&&(invoice.stripePaymentLinkId||invoice.paymentUrl))return blocked('Close the existing invoice payment sessions before retiring its delivery.');
+  const retirement=await prepareInvoiceSendRetirement(invoice,deps),TableName=deps.invoiceTable??process.env.INVOICE_TABLE;
+  if(!TableName||!retirement.operation)return blocked('Invoice send retirement is not configured.');
+  const now=new Date(Math.max((deps.now??Date.now)(),Date.parse(String(invoice.updatedAt))+1)).toISOString();
+  return [{Update:{TableName,Key:{id:invoice.id},UpdateExpression:'SET #op = :retired, updatedAt = :now',ConditionExpression:'#status = :void AND updatedAt = :old AND #op = :previous',ExpressionAttributeNames:{'#op':'invoiceSendOperation','#status':'status'},ExpressionAttributeValues:{':retired':retirement.operation,':now':now,':void':'VOID',':old':invoice.updatedAt,':previous':invoice.invoiceSendOperation}}},...retirement.writes];
 }
 
 /** Root-only, post-deployment zero-legacy inventory; never created by this handler. */
@@ -62,6 +119,7 @@ export async function beginInvoiceSend(invoice: Invoice, to: string[], expectedS
   const row = (await db.send(new GetCommand({ TableName: table, Key: { id: invoice.id }, ConsistentRead: true }))).Item;
   if (!row || row.updatedAt !== invoice.updatedAt || row.status !== invoice.status || row.status === "VOID") return blocked("The invoice changed. Refresh it before sending.");
   const previous = row[ATTRIBUTE] as InvoiceSendOperation | undefined;
+  if (previous?.retired) return blocked("This invoice send was retired when the invoice was voided.");
   if (previous !== undefined && (!valid(previous) || !previous.key.startsWith(`invoice:${invoice.id}:`))) return blocked("The invoice delivery record needs review. No replacement was sent.");
   const recipients = hash(to.map(address => address.trim().toLowerCase()).sort().join(","));
   const observedSentAt = expectedSentAt === undefined ? undefined : expectedSentAt || null;

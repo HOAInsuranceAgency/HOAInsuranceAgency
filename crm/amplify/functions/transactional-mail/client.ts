@@ -9,7 +9,7 @@ const db = DynamoDBDocumentClient.from(new DynamoDBClient(), { marshallOptions: 
 const s3 = new S3Client();
 // A single SDK attempt is essential: SES does not deduplicate SendEmail requests.
 const ses = new SESv2Client({ region: "us-east-1", maxAttempts: 1 });
-type Operation = { pk: string; state: string; payloadHash: string; payloadKey?: string; provider?: string; providerId?: string; attempt?: number; nextRetryAt?: string };
+type Operation = { pk: string; state: string; payloadHash: string; payloadKey?: string; provider?: string; providerId?: string; attempt?: number; nextRetryAt?: string; retiredAt?: string };
 export interface TransportDependencies {
   database: Pick<typeof db, "send">;
   storage: Pick<typeof s3, "send">;
@@ -69,6 +69,7 @@ export class TransactionalMailClient {
     const prefix = `OP#hoa/${logicalEnvironment()}/${this.kind}/`;
     if (!operationKey.startsWith(prefix) || !/^[a-f0-9]{64}$/.test(operationKey.slice(prefix.length)) || this.kind === "login" || this.kind === "invite") throw new Error("This email is not eligible for operator recovery.");
     const operation: Operation | undefined = await get(operationKey, this.deps);
+    if (operation?.retiredAt) throw new Error("This saved invoice email was retired when its invoice was voided.");
     if (!operation || operation.payloadHash !== expectedPayloadHash || !["DEFERRED", "RESERVED"].includes(operation.state) || !operation.payloadKey) throw new Error("Only definitely unsent saved mail can be recovered. Reconcile accepted or uncertain deliveries separately.");
     const idempotencyKey = operationKey.slice(3);
     const expected = `outbox/${logicalEnvironment()}/${hash(idempotencyKey)}/${operation.payloadHash}.json`;
@@ -94,6 +95,7 @@ export class TransactionalMailClient {
     // Conversion is local and must succeed before reserving an attempt.
     const sesRequest = sesCommand(body, sesConfigurationSet(), environment, this.kind, operationKey);
     let operation: Operation | undefined = await get(operationKey, deps);
+    if (operation?.retiredAt) throw new Error("This saved invoice email was retired when its invoice was voided.");
     if (operation && operation.payloadHash !== digest) throw new Error("The email operation already exists with different content. Review it before creating a replacement.");
     if (operation?.state === "ACCEPTED" && operation.providerId) return { MessageId: operation.providerId };
     if (operation?.state === "DEFERRED" && (!operation.nextRetryAt || !Number.isFinite(Date.parse(operation.nextRetryAt)) || Date.parse(operation.nextRetryAt) > deps.now())) throw new MailDeliveryError("DEFERRED", operationKey);
@@ -117,6 +119,7 @@ export class TransactionalMailClient {
         if (error.name !== "ConditionalCheckFailedException") throw error;
         // Do not run a second network send on a concurrent invocation.
         const winner = await get(operationKey, deps);
+        if (winner?.retiredAt) throw new Error("This saved invoice email was retired when its invoice was voided.");
         if (winner?.state === "ACCEPTED" && winner.payloadHash === digest && winner.providerId) return { MessageId: winner.providerId };
         throw new MailDeliveryError("UNKNOWN", operationKey);
       }
@@ -138,12 +141,13 @@ export class TransactionalMailClient {
     // Five recipient slots remain available for sign-in if other mail fills a day.
     try {
       await deps.database.send(new TransactWriteCommand({ TransactItems: [
-        { Update: { TableName: table(), Key: { pk: operationKey }, UpdateExpression: "SET #state = :sending, #provider = if_not_exists(#provider, :provider), attempt = :attempt, updatedAt = :now", ConditionExpression: "(#state = :reserved OR #state = :deferred) AND payloadHash = :hash AND attempt = :oldAttempt AND (attribute_not_exists(#provider) OR #provider = :provider)", ExpressionAttributeNames: { "#state": "state", "#provider": "provider" }, ExpressionAttributeValues: { ":sending": "SENDING", ":reserved": "RESERVED", ":deferred": "DEFERRED", ":provider": provider, ":hash": digest, ":oldAttempt": operation.attempt ?? 0, ":attempt": attempt, ":now": now } } },
+        { Update: { TableName: table(), Key: { pk: operationKey }, UpdateExpression: "SET #state = :sending, #provider = if_not_exists(#provider, :provider), attempt = :attempt, updatedAt = :now", ConditionExpression: "(#state = :reserved OR #state = :deferred) AND attribute_not_exists(retiredAt) AND payloadHash = :hash AND attempt = :oldAttempt AND (attribute_not_exists(#provider) OR #provider = :provider)", ExpressionAttributeNames: { "#state": "state", "#provider": "provider" }, ExpressionAttributeValues: { ":sending": "SENDING", ":reserved": "RESERVED", ":deferred": "DEFERRED", ":provider": provider, ":hash": digest, ":oldAttempt": operation.attempt ?? 0, ":attempt": attempt, ":now": now } } },
         ...[[policy.dayKey, policy.dayLimit], [policy.monthKey, policy.monthLimit]].map(([pk, limit]) => ({ Update: { TableName: table(), Key: { pk }, UpdateExpression: "SET #count = if_not_exists(#count, :zero) + :cost", ConditionExpression: "attribute_not_exists(#count) OR #count <= :remaining", ExpressionAttributeNames: { "#count": "count" }, ExpressionAttributeValues: { ":zero": 0, ":cost": recipientCost, ":remaining": Number(limit) - recipientCost } } })),
       ] }));
     } catch (error: any) {
       if (error.name === "TransactionCanceledException") {
         const current = await get(operationKey, deps);
+        if (current?.retiredAt) throw new Error("This saved invoice email was retired when its invoice was voided.");
         if (current?.state === "ACCEPTED" && current.providerId) return { MessageId: current.providerId };
         if (["SENDING", "UNKNOWN"].includes(current?.state)) throw new MailDeliveryError("UNKNOWN", operationKey);
       }

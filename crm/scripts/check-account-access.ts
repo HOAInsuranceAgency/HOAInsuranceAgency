@@ -1,3 +1,4 @@
+import { QUOTE_FINANCIAL_STASH } from "../amplify/quote-financial-pipeline";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { Stack } from "aws-cdk-lib";
@@ -69,6 +70,16 @@ export function checkAccountAccess(backend: typeof Backend, outdir: string) {
       const stages = pipeline?.functions ?? [];
       if (!pre || stages[1] !== pre.attrFunctionId) throw new Error(`Custom authorization must run after the session guard: ${resolver.fieldName}`);
       if (resolver.fieldName === "communicationRead" && (!post || stages.at(-1) !== post.attrFunctionId)) throw new Error("Communication results must retain the post-read access filter");
+    }
+    if (target === "Quote" && resolver.fieldName === "updateQuote") {
+      const atomic = functions.find(fn => fn.name === 'access_quote_financial_Quote__update');
+      const data = Object.values(backend.data.resources.cfnResources.cfnFunctionConfigurations).find(fn => fn.name === 'MutationUpdateQuoteDataResolverFn');
+      const stages = pipeline?.functions ?? [], at = atomic ? stages.indexOf(atomic.attrFunctionId) : -1;
+      if (!atomic || !data || at < 3 || stages[at + 1] !== data.attrFunctionId) throw new Error('Atomic financial Quote edits must run after native authorization and directly before data');
+      if (!data.requestMappingTemplate?.startsWith(`#if(!$util.isNull($ctx.stash.${QUOTE_FINANCIAL_STASH}))\n#return($ctx.stash.${QUOTE_FINANCIAL_STASH})`) || data.requestMappingTemplateS3Location !== undefined) throw new Error('Committed financial Quote writes must bypass the native duplicate update');
+      if (!atomic.responseMappingTemplate?.includes(`$ctx.stash.put("${QUOTE_FINANCIAL_STASH}", $ctx.result.quote)`) || atomic.responseMappingTemplate.includes('$ctx.arguments') || !atomic.requestMappingTemplate?.includes('"mode":"quote-financial"') || !atomic.requestMappingTemplate.includes('"nativeConditions":$util.toJson($ctx.stash.conditions)')) throw new Error('Financial Quote commit stash must be server-owned with fixed native context');
+      const nativeAuth = Object.values(backend.data.resources.cfnResources.cfnFunctionConfigurations).filter(fn => stages.slice(0, at).includes(fn.attrFunctionId) && /updateQuote(auth|postAuth)/.test(fn.name));
+      if (nativeAuth.length < 2) throw new Error('Native Quote authorization stages must remain ahead of the financial transaction');
     }
     if (target && (ACCOUNT_MODELS as readonly string[]).includes(target) && !guarded) throw new Error(`Assignment guard missing: ${resolver.typeName}.${resolver.fieldName}`);
     if (target && (ACCOUNT_MODELS as readonly string[]).includes(target) && resolver.typeName === "Query") {

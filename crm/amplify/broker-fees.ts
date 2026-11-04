@@ -18,9 +18,8 @@ export function installBrokerFees(backend: typeof Backend, communicationTable: D
     fees.addGlobalSecondaryIndex({ indexName, partitionKey: { name: field, type: AttributeType.STRING }, sortKey: { name: 'id', type: AttributeType.STRING } });
   }
   // Keep IAM attachments outside the nearly-full generated data template.
-  // Managed policies keep these identical grants outside the roles' aggregate
-  // 10,240-character inline limit. Attaching through the policy's Roles field
-  // keeps dependencies one-way from this stack to the unchanged roles/tables.
+  // Managed policies also preserve the callers' 10 KB inline-policy budget.
+  // This stack depends on the roles/tables; neither depends on these policies.
   const permissions = backend.createStack('BrokerFeePermissions');
   const api = backend.data.resources.graphqlApi;
   const writers = [backend.brokerFees,backend.communications,backend.commissions,backend.stripeWebhook,backend.sendInvoice,backend.voidInvoice,backend.pfElection];
@@ -33,7 +32,7 @@ export function installBrokerFees(backend: typeof Backend, communicationTable: D
   const writes=['dynamodb:PutItem','dynamodb:UpdateItem'];
   for(const fn of functions) {
     fn.addEnvironment('BROKER_FEE_TABLE',fees.tableName);
-    add(fn,[...reads,...(writers.includes(fn as typeof writers[number])?writes:[])],[fees.tableArn,`${fees.tableArn}/index/*`]);
+    add(fn,[...reads,...(writers.includes(fn as typeof writers[number])?writes:fn===backend.crmAccess?['dynamodb:PutItem']:[])],[fees.tableArn,`${fees.tableArn}/index/*`]);
   }
   for(const fn of [backend.brokerFees,backend.stripeWebhook]) {
     fn.addEnvironment('COMMISSION_TABLE',commissionTable.tableName);
@@ -54,12 +53,18 @@ export function installBrokerFees(backend: typeof Backend, communicationTable: D
     fn.addEnvironment('ACCESS_API_ID',api.apiId);
     const models=fn===backend.brokerFees?['Account','Quote','Policy','Invoice','InvoiceLine','Document','AgencySettings','PfLoan']
       :fn===backend.voidInvoice?['Quote','Policy','Invoice']
-      :[backend.communications,backend.sendInvoice,backend.pfElection].includes(fn as typeof backend.communications)?['AgencySettings','Quote','Account','Policy','Invoice','PfLoan']
+      :[backend.communications,backend.sendInvoice,backend.pfElection].includes(fn as typeof backend.communications)?['AgencySettings','Quote','Account','Policy','Invoice','PfLoan',...(fn===backend.sendInvoice?['InvoiceLine']:[])]
       :['Quote','Policy','Document','AgencySettings'];
     add(fn,reads,models.flatMap(model=>[modelArn(model),`${modelArn(model)}/index/*`]));
     const writable=fn===backend.brokerFees?['Account','Invoice','Document','Policy','AgencySettings']:fn===backend.stripeWebhook?['Policy']:fn===backend.commissions?['Document']:fn===backend.voidInvoice?['Invoice']:[];
     if(writable.length)add(fn,writes,writable.map(modelArn));
   }
+  // Native Quote financial edits share a transaction with fee/loan checkout
+  // fences. No browser or public signing role receives these mutation grants.
+  add(backend.crmAccess,['dynamodb:UpdateItem','dynamodb:ConditionCheckItem'],['Quote','PfLoan'].map(modelArn));
+  add(backend.crmAccess,['dynamodb:ConditionCheckItem'],[modelArn('Invoice'),communicationTable.tableArn]);
+  add(backend.crmAccess,['dynamodb:UpdateItem'],[modelArn('Invoice')]);
+  for(const fn of [backend.sendInvoice,backend.pfElection])add(fn,['dynamodb:UpdateItem'],[modelArn('Quote')]);
   let index=0;
   for(const [fn,statements]of grants)new ManagedPolicy(permissions,`BrokerFeeAccess${index++}`,{roles:[fn.resources.lambda.role!],statements});
   new Rule(Stack.of(backend.brokerFees.resources.lambda),'BrokerFeeReceiptRecovery',{

@@ -194,23 +194,23 @@ describe('real projector and reader semantic parity', () => {
   function feeBearingPartialClient() {
     const row = sources.find(row => row.account.id === 'e')!;
     Object.assign(row.quotes[0], { brokerFee: 125.50, billType: 'AGENCY' });
-    Object.assign(row.quotes[1], { brokerFee: 250, billType: 'DIRECT' });
+    Object.assign(row.quotes[1], { brokerFee: 250, billType: 'AGENCY', passThroughCharges: [{ id: 'rt', kind: 'WHOLESALER_FEE', description: 'Reviewed RT fee', amountCents: 25000 }], clientConditions: 'No flat cancellations.' });
     const approvedTerms = Object.fromEntries(row.quotes.map(quote => [quote.id, packageTerms(quote)]));
     row.plan.options[0].reviewed!.terms = approvedTerms;
     row.plan.selectedTerms = approvedTerms;
     return row;
   }
-  it('retains reviewed agency/direct broker-fee terms through compact source reads without adding fees to pending commission', async () => {
+  it('retains reviewed agency broker-fee and supplier-charge terms without adding fees to pending premium commission', async () => {
     const row = feeBearingPartialClient(); persist(row); await projectAccount(row.account.id, day, at);
     const expected = pendingCommission(row.plan, row.quotes, day);
     expect(expected).toMatchObject({ cents: 50_000, label: 'Partially bound', unfinished: true });
     expect((await pages()).find(item => item.account.id === row.account.id)?.forecast).toEqual(expected);
     expect((await pages({ stage: 'CLIENT' })).find(item => item.account.id === row.account.id)?.forecast).toEqual(expected);
   });
-  it.each(['brokerFee', 'billType'])('invalidates an earlier package review when the current positive-fee %s changes', async field => {
+  it.each(['brokerFee', 'billType', 'passThroughCharges', 'clientConditions'])('invalidates an earlier package review when the current positive-fee %s changes', async field => {
     const row = feeBearingPartialClient(); persist(row); await projectAccount(row.account.id, day, at);
     expect((await pages()).find(item => item.account.id === row.account.id)?.forecast.cents).toBe(50_000);
-    Object.assign(row.quotes[1], field === 'brokerFee' ? { brokerFee: 250.01 } : { billType: 'AGENCY' });
+    Object.assign(row.quotes[1], field === 'brokerFee' ? { brokerFee: 250.01 } : field === 'billType' ? { billType: 'DIRECT' } : field === 'passThroughCharges' ? { passThroughCharges: [{ id: 'rt', kind: 'WHOLESALER_FEE', description: 'Reviewed RT fee', amountCents: 25001 }] } : { clientConditions: 'Changed cancellation conditions.' });
     row.quotes[1].updatedAt = '2026-11-04T16:00:00.000Z';
     persist(row); await projectAccount(row.account.id, day, at);
     const expected = pendingCommission(row.plan, row.quotes, day);

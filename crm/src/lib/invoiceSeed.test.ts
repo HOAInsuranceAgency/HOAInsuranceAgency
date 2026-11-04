@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   brokerFeeLineFromSource,
+  findAdjustmentOriginal,
+  passThroughLinesFromSource,
   invoiceableQuotes,
   liveAnchorIds,
   seededLineDescription,
@@ -126,6 +128,15 @@ describe("liveAnchorIds — void frees the slot", () => {
     );
     expect([...busy]).toEqual(["p9"]);
   });
+
+  it.each([-10000, 0])('releases only finalized nonpayable adjustment statements totaling %s cents', total => {
+    const statement = { id: 'credit', policyId: 'p', sourcePricingVersion: 2, status: 'SENT', sentAt: '2026-11-04T20:00:00Z',
+      remittanceCarrierCents: total, remittanceCommissionCents: 0, remittanceInterestCents: 0, remittanceBrokerFeeCents: 0 };
+    expect(liveAnchorIds([statement], [{ invoiceId: 'credit', policyId: 'p' }])).toEqual(new Set());
+    for (const delta of [{ status: 'DRAFT' }, { remittanceCarrierCents: undefined }, { paymentUrl: 'https://payments.example.test' }, { remittanceCarrierCents: 1 }]) {
+      expect(liveAnchorIds([{ ...statement, ...delta }], []).has('p')).toBe(true);
+    }
+  });
 });
 
 describe("seededLineDescription", () => {
@@ -245,13 +256,53 @@ describe("addDays", () => {
 });
 
 describe("policy-sourced broker fees", () => {
-  it("allows an unpaid fee on direct bill without making carrier premium billable", () => {
-    expect(unbilledAgencyPolicies([agency("p",{billType:"DIRECT",brokerFee:500})],new Set())).toHaveLength(1);
+  it("does not allow a direct-bill policy to collect an HOA fee", () => {
+    expect(unbilledAgencyPolicies([agency("p",{billType:"DIRECT",brokerFee:500})],new Set())).toHaveLength(0);
     expect(unbilledAgencyPolicies([agency("p",{billType:"DIRECT",brokerFee:500,brokerFeeCollected:500})],new Set())).toHaveLength(0);
-    expect(brokerFeeLineFromSource({id:"p",quoteId:"q",brokerFee:500},"p")).toEqual({kind:"BROKER_FEE",description:"Broker fee",retailAmount:500,costAmount:0,brokerFeeQuoteId:"q",policyId:"p"});
+    expect(brokerFeeLineFromSource({id:"p",quoteId:"q",brokerFee:500},"p")).toEqual({kind:"BROKER_FEE",description:"HOA broker fee",retailAmount:500,costAmount:0,brokerFeeQuoteId:"q",policyId:"p"});
+    expect(() => brokerFeeLineFromSource({ id: 'q', billType: 'DIRECT', brokerFee: 500 })).toThrow('agency billing');
   });
   it("requires the source quote and leaves zero-fee terms unchanged", () => {
     expect(brokerFeeLineFromSource({id:"q",brokerFee:0})).toBeNull();
     expect(()=>brokerFeeLineFromSource({id:"p",brokerFee:500},"p")).toThrow("original quote");
+  });
+});
+
+describe("supplier charges and taxes", () => {
+  const charges = [
+    { id: "rt", kind: "WHOLESALER_FEE", description: "RT brokerage fee", amountCents: 25000 },
+    { id: "ma-tax", kind: "SURPLUS_LINES", description: "MA surplus lines tax", amountCents: 222164 },
+  ];
+  it("seeds every recorded source charge at cost with stable references", () => {
+    expect(passThroughLinesFromSource({ billType: "AGENCY", passThroughCharges: JSON.stringify(charges) }, "p")).toEqual([
+      { sourceQuoteChargeId: "rt", kind: "WHOLESALER_FEE", description: "RT brokerage fee", retailAmount: 250, costAmount: 250, policyId: "p" },
+      { sourceQuoteChargeId: "ma-tax", kind: "SURPLUS_LINES", description: "MA surplus lines tax", retailAmount: 2221.64, costAmount: 2221.64, policyId: "p" },
+    ]);
+    expect(passThroughLinesFromSource({ passThroughCharges: charges })).toHaveLength(2);
+  });
+  it("keeps legacy sources empty and never bills direct-bill supplier amounts", () => {
+    expect(passThroughLinesFromSource({})).toEqual([]);
+    expect(passThroughLinesFromSource({ billType: "DIRECT", passThroughCharges: charges })).toEqual([]);
+  });
+  it("rejects malformed recorded costs rather than omitting a charge", () => {
+    expect(() => passThroughLinesFromSource({ passThroughCharges: [charges[0], { ...charges[1], amountCents: -1 }] })).toThrow();
+  });
+});
+
+describe('paid original invoice eligibility', () => {
+  const policy = { id: 'p', accountId: 'a', quoteId: 'q' };
+  const original = { id: 'paid', accountId: 'a', policyId: 'p', status: 'PAID', sourcePricingVersion: 1 };
+  const premium = { id: 'premium', invoiceId: 'paid', accountId: 'a', policyId: 'p', kind: 'PREMIUM', retailAmount: 55541 };
+  it('finds a paid original for policy and pre-bind quote billing, including legacy originals', () => {
+    expect(findAdjustmentOriginal(policy, [original], [premium])).toEqual({ adjustsInvoiceId: 'paid', adjustsPremiumLineId: 'premium' });
+    expect(findAdjustmentOriginal(policy, [{ ...original, policyId: undefined, quoteId: 'q', sourcePricingVersion: undefined }], [{ ...premium, policyId: undefined }])).toEqual({ adjustsInvoiceId: 'paid', adjustsPremiumLineId: 'premium' });
+  });
+  it('does not treat fee-only receipts, later adjustments, foreign records or unsettled bills as original premium proof', () => {
+    for (const row of [{ ...original, status: 'SENT' }, { ...original, sourcePricingVersion: 2 }, { ...original, accountId: 'foreign' }, { ...original, policyId: 'other' }]) {
+      expect(findAdjustmentOriginal(policy, [row], [premium])).toBeNull();
+    }
+    for (const row of [{ ...premium, kind: 'BROKER_FEE' }, { ...premium, retailAmount: 0 }, { ...premium, invoiceId: 'other' }]) {
+      expect(findAdjustmentOriginal(policy, [original], [row])).toBeNull();
+    }
   });
 });

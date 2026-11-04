@@ -10,7 +10,7 @@ const api = vi.hoisted(() => ({
 }));
 vi.mock("aws-amplify/data", () => ({ generateClient: () => api }));
 vi.mock("../../components/InvoiceEditor", () => ({ InvoiceEditor: ({ invoice }: { invoice: { id: string } }) => <div>Editing {invoice.id}</div> }));
-import { InvoicesTab } from "./InvoicesTab";
+import { addDays, DEFAULT_TERM_DAYS, InvoicesTab } from "./InvoicesTab";
 const policy = { id: "p1", accountId: "a1", policyNumber: "POL-1", billType: "AGENCY", premium: 100, status: "ACTIVE" };
 beforeEach(() => {
   vi.resetAllMocks();
@@ -84,13 +84,13 @@ describe("invoice creation reliability", () => {
 });
 
 describe("broker fee invoice seeding",()=>{
-  it("seeds only the broker fee for a direct-bill policy",async()=>{
+  it("does not offer direct-bill policies for collecting an HOA fee",async()=>{
     api.models.Policy.list.mockResolvedValue({data:[{...policy,quoteId:"q1",billType:"DIRECT",brokerFee:500}]});
-    await selectPolicy();
-    await userEvent.click(screen.getByRole("button",{name:"New invoice"}));
-    await screen.findByText("Editing inv1");
-    expect(api.models.InvoiceLine.create).toHaveBeenCalledTimes(1);
-    expect(api.models.InvoiceLine.create).toHaveBeenCalledWith(expect.objectContaining({kind:"BROKER_FEE",retailAmount:500,costAmount:0,brokerFeeQuoteId:"q1",policyId:"p1"}));
+    render(<InvoicesTab accountId="a1" />);
+    await screen.findByRole('combobox');
+    expect(screen.queryByRole('option', { name: /POL-1/ })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'New invoice' })).toBeDisabled();
+    expect(api.models.Invoice.create).not.toHaveBeenCalled();
   });
   it("does not seed the same fee onto a later premium invoice after collection",async()=>{
     api.models.Policy.list.mockResolvedValue({data:[{...policy,quoteId:"q1",brokerFee:500,brokerFeeCollected:500}]});
@@ -102,14 +102,73 @@ describe("broker fee invoice seeding",()=>{
   });
 });
 
-it("collects only the fee when direct bill is chosen on the existing quote before bind",async()=>{
+it("rejects a legacy direct-bill fee quote before reserving or creating an invoice",async()=>{
   api.models.Policy.list.mockResolvedValue({data:[]});
   api.models.Quote.list.mockResolvedValue({data:[{id:"q1",accountId:"a1",status:"QUOTED",billType:"DIRECT",premium:100,brokerFee:500}]});
   api.models.Invoice.create.mockResolvedValue({data:{id:"inv1",accountId:"a1",quoteId:"q1",status:"DRAFT",number:"INV-1"}});
   render(<InvoicesTab accountId="a1" />);
   await userEvent.selectOptions(await screen.findByRole("combobox"),"quote:q1");
   await userEvent.click(screen.getByRole("button",{name:"New invoice"}));
-  await screen.findByText("Editing inv1");
-  expect(api.models.InvoiceLine.create).toHaveBeenCalledTimes(1);
-  expect(api.models.InvoiceLine.create).toHaveBeenCalledWith(expect.objectContaining({kind:"BROKER_FEE",brokerFeeQuoteId:"q1",retailAmount:500,costAmount:0}));
+  expect(await screen.findByRole('alert')).toHaveTextContent('Broker fees require agency billing');
+  expect(api.mutations.reserveInvoiceNumber).not.toHaveBeenCalled();
+  expect(api.models.Invoice.create).not.toHaveBeenCalled();
+});
+
+it.each([0, 500])('seeds every supplier charge and tax alongside a $%s HOA broker fee', async brokerFee => {
+  api.models.Policy.list.mockResolvedValue({ data: [{ ...policy, premium: 55541, quoteId: 'q1', brokerFee, passThroughCharges: JSON.stringify([
+    { id: 'rt', kind: 'WHOLESALER_FEE', description: 'RT brokerage fee', amountCents: 25000 },
+    { id: 'tax', kind: 'SURPLUS_LINES', description: 'MA surplus lines tax', amountCents: 222164 },
+  ]) }] });
+  await selectPolicy(); await userEvent.click(screen.getByRole('button', { name: 'New invoice' }));
+  await screen.findByText('Editing inv1');
+  const rows = api.models.InvoiceLine.create.mock.calls.map(([row]) => row);
+  const invoice = api.models.Invoice.create.mock.calls[0][0];
+  expect(invoice.dueAt).toBe(brokerFee ? invoice.issuedAt : addDays(invoice.issuedAt, DEFAULT_TERM_DAYS));
+  expect(rows).toEqual([
+    expect.objectContaining({ kind: 'PREMIUM', retailAmount: 55541, costAmount: null }),
+    expect.objectContaining({ kind: 'WHOLESALER_FEE', sourceQuoteChargeId: 'rt', retailAmount: 250, costAmount: 250 }),
+    expect.objectContaining({ kind: 'SURPLUS_LINES', sourceQuoteChargeId: 'tax', retailAmount: 2221.64, costAmount: 2221.64 }),
+    ...(brokerFee ? [expect.objectContaining({ kind: 'BROKER_FEE', description: 'HOA broker fee', retailAmount: brokerFee, costAmount: 0 })] : []),
+  ]);
+});
+
+it.each(['ACTIVE', 'EXPIRED', 'CANCELLED'])('creates only an adjustment after a paid full-policy invoice on an %s policy', async status => {
+  const source = { ...policy, status, premium: 55541, quoteId: 'q1', brokerFee: 500, brokerFeeCollected: 500, passThroughCharges: JSON.stringify([
+    { id: 'rt', kind: 'WHOLESALER_FEE', description: 'Wholesale fee', amountCents: 25000 },
+    { id: 'tax', kind: 'SURPLUS_LINES', description: 'Surplus tax', amountCents: 222164 },
+  ]) };
+  api.models.Policy.list.mockResolvedValue({ data: [source] });
+  api.models.Invoice.list.mockResolvedValue({ data: [{ id: 'original', accountId: 'a1', quoteId: 'q1', status: 'PAID', sourcePricingVersion: 1 }] });
+  api.models.InvoiceLine.list.mockResolvedValue({ data: [
+    { id: 'original-premium', invoiceId: 'original', accountId: 'a1', kind: 'PREMIUM', retailAmount: 55541, costAmount: 49986.90 },
+    { id: 'original-fee', invoiceId: 'original', accountId: 'a1', kind: 'BROKER_FEE', brokerFeeQuoteId: 'q1', retailAmount: 500, costAmount: 0 },
+    { id: 'original-tax', invoiceId: 'original', accountId: 'a1', kind: 'SURPLUS_LINES', retailAmount: 2221.64, costAmount: 2221.64 },
+  ] });
+  await selectPolicy();
+  expect(screen.getByRole('option', { name: /POL-1.*endorsement\/audit adjustment/ })).toBeInTheDocument();
+  await userEvent.click(screen.getByRole('button', { name: 'New invoice' }));
+  await screen.findByText('Editing inv1');
+  expect(api.models.Invoice.create).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ sourcePricingVersion: 2, policyId: 'p1', adjustsInvoiceId: 'original', adjustsPremiumLineId: 'original-premium' }));
+  expect(api.models.Invoice.create.mock.calls[0][0]).not.toHaveProperty('quoteId');
+  const created = api.models.Invoice.create.mock.calls[0][0];
+  expect(created.dueAt).toBe(addDays(created.issuedAt, DEFAULT_TERM_DAYS));
+  expect(api.models.InvoiceLine.create).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ kind: 'ENDORSEMENT', description: 'Endorsement or audit adjustment', retailAmount: null, costAmount: null, policyId: 'p1' }));
+});
+
+it.each([-10000, 0])('allows a later policy bill after a finalized sent adjustment statement totaling %s cents', async total => {
+  api.models.Invoice.list.mockResolvedValue({ data: [
+    { id: 'original', accountId: 'a1', policyId: 'p1', status: 'PAID', sourcePricingVersion: 1 },
+    { id: 'statement', accountId: 'a1', policyId: 'p1', status: 'SENT', sourcePricingVersion: 2, sentAt: '2026-11-04T20:00:00Z',
+      adjustsInvoiceId: 'original', adjustsPremiumLineId: 'original-premium', remittanceCarrierCents: total,
+      remittanceCommissionCents: 0, remittanceInterestCents: 0, remittanceBrokerFeeCents: 0 },
+  ] });
+  api.models.InvoiceLine.list.mockResolvedValue({ data: [
+    { id: 'original-premium', invoiceId: 'original', accountId: 'a1', policyId: 'p1', kind: 'PREMIUM', retailAmount: 100 },
+    { id: 'credit', invoiceId: 'statement', accountId: 'a1', policyId: 'p1', kind: 'ENDORSEMENT', retailAmount: -100, costAmount: -100 },
+    ...(total === 0 ? [{ id: 'offset', invoiceId: 'statement', accountId: 'a1', policyId: 'p1', kind: 'ENDORSEMENT', retailAmount: 100, costAmount: 100 }] : []),
+  ] });
+  await selectPolicy(); await userEvent.click(screen.getByRole('button', { name: 'New invoice' }));
+  await screen.findByText('Editing inv1');
+  expect(api.models.Invoice.create).toHaveBeenCalledWith(expect.objectContaining({ sourcePricingVersion: 2, adjustsInvoiceId: 'original', adjustsPremiumLineId: 'original-premium' }));
+  expect(api.models.InvoiceLine.create).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ kind: 'ENDORSEMENT', retailAmount: null, costAmount: null }));
 });

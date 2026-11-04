@@ -2,13 +2,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { authorizedQuoteTerms } from '../../../shared/quoteAuthorization';
 import { BROKER_FEE_TERMS_VERSION } from '../../../shared/brokerFees';
 type Row = Record<string, any>;
-const h = vi.hoisted(() => ({ models: new Map<string, Row>(), rows: new Map<string, Row>(), sessions: [] as Row[], intentStatus: 'requires_payment_method', events: [] as string[], transact: vi.fn(), deactivate: vi.fn(), expire: vi.fn(), retrieve: vi.fn(), session: vi.fn() }));
+const h = vi.hoisted(() => ({ models: new Map<string, Row>(), rows: new Map<string, Row>(), sessions: [] as Row[], invoiceLineIds: ['fee-line'], intentStatus: 'requires_payment_method', events: [] as string[], transact: vi.fn(), deactivate: vi.fn(), expire: vi.fn(), retrieve: vi.fn(), session: vi.fn() }));
 vi.mock('../../amplify/functions/broker-fees/store', async original => ({
   ...await original<typeof import('../../amplify/functions/broker-fees/store')>(),
   modelTable: (model: string) => model,
   getModel: async (model: string, id: string) => structuredClone(h.models.get(`${model}:${id}`)),
+  accountModels: async (model:string,accountId:string)=>[...h.models.entries()].filter(([key,row])=>key.startsWith(`${model}:`)&&row.accountId===accountId).map(([,row])=>structuredClone(row)),
   getRow: async (id: string) => structuredClone(h.rows.get(id)), getFee: async (id: string) => structuredClone(h.rows.get(`fee:${id}`)), getAgreement: async (id: string) => structuredClone(h.rows.get(id)),
-  db: { send: async () => ({ Items: [{ id: 'fee-line' }] }) }, transact: h.transact,
+  db: { send: async (command:{input:{ExpressionAttributeValues:Record<string,unknown>}}) => ({ Items: command.input.ExpressionAttributeValues[':invoice']==='i'?h.invoiceLineIds.map(id=>({id})):[...h.models.entries()].filter(([key,row])=>key.startsWith('InvoiceLine:')&&row.invoiceId===command.input.ExpressionAttributeValues[':invoice']).map(([,row])=>({id:row.id})) }) }, transact: h.transact,
 }));
 vi.mock('../../amplify/functions/crm-access/user-status', async original => ({ ...await original<typeof import('../../amplify/functions/crm-access/user-status')>(), assertUserSession: h.session }));
 vi.mock('stripe', () => ({ default: class {
@@ -30,6 +31,15 @@ function issuedLoan(fields: Row = {}) {
 function issuedInvoiceClaim(invoiceId = 'i', phase = 'PUBLISHED') {
   Object.assign(h.rows.get('fee:q')!, { issuedInvoiceIds: [invoiceId], invoiceSendClaim: { invoiceId, token: 'invoice-send-token', phase, totalCents: 50000, previousLinkId: null, ...(phase === 'PUBLISHED' ? { linkId: invoiceId === 'i' ? 'plink' : 'prior-plink' } : {}) } });
 }
+function adjustment(amount=1000,cost=800) {
+  h.models.set('Policy:p',{id:'p',accountId:'a',quoteId:'q',premium:10000,brokerFee:500,billType:'AGENCY',passThroughCharges:[],updatedAt:NOW});
+  h.models.set('Invoice:original',{id:'original',accountId:'a',policyId:'p',quoteId:'q',status:'PAID',sourcePricingVersion:1,updatedAt:NOW});
+  h.models.set('InvoiceLine:original-premium',{id:'original-premium',invoiceId:'original',accountId:'a',policyId:'p',kind:'PREMIUM',retailAmount:10000,costAmount:9000,updatedAt:NOW});
+  Object.assign(h.models.get('Invoice:i')!,{policyId:'p',quoteId:null,sourcePricingVersion:2,adjustsInvoiceId:'original',adjustsPremiumLineId:'original-premium',brokerFeeAllocations:[]});
+  Object.assign(h.rows.get('fee:q')!,{submittedCents:50000,collectedCents:50000});
+  h.invoiceLineIds=['endorsement'];
+  h.models.set('InvoiceLine:endorsement',{id:'endorsement',invoiceId:'i',accountId:'a',policyId:'p',kind:'ENDORSEMENT',description:'Additional audit premium',retailAmount:amount,costAmount:cost,updatedAt:NOW});
+}
 
 /** Stage the entire real receipt transaction before publishing any test writes. */
 function applyTransaction(writes: Row[]) {
@@ -41,6 +51,12 @@ function applyTransaction(writes: Row[]) {
     const fail = () => { throw new Error('Atomic payment transaction condition failed'); };
     if (action.ConditionExpression === 'attribute_not_exists(id)' && old) fail();
     if (action.ConditionExpression?.includes('#v = :v') && old?.[action.ExpressionAttributeNames['#v']] !== values[':v']) fail();
+    if (action.TableName === 'PfLoan') for (const term of (action.ConditionExpression ?? '').split(' AND ')) {
+      const equality = /^(#[A-Za-z0-9]+|[A-Za-z0-9]+) = (:[A-Za-z0-9]+)$/.exec(term);
+      if (equality && JSON.stringify(old?.[action.ExpressionAttributeNames?.[equality[1]] ?? equality[1]]) !== JSON.stringify(values[equality[2]])) fail();
+      const absent = /^attribute_not_exists\(([A-Za-z0-9]+)\)$/.exec(term);
+      if (absent && old && Object.hasOwn(old, absent[1])) fail();
+    }
     if (action.ConditionExpression === '#data = :data' && JSON.stringify(old?.data) !== JSON.stringify(values[':data'])) fail();
     if (action.TableName === 'TeamUser' && old?.disabled) fail();
     if (write.Update && action.TableName === 'Invoice' && (old?.updatedAt !== values[':old'] || old?.status !== values[':status'])) fail();
@@ -56,7 +72,7 @@ function applyTransaction(writes: Row[]) {
   h.rows.clear(); rows.forEach((value, key) => h.rows.set(key, value)); h.models.clear(); models.forEach((value, key) => h.models.set(key, value));
 }
 beforeEach(() => {
-  vi.resetAllMocks(); vi.useFakeTimers(); vi.setSystemTime(new Date(NOW)); h.models.clear(); h.rows.clear(); h.sessions = []; h.events = []; h.intentStatus = 'requires_payment_method';
+  vi.resetAllMocks(); vi.useFakeTimers(); vi.setSystemTime(new Date(NOW)); h.models.clear(); h.rows.clear(); h.sessions = []; h.invoiceLineIds=['fee-line']; h.events = []; h.intentStatus = 'requires_payment_method';
   process.env.BROKER_FEE_TABLE = 'fee-table'; process.env.USER_ACCESS_TABLE = 'TeamUser'; process.env.COMMUNICATION_TABLE = 'Communication'; process.env.STRIPE_SECRET_KEY = 'fixture'; process.env.ACCESS_INDEXES = JSON.stringify({ 'InvoiceLine.invoiceId': 'invoice-lines' });
   vi.spyOn(AccountAccess.prototype, 'get').mockImplementation(async (model, id) => structuredClone(h.models.get(`${model}:${id}`)));
   h.session.mockResolvedValue(undefined);
@@ -102,6 +118,20 @@ describe('outside invoice payment after an unsuccessful online checkout', () => 
     await confirmInvoicePayment(actor, { invoiceId: 'i' });
     expect(h.events).toEqual(['deactivate', 'intent:pi-failed', 'expire:cs-open-one', 'expire:cs-open-two', 'commit']); expect(paymentRows()).toHaveLength(1);
   });
+  it.each(['unknown', undefined, null])('refuses an unverifiable checkout status %s before recording any receipt', async status => {
+    h.sessions = [{ id: 'cs-unverified', status, payment_status: 'unpaid' }];
+    await expect(confirmInvoicePayment(actor, { invoiceId: 'i' })).rejects.toThrow('The invoice payment session could not be verified. Retry before recording an outside payment.');
+    expect(h.events).toEqual(['deactivate']);
+    expect(h.transact).not.toHaveBeenCalled(); expect(h.retrieve).not.toHaveBeenCalled(); expect(h.expire).not.toHaveBeenCalled();
+    expect(paymentRows()).toHaveLength(0); expect(h.rows.get('fee:q')).toMatchObject({ submittedCents: 0, collectedCents: 0 });
+    expect(h.models.get('Invoice:i')?.status).toBe('SENT');
+  });
+  it('allows an expired unpaid session without another processor action', async () => {
+    h.sessions = [{ id: 'cs-expired', status: 'expired', payment_status: 'unpaid' }];
+    await confirmInvoicePayment(actor, { invoiceId: 'i' });
+    expect(h.events).toEqual(['deactivate', 'commit']); expect(h.retrieve).not.toHaveBeenCalled(); expect(h.expire).not.toHaveBeenCalled();
+    expect(paymentRows()).toHaveLength(1); expect(h.models.get('Invoice:i')?.status).toBe('PAID');
+  });
   it('refuses a completed unpaid session whose payment intent cannot be identified', async () => {
     h.sessions = [{ id: 'cs-missing-intent', status: 'complete', payment_status: 'unpaid' }];
     await expect(confirmInvoicePayment(actor, { invoiceId: 'i' })).rejects.toThrow('already been submitted');
@@ -140,7 +170,9 @@ describe('outside invoice payment beside an issued financing offer', () => {
     issuedLoan({ electionCheckoutUrl: 'https://checkout.stripe.com/c/pay/expired', electionCheckoutExpiresAt: '2026-11-04T14:00:00Z' });
     await confirmInvoicePayment(actor, { invoiceId: 'i' });
     expect(paymentRows()).toHaveLength(1); expect(h.rows.get('fee:q')?.collectedCents).toBe(50000);
-    expect(h.transact.mock.calls[0][0]).toEqual(expect.arrayContaining([expect.objectContaining({ ConditionCheck: expect.objectContaining({ TableName: 'PfLoan', Key: { id: 'loan' }, ExpressionAttributeValues: { ':v': NOW } }) })]));
+    const loanGuard = h.transact.mock.calls[0][0].find((write: Row) => write.ConditionCheck?.TableName === 'PfLoan').ConditionCheck;
+    expect(loanGuard).toMatchObject({ Key: { id: 'loan' }, ConditionExpression: expect.stringContaining('attribute_not_exists(downPaymentIntentId)'), ExpressionAttributeValues: { ':quoted': 'QUOTED', ':url': 'https://checkout.stripe.com/c/pay/expired' } });
+    expect(Object.values(loanGuard.ExpressionAttributeValues)).toContain(NOW);
   });
   it('does not record a manual receipt if a financing checkout wins after the initial check', async () => {
     issuedLoan();
@@ -161,9 +193,57 @@ describe('outside invoice payment beside an issued financing offer', () => {
     await expect(confirmInvoicePayment(actor, { invoiceId: 'i' })).rejects.toThrow(/changed|version|refresh|payment/i);
     expect(paymentRows()).toHaveLength(0); expect(h.rows.get('fee:q')?.collectedCents).toBe(0); expect(h.models.get('Invoice:i')?.status).toBe('SENT');
   });
+  it.each(['electionCheckoutUrl', 'downPaymentIntentId'])('refuses a competing %s even when both writes share the same timestamp', async field => {
+    issuedLoan();
+    h.deactivate.mockImplementation(async () => {
+      Object.assign(h.models.get('PfLoan:loan')!, { [field]: field === 'electionCheckoutUrl' ? 'claim-concurrent' : 'pi-concurrent' });
+      return { active: false };
+    });
+    await expect(confirmInvoicePayment(actor, { invoiceId: 'i' })).rejects.toThrow('transaction condition failed');
+    expect(paymentRows()).toHaveLength(0); expect(h.rows.get('fee:q')).toMatchObject({ collectedCents: 0, submittedCents: 0 });
+    expect(h.models.get('Invoice:i')?.status).toBe('SENT');
+  });
 });
 
 describe('outside payment while an invoice send owns the fee', () => {
+  it('records a proven adjustment receipt without charging or earning the original broker fee twice', async () => {
+    adjustment();const oldFee=structuredClone(h.rows.get('fee:q'));
+    await expect(confirmInvoicePayment(actor,{invoiceId:'i'})).resolves.toMatchObject({invoice:{status:'PAID'}});
+    expect(paymentRows()).toHaveLength(0);expect(h.rows.get('fee:q')).toEqual(oldFee);
+    expect(h.transact.mock.calls[0][0]).toEqual(expect.arrayContaining([expect.objectContaining({ConditionCheck:expect.objectContaining({TableName:'Invoice',Key:{id:'original'}})}),expect.objectContaining({ConditionCheck:expect.objectContaining({TableName:'InvoiceLine',Key:{id:'original-premium'}})})]));
+  });
+  it('rejects a forced initial invoice after its policy already has a paid original premium',async()=>{
+    adjustment();Object.assign(h.models.get('Invoice:i')!,{sourcePricingVersion:1,adjustsInvoiceId:null,adjustsPremiumLineId:null});
+    await expect(confirmInvoicePayment(actor,{invoiceId:'i'})).rejects.toThrow('already has a paid original');
+    expect(h.deactivate).not.toHaveBeenCalled();expect(h.transact).not.toHaveBeenCalled();
+  });
+  it.each([-1000,0])('cannot turn an adjustment total %s into an incoming cash receipt',async amount=>{
+    adjustment(amount,amount);if(amount===0)h.models.get('InvoiceLine:endorsement')!.retailAmount=1000;
+    if(amount===0){h.invoiceLineIds.push('credit-tax');h.models.set('InvoiceLine:credit-tax',{id:'credit-tax',invoiceId:'i',accountId:'a',kind:'TAX',description:'Return tax',retailAmount:-1000,costAmount:-1000,updatedAt:NOW});}
+    await expect(confirmInvoicePayment(actor,{invoiceId:'i'})).rejects.toThrow('not an incoming payment');
+    expect(h.deactivate).not.toHaveBeenCalled();expect(h.transact).not.toHaveBeenCalled();expect(h.models.get('Invoice:i')?.status).toBe('SENT');
+  });
+  it('revalidates actual paid originals and actual policy billing before taking an adjustment receipt',async()=>{
+    adjustment();h.models.get('Invoice:original')!.status='VOID';
+    await expect(confirmInvoicePayment(actor,{invoiceId:'i'})).rejects.toThrow('could not be verified');
+    h.models.get('Invoice:original')!.status='PAID';h.models.get('Policy:p')!.billType='DIRECT';
+    await expect(confirmInvoicePayment(actor,{invoiceId:'i'})).rejects.toThrow('carrier collects');
+    expect(h.deactivate).not.toHaveBeenCalled();expect(h.transact).not.toHaveBeenCalled();
+  });
+  it('cannot commit an adjustment receipt when its original proof changes during processor cleanup',async()=>{
+    adjustment();h.deactivate.mockImplementation(async()=>{h.models.get('Invoice:original')!.updatedAt='2026-11-04T15:00:01Z';return{active:false};});
+    await expect(confirmInvoicePayment(actor,{invoiceId:'i'})).rejects.toThrow('transaction condition failed');
+    expect(h.models.get('Invoice:i')?.status).toBe('SENT');expect(paymentRows()).toHaveLength(0);
+  });
+  it('uses the persisted linked legacy policy to accept an at-cost supplier charge with an outside payment', async () => {
+    h.models.set('Policy:legacy',{id:'legacy',accountId:'a',quoteId:'q',premium:10000,brokerFee:500,billType:'AGENCY',updatedAt:NOW});
+    Object.assign(h.models.get('Invoice:i')!,{policyId:'legacy',sourcePricingVersion:1});
+    h.invoiceLineIds.push('premium','supplier');
+    h.models.set('InvoiceLine:premium',{id:'premium',invoiceId:'i',accountId:'a',kind:'PREMIUM',retailAmount:10000,costAmount:9000,updatedAt:NOW});
+    h.models.set('InvoiceLine:supplier',{id:'supplier',invoiceId:'i',accountId:'a',kind:'WHOLESALER_FEE',description:'RT brokerage fee',retailAmount:250,costAmount:250,updatedAt:NOW});
+    expect(await confirmInvoicePayment(actor,{invoiceId:'i'})).toMatchObject({invoice:{status:'PAID'}});
+    expect(paymentRows()).toHaveLength(1);expect(h.rows.get('fee:q')?.collectedCents).toBe(50000);
+  });
   it('refuses an unpublished preparing send before any processor link has been stored', async () => {
     issuedInvoiceClaim('i', 'PREPARING');
     const invoice = h.models.get('Invoice:i')!; invoice.status = 'DRAFT'; delete invoice.stripePaymentLinkId; delete invoice.paymentUrl; delete invoice.brokerFeeAllocations;

@@ -98,6 +98,7 @@ async function loadLogo(): Promise<Uint8Array | null> {
 }
 
 export async function renderInvoicePdf(inv: InvoiceView): Promise<Uint8Array> {
+  const total = invoiceTotals(inv.lines).retail;
   const doc = await PDFDocument.create();
   if (process.env.HOA_MIGRATION_APP_ID === "d1nuh9rw1hcuxo") {
     // A safe retry of the same invoice must reproduce the saved PDF byte-for-byte.
@@ -164,8 +165,8 @@ export async function renderInvoicePdf(inv: InvoiceView): Promise<Uint8Array> {
   for (const [k, v] of [
     ["Invoice No.:", inv.number ?? ""],
     ["Invoice Date:", formatDayShort(inv.issuedAt)],
-    ["Due Date:", formatDayShort(inv.dueAt)],
-    ["Terms:", invoiceTerms(inv.issuedAt, inv.dueAt)],
+    ["Due Date:", total > 0 ? formatDayShort(inv.dueAt) : ''],
+    ["Terms:", total > 0 ? invoiceTerms(inv.issuedAt, inv.dueAt) : 'No payment due'],
   ] as [string, string][]) {
     if (!v) continue;
     const value = fit(v, fonts.bold, 9, 130);
@@ -220,7 +221,7 @@ export async function renderInvoicePdf(inv: InvoiceView): Promise<Uint8Array> {
     ["Policy Number", inv.policyNumber ?? ""],
     ["Insurer", inv.carrierName ?? ""],
     [
-      "Policy Term",
+      inv.coverageBound ? "Policy Term" : "Proposed Term",
       inv.effectiveDate && inv.expirationDate
         ? `${formatDayShort(inv.effectiveDate)} - ${formatDayShort(inv.expirationDate)}`
         : "",
@@ -329,17 +330,16 @@ export async function renderInvoicePdf(inv: InvoiceView): Promise<Uint8Array> {
   }
 
   /* ── Total, which is the point of the page ─────────────────────────── */
-  const total = invoiceTotals(inv.lines).retail;
   y -= 6;
   const TOTAL_LEFT = 360;
   page.drawLine({
     start: { x: TOTAL_LEFT, y: y + 12 }, end: { x: M.right, y: y + 12 },
     thickness: 1.5, color: NAVY,
   });
-  page.drawText("TOTAL DUE", {
+  page.drawText(total < 0 ? 'TOTAL CREDIT' : total === 0 ? 'NO PAYMENT DUE' : 'TOTAL DUE', {
     x: TOTAL_LEFT, y: y - 6, size: 10, font: fonts.bold, color: NAVY,
   });
-  drawRight(page, formatMoney(total), AMOUNT_COL, y - 8, fonts.bold, 15, NAVY);
+  drawRight(page, formatMoney(Math.abs(total)), AMOUNT_COL, y - 8, fonts.bold, 15, NAVY);
   y -= 40;
 
   /* ── How to pay, and what this document is not ─────────────────────── */
@@ -356,12 +356,16 @@ export async function renderInvoicePdf(inv: InvoiceView): Promise<Uint8Array> {
   }
 
   y = drawStatementBox(page, fonts, {
-    title: "PAYMENT INSTRUCTIONS",
+    title: total > 0 ? 'PAYMENT INSTRUCTIONS' : total < 0 ? 'CREDIT INFORMATION' : 'NO PAYMENT DUE',
     left: M.left,
     right: M.right,
     top: y,
     emphasis: true,
-    body: [
+    body: total <= 0 ? [
+      total < 0 ? 'No payment is due. Contact the agency to apply or return this credit.' : 'No payment is due on this invoice.',
+      `${AGENCY.email} or ${AGENCY.phone}`,
+      ...(inv.number ? [`Reference invoice ${inv.number} and the named insured.`] : []),
+    ] : [
       `Make checks payable to ${AGENCY.name} and mail to:`,
       `${AGENCY.addressLine1}, ${AGENCY_FMT.addressLine2}`,
       ...(inv.paymentUrl?.trim()
@@ -394,7 +398,9 @@ export async function renderInvoicePdf(inv: InvoiceView): Promise<Uint8Array> {
     body: [
       ...(inv.memo?.trim() ? [inv.memo.trim()] : []),
       ...(inv.effectiveDate
-        ? [`Coverage was bound effective ${formatDay(inv.effectiveDate)}.`]
+        ? [inv.coverageBound
+          ? `Coverage was bound effective ${formatDay(inv.effectiveDate)}.`
+          : `Proposed effective date: ${formatDay(inv.effectiveDate)}. Coverage is subject to binding confirmation.`]
         : []),
       // The disclaimer this document must always carry: an invoice is evidence
       // of a debt, and a treasurer who reads its policy block as the terms of

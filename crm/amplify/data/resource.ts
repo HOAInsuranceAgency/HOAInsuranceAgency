@@ -147,6 +147,8 @@ const schema = a
      */
     InvoiceLineKind: a.enum([
       "BROKER_FEE",
+      "CARRIER_FEE",
+      "WHOLESALER_FEE",
       "PREMIUM",
       "ENDORSEMENT",
       "TAX",
@@ -841,6 +843,8 @@ const schema = a
       premium: a.float(),
       /** Optional agency fee; never part of carrier premium. */
       brokerFee: a.float(),
+      passThroughCharges: a.json(),
+      clientConditions: a.string(),
       billType: a.ref("BillType"),
       // Agency commission, % of premium. NOTE: already baked into the
       // quoted premium — commission $ is informational, never additive.
@@ -935,6 +939,8 @@ const schema = a
       lines: a.string().array(),
       premium: a.float(),
       brokerFee: a.float(),
+      passThroughCharges: a.json(),
+      clientConditions: a.string(),
       /** Server-owned actual fee receipts; independent of policy cancellation. */
       brokerFeeReportingKey: a.string(), // Server-owned sparse reporting partition.
       brokerFeeCollected: a.float(),
@@ -1000,6 +1006,10 @@ const schema = a
      * disagreeing about money.
      */
     Invoice: a.model({
+      /** Versioned initial source pricing; absent only on pre-feature legacy records. */
+      sourcePricingVersion: a.integer(),
+      adjustsInvoiceId: a.id(),
+      adjustsPremiumLineId: a.id(),
       accountId: a.id().required(),
       account: a.belongsTo("Account", "accountId"),
       /** Optional: a policy can have several, and some bill no policy at all. */
@@ -1135,6 +1145,8 @@ const schema = a
       description: a.string(),
       /** Authoritative quote-term anchor for agency-owned fee revenue. */
       brokerFeeQuoteId: a.string(),
+      /** Stable charge ID in the source quote/policy's passThroughCharges. */
+      sourceQuoteChargeId: a.string(),
       kind: a.ref("InvoiceLineKind"),
       /** What the association pays for this line. */
       retailAmount: a.float(),
@@ -2241,6 +2253,11 @@ const schema = a
       .handler(a.handler.function(brokerFees)),
 
     commissionOverview: a.query().returns(a.json())
+      .authorization(allow => [allow.authenticated()])
+      .handler(a.handler.function(commissions)),
+    carrierPaymentPreview: a.query()
+      .arguments({ quoteId: a.string().required(), billType: a.string().required() })
+      .returns(a.json())
       .authorization(allow => [allow.authenticated()])
       .handler(a.handler.function(commissions)),
     commissionAction: a.mutation()
