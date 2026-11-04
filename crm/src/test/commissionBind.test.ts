@@ -1,6 +1,7 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 import { packageTerms } from '../../../shared/quotePackages';
 import { commissionPolicy, commissionAccount } from './commissionFixtures';
+import type { CarrierPaymentArrangement } from '../../../shared/commissions';
 const h = vi.hoisted(() => ({
   get: vi.fn(),
   commit: vi.fn(),
@@ -109,6 +110,7 @@ it('atomically binds, converts the lead, and freezes the original producer rate 
     agencyRateUnits: 120000,
     entries: [],
   });
+  expect(changes[0].value.carrierTerms).not.toHaveProperty('arrangements');
   expect(extras).toEqual(
     expect.arrayContaining([
       expect.objectContaining({
@@ -308,4 +310,56 @@ it('preserves the account exclusion on a later renewal', async () => {
     producerBps: 0,
     eligibility: { eligible: false, accountFirstBoundOn: '2026-09-30' },
   });
+});
+
+const scopedPayment = (): CarrierPaymentArrangement => ({
+  id: 'property-direct', from: '2026-01-01', to: '2026-12-31',
+  lines: ['Property'], billType: 'DIRECT', transaction: 'NEW',
+  basis: 'EARNED', payor: 'Carrier payments', trigger: 'EARNED', cadence: 'MONTHLY',
+  lagDays: 30, earningMethod: 'DAILY_PRORATA', evidence: 'Property commission agreement',
+});
+const configureStructuredCarrier = () => {
+  const fallback = h.get.getMockImplementation()!;
+  const payment = scopedPayment();
+  h.get.mockImplementation(async (kind, id) => kind === 'CARRIER'
+    ? { ...commissionPolicy().carrierTerms, version: 8, arrangements: [payment] }
+    : fallback(kind, id));
+  return payment;
+};
+it('freezes the confirmed applicable carrier arrangement and guards the parent version', async () => {
+  const payment = configureStructuredCarrier();
+  await bindPolicy(event, {
+    ...input(), carrierTermsVersion: 8, carrierArrangementId: payment.id,
+  });
+  const [changes, , guards] = h.commit.mock.calls[0];
+  expect(changes[0].value).toMatchObject({
+    carrierTerms: { version: 8, basis: 'EARNED', evidence: payment.evidence, payment: { ...payment, lines: ['PROPERTY'] } },
+    entries: [],
+  });
+  expect(changes[0].value.carrierTerms).not.toHaveProperty('arrangements');
+  expect(guards).toContainEqual({
+    ConditionCheck: {
+      TableName: 'commissions', Key: { kind: 'CARRIER', id: 'c' },
+      ConditionExpression: '#v = :v', ExpressionAttributeNames: { '#v': 'version' },
+      ExpressionAttributeValues: { ':v': 8 },
+    },
+  });
+});
+it.each([
+  {},
+  { carrierTermsVersion: 7, carrierArrangementId: 'property-direct' },
+  { carrierTermsVersion: 8, carrierArrangementId: 'other-scope' },
+])('blocks unconfirmed or changed structured carrier payment terms %#', async (confirmation) => {
+  configureStructuredCarrier();
+  await expect(bindPolicy(event, { ...input(), ...confirmation })).rejects.toThrow(/confirm/i);
+  expect(h.commit).not.toHaveBeenCalled();
+});
+it('requires an applicable carrier arrangement for the policy term rather than using an expired default', async () => {
+  configureStructuredCarrier();
+  const future = { ...quote, effectiveDate: '2027-01-01', expirationDate: '2028-01-01' };
+  h.rows.set('Quote:q', future);
+  await expect(bindPolicy(event, {
+    ...input(), terms: packageTerms(future), carrierTermsVersion: 8, carrierArrangementId: 'property-direct',
+  })).rejects.toThrow(/carrier|arrangement|terms/i);
+  expect(h.commit).not.toHaveBeenCalled();
 });

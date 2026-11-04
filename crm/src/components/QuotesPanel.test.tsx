@@ -3,13 +3,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { listAllPages } from "../lib/pagination";
 import type { Account } from "../lib/client";
 
-const h = vi.hoisted(() => ({ bind: vi.fn(), quotes: vi.fn(), update: vi.fn(), carriers: vi.fn(), getQuote: vi.fn(), policies: vi.fn(), createPolicy: vi.fn(), accountUpdate: vi.fn(), request: vi.fn(), children: vi.fn() }));
+const h = vi.hoisted(() => ({ preview: vi.fn(), bind: vi.fn(), quotes: vi.fn(), update: vi.fn(), carriers: vi.fn(), getQuote: vi.fn(), policies: vi.fn(), createPolicy: vi.fn(), accountUpdate: vi.fn(), request: vi.fn(), children: vi.fn() }));
 vi.mock("./QuotePackages", () => ({ default: () => null }));
 vi.mock("./CoverageForm", () => ({ default: () => null }));
 vi.mock("../lib/useAgencyDay", () => ({ useAgencyDay: () => "2026-11-03" }));
 vi.mock("../lib/communications", () => ({ communicationRequest: h.request }));
 vi.mock("../lib/client", () => ({
-  client: { mutations: { bindCommissionPolicy: h.bind }, models: { Quote: { list: h.quotes, update: h.update, get: h.getQuote }, Carrier: { list: h.carriers }, Policy: { list: h.policies, create: h.createPolicy }, Account: { update: h.accountUpdate }, Invoice: { list: h.children }, Document: { list: h.children }, PfLoan: { list: h.children } } },
+  client: { queries: { carrierPaymentPreview: h.preview }, mutations: { bindCommissionPolicy: h.bind }, models: { Quote: { list: h.quotes, update: h.update, get: h.getQuote }, Carrier: { list: h.carriers }, Policy: { list: h.policies, create: h.createPolicy }, Account: { update: h.accountUpdate }, Invoice: { list: h.children }, Document: { list: h.children }, PfLoan: { list: h.children } } },
   listAllPages: (...args: Parameters<typeof listAllPages>) => listAllPages(...args),
   friendlyError: (error: unknown, fallback: string) => error instanceof Error ? error.message : fallback,
   fmtDate: (value: string) => value || "—",
@@ -32,6 +32,7 @@ function pendingQuotes() {
 
 beforeEach(() => {
   vi.resetAllMocks();
+  h.preview.mockResolvedValue({ data: { ok: true, carrierTermsVersion: 4, basis: 'COLLECTED' } });
   h.bind.mockResolvedValue({ data: { ok: true, policy: { id: "policy-a" }, account: { ...account, stage: "CLIENT" } } });
   h.carriers.mockResolvedValue({ data: [{ id: "carrier-a", name: "Harbor Mutual" }] });
   h.update.mockResolvedValue({ data: quote });
@@ -126,8 +127,42 @@ async function openBind() {
   fireEvent.click(screen.getByLabelText("I confirmed the exact premium and agency commission percentage."));
   fireEvent.change(screen.getByLabelText("Bill type (required)"), { target: { value: "DIRECT" } });
   fireEvent.change(screen.getByLabelText("Policy number (can be added later)"), { target: { value: "POL-123" } });
+  await screen.findByText(/Legacy carrier terms: receipt timing is unconfirmed/);
 }
 describe("binding recovery", () => {
+  it('requires review of structured terms and sends the exact selected carrier version', async () => {
+    h.quotes.mockResolvedValue({ data: [quote] });
+    h.preview.mockResolvedValue({ data: { ok: true, carrierTermsVersion: 7, basis: 'WRITTEN', payment: {
+      id: 'direct-2026', payor: 'Harbor MGA', trigger: 'EFFECTIVE', cadence: 'MONTHLY', lagDays: 5,
+    } } });
+    render(<QuotesPanel account={account} onAccountChange={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Bind' }));
+    fireEvent.change(screen.getByLabelText('Bill type (required)'), { target: { value: 'DIRECT' } });
+    fireEvent.click(screen.getByLabelText('I confirmed the exact premium and agency commission percentage.'));
+    const review = await screen.findByLabelText('I reviewed the carrier commission payment arrangement.');
+    expect(screen.getByRole('button', { name: 'Confirm bind' })).toBeDisabled();
+    fireEvent.click(review);
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm bind' }));
+    await waitFor(() => expect(h.bind).toHaveBeenCalledTimes(1));
+    expect(JSON.parse(h.bind.mock.calls[0][0].input)).toMatchObject({
+      carrierTermsVersion: 7, carrierArrangementId: 'direct-2026',
+    });
+  });
+
+  it('blocks binding on a failed terms read and permits a reviewed retry', async () => {
+    h.quotes.mockResolvedValue({ data: [quote] });
+    h.preview.mockRejectedValueOnce(new Error('Carrier terms unavailable'));
+    render(<QuotesPanel account={account} onAccountChange={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Bind' }));
+    fireEvent.change(screen.getByLabelText('Bill type (required)'), { target: { value: 'DIRECT' } });
+    fireEvent.click(screen.getByLabelText('I confirmed the exact premium and agency commission percentage.'));
+    await screen.findByText('Carrier terms unavailable');
+    expect(screen.getByRole('button', { name: 'Confirm bind' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh carrier payment terms' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Confirm bind' })).toBeEnabled());
+    expect(h.bind).not.toHaveBeenCalled();
+  });
+
   it("preserves the bill type and policy number after a failed preflight and allows retry", async () => {
     h.quotes.mockResolvedValue({ data: [quote] });
     h.bind.mockRejectedValueOnce(new Error("Temporary quote read failure"));
@@ -139,6 +174,7 @@ describe("binding recovery", () => {
     expect(screen.getByLabelText("Policy number (can be added later)")).toHaveValue("POL-123");
     expect(screen.getByLabelText("Bill type (required)")).toHaveValue("DIRECT");
     expect(h.createPolicy).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Confirm bind" })).toBeEnabled());
     fireEvent.click(screen.getByRole("button", { name: "Confirm bind" }));
     await waitFor(() => expect(changed).toHaveBeenCalledWith(expect.objectContaining({ stage: "CLIENT" })));
     expect(JSON.parse(h.bind.mock.calls.at(-1)![0].input)).toMatchObject({ policyNumber: "POL-123", billType: "DIRECT", premium: "12000", agencyRate: "10" });
@@ -162,7 +198,7 @@ describe("binding recovery", () => {
     fireEvent.change(screen.getByLabelText("Bill type (required)"), { target: { value: "DIRECT" } });
     expect(screen.getByRole("button", { name: "Confirm bind" })).toBeDisabled();
     fireEvent.click(screen.getByLabelText("I confirmed the exact premium and agency commission percentage."));
-    expect(screen.getByRole("button", { name: "Confirm bind" })).toBeEnabled();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Confirm bind" })).toBeEnabled());
     fireEvent.change(screen.getByLabelText("Exact policy premium"), { target: { value: "12000.01" } });
     expect(screen.getByRole("button", { name: "Confirm bind" })).toBeDisabled();
     expect(h.bind).not.toHaveBeenCalled();

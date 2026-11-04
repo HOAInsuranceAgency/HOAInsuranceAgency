@@ -12,6 +12,7 @@ import {
 import { authorizedQuoteTerms } from '../../../../shared/quoteAuthorization';
 import {
   selectCommissionTerms,
+  selectCarrierPaymentTerms,
   type CommissionAccount,
   day,
   decimal,
@@ -109,6 +110,21 @@ export async function bindPolicy(event: Event, input: Data) {
       day: '2-digit',
     }).format(new Date(at));
   const transaction = quote.renewalPolicyId ? 'RENEWAL' : 'NEW';
+  const selectedCarrierTerms = selectCarrierPaymentTerms(carrierTerms, {
+    effectiveDate,
+    lines: quote.lines.filter((line): line is string => typeof line === 'string'),
+    billType: input.billType as 'AGENCY' | 'DIRECT',
+    transaction,
+  });
+  if (
+    carrierTerms.arrangements?.length &&
+    (input.carrierTermsVersion !== carrierTerms.version ||
+      input.carrierArrangementId !== selectedCarrierTerms.payment?.id)
+  )
+    throw new Error('Carrier payment terms changed or were not confirmed. Review and confirm the current payment terms before binding.');
+  // Freeze only the resolved contract, not every carrier arrangement. Apart
+  // from being unrelated history, the full configuration can exceed item limits.
+  const { arrangements: _arrangements, ...carrierSnapshotTerms } = selectedCarrierTerms;
   if (quote.renewalPolicyId) {
     const prior = await access.requireRecord('Policy', String(quote.renewalPolicyId));
     if (prior.accountId !== accountId)
@@ -210,7 +226,7 @@ export async function bindPolicy(event: Event, input: Data) {
     agencyRateUnits,
     ...selectedTerms,
     planVersion: plan.version,
-    carrierTerms,
+    carrierTerms: carrierSnapshotTerms,
     entries: [],
   };
   const guards: Transaction = [

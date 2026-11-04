@@ -18,10 +18,14 @@ import {
   validatePlan,
   validateCommissionAccount,
   selectCommissionTerms,
+  selectCarrierPaymentTerms,
+  validateCarrierPaymentTerms,
+  validateReceiptForecast,
+  carrierReconciliationBalances,
+  type CommissionReceiptForecast,
   type CommissionAccount,
   MONEY_MAX,
   validateAllocationSnapshot,
-  COMMISSION_BASES,
   type CommissionPlan,
   type CarrierCommissionTerms,
   type CommissionPolicy,
@@ -30,6 +34,7 @@ import {
   type StatementLine,
 } from '../../../../shared/commissions';
 import { bindPolicy } from './bind';
+import { previewCarrierPaymentTerms } from './payment-preview';
 import {
   downloadContentDisposition,
   fileClient,
@@ -74,7 +79,7 @@ export function permitted(event: Event) {
     throw new Error(
       'Only the active Owner role can reconcile commissions or change commission records.',
     );
-  if (!['commissionOverview', 'commissionAction', 'bindCommissionPolicy'].includes(field ?? ''))
+  if (!['commissionOverview', 'commissionAction', 'bindCommissionPolicy', 'carrierPaymentPreview'].includes(field ?? ''))
     throw new Error('Unknown commission request.');
   return { actor, role, field };
 }
@@ -85,8 +90,11 @@ export async function handler(event: Event) {
     await assertUserSession(event.identity);
     const args = event.arguments ?? {},
       input = object(args.input);
+    if (field === 'carrierPaymentPreview')
+      return { ok: true, ...(await previewCarrierPaymentTerms(event)) };
     if (field === 'bindCommissionPolicy') return { ok: true, ...(await bindPolicy(event, input)) };
     if (field === 'commissionOverview') {
+      const asOf = agencyToday();
       if (role !== 'OWNER') {
         // Query only this identity, then load authoritative records consistently:
         // GSI lag can delay discovery, but cannot expose old payment/ownership data.
@@ -118,6 +126,7 @@ export async function handler(event: Event) {
             producerBps: p.producerBps,
             eligibility: p.eligibility,
             receiptsFrom: p.receiptsFrom,
+            reconciliationBalances: carrierReconciliationBalances(p, asOf),
             entries: p.entries.map((e) => ({
               id: e.id,
               lineRef: e.lineRef,
@@ -132,6 +141,7 @@ export async function handler(event: Event) {
           }));
         return {
           ok: true,
+          asOf,
           policies,
           batches: rows.filter((r) => r && r.producerId === actor && 'payDate' in r),
         };
@@ -146,6 +156,7 @@ export async function handler(event: Event) {
       validateAllocationSnapshot(policies, batches);
       return {
         ok: true,
+        asOf,
         plans,
         carriers,
         policies,
@@ -240,16 +251,17 @@ export async function handler(event: Event) {
       ).requireRecord('Carrier', carrierId);
       const old = await store.get<CarrierCommissionTerms>('CARRIER', carrierId);
       currentVersion(input, old);
-      if (!Object.hasOwn(COMMISSION_BASES, String(input.basis)))
-        throw new Error('Choose the carrier commission basis.');
-      const terms = {
+      const arrangements = input.arrangements as CarrierCommissionTerms['arrangements'];
+      const terms = validateCarrierPaymentTerms({
         id: carrierId,
         name: String(carrier.name),
         version: Number(input.version),
-        basis: input.basis,
-        schedule: required(input.schedule, 'the remittance schedule'),
-        evidence: required(input.evidence, 'the carrier agreement reference'),
-      };
+        // Compatibility summaries are derived from the structured arrangements.
+        basis: arrangements?.[0]?.basis as CarrierCommissionTerms['basis'],
+        schedule: typeof input.schedule === 'string' ? input.schedule : '',
+        evidence: arrangements?.[0]?.evidence as string,
+        arrangements,
+      });
       await store.commit([change('CARRIER', terms, old)], actor);
       return { ok: true };
     }
@@ -324,6 +336,13 @@ export async function handler(event: Event) {
         1_000_000,
         'agency rate',
       );
+      const selectedCarrierTerms = selectCarrierPaymentTerms(carrierTerms, {
+        effectiveDate,
+        lines: Array.isArray(policy.lines) ? policy.lines.filter((line): line is string => typeof line === 'string') : undefined,
+        billType: policy.billType as 'AGENCY' | 'DIRECT' | undefined,
+        transaction: input.transaction as 'NEW' | 'RENEWAL',
+      });
+      const { arrangements: _arrangements, ...carrierSnapshotTerms } = selectedCarrierTerms;
       const snapshot: CommissionPolicy = {
         id: String(policy.id),
         version: 0,
@@ -343,7 +362,7 @@ export async function handler(event: Event) {
         agencyRateUnits,
         ...selectedTerms,
         planVersion: plan.version,
-        carrierTerms,
+        carrierTerms: carrierSnapshotTerms,
         entries: [],
       };
       await store.commit(
@@ -408,6 +427,18 @@ export async function handler(event: Event) {
           },
         ],
       );
+      return { ok: true };
+    }
+    if (operation === 'saveReceiptForecast') {
+      const id = required(input.policyId, 'a policy'),
+        snapshot = await store.get<CommissionPolicy>('POLICY', id);
+      if (!snapshot) throw new Error('Commission policy not found.');
+      currentVersion(input, snapshot);
+      const receiptForecast = validateReceiptForecast({
+        ...object(input.receiptForecast),
+        reviewedEntryCount: snapshot.entries.length,
+      } as CommissionReceiptForecast);
+      await store.commit([change('POLICY', { ...snapshot, receiptForecast }, snapshot)], actor);
       return { ok: true };
     }
     if (operation === 'updatePolicyNumber') {

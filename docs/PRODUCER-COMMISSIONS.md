@@ -41,15 +41,77 @@ Private statement uploads are immutable and download links last sixty seconds.
    overlapping periods cannot silently pick a rate. A relationship or account
    name alone never determines compensation. When GIM management changes, the
    Owner must update classification periods before the next bind/renewal.
-4. Configure each carrier's written/earned/collected-premium basis, remittance
-   schedule, and contract reference. These forecast timing; they do not generate
-   payable earnings.
+4. Configure effective-dated carrier payment arrangements: written, earned, or
+   collected premium; actual carrier/MGA payor; receipt trigger; once/monthly/
+   quarterly remittance; statement cutoff; remittance day; calendar-day lag; and
+   source agreement. Optional coverage-line, new/renewal, and billing scopes
+   override carrierwide defaults. Dates are inclusive and selected by the policy
+   effective date. Equally specific overlapping rules are rejected. A combined
+   policy must have one applicable arrangement covering all its coverage lines;
+   differing line terms require a supported combined arrangement or separate
+   quotes with their own premium amounts.
 5. At bind, confirm the exact commissionable policy premium and agency percentage.
    These must match the accepted quote. Edit the quote first if necessary and
    obtain renewed client authorization when client-facing terms change.
 6. The server atomically saves the policy, private commission snapshot, bound quote
    status, and lead conversion. Retries return the same policy. Direct model
    creation and direct transitions to BOUND cannot bypass the workflow.
+
+After selecting the bill type at bind, review the selected carrier payment
+summary. The server checks the reviewed carrier version and arrangement again
+before binding and freezes the resolved arrangement. The quote-scoped preview
+does not expose private carrier references, notes, or other arrangements.
+Client installment or premium-finance plans do not determine commission basis.
+Keep the carrier's original wording in the arrangement notes: “as earned” may
+mean as-collected, rather than the passage of coverage time.
+
+## Carrier receipt forecasts and balances
+
+The Owner ledger has a **Receipt reconciliation as of** date. Each policy shows
+its original full-term agency estimate, expected commission through that date,
+actual net reconciled receipts through that date, overdue commission, remaining
+future scheduled balance, complete receipt forecast, and any estimate not yet
+allocated to dates. Due-today amounts are expected today and become overdue the
+following day. Early receipts cover earlier scheduled expectations first and
+reduce the future scheduled balance. These are operational cash forecasts;
+they do not post accounting revenue, receipts, or producer payables. Earnings and
+payroll continue to use only actual reconciled eligible receipts.
+
+Written-premium arrangements forecast the full commission after the configured
+bind/effective trigger and remittance timing, even when remittance is monthly.
+Daily pro rata earned-premium arrangements use actual covered days and
+cumulative cent rounding through the configured statement cutoff. Earned
+arrangements with a manual method and collected-premium arrangements require
+an explicit supported receipt schedule; the app never assumes twelve equal
+payments or infers collections from a customer payment plan.
+
+Monthly statement cycles close each month; quarterly cycles close in March,
+June, September, and December. The cutoff defaults to month end. A trigger after
+the cutoff rolls to the next cycle. If a remittance day is configured, it falls
+in the month after the cutoff; otherwise remittance is on the cutoff. Calendar
+lag days are then added. One-time remittance uses the trigger date or the next
+configured payment day on/after it, plus lag. Days 29–31 clamp to month end.
+Other contractual patterns should use a documented manual receipt forecast.
+
+In **Manage expected receipts**, the Owner can save dated agency commission
+amounts with source evidence, explicitly estimated or confirmed and partial or
+complete. Partial schedules leave the unallocated remainder unknown. Estimated
+gaps are not presented as confirmed overdue amounts. A complete schedule replaces
+the forecast total without rewriting the original premium/rate estimate; a
+complete empty schedule can document no further entitlement after cancellation.
+Save the whole expected schedule, including prior expected receipts, rather than
+only its unpaid remainder. Actual receipts are applied to that schedule.
+
+Carrier reversals/restorations flag the schedule for review and suppress overdue
+claims until the Owner reviews a supported forecast against the current receipt
+history. Forecast changes are version-checked and privately audited, and cannot
+alter receipts, producer earnings, or payroll allocations. Producers receive only
+their safe computed balances as of the server's agency-local date.
+
+Existing free-text carrier terms and frozen policy snapshots remain readable.
+Their timing stays unknown until an Owner enters structured terms for future
+binds or a supported receipt forecast on an existing policy. There is no inferred
+backfill or historical recalculation.
 
 The assigned producer at bind receives the snapshot. New business selects the
 agreement by bind date in America/New_York; renewals select it by effective date.
@@ -173,11 +235,20 @@ ledger, private statement bucket, function, and API operations before the new
 frontend can use them. Refresh existing browser sessions after release.
 
 The initial release supports one producer per policy. Written multi-producer
-splits, carrier-program-specific overrides, automatic statement extraction/import,
+splits, separately identified program-specific arrangements beyond the supported
+coverage-line/business/billing scopes, automatic statement extraction/import,
 automatic payroll-calendar scheduling, partial payroll settlements, and authorized
 recovery collection remain separate extensions from the broader process design.
 
 ## Local verification
+
+Structured carrier terms and reconciliation balances were verified November 4,
+2026: all 3,639 tests across 208 files passed; frontend/backend type checks,
+production build, backend synthesis, and whitespace checks passed. The Owner
+carrier editor and receipt balances were visually checked using fictional data.
+This extension adds the authenticated, quote-scoped `carrierPaymentPreview`
+query; deploy the backend before serving the updated frontend. No live carrier
+configuration, receipt, payroll, or cloud deployment was performed.
 
 Run `npm run test:run`, `npm run typecheck`, `npm run build`, and
 `npm run synth:check` from `crm`. When reusing dependencies through a worktree
