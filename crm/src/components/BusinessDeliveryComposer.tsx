@@ -19,6 +19,19 @@ type History = { items: BusinessDeliveryAttempt[]; nextToken?: string };
 const KIND_LABELS: Record<BusinessDeliveryKind, string> = { PACKAGE: "Proposal package", CERTIFICATE: "Certificate", DOCUMENT: "Document" };
 const STATE_LABELS = { PREPARING: "Preparing", DRAFT: "Prepared", UNKNOWN: "Needs review", FAILED: "Failed", SENT: "Sent" };
 
+function mergeAttemptEvidence(previous: BusinessDeliveryAttempt | undefined, incoming: BusinessDeliveryAttempt): BusinessDeliveryAttempt {
+  if (!previous) return incoming;
+  const stale = previous.state === "FAILED" && incoming.state !== "FAILED" || previous.state === "SENT" && !["SENT", "FAILED"].includes(incoming.state);
+  const current = stale ? previous : incoming;
+  return { ...current,
+    sentWithChanges: previous.sentWithChanges || incoming.sentWithChanges ? true : current.sentWithChanges,
+    sentAt: current.sentAt ?? previous.sentAt ?? incoming.sentAt,
+    frontDraftId: current.frontDraftId ?? previous.frontDraftId ?? incoming.frontDraftId,
+    frontUrl: current.frontUrl ?? previous.frontUrl ?? incoming.frontUrl,
+    messageUrl: current.messageUrl ?? previous.messageUrl ?? incoming.messageUrl,
+  };
+}
+
 export function safeFrontUrl(value?: string): string | undefined {
   if (!value) return;
   try {
@@ -75,9 +88,15 @@ export default function BusinessDeliveryComposer(props: BusinessDeliveryComposer
 
 function BusinessDeliveryComposerContent({ accountId, conversationId, kind, recordId, onClose }: BusinessDeliveryComposerProps) {
   const id = useId();
+  const evidence = useRef(new Map<string, BusinessDeliveryAttempt>());
+  function rememberAttempt(incoming: BusinessDeliveryAttempt) {
+    const current = mergeAttemptEvidence(evidence.current.get(incoming.id), incoming);
+    evidence.current.set(current.id, current);
+    return current;
+  }
   const context = useAsyncResource(() => request<{ context: BusinessDeliveryContext }>("businessDeliveryContext", { accountId }), [accountId], { initialData: null, errorMessage: "Could not load delivery choices" });
   const history = useAsyncResource(async () => {
-    try { return await request<History>("historyBusinessDeliveries", { accountId }); }
+    try { const page = await request<History>("historyBusinessDeliveries", { accountId }); return { ...page, items: page.items.map(rememberAttempt) }; }
     catch (err) { if (isAuthorizationError(err)) context.invalidate(err); throw err; }
   }, [accountId], { initialData: { items: [] } as History, errorMessage: "Could not load Front draft history" });
   const [choiceKey, setChoiceKey] = useState(kind && recordId ? `${kind}:${recordId}` : "");
@@ -111,10 +130,10 @@ function BusinessDeliveryComposerContent({ accountId, conversationId, kind, reco
     const found = history.data.items.find(item => item.id === attempt.id);
     // Account-index reads can lag a direct prepare/reconcile response. Accept
     // verified terminal progress without reviving a stale draft or failed send.
-    if (found && (found.state === "FAILED" && attempt.state !== "FAILED" || found.state === "SENT" && !["SENT", "FAILED"].includes(attempt.state))) setAttempt(found);
+    if (found && (found.state === "FAILED" && attempt.state !== "FAILED" || found.state === "SENT" && !["SENT", "FAILED"].includes(attempt.state) || found.sentWithChanges && !attempt.sentWithChanges)) setAttempt(found);
   }, [history.data, attempt]);
   useEffect(() => {
-    if (context.loaded && !context.data) { setPreview(null); setAttempt(null); setTo(""); setCc(""); lastInput.current = null; setUncertain(false); }
+    if (context.loaded && !context.data) { setPreview(null); setAttempt(null); setTo(""); setCc(""); lastInput.current = null; setUncertain(false); evidence.current.clear(); }
   }, [context.loaded, context.data]);
   useEffect(() => {
     const refresh = () => { if (document.visibilityState === "visible" && !flight.current) void history.refetch(); };
@@ -133,7 +152,7 @@ function BusinessDeliveryComposerContent({ accountId, conversationId, kind, reco
   const invalidatePreview = () => { setPreview(null); setReviewed(false); setError(""); lastInput.current = null; };
   const reportError = (err: unknown, fallback: string) => {
     setError(friendlyError(err, fallback));
-    if (isAuthorizationError(err)) { context.invalidate(err); history.invalidate(err); setPreview(null); setAttempt(null); setTo(""); setCc(""); lastInput.current = null; setUncertain(false); }
+    if (isAuthorizationError(err)) { context.invalidate(err); history.invalidate(err); setPreview(null); setAttempt(null); setTo(""); setCc(""); lastInput.current = null; setUncertain(false); evidence.current.clear(); }
   };
 
   async function showPreview() {
@@ -159,7 +178,7 @@ function BusinessDeliveryComposerContent({ accountId, conversationId, kind, reco
     try {
       const result = await request<{ attempt: BusinessDeliveryAttempt }>("prepareBusinessDraft", input, true);
       if (!mounted.current) return;
-      setAttempt(result.attempt); setUncertain(false); void history.refetch();
+      setAttempt(rememberAttempt(result.attempt)); setUncertain(false); void history.refetch();
     } catch (err) {
       if (mounted.current) {
         reportError(err, "Could not confirm the Front draft");
@@ -176,8 +195,9 @@ function BusinessDeliveryComposerContent({ accountId, conversationId, kind, reco
     try {
       const result = await request<{ attempt: BusinessDeliveryAttempt }>("reconcileBusinessDraft", { accountId, attemptId: item.id, ...(recoveryMessageId ? { recoveryMessageId } : {}) }, true);
       if (!mounted.current) return;
-      history.setData(previous => ({ ...previous, items: previous.items.map(row => row.id === result.attempt.id ? result.attempt : row) }));
-      if (recoveryMessageId || attempt?.id === item.id || lastInput.current?.requestId === item.requestId) { setAttempt(result.attempt); setUncertain(false); }
+      const verified = rememberAttempt(result.attempt);
+      history.setData(previous => ({ ...previous, items: previous.items.map(row => row.id === verified.id ? verified : row) }));
+      if (recoveryMessageId || attempt?.id === item.id || lastInput.current?.requestId === item.requestId) { setAttempt(verified); setUncertain(false); }
     } catch (err) { if (mounted.current) reportError(err, "Could not check Front status"); }
     finally { flight.current = false; if (mounted.current) setBusy(""); }
   }
@@ -197,16 +217,17 @@ function BusinessDeliveryComposerContent({ accountId, conversationId, kind, reco
     const captured = history.data; setLoadingMore(true);
     try {
       const result = await request<History>("historyBusinessDeliveries", { accountId, nextToken: captured.nextToken });
-      if (mounted.current) history.setData(previous => previous === captured ? { items: [...new Map([...previous.items, ...result.items].map(item => [item.id, item])).values()], nextToken: result.nextToken } : previous);
+      if (mounted.current) history.setData(previous => previous === captured ? { items: [...new Map([...previous.items, ...result.items.map(rememberAttempt)].map(item => [item.id, item])).values()], nextToken: result.nextToken } : previous);
     } catch (err) { if (mounted.current) reportError(err, "Could not load older drafts"); }
     finally { if (mounted.current) setLoadingMore(false); }
   }
 
   function attemptRow(item: BusinessDeliveryAttempt) {
     const url = safeFrontUrl(item.messageUrl) ?? safeFrontUrl(item.frontUrl);
-    return <li key={item.id} className="business-delivery-attempt"><div><strong>{STATE_LABELS[item.state]}</strong> · {item.kind === "QUOTE" ? "Quote" : KIND_LABELS[item.kind]} · {fmtDateTime(item.sentAt ?? item.preparedAt)}</div>
-      <p className="small">From {item.from} · To {item.to.join(", ")}{item.cc.length ? ` · CC ${item.cc.join(", ")}` : ""}</p>
+    return <li key={item.id} className="business-delivery-attempt"><div><strong>{item.state === "SENT" && item.sentWithChanges ? "Sent with changes" : STATE_LABELS[item.state]}</strong> · {item.kind === "QUOTE" ? "Quote" : KIND_LABELS[item.kind]} · {fmtDateTime(item.sentAt ?? item.preparedAt)}</div>
+      <p className="small">From {item.from} · {item.sentWithChanges ? "Originally prepared for To: " : "To "}{item.to.join(", ")}{item.cc.length ? ` · ${item.sentWithChanges ? "Originally prepared CC:" : "CC"} ${item.cc.join(", ")}` : ""}</p>
       {item.failure && <p className="error-text">{item.failure}</p>}
+      {item.sentWithChanges && <p className="business-delivery-notice">The message was sent with changes in Front. Open Front to verify the actual recipients, message and attachments. The recipients above are the original preparation, and this send did not mark current quotes as presented.</p>}
       {item.state === "DRAFT" && <p className="small">Review the message and every attachment in Front, then send it there.</p>}
       {item.state === "SENT" && <p className="muted small">Sent via Front. This does not confirm receipt or reading.</p>}
       {item.state === "UNKNOWN" && <p className="small">The draft result needs review. Check Front before preparing another copy. Ask an administrator for help if the teammate who prepared it is unavailable.</p>}

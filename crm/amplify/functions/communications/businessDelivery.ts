@@ -7,7 +7,7 @@ import { dataClient } from "./data";
 import { currentMessage } from "../../../../shared/serviceEvidence";
 import { resolveIssue } from "./routing";
 import { downloadFrontAttachment } from "./attachments";
-import { applyBusinessAttempt } from "./businessHandoff";
+import { applyBusinessAttempt, quoteProjectionTimestamp } from "./businessHandoff";
 export { businessDeliveryContext, previewBusinessDelivery, prepareBusinessDraft, historyBusinessDeliveries, reconcileBusinessDraft } from "./businessHandoff";
 
 const digest = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
@@ -52,7 +52,7 @@ export async function applyBusinessDelivery(comm: Communication) {
       const q = await (await dataClient()).models.Quote.get({ id: d.recordId });
       if (q.errors?.length || !q.data || q.data.accountId !== comm.accountId) { await issue(candidate.id, "Review the historical quote proof before recording presentation.", comm.accountId); continue; }
       if (!process.env.QUOTE_TABLE) throw new Error("Business delivery storage needs configuration");
-      projection.push({ Update: { TableName: process.env.QUOTE_TABLE, Key: { id: d.recordId }, UpdateExpression: "SET presentedAt = if_not_exists(presentedAt, :at), updatedAt = :at, lastWriteBy = :actor, #status = :presented", ConditionExpression: "updatedAt = :old AND #status = :quoted", ExpressionAttributeValues: { ":at": comm.at, ":old": d.recordVersion, ":actor": "communication-delivery", ":presented": "PRESENTED", ":quoted": "QUOTED" }, ExpressionAttributeNames: { "#status": "status" } } });
+      projection.push({ Update: { TableName: process.env.QUOTE_TABLE, Key: { id: d.recordId }, UpdateExpression: "SET presentedAt = if_not_exists(presentedAt, :at), updatedAt = :processed, lastWriteBy = :actor, #status = :presented", ConditionExpression: "updatedAt = :old AND #status = :quoted", ExpressionAttributeValues: { ":at": comm.at, ":processed": quoteProjectionTimestamp(q.data.updatedAt), ":old": d.recordVersion, ":actor": "communication-delivery", ":presented": "PRESENTED", ":quoted": "QUOTED" }, ExpressionAttributeNames: { "#status": "status" } } });
     }
     try {
       await commit([check(source), check(link), put(row("BUSINESS_DELIVERY", candidate.id, { ...d, state: "SENT", sentAt: comm.at, messageId: comm.providerId }, { accountId: comm.accountId, previous: candidate }), candidate), ...projection]);

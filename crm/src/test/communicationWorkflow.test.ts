@@ -2274,6 +2274,7 @@ describe("native Front quote presentation", () => {
     const comm = await inbound('resend', '2026-09-08T15:00:00Z', { direction:'OUTBOUND', to:['jane@example.com'], text:draft.body.replace(/<[^>]*>/g,'\n') });
     await (await import('../../amplify/functions/communications/businessDelivery')).applyBusinessDelivery(comm);
     expect(h.records.get('Quote:q1')!.presentedAt).toBe(original); expect(entries('BUSINESS_DELIVERY')[0].data.sentAt).toBe(comm.at);
+    expect(Date.parse(h.records.get('Quote:q1')!.updatedAt)).toBeGreaterThan(Date.parse(NOW));
   });
   it.each(['CERTIFICATE','DOCUMENT'])('records historical %s sending without asserting recipient delivery', async kind => {
     const draft=await prepare(),proof=entries('BUSINESS_DELIVERY')[0]; proof.data.kind=kind;

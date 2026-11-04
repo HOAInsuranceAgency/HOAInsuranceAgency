@@ -21,7 +21,12 @@ vi.mock('../../amplify/functions/communications/store',async original=>{
       const failed=w.ConditionExpression==='attribute_not_exists(id)'?!!old:w.ExpressionAttributeValues?.[':v']!==undefined?old?.version!==w.ExpressionAttributeValues[':v']:w.ExpressionAttributeValues?.[':at']!==undefined && write.ConditionCheck?old?.updatedAt!==w.ExpressionAttributeValues[':at']:write.Update?old?.updatedAt!==w.ExpressionAttributeValues[':old']:false;
       if(failed)throw Object.assign(new Error('Conflict'),{name:'ConditionalCheckFailedException'});
     }
-    for(const write of writes){if(write.Put)h.rows.set(write.Put.Item.id,structuredClone(write.Put.Item));if(write.Update){const u=write.Update,key=`${u.TableName}:${u.Key.id}`,old=h.models.get(key);h.models.set(key,{...old,presentedAt:old.presentedAt ?? u.ExpressionAttributeValues[':at'],updatedAt:u.ExpressionAttributeValues[':at'],status:'PRESENTED'});}}
+    for(const write of writes){if(write.Put)h.rows.set(write.Put.Item.id,structuredClone(write.Put.Item));if(write.Update){const u=write.Update,key=`${u.TableName}:${u.Key.id}`,next={...h.models.get(key)};
+      for(const assignment of u.UpdateExpression.replace(/^SET /,'').split(/, (?![^()]*\))/)){
+        const [raw,expression]=assignment.split(' = '),field=u.ExpressionAttributeNames?.[raw] ?? raw,fallback=/^if_not_exists\(([^,]+), (:[^)]+)\)$/.exec(expression);
+        next[field]=fallback?next[fallback[1]] ?? u.ExpressionAttributeValues[fallback[2]]:u.ExpressionAttributeValues[expression];
+      }h.models.set(key,next);
+    }}
   };
   return{...actual,get:async(id:string)=>h.rows.get(id),commit:execute,save:async(next:any,old?:any)=>{await execute([actual.put(next,old)]);return next;},query:async(_index:string,accountId:string)=>({items:[...h.rows.values()].filter(r=>r.kind==='BUSINESS_DELIVERY' && r.accountId===accountId)})};
 });
@@ -58,6 +63,7 @@ beforeEach(()=>{
     if(path.startsWith('/messages/'))return h.messages.get(path.split('/').pop()!);
     if(path.endsWith('/drafts'))return{_results:[...h.messages.values()].filter(m=>m.is_draft)};
     if(path.includes('/messages'))return{_results:[{id:'msg_in',is_inbound:true,recipients:[{role:'from',handle:'client@example.com'},{role:'to',handle:'actor@example.com'}]}]};
+    if(/^\/conversations\/cnv_[a-z0-9]+$/.test(path))return{id:path.split('/').pop(),status:'open'};
     throw new Error(`Unexpected test Front read ${path}`);
   });
 });
@@ -70,6 +76,7 @@ describe('reviewed Front business handoff',()=>{
   });
   it('freezes one public PDF without leaking commission, notes or private storage paths',async()=>{
     const p=await previewBusinessDelivery(selection,'actor');
+    expect(p.warnings).toContain('No carrier quotation PDFs are selected. The proposal contains recorded terms only; review the carrier quotations before sending.');
     expect(p.attachments[0].sha256).toBe(sha(PDF));expect(p.sender.senderEmail).toBe('actor@example.com');expect(JSON.stringify(p)).not.toContain('PRIVATE NOTES');expect(JSON.stringify(p)).not.toContain('commission');expect(JSON.stringify(p)).not.toContain('business-deliveries/');expect(h.pdf.mock.calls[0][0].quotes[0]).not.toHaveProperty('notes');
     const a=await prepareBusinessDraft(prepareInput(p),'actor');expect(a.state).toBe('DRAFT');expect(h.pdf).toHaveBeenCalledTimes(1);expect(h.front.mock.calls.find(c=>c[1]==='POST')![0]).toBe('/channels/cha_personal/drafts');expect(h.rows.has('front-link:cnv_private')).toBe(false);expect(h.models.get('Quote:q1').status).toBe('QUOTED');
   });
@@ -121,19 +128,53 @@ describe('reviewed Front business handoff',()=>{
   it('reconciles a known private draft without traversing or importing its private inbox',async()=>{
     const p=await previewBusinessDelivery(selection,'actor'),a=await prepareBusinessDraft(prepareInput(p),'actor');h.front.mockClear();expect((await reconcileBusinessDraft({accountId:'a1',attemptId:a.id},'actor')).state).toBe('DRAFT');expect(h.front.mock.calls.map(c=>c[0])).toEqual(['/messages/msg_draft']);await expect(reconcileBusinessDraft({accountId:'a1',attemptId:a.id},'other')).rejects.toThrow('assignment changed');sent();expect((await reconcileBusinessDraft({accountId:'a1',attemptId:a.id},'actor')).state).toBe('SENT');
   });
-  it.each(['To','CC','facts','files','reference'])('holds a known sent message with changed %s for review and blocks another target attempt',async changed=>{
+  it('uses validated resource-scoped GETs for known message and conversation receipt checks',async()=>{
+    const p=await previewBusinessDelivery(selection,'actor'),a=await prepareBusinessDraft(prepareInput(p),'actor');sent();h.front.mockClear();expect((await reconcileBusinessDraft({accountId:'a1',attemptId:a.id},'actor')).state).toBe('SENT');
+    expect(h.front.mock.calls.length).toBeGreaterThan(1);for(const call of h.front.mock.calls)expect(call.slice(1)).toEqual(['GET',undefined,{resourceScoped:true}]);
+  });
+  it.each(['To','CC','facts','files','reference'])('records known sent changes to %s without projecting quotes and allows a reviewed new attempt',async changed=>{
     const p=await previewBusinessDelivery(selection,'actor'),a=await prepareBusinessDraft(prepareInput(p),'actor');sent();const message=h.messages.get(a.frontDraftId!);
     if(changed==='To')message.recipients.find((r:any)=>r.role==='to').handle='different@example.com';
     if(changed==='CC')message.recipients.push({role:'cc',handle:'newcc@example.com'});
     if(changed==='facts')message.text=message.text.replace('Premium: $1,200.00','Premium: $9,999.00');
     if(changed==='files')h.attachment.mockResolvedValue(new TextEncoder().encode('%PDF-1.7 changed by sender'));
     if(changed==='reference')message.text=message.text.replace(/HOA-[A-F0-9]{12}/,'different reference');
-    const result=await reconcileBusinessDraft({accountId:'a1',attemptId:a.id},'actor');expect(result).toMatchObject({state:'UNKNOWN',frontDraftId:a.frontDraftId});expect(result.failure).toContain('records this message as sent');expect(result.failure).toContain('differs from the prepared preview');expect(h.models.get('Quote:q1').status).toBe('QUOTED');expect(result.sentAt).toBeUndefined();
-    const p2=await previewBusinessDelivery(selection,'actor');await expect(prepareBusinessDraft(prepareInput(p2,'another_request'),'actor')).rejects.toThrow('earlier draft attempt');expect(h.posts).toBe(1);
+    const result=await reconcileBusinessDraft({accountId:'a1',attemptId:a.id},'actor');expect(result).toMatchObject({state:'SENT',sentWithChanges:true,sentAt:'2026-11-03T17:00:00.000Z',frontDraftId:a.frontDraftId,to:['client@example.com'],cc:[]});expect(result.failure).toContain('originally prepared To/CC');expect(result.failure).toContain('Current quotes were not marked presented');expect(h.models.get('Quote:q1').status).toBe('QUOTED');expect(h.rows.get(a.id).data.frontMessageId).toBe(a.frontDraftId);
+    h.attachment.mockResolvedValue(PDF);const p2=await previewBusinessDelivery(selection,'actor');expect((await prepareBusinessDraft(prepareInput(p2,'another_request'),'actor')).state).toBe('DRAFT');expect(h.posts).toBe(2);
+  });
+  it.each(['author','From','message ID','conversation','account link','carrier link'])('keeps a known sent message UNKNOWN when %s is ambiguous',async ambiguity=>{
+    const p=await previewBusinessDelivery(selection,'actor'),a=await prepareBusinessDraft(prepareInput(p),'actor');sent();const message=h.messages.get(a.frontDraftId!);
+    message.text='Human-edited sent content';
+    if(ambiguity==='author')message.author.id='tea_someoneelse';
+    if(ambiguity==='From')message.recipients.find((r:any)=>r.role==='from').handle='someoneelse@example.com';
+    if(ambiguity==='message ID')message.id='msg_other';
+    if(ambiguity==='conversation')message.conversation.id='cnv_other';
+    if(ambiguity==='account link')h.rows.set('front-link:cnv_private',row('LINK','front-link:cnv_private',{accountId:'other-account',purpose:'PROSPECT'}));
+    if(ambiguity==='carrier link')h.rows.set('front-link:cnv_private',row('LINK','front-link:cnv_private',{accountId:'a1',purpose:'CARRIER'}));
+    const result=await reconcileBusinessDraft({accountId:'a1',attemptId:a.id},'actor');expect(result.state).toBe('UNKNOWN');expect(result.sentWithChanges).not.toBe(true);expect(h.models.get('Quote:q1').status).toBe('QUOTED');const p2=await previewBusinessDelivery(selection,'actor');await expect(prepareBusinessDraft(prepareInput(p2,'new_request'),'actor')).rejects.toThrow('earlier draft attempt');
+  });
+  it('rejects a foreign raw message-conversation alias even when it resolves to the known canonical conversation',async()=>{
+    const p=await previewBusinessDelivery(selection,'actor'),a=await prepareBusinessDraft(prepareInput(p),'actor');sent();const message=h.messages.get(a.frontDraftId!);message.text='Human-edited sent content';message.conversation.id='cnv_foreignalias';
+    h.rows.set('front-link:cnv_foreignalias',row('LINK','front-link:cnv_foreignalias',{accountId:'foreign-account',purpose:'PROSPECT'}));const implementation=h.front.getMockImplementation()!;
+    h.front.mockImplementation(async(path:string,method='GET',body?:FormData)=>path==='/conversations/cnv_foreignalias'?{id:'cnv_private',status:'open'}:implementation(path,method,body));
+    expect((await reconcileBusinessDraft({accountId:'a1',attemptId:a.id},'actor')).state).toBe('UNKNOWN');expect(h.models.get('Quote:q1').status).toBe('QUOTED');
   });
   it('keeps an observed sent message unresolved if attachment verification temporarily fails',async()=>{
     const p=await previewBusinessDelivery(selection,'actor'),a=await prepareBusinessDraft(prepareInput(p),'actor');sent();h.attachment.mockRejectedValue(new Error('Temporary attachment read failure'));
     await expect(reconcileBusinessDraft({accountId:'a1',attemptId:a.id},'actor')).rejects.toThrow('Temporary attachment');expect(h.rows.get(a.id).data).toMatchObject({state:'UNKNOWN',failure:expect.stringContaining('Verification')});const p2=await previewBusinessDelivery(selection,'actor');await expect(prepareBusinessDraft(prepareInput(p2,'retry_new_request'),'actor')).rejects.toThrow('earlier draft attempt');
+  });
+  it('requires full proof when adopting an unknown NEW outcome by user-supplied ID',async()=>{
+    const p=await previewBusinessDelivery(selection,'actor'),implementation=h.front.getMockImplementation()!;
+    h.front.mockImplementation(async(path:string,method='GET',body?:FormData)=>{const result=await implementation(path,method,body);if(method==='POST')throw new ProviderError('Lost response',0,true);return result;});
+    const a=await prepareBusinessDraft(prepareInput(p),'actor');sent();h.messages.get('msg_draft').text='Edited before the unknown original draft ID was recovered';await expect(reconcileBusinessDraft({accountId:'a1',attemptId:a.id,recoveryMessageId:'msg_draft'},'actor')).rejects.toThrow('does not match');expect(h.rows.get(a.id).data).toMatchObject({state:'UNKNOWN'});expect(h.rows.get(a.id).data.frontDraftId).toBeUndefined();
+  });
+  it('records a late actual Front error on Sent with changes without requiring prepared recipients or reference',async()=>{
+    const p=await previewBusinessDelivery(selection,'actor'),a=await prepareBusinessDraft(prepareInput(p),'actor');sent();const message=h.messages.get(a.frontDraftId!);message.text='Changed sent body without original reference';message.recipients.find((r:any)=>r.role==='to').handle='changed@example.com';
+    const first=await reconcileBusinessDraft({accountId:'a1',attemptId:a.id},'actor');expect(first).toMatchObject({state:'SENT',sentWithChanges:true});message.error_type='delivery_failed';expect(await reconcileBusinessDraft({accountId:'a1',attemptId:a.id},'actor')).toMatchObject({state:'FAILED',sentWithChanges:true,sentAt:first.sentAt});expect(h.models.get('Quote:q1').status).toBe('QUOTED');
+  });
+  it('correlates a signed late failure by exact sent-message ID even after the reference was edited away',async()=>{
+    const p=await previewBusinessDelivery(selection,'actor'),a=await prepareBusinessDraft(prepareInput(p),'actor');sent();const message=h.messages.get(a.frontDraftId!);message.text='Changed sent body without original reference';await reconcileBusinessDraft({accountId:'a1',attemptId:a.id},'actor');const failed={...sent(),status:'FAILED'};
+    await applyBusinessAttempt({...failed,actorId:'tea_other'});expect(h.rows.get(a.id).data.state).toBe('SENT');await applyBusinessAttempt({...failed,from:'other@example.com'});expect(h.rows.get(a.id).data.state).toBe('SENT');await applyBusinessAttempt(failed);expect((await historyBusinessDeliveries({accountId:'a1'},'actor')).items[0]).toMatchObject({state:'FAILED',sentWithChanges:true});
   });
   it.each(['SENT','FAILED'])('retains terminal %s when a sent-message review races another receipt writer',async state=>{
     const p=await previewBusinessDelivery(selection,'actor'),a=await prepareBusinessDraft(prepareInput(p),'actor');sent();h.messages.get(a.frontDraftId!).text='Human-edited sent content';
@@ -142,7 +183,13 @@ describe('reviewed Front business handoff',()=>{
   });
   it('accepts a whole-second Front sent timestamp in the same second as its millisecond intent',async()=>{
     vi.setSystemTime(new Date('2026-11-03T16:00:00.750Z'));const p=await previewBusinessDelivery(selection,'actor'),a=await prepareBusinessDraft(prepareInput(p),'actor');sent(a.frontDraftId!,'2026-11-03T16:00:00.000Z');
-    expect(await reconcileBusinessDraft({accountId:'a1',attemptId:a.id},'actor')).toMatchObject({state:'SENT',sentAt:'2026-11-03T16:00:00.000Z'});expect(h.models.get('Quote:q1').status).toBe('PRESENTED');
+    expect(await reconcileBusinessDraft({accountId:'a1',attemptId:a.id},'actor')).toMatchObject({state:'SENT',sentWithChanges:false,sentAt:'2026-11-03T16:00:00.000Z'});expect(h.models.get('Quote:q1').status).toBe('PRESENTED');
+  });
+  it('preserves notes and a later metadata edit while advancing updatedAt beyond the current quote version',async()=>{
+    const oldClientVersion='2026-11-03T17:00:00.000Z',laterVersion='2026-11-03T18:00:00.000Z',quote=h.models.get('Quote:q1');quote.updatedAt=oldClientVersion;
+    const p=await previewBusinessDelivery(selection,'actor'),a=await prepareBusinessDraft(prepareInput(p),'actor');quote.readyAt=laterVersion;quote.updatedAt=laterVersion;quote.lastWriteBy='later-metadata-editor';const unchangedTerms=packageTerms(quote);
+    sent(a.frontDraftId!,oldClientVersion);expect((await reconcileBusinessDraft({accountId:'a1',attemptId:a.id},'actor')).state).toBe('SENT');
+    const result=h.models.get('Quote:q1');expect(packageTerms(result)).toBe(unchangedTerms);expect(result).toMatchObject({notes:'PRIVATE NOTES',readyAt:laterVersion,presentedAt:oldClientVersion,status:'PRESENTED',updatedAt:'2026-11-03T18:00:00.001Z'});expect(result.updatedAt).not.toBe(oldClientVersion);expect(Date.parse(result.updatedAt)).toBeGreaterThan(Date.parse(laterVersion));
   });
   it('rejects a Front message from a preceding second without projecting current quote presentation',async()=>{
     vi.setSystemTime(new Date('2026-11-03T16:00:01.750Z'));const p=await previewBusinessDelivery(selection,'actor'),a=await prepareBusinessDraft(prepareInput(p),'actor');sent(a.frontDraftId!,'2026-11-03T16:00:00.000Z');

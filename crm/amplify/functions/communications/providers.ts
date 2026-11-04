@@ -53,13 +53,22 @@ export async function providerRequest<T = Record<string, unknown>>(provider: "fr
   if (response.status === 204) return {} as T;
   return response.json() as Promise<T>;
 }
-export async function front<T = Record<string, unknown>>(path: string, method = "GET", body?: unknown): Promise<T> {
+export async function front<T = Record<string, unknown>>(path: string, method = "GET", body?: unknown, options: { resourceScoped?: boolean } = {}): Promise<T> {
+  if (options.resourceScoped) {
+    const url = new URL(path, "https://api2.frontapp.com");
+    if (method !== "GET" || body !== undefined || url.protocol !== "https:" || url.username || url.password || url.port || url.hash ||
+      !(url.hostname === "api2.frontapp.com" || /^[a-z0-9-]+\.api\.frontapp\.com$/.test(url.hostname)) ||
+      !/^\/(?:messages\/msg_[a-z0-9]+|conversations\/cnv_[a-z0-9]+(?:\/(?:messages|drafts))?)$/.test(url.pathname)) {
+      throw new Error("Untrusted Front scoped resource request");
+    }
+    path = url.href;
+  }
   const match = path.match(/^\/conversations\/(cnv_[a-z0-9]+)(?=\/|$|\?)/);
   if (match && method !== "GET") {
     const alias = await get<{ conversationId: string }>(`front-alias:${match[1]}`);
     if (alias) path = path.replace(match[1], alias.data.conversationId);
   }
-  return providerRequest<T>("front", path, method, body);
+  return providerRequest<T>("front", path, method, body, 0, method === "GET" && options.resourceScoped === true);
 }
 /** A denied personal-resource lookup must not pause unrelated shared-inbox work. */
 export function frontPersonalResource<T = Record<string, unknown>>(path: string): Promise<T> {
@@ -91,7 +100,7 @@ export async function permittedConversation(id: string) {
   ]);
   if (!Array.isArray(inboxes._results)) throw new Error("Front inbox membership could not be verified");
   if (!inboxes._results.some(x => [settings.frontInboxId, ...settings.allowedInboxIds].includes(x.id))) throw new FrontScopeError("Conversation is outside the configured inboxes");
-  const conversation = await front<{ id: string; status: string; assignee?: { id: string }; last_message?: FrontMessage }>(`/conversations/${id}`);
+  const conversation = await front<{ id: string; status: string; assignee?: { id: string }; last_message?: FrontMessage }>(`/conversations/${id}`, "GET", undefined, { resourceScoped: true });
   if (conversation.id !== id) {
     if (!/^cnv_[a-z0-9]+$/.test(conversation.id)) throw new Error("Invalid canonical Front conversation");
     const source = await get<{ accountId: string; conversationId: string }>(`front-link:${id}`), target = await get<{ accountId: string }>(`front-link:${conversation.id}`);
