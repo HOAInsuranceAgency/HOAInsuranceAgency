@@ -9,6 +9,7 @@ import type { backend as Backend } from './backend';
 export function installBrokerFees(backend: typeof Backend, communicationTable: DynamoTable, commissionTable: DynamoTable, siteUrl: string) {
   const stack = backend.createStack('BrokerFees');
   const fees = new Table(stack, 'BrokerFeeLedger', {
+    tableName: `${backend.stack.stackName}-broker-fees`, deletionProtection: true,
     partitionKey: { name: 'id', type: AttributeType.STRING },
     billingMode: BillingMode.PAY_PER_REQUEST, encryption: TableEncryption.AWS_MANAGED,
     pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true }, removalPolicy: RemovalPolicy.RETAIN,
