@@ -1,6 +1,6 @@
 import { defineAuth, secret } from "@aws-amplify/backend";
 import { googleSignIn } from "../functions/google-sign-in/resource";
-import { googleRedirectUrls, googleSignInEnabled } from "./config";
+import { destinationStagingNativeAuth, googleRedirectUrls, googleSignInEnabled } from "./config";
 import {
   magicLinkDefine,
   magicLinkCreate,
@@ -37,12 +37,12 @@ export const auth = defineAuth({
   },
   // Cognito custom attributes cannot be removed after creation. Keep this
   // optional schema attribute stable even when Google is switched off.
-  userAttributes: {
+  ...(destinationStagingNativeAuth ? {} : { userAttributes: {
     "custom:googleHostedDomain": { dataType: "String", mutable: true },
-  },
+  } }),
   groups: ["OWNER", "ADMIN", "STAFF", "PRODUCER"],
   triggers: {
-    preSignUp: googleSignIn,
+    ...(destinationStagingNativeAuth ? {} : { preSignUp: googleSignIn }),
     defineAuthChallenge: magicLinkDefine,
     createAuthChallenge: magicLinkCreate,
     verifyAuthChallengeResponse: magicLinkVerify,

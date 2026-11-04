@@ -1,6 +1,5 @@
 import { migrationProbeScopes } from "./migration-probe-scopes";
 import { installTransactionalMail } from "./transactional-mail";
-import { mailFeedback } from "./functions/mail-feedback/resource";
 import { sesMailFeedback } from "./functions/ses-mail-feedback/resource";
 import { mailVerification, mailRecovery } from "./functions/transactional-mail/resource";
 import { migrationDestination, migrationPreview, migrationTargets, businessBranch, providerBranch, migrationWebOrigin, migrationExecution, migrationRuntimeBranch } from "./migration-config";
@@ -39,7 +38,7 @@ import {
 } from "aws-cdk-lib/aws-lambda";
 import { DynamoEventSource } from "aws-cdk-lib/aws-lambda-event-sources";
 import { auth } from "./auth/resource";
-import { crmBaseUrl, googleSignInEnabled } from "./auth/config";
+import { crmBaseUrl, destinationStagingNativeAuth, googleSignInEnabled } from "./auth/config";
 import { googleSignIn } from "./functions/google-sign-in/resource";
 import { data } from "./data/resource";
 import { storage } from "./storage/resource";
@@ -82,8 +81,7 @@ import {
 // real synth. Nothing else imports it; `ampx` uses this file for its side
 // effects, as it always has.
 export const backend = defineBackend({
-  ...Object.fromEntries(migrationDestination && businessBranch === "main" && !migrationPreview ? [["sesMailFeedback", sesMailFeedback]] : []),
-  mailFeedback,
+  ...Object.fromEntries(migrationDestination && !migrationPreview ? [["sesMailFeedback", sesMailFeedback]] : []),
   mailVerification,
   mailRecovery,
   auth,
@@ -130,7 +128,7 @@ export const backend = defineBackend({
   magicLinkCreate,
   magicLinkVerify,
   migrationNativeMessage,
-  googleSignIn,
+  ...Object.fromEntries(destinationStagingNativeAuth ? [] : [["googleSignIn", googleSignIn]]),
 });
 
 // The OCR function drives async Textract jobs over uploaded documents.

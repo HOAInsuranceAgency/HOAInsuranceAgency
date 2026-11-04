@@ -1,13 +1,11 @@
 import { SESv2Client, type SendEmailCommand } from "@aws-sdk/client-sesv2";
-import { SecretsManagerClient, GetSecretValueCommand } from "@aws-sdk/client-secrets-manager";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, GetCommand, PutCommand, UpdateCommand, TransactWriteCommand } from "@aws-sdk/lib-dynamodb";
 import { S3Client, PutObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
-import { assertDestination, hash, payload, selectedProvider, sesConfigurationSet, trackedMailProvider, MailDeliveryError, type MailDetails, type MailKind, type MailProvider, type Payload } from "./contract";
+import { assertDestination, hash, payload, sesConfigurationSet, ledgerMailProvider, MailDeliveryError, type MailDetails, type MailKind, type Payload } from "./contract";
 import { sesCommand, sesFailure } from "./ses";
 
 const db = DynamoDBDocumentClient.from(new DynamoDBClient(), { marshallOptions: { removeUndefinedValues: true } });
-const secrets = new SecretsManagerClient();
 const s3 = new S3Client();
 // A single SDK attempt is essential: SES does not deduplicate SendEmail requests.
 const ses = new SESv2Client({ region: "us-east-1", maxAttempts: 1 });
@@ -15,21 +13,20 @@ type Operation = { pk: string; state: string; payloadHash: string; payloadKey?: 
 export interface TransportDependencies {
   database: Pick<typeof db, "send">;
   storage: Pick<typeof s3, "send">;
-  secrets: Pick<typeof secrets, "send">;
   ses?: Pick<typeof ses, "send">;
-  fetch: typeof fetch;
   now: () => number;
 }
-const defaults: TransportDependencies = { database: db, storage: s3, secrets, ses, fetch: globalThis.fetch, now: Date.now };
+const defaults: TransportDependencies = { database: db, storage: s3, ses, now: Date.now };
 const logicalEnvironment = () => process.env.HOA_MIGRATION_BRANCH === "codex-hoa-account-migration" ? "main" : "staging";
 const table = () => process.env.HOA_TRANSACTIONAL_MAIL_TABLE!;
-/** Resend keeps its original shared counters. SES caps require explicit configuration to expand. */
-export function quotaPolicy(provider: MailProvider, kind: MailKind, now: string, env = process.env) {
-  if (provider === "resend") return { dayKey: `QUOTA#DAY#${now.slice(0, 10)}`, monthKey: `QUOTA#MONTH#${now.slice(0, 7)}`, dayLimit: kind === "login" ? 100 : 95, monthLimit: kind === "login" ? 3000 : 2950 };
-  const daily = Number(env.HOA_SES_DAILY_LIMIT ?? "100");
-  const monthly = Number(env.HOA_SES_MONTHLY_LIMIT ?? "3000");
-  if (!Number.isSafeInteger(daily) || daily < 1 || daily > 50000 || !Number.isSafeInteger(monthly) || monthly < 1 || monthly > 1550000) throw new Error("SES application limits are not configured safely.");
-  return { dayKey: `QUOTA#SES#DAY#${now.slice(0, 10)}`, monthKey: `QUOTA#SES#MONTH#${now.slice(0, 7)}`, dayLimit: daily - (kind === "login" ? 0 : Math.min(5, daily - 1)), monthLimit: monthly - (kind === "login" ? 0 : Math.min(50, monthly - 1)) };
+/** Preserve production counter keys; staging cannot consume the production cap. */
+export function quotaPolicy(kind: MailKind, now: string, env = process.env) {
+  const stage = env.HOA_MIGRATION_BRANCH === "codex-hoa-staging-migration";
+  const prefix = stage ? "QUOTA#SES#STAGING" : "QUOTA#SES";
+  const daily = Number(env.HOA_SES_DAILY_LIMIT ?? (stage ? "100" : "1000"));
+  const monthly = Number(env.HOA_SES_MONTHLY_LIMIT ?? (stage ? "3000" : "30000"));
+  if (!Number.isSafeInteger(daily) || daily < 1 || daily > 50000 || !Number.isSafeInteger(monthly) || monthly < 1 || monthly > 1500000) throw new Error("SES application limits are not configured safely.");
+  return { dayKey: `${prefix}#DAY#${now.slice(0, 10)}`, monthKey: `${prefix}#MONTH#${now.slice(0, 7)}`, dayLimit: daily - (kind === "login" ? 0 : Math.min(5, daily - 1)), monthLimit: monthly - (kind === "login" ? 0 : Math.min(50, monthly - 1)) };
 }
 function alarm(state: string, kind: MailKind, operationKey: string) {
   // No API keys, email addresses, subjects, links, or payloads in logs/metrics.
@@ -57,11 +54,11 @@ async function recordFailure(operationKey: string, state: MailDeliveryError["sta
   return new MailDeliveryError(state, operationKey);
 }
 
-/** Source accounts retain SES; a destination can never silently fall back to it. */
+/** Source paths keep native SES; destination sends always use the durable SES ledger. */
 export class TransactionalMailClient {
   constructor(private readonly kind: MailKind, private readonly deps: TransportDependencies = defaults) {}
   async send(command: SendEmailCommand, details: MailDetails = {}): Promise<{ MessageId?: string }> {
-    const destination = process.env.HOA_MIGRATION_AUTH === "true" || process.env.HOA_MIGRATION_APP_ID === "d1nuh9rw1hcuxo" || trackedMailProvider(process.env.HOA_TRANSACTIONAL_MAIL_PROVIDER) || process.env.HOA_MIGRATION_PREVIEW === "true" || process.env.AWS_LAMBDA_FUNCTION_NAME?.startsWith("amplify-d1nuh9rw1hcuxo-");
+    const destination = process.env.HOA_MIGRATION_AUTH === "true" || process.env.HOA_MIGRATION_APP_ID === "d1nuh9rw1hcuxo" || process.env.HOA_TRANSACTIONAL_MAIL_PROVIDER !== undefined || process.env.HOA_MIGRATION_PREVIEW === "true" || process.env.AWS_LAMBDA_FUNCTION_NAME?.startsWith("amplify-d1nuh9rw1hcuxo-");
     if (!destination) return new SESv2Client(this.kind === "report" ? { maxAttempts: 1 } : {}).send(command);
     const body = payload(command.input, details);
     assertDestination(this.kind, body, process.env, this.deps.now());
@@ -92,10 +89,10 @@ export class TransactionalMailClient {
     const digest = hash(encoded);
     const idempotencyKey = replayKey ? replayKey.slice(3) : `hoa/${environment}/${this.kind}/${hash(details.idempotencyKey ?? digest)}`;
     const operationKey = `OP#${idempotencyKey}`;
-    const provider = selectedProvider(this.kind, body, process.env, deps.now());
-    const policy = quotaPolicy(provider, this.kind, new Date(deps.now()).toISOString());
+    const provider = "ses";
+    const policy = quotaPolicy(this.kind, new Date(deps.now()).toISOString());
     // Conversion is local and must succeed before reserving an attempt.
-    const sesRequest = provider === "ses" ? sesCommand(body, sesConfigurationSet(), environment, this.kind, operationKey) : undefined;
+    const sesRequest = sesCommand(body, sesConfigurationSet(), environment, this.kind, operationKey);
     let operation: Operation | undefined = await get(operationKey, deps);
     if (operation && operation.payloadHash !== digest) throw new Error("The email operation already exists with different content. Review it before creating a replacement.");
     if (operation?.state === "ACCEPTED" && operation.providerId) return { MessageId: operation.providerId };
@@ -107,7 +104,7 @@ export class TransactionalMailClient {
     if (operation && (operation.provider ?? "resend") !== provider) {
       // A provider cutover never creates a replacement send for an old operation.
       alarm("PROVIDER_REVIEW_REQUIRED", this.kind, operationKey);
-      throw new MailDeliveryError(trackedMailProvider(operation.provider ?? "resend") ? "DEFERRED" : "UNKNOWN", operationKey);
+      throw new MailDeliveryError(ledgerMailProvider(operation.provider ?? "resend") ? "DEFERRED" : "UNKNOWN", operationKey);
     }
     if (!operation) {
       const payloadKey = `outbox/${environment}/${hash(idempotencyKey)}/${digest}.json`;
@@ -134,18 +131,10 @@ export class TransactionalMailClient {
       const suppression = await get(`SUPPRESSION#${hash(recipient)}`, deps);
       if (suppression && suppression.suppressed !== false) throw await recordFailure(operationKey, "SUPPRESSED", this.kind, deps, operation.attempt ?? 0);
     }
-    let apiKey: string | undefined;
-    if (provider === "resend") {
-      try {
-        const secret = await deps.secrets.send(new GetSecretValueCommand({ SecretId: process.env.HOA_RESEND_SECRET_ARN }));
-        apiKey = JSON.parse(secret.SecretString ?? "{}").apiKey;
-        if (typeof apiKey !== "string" || !apiKey.startsWith("re_") || /\s/.test(apiKey)) throw new Error("Missing sending key.");
-      } catch { throw await recordFailure(operationKey, "DEFERRED", this.kind, deps, operation.attempt ?? 0); }
-    }
     const now = new Date(deps.now()).toISOString();
     const attempt = (operation.attempt ?? 0) + 1;
     // Count every recipient and every reserved attempt conservatively. Never
-    // decrement after an ambiguous response, and share limits across both backends.
+    // decrement after an ambiguous response. Each environment has its own limits.
     // Five recipient slots remain available for sign-in if other mail fills a day.
     try {
       await deps.database.send(new TransactWriteCommand({ TransactItems: [
@@ -163,37 +152,22 @@ export class TransactionalMailClient {
       throw await recordFailure(operationKey, "DEFERRED", this.kind, deps, operation.attempt ?? 0, false, reason);
     }
     // Recheck the deadline after potentially slow AWS persistence/credential calls.
-    try { assertDestination(this.kind, body, process.env, deps.now()); if (selectedProvider(this.kind, body, process.env, deps.now()) !== provider) throw new Error("The provider selection changed before sending."); }
+    try { assertDestination(this.kind, body, process.env, deps.now()); }
     catch { throw await recordFailure(operationKey, "DEFERRED", this.kind, deps, attempt, true); }
     let providerId: string;
-    if (provider === "ses") {
-      try {
-        const result = await (deps.ses ?? ses).send(sesRequest!, { abortSignal: AbortSignal.timeout(this.kind === "login" ? 2500 : 8000) });
-        if (typeof result.MessageId !== "string" || !/^[a-zA-Z0-9_-]{8,256}$/.test(result.MessageId)) throw new Error("No receipt.");
-        providerId = result.MessageId;
-      } catch (error) {
-        const failure = sesFailure(error);
-        throw await recordFailure(operationKey, failure.state, this.kind, deps, attempt, true, failure.reason);
-      }
-    } else {
-      let response: Response;
-      try {
-        response = await deps.fetch("https://api.resend.com/emails", { method: "POST", redirect: "error", headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json", "Idempotency-Key": idempotencyKey }, body: encoded, signal: AbortSignal.timeout(this.kind === "login" ? 2500 : 8000) });
-      } catch { throw await recordFailure(operationKey, "UNKNOWN", this.kind, deps, attempt, true); }
-      if (!response.ok) {
-        const state = response.status === 429 ? "DEFERRED" : [400, 401, 403, 404, 413, 422].includes(response.status) ? "REJECTED" : "UNKNOWN";
-        let reason = `http_${response.status}`;
-        try { const parsed = await response.json(); if (typeof parsed.name === "string" && /^[a-z_]{1,80}$/.test(parsed.name)) reason = parsed.name; } catch { /* Never log a provider response body. */ }
-        throw await recordFailure(operationKey, state, this.kind, deps, attempt, true, reason, retryAt(deps.now(), reason, response.headers.get("retry-after")));
-      }
-      try { providerId = (await response.json()).id; if (typeof providerId !== "string" || !/^[a-zA-Z0-9_-]{8,100}$/.test(providerId)) throw new Error("No receipt."); }
-      catch { throw await recordFailure(operationKey, "UNKNOWN", this.kind, deps, attempt, true); }
+    try {
+      const result = await (deps.ses ?? ses).send(sesRequest, { abortSignal: AbortSignal.timeout(this.kind === "login" ? 2500 : 8000) });
+      if (typeof result.MessageId !== "string" || !/^[a-zA-Z0-9_-]{8,256}$/.test(result.MessageId)) throw new Error("No receipt.");
+      providerId = result.MessageId;
+    } catch (error) {
+      const failure = sesFailure(error);
+      throw await recordFailure(operationKey, failure.state, this.kind, deps, attempt, true, failure.reason);
     }
     try {
-      const receiptStatus = provider === "ses" ? "#status = if_not_exists(#status, :accepted)" : "#status = :accepted";
+      const receiptStatus = "#status = if_not_exists(#status, :accepted)";
       await deps.database.send(new TransactWriteCommand({ TransactItems: [
         { Update: { TableName: table(), Key: { pk: operationKey }, UpdateExpression: "SET #state = :accepted, providerId = :id, acceptedAt = :now, updatedAt = :now", ConditionExpression: "#state = :sending AND attempt = :attempt AND #provider = :provider", ExpressionAttributeNames: { "#state": "state", "#provider": "provider" }, ExpressionAttributeValues: { ":accepted": "ACCEPTED", ":sending": "SENDING", ":provider": provider, ":attempt": attempt, ":id": providerId, ":now": new Date(deps.now()).toISOString() } } },
-        { Update: { TableName: table(), Key: { pk: provider === "ses" ? `RECEIPT#ses#${providerId}` : `RECEIPT#${providerId}` }, UpdateExpression: `SET #kind = :kind, #provider = :provider, operationKey = :operation, operationHash = :operationHash, environment = :environment, #mailKind = :mailKind, providerId = :id, ${receiptStatus}, acceptedAt = :now`, ConditionExpression: "(attribute_not_exists(operationKey) OR operationKey = :operation) AND (attribute_not_exists(operationHash) OR operationHash = :operationHash) AND (attribute_not_exists(#provider) OR #provider = :provider) AND (attribute_not_exists(environment) OR environment = :environment) AND (attribute_not_exists(#mailKind) OR #mailKind = :mailKind)", ExpressionAttributeNames: { "#kind": "kind", "#status": "status", "#provider": "provider", "#mailKind": "mailKind" }, ExpressionAttributeValues: { ":kind": "RECEIPT", ":provider": provider, ":operation": operationKey, ":operationHash": hash(operationKey), ":environment": environment, ":mailKind": this.kind, ":id": providerId, ":accepted": "ACCEPTED", ":now": new Date(deps.now()).toISOString() } } },
+        { Update: { TableName: table(), Key: { pk: `RECEIPT#ses#${providerId}` }, UpdateExpression: `SET #kind = :kind, #provider = :provider, operationKey = :operation, operationHash = :operationHash, environment = :environment, #mailKind = :mailKind, providerId = :id, ${receiptStatus}, acceptedAt = :now`, ConditionExpression: "(attribute_not_exists(operationKey) OR operationKey = :operation) AND (attribute_not_exists(operationHash) OR operationHash = :operationHash) AND (attribute_not_exists(#provider) OR #provider = :provider) AND (attribute_not_exists(environment) OR environment = :environment) AND (attribute_not_exists(#mailKind) OR #mailKind = :mailKind)", ExpressionAttributeNames: { "#kind": "kind", "#status": "status", "#provider": "provider", "#mailKind": "mailKind" }, ExpressionAttributeValues: { ":kind": "RECEIPT", ":provider": provider, ":operation": operationKey, ":operationHash": hash(operationKey), ":environment": environment, ":mailKind": this.kind, ":id": providerId, ":accepted": "ACCEPTED", ":now": new Date(deps.now()).toISOString() } } },
       ] }));
     } catch { throw await recordFailure(operationKey, "UNKNOWN", this.kind, deps, attempt, true); }
     return { MessageId: providerId };
