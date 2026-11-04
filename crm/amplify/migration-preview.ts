@@ -5,6 +5,7 @@ import { Effect, ManagedPolicy, PolicyStatement } from "aws-cdk-lib/aws-iam";
 import { CfnFunction } from "aws-cdk-lib/aws-lambda";
 import { migrationDestination, migrationPreview, migrationTargets, migrationStreamPhase, migrationSchedulesEnabled, migrationExecution, migrationPendingCutoff, migrationRuntimeBranch } from "./migration-config";
 import { disableBucketNotifications } from "./migration-notifications";
+import { mainSesCanaryExpiry } from "./transactional-mail";
 
 const READ_FUNCTIONS = new Set(["crmAccess", "communications", "commissions", "ownerProfitability"]);
 // The signup guard must remain callable for AdminCreateUser even while Google
@@ -43,7 +44,7 @@ export function installMigrationPreview(backend: any) {
       resource.addEnvironment("HOA_MIGRATION_STREAM_PROBE_TOKEN", process.env.HOA_MIGRATION_STREAM_PROBE_TOKEN ?? "");
       resource.addEnvironment("HOA_MIGRATION_STREAM_PROBE_EXPIRES_AT", process.env.HOA_MIGRATION_STREAM_PROBE_EXPIRES_AT ?? "");
     }
-    if (name === "mailVerification" && !migrationPreview) (resource.resources.lambda.node.defaultChild as CfnFunction).reservedConcurrentExecutions = 0;
+    if (name === "mailVerification" && !migrationPreview) (resource.resources.lambda.node.defaultChild as CfnFunction).reservedConcurrentExecutions = mainSesCanaryExpiry() ? 1 : 0;
     if (!migrationExecution.holdBusinessExecution || name === "mailFeedback" || (migrationPreview && AUTH_FUNCTIONS.has(name))) continue;
     resource.resources.lambda.role!.addManagedPolicy(guard!);
     if ((!migrationPreview || !READ_FUNCTIONS.has(name)) && name !== "migrateProducerLicenses") {

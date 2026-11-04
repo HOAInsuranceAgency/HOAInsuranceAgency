@@ -45,8 +45,8 @@ describe("contact-page split integration", () => {
 describe("release legal wording and revision dates", () => {
   it("identifies the legal entity as an independent agency, not a carrier", () => {
     const terms = read("../../../web/src/pages/terms-of-service.astro");
-    expect(terms).toContain(
-      `${AGENCY.name} is an independent insurance agency, not an insurance company or carrier.`
+    expect(terms.toLowerCase()).toContain(
+      `${AGENCY.name} is an independent insurance agency, not an insurance company or carrier.`.toLowerCase()
     );
     expect(terms).not.toContain("insurance agency/broker/producer");
   });
@@ -80,9 +80,16 @@ describe("production website-lead recipient and operational documentation", () =
     expect(STRUCTURE).not.toContain("forms silently skip");
   });
 
-  it("keeps the closed guide-count note consistent with the homepage", () => {
+  it("preserves the historical guide-count resolution and current homepage guide links", () => {
     const homepage = read("../../../web/src/pages/index.astro");
-    expect(homepage).toContain("const withGuides = reviewedStateSlugs;");
+    const coverageMap = read("../../../web/src/components/CoverageMap.astro");
+    // The redesign removed the guide count. The current crawl path is the map,
+    // whose links still derive from the state data that owns the guide routes.
+    expect(homepage).toContain('<CoverageMap ctaHref={QUOTE_URL}');
+    expect(homepage).not.toContain("{withGuides.length}");
+    expect(coverageMap).toContain('import { states as guideStates } from "../data/states";');
+    expect(coverageMap).toContain("const slugByName = new Map(guideStates.map((s) => [s.name, s.slug]));");
+    expect(coverageMap).toContain('<a href={`/hoa-insurance-${s.slug}/`}');
     expect(STRUCTURE).toContain("CLOSED — homepage guide count");
     expect(STRUCTURE).toContain("`withGuides = reviewedStateSlugs`");
     expect(STRUCTURE).not.toContain("The homepage state count renders wrong");

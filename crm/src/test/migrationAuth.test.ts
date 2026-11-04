@@ -16,7 +16,7 @@ function event(triggerSource = "CreateAuthChallenge_Authentication") {
   return {
     region: "us-east-1", userPoolId: "us-east-1_preview", userName: "owner-id", triggerSource,
     callerContext: { clientId: "preview-client" },
-    request: { userAttributes: { email: "jake@getgim.com", email_verified: "true" }, userNotFound: false, challengeAnswer: "valid-token", session: [] as unknown[] },
+    request: { userAttributes: { email: "jake@getgim.com", email_verified: "true" }, userNotFound: false, challengeAnswer: "valid-token", privateChallengeParameters: { mode: "destination", requestId: "c8b307f1-8658-4f6a-a3ee-fc17e34ce15e", issuedAt: String(Date.now()) }, session: [] as unknown[] },
     response: {} as Record<string, unknown>,
   };
 }
@@ -66,11 +66,13 @@ describe("destination preview authentication guard", () => {
 it("never sends a link from destination InitiateAuth or consume challenge creation", async () => {
   const e = event(); await create(e as never, context as never, () => {});
   expect(e.response.challengeMetadata).toBe("MAGIC_LINK"); expect(sendDestinationLink).not.toHaveBeenCalled();
+  expect(e.response.privateChallengeParameters).toMatchObject({ mode: "destination", requestId: expect.stringMatching(/^[0-9a-f-]{36}$/), issuedAt: expect.stringMatching(/^\d+$/) });
+  expect(e.response.publicChallengeParameters).toEqual({ mode: "destination" });
 });
 it("sends one link only for the explicit destination request answer", async () => {
   const e = event("VerifyAuthChallengeResponse_Authentication"); e.request.challengeAnswer = "REQUEST_LINK";
   await verify(e as never, context as never, () => {});
-  expect(sendDestinationLink).toHaveBeenCalledExactlyOnceWith("jake@getgim.com"); expect(e.response.answerCorrect).toBe(false); expect(getSigningSecret).not.toHaveBeenCalled();
+  expect(sendDestinationLink).toHaveBeenCalledExactlyOnceWith("jake@getgim.com", e.request.privateChallengeParameters); expect(e.response.answerCorrect).toBe(false); expect(getSigningSecret).not.toHaveBeenCalled();
 });
 it("consumes a token without sending another email", async () => {
   const e = event("VerifyAuthChallengeResponse_Authentication"); await verify(e as never, context as never, () => {});

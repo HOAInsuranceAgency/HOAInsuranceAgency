@@ -847,7 +847,7 @@ export const handler = async (event: {
      */
     // Pin the legacy-compatible operation before storeLink can change updatedAt.
     // The private reservation survives link/finance writes and lost mail responses.
-    const tracked = process.env.HOA_TRANSACTIONAL_MAIL_PROVIDER === "resend"
+    const tracked = ["resend", "ses"].includes(process.env.HOA_TRANSACTIONAL_MAIL_PROVIDER ?? "")
       ? await beginInvoiceSend(invoice, to, event.arguments?.expectedSentAt, { database: ddb })
       : undefined;
     if (tracked?.completed) return tracked.completed;

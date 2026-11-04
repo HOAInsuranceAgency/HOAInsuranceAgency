@@ -20,7 +20,7 @@ vi.mock("aws-amplify", () => ({ Amplify: { configure: vi.fn() } }));
 vi.mock("aws-amplify/data", () => ({ generateClient: () => ({ models: h.models }) }));
 vi.mock("@aws-amplify/backend/function/runtime", () => ({ getAmplifyDataClientConfig: async () => ({ resourceConfig: {}, libraryOptions: {} }) }));
 vi.mock("../../amplify/functions/crm-access/user-status", () => ({ assertUserSession: async () => {}, readUserAccess: async () => undefined }));
-vi.mock("../../amplify/functions/magic-link/token", () => ({ getSigningSecret: async () => "synthetic-only", mintToken: () => "synthetic-token-never-valid" }));
+vi.mock("../../amplify/functions/magic-link/token", () => ({ getSigningSecret: async () => "synthetic-only", mintToken: () => "synthetic-token-never-valid", TOKEN_TTL_MS: 15 * 60 * 1000 }));
 vi.mock("../../amplify/functions/send-invoice/pdf", () => ({ pdfFilename: (number: string) => `${number}.pdf`, renderInvoicePdf: async () => Uint8Array.from([37, 80, 68, 70, 45, 49, 46, 55]) }));
 vi.mock("../../amplify/functions/marketing-report/snapshot", () => ({ reportSnapshot: async () => ({ accounts: [], quotes: [], policies: [], priorCarriers: [], carriers: [], documents: [], activities: [], workflows: [], communications: [], submissions: [] }) }));
 vi.mock("../../amplify/functions/marketing-report/store", () => ({
@@ -76,7 +76,7 @@ function captured() { const [kind, command, details] = h.mail.mock.calls[0]; ret
 describe("real sender to Resend adapter contracts", () => {
   it("login preserves its exact destination, encoded link, expiry copy, and sender", async () => {
     const { sendDestinationLink } = await import("../../amplify/functions/magic-link/send");
-    await sendDestinationLink("member@example.com");
+    await sendDestinationLink("member@example.com", { mode: "destination", requestId: "c8b307f1-8658-4f6a-a3ee-fc17e34ce15e", issuedAt: String(Date.now()) });
     const { kind, body } = captured();
     expect(kind).toBe("login"); expect(body.from).toBe("noreply@protectmyhoa.com"); expect(body.to).toEqual(["member@example.com"]);
     expect(body.text).toContain("https://crm.protectmyhoa.com/#magic=synthetic-token-never-valid"); expect(body.text).toContain("15 minutes");
@@ -85,7 +85,7 @@ describe("real sender to Resend adapter contracts", () => {
   it("login bubbles a definite transport failure instead of claiming acceptance", async () => {
     const { sendDestinationLink } = await import("../../amplify/functions/magic-link/send");
     h.mail.mockRejectedValue(new MailDeliveryError("DEFERRED", "OP#synthetic"));
-    await expect(sendDestinationLink("member@example.com")).rejects.toMatchObject({ state: "DEFERRED" });
+    await expect(sendDestinationLink("member@example.com", { mode: "destination", requestId: "c8b307f1-8658-4f6a-a3ee-fc17e34ce15e", issuedAt: String(Date.now()) })).rejects.toMatchObject({ state: "DEFERRED" });
   });
   it("invitation preserves roles and portal while giving recreated members a new operation", async () => {
     const { handler } = await import("../../amplify/functions/team-admin/handler");
@@ -121,9 +121,9 @@ describe("real sender to Resend adapter contracts", () => {
     expect(await handler({ arguments: { invoiceId: h.invoice.id, toEmail: "board@example.com" } })).toMatchObject({ ok: false });
     expect(h.db).not.toHaveBeenCalled();
   });
-  it("real invoice handler reserves before storeLink and never resends a lost acceptance using the newer updatedAt", async () => {
+  it.each(["resend", "ses"])("real invoice handler (%s) reserves before storeLink and never resends a lost acceptance using the newer updatedAt", async provider => {
     vi.setSystemTime(new Date("2026-11-02T14:00:00Z"));
-    vi.stubEnv("HOA_TRANSACTIONAL_MAIL_PROVIDER", "resend"); vi.stubEnv("HOA_MIGRATION_BRANCH", "codex-hoa-account-migration");
+    vi.stubEnv("HOA_TRANSACTIONAL_MAIL_PROVIDER", provider); vi.stubEnv("HOA_MIGRATION_BRANCH", "codex-hoa-account-migration");
     vi.stubEnv("HOA_TRANSACTIONAL_MAIL_TABLE", "HOA-TransactionalMail"); vi.stubEnv("AWS_LAMBDA_FUNCTION_NAME", "amplify-d1nuh9rw1hcuxo-main-sendInvoice");
     vi.stubEnv("STRIPE_SECRET_KEY", "sk_test_synthetic");
     const deliveries = new Map<string, any>();
