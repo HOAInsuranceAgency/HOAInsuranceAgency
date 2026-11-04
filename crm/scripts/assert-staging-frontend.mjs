@@ -15,10 +15,16 @@ class GuardError extends Error {}
 function requireCondition(ok, message) { if (!ok) throw new GuardError(message); }
 function aws(service, operation, ...args) {
   // Deliberately no arbitrary operation passthrough or mutation capability.
-  const allowed = new Set(["sts:get-caller-identity", "amplify:get-app", "amplify:get-branch", "cloudformation:describe-stacks", "cloudformation:list-stack-resources", "cognito-idp:describe-user-pool", "cognito-idp:describe-user-pool-client", "lambda:get-function-configuration"]);
+  const allowed = new Set(["sts:get-caller-identity", "amplify:get-branch", "cloudformation:describe-stacks", "cloudformation:list-stack-resources", "cloudformation:get-template"]);
   requireCondition(allowed.has(`${service}:${operation}`), "Only read-only staging metadata operations are allowed.");
-  const raw = execFileSync("aws", [service, operation, ...args, "--region", REGION, "--output", "json"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, AWS_PAGER: "" }, maxBuffer: 10 * 1024 * 1024 });
-  return JSON.parse(raw);
+  try {
+    const raw = execFileSync("aws", [service, operation, ...args, "--region", REGION, "--output", "json"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, AWS_PAGER: "" }, maxBuffer: 10 * 1024 * 1024 });
+    return JSON.parse(raw);
+  } catch (error) {
+    const code = /An error occurred \(([A-Za-z0-9_]+)\)/.exec(String(error?.stderr ?? ""))?.[1]
+      ?? String(error?.code ?? error?.name ?? "Error").replace(/[^A-Za-z0-9_]/g, "");
+    throw new GuardError(`Read-only staging check failed: ${service}/${operation} (${code}).`);
+  }
 }
 function resources(stack) {
   const result = []; let token;
@@ -41,11 +47,9 @@ function guard() {
   requireCondition(process.env.AWS_APP_ID === APP && process.env.AWS_BRANCH === RUNTIME && process.env.AMPLIFY_MONOREPO_APP_ROOT === "crm", "This temporary frontend build is restricted to the business CRM staging hosted branch.");
   requireCondition(releasedFrontend(process.env), "The frontend must retain released staging authentication and preview=false.");
   requireCondition(aws("sts", "get-caller-identity").Account === ACCOUNT, "AWS identity does not belong to the business staging account.");
-  const app = aws("amplify", "get-app", "--app-id", APP).app;
-  requireCondition(app?.appId === APP && app.appArn === `arn:aws:amplify:${REGION}:${ACCOUNT}:apps/${APP}` && app.defaultDomain === "d1nuh9rw1hcuxo.amplifyapp.com" && app.environmentVariables?.AMPLIFY_MONOREPO_APP_ROOT === "crm", "The CRM app or monorepo root differs from the reviewed staging target.");
-  const runtime = aws("amplify", "get-branch", "--app-id", APP, "--branch-name", RUNTIME).branch;
-  requireCondition(runtime?.branchName === RUNTIME && runtime.displayName === "migration-staging" && runtime.enableAutoBuild === false && !runtime.backend?.stackArn && runtime.enablePullRequestPreview !== true, "The staging hosted branch binding or dormant automation changed.");
-  requireCondition(releasedFrontend(runtime.environmentVariables ?? {}), "The hosted branch is not configured for released staging authentication.");
+  // The Hosting service role can read only dormant namespace branches and CF
+  // metadata. The operator's pre/post fingerprint additionally checks the app,
+  // runtime branch, live Cognito configuration and all Lambda environments.
   const namespace = aws("amplify", "get-branch", "--app-id", APP, "--branch-name", NAMESPACE).branch;
   requireCondition(namespace?.branchName === NAMESPACE && namespace.backend?.stackArn === ROOT && namespace.enableAutoBuild === false && namespace.enablePullRequestPreview !== true, "The existing staging backend namespace must remain dormant and unchanged.");
   const stack = aws("cloudformation", "describe-stacks", "--stack-name", ROOT).Stacks?.[0];
@@ -54,19 +58,19 @@ function guard() {
   requireCondition(auth?.PhysicalResourceId === AUTH_STACK && stable(auth.ResourceStatus), "The staging auth child differs from the retained backend.");
   const authResources = resources(AUTH_STACK);
   requireCondition(authResources.some(item => item.ResourceType === "AWS::Cognito::UserPool" && item.PhysicalResourceId === POOL && stable(item.ResourceStatus)) && authResources.some(item => item.ResourceType === "AWS::Cognito::UserPoolClient" && item.PhysicalResourceId === CLIENT && stable(item.ResourceStatus)), "The expected staging pool/client are not owned by this backend.");
-  const pool = aws("cognito-idp", "describe-user-pool", "--user-pool-id", POOL).UserPool;
-  requireCondition(pool?.Id === POOL && pool.Arn === `arn:aws:cognito-idp:${REGION}:${ACCOUNT}:userpool/${POOL}` && pool.AdminCreateUserConfig?.AllowAdminCreateUserOnly === true, "The staging user pool must remain invite-only.");
-  const client = aws("cognito-idp", "describe-user-pool-client", "--user-pool-id", POOL, "--client-id", CLIENT).UserPoolClient;
-  requireCondition(client?.UserPoolId === POOL && client.ClientId === CLIENT && client.ClientSecret === undefined && JSON.stringify([...(client.ExplicitAuthFlows ?? [])].sort()) === JSON.stringify(["ALLOW_CUSTOM_AUTH", "ALLOW_REFRESH_TOKEN_AUTH"]), "The retained staging browser client or native sign-in flow changed.");
-  const verifyArn = pool.LambdaConfig?.VerifyAuthChallengeResponse;
-  requireCondition(typeof verifyArn === "string" && verifyArn.startsWith(`arn:aws:lambda:${REGION}:${ACCOUNT}:function:amplify-${APP}-`), "The staging native sign-in trigger is not bound to the business app.");
-  const authEnv = aws("lambda", "get-function-configuration", "--function-name", verifyArn).Environment?.Variables ?? {};
-  requireCondition(authEnv.HOA_MIGRATION_AUTH === "true" && authEnv.HOA_MIGRATION_PREVIEW === "false" && authEnv.HOA_MIGRATION_APP_ID === APP && authEnv.HOA_MIGRATION_BRANCH === RUNTIME && authEnv.HOA_PREVIEW_ADMIN_USER_POOL_ID === POOL && authEnv.HOA_PREVIEW_ADMIN_CLIENT_ID === CLIENT && authEnv.MAGIC_LINK_BASE_URL === ORIGIN, "The staging native sign-in trigger or email-link destination differs from the reviewed target.");
+  const templateResponse = aws("cloudformation", "get-template", "--stack-name", AUTH_STACK, "--template-stage", "Original");
+  const template = typeof templateResponse.TemplateBody === "string" ? JSON.parse(templateResponse.TemplateBody) : templateResponse.TemplateBody;
+  const poolResource = template?.Resources?.amplifyAuthUserPool4BA7F805;
+  const clientResource = template?.Resources?.amplifyAuthUserPoolAppClient2626C6F8;
+  const pool = poolResource?.Properties, client = clientResource?.Properties;
+  requireCondition(poolResource?.Type === "AWS::Cognito::UserPool" && pool?.AdminCreateUserConfig?.AllowAdminCreateUserOnly === true, "The retained staging pool template must remain invite-only.");
+  requireCondition(["CreateAuthChallenge", "DefineAuthChallenge", "VerifyAuthChallengeResponse"].every(name => pool.LambdaConfig?.[name]), "The retained staging pool template is missing a native sign-in trigger.");
+  requireCondition(clientResource?.Type === "AWS::Cognito::UserPoolClient" && JSON.stringify(client?.UserPoolId) === JSON.stringify({ Ref: "amplifyAuthUserPool4BA7F805" }) && client.GenerateSecret !== true && client.RefreshTokenValidity === 7 && JSON.stringify([...(client.ExplicitAuthFlows ?? [])].sort()) === JSON.stringify(["ALLOW_CUSTOM_AUTH", "ALLOW_REFRESH_TOKEN_AUTH"]), "The retained staging browser-client template or native sign-in flow changed.");
   if (args[0] === "--outputs") {
     const info = statSync(args[1]);
     requireCondition(info.isFile() && info.size > 1 && info.size < 5 * 1024 * 1024, "Expected a small generated Amplify outputs file.");
     const outputs = JSON.parse(readFileSync(args[1], "utf8")), migration = outputs.custom?.migration;
-    requireCondition(outputs.auth?.aws_region === REGION && outputs.auth.user_pool_id === POOL && outputs.auth.user_pool_client_id === CLIENT && outputs.data?.url === API && migration?.account === ACCOUNT && migration.appId === APP && migration.branch === RUNTIME && migration.preview === "false", "Generated outputs do not belong to the retained, released staging backend.");
+    requireCondition(outputs.auth?.aws_region === REGION && outputs.auth.user_pool_id === POOL && outputs.auth.user_pool_client_id === CLIENT && outputs.data?.url === API && migration?.account === ACCOUNT && migration.appId === APP && migration.branch === RUNTIME && migration.preview === "false" && outputs.custom?.frontSidebarUrl === `${ORIGIN}/front-sidebar`, "Generated outputs do not belong to the retained, released staging backend and origin.");
   }
   console.log(JSON.stringify({ account: ACCOUNT, appId: APP, hostedBranch: RUNTIME, backendBranch: NAMESPACE, poolId: POOL, clientId: CLIENT, graphqlUrl: API, url: ORIGIN, generatedOutputsVerified: args[0] === "--outputs", backendDeployment: false }));
 }
