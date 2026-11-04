@@ -219,7 +219,7 @@ it("blocks a new attempt for an item with an unresolved existing draft", async (
 it("recovers an UNKNOWN new-conversation attempt by verifying a normalized exact message ID", async () => {
   const base = h.request.getMockImplementation()!;
   h.request.mockImplementation((op, input) => {
-    if (op === "historyBusinessDeliveries") return Promise.resolve({ items: [attempt({ state: "UNKNOWN", conversationId: "NEW", frontUrl: undefined })] });
+    if (op === "historyBusinessDeliveries") return Promise.resolve({ items: [attempt({ state: "UNKNOWN", conversationId: "NEW", frontUrl: undefined, reference: "HOA-123456ABCDEF" })] });
     if (op === "reconcileBusinessDraft") return Promise.resolve({ attempt: attempt({ state: "DRAFT", frontDraftId: "msg_recovered" }) });
     return base(op, input);
   });
@@ -227,6 +227,8 @@ it("recovers an UNKNOWN new-conversation attempt by verifying a normalized exact
   expect(screen.getByRole("button", { name: "Prepare Front draft" })).toBeDisabled();
   const recovery = screen.getByRole("form", { name: "Recover unconfirmed Front draft" });
   expect(recovery).toHaveTextContent("does not create or send another draft");
+  expect(recovery).toHaveTextContent("Search Front for the email reference shown above");
+  expect(screen.getByText("HOA-123456ABCDEF")).toBeVisible();
   fireEvent.change(within(recovery).getByLabelText("Front draft/message ID or message link"), { target: { value: " https://app.frontapp.com/open/msg_recovered " } });
   fireEvent.submit(recovery);
   const result = await screen.findByRole("region", { name: "Prepared draft result" });
