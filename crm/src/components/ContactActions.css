@@ -1,0 +1,6 @@
+.contact-actions { display: inline-flex; flex-direction: column; align-items: flex-start; gap: 3px; max-width: 100%; white-space: normal; }
+.contact-actions-value { overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.contact-actions-tools { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 10px; font-size: 11px; line-height: 1.5; }
+.contact-actions-tools .link { padding: 0; font-size: inherit; line-height: inherit; }
+.contact-actions-feedback { color: var(--muted); font-size: 11px; }
+.contact-actions-feedback:empty { display: none; }
