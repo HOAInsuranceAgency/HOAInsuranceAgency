@@ -26,7 +26,7 @@ export function assertSteadyState(env, contract) {
     need(!env[key], `temporary capability remains: ${key}`);
   }
   if (env.AWS_APP_ID === contract.webApp) {
-    need(env.PUBLIC_HOA_MIGRATION_PREVIEW === "false" && env.PUBLIC_ANALYTICS_DISABLED === "false"
+    need(env.PUBLIC_HOA_MIGRATION_PREVIEW === "false" && env.PUBLIC_ANALYTICS_DISABLED === (staging ? "true" : "false")
       && env.PUBLIC_CRM_API_URL === contract.graphqlUrl, "website production/API binding differs");
     return;
   }
