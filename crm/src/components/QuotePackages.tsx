@@ -2,7 +2,6 @@ import { useRef, useState } from 'react';
 import { useCommercial } from '../lib/commercial';
 import { communicationRequest } from '../lib/communications';
 import {
-  fmtMoney,
   LINES_OF_BUSINESS,
   type Carrier,
   type Quote,
@@ -17,6 +16,7 @@ import {
   type PackageOption,
 } from '../../../shared/quotePackages';
 import { OpportunityEstimate } from './OpportunityEstimate';
+import { formatMoney } from '../lib/invoiceTotals';
 import BusinessDraftButton from './BusinessDraftButton';
 import './QuotePackages.css';
 
@@ -199,7 +199,7 @@ function QuotePackagesContent({
                   <dl className="package-totals">
                     <div>
                       <dt>Premium</dt>
-                      <dd>{fmtMoney(assessment.premiumCents / 100)}</dd>
+                      <dd>{formatMoney(assessment.premiumCents / 100)}</dd>
                     </div>
                     <div>
                       <dt>Commission</dt>
@@ -209,9 +209,10 @@ function QuotePackagesContent({
                           : '—'}
                       </dd>
                     </div>
-                    <div><dt>Broker fees</dt><dd>{fmtMoney(assessment.brokerFeeCents / 100)}</dd></div>
-                    <div><dt>Premium + broker fees</dt><dd>{fmtMoney(assessment.clientTotalCents / 100)}</dd></div>
-                    <div><dt>Total agency revenue</dt><dd>{assessment.complete ? fmtMoney(assessment.agencyRevenueCents / 100) : '—'}</dd></div>
+                    <div><dt>Supplier fees and taxes</dt><dd>{formatMoney(assessment.passThroughCents / 100)}</dd></div>
+                    <div><dt>HOA broker fees</dt><dd>{formatMoney(assessment.brokerFeeCents / 100)}</dd></div>
+                    <div><dt>Client policy total</dt><dd>{formatMoney(assessment.clientTotalCents / 100)}</dd></div>
+                    <div><dt>Total agency revenue</dt><dd>{assessment.complete ? formatMoney(assessment.agencyRevenueCents / 100) : '—'}</dd></div>
                   </dl>
                   {assessment.problems.length ? (
                     <p className="muted small">
@@ -393,7 +394,7 @@ function QuotePackagesContent({
                             'Carrier not recorded'}{' '}
                           · {(q.lines ?? []).join(', ')}
                           <small>
-                            {fmtMoney(q.premium)} premium ·{' '}
+                            {formatMoney(q.premium)} premium ·{' '}
                             {q.effectiveDate ?? 'No effective date'} to{' '}
                             {q.expirationDate ?? 'No expiration date'}
                           </small>

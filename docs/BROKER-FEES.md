@@ -6,13 +6,27 @@ Broker fees are optional agency revenue on an individual quote and policy term. 
 
 ## Existing workflow
 
-1. Record the optional dollar fee beside premium and commission in the quote form. Positive fees use cents precision. On fee-bearing quotes, choose the existing bill type before presenting terms so a direct-bill placement collects only the agency fee. This answer is carried into bind. The normal quote/proposal shows premium, the fee, and premium plus fee; package proposals sum the distinct policies without duplicating their fees.
+1. Record the optional dollar fee beside premium and commission in the quote form. Positive fees use cents precision and require **agency billing**. Selecting a positive fee selects agency billing; the server also rejects fee-bearing direct-bill quotes, invoices, agreements and binding. This answer is carried into bind. Record carrier/wholesaler fees and taxes as separate pass-through charge rows in the same quote form. The proposal itemizes gross client premium, supplier charges, taxes, the HOA fee and the complete policy cost; package totals sum the distinct policies without duplicating their fees.
 2. Include the fee agreement in the existing client quote/proposal delivery. One agreement can list the proposed policies and each fee, with one customer signing event. State-specific disclosures or other required content can add pages; a strict one-page maximum is not a nationwide compliance rule.
 3. The customer signs and submits payment through the existing delivery/payment experience. The bind panel displays fee signature and collection status. Binding still uses the existing action, with server checks for current signed terms and submitted/clearing or completed payment.
 4. Binding preserves the fee, signed agreement, producer attribution and applicable producer rate. Fee changes are part of quote authorization and package review fingerprints; a changed fee requires current client agreement. Fee-free legacy fingerprints remain unchanged.
 5. The signed document stays on the account and appears under every covered quote/policy filter. Multiple quote/policy links point to one document rather than duplicating the signed file.
 
 The policy form shows the bound fee read-only. Editing an ordinary policy must not alter an already agreed financial obligation or its frozen producer compensation.
+
+## Agency-billed client packet
+
+The quote's Premium field means the client's gross insurance premium before fees and taxes. New invoice premium lines use that gross amount as retail and leave supplier cost for the actual remittance amount. Do not derive that cost from a commission percentage. Sending or recording a manual receipt requires an explicitly recorded premium cost; existing saved invoice lines are not reinterpreted or backfilled.
+
+Carrier fees, wholesaler fees, taxes, surplus-lines tax and stamping fees pass through at equal retail and cost. Stable source-charge IDs carry their exact labels and cents amounts from the quote through binding into the policy and generated invoice lines. The invoice cannot omit, duplicate, relabel or mark up a recorded source charge. Supplier charges do not contribute to HOA broker-fee revenue or producer fee earnings. Base premium and carrier commission reports retain their existing premium-only basis.
+
+New invoices created from a source are initial-term bills with the gross premium locked to that source. Existing unflagged adjustment invoices keep their behavior. For older bound policies that have no recorded charge schedule, the existing invoice editor still accepts separately labeled supplier fees and taxes at equal retail/cost. This exception uses the actual stored policy provenance; new binds always carry an explicit schedule, including an empty one, and cannot clear it to claim legacy status.
+
+The normal proposal includes optional reviewed client-facing conditions, separate from private quote notes. Preserve the actual carrier's binding subjectivities, cancellation/minimum-earned terms and required coverage notices in reviewed conditions and selected carrier attachments. A wholesale authorized-representative signature does not constitute client fee consent. Do not apply a source document's cancellation terms or scheduled-limits warning universally to other policies.
+
+The HOA invoice controls the amount payable to HOA and its existing payment link. Source wholesale payment instructions concern agency remittance; the proposal and email tell clients to contact HOA before making a separate payment. Staff use the existing attachment preview to choose client-facing carrier quotations and required notices and check source documents for private agency compensation or conflicting payee instructions. The CRM does not silently redact or rewrite original carrier PDFs.
+
+Without an HOA fee, the same itemized proposal and invoice apply and no HOA fee agreement is generated. With an HOA fee, the existing combined fee agreement and electronic signing link are included. Pre-bind invoices identify a proposed effective date and do not claim that coverage has been bound. A verified bound-policy record supplies bound wording.
 
 ## Money and compensation
 
@@ -49,6 +63,8 @@ These examples are not a completed 50-state legal survey. Production configurati
 
 AMS360 documents agency fees as separate policy billing charges, including fees on otherwise direct-bill policies. Its production reporting distinguishes premium from non-premium and tracks producer compensation on both. This supports integrating the fee into current billing/compensation/reporting rather than creating a separate sales process: [billing workflow](https://help.vertafore.com/AMS360/content/howtos/accounting/htbillbenefitsagbillfees.htm), [production analysis](https://help.vertafore.com/AMS360/content/reports/csreportprodanalysis.htm).
 
+HOA's product rule is stricter: a policy carrying an HOA broker fee must be agency billed.
+
 The public website's former universal “no broker fee” promises are replaced with disclosure-before-purchase language. Free preliminary reviews/indications remain described separately from a disclosed placement fee.
 
 ## Setup and release
@@ -65,4 +81,4 @@ Once an invoice fee payment is issued, its quote terms and charge lines are prot
 
 Payment preparation reserves the fee through link creation and invoice delivery. Financing and manual receipts cannot bypass an unfinished send. Retry an interrupted send using the existing Send action; it resumes the same payment setup. If the processor link remains unknown after 20 hours, automatic creation stays blocked until the original processor payment setup is reviewed. Voiding releases the reservation together with the invoice status after known checkout sessions are closed.
 
-Deploy first to the retained staging branch `codex-hoa-staging-migration` using its existing staging build-spec override. Preserve the retained namespace and stateful resources; do not deploy the retired source backend. Promote only the broker-fee commits to `main` after review and staging verification.
+Deploy first to the retained staging branch `codex-hoa-staging-migration`. The repository's `amplify.yml` drives monorepo builds; its deployment helper resolves the retained staging namespace from the existing environment contract. Pre- and post-deploy guards verify stateful resources. Preserve the retained namespace and do not deploy the retired source backend. Promote only the broker-fee commits to `main` after review and staging verification. Both hosted CRM branches use a 6 GiB Node heap within their existing 8 GiB build instance.

@@ -1,4 +1,5 @@
 import { brokerFeeCents } from "../../../shared/brokerFees";
+import { normalizePassThroughCharges } from "../../../shared/passThroughCharges";
 /**
  * What a new invoice should already contain.
  *
@@ -56,7 +57,7 @@ export function unbilledAgencyPolicies<T extends PolicyLike>(
 ): T[] {
   return policies.filter(
     (p) =>
-      (p.billType !== "DIRECT" || brokerFeeCents(p.brokerFee) > brokerFeeCents(p.brokerFeeCollected)) &&
+      p.billType !== "DIRECT" &&
       p.status === "ACTIVE" &&
       !billedPolicyIds.has(p.id)
   );
@@ -154,11 +155,25 @@ export function seededQuoteLineDescription(quote: QuoteLike): string {
 }
 
 /** A fee is sourced from its policy term; invoice editing cannot invent another one. */
-export function brokerFeeLineFromSource(source: { id: string; quoteId?: string | null; brokerFee?: number | null }, policyId?: string) {
+export function brokerFeeLineFromSource(source: { id: string; quoteId?: string | null; brokerFee?: number | null; billType?: string | null }, policyId?: string) {
   const amountCents = brokerFeeCents(source.brokerFee);
   if (!amountCents) return null;
+  if (source.billType === "DIRECT") throw new Error("Broker fees require agency billing.");
   const quoteId = policyId ? source.quoteId : source.id;
   if (!quoteId) throw new Error("This broker fee needs its original quote before it can be billed.");
-  return { kind: "BROKER_FEE" as const, description: "Broker fee", retailAmount: amountCents / 100, costAmount: 0,
+  return { kind: "BROKER_FEE" as const, description: "HOA broker fee", retailAmount: amountCents / 100, costAmount: 0,
     brokerFeeQuoteId: quoteId, ...(policyId ? { policyId } : {}) };
 }
+
+/** Supplier charges and taxes are collected at cost, never agency fee income. */
+export function passThroughLinesFromSource(source: { billType?: string | null; passThroughCharges?: unknown }, policyId?: string) {
+  if (source.billType === "DIRECT") return [];
+  return normalizePassThroughCharges(source.passThroughCharges).map(charge => ({
+    sourceQuoteChargeId: charge.id, kind: charge.kind, description: charge.description,
+    retailAmount: charge.amountCents / 100, costAmount: charge.amountCents / 100,
+    ...(policyId ? { policyId } : {}),
+  }));
+}
+
+/** Retrying partial seeding addresses the same row instead of adding a duplicate. */
+export const sourceChargeLineId = (invoiceId: string, chargeId: string) => `invoice:${invoiceId}:charge:${chargeId}`;

@@ -44,6 +44,21 @@ beforeEach(() => {
   h.models.set('Quote:q1', { id: 'q1', accountId: 'a1', carrierId: 'carrier1', lines: ['Property'], premium: 12000, commissionPct: 15, notes: 'PRIVATE NOTES', brokerFee: 250, billType: 'AGENCY', status: 'QUOTED', effectiveDate: '2027-01-01', expirationDate: '2028-01-01', updatedAt: NOW });
 });
 describe('broker fee client disclosure', () => {
+  it('rejects direct-bill broker fees before preparing an agreement', async () => {
+    h.models.get('Quote:q1').billType = 'DIRECT';
+    await expect(prepared()).rejects.toThrow('Broker fees require agency billing.');
+    expect(h.rows.size).toBe(0);
+  });
+  it('closes an existing unsigned direct-bill fee link and prevents signing it', async () => {
+    const p = await prepared();
+    const quote = h.models.get('Quote:q1'); quote.billType = 'DIRECT';
+    const agreement = h.rows.get(p.agreementId), terms = authorizedQuoteTerms(quote);
+    agreement.quotes[0] = { ...agreement.quotes[0], billType: 'DIRECT', terms };
+    h.rows.get('fee:q1').terms = terms;
+    expect(await brokerFeeDisclosure(p.token)).toMatchObject({ state: 'closed' });
+    await expect(signBrokerFeeDisclosure(p.token, signer)).rejects.toThrow('Broker fees require agency billing.');
+    expect(h.rows.get('fee:q1').signedAt).toBeUndefined();
+  });
   it('stores only a token hash and returns an explicit public projection', async () => {
     const p = await prepared(), dto = await brokerFeeDisclosure(p.token);
     expect(h.rows.has(`token:${createHash('sha256').update(p.token).digest('hex')}`)).toBe(true);

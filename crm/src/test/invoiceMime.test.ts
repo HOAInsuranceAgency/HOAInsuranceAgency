@@ -224,6 +224,7 @@ describe("the invoice PDF", () => {
     riskLocation: ["18 Maple Court", "Marlborough, MA 01752"],
     effectiveDate: "2026-08-15",
     expirationDate: "2027-08-15",
+    coverageBound: true,
     issuedAt: "2026-08-21",
     dueAt: "2026-09-04",
     memo: "A 35% minimum earned premium applies.",
@@ -246,10 +247,10 @@ describe("the invoice PDF", () => {
    * writes every string as a hex literal — `<544f54414c>` rather than
    * `(TOTAL)` — so those are decoded too. What comes back is the text as drawn.
    */
-  const text = async () => {
+  const text = async (overrides: { coverageBound?: boolean } = {}) => {
     const { inflateSync } = await import("node:zlib");
     const { renderInvoicePdf } = await import("../../amplify/functions/send-invoice/pdf");
-    const buf = Buffer.from(await renderInvoicePdf(view as never));
+    const buf = Buffer.from(await renderInvoicePdf({ ...view, ...overrides } as never));
 
     let streams = "";
     let i = 0;
@@ -328,5 +329,21 @@ describe("the invoice PDF", () => {
     // invoice carries a policy block, and a treasurer reading it as the terms
     // of their coverage would have been misled by us, not by their carrier.
     expect(await text()).toContain("not a binder or policy");
+  });
+
+  it.each([false, undefined])("describes unconfirmed coverage as proposed even when it has an effective date (bound=%s)", async coverageBound => {
+    const pdf = await text({ coverageBound });
+    expect(pdf).toContain("Proposed Term");
+    expect(pdf).toContain("Proposed effective date: August 15, 2026.");
+    expect(pdf).toContain("Coverage is subject to binding confirmation.");
+    expect(pdf).not.toContain("Coverage was bound");
+    expect(pdf).toContain("not a binder or policy");
+  });
+
+  it("states a bound effective date only when the trusted policy proves binding", async () => {
+    const pdf = await text({ coverageBound: true });
+    expect(pdf).toContain("Policy Term");
+    expect(pdf).toContain("Coverage was bound effective August 15, 2026.");
+    expect(pdf).not.toContain("Proposed effective date");
   });
 });

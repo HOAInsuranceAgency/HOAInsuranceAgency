@@ -45,6 +45,8 @@ export interface InvoiceView {
   riskLocation?: string[];
   effectiveDate?: string | null;
   expirationDate?: string | null;
+  /** Set only from the linked policy's recorded binding, never a quote date. */
+  coverageBound?: boolean;
   issuedAt?: string | null;
   dueAt?: string | null;
   memo?: string | null;

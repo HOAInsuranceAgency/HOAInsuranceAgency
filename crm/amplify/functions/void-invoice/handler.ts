@@ -202,10 +202,10 @@ export const handler = async (event: {
           }
           console.warn(`[void-invoice] link ${linkId} already gone at Stripe`);
         }
-        if (invoice.hasBrokerFee) {
+        if (invoice.hasBrokerFee || invoice.sourcePricingVersion === 1) {
           // Deactivating a Payment Link does not close sessions already opened
-          // from it. Close every unsubmitted fee checkout before releasing its
-          // accepted terms for an updated quote and invoice.
+          // from it. Close every unsubmitted source-packet checkout before
+          // releasing its accepted terms for an updated quote and invoice.
           try { await closeInvoiceCheckoutSessions(stripe, linkId); }
           catch (error) { return { ok: false, error: error instanceof Error ? error.message : "The payment sessions could not be closed." }; }
         }

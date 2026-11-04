@@ -3,7 +3,8 @@ import { authorizedQuoteTerms } from '../../../shared/quoteAuthorization';
 const h = vi.hoisted(() => ({
   invoice: {} as Record<string, any>, quote: {} as Record<string, any>, models: {} as Record<string, any>, order: [] as string[],
   db: vi.fn(), mail: vi.fn(), begin: vi.fn(), finish: vi.fn(), reserve: vi.fn(), publish: vi.fn(), complete: vi.fn(),
-  price: vi.fn(), link: vi.fn(), retrieve: vi.fn(), deactivate: vi.fn(), close: vi.fn(), getFee: vi.fn(),
+  price: vi.fn(), link: vi.fn(), retrieve: vi.fn(), deactivate: vi.fn(), close: vi.fn(), getFee: vi.fn(), pdf: vi.fn(),
+  sessions: vi.fn(), expire: vi.fn(), intent: vi.fn(), prepare: vi.fn(), realClose: undefined as undefined | ((...args: any[]) => Promise<void>),
 }));
 vi.mock('aws-amplify', () => ({ Amplify: { configure: vi.fn() } }));
 vi.mock('aws-amplify/data', () => ({ generateClient: () => ({ models: h.models }) }));
@@ -14,11 +15,15 @@ vi.mock('../../amplify/functions/send-invoice/sendOperation', () => ({ beginInvo
 vi.mock('../../amplify/functions/broker-fees/store', () => ({ getFee: h.getFee, getModel: async () => structuredClone(h.invoice) }));
 vi.mock('../../amplify/functions/broker-fees/payments', () => ({ reserveFeeInvoice: h.reserve, publishFeeInvoiceLink: h.publish, completeFeeInvoiceSend: h.complete, reserveFeeLoan: vi.fn() }));
 vi.mock('../../amplify/functions/broker-fees/bindValidation', () => ({ assertBrokerFeeSigned: async () => ({}) }));
-vi.mock('../../amplify/functions/broker-fees/agreements', () => ({ prepareBrokerFeeAgreement: async () => ({ url: 'https://agency.test/sign' }) }));
-vi.mock('../../amplify/functions/send-invoice/pdf', () => ({ pdfFilename: () => 'invoice.pdf', renderInvoicePdf: async () => new Uint8Array([37, 80, 68, 70]) }));
-vi.mock('../../amplify/functions/invoiceCheckout', () => ({ closeInvoiceCheckoutSessions: h.close }));
+vi.mock('../../amplify/functions/broker-fees/agreements', () => ({ prepareBrokerFeeAgreement: h.prepare }));
+vi.mock('../../amplify/functions/send-invoice/pdf', () => ({ pdfFilename: () => 'invoice.pdf', renderInvoicePdf: h.pdf }));
+vi.mock('../../amplify/functions/invoiceCheckout', async original => {
+  h.realClose = (await original<typeof import('../../amplify/functions/invoiceCheckout')>()).closeInvoiceCheckoutSessions;
+  return { closeInvoiceCheckoutSessions: h.close };
+});
 vi.mock('stripe', () => ({ default: class {
   prices = { create: h.price }; paymentLinks = { create: h.link, retrieve: h.retrieve, update: h.deactivate };
+  checkout = { sessions: { list: h.sessions, expire: h.expire } }; paymentIntents = { retrieve: h.intent };
 } }));
 import { handler } from '../../amplify/functions/send-invoice/handler';
 
@@ -29,33 +34,58 @@ beforeEach(() => {
   vi.stubEnv('HOA_TRANSACTIONAL_MAIL_PROVIDER', 'resend'); vi.stubEnv('STRIPE_SECRET_KEY', 'fixture'); vi.stubEnv('INVOICE_TABLE', 'Invoice');
   vi.stubEnv('PF_LOAN_TABLE', ''); vi.stubEnv('SITE_URL', '');
   h.order.length = 0;
-  h.quote = { id: 'q', accountId: 'a', carrierId: 'c', premium: 10000, brokerFee: 500, billType: 'DIRECT', lines: ['Property'], status: 'QUOTED', updatedAt: 'q1' };
+  h.quote = { id: 'q', accountId: 'a', carrierId: 'c', premium: 10000, brokerFee: 500, billType: 'AGENCY', lines: ['Property'], status: 'QUOTED', updatedAt: 'q1' };
   h.invoice = { id: 'i', accountId: 'a', quoteId: 'q', number: 'INV1', status: 'DRAFT', updatedAt: 'i1' };
   const lines = [{ id: 'fee', invoiceId: 'i', accountId: 'a', brokerFeeQuoteId: 'q', kind: 'BROKER_FEE', description: 'Broker fee', retailAmount: 500, costAmount: 0 }];
-  h.models = {
+  for (const key of Object.keys(h.models)) delete h.models[key];
+  Object.assign(h.models, {
     Invoice: { get: async () => ({ data: structuredClone(h.invoice) }), list: async () => ({ data: [structuredClone(h.invoice)] }) },
     Account: { get: async () => ({ data: { id: 'a', name: 'Cedar HOA', state: 'MA' } }) },
     Quote: { get: async () => ({ data: structuredClone(h.quote) }) }, Carrier: { get: async () => ({ data: { name: 'Carrier' } }) },
     InvoiceLine: { list: async () => ({ data: structuredClone(lines) }) },
     Contact: { list: async () => ({ data: [{ id: 'contact', email: 'board@example.test', isPrimary: true }] }) },
-  };
+  });
   h.getFee.mockImplementation(async () => ({ signedAt: 'signed', amountCents: 50000, terms: authorizedQuoteTerms(h.quote), submittedCents: 0, collectedCents: 0, refundedCents: 0, invoiceSendClaim: structuredClone(claim) }));
   h.begin.mockImplementation(async () => { h.order.push('begin'); return { operation: { key: 'mail-operation' } }; });
   h.reserve.mockImplementation(async () => { h.order.push('reserve'); return structuredClone(claim); });
+  h.prepare.mockResolvedValue({ url: 'https://agency.test/sign' });
   h.price.mockResolvedValue({ id: 'price1' }); h.link.mockResolvedValue({ id: 'pl1', url: 'https://buy.stripe.com/known' });
-  h.retrieve.mockResolvedValue({ active: true, url: 'https://buy.stripe.com/known' }); h.deactivate.mockResolvedValue({}); h.close.mockResolvedValue(undefined);
+  h.retrieve.mockResolvedValue({ active: true, url: 'https://buy.stripe.com/known' }); h.deactivate.mockResolvedValue({});
+  h.close.mockImplementation(h.realClose!); h.sessions.mockImplementation(async function* () {}); h.expire.mockResolvedValue({});
+  h.intent.mockResolvedValue({ status: 'requires_action' });
   h.publish.mockImplementation(async (_id, _parts, _token, linkId, write) => {
     h.order.push('publish'); const values = write.Update.ExpressionAttributeValues;
     Object.assign(h.invoice, { stripePaymentLinkId: linkId, paymentUrl: values[':url'], stripeLinkAmountCents: values[':cents'] }); return true;
   });
   h.mail.mockImplementation(async () => { h.order.push('mail'); return { MessageId: 'mail1' }; });
-  h.db.mockImplementation(async command => { h.order.push('record'); if (command.input.ExpressionAttributeValues[':sent']) h.invoice.status = 'SENT'; return {}; });
+  h.pdf.mockResolvedValue(new Uint8Array([37, 80, 68, 70]));
+  h.db.mockImplementation(async command => {
+    const values = command.input.ExpressionAttributeValues;
+    if (command.input.UpdateExpression.startsWith('SET paymentUrl')) {
+      h.order.push('store-link'); Object.assign(h.invoice, { stripePaymentLinkId: values[':link'], paymentUrl: values[':url'], stripeLinkAmountCents: values[':cents'] });
+    } else { h.order.push('record'); if (values[':sent']) h.invoice.status = 'SENT'; }
+    return {};
+  });
   h.complete.mockImplementation(async () => { h.order.push('complete'); }); h.finish.mockResolvedValue(undefined);
 });
 afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); vi.restoreAllMocks(); });
 const send = () => handler({ arguments: { invoiceId: 'i', toEmail: 'board@example.test' } });
 
 describe('real broker fee invoice send claim sequencing', () => {
+  it('does not treat a quoted effective date as evidence of bound coverage in the attachment', async () => {
+    Object.assign(h.quote, { effectiveDate: '2026-12-01', expirationDate: '2027-12-01' });
+    expect(await send()).toMatchObject({ ok: true });
+    expect(h.pdf.mock.calls[0][0]).toMatchObject({ effectiveDate: '2026-12-01', coverageBound: false });
+  });
+
+  it('passes bound evidence only from the linked policy binding record', async () => {
+    h.invoice.policyId = 'p';
+    h.models.Policy = { get: async () => ({ data: { ...h.quote, id: 'p', quoteId: 'q', datePolicyBound: '2026-11-04', effectiveDate: '2026-12-01' } }) };
+    const result = await send();
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
+    expect(h.pdf.mock.calls[0][0]).toMatchObject({ effectiveDate: '2026-12-01', coverageBound: true });
+  });
+
   it('returns a completed mail retry before touching its published fee claim', async () => {
     const result = { ok: true, sentTo: 'board@example.test', subject: 'Invoice', sentAt: '2026-11-04T14:00:00Z' };
     h.begin.mockResolvedValue({ operation: {}, completed: result });
@@ -81,6 +111,29 @@ describe('real broker fee invoice send claim sequencing', () => {
     vi.stubEnv('STRIPE_SECRET_KEY', '');
     expect(await send()).toMatchObject({ ok: false, error: expect.stringContaining('not configured') });
     expect(h.mail).not.toHaveBeenCalled(); expect(h.complete).not.toHaveBeenCalled();
+    expect(h.begin).not.toHaveBeenCalled(); expect(h.reserve).not.toHaveBeenCalled(); expect(h.prepare).not.toHaveBeenCalled();
+    expect(h.db).not.toHaveBeenCalled();
+  });
+
+  it('rejects a processor amount above its ceiling before any mail or fee claim is prepared', async () => {
+    h.quote.premium = 1_000_000;
+    h.invoice.sourcePricingVersion = 1;
+    h.models.InvoiceLine.list = async () => ({ data: [
+      { id: 'premium', accountId: 'a', invoiceId: 'i', kind: 'PREMIUM', retailAmount: 1_000_000, costAmount: 800000 },
+      { id: 'fee', accountId: 'a', invoiceId: 'i', kind: 'BROKER_FEE', brokerFeeQuoteId: 'q', retailAmount: 500, costAmount: 0 },
+    ] });
+    h.getFee.mockImplementation(async () => ({ amountCents: 50000, terms: authorizedQuoteTerms(h.quote), submittedCents: 0, collectedCents: 0, refundedCents: 0 }));
+    expect(await send()).toMatchObject({ ok: false, error: expect.stringContaining('too large') });
+    expect(h.begin).not.toHaveBeenCalled(); expect(h.reserve).not.toHaveBeenCalled(); expect(h.prepare).not.toHaveBeenCalled();
+    expect(h.price).not.toHaveBeenCalled(); expect(h.link).not.toHaveBeenCalled(); expect(h.mail).not.toHaveBeenCalled(); expect(h.db).not.toHaveBeenCalled();
+  });
+
+  it('preserves offline legacy fee-free invoice sending when Stripe is not configured', async () => {
+    h.quote.brokerFee = 0;
+    vi.stubEnv('STRIPE_SECRET_KEY', '');
+    h.models.InvoiceLine.list = async () => ({ data: [{ id: 'premium', accountId: 'a', invoiceId: 'i', kind: 'PREMIUM', retailAmount: 10000, costAmount: 8000 }] });
+    expect(await send()).toMatchObject({ ok: true });
+    expect(h.mail).toHaveBeenCalledOnce(); expect(h.reserve).not.toHaveBeenCalled(); expect(h.prepare).not.toHaveBeenCalled(); expect(h.link).not.toHaveBeenCalled();
   });
 
   it('atomically binds a newly reserved resend claim to an existing active payment link', async () => {
@@ -151,5 +204,33 @@ describe('real broker fee invoice send claim sequencing', () => {
     h.close.mockRejectedValue(Object.assign(new Error('Unknown intent'), { code: 'resource_missing' }));
     expect(await send()).toMatchObject({ ok: false, error: expect.stringContaining('payment sessions') });
     expect(h.price).not.toHaveBeenCalled(); expect(h.mail).not.toHaveBeenCalled();
+  });
+
+  it('expires open sessions from a published source-priced packet before replacing its link without an HOA fee', async () => {
+    h.quote.brokerFee = 0;
+    Object.assign(h.invoice, { status: 'SENT', sourcePricingVersion: 1, stripePaymentLinkId: 'old', paymentUrl: 'https://buy.stripe.com/old', stripeLinkAmountCents: 1000000 });
+    h.models.InvoiceLine.list = async () => ({ data: [{ id: 'premium', accountId: 'a', invoiceId: 'i', kind: 'PREMIUM', retailAmount: 10000, costAmount: 8000 }] });
+    h.retrieve.mockResolvedValue({ active: false, url: 'https://buy.stripe.com/old' });
+    const session = { id: 'old-checkout', status: 'open', payment_status: 'unpaid' };
+    h.sessions.mockImplementation(async function* () { yield session; });
+    h.expire.mockImplementation(async () => { session.status = 'expired'; return {}; });
+    expect(await send()).toMatchObject({ ok: true });
+    expect(session.status).toBe('expired');
+    expect(h.expire).toHaveBeenCalledWith('old-checkout');
+    expect(h.expire.mock.invocationCallOrder[0]).toBeLessThan(h.link.mock.invocationCallOrder[0]);
+    expect(h.link.mock.invocationCallOrder[0]).toBeLessThan(h.mail.mock.invocationCallOrder[0]);
+    expect(h.reserve).not.toHaveBeenCalled(); expect(h.publish).not.toHaveBeenCalled();
+  });
+
+  it('refuses replacing a source-priced no-HOA link if its existing session already submitted payment', async () => {
+    h.quote.brokerFee = 0;
+    Object.assign(h.invoice, { status: 'SENT', sourcePricingVersion: 1, stripePaymentLinkId: 'old', paymentUrl: 'https://buy.stripe.com/old', stripeLinkAmountCents: 1000000 });
+    h.models.InvoiceLine.list = async () => ({ data: [{ id: 'premium', accountId: 'a', invoiceId: 'i', kind: 'PREMIUM', retailAmount: 10000, costAmount: 8000 }] });
+    h.retrieve.mockResolvedValue({ active: false });
+    h.sessions.mockImplementation(async function* () { yield { id: 'old-checkout', status: 'complete', payment_status: 'unpaid', payment_intent: 'pi-old' }; });
+    h.intent.mockResolvedValue({ status: 'processing' });
+    expect(await send()).toMatchObject({ ok: false, error: expect.stringContaining('previous payment sessions') });
+    expect(h.price).not.toHaveBeenCalled(); expect(h.mail).not.toHaveBeenCalled();
+    expect(h.invoice.stripePaymentLinkId).toBe('old');
   });
 });

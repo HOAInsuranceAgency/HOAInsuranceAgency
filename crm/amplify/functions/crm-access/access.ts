@@ -1,6 +1,8 @@
-import { brokerFeeCents, feeAllocations } from '../../../../shared/brokerFees';
+import { assertBrokerFeeAgencyBilling, brokerFeeCents, feeAllocations } from '../../../../shared/brokerFees';
 import { getFee, getAgreement, getModel } from '../broker-fees/store';
 import { authorizedQuoteTerms } from '../../../../shared/quoteAuthorization';
+import { normalizeClientConditions, normalizePassThroughCharges } from '../../../../shared/passThroughCharges';
+import { validateInvoiceSourceCharges } from '../send-invoice/passThroughInvoice';
 import { relationshipCurrent } from "../../../../shared/relationships";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, GetCommand, BatchGetCommand } from "@aws-sdk/lib-dynamodb";
@@ -164,8 +166,12 @@ export class AccountAccess {
       if(fee&&(fee.signedAt||fee.submittedCents>0||fee.collectedCents>0||fee.policyId))throw new Error("Quotes with signed fee or payment history cannot be deleted. Preserve the record and its adjustments.");
     }
     if (model === "Quote" && ["create","update"].includes(operation)) {
+      if(Object.hasOwn(input,"passThroughCharges"))normalizePassThroughCharges(input.passThroughCharges);
+      if(Object.hasOwn(input,"clientConditions"))normalizeClientConditions(input.clientConditions);
       if (Object.hasOwn(input,"brokerFee")) brokerFeeCents(input.brokerFee as number|null);
       const previous = input.id ? await this.get("Quote",id(input.id)) : undefined;
+      assertBrokerFeeAgencyBilling({...previous,...input} as {brokerFee?:number|null;billType?:string|null});
+      if(previous?.status==="BOUND"&&((Object.hasOwn(input,"passThroughCharges")&&JSON.stringify(normalizePassThroughCharges(input.passThroughCharges))!==JSON.stringify(normalizePassThroughCharges(previous.passThroughCharges)))||(Object.hasOwn(input,"clientConditions")&&normalizeClientConditions(input.clientConditions)!==normalizeClientConditions(previous.clientConditions))))throw new Error("Bound policy charges and client conditions cannot be changed.");
       if (previous && (brokerFeeCents(previous.brokerFee as number|undefined)>0 || brokerFeeCents(input.brokerFee as number|undefined)>0)) {
         const fee = await getFee(String(previous.id));
         const agreement=fee?.agreementId?await getAgreement(fee.agreementId):undefined;
@@ -185,8 +191,11 @@ export class AccountAccess {
     }
     if (model === "Invoice") {
       const previous = input.id ? await this.get("Invoice",id(input.id)) : undefined;
+      if(operation==="create"&&(input.sourcePricingVersion!==1||input.status!=="DRAFT"||!input.quoteId&&!input.policyId))throw new Error("Create a source-priced draft invoice from its quote or policy.");
+      if(previous&&Object.hasOwn(input,"sourcePricingVersion")&&(input.sourcePricingVersion??null)!==(previous.sourcePricingVersion??null))throw new Error("Invoice source pricing provenance cannot be changed or removed.");
       const changesIssuedIdentity=previous&&["accountId","quoteId","policyId"].some(field=>Object.hasOwn(input,field)&&(input[field]??null)!==(previous[field]??null));
       const changesStatus=previous&&Object.hasOwn(input,"status")&&input.status!==previous.status;
+      if(previous?.sourcePricingVersion===1&&(changesIssuedIdentity||changesStatus||operation==="delete"&&(previous.status!=="DRAFT"||previous.stripePaymentLinkId)))throw new Error("Source-priced invoices retain their source and payment history. Use the invoice payment or void action.");
       if(previous&&(operation==="delete"||changesStatus||changesIssuedIdentity)) {
         if(await this.issuedBrokerFeeInvoice(previous))throw new Error("Issued broker fee invoices retain their source and payment history. Use the invoice payment or void action to change their status.");
       }
@@ -203,7 +212,29 @@ export class AccountAccess {
       const previousInvoice=previous?.invoiceId&&previous.invoiceId!==candidate.invoiceId?await this.get("Invoice",id(previous.invoiceId)):undefined;
       for(const parent of [invoice,previousInvoice])if(parent) {
         if (["PAID","PROCESSING"].includes(String(parent.status))) throw new Error("Payment allocation lines cannot change after payment is submitted.");
+        if(parent.sourcePricingVersion===1&&(parent.status==="SENT"||parent.stripePaymentLinkId))throw new Error("Void the issued source-priced invoice before changing its payment lines.");
         if(["DRAFT","SENT"].includes(String(parent.status))&&await this.issuedBrokerFeeInvoice(parent))throw new Error("Void the issued fee invoice before changing its payment lines.");
+        if(parent.status==="SENT") {
+          const policy=parent.policyId?await this.get("Policy",id(parent.policyId)):undefined;
+          const source=policy??(parent.quoteId?await this.get("Quote",id(parent.quoteId)):undefined);
+          if(candidate.sourceQuoteChargeId||previous?.sourceQuoteChargeId||normalizePassThroughCharges(source?.passThroughCharges).length)throw new Error("Void the issued invoice before changing its source charge payment lines.");
+        }
+      }
+      if(previous?.sourceQuoteChargeId&&operation==="delete") {
+        const policy=invoice?.policyId?await this.get("Policy",id(invoice.policyId)):undefined;
+        const source=policy??(invoice?.quoteId?await this.get("Quote",id(invoice.quoteId)):undefined);
+        if(invoice?.status!=="DRAFT"||!source||normalizePassThroughCharges(source.passThroughCharges).some(charge=>charge.id===previous.sourceQuoteChargeId))throw new Error("Pass-through invoice charges come from the source quote. Only an obsolete unissued draft charge can be removed.");
+      }
+      if(previous?.sourceQuoteChargeId&&["sourceQuoteChargeId","invoiceId"].some(field=>Object.hasOwn(input,field)&&input[field]!==previous[field]))throw new Error("A generated pass-through charge cannot be detached from its source invoice.");
+      if(operation!=="delete"&&(candidate.sourceQuoteChargeId||["CARRIER_FEE","WHOLESALER_FEE","TAX","SURPLUS_LINES","STAMPING_FEE"].includes(String(candidate.kind)))) {
+        const policy=invoice?.policyId?await this.get("Policy",id(invoice.policyId)):undefined;
+        const source=policy??(invoice?.quoteId?await this.get("Quote",id(invoice.quoteId)):undefined);
+        validateInvoiceSourceCharges({invoice:{accountId:id(invoice?.accountId),policyId:id(invoice?.policyId),status:invoice?.status as string|undefined,sourcePricingVersion:invoice?.sourcePricingVersion as number|undefined},source:source?{id:id(source.id),accountId:id(source.accountId),premium:source.premium as number|undefined,billType:source.billType as string|undefined,passThroughCharges:source.passThroughCharges}:null,lines:[candidate],requireAll:false});
+      }
+      if(invoice?.sourcePricingVersion===1&&operation!=="delete"&&!candidate.sourceQuoteChargeId) {
+        const policy=invoice.policyId?await this.get("Policy",id(invoice.policyId)):undefined;
+        const source=policy??(invoice.quoteId?await this.get("Quote",id(invoice.quoteId)):undefined);
+        validateInvoiceSourceCharges({invoice:{accountId:id(invoice.accountId),policyId:id(invoice.policyId),status:invoice.status as string|undefined,sourcePricingVersion:1},source:source?{id:id(source.id),accountId:id(source.accountId),premium:source.premium as number|undefined,billType:source.billType as string|undefined,passThroughCharges:source.passThroughCharges}:null,lines:[candidate],requireAll:false});
       }
       if (candidate.kind === "BROKER_FEE" && operation!=="delete") {
         const quote = await this.get("Quote",id(candidate.brokerFeeQuoteId));
@@ -215,6 +246,8 @@ export class AccountAccess {
     if (model === "Quote" && input.status === "BOUND" && (operation === "create" || (await this.get("Quote", id(input.id)))?.status !== "BOUND")) throw new Error("Use the bind workflow to mark a quote bound.");
     if (model === "Policy" && operation === "update") {
       const prior = await this.get("Policy", id(input.id));
+      assertBrokerFeeAgencyBilling({...prior,...input} as {brokerFee?:number|null;billType?:string|null});
+      if(Object.hasOwn(input,"passThroughCharges")&&((input.passThroughCharges!=null)!==(prior?.passThroughCharges!=null)||JSON.stringify(normalizePassThroughCharges(input.passThroughCharges))!==JSON.stringify(normalizePassThroughCharges(prior?.passThroughCharges)))||Object.hasOwn(input,"clientConditions")&&normalizeClientConditions(input.clientConditions)!==normalizeClientConditions(prior?.clientConditions))throw new Error("Bound policy charges and client conditions are immutable. Record a reviewed adjustment instead.");
       if (Object.hasOwn(input, "commissionSnapshotId") && input.commissionSnapshotId !== prior?.commissionSnapshotId) throw new Error("Commission provenance is server-owned.");
       if (prior && ["brokerFee", "accountId", "quoteId", "carrierId", "premium", "commissionPct", "effectiveDate", "expirationDate", "datePolicyBound"].some(f => Object.hasOwn(input, f) && (input[f] ?? null) !== (prior[f] ?? null))) throw new Error("Bound financial terms are immutable. Record a reviewed adjustment instead.");
       if (["brokerFeeReportingKey","brokerFeeCollected","brokerFeeRefunded","brokerFeeCollectedAt"].some(key=>Object.hasOwn(input,key) && input[key]!==prior?.[key])) throw new Error("Actual broker fee receipts are server-owned.");

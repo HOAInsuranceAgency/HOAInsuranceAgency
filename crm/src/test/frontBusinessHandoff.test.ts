@@ -81,7 +81,7 @@ describe('reviewed Front business handoff',()=>{
     const quote = h.models.get('Quote:q1'); quote.brokerFee = 250; quote.billType = 'AGENCY';
     h.rows.get('commercial:a1').data.options[0].reviewed.terms.q1 = packageTerms(quote);
     const preview = await previewBusinessDelivery(selection, 'actor');
-    expect(preview.body).toContain('Review and sign the broker fee disclosure'); expect(preview.body).toContain('Premium and broker fees: $1,450.00');
+    expect(preview.body).toContain('Review and sign the broker fee disclosure'); expect(preview.body).toContain('Total quoted policy cost: $1,450.00');
     expect(preview.attachments.map(file => file.name)).toContain('Broker fee disclosure.pdf');
     expect(fee.prepare).toHaveBeenCalledWith('a1', [expect.objectContaining({ id: 'q1', brokerFee: 250, billType: 'AGENCY', terms: authorizedQuoteTerms(quote) })]);
     const attempt = await prepareBusinessDraft(prepareInput(preview), 'actor'); sent();

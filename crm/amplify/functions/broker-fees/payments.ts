@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { QueryCommand, PutCommand } from '@aws-sdk/lib-dynamodb';
-import { brokerFeeCents, feeAllocations, type BrokerFeeAllocation, type BrokerFeeRecord, type BrokerFeeInvoiceSendClaim } from '../../../../shared/brokerFees';
+import { assertBrokerFeeAgencyBilling, brokerFeeCents, feeAllocations, type BrokerFeeAllocation, type BrokerFeeRecord, type BrokerFeeInvoiceSendClaim } from '../../../../shared/brokerFees';
 import { authorizedQuoteTerms } from '../../../../shared/quoteAuthorization';
 import { appendEntry, type CommissionPolicy, type CommissionStatement, type StatementLine } from '../../../../shared/commissions';
 import * as commissions from '../commissions/store';
@@ -56,6 +56,7 @@ export async function reserveFeeInvoice(source:Record<string,unknown>|string,inv
     const policy=invoice.policyId?await getModel<Record<string,unknown>>('Policy',String(invoice.policyId)):undefined;
     if(invoice.quoteId!==quoteId&&policy?.quoteId!==quoteId)throw new Error('The fee invoice must belong to its quoted policy term.');
     const amount=brokerFeeCents(quote.brokerFee as number|undefined);
+    assertBrokerFeeAgencyBilling(quote as {brokerFee?:number|null;billType?:string|null});
     if(!amount)return;
     if(typeof source!=='string'&&authorizedQuoteTerms(source)!==authorizedQuoteTerms(quote))throw new Error('The fee quote changed. Refresh the invoice before sending.');
     const old=await getFee(quoteId);
@@ -136,10 +137,13 @@ export async function feeInvoiceVoidWrites(invoice:Record<string,unknown>):Promi
 export async function reserveFeeLoan(quoteId:string,loanId:string) {
   for(let attempt=0;attempt<5;attempt++) {
     const fee=await getFee(quoteId),loan=await getModel<Record<string,unknown>>('PfLoan',loanId);
+    const quote=await getModel<Record<string,unknown>>('Quote',quoteId);
+    if(!quote)throw new Error('The original fee quote could not be verified.');
+    assertBrokerFeeAgencyBilling(quote as {brokerFee?:number|null;billType?:string|null});
     if(!fee||!loan||loan.accountId!==fee.accountId||!feeAllocations(loan.brokerFeeAllocations).some(a=>a.quoteId===quoteId&&a.amountCents===fee.amountCents))throw new Error('The finance offer fee does not match its accepted policy term.');
     const ids=[...new Set([...(fee.issuedLoanIds??[]),loanId])];
     if(ids.length>100)throw new Error('The fee financing history needs review.');
-    try {await transact([feePut({...fee,issuedLoanIds:ids},fee),versionCheck(modelTable('PfLoan'),loan as {id:string;updatedAt:string})]);return;}
+    try {await transact([feePut({...fee,issuedLoanIds:ids},fee),versionCheck(modelTable('PfLoan'),loan as {id:string;updatedAt:string}),versionCheck(modelTable('Quote'),quote as {id:string;updatedAt:string})]);return;}
     catch(error){if(!retryable(error)||attempt===4)throw error;}
   }
 }

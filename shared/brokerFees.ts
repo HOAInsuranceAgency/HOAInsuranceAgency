@@ -40,6 +40,9 @@ export function brokerFeeCents(value: number | null | undefined): number {
   if (!Number.isFinite(value) || value < 0 || value > 10_000_000 || Math.abs(value * 100 - Math.round(value * 100)) > 0.00001) throw new Error('Enter a broker fee of $0 or more with at most two decimal places.');
   return Math.round(value * 100);
 }
+export function assertBrokerFeeAgencyBilling(source: { brokerFee?: number | null; billType?: string | null }): void {
+  if (brokerFeeCents(source.brokerFee) > 0 && source.billType !== 'AGENCY') throw new Error('Broker fees require agency billing.');
+}
 export function feeAllocations(value: unknown): BrokerFeeAllocation[] {
   const parsed: unknown = typeof value === 'string' ? JSON.parse(value) : value;
   if (parsed == null) return [];

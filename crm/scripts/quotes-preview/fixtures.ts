@@ -42,7 +42,11 @@ const quote = (id: string, carrierId: string, lines: string[], premium: number) 
   createdAt: `${future(-2)}T13:00:00Z`, updatedAt: `${today}T13:00:00Z`,
 }) as Quote;
 export const quotes: Quote[] = ['populated', 'selected', 'estimates'].includes(scenario) ? [
-  { ...quote('bundle', 'harbor', ['Commercial Property', 'General Liability', 'D&O'], 18000), brokerFee: 500, billType: 'DIRECT' },
+  { ...quote('bundle', 'harbor', ['Commercial Property', 'General Liability', 'D&O'], 55541), brokerFee: 500, billType: 'AGENCY',
+    passThroughCharges: JSON.stringify([
+      { id: 'fictional-wholesaler', kind: 'WHOLESALER_FEE', description: 'Wholesaler brokerage fee', amountCents: 25000 },
+      { id: 'fictional-tax', kind: 'SURPLUS_LINES', description: 'Surplus lines tax', amountCents: 222164 },
+    ]), clientConditions: '25% minimum earned premium. No flat cancellations.' },
   quote('property', 'pine', ['Commercial Property', 'General Liability'], 14200),
   quote('do', 'summit', ['D&O'], 2200),
 ] : [];

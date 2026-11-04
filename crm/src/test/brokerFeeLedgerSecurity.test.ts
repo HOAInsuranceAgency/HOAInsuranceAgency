@@ -290,7 +290,7 @@ describe('bind, state configuration, and browser guards', () => {
       expect.objectContaining({ ConditionCheck: expect.objectContaining({ TableName: 'fee-table', Key: { id: 'agreement' } }) }),
       expect.objectContaining({ ConditionCheck: expect.objectContaining({ TableName: 'AgencySettings', Key: { id: 'AGENCY' } }) }),
     ]));
-    await expect(brokerFeeBindWrites(quote, 'p', 'DIRECT')).rejects.toThrow('billing method');
+    await expect(brokerFeeBindWrites(quote, 'p', 'DIRECT')).rejects.toThrow('Broker fees require agency billing.');
     await expect(brokerFeeBindWrites({ ...quote, brokerFee: 501 }, 'p', 'AGENCY')).rejects.toThrow('current');
     h.rows.set('fee:q', { ...fee(), refundedCents: 100 });
     await expect(brokerFeeBindWrites(quote, 'p', 'AGENCY')).rejects.toThrow('submitted');

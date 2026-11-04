@@ -220,7 +220,7 @@ export async function renderInvoicePdf(inv: InvoiceView): Promise<Uint8Array> {
     ["Policy Number", inv.policyNumber ?? ""],
     ["Insurer", inv.carrierName ?? ""],
     [
-      "Policy Term",
+      inv.coverageBound ? "Policy Term" : "Proposed Term",
       inv.effectiveDate && inv.expirationDate
         ? `${formatDayShort(inv.effectiveDate)} - ${formatDayShort(inv.expirationDate)}`
         : "",
@@ -394,7 +394,9 @@ export async function renderInvoicePdf(inv: InvoiceView): Promise<Uint8Array> {
     body: [
       ...(inv.memo?.trim() ? [inv.memo.trim()] : []),
       ...(inv.effectiveDate
-        ? [`Coverage was bound effective ${formatDay(inv.effectiveDate)}.`]
+        ? [inv.coverageBound
+          ? `Coverage was bound effective ${formatDay(inv.effectiveDate)}.`
+          : `Proposed effective date: ${formatDay(inv.effectiveDate)}. Coverage is subject to binding confirmation.`]
         : []),
       // The disclaimer this document must always carry: an invoice is evidence
       // of a debt, and a treasurer who reads its policy block as the terms of

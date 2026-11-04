@@ -1,6 +1,7 @@
 import { authorizedQuoteTerms } from './quoteAuthorization';
 import { validCalendarDate } from './renewalPolicy';
 import { brokerFeeCents } from './brokerFees';
+import { normalizeClientConditions, passThroughTotalCents } from './passThroughCharges';
 
 export interface PackageQuote {
   id: string;
@@ -11,6 +12,8 @@ export interface PackageQuote {
   premium?: number | null;
   commissionPct?: number | null;
   brokerFee?: number | null;
+  passThroughCharges?: unknown;
+  clientConditions?: string | null;
   billType?: string | null;
   effectiveDate?: string | null;
   expirationDate?: string | null;
@@ -138,8 +141,12 @@ export function packageAssessment(
     catch { problems.push('Check the broker fee amounts'); return 0; }
   });
   const feeTotal = fees.reduce((sum, fee) => sum + fee, 0);
-  if (valid.some(q => (q.brokerFee ?? 0) > 0 && !['AGENCY', 'DIRECT'].includes(q.billType ?? '')))
-    problems.push('Choose who bills the premium for each quote with a broker fee');
+  const passThroughTotal = valid.reduce((sum, q) => {
+    try { normalizeClientConditions(q.clientConditions); return sum + passThroughTotalCents(q.passThroughCharges); }
+    catch { problems.push('Review the pass-through charges and client conditions'); return sum; }
+  }, 0);
+  if (valid.some(q => (q.brokerFee ?? 0) > 0 && q.billType !== 'AGENCY'))
+    problems.push('Broker fees require agency billing.');
   const premiumTotal = valid.reduce((sum, q) => sum + Math.round((q.premium ?? 0) * 100), 0);
   if (
     !Number.isSafeInteger(
@@ -150,7 +157,7 @@ export function packageAssessment(
     )
   )
     problems.push('Check the recorded amounts');
-  if (!Number.isSafeInteger(feeTotal) || !Number.isSafeInteger(premiumTotal + feeTotal))
+  if (!Number.isSafeInteger(feeTotal) || !Number.isSafeInteger(premiumTotal + feeTotal + passThroughTotal))
     problems.push('Check the recorded amounts');
   if (
     requireReview &&
@@ -167,7 +174,8 @@ export function packageAssessment(
     complete: problems.length === 0,
     premiumCents: premiumTotal,
     brokerFeeCents: feeTotal,
-    clientTotalCents: premiumTotal + feeTotal,
+    passThroughCents: passThroughTotal,
+    clientTotalCents: premiumTotal + feeTotal + passThroughTotal,
     agencyRevenueCents: valid.reduce((sum, q) => sum + (commissionCents(q) ?? 0), 0) + feeTotal,
     commissionCents: valid.reduce(
       (sum, q) => sum + (commissionCents(q) ?? 0),

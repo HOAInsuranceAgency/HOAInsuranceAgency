@@ -2,13 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { authorizedQuoteTerms } from '../../../shared/quoteAuthorization';
 import { BROKER_FEE_TERMS_VERSION } from '../../../shared/brokerFees';
 type Row = Record<string, any>;
-const h = vi.hoisted(() => ({ models: new Map<string, Row>(), rows: new Map<string, Row>(), sessions: [] as Row[], intentStatus: 'requires_payment_method', events: [] as string[], transact: vi.fn(), deactivate: vi.fn(), expire: vi.fn(), retrieve: vi.fn(), session: vi.fn() }));
+const h = vi.hoisted(() => ({ models: new Map<string, Row>(), rows: new Map<string, Row>(), sessions: [] as Row[], invoiceLineIds: ['fee-line'], intentStatus: 'requires_payment_method', events: [] as string[], transact: vi.fn(), deactivate: vi.fn(), expire: vi.fn(), retrieve: vi.fn(), session: vi.fn() }));
 vi.mock('../../amplify/functions/broker-fees/store', async original => ({
   ...await original<typeof import('../../amplify/functions/broker-fees/store')>(),
   modelTable: (model: string) => model,
   getModel: async (model: string, id: string) => structuredClone(h.models.get(`${model}:${id}`)),
   getRow: async (id: string) => structuredClone(h.rows.get(id)), getFee: async (id: string) => structuredClone(h.rows.get(`fee:${id}`)), getAgreement: async (id: string) => structuredClone(h.rows.get(id)),
-  db: { send: async () => ({ Items: [{ id: 'fee-line' }] }) }, transact: h.transact,
+  db: { send: async () => ({ Items: h.invoiceLineIds.map(id=>({id})) }) }, transact: h.transact,
 }));
 vi.mock('../../amplify/functions/crm-access/user-status', async original => ({ ...await original<typeof import('../../amplify/functions/crm-access/user-status')>(), assertUserSession: h.session }));
 vi.mock('stripe', () => ({ default: class {
@@ -56,7 +56,7 @@ function applyTransaction(writes: Row[]) {
   h.rows.clear(); rows.forEach((value, key) => h.rows.set(key, value)); h.models.clear(); models.forEach((value, key) => h.models.set(key, value));
 }
 beforeEach(() => {
-  vi.resetAllMocks(); vi.useFakeTimers(); vi.setSystemTime(new Date(NOW)); h.models.clear(); h.rows.clear(); h.sessions = []; h.events = []; h.intentStatus = 'requires_payment_method';
+  vi.resetAllMocks(); vi.useFakeTimers(); vi.setSystemTime(new Date(NOW)); h.models.clear(); h.rows.clear(); h.sessions = []; h.invoiceLineIds=['fee-line']; h.events = []; h.intentStatus = 'requires_payment_method';
   process.env.BROKER_FEE_TABLE = 'fee-table'; process.env.USER_ACCESS_TABLE = 'TeamUser'; process.env.COMMUNICATION_TABLE = 'Communication'; process.env.STRIPE_SECRET_KEY = 'fixture'; process.env.ACCESS_INDEXES = JSON.stringify({ 'InvoiceLine.invoiceId': 'invoice-lines' });
   vi.spyOn(AccountAccess.prototype, 'get').mockImplementation(async (model, id) => structuredClone(h.models.get(`${model}:${id}`)));
   h.session.mockResolvedValue(undefined);
@@ -164,6 +164,15 @@ describe('outside invoice payment beside an issued financing offer', () => {
 });
 
 describe('outside payment while an invoice send owns the fee', () => {
+  it('uses the persisted linked legacy policy to accept an at-cost supplier charge with an outside payment', async () => {
+    h.models.set('Policy:legacy',{id:'legacy',accountId:'a',quoteId:'q',premium:10000,brokerFee:500,billType:'AGENCY',updatedAt:NOW});
+    Object.assign(h.models.get('Invoice:i')!,{policyId:'legacy',sourcePricingVersion:1});
+    h.invoiceLineIds.push('premium','supplier');
+    h.models.set('InvoiceLine:premium',{id:'premium',invoiceId:'i',accountId:'a',kind:'PREMIUM',retailAmount:10000,costAmount:9000,updatedAt:NOW});
+    h.models.set('InvoiceLine:supplier',{id:'supplier',invoiceId:'i',accountId:'a',kind:'WHOLESALER_FEE',description:'RT brokerage fee',retailAmount:250,costAmount:250,updatedAt:NOW});
+    expect(await confirmInvoicePayment(actor,{invoiceId:'i'})).toMatchObject({invoice:{status:'PAID'}});
+    expect(paymentRows()).toHaveLength(1);expect(h.rows.get('fee:q')?.collectedCents).toBe(50000);
+  });
   it('refuses an unpublished preparing send before any processor link has been stored', async () => {
     issuedInvoiceClaim('i', 'PREPARING');
     const invoice = h.models.get('Invoice:i')!; invoice.status = 'DRAFT'; delete invoice.stripePaymentLinkId; delete invoice.paymentUrl; delete invoice.brokerFeeAllocations;
