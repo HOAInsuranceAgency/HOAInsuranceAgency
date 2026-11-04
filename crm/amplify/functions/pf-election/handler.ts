@@ -1,5 +1,5 @@
 import { assertBrokerFeeSigned } from "../broker-fees/bindValidation";
-import { getFee } from "../broker-fees/store";
+import { getFee, table as brokerFeeTable, versionCheck, type Write } from "../broker-fees/store";
 import { brokerFeeCents, feeAllocations } from "../../../../shared/brokerFees";
 import { randomUUID } from "node:crypto";
 import { Amplify } from "aws-amplify";
@@ -345,6 +345,7 @@ async function handleAccept(
     };
   }
   const feeParts = feeAllocations(loan.brokerFeeAllocations);
+  const feeClaimGuards: Write[] = [];
   if (feeParts.reduce((sum, part) => sum + part.amountCents, 0) !== (loan.brokerFeeCents ?? 0)) throw new Error("The broker fee payment allocation is incomplete.");
   const feeAlreadyPaid = () => ({ ok: true, state: "closed", reason: "This broker fee has already been paid or submitted. Ask your agent to reissue premium financing without the already paid fee." });
   if (feeParts.length && invoices.some(invoice => !premiumInvoices.includes(invoice) && ["PAID", "PROCESSING"].includes(invoice.status ?? ""))) return feeAlreadyPaid();
@@ -360,6 +361,8 @@ async function handleAccept(
     const fee = await getFee(part.quoteId);
     if (!fee || fee.accountId !== loan.accountId || fee.amountCents !== part.amountCents) throw new Error("The broker fee payment balance could not be verified.");
     if (fee.submittedCents > 0 || fee.collectedCents > 0 || fee.refundedCents > 0) return feeAlreadyPaid();
+    if (!fee.issuedLoanIds?.includes(loan.id)) throw new Error("This fee financing offer needs to be reissued by your agent before payment.");
+    feeClaimGuards.push(versionCheck(brokerFeeTable(), fee));
   }
   const loanTable = process.env.PF_LOAN_TABLE;
   const settingsTable = process.env.AGENCY_SETTINGS_TABLE;
@@ -608,6 +611,7 @@ async function handleAccept(
               ExpressionAttributeValues: { ":now": now },
             },
           })),
+          ...feeClaimGuards,
         ],
       })
     );

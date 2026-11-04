@@ -34,7 +34,7 @@ vi.mock('stripe', () => ({ default: class {
   checkout = { sessions: { list: h.sessions, expire: h.expire } };
 } }));
 
-import { syncBrokerFeePayment, reconcileQuotePayments } from '../../amplify/functions/broker-fees/payments';
+import { syncBrokerFeePayment, reconcileQuotePayments, reserveFeeInvoice, assertNoFeeLoanCheckout } from '../../amplify/functions/broker-fees/payments';
 import { brokerFeeBindWrites } from '../../amplify/functions/broker-fees/bindValidation';
 import { confirmInvoicePayment } from '../../amplify/functions/broker-fees/manualPayment';
 import { saveJurisdiction } from '../../amplify/functions/broker-fees/settings';
@@ -108,7 +108,7 @@ beforeEach(() => {
   vi.resetAllMocks(); vi.useFakeTimers(); vi.setSystemTime(new Date('2026-11-04T15:00:00Z'));
   h.rows.clear(); h.models.clear(); h.ledger.clear();
   process.env.BROKER_FEE_TABLE = 'fee-table'; process.env.SITE_URL = 'https://agency.example.test'; process.env.STRIPE_SECRET_KEY = 'fixture';
-  process.env.ACCESS_TABLES = JSON.stringify(Object.fromEntries(['Account','Quote','Policy','Invoice','InvoiceLine','Document','AgencySettings','Communication'].map(name => [name, name])));
+  process.env.ACCESS_TABLES = JSON.stringify(Object.fromEntries(['Account','Quote','Policy','Invoice','InvoiceLine','PfLoan','Document','AgencySettings','Communication'].map(name => [name, name])));
   process.env.COMMUNICATION_TABLE = 'Communication';
   process.env.USER_ACCESS_TABLE = 'TeamUser';
   process.env.ACCESS_INDEXES = JSON.stringify({ 'InvoiceLine.invoiceId': 'invoice-lines' });
@@ -378,5 +378,36 @@ describe('bind, state configuration, and browser guards', () => {
     h.models.set('Invoice:i', { id: 'i', accountId: 'a', quoteId: 'q', status: 'SENT' });
     const access = new AccountAccess({ sub: 'unassigned-producer', groups: ['PRODUCER'] }, async (kind, key) => clone(h.models.get(`${kind}:${key}`)));
     await expect(access.write(model, 'update', { id, ...patch })).rejects.toThrow('This record is not available to your account');
+  });
+});
+
+describe('invoice reservations versus known financing checkout URLs',()=>{
+  const offer=()=>({id:'loan',accountId:'a',quoteId:'q',status:'QUOTED',brokerFeeAllocations:[{quoteId:'q',amountCents:50000}],updatedAt:'2026-10-03T12:00:00Z'});
+  function seedOffer(extra:Row={}) {
+    h.rows.set('fee:q',{...fee(),issuedLoanIds:['loan']});
+    h.models.set('PfLoan:loan',{...offer(),...extra});
+    h.models.set('Invoice:i',{id:'i',accountId:'a',quoteId:'q',status:'DRAFT',updatedAt:quote.updatedAt});
+  }
+  it('refuses a second invoice while an already-issued finance checkout is still payable',async()=>{
+    seedOffer({electionCheckoutUrl:'https://checkout.stripe.test/existing',electionCheckoutExpiresAt:'2099-01-01T00:00:00Z'});
+    await expect(reserveFeeInvoice(quote,'i')).rejects.toThrow('already open or submitted');
+    expect(h.transact).not.toHaveBeenCalled();
+  });
+  it('includes the viable loan version in the invoice reservation transaction',async()=>{
+    seedOffer();await reserveFeeInvoice(quote,'i');
+    expect(h.transact.mock.calls[0][0]).toContainEqual(expect.objectContaining({ConditionCheck:expect.objectContaining({TableName:'PfLoan',Key:{id:'loan'},ExpressionAttributeNames:{'#v':'updatedAt'},ExpressionAttributeValues:{':v':offer().updatedAt}})}));
+    expect(fee().issuedInvoiceIds).toContain('i');
+  });
+  it('loses safely when a financing claim is created between its read and reservation write',async()=>{
+    seedOffer();h.transact.mockImplementationOnce(async writes=>{
+      h.models.set('PfLoan:loan',{...offer(),updatedAt:'2026-10-03T12:00:01Z',electionCheckoutUrl:'claim-racing',electionCheckoutExpiresAt:'2099-01-01T00:00:00Z'});
+      applyWrites(writes);
+    });
+    await expect(reserveFeeInvoice(quote,'i')).rejects.toThrow('already open or submitted');
+    expect(fee().issuedInvoiceIds).toBeUndefined();
+  });
+  it('fails closed when a retained financing reference cannot be read',async()=>{
+    seedOffer();h.models.delete('PfLoan:loan');
+    await expect(assertNoFeeLoanCheckout(fee())).rejects.toThrow('could not be verified');
   });
 });
