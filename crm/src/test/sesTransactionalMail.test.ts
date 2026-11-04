@@ -15,7 +15,7 @@ const bound = {
   AWS_LAMBDA_FUNCTION_NAME: "amplify-d1nuh9rw1hcuxo-main-magicLinkVerify",
 };
 const command = (to = "jake@getgim.com") => new SendEmailCommand({ FromEmailAddress: "HOA Insurance Agency <noreply@protectmyhoa.com>", Destination: { ToAddresses: [to] }, Content: { Simple: { Subject: { Data: "SES verification" }, Body: { Text: { Data: "Synthetic only" }, Html: { Data: "<p>Synthetic only</p>" } } } } });
-type Options = { sesError?: unknown; missingReceipt?: boolean; receiptFailure?: boolean; earlyFeedback?: boolean; wrongEarlyProvider?: boolean; quota?: boolean; beforeClaim?: () => void };
+type Options = { sesError?: unknown; missingReceipt?: boolean; receiptFailure?: boolean; earlyFeedback?: boolean; wrongEarlyProvider?: boolean; wrongEarlyKind?: boolean; quota?: boolean; beforeClaim?: () => void };
 function harness(options: Options = {}) {
   const rows = new Map<string, any>(); const objects = new Map<string, string>(); const transactions: any[] = [];
   const conditional = () => Object.assign(new Error("conflict"), { name: "TransactionCanceledException" });
@@ -40,9 +40,9 @@ function harness(options: Options = {}) {
       } else {
         if (options.receiptFailure) throw new Error("receipt failure");
         const receipt = i.TransactItems[1].Update; const rv = receipt.ExpressionAttributeValues; const prior = rows.get(receipt.Key.pk);
-        if (row.state !== "SENDING" || row.provider !== v[":provider"] || (prior?.provider && prior.provider !== rv[":provider"]) || (prior?.operationHash && prior.operationHash !== rv[":operationHash"])) throw conditional();
+        if (row.state !== "SENDING" || row.provider !== v[":provider"] || (prior?.provider && prior.provider !== rv[":provider"]) || (prior?.operationHash && prior.operationHash !== rv[":operationHash"]) || (prior?.mailKind && prior.mailKind !== rv[":mailKind"])) throw conditional();
         Object.assign(row, { state: "ACCEPTED", providerId: v[":id"] });
-        rows.set(receipt.Key.pk, { ...prior, kind: "RECEIPT", provider: rv[":provider"], providerId: rv[":id"], operationKey: rv[":operation"], operationHash: rv[":operationHash"], environment: rv[":environment"], status: "ACCEPTED" });
+        rows.set(receipt.Key.pk, { ...prior, kind: "RECEIPT", provider: rv[":provider"], providerId: rv[":id"], operationKey: rv[":operation"], operationHash: rv[":operationHash"], environment: rv[":environment"], mailKind: rv[":mailKind"], status: "ACCEPTED" });
       }
       return {};
     }
@@ -58,7 +58,7 @@ function harness(options: Options = {}) {
     if (options.sesError) throw options.sesError;
     if (options.earlyFeedback) {
       const operationHash = c.input.EmailTags.find((t: any) => t.Name === "HOAOperation").Value;
-      rows.set("RECEIPT#ses#ses-receipt-12345", { kind: "RECEIPT", provider: options.wrongEarlyProvider ? "resend" : "ses", environment: "main", operationHash, deliveredAt: "2026-11-04T02:00:00Z" });
+      rows.set("RECEIPT#ses#ses-receipt-12345", { kind: "RECEIPT", provider: options.wrongEarlyProvider ? "resend" : "ses", environment: "main", operationHash, mailKind: options.wrongEarlyKind ? "invoice" : c.input.EmailTags.find((t: any) => t.Name === "HOAMailKind").Value, deliveredAt: "2026-11-04T02:00:00Z" });
     }
     return options.missingReceipt ? {} : { MessageId: "ses-receipt-12345" };
   });
@@ -155,6 +155,10 @@ describe("provider pinning and uncertainty", () => {
   it("holds an incompatible early receipt instead of rebinding another provider's record", async () => {
     const h = harness({ earlyFeedback: true, wrongEarlyProvider: true }); await expect(new TransactionalMailClient("login", h.deps).send(command())).rejects.toMatchObject({ state: "UNKNOWN" });
     expect(h.rows.get("RECEIPT#ses#ses-receipt-12345").provider).toBe("resend"); expect(h.sesMock).toHaveBeenCalledOnce();
+  });
+  it("holds conflicting early mail-kind tags even when the provider and operation hash match", async () => {
+    const h = harness({ earlyFeedback: true, wrongEarlyKind: true }); await expect(new TransactionalMailClient("login", h.deps).send(command())).rejects.toMatchObject({ state: "UNKNOWN" });
+    expect(h.rows.get("RECEIPT#ses#ses-receipt-12345").mailKind).toBe("invoice"); expect(h.sesMock).toHaveBeenCalledOnce();
   });
 });
 
