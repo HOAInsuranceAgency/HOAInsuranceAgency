@@ -1,15 +1,17 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import contract from '../../amplify/steady-state-main.json';
+import stagingContract from '../../amplify/steady-state-staging.json';
 // Deployment preflight runs without npm dependencies on Amplify.
 // @ts-expect-error JavaScript deployment-only verifier
 import { verifySteadyState } from '../../scripts/verify-steady-state.mjs';
 // @ts-expect-error JavaScript deployment-only allowlist
-import { ACCOUNT_LIST_EXTENSION as e } from '../../scripts/steady-state-account-list.mjs';
+import { ACCOUNT_LIST_EXTENSION, ACCOUNT_LIST_STAGING_EXTENSION } from '../../scripts/steady-state-account-list.mjs';
 
 type Resource = { LogicalResourceId: string; PhysicalResourceId: string; ResourceType: string; ResourceStatus: string };
-function fixture(failure = '') {
-  const c = structuredClone(contract), calls: string[][] = [];
+function fixture(failure = '', staging = false) {
+  const c = structuredClone(staging ? stagingContract : contract), calls: string[][] = [];
+  const e = staging ? ACCOUNT_LIST_STAGING_EXTENSION : ACCOUNT_LIST_EXTENSION;
   const row = (logical: string, type: string, physical: string): Resource => ({ LogicalResourceId: logical, ResourceType: type, PhysicalResourceId: physical, ResourceStatus: 'CREATE_COMPLETE' });
   const tableArn = (name: string) => `arn:aws:dynamodb:${c.region}:${c.account}:table/${name}`;
   const sourceNames: Record<string, string> = {}, streams: Record<string, string> = {};
@@ -80,19 +82,19 @@ function fixture(failure = '') {
     }
     if (args[1] === 'get-schedule') {
       const old = c.schedules.find(s => s.name === args[3]);
-      if (old) return { Name: old.name, State: 'ENABLED', Target: old.target, ScheduleExpression: old.scheduleExpression, ScheduleExpressionTimezone: old.scheduleExpressionTimezone, FlexibleTimeWindow: old.flexibleTimeWindow };
+      if (old) return { Name: old.name, State: old.state, Target: old.target, ScheduleExpression: old.scheduleExpression, ScheduleExpressionTimezone: old.scheduleExpressionTimezone, FlexibleTimeWindow: old.flexibleTimeWindow };
       return { Name: scheduleName, State: failure === 'disabled-schedule' ? 'DISABLED' : 'ENABLED', ScheduleExpression: failure === 'schedule-timing' ? 'rate(1 minute)' : 'cron(* * * * ? *)', ScheduleExpressionTimezone: 'America/New_York', FlexibleTimeWindow: { Mode: 'OFF' },
         Target: { Arn: workerArn, RoleArn: `arn:aws:iam::${failure === 'foreign-role' ? '000000000000' : c.account}:role/${schedulerRole}`,
           RetryPolicy: { MaximumEventAgeInSeconds: 86400, MaximumRetryAttempts: 185 }, ...(failure === 'schedule-input' ? { Input: '{"unexpected":true}' } : {}) } };
     }
     throw new Error(`Unexpected read: ${args.join(' ')}`);
   };
-  return { c, aws, calls, namespace: { branchName: 'main', backend: { stackArn: c.backendRoot } } };
+  return { c, aws, calls, namespace: { branchName: c.backendBranch, enableAutoBuild: false, enablePullRequestPreview: false, backend: { stackArn: c.backendRoot } } };
 }
 
 describe('narrow additive account-list steady-state admission', () => {
-  it('admits exactly one derived table, six current source mappings and one worker schedule while checking all original controls', () => {
-    const f = fixture(); expect(() => verifySteadyState(f.namespace, f.c, f.aws)).not.toThrow();
+  it.each([false, true])('admits exactly one derived table, six current source mappings and one worker schedule while checking all original controls (staging=%s)', staging => {
+    const f = fixture('', staging); expect(() => verifySteadyState(f.namespace, f.c, f.aws)).not.toThrow();
     expect(f.calls.filter(call => call[1] === 'get-event-source-mapping')).toHaveLength(28);
     expect(f.calls.filter(call => call[1] === 'get-schedule')).toHaveLength(9);
     expect(f.calls.filter(call => call[1] === 'describe-table')).toHaveLength(7);
@@ -104,4 +106,24 @@ describe('narrow additive account-list steady-state admission', () => {
       const f = fixture(failure); expect(() => verifySteadyState(f.namespace, f.c, f.aws)).toThrow();
     },
   );
+  it.each(['missing-table', 'missing-mapping', 'extra-table', 'extra-mapping', 'extra-schedule', 'old-stateful-change', 'old-cursor-change', 'old-schedule-change', 'foreign-source', 'foreign-stream', 'foreign-function', 'source-generation', 'replay', 'schedule-input'])(
+    'rejects staging %s while preserving the original staging contract', failure => {
+      const f = fixture(failure, true); expect(() => verifySteadyState(f.namespace, f.c, f.aws)).toThrow();
+    },
+  );
+  it('keeps the staging namespace dormant and its original weekly marketing schedule disabled', () => {
+    const f = fixture('', true);
+    expect(() => verifySteadyState({ ...f.namespace, enableAutoBuild: true }, f.c, f.aws)).toThrow();
+    expect(() => verifySteadyState({ ...f.namespace, enablePullRequestPreview: true }, f.c, f.aws)).toThrow();
+    const marketing = f.c.schedules.find(schedule => schedule.state === 'DISABLED')!;
+    const reads = (...args: string[]) => args[1] === 'get-schedule' && args[3] === marketing.name
+      ? { ...(f.aws(...args) as object), State: 'ENABLED' } : f.aws(...args);
+    expect(() => verifySteadyState(f.namespace, f.c, reads)).toThrow();
+  });
+  it.each([false, true])('rejects swapping root, branch or runtime scope after adding the extension (staging=%s)', staging => {
+    const f = fixture('', staging), foreign = staging ? contract : stagingContract;
+    for (const change of [{ backendRoot: foreign.backendRoot }, { branch: foreign.branch }, { runtimeBranch: foreign.runtimeBranch }, { backendBranch: foreign.backendBranch }]) {
+      expect(() => verifySteadyState({ ...f.namespace, branchName: change.backendBranch ?? f.namespace.branchName, backend: { stackArn: change.backendRoot ?? f.c.backendRoot } }, { ...f.c, ...change }, f.aws)).toThrow();
+    }
+  });
 });

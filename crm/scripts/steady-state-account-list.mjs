@@ -1,6 +1,6 @@
-// Exact logical IDs from the destination main CDK assembly. This is one
+// Exact logical IDs from the destination main/staging CDK assemblies. This is one
 // additive, rebuildable read projection; it does not replace the frozen source
-// inventory, migrated cursors or existing schedules in steady-state-main.json.
+// inventory, migrated cursors or existing environment-specific steady-state contracts.
 export const ACCOUNT_LIST_EXTENSION = Object.freeze({
   table: 'amplifyDataL2GraphqlApiAccountListRecordsADED7554',
   workerStack: 'accountlist28FD5CD7',
@@ -17,6 +17,17 @@ export const ACCOUNT_LIST_EXTENSION = Object.freeze({
     Communication: 'accountlistworkerlambdaDynamoDBEventSourceamplifyd1nuh9rw1hcuxomainbranch0e4fdbd849dataamplifyDataL2GraphqlApiCommunicationRecords6D9DF288CDFC4BDFMigrationLiveV1',
   }),
 });
+export const ACCOUNT_LIST_STAGING_EXTENSION = Object.freeze({
+  ...ACCOUNT_LIST_EXTENSION,
+  mappings: Object.freeze({
+    Account: 'accountlistworkerlambdaDynamoDBEventSourceamplifyd1nuh9rw1hcuxostagingbranch3787a09124dataamplifyDataAccountCustomTableAccountTableB6D497DA3472F3E9MigrationLiveV1',
+    Contact: 'accountlistworkerlambdaDynamoDBEventSourceamplifyd1nuh9rw1hcuxostagingbranch3787a09124dataamplifyDataContactCustomTableContactTable47F0642E53B42C56MigrationLiveV1',
+    Quote: 'accountlistworkerlambdaDynamoDBEventSourceamplifyd1nuh9rw1hcuxostagingbranch3787a09124dataamplifyDataQuoteCustomTableQuoteTable4E3B319C11C89C54MigrationLiveV1',
+    Policy: 'accountlistworkerlambdaDynamoDBEventSourceamplifyd1nuh9rw1hcuxostagingbranch3787a09124dataamplifyDataPolicyCustomTablePolicyTable6DB1FC131142CB59MigrationLiveV1',
+    UserProfile: 'accountlistworkerlambdaDynamoDBEventSourceamplifyd1nuh9rw1hcuxostagingbranch3787a09124dataamplifyDataUserProfileCustomTableUserProfileTableE875524978F2700EMigrationLiveV1',
+    Communication: 'accountlistworkerlambdaDynamoDBEventSourceamplifyd1nuh9rw1hcuxostagingbranch3787a09124dataamplifyDataL2GraphqlApiCommunicationRecords4A7F416316EA1654MigrationLiveV1',
+  }),
+});
 const requireExtension = (ok, reason) => { if (!ok) throw new Error(`HOA steady-state account-list extension: ${reason}`); };
 const exactly = (inventory, logical, type) => {
   const found = inventory.filter(row => row.LogicalResourceId === logical);
@@ -29,12 +40,16 @@ const exactly = (inventory, logical, type) => {
  * Before the first deployment the extension must be wholly absent; afterward
  * all eight protected additions and their owning worker stack must be present. */
 export function accountListExtension(inventory, contract) {
-  const e = ACCOUNT_LIST_EXTENSION;
+  const e = contract.backendBranch === 'staging' ? ACCOUNT_LIST_STAGING_EXTENSION : ACCOUNT_LIST_EXTENSION;
   const protectedIds = [e.table, e.schedule, ...Object.values(e.mappings)];
-  const allIds = [...protectedIds, e.worker, e.schedulerRole, e.workerStack];
+  const allIds = [...protectedIds, ...Object.values(ACCOUNT_LIST_EXTENSION.mappings), ...Object.values(ACCOUNT_LIST_STAGING_EXTENSION.mappings), e.worker, e.schedulerRole, e.workerStack];
   if (!inventory.some(row => allIds.includes(row.LogicalResourceId))) return { legacy: inventory, extension: null };
+  const main = contract.backendBranch === 'main' && contract.branch === 'main' && contract.runtimeBranch === 'codex-hoa-account-migration'
+    && contract.backendRoot === 'arn:aws:cloudformation:us-east-1:917680434255:stack/amplify-d1nuh9rw1hcuxo-main-branch-0e4fdbd849/dad5c940-d3d3-11f1-a5d3-0e97a2fa656f';
+  const staging = contract.backendBranch === 'staging' && contract.branch === 'codex-hoa-staging-migration' && contract.runtimeBranch === 'codex-hoa-staging-migration'
+    && contract.backendRoot === 'arn:aws:cloudformation:us-east-1:917680434255:stack/amplify-d1nuh9rw1hcuxo-staging-branch-3787a09124/eaa4dff0-d3d3-11f1-ab1d-0edee65f4629';
   requireExtension(contract.account === '917680434255' && contract.region === 'us-east-1' && contract.crmApp === 'd1nuh9rw1hcuxo'
-    && contract.backendBranch === 'main', 'allowance is bound only to destination main');
+    && (main || staging), 'allowance is bound only to the exact retained destination main/staging roots');
   const table = exactly(inventory, e.table, 'AWS::DynamoDB::Table');
   const stack = exactly(inventory, e.workerStack, 'AWS::CloudFormation::Stack');
   const worker = exactly(inventory, e.worker, 'AWS::Lambda::Function');
