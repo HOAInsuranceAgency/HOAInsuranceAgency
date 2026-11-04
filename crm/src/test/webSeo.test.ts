@@ -455,6 +455,16 @@ describe("the /contact specialist", () => {
 });
 
 describe("owner-confirmed market and service commitments", () => {
+  it("does not publish a universal no-broker-fee promise after optional fees are enabled", () => {
+    function inspect(directory: string) {
+      for (const entry of readdirSync(directory, { withFileTypes: true })) {
+        const target = join(directory, entry.name);
+        if (entry.isDirectory()) inspect(target);
+        else if (/\.(astro|tsx?|json)$/.test(entry.name)) expect(readFileSync(target, "utf8"), target).not.toMatch(/no broker fee|zero dollar broker fee/i);
+      }
+    }
+    inspect(join(basename(process.cwd()) === "crm" ? dirname(process.cwd()) : process.cwd(), "web/src"));
+  });
   it("describes twelve direct appointments without promising universal availability", () => {
     expect(MARKETS).toHaveLength(12);
     expect(STAGES.find((stage) => stage.title === "Compare")?.desc).toContain(
@@ -471,11 +481,11 @@ describe("owner-confirmed market and service commitments", () => {
     expect(whyChooseUs).toContain("we compare the ones that write your association");
   });
 
-  it("retains the confirmed response, no-fee and assessment commitments", () => {
+  it("retains response and assessment commitments with transparent fee disclosure", () => {
     const assessment = read("../../../web/src/components/InstantAssessment.tsx");
     const contact = read("../../../web/src/pages/contact.astro");
     expect(assessment).toContain("within one business day");
-    expect(contact).toContain("<li>No broker fee, now or at renewal</li>");
+    expect(contact).toContain("<li>Any broker fee disclosed before purchase</li>");
     for (const deliverable of [
       "Personalized coverage recommendation",
       "Gap analysis vs. your current policy",
@@ -688,6 +698,7 @@ describe("indexing hygiene", () => {
     for (const prefix of [
       "/documents/",
       "/finance/",
+      "/broker-fee/",
       "/associations/",
       "/get-started/",
       "/quote/",
@@ -719,6 +730,10 @@ describe("indexing hygiene", () => {
     const config = read("../../../web/astro.config.mjs");
     expect(config).toContain("isNoindexRoute");
     expect(config).toContain("./src/data/routes.ts");
+  });
+  it("keeps broker fee signing private and unindexed", () => {
+    const template = read("../../../web/src/pages/broker-fee.astro");
+    expect(template).toMatch(/<Layout[^>]*\bnoindex\b[^>]*\bprivate\b/);
   });
 
   it("writes every internal link in the trailing-slash form", () => {

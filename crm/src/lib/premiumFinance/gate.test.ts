@@ -290,9 +290,9 @@ describe("the lending schema cannot express producer compensation", () => {
       expect(block, model).not.toMatch(
         /commission|referral|bonus|kickback|producer(Fee|Pay|Split|Comp)|revenue.?share/i
       );
-      // The only fee anywhere in lending is the flat origination fee.
+      // Upfront broker fee collection metadata is separate from lending income.
       const fees = [...block.matchAll(/\w*[Ff]ee\w*/g)].map((m) => m[0]);
-      expect(fees.every((f) => /originationFee/i.test(f)), `${model}: ${fees}`).toBe(true);
+      expect(fees.every((f) => /^(originationFee(?:Collected)?|brokerFeeCents|brokerFeeAllocations)$/i.test(f)), `${model}: ${fees}`).toBe(true);
     }
   });
 });
@@ -328,5 +328,21 @@ describe("the fee counts toward Rhode Island's ceiling", () => {
       effectiveDate: "2026-08-24",
     });
     expect(aprCapViolation(14, ri, q)).toBeNull();
+  });
+});
+
+
+describe("broker fees are collected outside lending economics", () => {
+  it("leaves financed principal, interest and installments unchanged when the upfront fee varies", async () => {
+    const { initialPaymentTotals } = await import("../../../amplify/functions/pfInitialPayment");
+    const quote=buildQuote({premium:10000,downPct:25,months:11,apr:14,effectiveDate:"2026-11-04"});
+    const originalSchedule=JSON.stringify(quote.schedule);
+    const base=initialPaymentTotals({...quote,brokerFeeCents:0});
+    const withFee=initialPaymentTotals({...quote,brokerFeeCents:50000});
+    expect(withFee.totalCents-base.totalCents).toBe(50000);
+    expect(withFee.premiumCents).toBe(base.premiumCents);
+    expect(quote.amountFinanced).toBe(7500);
+    expect(JSON.stringify(quote.schedule)).toBe(originalSchedule);
+    expect(quote.schedule.reduce((sum,row)=>sum+Math.round(row.principal*100),0)).toBe(750000);
   });
 });

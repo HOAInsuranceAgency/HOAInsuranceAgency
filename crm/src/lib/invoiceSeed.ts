@@ -1,3 +1,4 @@
+import { brokerFeeCents } from "../../../shared/brokerFees";
 /**
  * What a new invoice should already contain.
  *
@@ -16,6 +17,9 @@ export interface PolicyLike {
   status?: string | null;
   billType?: string | null;
   premium?: number | null;
+  brokerFee?: number | null;
+  brokerFeeCollected?: number | null;
+  quoteId?: string | null;
   policyNumber?: string | null;
   lines?: (string | null)[] | null;
 }
@@ -52,7 +56,7 @@ export function unbilledAgencyPolicies<T extends PolicyLike>(
 ): T[] {
   return policies.filter(
     (p) =>
-      p.billType !== "DIRECT" &&
+      (p.billType !== "DIRECT" || brokerFeeCents(p.brokerFee) > brokerFeeCents(p.brokerFeeCollected)) &&
       p.status === "ACTIVE" &&
       !billedPolicyIds.has(p.id)
   );
@@ -147,4 +151,14 @@ export function invoiceableQuotes<T extends QuoteLike>(
 export function seededQuoteLineDescription(quote: QuoteLike): string {
   const lines = (quote.lines ?? []).filter(Boolean).join(", ");
   return lines ? `${lines} — quoted coverage` : "Quoted coverage";
+}
+
+/** A fee is sourced from its policy term; invoice editing cannot invent another one. */
+export function brokerFeeLineFromSource(source: { id: string; quoteId?: string | null; brokerFee?: number | null }, policyId?: string) {
+  const amountCents = brokerFeeCents(source.brokerFee);
+  if (!amountCents) return null;
+  const quoteId = policyId ? source.quoteId : source.id;
+  if (!quoteId) throw new Error("This broker fee needs its original quote before it can be billed.");
+  return { kind: "BROKER_FEE" as const, description: "Broker fee", retailAmount: amountCents / 100, costAmount: 0,
+    brokerFeeQuoteId: quoteId, ...(policyId ? { policyId } : {}) };
 }

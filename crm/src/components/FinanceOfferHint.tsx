@@ -45,10 +45,12 @@ export function FinanceOfferHint({
   account,
   anchor,
   retailTotal,
+  brokerFee = 0,
 }: {
   account: Account;
   anchor: HintAnchor;
   retailTotal: number;
+  brokerFee?: number;
 }) {
   const j = useMemo(() => jurisdictionFor(account.state), [account.state]);
   const res = useAsyncResource(
@@ -173,7 +175,7 @@ export function FinanceOfferHint({
   return (
     <div className="offer-banner">
       <strong>Financing will be offered</strong> beside pay-in-full:{" "}
-      {formatMoney(preview.downPayment)} down (payment 1 of {PF_DEFAULT_MONTHS + 1}),
+      {formatMoney(preview.downPayment)} down (payment 1 of {PF_DEFAULT_MONTHS + 1}){brokerFee > 0 ? ` plus the ${formatMoney(brokerFee)} broker fee paid in full upfront` : ""},
       then {PF_DEFAULT_MONTHS} monthly payments of {formatMoney(preview.payment)} at{" "}
       {PF_DEFAULT_APR}% APR.
       {standing && standing.premium !== retailTotal

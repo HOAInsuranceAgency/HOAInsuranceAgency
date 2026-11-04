@@ -155,7 +155,8 @@ function Ledger({
                 'Policy',
                 'Receipt date',
                 'Type',
-                'Agency commission (USD)',
+                'Revenue source',
+                'Agency revenue (USD)',
                 'Producer rate (%)',
                 'Producer amount (USD)',
                 'Payment batch',
@@ -167,6 +168,7 @@ function Ledger({
                   p.policyNumber,
                   e.receivedOn,
                   e.kind,
+                  e.revenueKind === "BROKER_FEE" ? "Broker fee" : "Carrier commission",
                   e.agencyCents / 100,
                   p.producerBps / 100,
                   e.producerCents / 100,
@@ -216,7 +218,7 @@ function Ledger({
               </p>
             )}
             <p className="small">
-              Expected agency commission {money(t.expectedAgency)} · Received{' '}
+              Expected agency revenue {money(t.expectedAgency)} · Received{' '}
               {money(t.receivedAgency)} · Producer earned {money(t.earned)} · Proposed adjustments{' '}
               {money(t.proposedRecovery)}
             </p>
@@ -240,6 +242,7 @@ function Ledger({
                         <td>{e.receivedOn}</td>
                         <td>
                           {e.kind}
+                          <div className="small">{e.revenueKind === "BROKER_FEE" ? "Broker fee" : "Carrier commission"}</div>
                           <div className="small muted">{e.lineRef}</div>
                         </td>
                         <td>{money(e.agencyCents)}</td>
@@ -262,7 +265,7 @@ function Ledger({
               </div>
             ) : (
               <p className="muted">
-                Awaiting carrier receipts. Binding does not create payable commission.
+                Awaiting carrier commission or broker fee receipts. Binding alone does not create payable earnings.
               </p>
             )}
           </section>

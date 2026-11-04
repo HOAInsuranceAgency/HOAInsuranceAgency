@@ -1,4 +1,9 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+const issuedFees = vi.hoisted(() => new Map<string, { issuedInvoiceIds: string[] }>());
+vi.mock("../../amplify/functions/broker-fees/store", async original => ({
+  ...await original<typeof import("../../amplify/functions/broker-fees/store")>(),
+  getFee: async (quoteId: string) => issuedFees.get(quoteId),
+}));
 import { AccountAccess, type Reader } from "../../amplify/functions/crm-access/access";
 import { authorizeCustom, filterCustom } from "../../amplify/functions/crm-access/custom";
 import { ACCOUNT_MODELS, RETIRED_MODELS, AccessDenied, type RecordData } from "../../amplify/functions/crm-access/policy";
@@ -7,6 +12,7 @@ const reader: Reader = async (model, key) => records[`${model}:${key}`];
 const user = (sub = "alice") => new AccountAccess({ sub }, reader);
 const admin = () => new AccountAccess({ sub: "admin", groups: ["ADMIN"] }, reader);
 beforeEach(() => {
+  issuedFees.clear();
   records = {
     "Communication:team-routing": { data: { members: [{ userId: "manager", salesManager: true }, { userId: "alice", salesManagerId: "manager" }, { userId: "bob", salesManagerId: "other-manager" }] } },
     "Communication:workflow:a": { data: { salespersonId: "alice" } },
@@ -149,6 +155,64 @@ describe("model writes", () => {
     await expect(user().write("UserProfile", "update", { id: "bob-profile", firstName: "Changed" })).rejects.toThrow(AccessDenied);
     await expect(user().write("UserProfile", "update", { id: "alice-profile", userId: "bob" })).rejects.toThrow(AccessDenied);
     await expect(user().write("UserProfile", "update", { id: "alice-profile", firstName: "Alice" })).resolves.toBeUndefined();
+  });
+  it.each(["producer", "admin"])("prevents a %s from bypassing fee invoice closure with a direct status edit", async role => {
+    records["Invoice:ia"] = { id: "ia", accountId: "a", status: "SENT", brokerFeeAllocations: JSON.stringify([{ quoteId: "qa", amountCents: 50000 }]), stripePaymentLinkId: "plink-live" };
+    const access = role === "admin" ? admin() : user();
+    for (const status of ["VOID", "DRAFT", null]) await expect(access.write("Invoice", "update", { id: "ia", status })).rejects.toThrow("invoice payment or void action");
+    await expect(access.write("Invoice", "update", { id: "ia", status: "SENT", notes: "Reminder" })).resolves.toBeUndefined();
+  });
+  it("protects a reserved draft fee invoice before payment-link allocations have been published", async () => {
+    records["Invoice:ia"] = { id: "ia", accountId: "a", quoteId: "qa", status: "DRAFT" };
+    issuedFees.set("qa", { issuedInvoiceIds: ["ia"] });
+    await expect(user().write("Invoice", "update", { id: "ia", status: "VOID" })).rejects.toThrow("invoice payment or void action");
+    await expect(admin().write("Invoice", "delete", { id: "ia" })).rejects.toThrow("retain their source and payment history");
+  });
+  it("resolves a policy invoice's original quote to protect an unpublished fee reservation", async () => {
+    records["Invoice:ia"] = { id: "ia", accountId: "a", policyId: "pa", status: "DRAFT" };
+    records["Policy:pa"] = { id: "pa", accountId: "a", quoteId: "qa" };
+    issuedFees.set("qa", { issuedInvoiceIds: ["ia"] });
+    await expect(user().write("Invoice", "update", { id: "ia", status: "VOID" })).rejects.toThrow("invoice payment or void action");
+  });
+  it.each(["accountId", "quoteId", "policyId"])("cannot detach %s from an issued fee invoice before voiding it", async field => {
+    records["Invoice:ia"] = { id: "ia", accountId: "a", quoteId: "qa", policyId: "pa", status: "DRAFT" };
+    records["Policy:pa"].quoteId = "qa";
+    issuedFees.set("qa", { issuedInvoiceIds: ["ia"] });
+    await expect(admin().write("Invoice", "update", { id: "ia", [field]: null })).rejects.toThrow("retain their source and payment history");
+  });
+  it("protects fee invoices represented by a frozen remittance amount without a quote reference", async () => {
+    records["Invoice:ia"] = { id: "ia", accountId: "a", status: "SENT", remittanceBrokerFeeCents: 50000 };
+    await expect(admin().write("Invoice", "update", { id: "ia", status: "VOID" })).rejects.toThrow("invoice payment or void action");
+    await expect(admin().write("Invoice", "delete", { id: "ia" })).rejects.toThrow("retain their source and payment history");
+  });
+  it("keeps unissued draft invoice edits and deletion available", async () => {
+    records["Invoice:ia"] = { id: "ia", accountId: "a", quoteId: "qa", status: "DRAFT" };
+    issuedFees.set("qa", { issuedInvoiceIds: ["another-invoice"] });
+    await expect(user().write("Invoice", "update", { id: "ia", notes: "Draft terms", quoteId: null })).resolves.toBeUndefined();
+    await expect(user().write("Invoice", "update", { id: "ia", status: "VOID" })).resolves.toBeUndefined();
+    await expect(user().write("Invoice", "delete", { id: "ia" })).resolves.toBeUndefined();
+  });
+  it.each(["create", "update", "delete"])("locks line %s while a draft fee invoice is reserved for publication", async operation => {
+    records["Invoice:ia"] = { id: "ia", accountId: "a", quoteId: "qa", status: "DRAFT" };
+    records["InvoiceLine:line"] = { id: "line", invoiceId: "ia", accountId: "a", kind: "PREMIUM", retailAmount: 1000 };
+    issuedFees.set("qa", { issuedInvoiceIds: ["ia"] });
+    const input = operation === "create" ? { id: "new-line", invoiceId: "ia", accountId: "a", kind: "PREMIUM", retailAmount: 100 } : { id: "line", retailAmount: 2000 };
+    await expect(user().write("InvoiceLine", operation, input)).rejects.toThrow("Void the issued fee invoice");
+    await expect(admin().write("InvoiceLine", operation, input)).rejects.toThrow("Void the issued fee invoice");
+  });
+  it("does not let a line escape the lock by moving to an unissued draft", async () => {
+    records["Invoice:ia"] = { id: "ia", accountId: "a", quoteId: "qa", status: "DRAFT" };
+    records["Invoice:unissued"] = { id: "unissued", accountId: "a", status: "DRAFT" };
+    records["InvoiceLine:line"] = { id: "line", invoiceId: "ia", accountId: "a", kind: "PREMIUM" };
+    issuedFees.set("qa", { issuedInvoiceIds: ["ia"] });
+    await expect(user().write("InvoiceLine", "update", { id: "line", invoiceId: "unissued" })).rejects.toThrow("Void the issued fee invoice");
+  });
+  it("keeps unissued draft invoice lines editable", async () => {
+    records["Invoice:ia"] = { id: "ia", accountId: "a", quoteId: "qa", status: "DRAFT" };
+    records["InvoiceLine:line"] = { id: "line", invoiceId: "ia", accountId: "a", kind: "PREMIUM" };
+    await expect(user().write("InvoiceLine", "create", { id: "new-line", invoiceId: "ia", accountId: "a", kind: "PREMIUM", retailAmount: 100 })).resolves.toBeUndefined();
+    await expect(user().write("InvoiceLine", "update", { id: "line", retailAmount: 200 })).resolves.toBeUndefined();
+    await expect(user().write("InvoiceLine", "delete", { id: "line" })).resolves.toBeUndefined();
   });
 });
 describe("files", () => {

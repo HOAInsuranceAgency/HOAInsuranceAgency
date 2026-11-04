@@ -1,3 +1,4 @@
+import { feeAllocations, type BrokerFeeAllocation } from "../../../shared/brokerFees";
 import { randomUUID } from "node:crypto";
 import type { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import { PutCommand, TransactWriteCommand } from "@aws-sdk/lib-dynamodb";
@@ -74,6 +75,8 @@ export interface OriginationRequest {
   anchor: OriginationAnchor;
   /** The amount being financed — under W8, the invoiced total. */
   premium: number;
+  brokerFeeCents?: number;
+  brokerFeeAllocations?: BrokerFeeAllocation[];
   downPct: number;
   months: number;
   apr: number;
@@ -317,6 +320,8 @@ export async function originateLoan(
                       state: gate.jurisdiction.code,
                       configSha256: PF_CONFIG_SHA256,
                       premium: req.premium,
+                      brokerFeeCents: req.brokerFeeCents ?? 0,
+                      brokerFeeAllocations: JSON.stringify(feeAllocations(req.brokerFeeAllocations)),
                       downPct: req.downPct,
                       months: req.months,
                       apr: req.apr,

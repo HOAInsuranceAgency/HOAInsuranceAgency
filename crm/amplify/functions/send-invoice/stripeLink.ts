@@ -1,3 +1,4 @@
+import type { BrokerFeeAllocation } from "../../../../shared/brokerFees";
 import Stripe from "stripe";
 
 /**
@@ -35,7 +36,11 @@ export interface LinkRequest {
   associationName: string;
   /** Retail total, in dollars. */
   total: number;
+  accountId?: string;
+  brokerFeeAllocations?: BrokerFeeAllocation[];
+  idempotencyToken?: string;
 }
+export class InactivePaymentLink extends Error {}
 
 /**
  * Create the link. Returns its id and url.
@@ -57,11 +62,12 @@ export async function createPaymentLink(
     currency: "usd",
     unit_amount: toCents(req.total),
     product_data: { name: label },
-  });
+  }, ...(req.idempotencyToken ? [{ idempotencyKey: `broker-fee:${req.idempotencyToken}:price` }] : []));
 
   const metadata = {
     invoiceId: req.invoiceId,
     invoiceNumber: req.invoiceNumber ?? "",
+    ...(req.brokerFeeAllocations?.length ? { brokerFeeAllocations: JSON.stringify(req.brokerFeeAllocations), brokerFeeAccountId: req.accountId ?? "", invoiceTotalCents: String(toCents(req.total)) } : {}),
   };
 
   const link = await stripe.paymentLinks.create({
@@ -82,8 +88,15 @@ export async function createPaymentLink(
           "within a few business days. We'll email a receipt once it settles.",
       },
     },
-  });
+  }, ...(req.idempotencyToken ? [{ idempotencyKey: `broker-fee:${req.idempotencyToken}:link` }] : []));
 
   if (!link.url) throw new Error("Stripe returned a link with no URL.");
+  if (req.brokerFeeAllocations?.length) {
+    // An idempotent create can replay its original response after the actual
+    // link has since been disabled. Verify current processor state before a
+    // fee link can be stored or delivered.
+    const current = await stripe.paymentLinks.retrieve(link.id);
+    if (!current.active || !current.url || current.url !== link.url) throw new InactivePaymentLink("The existing broker fee payment link is inactive. Review its payment before retrying or reissuing the invoice.");
+  }
   return { id: link.id, url: link.url };
 }

@@ -21,7 +21,7 @@ export interface BusinessDeliverySender {
   frontId: string; channelId: string; senderEmail: string; signatureId: string;
 }
 export interface PublicProposalQuote {
-  id: string; carrierName: string; lines: string[]; premium: number;
+  id: string; carrierName: string; lines: string[]; premium: number; brokerFee?: number | null; billType?: string | null;
   effectiveDate: string; expirationDate: string; offerExpiresAt?: string | null;
   perOccurrenceDeductible?: number | null; perUnitDeductible?: number | null;
   blanketLimit?: number | null; coinsurancePct?: number | null;

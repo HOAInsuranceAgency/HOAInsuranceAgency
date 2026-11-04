@@ -52,6 +52,7 @@ const OUTCOMES: Record<string, InvoiceOutcome> = {
   "payment_intent.processing": "PROCESSING",
   "payment_intent.succeeded": "PAID",
   "payment_intent.payment_failed": "FAILED",
+  "payment_intent.canceled": "FAILED",
 };
 
 export function decideEvent(event: StripeEventLike): EventDecision | null {
@@ -173,7 +174,7 @@ export function decidePfEvent(event: StripeEventLike): PfEventDecision | null {
   const cents = object.amount;
   return {
     loanId: loanId.trim(),
-    billingVersion: metadata?.pfBillingVersion === "2" ? 2 : null,
+    billingVersion: metadata?.pfBillingVersion === "3" ? 3 : metadata?.pfBillingVersion === "2" ? 2 : null,
     kind,
     installment,
     outcome,

@@ -5,6 +5,34 @@ vi.mock("aws-amplify/data", () => ({ generateClient: () => ({ models: { Policy: 
 import CoverageForm from "./CoverageForm";
 beforeEach(() => { h.create.mockReset(); h.update.mockReset(); });
 
+it('starts new quotes at zero broker fee and validates cents before saving', async () => {
+  h.create.mockResolvedValue({ data: {} });
+  render(<CoverageForm kind="quote" accountId="a" carriers={[]} existing={null} onSaved={() => {}} onCancel={() => {}} />);
+  const fee = screen.getByLabelText('Broker fee ($)');
+  expect(fee).toHaveValue('0');
+  fireEvent.change(fee, { target: { value: '500.123' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save quote' }));
+  expect(h.create).not.toHaveBeenCalled();
+  expect(screen.getByText(/at most two decimal places/)).toBeInTheDocument();
+  fireEvent.change(fee, { target: { value: '500.25' } });
+  await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Save quote' })));
+  expect(h.create).toHaveBeenCalledWith(expect.objectContaining({ brokerFee: 500.25, premium: null, commissionPct: null }));
+});
+
+it('uses the existing bill type before presenting a fee quote so direct bill does not charge premium twice', async () => {
+  h.create.mockResolvedValue({ data: {} });
+  render(<CoverageForm kind="quote" accountId="a" carriers={[]} existing={null} onSaved={() => {}} onCancel={() => {}} />);
+  expect(screen.queryByLabelText('Bill type')).not.toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText('Broker fee ($)'), { target: { value: '500' } });
+  fireEvent.change(screen.getByRole('option', { name: 'QUOTED' }).parentElement!, { target: { value: 'QUOTED' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save quote' }));
+  expect(h.create).not.toHaveBeenCalled();
+  expect(screen.getByText(/Choose who bills the premium/)).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText('Bill type'), { target: { value: 'DIRECT' } });
+  await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Save quote' })));
+  expect(h.create).toHaveBeenCalledWith(expect.objectContaining({ brokerFee: 500, billType: 'DIRECT' }));
+});
+
 it("locks quote fields and cancellation until a pending save settles, then permits recovery", async () => {
   let reject!: (error: Error) => void;
   h.create.mockReturnValue(new Promise((_resolve, fail) => { reject = fail; }));

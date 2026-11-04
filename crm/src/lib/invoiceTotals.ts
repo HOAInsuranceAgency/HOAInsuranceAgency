@@ -91,6 +91,7 @@ export function marginWarnings(lines: readonly LineLike[]): string[] {
     const retail = amount(line.retailAmount);
     const cost = amount(line.costAmount);
     const where = `Line ${i + 1}`;
+    if (line.kind === "BROKER_FEE" && retail > 0 && cost === 0) continue;
     if (retail < 0 || cost < 0) {
       out.push(`${where} has a negative amount.`);
       continue;
@@ -139,6 +140,8 @@ export interface RemittanceSplit {
   commissionCents: number;
   /** Earned for financing it. Zero until in-house financing is offered. */
   interestCents: number;
+  /** Agency broker fee, kept separate from carrier commission. */
+  brokerFeeCents: number;
   /** What the association paid. Always the sum of the three above. */
   totalCents: number;
 }
@@ -176,13 +179,17 @@ export function remittanceSplit(lines: readonly LineLike[]): RemittanceSplit {
     .filter((l) => INTEREST_KINDS.has(l.kind ?? ""))
     .reduce((sum, l) => sum + cents(amount(l.retailAmount) - amount(l.costAmount)), 0);
 
+  const brokerFeeCents = lines.filter(l => l.kind === "BROKER_FEE")
+    .reduce((sum, l) => sum + cents(amount(l.retailAmount)), 0);
+
   return {
     carrierCents,
     interestCents,
+    brokerFeeCents,
     // The remainder, so the three always add up to what was charged. Deriving
     // it instead of summing margins is what makes that guarantee hold when a
     // line rounds against the total.
-    commissionCents: totalCents - carrierCents - interestCents,
+    commissionCents: totalCents - carrierCents - interestCents - brokerFeeCents,
     totalCents,
   };
 }
@@ -269,4 +276,9 @@ export function premiumLineFromPolicy(policy: {
     return { retailAmount: null, costAmount: null };
   }
   return { retailAmount: null, costAmount: cents(premium) };
+}
+
+/** Broker fees are due in full at inception and never financed. */
+export function financeableInvoiceTotal(lines: readonly LineLike[]): number {
+  return invoiceTotals(lines.filter(line => line.kind !== "BROKER_FEE")).retail;
 }

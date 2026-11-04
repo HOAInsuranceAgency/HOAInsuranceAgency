@@ -6,7 +6,7 @@ import { CfnFunction } from "aws-cdk-lib/aws-lambda";
 import { migrationDestination, migrationPreview, migrationTargets, migrationStreamPhase, migrationSchedulesEnabled, migrationExecution, migrationPendingCutoff, migrationRuntimeBranch } from "./migration-config";
 import { disableBucketNotifications } from "./migration-notifications";
 
-const READ_FUNCTIONS = new Set(["crmAccess", "communications", "commissions", "ownerProfitability"]);
+const READ_FUNCTIONS = new Set(["crmAccess", "communications", "commissions", "ownerProfitability", "brokerFees"]);
 // The signup guard must remain callable for AdminCreateUser even while Google
 // OAuth is disabled; it rejects public signup without performing business work.
 const AUTH_FUNCTIONS = new Set(["magicLinkDefine", "magicLinkCreate", "magicLinkVerify", "migrationNativeMessage", "googleSignIn", "mailVerification"]);

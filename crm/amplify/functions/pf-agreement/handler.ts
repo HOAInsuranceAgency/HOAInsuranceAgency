@@ -110,6 +110,7 @@ export const handler = async (event: {
       months: loan.months,
       payment: loan.payment,
       originationFee: loan.originationFee,
+      brokerFee: (loan.brokerFeeCents ?? 0) / 100,
       effectiveDate: loan.effectiveDate,
       schedule,
       signedName: loan.agreementSignedName,

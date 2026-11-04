@@ -1,5 +1,6 @@
 import { authorizedQuoteTerms } from './quoteAuthorization';
 import { validCalendarDate } from './renewalPolicy';
+import { brokerFeeCents } from './brokerFees';
 
 export interface PackageQuote {
   id: string;
@@ -9,6 +10,8 @@ export interface PackageQuote {
   lines?: (string | null)[] | null;
   premium?: number | null;
   commissionPct?: number | null;
+  brokerFee?: number | null;
+  billType?: string | null;
   effectiveDate?: string | null;
   expirationDate?: string | null;
   offerExpiresAt?: string | null;
@@ -130,6 +133,14 @@ export function packageAssessment(
     problems.push('Record each quote’s coverages');
   if (valid.some((q) => commissionCents(q) == null))
     problems.push('Commission information is missing');
+  const fees = valid.map(q => {
+    try { return brokerFeeCents(q.brokerFee); }
+    catch { problems.push('Check the broker fee amounts'); return 0; }
+  });
+  const feeTotal = fees.reduce((sum, fee) => sum + fee, 0);
+  if (valid.some(q => (q.brokerFee ?? 0) > 0 && !['AGENCY', 'DIRECT'].includes(q.billType ?? '')))
+    problems.push('Choose who bills the premium for each quote with a broker fee');
+  const premiumTotal = valid.reduce((sum, q) => sum + Math.round((q.premium ?? 0) * 100), 0);
   if (
     !Number.isSafeInteger(
       valid.reduce((sum, q) => sum + Math.round((q.premium ?? 0) * 100), 0),
@@ -139,20 +150,25 @@ export function packageAssessment(
     )
   )
     problems.push('Check the recorded amounts');
+  if (!Number.isSafeInteger(feeTotal) || !Number.isSafeInteger(premiumTotal + feeTotal))
+    problems.push('Check the recorded amounts');
   if (
     requireReview &&
     (!option.reviewed ||
-      valid.some((q) => option.reviewed?.terms[q.id] !== packageTerms(q)))
+      valid.some((q) => {
+        try { return option.reviewed?.terms[q.id] !== packageTerms(q); }
+        catch { return true; }
+      }))
   )
     problems.push('Review this package’s current terms');
   const boundCount = valid.filter((q) => q.status === 'BOUND').length;
   return {
     problems: [...new Set(problems)],
     complete: problems.length === 0,
-    premiumCents: valid.reduce(
-      (sum, q) => sum + Math.round((q.premium ?? 0) * 100),
-      0,
-    ),
+    premiumCents: premiumTotal,
+    brokerFeeCents: feeTotal,
+    clientTotalCents: premiumTotal + feeTotal,
+    agencyRevenueCents: valid.reduce((sum, q) => sum + (commissionCents(q) ?? 0), 0) + feeTotal,
     commissionCents: valid.reduce(
       (sum, q) => sum + (commissionCents(q) ?? 0),
       0,

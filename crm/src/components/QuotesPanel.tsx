@@ -29,6 +29,7 @@ import { BILL_TYPE_OPTIONS, type BillType } from "../lib/enums";
 import QuoteOfferExpiry from "./QuoteOfferExpiry";
 import { quoteOfferDate } from "../lib/quoteOfferExpiry";
 import { useAgencyDay } from "../lib/useAgencyDay";
+import { brokerFeeCents, type BrokerFeeRecord } from "../../../shared/brokerFees";
 
 /** Commission is baked into the premium — the $ figure is the agency's cut,
  * never an addition on top. */
@@ -304,7 +305,7 @@ function QuotesPanelContent({
                     <td className="small">
                       {(qt.lines ?? []).filter(Boolean).join(", ") || "—"}
                     </td>
-                    <td>{fmtMoney(qt.premium)}</td>
+                    <td>{fmtMoney(qt.premium)}{(qt.brokerFee ?? 0) > 0 && <div className="small muted">+ {fmtMoney(qt.brokerFee)} broker fee · {fmtMoney((qt.premium ?? 0) + (qt.brokerFee ?? 0))} total</div>}</td>
                     <td className="small">{commissionCell(qt)}</td>
                     <td className="small">{termsSummary(qt)}</td>
                     <td>{fmtDate(qt.effectiveDate)}</td>
@@ -385,7 +386,7 @@ function QuotesPanelContent({
             <h3>Request binding</h3>
             <p className="quote-flow-summary">
               {carrierName(authorization.carrierId)} ·{" "}
-              {fmtMoney(authorization.premium)} · Effective{" "}
+              {fmtMoney(authorization.premium)} premium{(authorization.brokerFee ?? 0) > 0 ? ` + ${fmtMoney(authorization.brokerFee)} broker fee` : ""} · Effective{" "}
               {fmtDate(authorization.effectiveDate)}
             </p>
             <p className="muted small">
@@ -483,13 +484,23 @@ function BindForm({
   const [agencyRate, setAgencyRate] = useState(quote.commissionPct == null ? "" : String(quote.commissionPct));
   const [confirmed, setConfirmed] = useState(false);
   /**
-   * No default. Bill type decides whether anyone here is supposed to collect
+   * Reuse the fee quote's recorded answer; otherwise there is no default.
+   * Bill type decides whether anyone here is supposed to collect
    * the premium, and a pre-selected answer to that is one nobody reads — the
    * first policy silently marked agency bill when the carrier is billing the
    * association directly is an invoice sent for money already paid.
    */
-  const [billType, setBillType] = useState<BillType | "">("");
+  const [billType, setBillType] = useState<BillType | "">(quote.billType ?? "");
   const [saving, setSaving] = useState(false);
+  const feeStatus = useAsyncResource(async () => {
+    if (!(quote.brokerFee && quote.brokerFee > 0)) return null;
+    const response = await client.mutations.brokerFeeAction({ input: JSON.stringify({ op: "status", accountId: account.id, quoteIds: [quote.id] }) });
+    if (response.errors?.length) throw new Error(response.errors[0].message);
+    const result = (typeof response.data === "string" ? JSON.parse(response.data) : response.data) as { ok?: boolean; error?: string; fees?: BrokerFeeRecord[] };
+    if (result?.ok === false || !Array.isArray(result?.fees)) throw new Error(result?.error || "Could not load broker fee status.");
+    return result.fees.find(fee => fee.quoteId === quote.id) ?? null;
+  }, [quote.id, quote.brokerFee, account.id], { initialData: null as BrokerFeeRecord | null, errorMessage: "Could not load broker fee status" });
+  const currentFeeSigned = Boolean(feeStatus.data?.signedAt && feeStatus.data.amountCents === brokerFeeCents(quote.brokerFee) && feeStatus.data.terms === authorizedQuoteTerms(quote));
   const bindLock = useRef(false);
   const live = useRef(true);
   useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
@@ -636,7 +647,8 @@ function BindForm({
         </>
       ) : (
         <>
-          <p className="small muted">Confirm the exact commissionable premium and agency percentage from the accepted quote. To change either amount, edit the quote first. Producer earnings follow reconciled carrier receipts and the agreement saved by the Owner.</p>
+          <p className="small muted">Confirm the exact commissionable premium and agency percentage from the accepted quote. To change either amount, edit the quote first. Producer earnings follow receipts and the agreement saved by the Owner. Broker fees use the same producer share, separately from carrier commission.</p>
+          {(quote.brokerFee ?? 0) > 0 && <div className="small" role="status"><strong>Broker fee: {fmtMoney(quote.brokerFee)}</strong><p>{feeStatus.loading ? "Checking signed disclosure and payment…" : feeStatus.error || (!currentFeeSigned ? "Client signature is needed on the current broker fee disclosure." : feeStatus.data!.collectedCents >= feeStatus.data!.amountCents ? "Disclosure signed · payment received." : feeStatus.data!.submittedCents >= feeStatus.data!.amountCents ? "Disclosure signed · payment submitted and clearing." : "Disclosure signed · fee payment is still needed.")}</p><button className="link" disabled={feeStatus.loading || saving} onClick={() => void feeStatus.refetch()}>Refresh fee status</button></div>}
           <div className="form-grid">
             <label className="field">Exact policy premium ($)<input aria-label="Exact policy premium" inputMode="decimal" value={premium} disabled={saving} onChange={e => { setPremium(e.target.value); setConfirmed(false); }} /></label>
             <label className="field">Agency commission (%)<input aria-label="Agency commission percentage" inputMode="decimal" value={agencyRate} disabled={saving} onChange={e => { setAgencyRate(e.target.value); setConfirmed(false); }} /></label>
@@ -645,7 +657,7 @@ function BindForm({
               <select
                 id="bind-bill-type"
                 value={billType}
-                disabled={saving}
+                disabled={saving || (quote.brokerFee ?? 0) > 0}
                 onChange={(e) => setBillType(e.target.value as BillType | "")}
               >
                 <option value="">Choose…</option>
@@ -655,6 +667,7 @@ function BindForm({
                   </option>
                 ))}
               </select>
+              {(quote.brokerFee ?? 0) > 0 && <p className="small muted">Set on the accepted quote. Edit the quote to change who bills the premium.</p>}
             </div>
             <div className="field">
               <label htmlFor="bind-policy-number">
@@ -671,7 +684,7 @@ function BindForm({
           {billType === "DIRECT" && (
             <p className="small muted">
               The carrier bills the association and pays us commission
-              afterwards, so there is nothing to invoice from here.
+              afterwards. Any disclosed broker fee is collected separately by the agency.
             </p>
           )}
           <label><input type="checkbox" checked={confirmed} disabled={saving} onChange={e => setConfirmed(e.target.checked)} /> I confirmed the exact premium and agency commission percentage.</label>

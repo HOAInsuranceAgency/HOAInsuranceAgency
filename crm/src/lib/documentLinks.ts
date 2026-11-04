@@ -12,6 +12,8 @@
 export interface DocLink {
   policyId?: string | null;
   quoteId?: string | null;
+  policyIds?: (string | null)[] | null;
+  quoteIds?: (string | null)[] | null;
 }
 
 /** The select/URL key for a document's current link. Policy wins after a
@@ -38,6 +40,9 @@ export function linkFields(key: string): { policyId: string | null; quoteId: str
 /** "" matches everything; a link key matches its own documents only. */
 export function matchesLink(d: DocLink, key: string): boolean {
   if (!key) return true;
+  const [kind, id] = key.split(":", 2);
+  if (kind === "policy" && id && d.policyIds?.includes(id)) return true;
+  if (kind === "quote" && id && d.quoteIds?.includes(id)) return true;
   return linkKeyOf(d) === key;
 }
 
