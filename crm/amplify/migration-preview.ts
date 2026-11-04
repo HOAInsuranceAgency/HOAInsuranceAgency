@@ -5,12 +5,11 @@ import { Effect, ManagedPolicy, PolicyStatement } from "aws-cdk-lib/aws-iam";
 import { CfnFunction } from "aws-cdk-lib/aws-lambda";
 import { migrationDestination, migrationPreview, migrationTargets, migrationStreamPhase, migrationSchedulesEnabled, migrationExecution, migrationPendingCutoff, migrationRuntimeBranch } from "./migration-config";
 import { disableBucketNotifications } from "./migration-notifications";
-import { mainSesCanaryExpiry } from "./transactional-mail";
 
 const READ_FUNCTIONS = new Set(["crmAccess", "communications", "commissions", "ownerProfitability"]);
 // The signup guard must remain callable for AdminCreateUser even while Google
 // OAuth is disabled; it rejects public signup without performing business work.
-const AUTH_FUNCTIONS = new Set(["magicLinkDefine", "magicLinkCreate", "magicLinkVerify", "migrationNativeMessage", "googleSignIn", "mailFeedback", "mailVerification"]);
+const AUTH_FUNCTIONS = new Set(["magicLinkDefine", "magicLinkCreate", "magicLinkVerify", "migrationNativeMessage", "googleSignIn", "mailVerification"]);
 export const PREVIEW_DENIED_ACTIONS = [
   "dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:DeleteItem", "dynamodb:BatchWriteItem", "dynamodb:TransactWriteItems",
   "dynamodb:PartiQLInsert", "dynamodb:PartiQLUpdate", "dynamodb:PartiQLDelete",
@@ -44,8 +43,8 @@ export function installMigrationPreview(backend: any) {
       resource.addEnvironment("HOA_MIGRATION_STREAM_PROBE_TOKEN", process.env.HOA_MIGRATION_STREAM_PROBE_TOKEN ?? "");
       resource.addEnvironment("HOA_MIGRATION_STREAM_PROBE_EXPIRES_AT", process.env.HOA_MIGRATION_STREAM_PROBE_EXPIRES_AT ?? "");
     }
-    if (name === "mailVerification" && !migrationPreview) (resource.resources.lambda.node.defaultChild as CfnFunction).reservedConcurrentExecutions = mainSesCanaryExpiry() ? 1 : 0;
-    if (!migrationExecution.holdBusinessExecution || name === "mailFeedback" || (migrationPreview && AUTH_FUNCTIONS.has(name))) continue;
+    if (name === "mailVerification" && !migrationPreview) (resource.resources.lambda.node.defaultChild as CfnFunction).reservedConcurrentExecutions = 0;
+    if (!migrationExecution.holdBusinessExecution || name === "sesMailFeedback" || (migrationPreview && AUTH_FUNCTIONS.has(name))) continue;
     resource.resources.lambda.role!.addManagedPolicy(guard!);
     if ((!migrationPreview || !READ_FUNCTIONS.has(name)) && name !== "migrateProducerLicenses") {
       (resource.resources.lambda.node.defaultChild as CfnFunction).reservedConcurrentExecutions = migrationExecution.streamProbeEnabled && MIGRATION_STREAM_WORKERS.has(name) ? 1 : 0;

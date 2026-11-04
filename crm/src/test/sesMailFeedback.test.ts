@@ -182,3 +182,49 @@ describe("SES feedback facts, suppression and operation fencing", () => {
     await expect(handler({ Records: [record()] }, context)).rejects.toThrow("persistence unavailable"); expect(deps.alert).not.toHaveBeenCalled();
   });
 });
+
+
+describe("SES feedback staging isolation", () => {
+  const stagingTopic = topic.replace("-main-", "-staging-");
+  const stagingKey = opKey.replace("/main/", "/staging/");
+  const stagingEnv = { HOA_MIGRATION_BRANCH: "codex-hoa-staging-migration", HOA_SES_CONFIGURATION_SET: "hoa-transactional-staging", HOA_SES_FEEDBACK_TOPIC_ARN: stagingTopic };
+  function stageRecord() {
+    const body = raw();
+    body.mail.source = "HOA Staging <jake+testing@protectmyhoa.com>";
+    body.mail.destination = ["jake@getgim.com"];
+    body.mail.tags["ses:configuration-set"] = ["hoa-transactional-staging"];
+    body.mail.tags.HOAEnvironment = ["staging"];
+    body.mail.tags.HOAOperation = [sesHash(stagingKey)];
+    const item = record(body); item.Sns.TopicArn = stagingTopic;
+    return item;
+  }
+  it("records staging delivery only on its own matching accepted operation", async () => {
+    const { handler, deps, items } = setup(stagingEnv);
+    items.set(`RECEIPT#ses#${providerId}`, { kind: "RECEIPT", provider: "ses", environment: "staging", operationKey: stagingKey, operationHash: sesHash(stagingKey), providerId });
+    items.set(stagingKey, { kind: "OPERATION", provider: "ses", environment: "staging", mailKind: "test", providerId, state: "ACCEPTED" });
+    await handler({ Records: [stageRecord()] }, context);
+    const tx = deps.transact.mock.calls[0][0];
+    expect(tx.TransactItems).toHaveLength(3);
+    expect(tx.TransactItems![0].Put!.Item!.environment).toBe("staging");
+    expect(tx.TransactItems![1].Update!.ExpressionAttributeValues![":environment"]).toBe("staging");
+    expect(tx.TransactItems![2].Update!.Key).toEqual({ pk: stagingKey });
+  });
+  it.each(["topic", "tags", "recipient", "sender", "receipt_environment", "operation_environment"])("rejects staging %s boundary violations without writes", async variant => {
+    const { handler, deps, items } = setup(stagingEnv);
+    const event = stageRecord(); const body = JSON.parse(event.Sns.Message);
+    if (variant === "topic") event.Sns.TopicArn = topic;
+    if (variant === "tags") body.mail.tags.HOAEnvironment = ["main"];
+    if (variant === "recipient") body.mail.destination = ["customer@example.com"];
+    if (variant === "sender") body.mail.source = "insurance@protectmyhoa.com";
+    if (variant === "receipt_environment") items.set(`RECEIPT#ses#${providerId}`, { kind: "RECEIPT", provider: "ses", environment: "main", providerId });
+    if (variant === "operation_environment") items.set(`RECEIPT#ses#${providerId}`, { kind: "RECEIPT", provider: "ses", environment: "staging", operationKey: opKey, providerId });
+    event.Sns.Message = JSON.stringify(body);
+    await expect(handler({ Records: [event] }, context)).rejects.toThrow();
+    expect(deps.transact).not.toHaveBeenCalled();
+  });
+  it("rejects the staging event on the production processor", async () => {
+    const { handler, deps } = setup();
+    await expect(handler({ Records: [stageRecord()] }, context)).rejects.toThrow();
+    expect(deps.transact).not.toHaveBeenCalled();
+  });
+});
