@@ -40,6 +40,7 @@ const DOC = {
   id: "doc-1",
   name: "scan_0043.pdf",
   s3Key: "documents/ACCOUNT/acct-1/doc-1/scan_0043.pdf",
+  contentType: "application/pdf",
   category: "BUDGET",
   ocrStatus: "COMPLETE",
   sizeBytes: 120_000,
@@ -69,6 +70,45 @@ beforeEach(() => {
   models.Policy.list.mockResolvedValue({ data: [] });
   models.Quote.list.mockResolvedValue({ data: [] });
   models.Document.update.mockResolvedValue({ errors: undefined });
+});
+
+it("offers Front handoff for account documents but not carrier documents or pending uploads", async () => {
+  models.Document.listDocumentByEntityId.mockResolvedValue({ data: [DOC] });
+  const view = render(<DocumentsPanel entityType="ACCOUNT" entityId="acct-1" />);
+  expect(await screen.findByRole("button", { name: "Prepare email in Front" })).toBeEnabled();
+  view.rerender(<DocumentsPanel entityType="CARRIER" entityId="carrier-1" />);
+  await screen.findByRole("button", { name: "Download" });
+  expect(screen.queryByRole("button", { name: "Prepare email in Front" })).toBeNull();
+  models.Document.listDocumentByEntityId.mockResolvedValue({ data: [{ ...DOC, s3Key: "pending" }] });
+  view.rerender(<DocumentsPanel entityType="ACCOUNT" entityId="pending-account" />);
+  await screen.findByRole("button", { name: "Download" });
+  expect(screen.queryByRole("button", { name: "Prepare email in Front" })).toBeNull();
+});
+
+it.each(["PF_AGREEMENT", "PF_BOARD_RESOLUTION", "PF_RESOLUTION_EXECUTED", "IMAGE"])("omits customer delivery for %s documents", async category => {
+  models.Document.listDocumentByEntityId.mockResolvedValue({ data: [{ ...DOC, category, contentType: category === "IMAGE" ? "image/jpeg" : "application/pdf" }] });
+  render(<DocumentsPanel entityType="ACCOUNT" entityId="acct-1" />);
+  await screen.findByRole("button", { name: "Download" });
+  expect(screen.queryByRole("button", { name: "Prepare email in Front" })).toBeNull();
+});
+
+it.each([
+  ["photo.jpg", "image/jpeg"],
+  ["schedule.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"],
+])("offers standalone account delivery for %s", async (name, contentType) => {
+  models.Document.listDocumentByEntityId.mockResolvedValue({ data: [{ ...DOC, name, contentType }] });
+  render(<DocumentsPanel entityType="ACCOUNT" entityId="acct-1" />);
+  expect(await screen.findByRole("button", { name: "Prepare email in Front" })).toBeEnabled();
+});
+
+it.each([
+  ["script.svg", "image/svg+xml"], ["macro.xlsm", "application/vnd.ms-excel.sheet.macroEnabled.12"],
+  ["program.exe", "application/octet-stream"], ["fake.pdf", "image/jpeg"],
+])("omits customer delivery for unsupported or mismatched %s", async (name, contentType) => {
+  models.Document.listDocumentByEntityId.mockResolvedValue({ data: [{ ...DOC, name, contentType }] });
+  render(<DocumentsPanel entityType="ACCOUNT" entityId="acct-1" />);
+  await screen.findByRole("button", { name: "Download" });
+  expect(screen.queryByRole("button", { name: "Prepare email in Front" })).toBeNull();
 });
 
 describe("DocumentsPanel rename", () => {

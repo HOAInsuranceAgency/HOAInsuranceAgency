@@ -26,6 +26,7 @@ import AiFilledList from "../../components/AiFilledList";
 import FilePreviewModal from "../../components/FilePreview";
 import { SaveStatus, useSaveStatus } from "../../components/SaveStatus";
 import { useFormState } from "../../lib/useFormState";
+import BusinessDraftButton from "../../components/BusinessDraftButton";
 
 export function CertificatesTab(props: Parameters<typeof CertificatesTabContent>[0]) {
   return <CertificatesTabContent key={`${props.account.id}:${props.sourceCommunicationId ?? ""}`} {...props} />;
@@ -388,6 +389,7 @@ function CertificatesTabContent({
                             <button className="link" onClick={() => downloadPdf(c)}>
                               Download
                             </button>
+                            <BusinessDraftButton accountId={account.id} kind="CERTIFICATE" recordId={c.id} label="Prepare email in Front" disabled={genStatus.busy || saving || !referencesReady} />
                             <button
                               className="link"
                               disabled={genStatus.busy || saving || !referencesReady}

@@ -1,14 +1,18 @@
 import { resolveMigrationRelease } from "./migration-release";
 import targets from "./migration-targets.json";
 import steadyStateMain from "./steady-state-main.json";
+import steadyStateStaging from "./steady-state-staging.json";
 import { assertSteadyState } from "./steady-state.mjs";
 
 const branch = process.env.AWS_BRANCH ?? "";
 const retained = targets.branches[branch as keyof typeof targets.branches];
 export const migrationDestination = !!retained;
-export const steadyStateDeployment = !!retained && "steadyState" in retained && retained.steadyState === true;
+// A deliberately isolated staging preview still follows all quarantine fences.
+// Main always requires the permanent production contract, including when its mode is wrong.
+export const steadyStateDeployment = !!retained && "steadyState" in retained && retained.steadyState === true
+  && (retained.businessEnvironment === "main" || process.env.HOA_MIGRATION_PREVIEW !== "true");
 export const migrationRuntimeBranch = retained && "runtimeBranch" in retained ? retained.runtimeBranch : branch;
-if (steadyStateDeployment) assertSteadyState(process.env, steadyStateMain);
+if (steadyStateDeployment) assertSteadyState(process.env, retained?.businessEnvironment === "staging" ? steadyStateStaging : steadyStateMain);
 export const migrationPreview = migrationDestination && process.env.HOA_MIGRATION_PREVIEW === "true";
 export const businessBranch = retained?.businessEnvironment ?? branch;
 export const migrationCrmOrigin = retained ? `https://${retained.alias}.${targets.crmApp}.amplifyapp.com` : "";

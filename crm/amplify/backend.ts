@@ -499,6 +499,28 @@ for (const fn of [backend.communications, backend.communicationWorker, backend.l
 }
 backend.storage.resources.bucket.grantRead(backend.communications.resources.lambda, "documents/*");
 backend.storage.resources.bucket.grantRead(backend.communications.resources.lambda, "certificates/*");
+// Explicitly selected generated account forms and frozen customer-facing
+// proposal artifacts use separate, account-bound keys. No finance/private
+// bucket-wide grant is needed for this draft workflow.
+// Keep additive, stateless permissions out of the data template, which is
+// close to CloudFormation's template-size limit. Existing resource identities
+// and their original grants remain in place.
+const businessDeliveryPermissions = backend.createStack('businessDeliveryPermissions');
+const deliveryBucket = backend.storage.resources.bucket;
+new Policy(businessDeliveryPermissions, 'PreparingTeammateArtifacts', {
+  roles: [backend.communications.resources.lambda.role!],
+  statements: [
+    new PolicyStatement({ actions: ['s3:GetObject', 's3:GetObjectVersion'], resources: [deliveryBucket.arnForObjects('generated/*/*-acord*.pdf'), deliveryBucket.arnForObjects('business-deliveries/*')] }),
+    new PolicyStatement({ actions: ['s3:PutObject'], resources: [deliveryBucket.arnForObjects('business-deliveries/*')] }),
+    new PolicyStatement({ actions: ['dynamodb:GetItem', 'dynamodb:BatchGetItem', 'dynamodb:ConditionCheckItem'], resources: [backend.data.resources.tables.Carrier.tableArn] }),
+  ],
+});
+new Policy(businessDeliveryPermissions, 'DeliveryReceiptArtifacts', {
+  roles: [backend.communicationWorker.resources.lambda.role!],
+  statements: [new PolicyStatement({ actions: ['s3:GetObject', 's3:GetObjectVersion'], resources: [deliveryBucket.arnForObjects('business-deliveries/*')] })],
+});
+const deliveryCarrierTable = backend.data.resources.tables.Carrier;
+backend.communications.addEnvironment('CARRIER_TABLE', deliveryCarrierTable.tableName);
 backend.communications.addEnvironment("DOCUMENT_BUCKET", backend.storage.resources.bucket.bucketName);
 backend.storage.resources.bucket.grantReadWrite(backend.communicationWorker.resources.lambda, "documents/*");
 backend.communicationWorker.addEnvironment("DOCUMENT_BUCKET", backend.storage.resources.bucket.bucketName);

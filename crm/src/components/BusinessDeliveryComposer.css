@@ -1,0 +1,19 @@
+.business-delivery-modal { width: min(900px, calc(100vw - 24px)); }
+.business-delivery-composer { display: grid; gap: 14px; padding: 18px; }
+.business-delivery-composer p, .business-delivery-composer h3, .business-delivery-composer h4 { margin: 0; }
+.business-delivery-recipients { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.business-delivery-from, .business-delivery-notice { padding: 10px 12px; border-radius: 6px; background: #f3f5f8; overflow-wrap: anywhere; }
+.business-delivery-contacts, .business-delivery-history { list-style: none; padding: 0; margin: 0; }
+.business-delivery-contacts li { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
+.business-delivery-documents { display: grid; gap: 10px; border: 1px solid #dce3ed; border-radius: 6px; padding: 12px; }
+.business-delivery-documents label, .business-delivery-confirm { display: flex; gap: 8px; align-items: flex-start; }
+.business-delivery-documents input, .business-delivery-confirm input { margin-top: 3px; flex: 0 0 auto; }
+.business-delivery-preview { display: grid; gap: 12px; border: 1px solid #dce3ed; border-radius: 8px; padding: 14px; }
+.business-delivery-preview pre { font: inherit; white-space: pre-wrap; overflow-wrap: anywhere; background: #f7f8fa; padding: 12px; margin: 0; }
+.business-delivery-terms dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 18px; margin: 10px 0; }
+.business-delivery-terms dt { color: #596676; font-size: .85em; }
+.business-delivery-terms dd { margin: 2px 0; }
+.business-delivery-history-section { border-top: 1px solid #dce3ed; padding-top: 14px; }
+.business-delivery-attempt { display: grid; gap: 7px; border: 1px solid #dce3ed; border-radius: 6px; padding: 12px; margin-top: 10px; overflow-wrap: anywhere; }
+.business-delivery-recovery { display: grid; gap: 9px; padding-top: 9px; border-top: 1px solid #dce3ed; }
+@media (max-width: 600px) { .business-delivery-recipients, .business-delivery-terms dl { grid-template-columns: 1fr; } .business-delivery-composer { padding: 10px; } }

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-/** Fresh read-only checks of the existing main backend before every deployment. */
+/** Fresh read-only checks of the retained backend before every deployment. */
 export function verifySteadyState(namespace, contract, aws) {
   const canonical = value => JSON.stringify(value, function (key, item) {
     return item && typeof item === "object" && !Array.isArray(item) ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)) : item;
@@ -8,6 +8,10 @@ export function verifySteadyState(namespace, contract, aws) {
   const need = (ok, reason) => { if (!ok) throw new Error(`HOA steady-state live guard: ${reason}`); };
   need(namespace?.branchName === contract.backendBranch && namespace?.backend?.stackArn === contract.backendRoot,
     "existing backend root differs; replacement creation is prohibited");
+  if (contract.backendBranch === "staging") {
+    need(namespace.enableAutoBuild === false && namespace.enablePullRequestPreview !== true,
+      "staging backend namespace must remain dormant");
+  }
   const root = aws("cloudformation", "describe-stacks", "--stack-name", contract.backendRoot).Stacks;
   need(root.length === 1 && root[0].StackId === contract.backendRoot
     && ["CREATE_COMPLETE", "UPDATE_COMPLETE"].includes(root[0].StackStatus)
@@ -45,14 +49,16 @@ export function verifySteadyState(namespace, contract, aws) {
       "existing stream cursor is not healthy or has changed scope");
   }
   const schedules = inventory.filter(r => r.ResourceType === "AWS::Scheduler::Schedule");
-  need(schedules.length === 8 && contract.schedules.length === 8, "exact eight main schedules required");
+  need(schedules.length === 8 && contract.schedules.length === 8, "exact eight schedules required");
   for (const expected of contract.schedules) {
     need(schedules.some(r => r.LogicalResourceId === expected.logical && r.PhysicalResourceId === expected.name), "schedule identity changed");
     const actual = aws("scheduler", "get-schedule", "--name", expected.name, "--group-name", "default");
-    need(actual.Name === expected.name && actual.State === "ENABLED" && expected.state === "ENABLED"
+    const expectedState = contract.backendBranch === "staging" ? expected.state : "ENABLED";
+    need(["ENABLED", "DISABLED"].includes(expectedState)
+      && actual.Name === expected.name && actual.State === expectedState && expected.state === expectedState
       && actual.Target?.Arn === expected.functionArn && canonical(actual.Target) === canonical(expected.target)
       && actual.ScheduleExpression === expected.scheduleExpression
       && actual.ScheduleExpressionTimezone === expected.scheduleExpressionTimezone
-      && JSON.stringify(actual.FlexibleTimeWindow) === JSON.stringify(expected.flexibleTimeWindow), "main schedule timing/target/eligibility changed");
+      && JSON.stringify(actual.FlexibleTimeWindow) === JSON.stringify(expected.flexibleTimeWindow), "schedule timing/target/eligibility changed");
   }
 }

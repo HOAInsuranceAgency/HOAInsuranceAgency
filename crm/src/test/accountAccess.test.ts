@@ -207,6 +207,33 @@ describe("files", () => {
 });
 describe("custom API operations", () => {
   const call = (op: string, input: RecordData = {}, actor = user()) => authorizeCustom(actor, "communicationWrite", { operation: op, input: JSON.stringify(input) });
+  it('limits delivery context and history to the current account assignment and read operations', async () => {
+    for (const readOperation of ['businessDeliveryContext', 'historyBusinessDeliveries']) {
+      await expect(authorizeCustom(user(), 'communicationRead', { readOperation, input: { accountId: 'a' } })).resolves.toBeUndefined();
+      await expect(authorizeCustom(user(), 'communicationRead', { readOperation, input: { accountId: 'b' } })).rejects.toThrow(AccessDenied);
+      await expect(call(readOperation, { accountId: 'a' })).rejects.toThrow(AccessDenied);
+    }
+  });
+  it('checks every package quote and selected attachment before creating a delivery preview', async () => {
+    records['Communication:commercial:a'] = { data: { options: [{ id: 'option', quoteIds: ['qa'] }] } };
+    const input = { accountId: 'a', kind: 'PACKAGE', recordId: 'option', conversationId: 'NEW', documentIds: ['da'] };
+    await expect(call('previewBusinessDelivery', input)).resolves.toBeUndefined();
+    await expect(call('previewBusinessDelivery', { ...input, documentIds: ['db'] })).rejects.toThrow(AccessDenied);
+    await expect(call('previewBusinessDelivery', { ...input, conversationId: 'cnv_b' })).rejects.toThrow(AccessDenied);
+    records['Communication:commercial:a'].data = { options: [{ id: 'option', quoteIds: ['qb'] }] };
+    await expect(call('previewBusinessDelivery', input)).rejects.toThrow(AccessDenied);
+  });
+  it('uses server-owned preview and attempt actor/account bindings for preparation and private reconciliation', async () => {
+    records['Communication:preview'] = { kind: 'BUSINESS_PREVIEW', accountId: 'a', data: { actor: 'alice', preview: { selection: { accountId: 'a' } } } };
+    records['Communication:attempt'] = { kind: 'BUSINESS_DELIVERY', accountId: 'a', data: { actor: 'alice', accountId: 'a' } };
+    await expect(call('prepareBusinessDraft', { accountId: 'a', previewId: 'preview', conversationId: 'NEW' })).resolves.toBeUndefined();
+    await expect(call('reconcileBusinessDraft', { accountId: 'a', attemptId: 'attempt' })).resolves.toBeUndefined();
+    records['Communication:preview'].data = { actor: 'bob', preview: { selection: { accountId: 'a' } } };
+    await expect(call('prepareBusinessDraft', { accountId: 'a', previewId: 'preview' })).rejects.toThrow(AccessDenied);
+    records['Communication:attempt'].data = { actor: 'bob', accountId: 'a' };
+    await expect(call('reconcileBusinessDraft', { accountId: 'a', attemptId: 'attempt' })).rejects.toThrow(AccessDenied);
+    await expect(call('prepareBusinessDraft', { accountId: 'a', previewId: 'task:a' })).rejects.toThrow(AccessDenied);
+  });
   it('limits follow-up changes to the current salesperson or an active administrator', async () => {
     const input = { accountId: 'a', version: 0, followUpOn: '2026-10-10', note: '' };
     await expect(call('saveLeadSnooze', input)).resolves.toBeUndefined();

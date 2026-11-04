@@ -23,8 +23,9 @@ export async function providerRequest<T = Record<string, unknown>>(provider: "fr
   if (delay) throw new ProviderError(`${provider} API budget is waiting to reset`, 429, false, delay);
   let response: Response;
   try {
-    response = await fetch(url, { method, body: body === undefined ? undefined : JSON.stringify(body),
-      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json", Accept: "application/json" },
+    const multipart = body instanceof FormData;
+    response = await fetch(url, { method, body: body === undefined ? undefined : multipart ? body : JSON.stringify(body),
+      headers: { Authorization: `Bearer ${key}`, ...(multipart ? {} : { "Content-Type": "application/json" }), Accept: "application/json" },
       redirect: "manual", signal: AbortSignal.timeout(12_000) });
   } catch { throw new ProviderError(`${provider} request could not be confirmed`, 0, method !== "GET"); }
   await rememberBudget(provider, response).catch(() => {});
@@ -80,6 +81,7 @@ export function dialpadCallItems(page: unknown): Record<string, unknown>[] {
 }
 export const htmlEscape = (value: string) => value.replace(/[&<>"']/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]!));
 export interface FrontMessage { id: string; message_uid?: string; uid?: string; created_at: number; is_inbound: boolean; is_draft?: boolean; type?: string; text?: string; body?: string; subject?: string;
+  draft_mode?: 'private' | 'shared' | null; error_type?: string | null;
   attachments?: { id: string; filename: string; content_type: string; size: number }[];
   author?: { id: string }; recipients?: { handle: string; role: string }[]; conversation?: { id: string }; _links?: { related?: { conversation?: string } }; metadata?: Record<string, unknown> }
 export async function permittedConversation(id: string) {

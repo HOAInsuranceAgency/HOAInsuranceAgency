@@ -18,7 +18,11 @@ export async function communicationRequest<T>(operation: string, input: unknown 
     throw error;
   }
   const result = typeof response.data === "string" ? JSON.parse(response.data) : response.data;
-  if (!result || typeof result !== "object" || !(result as { ok?: boolean }).ok) throw new Error((result as { error?: string } | null)?.error ?? "The request could not be completed");
+  if (!result || typeof result !== "object" || !(result as { ok?: boolean }).ok) {
+    const error = new Error((result as { error?: string } | null)?.error ?? "The request could not be completed");
+    if ((result as { code?: unknown } | null)?.code === 'BUSINESS_DRAFT_NOT_DISPATCHED') Object.assign(error, { code: 'BUSINESS_DRAFT_NOT_DISPATCHED' });
+    throw error;
+  }
   return result as T;
 }
 export type { LeadWorkflow, LeadTask, TeamEligibility, IntegrationConfig, Communication, WorkflowContext } from "../../../shared/leadWorkflow";

@@ -122,8 +122,8 @@ async function frontEvent(event: Json, type: string) {
       const messageId = str(object(target.data).id || object(event.message).id);
       const message = /^msg_/.test(messageId) ? await get<Communication>(`comm:front:${messageId}`) : undefined;
       if (message && message.accountId === link.data.accountId && message.data.direction === "OUTBOUND" && message.data.conversationId === cnv) {
-        await save(row("COMMUNICATION", message.id, { ...message.data, status: "FAILED" }, { accountId: message.accountId, previous: message }), message);
-
+        const failed = await save(row("COMMUNICATION", message.id, { ...message.data, status: "FAILED" }, { accountId: message.accountId, previous: message }), message);
+        await (await import("./businessDelivery")).applyBusinessDelivery(failed.data);
       }
     }
     return;
