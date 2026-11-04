@@ -116,6 +116,43 @@ describe("new lead property classification", () => {
 });
 
 describe("new lead form", () => {
+  it.each([
+    ["Name (association / insured) *", "Name", 200],
+    ["Street address", "Street address", 500],
+    ["City", "City", 500],
+    ["Current agent / broker", "Current agent / broker", 500],
+    ["Notes", "Notes", 10000],
+  ])("rejects an oversized %s before creation and focuses the field", (label, errorLabel, limit) => {
+    render(<NewLead />); fillRequired();
+    const field = screen.getByLabelText(label);
+    fireEvent.change(field, { target: { value: "x".repeat(Number(limit) + 1) } });
+    fireEvent.click(screen.getByRole("button", { name: "Create lead" }));
+    expect(screen.getByRole("alert")).toHaveTextContent(`${errorLabel} must be ${Number(limit).toLocaleString("en-US")} characters or fewer.`);
+    expect(field).toHaveFocus();
+    if (field.closest("details")) expect(field.closest("details")).toHaveAttribute("open");
+    expect(h.request.mock.calls.filter(([op]) => op === "createLead")).toHaveLength(0);
+    expect(h.contactCreate).not.toHaveBeenCalled();
+  });
+
+  it("creates primary fields at their trimmed server limits and still saves the contact", async () => {
+    render(<NewLead />); fillRequired();
+    const values = {
+      "Name (association / insured) *": ` ${"n".repeat(200)} `,
+      "Street address": ` ${"a".repeat(500)} `,
+      City: "c".repeat(500),
+      "Current agent / broker": "b".repeat(500),
+      Notes: ` ${"t".repeat(10000)} `,
+      "Contact name": "Pat",
+    };
+    for (const [label, value] of Object.entries(values)) fireEvent.change(screen.getByLabelText(label), { target: { value } });
+    fireEvent.click(screen.getByRole("button", { name: "Create lead" }));
+    await waitFor(() => expect(h.navigate).toHaveBeenCalledWith("/accounts/new-lead?tab=documents"));
+    expect(h.request.mock.calls.find(([op]) => op === "createLead")![1].fields).toMatchObject({
+      name: "n".repeat(200), address: "a".repeat(500), city: "c".repeat(500), currentAgent: "b".repeat(500), notes: "t".repeat(10000),
+    });
+    expect(h.contactCreate).toHaveBeenCalledOnce();
+  });
+
   it("retains optional details and notes when their sections are closed before saving", async () => {
     render(<NewLead />);
     const property = disclosure("Property & current coverage");
