@@ -68,4 +68,6 @@ export interface BusinessDeliveryAttempt {
   state: BusinessDeliveryState; from: string; to: string[]; cc: string[];
   conversationId: string; frontDraftId?: string; frontUrl?: string; messageUrl?: string;
   preparedAt: string; sentAt?: string; failure?: string;
+  /** Verified known draft was sent after human edits; To/CC remain the original preparation. */
+  sentWithChanges?: boolean;
 }

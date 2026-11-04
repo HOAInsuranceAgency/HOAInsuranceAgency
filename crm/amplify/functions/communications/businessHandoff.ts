@@ -22,6 +22,7 @@ interface FrozenFile { id: string; name: string; key: string; contentType: strin
 interface PreviewRecord { actor: string; preview: BusinessDeliveryPreview; sourceFingerprint: string; files: FrozenFile[]; reference: string; memberVersion: number; allowedRecipients: string[]; commercialVersion?:number; }
 interface AttemptRecord extends BusinessDeliveryAttempt { actor: string; previewId: string; previewHash: string; requestHash: string; reference: string; facts: string[]; files: FrozenFile[]; quoteTerms: Record<string,string>; sender: BusinessDeliverySender; sourceFingerprint: string; frontMessageId?: string; lastCheckedBy?:string; lastCheckedAt?:string; }
 interface TargetPointer { accountId:string; kind:string; recordId:string; attemptId:string; }
+interface MessagePointer { accountId:string; attemptId:string; }
 interface ServerAccess { admin: boolean; }
 async function accountAccess(accountId:string,actor:string,access:ServerAccess) {
   const workflow=await get<LeadWorkflow>(`workflow:${accountId}`);
@@ -33,6 +34,9 @@ const openUrl = (id: string) => /^cnv_[a-z0-9]+$/.test(id) ? `https://app.fronta
 const fileHash = (value: Uint8Array) => createHash('sha256').update(value).digest('hex');
 const cleanName = (value: string) => value.replace(/[\\/\x00-\x1f]/g,'_').slice(0,180) || 'document.pdf';
 const senderDto = (s: BusinessDeliverySender):BusinessDeliverySender => ({frontId:s.frontId,channelId:s.channelId,senderEmail:s.senderEmail,signatureId:s.signatureId});
+// These exact IDs have already passed the account/attempt boundary. A denied
+// private read must not start a token-wide authorization hold for shared mail.
+const businessFrontRead=<T = Record<string,unknown>>(path:string)=>front<T>(path,'GET',undefined,{resourceScoped:true});
 /** Front's documented Core response uses draft_mode; older receipts expose is_draft. */
 function draftState(message:FrontMessage):boolean|undefined {
   const mode=message.draft_mode==='private' || message.draft_mode==='shared'?true:message.draft_mode===null?false:undefined;
@@ -43,6 +47,12 @@ function draftState(message:FrontMessage):boolean|undefined {
 function notBeforePreparation(preparedAt:string,sentSeconds:number):boolean {
   const preparedSeconds=Date.parse(preparedAt)/1000;
   return Number.isFinite(preparedSeconds) && Number.isFinite(sentSeconds) && Math.floor(sentSeconds)>=Math.floor(preparedSeconds);
+}
+/** Receipt time is business evidence, not the optimistic-lock version of a later edit. */
+export function quoteProjectionTimestamp(updatedAt:string):string {
+  const previous=Date.parse(updatedAt);
+  if(!Number.isFinite(previous))throw new Error('The current quote update version could not be verified');
+  return new Date(Math.max(Date.now(),previous+1)).toISOString();
 }
 async function sender(actor:string) {
   await enabledUser(actor);
@@ -69,7 +79,7 @@ async function thread(accountId:string,chosen?:string) {
     const url=new URL(cursor,'https://api2.frontapp.com');
     if(url.pathname!==`/conversations/${conversation.id}/messages` || seen.has(cursor))throw businessValidation('Conversation history could not be verified');
     seen.add(cursor);
-    const messages:{_results:FrontMessage[];_pagination?:{next?:string}}=await front(cursor);
+    const messages:{_results:FrontMessage[];_pagination?:{next?:string}}=await businessFrontRead(cursor);
     if(!Array.isArray(messages._results))throw businessValidation('Conversation recipients could not be verified');
     for(const message of messages._results)if(draftState(message)!==true)for(const r of message.recipients ?? [])if(['from','to','cc'].includes(r.role) && r.handle.includes('@'))handles.add(r.handle.trim().toLowerCase());
     cursor=messages._pagination?.next;
@@ -90,7 +100,7 @@ export function deliveryRecipients(to:unknown,cc:unknown) {
   return result;
 }
 function attemptDto(d:AttemptRecord):BusinessDeliveryAttempt {
-  return {id:d.id,requestId:d.requestId,accountId:d.accountId,kind:d.kind,recordId:d.recordId,state:d.state,from:d.from,to:d.to,cc:d.cc,conversationId:d.conversationId,frontDraftId:d.frontDraftId,frontUrl:d.frontUrl,messageUrl:d.messageUrl,preparedAt:d.preparedAt,sentAt:d.sentAt,failure:d.failure};
+  return {id:d.id,requestId:d.requestId,accountId:d.accountId,kind:d.kind,recordId:d.recordId,state:d.state,from:d.from,to:d.to,cc:d.cc,conversationId:d.conversationId,frontDraftId:d.frontDraftId,frontUrl:d.frontUrl,messageUrl:d.messageUrl,preparedAt:d.preparedAt,sentAt:d.sentAt,failure:d.failure,sentWithChanges:d.sentWithChanges};
 }
 /** Missing personal mailbox setup must not hide available sources or account history. */
 export async function businessDeliveryContext(input:{accountId:string},actor:string,access:ServerAccess={admin:false}):Promise<BusinessDeliveryContext> {
@@ -130,7 +140,7 @@ export async function previewBusinessDelivery(input:BusinessDeliverySelection,ac
   if(input.kind==='PACKAGE'){const proposal=await createBusinessProposalPdf({account:source.account,packageName:source.packageName!,requiredLines:source.requiredLines,quotes:source.quotes,reference,preparedAt:new Date().toISOString()});await add(`proposal:${input.recordId}`,proposal.filename,proposal.bytes);}
   for(const file of source.files)await add(file.id,file.name,await bytes(file.key,file.contentType),file.key,file.contentType);
   const body=`<h2>${htmlEscape(source.title)}</h2><p>${htmlEscape(source.account.name)}</p>${source.facts.map(f=>`<p>${htmlEscape(f)}</p>`).join('')}<p>${input.kind==='PACKAGE'?'Please review the attached insurance proposal and selected documents. Coverage is subject to the carrier’s terms and confirmation of binding.':'Please review the attached document.'}</p><p>Reference: ${reference}</p>`;
-  const preview:BusinessDeliveryPreview={id,previewId:id,previewHash:'',selection:{accountId:input.accountId,kind:input.kind,recordId:input.recordId,conversationId:selected.id,documentIds:input.documentIds ?? []},sender:identity.sender,conversationId:selected.id,conversationLabel:selected.label,subject:source.title,body,facts:source.facts,quotes:source.quotes,attachments:files.map(f=>({id:f.id,name:f.name,contentType:f.contentType,size:f.size,sha256:f.sha256})),warnings:['Nothing has been sent. Review every attachment and recipient in Front before sending.'],expiresAt:new Date(Date.now()+600_000).toISOString()};
+  const preview:BusinessDeliveryPreview={id,previewId:id,previewHash:'',selection:{accountId:input.accountId,kind:input.kind,recordId:input.recordId,conversationId:selected.id,documentIds:input.documentIds ?? []},sender:identity.sender,conversationId:selected.id,conversationLabel:selected.label,subject:source.title,body,facts:source.facts,quotes:source.quotes,attachments:files.map(f=>({id:f.id,name:f.name,contentType:f.contentType,size:f.size,sha256:f.sha256})),warnings:['Nothing has been sent. Review every attachment and recipient in Front before sending.',...(input.kind==='PACKAGE' && source.files.length===0?['No carrier quotation PDFs are selected. The proposal contains recorded terms only; review the carrier quotations before sending.']:[])],expiresAt:new Date(Date.now()+600_000).toISOString()};
   preview.previewHash=hash(canonical({actor,preview,sourceFingerprint:source.fingerprint}));
   const stored=row('BUSINESS_PREVIEW',id,{actor,preview,sourceFingerprint:source.fingerprint,files,reference,memberVersion:identity.member.version,allowedRecipients:selected.allowedRecipients,commercialVersion:source.commercial?.version} satisfies PreviewRecord,{accountId:input.accountId});
   await commit([put(stored),...(workflow?[check(workflow)]:[]),check(identity.member),...deliverySourceChecks(source),absent(`deleted-account:${input.accountId}`),activeTeamUserCheck(actor)]);
@@ -150,6 +160,48 @@ async function sentNeedsReview(id:string,failure:string) {
   if(['SENT','FAILED'].includes(current.data.state))return attemptDto(current.data);
   try{return attemptDto((await updateAttempt(current,{state:'UNKNOWN',failure})).data);}catch(error){
     if(conflict(error)){const latest=await get<AttemptRecord>(id);if(latest && ['SENT','FAILED'].includes(latest.data.state))return attemptDto(latest.data);}
+    throw error;
+  }
+}
+function originalSender(message:FrontMessage,d:AttemptRecord):boolean {
+  const from=(message.recipients ?? []).filter(r=>r.role==='from');
+  return message.author?.id===d.sender.frontId && from.length===1 && from[0].handle.toLowerCase()===d.from;
+}
+/** Resolve only the stored conversation and the returned message's conversation. */
+async function knownSentConversation(message:FrontMessage,d:AttemptRecord) {
+  const actualId=messageConversation(message);
+  if(message.id!==d.frontDraftId || !actualId || !/^cnv_[a-z0-9]+$/.test(d.conversationId) || !originalSender(message,d) || message.is_inbound!==false || draftState(message)!==false || message.error_type || !notBeforePreparation(d.preparedAt,message.created_at))return;
+  const preview=await get<PreviewRecord>(d.previewId);
+  if(!preview || preview.accountId!==d.accountId || preview.data.actor!==d.actor || preview.data.preview.selection.accountId!==d.accountId)return;
+  const known=await businessFrontRead<{id:string}>(`/conversations/${d.conversationId}`);
+  const actual=actualId===d.conversationId?known:await businessFrontRead<{id:string}>(`/conversations/${actualId}`);
+  if(!/^cnv_[a-z0-9]+$/.test(known.id) || known.id!==actual.id)return;
+  const checks:Row<unknown>[]=[preview];
+  for(const id of new Set([d.conversationId,actualId,known.id])) {
+    const link=await get<{accountId:string;purpose?:string}>(`front-link:${id}`);
+    if(link && (link.data.accountId!==d.accountId || link.data.purpose==='CARRIER'))return;
+    if(link)checks.push(link);
+  }
+  if(preview.data.preview.conversationId!=='NEW') {
+    const permitted=await permittedConversation(preview.data.preview.conversationId),link=await get<{accountId:string;purpose?:string}>(`front-link:${known.id}`);
+    if(permitted.id!==known.id || !link || link.data.accountId!==d.accountId || link.data.purpose!=='PROSPECT')return;
+    if(!checks.some(c=>c.id===link.id))checks.push(link);
+  }
+  return {id:known.id,checks};
+}
+async function messagePointer(d:AttemptRecord,messageId:string) {
+  const id=`business-message:${messageId}`,previous=await get<MessagePointer>(id);
+  if(previous && (previous.data.attemptId!==d.id || previous.data.accountId!==d.accountId))throw new Error('This Front message is already recorded for another draft attempt; review its history');
+  return {previous,record:row('BUSINESS_MESSAGE',id,{accountId:d.accountId,attemptId:d.id} satisfies MessagePointer,{accountId:d.accountId,previous})};
+}
+async function recordChangedSend(attemptId:string,message:FrontMessage,originalKnownId:string|undefined,conversation:{id:string;checks:Row<unknown>[]}) {
+  const current=await get<AttemptRecord>(attemptId);
+  if(!current)throw new Error('This draft attempt is unavailable');
+  if(['SENT','FAILED'].includes(current.data.state))return attemptDto(current.data);
+  if(!originalKnownId || originalKnownId!==message.id || current.data.frontDraftId!==message.id)return sentNeedsReview(attemptId,'The sent message differs from the preview and was not a previously known draft. Verify the exact original draft before recording its outcome.');
+  const pointer=await messagePointer(current.data,message.id),next=row('BUSINESS_DELIVERY',current.id,{...current.data,state:'SENT' as const,sentWithChanges:true,sentAt:new Date(message.created_at*1000).toISOString(),frontMessageId:message.id,conversationId:conversation.id,frontUrl:openUrl(conversation.id),messageUrl:openUrl(conversation.id),failure:'Sent with changes in Front. Recipients shown are the originally prepared To/CC; open Front for the actual recipients and content. Current quotes were not marked presented.'},{accountId:current.accountId,previous:current});
+  try{await commit([put(next,current),put(pointer.record,pointer.previous),...conversation.checks.map(check)]);return attemptDto(next.data);}catch(error){
+    if(conflict(error)){const latest=await get<AttemptRecord>(attemptId);if(latest && ['SENT','FAILED'].includes(latest.data.state))return attemptDto(latest.data);}
     throw error;
   }
 }
@@ -239,6 +291,7 @@ export async function reconcileBusinessDraft(input:ReconcileBusinessDraftInput,a
   await deliveryAccount(input.accountId);await enabledUser(actor);
   const attempt=await get<AttemptRecord>(input.attemptId);
   if(!attempt || attempt.accountId!==input.accountId || attempt.data.actor!==actor && !access.admin)throw businessValidation('This draft attempt is unavailable');
+  const originalKnownId=attempt.data.frontDraftId;
   let current=attempt,d=current.data;
   if(access.admin && actor!==d.actor){
     // Verify the recorded original mailbox directly. An offboarded CRM user is
@@ -251,7 +304,7 @@ export async function reconcileBusinessDraft(input:ReconcileBusinessDraftInput,a
     if(!/^msg_[a-z0-9]{1,124}$/.test(input.recoveryMessageId))throw businessValidation('Enter the exact Front message or draft ID beginning msg_');
     if(['SENT','FAILED'].includes(d.state) && d.frontDraftId!==input.recoveryMessageId)throw new Error('A completed attempt cannot be replaced with another message');
     if(actor===d.actor){const identity=await sender(actor);if(canonical(identity.sender)!==canonical(d.sender))throw businessValidation('Your personal Front mailbox changed. Restore its verified connection before recovery');}
-    const message=await front<FrontMessage>(`/messages/${input.recoveryMessageId}`),conversationId=messageConversation(message),text=plainBody(message);
+    const message=await businessFrontRead<FrontMessage>(`/messages/${input.recoveryMessageId}`),conversationId=messageConversation(message),text=plainBody(message);
     const link=conversationId?await get<{accountId:string;purpose?:string}>(`front-link:${conversationId}`):undefined;
     if(message.id!==input.recoveryMessageId || !conversationId || message.author?.id!==d.sender.frontId || message.is_inbound || draftState(message)===undefined || !notBeforePreparation(d.preparedAt,message.created_at) || !verifiedRecipients(message,d) || !text.includes(d.reference) || !d.facts.every(f=>text.includes(f)) || link && (link.data.accountId!==d.accountId || link.data.purpose==='CARRIER') || !await verifiedFiles(message,d))throw businessValidation('That Front message does not match this prepared attempt');
     const preview=await get<PreviewRecord>(d.previewId);
@@ -260,20 +313,22 @@ export async function reconcileBusinessDraft(input:ReconcileBusinessDraftInput,a
   }
   if(d.frontDraftId){
     let message:FrontMessage;
-    try{message=await front(`/messages/${d.frontDraftId}`);}catch(error){if(error instanceof ProviderError && error.status===404){if(['SENT','FAILED'].includes(d.state))return attemptDto(d);return attemptDto((await updateAttempt(current,{state:'UNKNOWN',failure:'This Front draft is no longer available at its stored ID. It may have been sent or deleted; inspect the conversation before preparing another attempt.'})).data);}throw error;}
-    if(message.error_type && d.frontDraftId===message.id && message.author?.id===d.sender.frontId && verifiedRecipients(message,d) && plainBody(message).includes(d.reference))return attemptDto((await updateAttempt(current,{state:'FAILED',failure:'Front reported this message failed. Check recipients before preparing a new attempt.'})).data);
+    try{message=await businessFrontRead(`/messages/${d.frontDraftId}`);}catch(error){if(error instanceof ProviderError && error.status===404){if(['SENT','FAILED'].includes(d.state))return attemptDto(d);return attemptDto((await updateAttempt(current,{state:'UNKNOWN',failure:'This Front draft is no longer available at its stored ID. It may have been sent or deleted; inspect the conversation before preparing another attempt.'})).data);}throw error;}
+    if(message.error_type && originalSender(message,d) && (d.sentWithChanges && d.frontMessageId===message.id || d.frontDraftId===message.id && verifiedRecipients(message,d) && plainBody(message).includes(d.reference)))return attemptDto((await updateAttempt(current,{state:'FAILED',failure:'Front reported this message failed. Check recipients before preparing a new attempt.'})).data);
     if(draftState(message)===true)return attemptDto((await captureDraft(current,message)).data);
     if(draftState(message)===false && !message.is_inbound){
       // Once Front says the known draft was sent, it must no longer unlock a
       // replacement as a resolved DRAFT, including while receipt checks retry.
       await sentNeedsReview(attempt.id,'Front records this message as sent. Verification against the prepared preview is pending; check this attempt before preparing another draft.');
+      const conversation=await knownSentConversation(message,d);
+      if(!conversation)return sentNeedsReview(attempt.id,'Front records this message as sent, but its original sender or account conversation could not be verified. No current quote presentation was recorded. Review the linked Front message.');
       await applyBusinessAttempt({id:`comm:front:${message.id}`,provider:'front',providerId:message.id,accountId:d.accountId,conversationId:messageConversation(message),channel:'EMAIL',direction:'OUTBOUND',at:new Date(message.created_at*1000).toISOString(),from:message.recipients?.find(r=>r.role==='from')?.handle,to:message.recipients?.filter(r=>r.role==='to').map(r=>r.handle),actorId:message.author?.id,text:message.text ?? plainBody(message),attachments:message.attachments,frontDraft:false,status:'SENT',classification:'SUBSTANTIVE',version:1});
-      return sentNeedsReview(attempt.id,'Front records this message as sent, but it differs from the prepared preview. No current quote presentation was recorded. Review the sent message before preparing another draft.');
+      return recordChangedSend(attempt.id,message,originalKnownId,conversation);
     }
   }
   if(d.conversationId!=='NEW'){
     // Only this known account-bound conversation is searched. No private inbox scan.
-    const drafts=await front<{_results:FrontMessage[]}>(`/conversations/${d.conversationId}/drafts`);
+    const drafts=await businessFrontRead<{_results:FrontMessage[]}>(`/conversations/${d.conversationId}/drafts`);
     const matches=drafts._results?.filter(m=>draftState(m)===true && m.author?.id===d.sender.frontId && (m.text ?? m.body ?? '').includes(d.reference));
     if(matches?.length===1)return attemptDto((await captureDraft(current,matches[0])).data);
   }
@@ -282,16 +337,18 @@ export async function reconcileBusinessDraft(input:ReconcileBusinessDraftInput,a
 }
 export async function applyBusinessAttempt(comm:Communication) {
   if(!comm.accountId || comm.provider!=='front' || comm.direction!=='OUTBOUND' || comm.frontDraft!==false)return;
+  const seen=new Set<string>(),pointer=await get<MessagePointer>(`business-message:${comm.providerId}`);
+  if(pointer && pointer.data.accountId===comm.accountId){const candidate=await get<AttemptRecord>(pointer.data.attemptId);if(candidate && candidate.accountId===comm.accountId && candidate.data.frontMessageId===comm.providerId){await applyAttempt(candidate,comm,currentMessage(comm.text));seen.add(candidate.id);}}
   const text=currentMessage(comm.text),references=[...new Set(text.match(/HOA-[A-F0-9]{12}/g) ?? [])].slice(0,10);
-  for(const reference of references){const index=await get<{attemptId:string}>(`business-reference:${reference}`);if(!index)continue;const candidate=await get<AttemptRecord>(index.data.attemptId);if(candidate && candidate.accountId===comm.accountId)await applyAttempt(candidate,comm,text);}
+  for(const reference of references){const index=await get<{attemptId:string}>(`business-reference:${reference}`);if(!index || seen.has(index.data.attemptId))continue;const candidate=await get<AttemptRecord>(index.data.attemptId);if(candidate && candidate.accountId===comm.accountId)await applyAttempt(candidate,comm,text);}
 }
 async function applyAttempt(candidate:Row<AttemptRecord>,comm:Communication,text:string) {
   const d=candidate.data;
   if(comm.status==='FAILED'){
-    if(d.frontMessageId===comm.providerId)await updateAttempt(candidate,{state:'FAILED',failure:'Front reported this sent message failed. Check recipients before preparing a new attempt.'});return;
+    if(d.frontMessageId===comm.providerId && comm.actorId===d.sender.frontId && comm.from?.toLowerCase()===d.from)await updateAttempt(candidate,{state:'FAILED',failure:'Front reported this sent message failed. Check recipients before preparing a new attempt.'});return;
   }
   if(d.state==='SENT' || d.state==='FAILED' || contactProgress(comm)!=='CONTACT' || !notBeforePreparation(d.preparedAt,Date.parse(comm.at)/1000) || !d.facts.every(f=>text.includes(f)))return;
-  const actual=await front<FrontMessage>(`/messages/${comm.providerId}`),cnv=messageConversation(actual);
+  const actual=await businessFrontRead<FrontMessage>(`/messages/${comm.providerId}`),cnv=messageConversation(actual);
   if(draftState(actual)!==false || actual.is_inbound || actual.author?.id!==d.sender.frontId || !cnv)return;
   if(!verifiedRecipients(actual,d) || !plainBody(actual).includes(d.reference) || !d.facts.every(f=>plainBody(actual).includes(f)) || !await verifiedFiles(actual,d))return;
   if(actual.error_type){await updateAttempt(candidate,{state:'FAILED',failure:'Front reported this message failed. Check recipients before preparing a new attempt.'});return;}
@@ -305,10 +362,10 @@ async function applyAttempt(candidate:Row<AttemptRecord>,comm:Communication,text
   if(d.kind==='PACKAGE')for(const [id,terms] of Object.entries(d.quoteTerms)){
     const result=await client.models.Quote.get({id}),q=result.data;
     if(result.errors?.length || !q || q.accountId!==d.accountId || packageTerms(q)!==terms || !['QUOTED','PRESENTED'].includes(q.status)){changed=true;continue;}
-    writes.push({Update:{TableName:process.env.QUOTE_TABLE,Key:{id},UpdateExpression:'SET presentedAt = if_not_exists(presentedAt, :at), #status = :presented, updatedAt = :at, lastWriteBy = :actor',ConditionExpression:'updatedAt = :old AND (#status = :quoted OR #status = :presented)',ExpressionAttributeNames:{'#status':'status'},ExpressionAttributeValues:{':at':comm.at,':old':q.updatedAt,':actor':'communication-delivery',':quoted':'QUOTED',':presented':'PRESENTED'}}});
+    writes.push({Update:{TableName:process.env.QUOTE_TABLE,Key:{id},UpdateExpression:'SET presentedAt = if_not_exists(presentedAt, :at), #status = :presented, updatedAt = :processed, lastWriteBy = :actor',ConditionExpression:'updatedAt = :old AND (#status = :quoted OR #status = :presented)',ExpressionAttributeNames:{'#status':'status'},ExpressionAttributeValues:{':at':comm.at,':processed':quoteProjectionTimestamp(q.updatedAt),':old':q.updatedAt,':actor':'communication-delivery',':quoted':'QUOTED',':presented':'PRESENTED'}}});
   }
   if(changed)writes.length=0;
   // Individual send-attempt history is the evidence; legacy deliveredAt is not receipt.
-  const next=row('BUSINESS_DELIVERY',candidate.id,{...d,state:'SENT' as const,sentAt:comm.at,frontMessageId:comm.providerId,conversationId:cnv,frontUrl:openUrl(cnv),messageUrl:openUrl(cnv),failure:changed?'Sent with frozen earlier terms; changed current quotes were not marked presented.':undefined},{accountId:d.accountId,previous:candidate});
-  await commit([put(next,candidate),...(writes.length && commercial?[check(commercial)]:[]),...writes]);
+  const pointer=await messagePointer(d,comm.providerId),next=row('BUSINESS_DELIVERY',candidate.id,{...d,state:'SENT' as const,sentWithChanges:false,sentAt:comm.at,frontMessageId:comm.providerId,conversationId:cnv,frontUrl:openUrl(cnv),messageUrl:openUrl(cnv),failure:changed?'Sent with frozen earlier terms; changed current quotes were not marked presented.':undefined},{accountId:d.accountId,previous:candidate});
+  await commit([put(next,candidate),put(pointer.record,pointer.previous),...(writes.length && commercial?[check(commercial)]:[]),...writes]);
 }

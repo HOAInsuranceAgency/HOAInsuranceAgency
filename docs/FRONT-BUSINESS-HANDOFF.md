@@ -18,7 +18,7 @@ Combined attachments must not exceed 25 MB. Previews expire after 10 minutes. Ch
 
 ## History and recovery
 
-Prepared means Front returned a verified draft. Sent means Front recorded an outbound message; it does not confirm receipt or reading. A later failure remains visible. Resending valid PRESENTED offers records another attempt and preserves the first presentation timestamp.
+Prepared means Front returned a verified draft. Sent means Front recorded an outbound message; it does not confirm receipt or reading. A later failure remains visible. A known draft sent after material edits in Front is recorded as **Sent with changes**; the CRM labels its recipients as the original preparation, directs the teammate to Front for actual details, and does not mark the current quote presented. An uncertain dispatch or unverifiable sender/account remains held for review. Resending valid PRESENTED offers records another attempt and preserves the first presentation timestamp.
 
 The CRM records its intent before calling Front. Repeating the same request ID never creates another draft. An uncertain POST is held for review; it is never blindly retried with another ID. Check Front status to reconcile a known draft or known linked conversation. For an uncertain new conversation whose response was lost, find the exact draft/message in Front and provide its `msg_…` ID or direct message link. The server verifies the original actor, From, recipients, reference, public facts and attachment hashes before adopting it. A conversation-only link is insufficient. If no matching draft can be found, keep the attempt in Needs review rather than sending a duplicate.
 

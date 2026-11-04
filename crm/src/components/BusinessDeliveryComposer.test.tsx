@@ -294,6 +294,72 @@ it("shows failure alongside sent history and rejects unsafe Front links", async 
   expect(region).not.toHaveTextContent("Delivered");
 });
 
+it("qualifies original recipients and quote status for a message sent with changes", async () => {
+  const base = h.request.getMockImplementation()!;
+  h.request.mockImplementation((op, input) => op === "historyBusinessDeliveries" ? Promise.resolve({ items: [attempt({ state: "SENT", sentWithChanges: true, cc: ["treasurer@example.com"] })] }) : base(op, input));
+  await mount();
+  const history = screen.getByRole("region", { name: "Front email history" });
+  expect(await within(history).findByText("Sent with changes", { exact: true })).toBeInTheDocument();
+  expect(history).toHaveTextContent("Originally prepared for To: client@example.com");
+  expect(history).toHaveTextContent("Originally prepared CC: treasurer@example.com");
+  expect(history).toHaveTextContent("Open Front to verify the actual recipients, message and attachments");
+  expect(history).toHaveTextContent("this send did not mark current quotes as presented");
+  expect(within(history).queryByText(/^From .* · To /)).toBeNull();
+  expect(within(history).getByRole("link", { name: "Open in Front ↗" })).toBeInTheDocument();
+});
+
+it("upgrades an active Sent result to Sent with changes without losing verified evidence to stale rows", async () => {
+  const base = h.request.getMockImplementation()!;
+  let rows: BusinessDeliveryAttempt[] = [];
+  h.request.mockImplementation((op, input) => {
+    if (op === "historyBusinessDeliveries") return Promise.resolve({ items: rows });
+    if (op === "reconcileBusinessDraft") return Promise.resolve({ attempt: attempt({ state: "SENT", sentWithChanges: false, frontUrl: undefined, messageUrl: undefined, sentAt: undefined }) });
+    return base(op, input);
+  });
+  await mount(); recipients(); await review(); acknowledge();
+  fireEvent.click(screen.getByRole("button", { name: "Prepare Front draft" }));
+  const result = await screen.findByRole("region", { name: "Prepared draft result" });
+  const refresh = async () => { fireEvent.click(within(screen.getByRole("region", { name: "Front email history" })).getByRole("button", { name: "Refresh history" })); await act(async () => {}); };
+  rows = [attempt({ state: "SENT", sentAt: "2026-11-01T15:01:00Z" })]; await refresh();
+  expect(await within(result).findByText("Sent", { exact: true })).toBeInTheDocument();
+  rows = [attempt({ state: "SENT", sentWithChanges: true, sentAt: "2026-11-01T15:01:00Z", messageUrl: "https://app.frontapp.com/open/msg_actual" })]; await refresh();
+  expect(await within(result).findByText("Sent with changes", { exact: true })).toBeInTheDocument();
+  rows = [attempt({ state: "SENT", sentWithChanges: false, frontUrl: undefined, messageUrl: undefined, sentAt: undefined })]; await refresh();
+  expect(within(result).getByText("Sent with changes", { exact: true })).toBeInTheDocument();
+  expect(within(result).getByRole("link", { name: "Open in Front ↗" })).toHaveAttribute("href", "https://app.frontapp.com/open/msg_actual");
+  expect(result).toHaveTextContent("Originally prepared for To: client@example.com");
+  fireEvent.click(within(result).getByRole("button", { name: "Check Front status" })); await act(async () => {});
+  expect(within(result).getByText("Sent with changes", { exact: true })).toBeInTheDocument();
+  expect(within(result).getByRole("link", { name: "Open in Front ↗" })).toHaveAttribute("href", "https://app.frontapp.com/open/msg_actual");
+  expect(screen.getByRole("button", { name: "Prepare another email" })).toBeEnabled();
+  rows = [attempt({ state: "FAILED", sentWithChanges: true, failure: "Front reported a delivery failure" })]; await refresh();
+  expect(await within(result).findByText("Failed", { exact: true })).toBeInTheDocument();
+  expect(result).toHaveTextContent("Originally prepared for To: client@example.com");
+  expect(result).toHaveTextContent("actual recipients, message and attachments");
+  rows = [attempt({ state: "SENT", sentWithChanges: false })]; await refresh();
+  expect(within(result).getByText("Failed", { exact: true })).toBeInTheDocument();
+  expect(result).toHaveTextContent("Front reported a delivery failure");
+});
+
+it("keeps trusted sent-with-changes responses qualified through stale passive history refreshes", async () => {
+  const base = h.request.getMockImplementation()!;
+  let rows = [attempt({ state: "SENT", sentWithChanges: false })];
+  h.request.mockImplementation((op, input) => {
+    if (op === "historyBusinessDeliveries") return Promise.resolve({ items: rows });
+    if (op === "reconcileBusinessDraft") return Promise.resolve({ attempt: attempt({ state: "SENT", sentWithChanges: true, messageUrl: "https://app.frontapp.com/open/msg_verified" }) });
+    return base(op, input);
+  });
+  await mount();
+  const history = screen.getByRole("region", { name: "Front email history" });
+  fireEvent.click(await within(history).findByRole("button", { name: "Check Front status" }));
+  expect(await within(history).findByText("Sent with changes", { exact: true })).toBeInTheDocument();
+  rows = [attempt({ state: "DRAFT", sentWithChanges: false, frontUrl: undefined })];
+  fireEvent.click(within(history).getByRole("button", { name: "Refresh history" })); await act(async () => {});
+  expect(within(history).getByText("Sent with changes", { exact: true })).toBeInTheDocument();
+  expect(history).toHaveTextContent("Originally prepared for To: client@example.com");
+  expect(within(history).getByRole("link", { name: "Open in Front ↗" })).toHaveAttribute("href", "https://app.frontapp.com/open/msg_verified");
+});
+
 it("refreshes the active prepared result to Sent/Failed without stale history downgrades", async () => {
   const base = h.request.getMockImplementation()!;
   let rows: BusinessDeliveryAttempt[] = [];

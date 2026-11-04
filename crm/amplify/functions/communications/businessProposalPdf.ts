@@ -121,12 +121,12 @@ export async function createBusinessProposalPdf(input: BusinessProposalInput) {
     gap(9); rule();
   }
   room(150); line(`Recorded premium subtotal: ${dollars(subtotal / 100)}`, 13, true); gap(8);
-  line('Review the attached carrier quotations for full terms, taxes, fees, exclusions, conditions, and payment requirements. Values not recorded here are not represented as included coverage.', 9, false, true);
+  line('Review the carrier quotations for full terms, taxes, fees, exclusions, conditions, and payment requirements. Values not recorded here are not represented as included coverage.', 9, false, true);
   gap(5); line('This proposal and its email do not bind insurance. Client authorization and carrier confirmation remain separate steps.', 9, false, true);
   const pages = pdf.getPages();
   pages.forEach((item, index) => {
     item.drawLine({ start: { x: MARGIN, y: 45 }, end: { x: WIDTH - MARGIN, y: 45 }, thickness: 0.5, color: rgb(0.84, 0.87, 0.89) });
-    item.drawText('Proposal snapshot - review with attached carrier quotations', { x: MARGIN, y: 31, font: regular, size: 8, color: MUTED });
+    item.drawText('Proposal snapshot - review with carrier quotations', { x: MARGIN, y: 31, font: regular, size: 8, color: MUTED });
     item.drawText(`${index + 1} / ${pages.length}`, { x: WIDTH - MARGIN - 35, y: 31, font: regular, size: 8, color: MUTED });
   });
   const filename = `Insurance proposal - ${accountName.replace(/[^a-zA-Z0-9 _-]/g, '').slice(0, 70).trim() || 'account'}.pdf`;
