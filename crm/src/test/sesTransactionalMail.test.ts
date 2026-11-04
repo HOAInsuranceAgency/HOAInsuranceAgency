@@ -42,7 +42,7 @@ function harness(options: Options = {}) {
         const receipt = i.TransactItems[1].Update; const rv = receipt.ExpressionAttributeValues; const prior = rows.get(receipt.Key.pk);
         if (row.state !== "SENDING" || row.provider !== v[":provider"] || (prior?.provider && prior.provider !== rv[":provider"]) || (prior?.operationHash && prior.operationHash !== rv[":operationHash"]) || (prior?.mailKind && prior.mailKind !== rv[":mailKind"])) throw conditional();
         Object.assign(row, { state: "ACCEPTED", providerId: v[":id"] });
-        rows.set(receipt.Key.pk, { ...prior, kind: "RECEIPT", provider: rv[":provider"], providerId: rv[":id"], operationKey: rv[":operation"], operationHash: rv[":operationHash"], environment: rv[":environment"], mailKind: rv[":mailKind"], status: "ACCEPTED" });
+        rows.set(receipt.Key.pk, { ...prior, kind: "RECEIPT", provider: rv[":provider"], providerId: rv[":id"], operationKey: rv[":operation"], operationHash: rv[":operationHash"], environment: rv[":environment"], mailKind: rv[":mailKind"], status: receipt.UpdateExpression.includes("#status = if_not_exists(#status, :accepted)") ? prior?.status ?? "ACCEPTED" : "ACCEPTED" });
       }
       return {};
     }
@@ -58,7 +58,7 @@ function harness(options: Options = {}) {
     if (options.sesError) throw options.sesError;
     if (options.earlyFeedback) {
       const operationHash = c.input.EmailTags.find((t: any) => t.Name === "HOAOperation").Value;
-      rows.set("RECEIPT#ses#ses-receipt-12345", { kind: "RECEIPT", provider: options.wrongEarlyProvider ? "resend" : "ses", environment: "main", operationHash, mailKind: options.wrongEarlyKind ? "invoice" : c.input.EmailTags.find((t: any) => t.Name === "HOAMailKind").Value, deliveredAt: "2026-11-04T02:00:00Z" });
+      rows.set("RECEIPT#ses#ses-receipt-12345", { kind: "RECEIPT", provider: options.wrongEarlyProvider ? "resend" : "ses", environment: "main", operationHash, mailKind: options.wrongEarlyKind ? "invoice" : c.input.EmailTags.find((t: any) => t.Name === "HOAMailKind").Value, status: "DELIVERED", deliveredAt: "2026-11-04T02:00:00Z" });
     }
     return options.missingReceipt ? {} : { MessageId: "ses-receipt-12345" };
   });
@@ -148,8 +148,9 @@ describe("provider pinning and uncertainty", () => {
   });
   it("merges feedback arriving before send acknowledgement without erasing delivered facts", async () => {
     const h = harness({ earlyFeedback: true }); await new TransactionalMailClient("login", h.deps).send(command());
-    const row = h.rows.get("RECEIPT#ses#ses-receipt-12345"); expect(row).toMatchObject({ deliveredAt: "2026-11-04T02:00:00Z", provider: "ses", environment: "main" });
+    const row = h.rows.get("RECEIPT#ses#ses-receipt-12345"); expect(row).toMatchObject({ deliveredAt: "2026-11-04T02:00:00Z", status: "DELIVERED", provider: "ses", environment: "main" });
     expect(row.operationHash).toBe(hash(row.operationKey));
+    expect(h.rows.get(row.operationKey)).toMatchObject({ state: "ACCEPTED", provider: "ses", providerId: "ses-receipt-12345" });
     expect(h.transactions[1].TransactItems[1].Update.UpdateExpression).not.toMatch(/delivered|bounced|feedback/i);
   });
   it("holds an incompatible early receipt instead of rebinding another provider's record", async () => {
@@ -169,6 +170,7 @@ describe("SES envelope fidelity and independent application caps", () => {
     const body = payload(input, { subject: "HOA — résumé", replyTo: "insurance@protectmyhoa.com", attachments: [{ filename: "fixture.pdf", contentType: "application/pdf", content: pdf }, { filename: "fixture.xlsx", contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", content: xlsx }] });
     const key = `OP#hoa/main/test/${"a".repeat(64)}`; const actual = sesCommand(body, "hoa-transactional-main", "main", "test", key).input;
     expect(actual.Destination).toEqual(input.Destination); expect(actual.FromEmailAddress).toBe(input.FromEmailAddress); expect(actual.ReplyToAddresses).toEqual(["insurance@protectmyhoa.com"]);
+    expect(actual.FromEmailAddressIdentityArn).toBe("arn:aws:ses:us-east-1:917680434255:identity/protectmyhoa.com");
     expect(actual.Content?.Simple?.Subject).toEqual({ Data: "HOA — résumé", Charset: "UTF-8" }); expect(actual.Content?.Simple?.Body?.Html?.Data).toBe("<p>Synthetic only</p>");
     expect(actual.Content?.Simple?.Attachments?.map(x => Buffer.from(x.RawContent!))).toEqual([pdf, xlsx]);
     expect(actual.Content?.Simple?.Attachments?.every(x => x.ContentTransferEncoding === "BASE64")).toBe(true);
