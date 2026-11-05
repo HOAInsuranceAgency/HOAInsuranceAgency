@@ -29,6 +29,7 @@
   },
   "devDependencies": {
     "@astrojs/check": "^0.9.10",
+    "@astrojs/compiler": "2.13.1",
     "@sentry/vite-plugin": "^11.10.0",
     "@types/google.maps": "^3.58.1",
     "@types/react": "~18.3.27",
