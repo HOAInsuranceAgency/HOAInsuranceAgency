@@ -268,7 +268,7 @@ function CertificatesTabContent({
         <>
           <div className="toolbar">
             <div className="grow" />
-            <Button variant="primary"  disabled={saving} onClick={() => setShowForm(!showForm)}>
+            <Button variant="primary"  disabled={saving} onClick={() => { if (showForm) reset(); setShowForm(!showForm); }}>
               {showForm ? "Cancel" : "+ New certificate"}
             </Button>
           </div>

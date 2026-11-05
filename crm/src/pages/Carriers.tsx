@@ -50,7 +50,7 @@ export default function Carriers() {
   // Persistent: a successful create navigates away, so what this is really
   // for is the failure that used to be swallowed entirely.
   const saveStatus = useSaveStatus();
-  const { form, setF, markSaved } = useFormState(
+  const { form, setF, markSaved, reset } = useFormState(
     { name: "", appointed: true },
     { onEdit: saveStatus.markDirty }
   );
@@ -152,7 +152,7 @@ export default function Carriers() {
         </div>
         <div className="carriers-header-actions">
 
-          <Button variant="primary"  disabled={saveStatus.busy} onClick={() => setShowForm(!showForm)} aria-expanded={showForm} aria-controls="add-carrier-form">
+          <Button variant="primary"  disabled={saveStatus.busy} onClick={() => { if (showForm) reset({ name: "", appointed: true }); setShowForm(!showForm); }} aria-expanded={showForm} aria-controls="add-carrier-form">
             {showForm ? "Cancel" : "+ Add carrier"}
           </Button>
         </div>

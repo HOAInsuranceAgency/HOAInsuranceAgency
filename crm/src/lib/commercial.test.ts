@@ -4,6 +4,13 @@ const request = vi.hoisted(() => vi.fn());
 vi.mock('./communications', () => ({ communicationRequest: request }));
 import { loadCommercial, useCommercial } from './commercial';
 beforeEach(() => { request.mockReset(); });
+it('reuses a cycle roster for later bounded batches without rereading the team', async () => {
+  const team = [{ userId: 'sales', name: 'Sales', salesperson: true }];
+  request.mockImplementation(async (_operation, input) => ({ items: input.accountIds.map((accountId: string) => ({ accountId })) }));
+  const result = await loadCommercial(['a', 'b'], ['b'], team);
+  expect(result.team).toBe(team);
+  expect(request).toHaveBeenCalledExactlyOnceWith('commercialTable', { accountIds: ['a', 'b'], snoozeAccountIds: ['b'] });
+});
 it('clears cached commercial details after an authorization failure', async () => {
   request.mockImplementation(async (operation, input) => operation === 'team' ? { team: [] } : { items: input.accountIds.map((accountId: string) => ({ accountId, salespersonId: 'a' })) });
   const { result } = renderHook(() => useCommercial(['a']));

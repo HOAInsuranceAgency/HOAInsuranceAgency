@@ -14,6 +14,15 @@ and BroadcastChannel carry invalidation metadata within the same user/role scope
 Readers retain their last authorized snapshot during ordinary network failures.
 Access-denied responses clear data immediately, including during an edit.
 
+The leads/clients list keeps complete-book filters, sorting, counts, and exports.
+Its automatic refresh uses a retained cursor cycle: each turn reads at most one
+100-row page per model and one 25-account commercial batch. Bursts coalesce into
+the active cycle; another completed-book cycle cannot start for 60 seconds.
+The prior complete snapshot stays visible and downloads wait until the new one
+is complete. Edits or writes discard a partial candidate and restart after the
+lock releases. Initial route loads and explicit error recovery still read the
+complete authorized list.
+
 ## Adding a reader
 
 Opt pure reads into `useAsyncResource(fetcher, deps, { live: true })`. Background

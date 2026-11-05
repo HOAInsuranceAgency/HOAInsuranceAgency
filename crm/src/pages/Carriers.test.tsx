@@ -363,6 +363,21 @@ describe("adding a carrier", () => {
   });
 });
 
+it("releases cancelled carrier drafts and applies deferred live lists", async () => {
+  const user = userEvent.setup(); await renderPage();
+  await user.click(screen.getByRole("button", {name:"+ Add carrier"}));
+  await user.type(screen.getByRole("textbox", {name:"Carrier name *"}), "Unsaved market");
+  models.Carrier.list.mockResolvedValue({data:[{...CARRIERS[0],name:"Updated Atlantic"},...CARRIERS.slice(1)],nextToken:null});
+  await invalidateLiveUpdates();
+  expect(models.Carrier.list).toHaveBeenCalledTimes(1);
+  expect(screen.getByRole("textbox", {name:"Carrier name *"})).toHaveValue("Unsaved market");
+  await user.click(screen.getByRole("button", {name:"Cancel"}));
+  expect(await screen.findByRole("link", {name:"Updated Atlantic"})).toBeVisible();
+  expect(models.Carrier.list).toHaveBeenCalledTimes(2);
+  await user.click(screen.getByRole("button", {name:"+ Add carrier"}));
+  expect(screen.getByRole("textbox", {name:"Carrier name *"})).toHaveValue("");
+});
+
 describe("the appetite finder", () => {
   it("retains the risk while refresh and retry withhold stale appetite results", async () => {
     const user = userEvent.setup();

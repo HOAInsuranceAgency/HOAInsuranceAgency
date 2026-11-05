@@ -315,7 +315,9 @@ function ActionForm({
   title: string;
   submit: () => Promise<unknown>;
   children: ReactNode;
-  onDone: () => Promise<void>;
+  // A callback that resets visible fields must return that acknowledged draft.
+  // Otherwise keep the submitted baseline, preserving edits made while saving.
+  onDone: () => Promise<void | { savedDraft: unknown }>;
   button?: string;
   disabled?: boolean;
   draft?: unknown;
@@ -338,8 +340,8 @@ function ActionForm({
     const submitted = serialized;
     try {
       await submit();
-      await onDone();
-      baseline.current = submitted;
+      const completed = await onDone();
+      baseline.current = completed ? JSON.stringify(completed.savedDraft) : submitted;
       setSaved(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not save.');
@@ -1854,7 +1856,7 @@ function Payroll({ data, refresh }: { data: CommissionOverview; refresh: () => P
       </p>
       <ActionForm
         title="Approve a producer payroll batch"
-      draft={{ producerId, cutoff, payDate, requestId }}
+      draft={{ producerId, cutoff, payDate }}
         button="Approve batch"
         onDone={async () => {
           setRequest(crypto.randomUUID());
@@ -2041,14 +2043,16 @@ function LegacyPolicies({
     [evidence, setEvidence] = useState('');
   const options = resource.data?.data ?? [],
     selected = options.find((p) => p.id === policyId);
+  const draft = { policyId, producerId, boundOn, transaction, evidence, premium, agencyRate, effectiveDate, expirationDate };
   return (
     <ActionForm
       title="Add an existing policy to commission tracking"
-      draft={{ policyId, producerId, boundOn, transaction, evidence, premium, agencyRate, effectiveDate, expirationDate }}
+      draft={draft}
       onDone={async () => {
         setPolicy('');
         await refresh();
         await resource.refetch();
+        return { savedDraft: { ...draft, policyId: '' } };
       }}
       submit={() =>
         commissionAction('adoptPolicy', {

@@ -66,9 +66,10 @@ function returnToPage(trigger: 'focus' | 'visibility' | 'both' = 'both') {
   if (trigger !== 'focus') document.dispatchEvent(new Event('visibilitychange'));
 }
 async function allowReturnRefresh() {
-  // Advance the Date-only test clock past the coordinator's coalescing window.
+  // A completed account-book cycle is rate limited; advance the Date-only
+  // clock without executing a minute of unrelated interval work.
   await act(async () => {
-    vi.setSystemTime(Date.now() + 1_100);
+    vi.setSystemTime(Date.now() + 61_100);
     liveUpdates.wake();
     await new Promise(resolve => window.setTimeout(resolve, 150));
   });

@@ -107,6 +107,78 @@ it('clears all financial data after a failed refresh', async () => {
   expect(screen.queryByText('Producer earned')).toBeNull();
 });
 
+it('keeps payroll live after approval rotates its request ID and protects a later failed draft', async () => {
+  h.owner = true;
+  render(<Commissions />);
+  await screen.findByText('Producer earned');
+  fireEvent.click(screen.getByRole('tab', { name: 'Payroll' }));
+  fireEvent.change(screen.getByLabelText('Producer'), { target: { value: 'producer' } });
+  fireEvent.change(screen.getByLabelText('Include receipts through (inclusive)'), {
+    target: { value: '2026-10-31' },
+  });
+  fireEvent.change(screen.getByLabelText('Scheduled pay date'), {
+    target: { value: '2026-11-06' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Approve batch' }));
+  await screen.findByText('Saved.');
+  expect(h.action).toHaveBeenCalledExactlyOnceWith('preparePayroll', {
+    producerId: 'producer', cutoff: '2026-10-31', payDate: '2026-11-06',
+    requestId: expect.any(String),
+  });
+  expect(h.read).toHaveBeenCalledTimes(2);
+  const firstRequestId = h.action.mock.calls[0][1].requestId;
+  h.read.mockResolvedValue({ ...snapshot(), policies: snapshot().policies.map(policy => ({
+    ...policy, version: policy.version + 1, producerName: 'Updated producer name',
+  })) });
+  await invalidateLiveUpdates(['OWNER']);
+  expect(screen.getByRole('option', { name: 'Updated producer name' })).toBeVisible();
+  expect(screen.getByRole('tab', { name: 'Payroll' })).toHaveAttribute('aria-selected', 'true');
+  expect(screen.getByLabelText('Include receipts through (inclusive)')).toHaveValue('2026-10-31');
+  expect(screen.getByLabelText('Scheduled pay date')).toHaveValue('2026-11-06');
+  expect(h.read).toHaveBeenCalledTimes(3);
+  expect(h.action).toHaveBeenCalledTimes(1);
+
+  fireEvent.change(screen.getByLabelText('Include receipts through (inclusive)'), {
+    target: { value: '2026-11-02' },
+  });
+  h.action.mockRejectedValueOnce(new Error('Payroll approval unavailable'));
+  fireEvent.click(screen.getByRole('button', { name: 'Approve batch' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('Payroll approval unavailable');
+  expect(h.action.mock.calls[1][1].requestId).not.toBe(firstRequestId);
+  await invalidateLiveUpdates(['OWNER']);
+  expect(h.read).toHaveBeenCalledTimes(3);
+  expect(screen.getByLabelText('Include receipts through (inclusive)')).toHaveValue('2026-11-02');
+  expect(h.action).toHaveBeenCalledTimes(2);
+});
+
+it('keeps edits made during payroll approval dirty after the submitted draft succeeds', async () => {
+  h.owner = true;
+  let finish!: (value: unknown) => void;
+  h.action.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  render(<Commissions />);
+  await screen.findByText('Producer earned');
+  fireEvent.click(screen.getByRole('tab', { name: 'Payroll' }));
+  fireEvent.change(screen.getByLabelText('Producer'), { target: { value: 'producer' } });
+  fireEvent.change(screen.getByLabelText('Include receipts through (inclusive)'), {
+    target: { value: '2026-10-31' },
+  });
+  fireEvent.change(screen.getByLabelText('Scheduled pay date'), {
+    target: { value: '2026-11-06' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Approve batch' }));
+  expect(screen.getByLabelText('Include receipts through (inclusive)')).toBeDisabled();
+  // Model a state update already queued when the request disabled the fields.
+  fireEvent.change(screen.getByLabelText('Include receipts through (inclusive)'), {
+    target: { value: '2026-11-02' },
+  });
+  await act(async () => finish({ ok: true }));
+  await screen.findByText('Saved.');
+  await invalidateLiveUpdates(['OWNER']);
+  expect(h.read).toHaveBeenCalledTimes(2);
+  expect(screen.getByLabelText('Include receipts through (inclusive)')).toHaveValue('2026-11-02');
+  expect(h.action).toHaveBeenCalledTimes(1);
+});
+
 it('searches historical policies in filtered pages and follows empty continuation pages', async () => {
   h.owner = true;
   h.policies.mockResolvedValueOnce({ data: [], nextToken: 'page-2' }).mockResolvedValueOnce({
@@ -214,6 +286,20 @@ it('lets the Owner confirm missing historical dates before adopting a policy', a
       }),
     ),
   );
+  await screen.findByText('Saved.');
+  expect(screen.getByLabelText('Existing policy')).toHaveValue('');
+  expect(h.read).toHaveBeenCalledTimes(2);
+  h.read.mockResolvedValue({
+    ...snapshot(),
+    plans: [{ id: 'producer', producerId: 'producer', name: 'Updated historical producer', terms: [] }],
+  });
+  await invalidateLiveUpdates(['OWNER']);
+  expect(within(screen.getByLabelText('Original producer')).getByRole('option', {
+    name: 'Updated historical producer',
+  })).toBeVisible();
+  expect(screen.getByLabelText('Existing policy')).toHaveValue('');
+  expect(h.read).toHaveBeenCalledTimes(3);
+  expect(h.action).toHaveBeenCalledTimes(1);
 });
 
 it('requires explicit GIM rates and sends both standard and GIM agreement schedules', async () => {
