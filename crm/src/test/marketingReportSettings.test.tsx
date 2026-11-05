@@ -364,7 +364,8 @@ it('starts a new send after a remount reads the terminal outcome of its persiste
   fireEvent.click(await screen.findByRole('button', { name: 'Send now' }));
   await screen.findByText('Preparing');
   const firstRequest = h.send.mock.calls[0][0];
-  expect(JSON.parse(sessionStorage.getItem('hoa-marketing-report-request')!)).toEqual({ requestId: firstRequest, runId: run.id });
+  expect(sessionStorage.getItem('hoa-marketing-report-request')).toBe(firstRequest);
+  expect(JSON.parse(sessionStorage.getItem('hoa-marketing-report-acknowledgement')!)).toEqual({ requestId: firstRequest, runId: run.id });
   first.unmount();
   h.load.mockResolvedValue({ ...snapshot(), recentRuns: [{ ...run, status: 'sent', sentAt: '2026-09-28T17:01:00Z', updatedAt: '2026-09-28T17:01:00Z' }] });
   render(<MarketingReportSettings />);
@@ -400,15 +401,37 @@ it('preserves an acknowledged send UUID across a remount and history omission un
   expect(h.send.mock.calls[2][0]).not.toBe(firstRequest);
 });
 
-it('reuses a legacy raw request UUID and persists its acknowledged run in the current storage format', async () => {
-  const legacyRequest = '41111111-1111-4111-8111-111111111111';
-  sessionStorage.setItem('hoa-marketing-report-request', legacyRequest);
+it('reuses the canonical raw request UUID and stores its matching acknowledgement separately', async () => {
+  const existingRequest = '41111111-1111-4111-8111-111111111111';
+  sessionStorage.setItem('hoa-marketing-report-request', existingRequest);
   render(<MarketingReportSettings />);
   const send = await screen.findByRole('button', { name: 'Send now' });
   expect(h.send).not.toHaveBeenCalled();
   fireEvent.click(send);
   await screen.findByText('Preparing');
   expect(h.send).toHaveBeenCalledTimes(1);
-  expect(h.send).toHaveBeenCalledWith(legacyRequest);
-  expect(JSON.parse(sessionStorage.getItem('hoa-marketing-report-request')!)).toEqual({ requestId: legacyRequest, runId: run.id });
+  expect(h.send).toHaveBeenCalledWith(existingRequest);
+  expect(sessionStorage.getItem('hoa-marketing-report-request')).toBe(existingRequest);
+  expect(JSON.parse(sessionStorage.getItem('hoa-marketing-report-acknowledgement')!)).toEqual({ requestId: existingRequest, runId: run.id });
+});
+
+it.each([
+  { kind: 'mismatched', acknowledgement: JSON.stringify({ requestId: '41111111-1111-4111-8111-111111111111', runId: run.id }) },
+  { kind: 'malformed', acknowledgement: '{"requestId":' },
+])('ignores a $kind acknowledgement when a terminal old run appears in history', async ({ acknowledgement }) => {
+  const currentRequest = '42222222-2222-4222-8222-222222222222';
+  sessionStorage.setItem('hoa-marketing-report-request', currentRequest);
+  sessionStorage.setItem('hoa-marketing-report-acknowledgement', acknowledgement);
+  h.load.mockResolvedValue({ ...snapshot(), recentRuns: [{ ...run, status: 'sent', sentAt: '2026-09-28T17:01:00Z', updatedAt: '2026-09-28T17:01:00Z' }] });
+  h.send.mockResolvedValueOnce({ run: { ...run, id: 'current-run' } });
+  render(<MarketingReportSettings />);
+  await screen.findByText('Sent');
+  expect(sessionStorage.getItem('hoa-marketing-report-request')).toBe(currentRequest);
+  expect(h.send).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole('button', { name: 'Send now' }));
+  await screen.findByText('Preparing');
+  expect(h.send).toHaveBeenCalledTimes(1);
+  expect(h.send).toHaveBeenCalledWith(currentRequest);
+  expect(sessionStorage.getItem('hoa-marketing-report-request')).toBe(currentRequest);
+  expect(JSON.parse(sessionStorage.getItem('hoa-marketing-report-acknowledgement')!)).toEqual({ requestId: currentRequest, runId: 'current-run' });
 });

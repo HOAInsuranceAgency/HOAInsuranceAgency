@@ -10,6 +10,7 @@ import { loadMarketingReports, saveMarketingReports, sendMarketingReport } from 
 import type { MarketingReportRun, MarketingReportSettingsSnapshot } from "../../../shared/marketingReportSettings";
 
 const REQUEST_KEY = "hoa-marketing-report-request";
+const ACKNOWLEDGEMENT_KEY = "hoa-marketing-report-acknowledgement";
 const pending = (run: MarketingReportRun) => run.status === "queued" || run.status === "sending";
 const statusLabels: Record<MarketingReportRun["status"], string> = {
   queued: "Preparing", sending: "Sending", sent: "Sent", failed: "Failed", unknown: "Delivery needs review",
@@ -19,21 +20,27 @@ const when = (value: string) => new Intl.DateTimeFormat("en-US", {
 }).format(new Date(value));
 type PendingRequest = { requestId: string; runId: string | null };
 function savedRequest(): PendingRequest {
+  let requestId = "";
+  let runId: string | null = null;
   try {
-    const value = sessionStorage.getItem(REQUEST_KEY);
-    if (value) {
-      // Previous releases stored only the opaque request UUID.
-      let saved: unknown;
-      try { saved = JSON.parse(value); } catch { return { requestId: value, runId: null }; }
-      if (saved && typeof saved === 'object' && 'requestId' in saved && typeof saved.requestId === 'string') {
-        return { requestId: saved.requestId, runId: 'runId' in saved && typeof saved.runId === 'string' ? saved.runId : null };
-      }
+    requestId = sessionStorage.getItem(REQUEST_KEY) || "";
+    const acknowledgement: unknown = JSON.parse(sessionStorage.getItem(ACKNOWLEDGEMENT_KEY) || "null");
+    if (requestId && acknowledgement && typeof acknowledgement === 'object' &&
+        'requestId' in acknowledgement && acknowledgement.requestId === requestId &&
+        'runId' in acknowledgement && typeof acknowledgement.runId === 'string') {
+      runId = acknowledgement.runId;
     }
   } catch { /* Storage may be unavailable. */ }
-  return { requestId: "", runId: null };
+  return { requestId, runId };
 }
 function keepRequest(value: string, runId: string | null = null) {
-  try { if (value) sessionStorage.setItem(REQUEST_KEY, JSON.stringify({ requestId: value, runId })); else sessionStorage.removeItem(REQUEST_KEY); } catch { /* In-memory deduplication remains available. */ }
+  try {
+    // Keep the canonical UUID format unchanged. A separate acknowledgement is
+    // accepted only for that UUID, so an interrupted storage write stays safe.
+    if (value) sessionStorage.setItem(REQUEST_KEY, value); else sessionStorage.removeItem(REQUEST_KEY);
+    if (value && runId) sessionStorage.setItem(ACKNOWLEDGEMENT_KEY, JSON.stringify({ requestId: value, runId }));
+    else sessionStorage.removeItem(ACKNOWLEDGEMENT_KEY);
+  } catch { /* In-memory deduplication remains available. */ }
 }
 
 export default function MarketingReportSettings() {
