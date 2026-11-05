@@ -47,10 +47,11 @@ The weeks follow a four-week rotation, three articles a week, one per day:
 | 3 | Master Policies, 8:00 AM | Market & Renewals, 8:00 AM | Liability & Umbrella, 10:00 AM |
 | 4 | Laws & Compliance, 10:00 AM | Property & Catastrophe, 10:00 AM | Unit Owners (HO-6), 6:00 PM |
 
-- **Seasons shift the mix.** From June 1 to November 30 (hurricane season),
-  Property & Catastrophe can take an extra slot. From September to December
-  (budget and renewal season), Market & Renewals can take one. The swapped
-  article keeps its own category's day and time.
+- **Seasons shift the mix.** From June to November (hurricane season), week 2's
+  Wednesday goes to Property & Catastrophe at 10:00 AM instead of D&O and
+  Crime. From September to December (budget and renewal season), week 4's
+  Wednesday goes to Market & Renewals at 8:00 AM instead of Property &
+  Catastrophe. Each swapped article keeps its own category's time.
 - **Breaking news takes the next open slot for its category.** A new law goes
   out the following Tuesday at 10:00 AM, for example.
 - The automation drafts 3 articles a week, so one can be rejected and the week
@@ -162,6 +163,48 @@ the front matter must match the file.
 Articles are published by HOA Insurance Agency. No individual author or license
 number appears. Every article is approved by the reviewer before it is merged,
 and nothing publishes without that approval.
+
+## How the automation works
+
+The workflows live in `.github/workflows/blog-*.yml` and their scripts in
+`.github/blog/`.
+
+1. **Drafting.** Every Monday, Tuesday and Wednesday at 6:00 AM Eastern, the
+   "Blog drafts" workflow drafts the article for the following week's Tuesday,
+   Wednesday or Thursday slot. It researches the topic, then a separate pass
+   opens every source and removes anything it cannot confirm, then the
+   structure rules above are checked and the site build is run.
+2. **Approval email.** The reviewer receives the title options, the fact-check
+   summary, the sources and two links: the draft pull request and the photo
+   upload folder.
+3. **Review.** In the pull request, the reviewer uploads the cover photo to the
+   article's image folder and comments:
+
+   ```
+   /title 2
+   /photo
+   alt: Condominium building exterior on a clear day
+   credit: Photo: HOA Insurance Agency
+   source: Agency photo, all rights held
+   link: https://optional-credit-page
+   ```
+
+   `/title` takes 1, 2 or 3, or your own wording. `/photo` crops the photo to
+   1600 × 900, replaces the temporary cover and marks the article ready. The
+   workflow re-runs the site build and replies on the pull request.
+4. **Merge.** Approve and merge. A draft merged without `/photo` stays
+   unpublished.
+5. **Publishing.** "Blog publishing" runs a few minutes after each category's
+   slot and asks Amplify to rebuild when an article's time has just passed.
+   Expect the article live within about 15 minutes of its slot.
+6. **Reminders.** On weekday mornings, one email lists any draft that has
+   waited more than two days.
+
+If a run cannot verify a topic, it tries an evergreen topic in the same
+category. If that also fails, the reviewer gets a "no draft this run" email
+instead. Any run can be started by hand from the Actions tab. "Blog drafts"
+defaults to a dry run that saves the draft as a download without opening a
+pull request or sending email.
 
 ## Article template
 

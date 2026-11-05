@@ -1,0 +1,139 @@
+name: Blog drafts
+
+# Monday, Tuesday and Wednesday at 6 AM Eastern, each run drafts the article
+# for the same weekday plus one (Tue, Wed, Thu) of the following week, opens a
+# draft pull request and emails the reviewer. Nothing publishes from here.
+on:
+  schedule:
+    - cron: '0 6 * * 1-3'
+      timezone: America/New_York
+  workflow_dispatch:
+    inputs:
+      day:
+        description: 'Publishing day to draft for'
+        type: choice
+        options: [tue, wed, thu]
+        default: tue
+      date:
+        description: 'Exact publish date (YYYY-MM-DD, optional; overrides the day)'
+        type: string
+        required: false
+      dry_run:
+        description: 'Draft only: save the article as a run artifact, no pull request or email'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: blog-drafts-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  draft:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+      pull-requests: write
+      id-token: write
+    steps:
+      - name: Check out main
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+      - name: Install dependencies
+        run: |
+          npm ci --prefix web --no-audit --no-fund
+          npm ci --prefix .github/blog --no-audit --no-fund
+      - name: Verify automation rules
+        run: npm test --prefix .github/blog
+      - name: List drafts already waiting
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh pr list --state open --limit 100 --json title,headRefName
+          --jq '[.[] | select(.headRefName | startswith("blog/draft-")) | .title | sub("^Blog draft: "; "")]'
+          > queued.json
+      - name: Research, verify and write the draft
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          SLOT_DAY: ${{ inputs.day || '' }}
+          SLOT_DATE: ${{ inputs.date || '' }}
+        run: |
+          day="$SLOT_DAY"
+          if [ -z "$day" ]; then
+            case "$(TZ=America/New_York date +%u)" in 1) day=tue ;; 2) day=wed ;; 3) day=thu ;; *) day=tue ;; esac
+          fi
+          set -- --day "$day" --queued queued.json --out blog-output
+          if [ -n "$SLOT_DATE" ]; then set -- "$@" --date "$SLOT_DATE"; fi
+          node .github/blog/draft.mjs "$@"
+      - name: Validate with the site build
+        if: hashFiles('blog-output/meta.json') != ''
+        env:
+          PUBLIC_ANALYTICS_DISABLED: 'true'
+        run: npm run build --prefix web
+      - name: Save dry-run draft
+        if: inputs.dry_run && hashFiles('blog-output/meta.json') != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: blog-draft
+          path: |
+            blog-output/
+            web/src/content/articles/*.md
+            web/public/images/blog/
+          retention-days: 7
+      - name: Open the draft pull request
+        id: pr
+        if: ${{ !inputs.dry_run && hashFiles('blog-output/meta.json') != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          slug=$(jq -r .slug blog-output/meta.json)
+          branch=$(jq -r .branch blog-output/meta.json)
+          title=$(jq -r '.titleOptions[0]' blog-output/meta.json)
+          git config user.name "github-actions[bot]"
+          git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git add "web/src/content/articles/$slug.md" "web/public/images/blog/$slug/cover.jpg"
+          git commit -m "Blog draft: $title"
+          git push origin "$branch"
+          url=$(gh pr create --base main --head "$branch" --title "Blog draft: $title" --body-file blog-output/pr-body.md)
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          echo "upload=https://github.com/$REPO/upload/$branch/web/public/images/blog/$slug" >> "$GITHUB_OUTPUT"
+          echo "Opened $url" >> "$GITHUB_STEP_SUMMARY"
+      - name: Prepare the email
+        id: email
+        if: ${{ !inputs.dry_run }}
+        env:
+          BLOG_EMAIL_FROM: ${{ vars.BLOG_EMAIL_FROM }}
+          REVIEWER_EMAIL: ${{ vars.REVIEWER_EMAIL }}
+          PR_URL: ${{ steps.pr.outputs.url }}
+          UPLOAD_URL: ${{ steps.pr.outputs.upload }}
+        run: |
+          if [ -f blog-output/meta.json ]; then
+            result=$(node .github/blog/notify.mjs draft --meta blog-output/meta.json --pr-url "$PR_URL" --upload-url "$UPLOAD_URL" --out email.json)
+          elif [ -f blog-output/no-draft.json ]; then
+            result=$(node .github/blog/notify.mjs no-draft --input blog-output/no-draft.json --out email.json)
+            echo "No verified draft this run: $(jq -r .reason blog-output/no-draft.json)" >> "$GITHUB_STEP_SUMMARY"
+          else
+            result=skip
+          fi
+          echo "$result"
+          echo "send=$([ "$result" = ready ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+      - name: Sign in to AWS for email
+        if: steps.email.outputs.send == 'true'
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
+        with:
+          role-to-assume: ${{ secrets.AWS_SES_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_SES_REGION }}
+      - name: Send the email
+        if: steps.email.outputs.send == 'true'
+        run: aws sesv2 send-email --cli-input-json file://email.json

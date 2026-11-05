@@ -1,0 +1,14 @@
+{
+  "name": "protectmyhoa-blog-automation",
+  "private": true,
+  "type": "module",
+  "description": "Drafts, review commands and scheduled publishing for the ProtectMyHOA journal.",
+  "engines": { "node": ">=22.12.0" },
+  "scripts": {
+    "test": "node --test test_lib.mjs"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "1.1.0",
+    "zod": "4.6.7"
+  }
+}

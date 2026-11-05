@@ -1,0 +1,121 @@
+name: Blog review commands
+
+# A reviewer comments /title and/or /photo on a draft pull request. The
+# workflow applies the change to the draft branch, re-runs the site build and
+# replies. Only repository members and collaborators can run it, and only on
+# this repository's own blog/draft-* branches.
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: blog-review-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    if: >-
+      github.event.issue.pull_request &&
+      (startsWith(github.event.comment.body, '/title') || startsWith(github.event.comment.body, '/photo')) &&
+      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Find the draft branch
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          NUMBER: ${{ github.event.issue.number }}
+        run: |
+          pr=$(gh api "repos/$REPO/pulls/$NUMBER")
+          head=$(echo "$pr" | jq -r .head.ref)
+          head_repo=$(echo "$pr" | jq -r .head.repo.full_name)
+          state=$(echo "$pr" | jq -r .state)
+          if [ "$head_repo" != "$REPO" ] || [ "$state" != open ] || [[ "$head" != blog/draft-* ]]; then
+            echo "Not an open journal draft from this repository." >> "$GITHUB_STEP_SUMMARY"
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "ok=true" >> "$GITHUB_OUTPUT"
+          echo "branch=$head" >> "$GITHUB_OUTPUT"
+          echo "slug=${head#blog/draft-}" >> "$GITHUB_OUTPUT"
+      - name: Check out workflow tools from main
+        if: steps.pr.outputs.ok == 'true'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: main
+          path: control
+          persist-credentials: false
+      - name: Check out the draft branch
+        if: steps.pr.outputs.ok == 'true'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ steps.pr.outputs.branch }}
+          path: source
+      - name: Set up Node
+        if: steps.pr.outputs.ok == 'true'
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+      - name: Install dependencies
+        if: steps.pr.outputs.ok == 'true'
+        run: |
+          npm ci --prefix source/web --no-audit --no-fund
+          npm ci --prefix control/.github/blog --no-audit --no-fund
+      - name: Apply the comment
+        id: apply
+        if: steps.pr.outputs.ok == 'true'
+        env:
+          COMMENT_BODY: ${{ github.event.comment.body }}
+          PR_BODY: ${{ github.event.issue.body }}
+          SLUG: ${{ steps.pr.outputs.slug }}
+        run: |
+          set +e
+          node control/.github/blog/review.mjs --slug "$SLUG" --root source --out review-output
+          echo "code=$?" >> "$GITHUB_OUTPUT"
+      - name: Validate with the site build
+        id: build
+        if: steps.pr.outputs.ok == 'true' && hashFiles('review-output/changed.txt') != ''
+        working-directory: source
+        env:
+          PUBLIC_ANALYTICS_DISABLED: 'true'
+        run: |
+          if [ -s ../review-output/changed.txt ]; then
+            npm run build --prefix web > ../review-output/build.log 2>&1 || { echo "failed=true" >> "$GITHUB_OUTPUT"; tail -40 ../review-output/build.log; exit 0; }
+          fi
+          echo "failed=false" >> "$GITHUB_OUTPUT"
+      - name: Commit the change
+        if: steps.pr.outputs.ok == 'true' && steps.build.outputs.failed == 'false'
+        working-directory: source
+        env:
+          BRANCH: ${{ steps.pr.outputs.branch }}
+        run: |
+          [ -s ../review-output/changed.txt ] || exit 0
+          git config user.name "github-actions[bot]"
+          git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+          xargs -a ../review-output/changed.txt git add -A --
+          git diff --cached --quiet && exit 0
+          git commit -m "Apply review comment"
+          git push origin "HEAD:$BRANCH"
+      - name: Reply on the pull request
+        if: always() && steps.pr.outputs.ok == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NUMBER: ${{ github.event.issue.number }}
+          BUILD_FAILED: ${{ steps.build.outputs.failed }}
+        run: |
+          {
+            cat review-output/result.md 2>/dev/null || echo "The command could not be applied. Check the workflow run for details."
+            if [ "$BUILD_FAILED" = true ]; then
+              echo
+              echo "**Not saved:** the site build failed with this change, so nothing was committed. See the workflow run log."
+            fi
+          } > reply.md
+          gh pr comment "$NUMBER" --repo "$GITHUB_REPOSITORY" --body-file reply.md
