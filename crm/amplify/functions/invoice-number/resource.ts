@@ -14,7 +14,7 @@ import { defineFunction } from "@aws-amplify/backend";
  */
 export const invoiceNumber = defineFunction({
   name: "invoice-number",
-  entry: "./handler.ts",
+  entry: "./handler.sentry.ts",
   timeoutSeconds: 15,
   memoryMB: 256,
 });

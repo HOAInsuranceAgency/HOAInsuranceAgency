@@ -1,3 +1,4 @@
+import { captureHandledFailure } from "../monitoring";
 import { Amplify } from "aws-amplify";
 import { generateClient } from "aws-amplify/data";
 import { getAmplifyDataClientConfig } from "@aws-amplify/backend/function/runtime";
@@ -412,6 +413,7 @@ For a contact's "type" use exactly one of: ${CONTACT_TYPES.join(", ")}, or "" wh
         `${response.usage.input_tokens} in / ${response.usage.output_tokens} out tokens`
     );
   } catch (err) {
+    captureHandledFailure(err);
     console.error(`Extraction failed for ${accountId}`, err);
     await client.models.Account.update({
       id: accountId,

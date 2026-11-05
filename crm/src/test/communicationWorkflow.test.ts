@@ -146,6 +146,7 @@ beforeEach(async () => {
   h.reads.length = 0; h.readFailureId = undefined; h.beforeWrite = undefined; h.userReads.length = 0; h.queries.length = 0; h.userError = undefined; h.queryError = undefined;
   h.producerEmail.mockReset().mockImplementation(async member => emailIdentity(member.userId));
   h.deletionQuery.mockReset();
+  delete process.env.ACCESS_API_ID;
   h.cognitoList.mockReset().mockResolvedValue(undefined);
   h.batch.mockReset().mockImplementation((p: { RequestItems: Record<string, { Keys: { id: string }[] }> }) => ({
     Responses: Object.fromEntries(Object.entries(p.RequestItems).map(([name, request]) => [name,
@@ -640,6 +641,42 @@ describe('deleted lead cleanup', () => {
       if (input.TableName === model) throw new Error('Access denied');
     });
     await expect((await import('../../amplify/functions/communications/deletion')).prepareLeadDeletion('a1', 'Willow HOA', 'admin')).rejects.toThrow(new RegExp(`Could not verify this lead.s ${model === 'Policy' ? 'policies' : 'billing records'}`));
+    expect(record('deleted-account:a1')).toBeUndefined();
+  });
+  it.each(['Policy', 'Invoice'])('preserves the identical indexed retention check when %s table aliases are derived', async model => {
+    const run = async (explicit: boolean) => {
+      process.env.ACCESS_API_ID = 'trusted-api';
+      for (const name of ['Policy', 'Invoice']) {
+        const key = `LEAD_DELETION_${name.toUpperCase()}_TABLE`;
+        if (explicit) process.env[key] = `${name}-trusted-api-NONE`; else delete process.env[key];
+      }
+      h.queries.length = 0; let reads = 0;
+      h.deletionQuery.mockImplementation((input: any) => input.TableName === `${model}-trusted-api-NONE`
+        ? reads++ === 0 ? { Count: 0, LastEvaluatedKey: { id: 'continuation', accountId: 'a1' } } : { Count: 1 }
+        : { Count: 0 });
+      await expect((await import('../../amplify/functions/communications/deletion')).prepareLeadDeletion('a1', 'Willow HOA', 'admin')).rejects.toThrow(/cannot be deleted/);
+      expect(record('deleted-account:a1')).toBeUndefined();
+      return [...h.queries];
+    };
+    const explicit = await run(true), derived = await run(false);
+    expect(derived).toEqual(explicit);
+    expect(derived.filter(query => query.TableName === `${model}-trusted-api-NONE`)).toHaveLength(2);
+    expect(derived.every(query => query.Select === 'COUNT' && query.Limit === 1 && query.IndexName === `gsi-Account.${query.TableName.startsWith('Policy-') ? 'policies' : 'invoices'}`)).toBe(true);
+  });
+  it('can delete a verified empty lead using derived Policy and Invoice tables', async () => {
+    process.env.ACCESS_API_ID = 'trusted-api';
+    delete process.env.LEAD_DELETION_POLICY_TABLE; delete process.env.LEAD_DELETION_INVOICE_TABLE;
+    h.deletionQuery.mockResolvedValue({ Count: 0 });
+    await (await import('../../amplify/functions/communications/deletion')).prepareLeadDeletion('a1', 'Willow HOA', 'admin');
+    expect(h.queries.filter(query => query.Select === 'COUNT').map(query => query.TableName)).toEqual(['Policy-trusted-api-NONE', 'Invoice-trusted-api-NONE']);
+    expect(record('deleted-account:a1')).toBeDefined();
+  });
+  it.each(['POLICY', 'INVOICE'])('still blocks deletion without the %s index even when table derivation is available', async model => {
+    process.env.ACCESS_API_ID = 'trusted-api';
+    delete process.env.LEAD_DELETION_POLICY_TABLE; delete process.env.LEAD_DELETION_INVOICE_TABLE;
+    delete process.env[`LEAD_DELETION_${model}_INDEX`];
+    h.deletionQuery.mockResolvedValue({ Count: 0 });
+    await expect((await import('../../amplify/functions/communications/deletion')).prepareLeadDeletion('a1', 'Willow HOA', 'admin')).rejects.toThrow(/Could not verify this lead.s/);
     expect(record('deleted-account:a1')).toBeUndefined();
   });
   it.each(['LEAD_DELETION_POLICY_TABLE', 'LEAD_DELETION_POLICY_INDEX', 'LEAD_DELETION_INVOICE_TABLE', 'LEAD_DELETION_INVOICE_INDEX'])('blocks deletion if %s is not configured', async setting => {

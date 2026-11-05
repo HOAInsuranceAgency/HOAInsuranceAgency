@@ -14,7 +14,7 @@ import { defineFunction, secret } from "@aws-amplify/backend";
  */
 export const formFiller = defineFunction({
   name: "form-filler",
-  entry: "./handler.ts",
+  entry: "./handler.sentry.ts",
   timeoutSeconds: 29,
   memoryMB: 1024,
   environment: {

@@ -18,7 +18,8 @@ const QUOTE_TERM_FIELDS = [
   'renewalPolicyId', 'notes',
 ];
 function configured(name: string): string {
-  const value = process.env[name];
+  const model = ({ DASHBOARD_QUOTE_TABLE: 'Quote', DASHBOARD_POLICY_TABLE: 'Policy' } as Record<string, string>)[name];
+  const value = process.env[name] || (model && process.env.ACCESS_API_ID ? `${model}-${process.env.ACCESS_API_ID}-NONE` : undefined);
   if (!value) throw new Error('Dashboard lead storage is not configured');
   return value;
 }

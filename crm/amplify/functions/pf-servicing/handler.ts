@@ -1,3 +1,4 @@
+import { captureHandledFailure } from "../monitoring";
 import { randomUUID } from "node:crypto";
 import { Amplify } from "aws-amplify";
 import { generateClient } from "aws-amplify/data";
@@ -434,6 +435,7 @@ export const handler = async (event: {
         return { ok: false, error: `Unknown action "${a.action}".` };
     }
   } catch (err) {
+    captureHandledFailure(err);
     console.error("pf-servicing failed", err);
     return { ok: false, error: "Servicing action failed. Try again." };
   }

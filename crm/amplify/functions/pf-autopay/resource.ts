@@ -14,7 +14,7 @@ import { defineFunction, secret } from "@aws-amplify/backend";
  */
 export const pfAutopay = defineFunction({
   name: "pf-autopay",
-  entry: "./handler.ts",
+  entry: "./handler.sentry.ts",
   environment: {
     ...(migrationPreview ? {} : { STRIPE_SECRET_KEY: secret("STRIPE_SECRET_KEY") }),
   },

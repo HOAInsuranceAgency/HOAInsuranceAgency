@@ -1,3 +1,4 @@
+import { captureHandledFailure } from "../monitoring";
 import { Amplify } from "aws-amplify";
 import { generateClient } from "aws-amplify/data";
 import { getAmplifyDataClientConfig } from "@aws-amplify/backend/function/runtime";
@@ -140,6 +141,7 @@ export const handler = async (event: {
       }
     );
   } catch (err) {
+    captureHandledFailure(err);
     console.error("pf-originate failed", err);
     return { ok: false, error: "Couldn't evaluate that quote. Try again." };
   }
