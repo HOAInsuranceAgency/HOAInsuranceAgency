@@ -8,4 +8,4 @@ The CRM's `schemaContracts.test.ts` checks shared enum types against the generat
 
 Deployment-time modules stay inside `crm/amplify`, including Honeycomb branch selection used by Amplify's loader. Public endpoint identities and runtime business contracts live here; credentials remain in runtime configuration.
 
-Run the import-boundary guard with `npx vitest run src/lib/sharedArchitecture.test.ts` from `crm`. It rejects server imports from frontend source, browser runtime imports from server source, and app/platform dependencies in this directory. Generated schema type-only imports are allowed in browser adapters.
+Run `npm run verify:architecture` from the repository root. The central checker in `scripts/check-module-boundaries.mjs` rejects server imports from frontend source, browser runtime imports from server source, and app/platform dependencies in this directory. Generated schema type-only imports are allowed in browser adapters. The same checker runs in the full repository verifier and PR workflow.

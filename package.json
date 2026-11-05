@@ -1,0 +1,12 @@
+{
+  "name": "hoa-insurance-repository",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "verify": "node scripts/verify.mjs",
+    "verify:crm": "node scripts/verify.mjs --scope=crm",
+    "verify:web": "node scripts/verify.mjs --scope=web",
+    "verify:backend": "node scripts/verify.mjs --scope=backend",
+    "verify:architecture": "node scripts/verify.mjs --scope=architecture"
+  }
+}
