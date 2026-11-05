@@ -1,3 +1,4 @@
+import { accountSearch } from '../../../shared/crmRoutes';
 import { formatUsdDollars } from '../../../shared/money';
 import { Button } from "./ui/Button";
 import { Link } from "react-router-dom";
@@ -38,7 +39,7 @@ export default function HoneycombEstimates({ accountId }: { accountId: string })
         <strong>{status.replaceAll("_", " ")}</strong>
         {record.price != null && <span> · {formatUsdDollars(record.price)}</span>}
         <p className="muted small">{new Date(record.createdAt).toLocaleString()}{record.estimationId ? ` · ${record.estimationId}` : ""}</p>
-        {eligibleEstimate(record) && <p><Link to={`?tab=submissions&estimate=${encodeURIComponent(record.id)}`}>Start submission from this estimate →</Link></p>}
+        {eligibleEstimate(record) && <p><Link to={accountSearch({ tab: 'submissions', estimate: record.id })}>Start submission from this estimate →</Link></p>}
         {record.issue && <p className="small">{record.issue}</p>}
         {status === "TIMED_OUT" && <p className="small">The request did not finish in time. Continue agent follow-up; the website retains its normal confirmation.</p>}
         {record.result && <details><summary>Carrier response (internal)</summary><pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{pretty(record.result)}</pre></details>}

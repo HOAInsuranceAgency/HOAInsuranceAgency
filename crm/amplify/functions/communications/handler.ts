@@ -1,3 +1,4 @@
+import { accountPath } from '../../../../shared/crmRoutes';
 import { agencyDay } from '../../../../shared/agencyTime';
 import { assertPreviewRead } from "../migration-readonly";
 import { apiFailure, decodeAwsJson, isRecord } from '../../../../shared/apiResponse';
@@ -105,7 +106,7 @@ export const handler = async (event: { arguments: { operation?: string; readOper
         if (contacts.errors?.length || quotes.errors?.length || documents.errors?.length) throw new Error("Could not load account context");
         return { ok: true, summary: { name: account.data.name, source: account.data.source, leadSource: account.data.leadSource, notes: account.data.notes, currentPolicyExpiration: account.data.currentPolicyExpiration,
           contacts: currentContacts(contacts.data).map(c => ({ id: c.id, name: c.name, email: c.email, phone: c.phone })), quotes: quotes.data.map(q => ({ id: q.id, status: q.status, lines: q.lines })), documents: documents.data.map(d => ({ id: d.id, name: d.name, status: d.ocrStatus })),
-          more: !!(contacts.nextToken || quotes.nextToken || documents.nextToken), url: `${process.env.CRM_BASE_URL}/accounts/${id}` } };
+          more: !!(contacts.nextToken || quotes.nextToken || documents.nextToken), url: `${process.env.CRM_BASE_URL}${accountPath(id)}` } };
       }
       if (op === "activity") { const r = await get<Communication>(text(input, "id")); if (!r || r.kind !== "COMMUNICATION") throw new Error("Communication not found"); return { ok: true, communication: safeCommunication({ ...r.data, version: r.version }) }; }
       if (op === "smsComposer") { const c = await config(); if (!c.frontSmsChannelId || !c.activatedAt || c.paused) throw new Error("Activate the shared-line text channel first"); await verifySmsChannel(); return { ok: true, channelId: c.frontSmsChannelId, sender: c.sharedSmsNumber }; }

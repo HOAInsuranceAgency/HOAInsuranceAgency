@@ -234,6 +234,13 @@ describe("account underwriting layout", () => {
 });
 
 describe("account communications in Activity", () => {
+  it('preserves deep-link query values and repeated parameters while a tab click clears the old hash', async () => {
+    renderAccount('/accounts/alpha?tab=overview&partyId=p%2F%2B&request=req%26one&tag=one&tag=two#contacts');
+    await screen.findByRole('heading', { name: 'Overview information' });
+    fireEvent.click(screen.getByRole('tab', { name: 'Activity' }));
+    expect(screen.getByLabelText('Current location')).toHaveTextContent('/accounts/alpha?tab=activity&partyId=p%2F%2B&request=req%26one&tag=one&tag=two');
+    expect(screen.getByLabelText('Current location')).not.toHaveTextContent('#contacts');
+  });
   it.each(["LEAD", "CLIENT"])("keeps communications off Overview and alongside account changes in Activity for a %s", async stage => {
     mocks.getAccount.mockResolvedValue({ data: { id: "alpha", name: "Alpha association", stage, type: "HOA" } });
     renderAccount();

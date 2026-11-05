@@ -1,3 +1,4 @@
+import { withAccountTab } from '../../../shared/crmRoutes';
 import { Button } from "./ui/Button";
 import { acquisitionLabel } from "../../../shared/leadSource";
 import { communicationRequest as request } from "../lib/communications";
@@ -22,11 +23,11 @@ export default function CommunicationAccountSummary({ accountId, open }: { accou
       {s.notes && <details className="front-subdetails"><summary>Lead notes</summary><p className="small front-preserve-lines">{s.notes}</p></details>}
       <div className="front-detail-group"><h3>Quotes</h3>
         {s.quotes.length ? s.quotes.map(q => <p className="small" key={q.id}>{q.status.toLowerCase().replaceAll("_", " ")}{q.lines?.length ? ` · ${q.lines.join(", ")}` : ""}</p>) : <p className="muted small">No quotes shown yet.</p>}
-        <Button variant="link"  onClick={() => open(`${s.url}?tab=quotes`)}>View quotes & bind</Button>
+        <Button variant="link"  onClick={() => open(withAccountTab(s.url, 'quotes'))}>View quotes & bind</Button>
       </div>
       <div className="front-detail-group"><h3>Documents</h3>
         {s.documents.length ? s.documents.map(d => <p className="small" key={d.id}><strong>{d.name}</strong><br /><span className="muted">{d.status?.toLowerCase().replaceAll("_", " ") ?? "uploaded"}</span></p>) : <p className="muted small">No documents shown yet.</p>}
-        <Button variant="link"  onClick={() => open(`${s.url}?tab=documents`)}>View all documents</Button>
+        <Button variant="link"  onClick={() => open(withAccountTab(s.url, 'documents'))}>View all documents</Button>
       </div>
       {s.more && <p className="muted small">More account details are available in the CRM.</p>}
     </details>

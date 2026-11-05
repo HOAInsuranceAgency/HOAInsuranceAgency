@@ -1,3 +1,4 @@
+import { relationshipPath } from '../../../shared/crmRoutes';
 import { Button } from "./ui/Button";
 import { Input } from "./ui/Input";
 import { usePagedList } from '../lib/usePagedList';
@@ -78,7 +79,7 @@ export default function AccountRelationships({
   }
   const display = (r: AccountRelationshipRecord) => (
     <li key={r.id}>
-      <Link to={`/relationships/${r.partyId}`}>
+      <Link to={relationshipPath(r.partyId)}>
         {resource.data.parties.find((p) => p.id === r.partyId)?.name ?? 'Relationship'}
       </Link>{' '}
       <span className="badge gray">{RELATIONSHIP_LABELS[r.role]}</span>

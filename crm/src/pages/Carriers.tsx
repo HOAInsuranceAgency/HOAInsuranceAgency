@@ -1,3 +1,4 @@
+import { carrierPath } from '../../../shared/crmRoutes';
 import { num } from "../lib/formCodec";
 import { assertGraphqlErrors } from '../lib/apiResponse';
 import { LiveStatus } from "../components/LiveStatus";
@@ -130,7 +131,7 @@ export default function Carriers() {
           assertGraphqlErrors({ errors });
           if (!data) throw new Error(errors?.[0]?.message);
           markSaved(submitted);
-          navigate(`/carriers/${data.id}`);
+          navigate(carrierPath(data.id));
         },
         { errorMessage: "Couldn't create that carrier." }
       );
@@ -273,11 +274,11 @@ export default function Carriers() {
                       key={c.id}
                       className="clickable"
                       onClick={(event) => {
-                        if (!(event.target as HTMLElement).closest("a, button, details")) navigate(`/carriers/${c.id}`);
+                        if (!(event.target as HTMLElement).closest("a, button, details")) navigate(carrierPath(c.id));
                       }}
                     >
                       <td>
-                        <Link to={`/carriers/${c.id}`} className="carrier-name">{c.name}</Link>
+                        <Link to={carrierPath(c.id)} className="carrier-name">{c.name}</Link>
                       </td>
                       <td>
                         <Badge {...flagBadge(c.appointed, CARRIER_APPOINTMENT_BADGE)} />
@@ -513,7 +514,7 @@ function AppetiteFinder({
                     gs.map((g) => (
                       <tr key={g.id}>
                         <td>
-                          <Link to={`/carriers/${carrier.id}`} className="carrier-name">{carrier.name}</Link>
+                          <Link to={carrierPath(carrier.id)} className="carrier-name">{carrier.name}</Link>
                         </td>
                         <td className="small">
                           {carrier.marketType

@@ -1,3 +1,4 @@
+import { accountPath } from '../../../shared/crmRoutes';
 import { Select } from "../components/ui/Select";
 import { Button } from "../components/ui/Button";
 import { Table } from "../components/ui/Table";
@@ -121,7 +122,7 @@ export default function QuotesList() {
                   <tr
                     key={q.id}
                     className="clickable"
-                    onClick={() => navigate(`/accounts/${q.accountId}?tab=quotes`)}
+                    onClick={() => navigate(accountPath(q.accountId, { tab: 'quotes' }))}
                   >
                     <td>
                       <strong>{accountName.get(q.accountId) ?? "—"}</strong>

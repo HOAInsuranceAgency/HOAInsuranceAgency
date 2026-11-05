@@ -1,3 +1,4 @@
+import { accountPath } from '../../../../shared/crmRoutes';
 import { Table } from "../../components/ui/Table";
 import { ReportDownload } from "../../components/ReportDownload";
 import { useMemo } from "react";
@@ -182,7 +183,7 @@ export default function FinanceTab() {
                     <tr
                       key={row.id}
                       className="clickable"
-                      onClick={() => navigate(`/accounts/${row.accountId}?tab=invoices`)}
+                      onClick={() => navigate(accountPath(row.accountId, { tab: 'invoices' }))}
                     >
                       <td>{row.number ?? "—"}</td>
                       <td>
@@ -296,7 +297,7 @@ function PortfolioCard({
                 <tr
                   key={l.id}
                   className="clickable"
-                  onClick={() => navigate(`/accounts/${l.accountId}?tab=financing`)}
+                  onClick={() => navigate(accountPath(l.accountId, { tab: 'financing' }))}
                 >
                   <td>
                     <strong>{accountName.get(l.accountId) ?? "—"}</strong>

@@ -124,6 +124,12 @@ describe("leadText", () => {
     );
   });
 
+  it('preserves the configured CRM prefix and encodes the complete account ID in the SMS link', () => {
+    const msg = leadText({ ...lead, id: 'account/?#' }, 'https://crm.example.test/app/');
+    expect(msg).toContain('https://crm.example.test/app/accounts/account%2F%3F%23');
+    expect(msg).toMatch(/account%2F%3F%23$/);
+  });
+
   it("drops the detail clause rather than writing an empty one", () => {
     const bare = leadText(
       { id: "a", name: "Someone", city: null, state: null },

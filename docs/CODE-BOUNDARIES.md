@@ -47,5 +47,12 @@ financial reconciliation, and notification audiences in the server domains that
 own them. A shared transport or storage helper must not automatically retry a
 financial command or weaken those contracts.
 
+`shared/crmRoutes.ts` owns internal CRM path syntax and encoded raw model IDs.
+Account stage/role visibility, navigation history, configured CRM origins, and
+public signing/payment/provider URLs remain with their existing owners. Account
+tab navigation clones existing query parameters; new links keep their explicit
+query values and known scroll anchors. `workLink` still owns task-action priority
+and labels and delegates only its internal path construction.
+
 Historical audit reports explain prior decisions; use current code, current
 verification commands, and this document for maintained boundaries.

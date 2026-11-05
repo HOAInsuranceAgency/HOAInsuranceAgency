@@ -1,3 +1,4 @@
+import { accountPath } from '../../../shared/crmRoutes';
 import { LiveStatus } from "./LiveStatus";
 import { Select } from "./ui/Select";
 import { Table } from "./ui/Table";
@@ -19,7 +20,7 @@ export default function CommunicationDiagnostics() {
     <LiveStatus resource={work} />
     {work.error && <p role="alert" className="error-text">{work.error}</p>}
     {!work.loaded ? <p>Loading queue…</p> : !work.data.items.length ? work.error ? null : <p className="muted">{work.data.nextToken ? "More records remain to be checked." : "No items in this queue."}</p> : <div className="table-wrap"><Table><thead><tr><th>Item</th><th>Details</th><th>Review</th></tr></thead><tbody>{work.data.items.map(item => <tr key={`${kind}:${item.id}`}>
-      <td>{item.accountId ? <Link to={`/accounts/${item.accountId}`}>{item.name || "Open lead"}</Link> : item.provider || "Connection"}<div className="small muted">{item.type?.toLowerCase().replaceAll("_", " ")}{item.at || item.dueAt ? ` · ${fmtDateTime(item.at ?? item.dueAt)}` : ""}</div></td>
+      <td>{item.accountId ? <Link to={accountPath(item.accountId)}>{item.name || "Open lead"}</Link> : item.provider || "Connection"}<div className="small muted">{item.type?.toLowerCase().replaceAll("_", " ")}{item.at || item.dueAt ? ` · ${fmtDateTime(item.at ?? item.dueAt)}` : ""}</div></td>
       <td>{item.message || item.error || item.state?.toLowerCase().replaceAll("_", " ") || "Pending processing"}</td>
       <td>{kind === "OPERATION" ? <DeliveryReview item={item} onSaved={() => void work.refresh()} /> : <ReviewAction id={item.id} version={item.version} event={kind === "EVENT"} onSaved={() => void work.refresh()} />}</td>
     </tr>)}</tbody></Table></div>}

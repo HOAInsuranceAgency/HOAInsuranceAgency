@@ -6,6 +6,17 @@ const render = (snapshot: Record<string, unknown>, overrides: Partial<IntakeBrie
 const bodyText = (html: string) => { const doc = new DOMParser().parseFromString(html, "text/html"); return doc.body.textContent!; };
 
 describe("agent intake brief", () => {
+  it('keeps the HTTPS CRM prefix and submission correlation while encoding the account route', () => {
+    const crmBaseUrl = 'https://crm.example.test/app/?ignored=base#ignored';
+    const { html } = render({}, { accountId: 'account/?#', crmBaseUrl });
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    const href = doc.querySelector('a[href*="/accounts/"]')?.getAttribute('href');
+    expect(href).toBe('https://crm.example.test/app/accounts/account%2F%3F%23?submission=submission-1');
+    expect(intakeReferenceFromHtml(html, crmBaseUrl)).toBe('submission-1');
+    for (const unsafe of ['http://crm.example.test', 'https://user:secret@crm.example.test']) {
+      expect(new DOMParser().parseFromString(render({}, { crmBaseUrl: unsafe }).html, 'text/html').querySelector('a[href*="/accounts/"]')).toBeNull();
+    }
+  });
   it("makes an HO-6 form readable without technical fields, duplicates, or a UTC timestamp", () => {
     const { html } = render({ type: "PERSONAL", contactFirstName: "Jane", contactLastName: "Smith", contactEmail: "jane@example.com", contactPhone: "6178959530", address: "114 Elm Street", city: "Worcester", state: "MA", zip: "01609", unitNumber: "4B", currentCarrier: "Example Mutual", source: "website-ho6:elm", notes: "Association: Elm Condominium\nPlease call after 3.\nMy renewal is coming up.", answers: { "Building / Association": "Elm Condominium", "Building Address": "114 Elm Street, Worcester, MA, 01609", "First Name": "Jane", "Last Name": "Smith", Email: "jane@example.com", Phone: "6178959530", "Unit Number": "4B", "Current HO-6 Carrier": "Example Mutual", Notes: "Please call after 3.\nMy renewal is coming up.", "Buildium ID": "123935", _captcha: "false", _template: "table", _replyto: "jane@example.com", "Lead Type": "HO-6 Unit Owner" } });
     const text = bodyText(html);

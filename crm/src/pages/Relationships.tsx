@@ -1,3 +1,4 @@
+import { relationshipPath } from '../../../shared/crmRoutes';
 import { LiveStatus } from "../components/LiveStatus";
 import { Button } from "../components/ui/Button";
 import { Input } from "../components/ui/Input";
@@ -100,7 +101,7 @@ export default function Relationships() {
                 {items.map((p) => (
                   <tr key={p.id}>
                     <td>
-                      <Link to={`/relationships/${p.id}`}>{p.name}</Link>
+                      <Link to={relationshipPath(p.id)}>{p.name}</Link>
                       {p.archived && <span className="badge gray">Archived</span>}
                     </td>
                     <td>
@@ -128,7 +129,7 @@ export default function Relationships() {
       </p>
       {reviewing && <LegacyManagerReview />}
       {adding && (
-        <PartyForm onClose={() => setAdding(false)} onSaved={(p) => navigate(`/relationships/${p.id}`)} />
+        <PartyForm onClose={() => setAdding(false)} onSaved={(p) => navigate(relationshipPath(p.id))} />
       )}
     </>
   );

@@ -1,3 +1,4 @@
+import { accountPath, carrierPath } from '../../../shared/crmRoutes';
 /**
  * The universal search bar's core: turning the a-tier tables into one flat
  * list of searchable rows, and ranking them against a query. Pure and
@@ -134,7 +135,7 @@ export function buildSearchRows(input: SearchIndexInput): SearchRow[] {
       sub: [sentence(a.stage), [a.city, a.state].filter(Boolean).join(", ")]
         .filter(Boolean)
         .join(" · "),
-      target: `/accounts/${a.id}`,
+      target: accountPath(a.id),
       haystack: [a.name, a.legalName, a.city, a.state].map(lower).filter(Boolean),
     });
   }
@@ -144,7 +145,7 @@ export function buildSearchRows(input: SearchIndexInput): SearchRow[] {
       id: c.id,
       label: c.name,
       sub: [c.email, acct(c.accountId)].filter(Boolean).join(" · "),
-      target: `/accounts/${c.accountId}`,
+      target: accountPath(c.accountId),
       haystack: [c.name, c.email].map(lower).filter(Boolean),
     });
   }
@@ -161,7 +162,7 @@ export function buildSearchRows(input: SearchIndexInput): SearchRow[] {
       ]
         .filter(Boolean)
         .join(" · "),
-      target: `/accounts/${p.accountId}?tab=policies`,
+      target: accountPath(p.accountId, { tab: 'policies' }),
       haystack: [lower(p.policyNumber)],
     });
   }
@@ -172,7 +173,7 @@ export function buildSearchRows(input: SearchIndexInput): SearchRow[] {
       id: i.id,
       label: i.number,
       sub: [acct(i.accountId), sentence(i.status)].filter(Boolean).join(" · "),
-      target: `/accounts/${i.accountId}?tab=invoices`,
+      target: accountPath(i.accountId, { tab: 'invoices' }),
       haystack: [lower(i.number)],
     });
   }
@@ -187,7 +188,7 @@ export function buildSearchRows(input: SearchIndexInput): SearchRow[] {
       ]
         .filter(Boolean)
         .join(" · "),
-      target: `/accounts/${c.accountId}?tab=certificates`,
+      target: accountPath(c.accountId, { tab: 'certificates' }),
       haystack: [c.certificateNumber, c.holderName].map(lower).filter(Boolean),
     });
   }
@@ -197,7 +198,7 @@ export function buildSearchRows(input: SearchIndexInput): SearchRow[] {
       id: c.id,
       label: c.name,
       sub: c.naicCode ? `NAIC ${c.naicCode}` : "Carrier",
-      target: `/carriers/${c.id}`,
+      target: carrierPath(c.id),
       haystack: [c.name, c.naicCode].map(lower).filter(Boolean),
     });
   }
