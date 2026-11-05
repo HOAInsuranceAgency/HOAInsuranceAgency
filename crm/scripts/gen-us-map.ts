@@ -167,7 +167,6 @@ const topo = (await res.json()) as Topology;
 const rawArcs = decodeArcs(topo);
 const arcs = rawArcs.map((a) => simplify(a, SIMPLIFY));
 const paths: Record<string, string> = {};
-const named: Record<string, string> = {};
 
 for (const g of topo.objects.states.geometries) {
   const code = FIPS_TO_USPS[g.id];
@@ -176,7 +175,6 @@ for (const g of topo.objects.states.geometries) {
   paths[code] = polygons
     .flatMap((rings) => rings.map((r) => ringPath(ringPoints(arcs, r))))
     .join("");
-  named[code] = g.properties.name;
 }
 
 const missing = Object.values(FIPS_TO_USPS).filter((c) => !paths[c]);
@@ -217,14 +215,6 @@ export const US_STATE_PATHS: Readonly<Record<string, string>> = Object.freeze({
 ${Object.keys(paths)
   .sort()
   .map((c) => `  ${c}: ${JSON.stringify(paths[c])},`)
-  .join("\n")}
-});
-
-/** USPS code → the state's full name, for labels and titles. */
-export const US_STATE_NAMES: Readonly<Record<string, string>> = Object.freeze({
-${Object.keys(named)
-  .sort()
-  .map((c) => `  ${c}: ${JSON.stringify(named[c])},`)
   .join("\n")}
 });
 `;

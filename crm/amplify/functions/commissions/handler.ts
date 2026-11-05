@@ -1,3 +1,4 @@
+import { agencyDay } from '../../../../shared/agencyTime';
 import { assertPreviewRead } from "../migration-readonly";
 import { apiFailure } from '../../../../shared/apiResponse';
 import { QueryCommand } from '@aws-sdk/lib-dynamodb';
@@ -46,12 +47,7 @@ import {
 import * as store from './store';
 
 const agencyToday = () =>
-  new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'America/New_York',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(new Date());
+  agencyDay(new Date());
 const hash = (text: string) => createHash('sha256').update(text).digest('hex');
 const s3 = fileClient();
 const data = (value: unknown) => value as store.Data & { id: string };

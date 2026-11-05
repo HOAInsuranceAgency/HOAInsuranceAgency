@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import { QUOTE_URL, PHONE, trackLead } from "../constants";
-import { states as ALL_STATES } from "../data/states";
+import { US_STATE_NAMES as STATE_ABBR_TO_NAME, isUSStateCode } from "../../../shared/usStates";
 import { useLeadSubmission } from "../lib/crmLead";
 import { loadGooglePlaces } from "../lib/googlePlaces";
 import "./CoverageCalculator.css";
@@ -16,20 +16,13 @@ interface CoverageResult {
   reason: string;
 }
 
-/** State lookup derived from the nationwide route data. */
-const STATE_ABBR_TO_NAME: Record<string, string> = Object.fromEntries(
-  ALL_STATES.map((s) => [s.abbr, s.name])
-);
-
-const KNOWN_STATES = new Set(Object.keys(STATE_ABBR_TO_NAME));
-
 /** Return a known state/DC abbreviation from a Places result. */
 function extractStateFromPlace(place: google.maps.places.PlaceResult): string | null {
   if (!place.address_components) return null;
   for (const comp of place.address_components) {
     if (comp.types.includes("administrative_area_level_1")) {
       const abbr = comp.short_name?.toUpperCase();
-      if (abbr && KNOWN_STATES.has(abbr)) return abbr;
+      if (abbr && isUSStateCode(abbr)) return abbr;
     }
   }
   return null;

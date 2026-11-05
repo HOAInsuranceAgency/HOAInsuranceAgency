@@ -1,15 +1,11 @@
+import { agencyDay } from '../../../../shared/agencyTime';
 import { day, type CommissionAccount } from '../../../../shared/commissions';
 
 export function bindDay(value: unknown): string | undefined {
   if (typeof value !== 'string' || !value) return undefined;
   if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return day(value);
   if (!Number.isFinite(Date.parse(value))) return undefined;
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'America/New_York',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(new Date(value));
+  return agencyDay(value);
 }
 /** Owner-attested history includes business predating the CRM. Never infer that
  * an old account is new merely because its imported policy dates are missing. */

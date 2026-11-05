@@ -4,14 +4,12 @@ import { Textarea } from "../ui/Textarea";
 import { Button } from "../ui/Button";
 import { useSaveStatus } from "../SaveStatus";
 import { str } from "../../lib/formCodec";
-import {
-  client,
+import { client,
   unwrap,
   LINES_OF_AUTHORITY,
-  US_STATES,
   type License,
-  type UserProfile,
-} from "../../lib/client";
+  type UserProfile } from "../../lib/client";
+import { US_STATES } from "../../../../shared/usStates";
 import {
   LICENSE_CLASS_LABELS,
   LICENSE_RESIDENCY_OPTIONS,

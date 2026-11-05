@@ -1,3 +1,4 @@
+import { formatUsdDollars } from './money';
 /**
  * Invoice arithmetic. Pure, and the only place it happens.
  *
@@ -243,12 +244,7 @@ export function directBillWarning(
  * Node guessed differently is not a formatting bug anyone finds quickly.
  */
 export function formatMoney(n: number | null | undefined): string {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(amount(n));
+  return formatUsdDollars(amount(n));
 }
 
 /**

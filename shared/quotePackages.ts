@@ -1,3 +1,4 @@
+import { formatUsdCents } from './money';
 import { authorizedQuoteTerms } from './quoteAuthorization';
 import { validCalendarDate } from './renewalPolicy';
 import { brokerFeeCents } from './brokerFees';
@@ -37,13 +38,7 @@ export interface CommercialPlan {
   selectedTerms?: Record<string, string>;
   selectedAt?: string;
 }
-export const formatCommission = (cents: number) =>
-  new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    minimumFractionDigits: cents % 100 ? 2 : 0,
-    maximumFractionDigits: 2,
-  }).format(cents / 100);
+export const formatCommission = (cents: number) => formatUsdCents(cents, 'optionalCents');
 export const emptyCommercialPlan = (accountId: string): CommercialPlan => ({
   accountId,
   version: 0,

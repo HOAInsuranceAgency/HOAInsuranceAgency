@@ -1,3 +1,4 @@
+import { formatUsdCents } from '../../../shared/money';
 import { isAuthorizationError } from "../../../shared/authorizationError";
 import { LiveStatus } from "../components/LiveStatus";
 import { readOwnerProfitability, saveOwnerCompensation, type ProfitabilityEmployee as Employee } from '../lib/ownerProfitability';
@@ -20,7 +21,7 @@ import {
 } from "../../../shared/employeeProfitability";
 import "./OwnerProfitability.css";
 
-const money = (cents: number | null) => cents == null ? "Incomplete" : new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 }).format(cents / 100);
+const money = (cents: number | null) => cents == null ? "Incomplete" : formatUsdCents(cents);
 const dollars = (cents: number | null) => cents == null ? null : cents / 100;
 const basis = "Estimated carrier commission plus broker fees less recorded fee refunds, by policy effective date and current account salesperson. The estimated producer share applies to both revenue sources; prorated annual salary is deducted. Cancelled carrier commission and other operating costs are excluded; retained broker fees remain included.";
 

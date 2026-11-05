@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { agencyDay } from "../../../shared/leadActionGuidance";
+import { agencyDay } from "../../../shared/agencyTime";
 import { matchesQuoteOfferFilter, quoteOfferDate, quoteOfferUrgency } from "./quoteOfferExpiry";
 
 const today = "2026-11-03";

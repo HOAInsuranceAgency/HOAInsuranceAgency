@@ -1,3 +1,4 @@
+import { agencyDay } from '../../../../shared/agencyTime';
 import { getFee } from '../broker-fees/store';
 import { brokerFeeCents } from '../../../../shared/brokerFees';
 import { normalizeClientConditions, normalizePassThroughCharges } from '../../../../shared/passThroughCharges';
@@ -110,12 +111,7 @@ export async function bindPolicy(event: Event, input: Data) {
       'An Owner must configure this carrier’s commission payment terms before binding.',
     );
   const at = new Date().toISOString(),
-    today = new Intl.DateTimeFormat('en-CA', {
-      timeZone: 'America/New_York',
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-    }).format(new Date(at));
+    today = agencyDay(at);
   const transaction = quote.renewalPolicyId ? 'RENEWAL' : 'NEW';
   const selectedCarrierTerms = selectCarrierPaymentTerms(carrierTerms, {
     effectiveDate,

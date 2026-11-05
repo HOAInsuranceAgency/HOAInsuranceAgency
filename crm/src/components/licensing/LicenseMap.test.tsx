@@ -3,7 +3,8 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import LicenseMap, { coverageOf } from "./LicenseMap";
-import { US_MAP_VIEWBOX, US_STATE_NAMES, US_STATE_PATHS } from "../../lib/usMap";
+import { US_MAP_VIEWBOX, US_STATE_PATHS } from "../../lib/usMap";
+import { US_STATE_NAMES } from "../../../../shared/usStates";
 import type { License, UserProfile } from "../../lib/client";
 
 // Exercise the map's document attachment wiring without invoking storage or

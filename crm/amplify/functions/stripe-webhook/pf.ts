@@ -1,5 +1,6 @@
+import { formatUsdDollars as money } from '../../../../shared/money';
 import { sendCrmWrite } from '../live-write';
-import { agencyDay } from "../../../../shared/leadActionGuidance";
+import { agencyDay } from "../../../../shared/agencyTime";
 import { feeAllocations, type BrokerFeeAllocation } from "../../../../shared/brokerFees";
 import { syncBrokerFeePayment } from "../broker-fees/payments";
 import { TransactionalMailClient } from "../transactional-mail/client";
@@ -156,8 +157,7 @@ async function mailAccounting(subject: string, lines: string[]) {
   console.log(`stripe-webhook: accounting email accepted by SES ${sent.MessageId ?? "(no id)"}: ${subject}`);
 }
 
-const money = (n: number) =>
-  n.toLocaleString("en-US", { style: "currency", currency: "USD" });
+
 
 /**
  * The names accounting reconciles by. A loan UUID identifies nothing to the

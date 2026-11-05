@@ -1,8 +1,8 @@
+import { agencyDay } from './agencyTime';
 import type { Communication, LeadTask } from "./leadWorkflow";
 import { taskDomain, taskContext } from "./workRouting";
 import { currentMessage } from "./serviceEvidence";
 
-export const agencyDay = (at: string) => new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(at));
 export function workLink(task: LeadTask): { path: string; label: string } {
   const account = `/accounts/${encodeURIComponent(task.accountId)}`;
   if (task.blocker) return { path: `${account}?tab=activity#lead-workspace`, label: "Review blocker" };

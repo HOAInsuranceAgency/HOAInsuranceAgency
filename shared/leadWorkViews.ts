@@ -1,12 +1,10 @@
+import { agencyDay } from './agencyTime';
 import type { LeadTask } from "./leadWorkflow";
 
 export const LEAD_WORK_VIEWS = ["Needs attention", "Upcoming", "All open"] as const;
 export type LeadWorkView = typeof LEAD_WORK_VIEWS[number];
-const agencyDate = new Intl.DateTimeFormat("en-CA", {
-  timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit",
-});
 export function dueToday(dueAt: string, now: string) {
-  return Number.isFinite(Date.parse(dueAt)) && agencyDate.format(new Date(dueAt)) === agencyDate.format(new Date(now));
+  return Number.isFinite(Date.parse(dueAt)) && agencyDay(dueAt) === agencyDay(now);
 }
 /** Requests need attention immediately; scheduled promises join them on their due date. */
 export function needsAttention(task: { kind?: string; dueAt?: string; blocker?: { reviewAt: string } }, now: string) {

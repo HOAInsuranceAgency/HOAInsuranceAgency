@@ -19,33 +19,20 @@ import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { load } from "js-yaml";
+import { US_STATE_CATALOG } from "../../shared/usStates";
 
 const ROOT = resolve(process.cwd());
 const YAML_PATH = resolve(ROOT, "config/premium_finance/jurisdictions.yml");
 const OUT_PATH = resolve(ROOT, "../shared/premiumFinance/jurisdictions.ts");
 
 /**
- * USPS codes are reference data, not compliance data, so they live in the
- * generator rather than the signed file. `Account.state` in this codebase is
+ * USPS codes are reference data, not compliance data, so they use the shared
+ * catalog rather than the signed file. `Account.state` in this codebase is
  * the two-letter form (ACORD state fields require it); the YAML uses the full
  * names the source table was signed with. The drift test asserts the mapping
  * is total and unique over the 51 rows.
  */
-const USPS: Record<string, string> = {
-  Alabama: "AL", Alaska: "AK", Arizona: "AZ", Arkansas: "AR", California: "CA",
-  Colorado: "CO", Connecticut: "CT", Delaware: "DE",
-  "District of Columbia": "DC", Florida: "FL", Georgia: "GA", Hawaii: "HI",
-  Idaho: "ID", Illinois: "IL", Indiana: "IN", Iowa: "IA", Kansas: "KS",
-  Kentucky: "KY", Louisiana: "LA", Maine: "ME", Maryland: "MD",
-  Massachusetts: "MA", Michigan: "MI", Minnesota: "MN", Mississippi: "MS",
-  Missouri: "MO", Montana: "MT", Nebraska: "NE", Nevada: "NV",
-  "New Hampshire": "NH", "New Jersey": "NJ", "New Mexico": "NM",
-  "New York": "NY", "North Carolina": "NC", "North Dakota": "ND", Ohio: "OH",
-  Oklahoma: "OK", Oregon: "OR", Pennsylvania: "PA", "Rhode Island": "RI",
-  "South Carolina": "SC", "South Dakota": "SD", Tennessee: "TN", Texas: "TX",
-  Utah: "UT", Vermont: "VT", Virginia: "VA", Washington: "WA",
-  "West Virginia": "WV", Wisconsin: "WI", Wyoming: "WY",
-};
+const USPS: Record<string, string> = Object.fromEntries(US_STATE_CATALOG.map(state => [state.name, state.code]));
 
 interface YamlRow {
   name: string;

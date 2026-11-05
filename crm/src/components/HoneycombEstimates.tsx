@@ -1,3 +1,4 @@
+import { formatUsdDollars } from '../../../shared/money';
 import { Button } from "./ui/Button";
 import { Link } from "react-router-dom";
 import { eligibleEstimate } from "../../../shared/honeycomb/submission";
@@ -35,7 +36,7 @@ export default function HoneycombEstimates({ accountId }: { accountId: string })
       const status = visibleStatus(record);
       return <div key={record.id} style={{ marginBottom: 16 }}>
         <strong>{status.replaceAll("_", " ")}</strong>
-        {record.price != null && <span> · {new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(record.price)}</span>}
+        {record.price != null && <span> · {formatUsdDollars(record.price)}</span>}
         <p className="muted small">{new Date(record.createdAt).toLocaleString()}{record.estimationId ? ` · ${record.estimationId}` : ""}</p>
         {eligibleEstimate(record) && <p><Link to={`?tab=submissions&estimate=${encodeURIComponent(record.id)}`}>Start submission from this estimate →</Link></p>}
         {record.issue && <p className="small">{record.issue}</p>}

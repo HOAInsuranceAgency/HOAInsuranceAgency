@@ -1,3 +1,4 @@
+import { formatUsdDollars } from '../../../../shared/money';
 import { publicApi } from "../../lib/publicApi";
 import { useEffect, useState } from "react";
 export type PublicEstimate = { status: string; price?: number; currency?: string; staging?: boolean };
@@ -54,7 +55,7 @@ export default function PriceIndication({ token, read = readEstimate }: { token?
   return <section className="qf-price-indication" aria-label="Price indication" role="status" aria-live="polite" aria-atomic="true">
     {result.staging && <span className="qf-estimate-badge">Staging test</span>}
     <h3>Preliminary price indication</h3>
-    <p className="qf-estimate-price">{new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(result.price)}</p>
+    <p className="qf-estimate-price">{formatUsdDollars(result.price, 'whole')}</p>
     <p className="qf-estimate-disclaimer">
       This is a preliminary, non-binding estimate. Final premiums may be significantly higher
       or lower based on underwriting, verified property details, coverage selections and other

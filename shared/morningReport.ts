@@ -1,6 +1,7 @@
 import type { LeadTask, LeadWorkflow, TeamEligibility, TeamRouting } from "./leadWorkflow";
 import { taskRoute, taskContext, taskDomain } from "./workRouting";
-import { leadActionGuidance, agencyDay, workLink } from "./leadActionGuidance";
+import { leadActionGuidance, workLink } from "./leadActionGuidance";
+import { agencyDay } from "./agencyTime";
 import { needsAttention } from "./leadWorkViews";
 
 export interface ReportItem {
