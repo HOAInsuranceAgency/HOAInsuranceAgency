@@ -8,17 +8,17 @@ import { validateInvoiceSourceCharges } from '../send-invoice/passThroughInvoice
 import { assertAdjustmentInvoiceProof, assertInitialInvoiceAvailable } from '../send-invoice/adjustmentInvoice';
 import { relationshipCurrent } from "../../../../shared/relationships";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, GetCommand, BatchGetCommand } from "@aws-sdk/lib-dynamodb";
+import { DynamoDBDocumentClient, GetCommand } from "@aws-sdk/lib-dynamodb";
+import { batchGetComplete } from '../storage/batchGet';
+import { modelKeyName, resolveModelTable, storedModel } from '../storage/models';
 import { ACCOUNT_MODELS, ACCOUNT_REFERENCES, LIST_PARENTS, SHARED_MODELS, RETIRED_MODELS, AccessDenied, id, object, type Identity, type RecordData } from "./policy";
 import { isActiveAdmin, type RoleRequest } from "./active-role";
 export const db = DynamoDBDocumentClient.from(new DynamoDBClient());
 export function tableName(model: string) {
-  const tables = JSON.parse(process.env.ACCESS_TABLES ?? "{}") as Record<string, string>;
-  const name = model === "Communication" ? process.env.COMMUNICATION_TABLE : tables[model] ?? (process.env.ACCESS_API_ID && `${model}-${process.env.ACCESS_API_ID}-NONE`);
-  if (!name) throw new Error("Account access is not configured");
-  return name;
+  const error = () => new Error('Account access is not configured');
+  return resolveModelTable(storedModel(model, error), { error });
 }
-const primaryKey = (model: string) => ["GlApplication", "DoApplication"].includes(model) ? "accountId" : "id";
+const primaryKey = (model: string) => modelKeyName(storedModel(model, () => new Error('Account access is not configured')));
 export type Reader = (model: string, key: string) => Promise<RecordData | undefined>;
 const read: Reader = async (model, key) => {
   return (await db.send(new GetCommand({ TableName: tableName(model), Key: { [primaryKey(model)]: key }, ConsistentRead: true }))).Item;
@@ -66,19 +66,12 @@ export class AccountAccess {
     if (!missing.length) return;
     if (this.reader !== read) { await Promise.all(missing.map(key => this.get(model, key))); return; }
     const name = tableName(model), keyField = primaryKey(model);
-    for (let offset = 0; offset < missing.length; offset += 100) {
-      const batch = missing.slice(offset, offset + 100);
-      let pending = { [name]: { Keys: batch.map(key => ({ [keyField]: key })), ConsistentRead: true } };
-      const found = new Map<string, RecordData>();
-      for (let attempt = 0; Object.keys(pending).length; attempt++) {
-        if (attempt === 4) throw new Error("Account access lookup is busy; please retry");
-        const result = await db.send(new BatchGetCommand({ RequestItems: pending }));
-        for (const item of result.Responses?.[name] ?? []) found.set(id(item[keyField]), item);
-        pending = result.UnprocessedKeys as typeof pending ?? {};
-        if (Object.keys(pending).length) await new Promise(resolve => setTimeout(resolve, 25 * 2 ** attempt));
-      }
-      for (const key of batch) this.records.set(`${model}:${key}`, Promise.resolve(found.get(key)));
-    }
+    const rows = await batchGetComplete<RecordData>({ send: command => db.send(command), table: name,
+      keys: missing.map(key => ({ [keyField]: key })), maxKeys: Number.MAX_SAFE_INTEGER, attempts: 4,
+      read: { ConsistentRead: true }, sizeError: () => new Error('Account access lookup is busy; please retry'),
+      incompleteError: () => new Error('Account access lookup is busy; please retry') });
+    const found = new Map(rows.map(item => [id(item[keyField]), item]));
+    for (const key of missing) this.records.set(`${model}:${key}`, Promise.resolve(found.get(key)));
   }
   async prefetchAccounts(keys: string[]) {
     if (this.admin) return;

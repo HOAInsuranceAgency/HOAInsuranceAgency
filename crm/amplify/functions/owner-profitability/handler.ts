@@ -5,6 +5,7 @@ import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, GetCommand, QueryCommand, ScanCommand, TransactWriteCommand } from '@aws-sdk/lib-dynamodb';
 import { isActiveOwner, type RoleRequest } from '../crm-access/active-role';
 import { reportBatchGet } from '../communications/dashboardStore';
+import { collectCompletePages } from '../storage/pages';
 import {
   calculateEmployeeProfitability, validateCompensationRecord, validateProfitabilityWindow, isProfitabilityDate,
   type EmployeeCompensation, type ProfitabilityEmployee, type ProfitabilityPolicy,
@@ -39,19 +40,12 @@ function projection(fields: string[]) {
 /** Follow every page, including empty filtered pages. Fail rather than render
  * partial financial totals when the bounded snapshot cannot be completed. */
 async function collect(fetch: (cursor?: RecordData) => Promise<{ Items?: RecordData[]; LastEvaluatedKey?: RecordData }>) {
-  const rows: RecordData[] = [], seen = new Set<string>();
-  let cursor: RecordData | undefined;
-  for (let page = 0; page < 200; page++) {
+  return collectCompletePages<RecordData>(async cursor => {
     const result = await fetch(cursor);
-    rows.push(...result.Items ?? []);
-    if (rows.length > 25000) throw new Error('This report is too large to load safely. Contact support.');
-    cursor = result.LastEvaluatedKey;
-    if (!cursor || !Object.keys(cursor).length) return rows;
-    const key = JSON.stringify(cursor);
-    if (seen.has(key)) throw new Error('The report could not finish loading. Please retry.');
-    seen.add(key);
-  }
-  throw new Error('The report could not finish loading. Please retry.');
+    return { items: result.Items ?? [], next: result.LastEvaluatedKey };
+  }, { maxPages: 200, maxRows: 25000,
+    sizeError: () => new Error('This report is too large to load safely. Contact support.'),
+    error: () => new Error('The report could not finish loading. Please retry.') });
 }
 const profiles = () => collect(cursor => db.send(new ScanCommand({
   TableName: configured('USER_PROFILE_TABLE'), ConsistentRead: true, Limit: 250, ExclusiveStartKey: cursor,

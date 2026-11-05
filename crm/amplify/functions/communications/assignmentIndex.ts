@@ -1,4 +1,4 @@
-import { BatchGetCommand } from "@aws-sdk/lib-dynamodb";
+import { batchGetComplete, ReadDeadlineExceeded } from '../storage/batchGet';
 import type { LeadWorkflow } from "../../../../shared/leadWorkflow";
 import { conflict, db, get, query, row, save, table, type Row } from "./store";
 import { migrateProducerIndex } from "./producerIndex";
@@ -6,22 +6,13 @@ import { migrateProducerIndex } from "./producerIndex";
 /** GSI pages may be stale. Read their current rows together before attempting
  * conditional writes; an unprocessed key is never evidence of a deleted row. */
 async function readPage(ids: string[], deadline: number) {
-  const name = table(), found = new Map<string, Row<LeadWorkflow>>();
-  let pending = [...new Set(ids)].map(id => ({ id }));
-  if (pending.length > 100) throw new Error("Assignment migration page exceeds the batch read limit");
-  for (let attempt = 0; pending.length; attempt++) {
-    if (Date.now() >= deadline) return;
-    const result = await db.send(new BatchGetCommand({ RequestItems: { [name]: { Keys: pending, ConsistentRead: true } } }));
-    for (const item of result.Responses?.[name] ?? []) found.set(item.id, item as Row<LeadWorkflow>);
-    pending = (result.UnprocessedKeys?.[name]?.Keys ?? []).map(key => ({ id: key.id as string }));
-    if (pending.length) {
-      if (attempt === 3) throw new Error("Assignment migration batch read remains incomplete; retry this page");
-      const delay = 25 * 2 ** attempt;
-      if (Date.now() + delay >= deadline) return;
-      await new Promise(resolve => setTimeout(resolve, delay));
-    }
-  }
-  return found;
+  try {
+    const rows = await batchGetComplete<Row<LeadWorkflow>>({ send: command => db.send(command), table: table(),
+      keys: ids.map(id => ({ id })), maxKeys: 100, attempts: 4, deadline, read: { ConsistentRead: true },
+      sizeError: () => new Error('Assignment migration page exceeds the batch read limit'),
+      incompleteError: () => new Error('Assignment migration batch read remains incomplete; retry this page') });
+    return new Map(rows.map(item => [item.id, item]));
+  } catch (error) { if (error instanceof ReadDeadlineExceeded) return; throw error; }
 }
 
 /** Dedicated scheduled worker: drain many pages per invocation, checkpointing

@@ -108,6 +108,12 @@ describe('account signed-agreement discovery', () => {
   it('bounds pagination and never treats a truncated index as an empty agreement list', async () => {
     const send = vi.spyOn(db, 'send').mockResolvedValue({ Items: [], LastEvaluatedKey: { id: 'cursor' } } as never);
     await expect(accountAgreements('a', 'q')).rejects.toThrow('could not be loaded completely');
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+  it('exhausts the original 100-page budget when distinct cursors keep advancing', async () => {
+    let page = 0;
+    const send = vi.spyOn(db, 'send').mockImplementation(async () => ({ Items: [], LastEvaluatedKey: { id: String(++page) } }) as never);
+    await expect(accountAgreements('a', 'q')).rejects.toThrow('could not be loaded completely');
     expect(send).toHaveBeenCalledTimes(100);
   });
 });

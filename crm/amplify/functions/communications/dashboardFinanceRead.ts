@@ -1,14 +1,15 @@
 import { reportBatchGet, reportIds } from './dashboardStore';
 import { reportIndexPage } from './reportIndexPage';
 import { reportDatePage } from './reportDatePage';
+import { resolveModelTable, type StoredModel } from '../storage/models';
 
 function iso(value: unknown): value is string {
   return typeof value === 'string' && value.length === 24 &&
     Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value;
 }
 function configured(name: string): string {
-  const model = ({ DASHBOARD_PAYMENT_TABLE: 'PfLoanPayment', DASHBOARD_POLICY_TABLE: 'Policy', DASHBOARD_INVOICE_LINE_TABLE: 'InvoiceLine' } as Record<string, string>)[name];
-  const value = process.env[name] || (model && process.env.ACCESS_API_ID ? `${model}-${process.env.ACCESS_API_ID}-NONE` : undefined);
+  const model = ({ DASHBOARD_PAYMENT_TABLE: 'PfLoanPayment', DASHBOARD_POLICY_TABLE: 'Policy', DASHBOARD_INVOICE_LINE_TABLE: 'InvoiceLine' } as Record<string, StoredModel>)[name];
+  const value = model ? resolveModelTable(model, { envNames: [name], useTableMap: false, error: () => new Error('Dashboard finance storage is not configured') }) : process.env[name];
   if (!value) throw new Error('Dashboard finance storage is not configured');
   return value;
 }

@@ -1,4 +1,5 @@
-import { BatchGetCommand, ScanCommand } from '@aws-sdk/lib-dynamodb';
+import { ScanCommand } from '@aws-sdk/lib-dynamodb';
+import { batchGetComplete } from '../storage/batchGet';
 import { AccountAccess } from '../crm-access/access';
 import type { Identity, RecordData } from '../crm-access/policy';
 import type { RoleRequest } from '../crm-access/active-role';
@@ -16,20 +17,13 @@ const table = (model: string) => {
 export async function relationshipBatch(model: string, ids: string[]) {
   const keys = [...new Set(ids)];
   if (keys.length > 100) throw new Error('Choose up to 100 records.');
-  const records = new Map<string, RecordData>();
-  if (!keys.length) return records;
+  if (!keys.length) return new Map<string, RecordData>();
   const name = table(model);
-  let pending: Record<string, { Keys: { id: string }[]; ConsistentRead?: boolean }> = {
-    [name]: { Keys: keys.map((id) => ({ id })), ConsistentRead: true },
-  };
-  for (let attempt = 0; Object.keys(pending).length; attempt++) {
-    if (attempt === 4) throw new Error('Relationship lookup is busy. Please retry.');
-    const result = await db.send(new BatchGetCommand({ RequestItems: pending }));
-    for (const record of result.Responses?.[name] ?? []) records.set(String(record.id), record);
-    pending = (result.UnprocessedKeys as typeof pending) ?? {};
-    if (Object.keys(pending).length) await new Promise((resolve) => setTimeout(resolve, 25 * 2 ** attempt));
-  }
-  return records;
+  const rows = await batchGetComplete<RecordData>({ send: command => db.send(command), table: name,
+    keys: keys.map(id => ({ id })), maxKeys: 100, attempts: 4, read: { ConsistentRead: true },
+    sizeError: () => new Error('Choose up to 100 records.'),
+    incompleteError: () => new Error('Relationship lookup is busy. Please retry.') });
+  return new Map(rows.map(record => [String(record.id), record]));
 }
 const profile = (r: RecordData) =>
   Object.fromEntries(
