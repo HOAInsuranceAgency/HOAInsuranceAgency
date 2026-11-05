@@ -66,6 +66,6 @@ export function LeadSnoozeControl({ accountName, snooze, today, onSaved, onRefre
       {snooze.followUpOn && <Button variant="link"  disabled={busy} onClick={() => void save(null, '')}>{status === 'DUE' ? 'Mark followed up' : 'Bring back now'}</Button>}
     </div>}
     {busy && <p className="muted small" role="status">Saving…</p>}
-    {error && <p className="error-text small" role="alert">{error} <Button variant="link"  disabled={busy} onClick={() => { setEditing(false); setError(''); void onRefresh(); }}>Refresh</Button></p>}
+    {error && <p className="error-text small" role="alert">{error} <Button variant="link"  disabled={busy} onClick={() => { setEditing(false); setError(''); void onRefresh(); }}>Retry</Button></p>}
   </div>;
 }

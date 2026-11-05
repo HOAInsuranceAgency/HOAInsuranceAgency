@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { invalidateLiveUpdates } from '../test/liveUpdates';
 
 const h = vi.hoisted(() => ({ admin: true, get: vi.fn(), save: vi.fn(), identifiers: vi.fn(), storage: vi.fn() }));
 vi.mock('../lib/client', async original => ({
@@ -55,6 +56,7 @@ beforeEach(() => {
 describe('one-time broker fee jurisdiction configuration', () => {
   it('starts unconfigured without claiming fees are permitted, then saves reviewed terms in the existing agency settings', async () => {
     render(<BrokerFeeSettings />); await ready();
+    expect(screen.queryByRole('button', { name: /reload|refresh|retry/i })).not.toBeInTheDocument();
     expect(screen.getByText(/A state without configured rules cannot charge a broker fee/)).toBeVisible();
     expect(field(/reviewed rules for fees alongside carrier commission/)).not.toBeChecked();
     fillRules(); fireEvent.click(saveButton());
@@ -137,7 +139,7 @@ describe('one-time broker fee jurisdiction configuration', () => {
     expect(h.save).toHaveBeenCalledTimes(2);
   });
 
-  it('offers a deliberate reload after a stale version instead of retrying the same obsolete version forever', async () => {
+  it('offers an error-only retry after a stale version instead of retrying the same obsolete version forever', async () => {
     stored.brokerFeeJurisdictionsVersion = 2; stored.brokerFeeJurisdictions.MA = approvedRule();
     h.save.mockResolvedValueOnce({ data: { ok: false, error: 'Jurisdiction settings changed. Reload before saving.' } });
     render(<BrokerFeeSettings />); await ready(); edit('Review reference/version', 'MA-my-review-v2'); fireEvent.click(saveButton());
@@ -145,11 +147,27 @@ describe('one-time broker fee jurisdiction configuration', () => {
     expect(JSON.parse(h.save.mock.calls[0][0].input).version).toBe(2);
     expect(field('Review reference/version')).toHaveValue('MA-my-review-v2');
     stored = { ...stored, brokerFeeJurisdictionsVersion: 3, brokerFeeJurisdictions: { MA: { ...approvedRule(), version: 'MA-other-review-v3' } } };
-    fireEvent.click(screen.getByRole('button', { name: /reload|refresh/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
     await waitFor(() => expect(field('Review reference/version')).toHaveValue('MA-other-review-v3'));
+    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
     edit('Review reference/version', 'MA-my-review-v4'); fireEvent.click(saveButton());
     await waitFor(() => expect(h.save).toHaveBeenCalledTimes(2));
     expect(JSON.parse(h.save.mock.calls[1][0].input).version).toBe(3);
+  });
+
+  it('updates pristine disclosure rules automatically and defers updates while reviewed terms are being edited', async () => {
+    stored = { ...stored, brokerFeeJurisdictionsVersion: 2, brokerFeeJurisdictions: { MA: approvedRule() } };
+    render(<BrokerFeeSettings />); await ready();
+    stored = { ...stored, brokerFeeJurisdictionsVersion: 3, brokerFeeJurisdictions: { MA: { ...approvedRule(), version: 'MA-current-v3' } } };
+    await invalidateLiveUpdates(['CRM']);
+    expect(field('Review reference/version')).toHaveValue('MA-current-v3');
+    expect(h.get).toHaveBeenCalledTimes(2);
+    edit('Review reference/version', 'MA-unsaved-review');
+    stored = { ...stored, brokerFeeJurisdictionsVersion: 4, brokerFeeJurisdictions: { MA: { ...approvedRule(), version: 'MA-current-v4' } } };
+    await invalidateLiveUpdates(['CRM']);
+    expect(field('Review reference/version')).toHaveValue('MA-unsaved-review');
+    expect(h.get).toHaveBeenCalledTimes(2);
+    expect(h.save).not.toHaveBeenCalled();
   });
 
   it('rejects a fractional-cent maximum rather than silently changing a reviewed legal fee limit', async () => {

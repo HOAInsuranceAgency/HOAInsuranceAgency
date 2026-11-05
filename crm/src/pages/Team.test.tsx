@@ -299,7 +299,7 @@ describe("combined team and assignment settings", () => {
     expect(await screen.findByText("Assignment service unavailable")).toBeVisible();
     expect(await screen.findByText(teammate.email)).toBeVisible();
     expect(screen.queryByRole("checkbox", { name: "Receive new leads for Casey Staff" })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Refresh assignment settings" }));
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     expect(await screen.findByRole("checkbox", { name: "Receive new leads for Casey Staff" })).toBeEnabled();
     expect(screen.queryByText("Assignment service unavailable")).toBeNull();
     expect(within(screen.getByRole("region", { name: "Team members" })).getAllByRole("row")).toHaveLength(2);
@@ -681,7 +681,7 @@ describe("bounded visible teammate settings", () => {
     expect(await screen.findByText("Settings temporarily unavailable")).toBeVisible();
     expect(screen.getByRole("button", { name: "Edit roles for Member 20" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Deactivate Member 20" })).toBeEnabled();
-    fireEvent.click(screen.getByRole("button", { name: "Refresh assignment settings" }));
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     await waitFor(() => expect(settingsCalls()).toHaveLength(4));
     expect(settingsCalls().slice(2).map(([, input]) => input)).toEqual([
       { userIds: first.users.map(user => user.userId) }, { userIds: second.users.map(user => user.userId) },

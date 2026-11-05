@@ -77,7 +77,7 @@ export function AccountSalespersonSelect({
         {eligible.map(member => <option key={member.userId} value={member.userId}>{member.name}</option>)}
       </Select>
       <div id={messageId}>
-        {error ? <div className="error-text small" role="alert">{error} <Button variant="link" type="button"  onClick={() => void onRefresh()}>Refresh assignments</Button></div>
+        {error ? <div className="error-text small" role="alert">{error} <Button variant="link" type="button"  onClick={() => void onRefresh()}>Retry</Button></div>
           : <span className="muted small" role="status">{pending !== null ? 'Saving…' : saved ? 'Saved' : eligible.length === 0 ? 'No eligible salespeople' : ''}</span>}
       </div>
     </div>

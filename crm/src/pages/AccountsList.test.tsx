@@ -145,7 +145,7 @@ it.each(stages)('$stage keeps the old assignment on failure and can refresh a st
 
   version = 9;
   h.request.mockImplementation(initial);
-  fireEvent.click(screen.getByRole('button', { name: 'Refresh assignments' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
   const refreshed = await salespersonPicker(accountName);
   fireEvent.change(refreshed, { target: { value: 'bob' } });
   await screen.findByText('Saved');
@@ -181,7 +181,7 @@ it.each(['refresh-last', 'save-last'])('keeps the newest assignment when another
   await screen.findByRole('alert');
   fireEvent.change(willow, { target: { value: 'bob' } });
   refreshing = true;
-  fireEvent.click(screen.getByRole('button', { name: 'Refresh assignments' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
   await waitFor(() => expect(finishRefresh).toBeTypeOf('function'));
   const snapshot = await initial('commercialTable', { accountIds: ['willow', 'pine', 'cedar'] });
   const saved = { workflow: { accountId: 'willow', salespersonId: 'bob', version: 8 } };

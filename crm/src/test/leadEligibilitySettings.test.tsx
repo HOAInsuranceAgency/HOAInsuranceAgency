@@ -267,7 +267,7 @@ it("clears saved rows and loaded defaults after an authorization denial instead 
   expect(screen.queryByRole("checkbox", { name: /Receive new leads/ })).toBeNull();
   expect(screen.queryByRole("button", { name: /Edit connections/ })).toBeNull();
   expect(screen.queryByText(member.frontId!)).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "Refresh assignment settings" }));
+  fireEvent.click(screen.getByRole("button", { name: "Retry" }));
   expect(await screen.findByRole("checkbox", { name: "Receive new leads for Jake Greasley" })).toBeChecked();
   expect(screen.getByText(member.frontId!)).toBeVisible();
 });

@@ -160,7 +160,7 @@ export default function LeadWorkflowPanel({ accountId, conversationId, onOpen }:
     {onOpen && <CommunicationAccountSummary accountId={workflow.accountId} open={open} />}
     {notice && <p className="workflow-notice" role="status">{notice}</p>}
     <LiveStatus resource={resource} />
-    {resource.error && <p className="error-text workflow-notice" role="alert">{resource.error} <Button variant="link"  onClick={() => void resource.refetch()}>Retry refresh</Button></p>}
+    {resource.error && <p className="error-text workflow-notice" role="alert">{resource.error} <Button variant="link"  onClick={() => void resource.refetch()}>Retry</Button></p>}
     {error && <p className="error-text workflow-notice" role="alert">{error}</p>}
     {workflow.assignmentIssue && <p className="error-text workflow-notice">{workflow.assignmentIssue}</p>}
     {issues.length > 0 && <details open className="front-disclosure activity-attention"><summary>Needs attention <span className="front-count">{issues.length}</span></summary>{issues.map(i => <div key={i.id}><p className="error-text small">{i.message}</p></div>)}</details>}

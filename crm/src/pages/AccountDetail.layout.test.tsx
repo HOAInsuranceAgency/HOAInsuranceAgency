@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { Link, MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { UserProfile } from "../lib/client";
@@ -168,7 +168,8 @@ describe("lead salesperson on Overview", () => {
     renderAccount(undefined, true);
     const picker = await screen.findByRole("combobox", { name: "Salesperson for Alpha association" });
     fireEvent.change(picker, { target: { value: "bob" } });
-    fireEvent.click(await screen.findByRole("button", { name: "Refresh assignments" }));
+    fireEvent.click(await within(screen.getByRole('region', { name: 'Lead salesperson' })).findByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(finishRefresh).toBeTypeOf('function'));
     fireEvent.change(picker, { target: { value: "bob" } });
     const refreshed = await normal("context", { accountId: "alpha" });
     const saved = { workflow: { accountId: "alpha", salespersonId: "bob", version: 5 } };
