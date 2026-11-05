@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { spawn } from 'node:child_process';
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, fstatSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, readSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { devNull, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { offlineEnvironment, offlinePlan, prepareOfflineWorkspace, runOfflineVerification } from './verify-offline.mjs';
@@ -22,14 +22,24 @@ const run = (paths, execute, extra = {}) => runOfflineVerification({ directory: 
 async function waitFor(predicate, message, timeout = 8000) {
   const deadline = Date.now() + timeout;
   while (!predicate()) {
-    if (Date.now() >= deadline) throw new Error(message);
+    if (Date.now() >= deadline) throw new Error(typeof message === 'function' ? message() : message);
     await new Promise(resolve => setTimeout(resolve, 20));
   }
+}
+
+function diagnosticTail(path) {
+  if (!existsSync(path)) return '(not created)';
+  const descriptor = openSync(path, 'r');
+  try {
+    const size = fstatSync(descriptor).size, length = Math.min(size, 4096), buffer = Buffer.alloc(length);
+    return buffer.subarray(0, readSync(descriptor, buffer, 0, length, size - length)).toString('utf8');
+  } finally { closeSync(descriptor); }
 }
 
 for (const signal of ['SIGTERM', 'SIGINT']) {
   test(`${signal} to the verifier stops its owned descendant group before restoring output and permits a successor`, { skip: process.platform === 'win32', timeout: 15000 }, async t => {
     const paths = workspace(t), ready = join(paths.root, 'ready.json'), heartbeat = join(paths.root, 'heartbeat'), late = join(paths.root, 'late-write');
+    const phases = join(paths.root, 'startup.log'), stdout = join(paths.root, 'driver.stdout'), stderr = join(paths.root, 'driver.stderr');
     buildOutput(paths.dist, 'original build');
     const original = lstatSync(paths.dist);
     writeFileSync(join(paths.directory, 'package.json'), JSON.stringify({ scripts: {
@@ -38,6 +48,8 @@ for (const signal of ['SIGTERM', 'SIGINT']) {
     writeFileSync(join(paths.directory, 'following.mjs'), `import { writeFileSync } from 'node:fs'; writeFileSync(${JSON.stringify(join(paths.root, 'following-command'))}, 'unexpected');`);
     writeFileSync(join(paths.directory, 'child.mjs'), `
       import { spawn } from 'node:child_process';
+      import { appendFileSync } from 'node:fs';
+      appendFileSync(${JSON.stringify(phases)}, 'child started pid=' + process.pid + '\\n');
       spawn(process.execPath, ['leaf.mjs'], { stdio: 'inherit' });
       setInterval(() => {}, 1000);
     `);
@@ -45,9 +57,20 @@ for (const signal of ['SIGTERM', 'SIGINT']) {
     // A cleanup that waits only for npm would restore dist under this writer.
     writeFileSync(join(paths.directory, 'leaf.mjs'), `
       import { execFileSync } from 'node:child_process';
-      import { writeFileSync } from 'node:fs';
+      import { appendFileSync, closeSync, openSync, readFileSync, writeFileSync } from 'node:fs';
       process.on('SIGTERM', () => {}); process.on('SIGINT', () => {});
-      writeFileSync(${JSON.stringify(ready)}, JSON.stringify({ group: Number(execFileSync('ps', ['-o', 'pgid=', '-p', String(process.pid)], { encoding: 'utf8' }).trim()) }));
+      appendFileSync(${JSON.stringify(phases)}, 'leaf started pid=' + process.pid + '; querying own process group\\n');
+      // Piped spawnSync can throw EPERM in the audit sandbox after ps succeeds.
+      // Regular files preserve the native result without requiring that pipe.
+      const descriptors = [], groupOutput = ${JSON.stringify(join(paths.root, 'group.stdout'))};
+      try {
+        descriptors.push(openSync(groupOutput, 'wx', 0o600));
+        descriptors.push(openSync(${JSON.stringify(join(paths.root, 'group.stderr'))}, 'wx', 0o600));
+        execFileSync('ps', ['-o', 'pgid=', '-p', String(process.pid)], { stdio: ['ignore', ...descriptors] });
+      } finally { descriptors.forEach(descriptor => closeSync(descriptor)); }
+      const group = Number(readFileSync(groupOutput, 'utf8').trim());
+      if (!Number.isSafeInteger(group) || group <= 0) throw new Error('ps did not report a positive process group ID');
+      writeFileSync(${JSON.stringify(ready)}, JSON.stringify({ group }));
       setInterval(() => writeFileSync(${JSON.stringify(heartbeat)}, String(Date.now())), 20);
       setTimeout(() => {
         writeFileSync(${JSON.stringify(late)}, 'descendant survived cancellation');
@@ -55,22 +78,35 @@ for (const signal of ['SIGTERM', 'SIGINT']) {
       }, 1600);
     `);
     let ownedGroup;
-    const runner = spawn(process.execPath, ['--input-type=module', '-e', `
-      import { runOfflineVerification } from ${JSON.stringify(new URL('./verify-offline.mjs', import.meta.url).href)};
-      process.exitCode = await runOfflineVerification({ directory: ${JSON.stringify(paths.directory)}, log: () => {} });
-    `], { detached: true, stdio: 'ignore' });
+    const descriptors = [stdout, stderr].map(path => openSync(path, 'wx', 0o600));
+    let runner;
+    try {
+      runner = spawn(process.execPath, ['--input-type=module', '-e', `
+        import { appendFileSync } from 'node:fs';
+        appendFileSync(${JSON.stringify(phases)}, 'driver started pid=' + process.pid + '\\n');
+        const { runOfflineVerification } = await import(${JSON.stringify(new URL('./verify-offline.mjs', import.meta.url).href)});
+        process.exitCode = await runOfflineVerification({ directory: ${JSON.stringify(paths.directory)} });
+      `], { detached: true, stdio: ['ignore', ...descriptors] });
+    } finally { descriptors.forEach(descriptor => closeSync(descriptor)); }
     let exit, spawnError;
     runner.on('error', error => { spawnError = error; });
     runner.on('exit', (code, killedBy) => { exit = { code, signal: killedBy }; });
-    t.after(() => {
+    t.after(async () => {
+      // A startup failure may occur before the descendant can report its group.
+      // Let the verifier stop its own command before forcing our driver group.
+      if (!exit) {
+        runner.kill('SIGTERM');
+        await waitFor(() => exit !== undefined, 'The fixture driver did not stop during test cleanup', 6000).catch(() => {});
+      }
       const groups = [runner.pid, ownedGroup];
       for (const group of new Set(groups)) {
         if (group > 0) try { process.kill(-group, 'SIGKILL'); } catch (error) { if (error.code !== 'ESRCH') throw error; }
       }
     });
-    await waitFor(() => existsSync(ready) && existsSync(heartbeat) || exit || spawnError, 'The fixture did not start');
-    assert.equal(spawnError, undefined);
-    assert.equal(exit, undefined);
+    const diagnostic = () => `The fixture did not start. exit=${JSON.stringify(exit)} spawnError=${spawnError ? `${spawnError.code}: ${spawnError.message}` : 'none'}\nstartup:\n${diagnosticTail(phases)}\nstdout:\n${diagnosticTail(stdout)}\nstderr:\n${diagnosticTail(stderr)}`;
+    await waitFor(() => existsSync(ready) && existsSync(heartbeat) || exit || spawnError, diagnostic);
+    assert.equal(spawnError, undefined, diagnostic());
+    assert.equal(exit, undefined, diagnostic());
     ownedGroup = JSON.parse(readFileSync(ready, 'utf8')).group;
     runner.kill(signal); // Signal the verifier itself, rather than its child.
     await new Promise(resolve => setTimeout(resolve, 50));
@@ -96,7 +132,7 @@ for (const signal of ['SIGTERM', 'SIGINT']) {
 test('the plan runs the real test, combined type, complete build and both branch synth scripts', () => {
   const plan = offlinePlan('crm', '/fictional/crm');
   assert.deepEqual(plan.map(task => task.args), [
-    ['run', 'test:run'], ['run', 'typecheck'], ['run', 'build'], ['run', 'synth:check'], ['run', 'synth:check'],
+    ['run', 'test:run', '--', '--pool=forks', '--maxWorkers=2'], ['run', 'typecheck'], ['run', 'build'], ['run', 'synth:check'], ['run', 'synth:check'],
   ]);
   assert.ok(plan.every(task => task.cwd === '/fictional/crm' && ['npm', 'npm.cmd'].includes(task.command)));
   assert.deepEqual(plan.map(task => task.env), [{}, {}, {}, { AWS_BRANCH: 'main' }, { AWS_BRANCH: 'staging' }]);

@@ -11,10 +11,10 @@
     "test": "vitest",
     "test:run": "vitest run",
     "typecheck:backend": "tsc -p amplify/tsconfig.json --noEmit",
-    "synth:check": "tsx scripts/synth-check.ts",
+    "synth:check": "node --import tsx scripts/synth-check.ts",
     "typecheck": "tsc -b && npm run typecheck:backend",
     "pf:generate": "tsx scripts/generate-pf-config.ts",
-    "test:verification": "node --test scripts/verify-offline.test.mjs",
+    "test:verification": "node --test --experimental-test-isolation=none scripts/verify-offline.test.mjs",
     "verify:offline": "node scripts/verify-offline.mjs"
   },
   "overrides": {
