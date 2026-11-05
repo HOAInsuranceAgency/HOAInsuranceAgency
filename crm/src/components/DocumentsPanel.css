@@ -64,12 +64,6 @@
   margin-left: auto;
 }
 
-.documents-panel--account .file-btn {
-  position: relative;
-  justify-content: center;
-  box-sizing: border-box;
-}
-
 .documents-filter-note,
 .documents-feedback:not(:empty) {
   margin-bottom: 14px;

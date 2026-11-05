@@ -712,7 +712,7 @@ function InvoiceEditorContent({
                       onBlur={() => void saveEdits()}
                     />
                   </td>
-                  <td className="num internal muted">
+                  <td className="num ui-table-internal muted">
                     {margin === null ? "—" : formatMoney(margin)}
                   </td>
                   <td className="row-action">
