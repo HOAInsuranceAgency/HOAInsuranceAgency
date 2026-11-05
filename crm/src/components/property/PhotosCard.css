@@ -76,18 +76,7 @@
   display: block;
   position: relative;
   width: 100%;
-  min-height: 144px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
   overflow: hidden;
-  padding: 0;
-  background: var(--bg);
-  font-family: inherit;
-  cursor: pointer;
-}
-
-.property-photos .property-photo-preview:hover {
-  border-color: var(--accent);
 }
 
 .property-photos .property-photo-preview img {
@@ -134,29 +123,7 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 32px;
-  padding: 5px 11px;
   box-sizing: border-box;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  color: var(--accent-dark);
-  background: var(--card);
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.property-photos .property-photo-upload:hover {
-  border-color: var(--accent);
-}
-
-.property-photos .property-photo-upload.is-busy {
-  opacity: .6;
-  cursor: default;
-}
-
-.property-photos .property-photo-actions button {
-  font-size: 12px;
 }
 
 .property-photos .property-photo-actions .confirm-button .small {
@@ -166,7 +133,6 @@
   line-height: 1.5;
 }
 
-.property-photos .property-photo-upload input,
 .property-photos .property-photos-sr-only {
   position: absolute;
   width: 1px;
@@ -176,12 +142,6 @@
   padding: 0;
   margin: -1px;
   white-space: nowrap;
-}
-
-.property-photos .property-photo-upload:focus-within,
-.property-photos button:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 3px;
 }
 
 .property-photos .property-photos-error {

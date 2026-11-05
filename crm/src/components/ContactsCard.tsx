@@ -1,3 +1,5 @@
+import { Input } from "./ui/Input";
+import { Select } from "./ui/Select";
 import { useAgencyDay } from "../lib/useAgencyDay";
 import { currentContacts, primaryContact } from "../lib/contacts";
 import { relationshipCurrent } from "../../../shared/relationships";
@@ -182,7 +184,7 @@ export default function ContactsCard({ accountId }: { accountId: string }) {
           key: "primary",
           label: "Primary",
           cell: (contact) => (
-            <input
+            <Input
               type="radio"
               name={`primary-contact-${accountId}`}
               checked={primaryContact(child.rows)?.id === contact.id}
@@ -269,7 +271,7 @@ function ContactFields({
     <>
       <div className="field">
         <label htmlFor={`${id}-name`}>Name</label>
-        <input
+        <Input
           id={`${id}-name`}
           placeholder="Pat Alvarez"
           value={form.form.name}
@@ -279,7 +281,7 @@ function ContactFields({
       </div>
       <div className="field">
         <label htmlFor={`${id}-type`}>Role</label>
-        <select
+        <Select
           id={`${id}-type`}
           value={form.form.type}
           onChange={(e) => form.setF("type", e.target.value)}
@@ -290,11 +292,11 @@ function ContactFields({
               {o.label}
             </option>
           ))}
-        </select>
+        </Select>
       </div>
       <div className="field">
         <label htmlFor={`${id}-email`}>Email</label>
-        <input
+        <Input
           id={`${id}-email`}
           type="email"
           value={form.form.email}
@@ -313,7 +315,7 @@ function ContactFields({
       </div>
       <div className="field contacts-notes-field">
         <label htmlFor={`${id}-notes`}>Notes</label>
-        <input
+        <Input
           id={`${id}-notes`}
           placeholder="Best reached mornings"
           value={form.form.notes}

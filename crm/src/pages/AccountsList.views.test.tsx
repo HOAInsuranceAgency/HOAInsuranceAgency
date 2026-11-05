@@ -50,8 +50,27 @@ function page({ scope = 'user-1:ADMIN', admin = true, url = '/leads' } = {}) {
     <Route path="/accounts/:id" element={<h1>Account opened</h1>} />
   </Routes></MemoryRouter></AdminContext.Provider>;
 }
-function chooseView(name: string) { fireEvent.click(screen.getByRole('tab', { name: new RegExp(`^${name}`) })); }
+function chooseView(name: string) { fireEvent.click(screen.getByRole('button', { name: new RegExp(`^${name}`) })); }
 function names() { return within(screen.getByRole('table')).getAllByRole('row').slice(1).map(row => within(row).getAllByRole('cell')[0].textContent); }
+
+it('keeps arrow-key filter selection, focus and URLs together without tab-panel semantics', () => {
+  render(page());
+  const group = screen.getByRole('group', { name: 'Lead views' });
+  const active = within(group).getByRole('button', { name: 'Active' });
+  active.focus();
+  fireEvent.keyDown(active, { key: 'End' });
+  const all = within(group).getByRole('button', { name: 'All leads' });
+  expect(all).toHaveFocus();
+  expect(all).toHaveAttribute('aria-pressed', 'true');
+  expect(screen.getByLabelText('View URL')).toHaveTextContent('view=all');
+  expect(names()).toEqual(['Alpha Condominium', 'Beta Condominium']);
+  fireEvent.keyDown(all, { key: 'ArrowRight' });
+  expect(active).toHaveFocus();
+  expect(active).toHaveAttribute('aria-pressed', 'true');
+  expect(names()).toEqual(['Alpha Condominium']);
+  expect(screen.queryByRole('tablist')).not.toBeInTheDocument();
+  expect(screen.queryByRole('tabpanel')).not.toBeInTheDocument();
+});
 
 it('keeps filters and sort through account navigation, browser Back and a fresh bare-URL visit', async () => {
   const mounted = render(page());
@@ -66,18 +85,18 @@ it('keeps filters and sort through account navigation, browser Back and a fresh 
   fireEvent.click(screen.getByRole('button', { name: 'History back' }));
   expect(screen.getByRole('combobox', { name: 'Salesperson' })).toHaveValue('alice');
   expect(screen.getByRole('columnheader', { name: 'Name' })).toHaveAttribute('aria-sort', 'descending');
-  expect(screen.getByRole('tab', { name: /^All leads/ })).toHaveAttribute('aria-selected', 'true');
+  expect(screen.getByRole('button', { name: /^All leads/ })).toHaveAttribute('aria-pressed', 'true');
   mounted.unmount();
   render(page());
   expect(screen.getByRole('combobox', { name: 'Salesperson' })).toHaveValue('alice');
   expect(screen.getByRole('columnheader', { name: 'Name' })).toHaveAttribute('aria-sort', 'descending');
-  expect(screen.getByRole('tab', { name: /^All leads/ })).toHaveAttribute('aria-selected', 'true');
+  expect(screen.getByRole('button', { name: /^All leads/ })).toHaveAttribute('aria-pressed', 'true');
 });
 
 it('treats an explicit shared URL as the complete view, ahead of this browser preferences', () => {
   window.localStorage.setItem(accountViewKey('user-1:ADMIN', 'LEAD')!, JSON.stringify({ version: 1, leadView: 'All leads', salesperson: 'alice', sortKey: 'name', dir: 'desc' }));
   render(page({ url: '/leads?view=snoozed' }));
-  expect(screen.getByRole('tab', { name: /^Snoozed/ })).toHaveAttribute('aria-selected', 'true');
+  expect(screen.getByRole('button', { name: /^Snoozed/ })).toHaveAttribute('aria-pressed', 'true');
   expect(screen.getByRole('combobox', { name: 'Salesperson' })).toHaveValue('');
   expect(screen.getByRole('columnheader', { name: 'Incumbent expires' })).toHaveAttribute('aria-sort', 'ascending');
   expect(names()).toEqual(['Beta Condominium']);
@@ -92,9 +111,9 @@ it('remembers Lead and Client views independently and can reset a remembered vie
   fireEvent.click(screen.getByRole('button', { name: 'Units' }));
   fireEvent.click(screen.getByRole('link', { name: 'Leads link' }));
   expect(screen.getByRole('columnheader', { name: 'Name' })).toHaveAttribute('aria-sort', 'ascending');
-  expect(screen.getByRole('tab', { name: /^All leads/ })).toHaveAttribute('aria-selected', 'true');
+  expect(screen.getByRole('button', { name: /^All leads/ })).toHaveAttribute('aria-pressed', 'true');
   fireEvent.click(screen.getByRole('button', { name: 'Reset view' }));
-  expect(screen.getByRole('tab', { name: /^Active/ })).toHaveAttribute('aria-selected', 'true');
+  expect(screen.getByRole('button', { name: /^Active/ })).toHaveAttribute('aria-pressed', 'true');
   expect(screen.getByRole('columnheader', { name: 'Incumbent expires' })).toHaveAttribute('aria-sort', 'ascending');
   fireEvent.click(screen.getByRole('link', { name: 'Clients link' }));
   expect(screen.getByRole('columnheader', { name: 'Units' })).toHaveAttribute('aria-sort', 'ascending');
@@ -113,14 +132,14 @@ it('restores a distinct user/role view when switching scope and strips admin-onl
   fireEvent.change(screen.getByRole('combobox', { name: 'Salesperson' }), { target: { value: 'alice' } });
   fireEvent.click(screen.getByRole('button', { name: 'Salesperson' }));
   mounted.rerender(page({ scope: 'user-1:PRODUCER', admin: false }));
-  expect(screen.getByRole('tab', { name: /^Active/ })).toHaveAttribute('aria-selected', 'true');
+  expect(screen.getByRole('button', { name: /^Active/ })).toHaveAttribute('aria-pressed', 'true');
   expect(screen.queryByRole('combobox', { name: 'Salesperson' })).not.toBeInTheDocument();
   expect(screen.getByLabelText('View URL')).toHaveTextContent('view=active&sort=renewal&dir=asc');
   chooseView('Snoozed');
   mounted.rerender(page({ scope: 'user-2:PRODUCER', admin: false }));
-  expect(screen.getByRole('tab', { name: /^Active/ })).toHaveAttribute('aria-selected', 'true');
+  expect(screen.getByRole('button', { name: /^Active/ })).toHaveAttribute('aria-pressed', 'true');
   mounted.rerender(page({ scope: 'user-1:ADMIN', admin: true }));
-  expect(screen.getByRole('tab', { name: /^All leads/ })).toHaveAttribute('aria-selected', 'true');
+  expect(screen.getByRole('button', { name: /^All leads/ })).toHaveAttribute('aria-pressed', 'true');
   expect(screen.getByRole('combobox', { name: 'Salesperson' })).toHaveValue('alice');
   expect(screen.getByRole('columnheader', { name: 'Salesperson' })).toHaveAttribute('aria-sort', 'ascending');
 });

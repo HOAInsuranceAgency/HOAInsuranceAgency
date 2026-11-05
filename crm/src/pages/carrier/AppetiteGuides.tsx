@@ -1,3 +1,8 @@
+import { Button } from "../../components/ui/Button";
+import { Table } from "../../components/ui/Table";
+import { Input } from "../../components/ui/Input";
+import { Select } from "../../components/ui/Select";
+import { Textarea } from "../../components/ui/Textarea";
 import { useRef, useState } from "react";
 import {
   BEST_FIT_BUSINESS,
@@ -58,8 +63,8 @@ export function AppetiteGuides({ carrierId }: { carrierId: string }) {
           </p>
         </div>
         <div className="grow" />
-        <button
-          className="primary"
+        <Button variant="primary"
+
           disabled={saving || !res.loaded || res.loading || !!res.error}
           onClick={() => {
             setEditing(null);
@@ -67,7 +72,7 @@ export function AppetiteGuides({ carrierId }: { carrierId: string }) {
           }}
         >
           {showForm ? "Cancel" : "+ Add appetite guide"}
-        </button>
+        </Button>
       </div>
 
       {(showForm || editing) && (
@@ -94,12 +99,12 @@ export function AppetiteGuides({ carrierId }: { carrierId: string }) {
       {!res.loaded ? (
         <p className="muted small">Loading…</p>
       ) : res.error ? (
-        <p className="error-text" role="alert">{res.error} <button disabled={res.loading} onClick={() => void res.refetch()}>Retry appetite guides</button></p>
+        <p className="error-text" role="alert">{res.error} <Button disabled={res.loading} onClick={() => void res.refetch()}>Retry appetite guides</Button></p>
       ) : guides.length === 0 ? (
         <p className="muted small">No appetite guides recorded.</p>
       ) : (
         <div className="table-wrap">
-          <table>
+          <Table>
             <thead>
               <tr>
                 <th>Lines</th>
@@ -143,8 +148,8 @@ export function AppetiteGuides({ carrierId }: { carrierId: string }) {
                   </td>
                   <td className="small">{g.notes ?? ""}</td>
                   <td style={{ whiteSpace: "nowrap" }}>
-                    <button
-                      className="link"
+                    <Button variant="link"
+
                       disabled={saving}
                       onClick={() => {
                         setShowForm(false);
@@ -152,9 +157,9 @@ export function AppetiteGuides({ carrierId }: { carrierId: string }) {
                       }}
                     >
                       Edit
-                    </button>
+                    </Button>
                     <ConfirmButton
-                      className="link"
+                      variant="link"
                       disabled={saving}
                       onConfirm={() => del(g.id)}
                     />
@@ -162,7 +167,7 @@ export function AppetiteGuides({ carrierId }: { carrierId: string }) {
                 </tr>
               ))}
             </tbody>
-          </table>
+          </Table>
         </div>
       )}
     </div>
@@ -291,7 +296,7 @@ function GuideForm({
                 className="small"
                 style={{ display: "flex", gap: 4, alignItems: "center" }}
               >
-                <input
+                <Input
                   type="checkbox"
                   checked={form.lines.includes(l)}
                   onChange={() =>
@@ -319,7 +324,7 @@ function GuideForm({
                 className="small"
                 style={{ display: "flex", gap: 4, alignItems: "center" }}
               >
-                <input
+                <Input
                   type="checkbox"
                   checked={form.bestFit.includes(b)}
                   onChange={() =>
@@ -335,7 +340,7 @@ function GuideForm({
         </div>
         <div className="field">
           <label>Paper</label>
-          <select
+          <Select
             value={form.paperType}
             onChange={(e) => setF("paperType", e.target.value)}
           >
@@ -345,11 +350,11 @@ function GuideForm({
                 {o.label}
               </option>
             ))}
-          </select>
+          </Select>
         </div>
         <div className="field">
           <label>Submission lead time (days)</label>
-          <input
+          <Input
             type="number"
             min={0}
             value={form.leadTime}
@@ -358,19 +363,19 @@ function GuideForm({
         </div>
         <div className="field">
           <label>Min TIV ($)</label>
-          <input type="number" value={form.minValue} onChange={(e) => setF("minValue", e.target.value)} />
+          <Input type="number" value={form.minValue} onChange={(e) => setF("minValue", e.target.value)} />
         </div>
         <div className="field">
           <label>Max TIV ($)</label>
-          <input type="number" value={form.maxValue} onChange={(e) => setF("maxValue", e.target.value)} />
+          <Input type="number" value={form.maxValue} onChange={(e) => setF("maxValue", e.target.value)} />
         </div>
         <div className="field">
           <label>Earliest construction year</label>
-          <input type="number" value={form.minYear} onChange={(e) => setF("minYear", e.target.value)} />
+          <Input type="number" value={form.minYear} onChange={(e) => setF("minYear", e.target.value)} />
         </div>
         <div className="field">
           <label>Latest construction year</label>
-          <input type="number" value={form.maxYear} onChange={(e) => setF("maxYear", e.target.value)} />
+          <Input type="number" value={form.maxYear} onChange={(e) => setF("maxYear", e.target.value)} />
         </div>
         <div className="field full">
           <h4 style={{ margin: "6px 0 0" }}>Key restrictions</h4>
@@ -382,18 +387,18 @@ function GuideForm({
         </div>
         <div className="field">
           <label>Writes coastal?</label>
-          <select
+          <Select
             value={form.writesCoastal}
             onChange={(e) => setF("writesCoastal", e.target.value)}
           >
             <option value="">— not stated</option>
             <option value="yes">Yes — writes coastal</option>
             <option value="no">No — declines coastal</option>
-          </select>
+          </Select>
         </div>
         <div className="field">
           <label>Minimum miles to coast</label>
-          <input
+          <Input
             type="number"
             min={0}
             step="0.1"
@@ -403,7 +408,7 @@ function GuideForm({
         </div>
         <div className="field">
           <label>Max rentals (% of units)</label>
-          <input
+          <Input
             type="number"
             min={0}
             max={100}
@@ -414,7 +419,7 @@ function GuideForm({
         </div>
         <div className="field">
           <label>Max losses (last {LOSS_LOOKBACK_YEARS} yrs)</label>
-          <input
+          <Input
             type="number"
             min={0}
             step="1"
@@ -424,7 +429,7 @@ function GuideForm({
         </div>
         <div className="field">
           <label>Max incurred, paid + reserved ($)</label>
-          <input
+          <Input
             type="number"
             min={0}
             step="1"
@@ -447,7 +452,7 @@ function GuideForm({
                 className="small"
                 style={{ display: "flex", gap: 3, alignItems: "center" }}
               >
-                <input
+                <Input
                   type="checkbox"
                   checked={form.states.includes(s)}
                   onChange={() =>
@@ -463,17 +468,17 @@ function GuideForm({
         </div>
         <div className="field full">
           <label>Notes</label>
-          <textarea rows={2} value={form.notes} onChange={(e) => setF("notes", e.target.value)} />
+          <Textarea rows={2} value={form.notes} onChange={(e) => setF("notes", e.target.value)} />
         </div>
       </div>
       </fieldset>
       <div className="form-actions">
-        <button className="primary" disabled={saving} onClick={save}>
+        <Button variant="primary"  disabled={saving} onClick={save}>
           {saving ? "Saving…" : existing ? "Save changes" : "Add guide"}
-        </button>
-        <button className="link" disabled={saving} onClick={onCancel}>
+        </Button>
+        <Button variant="link"  disabled={saving} onClick={onCancel}>
           Cancel
-        </button>
+        </Button>
         {error && <span className="error-text" role="alert">{error}</span>}
       </div>
     </div>

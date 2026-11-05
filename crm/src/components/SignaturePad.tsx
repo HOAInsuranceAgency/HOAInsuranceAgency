@@ -1,3 +1,4 @@
+import { Button } from "./ui/Button";
 import { useEffect, useRef, useState } from "react";
 
 /**
@@ -142,15 +143,15 @@ export default function SignaturePad({
         PNG cropped to your signature.
       </p>
       <div className="toolbar" style={{ marginTop: 0 }}>
-        <button className="primary" disabled={!hasInk || busy} onClick={save}>
+        <Button variant="primary"  disabled={!hasInk || busy} onClick={save}>
           {busy ? "Saving…" : "Save signature"}
-        </button>
-        <button className="secondary" disabled={!hasInk || busy} onClick={clear}>
+        </Button>
+        <Button variant="secondary"  disabled={!hasInk || busy} onClick={clear}>
           Clear
-        </button>
-        <button className="link" disabled={busy} onClick={onCancel}>
+        </Button>
+        <Button variant="link"  disabled={busy} onClick={onCancel}>
           Cancel
-        </button>
+        </Button>
       </div>
     </div>
   );

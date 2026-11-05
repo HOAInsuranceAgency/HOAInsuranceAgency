@@ -1,3 +1,6 @@
+import { Input } from "./ui/Input";
+import { Button } from "./ui/Button";
+import { Textarea } from "./ui/Textarea";
 import PartyPicker from './PartyPicker';
 import { useMounted } from '../lib/useMounted';
 import { useRef, useState } from 'react';
@@ -135,7 +138,7 @@ export default function ManagementChangeForm({
           </p>
           <label className="field">
             Effective date
-            <input
+            <Input
               type="date"
               required
               value={effectiveOn}
@@ -161,7 +164,7 @@ export default function ManagementChangeForm({
             {legacy.length ? (
               legacy.map((c) => (
                 <label className="relationship-checkbox" key={c.id}>
-                  <input
+                  <Input
                     type="checkbox"
                     checked={retire.includes(c.id)}
                     onChange={(e) => {
@@ -181,11 +184,11 @@ export default function ManagementChangeForm({
             )}
           </div>
           {contactsLoading && <p className="muted">Loading account contacts…</p>}
-          {contactsError && <p role="alert" className="error-text">{contactsError} <button type="button" className="secondary" onClick={retryContacts}>Retry contacts</button></p>}
-          {moreContacts && <p className="muted small">Additional account contacts are available to review. <button type="button" className="secondary" disabled={contactsLoading} onClick={moreContacts}>Load more account contacts</button></p>}
+          {contactsError && <p role="alert" className="error-text">{contactsError} <Button variant="secondary" type="button"  onClick={retryContacts}>Retry contacts</Button></p>}
+          {moreContacts && <p className="muted small">Additional account contacts are available to review. <Button variant="secondary" type="button"  disabled={contactsLoading} onClick={moreContacts}>Load more account contacts</Button></p>}
           <label className="field">
             Handoff note
-            <textarea
+            <Textarea
               maxLength={2000}
               rows={3}
               value={notes}
@@ -216,7 +219,7 @@ export default function ManagementChangeForm({
             )}
           </div>
           <label className="relationship-checkbox">
-            <input
+            <Input
               type="checkbox"
               checked={confirmed}
               onChange={(e) => setConfirmed(e.target.checked)}
@@ -225,12 +228,12 @@ export default function ManagementChangeForm({
             I reviewed the effective date and contact handoff.
           </label>
           <div className="form-actions">
-            <button className="primary" type="submit" disabled={!confirmed || contactsLoading || !!contactsError}>
+            <Button variant="primary"  type="submit" disabled={!confirmed || contactsLoading || !!contactsError}>
               {busy ? 'Saving…' : 'Save management change'}
-            </button>
-            <button className="secondary" type="button" onClick={onClose}>
+            </Button>
+            <Button variant="secondary"  type="button" onClick={onClose}>
               Cancel
-            </button>
+            </Button>
           </div>
         </fieldset>
         {error && (

@@ -100,9 +100,9 @@ export function DeleteLeadZone({ account }: { account: Account }) {
       <div className="form-actions" style={{ marginTop: 0 }}>
         <ConfirmButton
           label="Delete this lead…"
-          className="secondary"
+          variant="secondary"
           confirmLabel="Yes, delete this lead"
-          cancelClassName="secondary"
+          cancelVariant="secondary"
           message={`Permanently delete ${account.name}, its contacts, quotes and documents, and retire its automated work? This can't be undone.`}
           onConfirm={deleteLead}
           onError={(err) => setError(friendlyError(err, "Delete failed"))}

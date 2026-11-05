@@ -1,3 +1,6 @@
+import { Button } from "./ui/Button";
+import { Input } from "./ui/Input";
+import { Table } from "./ui/Table";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { loadMarketingReports, saveMarketingReports, sendMarketingReport } from "../lib/marketingReports";
 import type { MarketingReportRun, MarketingReportSettingsSnapshot } from "../../../shared/marketingReportSettings";
@@ -69,7 +72,7 @@ export default function MarketingReportSettings() {
 
   if (!snapshot) return <section className="card" aria-label="Marketing reports"><h2>Weekly marketing report</h2>
     <p role={readError ? "alert" : "status"}>{readError || "Loading report settings…"}</p>
-    {readError && <button className="secondary" onClick={() => void load(true)}>Retry</button>}
+    {readError && <Button variant="secondary"  onClick={() => void load(true)}>Retry</Button>}
   </section>;
 
   const dirty = recipient.trim() !== snapshot.settings.recipient || enabled !== snapshot.settings.enabled;
@@ -93,9 +96,9 @@ export default function MarketingReportSettings() {
         });
       }}>
         <fieldset disabled={!!busy} style={{ border: 0, padding: 0, margin: 0 }}>
-          <label className="field">Recipient email<input type="email" autoComplete="email" value={recipient} onChange={e => { edited.current = true; setRecipient(e.target.value); }} required={enabled} maxLength={254} /></label>
-          <label className="small"><input type="checkbox" checked={enabled} onChange={e => { edited.current = true; setEnabled(e.target.checked); }} /> Send automatically every Friday</label>
-          <div className="form-actions"><button type="submit" className="primary" disabled={disabled || !dirty}>{busy === "save" ? "Saving…" : "Save settings"}</button>{dirty && <button type="button" className="secondary" onClick={() => { setRecipient(snapshot.settings.recipient); setEnabled(snapshot.settings.enabled); draftVersion.current = snapshot.settings.version; edited.current = false; setError(""); }}>Discard changes</button>}</div>
+          <label className="field">Recipient email<Input type="email" autoComplete="email" value={recipient} onChange={e => { edited.current = true; setRecipient(e.target.value); }} required={enabled} maxLength={254} /></label>
+          <label className="small"><Input type="checkbox" checked={enabled} onChange={e => { edited.current = true; setEnabled(e.target.checked); }} /> Send automatically every Friday</label>
+          <div className="form-actions"><Button variant="primary" type="submit"  disabled={disabled || !dirty}>{busy === "save" ? "Saving…" : "Save settings"}</Button>{dirty && <Button variant="secondary" type="button"  onClick={() => { setRecipient(snapshot.settings.recipient); setEnabled(snapshot.settings.enabled); draftVersion.current = snapshot.settings.version; edited.current = false; setError(""); }}>Discard changes</Button>}</div>
         </fieldset>
       </form>
       <hr />
@@ -103,21 +106,21 @@ export default function MarketingReportSettings() {
       <p className="muted small">Email a fresh Excel snapshot to {snapshot.settings.recipient || "the saved recipient"}. This does not change the Friday schedule.</p>
       {dirty && <p className="muted small">Save your changes before sending.</p>}
       <div className="form-actions">
-        <button type="button" className="primary" disabled={disabled || dirty || hasPending || !snapshot.settings.recipient} onClick={() => void act("send", async () => {
+        <Button variant="primary" type="button"  disabled={disabled || dirty || hasPending || !snapshot.settings.recipient} onClick={() => void act("send", async () => {
           if (!requestId.current) { requestId.current = crypto.randomUUID(); keepRequest(requestId.current); }
           const result = await sendMarketingReport(requestId.current);
           requestId.current = ""; keepRequest("");
           if (!mounted.current) return;
           setSnapshot(previous => previous ? { ...previous, recentRuns: [result.run, ...previous.recentRuns.filter(r => r.id !== result.run.id)].slice(0, 10) } : previous);
           setMessage(pending(result.run) ? "Report queued. The delivery status below will update automatically." : result.run.status === "sent" ? "This report has already been sent. Its status is shown below." : "This request has already been processed. Review its delivery status below.");
-        })}>{busy === "send" ? "Queuing…" : hasPending ? "Report in progress…" : "Send now"}</button>
-        <button type="button" className="secondary" disabled={!!busy} onClick={() => void load()}>Refresh status</button>
+        })}>{busy === "send" ? "Queuing…" : hasPending ? "Report in progress…" : "Send now"}</Button>
+        <Button variant="secondary" type="button"  disabled={!!busy} onClick={() => void load()}>Refresh status</Button>
       </div>
     </section>
     <section className="card" aria-label="Marketing report delivery history">
       <h2>Recent reports</h2>
       <p className="muted small">Times are Eastern. “Sent” means the email service accepted the message. If delivery needs review, check the original send before requesting another copy.</p>
-      {!snapshot.recentRuns.length ? <p>No reports have been sent yet.</p> : <div className="table-wrap"><table>
+      {!snapshot.recentRuns.length ? <p>No reports have been sent yet.</p> : <div className="table-wrap"><Table>
         <thead><tr><th>Requested</th><th>Recipient</th><th>Delivery</th><th>Accounts</th></tr></thead>
         <tbody>{snapshot.recentRuns.map(run => <tr key={run.id}>
           <td>{when(run.createdAt)}<div className="muted small">{run.kind === "scheduled" ? "Friday schedule" : "Manual send"}</div></td>
@@ -125,7 +128,7 @@ export default function MarketingReportSettings() {
           <td><strong>{statusLabels[run.status]}</strong>{run.sentAt && <div className="muted small">{when(run.sentAt)}</div>}{run.error && <div className="error-text small">{run.error}</div>}</td>
           <td>{run.rowCount ?? "—"}</td>
         </tr>)}</tbody>
-      </table></div>}
+      </Table></div>}
     </section>
   </div>;
 }

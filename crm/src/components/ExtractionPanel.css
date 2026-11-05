@@ -70,15 +70,12 @@
 .extraction-panel .extraction-table-wrap {
   max-width: 100%;
   overflow-x: auto;
-  border: 1px solid var(--border);
-  border-radius: 7px;
 }
 
 .extraction-panel .extraction-table {
   width: 100%;
   min-width: 880px;
   table-layout: fixed;
-  font-size: 13px;
 }
 
 .extraction-panel .extraction-col-select {
@@ -102,55 +99,20 @@
 }
 
 .extraction-panel .extraction-table :is(th, td) {
-  padding: 13px 12px;
   vertical-align: top;
-  line-height: 1.5;
   overflow-wrap: anywhere;
 }
 
-.extraction-panel .extraction-table thead th {
-  padding-block: 11px;
-  background: var(--bg);
-  font-size: 11px;
-}
-
 .extraction-panel .extraction-table tbody th {
-  font-size: 13px;
-  font-weight: 600;
-  letter-spacing: normal;
-  text-transform: none;
   white-space: normal;
-  color: var(--text);
-  background: transparent;
-}
-
-.extraction-panel .extraction-table tbody tr:last-child :is(th, td) {
-  border-bottom: 0;
-}
-
-.extraction-panel .extraction-row-selected {
-  background: #f8fbff;
-}
-
-.extraction-panel .extraction-row-unchanged {
-  opacity: .6;
 }
 
 .extraction-panel .extraction-selection {
-  padding-inline: 8px;
   text-align: center;
 }
 
 .extraction-panel .extraction-selection input {
-  width: 18px;
-  height: 18px;
   margin: 1px 0 0;
-  accent-color: var(--accent);
-  cursor: pointer;
-}
-
-.extraction-panel .extraction-selection input:disabled {
-  cursor: default;
 }
 
 .extraction-panel .extraction-current,
@@ -223,7 +185,7 @@
   line-height: 1.5;
 }
 
-.extraction-panel :is(button, input, summary):focus-visible {
+.extraction-panel summary:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 3px;
 }

@@ -1,3 +1,4 @@
+import { Button } from "./ui/Button";
 import { captureException, ErrorBoundary } from "@sentry/react";
 import { useEffect, useRef, type ReactNode } from "react";
 import { useRouteError } from "react-router-dom";
@@ -9,8 +10,8 @@ function ErrorRecoveryScreen({ onRetry }: { onRetry?: () => void }) {
         <h1>This page couldn't be displayed</h1>
         <p>{onRetry ? "Try again, or reload the app if this keeps happening." : "Reload the app to try again."}</p>
         <div className="form-actions">
-          {onRetry && <button type="button" className="primary" onClick={onRetry}>Try again</button>}
-          <button type="button" className={onRetry ? "secondary" : "primary"} onClick={() => window.location.reload()}>Reload app</button>
+          {onRetry && <Button variant="primary" type="button"  onClick={onRetry}>Try again</Button>}
+          <Button type="button" variant={onRetry ? "secondary" : "primary"} onClick={() => window.location.reload()}>Reload app</Button>
         </div>
       </section>
     </main>

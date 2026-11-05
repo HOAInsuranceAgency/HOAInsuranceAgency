@@ -1,3 +1,4 @@
+import { Input } from "../components/ui/Input";
 import { useMemo } from "react";
 
 /**
@@ -137,7 +138,7 @@ export function FilterInput({
   className,
 }: FilterInputProps) {
   return (
-    <input
+    <Input
       className={className ? `lic-search ${className}` : "lic-search"}
       type="search"
       placeholder={placeholder}

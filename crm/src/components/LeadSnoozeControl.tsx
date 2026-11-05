@@ -1,3 +1,6 @@
+import { Input } from "./ui/Input";
+import { Textarea } from "./ui/Textarea";
+import { Button } from "./ui/Button";
 import { useRef, useState } from 'react';
 import { communicationRequest } from '../lib/communications';
 import { fmtDate, friendlyError } from '../lib/client';
@@ -50,17 +53,17 @@ export function LeadSnoozeControl({ accountName, snooze, today, onSaved, onRefre
       {snooze.note && <p className="small">{snooze.note}</p>}
     </div>}
     {editing ? <form onSubmit={event => { event.preventDefault(); void save(followUpOn, note, editingVersion); }}>
-      <label className="field">Follow-up date<input type="date" value={followUpOn} min={addCalendarDays(today, 1)} required disabled={busy} onChange={event => setFollowUpOn(event.target.value)} /></label>
-      <label className="field">Follow-up note<textarea value={note} placeholder="Optional — what to follow up on" maxLength={1000} rows={2} disabled={busy} onChange={event => setNote(event.target.value)} /></label>
-      <div className="form-actions"><button className="primary" disabled={busy}>Snooze lead</button><button type="button" className="secondary" disabled={busy} onClick={() => { setEditing(false); setError(''); }}>Cancel</button></div>
+      <label className="field">Follow-up date<Input type="date" value={followUpOn} min={addCalendarDays(today, 1)} required disabled={busy} onChange={event => setFollowUpOn(event.target.value)} /></label>
+      <label className="field">Follow-up note<Textarea value={note} placeholder="Optional — what to follow up on" maxLength={1000} rows={2} disabled={busy} onChange={event => setNote(event.target.value)} /></label>
+      <div className="form-actions"><Button variant="primary"  disabled={busy}>Snooze lead</Button><Button variant="secondary" type="button"  disabled={busy} onClick={() => { setEditing(false); setError(''); }}>Cancel</Button></div>
     </form> : <div className="lead-snooze-actions">
-      <button className="link" aria-label={snooze.followUpOn ? `Edit follow-up for ${accountName}` : `Snooze ${accountName}`} disabled={busy} onClick={() => {
+      <Button variant="link"  aria-label={snooze.followUpOn ? `Edit follow-up for ${accountName}` : `Snooze ${accountName}`} disabled={busy} onClick={() => {
         setEditingVersion(snooze.version);
         setFollowUpOn(status === 'SNOOZED' ? snooze.followUpOn! : addCalendarDays(today, 1)); setNote(snooze.note); setEditing(true); setError('');
-      }}>{snooze.followUpOn ? 'Reschedule' : 'Snooze'}</button>
-      {snooze.followUpOn && <button className="link" disabled={busy} onClick={() => void save(null, '')}>{status === 'DUE' ? 'Mark followed up' : 'Bring back now'}</button>}
+      }}>{snooze.followUpOn ? 'Reschedule' : 'Snooze'}</Button>
+      {snooze.followUpOn && <Button variant="link"  disabled={busy} onClick={() => void save(null, '')}>{status === 'DUE' ? 'Mark followed up' : 'Bring back now'}</Button>}
     </div>}
     {busy && <p className="muted small" role="status">Saving…</p>}
-    {error && <p className="error-text small" role="alert">{error} <button className="link" disabled={busy} onClick={() => { setEditing(false); setError(''); void onRefresh(); }}>Refresh</button></p>}
+    {error && <p className="error-text small" role="alert">{error} <Button variant="link"  disabled={busy} onClick={() => { setEditing(false); setError(''); void onRefresh(); }}>Refresh</Button></p>}
   </div>;
 }

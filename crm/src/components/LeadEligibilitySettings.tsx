@@ -1,3 +1,5 @@
+import { Button } from "./ui/Button";
+import { Input } from "./ui/Input";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { receivesNewLeads } from "../../../shared/salespersonOwnership";
 import { communicationRequest as request, type TeamEligibility } from "../lib/communications";
@@ -105,7 +107,7 @@ type EligibilitySettings = ReturnType<typeof useLeadEligibilitySettings>;
 export function LeadEligibilityFeedback({ settings }: { settings: EligibilitySettings }) {
   const { editing, error, resource, disabled, refresh, busy, message } = settings;
   return <>
-    {!editing && (error || resource.error) && <div role="alert"><p className="error-text">{error || resource.error}</p><button type="button" className="secondary" disabled={disabled} onClick={refresh}>Refresh assignment settings</button></div>}
+    {!editing && (error || resource.error) && <div role="alert"><p className="error-text">{error || resource.error}</p><Button variant="secondary" type="button"  disabled={disabled} onClick={refresh}>Refresh assignment settings</Button></div>}
     <p className="small muted" role="status">{busy ? "Saving teammate settings…" : resource.loading ? "Loading assignment settings…" : message}</p>
   </>;
 }
@@ -115,7 +117,7 @@ export function LeadEligibilityCells({ member, settings, disabled: rowDisabled =
   if (!member) return <td colSpan={2} className="muted small">{resource.error ? "Assignment settings unavailable" : "Loading assignment settings…"}</td>;
   return <>
     <td>{member.salesperson ? <label className="lead-text-switch">
-      <input aria-label={`Receive new leads for ${member.name}`} type="checkbox" checked={member.receiveNewLeads !== false}
+      <Input aria-label={`Receive new leads for ${member.name}`} type="checkbox" checked={member.receiveNewLeads !== false}
         disabled={disabled || rowDisabled || member.available === false}
         onChange={event => void save(member, { receiveNewLeads: event.target.checked })} />
       <span>{member.receiveNewLeads !== false ? "On" : "Off"}</span>
@@ -124,7 +126,7 @@ export function LeadEligibilityCells({ member, settings, disabled: rowDisabled =
       <div className="small">Front: {member.frontId ? <code className="team-connection-id">{member.frontId}</code> : <span className="muted">Not linked</span>}</div>
       {member.frontId && <div className="small muted">Email: {member.frontChannelId || member.frontSignatureId ? "Custom Front selections" : "Automatic from Front"}</div>}
       <div className="small">Dialpad: {member.dialpadId ? <code className="team-connection-id">{member.dialpadId}</code> : <span className="muted">Not linked</span>}</div>
-      <button type="button" className="secondary" disabled={disabled || rowDisabled || member.available === false} aria-label={`Edit connections for ${member.name}`} onClick={() => editMember(member)}>Edit connections</button>
+      <Button variant="secondary" type="button"  disabled={disabled || rowDisabled || member.available === false} aria-label={`Edit connections for ${member.name}`} onClick={() => editMember(member)}>Edit connections</Button>
     </td>
   </>;
 }
@@ -152,17 +154,17 @@ function ConnectionEditor({ member, busy, error, onClose, onSave }: {
     <form aria-label={`Connections for ${member.name}`} onSubmit={event => { event.preventDefault(); if (!busy && dirty && !invalid) void onSave({ frontId: front, dialpadId: dialpad, frontChannelId: channel, frontSignatureId: signature }); }}>
       <fieldset disabled={busy} className="team-connection-fields">
         <div className="form-grid">
-          <label className="field">Front teammate ID<input value={frontId} autoComplete="off" autoCapitalize="none" spellCheck={false} placeholder="tea_…" aria-invalid={frontError} aria-describedby="front-id-help" onChange={event => { if (event.target.value.trim() !== front) { setFrontChannelId(""); setFrontSignatureId(""); } setFrontId(event.target.value); }} />
+          <label className="field">Front teammate ID<Input value={frontId} autoComplete="off" autoCapitalize="none" spellCheck={false} placeholder="tea_…" aria-invalid={frontError} aria-describedby="front-id-help" onChange={event => { if (event.target.value.trim() !== front) { setFrontChannelId(""); setFrontSignatureId(""); } setFrontId(event.target.value); }} />
             <span id="front-id-help" className={frontError ? "error-text" : "muted small"}>{frontError ? "Use a Front teammate ID beginning with tea_, followed by lowercase letters or numbers." : "Starts with tea_, followed by letters and numbers."}</span></label>
-          <label className="field">Dialpad user ID<input value={dialpadId} inputMode="numeric" autoComplete="off" spellCheck={false} aria-invalid={dialpadError} aria-describedby="dialpad-id-help" onChange={event => setDialpadId(event.target.value)} />
+          <label className="field">Dialpad user ID<Input value={dialpadId} inputMode="numeric" autoComplete="off" spellCheck={false} aria-invalid={dialpadError} aria-describedby="dialpad-id-help" onChange={event => setDialpadId(event.target.value)} />
             <span id="dialpad-id-help" className={dialpadError ? "error-text" : "muted small"}>{dialpadError ? "Use the numeric Dialpad user ID without spaces or punctuation." : "The numeric user ID from Dialpad."}</span></label>
-          <label className="field">Email channel ID<input value={frontChannelId} autoComplete="off" autoCapitalize="none" spellCheck={false} placeholder="cha_…" aria-invalid={channelError} aria-describedby="front-channel-help front-email-help" onChange={event => setFrontChannelId(event.target.value)} />
+          <label className="field">Email channel ID<Input value={frontChannelId} autoComplete="off" autoCapitalize="none" spellCheck={false} placeholder="cha_…" aria-invalid={channelError} aria-describedby="front-channel-help front-email-help" onChange={event => setFrontChannelId(event.target.value)} />
             <span id="front-channel-help" className={channelError ? "error-text" : "muted small"}>{channelError ? "Link a Front teammate and use their channel ID beginning with cha_." : "Optional Front sending channel, beginning with cha_."}</span></label>
-          <label className="field">Email signature ID<input value={frontSignatureId} autoComplete="off" autoCapitalize="none" spellCheck={false} placeholder="sig_…" aria-invalid={signatureError} aria-describedby="front-signature-help front-email-help" onChange={event => setFrontSignatureId(event.target.value)} />
+          <label className="field">Email signature ID<Input value={frontSignatureId} autoComplete="off" autoCapitalize="none" spellCheck={false} placeholder="sig_…" aria-invalid={signatureError} aria-describedby="front-signature-help front-email-help" onChange={event => setFrontSignatureId(event.target.value)} />
             <span id="front-signature-help" className={signatureError ? "error-text" : "muted small"}>{signatureError ? "Link a Front teammate and use their signature ID beginning with sig_." : "Optional Front email signature, beginning with sig_."}</span></label>
         </div>
         <p id="front-email-help" className="muted small">Leave blank to use the salesperson’s only mailbox and default signature in Front. Changing the Front teammate clears these selections.</p>
-        <div className="form-actions"><button type="submit" className="primary" disabled={!dirty || invalid}>{busy ? "Saving…" : "Save connections"}</button><button type="button" className="secondary" onClick={onClose}>Cancel</button></div>
+        <div className="form-actions"><Button variant="primary" type="submit"  disabled={!dirty || invalid}>{busy ? "Saving…" : "Save connections"}</Button><Button variant="secondary" type="button"  onClick={onClose}>Cancel</Button></div>
       </fieldset>
     </form>
   </Modal>;

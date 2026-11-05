@@ -1,3 +1,7 @@
+import { Button } from "../components/ui/Button";
+import { Table } from "../components/ui/Table";
+import { Input } from "../components/ui/Input";
+import { Tabs, TabPanel } from "../components/ui/Tabs";
 import BrokerFeeSettings from '../components/BrokerFeeSettings';
 import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
@@ -64,18 +68,8 @@ export default function Settings({ profile }: { profile: UserProfile }) {
       <h1>Settings</h1>
       <p className="sub">Form templates, licensing, agency details, and team</p>
 
-      <div className="tabs">
-        {TABS.map(([t, label]) => (
-          <button
-            key={t}
-            className={tab === t ? "active" : ""}
-            onClick={() => selectTab(t)}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-
+      <Tabs id="settings" label="Settings views" items={TABS.map(([value, label]) => ({ value, label }))} value={tab} onChange={selectTab} />
+      <TabPanel tabsId="settings" value={tab}>
       {tab === "templates" && <TemplatesPanel />}
       {tab === "licensing" && <Licensing />}
       {tab === "signature" && <MySignature profile={profile} />}
@@ -83,6 +77,7 @@ export default function Settings({ profile }: { profile: UserProfile }) {
       {tab === "team" && isAdmin && <Team profile={profile} />}
       {tab === "integrations" && isAdmin && <CommunicationSettings />}
       {tab === "reports" && isAdmin && <MarketingReportSettings />}
+      </TabPanel>
     </>
   );
 }
@@ -170,7 +165,7 @@ function TemplatesPanel() {
       {/* Only claim a template is missing once we know. `uploaded` is `{}`
           until the S3 list returns, which would otherwise flag every form. */}
       {uploadedRes.error && (
-        <p className="error-text" role="alert">{uploadedRes.error} <button disabled={uploadedRes.loading || busy.size > 0} onClick={() => void uploadedRes.refetch()}>Retry templates</button></p>
+        <p className="error-text" role="alert">{uploadedRes.error} <Button disabled={uploadedRes.loading || busy.size > 0} onClick={() => void uploadedRes.refetch()}>Retry templates</Button></p>
       )}
       {uploadedRes.loaded && !uploadedRes.error && missing > 0 && (
         <p className="small" style={{ color: "var(--amber)" }}>
@@ -181,7 +176,7 @@ function TemplatesPanel() {
       )}
 
       <div className="table-wrap">
-        <table>
+        <Table>
           <thead>
             <tr>
               <th>Form</th>
@@ -208,7 +203,7 @@ function TemplatesPanel() {
               />
             ))}
           </tbody>
-        </table>
+        </Table>
       </div>
 
       {error && <p className="error-text">{error}</p>}
@@ -272,9 +267,9 @@ function TemplateRow({
               onFiles={(files) => onUpload(files?.[0])}
             />}
             {isUploaded && (
-              <button className="secondary" disabled={busy} onClick={onInspect}>
+              <Button variant="secondary"  disabled={busy} onClick={onInspect}>
                 {busy ? "Reading…" : "Inspect fields"}
-              </button>
+              </Button>
             )}
           </div>
         </td>
@@ -287,9 +282,9 @@ function TemplateRow({
                 {fieldNames.length} form fields in {num}
               </strong>
               <div className="grow" />
-              <button className="link" onClick={onCloseFields}>
+              <Button variant="link"  onClick={onCloseFields}>
                 Hide
-              </button>
+              </Button>
             </div>
             <div className="ocr-text" style={{ maxHeight: 240 }}>
               {fieldNames.join("\n")}
@@ -362,7 +357,7 @@ function AgencyPanel({ profile }: { profile: UserProfile }) {
         and state portals ask for them constantly. Only admins can change them.
       </p>
 
-      {res.error && <p className="error-text" role="alert">{res.error} <button disabled={res.loading} onClick={() => void res.refetch()}>Retry agency identifiers</button></p>}
+      {res.error && <p className="error-text" role="alert">{res.error} <Button disabled={res.loading} onClick={() => void res.refetch()}>Retry agency identifiers</Button></p>}
       {!res.loaded ? (
         <p className="muted small">Loading…</p>
       ) : !res.error && (
@@ -370,7 +365,7 @@ function AgencyPanel({ profile }: { profile: UserProfile }) {
           <div className="form-grid">
             <div className="field">
               <label htmlFor="agency-npn">Agency NPN</label>
-              <input
+              <Input
                 id="agency-npn"
                 inputMode="numeric"
                 value={ids.agencyNpn}
@@ -379,7 +374,7 @@ function AgencyPanel({ profile }: { profile: UserProfile }) {
             </div>
             <div className="field">
               <label htmlFor="drlp-npn">DRLP NPN</label>
-              <input
+              <Input
                 id="drlp-npn"
                 inputMode="numeric"
                 value={ids.drlpNpn}
@@ -404,9 +399,9 @@ function AgencyPanel({ profile }: { profile: UserProfile }) {
             </div>
           </div>
           <div className="form-actions">
-            <button className="primary" disabled={saveStatus.busy} onClick={save}>
+            <Button variant="primary"  disabled={saveStatus.busy} onClick={save}>
               {saveStatus.busy ? "Saving…" : "Save"}
-            </button>
+            </Button>
             <SaveStatus {...saveStatus.status} />
           </div>
         </fieldset>

@@ -1,3 +1,5 @@
+import { Button } from "./components/ui/Button";
+import { Select } from "./components/ui/Select";
 import Relationships from "./pages/Relationships";
 import RelationshipDetail from "./pages/RelationshipDetail";
 import FrontSidebar from "./pages/FrontSidebar";
@@ -183,12 +185,12 @@ function ProfileGate({ user, signOut }: { user: AuthUser; signOut: () => void })
             usually clears it.
           </p>
           <div className="form-actions" style={{ justifyContent: "center" }}>
-            <button className="primary" onClick={() => void refetch()}>
+            <Button variant="primary"  onClick={() => void refetch()}>
               Try again
-            </button>
-            <button className="secondary" onClick={guardedSignOut}>
+            </Button>
+            <Button variant="secondary"  onClick={guardedSignOut}>
               Sign out
-            </button>
+            </Button>
           </div>
         </div>
       </div>
@@ -230,7 +232,7 @@ function NotFound() {
       <h2>Page not found</h2>
       <p className="muted small">That page doesn't exist (or moved).</p>
       <NavLink to={isAdmin ? "/" : "/leads"}>
-        <button className="primary">Back to {isAdmin ? "dashboard" : "leads"}</button>
+        <Button variant="primary" >Back to {isAdmin ? "dashboard" : "leads"}</Button>
       </NavLink>
     </div>
   );
@@ -369,9 +371,9 @@ function AgencyIdentifiers() {
 
   return (
     <div className="user-npns">
-      {ids.agencyNpn && <CopyValue label="Agency NPN" value={ids.agencyNpn} />}
-      {ids.drlpNpn && <CopyValue label="DRLP NPN" value={ids.drlpNpn} />}
-      {ids.agencyEin && <CopyValue label="Agency EIN" value={ids.agencyEin} />}
+      {ids.agencyNpn && <CopyValue inverse label="Agency NPN" value={ids.agencyNpn} />}
+      {ids.drlpNpn && <CopyValue inverse label="DRLP NPN" value={ids.drlpNpn} />}
+      {ids.agencyEin && <CopyValue inverse label="Agency EIN" value={ids.agencyEin} />}
     </div>
   );
 }
@@ -412,14 +414,14 @@ function Shell({ profile, signOut, activeRole, roles, onRoleChange }: {
           <NavLink to={homePath} className="brand" onClick={() => setMenuOpen(false)}>
             <img src="/logo.png" alt="HOA Insurance Agency" />
           </NavLink>
-          <button
+          <Button variant="inverse" iconOnly
             className="hamburger"
             aria-label={menuOpen ? "Close menu" : "Open menu"}
             aria-expanded={menuOpen}
             onClick={() => setMenuOpen(!menuOpen)}
           >
             {menuOpen ? <IconClose /> : <IconMenu />}
-          </button>
+          </Button>
         </div>
         <nav onClick={() => setMenuOpen(false)}>
           {navItems.map((item) => (
@@ -437,12 +439,12 @@ function Shell({ profile, signOut, activeRole, roles, onRoleChange }: {
           </div>
           {roles.length > 1 ? (
             <div className="role-switcher">
-              <select id="active-role" aria-label="Active role" value={activeRole} onChange={event => onRoleChange(event.target.value as Role)}>
+              <Select id="active-role" aria-label="Active role" value={activeRole} onChange={event => onRoleChange(event.target.value as Role)}>
                 {roles.map(role => <option key={role} value={role}>{role}</option>)}
-              </select>
+              </Select>
             </div>
           ) : <div className="muted small">{activeRole}</div>}
-          <button onClick={signOut}>Sign out</button>
+          <Button variant="inverse" controlSize="compact" onClick={signOut}>Sign out</Button>
         </div>
       </aside>
       <main className="main">

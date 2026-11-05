@@ -1,3 +1,5 @@
+import { Input } from "./ui/Input";
+import { Button } from "./ui/Button";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { signIn, confirmSignIn, signInWithRedirect } from "aws-amplify/auth";
 import { destinationSignIn, previewSignInAvailable } from "../lib/migrationAuth";
@@ -178,20 +180,20 @@ export default function MagicLinkSignIn({ embedded = false }: { embedded?: boole
               } catch { setError("Paste the sign-in link from your CRM email."); }
             }}>
               <p className="muted small">For the Front sidebar, copy the sign-in link from your email without opening it, then paste it here. This signs in this panel directly.</p>
-              <label className="field">Private sign-in link<input type="password" autoComplete="off" required value={sidebarLink} onChange={e => setSidebarLink(e.target.value)} /></label>
-              <button disabled={!sidebarLink}>Sign in to this sidebar</button>
+              <label className="field">Private sign-in link<Input type="password" autoComplete="off" required value={sidebarLink} onChange={e => setSidebarLink(e.target.value)} /></label>
+              <Button disabled={!sidebarLink}>Sign in to this sidebar</Button>
             </form>}
-            <button className="link" onClick={() => setPhase("email")}>
+            <Button variant="link"  onClick={() => setPhase("email")}>
               ← Use a different email
-            </button>
+            </Button>
           </>
         ) : (
           <>
             {googleEnabled && <>
-              <button className="auth-google" disabled={busy} onClick={signInWithGoogle}>
+              <Button variant="google" className="auth-google" disabled={busy} onClick={signInWithGoogle}>
                 <img src="/images/auth/google-g.png" alt="" width="20" height="20" />
                 {redirecting ? "Opening Google…" : "Continue with Google"}
-              </button>
+              </Button>
               <div className="auth-divider"><span>or use an email link</span></div>
             </>}
             <p className="muted small" style={{ textAlign: "center" }}>
@@ -200,7 +202,7 @@ export default function MagicLinkSignIn({ embedded = false }: { embedded?: boole
             </p>
             <div className="field">
               <label htmlFor="sign-in-email">Email</label>
-              <input
+              <Input
                 id="sign-in-email"
                 type="email"
                 autoFocus
@@ -211,9 +213,9 @@ export default function MagicLinkSignIn({ embedded = false }: { embedded?: boole
               />
             </div>
             <div className="form-actions">
-              <button className="primary" disabled={busy || !email.trim()} onClick={requestLink}>
+              <Button variant="primary"  disabled={busy || !email.trim()} onClick={requestLink}>
                 {sending ? 'Sending…' : 'Email me a sign-in link'}
-              </button>
+              </Button>
             </div>
           </>
         )}

@@ -1,0 +1,59 @@
+@import './tokens.css';
+
+@font-face {
+  font-family: 'Google Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url('/fonts/google-sans-medium-latin.woff2') format('woff2');
+}
+
+.ui-button {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: var(--control-height);
+  max-width: 100%;
+  border: 1px solid var(--border, #dce2e9);
+  border-radius: var(--control-radius);
+  padding: 8px 14px;
+  font-family: inherit;
+  font-size: var(--control-font);
+  font-weight: 600;
+  line-height: 1.25;
+  text-align: center;
+  text-decoration: none;
+  color: var(--text, #1c2634);
+  background: var(--card, #fff);
+  cursor: pointer;
+  vertical-align: middle;
+  transition: background-color .15s, border-color .15s, color .15s;
+}
+.ui-button[data-size='compact'] { min-height: var(--control-height-compact); padding: 5px 10px; font-size: var(--control-font-compact); }
+.ui-button[data-variant='secondary']:not(:disabled):not([aria-disabled='true']):hover { color: var(--accent-dark, #2566ad); border-color: var(--accent, #2e7dd1); }
+.ui-button[data-variant='primary'] { color: #fff; background: var(--accent, #2e7dd1); border-color: var(--accent, #2e7dd1); }
+.ui-button[data-variant='primary']:not(:disabled):not([aria-disabled='true']):hover { background: var(--accent-dark, #2566ad); border-color: var(--accent-dark, #2566ad); }
+.ui-button[data-variant='danger'], .ui-button[data-variant='link'], .ui-button[data-variant='ghost'], .ui-button[data-variant='plain'] { border-color: transparent; background: transparent; }
+.ui-button[data-variant='danger'] { color: var(--red, #a83b32); }
+.ui-button[data-variant='link'] { color: var(--accent-dark, #2566ad); }
+.ui-button[data-variant='ghost'] { color: var(--muted, #64748b); }
+.ui-button:is([data-variant='danger'], [data-variant='link'], [data-variant='ghost']):not(:disabled):not([aria-disabled='true']):hover { background: var(--blue-bg, #edf4fc); }
+.ui-button[data-variant='inverse'] { color: #fff; background: transparent; border-color: rgb(255 255 255 / 45%); }
+.ui-button[data-variant='inverse']:not(:disabled):not([aria-disabled='true']):hover { background: rgb(255 255 255 / 12%); border-color: #fff; }
+.ui-button[data-variant='plain'] { min-height: 0; padding: 0; border: 0; border-radius: 0; color: inherit; font: inherit; text-transform: inherit; letter-spacing: inherit; }
+.ui-button[data-variant='surface'] { display: flex; padding: 0; text-align: left; font-weight: inherit; }
+.ui-button[data-variant='google'] { min-height: 44px; color: #1f1f1f; background: #fff; border-color: #747775; font-family: 'Google Sans', Arial, sans-serif; }
+.ui-button[data-icon-only='true'] { width: var(--control-height); padding: 6px; flex-shrink: 0; }
+.ui-button[data-size='compact'][data-icon-only='true'] { width: var(--control-height-compact); }
+.ui-button:focus-visible { outline: 2px solid var(--accent, #2e7dd1); outline-offset: 2px; }
+.ui-button:disabled, .ui-button[aria-disabled='true'] { cursor: default; opacity: .55; }
+.ui-button svg { flex-shrink: 0; }
+@media (prefers-reduced-motion: reduce) { .ui-button { transition: none; } }
+
+.ui-button:hover { text-decoration: none; }
+.ui-button[data-variant='surface']:not(:disabled):not([aria-disabled='true']):hover { border-color: var(--accent, #2e7dd1); }
+.ui-button[data-variant='danger']:not(:disabled):not([aria-disabled='true']):hover { background: var(--red-bg, #fde8e6); }
+.ui-button[data-variant='google'] { font-weight: 500; }
+.ui-button[data-variant='google']:not(:disabled):not([aria-disabled='true']):hover { background: #f8fafc; }

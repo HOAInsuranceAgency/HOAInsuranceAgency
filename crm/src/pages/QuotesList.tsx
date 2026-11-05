@@ -1,3 +1,7 @@
+import { Select } from "../components/ui/Select";
+import { Button } from "../components/ui/Button";
+import { Table } from "../components/ui/Table";
+import { SegmentedControl } from "../components/ui/SegmentedControl";
 import { useId, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
@@ -83,37 +87,31 @@ export default function QuotesList() {
       <p className="sub">All quotes across leads and clients</p>
 
       <div className="toolbar quote-offer-filters">
-        <div className="chip-row" role="group" aria-label="Quote status views">
-          <button className={openOnly ? "on" : ""} aria-pressed={openOnly} onClick={() => setOpenOnly(true)}>
-            In flight
-          </button>
-          <button className={!openOnly ? "on" : ""} aria-pressed={!openOnly} onClick={() => setOpenOnly(false)}>
-            All
-          </button>
-        </div>
+        <SegmentedControl label="Quote status views" value={openOnly ? 'open' : 'all'} onChange={value => setOpenOnly(value === 'open')}
+          items={[{ value: 'open', label: 'In flight' }, { value: 'all', label: 'All' }]} />
         <label className="field" htmlFor={`${filterId}-expiry`}>Offer expiry
-          <select id={`${filterId}-expiry`} value={offerExpiry} aria-describedby={`${filterId}-help`} onChange={e => setOfferExpiry(e.target.value as QuoteOfferFilter)}>
+          <Select id={`${filterId}-expiry`} value={offerExpiry} aria-describedby={`${filterId}-help`} onChange={e => setOfferExpiry(e.target.value as QuoteOfferFilter)}>
             <option value="all">Any offer expiry</option>
             <option value="expiring">Expiring within 7 days ({expiringCount})</option>
             <option value="expired">Expired ({expiredCount})</option>
-          </select>
+          </Select>
         </label>
         <p id={`${filterId}-help`} className="quote-offer-filter-help">Expiry filters include quoted and presented offers. An offer remains valid through the recorded date, including today.</p>
       </div>
 
-      {accountRes.error && <p className="error-text" role="alert">{accountRes.error} <button disabled={accountRes.loading} onClick={() => void accountRes.refetch()}>Retry account names</button></p>}
-      {carrierRes.error && <p className="error-text" role="alert">{carrierRes.error} <button disabled={carrierRes.loading} onClick={() => void carrierRes.refetch()}>Retry carriers</button></p>}
+      {accountRes.error && <p className="error-text" role="alert">{accountRes.error} <Button disabled={accountRes.loading} onClick={() => void accountRes.refetch()}>Retry account names</Button></p>}
+      {carrierRes.error && <p className="error-text" role="alert">{carrierRes.error} <Button disabled={carrierRes.loading} onClick={() => void carrierRes.refetch()}>Retry carriers</Button></p>}
 
       <div className="card">
         {!quoteRes.loaded ? (
           <p className="muted small">Loading…</p>
         ) : quoteRes.error ? (
-          <p className="error-text" role="alert">{quoteRes.error} <button disabled={quoteRes.loading} onClick={() => void quoteRes.refetch()}>Retry quotes</button></p>
+          <p className="error-text" role="alert">{quoteRes.error} <Button disabled={quoteRes.loading} onClick={() => void quoteRes.refetch()}>Retry quotes</Button></p>
         ) : sorted.length === 0 ? (
           <p className="muted small">{quotes.length ? "No quotes match these filters." : "No quotes."}</p>
         ) : (
           <div className="table-wrap">
-            <table aria-label="All carrier quotes">
+            <Table aria-label="All carrier quotes">
               <thead>
                 <tr>
                   <SortTh label="Account" colKey="account" sortKey={sortKey} dir={dir} onToggle={toggle} />
@@ -144,7 +142,7 @@ export default function QuotesList() {
                   </tr>
                 ))}
               </tbody>
-            </table>
+            </Table>
           </div>
         )}
       </div>

@@ -1,3 +1,4 @@
+import { Button } from "./ui/Button";
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import type { Contact } from '../lib/client';
@@ -27,9 +28,9 @@ export default function LegacyManagerReview() {
       {resource.error && (
         <p role="alert" className="error-text">
           {resource.error}{' '}
-          <button className="secondary" onClick={() => void resource.more()}>
+          <Button variant="secondary"  onClick={() => void resource.more()}>
             Retry
-          </button>
+          </Button>
         </p>
       )}
       {resource.loading && <p>Loading contacts…</p>}
@@ -49,18 +50,18 @@ export default function LegacyManagerReview() {
               <Link to={`/accounts/${contact.accountId}`}>{accountName}</Link>
             </p>
             <div className="toolbar">
-              <button className="secondary" onClick={() => setSelected(contact)}>
+              <Button variant="secondary"  onClick={() => setSelected(contact)}>
                 Create reviewed profile
-              </button>
+              </Button>
               <Link to={`/accounts/${contact.accountId}?management=1`}>Link an existing manager</Link>
             </div>
           </li>
         ))}
       </ul>
       {resource.nextToken && (
-        <button className="secondary" disabled={resource.loading} onClick={() => void resource.more()}>
+        <Button variant="secondary"  disabled={resource.loading} onClick={() => void resource.more()}>
           Load more contacts
-        </button>
+        </Button>
       )}
       {selected && (
         <PartyForm

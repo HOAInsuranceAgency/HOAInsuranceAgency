@@ -1,3 +1,4 @@
+import { Input } from "../components/ui/Input";
 import { useEffect, useRef } from "react";
 
 /**
@@ -91,7 +92,7 @@ export function AddressAutocomplete({
   }, []);
 
   return (
-    <input
+    <Input
       ref={inputRef}
       value={value}
       placeholder={placeholder ?? "Start typing an address…"}

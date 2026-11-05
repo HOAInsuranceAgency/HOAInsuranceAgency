@@ -76,7 +76,7 @@ describe("quote loading and retries", () => {
     fireEvent.change(screen.getByRole("combobox", { name: "Quote status" }), { target: { value: "PRESENTED" } });
     await waitFor(() => expect(h.quotes).toHaveBeenCalledTimes(2));
     expect(screen.getByText("Harbor Mutual")).toBeVisible();
-    expect(screen.getByRole("table", { name: "Carrier quotes" }).parentElement).toHaveAttribute("aria-busy", "true");
+    expect(screen.getByRole("table", { name: "Carrier quotes" }).closest("[aria-busy]")).toHaveAttribute("aria-busy", "true");
     expect(screen.queryByText("Loading quotes…")).toBeNull();
     expect(screen.queryByText("No quotes yet")).toBeNull();
     await act(async () => refresh.resolve({ data: [{ ...quote, status: "PRESENTED" }] }));

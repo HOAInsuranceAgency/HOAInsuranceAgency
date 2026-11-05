@@ -1,6 +1,11 @@
+import { Button } from "../components/ui/Button";
+import { Select } from "../components/ui/Select";
+import { Table } from "../components/ui/Table";
+import { Input } from "../components/ui/Input";
+import { SegmentedControl } from "../components/ui/SegmentedControl";
 import { isOpenLead } from "../lib/dashboardLeads";
 import { useIsAdmin } from "../lib/auth";
-import { useEffect, useId, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
   fmtDate,
@@ -39,7 +44,6 @@ function AccountList({ stage, viewScope }: AccountsListProps) {
   const setLeadView = (leadView: LeadView) => view.update({ leadView });
   const setSalesperson = (salesperson: string) => view.update({ salesperson });
   const [notice, setNotice] = useState('');
-  const viewId = useId();
   const navigate = useNavigate();
 
   const resource = useAccountsListData(stage);
@@ -139,49 +143,42 @@ function AccountList({ stage, viewScope }: AccountsListProps) {
     <>
       <h1 style={{ marginBottom: 20 }}>{label}</h1>
 
-      {stage === 'LEAD' && <div className="tabs" role="tablist" aria-label="Lead views">
-        {LEAD_VIEWS.map((view, index) => <button key={view} id={`${viewId}-${index}`} role="tab" aria-selected={leadView === view} aria-controls={`${viewId}-panel`} tabIndex={leadView === view ? 0 : -1} className={leadView === view ? 'active' : ''}
-          onClick={() => setLeadView(view)} onKeyDown={event => {
-            const next = event.key === 'ArrowRight' ? (index + 1) % LEAD_VIEWS.length : event.key === 'ArrowLeft' ? (index + LEAD_VIEWS.length - 1) % LEAD_VIEWS.length : event.key === 'Home' ? 0 : event.key === 'End' ? LEAD_VIEWS.length - 1 : -1;
-            if (next < 0) return;
-            event.preventDefault(); setLeadView(LEAD_VIEWS[next]);
-            event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next]?.focus();
-          }}>{view}{loaded && !error && <span aria-hidden="true"> ({matching.filter(a => inView(a, view)).length})</span>}</button>)}
-      </div>}
+      {stage === 'LEAD' && <SegmentedControl label="Lead views" value={leadView} onChange={setLeadView} rovingFocus
+        items={LEAD_VIEWS.map(value => ({ value, label: value, ...(loaded && !error ? { count: matching.filter(a => inView(a, value)).length } : {}) }))} />}
 
       {stage === 'LEAD' && loaded && !error && dueCount > 0 && <div className="lead-follow-up-notice" role="status">
         <p><strong>{dueCount} follow-up{dueCount === 1 ? '' : 's'} due</strong> — ready to contact again.</p>
-        {leadView !== 'Follow-up due' && <button className="link" onClick={() => setLeadView('Follow-up due')}>View due leads</button>}
+        {leadView !== 'Follow-up due' && <Button variant="link"  onClick={() => setLeadView('Follow-up due')}>View due leads</Button>}
       </div>}
       {stage === 'LEAD' && notice && <p className="muted small" role="status">{notice}</p>}
 
       <AccountSavedViews storageKey={view.storageKey} current={currentView} stage={stage} admin={isAdmin} onApply={view.update} onReset={view.reset} />
 
       <div className="toolbar">
-        <button className="secondary" disabled={loading} onClick={() => void refetchAccounts()} aria-label={`Refresh ${label.toLowerCase()}`}>{loading && loaded ? 'Refreshing…' : 'Refresh'}</button>
-        <label className="field">State<select value={view.state} onChange={event => view.update({ state: event.target.value })}><option value="">All states</option>{Object.entries(US_STATE_NAMES).sort((a, b) => a[1].localeCompare(b[1])).map(([code, name]) => <option key={code} value={code}>{name} ({code})</option>)}</select></label>
-        {isAdmin && <label className="field">Salesperson<select value={salesperson} onChange={e => setSalesperson(e.target.value)}><option value="">All salespeople</option>{commercial.data.team.filter(t => t.salesperson).map(t => <option key={t.userId} value={t.userId}>{t.name}</option>)}</select></label>}
+        <Button variant="secondary"  disabled={loading} onClick={() => void refetchAccounts()} aria-label={`Refresh ${label.toLowerCase()}`}>{loading && loaded ? 'Refreshing…' : 'Refresh'}</Button>
+        <label className="field">State<Select value={view.state} onChange={event => view.update({ state: event.target.value })}><option value="">All states</option>{Object.entries(US_STATE_NAMES).sort((a, b) => a[1].localeCompare(b[1])).map(([code, name]) => <option key={code} value={code}>{name} ({code})</option>)}</Select></label>
+        {isAdmin && <label className="field">Salesperson<Select value={salesperson} onChange={e => setSalesperson(e.target.value)}><option value="">All salespeople</option>{commercial.data.team.filter(t => t.salesperson).map(t => <option key={t.userId} value={t.userId}>{t.name}</option>)}</Select></label>}
         <ReportDownload disabled={loading || !loaded || !!error || !!refreshError || stage === 'LEAD' && !!quoteResource.error} report={{ title: label, filters: [isAdmin ? `Salesperson: ${commercial.data.team.find(t => t.userId === salesperson)?.name ?? 'All'}` : 'All displayed data', ...(stage === 'LEAD' ? [`View: ${leadView}`] : []), ...(view.state ? [`State: ${US_STATE_NAMES[view.state]}`] : [])].join(' · '), sections: [{ title: label, columns: ['Name', 'Type', 'Contact', 'City', 'State', ...(isAdmin ? ['Salesperson'] : []), ...(stage === 'LEAD' ? [ 'Lead source', 'Website form', 'Estimated opportunity (USD)', 'Pending commission (USD)', 'Commission basis', 'Entered', 'Follow-up date', 'Follow-up note'] : []), 'Units', 'TIV (USD)', stage === 'LEAD' ? 'Incumbent expires' : 'Renewal'], rows: sorted.map(a => { const f = forecastOf(a), estimate = commercial.data.entries[a.id]?.plan.estimatedCents; return [a.name, a.type, contactOf(a)?.name, a.city, a.state, ...(isAdmin ? [assignee(a, 'salespersonId')] : []), ...(stage === 'LEAD' ? [ acquisitionLabel(a.leadSource, a.source), websiteFormLabel(a.source), estimate == null ? null : estimate / 100, f?.cents == null ? null : f.cents / 100, f?.label, a.createdAt?.slice(0,10), a.stage === 'LEAD' ? snoozeOf(a)?.followUpOn : null, a.stage === 'LEAD' ? snoozeOf(a)?.note : null] : []), a.unitCount, a.totalInsuredValue, renewalOf(a)]; }) }] }} />
         {stage === "LEAD" && (
           <Link to="/leads/new">
-            <button className="primary">+ New lead</button>
+            <Button variant="primary" >+ New lead</Button>
           </Link>
         )}
       </div>
 
-      <div className="card" id={stage === 'LEAD' ? `${viewId}-panel` : undefined} role={stage === 'LEAD' ? 'tabpanel' : undefined} aria-labelledby={stage === 'LEAD' ? `${viewId}-${LEAD_VIEWS.indexOf(leadView)}` : undefined}>
-        {refreshError && <p className="error-text" role="alert">Some details may be out of date. {refreshError} <button disabled={loading} onClick={() => void refetchAccounts()}>Retry</button></p>}
-        {stage === 'LEAD' && quoteResource.error && !refreshError && <p className="error-text" role="alert">{quoteResource.error} <button onClick={() => void refetchAccounts()}>Retry</button></p>}
+      <div className="card">
+        {refreshError && <p className="error-text" role="alert">Some details may be out of date. {refreshError} <Button disabled={loading} onClick={() => void refetchAccounts()}>Retry</Button></p>}
+        {stage === 'LEAD' && quoteResource.error && !refreshError && <p className="error-text" role="alert">{quoteResource.error} <Button onClick={() => void refetchAccounts()}>Retry</Button></p>}
         {stage === 'LEAD' && <p className="muted small">Commission estimates are for the agency. Client accounts with a selected package still being bound remain here until the package is finished.</p>}
         {!loaded && loading ? (
           <p className="muted small">Loading…</p>
         ) : error ? (
-          <p className="error-text" role="alert">{error} <button onClick={() => void refetchAccounts()}>Retry</button></p>
+          <p className="error-text" role="alert">{error} <Button onClick={() => void refetchAccounts()}>Retry</Button></p>
         ) : sorted.length === 0 ? (
           <p className="muted small">No {label.toLowerCase()} found.</p>
         ) : (
           <div className="table-wrap">
-            <table>
+            <Table>
               <thead>
                 <tr>
                   <SortTh label="Name" colKey="name" sortKey={sortKey} dir={dir} onToggle={toggle} />
@@ -271,7 +268,7 @@ function AccountList({ stage, viewScope }: AccountsListProps) {
                   );
                 })}
               </tbody>
-            </table>
+            </Table>
           </div>
         )}
       </div>
@@ -327,7 +324,7 @@ function AccountSavedViews({ storageKey, current, stage, admin, onApply, onReset
   }
   return <section aria-label="Saved account views">
     <div className="toolbar">
-      <label className="field">Saved view<select value={selected?.id ?? ''} disabled={!available} onChange={event => {
+      <label className="field">Saved view<Select value={selected?.id ?? ''} disabled={!available} onChange={event => {
         const id = event.target.value;
         setMode(''); setError(''); setMessage('');
         if (!id) { setSelectedId(''); return; }
@@ -342,18 +339,18 @@ function AccountSavedViews({ storageKey, current, stage, admin, onApply, onReset
           return;
         }
         setSelectedId(item.id); onApply(item.view);
-      }}><option value="">Current view</option>{views.map(item => <option key={item.id} value={item.id}>{item.name}{item.id === selectedId && modified ? ' (modified)' : ''}</option>)}</select></label>
-      <button type="button" className="secondary" disabled={!available || views.length >= MAX_NAMED_VIEWS} onClick={() => { setMode('new'); setName(''); setError(''); setMessage(''); }}>Save current view</button>
+      }}><option value="">Current view</option>{views.map(item => <option key={item.id} value={item.id}>{item.name}{item.id === selectedId && modified ? ' (modified)' : ''}</option>)}</Select></label>
+      <Button variant="secondary" type="button"  disabled={!available || views.length >= MAX_NAMED_VIEWS} onClick={() => { setMode('new'); setName(''); setError(''); setMessage(''); }}>Save current view</Button>
       {selected && <>
-        {modified && <button type="button" className="secondary" onClick={() => {
+        {modified && <Button variant="secondary" type="button"  onClick={() => {
           if (persist(latest => putNamedAccountView(latest, { id: selected.id, name: latest.find(item => item.id === selected.id)?.name ?? selected.name, view: current }, stage, admin))) setMessage('Saved view updated.');
-        }}>Update saved view</button>}
-        <button type="button" className="secondary" onClick={() => { setMode('rename'); setName(selected.name); setError(''); setMessage(''); }}>Rename view</button>
-        <button type="button" className="secondary" onClick={() => {
+        }}>Update saved view</Button>}
+        <Button variant="secondary" type="button"  onClick={() => { setMode('rename'); setName(selected.name); setError(''); setMessage(''); }}>Rename view</Button>
+        <Button variant="secondary" type="button"  onClick={() => {
           if (persist(latest => latest.filter(item => item.id !== selected.id))) { setSelectedId(''); setMode(''); setMessage('Saved view deleted.'); }
-        }}>Delete view</button>
+        }}>Delete view</Button>
       </>}
-      {(custom || selected) && <button type="button" className="secondary" onClick={() => { setSelectedId(''); setMode(''); setError(''); setMessage(''); onReset(); }}>Reset view</button>}
+      {(custom || selected) && <Button variant="secondary" type="button"  onClick={() => { setSelectedId(''); setMode(''); setError(''); setMessage(''); onReset(); }}>Reset view</Button>}
     </div>
     {mode && <form className="toolbar" aria-label={mode === 'rename' ? 'Rename saved view' : 'Save current view'} onSubmit={event => {
       event.preventDefault();
@@ -363,9 +360,9 @@ function AccountSavedViews({ storageKey, current, stage, admin, onApply, onReset
       setSelectedId(mode === 'rename' && selected ? selected.id : next[next.length - 1].id);
       setMode(''); setName(''); setMessage(mode === 'rename' ? 'Saved view renamed.' : 'View saved in this browser.');
     }}>
-      <label className="field">View name<input value={name} maxLength={80} onChange={event => { setName(event.target.value); setError(''); }} autoFocus /></label>
-      <button type="submit" className="primary">{mode === 'rename' ? 'Save name' : 'Save view'}</button>
-      <button type="button" className="secondary" onClick={() => { setMode(''); setError(''); }}>Cancel naming</button>
+      <label className="field">View name<Input value={name} maxLength={80} onChange={event => { setName(event.target.value); setError(''); }} autoFocus /></label>
+      <Button variant="primary" type="submit" >{mode === 'rename' ? 'Save name' : 'Save view'}</Button>
+      <Button variant="secondary" type="button"  onClick={() => { setMode(''); setError(''); }}>Cancel naming</Button>
     </form>}
     {!available && <p className="muted small">Saved views are unavailable in this browser. Current filters still work in the URL.</p>}
     {available && <p className="muted small">Saved views stay in this browser for your current role.{views.length >= MAX_NAMED_VIEWS ? ` You have ${MAX_NAMED_VIEWS} saved views; delete one to add another.` : ''}</p>}

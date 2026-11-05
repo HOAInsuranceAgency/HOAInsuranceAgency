@@ -1,3 +1,4 @@
+import { Button } from "./ui/Button";
 import { Link } from "react-router-dom";
 import { eligibleEstimate } from "../../amplify/functions/honeycomb/submission-contract";
 import { listAllPages } from "../lib/pagination";
@@ -29,7 +30,7 @@ export default function HoneycombEstimates({ accountId }: { accountId: string })
   return <section className="card" style={{ marginBottom: 20 }} aria-label="Honeycomb estimates">
     <h3>Honeycomb estimates</h3>
     <p className="muted small">Directional indications only. No application has been submitted to underwriting.</p>
-    {resource.error && <p role="alert">{resource.error} <button onClick={() => void resource.refetch()}>Retry</button></p>}
+    {resource.error && <p role="alert">{resource.error} <Button onClick={() => void resource.refetch()}>Retry</Button></p>}
     {resource.data.map(record => {
       const status = visibleStatus(record);
       return <div key={record.id} style={{ marginBottom: 16 }}>

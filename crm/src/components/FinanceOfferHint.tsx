@@ -1,3 +1,4 @@
+import { Button } from "./ui/Button";
 import { useMemo } from "react";
 import { client, listAllPages, type Account } from "../lib/client";
 import type { Schema } from "../../amplify/data/resource";
@@ -83,7 +84,7 @@ export function FinanceOfferHint({
     { initialData: null, errorMessage: "Couldn't check financing." }
   );
 
-  if (res.error) return <p className="muted small">{res.error} <button type="button" disabled={res.loading} onClick={() => void res.refetch()}>Retry financing check</button></p>;
+  if (res.error) return <p className="muted small">{res.error} <Button type="button" disabled={res.loading} onClick={() => void res.refetch()}>Retry financing check</Button></p>;
   if (!res.loaded || !res.data) return null;
   const { hasOpinion, loans } = res.data;
 

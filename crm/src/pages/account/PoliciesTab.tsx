@@ -1,3 +1,6 @@
+import { Button } from "../../components/ui/Button";
+import { Table } from "../../components/ui/Table";
+import { Select } from "../../components/ui/Select";
 import { useRef, useState } from "react";
 import {
   client,
@@ -118,11 +121,11 @@ function AccountPolicies({ accountId }: { accountId: string }) {
           column reads "—", indistinguishable from a policy with none set. */}
       {carrierRes.error && <p className="error-text" role="alert">
         {carrierRes.error}{" "}
-        <button className="secondary" disabled={carrierRes.loading} onClick={() => void carrierRes.refetch()}>Retry carriers</button>
+        <Button variant="secondary"  disabled={carrierRes.loading} onClick={() => void carrierRes.refetch()}>Retry carriers</Button>
       </p>}
       {policyRes.error && <p className="error-text" role="alert">
         {policyRes.error}{" "}
-        <button className="secondary" disabled={policyRes.loading} onClick={() => void refresh()}>Retry policies</button>
+        <Button variant="secondary"  disabled={policyRes.loading} onClick={() => void refresh()}>Retry policies</Button>
       </p>}
 
       {!policyRes.loaded || (policyRes.loading && policies.length === 0) ? (
@@ -133,7 +136,7 @@ function AccountPolicies({ accountId }: { accountId: string }) {
         </p>
       ) : (
         <div className="table-wrap">
-          <table>
+          <Table>
             <thead>
               <tr>
                 <SortTh label="Policy #" colKey="number" sortKey={sortKey} dir={dir} onToggle={toggle} />
@@ -172,7 +175,7 @@ function AccountPolicies({ accountId }: { accountId: string }) {
                       before the field existed. */}
                   <td>{fmtDate(p.datePolicyBound?.slice(0, 10))}</td>
                   <td>
-                    <select
+                    <Select
                       aria-label={`Status for policy ${p.policyNumber || p.id}`}
                       disabled={rowStatus[p.id]?.state === "saving" || policyRes.loading || Boolean(policyRes.error) || Boolean(editing)}
                       value={p.status}
@@ -183,18 +186,18 @@ function AccountPolicies({ accountId }: { accountId: string }) {
                       {POLICY_STATUSES.map((s) => (
                         <option key={s}>{s}</option>
                       ))}
-                    </select>
+                    </Select>
                     <SaveStatus {...(rowStatus[p.id] ?? { state: "idle" })} />
                   </td>
                   <td>
-                    <button className="link" disabled={saving || policyRes.loading || Boolean(policyRes.error) || Boolean(editing) || !carrierRes.loaded || carrierRes.loading || Boolean(carrierRes.error)} onClick={() => setEditing(p)}>
+                    <Button variant="link"  disabled={saving || policyRes.loading || Boolean(policyRes.error) || Boolean(editing) || !carrierRes.loaded || carrierRes.loading || Boolean(carrierRes.error)} onClick={() => setEditing(p)}>
                       Edit
-                    </button>
+                    </Button>
                   </td>
                 </tr>
               ))}
             </tbody>
-          </table>
+          </Table>
         </div>
       )}
     </div>

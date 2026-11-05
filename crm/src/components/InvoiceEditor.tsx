@@ -1,3 +1,8 @@
+import { Button } from "./ui/Button";
+import { Table } from "./ui/Table";
+import { Input } from "./ui/Input";
+import { Select } from "./ui/Select";
+import { Textarea } from "./ui/Textarea";
 import { feeAllocations } from "../../../shared/brokerFees";
 import { validateAdjustmentLines } from "../../../shared/invoiceAdjustments";
 import { currentContacts, billingContact } from "../lib/contacts";
@@ -563,7 +568,7 @@ function InvoiceEditorContent({
   }
 
   if (!linesRes.loaded) return <p className="muted small">Loading invoice…</p>;
-  if (linesRes.error) return <p className="error-text">{linesRes.error} <button type="button" disabled={linesRes.loading} onClick={() => void linesRes.refetch()}>Retry invoice lines</button></p>;
+  if (linesRes.error) return <p className="error-text">{linesRes.error} <Button type="button" disabled={linesRes.loading} onClick={() => void linesRes.refetch()}>Retry invoice lines</Button></p>;
 
   const inputId = (part: string) => `inv-${part}-${invoice.id}`;
 
@@ -576,7 +581,7 @@ function InvoiceEditorContent({
         </h2>
         <div className="inline-actions">
           <SaveStatus {...saveStatus.status} />
-          {dirty && <button type="button" disabled={pending > 0} onClick={() => void saveEdits()}>Save changes</button>}
+          {dirty && <Button type="button" disabled={pending > 0} onClick={() => void saveEdits()}>Save changes</Button>}
           {/* Voided, not deleted: the number must never be reused, and a gap in
               the sequence is explainable in a way a reissue is not. */}
           {/* Not offered while a debit is clearing: an in-flight ACH cannot be
@@ -586,7 +591,7 @@ function InvoiceEditorContent({
             <ConfirmButton
               label="Void"
               busyLabel="Voiding…"
-              className="danger"
+              variant="danger"
               message="The number is retired, and the payment link is closed."
               disabled={actionBusy}
               onConfirm={() => voidThis()}
@@ -596,7 +601,7 @@ function InvoiceEditorContent({
             <ConfirmButton
               label="Delete"
               busyLabel="Deleting…"
-              className="danger"
+              variant="danger"
               message="It is void and has no lines."
               disabled={actionBusy}
               onConfirm={() => enqueue(async () => {
@@ -611,14 +616,14 @@ function InvoiceEditorContent({
 
       {/* ── What is being billed ───────────────────────────────────────── */}
       <div className="table-wrap">
-        <table className="invoice-lines">
+        <Table className="invoice-lines">
           <thead>
             {/* Two header rows so the split is visible without reading the
                 column names: everything under "The association sees" is on the
                 emailed invoice, everything under "Agency only" never is. */}
-            <tr className="group-head">
+            <tr className="ui-table-group">
               <th colSpan={3}>The association sees</th>
-              <th colSpan={2} className="internal band-start">
+              <th colSpan={2} className="ui-table-internal ui-table-band-start">
                 Agency only
               </th>
               <th />
@@ -627,8 +632,8 @@ function InvoiceEditorContent({
               <th>Description</th>
               <th className="kind-col">Kind</th>
               <th className="num">Amount</th>
-              <th className="num internal band-start">Costs us</th>
-              <th className="num internal">Margin</th>
+              <th className="num ui-table-internal ui-table-band-start">Costs us</th>
+              <th className="num ui-table-internal">Margin</th>
               <th />
             </tr>
           </thead>
@@ -651,7 +656,7 @@ function InvoiceEditorContent({
               return (
                 <tr key={l.id}>
                   <td>
-                    <input
+                    <Input
                       aria-label="Description"
                       placeholder="What this line is for"
                       value={l.description ?? ""}
@@ -661,7 +666,7 @@ function InvoiceEditorContent({
                     />
                   </td>
                   <td className="kind-col">
-                    <select
+                    <Select
                       aria-label="Kind"
                       value={l.kind ?? "PREMIUM"}
                       disabled={linesLocked || actionBusy || pricingLocked}
@@ -679,10 +684,10 @@ function InvoiceEditorContent({
                           {label}
                         </option>
                       ))}
-                    </select>
+                    </Select>
                   </td>
                   <td className="num">
-                    <input
+                    <Input
                       aria-label="Bills the association"
                       className="money"
                       type="text"
@@ -694,8 +699,8 @@ function InvoiceEditorContent({
                       onBlur={() => void saveEdits()}
                     />
                   </td>
-                  <td className="num internal band-start">
-                    <input
+                  <td className="num ui-table-internal ui-table-band-start">
+                    <Input
                       aria-label="Costs the agency"
                       className="money"
                       type="text"
@@ -707,7 +712,7 @@ function InvoiceEditorContent({
                       onBlur={() => void saveEdits()}
                     />
                   </td>
-                  <td className="num internal muted">
+                  <td className="num ui-table-internal muted">
                     {margin === null ? "—" : formatMoney(margin)}
                   </td>
                   <td className="row-action">
@@ -716,20 +721,20 @@ function InvoiceEditorContent({
                         {/* On the row rather than under the table, so a line
                             lands where it is wanted instead of at the bottom
                             and needing to be dragged up. */}
-                        {!sourcePricing && <button
+                        {!sourcePricing && <Button
                           type="button"
-                          className="icon-btn"
+                          iconOnly controlSize="compact" className="icon-btn"
                           title="Add a line below this one"
                           aria-label="Add a line below this one"
                           disabled={actionBusy}
                           onClick={() => void addLine(undefined, l)}
                         >
                           +
-                        </button>}
+                        </Button>}
                         <ConfirmButton
                           label="Remove"
                           busyLabel="Removing…"
-                          className="danger"
+                          variant="danger"
                           disabled={actionBusy || pricingLocked}
                           onConfirm={() => removeLine(l.id)}
                         />
@@ -752,8 +757,8 @@ function InvoiceEditorContent({
             <tr>
               <th colSpan={2}>Total</th>
               <th className="num total">{formatMoney(totals.retail)}</th>
-              <th className="num internal band-start">{formatMoney(totals.cost)}</th>
-              <th className="num internal">
+              <th className="num ui-table-internal ui-table-band-start">{formatMoney(totals.cost)}</th>
+              <th className="num ui-table-internal">
                 {totals.retail === 0 && totals.cost > 0 ? (
                   <span className="muted">—</span>
                 ) : (
@@ -768,7 +773,7 @@ function InvoiceEditorContent({
               <th />
             </tr>
           </tfoot>
-        </table>
+        </Table>
       </div>
 
       {(issuedFee || issuedPricing) && <p className="muted small">Void this invoice before changing its charges.</p>}
@@ -776,20 +781,20 @@ function InvoiceEditorContent({
         <div className="inline-actions">
           {/* Every other row is added with its own +. This is the way in when
               there is no row to press one on, and the way to append. */}
-          <button type="button" className="secondary" disabled={actionBusy} onClick={() => void addLine(adjustment
+          <Button variant="secondary" type="button"  disabled={actionBusy} onClick={() => void addLine(adjustment
             ? { kind: "ENDORSEMENT", description: "Endorsement or audit adjustment", retailAmount: null, costAmount: null, policyId: invoice.policyId! }
             : sourcePricing ? { kind: "TAX", description: "Supplier charge or tax", retailAmount: 0, costAmount: 0, policyId: invoice.policyId! } : undefined)}>
             {adjustment ? "Add adjustment line" : sourcePricing ? "Add supplier/tax line" : lines.length === 0 ? "Add line" : "Add line at the end"}
-          </button>
+          </Button>
           {policy && !sourcePricing && (
-            <button
+            <Button variant="secondary"
               type="button"
-              className="secondary"
+
               disabled={actionBusy}
               onClick={() => void addPremiumFromPolicy()}
             >
               Add premium from {policyLabel(policy)}
-            </button>
+            </Button>
           )}
         </div>
       )}
@@ -842,7 +847,7 @@ function InvoiceEditorContent({
         </div>
         <div className="field">
           <label htmlFor={inputId("issued")}>Issued</label>
-          <input
+          <Input
             id={inputId("issued")}
             type="date"
             value={Object.hasOwn(invoiceDraft, "issuedAt") ? invoiceDraft.issuedAt ?? "" : invoice.issuedAt ?? ""}
@@ -853,7 +858,7 @@ function InvoiceEditorContent({
         </div>
         <div className="field">
           <label htmlFor={inputId("due")}>Due</label>
-          <input
+          <Input
             id={inputId("due")}
             type="date"
             value={Object.hasOwn(invoiceDraft, "dueAt") ? invoiceDraft.dueAt ?? "" : invoice.dueAt ?? ""}
@@ -864,7 +869,7 @@ function InvoiceEditorContent({
         </div>
         <div className="field full">
           <label htmlFor={inputId("memo")}>Memo</label>
-          <textarea
+          <Textarea
             id={inputId("memo")}
             rows={2}
             placeholder="Optional. Shown to the association above the total."
@@ -898,7 +903,7 @@ function InvoiceEditorContent({
                   {withEmail.map((c) => (
                     <li key={c.id}>
                       <label>
-                        <input
+                        <Input
                           type="checkbox"
                           checked={toIds.includes(c.id)}
                           disabled={actionBusy}
@@ -949,14 +954,14 @@ function InvoiceEditorContent({
           )}
 
           <div className="inline-actions">
-            <button
+            <Button variant="primary"
               type="button"
-              className="primary"
+
               disabled={actionBusy || lines.length === 0 || toEmails.length === 0 || needsRemittanceCost || needsSupplierAmount || !!adjustmentError}
               onClick={() => void send()}
             >
               {invoice.sentAt ? "Send again" : "Send invoice"}
-            </button>
+            </Button>
             <SaveStatus {...sendStatus.status} />
           </div>
           {needsRemittanceCost && <p className="error-text">Enter actual carrier/wholesaler remittance cost in the cost cell before sending. Enter 0 only when the reviewed supplier amount is zero.</p>}
@@ -982,9 +987,9 @@ function InvoiceEditorContent({
       </p>}
       {(invoice.status === "SENT" || invoice.status === "PROCESSING") && !(adjustment && totals.retail <= 0) && (
         <div className="inline-actions">
-          <button
+          <Button variant="secondary"
             type="button"
-            className="secondary"
+
             disabled={actionBusy}
             onClick={() =>
               void enqueue(async () => {
@@ -999,7 +1004,7 @@ function InvoiceEditorContent({
             }
           >
             Mark paid
-          </button>
+          </Button>
           {invoice.status === "PROCESSING" && (
             <p className="muted small">
               A bank transfer has been authorised and is clearing. Stripe marks

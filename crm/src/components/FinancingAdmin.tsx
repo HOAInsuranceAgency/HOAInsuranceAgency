@@ -1,3 +1,7 @@
+import { Button } from "./ui/Button";
+import { Table } from "./ui/Table";
+import { Select } from "./ui/Select";
+import { Input } from "./ui/Input";
 import { useEffect, useId, useRef, useState } from "react";
 import type { Schema } from "../../amplify/data/resource";
 import { client, friendlyError } from "../lib/client";
@@ -112,13 +116,13 @@ export function FinancingAdmin({ onChanged }: { onChanged: () => Promise<void> }
       {(rows.error || pageError) && (
         <div className="inline-actions">
           <p role="alert" className="error-text">{rows.error || pageError}</p>
-          <button type="button" className="secondary" disabled={rows.loading || status.busy} onClick={() => void refreshHistory()}>Retry history</button>
+          <Button variant="secondary" type="button"  disabled={rows.loading || status.busy} onClick={() => void refreshHistory()}>Retry history</Button>
         </div>
       )}
       {!rows.loading && !rows.error && history.length === 0 && <p className="muted small">{rows.data.nextToken ? "More opinion history is available." : "No opinions recorded."}</p>}
       {history.length > 0 && (
         <div className="table-wrap" aria-busy={rows.loading || loadingMore}>
-          <table aria-label="Counsel opinion history">
+          <Table aria-label="Counsel opinion history">
             <thead><tr><th>State</th><th>Effective</th><th>Review by</th><th>Status</th><th>Notes</th></tr></thead>
             <tbody>
               {history.map(opinion => (
@@ -133,28 +137,28 @@ export function FinancingAdmin({ onChanged }: { onChanged: () => Promise<void> }
                 </tr>
               ))}
             </tbody>
-          </table>
+          </Table>
         </div>
       )}
       {rows.data.nextToken && !rows.error && (
         <div className="inline-actions">
-          <button type="button" className="secondary" disabled={rows.loading || loadingMore || status.busy} onClick={() => void loadMore()}>
+          <Button variant="secondary" type="button"  disabled={rows.loading || loadingMore || status.busy} onClick={() => void loadMore()}>
             {loadingMore ? "Loading more history…" : "Load more history"}
-          </button>
+          </Button>
         </div>
       )}
       <form onSubmit={event => { event.preventDefault(); void add(); }}>
         <div className="form-grid">
           <div className="field">
             <label htmlFor={`${id}-state`}>State</label>
-            <select id={`${id}-state`} value={code} disabled={status.busy} required onChange={event => { setCode(event.target.value); status.markDirty(); }}>
+            <Select id={`${id}-state`} value={code} disabled={status.busy} required onChange={event => { setCode(event.target.value); status.markDirty(); }}>
               <option value="">Choose state…</option>
               {CONDITIONAL.map(jurisdiction => <option key={jurisdiction.code} value={jurisdiction.code}>{jurisdiction.name}</option>)}
-            </select>
+            </Select>
           </div>
           <div className="field">
             <label htmlFor={`${id}-effective`}>Effective date</label>
-            <input id={`${id}-effective`} type="date" value={effectiveAt} disabled={status.busy} required onChange={event => {
+            <Input id={`${id}-effective`} type="date" value={effectiveAt} disabled={status.busy} required onChange={event => {
               setEffectiveAt(event.target.value);
               if (!reviewByEdited) setReviewBy(event.target.value ? defaultReviewBy(event.target.value) : "");
               status.markDirty();
@@ -162,15 +166,15 @@ export function FinancingAdmin({ onChanged }: { onChanged: () => Promise<void> }
           </div>
           <div className="field">
             <label htmlFor={`${id}-review`}>Review by</label>
-            <input id={`${id}-review`} type="date" value={reviewBy} min={effectiveAt || undefined} disabled={status.busy} onChange={event => { setReviewBy(event.target.value); setReviewByEdited(Boolean(event.target.value)); status.markDirty(); }} />
+            <Input id={`${id}-review`} type="date" value={reviewBy} min={effectiveAt || undefined} disabled={status.busy} onChange={event => { setReviewBy(event.target.value); setReviewByEdited(Boolean(event.target.value)); status.markDirty(); }} />
           </div>
           <div className="field">
             <label htmlFor={`${id}-notes`}>Notes</label>
-            <input id={`${id}-notes`} value={notes} disabled={status.busy} onChange={event => { setNotes(event.target.value); status.markDirty(); }} />
+            <Input id={`${id}-notes`} value={notes} disabled={status.busy} onChange={event => { setNotes(event.target.value); status.markDirty(); }} />
           </div>
         </div>
         <div className="inline-actions">
-          <button type="submit" className="secondary" disabled={!code || !effectiveAt || status.busy}>Record opinion</button>
+          <Button variant="secondary" type="submit"  disabled={!code || !effectiveAt || status.busy}>Record opinion</Button>
         </div>
       </form>
 
@@ -178,7 +182,7 @@ export function FinancingAdmin({ onChanged }: { onChanged: () => Promise<void> }
         <summary>Regulatory reference</summary>
         <p className="muted small">Signed configuration SHA-256: <code style={{ overflowWrap: "anywhere" }}>{PF_CONFIG_SHA256}</code></p>
         <div className="table-wrap">
-          <table aria-label="Financing regulatory reference">
+          <Table aria-label="Financing regulatory reference">
             <thead><tr><th>State</th><th>Configured status</th><th className="num">Maximum APR</th><th className="num">Minimum financed</th><th>Note</th></tr></thead>
             <tbody>
               {PF_JURISDICTIONS.map(jurisdiction => (
@@ -191,7 +195,7 @@ export function FinancingAdmin({ onChanged }: { onChanged: () => Promise<void> }
                 </tr>
               ))}
             </tbody>
-          </table>
+          </Table>
         </div>
       </details>
     </div>

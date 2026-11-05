@@ -1,3 +1,4 @@
+import { Button } from "./ui/Button";
 import { getUrl } from "../lib/scopedStorage";
 import { useAsyncResource } from "../lib/useAsyncResource";
 import Modal from "./Modal";
@@ -46,13 +47,13 @@ export default function FilePreviewModal({
       actions={
         url ? (
           <a href={url} target="_blank" rel="noreferrer">
-            <button className="secondary">Open / download</button>
+            <Button variant="secondary" >Open / download</Button>
           </a>
         ) : null
       }
     >
       {error ? (
-        <p className="error-text" role="alert">{error} <button className="secondary" disabled={res.loading} onClick={() => void res.refetch()}>Retry preview</button></p>
+        <p className="error-text" role="alert">{error} <Button variant="secondary"  disabled={res.loading} onClick={() => void res.refetch()}>Retry preview</Button></p>
       ) : !url ? (
         <p className="muted small">Loading…</p>
       ) : isImage ? (

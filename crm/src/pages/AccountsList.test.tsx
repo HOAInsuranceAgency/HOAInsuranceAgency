@@ -335,12 +335,12 @@ it.each(['LOST', 'DISQUALIFIED', 'BOUND'])('keeps %s leads out of working views 
     return op === 'commercialTable' ? { items: result.items.map((entry: any) => ({ ...entry, disposition })) } : result;
   });
   render(page());
-  await waitFor(() => expect(screen.getByRole('tab', { name: /^All leads/ })).toHaveTextContent('(2)'));
+  await waitFor(() => expect(screen.getByRole('button', { name: /^All leads/ })).toHaveTextContent('(2)'));
   expect(screen.queryByRole('combobox', { name: 'Salesperson for Willow Court Condominium' })).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole('tab', { name: /^Snoozed/ }));
+  fireEvent.click(screen.getByRole('button', { name: /^Snoozed/ }));
   expect(screen.queryByText('Willow Court Condominium')).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole('tab', { name: /^Follow-up due/ }));
+  fireEvent.click(screen.getByRole('button', { name: /^Follow-up due/ }));
   expect(screen.queryByText('Willow Court Condominium')).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole('tab', { name: /^All leads/ }));
+  fireEvent.click(screen.getByRole('button', { name: /^All leads/ }));
   expect(await salespersonPicker()).toBeVisible();
 });
