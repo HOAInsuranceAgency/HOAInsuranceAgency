@@ -2,10 +2,16 @@ import { describe, expect, it, vi } from 'vitest';
 import { ApiResponseError, apiFailure, decodeApiRecord, decodeApiResponse } from '../../../shared/apiResponse';
 import { privateApiError, privateApiRecord } from './apiResponse';
 import { isAuthorizationError } from '../../../shared/authorizationError';
+import { object as serverInput } from '../../amplify/functions/api-input';
 vi.mock('aws-amplify/data', () => ({ generateClient: () => ({ models: {} }) }));
 import { assertNoErrors, unwrap } from './client';
 
 describe('API wire contracts', () => {
+  it('keeps Lambda input fallback semantics separate from a required response payload', () => {
+    for (const value of [null, undefined, [], 5]) expect(serverInput(value)).toEqual({});
+    expect(serverInput(JSON.stringify(JSON.stringify({ operation: 'status', accountId: 'a' })))).toEqual({ operation: 'status', accountId: 'a' });
+    expect(() => serverInput('invalid JSON')).toThrow();
+  });
   it.each([(value: unknown) => value, JSON.stringify, (value: unknown) => JSON.stringify(JSON.stringify(value))])('decodes AWSJSON without changing its result', encode => {
     expect(decodeApiRecord({ data: encode({ ok: true, amount: 0 }) }, { fallback: 'Failed' })).toEqual({ ok: true, amount: 0 });
   });

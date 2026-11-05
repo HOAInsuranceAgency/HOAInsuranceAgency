@@ -4,7 +4,8 @@ import { brokerFeeDisclosure, signBrokerFeeDisclosure } from './agreements';
 import { accountFees, getFee } from './store';
 import { AccountAccess } from '../crm-access/access';
 import { assertUserSession } from '../crm-access/user-status';
-import { id, object, type Identity } from '../crm-access/policy';
+import { id, type Identity } from '../crm-access/policy';
+import { object } from '../api-input';
 import { assertPreviewRead } from '../migration-readonly';
 interface Event { source?: string; fieldName?: string; info?: { fieldName?: string }; arguments?: Record<string, unknown>; identity?: Identity; request?: { headers?: Record<string, unknown> }; }
 export const handler = async (event: Event) => {

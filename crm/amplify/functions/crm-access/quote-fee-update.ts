@@ -4,7 +4,8 @@ import { authorizedQuoteTerms } from '../../../../shared/quoteAuthorization';
 import { feeIssuedHistory, invalidateUnclaimedLoan } from '../broker-fees/payments';
 import { db, feePut, getAgreement, getFee, modelTable, table, transact, versionCheck, type Write } from '../broker-fees/store';
 import { AccountAccess } from './access';
-import { AccessDenied, id, object, type RecordData } from './policy';
+import { AccessDenied, id, type RecordData } from './policy';
+import { object } from '../api-input';
 import { quoteSourceBillingHistory } from '../quote-source-billing';
 import { activeTeamUserCheck } from './user-status';
 

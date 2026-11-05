@@ -9,7 +9,8 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { activeRole, type RoleRequest } from '../crm-access/active-role';
 import { assertUserSession } from '../crm-access/user-status';
 import { AccountAccess, tableName } from '../crm-access/access';
-import { type Identity, object } from '../crm-access/policy';
+import { type Identity } from '../crm-access/policy';
+import { object } from '../api-input';
 import {
   appendEntry,
   day,
