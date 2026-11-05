@@ -1,3 +1,4 @@
+import { INVOICE_INDEX_KEYS, isIndexedAccountModel, modelIndexFields, modelIndexKey, type ModelIndexMap } from './functions/storage/model-indexes';
 import { installQuoteFinancialStage, QUOTE_FINANCIAL_RESPONSE } from "./quote-financial-pipeline";
 import { readFileSync } from "node:fs";
 import { Asset } from "aws-cdk-lib/aws-s3-assets";
@@ -7,7 +8,7 @@ import { PolicyStatement } from "aws-cdk-lib/aws-iam";
 import { grantAccountTableReads } from "./account-access-policies";
 import type { Table } from "aws-cdk-lib/aws-dynamodb";
 import type { backend as Backend } from "./backend";
-import { ACCOUNT_MODELS, SHARED_MODELS, PUBLIC_OPERATIONS, ADMIN_OPERATIONS, OWNER_OPERATIONS, ADMIN_MODEL_OPERATIONS, CUSTOM_OPERATIONS, listPartition } from "./functions/crm-access/policy";
+import { ACCOUNT_MODELS, SHARED_MODELS, PUBLIC_OPERATIONS, ADMIN_OPERATIONS, OWNER_OPERATIONS, ADMIN_MODEL_OPERATIONS, CUSTOM_OPERATIONS } from "./functions/crm-access/policy";
 
 // Only this post-commit stage is asynchronous. Authorization and financial
 // stages must finish before the native write. Event invocation returns null;
@@ -23,7 +24,7 @@ export function installAccountAccess(backend: typeof Backend, communicationTable
   const api = backend.data.resources.graphqlApi, guard = backend.crmAccess;
   const resources = backend.data.resources.cfnResources;
   const tables: Record<string, string> = {};
-  const indexes: Record<string, string> = {};
+  const indexes: ModelIndexMap = {};
   const generated = backend.stack.node.root.node.findAll().filter((n): n is CfnResource => n instanceof CfnResource && n.cfnResourceType === "Custom::AmplifyDynamoDBTable");
   for (const model of Object.keys(resources.amplifyDynamoDbTables)) {
     if (![...ACCOUNT_MODELS, ...SHARED_MODELS].includes(model as never)) throw new Error(`Unclassified CRM model: ${model}`);
@@ -38,28 +39,28 @@ export function installAccountAccess(backend: typeof Backend, communicationTable
     const name = `${model}-${api.apiId}-NONE`;
     if (JSON.stringify(properties.tableName) !== JSON.stringify(Stack.of(resource).resolve(name))) throw new Error(`Unexpected table name for ${model}; update the access map`);
     tables[model] = name;
-    if ((ACCOUNT_MODELS as readonly string[]).includes(model) && !["Account", "GlApplication", "DoApplication"].includes(model)) {
+    if (isIndexedAccountModel(model)) {
       const all = [...properties.globalSecondaryIndexes ?? []], definitions = [...properties.attributeDefinitions ?? []];
       let added = 0;
-      for (const field of model === "Document" ? ["entityId", "entityType"] : [listPartition(model)]) {
+      for (const field of modelIndexFields(model)) {
         let index = all.find(i => i.keySchema.length === 1 && i.keySchema[0].attributeName === field && i.projection.projectionType === "ALL");
         if (!index) {
           index = { indexName: `crmBy_${field}`, keySchema: [{ attributeName: field, keyType: "HASH" }], projection: { projectionType: "ALL" } };
           all.push(index); added++;
           if (!definitions.some(d => d.attributeName === field)) definitions.push({ attributeName: field, attributeType: "S" });
         }
-        indexes[`${model}.${field}`] = index.indexName;
+        indexes[modelIndexKey(model, field)] = index.indexName;
       }
       // DynamoDB supports adding one GSI to an existing table per deployment.
       if (added > 1) throw new Error(`Stage index additions for ${model} across deployments`);
       if (added) { resource.addPropertyOverride("globalSecondaryIndexes", all); resource.addPropertyOverride("attributeDefinitions", definitions); }
     }
   }
-  backend.commissions.addEnvironment("COMMISSION_POLICY_ACCOUNT_INDEX", indexes["Policy.accountId"]);
+  backend.commissions.addEnvironment("COMMISSION_POLICY_ACCOUNT_INDEX", indexes[modelIndexKey("Policy", "accountId")]!);
   // Lead deletion checks must query the account partition, rather than mistake
   // an empty filtered scan page's continuation token for a related record.
-  const deletionIndexes = ["Policy", "Invoice"].map(model => {
-    const table = tables[model], index = indexes[`${model}.accountId`];
+  const deletionIndexes = (["Policy", "Invoice"] as const).map(model => {
+    const table = tables[model], index = indexes[modelIndexKey(model, "accountId")];
     if (!table || !index) throw new Error(`Missing ${model}.accountId index for lead deletion`);
     backend.communications.addEnvironment(`LEAD_DELETION_${model.toUpperCase()}_INDEX`, index);
     return `${Stack.of(api).formatArn({ service: "dynamodb", resource: "table", resourceName: table })}/index/${index}`;
@@ -70,7 +71,7 @@ export function installAccountAccess(backend: typeof Backend, communicationTable
   guard.addEnvironment("ACCESS_API_ID", api.apiId);
   guard.addEnvironment("ACCESS_INDEXES", JSON.stringify(indexes));
   backend.brokerFees.addEnvironment("ACCESS_INDEXES", JSON.stringify(indexes));
-  backend.sendInvoice.addEnvironment("ACCESS_INDEXES", JSON.stringify(Object.fromEntries(["Invoice.accountId","InvoiceLine.invoiceId"].map(key=>[key,indexes[key]]))));
+  backend.sendInvoice.addEnvironment("ACCESS_INDEXES", JSON.stringify(Object.fromEntries(INVOICE_INDEX_KEYS.map(key=>[key,indexes[key]]))));
   guard.addEnvironment("COMMUNICATION_TABLE", communicationTable.tableName);
   communicationTable.grantReadData(guard.resources.lambda);
   const tableArns = Object.values(tables).map(tableName => Stack.of(api).formatArn({ service: "dynamodb", resource: "table", resourceName: tableName }));

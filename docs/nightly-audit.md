@@ -42,6 +42,12 @@ publisher job gets scoped contents/pull-request write permission, revalidates pa
 rechecks open PRs and the staging base, and creates one ready-for-review PR per selected area.
 It never executes proposed code. All action revisions and the Codex CLI are pinned.
 
+The agent job also pins its runner to `ubuntu-24.04`. Ubuntu 26.04's socket permission
+probe prevents the pinned Codex action from completing `drop-sudo` before the agent
+starts ([upstream issue](https://github.com/openai/codex-action/issues/188)). Keep the
+privilege checks enabled; revisit the runner pin after a released upstream fix has
+passed both smoke and full audit validation. The separate publisher uses `ubuntu-latest`.
+
 Ready-for-review PRs target `staging`; the workflow never pushes directly to `main` or `staging`,
 merges, or deploys. Audit branches use `codex/nightly-audit/<date>/<run>-<attempt>/<area>`.
 Commits include `[skip-cd]`. PRs created using `GITHUB_TOKEN` may require approval before

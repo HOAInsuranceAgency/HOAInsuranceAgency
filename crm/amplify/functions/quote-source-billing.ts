@@ -11,7 +11,7 @@ const historyId = (value: unknown) => { if (typeof value !== 'string' || !value 
 /** Indexes discover candidates, never payment authority. Strong reads plus
  * private source pointers retain the current owner even during index lag. */
 export async function quoteSourceBillingHistory(quote: RecordData, fee: BrokerFeeRecord | undefined) {
-  const lists = await Promise.all(['Invoice','PfLoan'].map(model => accountModels<RecordData>(model,String(quote.accountId))));
+  const lists = await Promise.all((['Invoice','PfLoan'] as const).map(model => accountModels<RecordData>(model,String(quote.accountId))));
   const invoiceIds = new Set((fee?.issuedInvoiceIds ?? []).map(historyId)), loanIds = new Set((fee?.issuedLoanIds ?? []).map(historyId));
   if (quote[SOURCE_INVOICE_POINTER] != null) invoiceIds.add(historyId(quote[SOURCE_INVOICE_POINTER]));
   if (quote[SOURCE_LOAN_POINTER] != null) loanIds.add(historyId(quote[SOURCE_LOAN_POINTER]));

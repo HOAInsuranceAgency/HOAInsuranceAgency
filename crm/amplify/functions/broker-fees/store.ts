@@ -1,3 +1,5 @@
+import { parseAccessIndexes, resolveAccessIndex } from '../storage/index-config';
+import { modelIndexKey, type AccountIndexModel } from '../storage/model-indexes';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { sendCrmWrite } from '../live-write';
 import { DynamoDBDocumentClient, GetCommand, QueryCommand, TransactWriteCommand, type TransactWriteCommandInput } from '@aws-sdk/lib-dynamodb';
@@ -39,11 +41,12 @@ export async function transact(items: Write[]) {
   if (items.some(item => item.Put || item.Update || item.Delete)) await sendCrmWrite(write); else await write;
 }
 /** Bounded complete reads; an unavailable payment list is never represented as empty. */
-export async function accountModels<T>(model: string, accountId: string): Promise<T[]> {
-  const indexes = JSON.parse(process.env.ACCESS_INDEXES ?? '{}') as Record<string, string | Record<string, string>>;
-  const configured = indexes[`${model}.accountId`] ?? indexes[model], index = typeof configured === 'string' ? configured : configured?.accountId;
+export async function accountModels<T>(model: AccountIndexModel, accountId: string): Promise<T[]> {
+  const error = () => new Error('Broker fee account storage is not configured.');
+  const indexes = parseAccessIndexes(process.env.ACCESS_INDEXES, error);
+  const index = resolveAccessIndex(indexes, modelIndexKey(model, 'accountId'), { nested: true, fallback: 'crmBy_accountId', error });
   return collectCompletePages<T>(async cursor => {
-    const result = await db.send(new QueryCommand({ TableName: modelTable(model), IndexName: index || 'crmBy_accountId', KeyConditionExpression: 'accountId = :account', ExpressionAttributeValues: { ':account': accountId }, ExclusiveStartKey: cursor }));
+    const result = await db.send(new QueryCommand({ TableName: modelTable(model), IndexName: index, KeyConditionExpression: 'accountId = :account', ExpressionAttributeValues: { ':account': accountId }, ExclusiveStartKey: cursor }));
     return { items: (result.Items ?? []) as T[], next: result.LastEvaluatedKey };
   }, { maxPages: 100, maxRows: 5000, error: () => new Error('The account payment list could not be loaded completely.') });
 }
