@@ -2,6 +2,70 @@ import { describe, expect, it } from "vitest";
 import { sanitizeSentryBreadcrumb, sanitizeSentryEvent } from "../../../shared/sentryPrivacy";
 
 describe("Sentry diagnostic privacy", () => {
+  const diagnostic = (environment: unknown, fingerprint: unknown = undefined) => ({
+    environment,
+    fingerprint,
+    exception: { values: [{ type: "TypeError", stacktrace: { frames: [{
+      filename: "https://example.com/assets/app.js", lineno: 12, colno: 34, function: "savePolicy",
+    }] } }] },
+  });
+
+  it("groups identical error stacks separately in staging and production", () => {
+    const staging = sanitizeSentryEvent(diagnostic("staging"));
+    const production = sanitizeSentryEvent(diagnostic("production"));
+    expect(staging.exception).toEqual(production.exception);
+    expect(staging.fingerprint).toEqual(["{{ default }}", "environment:staging"]);
+    expect(production.fingerprint).toEqual(["{{ default }}", "environment:production"]);
+    expect(sanitizeSentryEvent(diagnostic("production")).fingerprint).toEqual(production.fingerprint);
+  });
+
+  it.each(["production", "staging", "development", "integration-test", "test"])("retains only the static %s environment segment", (environment) => {
+    const result = sanitizeSentryEvent(diagnostic(environment));
+    expect(result.environment).toBe(environment);
+    expect(result.fingerprint).toEqual(["{{ default }}", `environment:${environment}`]);
+  });
+
+  it("drops arbitrary fingerprint hints and unsafe environment values", () => {
+    for (const environment of ["secret-environment@example.com", "production:secret-token", { token: "secret-token" }, undefined]) {
+      const result = sanitizeSentryEvent(diagnostic(environment, ["secret-fingerprint", "{{ default }}"]));
+      expect(result.environment).toBe("unknown");
+      expect(result.fingerprint).toEqual(["{{ default }}", "environment:unknown"]);
+      expect(JSON.stringify(result)).not.toContain("secret-");
+    }
+  });
+
+  it("preserves the wrapper's per-function result grouping within each environment", () => {
+    const resultFailure = (environment: string, name: string) => sanitizeSentryEvent({
+      environment,
+      fingerprint: ["hoa-lambda-result", name, "worker_item_failure"],
+      tags: { function: name, failure_kind: "worker_item_failure" },
+      exception: { values: [{ type: "LambdaResultFailure" }] },
+    });
+    const staging = resultFailure("staging", "communications.worker");
+    const production = resultFailure("production", "communications.worker");
+    expect(staging.fingerprint).toEqual(["hoa-lambda-result", "communications.worker", "worker_item_failure", "environment:staging"]);
+    expect(production.fingerprint).toEqual(["hoa-lambda-result", "communications.worker", "worker_item_failure", "environment:production"]);
+    expect(resultFailure("production", "communications.worker").fingerprint).toEqual(production.fingerprint);
+    expect(resultFailure("production", "lead-intake.handler").fingerprint).not.toEqual(production.fingerprint);
+  });
+
+  it("rejects forged Lambda fingerprints instead of carrying their payloads", () => {
+    for (const fingerprint of [
+      ["hoa-lambda-result", "secret-function", "worker_item_failure"],
+      ["hoa-lambda-result", "communications.worker", "secret-kind"],
+      ["hoa-lambda-result", "communications.worker", "worker_item_failure", "secret-extra"],
+    ]) {
+      const result = sanitizeSentryEvent({
+        environment: "production",
+        fingerprint,
+        tags: { function: "communications.worker", failure_kind: "worker_item_failure" },
+        exception: { values: [{ type: "LambdaResultFailure" }] },
+      });
+      expect(result.fingerprint).toEqual(["{{ default }}", "environment:production"]);
+      expect(JSON.stringify(result)).not.toContain("secret-");
+    }
+  });
+
   it("omits customer data and token URLs while retaining symbolication and grouping", () => {
     const event = {
       event_id: "abc123", release: "hoa-crm@123", environment: "staging",

@@ -114,8 +114,24 @@ describe("Lambda monitoring delivery contract", () => {
     expect(await wrapped({ input: "private-input" }, context())).toBe(result);
     expect(events()).toHaveLength(1);
     expect(events()[0].tags.failure_kind).toBe(kind);
-    expect(events()[0].fingerprint).toEqual(["hoa-lambda-result", "worker", kind]);
+    expect(events()[0].fingerprint).toEqual(["hoa-lambda-result", "worker", kind, "environment:test"]);
     expect(JSON.stringify(transport.envelopes)).not.toMatch(/private-/);
+  });
+
+  it("delivers identical Lambda result failures as stable, environment-separated groups", async () => {
+    const fingerprints: string[][] = [];
+    for (const environment of ["staging", "production", "production"]) {
+      vi.resetModules();
+      vi.stubEnv("SENTRY_ENVIRONMENT", environment);
+      const { monitorHandler } = await import("../../amplify/functions/monitoring");
+      await monitorHandler(async (_event: unknown, _context: Context) => ({ failed: 1 }), "communications.worker")({}, context());
+      const event = events().at(-1);
+      expect(event.environment).toBe(environment);
+      expect(event.fingerprint).toEqual(["hoa-lambda-result", "communications.worker", "worker_item_failure", `environment:${environment}`]);
+      fingerprints.push(event.fingerprint);
+    }
+    expect(fingerprints[0]).not.toEqual(fingerprints[1]);
+    expect(fingerprints[1]).toEqual(fingerprints[2]);
   });
 
   it("leaves expected auth/validation responses unreported", async () => {
