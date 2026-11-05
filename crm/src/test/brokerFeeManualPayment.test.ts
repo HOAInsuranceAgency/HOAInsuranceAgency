@@ -299,3 +299,13 @@ describe('outside payment while an invoice send owns the fee', () => {
     expect(paymentRows()).toHaveLength(0); expect(h.models.get('Invoice:i')?.status).toBe('SENT'); expect(h.rows.get('fee:q')?.collectedCents).toBe(0);
   });
 });
+
+it.each(['{}', '{"InvoiceLine.invoiceId":15}', '{"InvoiceLine":{"invoiceId":"nested-not-enabled"}}'])('fails outside-payment confirmation before closing checkout or recording cash when line-index configuration is %s', async config => {
+  process.env.ACCESS_INDEXES = config;
+  await expect(confirmInvoicePayment(actor, { invoiceId: 'i' })).rejects.toThrow('Invoice line access is not configured.');
+  expect(h.deactivate).not.toHaveBeenCalled();
+  expect(h.expire).not.toHaveBeenCalled();
+  expect(h.transact).not.toHaveBeenCalled();
+  expect(paymentRows()).toEqual([]);
+  expect(h.models.get('Invoice:i')?.status).toBe('SENT');
+});

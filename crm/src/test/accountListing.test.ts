@@ -328,3 +328,9 @@ it("retains search, date, numeric, boolean, and nested filter behavior", () => {
   expect(matchesFilter(record, { name: { size: { ge: 4 } }, active: { attributeType: "BOOL" }, absent: { attributeExists: false } })).toBe(true);
   expect(() => matchesFilter(record, { name: { unsupported: true } })).toThrow("Unsupported");
 });
+
+it.each(['{}', '{"Contact.accountId":15}', '{"Contact":{"accountId":"nested-not-enabled"}}'])('keeps scoped-list index errors and makes no child query for configuration %s', async config => {
+  process.env.ACCESS_INDEXES = config;
+  await expect(listAssigned(access(), 'Contact', { filter: { accountId: { eq: 'a' } } })).rejects.toThrow('Missing list index for Contact.accountId');
+  expect(h.db.mock.calls.filter(([command]) => command.input.IndexName && command.input.TableName === 'Contact')).toEqual([]);
+});

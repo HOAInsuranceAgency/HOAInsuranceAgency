@@ -69,3 +69,14 @@ caller's environment/table-map precedence and retained API namespace. Private
 Communication storage requires its explicit table. `modelKeyName` preserves
 the schema's `accountId` identifiers for GL/D&O singleton applications; other
 models retain `id`. None of these helpers authorizes a caller or broadens IAM.
+
+`model-indexes.ts` describes generated model-index keys using the existing model
+classification and authoritative list-parent partitions. The deployment producer
+and runtime readers use these keys, including the two-entry invoice projection.
+It is loaded at synth time: keep every dependency within `amplify/`, SDK-free, and
+free of runtime initialization. Private domain indexes keep their own contracts.
+
+`index-config.ts` parses `ACCESS_INDEXES` and validates the selected index name.
+Callers provide their own error and explicitly opt into any existing nested map
+or physical-name fallback. Do not pass browser-supplied configuration or enable a
+fallback for a reader whose missing configuration must fail closed.
