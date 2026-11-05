@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { ReportDownload } from "../components/ReportDownload";
+import { DateRangeFilter } from "../components/DateRangeFilter";
+import { dateRangeError, dateRangePreset } from "../lib/dateRange";
+import { useReportDateRange } from "../lib/useReportDateRange";
 import { client } from "../lib/client";
 import { useIsOwner } from "../lib/auth";
 import { useAsyncResource } from "../lib/useAsyncResource";
@@ -14,7 +17,6 @@ type Employee = { userId: string; name: string; salesperson?: boolean };
 type Snapshot = { ok: true; employees: Employee[]; compensations: Record<string, EmployeeCompensation>; report: EmployeeProfitabilityResult; reportStale?: boolean };
 const money = (cents: number | null) => cents == null ? "Incomplete" : new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 }).format(cents / 100);
 const dollars = (cents: number | null) => cents == null ? null : cents / 100;
-const today = () => new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
 const basis = "Estimated carrier commission plus broker fees less recorded fee refunds, by policy effective date and current account salesperson. The estimated producer share applies to both revenue sources; prorated annual salary is deducted. Cancelled carrier commission and other operating costs are excluded; retained broker fees remain included.";
 
 function response<T>(result: { data?: unknown; errors?: readonly { message?: string }[] }): T {
@@ -33,28 +35,17 @@ export default function OwnerProfitability() {
 }
 
 function OwnerPage() {
-  const [window, setWindow] = useState(() => ({ from: `${today().slice(0, 4)}-01-01`, to: today() }));
-  const [draft, setDraft] = useState(window), [error, setError] = useState("");
-  function apply(from: string, to: string) {
-    try { const next = validateProfitabilityWindow(from, to); setWindow(next); setDraft(next); setError(""); }
-    catch (error) { setError(error instanceof Error ? error.message : "Choose valid report dates."); }
-  }
+  const [window, setWindow] = useState(() => dateRangePreset('ytd'));
+  const [editingPay, setEditingPay] = useState(false);
+  const error = dateRangeError(window, { validate: validateProfitabilityWindow });
+  const applied = useReportDateRange(window, !error);
   return <div className="owner-profitability">
-    <header className="owner-profitability-heading"><div><p className="owner-profitability-eyebrow">Owner only</p><h1>Employee profitability</h1><p className="muted">Estimated contribution after commission share and salary.</p><p className="muted small">This estimate uses the single share in private pay settings. Actual new-business and renewal earnings, receipts, and payouts are in <a href="/commissions">Commissions</a>.</p></div></header>
-    <form className="card owner-profitability-period" aria-label="Reporting period" onSubmit={event => { event.preventDefault(); apply(draft.from, draft.to); }}>
-      <div className="filter-row">
-        <button type="button" className="secondary" onClick={() => apply(`${today().slice(0, 4)}-01-01`, today())}>Year to date</button>
-        <label className="field">From<input aria-label="Report from" type="date" required value={draft.from} onChange={event => setDraft({ ...draft, from: event.target.value })} /></label>
-        <label className="field">Through<input aria-label="Report through" type="date" required value={draft.to} onChange={event => setDraft({ ...draft, to: event.target.value })} /></label>
-        <button type="submit" className="primary">Apply dates</button>
-      </div>
-      {error && <p role="alert" className="error-text">{error}</p>}
-    </form>
-    <ProfitabilitySnapshot key={`${window.from}|${window.to}`} {...window} />
+    <DateRangeFilter label="Reporting period" value={window} onChange={setWindow} validate={validateProfitabilityWindow} disabled={editingPay} />
+    {applied ? <ProfitabilitySnapshot key={`${applied.from}|${applied.to}`} {...applied} onEditingChange={setEditingPay} /> : !error && <p className="muted small">Loading employee profitability…</p>}
   </div>;
 }
 
-function ProfitabilitySnapshot({ from, to }: { from: string; to: string }) {
+function ProfitabilitySnapshot({ from, to, onEditingChange }: { from: string; to: string; onEditingChange: (editing: boolean) => void }) {
   // Pay writes can be ahead of the report's read. Keep the newest confirmed
   // versions in the parent so switching employees or reopening an editor
   // cannot restore an older salary or optimistic-lock version.
@@ -90,6 +81,7 @@ function ProfitabilitySnapshot({ from, to }: { from: string; to: string }) {
   }, [from, to], { errorMessage: "Could not load employee profitability.", clearDataOnError: () => true });
   const [payOpen, setPayOpen] = useState(false), [employeeId, setEmployeeId] = useState(""), [paySaved, setPaySaved] = useState(false);
   const [payBusy, setPayBusy] = useState(false);
+  useEffect(() => { onEditingChange(!!resource.data && (payOpen || payBusy)); }, [resource.data, payOpen, payBusy, onEditingChange]);
   const payPanel = useRef<HTMLElement>(null);
   useEffect(() => { if (payOpen) payPanel.current?.focus(); }, [payOpen, employeeId]);
   const snapshot = resource.data;
@@ -132,10 +124,6 @@ function ProfitabilitySnapshot({ from, to }: { from: string; to: string }) {
       }} /> : <p className="muted">No employees are available.</p>}
       {paySaved && <p role="status">Pay settings saved.</p>}
     </section>}
-    <section className="card owner-profitability-basis" aria-label="Report calculation basis"><h2>How this estimate works</h2><p>{basis}</p><p>Annual salary is prorated by calendar day within each dated pay period. This is an estimate of employee contribution, not collected income or accounting net profit.</p>
-      <p>{report.cancelledPolicyCount} cancelled policies excluded from carrier commission; retained fees remain · {report.undatedPolicyCount} policies excluded for missing or invalid effective dates.</p>
-      {report.warnings.length > 0 && <ul>{report.warnings.map((warning, i) => <li key={i}>{warning}</li>)}</ul>}
-    </section>
   </>;
 }
 
