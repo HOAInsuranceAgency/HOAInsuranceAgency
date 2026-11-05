@@ -897,7 +897,7 @@ describe("voiding an invoice", () => {
     "utf8"
   );
   const EDITOR = readFileSync(
-    resolve(process.cwd(), "src/components/InvoiceEditor.tsx"),
+    resolve(process.cwd(), "src/features/invoicing/useInvoiceEditor.ts"),
     "utf8"
   );
 
@@ -943,7 +943,7 @@ describe("voiding an invoice", () => {
     expect(VOID_FN).toMatch(/status === "PROCESSING"/);
     expect(VOID_FN).toContain("still clearing");
     const editor = readFileSync(
-      resolve(process.cwd(), "src/components/InvoiceEditor.tsx"),
+      resolve(process.cwd(), "src/features/invoicing/InvoiceHeader.tsx"),
       "utf8"
     );
     expect(editor).toMatch(/invoice\.status !== "PROCESSING" &&/);
