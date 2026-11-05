@@ -3,13 +3,13 @@ import { Table } from "../../components/ui/Table";
 import { Input } from "../../components/ui/Input";
 import { Select } from "../../components/ui/Select";
 import { Textarea } from "../../components/ui/Textarea";
-import { useRef, useState } from "react";
+import { useState } from "react";
+import { useSaveStatus } from "../../components/SaveStatus";
 import {
   BEST_FIT_BUSINESS,
   assertNoErrors,
   client,
   fmtMoney,
-  friendlyError,
   LINES_OF_BUSINESS,
   listAllPages,
   US_STATES,
@@ -18,7 +18,7 @@ import {
 import ConfirmButton from "../../components/ConfirmButton";
 import { useAsyncResource } from "../../lib/useAsyncResource";
 import { useFormState } from "../../lib/useFormState";
-import { bool, boolValue } from "../../lib/formCodec";
+import { bool, boolValue, num, str as nullableText, inputValue } from "../../lib/formCodec";
 import { PAPER_TYPE_LABELS, PAPER_TYPE_OPTIONS, type PaperType } from "../../lib/enums";
 import { LOSS_LOOKBACK_YEARS, restrictionSummary } from "../../lib/appetite";
 
@@ -188,36 +188,33 @@ function GuideForm({
   onCancel: () => void;
   onBusyChange: (busy: boolean) => void;
 }) {
-  // Read side: column value → input string. (Not `formCodec`'s `str`, which
-  // runs the other way; that boundary is a separate migration.)
-  const str = (n: number | null | undefined) => (n == null ? "" : String(n));
+  const saveStatus = useSaveStatus({ singleFlight: true });
+  const { busy: saving } = saveStatus;
+  const error = saveStatus.status.state === "error" ? saveStatus.status.message : "";
   const { form, setF, markSaved } = useFormState({
     lines: (existing?.linesWritten ?? []).filter((l): l is string => !!l),
     bestFit: (existing?.bestFitBusiness ?? []).filter((b): b is string => !!b),
     states: (existing?.states ?? []).filter((s): s is string => !!s),
     paperType: existing?.paperType ?? "",
-    leadTime: str(existing?.quoteSubmissionLeadTimeDays),
-    minValue: str(existing?.minValue),
-    maxValue: str(existing?.maxValue),
-    minYear: str(existing?.minConstructionYear),
-    maxYear: str(existing?.maxConstructionYear),
+    leadTime: inputValue(existing?.quoteSubmissionLeadTimeDays),
+    minValue: inputValue(existing?.minValue),
+    maxValue: inputValue(existing?.maxValue),
+    minYear: inputValue(existing?.minConstructionYear),
+    maxYear: inputValue(existing?.maxConstructionYear),
     // Tri-state, not a checkbox: "we don't write coastal" and "nobody has
     // said" are different answers, and only the first one should exclude a
     // coastal risk. Same reasoning as the GL/D&O application questions.
     writesCoastal: boolValue(existing?.writesCoastal),
-    minMilesToCoast: str(existing?.minMilesToCoast),
-    maxRentalPct: str(existing?.maxRentalPct),
-    maxLosses: str(existing?.maxLosses),
-    maxLossIncurred: str(existing?.maxLossIncurred),
+    minMilesToCoast: inputValue(existing?.minMilesToCoast),
+    maxRentalPct: inputValue(existing?.maxRentalPct),
+    maxLosses: inputValue(existing?.maxLosses),
+    maxLossIncurred: inputValue(existing?.maxLossIncurred),
     notes: existing?.notes ?? "",
-  });
-  const [saving, setSaving] = useState(false);
-  const inFlight = useRef(false);
-  const [error, setError] = useState("");
+  }, { onEdit: saveStatus.markDirty });
 
   async function save() {
     const submitted = form;
-    if (inFlight.current) return;
+    if (saveStatus.isPending()) return;
     // Inverted ranges silently break the Appetite Finder — catch them here.
     const problems: string[] = [];
     if (form.minValue && form.maxValue && Number(form.minValue) > Number(form.maxValue))
@@ -239,14 +236,9 @@ function GuideForm({
     if (form.maxRentalPct && Number(form.maxRentalPct) > 100)
       problems.push("Rental percentage can't be over 100.");
     if (problems.length) {
-      setError(problems.join(" "));
+      saveStatus.markError(problems.join(" "));
       return;
     }
-    setError("");
-    inFlight.current = true;
-    setSaving(true);
-    onBusyChange(true);
-    const num = (v: string) => (v.trim() === "" ? null : Number(v));
     const payload = {
       linesWritten: form.lines,
       bestFitBusiness: form.bestFit,
@@ -264,23 +256,19 @@ function GuideForm({
       maxRentalPct: num(form.maxRentalPct),
       maxLosses: num(form.maxLosses),
       maxLossIncurred: num(form.maxLossIncurred),
-      notes: form.notes.trim() || null,
+      notes: nullableText(form.notes),
     };
-    try {
+    await saveStatus.run(async current => {
+      onBusyChange(true);
+      try {
       const result = existing
         ? await client.models.AppetiteGuide.update({ id: existing.id, ...payload })
         : await client.models.AppetiteGuide.create({ carrierId, ...payload });
       assertNoErrors(result);
       if (!result.data) throw new Error('No saved guide was returned.');
-      markSaved(submitted);
-      onSaved(result.data);
-    } catch (error) {
-      setError(friendlyError(error, 'Save failed'));
-    } finally {
-      inFlight.current = false;
-      setSaving(false);
-      onBusyChange(false);
-    }
+      if (current()) { markSaved(submitted); onSaved(result.data); }
+      } finally { onBusyChange(false); }
+    }, { errorMessage: "Save failed" });
   }
 
   return (

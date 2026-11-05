@@ -133,7 +133,7 @@ export function SaveStatus(props: SaveStatusValue) {
  * instead of a second parallel piece of state. Resolving with nothing is a
  * clean success. Throwing is a failure.
  */
-export type SaveTask = () => Promise<string | void>;
+export type SaveTask = (isCurrent: () => boolean) => Promise<string | void>;
 
 export interface SaveRunOptions {
   /** Copy for a clean success. Defaults to "Saved." */
@@ -147,6 +147,8 @@ export interface SaveStatusApi {
   status: SaveStatusValue;
   /** `status.state === "saving"`. For `disabled={busy}` on the save button. */
   busy: boolean;
+  /** Synchronous guard for events which can run before React renders busy. */
+  isPending: () => boolean;
   /**
    * The form changed, so any previous outcome no longer describes it: back to
    * `idle` from `saved`, `warning`, or `error`. A save in flight is left
@@ -176,6 +178,8 @@ export interface SaveStatusApi {
 }
 
 export interface SaveStatusOptions {
+  /** Ignore overlapping submissions while one task is in flight. Never retries a task. */
+  singleFlight?: boolean;
   /**
    * Milliseconds after which `saved` returns to `idle`. **Off by default.**
    *
@@ -212,6 +216,10 @@ export function useSaveStatus(options: SaveStatusOptions = {}): SaveStatusApi {
   // Declared before anything that schedules work, so it is torn down last on
   // unmount and `mounted.current` is still true for cleanups that run first.
   const mounted = useRef(true);
+  const activeRuns = useRef(0);
+  const singleFlight = useRef(options.singleFlight ?? false);
+  singleFlight.current = options.singleFlight ?? false;
+  const isPending = useCallback(() => activeRuns.current > 0, []);
   useEffect(() => {
     mounted.current = true;
     return () => {
@@ -278,13 +286,14 @@ export function useSaveStatus(options: SaveStatusOptions = {}): SaveStatusApi {
 
   const run = useCallback(
     async (task: SaveTask, runOptions: SaveRunOptions = {}): Promise<void> => {
-      if (!mounted.current) return;
+      if (!mounted.current || singleFlight.current && activeRuns.current > 0) return;
+      activeRuns.current++;
       const id = ++ticket.current;
       const submittedEdit = edits.current;
       const releaseLive = liveUpdates.acquireBlock("write");
       apply(SAVING);
       try {
-        const warning = await task();
+        const warning = await task(() => mounted.current && id === ticket.current);
         if (!mounted.current || id !== ticket.current) return;
         const newerEdits = submittedEdit !== edits.current;
         const message = [typeof warning === 'string' ? warning.trim() : '',
@@ -302,6 +311,7 @@ export function useSaveStatus(options: SaveStatusOptions = {}): SaveStatusApi {
           ),
         });
       } finally {
+        activeRuns.current--;
         releaseLive();
       }
     },
@@ -312,6 +322,7 @@ export function useSaveStatus(options: SaveStatusOptions = {}): SaveStatusApi {
     () => ({
       status,
       busy: status.state === "saving",
+      isPending,
       markDirty,
       markSaving,
       markSaved,
@@ -319,6 +330,6 @@ export function useSaveStatus(options: SaveStatusOptions = {}): SaveStatusApi {
       markError,
       run,
     }),
-    [status, markDirty, markSaving, markSaved, markWarning, markError, run]
+    [status, isPending, markDirty, markSaving, markSaved, markWarning, markError, run]
   );
 }

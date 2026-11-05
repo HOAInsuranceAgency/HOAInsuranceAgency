@@ -1,14 +1,14 @@
-import { useLiveUpdateBlock } from "../lib/useLiveUpdates";
+import { str, inputValue } from "../lib/formCodec";
 import { Select } from "./ui/Select";
 import { Input } from "./ui/Input";
 import { Button } from "./ui/Button";
 import { Textarea } from "./ui/Textarea";
 import { listAllPages } from "../lib/pagination";
 import { useAsyncResource } from "../lib/useAsyncResource";
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
+import { useSaveStatus } from "./SaveStatus";
 import {
   client,
-  friendlyError,
   LINES_OF_BUSINESS,
   type Carrier,
   type Policy,
@@ -28,6 +28,10 @@ import { clientChargeBreakdown } from "../../../shared/clientCharges";
 import { normalizeClientConditions, normalizePassThroughCharges, type PassThroughCharge } from "../../../shared/passThroughCharges";
 import { formatMoney } from "../lib/invoiceTotals";
 
+// Draft monetary inputs preserve invalid intermediate text as NaN, so charge
+// validation cannot mistake an unfinished amount for an absent stored value.
+const num = (value: string) => value.trim() === '' ? null : Number(value);
+
 const CHARGE_KINDS = [["CARRIER_FEE", "Carrier fee"], ["WHOLESALER_FEE", "Wholesaler fee"], ["TAX", "Tax"], ["SURPLUS_LINES", "Surplus lines tax"], ["STAMPING_FEE", "Stamping fee"]] as const;
 
 /**
@@ -39,11 +43,6 @@ const CHARGE_KINDS = [["CARRIER_FEE", "Carrier fee"], ["WHOLESALER_FEE", "Wholes
  * existence by binding a quote, so policy mode is edit-only.
  */
 
-const num = (v: string) => (v.trim() === "" ? null : Number(v));
-// Read side: column value → input string, seeding the form below. This runs
-// the opposite way from `formCodec`'s same-named `str` (input → column);
-// adopting that codec is a separate migration.
-const str = (v: number | null | undefined) => (v == null ? "" : String(v));
 
 export default function CoverageForm({
   kind,
@@ -60,8 +59,9 @@ export default function CoverageForm({
   onSaved: () => void;
   onCancel: () => void;
 }) {
-  const savingNow = useRef(false), mounted = useRef(true);
-  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const saveStatus = useSaveStatus({ singleFlight: true });
+  const { busy: saving } = saveStatus;
+  const error = saveStatus.status.state === "error" ? saveStatus.status.message : "";
   const isPolicy = kind === "policy";
   const policies = useAsyncResource(() => isPolicy ? Promise.resolve([]) : listAllPages(token => client.models.Policy.list({ filter: { accountId: { eq: accountId } }, nextToken: token })), [accountId, isPolicy], { initialData: [] , live: true });
   const editing = !!existing;
@@ -76,32 +76,32 @@ export default function CoverageForm({
     // MEP rides along as underwriting data. Its screen — and auditable's,
     // and producer-of-record's — all retired 2026-08-24 by signed decision;
     // the form no longer asks any of them.
-    mepPct: str(existing?.minimumEarnedPremiumPct),
+    mepPct: inputValue(existing?.minimumEarnedPremiumPct),
     status: (existing?.status ?? (isPolicy ? "ACTIVE" : "DRAFT")) as string,
     lines: (existing?.lines ?? []).filter((l): l is string => !!l),
-    premium: str(existing?.premium),
-    commissionPct: str(existing?.commissionPct),
-    brokerFee: str(existing?.brokerFee ?? 0),
+    premium: inputValue(existing?.premium),
+    commissionPct: inputValue(existing?.commissionPct),
+    brokerFee: inputValue(existing?.brokerFee ?? 0),
     passThroughCharges: normalizePassThroughCharges(existing?.passThroughCharges).map(charge => ({ ...charge, amount: String(charge.amountCents / 100) })),
     clientConditions: existing?.clientConditions ?? "",
-    perOccDed: str(existing?.perOccurrenceDeductible),
-    perUnitDed: str(existing?.perUnitDeductible),
-    blanketLimit: str(existing?.blanketLimit),
-    coinsurance: str(existing?.coinsurancePct),
+    perOccDed: inputValue(existing?.perOccurrenceDeductible),
+    perUnitDed: inputValue(existing?.perUnitDeductible),
+    blanketLimit: inputValue(existing?.blanketLimit),
+    coinsurance: inputValue(existing?.coinsurancePct),
     rcType: existing?.replacementCostType ?? "",
     // GL limits — these are what actually print on a certificate.
-    glEachOcc: str(existing?.glEachOccurrence),
-    glRented: str(existing?.glDamageToRentedPremises),
-    glMed: str(existing?.glMedicalExpense),
-    glPersAdv: str(existing?.glPersonalAdvInjury),
-    glGenAgg: str(existing?.glGeneralAggregate),
-    glProdAgg: str(existing?.glProductsCompletedOps),
+    glEachOcc: inputValue(existing?.glEachOccurrence),
+    glRented: inputValue(existing?.glDamageToRentedPremises),
+    glMed: inputValue(existing?.glMedicalExpense),
+    glPersAdv: inputValue(existing?.glPersonalAdvInjury),
+    glGenAgg: inputValue(existing?.glGeneralAggregate),
+    glProdAgg: inputValue(existing?.glProductsCompletedOps),
     glClaimsMade: !!existing?.glClaimsMade,
     glAggApplies: existing?.glAggregateAppliesTo ?? "POLICY",
     effectiveDate: existing?.effectiveDate ?? "",
     expirationDate: existing?.expirationDate ?? "",
     notes: existing?.notes ?? "",
-  });
+  }, { onEdit: saveStatus.markDirty });
   // Only autofill the carrier's standard rate on an untouched new quote —
   // never clobber a rate already negotiated on an existing record.
   //
@@ -109,9 +109,6 @@ export default function CoverageForm({
   // value. Deriving it from the form (current ≠ initial) would re-arm the
   // autofill the moment someone typed the standard rate back by hand.
   const [commissionTouched, setCommissionTouched] = useState(editing);
-  const [saving, setSaving] = useState(false);
-  useLiveUpdateBlock(saving);
-  const [error, setError] = useState("");
 
   // Draft labels and blank rows need not be complete before the amount preview
   // works. Only committed charges use their actual IDs/labels and strict save
@@ -142,16 +139,16 @@ export default function CoverageForm({
 
   async function save() {
     const submitted = form;
-    if (savingNow.current) return;
+    if (saveStatus.isPending()) return;
     let brokerFee: number, passThroughCharges: PassThroughCharge[], clientConditions: string;
     try {
       brokerFee = brokerFeeCents(form.brokerFee.trim() === "" ? 0 : Number(form.brokerFee)) / 100;
       passThroughCharges = normalizePassThroughCharges(form.passThroughCharges.map(({ id, kind, description, amount }) => ({ id, kind, description, amountCents: brokerFeeCents(Number(amount)) })));
       clientConditions = normalizeClientConditions(form.clientConditions);
     }
-    catch (error) { setError(error instanceof Error ? error.message : "Check the broker fee."); return; }
+    catch (error) { saveStatus.markError(error instanceof Error ? error.message : "Check the broker fee."); return; }
     if (brokerFee > 0 && form.billType !== "AGENCY") {
-      setError("HOA broker fees require agency billing. Choose Agency bill before saving.");
+      saveStatus.markError("HOA broker fees require agency billing. Choose Agency bill before saving.");
       return;
     }
     if (
@@ -159,12 +156,9 @@ export default function CoverageForm({
       form.expirationDate &&
       form.effectiveDate > form.expirationDate
     ) {
-      setError("Effective date can't be after the expiration date.");
+      saveStatus.markError("Effective date can't be after the expiration date.");
       return;
     }
-    savingNow.current = true;
-    setSaving(true);
-    setError("");
 
     const shared = {
       carrierId: form.carrierId || null,
@@ -189,16 +183,16 @@ export default function CoverageForm({
       glAggregateAppliesTo: form.glAggApplies as Quote["glAggregateAppliesTo"],
       effectiveDate: form.effectiveDate || null,
       expirationDate: form.expirationDate || null,
-      notes: form.notes.trim() || null,
+      notes: str(form.notes),
     };
 
-    try {
+    await saveStatus.run(async current => {
       if (isPolicy) {
         if (!existing) throw new Error("Policies are created by binding a quote.");
         const { errors } = await client.models.Policy.update({
           id: existing.id,
           ...shared,
-          ...(!asPolicy?.commissionSnapshotId ? { policyNumber: form.policyNumber.trim() || null } : {}),
+          ...(!asPolicy?.commissionSnapshotId ? { policyNumber: str(form.policyNumber) } : {}),
           status: form.status as Policy["status"],
           // Nullable on the way back out: a policy bound before this field
           // existed opens with the box empty, and saving other edits must not
@@ -233,14 +227,8 @@ export default function CoverageForm({
         });
         if (errors?.length) throw new Error(errors[0].message);
       }
-      markSaved(submitted);
-      if (mounted.current) onSaved();
-    } catch (err) {
-      if (mounted.current) setError(friendlyError(err, "Save failed"));
-    } finally {
-      savingNow.current = false;
-      if (mounted.current) setSaving(false);
-    }
+      if (current()) { markSaved(submitted); onSaved(); }
+    }, { errorMessage: "Save failed" });
   }
 
   // A bound quote's status is owned by the policy — don't offer to unwind it
@@ -508,7 +496,7 @@ export default function CoverageForm({
         <Button variant="primary"  disabled={saving} onClick={save}>
           {saving ? "Saving…" : editing ? "Save changes" : "Save quote"}
         </Button>
-        <Button variant="link"  disabled={saving} onClick={() => { if (!savingNow.current) onCancel(); }}>
+        <Button variant="link"  disabled={saving} onClick={() => { if (!saveStatus.isPending()) onCancel(); }}>
           Cancel
         </Button>
         {error && <span className="error-text">{error}</span>}

@@ -2,10 +2,11 @@ import { Select } from "../ui/Select";
 import { Input } from "../ui/Input";
 import { Textarea } from "../ui/Textarea";
 import { Button } from "../ui/Button";
-import { useRef, useState } from "react";
+import { useSaveStatus } from "../SaveStatus";
+import { str } from "../../lib/formCodec";
 import {
   client,
-  friendlyError,
+  unwrap,
   LINES_OF_AUTHORITY,
   US_STATES,
   type License,
@@ -34,6 +35,9 @@ export default function LicenseForm({
   onSaved: (l: License) => void;
   onSaving?: (saving: boolean) => void;
 }) {
+  const saveStatus = useSaveStatus({ singleFlight: true });
+  const { busy: saving } = saveStatus;
+  const error = saveStatus.status.state === "error" ? saveStatus.status.message : "";
   const { form, setF, markSaved } = useFormState({
     userProfileId: existing?.userProfileId ?? "",
     state: existing?.state ?? "",
@@ -54,20 +58,17 @@ export default function LicenseForm({
     // Was hoisted out of `form` only because the curried setter couldn't type
     // a `string[]`; it is a field like any other.
     loa: (existing?.linesOfAuthority ?? []).filter((x): x is string => !!x),
-  });
-  const inFlight = useRef(false);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
+  }, { onEdit: saveStatus.markDirty });
 
   async function save() {
     const submitted = form;
-    if (inFlight.current) return;
+    if (saveStatus.isPending()) return;
     if (!form.state || !form.licenseNumber.trim()) {
-      setError("State and license number are required.");
+      saveStatus.markError("State and license number are required.");
       return;
     }
     if (holderType === "PRODUCER" && !form.userProfileId) {
-      setError("Pick which team member this license belongs to.");
+      saveStatus.markError("Pick which team member this license belongs to.");
       return;
     }
     if (
@@ -75,13 +76,9 @@ export default function LicenseForm({
       form.expirationDate &&
       form.effectiveDate > form.expirationDate
     ) {
-      setError("Effective date can't be after the expiration date.");
+      saveStatus.markError("Effective date can't be after the expiration date.");
       return;
     }
-    inFlight.current = true;
-    setSaving(true);
-    onSaving?.(true);
-    setError("");
     const holder = profiles.find((p) => p.id === form.userProfileId);
     const payload = {
       holderType,
@@ -93,7 +90,7 @@ export default function LicenseForm({
           : null,
       state: form.state,
       licenseNumber: form.licenseNumber.trim(),
-      npn: form.npn.trim() || null,
+      npn: str(form.npn),
       licenseClass: form.licenseClass as never,
       residency: form.residency as never,
       status: form.status as never,
@@ -101,22 +98,18 @@ export default function LicenseForm({
       effectiveDate: form.effectiveDate || null,
       expirationDate: form.expirationDate || null,
       continuingEducationDueDate: form.continuingEducationDueDate || null,
-      notes: form.notes.trim() || null,
+      notes: str(form.notes),
     };
-    try {
-      const { data, errors } = existing
-        ? await client.models.License.update({ id: existing.id, ...payload })
-        : await client.models.License.create(payload);
-      if (errors?.length || !data) throw new Error(errors?.[0]?.message || "Save failed");
-      markSaved(submitted);
-      onSaved(data);
-    } catch (error) {
-      setError(friendlyError(error, "Save failed"));
-    } finally {
-      inFlight.current = false;
-      setSaving(false);
-      onSaving?.(false);
-    }
+    await saveStatus.run(async current => {
+      onSaving?.(true);
+      try {
+        const response = existing
+          ? await client.models.License.update({ id: existing.id, ...payload })
+          : await client.models.License.create(payload);
+        const data = unwrap(response);
+        if (current()) { markSaved(submitted); onSaved(data); }
+      } finally { onSaving?.(false); }
+    }, { errorMessage: 'Save failed' });
   }
 
   /**
